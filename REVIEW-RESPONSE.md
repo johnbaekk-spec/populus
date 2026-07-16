@@ -75,4 +75,39 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | Logical digest (H9) | Canonicalization changes across releases break digest comparisons | `normalization_version`/pipeline version recorded in manifest; digests compared only within like versions; DR drill pins the current one |
 | UA without install ID (M11) | SEC cannot distinguish misbehaving installs | Rate floors are in code (G6); repo URL is the reachable channel; accepted trade — privacy over pseudo-identification |
 
-**Verdict requested for round 3:** re-review of v2.2 (`git diff f7985f6..HEAD` scopes exactly this round's changes).
+**Round-3 outcome on §B:** the legal, identity, 13F, dashboard, and sampling remediations passed; the trust model contained a provider-plan blocker (private-Free-repo attestations) and TD-3's fallback was correctly rejected; two P1-gate propagation residues escaped this section's Failure-Mode Sweep — the sweep checked new failure modes but not old text made stale, a gap fixed in §C's sweep discipline.
+
+---
+
+# §C — Round 3: v2.2 → v2.3
+
+**Date:** 2026-07-16 · **Reviewed artifact:** ARCHITECTURE.md v2.2 (SHA-256 `862bb0fc…`, 845 lines, range `f7985f6..5a665ce`) · **Round-3 verdict:** REQUEST CHANGES, narrow (2 critical, 2 high, 5 medium). **Disposition: all 9 accepted, zero pushbacks.**
+
+| # | Finding | Disposition | Where in v2.3 |
+|---|---|---|---|
+| **C1** | GitHub artifact attestations are public-repo-only on the Free plan — infeasible during private P1 staging; `id-token`/`attestations` scopes missing from the permission contract | **Accepted — provider fact conceded; route 1 chosen and locked.** Attestation creation + the tamper gate move to the **P2 flip sequence**: repo public → publish job (now with `id-token: write` + `attestations: write`, §14) republishes and attests the current build → only then is `latest.json` documented consumer-readable, so **no public consumer ever reads an unattested build**. Private P1 staging needs no attestations: its only consumers (pipeline, monitor) read via the authenticated API inside the repo ACL with manifest-hash verification. Client verification pinned exactly: `sigstore-python`, certificate identity `…/populus-data/.github/workflows/publish.yml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com` — no more "gh-equivalent" hand-waving. One protocol, one posture. | §5.5, §14, §17 P1/P2 |
+| **C2** | TD-3's unsigned fallback silently reversed the trust fix | **Accepted — fallback removed.** No unsigned client mode exists anywhere; performance may select a lighter *verified* implementation (e.g., offline bundle verification against Sigstore's trusted root); a client that cannot verify keeps serving its last verified build. TD-3 restated: the debt is the unmeasured verification cost, never the trust requirement. | §5.5, §14, §18.1 TD-3 |
+| **H3** | Monitor bypassed the sole-mutable-path invariant (read root `stats.json`) | **Accepted.** Monitor is now protocol-conformant: `latest.json` → authenticate manifest → fetch the **manifest-listed** `stats.json` → verify hash → evaluate freshness; it also re-checks the immutable-releases setting via the repo API and alerts on drift. | §13.2 |
+| **H4** | Two P1-gate residues: "n=150 stratified" and "counts/hashes reconcile" contradicted §9.6/§5.5 | **Accepted — propagation misses, mine.** Gates now read "simple-random n=150 population sample plus §9.6 coverage quotas" and "row counts plus logical digests reconcile." Sweep discipline corrected: residue sweeps now grep for the *old* terminology after every fix, not just new failure modes. | §17 P1 |
+| **M5** | Logical-digest projection underspecified (`ingest_runs` volatile fields) | **Accepted.** Projection is now an explicit versioned allowlist (`digest_projection_version` in the manifest): `ingest_runs` excluded entirely; included tables/columns enumerated; digests compared only within like projection+normalization versions. | §5.5 |
+| **M6** | Two surviving "per-install" statements | **Accepted.** Both (DR-8 consequences; risks table) now read "truthful application UA plus optional operator contact." | DR-8, §18 |
+| **M7** | "Long US-equity" understates Section 13(f) scope (options/warrants/convertibles; the schema already models `putCall`) | **Accepted.** Both caveat sites (§5.2, §10.2) now say "long positions in Section 13(f) securities, including reportable options, warrants, certain convertibles; no short positions, no cash." | §5.2, §10.2 |
+| **M8** | `raw_row`/`flags` JSON contracts not DDL-enforced | **Accepted.** `CHECK (json_valid(raw_row) AND json_type(raw_row)='object')` and the array equivalent for `flags`; DDL re-verified parsing in SQLite. | §9.4 DDL |
+| **M9** | DESIGN-BRIEF retained unbounded long-tail wording | **Accepted.** Brief now bounds client rendering to the published extract and asks the designer for an explicit "not rendered — here's the government source" state. | DESIGN-BRIEF §4 |
+
+**Process finding (commit schema):** accepted — this round's commit message carries the canonical `## Dev Notes` block with `Reuse / Duplication Check`, `Simplicity Audit`, and `Memory Touch-Points` subsections.
+
+## Failure-Mode Sweep (v2.3 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| Attestation moved to P2 flip (C1) | A public consumer reads the build published *before* attestation lands | Impossible by ordering: the flip sequence attests before `latest.json` is documented consumer-readable, and the MCP client only ships in P2 after the drill |
+| | Staging integrity gap during P1 | Bounded by the repo ACL: no public consumers exist; pipeline + monitor verify manifest hashes over the authenticated API |
+| | Workflow scopes over-granted | `id-token`/`attestations` on the publish job only, from P2 on (§14) |
+| No-unsigned-mode rule (C2) | Sigstore outage strands clients | Client serves last verified build with staleness note — availability degrades, authenticity never does |
+| Protocol-conformant monitor (H3) | Monitor's own verification bug masks real staleness | Two consecutive failures of *any* step (fetch or verify) alert — a broken verifier is itself an alert condition |
+| Versioned digest projection (M5) | Projection change silently breaks DR comparisons | Version recorded in manifest; unlike-version comparison is a defined no-op, not a false failure |
+| JSON CHECKs (M8) | Legacy rows violating checks block a reparse | Checks ship before first ingest (greenfield); atomic per-filing replace means any violation fails the filing's transaction loudly, not the run silently |
+| Residue-sweep discipline (H4) | Future fixes leave stale contradicting text again | Sweep rule updated: grep for superseded terminology across all four documents after every disposition (applied this round: `stratified`, `counts/hashes`, `per-install`, `long-US-equity`, `13F-CTR`, `50 MB`) |
+
+**Verdict requested for round 4:** re-review of v2.3 (`git diff 5a665ce..HEAD`).

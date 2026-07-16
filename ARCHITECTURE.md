@@ -1,4 +1,4 @@
-# Populus — Architecture (v2.2)
+# Populus — Architecture (v2.3)
 
 **The open financial-data commons: finance data that is free to pull from primary sources and redistributable under recorded conditions, served as an MCP server and a public dashboard. Congressional trading ships first.**
 
@@ -6,7 +6,8 @@
 |---|---|
 | Status | Draft for owner review — no implementation until approved (P0 gate) |
 | Author | Claude (Fable 5), 2026-07-16, on the Mac mini |
-| v2.2 | Revision addressing external review **round 2** (REQUEST CHANGES; 4 critical, 5 high, 6 medium). Key changes: counsel review now precedes the **first public data artifact** (P1 runs against a private staging repo); the M1 identity contract is reproducible from the schema (raw fields stored, canonical serialization, 128-bit fingerprints, source-coordinate duplicate identity); the artifact trust model is real (immutable releases enabled, Sigstore attestations consumer-verified, all consumed files build-scoped); 13F confidential-treatment and unit-cutover semantics corrected; unresolved amendments no longer double-count. Round-2 dispositions in [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). |
+| v2.3 | Revision addressing external review **round 3** (REQUEST CHANGES, narrow: 2 critical, 2 high, 5 medium). One trust protocol, locked: GitHub artifact attestations are **public-repo-only on the Free plan**, so attestation creation + the tamper gate move to the **P2 flip sequence** (repo public → attested build → `latest.json` consumer-readable); private-P1 staging relies on the repo's own access control with hash verification; the unsigned client fallback (old TD-3) is **removed** — clients always verify attestations from P2 on, with pinned certificate identity + OIDC issuer. Monitor now follows the manifest protocol; P1-gate residues (stratified wording, counts/hashes) reconciled; logical-digest projection made explicit and versioned; 13F caveat widened to Section 13(f) securities; JSON CHECK constraints added; per-install UA residues removed. |
+| v2.2 | Addressed external review **round 2** (REQUEST CHANGES; 4 critical, 5 high, 6 medium). Key changes: counsel review now precedes the **first public data artifact** (P1 runs against a private staging repo); the M1 identity contract is reproducible from the schema (raw fields stored, canonical serialization, 128-bit fingerprints, source-coordinate duplicate identity); the artifact trust model is real (immutable releases enabled, Sigstore attestations consumer-verified, all consumed files build-scoped); 13F confidential-treatment and unit-cutover semantics corrected; unresolved amendments no longer double-count. Round-2 dispositions in [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). |
 | v2.1 | Addressed external review round 1 (15 findings). **This document is self-contained and supersedes v1.0/v2.0/v2.1 entirely; no earlier version is normative.** v2.1 is commit `f7985f6` — rounds are now diffable. |
 | Inputs | CodexSOL handoff (2026-07-15); live verification 2026-07-16 in three rounds (Appendices A, B); external review 2026-07-16; Project Compass — Architecture v2.6 (read, not reused) |
 | Companions | [HANDOFF-REVIEW.md](HANDOFF-REVIEW.md) (review of the original handoff) · [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md) (finding dispositions) |
@@ -136,7 +137,7 @@ A source is ingested only if it passes all four, with the determination recorded
 
 **Justification.** (1) Cost containment: federated reads are made by each user against infrastructure the agencies operate for exactly this purpose, within published fair-access rules — Populus's own infra carries none of it. (2) Freshness: federated answers are as fresh as the agency. (3) Replication only where it adds value: cross-entity aggregates (all-of-Congress feeds, QoQ 13F deltas) are precisely what per-entity APIs can't answer.
 
-**Consequences.** Pattern-F tools require network at question time (declared in tool descriptions; caches serve offline with staleness notes). Aggregate load across all installations still grows with adoption — so the federated client is deliberately conservative (§11.4): defaults far below agency ceilings, caching, coalescing, bulk-endpoints-first, and honest per-install identification. No "at any scale" claims; if an agency ever signals displeasure, the affected dataset moves to Pattern R extracts or is dropped (G6).
+**Consequences.** Pattern-F tools require network at question time (declared in tool descriptions; caches serve offline with staleness notes). Aggregate load across all installations still grows with adoption — so the federated client is deliberately conservative (§11.4): defaults far below agency ceilings, caching, coalescing, bulk-endpoints-first, and a truthful application UA plus optional operator contact. No "at any scale" claims; if an agency ever signals displeasure, the affected dataset moves to Pattern R extracts or is dropped (G6).
 
 ### DR-9 — One MCP server, domain-namespaced tools, hard tool budget
 
@@ -210,7 +211,7 @@ Derived aggregates additionally carry lineage: the input `build_id`(s) and the i
 
 ### 5.2 Honesty layer
 
-Per module, always published (in `stats.json`, the `*_health` tools, and `/methodology`): freshness (source-side latest vs. ours), coverage (parsed/total, joined/total), known-gap counts (`needs_ocr`, unjoined names, unmapped identifiers), and a standing `data_note` stating the domain's structural caveat — M1: the 45-day STOCK Act lag and range-only amounts; M2: 13F is long-US-equity, quarter-end, up-to-45-days-late, no shorts/bonds/cash, era-dependent value units; M3: as-reported XBRL ≠ normalized comparables; M4: series are revised, vintage semantics stated per series. These are response-envelope content, not footnotes.
+Per module, always published (in `stats.json`, the `*_health` tools, and `/methodology`): freshness (source-side latest vs. ours), coverage (parsed/total, joined/total), known-gap counts (`needs_ocr`, unjoined names, unmapped identifiers), and a standing `data_note` stating the domain's structural caveat — M1: the 45-day STOCK Act lag and range-only amounts; M2: 13F covers long positions in Section 13(f) securities (including reportable options, warrants, certain convertibles) — no shorts or cash — quarter-end, up-to-45-days-late, era-dependent value units; M3: as-reported XBRL ≠ normalized comparables; M4: series are revised, vintage semantics stated per series. These are response-envelope content, not footnotes.
 
 ### 5.3 Pipeline framework and CLI contract
 
@@ -275,9 +276,13 @@ Join rules: historical records join **as-of their own date** (transaction date, 
 
 Field semantics: `client_compat` is a **PEP 440 version-specifier string** evaluated against the client's own version (no `1.6.x`-style informal grammar); `logical_digest` is the canonical logical-content digest defined below; **every consumed file — SQLite, JSON slices, `stats.json` — is an enumerated artifact under a build-scoped path or Release URL.** `latest.json` (git) holds only `{ "build_id": …, "manifest_path": … }` and is **the sole mutable path any consumer ever reads**; unversioned convenience copies may exist for humans but are non-normative and never consumed programmatically. Old and new builds therefore cannot mix: everything else a consumer touches is under `builds/<build_id>/…` or an immutable release tag.
 
-**Trust model.** GitHub **immutable releases are enabled on `populus-data`** (explicit repository setting — release assets are *not* immutable by default; verified in the §14 checklist and re-checked by the external monitor). At publish, the workflow generates **GitHub artifact attestations (Sigstore)** for `manifest.json` and every Release asset, binding them to the repository's publish-workflow identity via GitHub OIDC. **Consumers verify the manifest's attestation** (via `sigstore-python`/`gh attestation verify`-equivalent bundled in the client) **before trusting it**, then verify each downloaded artifact against the manifest's SHA-256 + byte size. The root of trust is the Sigstore attestation chain — not branch protection, which is an access control, not a signature.
+**Trust model — one protocol, two phases, no unsigned fallback.** GitHub **immutable releases are enabled on `populus-data`** (explicit repository setting — release assets are *not* immutable by default; verified in the §14 checklist and re-checked by the external monitor, §13.2).
 
-**Logical digest (for reproducibility checks).** Per SQLite artifact, `logical_digest` = SHA-256 over a canonical logical export: each table's rows serialized in canonical form (RFC 8785-style JSON per row), sorted by primary key, **excluding operational columns** (`ingested_at`, run ids, host metadata). File bytes are *not* reproducible (SQLite page layout, insertion order, and library version all perturb them); logical content is. The disaster-recovery drill (§13.5) compares logical digests and row counts, never file hashes.
+- *Private staging phase (P1).* **GitHub artifact attestations are unavailable to private repositories on the Free plan** (Enterprise-only), so no attestations exist during staging — and none are needed: the only consumers are the pipeline itself and the external monitor, both reading through the **authenticated GitHub API inside the private repo's access boundary**, verifying manifest-listed SHA-256s. There are no public consumers to protect yet; the trust boundary *is* the repo ACL.
+- *Public phase (P2 on).* The flip sequence is ordered so **no public consumer ever reads an unattested build**: (1) repo flips public (after the counsel entry gate); (2) the publish workflow — with `permissions: id-token: write, attestations: write` on the publish job (§14) — republishes the current build and generates **GitHub artifact attestations** for `manifest.json` and every Release asset; (3) only then is `latest.json` documented as consumer-readable, and the MCP client ships. From then on, every build is attested at publish.
+- *Client verification, pinned exactly.* Clients verify the manifest's attestation bundle with `sigstore-python`, requiring **certificate identity `https://github.com/<org>/populus-data/.github/workflows/publish.yml@refs/heads/main`** and **OIDC issuer `https://token.actions.githubusercontent.com`**, then verify each downloaded artifact against the manifest's SHA-256 + byte size. **There is no unsigned mode:** performance concerns may select a lighter *verified* implementation (e.g., offline bundle verification against Sigstore's published trusted root, avoiding network calls), but a client that cannot verify does not trust a new manifest — it keeps serving its last verified build and says so. The root of trust is the attestation chain; branch protection is an access control, not a signature.
+
+**Logical digest (for reproducibility checks).** Per SQLite artifact, `logical_digest` = SHA-256 over a canonical logical export under an **explicit, versioned projection** (`digest_projection_version` recorded in the manifest). Projection v1 for `congress.db`, stated as an allowlist, not an exclusion heuristic: `ingest_runs` is **excluded entirely** (every column is operational); `members`, `member_aliases`, `filings`, and `transactions` are included with **all columns except** `filings.ingested_at`; rows are serialized as RFC 8785 JSON, sorted by primary key, tables framed in schema order by name. Changing the projection bumps the version, and digests are compared only within like `(digest_projection_version, normalization_version)` pairs. File bytes are *not* reproducible (SQLite page layout, insertion order, and library version all perturb them); logical content under a pinned projection is. The disaster-recovery drill (§13.5) compares logical digests and row counts, never file hashes.
 
 **Publication order (atomic from a consumer's view):** (1) upload all Release assets under tag `data-<build_id>` + generate attestations; (2) commit `builds/<build_id>/` (manifest + build-scoped JSON); (3) update `latest.json` **last**. A consumer that resolves `latest.json` always finds a complete, attested, verifiable build; `populus publish` refuses to advance the pointer while any enumerated artifact is missing or fails verification (`populus verify` gate).
 
@@ -421,9 +426,10 @@ CREATE TABLE filings (
 CREATE TABLE transactions (
   txn_id        TEXT PRIMARY KEY,           -- '<filing_id>:<fingerprint32>[#<dup_seq>]' (§ below)
   filing_id     TEXT NOT NULL REFERENCES filings(filing_id),
-  raw_row       TEXT NOT NULL,              -- JSON: the exact extracted raw field object —
+  raw_row       TEXT NOT NULL               -- JSON: the exact extracted raw field object —
                                             -- the fingerprint's input, stored so identity is
                                             -- reproducible and auditable from the row itself
+                CHECK (json_valid(raw_row) AND json_type(raw_row) = 'object'),
   row_fingerprint TEXT NOT NULL,            -- full sha256 hex of canonical raw_row (§ below)
   dup_seq       INTEGER NOT NULL DEFAULT 1, -- 1..n among identical raw_rows in one filing
   row_ordinal   INTEGER NOT NULL,           -- display order as printed (presentation only)
@@ -446,7 +452,8 @@ CREATE TABLE transactions (
   amount_label  TEXT,                       -- as printed
   cap_gains_over_200 INTEGER CHECK (cap_gains_over_200 IN (0,1)),
   comment       TEXT,
-  flags         TEXT NOT NULL DEFAULT '[]', -- JSON array: ["missing_ticker","date_anomaly",…]
+  flags         TEXT NOT NULL DEFAULT '[]'  -- JSON array: ["missing_ticker","date_anomaly",…]
+                CHECK (json_valid(flags) AND json_type(flags) = 'array'),
   source        TEXT NOT NULL,
   license_id    TEXT NOT NULL,              -- record-level (sources mix in this table, §5.1)
   kadoa_id      TEXT,                       -- original seed id where source='kadoa'
@@ -519,7 +526,7 @@ Owner-specified: institutional → company financials → macro. Also the depend
 - **Amendments are typed.** `13F-HR/A` carries an amendment type: **RESTATEMENT** (supersedes the original in full) vs. **NEW HOLDINGS** (must be **merged** with the original). The M1 supersede model applies only to restatements; new-holdings amendments compose. **Confidential treatment, correctly modeled:** a **13F-CTR is the *request* for confidential treatment** — positions under it are simply *omitted* from the public filing; when treatment expires or is denied, the holdings surface via a **public 13F-HR/A NEW HOLDINGS amendment** (per the SEC's Form 13F FAQ). The pipeline flags filings whose cover indicates confidential omissions and merges the later disclosing amendment through the same NEW-HOLDINGS path. `otherManager`/related-filer structures are modeled to avoid double counting the same positions across affiliated filers. All four behaviors get golden fixtures before the module ships.
 - **Consumer matrix.** Pipeline: R for cross-filer aggregates (filer registry, QoQ deltas, top-holders per issuer, concentration) into `inst_agg.db`. MCP: snapshot for aggregates + F for arbitrary per-filer detail. Dashboard: build-time slices, static pages budgeted to the top filers only (≤1,500 pages), long tail client-rendered from published JSON.
 - **Identity.** CUSIP-only in filings → resolved through §5.4's dated `security_identifiers` (bootstrap: OQ-8), as-of the report period; unmapped CUSIPs surface by issuer name + flag. Coverage gate ≥95% by reported value.
-- **Caveat.** Long US-equity positions of ≥$100M managers; quarter-end snapshots filed up to 45 days late; no shorts, bonds, cash; era-dependent units; affiliated-filer overlap.
+- **Caveat.** Long positions in **Section 13(f) securities** — US exchange-traded equities plus reportable equity options, warrants, and certain convertibles (which is why the schema models `putCall`) — of ≥$100M managers; quarter-end snapshots filed up to 45 days late; **no short positions, no cash**; era-dependent units; affiliated-filer overlap.
 - **Candidate tools (≤5):** `inst_filer_lookup`, `inst_filer_holdings` (+QoQ deltas), `inst_ticker_holders`, `inst_biggest_moves`, `inst_health`.
 
 ### 10.3 M3 — Company financials
@@ -602,7 +609,7 @@ Astro static on Cloudflare Pages; nightly rebuild via deploy hook from the publi
 
 ### 13.2 Monitoring — external and internal
 
-- **External heartbeat (independent of GitHub — review F12):** a launchd job on the Mac mini every 6 h fetches `latest.json` + `stats.json` from `populus-data` raw URLs and alerts to Discord if: build age >36 h, `stats.json` freshness lags its own watermarks, or fetch fails twice consecutively. This catches disabled schedules, dropped cron events, and GitHub outages — the failure classes an Actions-hosted watchdog shares with the thing it watches. Operational-by-P1 is a gate.
+- **External heartbeat (independent of GitHub — review F12), protocol-conformant:** a launchd job on the Mac mini every 6 h behaves like any other consumer (§5.5): resolve `latest.json` → authenticate the manifest (attestation verification from P2 on; authenticated-API + manifest-hash inside the private staging boundary during P1) → fetch the **manifest-listed** `stats.json` artifact → verify its SHA-256 → then evaluate: build age >36 h, freshness lagging the manifest watermarks, or two consecutive fetch/verification failures → Discord alert. It never reads a mutable root path other than `latest.json`, so pointer state and statistics can never mix across builds. It additionally re-checks that the **immutable-releases setting is still enabled** on `populus-data` (via the repo API) and alerts if it ever flips off. This catches disabled schedules, dropped cron events, GitHub outages, and setting drift — the failure classes an Actions-hosted watchdog shares with the thing it watches. Operational-by-P1 is a gate.
 - **Internal:** Actions failure e-mail + auto-filed issue (deduped by title) + Discord webhook per failed job; freshness assertions inside the pipeline (House index Last-Modified vs. DB watermark) fail the run loudly rather than publishing stale-but-green.
 
 ### 13.3 Publication coordination
@@ -648,12 +655,12 @@ Any new cost is flagged before it enters the tree (G8). One metering note: while
 
 ## 14. Security & supply chain *(new; review F14)*
 
-- **Workflow least privilege.** Every workflow declares an explicit `permissions:` block; default `contents: read`. Only the publish job gets `contents: write` (and only in `populus-data`).
+- **Workflow least privilege.** Every workflow declares an explicit `permissions:` block; default `contents: read`. Only the publish job gets `contents: write` (and only in `populus-data`), plus — from the P2 public flip on — `id-token: write` and `attestations: write`, the two scopes attestation generation requires (§5.5). No other job gets any of the three.
 - **Untrusted-PR isolation.** PR-triggered jobs run without secrets; `pull_request_target` is banned; publish jobs trigger only on `schedule`/`workflow_dispatch` from the default branch.
 - **Action pinning.** All third-party Actions pinned to full commit SHAs; Dependabot watches the pins.
 - **Branch protection + CODEOWNERS** on both repos, mandatory review for: `parse/` (parsers), `member_aliases`, identity registries, `licenses.json` and the conditions register, and `.github/workflows/`.
 - **Dependencies.** `uv.lock` with hashes; CI dependency audit (vulnerabilities + license check) — which also implements guardrail G1's paid-vendor denylist.
-- **Artifact integrity — verified chain, not trust-by-location.** GitHub **immutable releases enabled** on `populus-data` (explicit repo setting; checked here and re-checked by the external monitor); the publish workflow generates **Sigstore artifact attestations** for the manifest and every asset; **clients verify the manifest attestation before trusting it**, then verify per-asset SHA-256 from the manifest (§5.5). Branch protection guards the repo but is not the root of trust — the attestation chain is.
+- **Artifact integrity — verified chain, not trust-by-location.** GitHub **immutable releases enabled** on `populus-data` (explicit repo setting; checked here and re-checked by the external monitor); from the P2 flip on, the publish workflow generates **GitHub artifact attestations** for the manifest and every asset (attestations are public-repo-only on the Free plan — the private P1 staging boundary is the repo ACL, §5.5); **clients verify the manifest attestation — pinned certificate identity and OIDC issuer — before trusting it**, then verify per-asset SHA-256 from the manifest. **No unsigned client mode exists.** Branch protection guards the repo but is not the root of trust — the attestation chain is.
 - **Secrets inventory (exactly three, reviewed quarterly):** Discord webhook URL (alerting); Cloudflare Pages deploy-hook URL (rotated on any suspicion; invocations visible in Pages logs); one fine-grained PAT for the Mac mini — `populus-data: contents` write for fallback publishing, plus read scope while the repo is private staging (stored in macOS Keychain on the mini, never in dotfiles; read scope dropped at the P2 public flip).
 - **User-side.** `~/.cache/populus/` written `0700`/files `0600`; cache paths never include secrets; the MCP server runs read-only against verified artifacts.
 - A security checklist covering all of the above is a **P1 gate** and re-run at every module launch.
@@ -702,13 +709,13 @@ Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No ph
 
 **P1 — M1 data layer + substrate.** Scope: §9 complete; §5.5 publication protocol; §13.2 external monitor; §14 controls; runbooks. **All P1 publishes go to the private staging repo — nothing is publicly distributed in this phase (C1).** Gates:
 - 7 consecutive green nightly publishes (Actions, to staging), zero manual intervention.
-- Attestation chain demonstrated: a consumer verifies the manifest attestation and rejects a tampered artifact (fixture test).
-- Logical-digest reproducibility: two independent builds from the same raw archive produce identical `logical_digest`s.
+- Hash-verification fixture: a consumer detects and rejects an artifact whose bytes don't match the manifest (attestation drills belong to P2 — attestations are unavailable on the private Free-plan staging repo, §5.5).
+- Logical-digest reproducibility: two independent builds from the same raw archive produce identical `logical_digest`s under the pinned projection version.
 - E-filed parse coverage ≥97%; member-join ≥98%; golden corpus (≥30 fixtures incl. bond/exchange/multi-page) green in CI.
-- kadoa acceptance sample per §9.6: n=150 stratified, 0 critical errors, cosmetic ≤5%.
+- kadoa acceptance sampling per §9.6: simple-random n=150 population sample (0 critical errors) plus the §9.6 coverage quotas; cosmetic ≤5%.
 - Completeness reconciliation: every DocID/UUID in the sources' indexes for the covered window is present with exactly one `parse_status` — counted, zero unaccounted.
 - Freshness <24 h vs. House index Last-Modified.
-- **Drills passed:** rollback (repoint `latest.json`, consumer follows) · disaster recovery (raw → rebuilt DB ≤2 h, counts/hashes reconcile with manifest) · publish-conflict (concurrent dispatch serializes, no torn build).
+- **Drills passed:** rollback (repoint `latest.json`, consumer follows) · disaster recovery (raw → rebuilt DB ≤2 h, row counts plus logical digests reconcile with the manifest) · publish-conflict (concurrent dispatch serializes, no torn build).
 - External monitor live and demonstrated (kill a scheduled run; alert fires ≤12 h).
 - Security checklist §14: all items pass.
 - OQ-13 amendment study complete; amendment fixtures encoded; supersede automation enabled only in the verified mode.
@@ -720,7 +727,8 @@ Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No ph
 - Latency: snapshot tools p95 ≤2 s on the reference corpus.
 - Schema-compat drill: previously released client vs. new manifest → works or refuses cleanly (CI-automated from here on).
 - Listed on the official MCP registry (+ ≥1 more); `server.json` validated.
-- Counsel entry-gate record on file; repo flip executed after it (order verified in the phase log).
+- Counsel entry-gate record on file; **flip sequence executed in order and verified in the phase log: repo public → attested build published → `latest.json` documented consumer-readable** (§5.5).
+- Attestation drill: the shipped client verifies a genuine manifest attestation (pinned identity + issuer) and **rejects** (a) a tampered artifact and (b) a manifest attested by a different workflow identity (fixture tests, CI-retained).
 - Launch post published.
 
 **P3 — Dashboard (M1).** Scope: §9.10 + `/methodology`; nightly rebuild; localStorage follows. Gates: live on the domain; Lighthouse ≥90 (performance + accessibility) on feed, one member page, one ticker page; every rendered claim traceable to `doc_url` (spot-audit fixture: 25 random rendered rows, 100% link-resolve); static file count within budget; second post published.
@@ -751,7 +759,7 @@ Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No ph
 | Provider-limit breach (GitHub CDN use, Pages file caps, Actions crons) | M×M | §13.4 measured thresholds + named triggers (R2); Releases not git for bulk; page budgets with hard CI fail; external monitor |
 | Supply-chain compromise of a published artifact | L×H | §14: least privilege, PR isolation, SHA pinning, attestations, manifest verification on every consumer |
 | kadoa seed errors inherited | M×M | n=150/0-critical acceptance sampling; lineage + tombstoned progressive replacement |
-| Aggregate federated load draws agency ire | L×M | §11.4 conservative defaults, per-install UA, bulk-first; degrade-or-disable response (G6) |
+| Aggregate federated load draws agency ire | L×M | §11.4 conservative defaults, truthful application UA + operator contact, bulk-first; degrade-or-disable response (G6) |
 | Legal challenge to posture | L×H | Conservative posture; counsel gate; notices everywhere |
 | Copycat forks (MIT) | H×L | Accepted; freshness, honesty record, and registry position don't fork |
 | Single-maintainer bus factor | H×M | Everything reproducible from public repos + raw archives (drilled); three inventoried secrets; runbooks in-repo; CONTRIBUTING day one |
@@ -762,7 +770,7 @@ Open questions are unknowns; these are *known* compromises accepted deliberately
 
 1. **Duplicate-row identity inherits source-coordinate stability** (§9.4): identical same-filing rows can renumber if a reparse finds a new identical duplicate earlier in the document. Accepted — the source provides no stronger identity; confined to same-filing duplicates and resolved atomically.
 2. **Member identity is name-based at the root** (§9.7): the temporal alias table constrains it, but a same-name/same-state/same-era collision would still need a human decision. Accepted with the version-controlled alias process as the control.
-3. **Client attestation verification depends on Sigstore tooling** (§5.5): `sigstore-python` is the assumed verifier; if it proves too heavy for the MCP client, the fallback is manifest-hash verification with attestation checked only by the external monitor — a weaker but stated trust posture. Decided at P2 implementation.
+3. **Client attestation verification cost is unmeasured** (§5.5): `sigstore-python` is the planned verifier and its weight in a `uvx` cold start is unknown until P2. **All resolution options are verified implementations** — e.g., offline bundle verification against Sigstore's published trusted root instead of online calls; there is no unsigned fallback, and a client that cannot verify serves only its last verified build. The debt is the unmeasured cost, not the trust requirement.
 4. **`transactions.bioguide_id` is denormalized** (§9.4) for query speed; guarded by a CI invariant test (must equal its filing's), not by normalization.
 5. **Hosted HTTP transport is deferred with a written acceptance checklist** (§11.6) rather than designed now. The checklist is the control; the debt is that it is unexercised.
 6. **kadoa-sourced history remains in the store until progressively re-parsed** (§9.6): audited seed data with provenance, but still third-party parser output, visible in the public `source` mix until replacement completes.
@@ -842,4 +850,4 @@ $1,001–$15,000 · $15,001–$50,000 · $50,001–$100,000 · $100,001–$250,0
 
 ---
 
-*End of ARCHITECTURE.md v2.2 — draft for owner review; supersedes v1.0/v2.0/v2.1 entirely (v2.1 = commit `f7985f6`). Finding dispositions for both review rounds: [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). No implementation begins until this document is approved (P0 gate).*
+*End of ARCHITECTURE.md v2.3 — draft for owner review; supersedes all earlier versions (v2.1 = commit `f7985f6`, v2.2 = `5a665ce`). Finding dispositions for all review rounds: [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). No implementation begins until this document is approved (P0 gate).*

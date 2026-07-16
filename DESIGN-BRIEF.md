@@ -39,7 +39,7 @@ Analysts, traders, journalists, civic-data people, and LLM-users who clicked thr
 ## 4. Hard constraints
 
 - **Static site (Astro) on Cloudflare Pages. No backend, no accounts, no cookies.** Personalization = localStorage watchlist only ("my members / my tickers").
-- **Page budgets are contractual:** global cap 15,000 static files; module 1 ≤4,000. Long-tail entities render client-side on a generic route from published JSON — the template must work identically pre-rendered and client-rendered.
+- **Page budgets are contractual:** global cap 15,000 static files; module 1 ≤4,000. Long-tail entities render client-side on a generic route from data shards deployed with the build — **but only entities within the published extract; out-of-extract entities get a link to the primary source, not a rendered page**. The template must work identically pre-rendered and client-rendered, and needs a designed "we don't render this entity — here's the government source" state.
 - **Performance/accessibility is a phase gate:** Lighthouse ≥90 (performance AND accessibility) on feed, entity, and instrument pages. WCAG 2.1 AA. Design within that: system-font-first or one self-hosted family, no heavy hero assets, tables that stay accessible.
 - **Light and dark from day one.** Data-dense tables and charts must hold contrast in both.
 - **Responsive:** feed and entity pages must genuinely work on phones (journalists share these links); wide tables scroll within their container, never the page.
