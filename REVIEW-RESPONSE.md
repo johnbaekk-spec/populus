@@ -1,6 +1,12 @@
-# Response to External Review — ARCHITECTURE v2.0 → v2.1
+# Response to External Reviews — ARCHITECTURE v2.0 → v2.1 → v2.2
 
-**Date:** 2026-07-16 · **Reviewed artifact:** ARCHITECTURE.md v2.0 (SHA-256 `59d4c618…`, 480 lines) · **Disposition:** all 15 findings + accuracy defects addressed in **v2.1**, which supersedes v2.0 in place. The directory is now a git repository (initialized this session; first commit pending owner) so future reviews have a diffable baseline.
+This document is the audit trail for both review rounds. **Round 1** (v2.0 → v2.1) is §A below. **Round 2** (v2.1 → v2.2) is §B, including the Tech Debt Introduced and Failure-Mode Sweep sections the review workflow requires. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — four round-1 remediations (F4, F5, F7, F13) contained follow-on defects; they are resolved in v2.2 and dispositioned in §B.
+
+---
+
+# §A — Round 1: v2.0 → v2.1
+
+**Date:** 2026-07-16 · **Reviewed artifact:** ARCHITECTURE.md v2.0 (SHA-256 `59d4c618…`, 480 lines) · **Disposition (as amended by round 2):** all 15 findings *responded to* in v2.1; round 2 subsequently confirmed 11 resolved and found follow-on defects in the remediations of F4, F5, F7, F13 — see §B.
 
 **Summary: 14 of 15 findings accepted (4 with refinements), 1 accepted-with-correction where the review itself contained a stale fact (F7 value units — evidence below). The review was high quality; F2 (CORS), F5 (row_seq instability), F7 (13F amendment types), and F13 (sample-size math) would each have produced latent data corruption or a broken consumer had they survived to implementation.**
 
@@ -24,3 +30,49 @@
 | Accuracy | BEA "verified" overstated; OQ-10/App-B.6 stale; Appendix C tense; OGE wording; superlatives; MCP-registry `server.json` + PyPI ownership marker; PyPI ≠ reservation | **All fixed.** BEA marked signup-page-only; OQ-10 closed with today's re-check; Appendix C says "must be verified in P1"; OGE "not imported"; superlatives converted to dated observations ("as of 2026-07-16 searches"); registry requirements (versioned `server.json`, PyPI README ownership marker) added to P2 scope+gate; **P0 now contains a naming action** — publish a `populus-mcp 0.0.1` placeholder to PyPI upon approval (outward-facing: owner executes or explicitly delegates). | throughout |
 
 **Not changed, deliberately:** one-module-at-a-time sequencing, parse-or-flag, dual-date honesty, Compass separation, the R/F distinction (now per-consumer), and the $0 posture — the review endorsed these, and the fixes above were made *within* them.
+
+---
+
+# §B — Round 2: v2.1 → v2.2
+
+**Date:** 2026-07-16 · **Reviewed artifact:** ARCHITECTURE.md v2.1 (SHA-256 `c6b29189…`, 801 lines; committed as baseline `f7985f6` at round-2 remediation start — the round is now diffable via `git diff f7985f6..HEAD`) · **Round-2 verdict:** REQUEST CHANGES (4 critical, 5 high, 6 medium). **Disposition: all 15 accepted; zero pushbacks this round** — every finding survived verification, including the two where round 2 corrected *my* round-1 work product (C4's CTR semantics) and my statistics (H8).
+
+| # | Finding | Disposition | Where in v2.2 |
+|---|---|---|---|
+| **C1** | Counsel gate followed public publication (P1 published 7 public builds before P2 review) | **Accepted — sequencing was wrong.** `populus-data` now starts **private (staging)**; all P1 publishes are private; counsel review is the **P2-entry gate**; the repo flip to public is explicitly named the legally relevant distribution event and follows counsel. Cost note added (private Actions minutes metered: est. <300 of 2,000 free; mini fallback if ever near cap). | DR-5, §1, §15.2/15.3, §17 P0–P2, §13.6, §14 (PAT read scope) |
+| **C2** | Fingerprint inputs absent from schema; delimiter/truncation/counter/constraint defects | **Accepted.** `transactions.raw_row` (JSON, NOT NULL) stores the exact raw field object — identity reproducible from the row itself; serialization = RFC 8785 (JCS), length-delimited by construction (no delimiter injection, null ≠ empty, NFC); `txn_id` uses **128 bits** (32 hex); `dup_seq` follows **source coordinates** (Senate `#` column / printed position) with the stability guarantee restated precisely (unique-raw rows never shift; identical duplicates inherit source-coordinate stability — residual instability declared as tech debt TD-1); UNIQUE constraint now matches identity `(filing_id, row_fingerprint, dup_seq)`; record-level `license_id` added to the mixed-source table. | §9.4 |
+| **C3** | Release immutability/signing overclaimed; unversioned "small JSON" could mix builds | **Accepted.** **Immutable releases** named as the explicit repo setting it is (P0 setup, §14 checklist, monitor-rechecked); root of trust corrected to **Sigstore artifact attestations, consumer-verified** (branch protection demoted to access control); **every consumed file** — including JSON slices and `stats.json` — is now an enumerated, build-scoped, manifest-hashed artifact; `latest.json` is the sole mutable consumer-readable path; attestation-verification and tamper-rejection fixtures added to P1 gates. | §5.5, §14, §17 P1 |
+| **C4** | "Disclosed via 13F-CTR" factually wrong; unit cutover imprecise | **Accepted — my round-1 text was wrong.** Corrected: 13F-CTR is the *request*; expiry/denial discloses via a **public 13F-HR/A NEW HOLDINGS amendment**; P4 fixture gate reworded accordingly. Unit cutover re-keyed to **form version/filing date (amended Form 13F effective 2023-01-03, EDGAR 22.4.1)**, not report period — a post-transition Q4-2022 filing uses whole dollars. | §10.2, §17 P4 |
+| **H5** | Flagged-but-active amendment pairs still double-count in aggregates | **Accepted — a flag doesn't stop a SUM.** Unresolved-pair rule: default feeds and **all quantitative aggregates include only the later filing** (flagged `amendment_unresolved`); the paired original is excluded from default views entirely; both sides visible in a dedicated uncertainty view. §9.4's default-view definition updated to reference the rule. | §9.5, §9.4 |
+| **H6** | `member_aliases` keyed timelessly — cannot represent alias reuse across eras | **Accepted.** Aliases now carry `state`/`district` disambiguators and `valid_from`/`valid_to`; resolution requires the filing date inside the validity window AND member-term overlap; overlapping candidates for one (alias, date) are a CI-tested defect. | §9.4 DDL, §9.7 |
+| **H7** | "Unbounded coverage" contradicted the consumer matrix; 50 MB artifact unservable via Pages | **Accepted.** Dashboard coverage restated as **bounded — exactly the published extract**; out-of-extract entities link out. Delivery model simplified: dashboard data (incl. the M3 extract, now **sharded ~64× by CIK prefix, each ≪25 MiB**) **ships inside the Pages deployment** — same-origin (no CORS design needed), build-scoped by construction, counted in the file budget. | §5.6, §10.3, §12.1, §6 |
+| **H8** | 1.97% bound unsupported by an unweighted 32-stratum design | **Accepted — the statistics were mine and wrong.** Split into two instruments: a **simple random n=150** (uniform over the population) carrying the exact-binomial 0/150 → ≈1.97% one-sided 95% bound, plus **coverage quotas** (≥5/stratum) explicitly labeled smoke checks, not bounds; failure protocol: fresh redraw, stratum-targeted n=60 follow-up. | §9.6 |
+| **H9** | Byte-hash DR gate impossible (SQLite bytes are not reproducible) | **Accepted.** New per-artifact **`logical_digest`**: SHA-256 over canonical (RFC 8785) row serialization, PK-sorted, operational columns excluded; DR drill compares logical digests + row counts, never file bytes; two-independent-builds reproducibility added as a P1 gate. | §5.5, §13.5, §17 P1 |
+| **M10** | "Verified 2013–2026" overstated (4 years probed) | **Accepted.** Reworded to "sampled back to 2013 (4 years probed)"; full sweep is a named P1 item; Appendix A entry corrected. | §9.1, App. A.2 |
+| **M11** | Persistent install ID = tracking token without contactability | **Accepted — dropped entirely.** UA = app/version/repo URL + optional operator `POPULUS_CONTACT` (warned when unset); rationale stated in-doc. | §11.4 |
+| **M12** | Hosted HTTP lacked security acceptance criteria | **Accepted.** §11.6 now carries the deployment acceptance checklist (Host/Origin allowlists, TLS trust, authn decision, session behavior, size + rate limits, end-to-end drill) per MCP SDK deployment guidance; OQ-7 updated; checklist gates any deployment. Declared as TD-5 until exercised. | §11.6, OQ-7 |
+| **M13** | Retention not tied to compat promise; `1.6.x` non-standard | **Accepted.** Retention = the full supported-client window incl. declared deprecation period (90-day floor); compat fields are **PEP 440 specifier strings** (`">=1.0,<2"`); manifest example updated with `client_compat` + `deprecation`. | §5.5 |
+| **M14** | CSV flags; denormalized FK; missing boolean checks | **Accepted.** `flags` is a JSON array; `bioguide_id` gets a real FK + CI invariant (equals its filing's — declared TD-4); `CHECK (… IN (0,1))` on boolean-likes. | §9.4 DDL |
+| **M15** | No commits/baseline; no Tech Debt declaration or Failure-Mode Sweep | **Accepted.** Baseline commit `f7985f6` (v2.1 + companions) made before v2.2 edits — this round is diffable; v2.2 committed with a conventional message + trailer. Tech debt now declared in ARCHITECTURE §18.1 (6 items) and below; Failure-Mode Sweep below. | git history; §18.1; this doc |
+
+## Tech Debt Introduced (v2.2, declared)
+
+Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coordinate stability (accepted; source provides no stronger identity) · **TD-2** member identity is name-based at root; temporal aliases + human-reviewed commits are the control · **TD-3** client attestation verification assumes `sigstore-python`; declared fallback is manifest-hash verification with monitor-side attestation checks (decided at P2) · **TD-4** `transactions.bioguide_id` denormalized, guarded by CI invariant · **TD-5** hosted-HTTP checklist written but unexercised · **TD-6** kadoa-sourced history remains until progressive primary re-parse completes (publicly visible in the `source` mix).
+
+## Failure-Mode Sweep (v2.2 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| Private staging repo (C1) | Metered Actions minutes exhaust silently → missed nightlies | Cost note + mini fallback (§13.6); external monitor alarms on build age regardless of cause |
+| | Staging privacy leaks via Release assets | Releases live in the same private repo; §14 checklist verifies visibility before P1 starts |
+| raw_row + JCS fingerprint (C2) | JCS implementation divergence between writer/verifier | Single shared serializer in `populus` used by both pipeline and any auditor tooling; golden fixture pins bytes |
+| | raw_row bloat | ~200 B/row × ~60k rows ≈ 12 MB — within size tier (§6) |
+| Attestation verification (C3) | Sigstore outage blocks refresh | Client keeps serving last verified cached build (§5.5 failure semantics unchanged); refresh retries |
+| | Verifier dependency too heavy for `uvx` cold start | TD-3 fallback declared; P2 cold-start gate (≤60 s) will surface it |
+| Amendment pair exclusion (H5) | Wrong pair-link hides a valid original | Pair links require explicit reference or document lineage (§9.5); uncertainty view keeps both visible; OQ-13 fixtures before automation |
+| Pages-bundled shards (H7) | Shards push file count over budget | Shards counted in the 15k cap with hard CI fail (§12.1) |
+| | Stale shard vs. page mismatch | Impossible by construction — shards and pages deploy in the same atomic Pages build |
+| Logical digest (H9) | Canonicalization changes across releases break digest comparisons | `normalization_version`/pipeline version recorded in manifest; digests compared only within like versions; DR drill pins the current one |
+| UA without install ID (M11) | SEC cannot distinguish misbehaving installs | Rate floors are in code (G6); repo URL is the reachable channel; accepted trade — privacy over pseudo-identification |
+
+**Verdict requested for round 3:** re-review of v2.2 (`git diff f7985f6..HEAD` scopes exactly this round's changes).

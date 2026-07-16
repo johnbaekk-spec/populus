@@ -1,4 +1,4 @@
-# Populus — Architecture (v2.1)
+# Populus — Architecture (v2.2)
 
 **The open financial-data commons: finance data that is free to pull from primary sources and redistributable under recorded conditions, served as an MCP server and a public dashboard. Congressional trading ships first.**
 
@@ -6,7 +6,8 @@
 |---|---|
 | Status | Draft for owner review — no implementation until approved (P0 gate) |
 | Author | Claude (Fable 5), 2026-07-16, on the Mac mini |
-| v2.1 | Revision addressing the 2026-07-16 external review (verdict: REQUEST CHANGES, 15 findings). Dispositions in [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). **This document is self-contained and supersedes v1.0 and v2.0 entirely; no earlier version is normative.** The directory is now a git repository so future revisions are diffable. |
+| v2.2 | Revision addressing external review **round 2** (REQUEST CHANGES; 4 critical, 5 high, 6 medium). Key changes: counsel review now precedes the **first public data artifact** (P1 runs against a private staging repo); the M1 identity contract is reproducible from the schema (raw fields stored, canonical serialization, 128-bit fingerprints, source-coordinate duplicate identity); the artifact trust model is real (immutable releases enabled, Sigstore attestations consumer-verified, all consumed files build-scoped); 13F confidential-treatment and unit-cutover semantics corrected; unresolved amendments no longer double-count. Round-2 dispositions in [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). |
+| v2.1 | Addressed external review round 1 (15 findings). **This document is self-contained and supersedes v1.0/v2.0/v2.1 entirely; no earlier version is normative.** v2.1 is commit `f7985f6` — rounds are now diffable. |
 | Inputs | CodexSOL handoff (2026-07-15); live verification 2026-07-16 in three rounds (Appendices A, B); external review 2026-07-16; Project Compass — Architecture v2.6 (read, not reused) |
 | Companions | [HANDOFF-REVIEW.md](HANDOFF-REVIEW.md) (review of the original handoff) · [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md) (finding dispositions) |
 | License | MIT (code). Data: per-source conditions register, §15 |
@@ -34,7 +35,7 @@ Three properties are the product:
 2. **Honest by construction.** Disclosure lags on every record; coverage, freshness, and known gaps published per module; estimates labeled; each source's redistribution conditions recorded *before* ingestion and shipped machine-readably with the data (§15).
 3. **≈$0/month, within stated limits.** GitHub Actions + Release-asset distribution + Cloudflare Pages + user-side MCP execution, each used inside its provider's published limits with measured thresholds and named migration triggers (§6, §13.4). Only bill: ~$12/yr domain.
 
-Reputation play first, revenue second. Launch sequence: M1 pipeline → MCP server (registry listings + launch post) → dashboard → subsequent modules, each a launch event on the same compounding assets. A paid tier, if ever ($5/mo-class), charges for convenience, never for data (G13), and is gated on counsel review — which is *also* required before the free public M1 launch (§15, P2 gate).
+Reputation play first, revenue second. Launch sequence: M1 pipeline → MCP server (registry listings + launch post) → dashboard → subsequent modules, each a launch event on the same compounding assets. A paid tier, if ever ($5/mo-class), charges for convenience, never for data (G13), and is gated on counsel review — which is *also* required **before the first public data artifact exists**: P1 builds and publishes against a **private staging repo**; the data repo flips public only after the P2-entry counsel gate (§15.3, §17).
 
 ---
 
@@ -107,13 +108,13 @@ A source is ingested only if it passes all four, with the determination recorded
 
 **Consequences.** A hosted API tier (P-Ω) would put a service in front of the same artifacts — consumer-side change only.
 
-### DR-5 — Two repos; git for small/current, Releases for bulky/immutable
+### DR-5 — Two repos; git for manifests/registries, Releases for artifacts; data repo starts private
 
-**Decision.** `populus` (code) and `populus-data` (artifacts) are separate public repos. Within `populus-data`, **git tracks only manifests, registries, `stats.json`, and small current JSON slices; SQLite snapshots and raw-archive bundles are immutable GitHub Release assets** referenced by the manifest.
+**Decision.** `populus` (code) and `populus-data` (artifacts) are separate repos. `populus` is public from day one (MIT code). **`populus-data` starts private (staging) and flips public only after the P2-entry counsel gate** (§15.3) — so no data artifact is publicly distributed before legal review. Within `populus-data`, git tracks only build manifests, `latest.json`, registries, and `licenses.json`; **all consumed data files — SQLite snapshots, JSON slices, `stats.json`, raw-archive bundles — are Release assets or build-scoped files referenced by the manifest** (§5.5).
 
-**Justification.** Separation keeps code history reviewable while the data repo commits daily (which also keeps its scheduled workflows active, §13.4). Release assets avoid the known failure of binary artifacts in git history: repo bloat, clone degradation, and GitHub's documented right to throttle repositories used as CDNs. Release assets are immutable-by-tag — exactly what the artifact protocol (§5.5) needs anyway.
+**Justification.** Separation keeps code history reviewable while the data repo commits daily (which also keeps its scheduled workflows active, §13.4). Release assets avoid binary-artifact git bloat, clone degradation, and GitHub's documented right to throttle repositories used as CDNs. **GitHub Release immutability is a repository feature that must be explicitly enabled — it is not automatic**; enabling *immutable releases* on `populus-data` is a P0 setup item verified by the §14 checklist.
 
-**Consequences.** Growth thresholds and a migration trigger are defined in §13.4 (successor: Cloudflare R2 free tier). Raw filings are bundled into periodic Release assets rather than committed individually.
+**Consequences.** Growth thresholds and a migration trigger are defined in §13.4 (successor: Cloudflare R2 free tier). Raw filings are bundled into periodic Release assets rather than committed individually. While private, Actions minutes are metered (2,000/mo free tier) — P1's nightly jobs are estimated <300 min/mo, within it (§13.6); the external monitor's PAT needs read scope on the staging repo until the flip.
 
 ### DR-6 — Names
 
@@ -255,11 +256,16 @@ Join rules: historical records join **as-of their own date** (transaction date, 
   "modules": {
     "congress": {
       "schema_version": "1.2",
-      "compat": {"min_client": "1.0.0", "max_client_tested": "1.6.x"},
+      "client_compat": ">=1.0,<2",
+      "deprecation": null,
       "watermarks": {"house_index_last_modified": "…", "senate_max_filed_date": "…"},
       "artifacts": [
         {"name": "congress.db", "sha256": "…", "bytes": 18234511,
+         "logical_digest": "…",
          "url": "https://github.com/…/releases/download/data-20260716.1/congress.db",
+         "license_ids": ["us-congress-disclosures"]},
+        {"name": "feed.json", "sha256": "…", "bytes": 412300,
+         "path": "builds/20260716.1/congress/feed.json",
          "license_ids": ["us-congress-disclosures"]}
       ]
     }
@@ -267,28 +273,32 @@ Join rules: historical records join **as-of their own date** (transaction date, 
 }
 ```
 
-`latest.json` (git) holds only `{ "build_id": …, "manifest_path": … }`.
+Field semantics: `client_compat` is a **PEP 440 version-specifier string** evaluated against the client's own version (no `1.6.x`-style informal grammar); `logical_digest` is the canonical logical-content digest defined below; **every consumed file — SQLite, JSON slices, `stats.json` — is an enumerated artifact under a build-scoped path or Release URL.** `latest.json` (git) holds only `{ "build_id": …, "manifest_path": … }` and is **the sole mutable path any consumer ever reads**; unversioned convenience copies may exist for humans but are non-normative and never consumed programmatically. Old and new builds therefore cannot mix: everything else a consumer touches is under `builds/<build_id>/…` or an immutable release tag.
 
-**Publication order (atomic from a consumer's view):** (1) upload all Release assets under tag `data-<build_id>`; (2) commit `builds/<build_id>/manifest.json` + updated small JSON + `stats.json`; (3) update `latest.json` **last**. A consumer that resolves `latest.json` always finds a complete, verifiable build; `publish` refuses to run with a partially uploaded asset set (`verify` gate).
+**Trust model.** GitHub **immutable releases are enabled on `populus-data`** (explicit repository setting — release assets are *not* immutable by default; verified in the §14 checklist and re-checked by the external monitor). At publish, the workflow generates **GitHub artifact attestations (Sigstore)** for `manifest.json` and every Release asset, binding them to the repository's publish-workflow identity via GitHub OIDC. **Consumers verify the manifest's attestation** (via `sigstore-python`/`gh attestation verify`-equivalent bundled in the client) **before trusting it**, then verify each downloaded artifact against the manifest's SHA-256 + byte size. The root of trust is the Sigstore attestation chain — not branch protection, which is an access control, not a signature.
 
-**Consumer protocol (MCP server and site build):** resolve `latest.json` → fetch manifest → check `schema_version` against the client's supported range — **on incompatibility, refuse with a self-explanatory message and continue serving the last compatible cached build** → download artifacts to a temp file → verify SHA-256 + byte size → for SQLite, `PRAGMA integrity_check` → atomic rename into `~/.cache/populus/<module>/<build_id>/` → update a local `current` pointer. Any failure at any step leaves the prior cache untouched. Artifacts from different builds are never mixed (the local pointer is per-build, not per-file).
+**Logical digest (for reproducibility checks).** Per SQLite artifact, `logical_digest` = SHA-256 over a canonical logical export: each table's rows serialized in canonical form (RFC 8785-style JSON per row), sorted by primary key, **excluding operational columns** (`ingested_at`, run ids, host metadata). File bytes are *not* reproducible (SQLite page layout, insertion order, and library version all perturb them); logical content is. The disaster-recovery drill (§13.5) compares logical digests and row counts, never file hashes.
 
-**Compatibility policy.** `schema_version` is `MAJOR.MINOR`: clients accept same-MAJOR; MAJOR bumps ship in this order — client release supporting both MAJORs first, data flips after a deprecation window stated in the manifest. CI enforces fail-safe behavior: the **previously released** client is run against each new manifest and must either work or refuse cleanly (P-gate, §17).
+**Publication order (atomic from a consumer's view):** (1) upload all Release assets under tag `data-<build_id>` + generate attestations; (2) commit `builds/<build_id>/` (manifest + build-scoped JSON); (3) update `latest.json` **last**. A consumer that resolves `latest.json` always finds a complete, attested, verifiable build; `populus publish` refuses to advance the pointer while any enumerated artifact is missing or fails verification (`populus verify` gate).
 
-**Retention & rollback.** ≥90 days of builds retained (Release tags are cheap and immutable). Rollback = repoint `latest.json` at a prior build (runbook §13.5); clients pick it up on next refresh because they follow the pointer, not "newest".
+**Consumer protocol (MCP server and site build):** resolve `latest.json` → fetch manifest → **verify manifest attestation** → evaluate `client_compat` against own version — **on incompatibility, refuse with a self-explanatory message and continue serving the last compatible cached build** → download artifacts to temp files → verify SHA-256 + byte size → for SQLite, `PRAGMA integrity_check` → atomic rename into `~/.cache/populus/<module>/<build_id>/` → update a local per-build `current` pointer. Any failure at any step leaves the prior cache untouched; artifacts from different builds are never mixed.
+
+**Compatibility policy.** `schema_version` is `MAJOR.MINOR`: clients accept same-MAJOR. MAJOR bumps ship in this order — a client release supporting both MAJORs first; the data flips only after a **deprecation window declared in the manifest** (`deprecation: {new_major, flips_at}`). CI enforces fail-safe behavior: the **previously released** client runs against each new manifest and must work or refuse cleanly (automated gate from P2 on, §17).
+
+**Retention & rollback.** Builds are retained for **the entire supported-client window including any declared deprecation period, with an absolute floor of 90 days** — retention is derived from the compatibility promise, not a fixed number. Rollback = repoint `latest.json` at a prior build (runbook §13.5); clients follow the pointer, not "newest".
 
 ### 5.6 Consumer-access matrix *(normative; DR-10)*
 
 | Dataset | Pipeline | MCP server | Dashboard |
 |---|---|---|---|
-| M1 congressional | R (scrape → `congress.db`) | snapshot | build-time JSON slices |
-| M2 13F aggregates (deltas, top-holders) | R (→ `inst_agg.db`) | snapshot | build-time slices (top-filer budget) |
-| M2 13F per-filer detail | — | **F** (EDGAR live) | not served statically (link out + client-side render of published aggregates only) |
-| M3 company financials | — | **F** (`data.sec.gov` live) | **build-time extract from bulk `companyfacts.zip`**, curated universe (§10.3) |
-| M4 curated macro core | R (→ `macro.db`) | snapshot | build-time series JSON |
-| M4 long-tail series | — | **F** (agency APIs live) | not served statically |
+| M1 congressional | R (scrape → `congress.db`) | snapshot | build-time JSON, deployed in the Pages bundle |
+| M2 13F aggregates (deltas, top-holders) | R (→ `inst_agg.db`) | snapshot | build-time slices in the Pages bundle (top-filer budget) |
+| M2 13F per-filer detail | — | **F** (EDGAR live) | **not served** — link out to EDGAR; only published aggregates render |
+| M3 company financials | — | **F** (`data.sec.gov` live) | build-time extract from bulk `companyfacts.zip`, curated universe, **sharded** (§10.3) |
+| M4 curated macro core | R (→ `macro.db`) | snapshot | build-time series JSON in the Pages bundle |
+| M4 long-tail series | — | **F** (agency APIs live) | **not served** |
 
-The dashboard never calls external APIs from the browser (SEC serves no CORS; and G7 forbids consumers creating hidden load paths). Everything static comes through §5.5 artifacts.
+Two rules make this coherent: (1) the dashboard never calls external APIs from the browser (SEC serves no CORS; G7 forbids hidden load paths); (2) **dashboard data ships inside the Pages deployment itself** — build-scoped by construction, same-origin (no cross-origin/CORS/caching design needed), every file within Pages' 25 MiB limit and counted against the file budget (§12.1). **Dashboard coverage is therefore exactly the published extract — bounded, not "unbounded":** entities outside a module's published slices do not render; they link out to the primary source.
 
 ---
 
@@ -298,7 +308,7 @@ The dashboard never calls external APIs from the browser (SEC serves no CORS; an
 |---|---|---|---|
 | `congress.db` | SQLite | Release assets per build | ~10–20 MB; +kB/day |
 | `inst_agg.db` | SQLite | Release assets | aggregates ~tens of MB/qtr; full quarterly holdings **not** replicated (source datasets ≈95 MB/qtr compressed per SEC page — archived as Release assets only if OQ-9 decides yes) |
-| M3 dashboard extract | JSON/SQLite | Release assets | curated universe × key metrics — target ≤50 MB (from the 1.39 GB bulk zip, at build time, in Actions) |
+| M3 dashboard extract | sharded JSON (~64 shards by CIK prefix) | deployed inside the Pages bundle | curated universe × key metrics — ≤50 MB total, every shard ≪25 MiB (from the 1.39 GB bulk zip, at build time, in Actions) |
 | `macro.db` | SQLite | Release assets | few MB |
 | Raw archives | bundled zips | Release assets (monthly bundles) | M1 ≈60 MB/yr; others per contract |
 | Registries, manifests, small slices, stats | JSON | git | MBs |
@@ -330,7 +340,7 @@ M1's contract is §9 (fully expanded). M2–M4 outlines (§10) are finalized, wi
 
 ### 9.1 Sources (verified end-to-end, Appendix A)
 
-**House (Clerk).** Bulk index `https://disclosures-clerk.house.gov/public_disc/financial-pdfs/<YEAR>FD.zip` → `<YEAR>FD.xml`; fields `Prefix, Last, First, Suffix, FilingType, StateDst, Year, FilingDate, DocID`. 2026 YTD: 1,376 filings, 298 `FilingType=P` (PTR). Yearly archives verified 2013–2026; the 2026 file's Last-Modified moves daily. Documents at `public_disc/ptr-pdfs/<YEAR>/<DocID>.pdf`; e-filed PTRs are text-native (verified: DocID 20034916 extracted field-perfect — asset+ticker, type, transaction date 06/30, notification date 07/02, filed 07/10, amount bucket, owner, broker, cap-gains flag). Paper filings are scans. The index carries filed date only; transaction data lives in the documents. Observed FilingType codes `{P,C,X,W,D,A,H,T}`; only `P` is confirmed — full map is OQ-2.
+**House (Clerk).** Bulk index `https://disclosures-clerk.house.gov/public_disc/financial-pdfs/<YEAR>FD.zip` → `<YEAR>FD.xml`; fields `Prefix, Last, First, Suffix, FilingType, StateDst, Year, FilingDate, DocID`. 2026 YTD: 1,376 filings, 298 `FilingType=P` (PTR). Yearly archives **sampled back to 2013** (2013/2015/2020/2024 probed — Appendix A; the full 2013–2025 sweep is a P1 item); the 2026 file's Last-Modified moves daily. Documents at `public_disc/ptr-pdfs/<YEAR>/<DocID>.pdf`; e-filed PTRs are text-native (verified: DocID 20034916 extracted field-perfect — asset+ticker, type, transaction date 06/30, notification date 07/02, filed 07/10, amount bucket, owner, broker, cap-gains flag). Paper filings are scans. The index carries filed date only; transaction data lives in the documents. Observed FilingType codes `{P,C,X,W,D,A,H,T}`; only `P` is confirmed — full map is OQ-2.
 
 **Senate (eFD).** No API. Verified session flow: GET `/search/home/` → Django `csrfmiddlewaretoken` → POST `prohibition_agreement=1` → 302 + session cookie → POST `/search/report/data/` (DataTables JSON; `report_types=[11]` = PTR; filterable by submitted date; paginated; returns filer, title, **filed date**, detail URL). E-filed detail pages (`/search/view/ptr/<uuid>/`) are clean 9-column HTML tables: `#, Transaction Date, Owner, Ticker, Asset Name, Asset Type, Type, Amount, Comment`; ticker `--` on non-equity rows (verified on a real bond filing); `Type` distinguishes `Sale (Full)`/`Sale (Partial)`. Paper filings (`/search/view/paper/…`) are scans. No bot-blocking observed at polite cadence from a residential IP; GitHub-Actions IPs untested → fallback §13.1.
 
@@ -369,11 +379,21 @@ CREATE TABLE members (
 );
 
 CREATE TABLE member_aliases (               -- every fuzzy-match decision is a reviewed commit
-  alias TEXT NOT NULL, chamber TEXT NOT NULL,
+  alias_id    INTEGER PRIMARY KEY,
+  alias       TEXT NOT NULL,                -- normalized filer-name string
+  chamber     TEXT NOT NULL,
+  state       TEXT,                         -- disambiguators; NULL = matches any
+  district    TEXT,
+  valid_from  DATE NOT NULL,                -- temporal: the same alias may map to
+  valid_to    DATE,                         -- different members across eras
   bioguide_id TEXT NOT NULL REFERENCES members(bioguide_id),
-  note TEXT,
-  PRIMARY KEY (alias, chamber)
+  note        TEXT NOT NULL                 -- why this mapping exists
 );
+CREATE UNIQUE INDEX alias_no_overlap
+  ON member_aliases (alias, chamber, state, district, valid_from);
+-- resolution (§9.7): an alias row applies only if the filing's filed_date falls in
+-- [valid_from, valid_to) AND the member has a term overlapping that date; overlapping
+-- candidate rows for one (alias, date) are a defect caught by a CI invariant test.
 
 CREATE TABLE filings (
   filing_id     TEXT PRIMARY KEY,           -- 'house:<DocID>' | 'senate:<uuid>' | 'kadoa:<id>'
@@ -399,32 +419,38 @@ CREATE TABLE filings (
 );
 
 CREATE TABLE transactions (
-  txn_id        TEXT PRIMARY KEY,           -- '<filing_id>:<fingerprint12>[#n]'  (§ below)
+  txn_id        TEXT PRIMARY KEY,           -- '<filing_id>:<fingerprint32>[#<dup_seq>]' (§ below)
   filing_id     TEXT NOT NULL REFERENCES filings(filing_id),
-  row_fingerprint TEXT NOT NULL,            -- sha256 over the RAW field tuple
-  row_ordinal   INTEGER NOT NULL,           -- display order as printed
-  bioguide_id   TEXT,                       -- denormalized; NULL = unresolved
+  raw_row       TEXT NOT NULL,              -- JSON: the exact extracted raw field object —
+                                            -- the fingerprint's input, stored so identity is
+                                            -- reproducible and auditable from the row itself
+  row_fingerprint TEXT NOT NULL,            -- full sha256 hex of canonical raw_row (§ below)
+  dup_seq       INTEGER NOT NULL DEFAULT 1, -- 1..n among identical raw_rows in one filing
+  row_ordinal   INTEGER NOT NULL,           -- display order as printed (presentation only)
+  source_row_no INTEGER,                    -- the source's own row number where printed
+                                            -- (Senate '#' column; House table position)
+  bioguide_id   TEXT REFERENCES members(bioguide_id),  -- denormalized from filing; CI
+                                            -- invariant: equals its filing's bioguide_id
   chamber       TEXT NOT NULL,
   owner         TEXT,                       -- canonical: self|spouse|child|joint|NULL
-  owner_raw     TEXT,
   ticker        TEXT,                       -- normalized; NULL for bonds/funds/'--'
-  ticker_raw    TEXT,
-  asset_name    TEXT NOT NULL,
+  asset_name    TEXT NOT NULL,              -- normalized (raw lives in raw_row)
   asset_type    TEXT,
   side          TEXT NOT NULL CHECK (side IN
                   ('purchase','sale','sale_partial','exchange','other')),
-  side_raw      TEXT NOT NULL,
   transaction_date DATE,                    -- NULL only with flag date_missing
   filed_date    DATE NOT NULL,
-  days_to_file  INTEGER, is_late INTEGER,
+  days_to_file  INTEGER,
+  is_late       INTEGER CHECK (is_late IN (0,1)),
   amount_low INTEGER, amount_high INTEGER,  -- statutory buckets, Appendix C
-  amount_label  TEXT,
-  cap_gains_over_200 INTEGER,
+  amount_label  TEXT,                       -- as printed
+  cap_gains_over_200 INTEGER CHECK (cap_gains_over_200 IN (0,1)),
   comment       TEXT,
-  flags         TEXT,                       -- csv: missing_ticker,date_anomaly,amount_unparsed,…
+  flags         TEXT NOT NULL DEFAULT '[]', -- JSON array: ["missing_ticker","date_anomaly",…]
   source        TEXT NOT NULL,
+  license_id    TEXT NOT NULL,              -- record-level (sources mix in this table, §5.1)
   kadoa_id      TEXT,                       -- original seed id where source='kadoa'
-  UNIQUE (filing_id, row_fingerprint, row_ordinal)
+  UNIQUE (filing_id, row_fingerprint, dup_seq)   -- matches the identity, exactly
 );
 
 CREATE TABLE ingest_runs (
@@ -434,20 +460,25 @@ CREATE TABLE ingest_runs (
 );
 ```
 
-**Row identity.** `row_fingerprint = sha256(owner_raw | asset_name_raw | ticker_raw | side_raw | transaction_date_raw | amount_label_raw | comment_raw)` — computed from **raw** values so it is invariant to normalization changes. Identical duplicate rows within one filing (they occur legitimately) are disambiguated by an occurrence counter appended to `txn_id` (`#2`, `#3`). A reparse that discovers a previously missed row therefore changes **no other row's identity** (review F5's `row_seq` drift is structurally impossible).
+**Row identity — reproducible from the schema.** `raw_row` stores the exact extracted raw field object: `{owner, asset_name, ticker, side, transaction_date, amount_label, comment}` — values exactly as the source printed them (missing field = JSON `null`, distinct from empty string; text NFC-normalized at extraction, otherwise untouched). `row_fingerprint = SHA-256 over the RFC 8785 (JCS) canonical serialization of raw_row` — length-delimited by construction, so delimiter injection, embedded `|`, whitespace, and Unicode ambiguity cannot collide; computed from raw values so it is invariant to normalization changes. `txn_id = <filing_id>:<first 32 hex chars of row_fingerprint>` (128 bits — collision-safe at any realistic scale), with `#<dup_seq>` appended only when `dup_seq > 1`. Anyone holding a row can recompute its identity from its own `raw_row` column.
 
-**Atomic load.** `load()` for a filing is one transaction: `DELETE FROM transactions WHERE filing_id = ?` → insert the full parsed set → update the `filings` row (parse_status, parser_version, row_count). Re-ingest and reparse are idempotent; corrected parses cannot leave ghost rows.
+**Duplicate rows and the exact stability guarantee.** Identical `raw_row`s within one filing occur legitimately; `dup_seq` numbers them **in source-coordinate order** (`source_row_no` where the source prints one — the Senate table's `#` column — else printed table position). Stability guarantee, stated precisely: a reparse never changes the identity of any row whose `raw_row` is **unique within its filing** (the overwhelmingly common case). For identical duplicates, identity is stable exactly when the source coordinates are; a reparse that newly discovers an identical duplicate *earlier* in the document shifts later duplicates' `dup_seq`. This residual instability is confined to same-filing identical rows, is resolved atomically with the filing's replace (below), and is accepted — inventing stronger identity than the source provides would be false precision.
 
-**Lifecycle vs. parse outcome.** `parse_status` records only what parsing achieved; `lifecycle` records the filing's standing. A cleanly parsed original later amended is `parsed` + `superseded`. **Default views select `lifecycle='active'`** — no double counting; history remains queryable.
+**Atomic load.** `load()` for a filing is one transaction: `DELETE FROM transactions WHERE filing_id = ?` → insert the full parsed set → update the `filings` row (parse_status, parser_version, row_count). Re-ingest and reparse are idempotent; corrected parses cannot leave ghost rows. `license_id` is stamped per row from the filing's register entry (`us-congress-disclosures` or `mit-kadoa-seed`), satisfying §5.1's record-level requirement for this mixed-source table.
+
+**Lifecycle vs. parse outcome.** `parse_status` records only what parsing achieved; `lifecycle` records the filing's standing. A cleanly parsed original later amended is `parsed` + `superseded`. **Default views select `lifecycle='active'` AND apply the unresolved-amendment-pair rule (§9.5)** — no double counting from either mechanism; history remains queryable.
 
 ### 9.5 Amendments *(verify-first; review F5)*
 
-Amendment semantics differ by chamber and are **not yet verified against real amended filings**. Policy: (1) OQ-13 — during P1, collect ≥3 real amended PTRs per chamber and establish empirically whether an amendment restates the full report or appends/corrects rows; encode the finding as golden fixtures. (2) Until then the **conservative default** applies: an amendment is loaded as its own filing with `supersedes` set when the original is confidently identified (same filer + explicit reference or matching document lineage); the original stays `active` and both carry an `amendment_pending_policy` flag surfaced on every consumer. (3) Only after OQ-13 lands does the supersede automation flip lifecycle to `superseded` — and only in the empirically verified mode. Wrong-but-flagged beats silently wrong in either direction.
+Amendment semantics differ by chamber and are **not yet verified against real amended filings**. Policy: (1) OQ-13 — during P1, collect ≥3 real amended PTRs per chamber and establish empirically whether an amendment restates the full report or appends/corrects rows; encode the finding as golden fixtures. (2) Until then, when an amendment is detected (same filer + explicit reference or matching document lineage), the two filings are linked as a pair (`supersedes` on the amendment) and the **unresolved-pair rule** applies: **default feeds and ALL quantitative aggregates include only the later filing (the amendment), flagged `amendment_unresolved`; the paired original is excluded from default views entirely** — a flag alone does not stop a SUM from counting both, so the pair never contributes twice to any number. A dedicated uncertainty view (`congress_latest_filings` and a dashboard filter) exposes both sides of pending pairs for inspection. (3) Only after OQ-13 lands does supersede automation flip lifecycle to `superseded` — and only in the empirically verified mode. Wrong-but-flagged beats silently wrong; excluded-and-flagged beats double-counted.
 
 ### 9.6 Backfill import and kadoa lineage *(revised per reviews F5, F13)*
 
 - Import congressional rows from the kadoa seed as filings with `filing_id='kadoa:<id>'`, `source='kadoa'`, `kadoa_id` preserved per row, `license_id='mit-kadoa-seed'`. OGE rows: not imported.
-- **Audit gate (blocking, statistically stated):** stratified acceptance sample — strata = chamber × year-band (2012–15/16–19/20–23/24–26) × asset class (equity/non-equity) × route (e-file/paper where known) — **n = 150, zero critical-field errors accepted** (one-sided 95% upper bound ≈ 1.97%, meeting the <2% target; any critical error → investigate the stratum, fix or renegotiate the import, re-sample). Critical fields: member identity, ticker, side, amount bucket, both dates. Cosmetic errors (name formatting, comments) tracked separately, ≤5%.
+- **Audit gate (blocking, statistically stated).** Two separate instruments, because one sample cannot honestly do both jobs:
+  1. **Population bound — simple random sample, n = 150 drawn uniformly from all importable congressional rows, zero critical-field errors accepted.** The estimator is the exact binomial: 0/150 gives a one-sided 95% upper bound of ≈1.97% on the population critical-error rate, meeting the <2% target. (A stratified allocation does not support this bound without weights; this sample is deliberately unstratified.)
+  2. **Coverage quotas — smoke checks, not bounds:** additionally ≥5 rows verified from each key stratum (chamber × year-band 2012–15/16–19/20–23/24–26 × equity/non-equity), drawn independently of sample 1, to make sure no stratum goes entirely uninspected.
+  Any critical error in either instrument → investigate, fix or renegotiate the import, then redraw a fresh n=150 (no reuse of the failed sample). A stratum-localized failure additionally requires a targeted follow-up sample in that stratum (n=60, zero errors) before import. Critical fields: member identity, ticker, side, amount bucket, both dates. Cosmetic errors (name formatting, comments) tracked separately across both instruments, ≤5%.
 - **Progressive replacement with lineage:** when our primary-source re-scrape parses a document that a kadoa filing represents (matched on `doc_url`/DocID), the kadoa filing gets `lifecycle='retired'` + `primary_filing_id=<ours>`; retired rows are retained (tombstones), never deleted. `stats.json` reports the source mix (`% rows primary` vs `% kadoa`) so replacement progress is public.
 
 ### 9.7 Member join
@@ -484,8 +515,8 @@ Owner-specified: institutional → company financials → macro. Also the depend
 ### 10.2 M2 — Institutional holdings (13F)
 
 - **Sources (verified).** Per-filer: `data.sec.gov/submissions/CIK<n>.json` → accession → `/Archives/edgar/data/<cik>/<accn>/index.json` → `primary_doc.xml` + information-table XML (verified live: Berkshire 13F-HR filed 2026-05-15; fields `nameOfIssuer, titleOfClass, cusip, value, sshPrnamt, sshPrnamtType, putCall?, investmentDiscretion, otherManager, votingAuthority`). Cross-sectional: SEC's quarterly **structured 13F datasets** — page verified HTTP 200 on re-check (earlier 503 was transient; OQ-10 closed), latest quarterly archive ≈95 MB per the SEC page.
-- **Value units are era-dependent.** Pre-2023 filings report `value` in **thousands of dollars**; post-modernization filings report **whole dollars** (verified arithmetically: Berkshire's ALLY row, 498,992,850 ÷ 12,719,675 sh = $39.23/sh). The schema carries `unit_basis` and normalizes both regimes; mixing them unnormalized is a defect.
-- **Amendments are typed.** `13F-HR/A` carries an amendment type: **RESTATEMENT** (supersedes the original in full) vs. **NEW HOLDINGS** (must be **merged** with the original). The M1 supersede model applies only to restatements; new-holdings amendments compose. Confidential-treatment omissions (later disclosed via 13F-CTR) are flagged; `otherManager`/related-filer structures are modeled to avoid double counting the same positions across affiliated filers. All four behaviors get golden fixtures before the module ships.
+- **Value units are era-dependent, keyed on the filing, not the report period.** Filings on the pre-2023 form report `value` in **thousands of dollars**; filings on the amended Form 13F (effective **2023-01-03**, EDGAR release 22.4.1) report **whole dollars** (verified arithmetically: Berkshire's ALLY row, 498,992,850 ÷ 12,719,675 sh = $39.23/sh). The discriminator is the **form version / filing date, not the report period** — a Q4 2022 report filed after the transition uses whole dollars. The schema carries `unit_basis` derived from the filed document; mixing regimes unnormalized is a defect.
+- **Amendments are typed.** `13F-HR/A` carries an amendment type: **RESTATEMENT** (supersedes the original in full) vs. **NEW HOLDINGS** (must be **merged** with the original). The M1 supersede model applies only to restatements; new-holdings amendments compose. **Confidential treatment, correctly modeled:** a **13F-CTR is the *request* for confidential treatment** — positions under it are simply *omitted* from the public filing; when treatment expires or is denied, the holdings surface via a **public 13F-HR/A NEW HOLDINGS amendment** (per the SEC's Form 13F FAQ). The pipeline flags filings whose cover indicates confidential omissions and merges the later disclosing amendment through the same NEW-HOLDINGS path. `otherManager`/related-filer structures are modeled to avoid double counting the same positions across affiliated filers. All four behaviors get golden fixtures before the module ships.
 - **Consumer matrix.** Pipeline: R for cross-filer aggregates (filer registry, QoQ deltas, top-holders per issuer, concentration) into `inst_agg.db`. MCP: snapshot for aggregates + F for arbitrary per-filer detail. Dashboard: build-time slices, static pages budgeted to the top filers only (≤1,500 pages), long tail client-rendered from published JSON.
 - **Identity.** CUSIP-only in filings → resolved through §5.4's dated `security_identifiers` (bootstrap: OQ-8), as-of the report period; unmapped CUSIPs surface by issuer name + flag. Coverage gate ≥95% by reported value.
 - **Caveat.** Long US-equity positions of ≥$100M managers; quarter-end snapshots filed up to 45 days late; no shorts, bonds, cash; era-dependent units; affiliated-filer overlap.
@@ -494,7 +525,7 @@ Owner-specified: institutional → company financials → macro. Also the depend
 ### 10.3 M3 — Company financials
 
 - **Sources (verified).** `data.sec.gov/api/xbrl/companyfacts/CIK<n>.json` (verified: Apple, 3.7 MB), `/api/xbrl/frames/...` (verified), `/submissions/` (verified), `company_tickers.json` (verified) — all keyless. **Bulk:** nightly `companyfacts.zip` (verified: `Content-Length 1,389,620,072`) and `submissions.zip` (verified 200/206).
-- **Consumer matrix (resolves review F2).** MCP: **F** — live `data.sec.gov` with the conservative client (§11.4). Dashboard: **build-time extract** — the nightly Actions build downloads `companyfacts.zip` once, extracts a curated universe (initial: companies with congressional or 13F activity plus a liquid-large-cap core; target ≤2,000 companies × key reported metrics; artifact ≤50 MB) and publishes it under §5.5. No browser calls to SEC (no CORS; G7). Pipeline stores nothing beyond registries.
+- **Consumer matrix (resolves review F2; delivery per round-2 F7).** MCP: **F** — live `data.sec.gov` with the conservative client (§11.4). Dashboard: **build-time extract** — the nightly Actions build downloads `companyfacts.zip` once, extracts a curated universe (initial: companies with congressional or 13F activity plus a liquid-large-cap core; target ≤2,000 companies × key reported metrics), and emits it as **sharded JSON by CIK prefix (~64 shards, each well under Pages' 25 MiB file limit), deployed inside the Pages bundle** — same-origin, build-scoped, counted in the file budget. Companies outside the curated universe do not render on the dashboard (bounded coverage; MCP covers the long tail live). No browser calls to SEC (no CORS; G7). Pipeline stores nothing beyond registries.
 - **Caveat.** As-reported XBRL: tag choices vary by company/year; restatements exist; Populus surfaces reported values with tags and periods, flags gaps, never silently constructs "clean" comparables (G10).
 - **Candidate tools (≤5):** `fin_company_lookup`, `fin_company_facts` (metric history), `fin_metric_across_companies` (frames), `fin_filings` (recent 10-K/Q/8-K with links), `fin_health`.
 
@@ -528,7 +559,7 @@ Every response: `{as_of, build_id | live_source, data_note, license_notices[], r
 
 ### 11.4 Federated client (Pattern F) — conservative by design
 
-Defaults far below agency ceilings: **≤2 req/s to SEC** (published limit 10 req/s), single-flight request coalescing, response cache (ETag-aware, TTLs per endpoint class), bulk-endpoints-first where the query shape allows. **UA policy:** `populus-mcp/<ver> (+repo-url; install:<random-install-id>; contact:$POPULUS_CONTACT)` — each installation identifies itself distinctly; the server warns at startup if `POPULUS_CONTACT` is unset and documents why (SEC fair-access asks automated clients to be identifiable; a shared project-wide contact would misrepresent thousands of installs as one operator). No claim is made that adoption is load-free; if any agency signals distress (sustained 403/429 patterns), the affected tools degrade to published extracts or are disabled in a patch release (G6).
+Defaults far below agency ceilings: **≤2 req/s to SEC** (published limit 10 req/s), single-flight request coalescing, response cache (ETag-aware, TTLs per endpoint class), bulk-endpoints-first where the query shape allows. **UA policy (truthful, no tracking):** `populus-mcp/<ver> (+https://github.com/<org>/populus; contact:$POPULUS_CONTACT)` — application, version, and repository URL (a genuinely monitored contact channel), plus the operator's own contact when `POPULUS_CONTACT` is set; the server warns at startup when it is unset and explains why (SEC fair-access asks automated clients to be identifiable, and the operator — not the project — is the party the agency would need to reach). **No per-install identifier is sent**: a persistent random ID would not make an anonymous operator contactable; it would only create a pseudonymous tracking token (privacy cost, zero fair-access benefit). No claim is made that adoption is load-free; if any agency signals distress (sustained 403/429 patterns), the affected tools degrade to published extracts or are disabled in a patch release (G6).
 
 ### 11.5 Key policy
 
@@ -536,7 +567,7 @@ Modules default to keyless operation (SEC, Treasury, keyless-BLS — verified). 
 
 ### 11.6 Hosted HTTP transport
 
-Designed-for (the SDK's Streamable-HTTP entry point exists in code), not operated. Revisit on demand: Mac mini + Cloudflare Tunnel, read-only, rate-limited — a flagged decision (OQ-7).
+Designed-for (the SDK's Streamable-HTTP entry point exists in code), not operated. Revisit on demand (OQ-7) — and **not before the deployment acceptance checklist is written and passed**, per the MCP Python SDK's deployment guidance: Host/Origin header allowlists (DNS-rebinding defense), TLS/tunnel trust chain, an explicit authentication decision (even if "none, read-only, documented"), session behavior, request/body size limits, per-IP rate limits, and an end-to-end security drill against the deployed endpoint. Candidate host remains Mac mini + Cloudflare Tunnel, but the checklist gates any deployment, not the host choice.
 
 ### 11.7 Registry publication requirements (P2 scope)
 
@@ -548,7 +579,7 @@ Official MCP registry requires a versioned `server.json` and, for PyPI packages,
 
 ### 12.1 Platform and budgets
 
-Astro static on Cloudflare Pages; nightly rebuild via deploy hook from the publish workflow; no backend; localStorage personalization; no browser calls to external APIs (§5.6). **Cloudflare Pages free-tier limits are design inputs: 20,000 files, 25 MiB/file, 500 builds/month, 20-minute builds.** Global static-file cap: **15,000 files (75%)**, tracked per build in `stats.json` with a hard CI failure at the cap. Builds: 1 nightly + manual ≈ ~35/month. Per-module page budgets are contract items (M1 ≤4,000; M2 ≤1,500 filer pages; M3 ≤2,000 company pages). **Long-tail strategy:** entities beyond a module's static budget are served by a generic client-rendered route that fetches the published JSON slice at view time from `populus-data` (same §5.5 artifacts; no external APIs) — bounded static core, unbounded coverage.
+Astro static on Cloudflare Pages; nightly rebuild via deploy hook from the publish workflow; no backend; localStorage personalization; no browser calls to external APIs (§5.6). **Cloudflare Pages free-tier limits are design inputs: 20,000 files, 25 MiB/file, 500 builds/month, 20-minute builds.** Global static-file cap: **15,000 files (75%)** — counting pages *and* deployed data shards — tracked per build in `stats.json` with a hard CI failure at the cap. Builds: 1 nightly + manual ≈ ~35/month. Per-module budgets are contract items (M1 ≤4,000 files; M2 ≤1,500 filer pages + aggregate slices; M3 ≤2,000 company pages + ~64 data shards). **Long-tail strategy (bounded):** entities within a module's *published extract* but beyond its pre-rendered page budget are served by a generic client-rendered route that fetches the **same-origin data shards deployed with the build** — no cross-origin fetches, no unversioned paths, coverage exactly equal to what §5.6 says is published. Entities outside the published extract link out to the primary source instead of rendering.
 
 ### 12.2 Surfaces
 
@@ -594,7 +625,7 @@ Tracked in `stats.json` per build; crossing any threshold auto-files a P1-severi
 ### 13.5 Runbooks (shipped in-repo under `docs/runbooks/`)
 
 - **Rollback:** repoint `latest.json` to a prior `build_id`; verify a consumer picks it up; file the incident issue. (Drilled in P1 — gate.)
-- **Disaster recovery:** clean machine → clone `populus` → download raw-archive bundles → `populus reparse --all` → `populus build` → row counts and hashes must reconcile with the last manifest. (Drilled in P1, target ≤2 h — gate.)
+- **Disaster recovery:** clean machine → clone `populus` → download raw-archive bundles → `populus reparse --all` → `populus build` → **row counts and per-artifact `logical_digest`s (§5.5) must reconcile with the last manifest** — logical content, never file bytes, which SQLite page layout and library version legitimately perturb. (Drilled in P1, target ≤2 h — gate.)
 - **eFD block:** circuit breaker fired → confirm from mini (residential) → relocate Senate job to mini (PAT already provisioned) → file issue → do not raise request rates.
 - **Backfill/gap recovery:** widen the re-scan window (`--since`), rerun idempotent ingest; §9.4 atomicity makes overlaps safe.
 
@@ -611,7 +642,7 @@ Tracked in `stats.json` per build; crossing any threshold auto-files a P1-severi
 | Domain | registrar | ~1 |
 | **Total** | | **≈$1/mo** |
 
-Any new cost is flagged before it enters the tree (G8).
+Any new cost is flagged before it enters the tree (G8). One metering note: while `populus-data` is private staging (P1), Actions minutes are metered — 2,000 free/mo against an estimated <300 used; the flip to public (P2) restores unmetered. If P1 ever approaches the cap, the nightly moves to the Mac mini for the staging period at $0.
 
 ---
 
@@ -622,8 +653,8 @@ Any new cost is flagged before it enters the tree (G8).
 - **Action pinning.** All third-party Actions pinned to full commit SHAs; Dependabot watches the pins.
 - **Branch protection + CODEOWNERS** on both repos, mandatory review for: `parse/` (parsers), `member_aliases`, identity registries, `licenses.json` and the conditions register, and `.github/workflows/`.
 - **Dependencies.** `uv.lock` with hashes; CI dependency audit (vulnerabilities + license check) — which also implements guardrail G1's paid-vendor denylist.
-- **Artifact integrity.** Release assets checksummed in the manifest (consumers verify — §5.5); GitHub artifact attestations enabled for releases; the manifest commit itself is the signing anchor (branch-protected).
-- **Secrets inventory (exactly three, reviewed quarterly):** Discord webhook URL (alerting); Cloudflare Pages deploy-hook URL (rotated on any suspicion; invocations visible in Pages logs); one fine-grained PAT scoped to `populus-data: contents` for Mac-mini fallback publishing (stored in macOS Keychain on the mini, never in dotfiles).
+- **Artifact integrity — verified chain, not trust-by-location.** GitHub **immutable releases enabled** on `populus-data` (explicit repo setting; checked here and re-checked by the external monitor); the publish workflow generates **Sigstore artifact attestations** for the manifest and every asset; **clients verify the manifest attestation before trusting it**, then verify per-asset SHA-256 from the manifest (§5.5). Branch protection guards the repo but is not the root of trust — the attestation chain is.
+- **Secrets inventory (exactly three, reviewed quarterly):** Discord webhook URL (alerting); Cloudflare Pages deploy-hook URL (rotated on any suspicion; invocations visible in Pages logs); one fine-grained PAT for the Mac mini — `populus-data: contents` write for fallback publishing, plus read scope while the repo is private staging (stored in macOS Keychain on the mini, never in dotfiles; read scope dropped at the P2 public flip).
 - **User-side.** `~/.cache/populus/` written `0700`/files `0600`; cache paths never include secrets; the MCP server runs read-only against verified artifacts.
 - A security checklist covering all of the above is a **P1 gate** and re-run at every module launch.
 
@@ -639,7 +670,7 @@ Any new cost is flagged before it enters the tree (G8).
 
 | `license_id` | Source | Instrument & determination basis |
 |---|---|---|
-| `us-congress-disclosures` | House Clerk, Senate eFD | Public records under the Ethics in Government Act as amended by the STOCK Act. **Not treated as unrestricted public domain:** 5 U.S.C. § 13107(c)(1) prohibits use for commercial purposes (exception: news/communications media dissemination to the general public), credit determination, or solicitation. Populus's posture — free public dissemination, open source, data never sold — is designed to sit inside the media-dissemination exception and matches incumbent practice, **but "free product" is not itself a legal determination: counsel review is a P2 gate, before the public M1 launch.** The prohibited-uses notice ships in README, MCP `data_note`/`license_notices`, and the dashboard footer. The eFD click-through (accepted programmatically, as the session requires) restates these conditions; we honor them in substance (posture) and behavior (politeness contract, G6). |
+| `us-congress-disclosures` | House Clerk, Senate eFD | Public records under the Ethics in Government Act as amended by the STOCK Act. **Not treated as unrestricted public domain:** 5 U.S.C. § 13107(c)(1) prohibits use for commercial purposes (exception: news/communications media dissemination to the general public), credit determination, or solicitation. Populus's posture — free public dissemination, open source, data never sold — is designed to sit inside the media-dissemination exception and matches incumbent practice, **but "free product" is not itself a legal determination: counsel review is the P2-entry gate, and no data artifact is publicly distributed before it — P1 builds live in the private staging repo (DR-5); the launch post is marketing, the repo flip is the legally relevant distribution event, and counsel precedes the flip.** The prohibited-uses notice ships in README, MCP `data_note`/`license_notices`, and the dashboard footer. The eFD click-through (accepted programmatically, as the session requires) restates these conditions; we honor them in substance (posture) and behavior (politeness contract, G6). |
 | `us-govworks-sec` | SEC EDGAR / data.sec.gov | 17 U.S.C. § 105 covers works of the US Government — which is the SEC's own compilations and site content, **not automatically every third-party filing hosted there**. Determination for filing *data*: facts and figures are not copyrightable; EDGAR's decades-long public-dissemination regime is the operative access framework; SEC fair-access rules (rate limits, identifying UA) are conditions we encode in every client. Documents are redistributed as public filings with source URLs. |
 | `us-govworks-treasury` / `us-govworks-cftc` | Treasury FiscalData, yield XML; CFTC COT | US-government works; attribution shipped as good practice. |
 | `bls-tos` | BLS API | US-government work **with explicit ToS conditions**: retrieval-date citation and BLS's verbatim disclaimer are **required**, not courtesy — emitted in `license_notices` on every BLS-derived response and on dashboard surfaces. Keyless tier limits encoded in the client. |
@@ -653,7 +684,7 @@ Any new cost is flagged before it enters the tree (G8).
 
 - Data is never behind a paywall (G13); a future convenience tier (P-Ω) requires fresh counsel review of the full register.
 - Notices are non-removable from consumer output (§11.3).
-- This section records posture, process, and determination bases — not conclusions of law. **Counsel reviews the register and the § 13107 posture before the first public launch (P2 gate), not merely before monetization.**
+- This section records posture, process, and determination bases — not conclusions of law. **Counsel reviews the register and the § 13107 posture before the first public data artifact exists (P2-entry gate; the data repo is private staging until then), not merely before monetization.**
 
 ---
 
@@ -667,10 +698,12 @@ Repo quality first: README with the what/why in three sentences, 60-second MCP q
 
 Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No phase starts before the prior phase's gates are green; one module in flight at a time (G12).
 
-**P0 — Foundation.** Scope: this doc approved; repos live (MIT, README stubs, branch protection, CODEOWNERS); CI skeleton (lint, tests, dependency/license audit, G1 denylist); **`populus-mcp 0.0.1` placeholder published to PyPI** (owner executes/delegates); domain chosen (OQ-1). Gates: owner approval recorded; CI green on both repos; PyPI name secured; security-relevant repo settings verified against §14 checklist.
+**P0 — Foundation.** Scope: this doc approved; `populus` public + **`populus-data` created private (staging, DR-5)** with **immutable releases enabled**; MIT, README stubs, branch protection, CODEOWNERS; CI skeleton (lint, tests, dependency/license audit, G1 denylist); **`populus-mcp 0.0.1` placeholder published to PyPI** (owner executes/delegates); domain chosen (OQ-1). Gates: owner approval recorded; CI green on both repos; PyPI name secured; §14 checklist passes including the immutable-releases setting.
 
-**P1 — M1 data layer + substrate.** Scope: §9 complete; §5.5 publication protocol; §13.2 external monitor; §14 controls; runbooks. Gates:
-- 7 consecutive green nightly publishes (Actions), zero manual intervention.
+**P1 — M1 data layer + substrate.** Scope: §9 complete; §5.5 publication protocol; §13.2 external monitor; §14 controls; runbooks. **All P1 publishes go to the private staging repo — nothing is publicly distributed in this phase (C1).** Gates:
+- 7 consecutive green nightly publishes (Actions, to staging), zero manual intervention.
+- Attestation chain demonstrated: a consumer verifies the manifest attestation and rejects a tampered artifact (fixture test).
+- Logical-digest reproducibility: two independent builds from the same raw archive produce identical `logical_digest`s.
 - E-filed parse coverage ≥97%; member-join ≥98%; golden corpus (≥30 fixtures incl. bond/exchange/multi-page) green in CI.
 - kadoa acceptance sample per §9.6: n=150 stratified, 0 critical errors, cosmetic ≤5%.
 - Completeness reconciliation: every DocID/UUID in the sources' indexes for the covered window is present with exactly one `parse_status` — counted, zero unaccounted.
@@ -681,20 +714,20 @@ Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No ph
 - OQ-13 amendment study complete; amendment fixtures encoded; supersede automation enabled only in the verified mode.
 - License conformance: 100% of artifacts carry `license_id`; `licenses.json`, `DATA-LICENSE.md`, `NOTICE` shipped.
 
-**P2 — MCP server (M1 tools) + launch.** Scope: §9.9 tools + `populus_health`; §5.5 client; §11.4 federated client skeleton; packaging; `server.json` + PyPI ownership marker; registries; launch post. Gates:
+**P2 — MCP server (M1 tools) + public launch.** **Entry gate (before anything else in this phase): counsel review of the §15 register + § 13107 posture, completed and recorded.** Then, in order: flip `populus-data` public (the first public data artifact — the legally relevant distribution event, after counsel); MCP server (§9.9 tools + `populus_health`; §5.5 client; §11.4 federated client skeleton); packaging; `server.json` + PyPI ownership marker; registries; launch post. Gates:
 - Golden-question suite: 20 analyst questions with pinned expected answers, 100% pass in CI.
 - `uvx populus-mcp` cold start on a clean macOS machine ≤60 s to first successful tool call.
 - Latency: snapshot tools p95 ≤2 s on the reference corpus.
 - Schema-compat drill: previously released client vs. new manifest → works or refuses cleanly (CI-automated from here on).
 - Listed on the official MCP registry (+ ≥1 more); `server.json` validated.
-- **Counsel review of §15 register + § 13107 posture completed** — blocking for the public launch post.
+- Counsel entry-gate record on file; repo flip executed after it (order verified in the phase log).
 - Launch post published.
 
 **P3 — Dashboard (M1).** Scope: §9.10 + `/methodology`; nightly rebuild; localStorage follows. Gates: live on the domain; Lighthouse ≥90 (performance + accessibility) on feed, one member page, one ticker page; every rendered claim traceable to `doc_url` (spot-audit fixture: 25 random rendered rows, 100% link-resolve); static file count within budget; second post published.
 
-**P4 — M2 institutional.** Scope: §7 contract finalized (OQ-8/9 resolved; datasets re-verified; amendment-type + unit-basis fixtures) → data layer → tools → `/institutional`. Gates: amendment fixtures (RESTATEMENT supersede + NEW-HOLDINGS merge + CTR flag + otherManager dedup) 100% green; CUSIP-map coverage ≥95% by value, unmapped rows visible; QoQ delta correctness on 2 hand-checked filers (Berkshire + one mid-size), 100% row match; unit normalization spot-check across a pre-2023 and post-2023 filing; page budget held; module launch post.
+**P4 — M2 institutional.** Scope: §7 contract finalized (OQ-8/9 resolved; datasets re-verified; amendment-type + unit-basis fixtures) → data layer → tools → `/institutional`. Gates: amendment fixtures (RESTATEMENT supersede + NEW-HOLDINGS merge + confidential-omission flag with its later disclosing NEW-HOLDINGS amendment + otherManager dedup) 100% green; CUSIP-map coverage ≥95% by value, unmapped rows visible; QoQ delta correctness on 2 hand-checked filers (Berkshire + one mid-size), 100% row match; unit normalization spot-check across a pre-2023 and post-2023 filing; page budget held; module launch post.
 
-**P5 — M3 financials.** Scope: contract → federated client + bulk extract → tools → `/financials`. Gates: golden-question suite extended (10 questions with values hand-verified against filings, 100%); sparse-tagging behavior: 3 named fixture companies (chosen for known odd tagging) return flagged partials with zero unhandled exceptions; latency: federated p95 ≤4 s cold / ≤1 s warm-cache on the reference question set; extract build ≤15 min in Actions and ≤50 MB; page budget held; launch post.
+**P5 — M3 financials.** Scope: contract → federated client + bulk extract → tools → `/financials`. Gates: golden-question suite extended (10 questions with values hand-verified against filings, 100%); sparse-tagging behavior: 3 named fixture companies (chosen for known odd tagging) return flagged partials with zero unhandled exceptions; latency: federated p95 ≤4 s cold / ≤1 s warm-cache on the reference question set; extract build ≤15 min in Actions, ≤50 MB total across shards, no shard ≥5 MiB; page + file budget held including shards; launch post.
 
 **P6 — M4 macro.** Scope: contract (BEA/FRED verification + per-series determinations, OQ-11; curated list OQ-12) → curated core + federated tail → tools → `/macro`. Gates: every curated series equals the agency-published value on 3 dated reference points each (fixtures); 100% of series carry `license_id` + required notices (BLS disclaimer emission verified by test); revision handling demonstrated on one revised observation (CPI revision fixture); launch post.
 
@@ -722,6 +755,17 @@ Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No ph
 | Legal challenge to posture | L×H | Conservative posture; counsel gate; notices everywhere |
 | Copycat forks (MIT) | H×L | Accepted; freshness, honesty record, and registry position don't fork |
 | Single-maintainer bus factor | H×M | Everything reproducible from public repos + raw archives (drilled); three inventoried secrets; runbooks in-repo; CONTRIBUTING day one |
+
+### 18.1 Declared tech debt (known compromises, on the record)
+
+Open questions are unknowns; these are *known* compromises accepted deliberately:
+
+1. **Duplicate-row identity inherits source-coordinate stability** (§9.4): identical same-filing rows can renumber if a reparse finds a new identical duplicate earlier in the document. Accepted — the source provides no stronger identity; confined to same-filing duplicates and resolved atomically.
+2. **Member identity is name-based at the root** (§9.7): the temporal alias table constrains it, but a same-name/same-state/same-era collision would still need a human decision. Accepted with the version-controlled alias process as the control.
+3. **Client attestation verification depends on Sigstore tooling** (§5.5): `sigstore-python` is the assumed verifier; if it proves too heavy for the MCP client, the fallback is manifest-hash verification with attestation checked only by the external monitor — a weaker but stated trust posture. Decided at P2 implementation.
+4. **`transactions.bioguide_id` is denormalized** (§9.4) for query speed; guarded by a CI invariant test (must equal its filing's), not by normalization.
+5. **Hosted HTTP transport is deferred with a written acceptance checklist** (§11.6) rather than designed now. The checklist is the control; the debt is that it is unexercised.
+6. **kadoa-sourced history remains in the store until progressively re-parsed** (§9.6): audited seed data with provenance, but still third-party parser output, visible in the public `source` mix until replacement completes.
 
 ---
 
@@ -754,7 +798,7 @@ Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No ph
 | OQ-4 | Senate paper-filing share (sets OCR priority) | P1 +30 days |
 | OQ-5 | Raw-archive bundling cadence and size trajectory | P1; §13.4 thresholds govern |
 | OQ-6 | Older-year House ZIP schema drift (2013–2015 exist; schemas undiffed) | P1 re-scrape |
-| OQ-7 | Hosted HTTP MCP demand + host | P4+ review |
+| OQ-7 | Hosted HTTP MCP: demand signal, host, and the §11.6 security acceptance checklist (Host/Origin allowlists, TLS trust, authn decision, session behavior, size + rate limits, end-to-end drill) | P4+ review; checklist gates any deployment |
 | OQ-8 | CUSIP↔security bootstrap source (candidate: SEC fails-to-deliver CUSIP+ticker pairs) — coverage and interval quality | P4 entry |
 | OQ-9 | Archive SEC quarterly 13F datasets (~95 MB/qtr) as Release assets for reproducibility, or rely on SEC availability? | P4 entry, with real numbers |
 | OQ-10 | ~~13F structured datasets availability~~ **Closed 2026-07-16:** page verified HTTP 200 (earlier 503 transient); latest quarterly archive ≈95 MB per the page | closed |
@@ -767,7 +811,7 @@ Policy: **every gate is a number, a named fixture, or a pass/fail drill.** No ph
 ## Appendix A — Verification log, congressional sources (executed 2026-07-16)
 
 1. `2026FD.zip`: HTTP 200, 50,845 B, Last-Modified 2026-07-15 13:00 GMT; contains `2026FD.xml` (369,925 B). Parsed: 1,376 filings; FilingType counts `{W:94, C:650, X:241, P:298, D:59, A:30, H:2, T:2}`; index schema confirmed.
-2. Yearly archives 2013/2015/2020/2024: exist (HTTP 206 range probes).
+2. Yearly archives: **four sampled years** (2013/2015/2020/2024) exist (HTTP 206 range probes). Intervening years are unprobed; the full sweep runs in P1.
 3. `ptr-pdfs/2026/20034916.pdf` (Rep. Wittman, VA-01): 64,839 B, 1 page; pypdf extracted every schema field (CCI sale; transacted 06/30/2026; notified 07/02/2026; filed 07/10/2026; $1,001–$15,000; broker; cap-gains flag; digital signature).
 4. Senate eFD handshake (plain curl, browser UA, residential IP, zero blocking): GET `/search/home/` 200 → CSRF token + agreement text → POST agreement → 302 → POST `/search/report/data/` (`report_types=[11]`, submitted ≥06/01) → JSON `recordsTotal: 19` (Tuberville 07/16, Boozman ×2 07/13, Fetterman 07/09, Whitehouse 07/08 …) with detail URLs.
 5. eFD PTR detail (Fetterman, `a5fdbba4-…`): 200, 15,344 B; 9-column table parsed; ticker `--` on bond rows; `Sale (Full)`/`Purchase`; child-owned rows.
@@ -798,4 +842,4 @@ $1,001–$15,000 · $15,001–$50,000 · $50,001–$100,000 · $100,001–$250,0
 
 ---
 
-*End of ARCHITECTURE.md v2.1 — draft for owner review; supersedes v1.0 and v2.0 entirely. Finding dispositions: [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). No implementation begins until this document is approved (P0 gate).*
+*End of ARCHITECTURE.md v2.2 — draft for owner review; supersedes v1.0/v2.0/v2.1 entirely (v2.1 = commit `f7985f6`). Finding dispositions for both review rounds: [REVIEW-RESPONSE.md](REVIEW-RESPONSE.md). No implementation begins until this document is approved (P0 gate).*
