@@ -1,6 +1,6 @@
-# Response to External Reviews — ARCHITECTURE v2.0 → v2.1 → v2.2 → v2.3 → v2.4
+# Response to External Reviews — ARCHITECTURE v2.0 → … → v2.5
 
-This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4). Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lesson (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted") is encoded in §D.
+This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4), §E = round 5 (v2.4 → v2.5). Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lesson (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted") is encoded in §D.
 
 ---
 
@@ -130,7 +130,7 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | **M1** | DR-5 storage map contradicted §5.5/§6 (build-scoped JSON in git) | **Accepted.** DR-5 is now the single authoritative map: git = manifests + pointer + registries + licenses + build-scoped small text artifacts (≤5 MB/build, CI-enforced); Releases = SQLite, raw bundles, anything >1 MB. §5.5/§6 conform. | DR-5 |
 | **M2** | Manifest example lacked `digest_projection_version`/`normalization_version`; digest framing under-specified | **Accepted.** Both fields added per module in the example; byte envelope pinned exactly: lexicographic table order, `T:<name>\n` frames, PK-ordered RFC 8785 rows, **stored TEXT opaque — JSON-typed columns never parsed** (digest independent of any JSON parser), `\n` terminators, SHA-256 over the concatenation. | §5.5 |
 | **M3** | Response-doc metadata stale (title at v2.2, "both rounds"); §C missing debt declaration; false "impossible by ordering" | **Accepted.** Title/intro now span all rounds; §C declaration added; the false sweep row corrected in place with strikethrough (the audit trail keeps the error visible rather than rewriting history). | this doc |
-| **M4** | Session-memory marker unverified | **Accepted.** The project memory file now carries an explicit `Last updated: 2026-07-16 (round 4)` marker line; memory updates are named in each commit's Memory Touch-Points subsection. | memory store; commit message |
+| **M4** | Session-memory marker unverified | ~~Accepted: `Last updated` line in project memory.~~ **Corrected by round 5:** project-memory prose is not the workflow's marker — the requirement is a session manifest at `~/.claude/sessions/.memory-captured/<session_id>`, which did not exist. Created 2026-07-16 (see §E M1). | §E M1 |
 
 ## Tech Debt Introduced (v2.4)
 
@@ -150,3 +150,34 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | Retroactive §C declaration (H4/M3) | Rewriting audit history | Corrections are additive and marked (strikethrough + "corrected by round 4"); original text preserved |
 
 **Verdict requested for round 5:** re-review of v2.4 (`git diff cfdb972..HEAD`).
+
+---
+
+# §E — Round 5: v2.4 → v2.5
+
+**Date:** 2026-07-16 · **Reviewed artifact:** ARCHITECTURE.md v2.4 (SHA-256 `96c7244c…`, 876 lines, range `cfdb972..1618fec`) · **Round-5 verdict:** REQUEST CHANGES (1 critical, 2 high, 1 medium). **Disposition: all 4 accepted, zero pushbacks.** On the critical, a third resolution path (stronger than either offered) was chosen and is justified below.
+
+| # | Finding | Disposition | Where in v2.5 |
+|---|---|---|---|
+| **C1** | The site build has no durable replay state — ephemeral Pages builds re-enter TOFU on every clean build, falsifying TD-7's "eliminated from run two" for that consumer | **Accepted; resolved by removing the dashboard from the pointer-consumer set entirely.** The reviewer offered (a) durable state for Pages builds or (b) declared permanent TOFU debt. Chosen: **(c) publisher-side deployment** — the nightly publish workflow builds the site *from the exact build it just published and verified* and deploys via `wrangler pages deploy` (direct upload); the dashboard never resolves `latest.json` and holds no replay state, so the TOFU condition cannot arise. This is simpler than (a) — no cross-repo credential, no durable-state plumbing in ephemeral builds — and stronger than (b). Consequences absorbed: the deploy-hook secret becomes a Cloudflare API token scoped to Pages-edit (inventory stays at exactly three); Pages' 500-builds/month and 20-minute-build limits stop binding (direct upload); the pointer's consumer set is now stated exactly: **MCP clients + the external monitor, both with durable state**. TD-7 rescoped accordingly. | §5.5 consumer set, §12.1, §14 secrets, §18.1 TD-7, system diagram |
+| **H1** | Strict-greater verification rejects the unchanged current pointer — ordinary restarts and the 6-hour monitor would fail between publishes, and two same-pointer polls could satisfy the monitor's alert condition | **Accepted — the check as written was self-defeating.** Replaced with the four-way state machine over a persisted `(pointer_version, pointer_sha256)` tuple: lower → replay reject · equal+identical bytes → **idempotent accept** (normal poll case, no alarm) · equal+different bytes → **equivocation reject + alarm** · higher → verify, install, atomically persist. §13.2 explicitly states the monitor must never alarm on sameness. Fixtures for all four transitions in the P2 drill. | §5.5 state machine, consumer protocol, §13.2, §17 P2 |
+| **H2** | Signed rollback not propagated: §5.5 retention, §13.5 runbook, §14 chain, and the P1 drill still described the unsigned repoint; no positive authorized-rollback gate | **Accepted — propagation failure, mine again.** All five sites rewritten: retention/rollback names the signed-generation rule; §13.5 is the exact executable sequence (select old build → mint `pointer_version`+1 with fresh timestamps and the old manifest's hash → attest exact bytes (P2+) → `verify --remote` → replace `latest.json` last); §14 states the full pointer → manifest → artifacts chain; the P1 drill runs the staging variant of the same sequence; the P2 drill gains the **positive** authorized-rollback fixture alongside replay rejection and equivocation. | §5.5, §13.5, §14, §17 P1/P2 |
+| **M1** | Round-4 M4 not actually resolved: the workflow marker is `~/.claude/sessions/.memory-captured/<session_id>`, absent | **Accepted.** Marker manifest created at `~/.claude/sessions/.memory-captured/4d90a611-92bc-496c-b2e9-5757a261341e` (2026-07-16) listing the memory files updated this session; §D's M4 row corrected additively with strikethrough. | marker file; §D M4 |
+
+## Tech Debt Introduced (v2.5)
+
+**No new debt. TD-7 was corrected and narrowed:** its round-4 statement was false for the site-build consumer (the reviewer's C1); v2.5 removes that consumer rather than patching the claim, so TD-7 now accurately covers exactly one window — an MCP client's very first run, expiry-bounded (≤7 days), closed by the persisted tuple thereafter. TD-1–TD-6 unchanged.
+
+## Failure-Mode Sweep (v2.5 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| Publisher-side deploy (C1) | Cloudflare API token compromise | Scoped to Pages-edit on one project — worst case is dashboard defacement, not data-artifact tampering (artifacts stay attestation-verified); rotation in inventory; Pages deploy history is auditable |
+| | `wrangler` deploy fails mid-publish | Data build is already published and verified before the site step; site deploy failure alerts (job failure) and the previous deployment keeps serving — data and dashboard can skew by one build, visible via `stats.json` build_id on the site footer vs. pointer |
+| | Site silently serves a stale build | The site embeds its source `build_id`; the monitor compares it against the current pointer's build_id and alerts on >1 generation of skew |
+| State-machine idempotency (H1) | Tuple corruption (bit-rot, partial write) | Tuple writes are atomic (temp+rename); a corrupt/unreadable tuple degrades to first-run TOFU (TD-7), never to accepting an expired or lower-version pointer |
+| | Equivocation false-positive from a benign re-publish | Impossible by protocol: publishes never reuse a version; any same-version byte difference is by definition publisher error or compromise — alarming is correct |
+| Signed-rollback propagation (H2) | Operator follows an old doc/muscle memory and bare-repoints | Post-P2 clients reject it as replay (the failure is loud and immediate, §13.5 says so explicitly); the runbook is the only documented procedure |
+| Marker file (M1) | Marker created without real memory capture | The manifest lists the actual files updated this session; the commit's Memory Touch-Points names the same files — cross-checkable |
+
+**Verdict requested for round 6:** re-review of v2.5 (`git diff 1618fec..HEAD`).
