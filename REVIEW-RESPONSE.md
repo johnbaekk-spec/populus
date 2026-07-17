@@ -217,3 +217,35 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | Tracked deploy ceiling (M1) | Cloudflare meters direct uploads against 500/month | §13.4 row alarms at >400; cadence ~35/month; confirm with Cloudflare before any cadence increase |
 
 **Verdict requested for round 7:** re-review of v2.6 (`git diff c85250b..HEAD`).
+
+---
+
+# §G — Round 7: v2.6 → v2.7
+
+**Date:** 2026-07-16 · **Reviewed artifact:** ARCHITECTURE.md v2.6 (SHA-256 `692aa1e0…`, range `c85250b..a7dee2f`) · **Round-7 verdict:** REQUEST CHANGES (2 critical, 1 high, 2 medium). **Disposition: all 5 accepted, zero pushbacks.** Every finding was again on the deploy path introduced two rounds ago — the design was right, the operational contract kept revealing edges.
+
+| # | Finding | Disposition | Where in v2.7 |
+|---|---|---|---|
+| **C1** | Post-deploy verification runs *after* `wrangler` promoted to production, so a failed check leaves the unverified build live; "leaves the previous deployment serving" was false | **Accepted — the circularity was real.** §12.1 is now transactional: deploy to a **preview** deployment → live-verify the preview (production hasn't received the bytes) → only then capture the current production deployment ID and promote the *same verified `dist`* → live-verify production → **on any post-promote failure, automatically Cloudflare-rollback to the captured prior deployment ID and re-verify it**. Production only ever receives already-verified bytes, and a failed final check self-heals instead of stranding an unverified build. Fixtures (a) preview-fail-leaves-production-untouched and (b) promote-fail-triggers-compensating-rollback added to the P3 gate. | §12.1 steps 4–5, §17 P3 |
+| **C2** | Rollback's "retained `dist/` artifact" and build→source mapping were unspecified — not reproducible | **Accepted.** New durable **`deployment` record** in the manifest (§5.5) keyed by `build_id`: `code_sha`, `dist_digest`, `workflow_run_id`, `dist_artifact_id` + `dist_artifact_expires_at` (retention ≥ supported rollback window), `cf_production_deployment_id`, `verified_at`. §13.5 rollback now reads it and restores deterministically — prior Cloudflare deployment if still present, else the retained artifact bytes, else a rebuild from `code_sha` cross-checked against `dist_digest` — **never "rebuild from current checkout,"** which wouldn't reproduce the target if app code caused the incident. Retention risk declared as TD-9. | §5.5 manifest, §13.5, §18.1 TD-9 |
+| **H1** | The finalized `stats.json` count isn't guaranteed to reach the already-built `dist` — deployed site could disagree with the immutable manifest | **Accepted.** §12.1 step 2 now writes the final count into the one `stats.json` in **both** the canonical artifact **and** `dist/` identically (the count derives from the file *list*, so injecting bytes into an existing file doesn't perturb it), with a **byte-equality assertion**; the per-deploy gate fetches live `stats.json` and compares its hash to the manifest-listed artifact. | §12.1 step 2, §17 P3 |
+| **M1** | `--branch` guarantees production only if it matches the project's configured `production_branch`, which Direct Upload requires configured separately | **Accepted.** §12.1 step 3 adds a pre-upload **Cloudflare project-API assertion** that the workflow-locked branch equals the project's `production_branch`; Pages project creation + that configuration are P3 setup items with an abort-on-mismatch fixture. | §12.1 step 3, §17 P3 |
+| **M2** | Footer still said v2.5 and stopped the lineage at v2.4 — a v2.6 propagation miss | **Accepted.** Footer now reads v2.7 with the full `f7985f6…a7dee2f` lineage; residue sweep run across the whole document (clean). | footer |
+
+## Tech Debt Introduced (v2.7)
+
+**One new item: TD-9** — reproducible dashboard rollback depends on the `dist` workflow artifact surviving until `dist_artifact_expires_at` (CI-set ≥ the supported rollback window); early deletion falls back to deterministic rebuild from `code_sha`, whose residual is an aged-out artifact *and* an unavailable pinned toolchain at once — accepted for builds past the rollback window. **TD-8 extended** to name the preview-window exposure (a preview deployment is publicly reachable at its alias URL between upload and promotion — worst case dashboard defacement, never data tampering). TD-1–TD-7 unchanged.
+
+## Failure-Mode Sweep (v2.7 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| Preview-then-promote (C1) | Preview passes but production promote uploads different bytes | Promote asserts the production deployment's `dist_digest` equals the preview-verified digest — production only receives already-verified bytes |
+| | Compensating rollback itself fails | Re-verify step catches it; incident alerts; the captured prior deployment ID is a known-good Cloudflare deployment, not a rebuild — highest-availability restore path |
+| | Preview alias publicly fetchable pre-promote | TD-8 extension: not the custom domain, not linked, but not secret — bounded to defacement visibility for the preview window |
+| Deployment record (C2) | Record present but Cloudflare deployment purged and artifact expired | Third fallback (rebuild from `code_sha` vs `dist_digest`); if the toolchain is also gone, TD-9 — accepted past the rollback window, loud failure not silent wrong bytes |
+| stats.json to dist (H1) | Count injection changes the file set | Impossible: the count is written into an existing file; no file added or removed, so the enumeration that produced the count still holds — asserted by the byte-equality + live-hash checks |
+| Production-branch assertion (M1) | Project reconfigured after assertion, before upload | Window is within one job; a reconfiguration mid-deploy surfaces as a failed live production verification (wrong deployment target) and the compensating path |
+| Footer/version sweep (M2) | Another stale version string elsewhere | Whole-document grep for `v2.5`/`v2.6` version-claim strings and superseded deploy phrasing — clean |
+
+**Verdict requested for round 8:** re-review of v2.7 (`git diff a7dee2f..HEAD`).
