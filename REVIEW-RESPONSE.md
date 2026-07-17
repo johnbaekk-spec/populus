@@ -1,6 +1,6 @@
-# Response to External Reviews — ARCHITECTURE v2.0 → … → v2.6
+# Response to External Reviews — ARCHITECTURE v2.0 → … → v2.9
 
-This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4), §E = round 5 (v2.4 → v2.5), §F = round 6 (v2.5 → v2.6). Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lesson (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted") is encoded in §D.
+This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4), §E = round 5 (v2.4 → v2.5), §F = round 6 (v2.5 → v2.6), §G = round 7 (v2.6 → v2.7), §H = round 8 (v2.8 → v2.9). (v2.8 was an owner-requested content addition, not a review round — its §12.3 analytics content was reviewed in round 8 and corrected in §H.) Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lessons (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted"; **verify provider capability against provider docs before asserting it**) are encoded in §D and §H.
 
 ---
 
@@ -249,3 +249,41 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | Footer/version sweep (M2) | Another stale version string elsewhere | Whole-document grep for `v2.5`/`v2.6` version-claim strings and superseded deploy phrasing — clean |
 
 **Verdict requested for round 8:** re-review of v2.7 (`git diff a7dee2f..HEAD`).
+
+**Round-8 corrections to §G (additive, per the audit discipline — the original rows above stand as the record of what v2.7 claimed):**
+- §G/C1 called the deploy "transactional" and said "production only ever receives already-verified bytes" via "promote the *same verified dist*." Round 8 (H1) found this **overstated the provider**: Cloudflare Direct Upload has **no preview→production promote operation and exposes no deployment content digest**, so preview and production are **two separate uploads**. v2.9 reframes it honestly as *two uploads of one locally-hash-pinned artifact, preview-verified first, with a compensating production rollback* — not a transactional promotion; a brief production-verification window is now named (TD-8).
+- §G/C2 put the durable "deployment record **in the manifest**." Round 8 (C1) found that **impossible** — the manifest is hashed + attested + pointed-to before deploy and is immutable, so a post-deploy write breaks it. v2.9 moves the record to a **separate, independently-attested `deployment.json`** written by a dedicated record job.
+
+---
+
+# §H — Round 8: v2.8 → v2.9
+
+**Date:** 2026-07-17 · **Reviewed artifact:** ARCHITECTURE.md v2.8 (SHA-256 `6740bd32…`, range `a7dee2f..b2ed2ea`) · **Round-8 verdict:** REQUEST CHANGES (2 critical, 1 high, 2 medium, 1 low). **Disposition: all 6 accepted, zero pushbacks.** Two of the three substantive findings were self-inflicted overreach — a manifest lifecycle that can't exist (C1) and provider capabilities Cloudflare doesn't offer (C2/H1) — exactly the "verify the provider before asserting it" lesson, now added to the running list.
+
+| # | Finding | Disposition | Where in v2.9 |
+|---|---|---|---|
+| **C1** | The v2.7 `deployment` block mutates an already-hashed, attested, pointed-to manifest — impossible without breaking `manifest_sha256`, the attestation, and immutability; and "not itself attested" contradicts sitting inside the attested manifest | **Accepted — genuinely impossible as written.** The record moves out of the manifest into a **separate `builds/<build_id>/deployment.json`**, written *after* production verifies by a dedicated **record job** and **independently attested** by that job's workflow identity. It is operational metadata outside the data trust chain (MCP clients never read it), discovered by `build_id` convention, never referenced from the immutable manifest. Three-job split (publish / deploy / record) keeps the Cloudflare token and GitHub-write in disjoint jobs. | §5.5, §12.1 step 6, §14 |
+| **C2** | Analytics promised raw search queries + new-vs-returning on Cloudflare Web Analytics, which supports neither; raw free-text isn't anonymized by dropping the identifier; "no consent banner required" predetermined OQ-14's open legal question; "zero new infrastructure" was false if a collector is needed | **Accepted.** §12.3 reduced to what a cookieless page-analytics tool documents: **interest read from resolved page paths** (a search that lands on `/tickers/NVDA` counts as a page view), **raw search text never collected/transmitted/stored** (it can contain PII; safest handling is not to capture it), no custom events, no cookie-based new-vs-returning. "Zero new infrastructure" is now *true* (no collector). The consent question is returned to OQ-14 rather than answered in the doc; the P3 gate now requires OQ-14's determination "on file," not "no banner required." | §12.3, §17 P3, OQ-14 |
+| **H1** | "Promote the verified preview" and "assert the production deployment's `dist` digest" — Cloudflare Direct Upload has no promote op and exposes no deployment content digest | **Accepted.** §12.1 rewritten honestly: recover the immutable `dist` artifact → **compute its digest locally** → upload to preview → verify preview → upload the **same local bytes** to production (a second upload, provably-identical by local digest, *not* a provider-side promotion) → verify production → compensating Cloudflare rollback on failure. Named as "two uploads with compensating rollback," with the post-production-upload verification window declared (TD-8). Compensating rollback retained. | §12.1 steps 3–5 |
+| **M1** | PyPI "downloads" mislabeled as "installs"/"N installs this month" | **Accepted.** §12.3 now says **download events** from the PyPI BigQuery `file_downloads` dataset / `pypistats` — "a noisy adoption proxy, not installs or unique users"; the retrieval mechanism is named. | §12.3 |
+| **M2** | Version drift: title said v2.7 while row/footer said v2.8; REVIEW-RESPONSE header stopped at v2.6, omitted §G | **Accepted.** Title → v2.9; footer/lineage through v2.8; this doc's header now spans v2.9 with §G and §H listed. Whole-document version-string sweep run. | title, footer, this header |
+| **L1** | v2.8 commit body contains `§13.6 /bin/zsh analytics cost row` — a `$0` shell-expansion typo | **Accepted; not history-rewritten.** Commit `b2ed2ea` was already cited by hash in the round-8 review, so amending it would invalidate that reference. Recorded here instead (the `$0` was meant to read "zero-dollar"); the v2.9 commit avoids unescaped `$` in its body. | this entry |
+
+## Tech Debt Introduced (v2.9)
+
+**No new debt; two existing items refined.** TD-8 (deploy toolchain / production credential) now enumerates **three** residuals — npm-ecosystem compromise, the preview-alias public window, and the newly-named **production-verification window** (production serves the just-uploaded build for the seconds between upload and passing verification; same bytes preview already verified; compensating rollback covers a failure). TD-9 (deployment-record retention) unchanged in substance, now keyed to `deployment.json` rather than a manifest block. The C2 fix **removes** a latent debt v2.8 had hidden (a would-be custom search-event collector + its PII surface). TD-1–TD-7 unchanged.
+
+## Failure-Mode Sweep (v2.9 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| Separate `deployment.json` (C1) | Record missing (deploy failed / record job failed) | A build with no successful production deploy simply has no `deployment.json`; the dashboard keeps serving the prior build; the §13.2 divergence alarm fires — correct, not a silent gap |
+| | Forged record | Independently attested by the record job's pinned identity; the record job holds no Cloudflare token and the deploy job holds no GitHub-write, so no single compromised job can both deploy and mint a matching record |
+| Three-job split (C1) | Data publish gated on dashboard build/deploy | It isn't — publish completes (manifest + pointer, the data product) before the deploy job runs; a deploy/record failure never blocks the data pointer, only the dashboard |
+| Path-only analytics (C2) | Interest signal lost by dropping raw queries | Resolved page paths carry it (member/ticker routes are the destinations searches resolve to); the residual — searches that resolve to *no* page — is exactly the "we don't have that entity" case, itself visible as the bounded-coverage link-out (§12.1) |
+| | Chosen analytics tool does require a consent banner | OQ-14 resolves before P3 ships; the gate blocks on a determination "on file," so a banner-requiring tool is either configured compliantly or swapped — not shipped on an assumption |
+| Two-upload honesty (H1) | Preview bytes ≠ production bytes | Same local artifact, locally hash-pinned before each upload — identity is asserted client-side, not trusted from the provider |
+| | Production window exploited | TD-8: same already-verified bytes; failure → compensating rollback; worst case dashboard defacement for seconds, never data tampering |
+| Version/label sweep (M2) | Another stale version string survives | Grepped title/footer/header/changelog for `v2.7`/`v2.8` claim strings; historical changelog rows left intact (dated to their version), current-state labels all v2.9 |
+
+**Verdict requested for round 9:** re-review of v2.9 (`git diff b2ed2ea..HEAD`).
