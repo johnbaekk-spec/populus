@@ -1,6 +1,6 @@
-# Response to External Reviews — ARCHITECTURE v2.0 → v2.1 → v2.2
+# Response to External Reviews — ARCHITECTURE v2.0 → v2.1 → v2.2 → v2.3 → v2.4
 
-This document is the audit trail for both review rounds. **Round 1** (v2.0 → v2.1) is §A below. **Round 2** (v2.1 → v2.2) is §B, including the Tech Debt Introduced and Failure-Mode Sweep sections the review workflow requires. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — four round-1 remediations (F4, F5, F7, F13) contained follow-on defects; they are resolved in v2.2 and dispositioned in §B.
+This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4). Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lesson (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted") is encoded in §D.
 
 ---
 
@@ -101,7 +101,7 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 
 | Change | Failure mode considered | Outcome |
 |---|---|---|
-| Attestation moved to P2 flip (C1) | A public consumer reads the build published *before* attestation lands | Impossible by ordering: the flip sequence attests before `latest.json` is documented consumer-readable, and the MCP client only ships in P2 after the drill |
+| Attestation moved to P2 flip (C1) | A public consumer reads the build published *before* attestation lands | ~~"Impossible by ordering"~~ **Corrected by round 4:** flipping public exposes all history immediately — documentation is not an access control. The real invariant (now §5.5): *no supported client trusts an unattested build* — clients require attested pointer + manifest, which exist only from the cutover build onward |
 | | Staging integrity gap during P1 | Bounded by the repo ACL: no public consumers exist; pipeline + monitor verify manifest hashes over the authenticated API |
 | | Workflow scopes over-granted | `id-token`/`attestations` on the publish job only, from P2 on (§14) |
 | No-unsigned-mode rule (C2) | Sigstore outage strands clients | Client serves last verified build with staleness note — availability degrades, authenticity never does |
@@ -110,4 +110,43 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | JSON CHECKs (M8) | Legacy rows violating checks block a reparse | Checks ship before first ingest (greenfield); atomic per-filing replace means any violation fails the filing's transaction loudly, not the run silently |
 | Residue-sweep discipline (H4) | Future fixes leave stale contradicting text again | Sweep rule updated: grep for superseded terminology across all four documents after every disposition (applied this round: `stratified`, `counts/hashes`, `per-install`, `long-US-equity`, `13F-CTR`, `50 MB`) |
 
-**Verdict requested for round 4:** re-review of v2.3 (`git diff 5a665ce..HEAD`).
+## Tech Debt Introduced (v2.3) — *declaration added retroactively per round-4 finding H4*
+
+**No new tech debt was introduced in v2.3; TD-3 was narrowed** (unsigned fallback removed; remaining debt is unmeasured verification cost only). TD-1–TD-6 unchanged.
+
+---
+
+# §D — Round 4: v2.3 → v2.4
+
+**Date:** 2026-07-16 · **Reviewed artifact:** ARCHITECTURE.md v2.3 (SHA-256 `7952f1cf…`, 853 lines, range `5a665ce..cfdb972`) · **Round-4 verdict:** REQUEST CHANGES (1 critical, 4 high, 4 medium). **Disposition: all 9 accepted, zero pushbacks.**
+
+| # | Finding | Disposition | Where in v2.4 |
+|---|---|---|---|
+| **C1** | Unsigned `latest.json` permits authenticated rollback: a compromised contents-write credential repoints clients at an older validly-attested build, indistinguishable from authorized rollback | **Accepted — the sharpest finding of the series.** The pointer is now inside the root of trust: versioned schema (`pointer_version` strictly monotonic, `issued_at`, `expires_at` = 7 days), **each generation attested by its exact bytes**; clients enforce attestation + strictly-greater-than-persisted-highest + non-expiry + `manifest_sha256` match; **legitimate rollback = a new higher signed generation targeting an older `build_id`** — cryptographically distinguishable from replay. Replay-rejection added to the P2 attestation drill. Residual first-run TOFU window declared as **TD-7** (expiry-bounded, gone from run 2). | §5.5 pointer, §17 P2, §18.1 TD-7 |
+| **H1** | Attestation-bundle acquisition undefined ("sigstore-python" with no source) | **Accepted.** Specified end to end: subject digest → `GET /repos/<org>/populus-data/attestations/sha256:<hex>` (public, unauthenticated) → filter candidates by predicate type (SLSA provenance) + subject match → `sigstore-python` verification with pinned certificate identity + OIDC issuer against the client-shipped, TUF-refreshed Sigstore trusted root (offline once held) → cache by digest. | §5.5 client verification |
+| **H2** | Normative publish order still attested during P1; "documented consumer-readable" is not access control; immutable assets can't be "republished" | **Accepted — all three sub-defects.** Publication sequences split: **P1 (private)** = assets → manifest → unattested-but-monotonic pointer; **P2+** = assets+attest → manifest+attest → pointer generation+attest → update last. Cutover rewritten as an executable sequence producing a **fresh build** (no immutable-asset mutation), with the honest invariant: flipping public exposes everything instantly; the guarantee is *"no supported client trusts an unattested build"*, never "old builds can't be read." | §5.5 sequences + cutover, §17 P2 |
+| **H3** | Monitor's immutable-setting check needs `Administration: read`, absent from the PAT inventory | **Accepted.** PAT inventory updated: Contents read/write + **Administration: read, permanent** (the check runs forever; Contents-read necessity lapses at the flip). §13.2 names the scope. | §14, §13.2 |
+| **H4** | Commit Dev Notes lacked `### Tech Debt Introduced`; §C lacked the declaration | **Accepted.** §C's declaration added retroactively above; the v2.4 commit carries the full four-subsection Dev Notes including an explicit Tech Debt statement. Rule internalized: "none" must be said, not implied. | this doc; commit message |
+| **M1** | DR-5 storage map contradicted §5.5/§6 (build-scoped JSON in git) | **Accepted.** DR-5 is now the single authoritative map: git = manifests + pointer + registries + licenses + build-scoped small text artifacts (≤5 MB/build, CI-enforced); Releases = SQLite, raw bundles, anything >1 MB. §5.5/§6 conform. | DR-5 |
+| **M2** | Manifest example lacked `digest_projection_version`/`normalization_version`; digest framing under-specified | **Accepted.** Both fields added per module in the example; byte envelope pinned exactly: lexicographic table order, `T:<name>\n` frames, PK-ordered RFC 8785 rows, **stored TEXT opaque — JSON-typed columns never parsed** (digest independent of any JSON parser), `\n` terminators, SHA-256 over the concatenation. | §5.5 |
+| **M3** | Response-doc metadata stale (title at v2.2, "both rounds"); §C missing debt declaration; false "impossible by ordering" | **Accepted.** Title/intro now span all rounds; §C declaration added; the false sweep row corrected in place with strikethrough (the audit trail keeps the error visible rather than rewriting history). | this doc |
+| **M4** | Session-memory marker unverified | **Accepted.** The project memory file now carries an explicit `Last updated: 2026-07-16 (round 4)` marker line; memory updates are named in each commit's Memory Touch-Points subsection. | memory store; commit message |
+
+## Tech Debt Introduced (v2.4)
+
+**One new item, declared:** TD-7 — first-run pointer trust is TOFU (no persisted highest-accepted version on a client's very first run; a replayed unexpired attested pointer would be accepted once). Bounded by the 7-day pointer expiry; eliminated from the second run; a pinned floor version per client release is noted as a shrinking option at P2. No other debt introduced; TD-1–TD-6 unchanged.
+
+## Failure-Mode Sweep (v2.4 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| Signed monotonic pointer (C1) | Publisher workflow itself compromised (can mint valid attestations) | Out of scope for the pointer fix and stated honestly: the workflow identity *is* the publisher; defense is §14 (least privilege, PR isolation, SHA pinning, branch protection on workflows) — the pointer fix closes the *credential*-compromise rollback, not publisher compromise |
+| | Clock skew breaks expiry checks | 7-day window dwarfs realistic skew; expiry evaluated against wall clock with no sub-day precision required |
+| | Highest-accepted state lost (cache wipe) | Degrades to first-run TOFU (TD-7), expiry-bounded — never accepts an expired pointer |
+| Attestation-API dependency (H1) | GitHub attestation endpoint down | Client keeps serving last verified build (availability degrades, authenticity never does); verified bundles cached by digest |
+| Split publish sequences (H2) | P1 habits leak into P2 (unattested publish after cutover) | `populus publish` refuses to advance an unattested pointer in public mode (`verify` gate); the monitor's pointer verification would alarm within 6 h |
+| Fresh-build cutover (H2) | Cutover build fails verification post-flip | Client hasn't shipped yet (it ships only after `verify --remote` green); staging pointer remains; re-run publish |
+| Admin-read PAT scope (H3) | Broader token blast radius on mini compromise | Fine-grained, single-repo, read-only administration; accepted against the alternative (no independent setting-drift detection) |
+| Retroactive §C declaration (H4/M3) | Rewriting audit history | Corrections are additive and marked (strikethrough + "corrected by round 4"); original text preserved |
+
+**Verdict requested for round 5:** re-review of v2.4 (`git diff cfdb972..HEAD`).
