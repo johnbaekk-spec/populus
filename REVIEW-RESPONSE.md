@@ -1,6 +1,6 @@
-# Response to External Reviews — ARCHITECTURE v2.0 → … → v2.9
+# Response to External Reviews — ARCHITECTURE v2.0 → … → v2.11
 
-This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4), §E = round 5 (v2.4 → v2.5), §F = round 6 (v2.5 → v2.6), §G = round 7 (v2.6 → v2.7), §H = round 8 (v2.8 → v2.9). (v2.8 was an owner-requested content addition, not a review round — its §12.3 analytics content was reviewed in round 8 and corrected in §H.) Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lessons (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted"; **verify provider capability against provider docs before asserting it**) are encoded in §D and §H.
+This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4), §E = round 5 (v2.4 → v2.5), §F = round 6 (v2.5 → v2.6), §G = round 7 (v2.6 → v2.7), §H = round 8 (v2.8 → v2.9), §I = round 9 (v2.9 → v2.10), §J = round 10 (v2.10 → v2.11). (v2.8 was an owner-requested content addition, not a review round — its §12.3 analytics content was reviewed in round 8 and corrected in §H.) Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lessons (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted"; **verify provider capability against provider docs before asserting it**) are encoded in §D and §H.
 
 ---
 
@@ -311,7 +311,7 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | Change | Failure mode considered | Outcome |
 |---|---|---|
 | Record job as verifier (C1) | Deploy job deploys good content but lies about `cf_production_deployment_id` | The record job fetches that deployment's URL; a wrong id serves the wrong/absent build → verification fails → no attestation |
-| | Deploy job deploys malicious content | Record job's live-domain check sees the wrong `build_id`/`code_sha` → refuses to attest + alarms; the defacement itself is TD-8 (unpreventable while the deploy job holds the token), but no false record is produced |
+| | Deploy job deploys malicious content | ~~"Record job's live-domain check sees the wrong `build_id`/`code_sha` → refuses to attest."~~ **Corrected by round-10 C1:** that assumed malicious content *must* change a marker. It need not — an attacker can preserve `build_id`, `code_sha`, and `stats.json` while altering every other file. v2.11 fixes this: the signer fetches and hash-verifies **every path in the published inventory**, so a marker-preserving alteration is caught (§5.5). |
 | | Publish-output trust | `build_id`/`code_sha`/artifact id come from the publish job's signed outputs + GitHub context, not the deploy job — the record job's trusted inputs never pass through the token-holding job |
 | Canonical tree digest (H1) | Symlink or special file in `dist/` | Build fails (only regular files permitted) — no ambiguity in the digest, no symlink-escape surprise |
 | | File mutated between preview and production upload | Immediately-before-production recompute ≠ preview digest → production aborts before upload |
@@ -320,3 +320,33 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | Audit-count correction (M1) | Rewriting the reviewed v2.9 commit | Not done — corrected additively in §H and here, preserving the hash the round-9 review cited |
 
 **Verdict requested for round 10:** re-review of v2.10 (`git diff 0f44bec..HEAD`). Per the round-9 close, this should be the approval pass — the remaining subsystems were declared stable and are untouched here.
+
+---
+
+# §J — Round 10: v2.10 → v2.11
+
+**Date:** 2026-07-22 · **Reviewed artifact:** ARCHITECTURE.md v2.10 (SHA-256 `4c4669bd…`, range `0f44bec..5010258`) · **Round-10 verdict:** REQUEST CHANGES (1 critical, 1 high, 1 medium). **Disposition: all 3 accepted, zero pushbacks.** Both substantive findings are the same species as round 9's — a security claim broader than the check backing it. Round 9 fixed *who* the signer trusts; round 10 fixes *what the signer actually looks at*.
+
+| # | Finding | Disposition | Where in v2.11 |
+|---|---|---|---|
+| **C1** | Marker verification ≠ tree authentication: the signer checked only `build_id`, `code_sha`, and `stats.json` on the live site, yet attested a record binding that deployment to the whole `dist_digest`. A compromised deploy job can preserve those three markers while altering every HTML/JS/CSS file — so TD-8's "cannot produce a false record" was unproven, and §I's sweep row wrongly assumed malicious content must change a marker. | **Accepted — the gap was real.** Chose the strengthening path over narrowing the claim, because the enforced page budgets make it affordable: the build now publishes a **path → SHA-256 inventory** with the artifact (`inventory_digest`), and the signer **fetches every inventory path from the identified deployment and verifies each file's hash** before attesting. Coverage is declared *in the record itself* — `verification_scope` (`full`/`partial`) plus `files_verified`/`files_total` — so an attestation can never overstate what was checked. At M1's ≤4,000-file budget this is a bounded, concurrency-limited fetch of tens of seconds; a `partial` degradation is an alarm and is declared as TD-10. Marker-preserving-tamper fixture added to the P3 gate; §I's incorrect sweep row corrected additively. | §5.5, §12.1, §17, §18.1 TD-10 |
+| **H1** | "The record job's workflow identity" isn't verifiable — GitHub attestations identify a **workflow**, not a job within one, so three jobs in one workflow share one identity; and `needs.<job>.outputs` are ordinary workflow data, not "signed outputs." | **Accepted — both terminology and mechanism were wrong.** Record verification/signing moved into a **separate reusable workflow `record-sign.yml`**, whose `job_workflow_ref` is a distinct, pinnable identity; verifiers pin `record-sign.yml` for deployment generations and `publish.yml` for manifest/pointer. The "signed outputs" claim is **deleted**; the signer's trusted inputs are restated honestly as: the attested published manifest (for `build_id`), the immutable artifact it locates via GitHub context and downloads itself (for `code_sha`/digest/inventory), the Cloudflare Pages API (for the live production deployment id), and the served bytes. Nothing is taken from the deploy job. | §5.5, §12.1 step 6, §14 |
+| **M1** | This document's header still said the trail ended at v2.9/§H despite containing §I | **Accepted.** Header now spans v2.11 and enumerates §A–§J. (Third propagation miss of this exact kind — the current-state header is now on the standing residue-sweep list alongside title/footer.) | this header |
+
+## Tech Debt Introduced (v2.11)
+
+**One new item: TD-10** — served-tree verification is **point-in-time** (a `scope: full` record certifies the bytes matched at `verified_at`, not afterward; the §13.2 monitor and per-redeploy generations cover the rest), and the **`partial` scope is a real mode** (executable assets + entry pages + sample) that fires if a tree exceeds the verification budget or fetches fail past retry — it alarms and is attested honestly rather than silently overstating. At the CI-enforced page caps, `full` is the expected path. TD-8 is **narrowed by this round**: the deploy-job compromise residual is now defacement that is *detected and left unsigned*, not a potentially-blessed forgery. TD-9 and TD-1–TD-7 unchanged.
+
+## Failure-Mode Sweep (v2.11 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| Full inventory verification (C1) | Verification cost blows the job budget as the site grows | Page budgets are already CI-enforced caps (M1 ≤4,000; global 15,000); the fetch is concurrency-limited and measured; exceeding the budget degrades to attested `partial` + alarm, never to a silent `full` claim |
+| | Attacker alters a file *after* verification | Point-in-time limitation declared (TD-10); the §13.2 monitor re-checks the live build independently and any re-deploy writes a new generation |
+| | Inventory itself tampered | It ships inside the immutable artifact the signer downloads itself and is covered by `inventory_digest`, which the signer recomputes — a tampered inventory fails before any fetch |
+| | CDN cache serves stale bytes during verification | Cache-busted fetches (as for markers); a mismatch fails closed rather than passing on a stale hit |
+| Separate signer workflow (H1) | Reusable-workflow ref drifts, breaking client verification | The pinned identity is part of the client's verification contract; changing it is a client-visible change gated like any schema change (§5.5 compatibility policy) |
+| | Two signer identities confuse consumers | Scoped by document type: `publish.yml` signs manifest + pointer (data trust chain), `record-sign.yml` signs deployment generations (operational, outside that chain) — stated in §5.5 |
+| Header propagation (M1) | Same miss recurs next round | Current-state header added to the standing sweep list (title, footer, response header) |
+
+**Verdict requested for round 11:** re-review of v2.11 (`git diff 5010258..HEAD`).
