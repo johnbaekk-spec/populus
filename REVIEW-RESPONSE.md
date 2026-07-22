@@ -1,6 +1,6 @@
-# Response to External Reviews — ARCHITECTURE v2.0 → … → v2.11
+# Response to External Reviews — ARCHITECTURE v2.0 → … → v2.12
 
-This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4), §E = round 5 (v2.4 → v2.5), §F = round 6 (v2.5 → v2.6), §G = round 7 (v2.6 → v2.7), §H = round 8 (v2.8 → v2.9), §I = round 9 (v2.9 → v2.10), §J = round 10 (v2.10 → v2.11). (v2.8 was an owner-requested content addition, not a review round — its §12.3 analytics content was reviewed in round 8 and corrected in §H.) Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lessons (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted"; **verify provider capability against provider docs before asserting it**) are encoded in §D and §H.
+This document is the audit trail for **all review rounds**: §A = round 1 (v2.0 → v2.1), §B = round 2 (v2.1 → v2.2), §C = round 3 (v2.2 → v2.3), §D = round 4 (v2.3 → v2.4), §E = round 5 (v2.4 → v2.5), §F = round 6 (v2.5 → v2.6), §G = round 7 (v2.6 → v2.7), §H = round 8 (v2.8 → v2.9), §I = round 9 (v2.9 → v2.10), §J = round 10 (v2.10 → v2.11), §K = round 11 (v2.11 → v2.12). (v2.8 was an owner-requested content addition, not a review round — its §12.3 analytics content was reviewed in round 8 and corrected in §H.) Each section carries the workflow-required Tech Debt Introduced and Failure-Mode Sweep declarations from round 2 onward. Round 2 correctly found that §A's original claim of "all findings addressed" was premature — a pattern that repeated in miniature each round; the running lessons (grep for superseded terminology; declare "no new debt" explicitly; never claim "impossible" for what is merely "not trusted"; **verify provider capability against provider docs before asserting it**) are encoded in §D and §H.
 
 ---
 
@@ -350,3 +350,35 @@ Mirrors ARCHITECTURE §18.1: **TD-1** duplicate-row identity inherits source-coo
 | Header propagation (M1) | Same miss recurs next round | Current-state header added to the standing sweep list (title, footer, response header) |
 
 **Verdict requested for round 11:** re-review of v2.11 (`git diff 5010258..HEAD`).
+
+---
+
+# §K — Round 11: v2.11 → v2.12
+
+**Date:** 2026-07-22 · **Reviewed artifact:** ARCHITECTURE.md v2.11 (SHA-256 `bf2ec238…`, range `5010258..04ac292`) · **Round-11 verdict:** REQUEST CHANGES (2 critical, 2 high, 1 medium). **Disposition: all 5 accepted, zero pushbacks.**
+
+| # | Finding | Disposition | Where in v2.12 |
+|---|---|---|---|
+| **C1** | The signer is specified with "no Cloudflare token" yet must query the authenticated Pages deployments API — unexecutable as written; and reusing the deploy token would collapse the privilege split | **Accepted — a straight execution contradiction.** The signer gets its own **`Pages Read`-only** token. The invariant is restated from "no Cloudflare token with GitHub-write" to **"no workflow holds both `Pages Write` and GitHub write/attestation authority."** Secrets inventory **3 → 4** (Discord; Pages Read — signer + monitor; Pages Write — deploy job only; mini PAT). Credential fixtures added: signer fails closed on a missing or `Pages Write`-scoped token, succeeds on `Pages Read`. | §5.5, §12.1 step 6, §14, §17 |
+| **C2** | "Full served-tree verification" overstates: fetching every *expected* path cannot detect *added* files or provider controls — Cloudflare treats `_redirects`, `_headers`, `_worker.js`, and Functions as configuration, not served assets, so an injected control file leaves every inventoried hash intact | **Accepted — the claim exceeded the check again.** Scope renamed **`expected_paths`** (never "full"), with closure explicitly disclaimed in §5.5 *and* declared as a TD-10 limit. Three bounded provider checks narrow the gap: a **no-Functions/Worker assertion** via the Pages API, **404 probes** on `/_redirects`, `/_headers`, `/_worker.js` and a never-published path, and a **response-header allowlist** on a sample; plus **redirects-disabled fetching**, which turns a `_redirects` hijack of any *inventoried* path into a hard failure. The residual — an added route evading all three — is a **documented non-detection**, with a P3 fixture asserting exactly that (so the gate can't mistake it for a pass). | §5.5, §12.1, §17, §18.1 TD-10 |
+| **H1** | Step 2 still said the artifact id/digest are publish-job outputs "which the record job trusts" — contradicting the round-10 signer contract | **Accepted.** That output is now explicitly **only the deploy job's own local upload gate**; the signer re-derives everything itself. | §12.1 step 2 |
+| **H2** | `inventory_digest` unspecified: filename, layout, whether it sits inside the deployed tree, canonical serialization, digest computation, path→URL mapping, redirect policy, decoded-body hashing | **Accepted.** Full envelope pinned: artifact = `site/**` + **sibling `inventory.json` outside the deployed tree** (no self-inventory ambiguity); RFC 8785 canonical JSON with `files` sorted bytewise by path; `inventory_digest` = sha256 of those exact bytes, recomputed by the signer before trusting any entry; URL = origin + `/` + path **verbatim** (no extension stripping, no index rewriting); **redirects disabled**; hash and length compared against the **content-decoded** body; cache-busted fetches. | §12.1 inventory envelope |
+| **M1** | v2.11's own changelog row said its header fix reached "v2.10/§I" when the corrected state is v2.11/§J | **Accepted.** Corrected in place (a factual typo about the doc's own content, not a superseded design claim). | §changelog v2.11 row |
+
+## Tech Debt Introduced (v2.12)
+
+**No new debt item; TD-10 is expanded from one limit to three, two of which round 11 correctly identified as previously hidden:** (a) **no closure proof** — `expected_paths` cannot show that nothing *extra* was deployed; the three provider checks narrow it and the remainder is accepted and named; (b) **point-in-time** (unchanged); (c) **`partial` is a real gated mode** (unchanged). The round-11 C1 credential gap was an execution defect, not debt — it is fixed, not declared. TD-1–TD-9 unchanged.
+
+## Failure-Mode Sweep (v2.12 changes)
+
+| Change | Failure mode considered | Outcome |
+|---|---|---|
+| `Pages Read` token for the signer (C1) | Read token leaks | Read-only: it can enumerate deployments, not alter one; rotated on suspicion with the others |
+| | Operator provisions one token for both roles | Fixture (h) fails closed when the signer's token carries `Pages Write` — the misconfiguration is caught in CI, not in production |
+| Scope rename + closure checks (C2) | Team reads `expected_paths` as closure anyway | The record field, §5.5 prose, TD-10, and a P3 fixture asserting the known non-detection all say otherwise — three independent places, one of them machine-readable |
+| | Provider changes how Functions are reported | The no-Functions assertion is a provider call; if it can't be made, the signer fails closed rather than assuming absence (OQ-7-style verification at P3 build time) |
+| Inventory outside `site/` (H2) | Inventory accidentally deployed | It is a sibling of the deployable tree, never uploaded; a fixture asserting `/inventory.json` 404s belongs with the control-path probes |
+| | Cloudflare re-encodes bodies | Hashing is over the **content-decoded** body with length cross-check; an encoding difference cannot mask a content change |
+| Header propagation | Same current-state header miss recurs | Title, footer, response header, and now the changelog row's self-description are all on the standing sweep list |
+
+**Verdict requested for round 12:** re-review of v2.12 (`git diff 04ac292..HEAD`).
