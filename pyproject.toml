@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "populus-mcp"
+dynamic = ["version"]
+description = "Populus — open financial-data commons (M1: congressional trading)"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "lxml",
+    "pdfplumber",
+    "pypdf",
+    "pyyaml",
+    "click",
+    "rfc8785",
+]
+
+[project.scripts]
+populus = "populus.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.hatch.version]
+path = "src/populus/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/populus"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
