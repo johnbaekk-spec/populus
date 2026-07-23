@@ -11,6 +11,8 @@ from __future__ import annotations
 import importlib.resources
 import sqlite3
 
+from populus.amendments import ensure_views
+
 
 def connect(path: str) -> sqlite3.Connection:
     """Open *path* in autocommit mode with foreign-key enforcement ON.
@@ -34,12 +36,14 @@ def json1_supported(conn: sqlite3.Connection) -> bool:
 
 
 def init_db(path: str) -> None:
-    """Create the full §9.4 schema at *path*.
+    """Create the full §9.4 schema at *path*, plus the §9.5 views.
 
     Refuses a database that already contains the schema (``members`` present)
     and fails with an actionable error when the SQLite build lacks JSON1
     (required by the ``json_valid``/``json_type`` CHECK constraints; built in
-    since SQLite 3.38).
+    since SQLite 3.38). The view DDL lives in ``views.sql`` (applied
+    idempotently by ``amendments.ensure_views``) so ``schema.sql`` stays
+    byte-identical to the §9.4 block.
     """
     conn = connect(path)
     try:
@@ -61,5 +65,6 @@ def init_db(path: str) -> None:
             .read_text(encoding="utf-8")
         )
         conn.executescript(schema)
+        ensure_views(conn)
     finally:
         conn.close()

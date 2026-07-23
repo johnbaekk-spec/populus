@@ -1,0 +1,272 @@
+# member_aliases seed (ARCHITECTURE.md §9.4/§9.7 — RUN 4).
+#
+# Every fuzzy-match decision is a reviewed commit: automatic §9.7 name
+# resolution never guesses, so a filer name the matcher cannot resolve to
+# exactly one member is joined ONLY by adding a row here. Rows load into the
+# member_aliases table via `populus ingest members` (full replace).
+#
+# Entry format (one list item per mapping):
+#   - alias:       the filer name as the source prints it (normalized at load
+#                  through members.normalize_filer_name, so "Khanna, Rohit"
+#                  and "Rohit Khanna" are one alias)
+#     chamber:     house | senate
+#     state:       optional disambiguator; omitted = matches any filing
+#     district:    optional disambiguator (House), zero-stripped ("4", "0")
+#     valid_from:  ISO date; the alias applies to filings with
+#                  valid_from <= filed_date < valid_to
+#     valid_to:    optional ISO date; omitted = open-ended
+#     bioguide_id: the member this alias resolves to
+#     note:        REQUIRED — why this mapping exists (the reviewed
+#                  justification; entries without a note are rejected)
+#
+# Resolution additionally requires the member to hold a term of the alias's
+# chamber overlapping the filing's filed_date, so none of these rows can
+# time-travel (G14). Overlapping applicable rows for one (alias, date) are a
+# defect caught by the CI invariant test (members.alias_overlap_errors).
+#
+# Every entry below was verified against data-cache/legislators (name parts,
+# bioguide, per-chamber first-term start) and the observed filer strings in
+# the House index / Senate eFD index / kadoa seed on 2026-07-23. The dominant
+# class is a legislators first name recorded only in its short form ("Ro",
+# "Rick", "Tommy") while the disclosure source prints the formal form.
+aliases:
+  - alias: "Khanna, Rohit"
+    chamber: house
+    state: CA
+    district: "17"
+    valid_from: "2017-01-03"
+    bioguide_id: K000389
+    note: >-
+      House index and kadoa print "Rohit"; legislators records first name
+      "Ro" with no formal variant. CA-17 per index StateDst; first House term
+      2017-01-03.
+  - alias: "Allen, Richard W."
+    chamber: house
+    state: GA
+    district: "12"
+    valid_from: "2015-01-06"
+    bioguide_id: A000372
+    note: >-
+      Sources print "Richard W. Allen"; legislators records "Rick W. Allen".
+      GA-12 per index StateDst; first House term 2015-01-06.
+  - alias: "Van Epps, Matthew Robert"
+    chamber: house
+    state: TN
+    district: "7"
+    valid_from: "2025-12-04"
+    bioguide_id: V000139
+    note: >-
+      Sources print "Matthew Robert Van Epps"; legislators records
+      "Matt Van Epps". TN-7 special-election term from 2025-12-04.
+  - alias: "Crenshaw, Daniel"
+    chamber: house
+    state: TX
+    district: "2"
+    valid_from: "2019-01-03"
+    bioguide_id: C001120
+    note: >-
+      Sources print "Daniel"; legislators records "Dan Crenshaw". TX-2 per
+      index StateDst; first House term 2019-01-03.
+  - alias: "Banks, James E."
+    chamber: house
+    state: IN
+    district: "3"
+    valid_from: "2017-01-03"
+    valid_to: "2025-01-03"
+    bioguide_id: B001299
+    note: >-
+      House index prints "Banks, James E."; legislators records "Jim Banks".
+      IN-3 House era only (2017-01-03 to 2025-01-03); his Senate era has its
+      own row below.
+  - alias: "Banks, James"
+    chamber: senate
+    state: IN
+    valid_from: "2025-01-03"
+    bioguide_id: B001299
+    note: >-
+      Senate eFD prints "Banks, James" (kadoa: "James Banks"); legislators
+      records "Jim Banks". Senate term from 2025-01-03.
+  - alias: "Neal Patrick MD, Facs Dunn"
+    chamber: house
+    state: FL
+    district: "2"
+    valid_from: "2017-01-03"
+    bioguide_id: D000628
+    note: >-
+      kadoa carries the House index honorific string reordered as
+      "Neal Patrick MD, Facs Dunn", which defeats Last-First reordering;
+      legislators records "Neal P. Dunn", FL-2, first term 2017-01-03.
+  - alias: "Emmer, Thomas Earl Jr"
+    chamber: house
+    state: MN
+    district: "6"
+    valid_from: "2015-01-06"
+    bioguide_id: E000294
+    note: >-
+      House index prints "Emmer, Thomas Earl Jr"; legislators records
+      "Tom Emmer". MN-6; first House term 2015-01-06.
+  - alias: "Garcia, Michael"
+    chamber: house
+    state: CA
+    valid_from: "2020-05-19"
+    valid_to: "2025-01-03"
+    bioguide_id: G000061
+    note: >-
+      House index prints "Garcia, Michael"; legislators records "Mike
+      Garcia". State-scoped without district (CA-25 through 2023, CA-27
+      after redistricting); House service 2020-05-19 to 2025-01-03.
+  - alias: "Gallagher, Michael John"
+    chamber: house
+    state: WI
+    district: "8"
+    valid_from: "2017-01-03"
+    bioguide_id: G000579
+    note: >-
+      House index prints "Gallagher, Michael John"; legislators records
+      "Mike Gallagher". WI-8; first House term 2017-01-03.
+  - alias: "Hagedorn, James"
+    chamber: house
+    state: MN
+    district: "1"
+    valid_from: "2019-01-03"
+    bioguide_id: H001088
+    note: >-
+      House index prints "Hagedorn, James"; legislators records
+      "Jim Hagedorn". MN-1; first House term 2019-01-03.
+  - alias: "Bresnahan, Rob"
+    chamber: house
+    state: PA
+    district: "8"
+    valid_from: "2025-01-03"
+    bioguide_id: B001327
+    note: >-
+      House index prints "Bresnahan, Rob"; legislators records
+      "Robert P. Bresnahan, Jr." with no "Rob" variant. PA-8 term from
+      2025-01-03.
+  - alias: "Blum, Rodney Leland"
+    chamber: house
+    state: IA
+    district: "1"
+    valid_from: "2015-01-06"
+    bioguide_id: B001294
+    note: >-
+      House index prints "Blum, Rodney Leland"; legislators records
+      "Rod Blum". IA-1; first House term 2015-01-06.
+  - alias: "Taylor, Nicholas Van"
+    chamber: house
+    state: TX
+    district: "3"
+    valid_from: "2019-01-03"
+    bioguide_id: T000479
+    note: >-
+      House index prints "Taylor, Nicholas Van"; legislators records
+      "Van Taylor". TX-3; first House term 2019-01-03.
+  - alias: "Fletcher, Elizabeth"
+    chamber: house
+    state: TX
+    district: "7"
+    valid_from: "2019-01-03"
+    bioguide_id: F000468
+    note: >-
+      House index prints "Fletcher, Elizabeth"; legislators records
+      "Lizzie Fletcher". TX-7; first House term 2019-01-03.
+  - alias: "Hill, James French"
+    chamber: house
+    state: AR
+    district: "2"
+    valid_from: "2015-01-06"
+    bioguide_id: H001072
+    note: >-
+      House index prints "Hill, James French"; legislators records
+      "J. French Hill". AR-2; first House term 2015-01-06.
+  - alias: "Jordan, James D"
+    chamber: house
+    state: OH
+    district: "4"
+    valid_from: "2007-01-04"
+    bioguide_id: J000289
+    note: >-
+      House index prints "Jordan, James D"; legislators records
+      "Jim Jordan". OH-4; first House term 2007-01-04.
+  - alias: "Jacobs, Christopher L."
+    chamber: house
+    state: NY
+    district: "27"
+    valid_from: "2020-07-21"
+    bioguide_id: J000020
+    note: >-
+      House index prints "Jacobs, Christopher L."; legislators records
+      "Chris Jacobs". NY-27 special-election term from 2020-07-21.
+  - alias: "Steube, Greg"
+    chamber: house
+    state: FL
+    district: "17"
+    valid_from: "2019-01-03"
+    bioguide_id: S001214
+    note: >-
+      House index prints "Steube, Greg"; legislators records
+      "W. Gregory Steube". FL-17; first House term 2019-01-03.
+  - alias: "McCormick, Richard Dean Dr"
+    chamber: house
+    state: GA
+    district: "6"
+    valid_from: "2025-01-03"
+    bioguide_id: M001218
+    note: >-
+      House index prints "McCormick, Richard Dean Dr" (kadoa: "Richard Dean
+      McCormick"); legislators records first "Rich" / official_full "Richard
+      McCormick" with no "Richard Dean" variant. Exact versioned correction
+      for a verified stale AUTHORITATIVE hint (F2/F3): the Clerk index
+      StateDst is the pre-redistricting GA06 while the member's term from
+      2025-01-03 is GA-7 (verified: 2026 DocIDs 20033648/20034542/20034954 all
+      print GA06; legislators M001218 holds GA-6 2023-25 then GA-7 2025-27).
+      This alias is scoped to the EXACT stale source district ("6") and the
+      exact stale window (valid_from 2025-01-03, when GA-7 began), so it never
+      wildcards the district constraint. Pre-2025 GA-6 filings resolve
+      automatically (StateDst GA06 == the then-current GA-6 term). Verified
+      bioguide M001218.
+  - alias: "Collins, Michael A. Jr"
+    chamber: house
+    state: GA
+    district: "10"
+    valid_from: "2023-01-03"
+    bioguide_id: C001129
+    note: >-
+      House Clerk index prints "Collins, Michael A. Jr"; the legislators seed
+      records first name "Mike" (no "Michael" variant), so automatic matching
+      finds zero candidates. Verified against the 2026 index StateDst GA10 and
+      the member's GA-10 terms starting 2023-01-03 (bioguide C001129).
+  - alias: "Tuberville, Thomas H"
+    chamber: senate
+    state: AL
+    valid_from: "2021-01-03"
+    bioguide_id: T000278
+    note: >-
+      Senate eFD and kadoa print "Thomas H Tuberville"; legislators records
+      "Tommy Tuberville". AL Senate term from 2021-01-03.
+  - alias: "McConnell, Jr., A. Mitchell"
+    chamber: senate
+    state: KY
+    valid_from: "1985-01-03"
+    bioguide_id: M000355
+    note: >-
+      Senate eFD prints "McConnell, Jr., A. Mitchell" (Addison Mitchell);
+      legislators records "Mitch McConnell" with no formal variant. KY
+      Senate service from 1985-01-03.
+  - alias: "A. Mitchell"
+    chamber: senate
+    state: KY
+    valid_from: "1985-01-03"
+    bioguide_id: M000355
+    note: >-
+      kadoa truncates the eFD filer "McConnell, Jr., A. Mitchell" at the
+      comma, leaving only "A. Mitchell" (verified: the kadoa row's document
+      uuid is McConnell's eFD PTR). State-scoped to KY.
+  - alias: "Rounds, M. Michael"
+    chamber: senate
+    state: SD
+    valid_from: "2015-01-06"
+    bioguide_id: R000605
+    note: >-
+      Senate eFD prints "Rounds, M. Michael" (Marion Michael); legislators
+      records "Mike Rounds". SD Senate service from 2015-01-06.

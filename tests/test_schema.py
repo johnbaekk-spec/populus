@@ -63,13 +63,15 @@ def _insert_alias(conn, **overrides):
         state="CA",
         district="12",
         valid_from="2025-01-03",
+        valid_to=None,
         bioguide_id="D000001",
         note="seed mapping",
     )
     values.update(overrides)
     conn.execute(
         "INSERT INTO member_aliases (alias, chamber, state, district,"
-        " valid_from, bioguide_id, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " valid_from, valid_to, bioguide_id, note)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         tuple(values.values()),
     )
 
@@ -205,13 +207,70 @@ def test_identity_unique_constraint(initialized_db, make_filing):
 
 
 def test_alias_no_overlap_rejects_duplicate(initialized_db):
-    # TECH DEBT (owner: RUN 4): SQLite unique indexes treat NULLs as distinct,
-    # so two alias rows differing only in NULL state/district both insert; the
-    # full temporal-overlap invariant is RUN 4's CI test (ARCHITECTURE.md §9.4).
+    # SQLite unique indexes treat NULLs as distinct, so two alias rows
+    # differing only in NULL state/district both insert; the full
+    # temporal-overlap invariant is members.alias_overlap_errors, tested
+    # below and over the packaged alias file (ARCHITECTURE.md §9.4).
     _insert_member(initialized_db)
     _insert_alias(initialized_db)
     with pytest.raises(sqlite3.IntegrityError):
         _insert_alias(initialized_db, note="identical key tuple")
+
+
+def test_alias_temporal_overlap_is_a_defect(initialized_db):
+    # The §9.4 invariant the unique index cannot express: two applicable
+    # rows for one (alias, date) — via NULL disambiguators or overlapping
+    # windows — are a defect caught by members.alias_overlap_errors.
+    from populus.members import alias_overlap_errors
+
+    _insert_member(initialized_db)
+    _insert_alias(initialized_db, valid_from="2025-01-03", valid_to=None)
+    _insert_alias(
+        initialized_db,
+        state=None,
+        district=None,
+        valid_from="2026-01-01",
+        note="overlaps the open-ended row via NULL disambiguators",
+    )
+    errors = alias_overlap_errors(initialized_db)
+    assert len(errors) == 1
+    assert "overlap" in errors[0]
+
+    # Disjoint windows are not a defect.
+    initialized_db.execute("DELETE FROM member_aliases")
+    _insert_alias(initialized_db, valid_from="2020-01-01", valid_to="2022-01-01")
+    _insert_alias(
+        initialized_db, valid_from="2022-01-01", note="starts where the first ends"
+    )
+    assert alias_overlap_errors(initialized_db) == []
+
+
+def test_packaged_alias_file_has_no_overlaps(initialized_db):
+    # The live seed file must satisfy its own invariant. Loading requires
+    # the referenced members to exist; synthesize them from the file.
+    import yaml
+
+    from populus.members import (
+        alias_overlap_errors,
+        default_aliases_text,
+        load_aliases,
+    )
+
+    entries = (yaml.safe_load(default_aliases_text()) or {}).get("aliases") or []
+    for bioguide_id in {entry["bioguide_id"] for entry in entries}:
+        _insert_member(initialized_db, bioguide_id=bioguide_id)
+    load_aliases(initialized_db)
+    assert alias_overlap_errors(initialized_db) == []
+
+
+def test_init_creates_default_and_pair_views(initialized_db):
+    views = {
+        name
+        for (name,) in initialized_db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'view'"
+        )
+    }
+    assert {"v_default_transactions", "v_amendment_pairs"} <= views
 
 
 @pytest.mark.parametrize("column", ["filer_name_raw", "source"])
@@ -275,10 +334,19 @@ def test_cli_db_init_unopenable_target(tmp_path):
 # --- CLI: full §5.3 surface and stubs ---------------------------------------
 
 
-def test_cli_help_lists_all_seven_commands():
+def test_cli_help_lists_all_eight_commands():
     result = CliRunner().invoke(cli_main, ["--help"])
     assert result.exit_code == 0
-    for command in ("db", "ingest", "reparse", "build", "publish", "verify", "stats"):
+    for command in (
+        "db",
+        "ingest",
+        "reparse",
+        "build",
+        "publish",
+        "verify",
+        "stats",
+        "backfill-audit",
+    ):
         assert command in result.output
 
 
@@ -295,16 +363,39 @@ def test_publish_help_shows_dry_run():
     assert "--dry-run" in result.output
 
 
-# congress-house (RUN 2) and congress-senate (RUN 3) are implemented; the
-# remaining ingest job keeps its bare-invocation stub (job dispatch runs
-# before option validation). Both reparse jobs are implemented, so reparse
-# has no stub left — its option validation is covered in the per-chamber
-# ingest test files.
-@pytest.mark.parametrize("job,run", [("congress-backfill", 4)])
-def test_ingest_stub_names_owning_run(job, run):
-    result = CliRunner().invoke(cli_main, ["ingest", job])
-    assert isinstance(result.exception, NotImplementedError)
-    assert f"RUN {run}" in str(result.exception)
+# All four ingest jobs are implemented (house/senate RUNs 2–3,
+# backfill/members RUN 4), as are stats and backfill-audit; each validates
+# its option surface. Only the RUN-5 pipeline commands keep stubs.
+@pytest.mark.parametrize(
+    "args,needed",
+    [
+        (["ingest", "congress-backfill"], "--db"),
+        (["ingest", "congress-backfill", "--db", "x.db"], "--from-cache"),
+        (["ingest", "members"], "--db"),
+        (["ingest", "members", "--db", "x.db"], "--from-cache"),
+    ],
+)
+def test_run4_ingest_jobs_validate_options(args, needed):
+    result = CliRunner().invoke(cli_main, args)
+    assert result.exit_code == 2
+    assert needed in _combined_output(result)
+
+
+def test_members_only_options_rejected_for_other_jobs(tmp_path):
+    aliases = tmp_path / "aliases.yaml"
+    aliases.write_text("aliases: []\n")
+    result = CliRunner().invoke(
+        cli_main,
+        ["ingest", "congress-house", "--db", "x.db", "--aliases", str(aliases)],
+    )
+    assert result.exit_code == 2
+    assert "apply only to ingest members" in _combined_output(result)
+
+
+def test_stats_requires_db_option():
+    result = CliRunner().invoke(cli_main, ["stats"])
+    assert result.exit_code == 2
+    assert "--db" in _combined_output(result)
 
 
 @pytest.mark.parametrize(
@@ -314,7 +405,6 @@ def test_ingest_stub_names_owning_run(job, run):
         (["publish"], 5),
         (["publish", "--dry-run"], 5),
         (["verify"], 5),
-        (["stats"], 4),
     ],
 )
 def test_pipeline_stubs_name_owning_run(args, run):

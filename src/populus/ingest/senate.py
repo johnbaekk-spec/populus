@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Protocol
 import lxml.etree
 import lxml.html
 
+from populus.amendments import flag_unresolved_pair_rows
 from populus.ingest import (
     USER_AGENT,
     TransportResponse,
@@ -887,6 +888,10 @@ def _ingest(
     report.amendments_total, report.amendments_paired = _link_amendments(
         conn, discovered
     )
+    # §9.5/RUN 4: both sides of every pair carry amendment_unresolved. The
+    # loader delete-and-reinserts rows, so the flag is restored at every
+    # job tail that rebuilds rows (here, reparse_senate, reparse_house).
+    flag_unresolved_pair_rows(conn)
     report.reconciliation = reconcile(conn, discovered.uuids)
 
 
@@ -1106,6 +1111,9 @@ def reparse_senate(
             normalization_version=NORMALIZATION_VERSION,
         )
         statuses[filing_id] = evaluated.status
+    # load_filing deleted and re-inserted each target's rows; restore the
+    # amendment_unresolved flag on both sides of every pair (§9.5/RUN 4).
+    flag_unresolved_pair_rows(conn)
     return ReparseReport(selection=selection, statuses=statuses)
 
 

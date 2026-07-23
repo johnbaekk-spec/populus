@@ -21,7 +21,7 @@ dependencies = [
 populus = "populus.cli:main"
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "jsonschema"]
 
 [tool.hatch.version]
 path = "src/populus/__init__.py"

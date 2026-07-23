@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Populus M1 stats.json (ARCHITECTURE.md §5.2 — RUN 4)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stats_version",
+    "generated_at",
+    "data_note",
+    "default",
+    "totals",
+    "freshness",
+    "unresolved_names"
+  ],
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "rate": {
+      "oneOf": [
+        { "type": "number", "minimum": 0, "maximum": 1 },
+        { "type": "null" }
+      ]
+    },
+    "late_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rows_with_late_status",
+        "late_count",
+        "late_rate",
+        "median_days_to_file"
+      ],
+      "properties": {
+        "rows_with_late_status": { "$ref": "#/$defs/count" },
+        "late_count": { "$ref": "#/$defs/count" },
+        "late_rate": { "$ref": "#/$defs/rate" },
+        "median_days_to_file": { "type": ["number", "null"] }
+      }
+    }
+  },
+  "properties": {
+    "stats_version": { "const": "stats-1.0.0" },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "data_note": { "type": "string", "minLength": 1 },
+    "default": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row_count", "source_mix", "late_filing", "join_coverage"],
+      "properties": {
+        "row_count": { "$ref": "#/$defs/count" },
+        "source_mix": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "primary_count",
+            "primary_rate",
+            "kadoa_count",
+            "kadoa_rate",
+            "by_source"
+          ],
+          "properties": {
+            "primary_count": { "$ref": "#/$defs/count" },
+            "primary_rate": { "$ref": "#/$defs/rate" },
+            "kadoa_count": { "$ref": "#/$defs/count" },
+            "kadoa_rate": { "$ref": "#/$defs/rate" },
+            "by_source": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/count" }
+            }
+          }
+        },
+        "late_filing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["overall", "by_chamber"],
+          "properties": {
+            "overall": { "$ref": "#/$defs/late_stats" },
+            "by_chamber": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["house", "senate"],
+              "properties": {
+                "house": { "$ref": "#/$defs/late_stats" },
+                "senate": { "$ref": "#/$defs/late_stats" }
+              }
+            }
+          }
+        },
+        "join_coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "primary_rows",
+            "primary_joined",
+            "primary_join_rate",
+            "by_source"
+          ],
+          "properties": {
+            "primary_rows": { "$ref": "#/$defs/count" },
+            "primary_joined": { "$ref": "#/$defs/count" },
+            "primary_join_rate": { "$ref": "#/$defs/rate" },
+            "by_source": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["rows", "joined", "join_rate"],
+                "properties": {
+                  "rows": { "$ref": "#/$defs/count" },
+                  "joined": { "$ref": "#/$defs/count" },
+                  "join_rate": { "$ref": "#/$defs/rate" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filing_count_including_excluded",
+        "transaction_count_including_excluded",
+        "filing_count_by_source_including_excluded",
+        "source_document_count_including_excluded",
+        "parse_coverage_primary_by_chamber_year_including_excluded",
+        "needs_ocr_filing_count_including_excluded",
+        "member_count",
+        "unresolved_pair_count"
+      ],
+      "properties": {
+        "filing_count_including_excluded": { "$ref": "#/$defs/count" },
+        "transaction_count_including_excluded": { "$ref": "#/$defs/count" },
+        "filing_count_by_source_including_excluded": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/count" }
+        },
+        "source_document_count_including_excluded": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/count" }
+        },
+        "parse_coverage_primary_by_chamber_year_including_excluded": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/count" }
+            }
+          }
+        },
+        "needs_ocr_filing_count_including_excluded": { "$ref": "#/$defs/count" },
+        "member_count": { "$ref": "#/$defs/count" },
+        "unresolved_pair_count": { "$ref": "#/$defs/count" }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "house_index_last_modified",
+        "house_index_last_modified_by_year",
+        "house_db_max_filed_date",
+        "senate_db_max_filed_date",
+        "last_ingest_runs"
+      ],
+      "properties": {
+        "house_index_last_modified": { "type": ["string", "null"] },
+        "house_index_last_modified_by_year": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "null"] }
+        },
+        "house_db_max_filed_date": { "type": ["string", "null"] },
+        "senate_db_max_filed_date": { "type": ["string", "null"] },
+        "last_ingest_runs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["run_id", "started_at", "finished_at", "status"],
+            "properties": {
+              "run_id": { "type": "string" },
+              "started_at": { "type": ["string", "null"] },
+              "finished_at": { "type": ["string", "null"] },
+              "status": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "unresolved_names": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["filer_name_raw", "chamber", "source", "filing_count"],
+        "properties": {
+          "filer_name_raw": { "type": "string" },
+          "chamber": { "enum": ["house", "senate"] },
+          "source": { "enum": ["house-clerk", "senate-efd", "kadoa"] },
+          "filing_count": { "$ref": "#/$defs/count" }
+        }
+      }
+    }
+  }
+}
