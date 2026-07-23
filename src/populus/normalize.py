@@ -189,16 +189,39 @@ def normalize_amount(
 _MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 
 
+def date_stats(
+    transaction_iso: str | None, filed_iso: str
+) -> tuple[str | None, int | None, int | None, frozenset[str]]:
+    """``(transaction_date_iso, days_to_file, is_late, flags)`` from ISO dates.
+
+    The single authority for the derived date statistics (shared by the
+    chamber parsers via :func:`normalize_dates` and by the kadoa backfill,
+    whose seed prints ISO dates directly). ``is_late`` is
+    ``days_to_file > 45``; ``date_anomaly`` (filed before transacted) keeps
+    the computed values and flags — never drops (G3). An absent or invalid
+    transaction date is NULL + ``date_missing`` (the schema's only
+    sanctioned NULL-date state).
+    """
+    if transaction_iso is None:
+        return None, None, None, frozenset({"date_missing"})
+    try:
+        transacted = date.fromisoformat(transaction_iso)
+    except ValueError:
+        return None, None, None, frozenset({"date_missing"})
+    filed = date.fromisoformat(filed_iso)
+    days_to_file = (filed - transacted).days
+    flags = frozenset({"date_anomaly"}) if filed < transacted else frozenset()
+    return transacted.isoformat(), days_to_file, int(days_to_file > 45), flags
+
+
 def normalize_dates(
     raw: str | None, filed_date: str
 ) -> tuple[str | None, int | None, int | None, frozenset[str]]:
     """``(transaction_date_iso, days_to_file, is_late, flags)`` (R10).
 
-    Source dates print as non-zero-padded ``M/D/YYYY``. ``is_late`` is
-    ``days_to_file > 45``; ``date_anomaly`` (filed before transacted) keeps
-    the computed values and flags — never drops (G3). An absent or
-    unparseable date is NULL + ``date_missing`` (the schema's only sanctioned
-    NULL-date state).
+    Source dates print as non-zero-padded ``M/D/YYYY``; the statistics
+    themselves are delegated to :func:`date_stats` so the rules cannot fork
+    across sources. An absent or unparseable date is NULL + ``date_missing``.
     """
     if raw is None:
         return None, None, None, frozenset({"date_missing"})
@@ -210,10 +233,7 @@ def normalize_dates(
         transacted = date(year, month, day)
     except ValueError:
         return None, None, None, frozenset({"date_missing"})
-    filed = date.fromisoformat(filed_date)
-    days_to_file = (filed - transacted).days
-    flags = frozenset({"date_anomaly"}) if filed < transacted else frozenset()
-    return transacted.isoformat(), days_to_file, int(days_to_file > 45), flags
+    return date_stats(transacted.isoformat(), filed_date)
 
 
 # --- comment -----------------------------------------------------------------

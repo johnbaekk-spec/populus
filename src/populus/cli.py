@@ -1,19 +1,20 @@
 """Populus pipeline CLI (ARCHITECTURE.md §5.3).
 
-``db init`` and the ``congress-house``/``congress-senate`` ingest and
-reparse jobs work today (RUNs 2–3). Every other command is a seam: it
+``db init``, all four ingest jobs (``congress-house``/``congress-senate``
+RUNs 2–3; ``congress-backfill``/``members`` RUN 4), both reparse jobs,
+``stats``, and the ``backfill-audit`` gate commands work today. The
+remaining commands (``build``/``publish``/``verify``) are seams: each
 parses and validates the settled §5.3 argument surface, then raises
-``NotImplementedError`` naming the RUN that owns its implementation. Job
-dispatch runs before per-job option validation so the not-yet-implemented
-jobs keep their bare-invocation stubs.
+``NotImplementedError`` naming the RUN that owns its implementation.
 
 This layer owns every current-time/identity/randomness value the library
-needs (``now``/``run_id``/``host``/``sleep``/``monotonic``/``jitter``) —
-library code never reads the wall clock.
+needs (``now``/``run_id``/``host``/``sleep``/``monotonic``/``jitter``/
+audit ``seed``) — library code never reads the wall clock.
 """
 
 from __future__ import annotations
 
+import json
 import platform
 import random
 import sqlite3
@@ -30,11 +31,16 @@ INGEST_JOB_OWNERS = {
     "congress-house": 2,
     "congress-senate": 3,
     "congress-backfill": 4,
+    "members": 4,
 }
 REPARSE_JOB_OWNERS = {
     "congress-house": 2,
     "congress-senate": 3,
 }
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 @click.group()
@@ -79,7 +85,9 @@ def _one_selector(ctx: click.Context, param: click.Parameter, value: object) -> 
     help=(
         "Ingest offline from a cache DIR laid out like the job's own cache:"
         " data-cache/house/ (<YEAR>FD.xml + pdfs/<YEAR>/) for congress-house,"
-        " data-cache/senate/ (ptr-index.json + pages/) for congress-senate."
+        " data-cache/senate/ (ptr-index.json + pages/) for congress-senate,"
+        " data-cache/kadoa/ (trades.json) for congress-backfill,"
+        " data-cache/legislators/ (both YAML files) for members."
     ),
 )
 @click.option("--year", type=int, help="Ingest exactly this year (default: settled window).")
@@ -89,6 +97,27 @@ def _one_selector(ctx: click.Context, param: click.Parameter, value: object) -> 
     type=click.Path(file_okay=False),
     help="Raw-archive root for live fetches.",
 )
+@click.option(
+    "--house-index",
+    "house_index",
+    type=click.Path(exists=True, file_okay=False),
+    help=(
+        "members only: DIR of cached <YEAR>FD.xml index files for House"
+        " state/district join hints."
+    ),
+)
+@click.option(
+    "--kadoa-trades",
+    "kadoa_trades",
+    type=click.Path(exists=True, dir_okay=False),
+    help="members only: kadoa trades.json for backfill join hints.",
+)
+@click.option(
+    "--aliases",
+    "aliases_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="members only: alias YAML overriding the packaged aliases.yaml.",
+)
 @click.pass_context
 def ingest(
     ctx: click.Context,
@@ -97,8 +126,15 @@ def ingest(
     from_cache: str | None,
     year: int | None,
     raw_root: str | None,
+    house_index: str | None,
+    kadoa_trades: str | None,
+    aliases_path: str | None,
 ) -> None:
     """Run an ingest JOB: discover → fetch → parse → normalize → load."""
+    if job != "members" and (house_index or kadoa_trades or aliases_path):
+        raise click.UsageError(
+            "--house-index/--kadoa-trades/--aliases apply only to ingest members"
+        )
     if job == "congress-house":
         from populus.ingest import house
 
@@ -167,10 +203,88 @@ def ingest(
         click.echo(senate.format_summary(report))
         if not report.ok:
             ctx.exit(1)
-    else:
-        raise NotImplementedError(
-            f"populus ingest {job} is implemented in RUN {INGEST_JOB_OWNERS[job]}"
+    elif job == "congress-backfill":
+        from populus import backfill
+        from populus.amendments import ensure_views
+
+        if db_path is None:
+            raise click.UsageError("--db is required for ingest congress-backfill")
+        if from_cache is None:
+            raise click.UsageError(
+                "--from-cache DIR (containing trades.json) is required for"
+                " ingest congress-backfill — the seed file is the archive;"
+                " this job never fetches live"
+            )
+        if year is not None or raw_root is not None:
+            raise click.UsageError(
+                "--year/--raw-root do not apply to ingest congress-backfill"
+            )
+        trades_path = Path(from_cache) / "trades.json"
+        if not trades_path.exists():
+            raise click.UsageError(f"{trades_path} does not exist")
+        if not Path(db_path).exists():
+            init_db(db_path)
+        conn = connect(db_path)
+        try:
+            ensure_views(conn)
+            report = backfill.run_backfill_ingest(
+                conn,
+                trades_path=trades_path,
+                run_id=f"backfill-{uuid.uuid4()}",
+                now=_utc_now,
+                host=platform.node(),
+            )
+        finally:
+            conn.close()
+        click.echo(backfill.format_backfill_summary(report))
+        if not report.ok:
+            ctx.exit(1)
+    else:  # members
+        from populus import members
+        from populus.amendments import ensure_views
+
+        if db_path is None:
+            raise click.UsageError("--db is required for ingest members")
+        if from_cache is None:
+            raise click.UsageError(
+                "--from-cache DIR (containing legislators-current.yaml and"
+                " legislators-historical.yaml) is required for ingest members"
+            )
+        if year is not None or raw_root is not None:
+            raise click.UsageError("--year/--raw-root do not apply to ingest members")
+        if not Path(db_path).exists():
+            init_db(db_path)
+        house_hints = None
+        if house_index is not None:
+            house_hints = members.house_hints_from_index(
+                sorted(Path(house_index).glob("*FD.xml"))
+            )
+        kadoa_hints = None
+        if kadoa_trades is not None:
+            kadoa_hints = members.kadoa_hints_from_trades(kadoa_trades)
+        conn = connect(db_path)
+        try:
+            ensure_views(conn)
+            run_report = members.run_members_ingest(
+                conn,
+                legislators_dir=from_cache,
+                aliases_path=aliases_path,
+                house_hints=house_hints,
+                kadoa_hints=kadoa_hints,
+                run_id=f"members-{uuid.uuid4()}",
+                now=_utc_now,
+                host=platform.node(),
+            )
+        finally:
+            conn.close()
+        click.echo(
+            f"members: {run_report.members.upserted} upserted"
+            f" ({run_report.members.current} current,"
+            f" {run_report.members.historical} historical,"
+            f" {len(run_report.members.skipped)} skipped)"
+            f" | aliases: {run_report.aliases}"
         )
+        click.echo(members.format_join_summary(run_report.join))
 
 
 @main.command()
@@ -248,6 +362,194 @@ def verify() -> None:
 
 
 @main.command()
-def stats() -> None:
+@click.option("--db", "db_path", required=True, help="Populus database.")
+@click.option(
+    "--raw-root",
+    "raw_root",
+    type=click.Path(file_okay=False),
+    help="Raw-archive root holding the House index meta sidecars (freshness).",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False),
+    help="Write stats.json here instead of printing it.",
+)
+def stats(db_path: str, raw_root: str | None, out_path: str | None) -> None:
     """Print/refresh stats.json."""
-    raise NotImplementedError("populus stats is implemented in RUN 4")
+    from populus import stats as stats_module
+    from populus.amendments import ensure_views
+
+    if not Path(db_path).exists():
+        raise click.ClickException(f"database {db_path} does not exist")
+    conn = connect(db_path)
+    try:
+        ensure_views(conn)
+        house_meta = (
+            stats_module.read_house_meta(raw_root) if raw_root is not None else None
+        )
+        document = stats_module.compute_stats(
+            conn, now=_utc_now, house_meta=house_meta
+        )
+    finally:
+        conn.close()
+    rendered = stats_module.render_stats(document)
+    if out_path is not None:
+        Path(out_path).write_text(rendered, encoding="utf-8")
+        click.echo(f"wrote {out_path}")
+    else:
+        click.echo(rendered, nl=False)
+
+
+@main.group("backfill-audit")
+def backfill_audit_group() -> None:
+    """§9.6 kadoa audit gate: draw worksheets, score filled ones."""
+
+
+@backfill_audit_group.command("draw")
+@click.option("--db", "db_path", required=True, help="Populus database.")
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="Directory for the worksheet (JSON+MD) and the sealed draw record.",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["initial", "redraw", "stratum-followup"]),
+    default="initial",
+    show_default=True,
+    help="Audit instrument; sizes are pinned per mode — there is no size flag.",
+)
+@click.option("--seed", type=int, default=0, show_default=True)
+@click.option(
+    "--exclude",
+    "exclude_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="redraw: the prior FAILED worksheet JSON (its SRS is excluded).",
+)
+@click.option("--stratum", help="stratum-followup: the stratum key to sample.")
+def backfill_audit_draw(
+    db_path: str,
+    out_dir: str,
+    mode: str,
+    seed: int,
+    exclude_path: str | None,
+    stratum: str | None,
+) -> None:
+    """Draw a §9.6 worksheet; never auto-passes anything."""
+    from populus import backfill
+    from populus.amendments import ensure_views
+
+    if mode == "redraw" and exclude_path is None:
+        raise click.UsageError("--exclude PRIOR_WORKSHEET.json is required for redraw")
+    if mode != "redraw" and exclude_path is not None:
+        raise click.UsageError("--exclude applies only to redraw")
+    if mode == "stratum-followup" and stratum is None:
+        raise click.UsageError("--stratum is required for stratum-followup")
+    if mode != "stratum-followup" and stratum is not None:
+        raise click.UsageError("--stratum applies only to stratum-followup")
+    if not Path(db_path).exists():
+        raise click.ClickException(f"database {db_path} does not exist")
+
+    exclusion: list[str] = []
+    if exclude_path is not None:
+        prior = json.loads(Path(exclude_path).read_text(encoding="utf-8"))
+        prior_srs = ((prior.get("instruments") or {}).get("srs") or {}).get("rows") or []
+        exclusion = [row["txn_id"] for row in prior_srs]
+        if not exclusion:
+            raise click.UsageError(f"{exclude_path} carries no SRS rows to exclude")
+
+    conn = connect(db_path)
+    try:
+        ensure_views(conn)
+        try:
+            result = backfill.run_audit_draw(
+                conn,
+                out_dir=out_dir,
+                mode=mode,
+                seed=seed,
+                exclude=exclusion,
+                stratum=stratum,
+                run_id=f"audit-draw-{uuid.uuid4()}",
+                now=_utc_now,
+                host=platform.node(),
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc))
+    finally:
+        conn.close()
+    click.echo(f"worksheet: {result.worksheet_json_path}")
+    click.echo(f"worksheet (markdown): {result.worksheet_md_path}")
+    click.echo(
+        f"sealed draw record: {result.record_path}"
+        f" (sha256 {result.record_sha256}, anchored in ingest_runs)"
+    )
+
+
+@backfill_audit_group.command("score")
+@click.argument("filled", type=click.Path(exists=True, dir_okay=False))
+@click.option("--db", "db_path", required=True, help="Populus database.")
+@click.option(
+    "--draw-record",
+    "record_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "Sealed draw record for this worksheet"
+        " (default: draw-record.<run_id>.json beside FILLED)."
+    ),
+)
+@click.option(
+    "--prior-failed",
+    "prior_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="redraw: the prior failed worksheet JSON (exclusion verification).",
+)
+@click.pass_context
+def backfill_audit_score(
+    ctx: click.Context,
+    filled: str,
+    db_path: str,
+    record_path: str | None,
+    prior_path: str | None,
+) -> None:
+    """Score a FILLED worksheet; exits non-zero on any non-pass status."""
+    from populus import backfill
+    from populus.amendments import ensure_views
+
+    worksheet = json.loads(Path(filled).read_text(encoding="utf-8"))
+    if worksheet.get("mode") == "redraw" and prior_path is None:
+        raise click.UsageError(
+            "--prior-failed is required to score a redraw worksheet"
+        )
+    if record_path is None:
+        run_id = worksheet.get("draw_run_id")
+        candidate = Path(filled).parent / f"draw-record.{run_id}.json"
+        if run_id is None or not candidate.exists():
+            raise click.UsageError(
+                "--draw-record is required (no draw-record.<run_id>.json"
+                " found beside FILLED)"
+            )
+        record_path = str(candidate)
+    prior = (
+        json.loads(Path(prior_path).read_text(encoding="utf-8"))
+        if prior_path is not None
+        else None
+    )
+    if not Path(db_path).exists():
+        raise click.ClickException(f"database {db_path} does not exist")
+    conn = connect(db_path)
+    try:
+        ensure_views(conn)
+        disposition = backfill.score_audit(
+            worksheet,
+            conn,
+            draw_record_bytes=Path(record_path).read_bytes(),
+            prior_failed_worksheet=prior,
+        )
+    finally:
+        conn.close()
+    click.echo(backfill.format_disposition(disposition))
+    if disposition.status != "pass":
+        ctx.exit(1)

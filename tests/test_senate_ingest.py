@@ -1270,9 +1270,11 @@ def test_amendment_pairs_with_unambiguous_index_original(tmp_path, initialized_d
     assert orig_supersedes is None
     assert orig_lifecycle == "active"
 
-    # Every amendment row carries the flag; original rows do not.
+    # §9.5/RUN 4: BOTH sides of the pair carry the flag after ingest — the
+    # amendment's rows from normalization, the original's from the
+    # flag-propagation pass at the ingest tail.
     assert all("amendment_unresolved" in f for f in _row_flags(initialized_db, U2))
-    assert all("amendment_unresolved" not in f for f in _row_flags(initialized_db, U1))
+    assert all("amendment_unresolved" in f for f in _row_flags(initialized_db, U1))
     # The flag is a source fact: the amendment still parses clean.
     assert _filing(initialized_db, U2)[0] == "parsed"
     assert "amendments 1 (paired 1, unpaired 0)" in senate.format_summary(report)
@@ -1436,6 +1438,56 @@ def test_reparse_reproduces_amendment_flag_from_filing_kind(reparsed_db):
         conn, raw_root=cache, selector=ReparseSelector(filing=f"senate:{U3}")
     )
     assert all("amendment_unresolved" in f for f in _row_flags(conn, U3))
+
+
+@pytest.fixture
+def paired_reparse_db(tmp_path, initialized_db):
+    """An unambiguous pair: U2 (amendment) supersedes U1 (original)."""
+    rows = [
+        _index_row(U1, title_date="05/10/2026", filed="05/10/2026"),
+        _index_row(U2, title_date="05/10/2026", filed="06/01/2026", amendment=True),
+    ]
+    cache = _make_cache(
+        tmp_path,
+        rows,
+        {f"ptr_{U1}.html": EFILE_1ROW, f"ptr_{U2}.html": EFILE_BOND},
+    )
+    _run_cache(initialized_db, cache)
+    assert _filing(initialized_db, U2)[8] == f"senate:{U1}"
+    return initialized_db, cache
+
+
+def _pair_fully_flagged(conn) -> bool:
+    return all(
+        "amendment_unresolved" in flags
+        for uuid in (U1, U2)
+        for flags in _row_flags(conn, uuid)
+    )
+
+
+def test_reparse_original_keeps_both_pair_sides_flagged(paired_reparse_db):
+    # R8 durability: load_filing deletes and re-inserts the original's rows;
+    # the propagation pass at the reparse tail restores the original side.
+    conn, cache = paired_reparse_db
+    assert _pair_fully_flagged(conn)
+    reparse_senate(
+        conn, raw_root=cache, selector=ReparseSelector(filing=f"senate:{U1}")
+    )
+    assert _pair_fully_flagged(conn)
+
+
+def test_reparse_amendment_keeps_both_pair_sides_flagged(paired_reparse_db):
+    conn, cache = paired_reparse_db
+    reparse_senate(
+        conn, raw_root=cache, selector=ReparseSelector(filing=f"senate:{U2}")
+    )
+    assert _pair_fully_flagged(conn)
+
+
+def test_full_reparse_keeps_both_pair_sides_flagged(paired_reparse_db):
+    conn, cache = paired_reparse_db
+    reparse_senate(conn, raw_root=cache, selector=ReparseSelector())
+    assert _pair_fully_flagged(conn)
 
 
 def test_reparse_selectors(reparsed_db):

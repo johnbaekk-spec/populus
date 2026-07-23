@@ -1,0 +1,33 @@
+Populus NOTICE — required attributions and notices
+GENERATED FILE — do not edit by hand. Source of truth:
+src/populus/licenses.json; regenerate with
+`python scripts/render_licenses.py`.
+
+[us-congress-disclosures]
+  Source: U.S. House of Representatives Office of the Clerk; U.S. Senate Office of Public Records (eFD).
+  NOTICE: 5 U.S.C. §13107(c)(1): It shall be unlawful for any person to obtain or use a report— (A) for any unlawful purpose; (B) for any commercial purpose, other than by news and communications media for dissemination to the general public; (C) for determining or establishing the credit rating of any individual; or (D) for use, directly or indirectly, in the solicitation of money for any political, charitable, or other purpose.
+
+[us-govworks-sec]
+  Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov).
+
+[us-govworks-treasury]
+  Source: U.S. Department of the Treasury.
+
+[us-govworks-cftc]
+  Source: U.S. Commodity Futures Trading Commission.
+
+[bls-tos]
+  Source: U.S. Bureau of Labor Statistics (retrieval date stated per response).
+  NOTICE: BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.
+
+[bea-tos]
+  Source: U.S. Bureau of Economic Analysis.
+
+[fred-per-series]
+  Source: Federal Reserve Bank of St. Louis (FRED), per-series underlying source stated per sub-entry.
+
+[cc0-legislators]
+  Source: the unitedstates project, congress-legislators (CC0).
+
+[mit-kadoa-seed]
+  Backfill seed: kadoa-org/congress-trading-monitor (MIT).

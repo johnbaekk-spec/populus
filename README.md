@@ -20,9 +20,22 @@ public dashboard. Congressional trading ships first.
   - `parse/house_ptr.py` — House PTR parser (pdfplumber positions, pypdf text fallback)
   - `parse/senate_ptr.py` — Senate eFD PTR page parser (lxml, verified 9-column table)
   - `normalize.py` — chamber-neutral normalization maps and the flag taxonomy
-- `scripts/` — CI-able guards (e.g. `dep_guard.py`, the §19 paid-SDK denylist check)
+  - `members.py` + `aliases.yaml` — §9.7 member identity: legislators load, the
+    version-controlled alias file, and the post-hoc join pass
+  - `backfill.py` — kadoa seed import, primary-source crosswalk, and the §9.6
+    blocking audit gate (deterministic sampler + fail-closed scorer)
+  - `amendments.py` + `views.sql` — §9.5 default/uncertainty views and durable
+    amendment-pair flags
+  - `stats.py` — the §5.2 honesty layer (`stats.json`)
+  - `licenses.py` + `licenses.json` — the §15 conditions register (generates
+    `DATA-LICENSE.md` and `NOTICE`)
+- `scripts/` — CI-able guards and generators (`dep_guard.py`, the §19 paid-SDK
+  denylist check; `render_licenses.py`, the license-document generator)
 - `tests/` — unit tests + golden corpus of real government filings
-- `ARCHITECTURE.md` / `REVIEW-RESPONSE.md` — governing spec + review audit trail; `docs/build/` — build briefs
+- `ARCHITECTURE.md` / `REVIEW-RESPONSE.md` — governing spec + review audit trail;
+  `docs/build/` — build briefs; `docs/runbooks/` — operating procedures
+- `DATA-LICENSE.md` / `NOTICE` — generated from the conditions register; data carries
+  per-source conditions, not one license
 - `.github/workflows/` — publish / record-sign / monitor (files; not yet armed)
 
 ## Development
@@ -37,10 +50,22 @@ uv run python scripts/dep_guard.py   # G1: no paid/vendor SDKs (ARCHITECTURE.md 
 uv run populus db init app.db        # create an empty database (full §9.4 schema)
 ```
 
-The `populus` CLI (`ingest` / `reparse` / `build` / `publish` / `verify` / `stats`)
-is scaffolded. `db init` and the `congress-house` / `congress-senate` ingest and
-reparse jobs are implemented; every other subcommand validates its full argument
-surface and names the build RUN that will implement it.
+The `populus` CLI covers `db init`, all four ingest jobs (`congress-house` /
+`congress-senate` / `congress-backfill` / `members`), both reparse jobs, `stats`,
+and the `backfill-audit` gate commands. `build` / `publish` / `verify` validate
+their full argument surface and name the build RUN that will implement them (RUN 5).
+
+The full offline pipeline, in order:
+
+```
+uv run populus db init app.db
+uv run populus ingest congress-house   --db app.db --from-cache data-cache/house
+uv run populus ingest congress-senate  --db app.db --from-cache data-cache/senate
+uv run populus ingest congress-backfill --db app.db --from-cache data-cache/kadoa
+uv run populus ingest members          --db app.db --from-cache data-cache/legislators \
+    --house-index data-cache/house --kadoa-trades data-cache/kadoa/trades.json
+uv run populus stats --db app.db --out stats.json
+```
 
 ### House PTR pipeline
 
@@ -107,8 +132,37 @@ Both chambers' politeness floors live in code, not config. `ingest/house.py` and
 `ingest/senate.py` are the only modules permitted to import `httpx`, which
 `tests/test_dep_guard.py` enforces. The test suite never touches the network.
 
+### Backfill, member join, stats, and the audit gate
+
+`ingest congress-backfill` imports **congressional rows only** from the kadoa
+seed (`data-cache/kadoa/trades.json`) as one filing per seed row
+(`filing_id='kadoa:<id>'`, `license_id='mit-kadoa-seed'`); OGE/executive rows
+are counted and never imported, and every source row reconciles into exactly
+one outcome. When a parsed primary filing exists for the same source document,
+the kadoa filings for that document are retired with `primary_filing_id`
+lineage — tombstones, never deleted.
+
+`ingest members` loads the congress-legislators seed (CC0) plus the
+version-controlled `aliases.yaml`, then joins filers to members per §9.7:
+normalized name × chamber × term overlap with the filed date (× state/district
+where hints exist), joining only on exactly one candidate. Unjoined filings
+keep a NULL `bioguide_id` and are listed in stats — never dropped. Re-running
+the job re-resolves after any alias edit.
+
+`stats` emits deterministic `stats.json`: every quantitative aggregate reads
+the `v_default_transactions` view (active filings minus the original side of
+each unresolved amendment pair), while archive-inventory totals are separately
+named `*_including_excluded`.
+
+`backfill-audit draw` / `backfill-audit score` implement the §9.6 blocking
+human audit of the kadoa import (pinned sample sizes, sealed draw records,
+independent reconstruction, fail-closed scoring). The operating procedure is
+[docs/runbooks/kadoa-backfill-audit.md](docs/runbooks/kadoa-backfill-audit.md);
+the signed disposition is a P1 gate, not something the tooling auto-passes.
+
 ## Legal
 
 Code is MIT. Data are US-government public records carrying statutory conditions —
-see the conditions register described in the architecture (§15), including
-5 U.S.C. § 13107(c) prohibited-uses notice. Not financial advice.
+see [DATA-LICENSE.md](DATA-LICENSE.md) and [NOTICE](NOTICE), generated from the
+machine-readable conditions register (`src/populus/licenses.json`, §15), including
+the 5 U.S.C. § 13107(c) prohibited-uses notice. Not financial advice.

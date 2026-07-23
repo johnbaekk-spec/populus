@@ -29,6 +29,7 @@ from typing import Protocol
 
 from lxml import etree
 
+from populus.amendments import flag_unresolved_pair_rows
 from populus.ingest import (
     USER_AGENT,
     TransportResponse,
@@ -898,6 +899,9 @@ def reparse_house(
             normalization_version=NORMALIZATION_VERSION,
         )
         statuses[filing_id] = evaluated.status
+    # load_filing deleted and re-inserted each target's rows; restore the
+    # amendment_unresolved flag on both sides of every pair (§9.5/RUN 4).
+    flag_unresolved_pair_rows(conn)
     return ReparseReport(selection=selection, statuses=statuses)
 
 
