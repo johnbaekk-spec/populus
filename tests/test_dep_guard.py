@@ -197,16 +197,31 @@ NETWORK_PRIMITIVES = re.compile(
     r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
+# RUN 2: the sanctioned HTTP client, permitted in exactly one module — the
+# House ingest orchestrator. Every other network primitive stays banned
+# everywhere, including there.
+NETWORK_PRIMITIVES_SANS_HTTPX = re.compile(
+    r"\b(requests|urllib|socket|http\.client|ftplib|smtplib"
+    r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
+)
+HTTPX_ALLOWED = {"ingest/house.py"}
 
 
 def test_owned_source_has_no_network_primitives():
     offending = []
-    for path in sorted((REPO_ROOT / "src" / "populus").rglob("*.py")):
+    src_root = REPO_ROOT / "src" / "populus"
+    for path in sorted(src_root.rglob("*.py")):
+        rel = path.relative_to(src_root).as_posix()
+        pattern = (
+            NETWORK_PRIMITIVES_SANS_HTTPX
+            if rel in HTTPX_ALLOWED
+            else NETWORK_PRIMITIVES
+        )
         for line_no, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
-            if NETWORK_PRIMITIVES.search(line):
-                offending.append(f"{path.name}:{line_no}: {line.strip()}")
+            if pattern.search(line):
+                offending.append(f"{rel}:{line_no}: {line.strip()}")
     assert offending == []
 
 

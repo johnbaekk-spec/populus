@@ -1,0 +1,124 @@
+{
+  "filing": {
+    "doc_id": "20017380",
+    "classification": "efile",
+    "parse_status": "parsed",
+    "parse_path": "positioned",
+    "header": {
+      "name": "Hon. Kevin Hern",
+      "status": "Member",
+      "state_district": "OK01"
+    },
+    "filed_date": "2020-09-15"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "Accenture plc Class A Ordinary Shares (ACN) [ST]",
+        "ticker": "ACN",
+        "side": "P",
+        "transaction_date": "08/14/2020",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Dividend Reinvesment"
+      },
+      "row_ordinal": 1,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "ACN",
+      "asset_name": "Accenture plc Class A Ordinary Shares (ACN) [ST]",
+      "asset_type": "ST",
+      "side": "purchase",
+      "transaction_date": "2020-08-14",
+      "days_to_file": 32,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "Dividend Reinvesment",
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "Magellan Midstream Partners l.P. limited Partnership (MMP) [ST]",
+        "ticker": "MMP",
+        "side": "P",
+        "transaction_date": "08/14/2020",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "dividend reinvestment"
+      },
+      "row_ordinal": 2,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "MMP",
+      "asset_name": "Magellan Midstream Partners l.P. limited Partnership (MMP) [ST]",
+      "asset_type": "ST",
+      "side": "purchase",
+      "transaction_date": "2020-08-14",
+      "days_to_file": 32,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "dividend reinvestment",
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "ONEOK, Inc. (OKE) [ST]",
+        "ticker": "OKE",
+        "side": "P",
+        "transaction_date": "08/14/2020",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "dividend reinvestment"
+      },
+      "row_ordinal": 3,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "OKE",
+      "asset_name": "ONEOK, Inc. (OKE) [ST]",
+      "asset_type": "ST",
+      "side": "purchase",
+      "transaction_date": "2020-08-14",
+      "days_to_file": 32,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "dividend reinvestment",
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "Texas Instruments Incorporated (TXN) [ST]",
+        "ticker": "TXN",
+        "side": "P",
+        "transaction_date": "08/17/2020",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Dividend Reinvestment"
+      },
+      "row_ordinal": 4,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "TXN",
+      "asset_name": "Texas Instruments Incorporated (TXN) [ST]",
+      "asset_type": "ST",
+      "side": "purchase",
+      "transaction_date": "2020-08-17",
+      "days_to_file": 29,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "Dividend Reinvestment",
+      "flags": []
+    }
+  ]
+}

@@ -295,9 +295,11 @@ def test_publish_help_shows_dry_run():
     assert "--dry-run" in result.output
 
 
+# congress-house is implemented in RUN 2; the remaining jobs keep their
+# bare-invocation stubs (job dispatch runs before option validation).
 @pytest.mark.parametrize(
     "job,run",
-    [("congress-house", 2), ("congress-senate", 3), ("congress-backfill", 4)],
+    [("congress-senate", 3), ("congress-backfill", 4)],
 )
 def test_ingest_stub_names_owning_run(job, run):
     result = CliRunner().invoke(cli_main, ["ingest", job])
@@ -305,7 +307,7 @@ def test_ingest_stub_names_owning_run(job, run):
     assert f"RUN {run}" in str(result.exception)
 
 
-@pytest.mark.parametrize("job,run", [("congress-house", 2), ("congress-senate", 3)])
+@pytest.mark.parametrize("job,run", [("congress-senate", 3)])
 def test_reparse_stub_names_owning_run(job, run):
     result = CliRunner().invoke(cli_main, ["reparse", job, "--filing", "house:1"])
     assert isinstance(result.exception, NotImplementedError)

@@ -1,0 +1,180 @@
+{
+  "filing": {
+    "doc_id": "20017555",
+    "classification": "efile",
+    "parse_status": "parsed",
+    "parse_path": "positioned",
+    "header": {
+      "name": "Hon. Greg Gianforte",
+      "status": "Member",
+      "state_district": "MT00"
+    },
+    "filed_date": "2020-10-19"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "AdYEN N V AdR [OT]",
+        "ticker": null,
+        "side": "P",
+        "transaction_date": "09/21/2020",
+        "amount_label": "$15,001 - $50,000",
+        "comment": "AdYEN N V AdR AdYEY"
+      },
+      "row_ordinal": 1,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": null,
+      "asset_name": "AdYEN N V AdR [OT]",
+      "asset_type": "OT",
+      "side": "purchase",
+      "transaction_date": "2020-09-21",
+      "days_to_file": 28,
+      "is_late": 0,
+      "amount_low": 15001,
+      "amount_high": 50000,
+      "amount_label": "$15,001 - $50,000",
+      "cap_gains_over_200": 0,
+      "comment": "AdYEN N V AdR AdYEY",
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "Avalara, Inc. (AVLR) [ST]",
+        "ticker": "AVLR",
+        "side": "P",
+        "transaction_date": "09/24/2020",
+        "amount_label": "$100,001 - $250,000",
+        "comment": null
+      },
+      "row_ordinal": 2,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "AVLR",
+      "asset_name": "Avalara, Inc. (AVLR) [ST]",
+      "asset_type": "ST",
+      "side": "purchase",
+      "transaction_date": "2020-09-24",
+      "days_to_file": 25,
+      "is_late": 0,
+      "amount_low": 100001,
+      "amount_high": 250000,
+      "amount_label": "$100,001 - $250,000",
+      "cap_gains_over_200": 0,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "CoStar Group, Inc. (CSGP) [ST]",
+        "ticker": "CSGP",
+        "side": "S (partial)",
+        "transaction_date": "09/24/2020",
+        "amount_label": "$100,001 - $250,000",
+        "comment": null
+      },
+      "row_ordinal": 3,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "CSGP",
+      "asset_name": "CoStar Group, Inc. (CSGP) [ST]",
+      "asset_type": "ST",
+      "side": "sale_partial",
+      "transaction_date": "2020-09-24",
+      "days_to_file": 25,
+      "is_late": 0,
+      "amount_low": 100001,
+      "amount_high": 250000,
+      "amount_label": "$100,001 - $250,000",
+      "cap_gains_over_200": 1,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "Infineon Technologies AG (IFNNY) [ST]",
+        "ticker": "IFNNY",
+        "side": "S (partial)",
+        "transaction_date": "09/21/2020",
+        "amount_label": "$50,001 - $100,000",
+        "comment": null
+      },
+      "row_ordinal": 4,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "IFNNY",
+      "asset_name": "Infineon Technologies AG (IFNNY) [ST]",
+      "asset_type": "ST",
+      "side": "sale_partial",
+      "transaction_date": "2020-09-21",
+      "days_to_file": 28,
+      "is_late": 0,
+      "amount_low": 50001,
+      "amount_high": 100000,
+      "amount_label": "$50,001 - $100,000",
+      "cap_gains_over_200": 1,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "Svenska Cellulosa b Shs American depositary Shares (SVCbY) [ST]",
+        "ticker": "SVCbY",
+        "side": "S",
+        "transaction_date": "09/22/2020",
+        "amount_label": "$1,001 - $15,000",
+        "comment": null
+      },
+      "row_ordinal": 5,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "SVCBY",
+      "asset_name": "Svenska Cellulosa b Shs American depositary Shares (SVCbY) [ST]",
+      "asset_type": "ST",
+      "side": "sale",
+      "transaction_date": "2020-09-22",
+      "days_to_file": 27,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 1,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "JT",
+        "asset_name": "West Pharmaceutical Services, Inc. (WST) [ST]",
+        "ticker": "WST",
+        "side": "S (partial)",
+        "transaction_date": "09/24/2020",
+        "amount_label": "$50,001 - $100,000",
+        "comment": null
+      },
+      "row_ordinal": 6,
+      "source_row_no": null,
+      "owner": "joint",
+      "ticker": "WST",
+      "asset_name": "West Pharmaceutical Services, Inc. (WST) [ST]",
+      "asset_type": "ST",
+      "side": "sale_partial",
+      "transaction_date": "2020-09-24",
+      "days_to_file": 25,
+      "is_late": 0,
+      "amount_low": 50001,
+      "amount_high": 100000,
+      "amount_label": "$50,001 - $100,000",
+      "cap_gains_over_200": 1,
+      "comment": null,
+      "flags": []
+    }
+  ]
+}

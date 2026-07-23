@@ -1,0 +1,162 @@
+{
+  "filing": {
+    "doc_id": "20002703",
+    "classification": "efile",
+    "parse_status": "parsed",
+    "parse_path": "positioned",
+    "header": {
+      "name": "Hon. Bill Flores",
+      "status": "Member",
+      "state_district": "TX17"
+    },
+    "filed_date": "2015-03-11"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "american Infrastructure MlP assoc. Fund lP",
+        "ticker": null,
+        "side": "s",
+        "transaction_date": "01/12/2015",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Cash Distribution from Private Equity Fund--NoT a salE"
+      },
+      "row_ordinal": 1,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": null,
+      "asset_name": "american Infrastructure MlP assoc. Fund lP",
+      "asset_type": null,
+      "side": "sale",
+      "transaction_date": "2015-01-12",
+      "days_to_file": 58,
+      "is_late": 1,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": "Cash Distribution from Private Equity Fund--NoT a salE",
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "american Infrastructure MlP assoc. Fund lP",
+        "ticker": null,
+        "side": "s",
+        "transaction_date": "02/27/2015",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Cash Distribution from Private Equity Fund--NoT a salE"
+      },
+      "row_ordinal": 2,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": null,
+      "asset_name": "american Infrastructure MlP assoc. Fund lP",
+      "asset_type": null,
+      "side": "sale",
+      "transaction_date": "2015-02-27",
+      "days_to_file": 12,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": "Cash Distribution from Private Equity Fund--NoT a salE",
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "Dime Business systems, 8% Interest",
+        "ticker": null,
+        "side": "P",
+        "transaction_date": "01/13/2015",
+        "amount_label": "$15,001 - $50,000",
+        "comment": "5 Year loan to Dime Business systems, a closely held company"
+      },
+      "row_ordinal": 3,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": null,
+      "asset_name": "Dime Business systems, 8% Interest",
+      "asset_type": null,
+      "side": "purchase",
+      "transaction_date": "2015-01-13",
+      "days_to_file": 57,
+      "is_late": 1,
+      "amount_low": 15001,
+      "amount_high": 50000,
+      "amount_label": "$15,001 - $50,000",
+      "cap_gains_over_200": null,
+      "comment": "5 Year loan to Dime Business systems, a closely held company",
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "salient MlP Fund lP",
+        "ticker": null,
+        "side": "s",
+        "transaction_date": "02/25/2015",
+        "amount_label": "$15,001 - $50,000",
+        "comment": "Return of Capital from Private Equity Fund--NoT a salE"
+      },
+      "row_ordinal": 4,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": null,
+      "asset_name": "salient MlP Fund lP",
+      "asset_type": null,
+      "side": "sale",
+      "transaction_date": "2015-02-25",
+      "days_to_file": 14,
+      "is_late": 0,
+      "amount_low": 15001,
+      "amount_high": 50000,
+      "amount_label": "$15,001 - $50,000",
+      "cap_gains_over_200": null,
+      "comment": "Return of Capital from Private Equity Fund--NoT a salE",
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "TPH Partners II, lP",
+        "ticker": null,
+        "side": "P",
+        "transaction_date": "03/18/2015",
+        "amount_label": "$15,001 - $50,000",
+        "comment": "Private Equity Fund Cash Call"
+      },
+      "row_ordinal": 5,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": null,
+      "asset_name": "TPH Partners II, lP",
+      "asset_type": null,
+      "side": "purchase",
+      "transaction_date": "2015-03-18",
+      "days_to_file": -7,
+      "is_late": 0,
+      "amount_low": 15001,
+      "amount_high": 50000,
+      "amount_label": "$15,001 - $50,000",
+      "cap_gains_over_200": null,
+      "comment": "Private Equity Fund Cash Call",
+      "flags": [
+        "date_anomaly",
+        "missing_ticker"
+      ]
+    }
+  ]
+}

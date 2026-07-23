@@ -1,0 +1,128 @@
+{
+  "filing": {
+    "doc_id": "20013901",
+    "classification": "efile",
+    "parse_status": "parsed",
+    "parse_path": "positioned",
+    "header": {
+      "name": "Hon. Earl Blumenauer",
+      "status": "Member",
+      "state_district": "oR03"
+    },
+    "filed_date": "2020-01-10"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "owner": "SP",
+        "asset_name": "CBS Corporation Class B (CBS) [ST]",
+        "ticker": "CBS",
+        "side": "E",
+        "transaction_date": "12/05/2019",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Name Change to ViacomCBS Inc. Part of my spouse's retirement portfolio."
+      },
+      "row_ordinal": 1,
+      "source_row_no": null,
+      "owner": "spouse",
+      "ticker": "CBS",
+      "asset_name": "CBS Corporation Class B (CBS) [ST]",
+      "asset_type": "ST",
+      "side": "exchange",
+      "transaction_date": "2019-12-05",
+      "days_to_file": 36,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "Name Change to ViacomCBS Inc. Part of my spouse's retirement portfolio.",
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": "SP",
+        "asset_name": "uS TREaSuR 2.375% 05/29 [gS]",
+        "ticker": null,
+        "side": "P",
+        "transaction_date": "12/23/2019",
+        "amount_label": "$50,001 - $100,000",
+        "comment": "Part of my spouse's retirement portfolio."
+      },
+      "row_ordinal": 2,
+      "source_row_no": null,
+      "owner": "spouse",
+      "ticker": null,
+      "asset_name": "uS TREaSuR 2.375% 05/29 [gS]",
+      "asset_type": "GS",
+      "side": "purchase",
+      "transaction_date": "2019-12-23",
+      "days_to_file": 18,
+      "is_late": 0,
+      "amount_low": 50001,
+      "amount_high": 100000,
+      "amount_label": "$50,001 - $100,000",
+      "cap_gains_over_200": 0,
+      "comment": "Part of my spouse's retirement portfolio.",
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "owner": "SP",
+        "asset_name": "uS TREaSuR NT 2.25% 02/20 [gS]",
+        "ticker": null,
+        "side": "S",
+        "transaction_date": "12/23/2019",
+        "amount_label": "$50,001 - $100,000",
+        "comment": "Part of my spouse's retirement portfolio."
+      },
+      "row_ordinal": 3,
+      "source_row_no": null,
+      "owner": "spouse",
+      "ticker": null,
+      "asset_name": "uS TREaSuR NT 2.25% 02/20 [gS]",
+      "asset_type": "GS",
+      "side": "sale",
+      "transaction_date": "2019-12-23",
+      "days_to_file": 18,
+      "is_late": 0,
+      "amount_low": 50001,
+      "amount_high": 100000,
+      "amount_label": "$50,001 - $100,000",
+      "cap_gains_over_200": 0,
+      "comment": "Part of my spouse's retirement portfolio.",
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "owner": "SP",
+        "asset_name": "ViacomCBS Inc. - Class B (VIaC) [ST]",
+        "ticker": "VIaC",
+        "side": "E",
+        "transaction_date": "12/05/2019",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Formerly CBS Corp. Part of my spouse's retirement portfolio."
+      },
+      "row_ordinal": 4,
+      "source_row_no": null,
+      "owner": "spouse",
+      "ticker": "VIAC",
+      "asset_name": "ViacomCBS Inc. - Class B (VIaC) [ST]",
+      "asset_type": "ST",
+      "side": "exchange",
+      "transaction_date": "2019-12-05",
+      "days_to_file": 36,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "Formerly CBS Corp. Part of my spouse's retirement portfolio.",
+      "flags": []
+    }
+  ]
+}
