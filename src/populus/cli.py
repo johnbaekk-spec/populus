@@ -1,19 +1,21 @@
 """Populus pipeline CLI (ARCHITECTURE.md §5.3).
 
-``db init`` and the ``congress-house`` ingest/reparse jobs work today (RUN
-2). Every other command is a seam: it parses and validates the settled §5.3
-argument surface, then raises ``NotImplementedError`` naming the RUN that
-owns its implementation. Job dispatch runs before per-job option validation
-so the not-yet-implemented jobs keep their bare-invocation stubs.
+``db init`` and the ``congress-house``/``congress-senate`` ingest and
+reparse jobs work today (RUNs 2–3). Every other command is a seam: it
+parses and validates the settled §5.3 argument surface, then raises
+``NotImplementedError`` naming the RUN that owns its implementation. Job
+dispatch runs before per-job option validation so the not-yet-implemented
+jobs keep their bare-invocation stubs.
 
-This layer owns every current-time/identity value the library needs
-(``now``/``run_id``/``host``/``sleep``/``monotonic``) — library code never
-reads the wall clock.
+This layer owns every current-time/identity/randomness value the library
+needs (``now``/``run_id``/``host``/``sleep``/``monotonic``/``jitter``) —
+library code never reads the wall clock.
 """
 
 from __future__ import annotations
 
 import platform
+import random
 import sqlite3
 import time
 import uuid
@@ -74,7 +76,11 @@ def _one_selector(ctx: click.Context, param: click.Parameter, value: object) -> 
     "--from-cache",
     "from_cache",
     type=click.Path(exists=True, file_okay=False),
-    help="Ingest offline from a cache DIR laid out like data-cache/house/.",
+    help=(
+        "Ingest offline from a cache DIR laid out like the job's own cache:"
+        " data-cache/house/ (<YEAR>FD.xml + pdfs/<YEAR>/) for congress-house,"
+        " data-cache/senate/ (ptr-index.json + pages/) for congress-senate."
+    ),
 )
 @click.option("--year", type=int, help="Ingest exactly this year (default: settled window).")
 @click.option(
@@ -93,40 +99,78 @@ def ingest(
     raw_root: str | None,
 ) -> None:
     """Run an ingest JOB: discover → fetch → parse → normalize → load."""
-    if job != "congress-house":
+    if job == "congress-house":
+        from populus.ingest import house
+
+        if db_path is None:
+            raise click.UsageError("--db is required for ingest congress-house")
+        if from_cache is None and raw_root is None:
+            raise click.UsageError(
+                "--raw-root is required for live ingest (or use --from-cache DIR)"
+            )
+        if not Path(db_path).exists():
+            init_db(db_path)
+        years = [year] if year is not None else house.default_years(date.today())
+        conn = connect(db_path)
+        try:
+            report = house.run_house_ingest(
+                conn,
+                years=years,
+                raw_root=raw_root if raw_root is not None else from_cache,
+                cache_dir=from_cache,
+                transport=None if from_cache is not None else house.HttpxTransport(),
+                run_id=f"house-{uuid.uuid4()}",
+                now=lambda: datetime.now(timezone.utc).isoformat(),
+                host=platform.node(),
+                sleep=time.sleep,
+                monotonic=time.monotonic,
+            )
+        finally:
+            conn.close()
+        click.echo(house.format_summary(report))
+        if not report.ok:
+            ctx.exit(1)
+    elif job == "congress-senate":
+        from populus.ingest import senate
+
+        if db_path is None:
+            raise click.UsageError("--db is required for ingest congress-senate")
+        if year is not None:
+            raise click.UsageError(
+                "--year applies only to congress-house; the Senate index is one"
+                " continuous submitted-date window (§9.2)"
+            )
+        if from_cache is None and raw_root is None:
+            raise click.UsageError(
+                "--raw-root is required for live ingest (or use --from-cache DIR)"
+            )
+        if not Path(db_path).exists():
+            init_db(db_path)
+        conn = connect(db_path)
+        try:
+            report = senate.run_senate_ingest(
+                conn,
+                raw_root=raw_root if raw_root is not None else from_cache,
+                cache_dir=from_cache,
+                transport=(
+                    None if from_cache is not None else senate.HttpxSenateTransport()
+                ),
+                run_id=f"senate-{uuid.uuid4()}",
+                now=lambda: datetime.now(timezone.utc).isoformat(),
+                host=platform.node(),
+                sleep=time.sleep,
+                monotonic=time.monotonic,
+                jitter=lambda: random.uniform(0.0, 1.0),
+            )
+        finally:
+            conn.close()
+        click.echo(senate.format_summary(report))
+        if not report.ok:
+            ctx.exit(1)
+    else:
         raise NotImplementedError(
             f"populus ingest {job} is implemented in RUN {INGEST_JOB_OWNERS[job]}"
         )
-    from populus.ingest import house
-
-    if db_path is None:
-        raise click.UsageError("--db is required for ingest congress-house")
-    if from_cache is None and raw_root is None:
-        raise click.UsageError(
-            "--raw-root is required for live ingest (or use --from-cache DIR)"
-        )
-    if not Path(db_path).exists():
-        init_db(db_path)
-    years = [year] if year is not None else house.default_years(date.today())
-    conn = connect(db_path)
-    try:
-        report = house.run_house_ingest(
-            conn,
-            years=years,
-            raw_root=raw_root if raw_root is not None else from_cache,
-            cache_dir=from_cache,
-            transport=None if from_cache is not None else house.HttpxTransport(),
-            run_id=f"house-{uuid.uuid4()}",
-            now=lambda: datetime.now(timezone.utc).isoformat(),
-            host=platform.node(),
-            sleep=time.sleep,
-            monotonic=time.monotonic,
-        )
-    finally:
-        conn.close()
-    click.echo(house.format_summary(report))
-    if not report.ok:
-        ctx.exit(1)
 
 
 @main.command()
@@ -156,28 +200,30 @@ def reparse(
     raw_root: str | None,
 ) -> None:
     """Reparse JOB from the raw archive, atomic per filing."""
-    if job != "congress-house":
-        raise NotImplementedError(
-            f"populus reparse {job} is implemented in RUN {REPARSE_JOB_OWNERS[job]}"
-        )
+    if db_path is None:
+        raise click.UsageError(f"--db is required for reparse {job}")
+    if raw_root is None:
+        raise click.UsageError(f"--raw-root is required for reparse {job}")
     from populus.ingest import house
 
-    if db_path is None:
-        raise click.UsageError("--db is required for reparse congress-house")
-    if raw_root is None:
-        raise click.UsageError("--raw-root is required for reparse congress-house")
+    selector = house.ReparseSelector(
+        filing=filing, since=since, parser_version=parser_version
+    )
     conn = connect(db_path)
     try:
-        report = house.reparse_house(
-            conn,
-            raw_root=raw_root,
-            selector=house.ReparseSelector(
-                filing=filing, since=since, parser_version=parser_version
-            ),
-        )
+        if job == "congress-house":
+            report = house.reparse_house(conn, raw_root=raw_root, selector=selector)
+            summary = house.format_reparse_summary(report)
+        else:
+            from populus.ingest import senate
+
+            report = senate.reparse_senate(
+                conn, raw_root=raw_root, selector=selector
+            )
+            summary = senate.format_reparse_summary(report)
     finally:
         conn.close()
-    click.echo(house.format_reparse_summary(report))
+    click.echo(summary)
     if not report.ok:
         ctx.exit(1)
 

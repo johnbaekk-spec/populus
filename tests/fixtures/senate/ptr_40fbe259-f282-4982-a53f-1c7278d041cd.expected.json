@@ -1,0 +1,41 @@
+{
+  "filing": {
+    "uuid": "40fbe259-f282-4982-a53f-1c7278d041cd",
+    "parse_status": "parsed",
+    "declared_total": 1,
+    "title": "Periodic Transaction Report for 07/02/2026",
+    "filer_display": "The Honorable Gary C Peters (Peters, Gary)",
+    "filed_date": "2026-07-02"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        06/29/2026\n                                    ",
+        "owner": "Self",
+        "ticker": "\n                                        \n                                            T\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            AT&T Inc.\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Purchase",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "AT&T Inc.",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 1,
+      "source_row_no": 1,
+      "owner": "self",
+      "ticker": "T",
+      "asset_name": "AT&T Inc.",
+      "asset_type": "Stock",
+      "side": "purchase",
+      "transaction_date": "2026-06-29",
+      "days_to_file": 3,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    }
+  ]
+}

@@ -528,6 +528,35 @@ def test_retry_exhaustion_persists_fetch_failed(tmp_path, initialized_db):
     assert audit == ("partial",)
 
 
+@pytest.mark.parametrize("lifecycle", ["superseded", "retired", "withdrawn"])
+def test_refetch_preserves_lifecycle(tmp_path, initialized_db, make_filing, lifecycle):
+    # Ingest records the parse outcome only; lifecycle records the filing's
+    # standing (§9.4). A fetch-failed retry re-evaluates the document but
+    # must never reactivate a non-active filing through the upsert.
+    make_filing(
+        initialized_db,
+        filing_id="house:20034916",
+        filed_date="2026-07-10",
+        parse_status="failed",
+        lifecycle=lifecycle,
+    )
+    cache = _make_cache(tmp_path, 2026, [WITTMAN], {"20034916": EFILE_2026})
+    _run(initialized_db, raw_root=cache, cache_dir=cache)
+    status, *_rest = _filing(initialized_db, "20034916")
+    assert status == "parsed"
+    assert initialized_db.execute(
+        "SELECT lifecycle FROM filings WHERE filing_id = 'house:20034916'"
+    ).fetchone() == (lifecycle,)
+
+
+def test_new_filing_defaults_to_active_lifecycle(tmp_path, initialized_db):
+    cache = _make_cache(tmp_path, 2026, [WITTMAN], {"20034916": EFILE_2026})
+    _run(initialized_db, raw_root=cache, cache_dir=cache)
+    assert initialized_db.execute(
+        "SELECT lifecycle FROM filings WHERE filing_id = 'house:20034916'"
+    ).fetchone() == ("active",)
+
+
 def test_fetch_failed_docid_is_refetched_next_run(tmp_path, initialized_db):
     transport = FakeTransport()
     clock = FakeClock()

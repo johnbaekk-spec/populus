@@ -1,0 +1,43 @@
+{
+  "filing": {
+    "uuid": "4f4d76c6-52ab-4edb-884d-b6c43e7b1bbe",
+    "parse_status": "parsed",
+    "declared_total": 1,
+    "title": "Periodic Transaction Report for 07/06/2026",
+    "filer_display": "The Honorable Shelley M Capito (Capito, Shelley Moore)",
+    "filed_date": "2026-07-06"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        06/16/2026\n                                    ",
+        "owner": "Spouse",
+        "ticker": "\n                                        \n                                            --\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            Citigroup New Inc (C)\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Sale (Full)",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "Citigroup New Inc (C)",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 1,
+      "source_row_no": 1,
+      "owner": "spouse",
+      "ticker": null,
+      "asset_name": "Citigroup New Inc (C)",
+      "asset_type": "Stock",
+      "side": "sale",
+      "transaction_date": "2026-06-16",
+      "days_to_file": 20,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": [
+        "missing_ticker"
+      ]
+    }
+  ]
+}

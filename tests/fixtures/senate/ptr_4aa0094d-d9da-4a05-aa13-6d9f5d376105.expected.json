@@ -1,0 +1,99 @@
+{
+  "filing": {
+    "uuid": "4aa0094d-d9da-4a05-aa13-6d9f5d376105",
+    "parse_status": "parsed",
+    "declared_total": 3,
+    "title": "Periodic Transaction Report for 06/02/2026",
+    "filer_display": "The Honorable Sheldon Whitehouse (Whitehouse, Sheldon)",
+    "filed_date": "2026-06-02"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        05/07/2026\n                                    ",
+        "owner": "Self",
+        "ticker": "\n                                        \n                                            ORCL\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            Oracle Corporation Common Stock\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Sale (Partial)",
+        "amount_label": "$15,001 - $50,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "Oracle Corporation Common Stock",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 1,
+      "source_row_no": 3,
+      "owner": "self",
+      "ticker": "ORCL",
+      "asset_name": "Oracle Corporation Common Stock",
+      "asset_type": "Stock",
+      "side": "sale_partial",
+      "transaction_date": "2026-05-07",
+      "days_to_file": 26,
+      "is_late": 0,
+      "amount_low": 15001,
+      "amount_high": 50000,
+      "amount_label": "$15,001 - $50,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        05/08/2026\n                                    ",
+        "owner": "Self",
+        "ticker": "\n                                        \n                                            NVDA\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            NVIDIA Corporation - Common Stock\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Sale (Partial)",
+        "amount_label": "$100,001 - $250,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "NVIDIA Corporation - Common Stock",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 2,
+      "source_row_no": 2,
+      "owner": "self",
+      "ticker": "NVDA",
+      "asset_name": "NVIDIA Corporation - Common Stock",
+      "asset_type": "Stock",
+      "side": "sale_partial",
+      "transaction_date": "2026-05-08",
+      "days_to_file": 25,
+      "is_late": 0,
+      "amount_low": 100001,
+      "amount_high": 250000,
+      "amount_label": "$100,001 - $250,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        05/08/2026\n                                    ",
+        "owner": "Spouse",
+        "ticker": "\n                                        \n                                            NVDA\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            NVIDIA Corporation - Common Stock\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Sale (Partial)",
+        "amount_label": "$100,001 - $250,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "NVIDIA Corporation - Common Stock",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 3,
+      "source_row_no": 1,
+      "owner": "spouse",
+      "ticker": "NVDA",
+      "asset_name": "NVIDIA Corporation - Common Stock",
+      "asset_type": "Stock",
+      "side": "sale_partial",
+      "transaction_date": "2026-05-08",
+      "days_to_file": 25,
+      "is_late": 0,
+      "amount_low": 100001,
+      "amount_high": 250000,
+      "amount_label": "$100,001 - $250,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    }
+  ]
+}

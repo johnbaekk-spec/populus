@@ -295,21 +295,14 @@ def test_publish_help_shows_dry_run():
     assert "--dry-run" in result.output
 
 
-# congress-house is implemented in RUN 2; the remaining jobs keep their
-# bare-invocation stubs (job dispatch runs before option validation).
-@pytest.mark.parametrize(
-    "job,run",
-    [("congress-senate", 3), ("congress-backfill", 4)],
-)
+# congress-house (RUN 2) and congress-senate (RUN 3) are implemented; the
+# remaining ingest job keeps its bare-invocation stub (job dispatch runs
+# before option validation). Both reparse jobs are implemented, so reparse
+# has no stub left — its option validation is covered in the per-chamber
+# ingest test files.
+@pytest.mark.parametrize("job,run", [("congress-backfill", 4)])
 def test_ingest_stub_names_owning_run(job, run):
     result = CliRunner().invoke(cli_main, ["ingest", job])
-    assert isinstance(result.exception, NotImplementedError)
-    assert f"RUN {run}" in str(result.exception)
-
-
-@pytest.mark.parametrize("job,run", [("congress-senate", 3)])
-def test_reparse_stub_names_owning_run(job, run):
-    result = CliRunner().invoke(cli_main, ["reparse", job, "--filing", "house:1"])
     assert isinstance(result.exception, NotImplementedError)
     assert f"RUN {run}" in str(result.exception)
 

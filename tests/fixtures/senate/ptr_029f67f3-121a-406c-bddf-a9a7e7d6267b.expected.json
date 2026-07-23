@@ -1,0 +1,99 @@
+{
+  "filing": {
+    "uuid": "029f67f3-121a-406c-bddf-a9a7e7d6267b",
+    "parse_status": "parsed",
+    "declared_total": 3,
+    "title": "Periodic Transaction Report for 05/07/2026",
+    "filer_display": "The Honorable Shelley M Capito (Capito, Shelley Moore)",
+    "filed_date": "2026-05-07"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        04/17/2026\n                                    ",
+        "owner": "Spouse",
+        "ticker": "\n                                        \n                                            CEG\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            Constellation Energy Corporation - Common Stock When-Issued\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Sale (Partial)",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "Constellation Energy Corporation - Common Stock When-Issued",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 1,
+      "source_row_no": 3,
+      "owner": "spouse",
+      "ticker": "CEG",
+      "asset_name": "Constellation Energy Corporation - Common Stock When-Issued",
+      "asset_type": "Stock",
+      "side": "sale_partial",
+      "transaction_date": "2026-04-17",
+      "days_to_file": 20,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        04/17/2026\n                                    ",
+        "owner": "Spouse",
+        "ticker": "\n                                        \n                                            AAPL\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            Apple Inc. - Common Stock\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Sale (Partial)",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "Apple Inc. - Common Stock",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 2,
+      "source_row_no": 2,
+      "owner": "spouse",
+      "ticker": "AAPL",
+      "asset_name": "Apple Inc. - Common Stock",
+      "asset_type": "Stock",
+      "side": "sale_partial",
+      "transaction_date": "2026-04-17",
+      "days_to_file": 20,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        04/13/2026\n                                    ",
+        "owner": "Spouse",
+        "ticker": "\n                                        \n                                            AVGO\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            Broadcom Inc. - Common Stock\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Sale (Partial)",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "Broadcom Inc. - Common Stock",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 3,
+      "source_row_no": 1,
+      "owner": "spouse",
+      "ticker": "AVGO",
+      "asset_name": "Broadcom Inc. - Common Stock",
+      "asset_type": "Stock",
+      "side": "sale_partial",
+      "transaction_date": "2026-04-13",
+      "days_to_file": 24,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    }
+  ]
+}
