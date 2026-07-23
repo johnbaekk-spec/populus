@@ -1,7 +1,8 @@
 """House Clerk PTR ingest pipeline (ARCHITECTURE.md §9.2; RUN 2).
 
-The only Populus module that talks to the network, and the only one allowed
-to import ``httpx``. Owns discovery (conditional-GET index ZIP), polite
+One of the two Populus modules that talk to the network — this one and its
+Senate sibling ``populus.ingest.senate`` are the only modules allowed to
+import ``httpx``. Owns discovery (conditional-GET index ZIP), polite
 sequential fetching (floors in code, never config — G6), raw archiving,
 classification/parse/normalize orchestration, the single filing-status
 decision point, atomic loads, the per-run ``ingest_runs`` audit lifecycle
@@ -28,7 +29,12 @@ from typing import Protocol
 
 from lxml import etree
 
-import populus
+from populus.ingest import (
+    USER_AGENT,
+    TransportResponse,
+    UnsafeArchivePathError,
+    archive_path as _archive_path,
+)
 from populus.load import ParsedRow, load_filing, upsert_filing
 from populus.normalize import (
     NORMALIZATION_VERSION,
@@ -43,10 +49,6 @@ from populus.parse.house_ptr import (
     parse_ptr,
 )
 
-USER_AGENT = (
-    f"PopulusBot/{populus.__version__} "
-    "(+https://github.com/johnbaekk-spec/populus; contact: johnbaekk@gmail.com)"
-)
 MIN_SPACING_S = 0.25
 BACKOFF_SCHEDULE = (1.0, 2.0, 4.0)
 
@@ -66,13 +68,6 @@ def default_years(today: date) -> list[int]:
 
 
 # --- transport ---------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class TransportResponse:
-    status_code: int
-    headers: Mapping[str, str]
-    content: bytes
 
 
 class Transport(Protocol):
@@ -172,28 +167,8 @@ _MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 _DOCID_RE = re.compile(r"^\d{1,10}$")
 
 
-class UnsafeArchivePathError(ValueError):
-    """A raw-archive path would resolve outside its configured root."""
-
-
 def _validate_doc_id(doc_id: str) -> bool:
     return bool(_DOCID_RE.match(doc_id))
-
-
-def _archive_path(raw_root: Path, relpath: str) -> Path:
-    """Join *relpath* under *raw_root*, proving containment after resolution.
-
-    Belt-and-braces with :func:`_validate_doc_id`: even if a future caller
-    builds a relative path some other way, nothing can be written outside the
-    configured archive root.
-    """
-    root = Path(raw_root).resolve()
-    candidate = (root / relpath).resolve()
-    if candidate != root and root not in candidate.parents:
-        raise UnsafeArchivePathError(
-            f"archive path {relpath!r} escapes the archive root {root}"
-        )
-    return candidate
 
 
 def _filing_date_iso(raw: str) -> str:
@@ -462,9 +437,12 @@ def reconcile(
     docids = list(index_docids)
     for start in range(0, len(docids), 500):
         chunk = docids[start : start + 500]
+        # nosec B608 — the only interpolated text is a generated run of '?'
+        # placeholders (one per chunk element); every value is bound as a
+        # query parameter below, so no caller-controlled string reaches SQL.
         placeholders = ", ".join("?" for _ in chunk)
         for filing_id, parse_status, raw_path in conn.execute(
-            f"SELECT filing_id, parse_status, raw_path FROM filings"
+            f"SELECT filing_id, parse_status, raw_path FROM filings"  # nosec B608
             f" WHERE filing_id IN ({placeholders})",
             [f"house:{doc_id}" for doc_id in chunk],
         ):
@@ -748,7 +726,21 @@ def _process_docid(
     pdf_bytes: bytes | None,
     now: Callable[[], str],
 ) -> _Outcome:
-    """Evaluate and atomically persist one DocID (upsert — R16/R17/R20)."""
+    """Evaluate and atomically persist one DocID (upsert — R16/R17/R20).
+
+    ``lifecycle`` is read back and replayed, never defaulted: ingest records
+    only what parsing achieved, while lifecycle records the filing's
+    standing (§9.4). Without this, a fetch-failed retry would reset a
+    non-active filing to ``active`` through ``upsert_filing``'s ON CONFLICT
+    update. No RUN-2 path sets a non-active House lifecycle today, so this
+    is behavior-identical for the current corpus and closes the seam ahead
+    of the kadoa lineage work (§9.6, RUN 4).
+    """
+    filing_id = f"house:{entry.doc_id}"
+    stored = conn.execute(
+        "SELECT lifecycle FROM filings WHERE filing_id = ?", (filing_id,)
+    ).fetchone()
+    lifecycle = stored[0] if stored is not None else "active"
     if pdf_bytes is None:
         evaluated = EvaluatedDocument(
             status="failed",
@@ -771,7 +763,7 @@ def _process_docid(
         response_hash = hashlib.sha256(pdf_bytes).hexdigest()
     upsert_filing(
         conn,
-        filing_id=f"house:{entry.doc_id}",
+        filing_id=filing_id,
         chamber="house",
         filer_name_raw=entry.filer_name_raw,
         filing_kind="ptr",
@@ -785,6 +777,7 @@ def _process_docid(
         normalization_version=NORMALIZATION_VERSION,
         raw_path=raw_path,
         response_hash=response_hash,
+        lifecycle=lifecycle,
     )
     return _Outcome(
         doc_id=entry.doc_id,
@@ -817,7 +810,7 @@ class ReparseSelection:
 
 
 def select_reparse_targets(
-    conn: sqlite3.Connection, selector: ReparseSelector
+    conn: sqlite3.Connection, selector: ReparseSelector, *, chamber: str = "house"
 ) -> ReparseSelection:
     """Build every selection branch with the archive filter applied centrally.
 
@@ -825,10 +818,12 @@ def select_reparse_targets(
     ``raw_path is not None`` split below serves default, ``--since``,
     ``--parser-version``, and ``--filing`` alike, so no branch can forget it.
     An explicit ``--filing`` naming a NULL-archive filing is reported as
-    ``skipped_no_archive``, never read, never a crash.
+    ``skipped_no_archive``, never read, never a crash. The selection
+    semantics are chamber-neutral; the Senate reparse (RUN 3) passes
+    ``chamber='senate'``.
     """
     condition = ""
-    params: list[str] = []
+    params: list[str] = [chamber]
     if selector.filing is not None:
         condition = " AND filing_id = ?"
         params.append(selector.filing)
@@ -840,7 +835,7 @@ def select_reparse_targets(
         params.append(selector.parser_version)
     rows = conn.execute(
         "SELECT filing_id, raw_path FROM filings"
-        f" WHERE chamber = 'house'{condition} ORDER BY filing_id",
+        f" WHERE chamber = ?{condition} ORDER BY filing_id",
         params,
     ).fetchall()
 

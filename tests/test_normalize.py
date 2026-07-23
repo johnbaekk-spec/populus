@@ -17,6 +17,7 @@ from populus.normalize import (
     normalize_amount,
     normalize_asset,
     normalize_capgains,
+    normalize_comment,
     normalize_dates,
     normalize_owner,
     normalize_row,
@@ -42,8 +43,14 @@ def test_known_flags_exact_membership():
         "row_incomplete",
         "row_orphan",
         "text_fallback",
+        "source_row_no_unparsed",
     }
-    assert SOURCE_FACT_FLAGS == {"missing_ticker", "amount_spouse_cap", "date_anomaly"}
+    assert SOURCE_FACT_FLAGS == {
+        "missing_ticker",
+        "amount_spouse_cap",
+        "date_anomaly",
+        "amendment_unresolved",
+    }
     assert KNOWN_FLAGS == PARSE_DEFECT_FLAGS | SOURCE_FACT_FLAGS
 
 
@@ -75,6 +82,11 @@ def test_has_parse_defect_truth_table():
         ("S (partial)", "sale_partial"),
         ("s (partial)", "sale_partial"),
         ("E", "exchange"),
+        # Senate eFD printed labels (RUN 3).
+        ("Purchase", "purchase"),
+        ("Sale (Full)", "sale"),
+        ("Sale (Partial)", "sale_partial"),
+        ("Exchange", "exchange"),
     ],
 )
 def test_side_map(raw, expected):
@@ -92,7 +104,17 @@ def test_unknown_side_is_other_flagged(raw):
 
 @pytest.mark.parametrize(
     "raw,expected",
-    [("SP", "spouse"), ("DC", "child"), ("JT", "joint"), ("self", "self")],
+    [
+        ("SP", "spouse"),
+        ("DC", "child"),
+        ("JT", "joint"),
+        ("self", "self"),
+        # Senate eFD printed labels (RUN 3).
+        ("Self", "self"),
+        ("Spouse", "spouse"),
+        ("Child", "child"),
+        ("Joint", "joint"),
+    ],
 )
 def test_owner_map(raw, expected):
     owner, flags = normalize_owner(raw)
@@ -244,6 +266,22 @@ def test_bad_or_missing_date(raw):
     assert flags == {"date_missing"}
 
 
+# --- comment (RUN 3) ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "--", " -- "])
+def test_comment_missing_forms_are_null(raw):
+    assert normalize_comment(raw) is None
+
+
+def test_comment_free_text_is_collapsed_and_preserved():
+    assert normalize_comment("Dividend Reinvestment") == "Dividend Reinvestment"
+    assert (
+        normalize_comment("  Sale of exercised\n  stock option  ")
+        == "Sale of exercised stock option"
+    )
+
+
 # --- cap gains (LD11) --------------------------------------------------------
 
 
@@ -324,5 +362,54 @@ def test_normalize_row_unions_structural_flags():
     assert has_parse_defect(row.flags) is True
 
 
+def test_normalize_row_senate_asset_seams():
+    # LD2: raw_row keeps the lossless printed asset cell; the clean display
+    # cell supplies the normalized asset_name and the printed Asset Type
+    # column supplies asset_type directly.
+    raw = dict(
+        RAW_ROW,
+        asset_name=(
+            "\n  Cheniere Energy Partners L P Note\n"
+            "  Rate/Coupon: 4.5% Matures: 2029-10-01\n"
+        ),
+        ticker="--",
+        side="Sale (Full)",
+        comment="--",
+    )
+    row = normalize_row(
+        raw,
+        filed_date="2026-07-09",
+        cap_gains_cell=None,
+        cap_gains_column_present=False,
+        row_ordinal=1,
+        source_row_no=3,
+        asset_display_cell="Cheniere Energy Partners L P Note",
+        asset_type_cell="Corporate Bond",
+    )
+    assert row.raw_row == raw  # lossless — annotation retained in raw
+    assert row.asset_name == "Cheniere Energy Partners L P Note"
+    assert row.asset_type == "Corporate Bond"
+    assert row.side == "sale"
+    assert row.ticker is None
+    assert row.comment is None
+    assert row.cap_gains_over_200 is None
+    assert set(row.flags) == {"missing_ticker"}
+
+
+def test_normalize_row_senate_blank_type_cell_falls_back_to_tag():
+    row = normalize_row(
+        RAW_ROW,
+        filed_date="2020-01-10",
+        cap_gains_cell=None,
+        cap_gains_column_present=False,
+        row_ordinal=1,
+        source_row_no=1,
+        asset_type_cell="   ",
+    )
+    # A whitespace-only printed type cell contributes nothing; the House
+    # [XX]-tag derivation from the asset source still applies.
+    assert row.asset_type == "ST"
+
+
 def test_normalization_version_is_stamped_constant():
-    assert NORMALIZATION_VERSION == "norm-1.0.0"
+    assert NORMALIZATION_VERSION == "norm-1.1.0"

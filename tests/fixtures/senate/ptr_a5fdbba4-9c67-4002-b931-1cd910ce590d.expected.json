@@ -1,0 +1,105 @@
+{
+  "filing": {
+    "uuid": "a5fdbba4-9c67-4002-b931-1cd910ce590d",
+    "parse_status": "parsed",
+    "declared_total": 3,
+    "title": "Periodic Transaction Report for 07/09/2026",
+    "filer_display": "The Honorable John Fetterman (Fetterman, John)",
+    "filed_date": "2026-07-09"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        06/24/2026\n                                    ",
+        "owner": "Child",
+        "ticker": "\n                                        \n                                            --\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            Cheniere Energy Partners L P Note\n                                        \n                                        \n                                        \n                                            Rate/Coupon: 4.5% Matures: 2029-10-01\n                                        \n                                    ",
+        "side": "Sale (Full)",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "Cheniere Energy Partners L P Note",
+      "asset_type_cell": "Corporate Bond",
+      "row_ordinal": 1,
+      "source_row_no": 3,
+      "owner": "child",
+      "ticker": null,
+      "asset_name": "Cheniere Energy Partners L P Note",
+      "asset_type": "Corporate Bond",
+      "side": "sale",
+      "transaction_date": "2026-06-24",
+      "days_to_file": 15,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        06/16/2026\n                                    ",
+        "owner": "Child",
+        "ticker": "\n                                        \n                                            --\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            NISOURCE INC NOTE\n                                        \n                                        \n                                        \n                                            Rate/Coupon: 6.95% Matures: 2054-11-30\n                                        \n                                    ",
+        "side": "Purchase",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "NISOURCE INC NOTE",
+      "asset_type_cell": "Corporate Bond",
+      "row_ordinal": 2,
+      "source_row_no": 2,
+      "owner": "child",
+      "ticker": null,
+      "asset_name": "NISOURCE INC NOTE",
+      "asset_type": "Corporate Bond",
+      "side": "purchase",
+      "transaction_date": "2026-06-16",
+      "days_to_file": 23,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": [
+        "missing_ticker"
+      ]
+    },
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        06/16/2026\n                                    ",
+        "owner": "Child",
+        "ticker": "\n                                        \n                                            --\n                                        \n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            EVERSOURCE ENERGY SER A NOTE\n                                        \n                                        \n                                        \n                                            Rate/Coupon: 6.1% Matures: 2056-08-15\n                                        \n                                    ",
+        "side": "Purchase",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "EVERSOURCE ENERGY SER A NOTE",
+      "asset_type_cell": "Corporate Bond",
+      "row_ordinal": 3,
+      "source_row_no": 1,
+      "owner": "child",
+      "ticker": null,
+      "asset_name": "EVERSOURCE ENERGY SER A NOTE",
+      "asset_type": "Corporate Bond",
+      "side": "purchase",
+      "transaction_date": "2026-06-16",
+      "days_to_file": 23,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": [
+        "missing_ticker"
+      ]
+    }
+  ]
+}

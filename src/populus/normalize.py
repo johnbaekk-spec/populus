@@ -1,15 +1,19 @@
-"""Chamber-neutral normalization maps and the locked flag taxonomy (RUN 2).
+"""Chamber-neutral normalization maps and the locked flag taxonomy (RUN 2+3).
 
 Pure functions from raw extracted cell text to normalized column values
 (ARCHITECTURE.md §9 + Appendix C). The raw text always survives in
 ``raw_row``; normalization never mutates it (G5 — ranges stay labeled).
+The maps serve both chambers: House PTR PDFs print coded tokens
+(``P``/``SP``/``[ST]``); Senate eFD pages print spelled-out labels
+(``Purchase``/``Spouse``/an Asset Type column) — both feed the same
+canonical vocabulary.
 
-Flag taxonomy (single source of truth): every flag any RUN-2 code path can
-emit is a member of exactly one of two disjoint frozensets. A *parse defect*
-means extraction/normalization could not fully interpret the source; a
-*source fact* is a faithfully parsed property of the filing itself. Both the
-filing-status decision (``parsed`` vs ``partial``) and the clean-row metric
-read :func:`has_parse_defect` — never a second list.
+Flag taxonomy (single source of truth): every flag any RUN-2/RUN-3 code
+path can emit is a member of exactly one of two disjoint frozensets. A
+*parse defect* means extraction/normalization could not fully interpret the
+source; a *source fact* is a faithfully parsed property of the filing
+itself. Both the filing-status decision (``parsed`` vs ``partial``) and the
+clean-row metric read :func:`has_parse_defect` — never a second list.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from datetime import date
 
 from populus.load import ParsedRow
 
-NORMALIZATION_VERSION = "norm-1.0.0"
+NORMALIZATION_VERSION = "norm-1.1.0"
 
 PARSE_DEFECT_FLAGS = frozenset(
     {
@@ -33,9 +37,21 @@ PARSE_DEFECT_FLAGS = frozenset(
         "row_incomplete",
         "row_orphan",
         "text_fallback",
+        # A printed Senate '#' cell that is not a positive integer: the row's
+        # dup_seq coordinate falls back to presentation order VISIBLY (LD15).
+        "source_row_no_unparsed",
     }
 )
-SOURCE_FACT_FLAGS = frozenset({"missing_ticker", "amount_spouse_cap", "date_anomaly"})
+SOURCE_FACT_FLAGS = frozenset(
+    {
+        "missing_ticker",
+        "amount_spouse_cap",
+        "date_anomaly",
+        # Every transaction row of a Senate amendment filing carries this
+        # until OQ-13 settles amendment semantics (§9.5 conservative default).
+        "amendment_unresolved",
+    }
+)
 KNOWN_FLAGS = PARSE_DEFECT_FLAGS | SOURCE_FACT_FLAGS
 
 
@@ -47,12 +63,28 @@ def has_parse_defect(flags: Iterable[str]) -> bool:
 # --- side / owner ------------------------------------------------------------
 
 _SIDE_MAP = {
+    # House codes.
     "p": "purchase",
     "s": "sale",
     "s(partial)": "sale_partial",
     "e": "exchange",
+    # Senate printed labels (whitespace removed by the key derivation).
+    "purchase": "purchase",
+    "sale(full)": "sale",
+    "sale(partial)": "sale_partial",
+    "exchange": "exchange",
 }
-_OWNER_MAP = {"sp": "spouse", "dc": "child", "jt": "joint", "self": "self"}
+_OWNER_MAP = {
+    # House codes.
+    "sp": "spouse",
+    "dc": "child",
+    "jt": "joint",
+    "self": "self",
+    # Senate printed labels.
+    "spouse": "spouse",
+    "child": "child",
+    "joint": "joint",
+}
 
 
 def normalize_side(raw: str | None) -> tuple[str, frozenset[str]]:
@@ -184,6 +216,25 @@ def normalize_dates(
     return transacted.isoformat(), days_to_file, int(days_to_file > 45), flags
 
 
+# --- comment -----------------------------------------------------------------
+
+
+def normalize_comment(raw: str | None) -> str | None:
+    """Whitespace-collapsed free text; ``--``/blank/absent → NULL, unflagged.
+
+    The Senate comment column prints the literal ``--`` for "no comment"
+    (like its ticker column); House comments are already collapsed at
+    segmentation, so collapsing here is behavior-preserving for RUN 2
+    (proven by the untouched House goldens).
+    """
+    if raw is None:
+        return None
+    collapsed = " ".join(raw.split())
+    if not collapsed or collapsed == "--":
+        return None
+    return collapsed
+
+
 # --- cap gains ---------------------------------------------------------------
 
 # The House PDF checkbox extracts as a Wingdings glyph run: "gfedcb" when
@@ -224,16 +275,34 @@ def normalize_row(
     row_ordinal: int,
     source_row_no: int | None,
     structural_flags: Iterable[str] = (),
+    asset_display_cell: str | None = None,
+    asset_type_cell: str | None = None,
 ) -> ParsedRow:
     """Compose the field normalizers into a loadable :class:`ParsedRow`.
 
-    *structural_flags* (``row_incomplete``/``row_orphan``/``text_fallback``)
-    come from segmentation and are unioned with the map flags; every emitted
+    *structural_flags* (``row_incomplete``/``row_orphan``/``text_fallback``/
+    ``source_row_no_unparsed``/``amendment_unresolved``) come from the
+    parser/orchestrator and are unioned with the map flags; every emitted
     flag is a :data:`KNOWN_FLAGS` member.
+
+    Senate seams (LD2 — ``raw_row`` keeps the closed seven-key shape):
+    *asset_display_cell* is the clean asset text (bond annotation excluded,
+    whitespace collapsed) and, when supplied, is the source of the
+    normalized ``asset_name`` while ``raw_row.asset_name`` stays lossless;
+    *asset_type_cell* is the printed Asset Type column and, when non-blank,
+    supplies ``asset_type`` directly. The defaults preserve the House
+    behavior exactly (asset name and ``[XX]`` type tag from the raw cell).
     """
     owner, owner_flags = normalize_owner(raw_row.get("owner"))
     ticker, ticker_flags = normalize_ticker(raw_row.get("ticker"))
-    asset_name, asset_type, asset_flags = normalize_asset(raw_row.get("asset_name"))
+    asset_source = (
+        asset_display_cell
+        if asset_display_cell is not None
+        else raw_row.get("asset_name")
+    )
+    asset_name, asset_type, asset_flags = normalize_asset(asset_source)
+    if asset_type_cell is not None and asset_type_cell.strip():
+        asset_type = " ".join(asset_type_cell.split())
     side, side_flags = normalize_side(raw_row.get("side"))
     transaction_date, days_to_file, is_late, date_flags = normalize_dates(
         raw_row.get("transaction_date"), filed_date
@@ -269,6 +338,6 @@ def normalize_row(
         amount_high=amount_high,
         amount_label=amount_label,
         cap_gains_over_200=cap_gains,
-        comment=raw_row.get("comment"),
+        comment=normalize_comment(raw_row.get("comment")),
         flags=flags,
     )

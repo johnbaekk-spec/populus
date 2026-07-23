@@ -197,14 +197,14 @@ NETWORK_PRIMITIVES = re.compile(
     r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
-# RUN 2: the sanctioned HTTP client, permitted in exactly one module — the
-# House ingest orchestrator. Every other network primitive stays banned
-# everywhere, including there.
+# RUN 2+3: the sanctioned HTTP client, permitted in exactly two modules —
+# the House and Senate ingest orchestrators. Every other network primitive
+# stays banned everywhere, including there.
 NETWORK_PRIMITIVES_SANS_HTTPX = re.compile(
     r"\b(requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
-HTTPX_ALLOWED = {"ingest/house.py"}
+HTTPX_ALLOWED = {"ingest/house.py", "ingest/senate.py"}
 
 
 def test_owned_source_has_no_network_primitives():
