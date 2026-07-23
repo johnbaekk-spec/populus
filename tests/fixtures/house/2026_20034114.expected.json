@@ -1,0 +1,70 @@
+{
+  "filing": {
+    "doc_id": "20034114",
+    "classification": "efile",
+    "parse_status": "parsed",
+    "parse_path": "positioned",
+    "header": {
+      "name": "Hon. Neal Patrick MD, Facs Dunn",
+      "status": "Member",
+      "state_district": "FL02"
+    },
+    "filed_date": "2026-03-17"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "Cadence Bank 5.50% Series A (CADE$A) [ST]",
+        "ticker": "CADE$A",
+        "side": "E",
+        "transaction_date": "02/02/2026",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Received Huntington Banc Shares Series-L in exchange for asset listed above due to corporate action."
+      },
+      "row_ordinal": 1,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": "CADE$A",
+      "asset_name": "Cadence Bank 5.50% Series A (CADE$A) [ST]",
+      "asset_type": "ST",
+      "side": "exchange",
+      "transaction_date": "2026-02-02",
+      "days_to_file": 43,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "Received Huntington Banc Shares Series-L in exchange for asset listed above due to corporate action.",
+      "flags": []
+    },
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "Huntington Bancshares Incorporated - Depositary Shares L Preferred Stock (HBANZ) [OT]",
+        "ticker": "HBANZ",
+        "side": "E",
+        "transaction_date": "02/02/2026",
+        "amount_label": "$1,001 - $15,000",
+        "comment": "Received asset listed above in exchange for Cadence Bank Preferred Shares due to corporate action."
+      },
+      "row_ordinal": 2,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": "HBANZ",
+      "asset_name": "Huntington Bancshares Incorporated - Depositary Shares L Preferred Stock (HBANZ) [OT]",
+      "asset_type": "OT",
+      "side": "exchange",
+      "transaction_date": "2026-02-02",
+      "days_to_file": 43,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": "Received asset listed above in exchange for Cadence Bank Preferred Shares due to corporate action.",
+      "flags": []
+    }
+  ]
+}

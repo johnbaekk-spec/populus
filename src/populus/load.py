@@ -158,57 +158,189 @@ def load_filing(
             "DELETE FROM transactions WHERE filing_id = ?", (filing_id,)
         ).rowcount
 
-        identities = assign_identity(filing_id, rows)
-        conn.executemany(
-            """
-            INSERT INTO transactions (
-              txn_id, filing_id, raw_row, row_fingerprint, dup_seq,
-              row_ordinal, source_row_no, bioguide_id, chamber, owner,
-              ticker, asset_name, asset_type, side, transaction_date,
-              filed_date, days_to_file, is_late, amount_low, amount_high,
-              amount_label, cap_gains_over_200, comment, flags, source,
-              license_id, kadoa_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    identity.txn_id,
-                    filing_id,
-                    canonical_json(row.raw_row).decode("utf-8"),
-                    identity.row_fingerprint,
-                    identity.dup_seq,
-                    row.row_ordinal,
-                    row.source_row_no,
-                    bioguide_id,
-                    chamber,
-                    row.owner,
-                    row.ticker,
-                    row.asset_name,
-                    row.asset_type,
-                    row.side,
-                    row.transaction_date,
-                    filed_date,
-                    row.days_to_file,
-                    row.is_late,
-                    row.amount_low,
-                    row.amount_high,
-                    row.amount_label,
-                    row.cap_gains_over_200,
-                    row.comment,
-                    json.dumps(row.flags, ensure_ascii=False),
-                    source,
-                    license_id,
-                    row.kadoa_id,
-                )
-                for row, identity in zip(rows, identities, strict=True)
-            ],
+        identities = _insert_transaction_rows(
+            conn,
+            filing_id,
+            rows,
+            bioguide_id=bioguide_id,
+            chamber=chamber,
+            filed_date=filed_date,
+            source=source,
+            license_id=license_id,
         )
 
         conn.execute(
             "UPDATE filings SET parse_status = ?, parser_version = ?,"
             " normalization_version = ?, row_count = ? WHERE filing_id = ?",
             (parse_status, parser_version, normalization_version, len(rows), filing_id),
+        )
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+    return LoadResult(
+        filing_id=filing_id,
+        row_count=len(rows),
+        txn_ids=tuple(identity.txn_id for identity in identities),
+        deleted=deleted,
+    )
+
+
+def _insert_transaction_rows(
+    conn: sqlite3.Connection,
+    filing_id: str,
+    rows: Sequence[ParsedRow],
+    *,
+    bioguide_id: str | None,
+    chamber: str,
+    filed_date: str,
+    source: str,
+    license_id: str,
+) -> list[RowIdentity]:
+    """Insert *rows* for *filing_id*, stamping the denormalized filing values.
+
+    Runs inside the caller's open transaction; shared by :func:`load_filing`
+    and :func:`upsert_filing` so the row-insert semantics cannot fork.
+    """
+    identities = assign_identity(filing_id, rows)
+    conn.executemany(
+        """
+        INSERT INTO transactions (
+          txn_id, filing_id, raw_row, row_fingerprint, dup_seq,
+          row_ordinal, source_row_no, bioguide_id, chamber, owner,
+          ticker, asset_name, asset_type, side, transaction_date,
+          filed_date, days_to_file, is_late, amount_low, amount_high,
+          amount_label, cap_gains_over_200, comment, flags, source,
+          license_id, kadoa_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                identity.txn_id,
+                filing_id,
+                canonical_json(row.raw_row).decode("utf-8"),
+                identity.row_fingerprint,
+                identity.dup_seq,
+                row.row_ordinal,
+                row.source_row_no,
+                bioguide_id,
+                chamber,
+                row.owner,
+                row.ticker,
+                row.asset_name,
+                row.asset_type,
+                row.side,
+                row.transaction_date,
+                filed_date,
+                row.days_to_file,
+                row.is_late,
+                row.amount_low,
+                row.amount_high,
+                row.amount_label,
+                row.cap_gains_over_200,
+                row.comment,
+                json.dumps(row.flags, ensure_ascii=False),
+                source,
+                license_id,
+                row.kadoa_id,
+            )
+            for row, identity in zip(rows, identities, strict=True)
+        ],
+    )
+    return identities
+
+
+def upsert_filing(
+    conn: sqlite3.Connection,
+    *,
+    filing_id: str,
+    chamber: str,
+    filer_name_raw: str,
+    filing_kind: str,
+    filed_date: str,
+    doc_url: str,
+    source: str,
+    ingested_at: str,
+    rows: Sequence[ParsedRow],
+    parse_status: str,
+    parser_version: str,
+    normalization_version: str,
+    license_id: str = "us-congress-disclosures",
+    bioguide_id: str | None = None,
+    raw_path: str | None = None,
+    response_hash: str | None = None,
+    lifecycle: str = "active",
+) -> LoadResult:
+    """Insert-or-replace a filing and its transaction set in ONE transaction.
+
+    The crash-consistency seam (R16): a new filing's row and its parsed set
+    commit together, so no interruption can strand a committed filing with
+    zero transactions that later DocID diffing would skip. Re-running is
+    idempotent (the ``ON CONFLICT`` update plus the DELETE-then-insert row
+    replace). Empty *rows* is valid (``needs_ocr``/``failed`` filings).
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        deleted = conn.execute(
+            "DELETE FROM transactions WHERE filing_id = ?", (filing_id,)
+        ).rowcount
+        conn.execute(
+            """
+            INSERT INTO filings (
+              filing_id, chamber, bioguide_id, filer_name_raw, filing_kind,
+              filed_date, doc_url, raw_path, response_hash, parse_status,
+              lifecycle, parser_version, normalization_version, row_count,
+              source, license_id, ingested_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (filing_id) DO UPDATE SET
+              chamber = excluded.chamber,
+              bioguide_id = excluded.bioguide_id,
+              filer_name_raw = excluded.filer_name_raw,
+              filing_kind = excluded.filing_kind,
+              filed_date = excluded.filed_date,
+              doc_url = excluded.doc_url,
+              raw_path = excluded.raw_path,
+              response_hash = excluded.response_hash,
+              parse_status = excluded.parse_status,
+              lifecycle = excluded.lifecycle,
+              parser_version = excluded.parser_version,
+              normalization_version = excluded.normalization_version,
+              row_count = excluded.row_count,
+              source = excluded.source,
+              license_id = excluded.license_id,
+              ingested_at = excluded.ingested_at
+            """,
+            (
+                filing_id,
+                chamber,
+                bioguide_id,
+                filer_name_raw,
+                filing_kind,
+                filed_date,
+                doc_url,
+                raw_path,
+                response_hash,
+                parse_status,
+                lifecycle,
+                parser_version,
+                normalization_version,
+                len(rows),
+                source,
+                license_id,
+                ingested_at,
+            ),
+        )
+        identities = _insert_transaction_rows(
+            conn,
+            filing_id,
+            rows,
+            bioguide_id=bioguide_id,
+            chamber=chamber,
+            filed_date=filed_date,
+            source=source,
+            license_id=license_id,
         )
         conn.execute("COMMIT")
     except BaseException:

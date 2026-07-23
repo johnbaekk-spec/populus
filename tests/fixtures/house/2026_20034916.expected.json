@@ -1,0 +1,43 @@
+{
+  "filing": {
+    "doc_id": "20034916",
+    "classification": "efile",
+    "parse_status": "parsed",
+    "parse_path": "positioned",
+    "header": {
+      "name": "Hon. Robert J. Wittman",
+      "status": "Member",
+      "state_district": "VA01"
+    },
+    "filed_date": "2026-07-10"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "owner": null,
+        "asset_name": "Crown Castle Inc. Common Stock (CCI) [ST]",
+        "ticker": "CCI",
+        "side": "S",
+        "transaction_date": "06/30/2026",
+        "amount_label": "$1,001 - $15,000",
+        "comment": null
+      },
+      "row_ordinal": 1,
+      "source_row_no": null,
+      "owner": null,
+      "ticker": "CCI",
+      "asset_name": "Crown Castle Inc. Common Stock (CCI) [ST]",
+      "asset_type": "ST",
+      "side": "sale",
+      "transaction_date": "2026-06-30",
+      "days_to_file": 10,
+      "is_late": 0,
+      "amount_low": 1001,
+      "amount_high": 15000,
+      "amount_label": "$1,001 - $15,000",
+      "cap_gains_over_200": 0,
+      "comment": null,
+      "flags": []
+    }
+  ]
+}

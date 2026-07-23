@@ -10,7 +10,13 @@ from types import MappingProxyType
 import pytest
 
 from populus.canonical import canonical_json
-from populus.load import ParsedRow, LoadResult, UnknownFilingError, load_filing
+from populus.load import (
+    ParsedRow,
+    LoadResult,
+    UnknownFilingError,
+    load_filing,
+    upsert_filing,
+)
 
 VERSIONS = dict(parse_status="parsed", parser_version="v1", normalization_version="n1")
 
@@ -328,3 +334,114 @@ def test_unknown_filing_raises_and_writes_nothing(initialized_db, make_row):
     # No transaction was left open on the connection.
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("ROLLBACK")
+
+
+# --- upsert_filing: the atomic new-filing seam (R16/LD17) --------------------
+
+UPSERT_KWARGS = dict(
+    filing_id="house:20034916",
+    chamber="house",
+    filer_name_raw="Wittman, Robert J.",
+    filing_kind="ptr",
+    filed_date="2026-07-10",
+    doc_url="https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034916.pdf",
+    source="house-clerk",
+    ingested_at="2026-07-22T00:00:00Z",
+    parse_status="parsed",
+    parser_version="house-ptr-1.0.0",
+    normalization_version="norm-1.0.0",
+    raw_path="pdfs/2026/20034916.pdf",
+    response_hash="ab" * 32,
+)
+
+
+def test_upsert_first_insert_commits_filing_and_rows_together(
+    initialized_db, make_row
+):
+    conn = initialized_db
+    result = upsert_filing(
+        conn,
+        rows=[make_row(asset_name="Apple Inc", row_ordinal=1),
+              make_row(asset_name="Microsoft Corp", row_ordinal=2)],
+        **UPSERT_KWARGS,
+    )
+    assert result.row_count == 2
+    assert result.deleted == 0
+    filing = conn.execute(
+        "SELECT parse_status, parser_version, normalization_version, row_count,"
+        " raw_path, response_hash, filer_name_raw FROM filings"
+        " WHERE filing_id = 'house:20034916'"
+    ).fetchone()
+    assert filing == (
+        "parsed", "house-ptr-1.0.0", "norm-1.0.0", 2,
+        "pdfs/2026/20034916.pdf", "ab" * 32, "Wittman, Robert J.",
+    )
+    assert conn.execute("SELECT count(*) FROM transactions").fetchone()[0] == 2
+
+
+def test_upsert_retry_replaces_and_preserves_identity(initialized_db, make_row):
+    conn = initialized_db
+    rows = [make_row(asset_name="Apple Inc", row_ordinal=1)]
+    first = upsert_filing(conn, rows=rows, **UPSERT_KWARGS)
+    second = upsert_filing(
+        conn,
+        rows=rows,
+        **{**UPSERT_KWARGS, "parse_status": "parsed", "ingested_at": "2026-07-23T00:00:00Z"},
+    )
+    assert second.txn_ids == first.txn_ids
+    assert second.deleted == 1
+    assert conn.execute("SELECT count(*) FROM transactions").fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT ingested_at FROM filings WHERE filing_id = 'house:20034916'"
+    ).fetchone() == ("2026-07-23T00:00:00Z",)
+
+
+def test_upsert_zero_rows_is_valid(initialized_db):
+    conn = initialized_db
+    result = upsert_filing(
+        conn, rows=[], **{**UPSERT_KWARGS, "parse_status": "needs_ocr"}
+    )
+    assert result.row_count == 0
+    assert conn.execute(
+        "SELECT parse_status, row_count FROM filings WHERE filing_id = 'house:20034916'"
+    ).fetchone() == ("needs_ocr", 0)
+
+
+def test_upsert_midload_failure_leaves_no_stranded_filing(initialized_db, make_row):
+    # F5: a failure between the filing insert and the row inserts must roll
+    # the WHOLE upsert back — a crash-stranded filing row with zero
+    # transactions would be skipped by later DocID diffing forever.
+    conn = initialized_db
+    with pytest.raises(sqlite3.IntegrityError):
+        upsert_filing(
+            conn,
+            rows=[make_row(asset_name="Apple Inc", row_ordinal=1),
+                  make_row(asset_name="Broken Corp", row_ordinal=2, side="bogus")],
+            **UPSERT_KWARGS,
+        )
+    assert conn.execute("SELECT count(*) FROM filings").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM transactions").fetchone()[0] == 0
+    # The connection is usable and not mid-transaction.
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("ROLLBACK")
+
+
+def test_upsert_failed_retry_preserves_prior_state(initialized_db, make_row):
+    conn = initialized_db
+    upsert_filing(conn, rows=[make_row(asset_name="Apple Inc")], **UPSERT_KWARGS)
+    before = conn.execute(
+        "SELECT txn_id, raw_row FROM transactions ORDER BY txn_id"
+    ).fetchall()
+    with pytest.raises(sqlite3.IntegrityError):
+        upsert_filing(
+            conn,
+            rows=[make_row(asset_name="Broken Corp", side="bogus")],
+            **{**UPSERT_KWARGS, "parse_status": "partial"},
+        )
+    after = conn.execute(
+        "SELECT txn_id, raw_row FROM transactions ORDER BY txn_id"
+    ).fetchall()
+    assert after == before
+    assert conn.execute(
+        "SELECT parse_status FROM filings WHERE filing_id = 'house:20034916'"
+    ).fetchone() == ("parsed",)
