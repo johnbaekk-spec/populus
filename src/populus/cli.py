@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import platform
 import random
+import re
 import sqlite3
 import time
 import uuid
@@ -286,6 +287,129 @@ def ingest(
             f" | aliases: {run_report.aliases}"
         )
         click.echo(members.format_join_summary(run_report.join))
+
+
+@main.group("identity")
+def identity_group() -> None:
+    """§5.4 identity registries: entities, securities, dated identifiers."""
+
+
+@identity_group.command("bootstrap")
+@click.option(
+    "--from-cache",
+    "from_cache",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="DIR containing company_tickers.json (data-cache/inst/registry).",
+)
+@click.option(
+    "--ftd",
+    "ftd_paths",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="SEC fails-to-deliver archive (.txt or .zip); repeatable.",
+)
+@click.option(
+    "--securities",
+    "securities_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Identity-authority YAML overriding the packaged securities.yaml.",
+)
+@click.option("--db", "db_path", required=True, help="Populus database.")
+@click.option(
+    "--as-of",
+    "as_of",
+    help=(
+        "Snapshot date the ticker intervals open at (default: today, UTC)."
+        " Ticker mappings resolve only from this date onward (G14 — no"
+        " identity time travel), so a --ftd archive whose settlement dates"
+        " PRECEDE it will link no symbols at all. Pass a date at or before"
+        " the archive's earliest settlement date to link it."
+    ),
+)
+@click.pass_context
+def identity_bootstrap(
+    ctx: click.Context,
+    from_cache: str,
+    ftd_paths: tuple[str, ...],
+    securities_path: str | None,
+    db_path: str,
+    as_of: str | None,
+) -> None:
+    """Seed the identity registries from cached SEC sources (no network)."""
+    from populus.identity.bootstrap import (
+        FtdFormatError,
+        format_bootstrap_summary,
+        run_identity_bootstrap,
+    )
+    from populus.identity.registry import (
+        IdentityRegistryError,
+        ensure_registry,
+        load_identity_registry,
+    )
+
+    tickers_path = Path(from_cache) / "company_tickers.json"
+    if not tickers_path.exists():
+        raise click.UsageError(f"{tickers_path} does not exist")
+    if as_of is not None:
+        # Require canonical YYYY-MM-DD: date.fromisoformat also accepts compact
+        # (20200101) and week-date forms, which would persist noncanonical into
+        # lexicographically-compared date columns and mis-order intervals (QA-F4).
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of):
+            raise click.UsageError(
+                f"--as-of {as_of!r} must be a canonical ISO date (YYYY-MM-DD)"
+            )
+        try:
+            date.fromisoformat(as_of)
+        except ValueError:
+            raise click.UsageError(f"--as-of {as_of!r} is not a valid date")
+    # Default to TODAY IN UTC (not the process-local calendar day): around UTC
+    # midnight a local date would open ticker/name intervals on the wrong day and
+    # leave otherwise-applicable FTD symbol links unresolved (G14). (QA-F4)
+    snapshot_date = (
+        as_of
+        if as_of is not None
+        else datetime.now(timezone.utc).date().isoformat()
+    )
+    try:
+        registry = load_identity_registry(securities_path)
+    except (IdentityRegistryError, OSError) as exc:
+        raise click.ClickException(str(exc))
+
+    if not Path(db_path).exists():
+        try:
+            init_db(db_path)
+        except (sqlite3.Error, OSError) as exc:
+            raise click.ClickException(str(exc))
+    try:
+        conn = connect(db_path)
+    except sqlite3.Error as exc:
+        raise click.ClickException(str(exc))
+    try:
+        ensure_registry(conn)
+        report = run_identity_bootstrap(
+            conn,
+            tickers_path=tickers_path,
+            ftd_paths=[Path(path) for path in ftd_paths],
+            registry=registry,
+            snapshot_date=snapshot_date,
+            run_id=f"identity-{uuid.uuid4()}",
+            now=_utc_now,
+            host=platform.node(),
+        )
+    except (
+        FtdFormatError,
+        IdentityRegistryError,
+        sqlite3.Error,
+        OSError,
+        ValueError,
+    ) as exc:
+        raise click.ClickException(str(exc))
+    finally:
+        conn.close()
+    # run_identity_bootstrap raises on every failure (caught above as a non-zero
+    # ClickException), so a returned report is always ok — just print it. (QA nit)
+    click.echo(format_bootstrap_summary(report))
 
 
 @main.command()

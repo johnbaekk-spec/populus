@@ -1,0 +1,24 @@
+# Revision 3 of securities-class.yaml: the incumbent hands 333333333 to a new
+# class at 2020-01-01 while KEEPING its own security_id, its two other
+# identifiers, its class and its review_state. Complementary ownership windows
+# are how a split is expressed — there is no separate splits section.
+classes:
+  - security_id: "sec:test-issuer-common"
+    class: equity
+    identifiers:
+      - {id_type: cusip, value: "111111111"}
+      - {id_type: cusip, value: "222222222"}
+      - {id_type: cusip, value: "333333333", to: "2020-01-01"}
+    note: >-
+      Test fixture: 333333333 was reassigned effective 2020-01-01; the
+      incumbent keeps everything else.
+    review_state: reviewed
+  - security_id: "sec:test-successor"
+    class: equity
+    identifiers:
+      - {id_type: cusip, value: "333333333", from: "2020-01-01"}
+    note: >-
+      Test fixture: the successor that received 333333333 at the 2020-01-01
+      boundary.
+    review_state: reviewed
+continuities: []

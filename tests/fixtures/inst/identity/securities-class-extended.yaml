@@ -1,0 +1,15 @@
+# Revision 2 of securities-class.yaml: the SAME class gains a fourth identifier.
+# Its security_id must be byte-identical to revision 1 (durable declared id).
+classes:
+  - security_id: "sec:test-issuer-common"
+    class: equity
+    identifiers:
+      - {id_type: cusip, value: "111111111"}
+      - {id_type: cusip, value: "222222222"}
+      - {id_type: cusip, value: "333333333"}
+      - {id_type: cusip, value: "555555555"}
+    note: >-
+      Test fixture: a reviewed revision adding one more identifier value to an
+      existing class. Adding a binding never rekeys the class.
+    review_state: reviewed
+continuities: []

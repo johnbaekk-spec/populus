@@ -197,15 +197,23 @@ NETWORK_PRIMITIVES = re.compile(
     r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
-# The sanctioned HTTP client, permitted in exactly three modules — the House
-# and Senate ingest orchestrators (RUNs 2–3) and the authenticated
-# GitHubRepoFetcher (RUN 5, R27; hermetic in tests via MockTransport). Every
-# other network primitive stays banned everywhere, including there.
+# The sanctioned HTTP client, permitted in exactly four modules — the House
+# and Senate ingest orchestrators (RUNs 2–3), the authenticated
+# GitHubRepoFetcher (RUN 5, R27; hermetic in tests via MockTransport) and the
+# §11.4 SEC federated client (RUN M2-1; hermetic in tests via an injected
+# transport). Every other network primitive stays banned everywhere, including
+# there — notably `urllib`, which is why the SEC client's host guard is plain
+# string work.
 NETWORK_PRIMITIVES_SANS_HTTPX = re.compile(
     r"\b(requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
-HTTPX_ALLOWED = {"ingest/house.py", "ingest/senate.py", "client/snapshot.py"}
+HTTPX_ALLOWED = {
+    "ingest/house.py",
+    "ingest/senate.py",
+    "client/snapshot.py",
+    "net/sec_client.py",
+}
 # RUN 5: publish/build.py invokes the gh CLI (argv-list subprocess, never a
 # shell) as the GhReleaseBackend command transport — injectable in tests, so
 # no real network runs under the suite. subprocess stays banned elsewhere.

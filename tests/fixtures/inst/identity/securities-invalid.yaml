@@ -1,0 +1,12 @@
+# Invalid on purpose: 999999999 has NO owner from 2020-01-01 onward, so the
+# ownership windows do not cover all time and target_for could not be total.
+# The loader must reject this by naming the value and the uncovered range.
+classes:
+  - security_id: "sec:test-gap-owner"
+    class: equity
+    identifiers:
+      - {id_type: cusip, value: "999999999", to: "2020-01-01"}
+    note: >-
+      Test fixture: a deliberately non-covering ownership window.
+    review_state: reviewed
+continuities: []

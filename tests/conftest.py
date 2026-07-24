@@ -191,6 +191,123 @@ def make_alias():
     return _make_alias
 
 
+# --- §5.4 identity registries (RUN M2-1) --------------------------------------
+
+
+@pytest.fixture
+def make_entity():
+    """Insert an ``entities`` row plus one dated ``entity_names`` interval."""
+
+    def _make_entity(
+        conn,
+        cik="0000000001",
+        *,
+        name="Alfa Corp",
+        valid_from="2020-01-01",
+        valid_to=None,
+        source="company_tickers",
+        license_id="sec-edgar",
+    ):
+        from populus.identity.registry import entity_id_for
+
+        entity_id = entity_id_for(cik)
+        conn.execute(
+            "INSERT INTO entities (entity_id, cik, raw) VALUES (?, ?, NULL)"
+            " ON CONFLICT (entity_id) DO NOTHING",
+            (entity_id, cik.zfill(10)),
+        )
+        if name is not None:
+            conn.execute(
+                "INSERT INTO entity_names (entity_id, name, valid_from, valid_to,"
+                " source, license_id, raw) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                (entity_id, name, valid_from, valid_to, source, license_id),
+            )
+        return entity_id
+
+    return _make_entity
+
+
+@pytest.fixture
+def make_entity_ticker():
+    """Insert one dated ``entity_tickers`` interval."""
+
+    def _make_entity_ticker(
+        conn,
+        *,
+        entity_id,
+        ticker,
+        valid_from="2020-01-01",
+        valid_to=None,
+        provenance="company_tickers",
+        confidence="high",
+        review_state="auto",
+        license_id="sec-edgar",
+    ):
+        conn.execute(
+            "INSERT INTO entity_tickers (entity_id, ticker, valid_from, valid_to,"
+            " provenance, confidence, review_state, license_id, raw)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            (
+                entity_id,
+                ticker,
+                valid_from,
+                valid_to,
+                provenance,
+                confidence,
+                review_state,
+                license_id,
+            ),
+        )
+        return ticker
+
+    return _make_entity_ticker
+
+
+@pytest.fixture
+def make_security_identifier():
+    """Insert a ``securities`` row (when absent) plus one dated CUSIP binding."""
+
+    def _make_security_identifier(
+        conn,
+        *,
+        security_id="sec:prov:00000000000000000000000000000000",
+        value="111111111",
+        id_type="cusip",
+        valid_from="2020-01-01",
+        valid_to=None,
+        id_state="provisional",
+        security_class=None,
+        provenance="sec-ftd",
+        confidence="high",
+        review_state="auto",
+        license_id="sec-ftd",
+    ):
+        conn.execute(
+            "INSERT INTO securities (security_id, id_state, class, review_state)"
+            " VALUES (?, ?, ?, 'auto') ON CONFLICT (security_id) DO NOTHING",
+            (security_id, id_state, security_class),
+        )
+        conn.execute(
+            "INSERT INTO security_identifiers (security_id, id_type, value,"
+            " valid_from, valid_to, provenance, confidence, review_state,"
+            " license_id, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            (
+                security_id,
+                id_type,
+                value,
+                valid_from,
+                valid_to,
+                provenance,
+                confidence,
+                review_state,
+                license_id,
+            ),
+        )
+        return security_id
+
+    return _make_security_identifier
+
+
 @pytest.fixture
 def make_amendment_pair(make_filing, make_row):
     """An original + amendment filing pair with loaded rows (RUN 4).

@@ -1,0 +1,53 @@
+# Security identity authority (ARCHITECTURE.md §5.4 — RUN M2-1).
+#
+# The stable class-ID authority. Every DURABLE `security_id` is a literal
+# written here by reviewed commit and never changes afterwards — adding an
+# identifier to a class, bounding one, or handing one to another class at a
+# boundary all leave the class's own id, its other identifiers, and its
+# metadata untouched. Observations (fails-to-deliver rows, 13F info tables)
+# NEVER assign or change an id; they only add dated bindings and may raise a
+# review flag. An identifier named by no class here gets a deterministic
+# `sec:prov:<hex>` PROVISIONAL id, which carries no durability claim and is
+# superseded once, through a recorded promotion, when a class claims it.
+#
+# ── classes ──────────────────────────────────────────────────────────────
+#   - security_id:  stable literal, ^sec:[a-z0-9][a-z0-9._-]{0,62}$; assigned
+#                   once, NEVER changed. The reserved `sec:prov:` prefix is
+#                   rejected here — it belongs to derived provisional ids.
+#     class:        instrument class ('equity', 'adr', …); omit when unknown
+#     identifiers:  one or more {id_type, value} entries, each with an OPTIONAL
+#                   half-open ownership window `from` / `to`:
+#                       from omitted = owned from the beginning of time
+#                       to   omitted = owned to the end of time
+#                   GUIDANCE: leave a window UNBOUNDED unless you are declaring
+#                   a boundary between two owners. For every (id_type, value)
+#                   named anywhere in this file, the windows across ALL classes
+#                   must be pairwise disjoint, contiguous, and cover all time —
+#                   the loader enforces it and names the offending value.
+#     note:         REQUIRED — the corporate action / reassignment and its
+#                   primary-source citation (entries without a note are rejected)
+#     review_state: auto | reviewed | disputed; stamped onto the class's rows
+#
+# A SPLIT is two classes owning one value over complementary windows, so the
+# incumbent keeps its id and its other bindings. A MERGE (a CUSIP change) is
+# one class owning two values. There is no separate splits section.
+#
+# ── continuities ─────────────────────────────────────────────────────────
+# An identifier whose observed dates contain a gap of at least
+# REUSE_REVIEW_HORIZON_DAYS (3650) with no declared ownership boundary inside
+# it is flagged `disputed`, and EVERY mapping for it then resolves to None
+# until a reviewed declaration exists (fail-closed — distinct instruments must
+# never be conflated). A continuity is the reviewed escape hatch: evidence that
+# the gap is a reporting gap, not a reassignment.
+#
+#   - anchor:     {id_type, value} — must not be split between two classes
+#                 (a boundary already resolves the ambiguity)
+#     gap_from:   first unobserved day of the gap being cleared (ISO)
+#     gap_to:     first observed day after the gap (ISO); gap_from < gap_to
+#     note:       REQUIRED — the evidence
+#     review_state: auto | reviewed | disputed
+#
+# This file ships EMPTY: the mechanism is built and tested, the content is
+# authored by reviewed commit as RUN M2-2 surfaces real cases (TD-M2-1-2).
+classes: []
+continuities: []

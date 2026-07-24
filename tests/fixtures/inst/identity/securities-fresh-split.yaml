@@ -1,0 +1,22 @@
+# A reviewed declaration resolving the 444444444 reuse gap: two classes, neither
+# of which existed before, own the value over complementary windows. The
+# provisional id that held it fans out into both and resolution stays
+# fail-closed (two successors => resolve_security_successor returns None).
+classes:
+  - security_id: "sec:test-reuse-era-one"
+    class: equity
+    identifiers:
+      - {id_type: cusip, value: "444444444", to: "2020-01-01"}
+    note: >-
+      Test fixture: the original issuer of 444444444, whose issue was retired
+      before the 2020-01-01 boundary.
+    review_state: reviewed
+  - security_id: "sec:test-reuse-era-two"
+    class: equity
+    identifiers:
+      - {id_type: cusip, value: "444444444", from: "2020-01-01"}
+    note: >-
+      Test fixture: the unrelated issuer that received 444444444 after the
+      2020-01-01 boundary.
+    review_state: reviewed
+continuities: []

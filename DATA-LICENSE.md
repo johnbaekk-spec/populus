@@ -4,7 +4,7 @@
 
 Populus **code** is MIT-licensed (see [LICENSE](LICENSE)). Populus **data** is not one license: every source enters through this conditions register (ARCHITECTURE.md §15), which records what each source permits, what it restricts, and which notices must travel with the data. "Public record" is never treated as synonymous with "public domain". No source is ingested before its entry exists (G11).
 
-Register version: `licenses-1.0.0`.
+Register version: `licenses-1.1.0`.
 
 ## `us-congress-disclosures` — House Clerk financial disclosures; Senate eFD
 
@@ -37,6 +37,41 @@ Register version: `licenses-1.0.0`.
 - **Attribution:** Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov).
 - **Determination basis:** Facts and figures are not copyrightable; EDGAR's decades-long public-dissemination regime is the operative access framework; fair-access rules are conditions we encode, not barriers to redistribution.
 - **Determined:** 2026-07-23 · **Review by:** 2026-10-23
+
+## `sec-edgar` — SEC EDGAR endpoints: data.sec.gov/submissions, www.sec.gov/Archives, www.sec.gov/files/company_tickers.json
+
+- **Instrument:** 17 U.S.C. §105 (works of the US Government) for SEC compilations and site content, accessed under SEC's published fair-access conditions; an endpoint-level determination under the §15.2 us-govworks-sec umbrella.
+- **Status:** determined · **Ingestible:** yes
+- **Permitted uses:**
+  - Automated retrieval at or below SEC's published request-rate ceiling with an identifying User-Agent
+  - Redistribution of filing data and derived aggregates with the source URL retained per record (§5.1)
+  - Research and analysis
+- **Restrictions:**
+  - Every request carries the SEC-accepted '<app name> <contact email>' User-Agent and 'Accept-Encoding: gzip, deflate' — verified 2026-07-24: the parenthesized 'PopulusBot/<version> (+url; contact: …)' form receives 403 'Request Rate Threshold Exceeded' from SEC's WAF, the '<name> <email>' form receives 200 (encoding held constant). The parenthesized form is never sent to any *.sec.gov host.
+  - Request-rate floor of at most 2 requests/second is enforced in code, never in configuration (G6)
+  - No User-Agent rotation, no source-address rotation, no retry storm: sustained 403 latches a circuit breaker that stops the job
+  - §105 does not automatically cover every third-party document hosted on EDGAR; per-document conditions still govern
+  - Per-filer holdings detail is federated at question time, not replicated wholesale
+- **Attribution:** Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov), retrieved per-record with the source URL retained.
+- **Determination basis:** Works of the US Government are not subject to domestic copyright (17 U.S.C. §105), and facts and figures in filings are not copyrightable. SEC publishes fair-access conditions (rate ceiling, identifying User-Agent) as access conditions, not redistribution restrictions; Populus encodes them in the client. Endpoints verified live end-to-end on 2026-07-24 (M2-CONTRACT §1), including the User-Agent correction recorded above.
+- **Determined:** 2026-07-24 · **Review by:** 2026-10-24
+
+## `sec-ftd` — SEC fails-to-deliver data (cnsfails<YYYYMM>[ab].zip)
+
+- **Instrument:** 17 U.S.C. §105 (works of the US Government): an SEC-compiled market-data publication; an endpoint-level determination under the §15.2 us-govworks-sec umbrella.
+- **Status:** determined · **Ingestible:** yes
+- **Permitted uses:**
+  - Seeding security_identifiers (CUSIP) and the CUSIP<->symbol/issuer-name association, with per-row provenance and review state
+  - Redistribution of a provenance-recorded verbatim excerpt as a repository test fixture, with the source URL, retrieval date and archive sha256 recorded alongside it
+  - Research and analysis
+- **Restrictions:**
+  - Identifier seeding only: fails-to-deliver quantities and prices are not republished as a market-data product
+  - Rows are point-in-time settlement-date observations — validity is never inferred across a gap between observed dates (G14); identifier validity intervals merge only calendar-adjacent observations
+  - Every seeded row keeps provenance 'sec-ftd' and an explicit review_state; unresolved or disputed identifiers surface by issuer name with a flag, never dropped (G3)
+  - Retrieved under the same sec-edgar fair-access conditions (SEC-accepted User-Agent, in-code rate floor)
+- **Attribution:** Source: U.S. Securities and Exchange Commission, fails-to-deliver data.
+- **Determination basis:** Works of the US Government (17 U.S.C. §105); the archive is an SEC compilation of reported settlement facts, and CUSIP values appear here only as they are published by the SEC in that compilation. Populus uses them solely as an identifier seed with recorded provenance, not as a redistributed identifier database. Source page and archive verified live on 2026-07-24 (M2-CONTRACT §1).
+- **Determined:** 2026-07-24 · **Review by:** 2026-10-24
 
 ## `us-govworks-treasury` — Treasury FiscalData; Treasury daily yield-curve XML
 

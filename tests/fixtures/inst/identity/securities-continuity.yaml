@@ -1,0 +1,12 @@
+# The other reviewed answer to the same flagged gap: the value was NOT reused,
+# it simply stopped failing to deliver for a decade. One security, resolvable in
+# both eras. The anchor is owned by no class, so it keeps its provisional id.
+classes: []
+continuities:
+  - anchor: {id_type: cusip, value: "444444444"}
+    gap_from: "2013-02-01"
+    gap_to: "2024-05-01"
+    note: >-
+      Test fixture: reviewed evidence that the 2013-2024 gap in 444444444 is a
+      fails-reporting gap, not a reassignment.
+    review_state: reviewed

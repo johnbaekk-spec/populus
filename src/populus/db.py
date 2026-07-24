@@ -12,6 +12,7 @@ import importlib.resources
 import sqlite3
 
 from populus.amendments import ensure_views
+from populus.identity.registry import ensure_registry
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -36,13 +37,16 @@ def json1_supported(conn: sqlite3.Connection) -> bool:
 
 
 def init_db(path: str) -> None:
-    """Create the full §9.4 schema at *path*, plus the §9.5 views.
+    """Create the full §9.4 schema at *path*, plus the §9.5 views and the
+    §5.4 identity registries.
 
     Refuses a database that already contains the schema (``members`` present)
     and fails with an actionable error when the SQLite build lacks JSON1
     (required by the ``json_valid``/``json_type`` CHECK constraints; built in
     since SQLite 3.38). The view DDL lives in ``views.sql`` (applied
-    idempotently by ``amendments.ensure_views``) so ``schema.sql`` stays
+    idempotently by ``amendments.ensure_views``) and the registry DDL in
+    ``registry.sql`` (applied idempotently by
+    ``identity.registry.ensure_registry``) so ``schema.sql`` stays
     byte-identical to the §9.4 block.
     """
     conn = connect(path)
@@ -66,5 +70,6 @@ def init_db(path: str) -> None:
         )
         conn.executescript(schema)
         ensure_views(conn)
+        ensure_registry(conn)
     finally:
         conn.close()

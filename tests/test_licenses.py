@@ -17,10 +17,14 @@ from populus.licenses import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The exact §15.2 register entry set.
+# The exact §15.2 register entry set. `sec-edgar` and `sec-ftd` are the RUN
+# M2-1 endpoint-level determinations under the retained `us-govworks-sec`
+# umbrella — written before any SEC ingest path or SEC-derived fixture (G11).
 SECTION_15_2_IDS = {
     "us-congress-disclosures",
     "us-govworks-sec",
+    "sec-edgar",
+    "sec-ftd",
     "us-govworks-treasury",
     "us-govworks-cftc",
     "bls-tos",
@@ -76,11 +80,89 @@ def test_reference_only_and_placeholders_not_ingestible():
         assert by_id[active]["status"] == "determined"
 
 
+# Determination dates are pinned per phase: the M1 entries were determined on
+# the RUN-4 register date, the two M2 endpoint-level entries on the M2 phase-
+# entry date (M2-CONTRACT §1 live verification, 2026-07-24).
+M1_REGISTER_DATE = "2026-07-23"
+M2_REGISTER_DATE = "2026-07-24"
+M2_ENTRY_IDS = {"sec-edgar", "sec-ftd"}
+
+
+def _one_quarter_later(iso: str) -> str:
+    """The §14 quarterly-cadence review date: same day, three months on
+    (clamped to month-end when the target month is shorter, e.g. day 31 → 30)."""
+    import calendar
+    from datetime import date
+
+    determined = date.fromisoformat(iso)
+    month = determined.month + 3
+    year = determined.year + (month - 1) // 12
+    target_month = (month - 1) % 12 + 1
+    last_day = calendar.monthrange(year, target_month)[1]
+    return date(year, target_month, min(determined.day, last_day)).isoformat()
+
+
 def test_register_dates_per_quarterly_cadence():
     register = load_register()
     for entry in register["entries"]:
-        assert entry["determination_date"] == "2026-07-23"
-        assert entry["review_by"] == "2026-10-23"
+        expected_determined = (
+            M2_REGISTER_DATE
+            if entry["license_id"] in M2_ENTRY_IDS
+            else M1_REGISTER_DATE
+        )
+        assert entry["determination_date"] == expected_determined, entry["license_id"]
+        # The invariant, not a second hard-coded table: review_by is exactly one
+        # quarter after the determination, for every entry in every phase.
+        assert entry["review_by"] == _one_quarter_later(
+            entry["determination_date"]
+        ), entry["license_id"]
+
+
+def test_m2_register_entries_well_formed():
+    # G11: both M2 sources are registered, determined, and ingestible BEFORE
+    # any code or fixture derived from them exists.
+    register = load_register()
+    assert register["register_version"] == "licenses-1.1.0"
+    by_id = {entry["license_id"]: entry for entry in register["entries"]}
+    for license_id in sorted(M2_ENTRY_IDS):
+        entry = by_id[license_id]
+        assert entry["status"] == "determined"
+        assert entry["ingestible"] is True
+        # Every §15.1 field carries real content, not a placeholder shell.
+        assert entry["permitted_uses"], license_id
+        assert entry["restrictions"], license_id
+        assert entry["attribution"], license_id
+        assert len(entry["determination_basis"]) > 80, license_id
+        assert "17 U.S.C." in entry["instrument"], license_id
+    # Both entries are mirrored into the generated documents.
+    rendered = render_data_license(register)
+    for license_id in sorted(M2_ENTRY_IDS):
+        assert f"`{license_id}`" in rendered
+
+
+def test_sec_edgar_records_the_ua_condition():
+    # The verified 2026-07-24 correction is recorded as a restriction, so the
+    # register — not only the client — carries why the UA form is what it is.
+    register = load_register()
+    by_id = {entry["license_id"]: entry for entry in register["entries"]}
+    restrictions = " ".join(by_id["sec-edgar"]["restrictions"])
+    assert "403" in restrictions
+    assert "PopulusBot" in restrictions
+    assert "Accept-Encoding: gzip, deflate" in restrictions
+    assert "2 requests/second" in restrictions
+
+
+def test_sec_ftd_records_the_no_inference_condition():
+    # DC2/G14 is a condition of the source, not only an implementation choice:
+    # FTD rows are point-in-time observations and validity is never inferred
+    # across a gap. The fixture-redistribution permission (R14) is recorded too.
+    register = load_register()
+    by_id = {entry["license_id"]: entry for entry in register["entries"]}
+    restrictions = " ".join(by_id["sec-ftd"]["restrictions"])
+    assert "never inferred across a gap" in restrictions
+    assert "point-in-time settlement-date observations" in restrictions
+    permitted = " ".join(by_id["sec-ftd"]["permitted_uses"])
+    assert "test fixture" in permitted
 
 
 def test_validate_register_catches_defects():

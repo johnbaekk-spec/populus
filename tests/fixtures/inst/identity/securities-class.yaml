@@ -1,0 +1,15 @@
+# Test authority: one declared class owning three identifier values for ALL time.
+# The incumbent whose id must survive every later revision.
+classes:
+  - security_id: "sec:test-issuer-common"
+    class: equity
+    identifiers:
+      - {id_type: cusip, value: "111111111"}
+      - {id_type: cusip, value: "222222222"}
+      - {id_type: cusip, value: "333333333"}
+    note: >-
+      Test fixture: the pre-change CUSIP (111111111), the post-corporate-action
+      CUSIP (222222222) and the value later handed off at a boundary
+      (333333333) are one instrument class.
+    review_state: reviewed
+continuities: []

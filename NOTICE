@@ -10,6 +10,12 @@ src/populus/licenses.json; regenerate with
 [us-govworks-sec]
   Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov).
 
+[sec-edgar]
+  Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov), retrieved per-record with the source URL retained.
+
+[sec-ftd]
+  Source: U.S. Securities and Exchange Commission, fails-to-deliver data.
+
 [us-govworks-treasury]
   Source: U.S. Department of the Treasury.
 
