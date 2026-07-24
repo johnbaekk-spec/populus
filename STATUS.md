@@ -28,22 +28,21 @@ The most security-sensitive subsystem; it took **nine external Codex review roun
 2. The configured `data_repo`/`state_dir` roots themselves are trusted operator inputs; a symlinked configured-root is out of the §14 threat model (precondition = publisher-filesystem compromise). Populus-owned base subdirs/files *are* symlink-refused.
 The merge was made on this convergent evidence (918 green + nine all-fixed Codex rounds + Opus PASS + documented out-of-scope perimeter) after tooling flakiness (a transient Codex failure and a synthesis heading-schema error) denied a clean tenth machine-verdict; the substance was unambiguous.
 
-## Blocker (why Run 6 hasn't run)
+## Constraint hit during the build (historical)
 
-**Monthly Fable 5 spend limit reached.** The orchestrate loop spawns headless `claude -p` (Fable) subprocesses for plan/dev/fix/synthesis; these now fail immediately with *"You've hit your monthly spend limit."* This is a billing cap, not a technical issue, and cannot be worked around from here (I will not bypass a spend cap). Codex reviews are unaffected (separate ChatGPT subscription).
+**Monthly Fable 5 spend limit reached mid-session** (during Run 6 planning). The orchestrate loop spawns headless `claude -p` (Fable) subprocesses for plan/dev/fix/synthesis; once the cap was hit these failed immediately with *"You've hit your monthly spend limit."* — a billing cap, not a technical issue (I did not bypass it). Consequence: **Runs 1–5 were built via the full orchestrate loop; Run 6 was hand-built directly in-session** and gated with the full test suite + Codex review (Codex is a separate subscription, unaffected). Run 6 is merged and green; re-running it through orchestrate for process parity is optional (see Pending #1).
 
 ## Pending
 
-1. **Integration QA done** (07-24): full pipeline + MCP server verified end-to-end on the real corpus. An optional deeper adversarial sweep across the whole M1 could still be run.
-2. **Not started / deferred by design:** M2 13F, M3 financials, M4 macro (later modules, one at a time per G12); the P3 dashboard; OQ-1 domain (deferred by owner — `populusfinance.com` collides with Populus Financial Group; candidates listed in ARCHITECTURE OQ-1); the PyPI `populus-mcp 0.0.1` placeholder (P0 owner action).
+1. **(Optional) Re-run Run 6 through orchestrate for process parity** once the Fable spend limit resets — the code is already merged/green, so this only re-establishes the same plan→review→QA paper trail the other runs have:
+   ```bash
+   cd ~/projects && ORCH_ASSUME_YES=skip-human-gate ORCH_PROFILE=quality WORKFLOW_MAX_ARTIFACT_BYTES=8388608 \
+     ./orchestrate-tool/orchestrate.sh Populus "Re-validate RUN 6 (MCP server, already implemented under src/populus/mcp_server/) per docs/build/RUN-6-brief.md; ARCHITECTURE.md governs (§9.9, §11); tests green under 'uv run pytest -q'."
+   ```
+2. **Owner actions (outward-facing, P0):** publish the `populus-mcp 0.0.1` placeholder to PyPI to claim the name; pick the domain (OQ-1 — `populusfinance.com` collides with Populus Financial Group; candidates in ARCHITECTURE OQ-1).
+3. **Optional:** a deeper cross-module adversarial sweep of the whole M1.
+4. **Deferred by design:** M2 13F → M3 financials → M4 macro (one module at a time, G12); the P3 dashboard.
 
-## Resume (when the spend limit is lifted / resets)
-
-```bash
-# Run 6 (MCP server) — resumes the exact same orchestrated flow:
-cd ~/projects && ORCH_ASSUME_YES=skip-human-gate ORCH_PROFILE=quality WORKFLOW_MAX_ARTIFACT_BYTES=8388608 \
-  ./orchestrate-tool/orchestrate.sh Populus "Implement RUN 6 (MCP server) per docs/build/RUN-6-brief.md; ARCHITECTURE.md governs (§9.9, §11); reuse RUNs 1-5 seams incl. the Run-5 snapshot client; 20-question golden suite from the real data-cache corpus; tests green under 'uv run pytest -q'."
-```
-Real source corpus is cached under `~/projects/Populus/data-cache/` (gitignored): House 2013/2015/2020/2026 indexes + 312 2026 PTR PDFs, 53 Senate pages, kadoa `trades.json`, legislators YAML. Golden fixtures are committed under `tests/fixtures/`.
+Real source corpus is cached under `~/projects/Populus/data-cache/` (gitignored): House 2013/2015/2020/2026 indexes + 312 2026 PTR PDFs, 53 Senate pages, kadoa `trades.json`, legislators YAML. Golden fixtures are committed under `tests/fixtures/`. To run the whole thing yourself: `uv run pytest -q`, then the ingest→build→publish→verify sequence in this file, then `uv run populus-mcp --data-repo ../populus-data` (or `--db <ingested.db>`).
 
 *Tooling note:* two orchestrate.sh bugs found and fixed during the build (committed in `~/projects/orchestrate-tool`): a `RESOLUTION NOTES` heading case/markdown-tolerance gate, and a reviewer-prompt that mis-flagged stripped plan revisions. A `WORKFLOW_MAX_ARTIFACT_BYTES=8388608` override is needed for runs with large golden-fixture diffs.
