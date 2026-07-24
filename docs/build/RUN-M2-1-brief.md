@@ -52,6 +52,31 @@ don't reimplement**. **No 13F data in this run** — this is shared substrate M3
    `scripts/dep_guard.py` stays clean (G1). CLI `populus identity bootstrap --from-cache DIR
    [--ftd PATH] --db PATH` seeds both registries with a printed reconciliation summary.
 
+## Design constraints — identity correctness (settle these in the plan)
+
+These are load-bearing; get them right in the design, each with a test:
+
+- **DC1 (one title per CIK per snapshot).** Name reconciliation must yield **exactly one**
+  normalized entity name per CIK per snapshot; conflicting titles are **rejected and counted**,
+  not both kept valid. `resolve_entity_by_cik` returns that single name (matches `EntityRef(entity_id,
+  cik, name)`). Add a conflicting-title test. (If plural aliases are truly needed, model them
+  explicitly and change the resolver contract to match — do not leave `(entity_id, name)` ambiguous.)
+- **DC2 (no fabricated FTD continuity — G14).** FTD rows are **point-in-time settlement-date**
+  balances; do **not** assume validity across gaps (no "N-day merge"). Build `security_identifiers`
+  validity intervals only from **actually-adjacent** settlement observations (or an authoritative
+  identifier-history source). Replace any day-merge test with **gap-refusal** tests.
+- **DC3 (durable security_id).** `security_id` must be a durable surrogate **independent of
+  ingestion-window boundaries and of CUSIP** (CUSIP is a dated *attribute*, not part of the key).
+  Importing February alone then adding an earlier January file must **not** rekey a security.
+  Test different file partitions, orders, and earlier incremental backfills — or specify an explicit
+  existing-security reconciliation/rekey protocol and test it.
+- **DC4 (as-of symbol→entity per observation).** Resolve **every** `(symbol, settlement_date)`
+  independently; stamp a static `entity_id` only when all resolved observations **agree**; otherwise
+  retain an unresolved/conflict state. Test a ticker change within a run.
+- **DC5 (honest reconciliation accounting — G3).** Keep **mutually-exclusive source-row
+  disposition buckets** (which sum to rows read) **separate** from mapping-mutation counters and
+  untouched-/absent-entity counters. Test both accounting invariants independently.
+
 ## Acceptance
 
 `uv run pytest -q` green (whole repo — all 936 M1 tests unchanged). `populus db init` creates the
