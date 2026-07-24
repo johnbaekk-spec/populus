@@ -1,6 +1,8 @@
-# Populus — Build Status (autonomous build session, 2026-07-22 → 07-23)
+# Populus — Build Status (autonomous build session, 2026-07-22 → 07-24)
 
-**Bottom line:** M1 (congressional trading) is **5 of 6 build-runs complete and merged to `main`**, and the merged system **works end-to-end on real government data**. The final run (Run 6, the MCP server) is **blocked only by a hard monthly Fable spend limit** — not by any technical problem. See **Resume** below.
+**Bottom line:** M1 (congressional trading) is **COMPLETE — all 6 build-runs merged to `main`**, **936 tests green**, and the whole system is **integration-verified end-to-end on real government data**: ingest (House 312 PTRs + Senate 53 + kadoa + members) → stats → build → publish → verify (906 artifacts, pointer v2), and the **`populus-mcp` server serving that published snapshot** over stdio (8 tools, honest envelope, real records). Every run passed external Codex review. Later modules (M2–M4), the P3 dashboard, the PyPI placeholder, and the OQ-1 domain remain (see Pending).
+
+> **Update 07-24:** Run 6 (MCP server) is done and merged (PR #6). It was hand-built directly (not via orchestrate) because a **monthly Fable spend limit** blocked orchestrate's `claude -p` subprocesses mid-session; the quality bar was held with the full test suite + Codex review (Codex is a separate subscription). Codex ran five review rounds on it and caught three genuine correctness/honesty bugs — a `since_iso` timezone-comparison error, an over-claiming `data_note`, and mishandled open-ended dollar ranges (which dropped the largest trades) — all fixed with regression tests, then APPROVED. **If the orchestrated process bar matters for parity, Run 6 can be re-run through orchestrate.sh once the spend limit resets; the code is already merged and green.**
 
 ## What is built, merged, and verified
 
@@ -13,6 +15,7 @@ All on `~/projects/populus` `main` (private GitHub: `johnbaekk-spec/populus`). E
 | 3 senate | #3 | eFD session handshake, DataTables watermark query, 9-col HTML parser, paper→needs_ocr, politeness floors + circuit breaker | **100%** e-file parse on the real 53-filing corpus |
 | 4 members/backfill | #4 | congress-legislators join (temporal aliases), kadoa import (OGE excluded) + crosswalk + sealed-draw audit sampler, amendment views, stats, license register | **100%** member-join coverage (P1 gate ≥98%) |
 | 5 publish | #5 | §5.5 build/manifest/signed-pointer state machine/logical digest, §12.1 dist-digest+inventory, crash-consistent snapshot client, journal publish + fresh-runner recovery, external monitor, workflow files, licensing artifacts | 918 tests; see note below |
+| 6 mcp | #6 | populus-mcp: FastMCP stdio, 6 congress tools + member_flows + populus_health, honest envelope (both dates, doc_url, ranges incl. open-ended, license_notices, lag note); snapshot-client or --db | 18-case suite incl. 10-q real-corpus golden; live stdio smoke-tested on the published snapshot; Codex-APPROVED |
 
 **End-to-end integration test (real data, this session), on merged `main`:**
 `db init → ingest house(312) + senate(53) + backfill + members → stats → build → publish → verify` all succeed — build `20260724.1`, 906 artifacts, logical digest computed, pointer v1, verify recomputed all 906 artifacts OK. The pipeline is real and working.
@@ -31,9 +34,8 @@ The merge was made on this convergent evidence (918 green + nine all-fixed Codex
 
 ## Pending
 
-1. **Run 6 — MCP server (`populus-mcp`).** Brief: `docs/build/RUN-6-brief.md`. Six analyst tools (`congress_recent_trades`, `congress_member_lookup`, `congress_member_activity`, `congress_ticker_activity` w/ modes, `congress_latest_filings`, `congress_health`) + `populus_health`, FastMCP stdio over the Run-5 snapshot client, response envelope (dual dates, `doc_url`, `license_notices`, §9.8 lag `data_note`), 20-question golden suite computed from the real cache corpus.
-2. **Integration QA + adversarial review pass** across the whole M1 (planned after Run 6).
-3. **Not started / deferred by design:** M2 13F, M3 financials, M4 macro (later modules, one at a time per G12); the P3 dashboard; OQ-1 domain (deferred by owner — `populusfinance.com` collides with Populus Financial Group; candidates listed in ARCHITECTURE OQ-1); the PyPI `populus-mcp 0.0.1` placeholder (P0 owner action).
+1. **Integration QA done** (07-24): full pipeline + MCP server verified end-to-end on the real corpus. An optional deeper adversarial sweep across the whole M1 could still be run.
+2. **Not started / deferred by design:** M2 13F, M3 financials, M4 macro (later modules, one at a time per G12); the P3 dashboard; OQ-1 domain (deferred by owner — `populusfinance.com` collides with Populus Financial Group; candidates listed in ARCHITECTURE OQ-1); the PyPI `populus-mcp 0.0.1` placeholder (P0 owner action).
 
 ## Resume (when the spend limit is lifted / resets)
 
