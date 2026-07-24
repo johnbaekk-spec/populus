@@ -197,14 +197,23 @@ NETWORK_PRIMITIVES = re.compile(
     r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
-# RUN 2+3: the sanctioned HTTP client, permitted in exactly two modules —
-# the House and Senate ingest orchestrators. Every other network primitive
-# stays banned everywhere, including there.
+# The sanctioned HTTP client, permitted in exactly three modules — the House
+# and Senate ingest orchestrators (RUNs 2–3) and the authenticated
+# GitHubRepoFetcher (RUN 5, R27; hermetic in tests via MockTransport). Every
+# other network primitive stays banned everywhere, including there.
 NETWORK_PRIMITIVES_SANS_HTTPX = re.compile(
     r"\b(requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
-HTTPX_ALLOWED = {"ingest/house.py", "ingest/senate.py"}
+HTTPX_ALLOWED = {"ingest/house.py", "ingest/senate.py", "client/snapshot.py"}
+# RUN 5: publish/build.py invokes the gh CLI (argv-list subprocess, never a
+# shell) as the GhReleaseBackend command transport — injectable in tests, so
+# no real network runs under the suite. subprocess stays banned elsewhere.
+NETWORK_PRIMITIVES_SANS_SUBPROCESS = re.compile(
+    r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
+    r"|os\.system|aiohttp|asyncio\.open_connection)\b"
+)
+SUBPROCESS_ALLOWED = {"publish/build.py"}
 
 
 def test_owned_source_has_no_network_primitives():
@@ -212,11 +221,12 @@ def test_owned_source_has_no_network_primitives():
     src_root = REPO_ROOT / "src" / "populus"
     for path in sorted(src_root.rglob("*.py")):
         rel = path.relative_to(src_root).as_posix()
-        pattern = (
-            NETWORK_PRIMITIVES_SANS_HTTPX
-            if rel in HTTPX_ALLOWED
-            else NETWORK_PRIMITIVES
-        )
+        if rel in HTTPX_ALLOWED:
+            pattern = NETWORK_PRIMITIVES_SANS_HTTPX
+        elif rel in SUBPROCESS_ALLOWED:
+            pattern = NETWORK_PRIMITIVES_SANS_SUBPROCESS
+        else:
+            pattern = NETWORK_PRIMITIVES
         for line_no, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):

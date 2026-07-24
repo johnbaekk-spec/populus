@@ -363,9 +363,8 @@ def test_publish_help_shows_dry_run():
     assert "--dry-run" in result.output
 
 
-# All four ingest jobs are implemented (house/senate RUNs 2–3,
-# backfill/members RUN 4), as are stats and backfill-audit; each validates
-# its option surface. Only the RUN-5 pipeline commands keep stubs.
+# All §5.3 commands are implemented (house/senate RUNs 2–3, backfill/members
+# RUN 4, build/publish/verify RUN 5); each validates its option surface.
 @pytest.mark.parametrize(
     "args,needed",
     [
@@ -398,19 +397,24 @@ def test_stats_requires_db_option():
     assert "--db" in _combined_output(result)
 
 
+# The RUN-5 pipeline commands are implemented; with missing prerequisites
+# they fail cleanly (ClickException, no traceback), never with a stub.
 @pytest.mark.parametrize(
-    "args,run",
+    "args",
     [
-        (["build"], 5),
-        (["publish"], 5),
-        (["publish", "--dry-run"], 5),
-        (["verify"], 5),
+        ["build", "--db", "absent.db", "--data-repo", "absent-repo"],
+        ["publish", "--data-repo", "absent-repo"],
+        ["publish", "--dry-run", "--data-repo", "absent-repo"],
+        ["verify", "--data-repo", "absent-repo"],
     ],
 )
-def test_pipeline_stubs_name_owning_run(args, run):
+def test_pipeline_commands_fail_cleanly_without_prerequisites(args, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli_main, args)
-    assert isinstance(result.exception, NotImplementedError)
-    assert f"RUN {run}" in str(result.exception)
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, NotImplementedError)
+    assert "Traceback" not in _combined_output(result)
+    assert "Error" in _combined_output(result)
 
 
 @pytest.mark.parametrize(

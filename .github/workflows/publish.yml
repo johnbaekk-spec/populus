@@ -1,0 +1,90 @@
+# Nightly data publish (ARCHITECTURE.md §5.5 P1, §13.3, §14) — NOT ARMED:
+# the job-level guard requires the repository variable POPULUS_PUBLISH_ARMED
+# to equal 'true', which is not provisioned until the staging nightly turns
+# on. Secrets are referenced by NAME only; DATA_REPO_PAT is the §14 secret 4
+# fine-grained PAT (populus-data Contents read/write).
+#
+# Least privilege (§14): the workflow token is read-only; all populus-data
+# writes go through the PAT — step-scoped as GH_TOKEN on exactly the build
+# and publish steps (the GitHub Release backend), never top-level, never
+# echoed (R33).
+name: data-publish
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# §13.3: all publishing serializes in one group; a running publish is never
+# cancelled — this is what guarantees at most one in-flight draft (R35).
+concurrency:
+  group: data-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Default-branch guard (§14: publish only from the default branch) plus
+    # the unarmed guard.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.POPULUS_PUBLISH_ARMED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out populus
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check out populus-data (private staging)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: johnbaekk-spec/populus-data
+          token: ${{ secrets.DATA_REPO_PAT }}
+          path: populus-data
+
+      - name: Install uv (version-pinned)
+        run: python3 -m pip install --quiet 'uv==0.7.13'
+
+      - name: Sync (frozen lockfile)
+        run: uv sync --frozen
+
+      - name: Ingest (live, raw-archived)
+        run: |
+          uv run populus ingest congress-house --db populus.db --raw-root raw
+          uv run populus ingest congress-senate --db populus.db --raw-root raw
+
+      - name: Build
+        env:
+          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
+          GH_REPO: johnbaekk-spec/populus-data
+        run: >-
+          uv run populus build --db populus.db --data-repo populus-data
+          --backend gh-release --repo "$GH_REPO" --raw-root raw
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
+          GH_REPO: johnbaekk-spec/populus-data
+        run: >-
+          uv run populus publish --data-repo populus-data
+          --backend gh-release --repo "$GH_REPO"
+
+      - name: Verify
+        run: uv run populus verify --data-repo populus-data
+
+      - name: Commit manifest and pointer (rebase-retry x3, §13.3)
+        working-directory: populus-data
+        run: |
+          git config user.name "populus-publish[bot]"
+          git config user.email "populus-publish@users.noreply.github.com"
+          git add builds latest.json
+          git commit -m "data: publish build"
+          for attempt in 1 2 3; do
+            if git pull --rebase && git push; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "push failed after 3 rebase retries (no force push, ever)" >&2
+          exit 1
