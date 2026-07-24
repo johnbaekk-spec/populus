@@ -16,10 +16,12 @@ dependencies = [
     "pyyaml",
     "click",
     "rfc8785",
+    "mcp>=1.28.1",
 ]
 
 [project.scripts]
 populus = "populus.cli:main"
+populus-mcp = "populus.mcp_server.server:main"
 
 [dependency-groups]
 dev = ["pytest", "jsonschema"]
