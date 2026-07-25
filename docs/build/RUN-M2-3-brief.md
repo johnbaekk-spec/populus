@@ -62,6 +62,17 @@ to `tests/test_publish.py` (multi-module manifest + two-build inst digest). Wire
    - **Publish is REFUSED (fail-closed)** when `meets_threshold` is false — i.e. coverage < 0.95, or
      `denominator = 0` (no inst value → N/A, not an auto-pass), or `cover_failed_count > 0` (a genuinely
      cover-failed filing of unknown value). Summing an unknown total as 0 would inflate coverage.
+   - **OWNER DECISION (2026-07-24) — ship the gate as specified; fail-closed is ACCEPTED.** The
+     threshold stays **≥0.95** and the gate is enforced exactly as written. It is understood and
+     accepted that, with only the FTD bootstrap admitted, the `inst` module **will not publish**
+     (coverage tops out ≈50 % by value per period — measured in RUN M2-2's V-A). That is the correct,
+     honest outcome: no under-covered inst snapshot is published, and the rest of this run —
+     aggregates, QoQ deltas, the `inst` manifest module, the logical digest, two-build reproducibility
+     and `verify` — is still built and fully tested. **Do NOT lower the threshold, and do NOT widen
+     FTD intervals by inference to make the gate pass.** The gate becomes satisfiable when an
+     identifier-history source is admitted through §15 (a later, separately-contracted run).
+     Acceptance for THIS run therefore asserts the gate REFUSES to publish `inst` on the FTD-only
+     corpus (a fail-closed test), not that it passes.
    - **Data-acquisition prerequisite (blocking input to this run):** period-covering FTD / identifier
      data must be admitted through the §15 conditions register (`sec-ftd`) so the CUSIP→`security_id`
      resolution the numerator depends on can reach ≥95 %; without it the gate stays fail-closed.
