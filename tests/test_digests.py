@@ -31,6 +31,7 @@ from populus.publish.build import (
     run_build,
 )
 from populus.publish.digests import (
+    LOGICAL_PROJECTIONS,
     DigestError,
     dist_digest,
     logical_digest,
@@ -342,6 +343,124 @@ def test_logical_digest_insertion_order_independent(tmp_path):
         finally:
             conn.close()
     assert digests[0] == digests[1]
+
+
+# --- inst logical digest (R2/R5) ----------------------------------------------
+
+# The inst projection v1 column lists + PKs, hardcoded independently of the
+# implementation so any drift in the byte contract fails here.
+INST_PROJECTED_COLUMNS = {
+    "agg_filer_registry": [
+        "cik", "filer_name", "latest_period", "position_count",
+        "total_value_usd", "null_value_positions", "unkeyed_positions",
+    ],
+    "agg_qoq_deltas": [
+        "cik", "position_key", "put_call", "curr_period", "prev_period",
+        "change_kind", "prev_value_usd", "curr_value_usd", "delta_value_usd",
+        "prev_shares", "curr_shares", "delta_shares", "ssh_prnamt_type", "flags",
+    ],
+    "agg_issuer_top_holders": [
+        "issuer_key", "period_of_report", "rank", "cik", "filer_name",
+        "issuer_name", "issuer_key_source", "value_usd", "security_count", "flags",
+    ],
+    "agg_filer_concentration": [
+        "cik", "period_of_report", "position_count", "total_value_usd",
+        "null_value_positions", "topn_value_usd", "topn_share_bps", "hhi", "flags",
+    ],
+}
+INST_PROJECTED_PKS = {
+    "agg_filer_registry": "cik",
+    # QA-F8: the COMPLETE primary key — ssh_prnamt_type is part of the grain,
+    # so omitting it leaves multi-unit rows nondeterministically ordered and an
+    # ordering regression could evade this independent oracle.
+    "agg_qoq_deltas": "cik, position_key, put_call, ssh_prnamt_type, curr_period",
+    "agg_issuer_top_holders": "issuer_key, period_of_report, rank",
+    "agg_filer_concentration": "cik, period_of_report",
+}
+
+
+def expected_inst_logical(conn) -> str:
+    digest = hashlib.sha256()
+    for table in sorted(INST_PROJECTED_COLUMNS):
+        digest.update(f"T:{table}\n".encode())
+        columns = INST_PROJECTED_COLUMNS[table]
+        rows = conn.execute(
+            f"SELECT {', '.join(columns)} FROM {table}"  # nosec B608 — test constants
+            f" ORDER BY {INST_PROJECTED_PKS[table]}"
+        ).fetchall()
+        for row in rows:
+            digest.update(canonical_json(dict(zip(columns, row))))
+            digest.update(b"\n")
+    return digest.hexdigest()
+
+
+@pytest.fixture
+def inst_agg_conn(tmp_path):
+    """A small populated inst_agg.db opened for digesting."""
+    from test_inst_agg import _db, _filer, _hold, _load, _security
+
+    src = _db(tmp_path)
+    _filer(src, "0000000001")
+    _security(src, "sec:x")
+    _load(
+        src, fid="inst:A-1", cik="0000000001", period="2025-12-31",
+        filed="2026-01-15",
+        holds=[
+            _hold(ordinal=1, issuer="X CO", cusip="111111111", value=1000,
+                  security_id="sec:x"),
+            _hold(ordinal=2, issuer="NULLCO", cusip="222222222", value=None),
+        ],
+    )
+    _load(
+        src, fid="inst:A-2", cik="0000000001", period="2026-03-31",
+        filed="2026-04-15",
+        holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111", value=1500,
+                     security_id="sec:x")],
+    )
+    from populus.amendments import ensure_views
+    from populus.inst_agg import build_inst_agg
+
+    ensure_views(src)
+    out = tmp_path / "inst_agg.db"
+    build_inst_agg(src, out, ingested_at="2026-07-24T00:00:00Z")
+    src.close()
+    agg = connect(str(out))
+    yield agg, out
+    agg.close()
+
+
+def test_inst_logical_digest_matches_independent_envelope(inst_agg_conn):
+    agg, _out = inst_agg_conn
+    assert logical_digest(agg, LOGICAL_PROJECTIONS["inst"]) == expected_inst_logical(agg)
+
+
+def test_inst_logical_digest_excludes_ingested_at_and_build_meta(inst_agg_conn):
+    agg, _out = inst_agg_conn
+    before = logical_digest(agg, LOGICAL_PROJECTIONS["inst"])
+    # Volatile provenance and the excluded meta table must not move the digest.
+    agg.execute("UPDATE agg_filer_registry SET ingested_at = '2099-01-01T00:00:00Z'")
+    agg.execute("UPDATE agg_qoq_deltas SET ingested_at = '2099-01-01T00:00:00Z'")
+    agg.execute(
+        "INSERT INTO agg_build_meta (key, value) VALUES ('extra', 'whatever')"
+    )
+    assert logical_digest(agg, LOGICAL_PROJECTIONS["inst"]) == before
+
+
+def test_inst_logical_digest_null_concentration_distinct_from_zero(inst_agg_conn):
+    agg, _out = inst_agg_conn
+    # A NULL HHI (concentration unavailable) must digest differently from a real 0.
+    agg.execute("UPDATE agg_filer_concentration SET hhi = NULL")
+    null_digest = logical_digest(agg, LOGICAL_PROJECTIONS["inst"])
+    agg.execute("UPDATE agg_filer_concentration SET hhi = 0")
+    zero_digest = logical_digest(agg, LOGICAL_PROJECTIONS["inst"])
+    assert null_digest != zero_digest
+
+
+def test_inst_logical_digest_congress_projection_is_disjoint(inst_agg_conn):
+    agg, _out = inst_agg_conn
+    # The congress projection's tables are absent from inst_agg.db — a defect.
+    with pytest.raises(DigestError, match="projection table missing"):
+        logical_digest(agg)  # default = congress projection
 
 
 # --- journal round-trip (R35) -------------------------------------------------

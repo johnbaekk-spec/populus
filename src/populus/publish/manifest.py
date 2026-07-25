@@ -44,6 +44,42 @@ REQUIRED_CONGRESS_ARTIFACTS = (
 )
 WATERMARK_KEYS = ("house_index_last_modified", "senate_max_filed_date")
 
+# --- the institutional 13F module (§5.5; M2-CONTRACT §5.6 — RUN M2-3) ---------
+# The inst module carries exactly one artifact: the derived cross-filer
+# aggregate database. Its watermarks are 13F-shaped (report period + filed
+# date), disjoint from congress's House/Senate freshness keys.
+INST_MODULE = "inst"
+INST_DB_ARTIFACT = "inst_agg.db"
+INST_SCHEMA_VERSION = "1.0"
+INST_CLIENT_COMPAT = ">=0.0.1,<1"
+REQUIRED_INST_ARTIFACTS = (INST_DB_ARTIFACT,)
+INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
+
+# Per-module structural policy: what each KNOWN module requires. Generic
+# validation admits any module named here (well-formed per its policy) and
+# rejects any module NOT named here; a separable standard-build parameter then
+# additionally requires specific modules be present (default: congress).
+_MODULE_POLICY: dict[str, dict] = {
+    MODULE: {
+        "required": REQUIRED_CONGRESS_ARTIFACTS,
+        "watermarks": WATERMARK_KEYS,
+        "db_artifact": DB_ARTIFACT,
+    },
+    INST_MODULE: {
+        "required": REQUIRED_INST_ARTIFACTS,
+        "watermarks": INST_WATERMARK_KEYS,
+        "db_artifact": INST_DB_ARTIFACT,
+    },
+}
+# Every module's database artifact name — the artifacts that MUST carry a
+# `logical_digest` (§5.5). Kept as a set so `_validate_artifact` is module-blind.
+_DB_ARTIFACTS = frozenset(policy["db_artifact"] for policy in _MODULE_POLICY.values())
+
+
+def module_db_artifact(module: str = MODULE) -> str:
+    """The database artifact name for *module* (e.g. ``inst`` → ``inst_agg.db``)."""
+    return _MODULE_POLICY[module]["db_artifact"]
+
 _BUILD_ID = re.compile(r"^\d{8}\.\d+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -255,7 +291,7 @@ def _validate_artifact(
         elif release.group("asset") != entry.get("name"):
             errors.append(f"{label}: url asset segment must equal the artifact name")
     logical = entry.get("logical_digest")
-    if entry.get("name") == DB_ARTIFACT:
+    if entry.get("name") in _DB_ARTIFACTS:
         if not isinstance(logical, str) or _SHA256.match(logical) is None:
             errors.append(f"{label}: the database artifact requires logical_digest")
     elif logical is not None and (
@@ -266,9 +302,22 @@ def _validate_artifact(
 
 
 def validate_manifest(
-    manifest: object, *, register_ids: set[str] | None = None
+    manifest: object,
+    *,
+    required_modules: frozenset[str] = frozenset({MODULE}),
+    register_ids: set[str] | None = None,
 ) -> list[str]:
-    """Structural validation of the §5.5 manifest; returns every defect."""
+    """Structural validation of the §5.5 manifest; returns every defect.
+
+    Generic contract (always): ``modules`` is non-empty; every present module is
+    a KNOWN, well-formed module (an unknown name is rejected); each module is
+    validated against its own policy (watermark keys, required artifacts) and its
+    database artifact must carry a ``logical_digest``. Standard-build contract
+    (separable): every name in *required_modules* must be present — the default
+    ``{congress}`` preserves every existing caller's guarantee that the congress
+    module (which RUN-5 consumers dereference unconditionally) is present, while
+    ``frozenset()`` admits a generic single-module (e.g. inst-only) manifest.
+    """
     if not isinstance(manifest, dict):
         return ["manifest is not a JSON object"]
     errors: list[str] = []
@@ -299,17 +348,29 @@ def validate_manifest(
     modules = manifest["modules"]
     if not isinstance(modules, dict) or not modules:
         return errors + ["modules must be a non-empty object"]
-    # RUN 5 consumers (monitor, verifier, client, journal, rollback) dereference
-    # the `congress` module unconditionally — a structurally valid manifest that
-    # omits it would pass validation and then crash those consumers with a
-    # KeyError (F5). Require it here so absence is a validation defect, not a
-    # downstream trap.
-    if MODULE not in modules:
-        errors.append(f"missing required module {MODULE!r}")
+    # Standard-build requirement (separable from the generic contract). RUN-5
+    # consumers (monitor, verifier, client, journal, rollback) dereference the
+    # `congress` module unconditionally, so its absence must be a validation
+    # defect, not a downstream KeyError. The default {congress} keeps that
+    # guarantee for every caller; an inst-only generic validation passes
+    # frozenset().
+    for required_module in sorted(required_modules):
+        if required_module not in modules:
+            errors.append(f"missing required module {required_module!r}")
     for module_name, module in sorted(modules.items()):
         if not isinstance(module, dict):
             errors.append(f"module {module_name}: not an object")
             continue
+        # Only KNOWN modules are admitted: an unknown name has no policy to
+        # validate against, so it is a defect outright (F1) — unknown modules
+        # never pass as well-formed.
+        if module_name not in _MODULE_POLICY:
+            errors.append(
+                f"module {module_name}: unknown module (not one of"
+                f" {sorted(_MODULE_POLICY)})"
+            )
+            continue
+        policy = _MODULE_POLICY[module_name]
         for missing in sorted(_MODULE_FIELDS - set(module)):
             errors.append(f"module {module_name}: missing field {missing!r}")
         for extra in sorted(set(module) - _MODULE_FIELDS):
@@ -341,14 +402,15 @@ def validate_manifest(
         if not isinstance(watermarks, dict):
             errors.append(f"module {module_name}: watermarks must be an object")
         else:
-            # R3/F12: exactly the required watermark keys must be present, so a
-            # publication carrying no freshness evidence (an empty map) cannot
-            # pass as fresh. Values are a timestamp string or null (a null is a
-            # legitimate "no evidence yet" value; an absent key is not).
-            if set(watermarks) != set(WATERMARK_KEYS):
+            # R3/F12: exactly the module's required watermark keys must be
+            # present, so a publication carrying no freshness evidence (an empty
+            # map) cannot pass as fresh. Values are a timestamp string or null (a
+            # null is a legitimate "no evidence yet" value; an absent key is not).
+            watermark_keys = policy["watermarks"]
+            if set(watermarks) != set(watermark_keys):
                 errors.append(
                     f"module {module_name}: watermarks must have exactly the"
-                    f" keys {sorted(WATERMARK_KEYS)}"
+                    f" keys {sorted(watermark_keys)}"
                 )
             for key, value in watermarks.items():
                 if value is not None and not isinstance(value, str):
@@ -372,17 +434,16 @@ def validate_manifest(
                 if name in seen_names:
                     errors.append(f"module {module_name}: duplicate artifact {name!r}")
                 seen_names.add(name)
-        # F6: the congress module must enumerate the full mandatory artifact set
-        # — a semantically partial build (missing the DB, feed, stats, or any
-        # licensing artifact) is refused here, before a consumer persists a
-        # higher pointer and makes an incomplete build current (R2/R3/R8/R10).
-        if module_name == MODULE:
-            for required in REQUIRED_CONGRESS_ARTIFACTS:
-                if required not in seen_names:
-                    errors.append(
-                        f"module {module_name}: missing required artifact"
-                        f" {required!r}"
-                    )
+        # F6: every KNOWN module must enumerate its full mandatory artifact set
+        # — a semantically partial build (congress missing the DB, feed, stats,
+        # or any licensing artifact; inst missing inst_agg.db) is refused here,
+        # before a consumer persists a higher pointer and makes an incomplete
+        # build current (R2/R3/R8/R10).
+        for required in policy["required"]:
+            if required not in seen_names:
+                errors.append(
+                    f"module {module_name}: missing required artifact {required!r}"
+                )
     return errors
 
 

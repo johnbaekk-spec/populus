@@ -30,9 +30,9 @@ from packaging.version import InvalidVersion, Version
 import populus
 from populus.publish.attestation import AttestationProvider, StagingNoop
 from populus.publish.manifest import (
-    DB_ARTIFACT,
     MODULE,
     module_artifacts,
+    module_db_artifact,
     parse_release_download_url,
     pointer_manifest_identity_error,
     resolve_within,
@@ -302,10 +302,15 @@ class SnapshotClient:
         return None
 
     def db_path(self) -> Path | None:
+        # Module-aware (R13/F6): resolve THIS module's database artifact —
+        # `congress.db` for congress, `inst_agg.db` for inst — never a hardcoded
+        # name, so an inst client reads its own aggregate through the accessor.
         build_id = self.current_build()
         if build_id is None:
             return None
-        candidate = self._safe_under(self._module, build_id, DB_ARTIFACT)
+        candidate = self._safe_under(
+            self._module, build_id, module_db_artifact(self._module)
+        )
         return candidate if candidate.is_file() else None
 
     def _load_trust(self) -> tuple[int, str] | None:

@@ -1,0 +1,21 @@
+=== R10a ACCEPTANCE (RUN M2-3) — FTD-only real corpus ===
+corpus: real Berkshire 13F (4 filings, 314 holdings) + real FTD cnsfails202606b
+
+--- build (the M2 >=95% gate decides) ---
+staged build 20260725.1 (6 artifacts, logical_digest 45dc20aaba7c…) at /private/tmp/claude-501/-Users-johnbaek-projects-Populus/e148ad36-e6d2-4afe-a4c2-903aca0997d8/scratchpad/data-repo/.staging/20260725.1
+inst module WITHHELD (below_threshold): value-coverage 0/797063485143 = 0.00% | cover_failed_count 0 — below the M2 ≥95% gate; congress publishes normally
+
+--- publish ---
+published build 20260725.1 (pointer_version 1)
+inst module: WITHHELD by the M2 ≥95% value-coverage gate (below_threshold; coverage 0.00%, cover_failed_count 0) — congress published normally
+
+--- verify ---
+verify ok: build 20260725.1, 6 local artifacts recomputed
+
+--- second build: pointer bump + idempotent re-poll ---
+staged build 20260725.2 (6 artifacts, logical_digest 45dc20aaba7c…) at /private/tmp/claude-501/-Users-johnbaek-projects-Populus/e148ad36-e6d2-4afe-a4c2-903aca0997d8/scratchpad/data-repo/.staging/20260725.2
+published build 20260725.2 (pointer_version 2)
+
+  manifest 20260725.1: modules=['congress']
+  manifest 20260725.2: modules=['congress']
+  pointer_version: 2 | build: 20260725.2

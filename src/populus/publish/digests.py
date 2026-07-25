@@ -2,8 +2,10 @@
 
 ``dist_digest`` is the reproducible tree digest over regular files only, with
 the exact §12.1 framing; ``logical_digest`` is the §5.5 canonical logical
-export of ``congress.db`` under the explicit, versioned projection v1. Both
-are byte-exact contracts: changing either envelope bumps its version.
+export of ONE MODULE's database under that module's explicit, versioned
+projection (``LOGICAL_PROJECTIONS[<module>]`` — ``congress`` over congress.db,
+``inst`` over inst_agg.db). It is projection-parametric, not congress-only.
+Both are byte-exact contracts: changing either envelope bumps its version.
 """
 
 from __future__ import annotations
@@ -19,17 +21,33 @@ from populus.canonical import canonical_json
 
 DIST_DIGEST_VERSION = "1"
 
-# Projection v1 (§5.5), stated as an allowlist, not an exclusion heuristic:
-# `ingest_runs` is excluded entirely (every column operational); the four
-# tables below are included with all columns except the per-table exclusions.
-# Columns are read BY NAME from PRAGMA table_info, never by position.
-LOGICAL_PROJECTION_VERSION = "1"
-LOGICAL_PROJECTION_V1: dict[str, frozenset[str]] = {
-    "filings": frozenset({"ingested_at"}),
-    "member_aliases": frozenset(),
-    "members": frozenset(),
-    "transactions": frozenset(),
+# Per-module projections (§5.5), each stated as an allowlist, not an exclusion
+# heuristic. Operational tables are excluded ENTIRELY (`ingest_runs` for
+# congress, `agg_build_meta` for inst); the allowlisted tables are included with
+# every column except their per-table exclusions. Columns are read BY NAME from
+# PRAGMA table_info, never by position. A module's projection version bumps only
+# when its byte envelope changes.
+LOGICAL_PROJECTIONS: dict[str, dict[str, frozenset[str]]] = {
+    "congress": {
+        "filings": frozenset({"ingested_at"}),
+        "member_aliases": frozenset(),
+        "members": frozenset(),
+        "transactions": frozenset(),
+    },
+    # The four cross-filer aggregate tables (populus.inst_agg), each minus its
+    # volatile `ingested_at`; `agg_build_meta` is excluded entirely.
+    "inst": {
+        "agg_filer_registry": frozenset({"ingested_at"}),
+        "agg_qoq_deltas": frozenset({"ingested_at"}),
+        "agg_issuer_top_holders": frozenset({"ingested_at"}),
+        "agg_filer_concentration": frozenset({"ingested_at"}),
+    },
 }
+LOGICAL_PROJECTION_VERSIONS = {"congress": "1", "inst": "1"}
+# Back-compat aliases: the unqualified names are the congress projection v1, so
+# every existing caller that passes nothing keeps the exact same envelope.
+LOGICAL_PROJECTION_V1: dict[str, frozenset[str]] = LOGICAL_PROJECTIONS["congress"]
+LOGICAL_PROJECTION_VERSION = LOGICAL_PROJECTION_VERSIONS["congress"]
 
 
 class DigestError(ValueError):
@@ -92,11 +110,15 @@ def dist_digest(tree: Path | str) -> str:
     return digest.hexdigest()
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> tuple[list[str], list[str]]:
+def _table_columns(
+    conn: sqlite3.Connection,
+    table: str,
+    projection: dict[str, frozenset[str]],
+) -> tuple[list[str], list[str]]:
     """``(included column names, primary-key column names)`` for *table*.
 
     Read by name from ``PRAGMA table_info`` — never by index — with the
-    projection's per-table exclusions applied. PK columns are ordered by
+    *projection*'s per-table exclusions applied. PK columns are ordered by
     their position within the primary key.
     """
     info = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
@@ -106,7 +128,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> tuple[list[str], lis
         {"name": row[1], "pk": row[5]}
         for row in info
     ]
-    excluded = LOGICAL_PROJECTION_V1[table]
+    excluded = projection[table]
     included = [col["name"] for col in by_name if col["name"] not in excluded]
     pk = [col["name"] for col in sorted(by_name, key=lambda c: c["pk"]) if col["pk"] > 0]
     if not pk:
@@ -114,19 +136,23 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> tuple[list[str], lis
     return included, pk
 
 
-def logical_digest(conn: sqlite3.Connection) -> str:
-    """§5.5 logical digest of one database under projection v1.
+def logical_digest(
+    conn: sqlite3.Connection,
+    projection: dict[str, frozenset[str]] = LOGICAL_PROJECTION_V1,
+) -> str:
+    """§5.5 logical digest of one database under *projection* (default congress).
 
     Byte envelope: tables in ascending lexicographic table-name order, each
     framed ``T:<table>\\n``, then one line per row in ascending primary-key
     order — the row as an RFC 8785 canonical JSON object (column names as
     keys; SQL NULL → JSON ``null``; INTEGER/REAL as JSON numbers; TEXT as an
     opaque JSON string, never parsed) followed by ``\\n``. BLOB values are a
-    projection defect and fail hard.
+    projection defect and fail hard. The envelope is projection-parametric so
+    each module (congress, inst) hashes exactly its own allowlisted tables.
     """
     digest = hashlib.sha256()
-    for table in sorted(LOGICAL_PROJECTION_V1):
-        included, pk = _table_columns(conn, table)
+    for table in sorted(projection):
+        included, pk = _table_columns(conn, table, projection)
         digest.update(f"T:{table}\n".encode("utf-8"))
         select = ", ".join(f'"{name}"' for name in included)
         order = ", ".join(f'"{name}"' for name in pk)

@@ -115,6 +115,57 @@ affirmed owner-accepted — the only way to do so is to commit the DB-inlining
 journal to git, which regresses DR-5/§13.4; their current behavior (safe-refuse
 + rebuild, nothing stranded) is correct by design.*
 
+## Multi-module recovery boundary — the inst asset (TD-M2-3-1, RUN M2-3)
+
+A build that clears the M2 ≥95% gate carries a SECOND Release asset,
+`inst_agg.db` (the cross-filer aggregate), alongside `congress.db`. The recovery
+journal stays **congress-scoped by design** — it inlines only `congress.db`
+(committing a second DB-inlining envelope would regress DR-5/§13.4 exactly as
+above) — so the inst asset is recovered as a **present draft Release asset** or
+**regenerated from source**, never carried in the journal. `_complete_build`
+uploads `inst_agg.db` from the staged `assets/` directory AFTER the journal +
+`congress.db` (the P1 journal-first / publish-release / pointer-last order is
+unchanged) and before `publish_release`.
+
+Crash boundaries for an inst-bearing build:
+
+- **Before the journal** — same as the pre-draft boundary above: nothing durable
+  exists, a fresh runner rebuilds from source (steps 1–4 regenerate the ingested
+  tables, and `populus build` regenerates `inst_agg.db` deterministically).
+- **After the journal + `congress.db`, before the inst upload, staging lost** —
+  the narrow fresh-runner window. `reconcile_inflight` / `populus publish` finds
+  the inst module in the journal's manifest but `inst_agg.db` is **neither a
+  verified draft asset nor present in staging**, and the congress-scoped journal
+  cannot regenerate it. Recovery **refuses loudly**: the release is left a draft,
+  the pointer is unmoved, and nothing consumer-visible is stranded. Resolve it
+  with the **drafts-only cleanup** below (shown for an example interrupted id
+  `20260724.1`), then rebuild under a new `build_id` (which regenerates
+  `inst_agg.db` from source):
+
+  ```bash
+  # 1. Delete the abandoned draft (drafts-only; published releases are immutable)
+  gh release delete data-20260724.1 --repo johnbaekk-spec/populus-data --yes
+  # 2. Remove any stale staging scratch for it
+  rm -rf ../populus-data/.staging/20260724.1
+  # 3. Rebuild + publish under a fresh id (next_build_id burns the interrupted one)
+  uv run populus build   --db rebuild.db --data-repo ../populus-data
+  uv run populus publish --data-repo ../populus-data
+  ```
+
+  This is the same executable, owner-accepted drafts-only cleanup as
+  `rollback.md` Appendix A — one documented operator command, applied to a
+  regenerable derived asset.
+- **After the inst upload** — `verify_asset` finds `inst_agg.db` present and
+  completion proceeds normally. On the SAME runner (staging intact) the upload is
+  simply retried from staging and completion is fully automatic; no operator
+  step is needed.
+
+*Removal condition:* widen the journal to a multi-DB envelope (accepting the
+DR-5 git-size cost) or upload the inst asset ahead of the journal — either would
+make the narrow window fully automatic. Neither is worth its cost today, so the
+one-command operator step stands (drilled in
+`tests/test_publish.py` fresh-runner inst crash-boundary tests).
+
 ## Filesystem trust boundary (§14, owner-accepted — bounded)
 
 Populus hardens **all untrusted-data-derived paths** (manifest / pointer /

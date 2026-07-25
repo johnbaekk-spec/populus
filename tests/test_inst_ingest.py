@@ -948,3 +948,51 @@ def test_an_invalid_index_date_is_a_counted_reject_not_a_crash(tmp_path):
     assert report.rejected_rows.count("0001193125-26-999999") == 2
     assert report.index_rows == 4  # the four real filings still processed
     conn.close()
+
+
+# --- the notice-only guard through the M2 gate / build path (RUN M2-3, R7) ----
+
+
+def test_notice_only_corpus_withheld_as_not_measurable_at_build(tmp_path):
+    """A valid 13F-NT notice is NOT a cover failure, but a notice-only corpus has
+    a zero coverage denominator → the build withholds inst as ``not_measurable``
+    (never blocking congress, never mislabeled ``cover_failed``). This ties the
+    notice-only coverage guard to the actual publish decision (R7)."""
+    from datetime import datetime, timezone
+
+    from test_inst_agg import _filer, _load
+
+    from populus.publish.build import LocalDirBackend, run_build
+
+    db = tmp_path / "populus.db"
+    init_db(str(db))
+    conn = connect(str(db))
+    try:
+        _filer(conn, "0009000009", "Notice Co")
+        _load(conn, fid="inst:NT-1", cik="0009000009", period="2026-03-31",
+              filed="2026-04-15", holds=[], total=None, submission_type="13F-NT")
+        # Sanity: the notice is not flagged cover_failed.
+        (flags,) = conn.execute(
+            "SELECT flags FROM inst_filings WHERE filing_id = 'inst:NT-1'"
+        ).fetchone()
+        assert "cover_failed" not in json.loads(flags)
+    finally:
+        conn.close()
+
+    repo = tmp_path / "data-repo"
+    repo.mkdir()
+    report = run_build(
+        db, repo,
+        now=lambda: datetime(2026, 7, 24, 12, 0, 0, tzinfo=timezone.utc),
+        backend=LocalDirBackend(repo),
+    )
+    assert report.inst_withheld is not None
+    assert report.inst_withheld["reason"] == "not_measurable"
+    assert report.inst_withheld["cover_failed_count"] == 0
+    # Congress still builds normally alongside the withheld inst module.
+    manifest = json.loads(
+        (repo / ".staging" / report.build_id / "build" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(manifest["modules"]) == {"congress"}

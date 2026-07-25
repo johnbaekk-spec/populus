@@ -35,17 +35,31 @@ from populus import licenses
 from populus.amendments import ensure_views
 from populus.db import connect
 from populus.ingest import UnsafeArchivePathError
+from populus.ingest.inst13f import compute_coverage
+from populus.inst_agg import build_inst_agg
+from populus.normalize_inst import NORMALIZATION_VERSION as INST_NORMALIZATION_VERSION
 from populus.publish import atomic_write_bytes
 from populus.publish.attestation import AttestationProvider, StagingNoop
-from populus.publish.digests import DigestError, logical_digest, sha256_file
+from populus.publish.digests import (
+    LOGICAL_PROJECTION_VERSIONS,
+    LOGICAL_PROJECTIONS,
+    DigestError,
+    logical_digest,
+    sha256_file,
+)
 from populus.publish.manifest import (
     DB_ARTIFACT,
+    INST_CLIENT_COMPAT,
+    INST_DB_ARTIFACT,
+    INST_MODULE,
+    INST_SCHEMA_VERSION,
     JOURNAL_ASSET,
     LICENSING_ARTIFACTS,
     MODULE,
     ArtifactEntry,
     build_manifest,
     find_artifact,
+    module_db_artifact,
     pointer_manifest_identity_error,
     render_manifest,
     resolve_within,
@@ -888,7 +902,59 @@ def next_build_id(data_repo: Path | str, today: date, backend: ReleaseBackend) -
         for entry in staging_root.iterdir():
             if entry.is_dir():
                 _consider(entry.name)
-    return f"{date_str}.{highest + 1}"
+    # DURABLE high-water mark. Every other input above is erasable: the
+    # documented drafts-only cleanup (rollback.md Appendix A) deletes the draft
+    # AND the staged build, after which a same-day rebuild would otherwise
+    # REALLOCATE the interrupted id — binding one immutable build identity to
+    # two different byte sets (QA-F1, round 7). The mark lives at the
+    # DATA-REPOSITORY ROOT, which survives that cleanup, so an allocated id is
+    # never handed out twice.
+    _consider(f"{date_str}.{_allocation_high_water(data_repo, date_str)}")
+    allocated = highest + 1
+    _record_allocation(data_repo, date_str, allocated)
+    return f"{date_str}.{allocated}"
+
+
+#: Durable record of the highest build sequence allocated per date. It lives at
+#: the DATA-REPO ROOT — deliberately NOT in `builds/` (which must not exist
+#: before finalize, and whose base is symlink-guarded) and not in `.staging/` or
+#: the release (both erased by the drafts-only cleanup). Build ids are immutable
+#: identities, so an allocated id is never handed out twice (QA-F1, round 7).
+ALLOCATIONS_FILE = ".build-allocations.json"
+
+
+def _allocations_path(data_repo: Path) -> Path:
+    return Path(data_repo) / ALLOCATIONS_FILE
+
+
+def _allocation_high_water(data_repo: Path, date_str: str) -> int:
+    path = _allocations_path(data_repo)
+    if not path.is_file():
+        return 0
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    value = record.get(date_str) if isinstance(record, dict) else None
+    return value if isinstance(value, int) and value >= 0 else 0
+
+
+def _record_allocation(data_repo: Path, date_str: str, sequence: int) -> None:
+    path = _allocations_path(data_repo)
+    record: dict = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                record = loaded
+        except (OSError, ValueError):
+            record = {}
+    if sequence <= record.get(date_str, 0):
+        return
+    record[date_str] = sequence
+    atomic_write_bytes(
+        path, (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+    )
 
 
 # --- reconcile + completion (R25/R35) ----------------------------------------
@@ -978,6 +1044,80 @@ def _committed_build_conflict(
     return None
 
 
+def _complete_extra_module_assets(
+    data_repo: Path,
+    build_id: str,
+    manifest: dict,
+    *,
+    backend: ReleaseBackend,
+    actions: list[str],
+    draft: bool,
+    scratch: Path | None,
+) -> None:
+    """Upload/verify every non-congress module's Release DB asset (R3/R12).
+
+    The recovery journal is congress-scoped — ``congress.db`` is extracted from
+    it — so an additional module's aggregate (``inst_agg.db``) is sourced from
+    the staged ``assets/`` directory instead. On a draft, a not-yet-uploaded
+    asset is uploaded from staging; if staging is gone AND the asset is not
+    already a verified draft asset (the narrow fresh-runner post-journal /
+    pre-inst-upload window), recovery **refuses loudly** with the release still a
+    draft and the pointer unmoved — resolved by the drafts-only cleanup +
+    rebuild (TD-M2-3-1). On an already-published release the asset must simply
+    verify present (immutability), or the re-publish is refused.
+    """
+    for module_name in sorted(manifest.get("modules", {})):
+        if module_name == MODULE:
+            continue  # congress.db is sourced from the journal itself
+        db_name = module_db_artifact(module_name)
+        entry = find_artifact(manifest, db_name, module=module_name)
+        if entry is None:
+            continue
+        if backend.verify_asset(
+            build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
+        ):
+            continue  # already uploaded and verified — idempotent
+        if not draft:
+            raise PublishError(
+                f"release data-{build_id} is published but module {module_name!r}"
+                f" asset {db_name} is missing or does not verify — refusing to"
+                " re-publish an inconsistent release"
+            )
+        staged_asset = (
+            Path(data_repo) / STAGING_DIR / build_id / "assets" / db_name
+        )
+        if not staged_asset.is_file():
+            raise PublishError(
+                f"module {module_name!r} Release asset {db_name} for"
+                f" data-{build_id} is neither a verified draft asset nor present"
+                " in staging: the congress-scoped recovery journal cannot"
+                " regenerate it. The release is still a draft and the pointer is"
+                " unmoved — run the drafts-only cleanup (docs/runbooks/rollback.md"
+                " Appendix A) and rebuild under a new build_id to regenerate it"
+                " (TD-M2-3-1)."
+            )
+        data = staged_asset.read_bytes()
+        if (
+            hashlib.sha256(data).hexdigest() != entry["sha256"]
+            or len(data) != entry["bytes"]
+        ):
+            raise PublishError(
+                f"staged {db_name} for data-{build_id} does not match its"
+                " manifest entry — refusing to upload an inconsistent asset"
+            )
+        upload_file = Path(scratch) / db_name
+        upload_file.write_bytes(data)
+        backend.upload(build_id, upload_file, name=db_name, clobber=True)
+        actions.append(f"upload:{db_name}")
+        if not backend.verify_asset(
+            build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
+        ):
+            raise PublishError(
+                f"{db_name} asset on data-{build_id} failed verification after"
+                " upload"
+            )
+
+
 def _complete_build(
     data_repo: Path,
     build_id: str,
@@ -1012,9 +1152,16 @@ def _complete_build(
     conflict = _committed_build_conflict(data_repo, build_id, journal)
     if conflict is not None:
         raise PublishError(conflict)
+    # The extra-module asset preflight must run here too: reconciliation reaches
+    # this point WITHOUT _preflight, so without it a resumed publish could upload
+    # the journal and congress.db before discovering a missing/corrupt staged
+    # inst_agg.db — partially mutating a build that was never publishable
+    # (QA-F1, round 6).
+    _preflight_module_assets(Path(data_repo), build_id, journal, backend)
     manifest_text: str = journal["artifacts"]["manifest.json"]
     manifest_bytes = manifest_text.encode("utf-8")
     manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    manifest = journal_manifest(journal)  # validated in journal_load
     journal_sha = journal_sha256(journal_bytes)
     db_sha = journal["db"]["sha256"]
     db_size = journal["db"]["bytes"]
@@ -1062,6 +1209,17 @@ def _complete_build(
                         f"congress.db asset on data-{build_id} failed"
                         " verification after upload"
                     )
+            # After the journal + congress.db (P1 order preserved), upload each
+            # additional module's Release asset from staging, before publish (R3).
+            _complete_extra_module_assets(
+                data_repo,
+                build_id,
+                manifest,
+                backend=backend,
+                actions=actions,
+                draft=True,
+                scratch=Path(scratch),
+            )
         backend.publish_release(build_id)
         actions.append(f"publish_release:{build_id}")
     else:
@@ -1075,6 +1233,17 @@ def _complete_build(
                 f"release data-{build_id} is already published with different"
                 " bytes — refusing to re-publish; existing assets unchanged"
             )
+        # Each additional module's asset must also verify present on the
+        # published release (immutability), or the re-publish is refused.
+        _complete_extra_module_assets(
+            data_repo,
+            build_id,
+            manifest,
+            backend=backend,
+            actions=actions,
+            draft=False,
+            scratch=None,
+        )
 
     # The complete committed-build conflict check ran in preflight above (F2),
     # before any mutation; materialize is byte-idempotent for the matching case.
@@ -1233,6 +1402,13 @@ class BuildReport:
     # True when an existing valid staged journal / completed in-flight build
     # was preserved or recovered verbatim rather than assembled fresh (F2).
     preserved: bool = False
+    # The inst cross-filer aggregate outcome (R7). When inst data is present but
+    # the M2 >=95% gate withholds it, this carries the typed reason (reason ∈
+    # {below_threshold, cover_failed, not_measurable} + the coverage numbers);
+    # it is None when inst published or no inst data was present.
+    inst_withheld: dict | None = None
+    # The inst logical digest when the inst module published (R5); None otherwise.
+    inst_logical_digest: str | None = None
 
 
 def _report_from_manifest(
@@ -1250,7 +1426,12 @@ def _report_from_manifest(
         staging_dir=staging_dir,
         previous_build_id=manifest.get("previous_build_id"),
         logical_digest=db_entry.get("logical_digest", ""),
-        artifact_count=len(manifest["modules"][MODULE]["artifacts"]),
+        # Count EVERY module's artifacts: a preserved two-module build would
+        # otherwise under-report its display-only count (QA-F2 nit, round 5).
+        artifact_count=sum(
+            len(module.get("artifacts", []))
+            for module in manifest.get("modules", {}).values()
+        ),
         skipped_tickers=(),
         adopted=adopted,
         reconciled=reconciled,
@@ -1483,6 +1664,60 @@ def run_build(
                 "senate_db_max_filed_date"
             ],
         }
+
+        # --- inst cross-filer aggregates + the M2 >=95% coverage gate (R1/R7) --
+        # Guard on inst data: absent → a byte-identical M1 build (no inst module,
+        # no inst_agg.db asset). The recovery journal stays congress-scoped
+        # either way (R3); the inst asset is a separate staged Release asset.
+        inst_agg_path = assets_dir / INST_DB_ARTIFACT
+        inst_present = (
+            snapshot.execute(
+                "SELECT 1 FROM v_default_inst_filings LIMIT 1"
+            ).fetchone()
+            is not None
+        )
+        inst_logical: str | None = None
+        inst_watermarks: dict | None = None
+        inst_withheld: dict | None = None
+        if inst_present:
+            build_inst_agg(snapshot, inst_agg_path, ingested_at=created_at)
+            # Fail-closed gate (OWNER DECISION 2026-07-24): consume the reused
+            # compute_coverage's `meets_threshold` at exactly COVERAGE_THRESHOLD,
+            # keyed on the cover_failed flag — never re-derived here, never
+            # widened by FTD inference. Coverage is never re-keyed off
+            # `total IS NULL`.
+            coverage = compute_coverage(snapshot)
+            if not coverage.meets_threshold:
+                if coverage.cover_failed_count > 0:
+                    reason = "cover_failed"
+                elif not coverage.certifiable:
+                    reason = "not_measurable"
+                else:
+                    reason = "below_threshold"
+                inst_withheld = {
+                    "reason": reason,
+                    "denominator": coverage.denominator,
+                    "numerator": coverage.numerator,
+                    "coverage": coverage.coverage,
+                    "cover_failed_count": coverage.cover_failed_count,
+                    "certifiable": coverage.certifiable,
+                }
+            else:
+                agg_conn = connect(str(inst_agg_path))
+                try:
+                    inst_logical = logical_digest(
+                        agg_conn, LOGICAL_PROJECTIONS[INST_MODULE]
+                    )
+                finally:
+                    agg_conn.close()
+                inst_watermarks = {
+                    "latest_period_of_report": snapshot.execute(
+                        "SELECT MAX(period_of_report) FROM v_default_inst_filings"
+                    ).fetchone()[0],
+                    "latest_filed_date": snapshot.execute(
+                        "SELECT MAX(filed_date) FROM v_default_inst_filings"
+                    ).fetchone()[0],
+                }
     finally:
         snapshot.close()
 
@@ -1540,6 +1775,29 @@ def run_build(
         watermarks=watermarks,
         artifacts=entries,
     )
+    # Post-assembly injection of the inst module when it cleared the gate (R3/R7).
+    # `build_manifest` stays congress-scoped (zero M1 regression); the inst
+    # aggregate is a separate Release asset alongside congress.db.
+    if inst_logical is not None:
+        inst_kind, inst_value = backend.locator(build_id, INST_DB_ARTIFACT)
+        inst_entry = ArtifactEntry(
+            name=INST_DB_ARTIFACT,
+            sha256=sha256_file(inst_agg_path),
+            bytes=inst_agg_path.stat().st_size,
+            license_ids=tuple(data_license_ids),
+            path=inst_value if inst_kind == "path" else None,
+            url=inst_value if inst_kind == "url" else None,
+            logical_digest=inst_logical,
+        )
+        manifest["modules"][INST_MODULE] = {
+            "schema_version": INST_SCHEMA_VERSION,
+            "client_compat": INST_CLIENT_COMPAT,
+            "deprecation": None,
+            "normalization_version": INST_NORMALIZATION_VERSION,
+            "digest_projection_version": LOGICAL_PROJECTION_VERSIONS[INST_MODULE],
+            "watermarks": inst_watermarks,
+            "artifacts": [inst_entry.to_dict()],
+        }
     manifest_errors = validate_manifest(
         manifest, register_ids=licenses.register_ids(register)
     )
@@ -1558,10 +1816,17 @@ def run_build(
         staging_dir=str(staging_dir),
         previous_build_id=previous_build_id,
         logical_digest=db_logical,
-        artifact_count=len(entries),
+        # Every module's artifacts, matching `_report_from_manifest` — a fresh
+        # two-module build must not report only the congress count (QA-F4 nit).
+        artifact_count=sum(
+            len(module.get("artifacts", []))
+            for module in manifest.get("modules", {}).values()
+        ),
         skipped_tickers=tuple(skipped_tickers),
         adopted=adopted,
         reconciled=reconciled.completed,
+        inst_withheld=inst_withheld,
+        inst_logical_digest=inst_logical,
     )
 
 
@@ -1575,6 +1840,62 @@ class PublishReport:
     dry_run: bool
     actions: tuple[str, ...]
     reconciled: tuple[str, ...] = ()
+
+
+def _preflight_module_assets(
+    data_repo: Path, build_id: str, journal: dict, backend: ReleaseBackend
+) -> None:
+    """Every NON-congress module DB asset must be obtainable BEFORE the first
+    mutation: staged with the manifest's exact sha256/size, or already a verified
+    asset on the release. Without this a dry-run could claim a build would
+    publish while its inst_agg.db is missing/corrupt, and a real publish could
+    upload the journal and congress.db before refusing — mutating on a build that
+    was never publishable (QA-F6, §5.5 preflight).
+
+    Shared by `_preflight` AND the draft-reconciliation path, which reaches
+    `_complete_build` without `_preflight` (QA-F1, round 6).
+    """
+    manifest_text = journal["artifacts"].get("manifest.json")
+    if manifest_text:
+        try:
+            staged_manifest = json.loads(manifest_text)
+        except ValueError:
+            staged_manifest = None
+        if isinstance(staged_manifest, dict):
+            assets_dir = Path(data_repo) / STAGING_DIR / build_id / "assets"
+            for module_name in sorted(staged_manifest.get("modules", {})):
+                if module_name == MODULE:
+                    continue  # congress.db comes from the journal itself
+                db_name = module_db_artifact(module_name)
+                entry = find_artifact(staged_manifest, db_name, module=module_name)
+                if entry is None:
+                    continue
+                if backend.verify_asset(
+                    build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
+                ):
+                    continue  # already uploaded and verified on the release
+                staged_asset = assets_dir / db_name
+                if not staged_asset.is_file():
+                    # Same operator guidance as the in-flight refusal: the
+                    # congress-scoped journal cannot regenerate a module asset,
+                    # so the resolution is the drafts-only cleanup + rebuild.
+                    raise PublishError(
+                        f"module {module_name!r} asset {db_name} is neither staged"
+                        f" at {staged_asset} nor a verified release asset —"
+                        " refusing to publish an incomplete multi-module build."
+                        " Run the drafts-only cleanup (docs/runbooks/rollback.md"
+                        " Appendix A) and rebuild under a new build_id to"
+                        " regenerate it (TD-M2-3-1)."
+                    )
+                if (
+                    sha256_file(staged_asset) != entry["sha256"]
+                    or staged_asset.stat().st_size != entry["bytes"]
+                ):
+                    raise PublishError(
+                        f"staged module asset {db_name} does not match the"
+                        f" manifest (sha256/bytes) — refusing an inconsistent"
+                        " publish"
+                    )
 
 
 def _preflight(
@@ -1605,6 +1926,9 @@ def _preflight(
                     f"staged artifact {relpath} differs from the journal —"
                     " refusing an inconsistent publish"
                 )
+
+    _preflight_module_assets(Path(data_repo), build_id, journal, backend)
+
     release = backend.get_release(build_id)
     if release is not None and not release.draft:
         journal_sha = journal_sha256(journal_bytes)
@@ -1685,32 +2009,35 @@ def _publish_rollback(
     identity = pointer_manifest_identity_error(manifest, rollback_to)
     if identity is not None:
         raise PublishError(f"rollback target: {identity}")
-    # Verify every enumerated immutable asset before repointing.
-    for entry in manifest["modules"][MODULE]["artifacts"]:
-        name = entry["name"]
-        if entry.get("path") is not None:
-            try:
-                committed = resolve_within(data_repo, entry["path"])
-            except UnsafeArchivePathError as exc:
-                raise PublishError(f"rollback target {name}: unsafe path: {exc}")
-            if (
-                not committed.is_file()
-                or committed.stat().st_size != entry["bytes"]
-                or sha256_file(committed) != entry["sha256"]
-            ):
-                raise PublishError(
-                    f"rollback target artifact {name} is missing or does not"
-                    " match its manifest — refusing to repoint"
-                )
-        else:
-            if not backend.verify_asset(
-                rollback_to, name, sha256=entry["sha256"], size=entry["bytes"]
-            ):
-                raise PublishError(
-                    f"rollback target Release asset {name} for data-{rollback_to}"
-                    " is missing or corrupt — refusing to repoint at an"
-                    " unverifiable build"
-                )
+    # Verify every enumerated immutable asset of EVERY module before repointing
+    # (R11): a missing/corrupt inst_agg.db refuses the rollback just as a missing
+    # congress.db does — consumers are never pointed at an unverifiable build.
+    for module_name in sorted(manifest["modules"]):
+        for entry in manifest["modules"][module_name]["artifacts"]:
+            name = entry["name"]
+            if entry.get("path") is not None:
+                try:
+                    committed = resolve_within(data_repo, entry["path"])
+                except UnsafeArchivePathError as exc:
+                    raise PublishError(f"rollback target {name}: unsafe path: {exc}")
+                if (
+                    not committed.is_file()
+                    or committed.stat().st_size != entry["bytes"]
+                    or sha256_file(committed) != entry["sha256"]
+                ):
+                    raise PublishError(
+                        f"rollback target artifact {name} is missing or does not"
+                        " match its manifest — refusing to repoint"
+                    )
+            else:
+                if not backend.verify_asset(
+                    rollback_to, name, sha256=entry["sha256"], size=entry["bytes"]
+                ):
+                    raise PublishError(
+                        f"rollback target Release asset {name} for"
+                        f" data-{rollback_to} is missing or corrupt — refusing to"
+                        " repoint at an unverifiable build"
+                    )
     latest_path = data_repo / "latest.json"
     if not latest_path.exists():
         raise PublishError("rollback requires an existing latest.json pointer")
@@ -1867,41 +2194,48 @@ class VerifyReport:
     checked_artifacts: int
 
 
-def _verify_local_db_artifact(db_file: Path, entry: dict) -> list[str]:
+def _verify_local_db_artifact(
+    db_file: Path,
+    entry: dict,
+    *,
+    projection: dict[str, frozenset[str]],
+    label: str,
+) -> list[str]:
     """SQLite integrity + logical-digest checks for a LOCAL database artifact.
 
-    R10 requires ``populus verify`` to validate the published database's
-    ``PRAGMA integrity_check`` and to recompute its ``logical_digest`` directly
-    from the manifest-resolved artifact — with no ``--db`` supplied (F2). A
-    hash-consistent but corrupt or non-SQLite file, or a manifest whose
-    ``logical_digest`` disagrees with the actual database, is a defect here.
-    (``--db`` remains the §13.5 disaster-recovery source reconciliation.)
+    R10 requires ``populus verify`` to validate each published module database's
+    ``PRAGMA integrity_check`` and to recompute its ``logical_digest`` under the
+    module's own *projection*, directly from the manifest-resolved artifact —
+    with no ``--db`` supplied (F2). A hash-consistent but corrupt or non-SQLite
+    file, or a manifest whose ``logical_digest`` disagrees with the actual
+    database, is a defect here. (``--db`` remains the §13.5 disaster-recovery
+    source reconciliation.)
     """
     errors: list[str] = []
     try:
         conn = connect(str(db_file))
     except sqlite3.Error as exc:
-        return [f"{DB_ARTIFACT}: not a valid SQLite database: {exc}"]
+        return [f"{label}: not a valid SQLite database: {exc}"]
     try:
         try:
             (integrity,) = conn.execute("PRAGMA integrity_check").fetchone()
         except sqlite3.Error as exc:
-            return [f"{DB_ARTIFACT}: PRAGMA integrity_check could not run: {exc}"]
+            return [f"{label}: PRAGMA integrity_check could not run: {exc}"]
         if integrity != "ok":
             errors.append(
-                f"{DB_ARTIFACT}: PRAGMA integrity_check reported {integrity!r}"
+                f"{label}: PRAGMA integrity_check reported {integrity!r}"
             )
         expected = entry.get("logical_digest")
         try:
-            recomputed = logical_digest(conn)
+            recomputed = logical_digest(conn, projection)
         except (DigestError, sqlite3.Error) as exc:
             errors.append(
-                f"{DB_ARTIFACT}: logical_digest could not be recomputed: {exc}"
+                f"{label}: logical_digest could not be recomputed: {exc}"
             )
         else:
             if recomputed != expected:
                 errors.append(
-                    f"{DB_ARTIFACT}: recomputed logical_digest {recomputed} does"
+                    f"{label}: recomputed logical_digest {recomputed} does"
                     f" not reconcile with the manifest logical_digest {expected}"
                 )
     finally:
@@ -2012,35 +2346,47 @@ def run_verify(
             False, build_id, (*errors, identity_error), tuple(notes), 0
         )
 
-    module = manifest["modules"][MODULE]
+    # Recompute EVERY module's artifact hashes and DB logical digest (R4): a
+    # two-module build re-verifies both congress.db (congress projection) and
+    # inst_agg.db (inst projection), each under its own module's allowlist.
     stats_bytes: bytes | None = None
-    for entry in module["artifacts"]:
-        name = entry["name"]
-        if entry.get("path") is not None:
-            try:
-                artifact_file = resolve_within(data_repo, entry["path"])
-            except Exception as exc:
-                errors.append(f"{name}: unsafe path: {exc}")
-                continue
-            if not artifact_file.is_file():
-                errors.append(f"{name}: missing at {entry['path']}")
-                continue
-            checked += 1
-            if artifact_file.stat().st_size != entry["bytes"]:
-                errors.append(f"{name}: byte size differs from the manifest")
-            if sha256_file(artifact_file) != entry["sha256"]:
-                errors.append(f"{name}: sha256 differs from the manifest")
-            elif name == "congress/stats.json":
-                stats_bytes = artifact_file.read_bytes()
-            elif name == DB_ARTIFACT:
-                # F2: a LOCAL (path) database artifact is integrity- and
-                # logical-digest-checked here, with no --db required.
-                errors.extend(_verify_local_db_artifact(artifact_file, entry))
-        else:
-            notes.append(
-                f"{name}: remote release asset — publish-time verified;"
-                " `verify --remote` is P2"
-            )
+    for module_name in sorted(manifest["modules"]):
+        db_artifact = module_db_artifact(module_name)
+        for entry in manifest["modules"][module_name]["artifacts"]:
+            name = entry["name"]
+            if entry.get("path") is not None:
+                try:
+                    artifact_file = resolve_within(data_repo, entry["path"])
+                except Exception as exc:
+                    errors.append(f"{name}: unsafe path: {exc}")
+                    continue
+                if not artifact_file.is_file():
+                    errors.append(f"{name}: missing at {entry['path']}")
+                    continue
+                checked += 1
+                if artifact_file.stat().st_size != entry["bytes"]:
+                    errors.append(f"{name}: byte size differs from the manifest")
+                if sha256_file(artifact_file) != entry["sha256"]:
+                    errors.append(f"{name}: sha256 differs from the manifest")
+                elif name == "congress/stats.json":
+                    stats_bytes = artifact_file.read_bytes()
+                elif name == db_artifact:
+                    # F2: a LOCAL (path) database artifact is integrity- and
+                    # logical-digest-checked here (under its module's own
+                    # projection), with no --db required.
+                    errors.extend(
+                        _verify_local_db_artifact(
+                            artifact_file,
+                            entry,
+                            projection=LOGICAL_PROJECTIONS[module_name],
+                            label=name,
+                        )
+                    )
+            else:
+                notes.append(
+                    f"{name}: remote release asset — publish-time verified;"
+                    " `verify --remote` is P2"
+                )
 
     # Licensing set (R34): present, enumerated, and byte-consistent with the
     # packaged register renders.

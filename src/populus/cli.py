@@ -638,6 +638,28 @@ def build(
             f"skipped {len(report.skipped_tickers)} non-conforming ticker"
             f" slice(s): {', '.join(report.skipped_tickers)}"
         )
+    # Surface the M2 gate decision for the inst module (R8): a withheld notice
+    # (below the >=95% value-coverage gate) is the honest, owner-accepted
+    # outcome, not an error — congress still publishes.
+    if report.inst_withheld is not None:
+        w = report.inst_withheld
+        cov = f"{w['coverage'] * 100:.2f}%" if w["coverage"] is not None else "N/A"
+        click.echo(
+            f"inst module WITHHELD ({w['reason']}): value-coverage"
+            f" {w['numerator']}/{w['denominator']} = {cov} | cover_failed_count"
+            f" {w['cover_failed_count']} — below the M2 ≥95% gate; congress"
+            " publishes normally"
+        )
+    elif report.inst_logical_digest is not None:
+        click.echo(
+            f"inst module included (logical_digest"
+            f" {report.inst_logical_digest[:12]}…)"
+        )
+    # Persist the gate outcome so `publish` can report it truthfully and can
+    # DISTINGUISH "withheld by the gate" from "no institutional data ingested"
+    # (QA-F5). This lives in .staging/ — operational state, never a published
+    # artifact, so it touches no manifest, digest or inventory.
+    _write_inst_gate_record(data_repo, report)
 
 
 @main.command()
@@ -662,6 +684,16 @@ def publish(
     from populus.publish.build import BackendError, PublishError, run_publish
 
     make_backend = _make_backend(backend, repo_slug)
+    # Capture the build-time gate record BEFORE publishing: a successful publish
+    # clears .staging/<build_id>, so reading it afterwards would always miss
+    # and the withheld reason would be lost at the publish boundary (QA-F5).
+    # A ROLLBACK republishes an EXISTING build, so a staged build's gate record
+    # would describe a different target entirely — printing "withheld" for a
+    # rollback target that was never gated. Capture a record only for a forward
+    # publish; rollback gets a neutral notice (QA-F3, round 6).
+    _gate_record_before_publish = (
+        None if rollback_to else _read_inst_gate_record(data_repo, build_id)
+    )
     try:
         report = run_publish(
             data_repo,
@@ -685,6 +717,134 @@ def publish(
         else ""
     )
     click.echo(f"published build {report.build_id}{version}")
+    # Note whether the published build carries the inst module (R8): its absence
+    # on the FTD-only corpus is the gate withholding it at build time.
+    manifest_path = Path(data_repo) / "builds" / report.build_id / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            published = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            published = None
+        if isinstance(published, dict) and "inst" in published.get("modules", {}):
+            click.echo("inst module: published in this build")
+        else:
+            # The module is absent — say WHY, from the build-time gate record.
+            # Silence here would hide the owner-accepted fail-closed outcome at
+            # the publication boundary (QA-F5).
+            if rollback_to:
+                click.echo(
+                    "inst module: not present in this build (rollback target —"
+                    " no build-time gate record applies)"
+                )
+            else:
+                click.echo(
+                    _inst_absence_notice(
+                        data_repo, report.build_id, _gate_record_before_publish
+                    )
+                )
+
+
+def _inst_gate_path(data_repo: str, build_id: str) -> Path:
+    """Where the build-time M2 gate outcome is recorded (staging, not published)."""
+    return Path(data_repo) / ".staging" / build_id / "inst-gate.json"
+
+
+def _write_inst_gate_record(data_repo: str, report) -> None:
+    """Record the inst gate outcome for `publish` to report (QA-F5).
+
+    Three states are distinguishable: `withheld` (measured, below the gate),
+    `included`, and `absent` (no institutional data was ingested at all) — so the
+    publish boundary never has to guess why the module is missing.
+    """
+    if getattr(report, "inst_withheld", None) is not None:
+        record = {"state": "withheld", **report.inst_withheld}
+    elif getattr(report, "inst_logical_digest", None) is not None:
+        record = {"state": "included"}
+    else:
+        record = {"state": "absent"}
+    path = _inst_gate_path(data_repo, report.build_id)
+    # Re-running `build` for an ALREADY-STAGED build reconstructs no gate
+    # metadata, so a naive write would overwrite a real `withheld` verdict with
+    # `absent` — and the next publish would falsely claim no institutional data
+    # was ingested, concealing the fail-closed decision (QA-F2, round 4). An
+    # "absent" verdict never overwrites a recorded one.
+    if record["state"] == "absent":
+        existing = _read_inst_gate_record(data_repo, report.build_id)
+        if isinstance(existing, dict) and existing.get("state") in (
+            "withheld",
+            "included",
+        ):
+            return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(record, sort_keys=True, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        pass  # advisory only — never fail a build over the operator note
+
+
+def _read_inst_gate_record(data_repo: str, build_id: str | None) -> dict | None:
+    """The build-time gate outcome, read while .staging still exists (QA-F5)."""
+    if build_id is None:
+        # Mirror the publisher's build selection: build ids are `YYYYMMDD.N`, so
+        # LEXICOGRAPHIC ordering puts `.9` after `.10` and could attach the wrong
+        # withholding reason to a publication. Sort numerically and ignore any
+        # staging entry that is not a valid build id (QA-F3, round 4).
+        # Mirror the PUBLISHER's selection exactly: build ids are `YYYYMMDD.N`
+        # (so lexicographic ordering would put `.9` after `.10`), and only a
+        # build carrying a valid journal is publishable. Without the journal
+        # predicate a newer PARTIAL staging directory could supply the verdict
+        # printed for a different publication (QA-F1, round 5).
+        staging = Path(data_repo) / ".staging"
+        candidates = []
+        for entry in staging.glob("*"):
+            if not entry.is_dir():
+                continue
+            date_part, _, seq = entry.name.partition(".")
+            if not (len(date_part) == 8 and date_part.isdigit() and seq.isdigit()):
+                continue
+            if not (entry / "journal.json").is_file():
+                continue  # not publishable — never the publisher's target
+            candidates.append(((date_part, int(seq)), entry.name))
+        if not candidates:
+            return None
+        build_id = max(candidates)[1]
+    path = _inst_gate_path(data_repo, build_id)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _inst_absence_notice(
+    data_repo: str, build_id: str, record: dict | None = None
+) -> str:
+    """A truthful one-line reason the inst module is not in the published build."""
+    if record is None:
+        record = _read_inst_gate_record(data_repo, build_id)
+    if isinstance(record, dict) and record.get("state") == "withheld":
+        coverage = record.get("coverage")
+        cov = f"{coverage * 100:.2f}%" if isinstance(coverage, (int, float)) else "N/A"
+        return (
+            f"inst module: WITHHELD by the M2 ≥95% value-coverage gate"
+            f" ({record.get('reason', 'below_threshold')}; coverage {cov},"
+            f" cover_failed_count {record.get('cover_failed_count', '?')})"
+            " — congress published normally"
+        )
+    if isinstance(record, dict) and record.get("state") == "absent":
+        return "inst module: not built (no institutional data ingested)"
+    # No record: a staging-less reconcile or an explicit re-publish of an
+    # already-published build. Say so plainly — and NEVER reference a variable
+    # that no longer exists here, which turned a SUCCESSFUL publish into a
+    # NameError traceback and a non-zero exit (QA-F1).
+    return (
+        "inst module: not present in this build (no build-time gate record at"
+        f" {_inst_gate_path(data_repo, build_id)} — staging is cleared after a"
+        " publish; rebuild to record the reason)"
+    )
 
 
 @main.command()
@@ -724,6 +884,48 @@ def verify(data_repo: str, db_path: str | None) -> None:
     click.echo(
         f"verify ok: build {report.build_id},"
         f" {report.checked_artifacts} local artifacts recomputed"
+    )
+
+
+@main.command("inst-agg")
+@click.option("--db", "db_path", required=True, help="Populus database (source).")
+@click.option(
+    "--out",
+    "out_path",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Destination inst_agg.db (overwritten if present).",
+)
+def inst_agg(db_path: str, out_path: str) -> None:
+    """Build the cross-filer 13F aggregate database (inst_agg.db).
+
+    A pure DB→DB step: reads the default 13F population and writes a fresh,
+    reproducible aggregate. This is the same builder ``populus build`` runs
+    behind the M2 ≥95% coverage gate; run standalone to inspect the aggregate.
+    """
+    from populus.amendments import ensure_views
+    from populus.inst_agg import InstAggError, build_inst_agg
+    from populus.load import ensure_inst_schema
+
+    if not Path(db_path).exists():
+        raise click.ClickException(f"database {db_path} does not exist")
+    conn = connect(db_path)
+    try:
+        # Every M2 entrypoint applies the inst schema before the views, so a
+        # pre-existing M1/M2-1 database resolves the default 13F views.
+        ensure_inst_schema(conn)
+        ensure_views(conn)
+        report = build_inst_agg(conn, out_path, ingested_at=_utc_now())
+    except InstAggError as exc:
+        # e.g. --out aliases the source database: a clean refusal, not a traceback.
+        raise click.ClickException(str(exc))
+    finally:
+        conn.close()
+    click.echo(
+        f"inst-agg: {report.filers} filers | {report.qoq_rows} QoQ deltas"
+        f" | {report.issuer_rows} issuer rows"
+        f" | {report.concentration_rows} concentration rows"
+        f" (top-{report.topn}) → {out_path}"
     )
 
 

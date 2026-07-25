@@ -2037,3 +2037,470 @@ def test_runbook_exists_with_gated_executable_snippets(runbook):
             ["bash", "-n"], input=block, capture_output=True, text=True
         )
         assert result.returncode == 0, f"{runbook} snippet fails bash -n:\n{block}\n{result.stderr}"
+
+
+# --- RUN M2-3: cross-filer inst module (R4/R6/R7/R10/R11/R12/R13) -------------
+
+from test_inst_agg import _entity, _filer, _hold, _load, _security  # noqa: E402
+
+
+def seed_inst(db_path: Path, *, covered: bool) -> Path:
+    """Add inst 13F data to a seeded congress db.
+
+    ``covered=True`` → every holding resolves and Σvalue == Σcover total, so
+    value-coverage is 1.0 (the gate publishes inst). ``covered=False`` → one
+    holding is unresolved, so coverage is 0.90 (< 0.95): certifiable but below
+    the gate (withheld with reason ``below_threshold``).
+    """
+    conn = connect(str(db_path))
+    try:
+        _filer(conn, "0000000001", "Alpha Capital")
+        _security(conn, "sec:x")
+        if covered:
+            holds = [_hold(ordinal=1, issuer="X CO", cusip="111111111",
+                           value=1000, security_id="sec:x")]
+        else:
+            _security(conn, "sec:y")
+            holds = [
+                _hold(ordinal=1, issuer="X CO", cusip="111111111", value=900,
+                      security_id="sec:x"),
+                _hold(ordinal=2, issuer="Y CO", cusip="222222222", value=100,
+                      security_id=None),  # unresolved → drags coverage to 0.90
+            ]
+        _load(conn, fid="inst:A-1", cik="0000000001", period="2026-03-31",
+              filed="2026-04-15", holds=holds)
+    finally:
+        conn.close()
+    return db_path
+
+
+def _staged_asset(repo: Path, build_id: str, name: str) -> Path:
+    return _staged(repo, build_id) / "assets" / name
+
+
+# --- manifest admits inst (R4/F1) --------------------------------------------
+
+
+def test_manifest_admits_inst_generic_rejects_unknown_and_defects(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    report = publish_build(db, repo)
+    manifest = read_manifest(repo, report.build_id)  # congress + inst
+    assert set(manifest["modules"]) == {"congress", "inst"}
+    assert validate_manifest(manifest) == []
+
+    # Generic inst-only validation: no congress required.
+    inst_only = json.loads(json.dumps(manifest))
+    inst_only["modules"] = {"inst": inst_only["modules"]["inst"]}
+    assert validate_manifest(inst_only, required_modules=frozenset()) == []
+    # …but the standard-build default still requires congress.
+    assert any("congress" in e for e in validate_manifest(inst_only))
+
+    # An unknown module is rejected.
+    unknown = json.loads(json.dumps(manifest))
+    unknown["modules"]["weather"] = json.loads(json.dumps(manifest["modules"]["inst"]))
+    assert any(
+        "weather" in e and "unknown" in e for e in validate_manifest(unknown)
+    )
+
+    # inst defect: no artifacts.
+    empty = json.loads(json.dumps(manifest))
+    empty["modules"]["inst"]["artifacts"] = []
+    assert any(
+        "inst" in e and "artifacts must be a non-empty list" in e
+        for e in validate_manifest(empty)
+    )
+
+    # inst defect: wrong watermark keys (congress keys on the inst module).
+    wm = json.loads(json.dumps(manifest))
+    wm["modules"]["inst"]["watermarks"] = {
+        "house_index_last_modified": None, "senate_max_filed_date": None
+    }
+    assert any("inst" in e and "watermark" in e for e in validate_manifest(wm))
+
+    # inst defect: the DB artifact drops its logical_digest.
+    nold = json.loads(json.dumps(manifest))
+    for entry in nold["modules"]["inst"]["artifacts"]:
+        if entry["name"] == "inst_agg.db":
+            entry.pop("logical_digest")
+    assert any(
+        "logical_digest" in e for e in validate_manifest(nold)
+    )
+
+
+# --- the M2 gate at build time (R7) ------------------------------------------
+
+
+def test_inst_gate_withholds_below_threshold_congress_publishes(tmp_path):
+    """R7/R10a: FTD-shaped under-coverage withholds inst (fail-closed) while
+    congress publishes and verifies; only congress assets ship."""
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=False)
+    repo = make_repo(tmp_path)
+    backend = LocalDirBackend(repo)
+    report = run_build(db, repo, now=pin(), backend=backend)
+    assert report.inst_withheld is not None
+    assert report.inst_withheld["reason"] == "below_threshold"
+    assert report.inst_withheld["certifiable"] is True   # measurable, just < 0.95
+    assert abs(report.inst_withheld["coverage"] - 0.90) < 1e-9
+    assert report.inst_logical_digest is None
+    manifest = read_manifest_staged(repo, report.build_id)
+    assert set(manifest["modules"]) == {"congress"}
+
+    run_publish(repo, now=pin(), backend=backend)
+    assert run_verify(repo, now=pin()).ok
+    release = backend.get_release(report.build_id)
+    assert set(release.assets) == {"congress.db", "journal.json"}
+
+
+def test_inst_gate_publishes_both_modules_when_covered(tmp_path):
+    """R10b: a fully-covered corpus publishes BOTH modules; verify recomputes
+    both; inst_agg.db ships as a Release asset in journal-first order."""
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    backend = RecordingBackend(repo)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert report.inst_withheld is None
+    assert report.inst_logical_digest is not None
+    manifest = read_manifest_staged(repo, report.build_id)
+    assert set(manifest["modules"]) == {"congress", "inst"}
+
+    run_publish(repo, now=pin(), backend=backend)
+    # Journal first, then congress.db, then inst_agg.db (P1 order preserved).
+    uploads = [op[1] for op in backend.ops if op[0] == "upload"]
+    assert uploads == ["journal.json", "congress.db", "inst_agg.db"]
+    release = backend.get_release(report.build_id)
+    assert set(release.assets) == {"congress.db", "inst_agg.db", "journal.json"}
+    assert (repo / "releases" / f"data-{report.build_id}" / "inst_agg.db").is_file()
+
+    verify = run_verify(repo, now=pin())
+    assert verify.ok, verify.errors
+
+
+def test_inst_gate_withholds_on_cover_failure(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    conn = connect(str(db))
+    try:
+        _filer(conn, "0000000001")
+        _load(conn, fid="inst:A-cf", cik="0000000001", period="2026-03-31",
+              filed="2026-04-15", holds=[], total=None, parse_status="failed",
+              failure_kind="cover_malformed", flags=["cover_failed"])
+    finally:
+        conn.close()
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert report.inst_withheld is not None
+    assert report.inst_withheld["reason"] == "cover_failed"
+    assert report.inst_withheld["cover_failed_count"] >= 1
+
+
+def test_verify_detects_tampered_inst_asset(tmp_path):
+    """Byte tampering is caught by the OUTER sha256 (before any recomputation)."""
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    report = publish_build(db, repo)
+    asset = repo / "releases" / f"data-{report.build_id}" / "inst_agg.db"
+    asset.write_bytes(asset.read_bytes() + b"tamper")
+    verify = run_verify(repo, now=pin())
+    assert not verify.ok
+    assert any("inst_agg.db" in e for e in verify.errors)
+
+
+def test_verify_recomputes_the_inst_logical_digest(tmp_path):
+    """QA-F5 (round 3) / R4-R10b: `verify` must RECOMPUTE the inst module's
+    logical digest, not merely re-hash its bytes.
+
+    The byte-tamper test above trips the outer sha256 first, so it never reaches
+    this branch. Here the asset is untouched and hash-consistent; only the
+    manifest's recorded `logical_digest` is wrong, so the failure can ONLY come
+    from module-specific recomputation. Mirrors the congress analogue.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    report = publish_build(db, repo)
+
+    manifest = read_manifest(repo, report.build_id)
+    entry = find_artifact(manifest, "inst_agg.db", module="inst")
+    assert entry["logical_digest"] != "ab" * 32
+    entry["logical_digest"] = "ab" * 32   # valid hex the DB cannot reproduce
+    _repoint_to_edited_manifest(repo, report.build_id, manifest)
+
+    verify = run_verify(repo, now=pin())
+    assert not verify.ok
+    assert any(
+        "inst_agg.db" in error and "logical_digest" in error
+        for error in verify.errors
+    ), verify.errors
+
+
+# --- snapshot serve via the module-aware accessor (R6/R13) --------------------
+
+
+def test_snapshot_client_serves_inst_and_congress_via_db_path(tmp_path):
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    fetcher = LocalRepoFetcher(repo)
+
+    inst = SnapshotClient(tmp_path / "cache", fetcher, now=pin(), module="inst")
+    assert inst.refresh().status == "installed"
+    inst_db = inst.db_path()
+    assert inst_db is not None and inst_db.name == "inst_agg.db"
+    reader = connect(str(inst_db))
+    try:
+        assert reader.execute(
+            "SELECT COUNT(*) FROM agg_filer_registry"
+        ).fetchone()[0] >= 1
+    finally:
+        reader.close()
+    # Idempotent re-poll: an unchanged pointer changes nothing (R10a).
+    assert inst.refresh().status == "idempotent"
+
+    # Regression: the congress client still resolves congress.db.
+    congress = SnapshotClient(tmp_path / "cache", fetcher, now=pin(), module="congress")
+    assert congress.refresh().status == "installed"
+    assert congress.db_path().name == "congress.db"
+
+
+# --- rollback preflight over every module's assets (R11) ---------------------
+
+
+def _two_inst_builds(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    first = publish_build(db, repo)
+    mutate_db(db)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    return repo, first.build_id
+
+
+def test_rollback_refused_when_target_inst_asset_missing(tmp_path):
+    repo, target = _two_inst_builds(tmp_path)
+    before = latest_pointer(repo)
+    (repo / "releases" / f"data-{target}" / "inst_agg.db").unlink()
+    with pytest.raises(PublishError, match="missing or does not match"):
+        run_publish(
+            repo, now=pin(NOW + timedelta(days=1, hours=1)),
+            backend=LocalDirBackend(repo), rollback_to=target,
+        )
+    assert latest_pointer(repo) == before
+
+
+def test_rollback_refused_when_target_inst_asset_corrupt(tmp_path):
+    repo, target = _two_inst_builds(tmp_path)
+    before = latest_pointer(repo)
+    asset = repo / "releases" / f"data-{target}" / "inst_agg.db"
+    asset.write_bytes(asset.read_bytes() + b"corruption")
+    with pytest.raises(PublishError, match="missing or does not match"):
+        run_publish(
+            repo, now=pin(NOW + timedelta(days=1, hours=1)),
+            backend=LocalDirBackend(repo), rollback_to=target,
+        )
+    assert latest_pointer(repo) == before
+
+
+# --- fresh-runner inst crash boundary + drafts-only recovery (R12) ------------
+
+
+def _inst_build(tmp_path, name="runner"):
+    runner = make_repo(tmp_path, name)
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    report = run_build(db, runner, now=pin(), backend=LocalDirBackend(runner))
+    return runner, report.build_id, db
+
+
+def test_fresh_runner_inst_completes_when_all_assets_uploaded(tmp_path):
+    """R12: with journal + congress.db + inst_agg.db all uploaded and published,
+    a fresh runner (no staging) completes the same build_id."""
+    runner, build_id, source_db = _inst_build(tmp_path)
+    b = LocalDirBackend(runner)
+    b.ensure_draft(build_id)
+    for name in ("journal.json", "congress.db", "inst_agg.db"):
+        src = (_staged(runner, build_id) / name if name == "journal.json"
+               else _staged_asset(runner, build_id, name))
+        b.upload(build_id, src, name=name)
+    # The release stays a DRAFT: that is exactly the boundary under test (QA-F2).
+    # Pre-publishing here would have tested an already-published release instead,
+    # leaving draft→published recovery completely uncovered.
+    assert b.get_release(build_id).draft
+
+    repo = _fresh_runner_workspace(runner, tmp_path / "fresh")
+    backend = RecordingBackend(repo)
+    report = run_publish(repo, now=pin(), backend=backend)
+    assert build_id in {report.build_id, *report.reconciled}
+    release = backend.get_release(build_id)
+    assert not release.draft  # the fresh runner PUBLISHED the draft
+    assert set(release.assets) == {"congress.db", "inst_agg.db", "journal.json"}
+    assert latest_pointer(repo)["build_id"] == build_id
+    assert "delete_release" not in backend.op_names()
+
+
+def test_fresh_runner_inst_refuses_loudly_at_pre_inst_window(tmp_path):
+    """R12/TD-M2-3-1: journal + congress.db uploaded but inst_agg.db not yet, and
+    a fresh runner lost staging → refuse loudly (draft intact, pointer unmoved);
+    the drafts-only cleanup then succeeds."""
+    runner, build_id, source_db = _inst_build(tmp_path)
+    b = LocalDirBackend(runner)
+    b.ensure_draft(build_id)
+    b.upload(build_id, _staged(runner, build_id) / "journal.json", name="journal.json")
+    b.upload(build_id, _staged_asset(runner, build_id, "congress.db"), name="congress.db")
+    # inst_agg.db intentionally NOT uploaded; release left a draft.
+
+    repo = _fresh_runner_workspace(runner, tmp_path / "fresh")  # no staging carried
+    backend = RecordingBackend(repo)
+    with pytest.raises(PublishError, match="drafts-only cleanup"):
+        run_publish(repo, now=pin(), backend=backend)
+    # Refused safely: draft preserved, pointer unmoved, nothing deleted.
+    assert backend.get_release(build_id).draft
+    assert not (repo / "latest.json").exists()
+    assert "delete_release" not in backend.op_names()
+    # The documented drafts-only cleanup (rollback.md Appendix A) then succeeds.
+    backend.delete_release(build_id)
+    assert backend.get_release(build_id) is None
+
+    # ...and the procedure is proven END-TO-END: rebuild under a FRESH build_id
+    # (regenerating inst_agg.db) and publish it successfully (QA-F3). Without
+    # this the documented recovery stopped at "delete the draft".
+    # The full documented procedure, SAME DAY on the workspace that carries the
+    # durable allocation record, with the same backend the draft lived on. The
+    # operator also removes the staged build, then rebuilds.
+    #
+    # Why `runner` and not the fresh `repo`: `builds/` travels to a fresh runner
+    # only TOGETHER WITH `latest.json` (one atomic finalize commit), and nothing
+    # was ever published here — so `repo` carries no durable state at all. In
+    # that specific case reallocating `.1` is harmless, because no durable
+    # object ever bound `.1` to bytes (draft deleted, staging gone, nothing
+    # committed or published). The burned-id guarantee is about workspaces where
+    # durable evidence DOES exist, which is what this asserts (QA-F1/F2, round 7).
+    shutil.rmtree(runner / ".staging" / build_id, ignore_errors=True)
+    runner_backend = LocalDirBackend(runner)
+    # The fresh workspace holds a COPY of the remote, so the cleanup above
+    # deleted the draft only there; in reality both point at one remote. Apply
+    # the same drafts-only cleanup on this root before rebuilding.
+    runner_backend.delete_release(build_id)
+    assert runner_backend.get_release(build_id) is None
+    same_day = pin()
+    rebuilt = run_build(source_db, runner, now=same_day, backend=runner_backend)
+    assert rebuilt.build_id != build_id, (
+        "the interrupted build_id must be BURNED, not reallocated on a same-day"
+        f" rebuild after cleanup (got {rebuilt.build_id} again)"
+    )
+    # ...and strictly newer, so identities only ever move forward.
+    assert int(rebuilt.build_id.split(".")[1]) > int(build_id.split(".")[1])
+    final = run_publish(runner, now=same_day, backend=runner_backend)
+    assert final.build_id == rebuilt.build_id
+    released = runner_backend.get_release(rebuilt.build_id)
+    assert not released.draft
+    assert {"congress.db", "inst_agg.db", "journal.json"} <= set(released.assets)
+    assert latest_pointer(runner)["build_id"] == rebuilt.build_id
+    # The interrupted identity is gone and never republished.
+    assert runner_backend.get_release(build_id) is None
+
+
+def test_same_runner_inst_uploads_from_staging(tmp_path):
+    """R12: on the SAME runner (staging intact), a missing inst asset is
+    re-uploaded from staging and completion is automatic."""
+    runner, build_id, source_db = _inst_build(tmp_path)
+    b = LocalDirBackend(runner)
+    b.ensure_draft(build_id)
+    b.upload(build_id, _staged(runner, build_id) / "journal.json", name="journal.json")
+    b.upload(build_id, _staged_asset(runner, build_id, "congress.db"), name="congress.db")
+    # inst_agg.db not uploaded, but .staging/ is intact.
+    backend = RecordingBackend(runner)
+    run_publish(runner, now=pin(), backend=backend)
+    release = backend.get_release(build_id)
+    assert not release.draft
+    assert set(release.assets) == {"congress.db", "inst_agg.db", "journal.json"}
+    assert "inst_agg.db" in [op[1] for op in backend.ops if op[0] == "upload"]
+    assert latest_pointer(runner)["build_id"] == build_id
+
+
+# --- second build bumps the pointer; unchanged re-poll is idempotent (R10a) ---
+
+
+def test_inst_withheld_second_build_bumps_pointer_idempotent_republish(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=False)   # inst withheld; congress carries the build
+    repo = make_repo(tmp_path)
+    backend = LocalDirBackend(repo)
+    publish_build(db, repo)
+    v1 = latest_pointer(repo)["pointer_version"]
+
+    mutate_db(db)
+    second = publish_build(db, repo, moment=NOW + timedelta(days=1))
+    v2 = latest_pointer(repo)["pointer_version"]
+    assert v2 == v1 + 1
+
+    # Re-publishing the same, already-committed build is idempotent — no bump.
+    run_publish(
+        repo, now=pin(NOW + timedelta(days=1)), backend=backend,
+        build_id=second.build_id,
+    )
+    assert latest_pointer(repo)["pointer_version"] == v2
+
+
+def read_manifest_staged(repo: Path, build_id: str) -> dict:
+    return json.loads(
+        (repo / STAGING_DIR / build_id / "build" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_republish_refuses_when_a_published_inst_asset_is_damaged(tmp_path, damage):
+    """QA-F4 / published-immutability: re-publishing an already-PUBLISHED
+    two-module release whose `inst_agg.db` asset is missing or corrupt must be
+    REFUSED — no delete, no re-upload, pointer unchanged. This is the
+    `draft=False` branch, which only verify-time and rollback-time tests covered.
+
+    Staging is deliberately kept INTACT: an empty-staging workspace refuses with
+    "nothing staged to publish" long before the asset checks, which would make
+    this assertion vacuous (the first version of this test did exactly that —
+    caught by mutating both the preflight and the immutability branch).
+    """
+    runner, build_id, _db = _inst_build(tmp_path)
+    b = LocalDirBackend(runner)
+    b.ensure_draft(build_id)
+    for name in ("journal.json", "congress.db", "inst_agg.db"):
+        src = (_staged(runner, build_id) / name if name == "journal.json"
+               else _staged_asset(runner, build_id, name))
+        b.upload(build_id, src, name=name)
+    # Publish the release through the BACKEND directly, so staging survives — a
+    # completed `run_publish` clears it, and an empty staging refuses with
+    # "nothing staged" long before the asset checks (which is precisely how the
+    # first version of this test went vacuous).
+    b.publish_release(build_id)
+    assert not b.get_release(build_id).draft
+    pointer_before = (runner / "latest.json").read_bytes() if (
+        runner / "latest.json"
+    ).exists() else None
+
+    # Damage the PUBLISHED inst asset in the backend store (staging untouched).
+    asset = runner / "releases" / f"data-{build_id}" / "inst_agg.db"
+    if damage == "missing":
+        asset.unlink()
+    else:
+        asset.write_bytes(b"not a database")
+
+    backend = RecordingBackend(runner)
+    with pytest.raises(PublishError) as excinfo:
+        run_publish(runner, now=pin(), backend=backend)
+    # It refuses for the RIGHT reason — the published release is immutable and
+    # its module asset cannot be re-uploaded or silently repaired.
+    assert "published" in str(excinfo.value) or "inst_agg.db" in str(excinfo.value)
+    assert "delete_release" not in backend.op_names()
+    assert "upload" not in backend.op_names()
+    after = (runner / "latest.json").read_bytes() if (
+        runner / "latest.json"
+    ).exists() else None
+    assert after == pointer_before  # pointer untouched by the refusal
