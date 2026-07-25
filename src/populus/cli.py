@@ -34,6 +34,7 @@ INGEST_JOB_OWNERS = {
     "congress-senate": 3,
     "congress-backfill": 4,
     "members": 4,
+    "inst-13f": 5,
 }
 REPARSE_JOB_OWNERS = {
     "congress-house": 2,
@@ -120,6 +121,12 @@ def _one_selector(ctx: click.Context, param: click.Parameter, value: object) -> 
     type=click.Path(exists=True, dir_okay=False),
     help="members only: alias YAML overriding the packaged aliases.yaml.",
 )
+@click.option(
+    "--cik",
+    "ciks",
+    multiple=True,
+    help="inst-13f only: a filer CIK to ingest (repeatable). Required for live.",
+)
 @click.pass_context
 def ingest(
     ctx: click.Context,
@@ -131,12 +138,15 @@ def ingest(
     house_index: str | None,
     kadoa_trades: str | None,
     aliases_path: str | None,
+    ciks: tuple[str, ...],
 ) -> None:
     """Run an ingest JOB: discover → fetch → parse → normalize → load."""
     if job != "members" and (house_index or kadoa_trades or aliases_path):
         raise click.UsageError(
             "--house-index/--kadoa-trades/--aliases apply only to ingest members"
         )
+    if job != "inst-13f" and ciks:
+        raise click.UsageError("--cik applies only to ingest inst-13f")
     if job == "congress-house":
         from populus.ingest import house
 
@@ -241,6 +251,64 @@ def ingest(
         click.echo(backfill.format_backfill_summary(report))
         if not report.ok:
             ctx.exit(1)
+    elif job == "inst-13f":
+        from populus.amendments import ensure_views
+        from populus.ingest import inst13f
+        from populus.load import ensure_inst_schema
+        from populus.net.sec_client import HttpxSecTransport, SecClient, sec_contact
+
+        if db_path is None:
+            raise click.UsageError("--db is required for ingest inst-13f")
+        if year is not None:
+            raise click.UsageError("--year does not apply to ingest inst-13f")
+        if from_cache is None:
+            if raw_root is None:
+                raise click.UsageError(
+                    "--raw-root is required for live ingest inst-13f"
+                    " (or use --from-cache DIR)"
+                )
+            if not ciks:
+                raise click.UsageError(
+                    "live ingest inst-13f requires at least one --cik"
+                )
+        if not Path(db_path).exists():
+            init_db(db_path)
+        conn = connect(db_path)
+        try:
+            # Every M2 entrypoint applies the inst schema before the views, so a
+            # pre-existing M1/M2-1 database gains the inst tables AND both inst
+            # views on first M2 use (F19/F33).
+            ensure_inst_schema(conn)
+            ensure_views(conn)
+            common = dict(
+                run_id=f"inst-{uuid.uuid4()}",
+                now=_utc_now,
+                host=platform.node(),
+                ingested_at=_utc_now(),
+                ciks=list(ciks) or None,
+            )
+            if from_cache is not None:
+                report = inst13f.run_inst13f_ingest(
+                    conn, cache_dir=from_cache, **common
+                )
+            else:
+                contact, warning = sec_contact()
+                if warning is not None:
+                    click.echo(warning, err=True)
+                client = SecClient(
+                    HttpxSecTransport(),
+                    contact=contact,
+                    sleep=time.sleep,
+                    monotonic=time.monotonic,
+                )
+                report = inst13f.run_inst13f_ingest(
+                    conn, raw_root=raw_root, client=client, **common
+                )
+        finally:
+            conn.close()
+        click.echo(inst13f.format_summary(report))
+        if not report.ok:
+            ctx.exit(1)
     else:  # members
         from populus import members
         from populus.amendments import ensure_views
@@ -342,11 +410,13 @@ def identity_bootstrap(
         format_bootstrap_summary,
         run_identity_bootstrap,
     )
+    from populus.amendments import ensure_views
     from populus.identity.registry import (
         IdentityRegistryError,
         ensure_registry,
         load_identity_registry,
     )
+    from populus.load import ensure_inst_schema
 
     tickers_path = Path(from_cache) / "company_tickers.json"
     if not tickers_path.exists():
@@ -387,6 +457,10 @@ def identity_bootstrap(
         raise click.ClickException(str(exc))
     try:
         ensure_registry(conn)
+        # A pre-inst database must gain the inst tables + views before the
+        # registry reconcile touches inst_holdings (LD-3) — F33.
+        ensure_inst_schema(conn)
+        ensure_views(conn)
         report = run_identity_bootstrap(
             conn,
             tickers_path=tickers_path,

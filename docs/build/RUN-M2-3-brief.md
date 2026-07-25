@@ -39,6 +39,38 @@ to `tests/test_publish.py` (multi-module manifest + two-build inst digest). Wire
    yield an **identical `inst` logical digest** — test asserts it (mirrors the congress two-build test).
 6. **Snapshot serve**: an integration test constructs `SnapshotClient(module="inst")` over the published
    tree and reads back an aggregate (client machinery already supports it — exercise, don't rebuild).
+7. **M2 ≥95 % value-coverage gate — a pre-publication requirement, enforced in this run's
+   `build`/`publish` path** (M2-CONTRACT §8; assigned by RUN M2-2 LD-8/R17, ratified by that plan's
+   human approval). RUN M2-2 already **computes and persists** the never-inflated gate inputs
+   (`inst_filings.table_value_total_usd` / `resolved_value_usd` / `resolved_rows`, and the
+   `v_default_inst_filings` / `v_default_holdings` predicate); this run **executes** the gate before the
+   `inst` module is published, since M2-3 owns publication. Semantics (LD-8):
+   - **Threshold:** coverage ≥ **0.95**.
+   - **Denominator** = Σ `table_value_total_usd` over `v_default_inst_filings` (includes info-table-failed
+     filings whose cover total is known — they drag coverage down, never vanish).
+   - **Numerator** = Σ `value_usd` over `v_default_holdings` with a non-null `security_id`.
+   - **Certifiability vs threshold are SEPARATE signals** (do not conflate them — RUN M2-2 QA-F6):
+     `InstCoverage.certifiable` means **measurable** (`denominator > 0` and no *cover-failed* filing);
+     `InstCoverage.meets_threshold` means measurable **and** `coverage ≥ COVERAGE_THRESHOLD` (0.95).
+     A fully-measurable 94 % is *certifiable but below threshold*, not "non-certifiable".
+   - **Cover-failure is keyed on the `cover_failed` FLAG, never on "total IS NULL"** (RUN M2-2 QA-F3 —
+     do not reintroduce this): a valid totals-free **`13F-NT` notice** legitimately has
+     `table_value_total_usd IS NULL` and is a genuine **zero contribution**, *not* an unknown one. Counting
+     every NULL total as a failure would refuse publication solely because a valid notice exists. Use
+     `cover_failed_count` as computed by `populus.ingest.inst13f.compute_coverage` (which already applies
+     this rule) rather than re-deriving it. An M2-3 gate regression test must cover a notice-only corpus.
+   - **Publish is REFUSED (fail-closed)** when `meets_threshold` is false — i.e. coverage < 0.95, or
+     `denominator = 0` (no inst value → N/A, not an auto-pass), or `cover_failed_count > 0` (a genuinely
+     cover-failed filing of unknown value). Summing an unknown total as 0 would inflate coverage.
+   - **Data-acquisition prerequisite (blocking input to this run):** period-covering FTD / identifier
+     data must be admitted through the §15 conditions register (`sec-ftd`) so the CUSIP→`security_id`
+     resolution the numerator depends on can reach ≥95 %; without it the gate stays fail-closed.
+     **Measured in RUN M2-2's V-A acceptance: FTD alone cannot reach the threshold** — its as-of intervals
+     only cover dates a security actually failed to deliver (~50 % by value per period; 0 % when no
+     period-covering archive is loaded). Reaching ≥95 % therefore requires either an identifier-history
+     source admitted via §15, an explicitly-labelled confidence-carrying inference layer (G5), or an
+     owner decision to revisit the gate's basis/threshold. **Raise this with the owner at M2-3 entry.**
+   So no under-coverage or genuinely cover-failed inst snapshot can publish before the gate exists.
 
 ## Acceptance
 

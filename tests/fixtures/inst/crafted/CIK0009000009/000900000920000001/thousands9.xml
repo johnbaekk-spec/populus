@@ -1,0 +1,34 @@
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <infoTable>
+    <nameOfIssuer>GAMMA CO</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>000000037</cusip>
+    <value>45000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>500</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>500</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>DELTA CO</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>000000045</cusip>
+    <value>12000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>300</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>300</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+</informationTable>

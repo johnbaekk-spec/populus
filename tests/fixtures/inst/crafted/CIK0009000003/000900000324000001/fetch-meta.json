@@ -1,0 +1,14 @@
+{
+  "retrieved_at": "2026-07-24T00:00:00Z",
+  "documents": {
+    "primary_doc.xml": {
+      "response_hash": "23a72b9c9a3bd4c28fb49747d1870c9e6320d4df63fcbaf51da0a36b58967a18"
+    },
+    "lin_base.xml": {
+      "response_hash": "457290d15a7ee9ea8d4b418342b06c35a96e476af0d1ea84facaa89c052b150b"
+    },
+    "index.json": {
+      "response_hash": "10c05b57bea809f8dedde5c5ec0720bd9d59f8716e4388f0f2a04ac202fe6fe4"
+    }
+  }
+}

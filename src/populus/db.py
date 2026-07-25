@@ -13,6 +13,7 @@ import sqlite3
 
 from populus.amendments import ensure_views
 from populus.identity.registry import ensure_registry
+from populus.load import ensure_inst_schema
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -69,7 +70,8 @@ def init_db(path: str) -> None:
             .read_text(encoding="utf-8")
         )
         conn.executescript(schema)
-        ensure_views(conn)
         ensure_registry(conn)
+        ensure_inst_schema(conn)
+        ensure_views(conn)
     finally:
         conn.close()

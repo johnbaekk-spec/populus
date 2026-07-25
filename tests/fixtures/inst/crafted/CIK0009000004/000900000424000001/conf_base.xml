@@ -1,0 +1,34 @@
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <infoTable>
+    <nameOfIssuer>CONF CORP</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>000000404</cusip>
+    <value>8000000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>800</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>800</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>OPEN CORP</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>000000412</cusip>
+    <value>4000000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>400</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>400</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+</informationTable>

@@ -1,3 +1,5 @@
 # Golden corpus fixtures
 
 Real government filings fetched 2026-07-22 with UA `PopulusBot/0.0` at polite pacing (ARCHITECTURE §9.2). House PDFs from disclosures-clerk.house.gov (2015/2020/2026; low-DocID files are paper-scanned — classifier fixtures); Senate pages from efdsearch.senate.gov (e-filed `ptr_*` + scanned `paper_*`). Public records; provenance = filename DocID/UUID. Expected-output JSON lives beside each fixture once parsers land (RUN 2/3 acceptance criteria).
+
+`inst/` holds the RUN M2-2 institutional 13F corpus — see `inst/README.md`. The `inst/real/CIK0001067983/` Berkshire filings were fetched 2026-07-24 through the RUN-M2-1 `SecClient` (SEC EDGAR, license `sec-edgar`), and `inst/crafted/` holds small deterministic trees for behaviors the real corpus cannot exhibit (era units, options, restatements, affiliated coverage, confidential treatment, cover/info-table failures). Both carry committed `submissions-meta.json` / `fetch-meta.json` retrieval sidecars so provenance is deterministic and offline. `inst/ftd/`, `inst/identity/`, and `inst/registry/` are the RUN M2-1 identity fixtures.

@@ -1,0 +1,50 @@
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <infoTable>
+    <nameOfIssuer>GOOD CORP</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>000000707</cusip>
+    <value>3000000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>300</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>300</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>BADCUSIP CORP</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>12345</cusip>
+    <value>7000000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>700</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>700</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>ANOTHER CORP</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>000000715</cusip>
+    <value>2000000</value>
+    <shrsOrPrnAmt>
+      <sshPrnamt>200</sshPrnamt>
+      <sshPrnamtType>SH</sshPrnamtType>
+    </shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion>
+    <votingAuthority>
+      <Sole>200</Sole>
+      <Shared>0</Shared>
+      <None>0</None>
+    </votingAuthority>
+  </infoTable>
+</informationTable>

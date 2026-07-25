@@ -812,9 +812,14 @@ def test_a_declared_boundary_inside_the_gap_explains_it(
 
 
 def test_security_id_referencing_tables_is_the_enforced_constant():
+    # RUN M2-2 (LD-3) added inst_holdings.security_id as an FK to securities, so
+    # the constant that drives promotion/split repointing must list it too; the
+    # FK-completeness interlock (test_identity_migration.py) set-compares this
+    # tuple to the live PRAGMA foreign_key_list tables.
     assert SECURITY_ID_REFERENCING_TABLES == (
         "security_identifiers",
         "security_supersessions",
+        "inst_holdings",
     )
 
 

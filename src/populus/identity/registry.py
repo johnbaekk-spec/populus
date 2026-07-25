@@ -69,7 +69,11 @@ REUSE_REVIEW_HORIZON_DAYS = 3650
 #: `tests/test_identity_migration.py::test_every_fk_to_securities_is_repointed`,
 #: which reads PRAGMA foreign_key_list for every registry table and fails if a
 #: referencing table is missing here.
-SECURITY_ID_REFERENCING_TABLES = ("security_identifiers", "security_supersessions")
+SECURITY_ID_REFERENCING_TABLES = (
+    "security_identifiers",
+    "security_supersessions",
+    "inst_holdings",
+)
 
 #: Repointed by interval CUTTING rather than a plain UPDATE, because its rows
 #: carry validity intervals that may cross an ownership boundary and therefore
