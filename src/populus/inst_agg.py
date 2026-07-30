@@ -129,6 +129,10 @@ class _Position:
     """A filer's aggregated holding of one keyable security in one period."""
 
     value_usd: int = 0
+    #: Whether ANY constituent holding disclosed a parseable value. Without it a
+    #: position whose only value was NULL is indistinguishable from a real zero,
+    #: and the QoQ delta fabricates one (QA-VERIFY5-B2).
+    has_disclosed_value: bool = False
     units: set[str] = field(default_factory=set)
     has_null_unit: bool = False
     shares_sum: int = 0
@@ -138,6 +142,7 @@ class _Position:
     def add(self, value_usd, ssh_prnamt, ssh_prnamt_type, cusip) -> None:
         if value_usd is not None:
             self.value_usd += value_usd
+            self.has_disclosed_value = True
         if ssh_prnamt_type is None:
             self.has_null_unit = True
         else:
@@ -174,13 +179,15 @@ class _Position:
 @dataclass(frozen=True)
 class _FinalPosition:
     value_usd: int
+    has_disclosed_value: bool
     shares: int | None
     unit: str | None
     single_cusip: str | None
 
 
 def _finalize(pos: _Position) -> _FinalPosition:
-    return _FinalPosition(pos.value_usd, pos.shares, pos.unit, pos.single_cusip)
+    return _FinalPosition(pos.value_usd, pos.has_disclosed_value, pos.shares,
+                          pos.unit, pos.single_cusip)
 
 
 # --- QoQ ----------------------------------------------------------------------
@@ -200,9 +207,17 @@ def _qoq_row(
     ingested_at: str,
 ) -> tuple:
     """One ``agg_qoq_deltas`` row tuple, with the F4 unit-guarded Δshares."""
-    prev_value = prev.value_usd if prev is not None else 0
-    curr_value = curr.value_usd if curr is not None else 0
-    delta_value = curr_value - prev_value
+    # A position that existed but disclosed NO parseable value must NOT
+    # difference against a fabricated zero (QA-VERIFY5-B2). Absence of the
+    # position is a real zero; presence with an undisclosed value is not.
+    prev_undisclosed = prev is not None and not prev.has_disclosed_value
+    curr_undisclosed = curr is not None and not curr.has_disclosed_value
+    prev_value = None if prev_undisclosed else (prev.value_usd if prev else 0)
+    curr_value = None if curr_undisclosed else (curr.value_usd if curr else 0)
+    delta_value = (
+        None if prev_value is None or curr_value is None
+        else curr_value - prev_value
+    )
     prev_shares = prev.shares if prev is not None else None
     curr_shares = curr.shares if curr is not None else None
     # The grain unit — NOT NULL, because subpositions are unit-distinct (QA-F2).
@@ -210,6 +225,8 @@ def _qoq_row(
     flags: set[str] = set()
     if reconciled:
         flags.add("identity_reconciled_by_cusip")
+    if prev_undisclosed or curr_undisclosed:
+        flags.add("value_undisclosed_one_side")
 
     if prev is None:
         change_kind = "new"
@@ -232,9 +249,14 @@ def _qoq_row(
             flags.add("shares_unit_mismatch")
         if delta_shares is not None and delta_shares != 0:
             change_kind = "add" if delta_shares > 0 else "trim"
-        else:
+        elif delta_value is not None:
             change_kind = "add" if delta_value >= 0 else "trim"
             flags.add("classified_by_value")
+        else:
+            # Neither shares nor value can classify this — say so rather than
+            # pick a direction.
+            change_kind = "unclassified"
+            flags.add("change_kind_undeterminable")
 
     return (
         cik,

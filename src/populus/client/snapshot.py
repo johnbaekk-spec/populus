@@ -11,6 +11,12 @@ is keyed by ``<module>/<build_id>``.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import errno
+import fcntl
+from contextlib import contextmanager
+
 import hashlib
 import json
 import os
@@ -80,9 +86,16 @@ class LocalRepoFetcher:
             target = resolve_within(self._data_repo, relpath)
         except Exception as exc:
             raise FetchError(f"unsafe path {relpath!r}: {exc}") from exc
-        if not target.is_file():
-            raise FetchError(f"{relpath} does not exist in {self._data_repo}")
-        return target.read_bytes()
+        # An unreadable file is a FETCH failure, not an escaping OSError: every
+        # caller guards `FetchError` only, so a bare OSError here propagates out
+        # of `refresh()` — which runs on every poll — and kills the whole server,
+        # congress included (QA-VERIFY-N-a).
+        try:
+            if not target.is_file():
+                raise FetchError(f"{relpath} does not exist in {self._data_repo}")
+            return target.read_bytes()
+        except OSError as exc:
+            raise FetchError(f"cannot read {relpath} from {self._data_repo}: {exc}") from exc
 
     def fetch_asset(self, url: str, dest: Path) -> None:
         raise FetchError(
@@ -211,12 +224,36 @@ class GitHubRepoFetcher:
 @dataclass(frozen=True)
 class RefreshResult:
     """Outcome of one refresh: ``status`` ∈ installed · idempotent ·
-    incompatible · refused; ``build_id`` is the build now being served."""
+    incompatible · refused · withdrawn; ``build_id`` is the build now being
+    served (``None`` when nothing is). ``withdrawn`` means a VERIFIED manifest
+    omitted this module — the M2 coverage gate withheld it — so nothing is
+    served and no previously cached build is reused (QA-r6-F4)."""
 
     status: str
     build_id: str | None
     pointer_version: int | None
     message: str
+    #: True only when a VERIFIED manifest was read, demonstrably omitted this
+    #: module, AND the withdrawal committed. Consumers may not infer this from
+    #: absence alone, so the fact travels on the result itself (QA-r3-F2).
+    verified_omission: bool = False
+    #: True when a verified manifest omitted the module but the withdrawal could
+    #: NOT be committed, so the prior build is still being served. Distinct from
+    #: `verified_omission` — nothing was withdrawn — but the caller must be able
+    #: to say the served data is stale rather than report it as clean published
+    #: data with no signal at all (QA-NIT-3).
+    observed_omission: bool = False
+
+
+#: errnos that mean "this filesystem cannot do flock at all" — as opposed to a
+#: transient or permission problem, which must be reported as itself (QA-NIT-2).
+_LOCKING_UNSUPPORTED = frozenset(
+    code for code in (
+        getattr(errno, name, None)
+        for name in ("ENOTSUP", "EOPNOTSUPP", "ENOLCK", "EINVAL", "ENOSYS")
+    )
+    if code is not None
+)
 
 
 class SnapshotClient:
@@ -254,9 +291,41 @@ class SnapshotClient:
         self._module_dir = self._safe_under(module)
         self._module_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self._module_dir, 0o700)
+        self._record_path = self._safe_under(module, "serving.json")
+        self._lock_path = self._safe_under(module, ".lock")
+        # An UNSUPPORTED lock facility is persistent — no transition could ever
+        # be serialized safely — so the module is disabled here, BEFORE any
+        # cache state is consulted (spec §4.1). Contention is different: it is
+        # transient and leaves serving to whatever `serving_build()` proves.
+        self._disabled_reason: str | None = None
+        try:
+            with open(self._lock_path, "a+") as probe:
+                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
+        except OSError as exc:
+            code = getattr(exc, "errno", None)
+            if code in (errno.EWOULDBLOCK, errno.EAGAIN):
+                pass                      # merely contended right now — fine
+            elif code in _LOCKING_UNSUPPORTED:
+                self._disabled_reason = (
+                    "the cache filesystem does not support flock, so module"
+                    f" state cannot be updated safely: {exc}"
+                )
+            else:
+                # Some OTHER I/O problem — read-only cache, EACCES, a directory
+                # where the lock file belongs, EMFILE. Still fail closed, but do
+                # NOT blame flock support: that sends an operator chasing the
+                # wrong cause (QA-NIT-2).
+                self._disabled_reason = (
+                    f"the module cache at {self._module_dir} cannot be locked"
+                    f" ({errno.errorcode.get(code, code)}: {exc.strerror or exc}),"
+                    " so module state cannot be updated safely"
+                )
         self._tuple_path = self._safe_under(module, "trust.json")
-        self._sidecar_path = self._safe_under(module, "install.json")
-        self._current_path = self._safe_under(module, "current")
+        # `install.json` (sidecar), `withdrawn.json` (tombstone) and `current`
+        # are RETIRED — see docs/build/RUN-M2-4-withdrawal-lifecycle.md §2. Every
+        # QA finding in rounds 5-8 was cross-file inference between those
+        # advisory markers; one anchor-validated record removes the category.
 
     def _safe_under(self, *parts: str) -> Path:
         """The single client cache-path chokepoint (R29/F2).
@@ -286,20 +355,146 @@ class SnapshotClient:
 
     # --- serving state -------------------------------------------------------
 
-    def current_build(self) -> str | None:
-        """The build the client is serving, or ``None``."""
-        if not self._current_path.is_file():
-            return None
-        build_id = self._current_path.read_text(encoding="utf-8").strip()
-        # The `current` marker is client-owned but corruptible; route its
-        # build_id through the chokepoint (a bad segment → not serving).
+    def _read_record(self) -> dict | None:
+        """The serving record, or ``None`` when absent, unreadable or malformed.
+
+        Malformed is NOT "no restriction": under §1 of the lifecycle spec, an
+        unparseable record proves nothing, so it yields absence of service.
+        """
         try:
-            manifest_file = self._safe_under(self._module, build_id, "manifest.json")
-        except ValueError:
+            raw = json.loads(self._record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             return None
-        if manifest_file.is_file():
-            return build_id
-        return None
+        if not (
+            isinstance(raw, dict)
+            and isinstance(raw.get("pointer_version"), int)
+            and not isinstance(raw.get("pointer_version"), bool)
+            and isinstance(raw.get("pointer_sha256"), str)
+            and isinstance(raw.get("pointer_bytes"), str)
+            and (raw.get("installed_build") is None
+                 or isinstance(raw.get("installed_build"), str))
+        ):
+            return None
+        return raw
+
+    def serving_build(self) -> str | None:
+        """The build this module may serve — the SOLE serving oracle (spec §3).
+
+        Positive proof or nothing: the record must match the trust anchor on
+        BOTH tuple fields, its embedded pointer bytes must hash to that anchor,
+        and the build those AUTHENTICATED bytes name must verify on disk. Any
+        gap — absent record, corrupt record, mismatched generation, equivocating
+        digest, a record naming some other cached build, missing artifacts —
+        yields ``None``.
+
+        The pointer bytes are what make this proof rather than assertion: an
+        earlier design took ``build_id``/``manifest_sha256`` from the record
+        itself, so the record certified its own claim and a valid-shaped corrupt
+        one could name a different complete build (spec rev-1 F2).
+        """
+        if self._disabled_reason is not None:
+            # No transition on this cache could ever be serialized safely, so
+            # the module cannot be kept correct — it serves nothing. Checked
+            # HERE so there is exactly one oracle (spec §6); putting it only on
+            # the accessors would create the second oracle rev-4 F2 warned of.
+            return None
+        try:
+            trust = load_tuple(self._tuple_path)
+        except TrustTupleError:
+            return None                      # corrupt anchor: fail closed
+        if trust is None:
+            return None
+        version, sha = trust
+        rec = self._read_record()
+        if rec is None:
+            return None
+        if rec["pointer_version"] != version or rec["pointer_sha256"] != sha:
+            return None                      # stale, or equal-version equivocation
+        try:
+            pointer_bytes = base64.b64decode(rec["pointer_bytes"], validate=True)
+        except (ValueError, binascii.Error):
+            return None
+        if hashlib.sha256(pointer_bytes).hexdigest() != sha:
+            return None                      # bytes not bound to the anchor
+        if rec["installed_build"] is None:
+            return None                      # withdrawn
+        try:
+            pointer = json.loads(pointer_bytes.decode("utf-8"))
+            build_id = pointer["build_id"]
+            manifest_sha = pointer["manifest_sha256"]
+        except (UnicodeDecodeError, ValueError, KeyError, TypeError):
+            return None
+        if rec["installed_build"] != build_id:
+            return None                      # record names some other build
+        if not isinstance(build_id, str) or not safe_artifact_name(build_id):
+            return None
+        if not self._build_complete(build_id, manifest_sha):
+            return None                      # artifacts missing or corrupt
+        return build_id
+
+    def _write_record(
+        self, pointer_bytes: bytes, version: int, sha: str, installed_build: str | None
+    ) -> None:
+        """Write the serving record atomically (spec §3)."""
+        self._atomic_text(
+            self._record_path,
+            json.dumps(
+                {
+                    "pointer_version": version,
+                    "pointer_sha256": sha,
+                    "pointer_bytes": base64.b64encode(pointer_bytes).decode("ascii"),
+                    "installed_build": installed_build,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+        )
+
+    @contextmanager
+    def _module_lock(self):
+        """Exclusive per-module lock over the whole read-modify-write (spec §4.1).
+
+        Yields True when held. Contention yields False — the caller returns
+        `refused` WITHOUT writing, and serving continues as whatever
+        `serving_build()` still proves. An unsupported `flock` is a persistent
+        condition and disables the module at construction, so it never reaches
+        here. Released on every exit path, including exceptions.
+        """
+        handle = None
+        try:
+            try:
+                handle = open(self._lock_path, "a+")  # noqa: SIM115 — closed below
+            except OSError:
+                # Cannot even open the lock file (read-only cache, EMFILE, a
+                # directory in its place). Treat as contention: no transition
+                # proceeds, nothing is written, and the error does not escape
+                # refresh() (QA-BLOCKER-2).
+                yield False
+                return
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            if handle is not None:
+                handle.close()
+
+
+    def current_build(self) -> str | None:
+        """The build the client is serving, or ``None``.
+
+        Delegates to :meth:`serving_build`, the sole oracle (spec §6): serving
+        is never decided from a marker file, a generation comparison, or the
+        relationship between two advisory records — every such rule in QA rounds
+        5-8 became a finding.
+        """
+        return self.serving_build()
 
     def db_path(self) -> Path | None:
         # Module-aware (R13/F6): resolve THIS module's database artifact —
@@ -313,32 +508,29 @@ class SnapshotClient:
         )
         return candidate if candidate.is_file() else None
 
-    def _load_trust(self) -> tuple[int, str] | None:
-        """The persisted tuple; corruption is state loss for a client (TD-7)."""
-        try:
-            return load_tuple(self._tuple_path)
-        except TrustTupleError:
-            return None
+    def current_manifest(self) -> dict | None:
+        """The cached ``manifest.json`` for the build being served, or ``None``.
 
-    def _read_sidecar(self) -> dict | None:
-        if not self._sidecar_path.is_file():
+        Additive, read-only freshness accessor: the MCP server reads this
+        module's manifest watermarks (§5.5) to surface freshness in health
+        without a re-fetch. Any absent/malformed cache state yields ``None``
+        rather than raising — a corruptible on-disk file is never trusted to be
+        well-formed (mirrors :meth:`current_build`).
+        """
+        build_id = self.current_build()
+        if build_id is None:
             return None
         try:
-            sidecar = json.loads(self._sidecar_path.read_text(encoding="utf-8"))
+            manifest_file = self._safe_under(self._module, build_id, "manifest.json")
+        except ValueError:
+            return None
+        if not manifest_file.is_file():
+            return None
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        if (
-            isinstance(sidecar, dict)
-            and isinstance(sidecar.get("build_id"), str)
-            # A single safe path segment — the build_id becomes a cache dir name.
-            and safe_artifact_name(sidecar.get("build_id"))
-            and "/" not in sidecar["build_id"]
-            and isinstance(sidecar.get("pointer_version"), int)
-            and isinstance(sidecar.get("pointer_sha256"), str)
-            and isinstance(sidecar.get("manifest_sha256"), str)
-        ):
-            return sidecar
-        return None
+        return manifest if isinstance(manifest, dict) else None
 
     def _build_complete(
         self, build_id: str, expected_manifest_sha256: str | None = None
@@ -387,9 +579,15 @@ class SnapshotClient:
                 artifact = resolve_within(build_dir, name)
             except Exception:
                 return False
-            if not artifact.is_file() or artifact.stat().st_size != size:
-                return False
-            if hashlib.sha256(artifact.read_bytes()).hexdigest() != sha:
+            # An unreadable artifact is "not complete", never an escaping
+            # error: this runs inside serving_build() AND refresh(), so an
+            # EACCES/EIO here would take down every module (QA-BLOCKER-2).
+            try:
+                if not artifact.is_file() or artifact.stat().st_size != size:
+                    return False
+                if hashlib.sha256(artifact.read_bytes()).hexdigest() != sha:
+                    return False
+            except OSError:
                 return False
         return True
 
@@ -398,78 +596,95 @@ class SnapshotClient:
 
         atomic_write_bytes(path, text.encode("utf-8"), mode=0o600)
 
-    def _set_current(self, build_id: str) -> None:
-        self._atomic_text(self._current_path, build_id + "\n")
-
-    def _write_sidecar(
-        self, build_id: str, version: int, sha: str, manifest_sha256: str
-    ) -> None:
-        # The advisory sidecar records the manifest digest too (F1), so offline
-        # reconcile can bind the cached build dir to the authenticated manifest
-        # without re-fetching. It stays advisory — cross-checked against the
-        # two-field trust tuple before it is ever believed.
-        self._atomic_text(
-            self._sidecar_path,
-            json.dumps(
-                {
-                    "build_id": build_id,
-                    "pointer_version": version,
-                    "pointer_sha256": sha,
-                    "manifest_sha256": manifest_sha256,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-        )
-
     # --- crash recovery (R24) ------------------------------------------------
 
     def reconcile(self) -> None:
-        """Read-time healing: remove orphans, repair ``current`` offline.
+        """Read-time cleanup of orphaned temp directories.
 
-        A crash between tuple-persist and ``current``-update is healed from
-        the advisory sidecar — believed only when it cross-checks against the
-        two-field tuple AND its build directory verifies completely. The
-        online idempotent branch of :meth:`refresh` covers the
-        sidecar-not-yet-written window.
+        Under the lifecycle spec (§3) there is nothing left to *heal* offline:
+        serving is derived from the anchor-validated record, so a crash between
+        the two transition writes already evaluates to absent and needs no
+        repair to be safe. The online `idempotent` branch of :meth:`refresh`
+        completes such a window when the authenticated pointer is seen again.
+
+        Every failure here is swallowed: `refresh()` calls this on every poll,
+        so an escaping ``OSError`` would take down the whole server rather than
+        one module (QA-r6-F1).
         """
-        for orphan in self._module_dir.glob(".tmp-*"):
-            if orphan.is_dir():
-                shutil.rmtree(orphan, ignore_errors=True)
-            else:
-                orphan.unlink(missing_ok=True)
-        trust = self._load_trust()
-        if trust is None:
-            return
-        version, sha = trust
-        sidecar = self._read_sidecar()
-        if (
-            sidecar is not None
-            and sidecar["pointer_version"] == version
-            and sidecar["pointer_sha256"] == sha
-            and self._build_complete(
-                sidecar["build_id"], sidecar["manifest_sha256"]
-            )
-        ):
-            if self.current_build() != sidecar["build_id"]:
-                self._set_current(sidecar["build_id"])
+        try:
+            for orphan in self._module_dir.glob(".tmp-*"):
+                if orphan.is_dir():
+                    shutil.rmtree(orphan, ignore_errors=True)
+                else:
+                    orphan.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     # --- refresh -------------------------------------------------------------
 
     def refresh(self) -> RefreshResult:
         """One protocol-conformant poll of ``latest.json``.
 
-        Any failure at any step leaves the prior cache, tuple, sidecar, and
-        ``current`` untouched — the last verified build keeps serving.
+        Serialized by the per-module lock (spec §4.1): the whole read-modify-
+        write — trust load, pointer evaluation, both transition writes, any heal
+        — happens under it, so a stale writer cannot interleave and roll the
+        anchor backward. Contention is transient and yields `refused` WITHOUT a
+        write; serving continues as whatever :meth:`serving_build` still proves.
+
+        Any failure at any step leaves the prior cache, tuple and record
+        untouched — the last verified build keeps serving.
         """
+        if self._disabled_reason is not None:
+            return RefreshResult(
+                "refused", None, None,
+                f"module {self._module!r} is disabled: {self._disabled_reason}",
+            )
+        with self._module_lock() as acquired:
+            if not acquired:
+                return RefreshResult(
+                    "refused",
+                    self.serving_build(),
+                    None,
+                    "another process holds this module's cache lock; no state"
+                    " was changed and serving is unaffected",
+                )
+            return self._refresh_locked()
+
+    def _refresh_locked(self) -> RefreshResult:
         self.reconcile()
-        serving = self.current_build()
+        serving = self.serving_build()
         try:
             pointer_bytes = self._fetcher.fetch_path("latest.json")
         except FetchError as exc:
             return RefreshResult("refused", serving, None, f"pointer fetch failed: {exc}")
-        trust = self._load_trust()
+        # The EXACT verified bytes travel to the record — never a re-serialized
+        # dict, which would not hash to the anchor (spec §3).
+        self._last_pointer_bytes = pointer_bytes
+        # A PRESENT-BUT-CORRUPT anchor must NOT be laundered into "no anchor".
+        # `_load_trust` swallows TrustTupleError and returns None (TD-7 state
+        # loss), which `evaluate_pointer` reads as bootstrap — so ANY unexpired
+        # attested pointer is accepted, including one older than a committed
+        # withdrawal, which then re-installs the coverage-gate-WITHHELD build and
+        # stamps it `inst_from_published_manifest=True`. `serving_build()` fails
+        # CLOSED on this same file, so routing it through `_load_trust` here made
+        # the client read one anchor two contradictory ways, fail-open on the
+        # write path. Absence of proof is absence of service (spec §1), and a
+        # corrupt anchor is absence of proof.
+        try:
+            trust = load_tuple(self._tuple_path)
+        except TrustTupleError as exc:
+            return self._refuse_unanchored(f"present but corrupt ({exc})")
+        if trust is None and self._has_local_state():
+            # A DELETED anchor beside a surviving record is the same hazard
+            # through a different door: no correct transition can produce
+            # "record at generation N, no anchor", because the anchor is written
+            # FIRST in both directions. So this is state loss or tampering, not
+            # bootstrap — and treating it as bootstrap let a replayed
+            # pre-withdrawal pointer reinstate a withheld build exactly as the
+            # corrupt case did. Genuine bootstrap (NEITHER file) is untouched.
+            return self._refuse_unanchored(
+                "missing, but this module's cache still holds local state"
+            )
         decision = evaluate_pointer(
             pointer_bytes,
             now=self._now(),
@@ -477,23 +692,27 @@ class SnapshotClient:
             attestation=self._attestation,
         )
         if decision.status == "idempotent":
-            # Online heal for the tuple-persisted/current-missing window: the
-            # authenticated, universally valid pointer whose digest matches
-            # the tuple names the build_id.
-            build_id = decision.pointer["build_id"]
+            # The anchored pointer is unchanged. If we are already serving what
+            # it implies there is nothing to do; otherwise COMPLETE the record it
+            # implies — a write-2 window from either transition heals here
+            # (spec §4). Which record depends on the manifest, so a pointer that
+            # OMITS the module heals to a null record, never to a serving one.
             version = decision.pointer["pointer_version"]
-            manifest_sha = decision.pointer["manifest_sha256"]
-            # Bind the pre-existing cache dir to the authenticated pointer's
-            # manifest before healing `current` to it (F1).
-            if serving != build_id and self._build_complete(build_id, manifest_sha):
-                self._write_sidecar(
-                    build_id, version, decision.pointer_sha256, manifest_sha
+            if serving is not None:
+                return RefreshResult(
+                    "idempotent", serving, version,
+                    "pointer unchanged; no state change",
                 )
-                self._set_current(build_id)
-                serving = build_id
-            return RefreshResult(
-                "idempotent", serving, version, "pointer unchanged; no state change"
-            )
+            # Nothing is proven at this anchor — a write-2 window from either
+            # transition. COMPLETE it through the ordinary install path, which
+            # already fetches and verifies the manifest, writes the withdrawal
+            # when the module is omitted, and short-circuits the artifact fetch
+            # when the build is already complete. Reusing it keeps ONE verified
+            # path instead of a parallel heal that can disagree with it — an
+            # earlier draft read the manifest from the module's cache dir, which
+            # a withdrawn module does not have, and so silently lost the
+            # verified-omission fact.
+            return self._install(decision.pointer, decision.pointer_sha256, None)
         if decision.status not in ("install", "bootstrap"):
             detail = "; ".join(decision.errors) or decision.status
             return RefreshResult(
@@ -504,6 +723,71 @@ class SnapshotClient:
                 " keeps serving",
             )
         return self._install(decision.pointer, decision.pointer_sha256, serving)
+
+    def _has_local_state(self) -> bool:
+        """Whether this module's cache holds state a genuine bootstrap wouldn't.
+
+        A serving record OR any installed build directory both mean this cache
+        has been used before, so `bootstrap` — which accepts any unexpired
+        pointer with NO replay protection — is the wrong reading. Checking only
+        the record left a hole: clearing just the state files (which the earlier
+        refusal message actually RECOMMENDED), or losing both, left the build
+        artifacts behind and let a stale pointer reinstate a withheld build
+        (QA-VERIFY3-B2).
+        """
+        if self._record_path.exists():
+            return True
+        try:
+            return any(
+                child.is_dir() and not child.name.startswith(".")
+                for child in self._module_dir.iterdir()
+            )
+        except OSError:
+            return True          # cannot tell: fail closed
+
+    def _refuse_unanchored(self, condition: str) -> RefreshResult:
+        """Refuse to re-bootstrap when the anchor cannot be trusted.
+
+        Without a valid anchor there is NO replay protection, so any unexpired
+        attested pointer would be accepted — including one older than a
+        committed withdrawal, which reinstates a build the current published
+        manifest withholds and has the resolver stamp it as verified published
+        data. Absence of proof is absence of service (spec §1).
+        """
+        return RefreshResult(
+            "refused",
+            None,
+            None,
+            f"the trust anchor at {self._tuple_path} is {condition}. Refusing to"
+            " re-bootstrap from it: without a valid anchor there is no replay"
+            " protection, so a stale pointer could reinstate a build the current"
+            " published manifest withholds. To recover, FIRST confirm the data"
+            " repository's latest.json is current — a pointer up to 7 days old"
+            " is still accepted on a genuine bootstrap — and only then remove"
+            f" the ENTIRE directory {self._module_dir} (including its cached"
+            " build directories, not just the state files).",
+        )
+
+    def _pointer_bytes_for(self, pointer: dict, pointer_sha256: str) -> bytes | None:
+        """The exact bytes whose digest is the anchor.
+
+        Reuses the bytes already stored in the record when they still hash to
+        the anchor; otherwise the fetched bytes are supplied by the caller via
+        :attr:`_last_pointer_bytes`. Never re-serializes the pointer dict — a
+        re-serialization would not hash to the anchor (spec §3).
+        """
+        raw = getattr(self, "_last_pointer_bytes", None)
+        if raw is not None and hashlib.sha256(raw).hexdigest() == pointer_sha256:
+            return raw
+        rec = self._read_record()
+        if rec is not None:
+            try:
+                stored = base64.b64decode(rec["pointer_bytes"], validate=True)
+            except (ValueError, binascii.Error):
+                return None
+            if hashlib.sha256(stored).hexdigest() == pointer_sha256:
+                return stored
+        return None
 
     def _install(
         self, pointer: dict, pointer_sha256: str, serving: str | None
@@ -549,8 +833,46 @@ class SnapshotClient:
             )
         module = manifest["modules"].get(self._module)
         if module is None:
+            # The CURRENT, verified build does not carry this module — e.g.
+            # `inst` withheld by the M2 >=95% coverage gate. Serving the
+            # previously cached build would hand back STALE data while health
+            # reported the module present, defeating the gate (QA-F1).
+            #
+            # TUPLE FIRST — it IS the commit (spec §4). Once it lands, the old
+            # record no longer matches the anchor, so the module is immediately
+            # absent, and any replay of a pre-commit pointer is a rollback and
+            # is refused. The null record that follows only tidies; if it fails,
+            # the withdrawal has still committed.
+            try:
+                persist_tuple(self._tuple_path, version, pointer_sha256)
+            except OSError as exc:
+                # Write 1 failed: nothing committed, prior state stands, the
+                # next refresh retries. Report honestly rather than claim a
+                # withdrawal that did not happen.
+                return RefreshResult(
+                    "refused", serving, None,
+                    f"build {build_id} does not include module"
+                    f" {self._module!r}, but the anchor could not be advanced"
+                    f" ({exc}); the withdrawal did NOT commit, so the PREVIOUS"
+                    " build keeps serving even though the current published"
+                    " manifest omits this module — treat it as stale until a"
+                    " later refresh commits the withdrawal",
+                    observed_omission=True,
+                )
+            try:
+                raw = self._pointer_bytes_for(pointer, pointer_sha256)
+                if raw is not None:
+                    self._write_record(raw, version, pointer_sha256, None)
+            except OSError:
+                pass  # committed already; the heal completes the record later
             return RefreshResult(
-                "refused", serving, None, f"manifest has no module {self._module!r}"
+                "withdrawn",
+                None,
+                version,
+                f"build {build_id} does not include module {self._module!r} —"
+                " it is not published in the current build, so nothing is served"
+                " for it (a previously cached build is NOT reused)",
+                verified_omission=True,
             )
 
         # client_compat (R22): a PEP 440 specifier against our own version.
@@ -576,10 +898,16 @@ class SnapshotClient:
         # it as a cache miss and re-install the authenticated artifacts.
         if not self._build_complete(build_id, pointer["manifest_sha256"]):
             tmp_dir = self._safe_under(self._module, f".tmp-{build_id}")
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir)
-            tmp_dir.mkdir(mode=0o700)
             try:
+                # INSIDE the guard (QA-BLOCKER-2): an unremovable orphan or a
+                # full/read-only cache made these two lines raise straight out
+                # of refresh(), which runs on every poll — so one module's I/O
+                # failure killed the server and took congress with it. reconcile
+                # now swallows the same rmtree, which meant the orphan survived
+                # and detonated here instead.
+                if tmp_dir.exists():
+                    shutil.rmtree(tmp_dir)
+                tmp_dir.mkdir(mode=0o700)
                 for entry in module["artifacts"]:
                     target = resolve_within(tmp_dir, entry["name"])
                     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -634,11 +962,34 @@ class SnapshotClient:
                     " trust tuple untouched",
                 )
 
-        # Install boundaries, in order: artifacts renamed → tuple → sidecar →
-        # current. reconcile()/the idempotent branch heal any crash between.
-        persist_tuple(self._tuple_path, version, pointer_sha256)
-        self._write_sidecar(build_id, version, pointer_sha256, pointer["manifest_sha256"])
-        self._set_current(build_id)
+        # Install boundaries, in order: artifacts renamed → TUPLE (the commit)
+        # → record (spec §4). Between the two the old record no longer matches
+        # the advanced anchor, so the module reads absent — fail-closed — and
+        # the `idempotent` heal completes it on the next poll.
+        try:
+            persist_tuple(self._tuple_path, version, pointer_sha256)
+        except OSError as exc:
+            return RefreshResult(
+                "refused", serving, None,
+                f"install of {build_id} failed at the anchor write: {exc} —"
+                " prior cache and trust tuple untouched",
+            )
+        raw = self._pointer_bytes_for(pointer, pointer_sha256)
+        if raw is None:
+            return RefreshResult(
+                "refused", None, version,
+                f"install of {build_id} could not bind the verified pointer"
+                " bytes to the anchor; nothing is served for this module",
+            )
+        try:
+            self._write_record(raw, version, pointer_sha256, build_id)
+        except OSError as exc:
+            return RefreshResult(
+                "refused", None, version,
+                f"install of {build_id} committed the anchor but could not write"
+                f" the serving record ({exc}); the module reads absent until the"
+                " next poll completes it",
+            )
         return RefreshResult(
             "installed", build_id, version, f"installed build {build_id}"
         )

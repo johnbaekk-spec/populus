@@ -1,0 +1,7 @@
+{
+  "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
+  "1": {"cik_str": 789019, "ticker": "MSFT", "title": "Microsoft Corp"},
+  "2": {"cik_str": 1045810, "ticker": "NVDA", "title": "NVIDIA Corp"},
+  "3": {"cik_str": 1067983, "ticker": "BRK-B", "title": "Berkshire Hathaway Inc"},
+  "4": {"cik_str": 1067983, "ticker": "BRK-A", "title": "Berkshire Hathaway Inc"}
+}

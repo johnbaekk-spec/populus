@@ -966,3 +966,50 @@ def test_gate_record_selection_ignores_a_build_without_a_journal(tmp_path):
 
     record = _read_inst_gate_record(str(repo), None)
     assert record["state"] == "withheld", "took the unpublishable .10 record"
+
+
+def test_an_undisclosed_prior_value_does_not_fabricate_a_move(tmp_path):
+    """QA-VERIFY5-B2: `_Position.value_usd` starts at 0 and only accumulates
+    non-NULL values, so a holding whose PRIOR filing had an unparseable <value>
+    differenced against a fabricated zero. The identical 100 shares held in both
+    quarters surfaced as `change_kind: "add"`, `delta_value_usd: +$5B` — ranked
+    first by `inst_biggest_moves`. Nothing was added.
+
+    `inst_agg.sql` states "a legitimately unavailable value is stored NULL …
+    never a fabricated zero"; the delta plane violated its own contract while
+    the snapshot plane handled the same row honestly."""
+    src = tmp_path / "populus.db"
+    init_db(str(src))
+    conn = connect(str(src))
+    sid = "sec:aapl"
+    _security(conn, sid, entity_id=_entity(conn, "0000320193"), link="resolved")
+    _filer(conn, "0009000001", "NULLVALUE PARTNERS LP")
+    # Prior quarter: value UNPARSEABLE (NULL). Current quarter: $5B.
+    _load(conn, fid="inst:NV-2025Q4", cik="0009000001", period="2025-12-31",
+          filed="2026-02-14",
+          holds=[_hold(ordinal=1, issuer="APPLE INC", cusip="037833100",
+                       value=None, shares=100, security_id=sid)])
+    _load(conn, fid="inst:NV-2026Q1", cik="0009000001", period="2026-03-31",
+          filed="2026-05-15",
+          holds=[_hold(ordinal=1, issuer="APPLE INC", cusip="037833100",
+                       value=5_000_000_000, shares=100, security_id=sid)])
+    ensure_views(conn)
+    out = tmp_path / "inst_agg.db"
+    build_inst_agg(conn, out, ingested_at="2026-07-25T00:00:00Z")
+    conn.close()
+
+    agg = connect(str(out))
+    rows = _rows(agg, "SELECT * FROM agg_qoq_deltas WHERE cik = '0009000001'")
+    agg.close()
+    assert len(rows) == 1
+    row = rows[0]
+
+    assert row["prev_value_usd"] is None, "an undisclosed value became a zero"
+    assert row["delta_value_usd"] is None, "a $5B move was fabricated"
+    assert "value_undisclosed_one_side" in row["flags"]
+    # Shares are unchanged, so the direction is not inventable from value.
+    # Deterministic: neither shares (unchanged) nor value (unknown) can
+    # classify a direction. The earlier `in (...)` disjunction accepted "add" —
+    # the exact wrong answer this fix exists to prevent — and survived mutation.
+    assert row["change_kind"] == "unclassified"
+    assert "change_kind_undeterminable" in row["flags"]

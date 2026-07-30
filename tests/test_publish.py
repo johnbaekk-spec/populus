@@ -10,6 +10,8 @@ escapes.
 
 from __future__ import annotations
 
+import base64
+
 import hashlib
 import json
 import re
@@ -2269,6 +2271,107 @@ def test_snapshot_client_serves_inst_and_congress_via_db_path(tmp_path):
     assert congress.db_path().name == "congress.db"
 
 
+def test_a_withheld_module_stops_serving_the_previously_cached_build(tmp_path):
+    """QA-F1 (M2-4): once a NEWER published build withholds `inst` (the M2 ≥95%
+    coverage gate), the client must STOP serving the previously cached
+    institutional build. Continuing to serve it would hand back STALE
+    institutional data while health reported the module present — silently
+    defeating the withholding gate. Drives the real snapshot resolution path.
+    """
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+
+    # Build 1: inst covered → published and cached by the client.
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    fetcher = LocalRepoFetcher(repo)
+    v1_pointer_bytes = fetcher.fetch_path("latest.json")   # kept for the replay
+    inst = SnapshotClient(tmp_path / "cache", fetcher, now=pin(), module="inst")
+    assert inst.refresh().status == "installed"
+    assert inst.db_path() is not None
+    first_build = inst.current_build()
+    assert first_build is not None
+
+    # Build 2, same repo: coverage now BELOW the gate → inst is withheld.
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    manifest_now = read_manifest(repo, latest_pointer(repo)["build_id"])
+    assert "inst" not in manifest_now["modules"], "the gate should have withheld inst"
+
+    # The client's clock must advance with the publisher's, or the new pointer
+    # reads as future-issued and refuses for an unrelated reason.
+    later = pin(NOW + timedelta(days=1))
+    inst_later = SnapshotClient(
+        tmp_path / "cache", fetcher, now=later, module="inst"
+    )
+    assert inst_later.current_build() == first_build  # still serving the cached build
+    result = result_withdrawn = inst_later.refresh()
+    # It must NOT keep serving the old build.
+    assert result.status == "withdrawn", result
+    assert inst_later.current_build() is None
+    assert inst_later.db_path() is None, "stale institutional data is still served"
+    assert "does not include module" in (result.message or "")
+
+    # Congress, published in the same build, is unaffected.
+    congress = SnapshotClient(
+        tmp_path / "cache", fetcher, now=later, module="congress"
+    )
+    assert congress.refresh().status == "installed"
+
+    # QA-r2-F1 — the withdrawal must be DURABLE. A fresh client whose pointer
+    # fetch then fails must not resurrect the withdrawn build from the advisory
+    # sidecar during read-time reconcile. (Round 1 cleared only the `current`
+    # marker, so exactly this sequence resumed serving the stale data.)
+    class _OfflineFetcher:
+        def fetch_path(self, path):
+            from populus.client.snapshot import FetchError
+
+            raise FetchError("offline")
+
+    revived = SnapshotClient(
+        tmp_path / "cache", _OfflineFetcher(), now=later, module="inst"
+    )
+    revived.reconcile()
+    assert revived.current_build() is None, "reconcile resurrected a withdrawn build"
+    assert revived.db_path() is None
+    offline = revived.refresh()
+    assert offline.status == "refused"
+    assert revived.db_path() is None, "stale institutional data came back offline"
+
+    # QA-r3-F1 — REPLAY of the pointer that originally installed inst must not
+    # resurrect it either. Withdrawal left the trust tuple at the old pointer, so
+    # replaying it evaluated as `idempotent` and the online heal branch rebuilt
+    # `current` from the retained cache. A tombstone bound to the withdrawing
+    # pointer now blocks every heal path until a NEWER build republishes.
+    class _ReplayFetcher:
+        """Serves the ORIGINAL v1 pointer again (a rollback/replay attempt)."""
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def fetch_path(self, path):
+            if path == "latest.json":
+                return self._payload
+            return LocalRepoFetcher(repo).fetch_path(path)
+
+    replayed = SnapshotClient(
+        tmp_path / "cache", _ReplayFetcher(v1_pointer_bytes), now=later,
+        module="inst",
+    )
+    result = replayed.refresh()
+    assert replayed.current_build() is None, (
+        f"replaying the old pointer resurrected the withdrawn build "
+        f"({result.status}: {result.message})"
+    )
+    assert replayed.db_path() is None, "withheld institutional data came back via replay"
+
+    # And the withdrawal itself must carry the verified-omission FACT, since
+    # `current_manifest()` is None once the marker is cleared (QA-r3-F2).
+    assert result_withdrawn.verified_omission is True
+    assert congress.db_path() is not None
+
+
 # --- rollback preflight over every module's assets (R11) ---------------------
 
 
@@ -2504,3 +2607,1465 @@ def test_republish_refuses_when_a_published_inst_asset_is_damaged(tmp_path, dama
         runner / "latest.json"
     ).exists() else None
     assert after == pointer_before  # pointer untouched by the refusal
+
+
+def test_resolve_snapshot_reports_gate_withholding_through_the_real_client(
+    tmp_path, monkeypatch
+):
+    """QA-r3-F2: the MCP resolver's gate-withheld branch must be reachable with
+    the REAL SnapshotClient. It was not: withdrawal clears the `current` marker,
+    so the resolver's `current_manifest()` re-read always returned None and
+    production reported a neutral resolution failure even when a verified
+    manifest demonstrably withheld `inst`. A mocked client that kept returning a
+    manifest hid this — so this test uses no mock at all.
+    """
+    import sys
+
+    from populus.mcp_server import server as srv_mod
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    cache = tmp_path / "cache"
+    argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(srv_mod, "_utc_now", pin())
+
+    covered = srv_mod._resolve_snapshot()
+    assert covered["inst_db_path"] is not None
+    assert covered["inst_from_published_manifest"] is True
+    assert covered["inst_absent_reason"] is None
+
+    # Republish with coverage BELOW the gate: inst is withheld.
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    assert "inst" not in read_manifest(repo, latest_pointer(repo)["build_id"])["modules"]
+    monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
+
+    withheld = srv_mod._resolve_snapshot()
+    assert withheld["inst_db_path"] is None
+    assert withheld["inst_from_published_manifest"] is False
+    assert withheld["inst_absent_gate_withheld"] is True, (
+        "the verified-omission branch is unreachable with the real client"
+    )
+    assert "withheld it" in withheld["inst_absent_reason"]
+
+
+def test_a_withdrawn_module_is_restored_when_a_newer_build_republishes_it(tmp_path):
+    """QA-r4-F4: withdrawal must not be a one-way door. Drives the REAL client
+    through covered → withheld → covered again and proves the tombstone does not
+    permanently suppress a legitimate newer module — while still rejecting a
+    replay of the old pointer."""
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    fetcher = LocalRepoFetcher(repo)
+    v1_pointer = fetcher.fetch_path("latest.json")
+    cache = tmp_path / "cache"
+
+    inst = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    assert inst.refresh().status == "installed"
+    first_build = inst.current_build()
+
+    # v2: withheld.
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    t2 = pin(NOW + timedelta(days=1))
+    assert SnapshotClient(cache, fetcher, now=t2, module="inst").refresh().status == (
+        "withdrawn"
+    )
+
+    # v3: coverage restored — the module must come BACK.
+    seed_inst(db, covered=True)
+    publish_build(db, repo, moment=NOW + timedelta(days=2))
+    t3 = pin(NOW + timedelta(days=2))
+    assert "inst" in read_manifest(repo, latest_pointer(repo)["build_id"])["modules"]
+
+    restored = SnapshotClient(cache, fetcher, now=t3, module="inst")
+    result = restored.refresh()
+    assert result.status == "installed", f"republication was suppressed: {result}"
+    third_build = restored.current_build()
+    assert third_build is not None and third_build != first_build
+    assert restored.db_path() is not None
+
+    # Idempotent on a repeat poll, and still serving.
+    again = SnapshotClient(cache, fetcher, now=t3, module="inst")
+    assert again.refresh().status == "idempotent"
+    assert again.current_build() == third_build
+
+    # Anti-replay is NOT weakened: the original v1 pointer is still rejected.
+    class _ReplayFetcher:
+        def fetch_path(self, path):
+            return v1_pointer if path == "latest.json" else fetcher.fetch_path(path)
+
+    replayed = SnapshotClient(cache, _ReplayFetcher(), now=t3, module="inst")
+    replayed.refresh()
+    assert replayed.current_build() == third_build, (
+        "an old pointer replay changed what is served"
+    )
+
+
+def test_a_withdrawal_whose_cleanup_fails_still_fails_closed_in_production(
+    tmp_path, monkeypatch
+):
+    """QA-r5-F1: if the tombstone lands but unlinking `current` raises OSError,
+    the earlier code returned `refused` with `serving` still set — and
+    `_resolve_snapshot` then took `db_path()` at face value and served the
+    coverage-gate-WITHHELD database, labeled as a valid published snapshot.
+    The verified omission is a fact about the manifest, not about our disk, so
+    it must fail closed regardless of cleanup success."""
+    import sys
+
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+    from populus.mcp_server import server as srv_mod
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    cache = tmp_path / "cache"
+    argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(srv_mod, "_utc_now", pin())
+    assert srv_mod._resolve_snapshot()["inst_db_path"] is not None
+
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
+
+    # The RECORD write fails — a read-only cache, a locked file, an NFS blip.
+    # (This previously injected on `current`, a file the lifecycle rewrite
+    # RETIRED, so the injection never fired and the test silently degraded into
+    # an ordinary committed withdrawal — QA-VERIFY-N-c.)
+    from populus.client import snapshot as snap_mod
+
+    real_write = snap_mod.SnapshotClient._write_record
+
+    def _explode(self, *a, **kw):
+        if self._module == "inst":          # scoped: congress must stay healthy
+            raise OSError("permission denied")
+        return real_write(self, *a, **kw)
+
+    monkeypatch.setattr(snap_mod.SnapshotClient, "_write_record", _explode)
+
+    resolved = srv_mod._resolve_snapshot()
+    assert resolved["inst_db_path"] is None, (
+        "the withheld institutional database was served after a cleanup failure"
+    )
+    assert resolved["inst_from_published_manifest"] is False
+    assert resolved["inst_absent_gate_withheld"] is True
+    assert "withheld it" in resolved["inst_absent_reason"]
+
+    # The accessors fail closed too, even without reconcile running.
+    stuck = SnapshotClient(cache, LocalRepoFetcher(repo),
+                           now=pin(NOW + timedelta(days=1)), module="inst")
+    assert stuck.current_build() is None and stuck.db_path() is None
+
+
+
+# =============================================================================
+# Module serving lifecycle — docs/build/RUN-M2-4-withdrawal-lifecycle.md §7.
+# The spec is the contract; these tests are its enumerated requirements.
+# =============================================================================
+
+
+def _installed_inst(tmp_path, *, covered=True):
+    """A cache with `inst` installed from a published build. Returns the pieces
+    every lifecycle test needs."""
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=covered)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    cache = tmp_path / "cache"
+    fetcher = LocalRepoFetcher(repo)
+    client = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    result = client.refresh()
+    return db, repo, cache, fetcher, client, result
+
+
+def _record(cache):
+    return json.loads((cache / "inst" / "serving.json").read_text())
+
+
+def _write_record(cache, **fields):
+    rec = _record(cache)
+    rec.update(fields)
+    (cache / "inst" / "serving.json").write_text(json.dumps(rec))
+
+
+def _fresh(cache, fetcher, *, moment=None):
+    from populus.client.snapshot import SnapshotClient
+
+    return SnapshotClient(cache, fetcher, now=pin(moment) if moment else pin(),
+                          module="inst")
+
+
+def test_install_writes_an_anchor_bound_serving_record(tmp_path):
+    """§3: the record carries the EXACT verified pointer bytes, and the build it
+    names is derived from those authenticated bytes — not asserted by the record."""
+    _db, _repo, cache, _f, client, result = _installed_inst(tmp_path)
+    assert result.status == "installed"
+    rec = _record(cache)
+    raw = base64.b64decode(rec["pointer_bytes"])
+    assert hashlib.sha256(raw).hexdigest() == rec["pointer_sha256"]
+    pointer = json.loads(raw)
+    assert rec["installed_build"] == pointer["build_id"]
+    assert client.serving_build() == pointer["build_id"]
+    assert client.db_path() is not None
+    # The retired markers must not come back.
+    for gone in ("current", "install.json", "withdrawn.json"):
+        assert not (cache / "inst" / gone).exists(), f"{gone} was resurrected"
+
+
+# --- §7 anti-replay negative controls: each differs in EXACTLY one respect ----
+
+
+def test_negative_control_1_equal_version_different_digest(tmp_path):
+    """A version-only check — the exact round-8 F3 defect — would pass this."""
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _write_record(cache, pointer_sha256="0" * 64)
+    assert _fresh(cache, fetcher).serving_build() is None
+
+
+def test_negative_control_2_different_version_equal_digest(tmp_path):
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _write_record(cache, pointer_version=_record(cache)["pointer_version"] + 1)
+    assert _fresh(cache, fetcher).serving_build() is None
+
+
+def test_negative_control_3_bytes_do_not_hash_to_the_anchor(tmp_path):
+    """Tuple fields copied correctly AND the forged bytes are internally
+    consistent — they name the real build and its real manifest digest, so every
+    other check passes. ONLY the bytes→anchor binding can reject this, which is
+    what makes the record PROOF rather than assertion (§3).
+
+    (A first version forged bytes naming build "x"; the installed_build
+    cross-check caught that, so the test passed even with the binding removed —
+    it proved nothing. Mutation testing surfaced it.)
+    """
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    rec = _record(cache)
+    real = json.loads(base64.b64decode(rec["pointer_bytes"]))
+    forged = json.dumps({                       # same claims, different bytes
+        "build_id": real["build_id"],
+        "manifest_sha256": real["manifest_sha256"],
+        "pointer_version": real["pointer_version"],
+    }, sort_keys=True).encode()
+    assert hashlib.sha256(forged).hexdigest() != rec["pointer_sha256"]
+    _write_record(cache, pointer_bytes=base64.b64encode(forged).decode())
+    assert _fresh(cache, fetcher).serving_build() is None
+
+
+def test_negative_control_4_installed_build_names_a_different_complete_build(tmp_path):
+    """The record names another build that is fully present on disk. Authority
+    comes from the authenticated bytes, so the mismatch must be caught."""
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    first = _record(cache)["installed_build"]
+    # Publish and install a SECOND build so two complete builds exist.
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+    second_client = SnapshotClient(cache, fetcher, now=later, module="inst")
+    assert second_client.refresh().status == "installed"
+    second = _record(cache)["installed_build"]
+    assert first != second and (cache / "inst" / first / "manifest.json").is_file()
+
+    _write_record(cache, installed_build=first)   # anchored at `second`
+    assert SnapshotClient(cache, fetcher, now=later, module="inst").serving_build() is None
+
+
+def test_negative_control_5_named_builds_artifacts_are_missing(tmp_path):
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    build = _record(cache)["installed_build"]
+    (cache / "inst" / build / "inst_agg.db").unlink()
+    assert _fresh(cache, fetcher).serving_build() is None
+
+
+def test_negative_control_5b_named_builds_artifacts_are_corrupt(tmp_path):
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    build = _record(cache)["installed_build"]
+    (cache / "inst" / build / "inst_agg.db").write_bytes(b"not the verified bytes")
+    assert _fresh(cache, fetcher).serving_build() is None
+
+
+@pytest.mark.parametrize(
+    "mutate, label",
+    [
+        (lambda p: p.unlink(), "absent"),
+        (lambda p: p.write_text("{not json"), "unparseable"),
+        (lambda p: p.write_text('{"pointer_version":"7","pointer_sha256":1,'
+                                '"pointer_bytes":[],"installed_build":2}'),
+         "wrong types"),
+        (lambda p: p.write_text("{}"), "empty object"),
+    ],
+)
+def test_negative_control_6_absent_or_malformed_records(tmp_path, mutate, label):
+    """§1: an unparseable record proves nothing, so it yields ABSENCE of service —
+    it is never read as 'no restriction'."""
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    mutate(cache / "inst" / "serving.json")
+    assert _fresh(cache, fetcher).serving_build() is None, label
+
+
+def test_a_corrupt_trust_anchor_fails_closed(tmp_path):
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    (cache / "inst" / "trust.json").write_text("{corrupt")
+    assert _fresh(cache, fetcher).serving_build() is None
+
+
+# --- §7 lifecycle -------------------------------------------------------------
+
+
+def _withdraw_inst(db, repo, cache, fetcher, *, day=1):
+    """Publish a build that WITHHOLDS inst, and poll it."""
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=day))
+    client = _fresh(cache, fetcher, moment=NOW + timedelta(days=day))
+    return client, client.refresh()
+
+
+def test_a_verified_omission_withdraws_the_module(tmp_path):
+    """§4: the manifest omits inst → withdrawn, carrying `verified_omission`,
+    and nothing is served for it."""
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    client, result = _withdraw_inst(db, repo, cache, fetcher)
+    assert result.status == "withdrawn"
+    assert result.verified_omission is True
+    assert client.serving_build() is None and client.db_path() is None
+    assert _record(cache)["installed_build"] is None
+
+    # Congress, published in the same build, is unaffected.
+    congress = _fresh(cache, fetcher, moment=NOW + timedelta(days=1))
+    from populus.client.snapshot import SnapshotClient
+    cong = SnapshotClient(cache, fetcher, now=pin(NOW + timedelta(days=1)),
+                          module="congress")
+    assert cong.refresh().status == "installed"
+
+
+def test_withdraw_then_offline_restart_stays_absent(tmp_path):
+    """A fresh client that cannot reach the repo must not resurrect the module."""
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _withdraw_inst(db, repo, cache, fetcher)
+
+    from populus.client.snapshot import FetchError, SnapshotClient
+
+    class _Offline:
+        def fetch_path(self, path):
+            raise FetchError("offline")
+
+    revived = SnapshotClient(cache, _Offline(), now=pin(NOW + timedelta(days=1)),
+                             module="inst")
+    assert revived.serving_build() is None
+    assert revived.refresh().status == "refused"
+    assert revived.db_path() is None
+
+
+def test_withdraw_then_replay_of_the_pre_withdrawal_pointer_stays_absent(tmp_path):
+    """The anchor advanced at the commit, so the old pointer is a ROLLBACK and is
+    refused — no heal can fire from it."""
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    v1 = fetcher.fetch_path("latest.json")
+    _withdraw_inst(db, repo, cache, fetcher)
+
+    from populus.client.snapshot import SnapshotClient
+
+    class _Replay:
+        def fetch_path(self, path):
+            return v1 if path == "latest.json" else fetcher.fetch_path(path)
+
+    replayed = SnapshotClient(cache, _Replay(), now=pin(NOW + timedelta(days=1)),
+                              module="inst")
+    replayed.refresh()
+    assert replayed.serving_build() is None, "a replayed pointer resurrected the build"
+    assert replayed.db_path() is None
+
+
+def test_withdraw_then_a_newer_build_republishes_and_it_serves(tmp_path):
+    """Withdrawal is not a one-way door."""
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _withdraw_inst(db, repo, cache, fetcher)
+
+    seed_inst(db, covered=True)
+    publish_build(db, repo, moment=NOW + timedelta(days=2))
+    restored = _fresh(cache, fetcher, moment=NOW + timedelta(days=2))
+    assert restored.refresh().status == "installed"
+    assert restored.serving_build() is not None
+    assert restored.db_path() is not None
+
+    # Repeat polls are stable — no oscillation.
+    for _ in range(3):
+        again = _fresh(cache, fetcher, moment=NOW + timedelta(days=2))
+        assert again.refresh().status == "idempotent"
+        assert again.serving_build() == restored.serving_build()
+
+
+def test_install_withdraw_install_withdraw_is_stable(tmp_path):
+    """§7: alternating transitions, each committing cleanly."""
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    for day, covered, expected in ((1, False, None), (2, True, "serve"),
+                                   (3, False, None), (4, True, "serve")):
+        seed_inst(db, covered=covered)
+        publish_build(db, repo, moment=NOW + timedelta(days=day))
+        client = _fresh(cache, fetcher, moment=NOW + timedelta(days=day))
+        client.refresh()
+        if expected is None:
+            assert client.serving_build() is None, f"day {day} should be absent"
+        else:
+            assert client.serving_build() is not None, f"day {day} should serve"
+
+
+# --- §5 crash/failure boundaries ---------------------------------------------
+
+
+def test_install_write2_failure_is_absent_then_heals_and_serves(tmp_path):
+    """§5: anchor committed, record not yet written → ABSENT; the idempotent heal
+    at the same authenticated pointer completes it and it serves."""
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    cache = tmp_path / "cache"
+    fetcher = LocalRepoFetcher(repo)
+
+    boom = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    real_write = SnapshotClient._write_record
+    def _fail(self, *a, **k):
+        raise OSError("disk full")
+    SnapshotClient._write_record = _fail
+    try:
+        result = boom.refresh()
+    finally:
+        SnapshotClient._write_record = real_write
+    assert result.status == "refused"
+
+    # Pre-refresh: the partial state proves nothing.
+    stranded = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    assert stranded.serving_build() is None
+
+    # Post-refresh: the heal completes it at the equal authenticated pointer.
+    healed = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    assert healed.refresh().status in ("installed", "idempotent")
+    assert healed.serving_build() is not None
+    assert healed.db_path() is not None
+
+
+def test_withdrawal_write2_failure_is_absent_and_replay_cannot_restore(tmp_path):
+    """§5 + §7: the anchor committed the withdrawal, so even though the null
+    record never landed, the module is absent AND a replay of the pre-withdrawal
+    pointer cannot bring it back. This is the exact path that resurrected
+    withheld data under the old design."""
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    v1 = fetcher.fetch_path("latest.json")
+
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+
+    boom = SnapshotClient(cache, fetcher, now=later, module="inst")
+    real_write = SnapshotClient._write_record
+    SnapshotClient._write_record = lambda self, *a, **k: (_ for _ in ()).throw(
+        OSError("disk full"))
+    try:
+        result = boom.refresh()
+    finally:
+        SnapshotClient._write_record = real_write
+    # The withdrawal COMMITTED at the anchor even though the record failed.
+    assert result.status == "withdrawn" and result.verified_omission is True
+
+    stranded = SnapshotClient(cache, fetcher, now=later, module="inst")
+    assert stranded.serving_build() is None
+
+    class _Replay:
+        def fetch_path(self, path):
+            return v1 if path == "latest.json" else fetcher.fetch_path(path)
+
+    replayed = SnapshotClient(cache, _Replay(), now=later, module="inst")
+    replayed.refresh()
+    assert replayed.serving_build() is None, (
+        "a replayed pre-withdrawal pointer restored the withheld build"
+    )
+
+
+def test_reconcile_never_raises_and_removes_orphans(tmp_path):
+    """§6: refresh() calls reconcile on every poll, so an escaping OSError would
+    take down every module, not one."""
+    _db, _repo, cache, fetcher, client, _r = _installed_inst(tmp_path)
+    orphan = cache / "inst" / ".tmp-leftover"
+    orphan.mkdir()
+    client.reconcile()
+    assert not orphan.exists()
+    # An unreadable module dir must not raise out.
+    import unittest.mock as mock
+    with mock.patch.object(type(cache), "glob", side_effect=OSError("boom")):
+        client.reconcile()   # must not raise
+
+
+# --- §7 serialization ---------------------------------------------------------
+
+
+def test_lock_contention_refuses_without_writing_and_keeps_serving(tmp_path):
+    """§4.1: contention is TRANSIENT and says nothing about what is already
+    proven. The contender writes nothing and serving is unaffected."""
+    import fcntl
+
+    _db, _repo, cache, fetcher, client, _r = _installed_inst(tmp_path)
+    proven = client.serving_build()
+    assert proven is not None                      # a stable proven build (rev-6 F1)
+    before = (cache / "inst" / "serving.json").read_bytes()
+    anchor_before = (cache / "inst" / "trust.json").read_bytes()
+
+    holder = open(cache / "inst" / ".lock", "a+")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        contender = _fresh(cache, fetcher)
+        result = contender.refresh()
+        assert result.status == "refused"
+        assert "lock" in result.message
+        assert contender.serving_build() == proven, "contention changed serving"
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+
+    assert (cache / "inst" / "serving.json").read_bytes() == before
+    assert (cache / "inst" / "trust.json").read_bytes() == anchor_before
+
+
+def test_the_lock_is_released_after_an_exception_mid_transition(tmp_path):
+    """§4.1: released on EVERY exit path, including exceptions — otherwise one
+    crash wedges the module forever."""
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+
+    boom = SnapshotClient(cache, fetcher, now=later, module="inst")
+    real = SnapshotClient._install
+    SnapshotClient._install = lambda self, *a, **k: (_ for _ in ()).throw(
+        RuntimeError("crash mid-transition"))
+    try:
+        with pytest.raises(RuntimeError):
+            boom.refresh()
+    finally:
+        SnapshotClient._install = real
+
+    # A subsequent refresh must be able to take the lock.
+    after = SnapshotClient(cache, fetcher, now=later, module="inst")
+    assert after.refresh().status in ("installed", "idempotent")
+
+
+def test_a_stale_writer_cannot_regress_the_anchor(tmp_path):
+    """§7 serialization: a writer that paused before its transition must not be
+    able to commit an older generation over a newer one.
+
+    (The first version of this test was VACUOUS: it defined a `_StaleFetcher`
+    and never instantiated it, serialized `serving.json` into a variable named
+    `v1_bytes` that was never used, and then polled with the REAL fetcher — so
+    it merely re-asserted the withdrawal and exercised nothing about anchor
+    regression. An independent review caught it. This version captures the
+    genuine pre-withdrawal pointer bytes and replays them.)"""
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    v1_pointer = fetcher.fetch_path("latest.json")          # the STALE pointer
+    v1_anchor = json.loads((cache / "inst" / "trust.json").read_text())
+
+    # A newer build withdraws inst and commits.
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+    assert SnapshotClient(cache, fetcher, now=later,
+                          module="inst").refresh().status == "withdrawn"
+    anchor_after = json.loads((cache / "inst" / "trust.json").read_text())
+    assert anchor_after["pointer_version"] > v1_anchor["pointer_version"]
+
+    class _StaleWriter:
+        """The paused writer, resuming with the pre-withdrawal pointer."""
+
+        def fetch_path(self, path):
+            return v1_pointer if path == "latest.json" else fetcher.fetch_path(path)
+
+    for attempt in (1, 2, 3):
+        stale = SnapshotClient(cache, _StaleWriter(), now=later, module="inst")
+        result = stale.refresh()
+        assert result.status == "refused", (
+            f"attempt {attempt}: a stale pointer was accepted ({result.status})"
+        )
+        assert json.loads((cache / "inst" / "trust.json").read_text()) == anchor_after, (
+            f"attempt {attempt}: the anchor was regressed"
+        )
+        assert stale.serving_build() is None
+        assert _record(cache)["installed_build"] is None
+
+
+def test_the_fail_closed_path_when_the_lock_is_unavailable(tmp_path, monkeypatch):
+    """§7 serialization, the clause that was unasserted: 'with the fail-closed
+    path asserted when the lock is unavailable'."""
+    from populus.client import snapshot as snap_mod
+
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    monkeypatch.setattr(snap_mod.fcntl, "flock",
+                        lambda fd, op: (_ for _ in ()).throw(
+                            OSError(45, "Operation not supported")))
+    client = _fresh(cache, fetcher)
+    assert client._disabled_reason is not None
+    assert client.serving_build() is None                 # fails CLOSED
+    assert client.db_path() is None
+    result = client.refresh()
+    assert result.status == "refused" and "disabled" in result.message
+    # No transition was attempted, so durable state is untouched.
+    assert _record(cache)["installed_build"] is not None
+
+
+def test_an_unsupported_flock_disables_the_module_before_reading_cache_state(
+    tmp_path, monkeypatch
+):
+    """§4.1: unsupported flock is PERSISTENT — no transition could ever be
+    serialized — so the module is disabled at construction, and it is a
+    configuration outcome rather than a serving decision."""
+    import fcntl as fcntl_mod
+
+    from populus.client import snapshot as snap_mod
+
+    _db, _repo, cache, fetcher, client, _r = _installed_inst(tmp_path)
+    assert client.serving_build() is not None      # proven before we break flock
+
+    def _unsupported(fd, op):
+        raise OSError(95, "Operation not supported")
+
+    monkeypatch.setattr(snap_mod.fcntl, "flock", _unsupported)
+    disabled = _fresh(cache, fetcher)
+    assert disabled._disabled_reason is not None
+    assert "flock" in disabled._disabled_reason
+    assert disabled.serving_build() is None
+    assert disabled.db_path() is None
+    result = disabled.refresh()
+    assert result.status == "refused" and "disabled" in result.message
+    assert fcntl_mod is snap_mod.fcntl or True     # module identity sanity
+
+
+# --- §7(b) production resolver, partitioned by what each case SHOULD do -------
+
+
+def _resolve(repo, cache, monkeypatch, *, moment=None):
+    """Run the real MCP resolver against this repo/cache."""
+    import sys
+
+    from populus.mcp_server import server as srv_mod
+
+    monkeypatch.setattr(sys, "argv",
+                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+    monkeypatch.setattr(srv_mod, "_utc_now", pin(moment) if moment else pin())
+    return srv_mod._resolve_snapshot()
+
+
+def test_resolver_must_serve_first_install(tmp_path, monkeypatch):
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    r = _resolve(repo, tmp_path / "cache", monkeypatch)
+    assert r["inst_db_path"] is not None
+    assert r["inst_from_published_manifest"] is True
+    assert r["db_path"] is not None                      # congress available
+
+
+def test_resolver_must_serve_after_republication_and_rollback(tmp_path, monkeypatch):
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _withdraw_inst(db, repo, cache, fetcher)
+    seed_inst(db, covered=True)
+    publish_build(db, repo, moment=NOW + timedelta(days=2))
+    r = _resolve(repo, cache, monkeypatch, moment=NOW + timedelta(days=2))
+    assert r["inst_db_path"] is not None, "republication was suppressed"
+    assert r["inst_from_published_manifest"] is True
+    assert r["db_path"] is not None
+
+
+def test_resolver_must_serve_a_healed_install_write2_partial(tmp_path, monkeypatch):
+    """§7(b): the partial state heals at the equal authenticated pointer and
+    serves — the test must not forbid correct healing."""
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    cache = tmp_path / "cache"
+    boom = SnapshotClient(cache, LocalRepoFetcher(repo), now=pin(), module="inst")
+    real = SnapshotClient._write_record
+    SnapshotClient._write_record = lambda self, *a, **k: (_ for _ in ()).throw(
+        OSError("disk full"))
+    try:
+        boom.refresh()
+    finally:
+        SnapshotClient._write_record = real
+    assert SnapshotClient(cache, LocalRepoFetcher(repo), now=pin(),
+                          module="inst").serving_build() is None   # pre-refresh
+
+    r = _resolve(repo, cache, monkeypatch)                          # post-refresh
+    assert r["inst_db_path"] is not None, "the heal was forbidden"
+    assert r["inst_from_published_manifest"] is True
+
+
+def test_resolver_must_remain_absent_for_a_verified_withdrawal(tmp_path, monkeypatch):
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _withdraw_inst(db, repo, cache, fetcher)
+    r = _resolve(repo, cache, monkeypatch, moment=NOW + timedelta(days=1))
+    assert r["inst_db_path"] is None
+    assert r["inst_from_published_manifest"] is False
+    assert r["inst_absent_gate_withheld"] is True
+    assert "withheld it" in r["inst_absent_reason"]
+    assert r["db_path"] is not None                      # congress unaffected
+
+
+def test_corrupt_artifacts_are_absent_pre_refresh_and_re_verified_online(
+    tmp_path, monkeypatch
+):
+    """Corrupt cached artifacts prove nothing (§7a → absent). Post-refresh the
+    behaviour depends on whether the source can still supply them:
+
+    ONLINE the build is re-fetched and re-verified against the manifest digest,
+    so serving it is safe and permanent absence would be a worse outcome —
+    self-healing is the point of a content-addressed cache. §7(b) lists corrupt
+    artifacts under must-remain-absent without drawing that distinction; this
+    test pins BOTH halves so the difference is explicit rather than accidental.
+    """
+    _db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    build = _record(cache)["installed_build"]
+    (cache / "inst" / build / "inst_agg.db").write_bytes(b"corrupt")
+
+    # (a) pre-refresh: the durable state proves nothing.
+    assert _fresh(cache, fetcher).serving_build() is None
+
+    # (b) post-refresh, ONLINE: re-fetched and re-verified, so it serves again.
+    r = _resolve(repo, cache, monkeypatch)
+    assert r["inst_db_path"] is not None
+    assert r["inst_from_published_manifest"] is True
+    assert r["db_path"] is not None
+
+
+def test_corrupt_artifacts_stay_absent_when_they_cannot_be_re_fetched(tmp_path):
+    """The offline half: nothing can re-establish the proof, so it stays absent."""
+    from populus.client.snapshot import FetchError, SnapshotClient
+
+    _db, _repo, cache, _f, _c, _r = _installed_inst(tmp_path)
+    build = _record(cache)["installed_build"]
+    (cache / "inst" / build / "inst_agg.db").write_bytes(b"corrupt")
+
+    class _Offline:
+        def fetch_path(self, path):
+            raise FetchError("offline")
+
+    client = SnapshotClient(cache, _Offline(), now=pin(), module="inst")
+    assert client.serving_build() is None
+    assert client.refresh().status == "refused"
+    assert client.db_path() is None
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p.unlink(),
+    lambda p: p.write_text("{not json"),
+])
+def test_resolver_heals_a_malformed_record_at_an_equal_pointer(
+    tmp_path, monkeypatch, mutate
+):
+    """§7(b): where the equal authenticated pointer publishes the module and its
+    build verifies, healing is CORRECT — absence would be wrong here."""
+    _db, repo, cache, _f, _c, _r = _installed_inst(tmp_path)
+    mutate(cache / "inst" / "serving.json")
+    r = _resolve(repo, cache, monkeypatch)
+    assert r["inst_db_path"] is not None
+    assert r["inst_from_published_manifest"] is True
+
+
+def test_an_unsupported_flock_stops_the_server_with_an_honest_reason(
+    tmp_path, monkeypatch
+):
+    """An unsupported `flock` is a CACHE-level failure, not a module-level one:
+    no module can be transitioned safely, so the server must refuse to start
+    rather than serve unserialized. The message must name the real cause — not
+    the generic 'no current snapshot' advice, which would send an operator
+    chasing a publish problem they do not have."""
+    from populus.client import snapshot as snap_mod
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    monkeypatch.setattr(snap_mod.fcntl, "flock",
+                        lambda fd, op: (_ for _ in ()).throw(
+                            OSError(95, "Operation not supported")))
+    with pytest.raises(SystemExit) as excinfo:
+        _resolve(repo, tmp_path / "cache", monkeypatch)
+    assert "flock" in str(excinfo.value)
+
+
+# --- §7 reporting -------------------------------------------------------------
+
+
+def test_verified_omission_is_reconstructed_on_an_idempotent_poll(tmp_path):
+    """§4: after a restart the pointer is unchanged, so the poll is `idempotent`
+    — the gate-withheld FACT must still be reported, not degrade to neutral."""
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _withdraw_inst(db, repo, cache, fetcher)
+
+    restarted = _fresh(cache, fetcher, moment=NOW + timedelta(days=1))
+    result = restarted.refresh()
+    assert restarted.serving_build() is None
+    # The FLAG itself must survive. The earlier version allowed
+    # `... or _record(cache)["installed_build"] is None`, whose second disjunct
+    # is trivially true after any successful withdrawal — so the test passed
+    # even if the heal stopped carrying the flag, i.e. exactly the regression it
+    # is named for. Assert only the fact that matters.
+    assert result.verified_omission is True
+    assert _record(cache)["installed_build"] is None
+
+
+def test_a_corrupt_anchor_cannot_resurrect_a_withheld_build_via_replay(tmp_path):
+    """QA-BLOCKER-1 (independent review): the money question, answered.
+
+    Sequence that served coverage-gate-WITHHELD data as published:
+      1. inst installed from build A at pointer v1.
+      2. A newer build withholds inst; the withdrawal COMMITS (anchor at v2,
+         null record). Absent — correct.
+      3. `trust.json` becomes corrupt (an enumerated state, spec §5 last row).
+      4. The pointer source returns the OLD v1 pointer — a stale mirror, a CDN
+         or git cache, a rolled-back data repo, or a replay inside the 7-day
+         attestation window.
+      5. `_load_trust` swallowed the corruption and returned None, which
+         `evaluate_pointer` read as BOOTSTRAP, so v1 was accepted, build A was
+         re-installed, and `_resolve_snapshot` reported it with
+         `inst_from_published_manifest=True` — i.e. the >=95% coverage guarantee
+         asserted over a build the current manifest deliberately omits.
+    """
+    import sys
+
+    from populus.client.snapshot import SnapshotClient
+    from populus.mcp_server import server as srv_mod
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    withheld_build = _record(cache)["installed_build"]
+    v1_pointer = fetcher.fetch_path("latest.json")
+
+    _withdraw_inst(db, repo, cache, fetcher)                 # commits at v2
+    assert _fresh(cache, fetcher, moment=NOW + timedelta(days=1)).serving_build() is None
+
+    # (3) the anchor is corrupted, (4) the stale pointer comes back
+    (cache / "inst" / "trust.json").write_text("garbage")
+
+    class _StalePointer:
+        def fetch_path(self, path):
+            return v1_pointer if path == "latest.json" else fetcher.fetch_path(path)
+
+    later = pin(NOW + timedelta(days=1))
+    client = SnapshotClient(cache, _StalePointer(), now=later, module="inst")
+    result = client.refresh()
+    assert result.status == "refused", (
+        f"a corrupt anchor re-bootstrapped from a stale pointer: {result.status}"
+    )
+    assert client.serving_build() is None
+    assert client.db_path() is None, "the withheld build was resurrected"
+
+    # And through the PRODUCTION resolver — the path that stamps provenance.
+    monkey_argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    real_argv = sys.argv
+    real_now = srv_mod._utc_now
+    sys.argv = monkey_argv
+    srv_mod._utc_now = later
+    try:
+        resolved = srv_mod._resolve_snapshot()
+    finally:
+        sys.argv = real_argv
+        srv_mod._utc_now = real_now
+    assert resolved["inst_db_path"] is None, (
+        f"the resolver served the withheld build {withheld_build}"
+    )
+    assert resolved["inst_from_published_manifest"] is False, (
+        "withheld data was stamped with the >=95% coverage guarantee"
+    )
+
+
+def test_the_resolver_module_boundary_absorbs_an_inst_io_failure(tmp_path, monkeypatch):
+    """The RESOLVER-level guarantee: any inst I/O failure resolves to an honest
+    absence with congress unaffected.
+
+    (Named for the boundary it actually exercises — QA-VERIFY-N-b. It was
+    previously named for `_install`'s temp-directory guard, but still passed
+    with that guard removed, because this module boundary catches the escape
+    either way. `test_a_full_cache_filesystem_does_not_take_down_the_server`
+    is the one that pins the guard itself.)"""
+    import shutil as shutil_mod
+    import sys
+
+    from populus.mcp_server import server as srv_mod
+
+    db, repo, cache, _f, _c, _r = _installed_inst(tmp_path)
+    # A newer build so `_install` actually runs, plus a stuck orphan.
+    seed_inst(db, covered=True)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    orphan = cache / "inst" / f".tmp-{latest_pointer(repo)['build_id']}"
+    orphan.mkdir(parents=True, exist_ok=True)
+
+    def _stuck(path, *a, **k):
+        raise PermissionError("cannot remove")
+
+    monkeypatch.setattr(shutil_mod, "rmtree", _stuck)
+    monkeypatch.setattr(sys, "argv",
+                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+    monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
+
+    resolved = srv_mod._resolve_snapshot()          # must NOT raise
+    assert resolved["db_path"] is not None, "congress died with the inst module"
+    assert resolved["inst_from_published_manifest"] is False
+    assert resolved["inst_absent_gate_withheld"] is False, (
+        "an I/O failure was misreported as a coverage-gate decision"
+    )
+
+
+def test_a_full_cache_filesystem_does_not_take_down_the_server(tmp_path, monkeypatch):
+    """The same escape via `mkdir` — ENOSPC on the temp directory."""
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    seed_inst(db, covered=True)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+
+    real_mkdir = Path.mkdir
+
+    def _no_space(self, *a, **k):
+        if self.name.startswith(".tmp-"):
+            raise OSError(28, "No space left on device")
+        return real_mkdir(self, *a, **k)
+
+    monkeypatch.setattr(Path, "mkdir", _no_space)
+    client = SnapshotClient(cache, fetcher, now=pin(NOW + timedelta(days=1)),
+                            module="inst")
+    result = client.refresh()                        # must NOT raise
+    assert result.status == "refused"
+
+
+def test_an_unopenable_lock_file_does_not_escape_refresh(tmp_path, monkeypatch):
+    """`_module_lock`'s open() was outside the guard that wrapped only flock."""
+    from populus.client.snapshot import SnapshotClient
+
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    proven = _fresh(cache, fetcher).serving_build()
+
+    import builtins
+    real_open = builtins.open
+
+    def _no_open(path, *a, **k):
+        if str(path).endswith(".lock"):
+            raise OSError(30, "Read-only file system")
+        return real_open(path, *a, **k)
+
+    # Construct FIRST (so the constructor probe succeeds), then break open() —
+    # this isolates `_module_lock`'s own open rather than the disabled-state
+    # path, which would otherwise short-circuit the test.
+    client = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    assert client._disabled_reason is None
+    monkeypatch.setattr(builtins, "open", _no_open)
+    result = client.refresh()                        # must NOT raise
+    assert result.status == "refused"
+    monkeypatch.undo()
+    # Nothing was written; the proven build still serves.
+    assert _fresh(cache, fetcher).serving_build() == proven
+
+
+def test_an_unreadable_artifact_is_incomplete_not_an_exception(tmp_path, monkeypatch):
+    """`_build_complete` runs inside BOTH serving_build() and refresh(), so an
+    EACCES/EIO there would take down every module."""
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    build = _record(cache)["installed_build"]
+    target = cache / "inst" / build / "inst_agg.db"
+
+    real_read = Path.read_bytes
+
+    def _unreadable(self, *a, **k):
+        if self == target:
+            raise OSError(13, "Permission denied")
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_bytes", _unreadable)
+    client = _fresh(cache, fetcher)
+    assert client.serving_build() is None            # incomplete, not a crash
+    assert client.db_path() is None
+
+
+def test_a_non_flock_lock_failure_is_not_blamed_on_flock_support(tmp_path, monkeypatch):
+    """QA-NIT-2: every OSError from the lock probe was reported as 'the cache
+    filesystem does not support flock'. A read-only cache, EACCES, or a
+    directory where the lock file belongs would send an operator chasing a
+    filesystem-capability problem they do not have."""
+    import builtins
+
+    from populus.client.snapshot import SnapshotClient
+
+    _db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    real_open = builtins.open
+
+    def _read_only(path, *a, **k):
+        if str(path).endswith(".lock"):
+            raise OSError(30, "Read-only file system")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(builtins, "open", _read_only)
+    client = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    assert client._disabled_reason is not None            # still fails closed
+    assert "does not support flock" not in client._disabled_reason
+    assert "EROFS" in client._disabled_reason or "Read-only" in client._disabled_reason
+
+
+def test_install_write1_failure_leaves_prior_state_untouched(tmp_path, monkeypatch):
+    """§5 row 'install write 1 fails (tuple)': the COMMIT never happened, so
+    nothing changed and the prior build keeps serving. Untested before —
+    §5 separated these rows precisely because an earlier revision collapsed them
+    wrongly, and they are the commit-boundary rows."""
+    from populus.client import snapshot as snap_mod
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    before_build = _fresh(cache, fetcher).serving_build()
+    before_anchor = (cache / "inst" / "trust.json").read_bytes()
+    before_record = (cache / "inst" / "serving.json").read_bytes()
+
+    seed_inst(db, covered=True)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    monkeypatch.setattr(snap_mod, "persist_tuple",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    client = SnapshotClient(cache, fetcher, now=pin(NOW + timedelta(days=1)),
+                            module="inst")
+    result = client.refresh()
+    assert result.status == "refused"
+    monkeypatch.undo()
+
+    after = _fresh(cache, fetcher, moment=NOW + timedelta(days=1))
+    assert after.serving_build() == before_build, "the prior build stopped serving"
+    assert (cache / "inst" / "trust.json").read_bytes() == before_anchor
+    assert (cache / "inst" / "serving.json").read_bytes() == before_record
+
+
+def test_withdrawal_write1_failure_does_not_commit(tmp_path, monkeypatch):
+    """§5 row 'withdrawal write 1 fails (tuple)': the withdrawal did NOT commit,
+    so prior state stands and the refusal says so honestly rather than claiming
+    a withdrawal that never happened."""
+    from populus.client import snapshot as snap_mod
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    before_build = _fresh(cache, fetcher).serving_build()
+
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    monkeypatch.setattr(snap_mod, "persist_tuple",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    client = SnapshotClient(cache, fetcher, now=pin(NOW + timedelta(days=1)),
+                            module="inst")
+    result = client.refresh()
+    assert result.status == "refused"
+    assert "did NOT commit" in result.message
+    assert result.verified_omission is False, (
+        "a withdrawal that did not commit must not claim to have been verified"
+    )
+    assert result.observed_omission is True, (
+        "an uncommitted withdrawal must still signal that a verified manifest"
+        " omitted the module, or the stale build is served with no signal"
+    )
+    monkeypatch.undo()
+    assert _fresh(cache, fetcher).serving_build() == before_build
+
+    # Retrying once the write works commits properly.
+    retried = SnapshotClient(cache, fetcher, now=pin(NOW + timedelta(days=1)),
+                             module="inst")
+    assert retried.refresh().status == "withdrawn"
+    assert retried.serving_build() is None
+
+
+def test_an_authorized_rollback_to_the_withdrawn_build_serves(tmp_path):
+    """§7: 'authorized higher-version rollback to the withdrawn build → served'.
+    This was QA-r7-F2, a SHIPPED blocker, and had no regression test — the
+    similarly-named resolver test only republishes a newer build."""
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    original = _fresh(cache, fetcher).serving_build()
+    assert original is not None
+
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+    assert SnapshotClient(cache, fetcher, now=later,
+                          module="inst").refresh().status == "withdrawn"
+
+    # An AUTHORIZED higher-version pointer that names the withdrawn build again.
+    run_publish(repo, now=pin(NOW + timedelta(days=2)),
+                backend=LocalDirBackend(repo), rollback_to=original)
+    t3 = pin(NOW + timedelta(days=2, hours=1))
+    client = SnapshotClient(cache, fetcher, now=t3, module="inst")
+    result = client.refresh()
+    assert client.serving_build() == original, (
+        f"an authorized rollback to the withdrawn build stayed suppressed"
+        f" ({result.status}: {result.message})"
+    )
+    assert client.db_path() is not None
+    assert original in str(client.db_path())
+
+
+def test_opposite_transitions_serialize_rather_than_interleave(tmp_path):
+    """§7: 'opposite transitions (install vs withdrawal) serialize rather than
+    interleave'. With the lock held by a withdrawal, an install cannot slip in;
+    the durable state is one transition's or the other's, never a mixture."""
+    import fcntl
+
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    # The NEXT build WITHHOLDS inst, so the transition the blocked client would
+    # attempt is a withdrawal while an install-shaped poll is locked out — two
+    # opposite transitions contending for the same module (QA-VERIFY-N-d).
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+
+    holder = open(cache / "inst" / ".lock", "a+")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        blocked = SnapshotClient(cache, fetcher, now=later, module="inst")
+        result = blocked.refresh()
+        assert result.status == "refused"
+        # The install did NOT partially apply while the other writer holds it.
+        anchor = json.loads((cache / "inst" / "trust.json").read_text())
+        rec = _record(cache)
+        assert rec["pointer_version"] == anchor["pointer_version"], (
+            "state was left mid-transition by a writer that never held the lock"
+        )
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+
+    # Once released, the withdrawal proceeds normally — the opposite transition
+    # completes intact rather than interleaving with the blocked poll.
+    after = SnapshotClient(cache, fetcher, now=later, module="inst")
+    assert after.refresh().status == "withdrawn"
+    assert after.serving_build() is None
+
+
+def test_a_pending_withdrawal_is_flagged_to_the_resolver(tmp_path, monkeypatch):
+    """QA-NIT-3: when a verified manifest omits the module but the withdrawal
+    could not commit, the prior build keeps serving (spec §4/§5 — nothing
+    committed). Those bytes did pass the gate when published, so serving them is
+    defensible — but reporting them as clean published data with NO signal hides
+    that the current build no longer publishes this module."""
+    import sys
+
+    from populus.client import snapshot as snap_mod
+    from populus.mcp_server import server as srv_mod
+
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+
+    db, repo, cache, _f, _c, _r = _installed_inst(tmp_path)
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    # Install congress FIRST so the patched write only affects the inst
+    # transition — otherwise congress cannot install either and the server
+    # exits for an unrelated reason.
+    later = pin(NOW + timedelta(days=1))
+    assert SnapshotClient(cache, LocalRepoFetcher(repo), now=later,
+                          module="congress").refresh().status == "installed"
+
+    monkeypatch.setattr(snap_mod, "persist_tuple",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(sys, "argv",
+                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+    monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
+
+    resolved = srv_mod._resolve_snapshot()
+    assert resolved["inst_db_path"] is not None          # still serving (§4)
+    assert resolved["inst_stale_withdrawal_pending"] is True, (
+        "the pending withdrawal was not surfaced"
+    )
+
+
+def test_a_deleted_anchor_beside_a_record_cannot_resurrect_a_withheld_build(tmp_path):
+    """QA-VERIFY-BLOCKER-1: the sibling of the corrupt-anchor hazard, through
+    `unlink` instead of corruption.
+
+    No correct transition can produce "serving record at generation N, no
+    anchor" — the anchor is written FIRST in both directions — so that state is
+    state loss or tampering, never bootstrap. Treating it as bootstrap let a
+    replayed pre-withdrawal pointer reinstate the withheld build and had the
+    resolver stamp it `inst_from_published_manifest=True`.
+    """
+    import sys
+
+    from populus.client.snapshot import SnapshotClient
+    from populus.mcp_server import server as srv_mod
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    withheld_build = _record(cache)["installed_build"]
+    v1_pointer = fetcher.fetch_path("latest.json")
+
+    _withdraw_inst(db, repo, cache, fetcher)                  # commits at v2
+    (cache / "inst" / "trust.json").unlink()                  # anchor DELETED
+    assert (cache / "inst" / "serving.json").exists()         # record survives
+
+    class _StalePointer:
+        def fetch_path(self, path):
+            return v1_pointer if path == "latest.json" else fetcher.fetch_path(path)
+
+    later = pin(NOW + timedelta(days=1))
+    client = SnapshotClient(cache, _StalePointer(), now=later, module="inst")
+    result = client.refresh()
+    assert result.status == "refused", (
+        f"a deleted anchor re-bootstrapped from a stale pointer: {result.status}"
+    )
+    assert "remove the ENTIRE directory" in result.message
+    assert client.serving_build() is None
+    assert client.db_path() is None, f"{withheld_build} was resurrected"
+
+    real_argv, real_now = sys.argv, srv_mod._utc_now
+    sys.argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    srv_mod._utc_now = later
+    try:
+        resolved = srv_mod._resolve_snapshot()
+    finally:
+        sys.argv, srv_mod._utc_now = real_argv, real_now
+    assert resolved["inst_db_path"] is None
+    assert resolved["inst_from_published_manifest"] is False
+
+
+def test_genuine_bootstrap_is_untouched_by_the_unanchored_refusal(tmp_path):
+    """The refusal must not break REAL bootstrap: a module directory with no
+    state files AND no cached builds was never established, so one unexpired
+    pointer is accepted as before (TD-7)."""
+    import shutil as shutil_mod
+
+    from populus.client.snapshot import SnapshotClient
+
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    shutil_mod.rmtree(cache / "inst")                 # genuinely fresh
+    client = SnapshotClient(cache, fetcher, now=pin(), module="inst")
+    assert client.refresh().status == "installed"
+    assert client.serving_build() is not None
+
+
+def test_clearing_only_the_state_files_still_refuses(tmp_path):
+    """QA-VERIFY3-B2: the earlier refusal RECOMMENDED clearing the module dir,
+    and clearing only the state files (or losing both) left the build artifacts
+    behind — so the next poll read `bootstrap`, accepted a stale pointer, and
+    reinstated the withheld build. The fix's own remediation walked the operator
+    into the hole it had just closed.
+
+    Any local state — a serving record OR a cached build directory — now means
+    this is not a genuine bootstrap.
+    """
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    withheld = _record(cache)["installed_build"]
+    v1_pointer = fetcher.fetch_path("latest.json")
+    _withdraw_inst(db, repo, cache, fetcher)
+
+    # BOTH state files gone; the cached build directory remains.
+    (cache / "inst" / "trust.json").unlink()
+    (cache / "inst" / "serving.json").unlink()
+    assert (cache / "inst" / withheld).is_dir()
+
+    class _StalePointer:
+        def fetch_path(self, path):
+            return v1_pointer if path == "latest.json" else fetcher.fetch_path(path)
+
+    client = SnapshotClient(cache, _StalePointer(),
+                            now=pin(NOW + timedelta(days=1)), module="inst")
+    result = client.refresh()
+    assert result.status == "refused", f"the withheld build came back: {result.status}"
+    assert client.db_path() is None
+    # And the remediation no longer recommends a partial clear.
+    assert "ENTIRE directory" in result.message
+    assert "7 days" in result.message
+
+
+def test_a_pending_withdrawal_reaches_the_health_tools(tmp_path, monkeypatch):
+    """QA-VERIFY-BLOCKER-2: the N3 signal was computed by the resolver and then
+    DROPPED by `main()`, so `inst_health` still reported clean published data
+    with the >=95% guarantee and no staleness signal. Drive the whole chain —
+    resolver → build_server → tool output — not just the resolver dict."""
+    import sys
+
+    from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+    from populus.client import snapshot as snap_mod
+    from populus.mcp_server import server as srv_mod
+
+    db, repo, cache, _f, _c, _r = _installed_inst(tmp_path)
+    seed_inst(db, covered=False)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+    assert SnapshotClient(cache, LocalRepoFetcher(repo), now=later,
+                          module="congress").refresh().status == "installed"
+
+    monkeypatch.setattr(snap_mod, "persist_tuple",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(sys, "argv",
+                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+    monkeypatch.setattr(srv_mod, "_utc_now", later)
+    resolved = srv_mod._resolve_snapshot()
+    assert resolved["inst_stale_withdrawal_pending"] is True
+
+    server = srv_mod.build_server(
+        db_path=resolved["db_path"], build_id=resolved["build_id"],
+        inst_db_path=resolved["inst_db_path"],
+        inst_build_id=resolved["inst_build_id"],
+        inst_watermarks=resolved["inst_watermarks"],
+        inst_from_published_manifest=resolved["inst_from_published_manifest"],
+        inst_absent_reason=resolved["inst_absent_reason"],
+        inst_absent_gate_withheld=resolved["inst_absent_gate_withheld"],
+        inst_stale_withdrawal_pending=resolved["inst_stale_withdrawal_pending"],
+        now=later,
+    )
+    health = server._tool_manager.get_tool("inst_health").fn()["results"]
+    assert health["stale_withdrawal_pending"] is True
+    joined = " ".join(health["caveats"])
+    assert "STALE" in joined, "the tool reported clean published data"
+    assert "no longer includes this module" in joined
+
+
+def test_an_unreadable_repo_file_does_not_take_down_the_server(tmp_path, monkeypatch):
+    """QA-VERIFY-N-a: `LocalRepoFetcher.fetch_path` guarded only path resolution,
+    so an unreadable `latest.json` or `manifest.json` raised a bare OSError.
+    Callers guard `FetchError` only, so it escaped `refresh()` — and the
+    CONGRESS resolution has no module boundary above it, so the server died."""
+    import sys
+
+    from populus.mcp_server import server as srv_mod
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+
+    real_read = Path.read_bytes
+
+    def _unreadable(self, *a, **k):
+        if self.name == "latest.json":
+            raise OSError(13, "Permission denied")
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_bytes", _unreadable)
+    monkeypatch.setattr(sys, "argv",
+                        ["populus-mcp", "--data-repo", str(repo),
+                         "--cache", str(tmp_path / "cache")])
+    monkeypatch.setattr(srv_mod, "_utc_now", pin())
+
+    # No snapshot can be resolved, but it must be an honest SystemExit rather
+    # than a PermissionError traceback out of the client.
+    with pytest.raises(SystemExit):
+        srv_mod._resolve_snapshot()
+
+
+def test_an_unanchored_refusal_reaches_the_operator_with_remediation(
+    tmp_path, monkeypatch
+):
+    """QA-VERIFY-N-f: the client's refusal message carries actionable
+    remediation ("Clear <module dir> ..."), and the resolver discarded it — an
+    operator saw only `refresh outcome: 'refused'`."""
+    import sys
+
+    from populus.mcp_server import server as srv_mod
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _withdraw_inst(db, repo, cache, fetcher)
+    (cache / "inst" / "trust.json").write_text("garbage")
+
+    later = pin(NOW + timedelta(days=1))
+    monkeypatch.setattr(sys, "argv",
+                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+    monkeypatch.setattr(srv_mod, "_utc_now", later)
+    resolved = srv_mod._resolve_snapshot()
+    assert resolved["inst_db_path"] is None
+    assert "remove the ENTIRE directory" in resolved["inst_absent_reason"], (
+        "the actionable remediation never reached the operator"
+    )
+    assert "corrupt" in resolved["inst_absent_reason"]
+
+
+def test_the_stale_signal_reaches_the_data_plane_not_only_health(tmp_path):
+    """QA-VERIFY3-N3: with a pending withdrawal the health tools warned, but the
+    DATA tools returned the old `build_id` with an unmodified note and no
+    staleness marker — and the note is non-removable precisely so a response
+    lifted out of context carries its caveats."""
+    from populus.mcp_server import server as srv_mod
+
+    # A REAL installed inst aggregate, so the health tool's queries resolve.
+    _db, _repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    inst_db = _fresh(cache, fetcher).db_path()
+    assert inst_db is not None
+
+    server = srv_mod.build_server(
+        db_path=":memory:", build_id="cong-1",
+        inst_db_path=str(inst_db), inst_build_id="inst-old",
+        inst_from_published_manifest=True,
+        inst_stale_withdrawal_pending=True,
+        now=lambda: datetime(2026, 7, 25, tzinfo=timezone.utc),
+    )
+    health = server._tool_manager.get_tool("inst_health").fn()["results"]
+    assert health["caveats"][0].startswith("STALE"), (
+        "the coverage assurance was ordered above the staleness warning"
+    )
+    # Any inst data response — the lookup needs no aggregate tables to fail
+    # validation, so use the health tool's envelope, which shares `_inst_env`.
+    env_out = server._tool_manager.get_tool("inst_health").fn()
+    assert "STALE" in env_out["data_note"], "the data plane carried no staleness"
+
+
+def test_an_idempotent_heal_write_failure_refuses_without_escaping(tmp_path, monkeypatch):
+    """§5 row 'idempotent heal write fails' — untested until now (QA-VERIFY3-N4)."""
+    from populus.client import snapshot as snap_mod
+    from populus.client.snapshot import SnapshotClient
+
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    # Strand the cache in the install write-2 window.
+    seed_inst(db, covered=True)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    later = pin(NOW + timedelta(days=1))
+    real_write = snap_mod.SnapshotClient._write_record
+    monkeypatch.setattr(snap_mod.SnapshotClient, "_write_record",
+                        lambda self, *a, **k: (_ for _ in ()).throw(OSError("full")))
+    SnapshotClient(cache, fetcher, now=later, module="inst").refresh()
+
+    # The heal at the same anchored pointer also cannot write.
+    healer = SnapshotClient(cache, fetcher, now=later, module="inst")
+    result = healer.refresh()                     # must NOT raise
+    assert result.status == "refused"
+    assert healer.serving_build() is None
+    monkeypatch.setattr(snap_mod.SnapshotClient, "_write_record", real_write)
+    ok = SnapshotClient(cache, fetcher, now=later, module="inst")
+    ok.refresh()
+    assert ok.serving_build() is not None
+
+
+def test_a_corrupt_record_heals_to_a_null_record_when_the_pointer_omits(tmp_path):
+    """§5's corrupt-record row: recovery follows whichever state the
+    authenticated pointer implies — a NULL withdrawal record when it omits the
+    module, not necessarily an install (rev-6 F2). Only the publishing half was
+    pinned (QA-VERIFY3-N4)."""
+    db, repo, cache, fetcher, _c, _r = _installed_inst(tmp_path)
+    _withdraw_inst(db, repo, cache, fetcher)
+    (cache / "inst" / "serving.json").write_text("garbage")
+
+    client = _fresh(cache, fetcher, moment=NOW + timedelta(days=1))
+    assert client.serving_build() is None
+    result = client.refresh()
+    assert result.status == "withdrawn"
+    assert result.verified_omission is True
+    assert _record(cache)["installed_build"] is None, "healed to an install"

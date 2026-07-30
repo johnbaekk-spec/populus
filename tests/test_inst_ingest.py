@@ -700,7 +700,12 @@ def test_summary_reports_coverage_and_cover_failed(tmp_path):
     assert "meets 95% gate no" in text
     assert report.coverage.certifiable is False
     assert report.coverage.meets_threshold is False
-    assert "13F holdings are a quarter-end snapshot" in text
+    # Assert the NOTE ITSELF is carried, not a phrase from it — the opening
+    # wording changed when the missing M2-CONTRACT §5 clauses were restored
+    # (QA-VERIFY7-B2), and a literal fragment silently pins that phrasing.
+    from populus.normalize_inst import INST_DATA_NOTE
+
+    assert INST_DATA_NOTE in text
     conn.close()
 
 
@@ -996,3 +1001,45 @@ def test_notice_only_corpus_withheld_as_not_measurable_at_build(tmp_path):
         )
     )
     assert set(manifest["modules"]) == {"congress"}
+
+
+def test_cache_source_reads_history_shards(tmp_path):
+    """QA-r4-F2: `_CacheSource.submissions_shard` was written with a field
+    `_Doc` does not have and without the required `raw_path`, so EVERY call
+    raised TypeError. It shipped because the shard tests drove only the
+    federated source. This exercises the cache-backed history path directly."""
+    from populus.ingest.inst13f import _CacheSource, discover
+
+    cik = "0001067983"
+    shard_name = f"CIK{cik}-submissions-001.json"
+    root = tmp_path / f"CIK{cik}"
+    root.mkdir(parents=True)
+    recent = {"accessionNumber": [], "form": [], "reportDate": [],
+              "filingDate": [], "fileNumber": []}
+    historical = {
+        "accessionNumber": ["0000950123-19-005436"], "form": ["13F-HR"],
+        "reportDate": ["2019-03-31"], "filingDate": ["2019-05-15"],
+        "fileNumber": ["028-01234"],
+    }
+    (root / "submissions.json").write_text(json.dumps(
+        {"name": "BERKSHIRE HATHAWAY INC",
+         "filings": {"recent": recent, "files": [{"name": shard_name}]}}))
+    (root / shard_name).write_text(json.dumps(historical))
+    (root / "submissions-meta.json").write_text(
+        json.dumps({"retrieved_at": "2026-07-24T00:00:00Z"}))
+
+    source = _CacheSource(tmp_path)
+    # The shard doc itself must be well-formed (this is what raised TypeError).
+    doc = source.submissions_shard(cik, shard_name)
+    assert doc.raw_path == f"CIK{cik}/{shard_name}"
+    assert doc.response_hash and doc.retrieved_at == "2026-07-24T00:00:00Z"
+    assert doc.meta_missing is False
+
+    # And history discovery over the cache reaches the sharded filing.
+    found = discover(source, cik, cache_bounded=False, include_history=True)
+    assert [e.accession for e in found.entries] == ["0000950123-19-005436"]
+    assert found.unread_shards == ()
+
+    # Without the opt-in, behaviour is unchanged: shards counted, not read.
+    bounded = discover(source, cik, cache_bounded=False)
+    assert bounded.entries == () and bounded.older_shards == 1

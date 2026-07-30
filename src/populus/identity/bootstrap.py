@@ -359,13 +359,28 @@ def load_company_tickers(path: Path | str) -> tuple[tuple[TickerRow, ...], Dispo
     no ambiguous name is ever written. Several tickers for one CIK sharing one
     title are ordinary one-to-many data and are accepted.
     """
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        return parse_company_tickers(
+            json.loads(Path(path).read_text(encoding="utf-8"))
+        )
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+
+
+def parse_company_tickers(
+    data: object,
+) -> tuple[tuple[TickerRow, ...], Disposition]:
+    """The decision core of :func:`load_company_tickers`, over already-decoded
+    JSON — so a federated consumer that fetched the bytes itself (the MCP
+    ticker resolver) gets the SAME malformed/duplicate/DC1 title-conflict
+    dispositions instead of reimplementing a laxer subset of them (QA-F9).
+    """
     if isinstance(data, Mapping):
         entries = [data[key] for key in sorted(data, key=_entry_order)]
     elif isinstance(data, list):
         entries = list(data)
     else:
-        raise ValueError(f"{path}: company_tickers must be an object or a list")
+        raise ValueError("company_tickers must be an object or a list")
 
     malformed = 0
     valid: list[tuple[str, str, str, Mapping]] = []
