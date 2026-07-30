@@ -384,6 +384,11 @@ button {
   padding: 10px 16px;
   flex-wrap: wrap;
 }
+/* On desktop the wrapper is transparent: its children are direct flex items of
+   .filterbar, exactly as the design lays them out. */
+.filter-controls {
+  display: contents;
+}
 .filter-group {
   display: flex;
   align-items: center;
@@ -753,6 +758,13 @@ button {
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
 }
+/* Focus is moved here programmatically when a pager control becomes
+   unavailable. Chrome does not apply :focus-visible to programmatic focus on a
+   non-input element, so an explicit :focus rule is what makes it visible. */
+.pager-range:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .pager-btn {
   font: 600 12px var(--sans);
   text-decoration: none;
@@ -964,11 +976,14 @@ button {
     display: block;
   }
   /* Coverage tiles FOLD, they do not vanish — §5.2 puts coverage and known
-     gaps in the response, not in a tooltip a touch device can never open. */
+     gaps in the response, not in a tooltip a touch device can never open.
+     The right-edge mask signals that the strip scrolls. */
   .tiles {
     margin-top: 12px;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
   .tile {
     padding: 10px 14px;
@@ -982,13 +997,22 @@ button {
     font-size: 8.5px;
   }
 
-  /* filters become one horizontally scrollable strip */
+  /* filter controls become one horizontally scrollable strip; the count line
+     stays put beneath them */
   .filterbar {
     margin-top: 14px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 12px;
+    overflow: visible;
+  }
+  .filter-controls {
+    display: flex;
+    align-items: center;
     flex-wrap: nowrap;
     overflow-x: auto;
     gap: 14px;
-    padding: 8px 12px;
     -webkit-overflow-scrolling: touch;
   }
   .filter-label {
@@ -1004,8 +1028,27 @@ button {
     min-height: 44px;
     white-space: nowrap;
   }
+  /* The count line STAYS on mobile. It carries three things nothing else
+     does: the indeterminate-amount disclosure ("· 73 amount not comparable"),
+     the "filtered on this device" privacy statement, and the only reset
+     control. Hiding it was the same fold failure as the row-level one —
+     a caveat that disappears at a breakpoint is still a caveat removed. */
   .filter-count {
-    display: none;
+    margin-left: 0;
+    white-space: normal;
+    width: 100%;
+    min-width: 0;
+    line-height: 1.55;
+    font-size: 10px;
+    border-top: 1px solid var(--rule);
+    padding-top: 6px;
+  }
+  .filter-controls {
+    min-width: 0;
+  }
+  .filter-count .linklike {
+    display: inline-block;
+    min-height: 28px;
   }
 
   /* rows fold to two-line cards: who · what · side / band · amount · dates */

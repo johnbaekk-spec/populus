@@ -185,11 +185,36 @@ it can be reconciled design-side rather than discovered later:
   carries both dates, the partial/joint qualifier, all 35 flag chips and the
   provenance link.
 
-An independent QA review of the first commit (`edf15f9`) returned 2 blockers,
-8 majors, 12 minors and 3 nits. Every finding is addressed in the follow-up
-commit; the two blockers were a pagination boundary that dropped paper filings
-no transaction preceded, and a mobile fold that deleted the row-level honesty
-layer. Both now have regression tests.
+### Review history
+
+Two rounds of independent QA, both actioned in full.
+
+**Round 1** on `edf15f9` — 2 blockers, 8 majors, 12 minors, 3 nits. The
+blockers: a pagination boundary that dropped paper filings no transaction
+preceded, and a mobile fold that deleted the row-level honesty layer.
+
+**Round 2** on `47cb8eb` — 0 blockers, 2 majors, 6 minors, 5 nits. Both majors
+were *introduced by round 1's own fixes*, which is worth recording:
+
+- `pageCount(txnCount, paperCount)` was one page short when the transaction
+  count was an exact multiple of 50 and a paper row trailed — that row was on
+  no page at all, while the count line asserted it existed. The lesson is in
+  the signature: **how many pages exist depends on where the paper rows sit,
+  which counts cannot express.** Replaced by `pageCountFor(merged)`, a walk
+  over the merged feed, and verified by an exhaustive sweep (1,161
+  count × paper-position combinations, every item reachable exactly once, no
+  page in range empty).
+- the new "N amount not comparable" disclosure reached only a
+  desktop-visible element and a visually-hidden live region, so a phone reader
+  filtering to ≥$5M saw "11 of 11 transactions" and could not learn that 73
+  rows were incomparable. Same fold failure as round 1's blocker, one
+  breakpoint narrower. Fixed structurally: `feedCountText()` assembles **one**
+  string that every sink receives, and `.filter-count` is no longer hidden at
+  ≤720px — which also restored the "filtered on this device" privacy statement
+  and the only reset control on mobile.
+
+Both fixes are covered by tests, including the multiple-of-50 boundary the
+round-1 suite passed only by fixture accident.
 
 ## Deferred to later handoffs (same design project)
 
@@ -203,6 +228,14 @@ layer. Both now have regression tests.
   (`wrangler`, inventory, record-sign) and its `_headers`/CSP — phase-gate
   items for P3 completion, not per-page work
 - A lint/format surface (no eslint/biome/prettier config here yet)
+- **A DOM-level test surface.** `src/lib/format.ts` is fully covered, but
+  `src/scripts/feed-client.ts` needs a DOM and has none. The count assembly and
+  the amount-verdict partition were extracted into `format.ts` precisely so
+  they could be tested without one; the empty/failure state machine still
+  cannot be. Note also that the mobile-fold regression tests assert **markup**,
+  so they cannot see CSS — a future `display:none` in the ≤720px block would
+  pass every test. The deferred axe/Lighthouse gate is what actually protects
+  it; until then that protection is a review obligation, not coverage.
 
 ## The design handoff
 

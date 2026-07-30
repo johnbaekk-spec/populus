@@ -1,7 +1,14 @@
 ---
 import Base from "../../layouts/Base.astro";
 import { getBuildData } from "../../lib/data";
-import { pageSlice, feedItemHtml, fmtInt, PAGE_SIZE, type RenderCtx } from "../../lib/format";
+import {
+  pageSlice,
+  pageCountFor,
+  feedCountText,
+  feedItemHtml,
+  fmtInt,
+  type RenderCtx,
+} from "../../lib/format";
 
 const build = getBuildData();
 
@@ -10,16 +17,19 @@ const ssrCtx: RenderCtx = { watched: new Set() };
 const pageOne = pageSlice(build.merged, 0);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
 
-// The count states what it counts: paper filings are not transactions and are
-// never folded into a transaction total (they carry no amount, side or dates).
-const shown = Math.min(PAGE_SIZE, build.txnCount);
-const paperOnPage = pageOne.filter((i) => i.kind === "paper").length;
-const rangeText =
-  `1–${fmtInt(shown)} of ${fmtInt(build.txnCount)} transactions` +
-  (build.paperCount > 0
-    ? ` · ${fmtInt(build.paperCount)} paper ${build.paperCount === 1 ? "filing" : "filings"}` +
-      (paperOnPage > 0 ? ` (${fmtInt(paperOnPage)} here)` : "")
-    : "");
+// The count is assembled by the same function the client island uses, so the
+// pre-rendered and re-rendered counts cannot drift.
+const rangeText = feedCountText({
+  page: 0,
+  txnMatched: build.txnCount,
+  paperMatched: build.paperCount,
+  paperOnPage: pageOne.filter((i) => i.kind === "paper").length,
+  txnTotal: build.txnCount,
+  indeterminate: 0,
+});
+// Whether a second page exists is a property of this build, not an assumption:
+// a reduced extract must not pre-render an "older →" that goes nowhere.
+const hasOlderPage = pageCountFor(build.merged) > 1;
 
 const description =
   "Congressional stock trading from primary sources — House Clerk PTRs and Senate eFD. " +
@@ -56,8 +66,13 @@ const description =
       </div>
     </div>
 
-    <!-- filter bar -->
+    <!-- filter bar. The controls live in their own wrapper so they can become a
+         horizontal scroll strip on mobile WITHOUT taking the count line — which
+         carries the indeterminate-amount disclosure, the privacy statement and
+         the reset control — out of view with them. `display: contents` keeps
+         the desktop layout exactly as designed. -->
     <div class="filterbar" id="filterbar">
+      <div class="filter-controls">
       <div class="filter-group" role="group" aria-label="Chamber">
         <span class="filter-label" aria-hidden="true">Chamber</span>
         <div class="seg">
@@ -114,11 +129,12 @@ const description =
         <input type="checkbox" id="filter-late" aria-label="late filings only" />
         late only
       </label>
+      </div>
       <div class="filter-count">
-        <span id="filter-count-line">{rangeText}</span>
-        · filtered on this device<span id="filter-reset-wrap" hidden>
-          · <button class="linklike" id="filter-reset">reset</button></span>
-        <noscript> · filters, search and paging need JavaScript — the full published data is at <a href="/congress/data/feed.v1.json">feed.v1.json</a></noscript>
+        <span id="filter-count-line">{rangeText}</span>{" · filtered on this device"}<span
+          id="filter-reset-wrap"
+          hidden>{" · "}<button class="linklike" id="filter-reset">reset</button></span>
+        <noscript>{" · filters, search and paging need JavaScript — the full published data is at "}<a href="/congress/data/feed.v1.json">feed.v1.json</a></noscript>
       </div>
     </div>
 
@@ -165,7 +181,11 @@ const description =
         <div class="pager">
           <span class="pager-range" id="pager-range" tabindex="-1">{rangeText}</span>
           <button class="pager-btn is-unavailable" id="pager-newer" aria-disabled="true">← newer</button>
-          <button class="pager-btn" id="pager-older" aria-disabled="false">older →</button>
+          <button
+            class:list={["pager-btn", { "is-unavailable": !hasOlderPage }]}
+            id="pager-older"
+            aria-disabled={hasOlderPage ? "false" : "true"}>older →</button
+          >
         </div>
       </div>
       <!-- Live region kept outside the mobile-hidden count line, so filter

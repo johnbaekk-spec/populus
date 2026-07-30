@@ -8,7 +8,8 @@ import {
   paperFromArray,
   mergeFeed,
   pageSlice,
-  pageCount,
+  pageCountFor,
+  feedCountText,
   feedItemHtml,
   fmtInt,
   fmtMoney,
@@ -133,8 +134,7 @@ export function initFeed(): void {
       The server-rendered first page is still on screen, so say exactly that. */
   function renderLoadFailure(): void {
     if (!emptyEl || !emptyDetailEl || !emptySuggestEl) return;
-    const heading = emptyEl.querySelector("h2");
-    if (heading) heading.textContent = "Couldn't load the full dataset.";
+    setHeading("Couldn't load the full dataset.");
     emptyDetailEl.textContent =
       "Filtering, search and paging need the full dataset, which failed to " +
       "download. The first page above is still the real published data — " +
@@ -154,7 +154,15 @@ export function initFeed(): void {
     raw.textContent = "open the raw dataset";
     emptySuggestEl.appendChild(raw);
     emptyEl.removeAttribute("hidden");
-    countEl!.textContent = "full dataset unavailable — showing the first page";
+    // every count sink, or the pager keeps asserting a total we cannot back
+    setCounts("full dataset unavailable — showing the first page only");
+  }
+
+  /** The #feed-empty block serves three states; whichever renders owns the
+      heading explicitly, so a stale one can never sit above a fresh detail. */
+  function setHeading(text: string): void {
+    const h = emptyEl?.querySelector("h2");
+    if (h) h.textContent = text;
   }
   const idle = (window as any).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
   idle(() => loadData());
@@ -281,6 +289,14 @@ export function initFeed(): void {
       shown++;
     }
     const unknown = indeterminateCount(state);
+    // With indeterminate rows present, "no disclosures match" would convert a
+    // cannot-know into a confirmed-none — the headline has to hedge too, not
+    // just the detail underneath it.
+    setHeading(
+      unknown > 0
+        ? "No disclosures are known to match."
+        : "No disclosures match — and that's an answer, not an error.",
+    );
     emptyDetailEl.textContent =
       `This build holds ${fmtInt(totalAll)} transaction rows; the current ` +
       `combination matches ${fmtInt(currentCount)}.` +
@@ -316,10 +332,12 @@ export function initFeed(): void {
     const fTxns = txns.filter((r) => matchTxn(r, state));
     const fPaper = paperVisible(state) ? paper.filter((p) => matchPaper(p, state)) : [];
 
-    const maxPage = Math.max(0, pageCount(fTxns.length, fPaper.length) - 1);
+    // Page count is derived from the merged feed, so a trailing paper row is
+    // always reachable (a counts-only formula cannot see where paper rows sit).
+    const merged = mergeFeed(fTxns, fPaper);
+    const maxPage = Math.max(0, pageCountFor(merged) - 1);
     if (state.page > maxPage) state.page = maxPage;
 
-    const merged = mergeFeed(fTxns, fPaper);
     const items = pageSlice(merged, state.page);
     const ctx: RenderCtx = { watched };
 
@@ -333,32 +351,30 @@ export function initFeed(): void {
       bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
     }
 
-    // The count describes transactions; paper filings are counted separately
-    // rather than being rendered inside a total that excludes them.
-    const paperOnPage = items.filter((it) => it.kind === "paper").length;
-    const lo = fTxns.length === 0 ? 0 : state.page * PAGE_SIZE + 1;
-    const hi = Math.min((state.page + 1) * PAGE_SIZE, fTxns.length);
-    const txnPart =
-      fTxns.length === 0
-        ? `0 of ${fmtInt(totalAll)} transactions`
-        : `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(fTxns.length)} transactions`;
-    const paperPart =
-      fPaper.length === 0
-        ? ""
-        : ` · ${fmtInt(fPaper.length)} paper ${fPaper.length === 1 ? "filing" : "filings"}` +
-          (paperOnPage > 0 ? ` (${fmtInt(paperOnPage)} here)` : "");
-    const unknown = indeterminateCount(state);
-    const unknownPart =
-      unknown > 0 ? ` · ${fmtInt(unknown)} amount not comparable` : "";
-    const range = txnPart + paperPart + unknownPart;
-    countEl!.textContent = range;
-    rangeEl!.textContent = txnPart + paperPart;
-    if (statusEl) statusEl.textContent = range;
+    // One assembled string, every sink — no fragment can reach some readers
+    // and not others (the indeterminate-amount disclosure previously reached
+    // only a desktop-visible element and a visually-hidden live region).
+    const range = feedCountText({
+      page: state.page,
+      txnMatched: fTxns.length,
+      paperMatched: fPaper.length,
+      paperOnPage: items.filter((it) => it.kind === "paper").length,
+      txnTotal: totalAll,
+      indeterminate: indeterminateCount(state),
+    });
+    setCounts(range);
 
     // Keep both pager controls focusable at the boundaries — removing the
     // control that was just activated dumps keyboard focus to <body>.
     setPagerState(newerBtn, state.page === 0);
     setPagerState(olderBtn, state.page >= maxPage);
+  }
+
+  /** Write the count to every sink at once, so none can fall out of step. */
+  function setCounts(text: string): void {
+    if (countEl) countEl.textContent = text;
+    if (rangeEl) rangeEl.textContent = text;
+    if (statusEl) statusEl.textContent = text;
   }
 
   function setPagerState(btn: HTMLButtonElement | null, unavailable: boolean): void {

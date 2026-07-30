@@ -265,6 +265,9 @@ export function amountVerdict(
   if (r.low != null && r.low > min) return "in";
   // open-ended above a floor at or below the threshold: unknowable
   if (r.high == null && r.low != null) return "indeterminate";
+  // unknown floor with a known ceiling ("Under $15K"): the floor is what the
+  // threshold compares against, so this cannot be ruled out either
+  if (r.low == null) return "indeterminate";
   return "out";
 }
 
@@ -314,10 +317,62 @@ export function pageSlice(merged: FeedItem[], page: number): FeedItem[] {
   return out;
 }
 
-/** Total pages for a merged feed. Paper-only result sets still have one page. */
-export function pageCount(txnCount: number, paperCount = 0): number {
-  const pages = Math.ceil(txnCount / PAGE_SIZE);
-  return Math.max(pages, txnCount + paperCount > 0 ? 1 : 0);
+/** Total pages for a merged feed.
+
+    Deliberately a walk over the merged feed, NOT a formula over counts: how
+    many pages exist depends on WHERE the paper rows sit, which counts cannot
+    express. With 100 transactions, a paper row before them needs 2 pages and a
+    paper row after them needs 3 — and padding unconditionally would render a
+    blank page that the caller's empty-state guard turns into a false
+    "no disclosures match". Anything that drops a row here is a §5.2 violation:
+    the count line asserts the filing exists, so a page must reach it. */
+export function pageCountFor(merged: readonly FeedItem[]): number {
+  if (merged.length === 0) return 0;
+  let txnSeen = 0;
+  let max = 0;
+  for (const item of merged) {
+    const p = itemPage(txnSeen);
+    if (p > max) max = p;
+    if (item.kind === "txn") txnSeen++;
+  }
+  return max + 1;
+}
+
+/* ---------- count line (one string, every sink) ----------
+   The count is assembled in exactly one place and handed to every sink, so a
+   fragment cannot reach some readers and not others. An earlier split built
+   the visible mobile count from a subset of the fragments and dropped the
+   indeterminate-amount disclosure at ≤720px. */
+
+export interface CountInputs {
+  page: number;
+  /** transactions matching the current filters */
+  txnMatched: number;
+  /** paper filings matching the current filters */
+  paperMatched: number;
+  /** paper filings rendered on this page */
+  paperOnPage: number;
+  /** transactions in the whole default view */
+  txnTotal: number;
+  /** rows whose amount can be neither ruled in nor out of the threshold */
+  indeterminate: number;
+}
+
+export function feedCountText(i: CountInputs): string {
+  const lo = i.txnMatched === 0 ? 0 : i.page * PAGE_SIZE + 1;
+  const hi = Math.min((i.page + 1) * PAGE_SIZE, i.txnMatched);
+  const txnPart =
+    i.txnMatched === 0
+      ? `0 of ${fmtInt(i.txnTotal)} transactions`
+      : `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(i.txnMatched)} transactions`;
+  const paperPart =
+    i.paperMatched === 0
+      ? ""
+      : ` · ${fmtInt(i.paperMatched)} paper ${i.paperMatched === 1 ? "filing" : "filings"}` +
+        (i.paperOnPage > 0 ? ` (${fmtInt(i.paperOnPage)} here)` : "");
+  const unknownPart =
+    i.indeterminate === 0 ? "" : ` · ${fmtInt(i.indeterminate)} amount not comparable`;
+  return txnPart + paperPart + unknownPart;
 }
 
 /* ---------- row renderers (single source for SSR + client) ---------- */

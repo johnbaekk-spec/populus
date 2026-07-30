@@ -30,7 +30,8 @@ import {
   fmtMoney,
   mergeFeed,
   pageSlice,
-  pageCount,
+  pageCountFor,
+  feedCountText,
   feedItemHtml,
   txnRowHtml,
   PAGE_SIZE,
@@ -86,7 +87,7 @@ test("pageSlice: a paper-only result set renders on page 0", () => {
   const merged = mergeFeed([], [paper(), paper(), paper(), paper()]);
   const page0 = pageSlice(merged, 0);
   assert.equal(page0.length, 4, "all four paper filings must be reachable");
-  assert.equal(pageCount(0, 4), 1, "a paper-only set still has one page");
+  assert.equal(pageCountFor(merged), 1, "a paper-only set still has one page");
 });
 
 test("pageSlice: a paper row newer than every transaction is not dropped", () => {
@@ -100,30 +101,48 @@ test("pageSlice: a paper row newer than every transaction is not dropped", () =>
   );
 });
 
-test("pageSlice: every item appears on exactly one page across a multi-page feed", () => {
-  const txns = Array.from({ length: PAGE_SIZE * 2 + 7 }, (_, i) =>
-    txn({ filed: `2026-07-${String(21 - (i % 20)).padStart(2, "0")}` }),
-  );
-  // paper rows at the head, at both page boundaries, and at the tail
-  const papers = [
-    paper({ filed: "2026-07-30", name: "head" }),
-    paper({ filed: "2026-07-11", name: "boundary-1" }),
-    paper({ filed: "2026-07-05", name: "boundary-2" }),
-    paper({ filed: "2026-01-01", name: "tail" }),
-  ];
-  const merged = mergeFeed(
-    [...txns].sort((a, b) => (a.filed < b.filed ? 1 : -1)),
-    [...papers].sort((a, b) => (a.filed < b.filed ? 1 : -1)),
-  );
-  const pages = pageCount(txns.length, papers.length);
+/** Walk every page and assert each item is reachable exactly once. */
+function assertExactlyOnce(merged: (TxnRow | PaperRow)[], label: string): void {
+  const pages = pageCountFor(merged);
   const seen = new Map<unknown, number>();
   for (let p = 0; p < pages; p++) {
-    for (const item of pageSlice(merged, p)) {
-      seen.set(item, (seen.get(item) ?? 0) + 1);
+    for (const item of pageSlice(merged, p)) seen.set(item, (seen.get(item) ?? 0) + 1);
+  }
+  assert.equal(seen.size, merged.length, `${label}: an item is on no page at all`);
+  for (const [, n] of seen) assert.equal(n, 1, `${label}: an item is on more than one page`);
+}
+
+test("pageSlice: every item appears on exactly one page — every paper position × several counts", () => {
+  // Exhaustive over paper-row RANK (how many transactions precede it), which is
+  // what the page assignment actually depends on. Hand-picked fixtures missed
+  // the case where the transaction count is an exact multiple of PAGE_SIZE and
+  // the paper row trails every transaction — that row was on no page at all.
+  const counts = [0, 1, PAGE_SIZE - 1, PAGE_SIZE, PAGE_SIZE + 1, PAGE_SIZE * 2, PAGE_SIZE * 2 + 7];
+  for (const nT of counts) {
+    for (let rank = 0; rank <= nT; rank++) {
+      const merged: (TxnRow | PaperRow)[] = [];
+      for (let i = 0; i < rank; i++) merged.push(txn());
+      merged.push(paper({ name: `rank-${rank}` }));
+      for (let i = rank; i < nT; i++) merged.push(txn());
+      assertExactlyOnce(merged, `nT=${nT} rank=${rank}`);
     }
   }
-  assert.equal(seen.size, merged.length, "no item may be missing from every page");
-  for (const [, count] of seen) assert.equal(count, 1, "no item may be duplicated");
+});
+
+test("pageSlice: multiple paper rows at head, both boundaries and tail", () => {
+  const merged: (TxnRow | PaperRow)[] = [paper({ name: "head" })];
+  for (let i = 0; i < PAGE_SIZE * 2; i++) {
+    if (i === PAGE_SIZE) merged.push(paper({ name: "boundary" }));
+    merged.push(txn());
+  }
+  merged.push(paper({ name: "tail" }));
+  assertExactlyOnce(merged, "head+boundary+tail");
+  // the tail row trails exactly 100 transactions — the regressed case
+  const last = pageSlice(merged, pageCountFor(merged) - 1);
+  assert.ok(
+    last.some((i) => i.kind === "paper" && i.name === "tail"),
+    "a paper row trailing a multiple of PAGE_SIZE transactions must be reachable",
+  );
 });
 
 test("pageSlice: transaction pages hold exactly PAGE_SIZE transactions", () => {
@@ -131,6 +150,24 @@ test("pageSlice: transaction pages hold exactly PAGE_SIZE transactions", () => {
   const merged = mergeFeed(txns, []);
   assert.equal(pageSlice(merged, 0).filter((i) => i.kind === "txn").length, PAGE_SIZE);
   assert.equal(pageSlice(merged, 1).filter((i) => i.kind === "txn").length, 10);
+});
+
+test("pageCountFor: derived from position, and never pads a blank page", () => {
+  assert.equal(pageCountFor([]), 0, "nothing to show is zero pages");
+  assert.equal(pageCountFor([paper()]), 1, "a paper-only set has one page");
+  assert.equal(pageCountFor(Array.from({ length: PAGE_SIZE }, () => txn())), 1);
+  assert.equal(pageCountFor(Array.from({ length: PAGE_SIZE + 1 }, () => txn())), 2);
+  // a paper row BEFORE 100 transactions needs 2 pages; AFTER them, 3
+  const head = [paper(), ...Array.from({ length: PAGE_SIZE * 2 }, () => txn())];
+  const tail = [...Array.from({ length: PAGE_SIZE * 2 }, () => txn()), paper()];
+  assert.equal(pageCountFor(head), 2, "a head paper row must not add a page");
+  assert.equal(pageCountFor(tail), 3, "a trailing paper row must add its page");
+  // and no page in range is ever empty (a blank page reads as "no matches")
+  for (const merged of [head, tail]) {
+    for (let p = 0; p < pageCountFor(merged); p++) {
+      assert.ok(pageSlice(merged, p).length > 0, "no page in range may be empty");
+    }
+  }
 });
 
 /* ---------- amounts: ranges stay ranges ---------- */
@@ -193,12 +230,48 @@ test("amountVerdict: open-ended and unparsed rows are indeterminate, never 'out'
   // "Over $1M" against a $25M threshold cannot be ruled in OR out
   assert.equal(amountVerdict({ low: 1000001, high: null }, 25_000_000), "indeterminate");
   assert.equal(amountVerdict({ low: null, high: null }, 25_000_000), "indeterminate");
+  // an unknown FLOOR with a known ceiling cannot be ruled out either, since
+  // the floor is what the threshold compares against
+  assert.equal(amountVerdict({ low: null, high: 15000 }, 15_000), "indeterminate");
+  assert.equal(amountVerdict({ low: null, high: 50000 }, 1_000_000), "indeterminate");
   // closed buckets resolve definitively, at the boundary too
   assert.equal(amountVerdict({ low: 15001, high: 50000 }, 15_000), "in");
   assert.equal(amountVerdict({ low: 1001, high: 15000 }, 15_000), "out");
   assert.equal(amountVerdict({ low: 5000001, high: 25000000 }, 5_000_000), "in");
   // no threshold ⇒ everything is in, including unparsed
   assert.equal(amountVerdict({ low: null, high: null }, 0), "in");
+});
+
+/* ---------- count line: one string, so no sink can omit a fragment ---------- */
+
+test("feedCountText: states transactions and paper filings separately", () => {
+  assert.equal(
+    feedCountText({ page: 0, txnMatched: 3911, paperMatched: 37, paperOnPage: 2, txnTotal: 3911, indeterminate: 0 }),
+    "1–50 of 3,911 transactions · 37 paper filings (2 here)",
+  );
+  assert.equal(
+    feedCountText({ page: 1, txnMatched: 3911, paperMatched: 0, paperOnPage: 0, txnTotal: 3911, indeterminate: 0 }),
+    "51–100 of 3,911 transactions",
+  );
+});
+
+test("feedCountText: never reports a bare zero while paper filings match", () => {
+  const s = feedCountText({ page: 0, txnMatched: 0, paperMatched: 4, paperOnPage: 4, txnTotal: 3911, indeterminate: 0 });
+  assert.equal(s, "0 of 3,911 transactions · 4 paper filings (4 here)");
+  assert.ok(s.includes("4 paper filings"), "the rendered filings must be counted");
+});
+
+test("feedCountText: the indeterminate-amount disclosure is part of the ONE string", () => {
+  // MAJ-B was this fragment reaching only a desktop-visible element; every
+  // sink now receives the same string, so it cannot be dropped per-viewport.
+  const s = feedCountText({ page: 0, txnMatched: 11, paperMatched: 0, paperOnPage: 0, txnTotal: 3911, indeterminate: 73 });
+  assert.equal(s, "1–11 of 11 transactions · 73 amount not comparable");
+});
+
+test("feedCountText: singular and plural agree", () => {
+  const one = feedCountText({ page: 0, txnMatched: 1, paperMatched: 1, paperOnPage: 1, txnTotal: 1, indeterminate: 0 });
+  assert.ok(one.includes("1 paper filing ("), "singular filing");
+  assert.ok(!one.includes("filings"), "no plural when there is one");
 });
 
 test("fmtMoney: statutory boundaries render compactly", () => {
@@ -307,13 +380,16 @@ test("row HTML: injection attempts in every string field are escaped", () => {
   );
   // What matters is that no value can close a tag or break out of an
   // attribute: the payload may survive as inert escaped TEXT, but never as
-  // markup. (`onerror=` inside an escaped attribute value is not executable.)
+  // markup. (`onerror=` inside an escaped attribute value is not executable,
+  // so asserting the string never appears would be the wrong property.)
   assert.ok(!html.includes("<img"), "no raw tag may be emitted");
   assert.ok(html.includes("&quot;&gt;&lt;img"), "the payload is escaped, not stripped");
-  // every attribute in the row is delimited by double quotes, so any raw
-  // double quote inside a value would be a breakout — assert there are none
-  const attrValues = [...html.matchAll(/="([^"]*)"/g)].map((m) => m[1]!);
-  for (const v of attrValues) assert.ok(!v.includes('"'), "attribute values carry no raw quote");
+  // Structural invariant: stripping the tags this renderer is allowed to emit
+  // must leave no "<" behind. A regex over attribute values cannot fail by
+  // construction (`[^"]*` stops at the first quote), so it proves nothing.
+  const stripped = html.replace(/<\/?(?:div|span|a|button|sup)\b[^>]*>/g, "");
+  assert.ok(!stripped.includes("<"), "no tag outside the allowed set may be emitted");
+  assert.ok(!/<[a-zA-Z]/.test(stripped), "no element start may survive stripping");
 });
 
 test("row HTML: a non-https source is stated, not linked", () => {

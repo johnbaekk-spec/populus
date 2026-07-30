@@ -264,10 +264,16 @@ function buildTiles(
     },
     {
       value: String(needsOcr),
-      label: "paper · need OCR",
+      // Split by chamber so the parse tiles above are composable: a reader can
+      // recover all-filings coverage per chamber without opening a tooltip.
+      label:
+        house.needsOcr + senate.needsOcr === needsOcr
+          ? `paper · need OCR · ${house.needsOcr} H · ${senate.needsOcr} S`
+          : "paper · need OCR",
       title:
         "filings submitted on paper — retained and counted in filing totals with zero" +
-        " transaction rows, not yet machine-readable",
+        " transaction rows, not yet machine-readable. Excluded from the parse" +
+        " denominators above, which count e-filed filings only.",
       muted: true,
     },
   ];
