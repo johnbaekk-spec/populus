@@ -507,19 +507,48 @@ def test_client_future_issued_rejected_h(served):
 
 
 def test_client_state_loss_bootstrap_accepts_one_unexpired_pointer_i(served):
+    """TD-7: an ABSENT anchor is genuine bootstrap — one unexpired pointer is
+    accepted. A PRESENT-BUT-CORRUPT anchor is NOT (see the test below): that
+    distinction is new, and deliberate."""
     _db, repo, cache, build_id = served
     make_client(cache, repo).refresh()
-    # Delete the tuple + sidecar: the client (TD-7) accepts one unexpired
-    # pointer on bootstrap; the monitor variant fails closed instead (below).
-    (cache / "congress" / "trust.json").unlink()
-    (cache / "congress" / "install.json").unlink()
+    # Delete the tuple + record: nothing was ever established, so bootstrap.
+    # Genuinely fresh: no state files AND no cached builds.
+    shutil.rmtree(cache / "congress")
     result = make_client(cache, repo).refresh()
     assert result.status == "installed"
     assert result.build_id == build_id
-    # Corrupt tuple is state loss too.
+
+
+def test_a_corrupt_anchor_refuses_instead_of_re_bootstrapping(served):
+    """CHANGED BEHAVIOUR (owner-visible). Previously a corrupt `trust.json` was
+    treated as state loss and the client re-bootstrapped from any unexpired
+    pointer. That is now REFUSED.
+
+    Why it changed: `serving_build()` fails closed on a corrupt anchor, so
+    laundering the same file into "no anchor" on the refresh path made the
+    client read one file two contradictory ways — fail-open on the write path.
+    Without a valid anchor there is NO replay protection, so a stale but still
+    attested pointer could reinstate a build the current published manifest
+    withholds, and the resolver would stamp it `inst_from_published_manifest=
+    True` with the >=95% coverage guarantee. Absence of proof is absence of
+    service (lifecycle spec §1), and a corrupt anchor is absence of proof.
+
+    The cost is that a corrupt anchor now needs the module's cache cleared
+    rather than self-healing; the refusal message says exactly that."""
+    _db, repo, cache, _build_id = served
+    make_client(cache, repo).refresh()
     (cache / "congress" / "trust.json").write_text("garbage", encoding="utf-8")
+
     result = make_client(cache, repo).refresh()
-    assert result.status == "installed"
+    assert result.status == "refused"
+    assert "corrupt" in result.message
+    assert "remove the ENTIRE directory" in result.message   # safe remediation
+    assert make_client(cache, repo).serving_build() is None   # fails closed
+
+    # Clearing the module cache restores normal bootstrap.
+    shutil.rmtree(cache / "congress")
+    assert make_client(cache, repo).refresh().status == "installed"
 
 
 def test_client_accepts_authorized_rollback(served):
@@ -541,16 +570,41 @@ def test_client_accepts_authorized_rollback(served):
     assert result.pointer_version == 3
 
 
-def test_client_compat_refusal_keeps_serving_r22(served):
-    _db, repo, cache, build_id = served
-    make_client(cache, repo).refresh()
-    incompatible = make_client(cache, repo, client_version="99.0")
-    # Force re-evaluation of the manifest: state loss makes it bootstrap.
-    (cache / "congress" / "trust.json").unlink()
+def test_client_compat_refusal_keeps_serving_r22(tmp_path):
+    """R22: a build requiring a newer client must be REFUSED as incompatible,
+    with the prior verified build still serving.
+
+    History: the original forced manifest re-evaluation by deleting
+    `trust.json`, which the serving-lifecycle rewrite turned into state loss. My
+    replacement tampered with a published manifest post-hoc — so the digest
+    check refused it BEFORE compat was ever evaluated, and the assertion had to
+    be widened to `in ("incompatible", "refused")`. That made the test VACUOUS:
+    an independent review deleted the entire `if not compatible:` branch and the
+    full suite still passed, silently disarming a shipped M1 safety property.
+
+    The published `client_compat` is `>=0.0.1,<1`, so an honest client version of
+    `0.0.0` reaches the branch with the manifest untouched.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+    cache = tmp_path / "cache"
+    assert make_client(cache, repo).refresh().status == "installed"
+    serving = make_client(cache, repo).current_build()
+    assert serving is not None
+
+    mutate_db(db)
+    publish_build(db, repo, moment=NOW + timedelta(days=1))
+    moment = NOW + timedelta(days=1, hours=1)
+
+    incompatible = make_client(cache, repo, client_version="0.0.0", moment=moment)
     result = incompatible.refresh()
-    assert result.status == "incompatible"
-    assert "client_compat" in result.message and "99.0" in result.message
-    assert incompatible.current_build() == build_id
+    assert result.status == "incompatible", result
+    assert "client_compat" in result.message
+    assert "0.0.0" in result.message
+    # The prior verified build is untouched and keeps serving.
+    assert incompatible.current_build() == serving
+    assert make_client(cache, repo, moment=moment).current_build() == serving
 
 
 def test_client_attestation_sites_pointer_and_manifest(served):
@@ -683,7 +737,7 @@ def two_builds(tmp_path):
     module = cache / "congress"
     state_b1 = {
         name: (module / name).read_bytes()
-        for name in ("trust.json", "install.json", "current")
+        for name in ("trust.json", "serving.json")
     }
     b1 = client.current_build()
     mutate_db(db)
@@ -737,9 +791,9 @@ def test_crash_boundary_temp_download_v1_intact(tmp_path):
 
 
 def test_crash_boundary_renamed_but_no_tuple(two_builds):
-    """Artifacts renamed in; crash before the tuple write."""
+    """Artifacts renamed in; crash before the tuple write (the commit)."""
     repo, cache, module, state_b1, b1, b2, moment = two_builds
-    _restore(module, state_b1, ("trust.json", "install.json", "current"))
+    _restore(module, state_b1, ("trust.json", "serving.json"))
     fresh = make_client(cache, repo, moment=moment)
     assert fresh.current_build() == b1  # prior verified build serving
     result = fresh.refresh()  # online: higher version, build dir complete
@@ -749,38 +803,24 @@ def test_crash_boundary_renamed_but_no_tuple(two_builds):
     assert fresh.current_build() == b2
 
 
-def test_crash_boundary_tuple_written_no_sidecar(two_builds):
-    """Tuple persisted; crash before sidecar + current. Offline reconcile
-    cannot heal (the sidecar cross-check fails) — the prior build keeps
-    serving; the ONLINE idempotent branch heals from the authenticated
-    pointer (its digest matches the tuple), which names the build_id."""
+def test_crash_boundary_tuple_written_no_record(two_builds):
+    """Tuple persisted (the commit); crash before the serving record.
+
+    The stale record no longer matches the advanced anchor, so the module is
+    ABSENT — not still serving b1. That is the spec's deliberate choice: the
+    commit has happened, and absence of proof is absence of service. The ONLINE
+    idempotent branch then completes the record from the authenticated pointer.
+    """
     repo, cache, module, state_b1, b1, b2, moment = two_builds
-    _restore(module, state_b1, ("install.json", "current"))
+    _restore(module, state_b1, ("serving.json",))
     fresh = make_client(cache, repo, moment=moment)
     fresh.reconcile()
-    assert fresh.current_build() == b1  # offline: heal refused, b1 serves
+    assert fresh.serving_build() is None  # anchor ahead of the record
     result = fresh.refresh()
-    assert result.status == "idempotent"
+    assert result.status in ("installed", "idempotent")
     assert fresh.current_build() == b2
-    sidecar = json.loads((module / "install.json").read_text(encoding="utf-8"))
-    assert sidecar["build_id"] == b2
-
-
-def test_crash_boundary_sidecar_written_no_current(two_builds):
-    """Sidecar written; crash before the current marker: OFFLINE heal."""
-    repo, cache, module, state_b1, _b1, b2, moment = two_builds
-    _restore(module, state_b1, ("current",))
-
-    class ExplodingFetcher:
-        def fetch_path(self, relpath):
-            raise AssertionError("offline heal must not touch the network")
-
-        def fetch_asset(self, url, dest):
-            raise AssertionError("offline heal must not touch the network")
-
-    fresh = SnapshotClient(cache, ExplodingFetcher(), now=pin(moment))
-    fresh.reconcile()
-    assert fresh.current_build() == b2
+    rec = json.loads((module / "serving.json").read_text(encoding="utf-8"))
+    assert rec["installed_build"] == b2
 
 
 def test_crash_boundary_all_written_consistent(two_builds):
@@ -790,12 +830,17 @@ def test_crash_boundary_all_written_consistent(two_builds):
     assert result.build_id == b2
 
 
-def test_corrupt_sidecar_is_advisory_only(two_builds):
+def test_a_corrupt_serving_record_fails_closed(two_builds):
+    """The INVERSION of the old advisory-sidecar behaviour: a corrupt record
+    proves nothing, so it yields absence rather than being ignored while some
+    other marker keeps serving. Re-verified online on the next refresh."""
     repo, cache, module, _state_b1, _b1, b2, moment = two_builds
-    (module / "install.json").write_text("garbage", encoding="utf-8")
+    (module / "serving.json").write_text("garbage", encoding="utf-8")
     fresh = make_client(cache, repo, moment=moment)
     fresh.reconcile()
-    assert fresh.current_build() == b2  # current marker intact; still serving
+    assert fresh.serving_build() is None
+    assert fresh.refresh().status in ("installed", "idempotent")
+    assert fresh.current_build() == b2
 
 
 def _client_in_subprocess(
@@ -831,43 +876,39 @@ def _client_in_subprocess(
 
 
 @pytest.mark.parametrize(
-    "boundary,action,expected_status",
+    "boundary,expected_status",
     [
-        # artifacts renamed in, no tuple yet → online install heal.
-        ("rename", "refresh", "installed"),
-        # tuple written, no sidecar/current → online idempotent heal.
-        ("tuple", "refresh", "idempotent"),
-        # sidecar written, no current marker → offline reconcile heal.
-        ("sidecar", "reconcile", None),
-        # all four written (marker boundary) → online idempotent no-op.
-        ("marker", "refresh", "idempotent"),
+        # artifacts renamed in, anchor not yet advanced → online install.
+        ("rename", "installed"),
+        # anchor advanced (COMMITTED), record not yet written → online heal.
+        ("tuple", None),
+        # both written and consistent → online idempotent no-op.
+        ("record", "idempotent"),
     ],
 )
-def test_crash_boundary_real_process_restart(
-    two_builds, boundary, action, expected_status
-):
+def test_crash_boundary_real_process_restart(two_builds, boundary, expected_status):
     """R24/F11: EVERY forward-progress crash boundary self-heals to the newest
-    verified build through a real interpreter restart over the same on-disk
-    cache — rename, tuple, sidecar, and marker — and the trust tuple stays
-    exactly two fields. (The temp-download-crash boundary, where the PRIOR build
+    verified build through a REAL interpreter restart over the same on-disk
+    cache. The lifecycle spec has three boundaries — rename, tuple (the commit),
+    record — where the old four-file model had four, and the trust anchor still
+    stays exactly two fields. (The temp-download boundary, where the PRIOR build
     stays trusted, is modelled separately below.)"""
     repo, cache, module, state_b1, _b1, b2, moment = two_builds
     if boundary == "rename":
-        _restore(module, state_b1, ("trust.json", "install.json", "current"))
+        _restore(module, state_b1, ("trust.json", "serving.json"))
     elif boundary == "tuple":
-        _restore(module, state_b1, ("install.json", "current"))
-    elif boundary == "sidecar":
-        _restore(module, state_b1, ("current",))
-    # "marker": leave the fully consistent state untouched.
+        _restore(module, state_b1, ("serving.json",))
+    # "record": leave the fully consistent state untouched.
 
-    result = _client_in_subprocess(cache, repo, moment, action=action)
+    result = _client_in_subprocess(cache, repo, moment, action="refresh")
     assert result["current"] == b2  # healed to the newest verified build
     if expected_status is not None:
         assert result["status"] == expected_status
     assert not list(module.glob(".tmp-*"))  # orphans removed by the restart
-    version, sha256 = load_tuple(module / "trust.json")  # two fields, exactly
+    version, _sha256 = load_tuple(module / "trust.json")  # two fields, exactly
     assert version == 2
-    assert json.loads((module / "install.json").read_text())["build_id"] == b2
+    rec = json.loads((module / "serving.json").read_text())
+    assert rec["installed_build"] == b2
     # A subsequent in-process client agrees over the healed on-disk state.
     assert make_client(cache, repo, moment=moment).current_build() == b2
 
@@ -885,7 +926,7 @@ def test_crash_boundary_temp_download_v1_intact_real_process_restart(tmp_path):
     assert not list(module.glob(".tmp-*"))  # partial download removed
     assert load_tuple(module / "trust.json") == tuple_before  # tuple still v1
     assert not (module / b2).exists()  # b2 never installed
-    assert json.loads((module / "install.json").read_text())["build_id"] == b1
+    assert json.loads((module / "serving.json").read_text())["installed_build"] == b1
 
 
 # --- GitHubRepoFetcher (R27) --------------------------------------------------

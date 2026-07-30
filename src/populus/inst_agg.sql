@@ -36,7 +36,11 @@ CREATE TABLE IF NOT EXISTS agg_filer_registry (
 -- both CUSIPs to one security_id) then, for still-unmatched rows, an exact
 -- reported-CUSIP reconciliation within the same filer's adjacent quarters
 -- (flagged identity_reconciled_by_cusip; never a name match, never G14 chaining).
--- delta_value_usd is always computed; delta_shares only when ssh_prnamt_type is
+-- delta_value_usd is NULL when either side's value was undisclosed — a holding
+-- whose prior filing had an unparseable <value> would otherwise difference
+-- against a FABRICATED zero and surface as a multi-billion "add" that never
+-- happened, ranked first by inst_biggest_moves (QA-VERIFY5-B2). delta_shares
+-- only when ssh_prnamt_type is
 -- equal in both quarters, else NULL + shares_unit_mismatch (never a fake 0).
 CREATE TABLE IF NOT EXISTS agg_qoq_deltas (
   cik             TEXT NOT NULL,
@@ -45,10 +49,10 @@ CREATE TABLE IF NOT EXISTS agg_qoq_deltas (
   curr_period     TEXT NOT NULL,
   prev_period     TEXT NOT NULL,
   change_kind     TEXT NOT NULL                   -- new | add | trim | exit
-      CHECK (change_kind IN ('new','add','trim','exit')),
-  prev_value_usd  INTEGER NOT NULL,
-  curr_value_usd  INTEGER NOT NULL,
-  delta_value_usd INTEGER NOT NULL,               -- always computed (curr - prev)
+      CHECK (change_kind IN ('new','add','trim','exit','unclassified')),
+  prev_value_usd  INTEGER,                        -- NULL when that quarter's
+  curr_value_usd  INTEGER,                        -- value was never disclosed
+  delta_value_usd INTEGER,                        -- NULL when either side is
   prev_shares     INTEGER,                         -- NULL when the prior unit is unknown
   curr_shares     INTEGER,                         -- NULL when the current unit is unknown
   delta_shares    INTEGER,                         -- NULL when units are incompatible (F4)

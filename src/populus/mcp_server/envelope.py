@@ -13,6 +13,7 @@ import json
 from typing import Any
 
 from populus import licenses
+from populus.normalize_inst import INST_DATA_NOTE  # M2 quarter-end caveat (G10)
 
 # §9.8 — the standing disclosure-lag note, non-removable from every response.
 DATA_NOTE = (
@@ -36,6 +37,31 @@ def license_notices() -> list[dict[str, str]]:
         {"license_id": lid, "notice": text}
         for lid, text in licenses.required_notices(register)
     ]
+
+
+def license_notices_for(license_ids: list[str]) -> list[dict[str, str]]:
+    """Module-scoped notices: the register ``attribution`` (and any verbatim
+    required notices) for each id in *license_ids* (§15/R9).
+
+    The global :func:`license_notices` emits only the register's non-empty
+    ``required_notices``; the ``sec-edgar`` entry has an EMPTY required-notices
+    list but a populated ``attribution`` that must still travel with every
+    inst response, so this surfaces the attribution as the license notice. A
+    federated inst response therefore carries ``sec-edgar`` and NOT the
+    congressional statutory notice (G9 separation).
+    """
+    wanted = set(license_ids)
+    register = licenses.load_register()
+    notices: list[dict[str, str]] = []
+    for entry in register["entries"]:
+        if entry["license_id"] not in wanted:
+            continue
+        attribution = entry.get("attribution")
+        if attribution:
+            notices.append({"license_id": entry["license_id"], "notice": attribution})
+        for notice in entry.get("required_notices", []):
+            notices.append({"license_id": entry["license_id"], "notice": notice})
+    return notices
 
 
 # The transaction fields surfaced to clients, in a stable order. Raw-only and
@@ -84,23 +110,85 @@ def shape_transaction(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# A 13F holding surfaced to clients. The grain is filing-level, so BOTH dates
+# ride every record (G4); the value is the manager's stated quarter-end market
+# value labeled with its era-dependent unit_basis, never a synthesized point
+# value (G5); the snapshot is explicitly quarter-end-not-current (G10). Identity
+# stays raw on the federated path — raw CUSIP + issuer name, no guessed
+# security_id (G3/G14/LD5).
+def shape_holding(
+    row: dict[str, Any],
+    *,
+    period_of_report: str,
+    filed_date: str,
+    doc_url: str | None,
+) -> dict[str, Any]:
+    """One 13F holding for a tool result — both dates + value-with-unit + doc_url."""
+    flags = row.get("flags")
+    if isinstance(flags, str):
+        try:
+            flags = json.loads(flags)
+        except ValueError:
+            flags = [flags] if flags else []
+    return {
+        "issuer_name": row.get("issuer_name_raw") or row.get("issuer_name"),
+        "cusip": row.get("cusip"),
+        "cusip_raw": row.get("cusip_raw"),
+        "title_of_class": row.get("title_of_class"),
+        # Quarter-end value as a labeled amount + its unit basis (G5), never a
+        # synthesized point value; value_usd is NULL when the filing did not
+        # print a parseable value.
+        "value_usd": row.get("value_usd"),
+        "unit_basis": row.get("unit_basis"),
+        "value_label": "manager's stated quarter-end market value (USD)",
+        "ssh_prnamt": row.get("ssh_prnamt"),
+        "ssh_prnamt_type": row.get("ssh_prnamt_type"),
+        "put_call": row.get("put_call"),
+        # Identity left unresolved on the federated path (G14/LD5); raw only.
+        "security_id": row.get("security_id"),
+        # Both dates, always (G4) — the grain is the filing/quarter.
+        "period_of_report": period_of_report,
+        "filed_date": filed_date,
+        "flags": flags or [],
+        "source": "sec-edgar",
+        "doc_url": doc_url,
+    }
+
+
 def envelope(
     *,
-    build_id: str | None,
+    build_id: str | None = None,
     as_of: str,
     results: Any,
     next_cursor: str | None = None,
     extra_note: str | None = None,
+    live_source: dict[str, Any] | None = None,
+    data_note: str | None = None,
+    license_notices_list: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Wrap tool output in the standard envelope (§11.3)."""
-    note = DATA_NOTE if extra_note is None else f"{DATA_NOTE} {extra_note}"
-    env: dict[str, Any] = {
-        "as_of": as_of,
-        "build_id": build_id,
-        "data_note": note,
-        "license_notices": license_notices(),
-        "results": results,
-    }
+    """Wrap tool output in the standard envelope (§11.3).
+
+    Defaults preserve the congress contract exactly (``build_id`` stamp, the
+    congressional ``DATA_NOTE``, the global ``license_notices``). The M2 module
+    passes ``data_note=INST_DATA_NOTE`` and ``license_notices_list`` scoped to
+    ``sec-edgar``; a federated fetch passes ``live_source`` INSTEAD of a
+    ``build_id`` — the two are mutually exclusive (xor), so a response is always
+    unambiguously either snapshot-stamped or live-stamped.
+    """
+    base_note = DATA_NOTE if data_note is None else data_note
+    note = base_note if extra_note is None else f"{base_note} {extra_note}"
+    env: dict[str, Any] = {"as_of": as_of}
+    # §11.3: EITHER the snapshot build_id OR, for a live federated fetch, the
+    # live_source — never both.
+    if live_source is not None:
+        env["live_source"] = live_source
+    else:
+        env["build_id"] = build_id
+    env["data_note"] = note
+    env["license_notices"] = (
+        license_notices() if license_notices_list is None else license_notices_list
+    )
+    env["results"] = results
     if next_cursor is not None:
         env["next_cursor"] = next_cursor
     return env

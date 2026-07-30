@@ -86,6 +86,12 @@ def _submissions_url(cik10: str) -> str:
     return f"https://data.sec.gov/submissions/CIK{cik10}.json"
 
 
+def _shard_url(name: str) -> str:
+    """An older submissions shard. *name* is validated against ``_SHARD_RE``
+    before it ever reaches here, so no remote value shapes the path."""
+    return f"https://data.sec.gov/submissions/{name}"
+
+
 def _archive_base(cik10: str, accession_nodash: str) -> str:
     # The Archives path uses the CIK with leading zeros stripped (verified
     # 2026-07-24: .../edgar/data/1067983/..., not .../0001067983/...).
@@ -130,6 +136,33 @@ class _CacheSource:
             )
         meta = self._fetch_meta[key]
         return meta.get("retrieved_at"), not meta
+
+    def submissions_shard(self, cik10: str, name: str) -> _Doc:
+        """An older ``filings.files[]`` shard, from the same local cache.
+
+        Mirrors :meth:`submissions` exactly — same sidecar provenance, same
+        ``raw_path`` discipline. (The first draft passed a non-existent
+        ``from_cache`` field and omitted the required ``raw_path``, so every
+        call raised ``TypeError``; it was never exercised because the tests
+        drove only the federated source — QA-r4-F2.)
+        """
+        relpath = f"CIK{cik10}/{name}"
+        content = self._read(relpath)
+        meta_path = self._root / f"CIK{cik10}" / "submissions-meta.json"
+        retrieved_at: str | None = None
+        meta_missing = True
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            retrieved_at = meta.get("retrieved_at")
+            meta_missing = False
+        return _Doc(
+            content=content,
+            url=_shard_url(name),
+            raw_path=relpath,
+            response_hash=_sha256(content),
+            retrieved_at=retrieved_at,
+            meta_missing=meta_missing,
+        )
 
     def submissions(self, cik10: str) -> _Doc:
         content = self._read(f"CIK{cik10}/submissions.json")
@@ -205,6 +238,9 @@ class _LiveSource:
             retrieved_at=self._now(),
         )
 
+    def submissions_shard(self, cik10: str, name: str) -> _Doc:
+        return self._obtain(_shard_url(name), f"CIK{cik10}/{name}")
+
     def submissions(self, cik10: str) -> _Doc:
         doc = self._obtain(_submissions_url(cik10), f"CIK{cik10}/submissions.json")
         meta = {
@@ -278,74 +314,131 @@ class _Discovery:
     entries: tuple[InstIndexEntry, ...]
     rejected: tuple[str, ...]        # accessions rejected for missing index dates
     uncached: tuple[str, ...]        # 13F accessions not present in the cache (LD-6)
-    older_shards: int                # files[] shards counted, not read (TD-M2-2-3)
+    older_shards: int                # files[] shards present
+    #: Shards that were requested but could NOT be read (malformed name, or a
+    #: fetch/parse failure). Non-empty means the discovered history is
+    #: INCOMPLETE and callers must say so rather than imply exhaustiveness (G3).
+    unread_shards: tuple[str, ...] = ()
 
 
-def discover(source, cik10: str, *, cache_bounded: bool) -> _Discovery:
-    """Discover a CIK's 13F accessions from ``submissions.json`` (R1/R18/R19)."""
+#: A submissions shard filename, e.g. ``CIK0001067983-submissions-001.json``.
+#: Remote input interpolated into a URL and a cache path, so it is validated to
+#: this exact shape before use — same discipline as ``_ACCESSION_RE`` (QA-F3).
+_SHARD_RE = re.compile(r"CIK\d{10}-submissions-\d{3}\.json")
+
+
+def discover(
+    source, cik10: str, *, cache_bounded: bool, include_history: bool = False
+) -> _Discovery:
+    """Discover a CIK's 13F accessions from ``submissions.json`` (R1/R18/R19).
+
+    ``include_history`` additionally READS the older ``filings.files[]`` shards
+    (TD-M2-2-3, closed for this path by QA-r3-F4). SEC keeps only a recent
+    window inline; a filer with a long history keeps older filings in shards, so
+    without this an explicitly-requested historical period returned a FALSE
+    "no 13F-HR at that period". The M2-2 ingest path leaves it off, so its cost
+    and behaviour are unchanged.
+    """
     submissions = source.submissions(cik10)
     document = json.loads(submissions.content.decode("utf-8"))
     filer_name = document.get("name") or ""
     recent = document.get("filings", {}).get("recent", {})
-    accessions = recent.get("accessionNumber", [])
-    forms = recent.get("form", [])
-    report_dates = recent.get("reportDate", [])
-    filing_dates = recent.get("filingDate", [])
-    file_numbers = recent.get("fileNumber", [])
+    shards = document.get("filings", {}).get("files", []) or []
 
     entries: list[InstIndexEntry] = []
     rejected: list[str] = []
     uncached: list[str] = []
-    for i, accession in enumerate(accessions):
-        form = forms[i] if i < len(forms) else ""
-        if form not in _SUBMISSION_TYPES:
-            continue
-        # The accession is REMOTE input and is interpolated into cache paths and
-        # live SEC URLs, so require the canonical dashed SEC form
-        # (##########-##-######) BEFORE deriving the no-dash variant or touching
-        # the filesystem. A malformed or path-bearing value (separators,
-        # traversal, wrong length, non-string) is a counted discovery reject —
-        # never a filesystem escape, an unintended request, or an aborted run.
-        # (QA-F3)
-        if not isinstance(accession, str) or not _ACCESSION_RE.fullmatch(accession):
-            rejected.append(str(accession))
-            continue
-        report_date = report_dates[i] if i < len(report_dates) else ""
-        filing_date = filing_dates[i] if i < len(filing_dates) else ""
-        # Both dates must be REAL canonical ISO dates, not merely non-empty: the
-        # failed-cover record persists them as temporal keys and `unit_basis_for`
-        # parses `filed_date`, so a malformed remote value would either abort the
-        # run downstream or persist an invalid key. Validate here and count it as
-        # a discovery reject instead (QA-F5, R18/G3).
-        if not (_is_iso_date(report_date) and _is_iso_date(filing_date)):
-            rejected.append(accession)
-            continue
-        nodash = accession.replace("-", "")
-        if cache_bounded and not (
-            source._root / f"CIK{cik10}" / nodash / "index.json"
-        ).exists():
-            uncached.append(accession)
-            continue
-        entries.append(
-            InstIndexEntry(
-                cik=cik10,
-                accession=accession,
-                accession_nodash=nodash,
-                form=form,
-                report_date=report_date,
-                filing_date=filing_date,
-                file_number=(file_numbers[i] if i < len(file_numbers) else None) or None,
-                filer_name=filer_name,
-            )
+    unread_shards: list[str] = []
+
+    def _harvest(recent: dict) -> None:
+        accessions = recent.get("accessionNumber", [])
+        forms = recent.get("form", [])
+        report_dates = recent.get("reportDate", [])
+        filing_dates = recent.get("filingDate", [])
+        file_numbers = recent.get("fileNumber", [])
+        _harvest_records(
+            accessions, forms, report_dates, filing_dates, file_numbers
         )
-    older_shards = len(document.get("filings", {}).get("files", []))
+
+    seen_accessions: set[str] = set()
+
+    def _harvest_records(
+        accessions, forms, report_dates, filing_dates, file_numbers
+    ) -> None:
+        for i, accession in enumerate(accessions):
+            form = forms[i] if i < len(forms) else ""
+            if form not in _SUBMISSION_TYPES:
+                continue
+            # The accession is REMOTE input and is interpolated into cache paths and
+            # live SEC URLs, so require the canonical dashed SEC form
+            # (##########-##-######) BEFORE deriving the no-dash variant or touching
+            # the filesystem. A malformed or path-bearing value (separators,
+            # traversal, wrong length, non-string) is a counted discovery reject —
+            # never a filesystem escape, an unintended request, or an aborted run.
+            # (QA-F3)
+            if not isinstance(accession, str) or not _ACCESSION_RE.fullmatch(accession):
+                rejected.append(str(accession))
+                continue
+            report_date = report_dates[i] if i < len(report_dates) else ""
+            filing_date = filing_dates[i] if i < len(filing_dates) else ""
+            # Both dates must be REAL canonical ISO dates, not merely non-empty: the
+            # failed-cover record persists them as temporal keys and `unit_basis_for`
+            # parses `filed_date`, so a malformed remote value would either abort the
+            # run downstream or persist an invalid key. Validate here and count it as
+            # a discovery reject instead (QA-F5, R18/G3).
+            if not (_is_iso_date(report_date) and _is_iso_date(filing_date)):
+                rejected.append(accession)
+                continue
+            nodash = accession.replace("-", "")
+            if cache_bounded and not (
+                source._root / f"CIK{cik10}" / nodash / "index.json"
+            ).exists():
+                uncached.append(accession)
+                continue
+            if accession in seen_accessions:
+                # `recent` and `files[]` are documented as disjoint, but a
+                # repeated accession would be composed TWICE — and a NEW HOLDINGS
+                # amendment applied twice inflates the position list while still
+                # reporting completeness (QA-VERIFY4-N2). Merge semantics are
+                # multiplicity-sensitive, so dedup at the source.
+                continue
+            seen_accessions.add(accession)
+            entries.append(
+                InstIndexEntry(
+                    cik=cik10,
+                    accession=accession,
+                    accession_nodash=nodash,
+                    form=form,
+                    report_date=report_date,
+                    filing_date=filing_date,
+                    file_number=(file_numbers[i] if i < len(file_numbers) else None) or None,
+                    filer_name=filer_name,
+                )
+            )
+
+    _harvest(recent)
+    if include_history:
+        for shard in shards:
+            name = shard.get("name") if isinstance(shard, dict) else None
+            if not isinstance(name, str) or not _SHARD_RE.fullmatch(name):
+                unread_shards.append(str(name))
+                continue
+            try:
+                shard_doc = source.submissions_shard(cik10, name)
+                _harvest(json.loads(shard_doc.content.decode("utf-8")))
+            except Exception:  # noqa: BLE001 — one bad shard must not lose the rest
+                # Degrade honestly: the shard is recorded as unread so the
+                # caller can say the history is incomplete (G3), never silently
+                # present a partial history as complete.
+                unread_shards.append(name)
     return _Discovery(
         filer_name=filer_name,
         submissions=submissions,
         entries=tuple(entries),
         rejected=tuple(rejected),
         uncached=tuple(uncached),
-        older_shards=older_shards,
+        older_shards=len(shards),
+        unread_shards=tuple(unread_shards),
     )
 
 
@@ -455,6 +548,23 @@ def evaluate_filing(
             ):
                 status = "partial"
 
+    # The EDGAR submission type is authoritative for amendment-ness; the cover's
+    # <isAmendment> is self-declared and may be absent or wrong. Trusting the
+    # cover alone let a `13F-HR/A` whose cover omits the element be composed as a
+    # BASE — which REPLACES the base's positions, so a 4-row NEW HOLDINGS
+    # amendment was returned as a complete 110-row portfolio with
+    # `composition_complete: True`. That is QA-F2 through a second door, and
+    # absence of the element is the NORMAL case (real base covers omit it).
+    # Decided once, here, so the pipeline and the federated plane agree.
+    form_says_amendment = entry.form.endswith("/A")
+    is_amendment = bool(cover.is_amendment) or form_says_amendment
+    if bool(cover.is_amendment) != form_says_amendment:
+        # Flagged in BOTH directions (QA-VERIFY4-N5): a plain `13F-HR` whose
+        # cover carries a stray <isAmendment>true</isAmendment> is the safe
+        # direction, but it is still a contradiction between the authoritative
+        # submission type and the self-declared cover, and it silently turned an
+        # ordinary base filing into "an amendment of unstated type".
+        extra_flags = set(extra_flags) | {"cover_amendment_flag_contradicts_form"}
     flags = _filing_flags(cover, reconciliation, extra_flags, cover_doc, table_doc, index_doc)
     filing = InstFilingRow(
         filing_id=f"inst:{entry.accession}",
@@ -465,7 +575,7 @@ def evaluate_filing(
         filed_date=entry.filing_date,
         form_version=cover.schema_version,
         unit_basis=unit_basis,
-        is_amendment=int(cover.is_amendment),
+        is_amendment=int(is_amendment),
         amendment_type=cover.amendment_type,
         amendment_no=cover.amendment_no,
         amends=None,
@@ -578,6 +688,10 @@ def _filing_flags(cover, reconciliation, extra_flags, cover_doc, table_doc, inde
     if cover.conf_denied_expired:
         flags.add("conf_denied_expired")
     if cover.is_amendment and cover.amendment_type is None:
+        flags.add("amendment_type_unknown")
+    if "cover_amendment_flag_contradicts_form" in flags and cover.amendment_type is None:
+        # A form-declared amendment whose cover states neither flag nor type:
+        # its merge semantics are unknown and must not be guessed.
         flags.add("amendment_type_unknown")
     if reconciliation.entry_total_mismatch:
         flags.add("entry_total_mismatch")

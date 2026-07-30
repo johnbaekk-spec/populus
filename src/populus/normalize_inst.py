@@ -39,10 +39,22 @@ UNPARSED_ISSUER_SENTINEL = "(unparsed issuer)"
 #: The §5.2 / M2-CONTRACT §5 structural caveat, shipped as a non-removable module
 #: constant so every consumer of a holdings number carries it (G10).
 INST_DATA_NOTE = (
-    "13F holdings are a quarter-end snapshot of the long 13(f) securities a"
-    " manager exercised investment discretion over; short positions, cash, and"
-    " non-13(f) instruments are not reported, and the snapshot is not a full"
-    " portfolio (ARCHITECTURE.md §5.2 / M2-CONTRACT §5)."
+    "13F reports cover LONG positions in Section 13(f) securities (US"
+    " exchange-traded equities plus reportable options, warrants, certain"
+    " convertibles) held by managers with at least $100M in such securities —"
+    " so managers below that threshold are absent entirely, and this is NOT a"
+    " census of institutional ownership. No short positions, no cash, no"
+    " non-13(f) assets, so this is not a full portfolio. Positions are"
+    " quarter-end snapshots FILED UP TO 45 DAYS LATE — not current holdings: a"
+    " position may have been changed or closed before you ever see it, and is"
+    " older still by however long ago that quarter ended. Values are the"
+    " manager's stated market value at quarter-end in ERA-DEPENDENT units"
+    " (whole dollars for form versions effective 2023-01-03 onward, thousands"
+    " before), normalized here to whole dollars with unit_basis carried on"
+    " every record. Affiliated managers may report the same position"
+    " (otherManager), and positions under confidential treatment may be omitted"
+    " until a later amendment discloses them. These are disclosures, not"
+    " investment advice (ARCHITECTURE.md §5.2 / M2-CONTRACT §5)."
 )
 
 # A parse defect means extraction/normalization could not fully interpret a
