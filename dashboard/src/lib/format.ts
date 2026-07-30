@@ -137,11 +137,16 @@ export function bandGeometry(r: Pick<TxnRow, "low" | "high">): BandGeom {
 
 /* ---------- row field presentation ---------- */
 
+/** Party tint class. An unmappable party is NOT painted as Independent — it
+    gets its own neutral class, because "we could not read the party" and
+    "this member is an Independent" are different claims. */
 export function partyClass(party: string): string {
-  return party === "D" ? "dem" : party === "R" ? "rep" : "ind";
+  return party === "D" ? "dem" : party === "R" ? "rep" : party === "I" ? "ind" : "unknown";
 }
 
-/** "D–CA-11" (house), "R–AL" (senate), "—" when unjoined/unknown. */
+/** "D–CA-11" (house), "R–AL" (senate), "—" when unjoined/unknown.
+    Only a positive integer district is printed; "0" is at-large, and any
+    other sentinel (e.g. "-1") is omitted rather than printed as "-1". */
 export function affText(r: {
   party: string;
   state: string | null;
@@ -152,13 +157,19 @@ export function affText(r: {
   const p = r.party || "?";
   if (!r.state) return p;
   if (r.chamber === "house" && r.district != null && r.district !== "") {
-    const d = r.district === "0" ? "AL" : r.district;
-    return `${p}–${r.state}-${d}`;
+    const d = r.district === "0" ? "AL" : /^[1-9][0-9]*$/.test(r.district) ? r.district : null;
+    if (d !== null) return `${p}–${r.state}-${d}`;
   }
   return `${p}–${r.state}`;
 }
 
-export function sideLabel(side: TxnRow["side"]): { text: string; cls: string } {
+/** An unparsed side is shown as unknown, never as the named category "Other" —
+    `side='other'` in this corpus always means the field did not parse. */
+export function sideLabel(
+  side: TxnRow["side"],
+  flags: readonly string[] = [],
+): { text: string; cls: string } {
+  if (flags.includes("side_unparsed")) return { text: "—", cls: "unknown" };
   switch (side) {
     case "purchase": return { text: "Purchase", cls: "buy" };
     case "sale": return { text: "Sale", cls: "sell" };
@@ -176,6 +187,18 @@ export function ownerNote(r: Pick<TxnRow, "side" | "owner">): string {
   else if (r.owner === "child") parts.push("DC");
   else if (r.owner === "joint") parts.push("JT");
   return parts.length ? "· " + parts.join(" · ") : "";
+}
+
+/** The same qualifiers spelled out, for assistive technology and tooltips —
+    "partial" and "JT" are load-bearing honesty, not decoration. */
+export function ownerNoteLong(r: Pick<TxnRow, "side" | "owner">): string {
+  const parts: string[] = [];
+  if (r.side === "sale_partial") parts.push("partial sale");
+  if (r.owner === "spouse") parts.push("spouse-owned");
+  else if (r.owner === "child") parts.push("dependent-child-owned");
+  else if (r.owner === "joint") parts.push("jointly owned");
+  else if (r.owner === "self") parts.push("member-owned");
+  return parts.join(", ");
 }
 
 export function srcLabel(doc: string): string {
@@ -206,12 +229,43 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   row_orphan: { label: "row orphan", cls: "dashed" },
 };
 
-export function flagChips(flags: string[]): { label: string; cls: string }[] {
+export function flagChips(
+  flags: string[],
+  r?: Pick<TxnRow, "low" | "high">,
+): { label: string; cls: string }[] {
   // missing_ticker already renders as "—" in the ticker column; the chip
   // restates it per the design row "no ticker".
-  return flags
+  const chips = flags
     .filter((f) => FLAG_PRESENTATION[f])
     .map((f) => FLAG_PRESENTATION[f]!);
+  // An amount with no bounds must always SAY it is unknown, even when the
+  // upstream flag set explains the row some other way (row_incomplete etc.) —
+  // presentation is derived from the value, not from the flag vocabulary.
+  if (r && r.low == null && r.high == null && !flags.includes("amount_unparsed")) {
+    chips.push({ label: "amount unparsed", cls: "dashed" });
+  }
+  return chips;
+}
+
+/* ---------- amount filtering ----------
+   A statutory range can be *indeterminate* against a threshold: an open-ended
+   "Over $1,000,000" (Senate spouse cap) may be any amount above $1M, and an
+   unparsed amount has no bounds at all. Neither can be ruled in OR out of
+   "≥ $25M". They are classified separately so the UI can say so instead of
+   asserting a confident zero. */
+
+export type AmountVerdict = "in" | "out" | "indeterminate";
+
+export function amountVerdict(
+  r: Pick<TxnRow, "low" | "high">,
+  min: number,
+): AmountVerdict {
+  if (min <= 0) return "in";
+  if (r.low == null && r.high == null) return "indeterminate";
+  if (r.low != null && r.low > min) return "in";
+  // open-ended above a floor at or below the threshold: unknowable
+  if (r.high == null && r.low != null) return "indeterminate";
+  return "out";
 }
 
 /* ---------- merge + pagination (shared so SSR page 1 === client page 1) ---- */
@@ -236,24 +290,34 @@ export function mergeFeed(txns: TxnRow[], paper: PaperRow[]): FeedItem[] {
   return out;
 }
 
-/** Slice a merged feed into page `page` (0-based): PAGE_SIZE transactions per
-    page; paper rows ride along with the page of the transaction they follow. */
+/** Page index each merged item belongs to. Transactions paginate PAGE_SIZE per
+    page; a paper (needs-OCR) filing belongs to the page of the transactions it
+    sits among — i.e. the page of however many transactions precede it. Every
+    item therefore has exactly one page, including a paper row that no
+    transaction precedes (a paper-only result set, or a build whose newest
+    filing arrived unparsed). Dropping those was a real defect: the rows are
+    "retained and counted" per §5.2 and must be reachable. */
+function itemPage(txnSeenBefore: number): number {
+  return Math.floor(txnSeenBefore / PAGE_SIZE);
+}
+
+/** Slice a merged feed into page `page` (0-based). */
 export function pageSlice(merged: FeedItem[], page: number): FeedItem[] {
   const out: FeedItem[] = [];
   let txnSeen = 0;
-  const lo = page * PAGE_SIZE;
-  const hi = lo + PAGE_SIZE;
   for (const item of merged) {
-    if (item.kind === "txn") {
-      if (txnSeen >= hi) break;
-      if (txnSeen >= lo) out.push(item);
-      txnSeen++;
-    } else if (txnSeen > lo && txnSeen <= hi) {
-      // paper row directly after the transaction it follows
-      out.push(item);
-    }
+    const p = itemPage(txnSeen);
+    if (p > page) break;
+    if (p === page) out.push(item);
+    if (item.kind === "txn") txnSeen++;
   }
   return out;
+}
+
+/** Total pages for a merged feed. Paper-only result sets still have one page. */
+export function pageCount(txnCount: number, paperCount = 0): number {
+  const pages = Math.ceil(txnCount / PAGE_SIZE);
+  return Math.max(pages, txnCount + paperCount > 0 ? 1 : 0);
 }
 
 /* ---------- row renderers (single source for SSR + client) ---------- */
@@ -264,10 +328,25 @@ export interface RenderCtx {
 }
 
 function memberHref(bioguide: string): string {
-  return `/congress/members/${bioguide}/`;
+  return `/congress/members/${esc(encodeURIComponent(bioguide))}/`;
 }
 function tickerHref(ticker: string): string {
-  return `/congress/tickers/${encodeURIComponent(ticker)}/`;
+  return `/congress/tickers/${esc(encodeURIComponent(ticker))}/`;
+}
+
+/** Source-document anchor. Scheme-allowlisted: the URL ultimately traces to a
+    scraped government page, so anything but https is stated as unlinkable
+    rather than rendered as a live href. */
+function srcCellHtml(doc: string, extraClass = ""): string {
+  const src = srcLabel(doc);
+  const cls = `cell cell-src${extraClass ? " " + extraClass : ""}`;
+  if (!doc.startsWith("https://")) {
+    return `<div class="${cls}"><span class="src-missing" title="source URL not usable">${src}</span></div>`;
+  }
+  return (
+    `<div class="${cls}"><a href="${esc(doc)}" rel="noopener" target="_blank"` +
+    ` aria-label="source document (${src}) — opens in a new tab">${src}&nbsp;↗</a></div>`
+  );
 }
 
 function starHtml(bioguide: string | null, name: string, ctx: RenderCtx): string {
@@ -300,57 +379,71 @@ function memberCellHtml(r: {
   );
 }
 
+/** Days-to-file affordance. A negative lag means the filing predates the
+    stated trade date — an anomaly, named as one, never printed as "+-320d". */
+export function lagHtml(r: Pick<TxnRow, "lag" | "late">): string {
+  if (r.lag != null && r.lag < 0) {
+    return `<span class="lag lag-anomaly" title="filed before the stated trade date">filed −${Math.abs(r.lag)}d before trade</span>`;
+  }
+  if (r.late === 1) {
+    return r.lag == null
+      ? `<span class="lag-late">LATE</span>`
+      : `<span class="lag-late">LATE·${r.lag}d</span>`;
+  }
+  if (r.lag != null) return `<span class="lag">+${r.lag}d</span>`;
+  return `<span class="lag" title="days to file unknown">—</span>`;
+}
+
 export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
-  const side = sideLabel(r.side);
+  const side = sideLabel(r.side, r.flags);
   const owner = ownerNote(r);
+  const ownerLong = ownerNoteLong(r);
   const amount = amountText(r);
+  const amountUnknown = r.low == null && r.high == null;
   const band = bandGeometry(r);
-  const chips = flagChips(r.flags);
+  const chips = flagChips(r.flags, r);
   const traded = tradedText(r);
-  const lagHtml =
-    r.late === 1
-      ? `<span class="lag-late">LATE·${r.lag ?? "?"}d</span>`
-      : r.lag != null
-        ? `<span class="lag">+${r.lag}d</span>`
-        : `<span class="lag">—</span>`;
   const spouseCapDagger = r.flags.includes("amount_spouse_cap")
-    ? `<sup class="dagger" aria-hidden="true">‡</sup>`
+    ? `<sup class="dagger" title="disclosed only as an open-ended cap">‡</sup>`
     : "";
-  const src = srcLabel(r.doc);
   const tickerHtml = r.ticker
     ? `<a href="${tickerHref(r.ticker)}">${esc(r.ticker)}</a>`
-    : `<span class="none" aria-label="no ticker">—</span>`;
+    : `<span class="none">—<span class="visually-hidden"> no ticker disclosed</span></span>`;
+  const amountSpoken = amountUnknown ? "not disclosed in a parseable range" : amount;
 
   return `<div class="feed-row feed-grid-cols" role="listitem">
 <div class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</div>
-<div class="cell cell-filed"><span class="visually-hidden">Filed </span>${r.filed}</div>
+<div class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</div>
 <div class="row-line1">
-<div class="cell cell-member">${memberCellHtml(r)}</div>
-<div class="cell cell-ticker">${tickerHtml}</div>
-<div class="cell cell-side ${side.cls}">${side.text} <span class="owner-note">${esc(owner)}</span></div>
+<div class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r)}</div>
+<div class="cell cell-ticker"><span class="visually-hidden">Ticker </span>${tickerHtml}</div>
+<div class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${
+    owner
+      ? ` <span class="owner-note" title="${esc(ownerLong)}">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
+      : ""
+  }</div>
 </div>
 <div class="row-line2">
-<div class="cell cell-traded"><span class="visually-hidden">Traded </span><span class="traded-date">${traded}</span><span class="mobile-dates" aria-hidden="true">${traded} → ${r.filed.slice(5)}</span> ${lagHtml}</div>
-<div class="cell cell-amount${amount === "—" ? " unknown" : ""}"><span class="visually-hidden">Amount </span>${esc(amount)}${spouseCapDagger}</div>
-<div class="cell cell-range"><div class="band" role="img" aria-label="disclosed range ${esc(amount)}"><div class="band-fill${band.open ? " open" : ""}" style="left:${band.left.toFixed(1)}%;width:${band.width.toFixed(1)}%"></div></div>${chips
+<div class="cell cell-traded"><span class="visually-hidden">Traded </span><span class="traded-date">${esc(traded)}</span><span class="mobile-dates" aria-hidden="true">${esc(traded)} → ${esc(r.filed.slice(5))}</span> ${lagHtml(r)}</div>
+<div class="cell cell-amount${amountUnknown ? " unknown" : ""}"><span class="visually-hidden">Amount </span><span aria-hidden="true">${esc(amount)}</span><span class="visually-hidden">${esc(amountSpoken)}</span>${spouseCapDagger}</div>
+<div class="cell cell-range"><div class="band" aria-hidden="true"><div class="band-fill${band.open ? " open" : ""}" style="left:${band.left.toFixed(1)}%;width:${band.width.toFixed(1)}%"></div></div>${chips
     .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
     .join("")}</div>
+${srcCellHtml(r.doc)}
 </div>
-<div class="cell cell-src"><a href="${esc(r.doc)}" rel="noopener" target="_blank" aria-label="source document (${src})">${src}&nbsp;↗</a></div>
 </div>`;
 }
 
 export function paperRowHtml(r: PaperRow, ctx: RenderCtx): string {
-  const src = srcLabel(r.doc);
   return `<div class="feed-row paper feed-grid-cols" role="listitem">
 <div class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</div>
-<div class="cell cell-filed"><span class="visually-hidden">Filed </span>${r.filed}</div>
+<div class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</div>
 <div class="cell paper-main">${
     r.bioguide
       ? `<a class="who" href="${memberHref(r.bioguide)}">${esc(r.name)}</a>`
       : `<span class="who">${esc(r.name)}</span>`
   } <span class="aff ${partyClass(r.party)}">${esc(affText(r))}</span><span class="chip-ocr">paper filing — needs OCR</span><span class="paper-note">transactions filed on paper; retained and counted, not yet machine-readable</span></div>
-<div class="cell cell-src"><a href="${esc(r.doc)}" rel="noopener" target="_blank" aria-label="source document (${src})">${src}&nbsp;↗</a></div>
+${srcCellHtml(r.doc)}
 </div>`;
 }
 

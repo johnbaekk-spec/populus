@@ -8,8 +8,11 @@ import {
   paperFromArray,
   mergeFeed,
   pageSlice,
+  pageCount,
   feedItemHtml,
   fmtInt,
+  fmtMoney,
+  amountVerdict,
   PAGE_SIZE,
   type TxnRow,
   type PaperRow,
@@ -50,6 +53,7 @@ export function initFeed(): void {
   const emptySuggestEl = document.getElementById("feed-empty-suggestions");
   const countEl = document.getElementById("filter-count-line");
   const rangeEl = document.getElementById("pager-range");
+  const statusEl = document.getElementById("feed-status");
   const resetBtn = document.getElementById("filter-reset") as HTMLButtonElement | null;
   const resetWrap = document.getElementById("filter-reset-wrap");
   const newerBtn = document.getElementById("pager-newer") as HTMLButtonElement | null;
@@ -120,21 +124,51 @@ export function initFeed(): void {
         loadPromise = null;
         loadingEl?.setAttribute("hidden", "");
         console.error("populus: feed dataset failed to load", err);
+        if (pendingApply) renderLoadFailure();
       });
     return loadPromise;
+  }
+
+  /** A failed dataset fetch is stated on the page, not only in the console.
+      The server-rendered first page is still on screen, so say exactly that. */
+  function renderLoadFailure(): void {
+    if (!emptyEl || !emptyDetailEl || !emptySuggestEl) return;
+    const heading = emptyEl.querySelector("h2");
+    if (heading) heading.textContent = "Couldn't load the full dataset.";
+    emptyDetailEl.textContent =
+      "Filtering, search and paging need the full dataset, which failed to " +
+      "download. The first page above is still the real published data — " +
+      "nothing here is stale or invented.";
+    emptySuggestEl.innerHTML = "";
+    const retry = document.createElement("button");
+    retry.textContent = "Try again";
+    retry.addEventListener("click", () => {
+      emptyEl.setAttribute("hidden", "");
+      loadingEl?.removeAttribute("hidden");
+      loadData();
+    });
+    emptySuggestEl.appendChild(retry);
+    const raw = document.createElement("a");
+    raw.className = "plain";
+    raw.href = "/congress/data/feed.v1.json";
+    raw.textContent = "open the raw dataset";
+    emptySuggestEl.appendChild(raw);
+    emptyEl.removeAttribute("hidden");
+    countEl!.textContent = "full dataset unavailable — showing the first page";
   }
   const idle = (window as any).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
   idle(() => loadData());
 
   /* ---------- filtering ---------- */
 
-  function matchTxn(r: TxnRow, s: State): boolean {
+  /** Everything except the amount threshold — so the indeterminate-amount
+      population can be counted against the same other filters. */
+  function matchTxnExceptAmount(r: TxnRow, s: State): boolean {
     if (s.chamber !== "all" && r.chamber !== s.chamber) return false;
     if (s.party !== "all" && r.party !== s.party) return false;
     if (s.side === "buy" && r.side !== "purchase") return false;
     if (s.side === "sell" && r.side !== "sale" && r.side !== "sale_partial") return false;
     if (s.side === "exch" && r.side !== "exchange") return false;
-    if (s.amountMin > 0 && !(r.low != null && r.low > s.amountMin)) return false;
     if (s.owner === "none") {
       if (r.owner != null) return false;
     } else if (s.owner !== "all" && r.owner !== s.owner) return false;
@@ -146,6 +180,19 @@ export function initFeed(): void {
       if (!nameHit && !tickerHit) return false;
     }
     return true;
+  }
+
+  function matchTxn(r: TxnRow, s: State): boolean {
+    return matchTxnExceptAmount(r, s) && amountVerdict(r, s.amountMin) === "in";
+  }
+
+  /** Rows this threshold can neither include nor exclude: open-ended
+      "Over $1M" caps and unparsed amounts. Reported, never silently dropped. */
+  function indeterminateCount(s: State): number {
+    if (!txns || s.amountMin <= 0) return 0;
+    return txns.filter(
+      (r) => matchTxnExceptAmount(r, s) && amountVerdict(r, s.amountMin) === "indeterminate",
+    ).length;
   }
 
   // A paper filing has no side/amount/owner/late/ticker — it can only honestly
@@ -233,9 +280,15 @@ export function initFeed(): void {
       emptySuggestEl.appendChild(b);
       shown++;
     }
+    const unknown = indeterminateCount(state);
     emptyDetailEl.textContent =
       `This build holds ${fmtInt(totalAll)} transaction rows; the current ` +
       `combination matches ${fmtInt(currentCount)}.` +
+      (unknown > 0
+        ? ` ${fmtInt(unknown)} further ${unknown === 1 ? "row discloses" : "rows disclose"}` +
+          ` only an open-ended or unparsed amount and can be neither ruled in nor out of` +
+          ` “≥ ${fmtMoney(state.amountMin)}”.`
+        : "") +
       (shown > 0 ? " Nearest matches:" : " No single filter is responsible — reset and refine.");
     const reset = document.createElement("button");
     reset.className = "plain";
@@ -249,9 +302,11 @@ export function initFeed(): void {
 
   function apply(): void {
     if (!txns || !paper) {
+      // Do NOT clear the server-rendered rows: if the dataset never arrives,
+      // page 1 stays readable instead of leaving a blank table under a count
+      // line that still claims thousands of rows.
       pendingApply = true;
       loadingEl?.removeAttribute("hidden");
-      if (bodyEl) bodyEl.innerHTML = "";
       emptyEl?.setAttribute("hidden", "");
       loadData();
       return;
@@ -261,30 +316,56 @@ export function initFeed(): void {
     const fTxns = txns.filter((r) => matchTxn(r, state));
     const fPaper = paperVisible(state) ? paper.filter((p) => matchPaper(p, state)) : [];
 
-    const maxPage = Math.max(0, Math.ceil(fTxns.length / PAGE_SIZE) - 1);
+    const maxPage = Math.max(0, pageCount(fTxns.length, fPaper.length) - 1);
     if (state.page > maxPage) state.page = maxPage;
 
     const merged = mergeFeed(fTxns, fPaper);
     const items = pageSlice(merged, state.page);
     const ctx: RenderCtx = { watched };
 
-    if (fTxns.length === 0 && fPaper.length === 0) {
+    // Keyed on what actually renders — a paper-only result set renders rows,
+    // and an empty page must always say so rather than showing a blank frame.
+    if (items.length === 0) {
       bodyEl!.innerHTML = "";
-      renderEmpty(0);
+      renderEmpty(fTxns.length);
     } else {
       emptyEl?.setAttribute("hidden", "");
       bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
     }
 
+    // The count describes transactions; paper filings are counted separately
+    // rather than being rendered inside a total that excludes them.
+    const paperOnPage = items.filter((it) => it.kind === "paper").length;
     const lo = fTxns.length === 0 ? 0 : state.page * PAGE_SIZE + 1;
     const hi = Math.min((state.page + 1) * PAGE_SIZE, fTxns.length);
-    const range =
-      fTxns.length === 0 ? `0 of ${fmtInt(totalAll)}` : `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(fTxns.length)}`;
+    const txnPart =
+      fTxns.length === 0
+        ? `0 of ${fmtInt(totalAll)} transactions`
+        : `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(fTxns.length)} transactions`;
+    const paperPart =
+      fPaper.length === 0
+        ? ""
+        : ` · ${fmtInt(fPaper.length)} paper ${fPaper.length === 1 ? "filing" : "filings"}` +
+          (paperOnPage > 0 ? ` (${fmtInt(paperOnPage)} here)` : "");
+    const unknown = indeterminateCount(state);
+    const unknownPart =
+      unknown > 0 ? ` · ${fmtInt(unknown)} amount not comparable` : "";
+    const range = txnPart + paperPart + unknownPart;
     countEl!.textContent = range;
-    rangeEl!.textContent = range;
+    rangeEl!.textContent = txnPart + paperPart;
+    if (statusEl) statusEl.textContent = range;
 
-    if (newerBtn) newerBtn.hidden = state.page === 0;
-    if (olderBtn) olderBtn.disabled = state.page >= maxPage;
+    // Keep both pager controls focusable at the boundaries — removing the
+    // control that was just activated dumps keyboard focus to <body>.
+    setPagerState(newerBtn, state.page === 0);
+    setPagerState(olderBtn, state.page >= maxPage);
+  }
+
+  function setPagerState(btn: HTMLButtonElement | null, unavailable: boolean): void {
+    if (!btn) return;
+    btn.hidden = false;
+    btn.setAttribute("aria-disabled", String(unavailable));
+    btn.classList.toggle("is-unavailable", unavailable);
   }
 
   function resetAll(): void {
@@ -346,15 +427,27 @@ export function initFeed(): void {
 
   resetBtn?.addEventListener("click", resetAll);
   newerBtn?.addEventListener("click", () => {
-    if (state.page > 0) {
-      state.page--;
-      apply();
-      feedEl.scrollIntoView({ block: "start" });
-    }
+    if (newerBtn.getAttribute("aria-disabled") === "true" || state.page === 0) return;
+    state.page--;
+    apply();
+    afterPageChange();
   });
   olderBtn?.addEventListener("click", () => {
+    if (olderBtn.getAttribute("aria-disabled") === "true") return;
     state.page++;
     apply();
-    feedEl.scrollIntoView({ block: "start" });
+    afterPageChange();
   });
+
+  /** Move focus to the (now-updated) range readout rather than letting it fall
+      to <body> when the activated pager control becomes unavailable. */
+  function afterPageChange(): void {
+    feedEl?.scrollIntoView({ block: "start" });
+    const active = document.activeElement;
+    const lost =
+      active === document.body ||
+      active === null ||
+      (active instanceof HTMLButtonElement && active.getAttribute("aria-disabled") === "true");
+    if (lost && rangeEl instanceof HTMLElement) rangeEl.focus();
+  }
 }

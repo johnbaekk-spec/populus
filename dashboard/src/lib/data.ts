@@ -27,7 +27,7 @@ import {
   TXN_COLS,
   PAPER_COLS,
   DATASET_VERSION,
-} from "./format";
+} from "./format.ts";
 
 export interface StatTile {
   value: string;
@@ -49,7 +49,9 @@ export interface BuildData {
   paper: PaperRow[];
   merged: FeedItem[];
   txnCount: number;
-  sinceYear: string;
+  paperCount: number;
+  filedFrom: string; // earliest FILING year in this build
+  tradesFrom: string; // earliest disclosed TRADE year (can precede filedFrom)
   dataset: string; // JSON string served at /congress/data/feed.v1.json
   dataLicenseMd: string;
   noticeTxt: string;
@@ -74,6 +76,15 @@ function resolveSources(): { buildDir: string; dbPath: string; buildId: string }
   }
   if (envBuildDir || envDb) {
     throw new Error("POPULUS_BUILD_DIR and POPULUS_DB must be set together");
+  }
+  // The "newest local build" fallback below is a DEV convenience and must never
+  // decide what a published site serves — CI passes the staged verified build
+  // explicitly (§12.1). Hold that line in code, not just in documentation.
+  if (process.env.CI) {
+    throw new Error(
+      "CI builds must set POPULUS_BUILD_DIR + POPULUS_DB explicitly —" +
+        " the newest-local-build fallback is dev-only and is refused here",
+    );
   }
   // Dev convenience: newest build in a local data-repo checkout.
   const dataRepo = process.env.POPULUS_DATA_REPO ?? path.resolve(repoRoot, "..", "populus-data");
@@ -200,15 +211,29 @@ function chamberParse(byYear: Record<string, ParseCell> | undefined): {
   return { parsed, partial, needsOcr, total };
 }
 
-function pct(num: number, den: number): string {
+/** Coverage percentage that can never overstate itself: exactly "100" only when
+    the numerator equals the denominator, and floored (never rounded up)
+    otherwise — 2,499/2,500 prints 99.9, not 100. */
+export function pct(num: number, den: number): string {
   if (den === 0) return "—";
+  if (num === den) return "100";
   const v = (num / den) * 100;
-  const s = v >= 99.95 ? "100" : v.toFixed(1);
-  return s;
+  return Math.min(99.9, Math.floor(v * 10) / 10).toFixed(1);
 }
 
-function buildTiles(stats: Record<string, any>, rowCount: number, sinceYear: string): StatTile[] {
-  const cov = stats?.totals?.parse_coverage_primary_by_chamber_year_including_excluded ?? {};
+function buildTiles(
+  stats: Record<string, any>,
+  rowCount: number,
+  filedFrom: string,
+): StatTile[] {
+  const cov = stats?.totals?.parse_coverage_primary_by_chamber_year_including_excluded;
+  if (cov == null || typeof cov !== "object") {
+    // Publishing "0 filings / —%" would be a false coverage claim; fail loudly.
+    throw new Error(
+      "stats.json is missing totals.parse_coverage_primary_by_chamber_year_including_excluded" +
+        " — refusing to publish coverage tiles derived from absent data",
+    );
+  }
   const house = chamberParse(cov.house);
   const senate = chamberParse(cov.senate);
   const houseEfile = house.total - house.needsOcr;
@@ -218,25 +243,31 @@ function buildTiles(stats: Record<string, any>, rowCount: number, sinceYear: str
   return [
     {
       value: rowCount.toLocaleString("en-US"),
-      label: `rows since ${sinceYear}`,
-      title: "transactions in the default view (active filings minus superseded amendment originals)",
+      label: `rows filed since ${filedFrom}`,
+      title:
+        "transactions in the default view (active filings minus superseded amendment" +
+        " originals). Counts filings made in this window; disclosed trade dates can be earlier.",
     },
     {
+      // Label states the denominator the percentage actually divides — the
+      // paper filings excluded from it get their own tile, not a silent share.
       value: pct(house.parsed, houseEfile),
       unit: "%",
-      label: `House parse · ${house.total} filings`,
-      title: `fully parsed ${house.parsed} of ${houseEfile} e-filed House PTRs (${house.partial} partial, ${house.needsOcr} paper/need-OCR of ${house.total} total)`,
+      label: `House parse · ${houseEfile} e-filed`,
+      title: `fully parsed ${house.parsed} of ${houseEfile} e-filed House PTRs; ${house.partial} partial. A further ${house.needsOcr} of ${house.total} total House filings are paper and not machine-readable — excluded from this denominator and counted in the paper tile.`,
     },
     {
       value: pct(senate.parsed, senateEfile),
       unit: "%",
-      label: `Senate parse · ${senate.total} filings`,
-      title: `fully parsed ${senate.parsed} of ${senateEfile} e-filed Senate PTRs (${senate.partial} partial, ${senate.needsOcr} paper/need-OCR of ${senate.total} total)`,
+      label: `Senate parse · ${senateEfile} e-filed`,
+      title: `fully parsed ${senate.parsed} of ${senateEfile} e-filed Senate PTRs; ${senate.partial} partial. A further ${senate.needsOcr} of ${senate.total} total Senate filings are paper and not machine-readable — excluded from this denominator and counted in the paper tile.`,
     },
     {
       value: String(needsOcr),
       label: "paper · need OCR",
-      title: "filings submitted on paper — retained and counted, not yet machine-readable",
+      title:
+        "filings submitted on paper — retained and counted in filing totals with zero" +
+        " transaction rows, not yet machine-readable",
       muted: true,
     },
   ];
@@ -262,10 +293,16 @@ export function getBuildData(): BuildData {
   const { txns, paper } = loadRows(dbPath);
   const merged = mergeFeed(txns, paper);
 
-  let sinceYear = "";
+  // The tile counts rows *filed* in this build's window, so it must be labelled
+  // by the filing window. Deriving it from min(traded) let a single 2023 trade
+  // imply three years of coverage when every filing in the build is from 2026.
+  let filedFrom = "";
+  let tradesFrom = "";
   for (const t of txns) {
+    const f = t.filed.slice(0, 4);
+    if (!filedFrom || f < filedFrom) filedFrom = f;
     const y = (t.traded ?? t.filed).slice(0, 4);
-    if (!sinceYear || y < sinceYear) sinceYear = y;
+    if (!tradesFrom || y < tradesFrom) tradesFrom = y;
   }
 
   const generatedAtIso = String(stats.generated_at ?? "");
@@ -305,12 +342,14 @@ export function getBuildData(): BuildData {
     manifestSha,
     manifestShaAbbrev: `${manifestSha.slice(0, 4)}…${manifestSha.slice(-4)}`,
     dataNote: String(stats.data_note ?? ""),
-    tiles: buildTiles(stats, rowCount, sinceYear),
+    tiles: buildTiles(stats, rowCount, filedFrom),
     txns,
     paper,
     merged,
     txnCount: txns.length,
-    sinceYear,
+    paperCount: paper.length,
+    filedFrom,
+    tradesFrom,
     dataset,
     dataLicenseMd,
     noticeTxt,

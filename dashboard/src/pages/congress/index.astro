@@ -10,8 +10,16 @@ const ssrCtx: RenderCtx = { watched: new Set() };
 const pageOne = pageSlice(build.merged, 0);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
 
+// The count states what it counts: paper filings are not transactions and are
+// never folded into a transaction total (they carry no amount, side or dates).
 const shown = Math.min(PAGE_SIZE, build.txnCount);
-const rangeText = `1–${fmtInt(shown)} of ${fmtInt(build.txnCount)}`;
+const paperOnPage = pageOne.filter((i) => i.kind === "paper").length;
+const rangeText =
+  `1–${fmtInt(shown)} of ${fmtInt(build.txnCount)} transactions` +
+  (build.paperCount > 0
+    ? ` · ${fmtInt(build.paperCount)} paper ${build.paperCount === 1 ? "filing" : "filings"}` +
+      (paperOnPage > 0 ? ` (${fmtInt(paperOnPage)} here)` : "")
+    : "");
 
 const description =
   "Congressional stock trading from primary sources — House Clerk PTRs and Senate eFD. " +
@@ -32,7 +40,8 @@ const description =
           public record. <a href="/methodology/">How this data is made ↗</a>
         </p>
         <div class="mobile-meta">
-          {fmtInt(build.txnCount)} rows · as of {build.generatedAt} · ranges, filed ≤45d late
+          {fmtInt(build.txnCount)} rows filed since {build.filedFrom} · as of {build.generatedAt} ·
+          statutory ranges, filed up to 45d after the trade
         </div>
       </div>
       <div class="tiles" role="list" aria-label="Data coverage">
@@ -106,10 +115,10 @@ const description =
         late only
       </label>
       <div class="filter-count">
-        <span id="filter-count-line" aria-live="polite">{rangeText}</span>
+        <span id="filter-count-line">{rangeText}</span>
         · filtered on this device<span id="filter-reset-wrap" hidden>
           · <button class="linklike" id="filter-reset">reset</button></span>
-        <noscript> · filters need JavaScript — full data: <a href="/congress/data/feed.v1.json">feed.v1.json</a></noscript>
+        <noscript> · filters, search and paging need JavaScript — the full published data is at <a href="/congress/data/feed.v1.json">feed.v1.json</a></noscript>
       </div>
     </div>
 
@@ -154,11 +163,14 @@ const description =
           originals · <a href="/methodology/#defaults">what's excluded ↗</a>
         </div>
         <div class="pager">
-          <span class="pager-range" id="pager-range">{rangeText}</span>
-          <button class="pager-btn" id="pager-newer" hidden>← newer</button>
-          <button class="pager-btn" id="pager-older">older →</button>
+          <span class="pager-range" id="pager-range" tabindex="-1">{rangeText}</span>
+          <button class="pager-btn is-unavailable" id="pager-newer" aria-disabled="true">← newer</button>
+          <button class="pager-btn" id="pager-older" aria-disabled="false">older →</button>
         </div>
       </div>
+      <!-- Live region kept outside the mobile-hidden count line, so filter
+           results are announced on every viewport. -->
+      <p class="visually-hidden" id="feed-status" role="status" aria-live="polite"></p>
     </div>
   </main>
 

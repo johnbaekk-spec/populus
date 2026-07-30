@@ -11,12 +11,19 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "astro check",
+    "test": "node --test \"test/*.test.ts\"",
+    "gates": "npm run check && npm test && npm run build"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.5",
     "@fontsource/public-sans": "^5.2.5",
     "@fontsource/source-serif-4": "^5.2.5",
     "astro": "^7.1.6"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@types/node": "^26.1.2",
+    "typescript": "^6.0.3"
   }
 }
