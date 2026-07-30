@@ -216,6 +216,29 @@ were *introduced by round 1's own fixes*, which is worth recording:
 Both fixes are covered by tests, including the multiple-of-50 boundary the
 round-1 suite passed only by fixture accident.
 
+**Round 3** on `11ba04a` — **PASS.** 0 blockers, 0 majors, 1 minor, 4 nits. The
+minor was a third defect in the same mechanism: on the page that round 2's fix
+made reachable, the count rendered `51–50 of 50 transactions`, because the range
+was computed from `page × PAGE_SIZE` rather than from what the page holds.
+
+Three rounds of defects in one mechanism met the threshold in a standing project
+lesson (*specify before rewriting*), so before touching it a fourth time the
+invariants were written down: **[docs/pagination-and-counts.md](docs/pagination-and-counts.md)**.
+The diagnostic signature is recorded there — every one of the three defects was
+a function reasoning about *where items sit on a page* from parameters that only
+described *how many items exist*. The fix then followed from invariant I5:
+`CountInputs` carries `txnOnPage` alongside `paperOnPage`, and a page holding
+only trailing paper filings says so in words instead of inverting a range. The
+test helper now asserts four invariants per configuration (exactly-once, no
+empty page in range, order preserved across page boundaries, no inverted range)
+rather than one.
+
+Remaining nits were also cleared: the dead `PAGE_SIZE` import that had put a
+permanent hint on the typecheck gate, a duplicated selector, the mobile reset
+control's touch target, and the desktop filter bar's incidental second row —
+now a deliberate one, since the count line carries fragments the mock's
+single-row bar was never sized for.
+
 ## Deferred to later handoffs (same design project)
 
 - `Home.dc.html` (site root), `Congress Member.dc.html`,

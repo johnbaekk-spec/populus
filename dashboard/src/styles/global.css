@@ -466,11 +466,20 @@ button {
   background: var(--ink);
   box-shadow: inset 0 0 0 2px var(--paper);
 }
+/* Its own line, deliberately. The mock puts this inline at the right end of a
+   single-row filter bar, which fitted when it read "1–14 of 54,213". It now
+   carries every count fragment — transactions, paper filings, the
+   indeterminate-amount disclosure, the privacy statement and the reset control
+   — and those are not negotiable, so the bar gets a designed second line
+   instead of an incidental wrap that shifts with the data. */
 .filter-count {
-  margin-left: auto;
-  font: 400 11px var(--mono);
+  flex: 1 0 100%;
+  margin-left: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  font: 400 11px/1.5 var(--mono);
   color: var(--ink3);
-  white-space: nowrap;
+  text-align: right;
 }
 .filter-count a {
   font: inherit;
@@ -1013,6 +1022,7 @@ button {
     flex-wrap: nowrap;
     overflow-x: auto;
     gap: 14px;
+    min-width: 0;
     -webkit-overflow-scrolling: touch;
   }
   .filter-label {
@@ -1035,7 +1045,7 @@ button {
      a caveat that disappears at a breakpoint is still a caveat removed. */
   .filter-count {
     margin-left: 0;
-    white-space: normal;
+    text-align: left;
     width: 100%;
     min-width: 0;
     line-height: 1.55;
@@ -1043,8 +1053,11 @@ button {
     border-top: 1px solid var(--rule);
     padding-top: 6px;
   }
-  .filter-controls {
-    min-width: 0;
+  /* touch target without breaking the text line it sits in */
+  .filter-count .linklike {
+    display: inline-block;
+    padding: 8px 4px;
+    margin: -8px 0;
   }
   .filter-count .linklike {
     display: inline-block;

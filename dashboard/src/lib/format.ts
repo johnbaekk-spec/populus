@@ -339,18 +339,22 @@ export function pageCountFor(merged: readonly FeedItem[]): number {
 }
 
 /* ---------- count line (one string, every sink) ----------
-   The count is assembled in exactly one place and handed to every sink, so a
-   fragment cannot reach some readers and not others. An earlier split built
-   the visible mobile count from a subset of the fragments and dropped the
-   indeterminate-amount disclosure at ≤720px. */
+   See docs/pagination-and-counts.md. Invariant I6: one assembled string reaches
+   every sink, so a fragment cannot reach some readers and not others (an
+   earlier per-sink assembly dropped the indeterminate-amount disclosure at
+   ≤720px). Invariant I5: a fragment describing THIS PAGE is computed from the
+   page's own contents — never from `page × PAGE_SIZE` arithmetic, which is what
+   produced "51–50 of 50 transactions" on a page holding only paper rows. */
 
 export interface CountInputs {
   page: number;
-  /** transactions matching the current filters */
+  /** transactions matching the current filters (whole result set) */
   txnMatched: number;
-  /** paper filings matching the current filters */
+  /** paper filings matching the current filters (whole result set) */
   paperMatched: number;
-  /** paper filings rendered on this page */
+  /** transactions rendered on THIS page — page-local, per I5 */
+  txnOnPage: number;
+  /** paper filings rendered on THIS page — page-local, per I5 */
   paperOnPage: number;
   /** transactions in the whole default view */
   txnTotal: number;
@@ -359,12 +363,18 @@ export interface CountInputs {
 }
 
 export function feedCountText(i: CountInputs): string {
-  const lo = i.txnMatched === 0 ? 0 : i.page * PAGE_SIZE + 1;
-  const hi = Math.min((i.page + 1) * PAGE_SIZE, i.txnMatched);
-  const txnPart =
-    i.txnMatched === 0
-      ? `0 of ${fmtInt(i.txnTotal)} transactions`
-      : `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(i.txnMatched)} transactions`;
+  let txnPart: string;
+  if (i.txnMatched === 0) {
+    txnPart = `0 of ${fmtInt(i.txnTotal)} transactions`;
+  } else if (i.txnOnPage === 0) {
+    // A reachable page can hold only trailing paper filings; a numeric range
+    // would have to invert to describe it.
+    txnPart = `no transactions on this page of ${fmtInt(i.txnMatched)}`;
+  } else {
+    const lo = i.page * PAGE_SIZE + 1;
+    const hi = Math.min(lo + i.txnOnPage - 1, i.txnMatched);
+    txnPart = `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(i.txnMatched)} transactions`;
+  }
   const paperPart =
     i.paperMatched === 0
       ? ""

@@ -23,6 +23,7 @@ const rangeText = feedCountText({
   page: 0,
   txnMatched: build.txnCount,
   paperMatched: build.paperCount,
+  txnOnPage: pageOne.filter((i) => i.kind === "txn").length,
   paperOnPage: pageOne.filter((i) => i.kind === "paper").length,
   txnTotal: build.txnCount,
   indeterminate: 0,

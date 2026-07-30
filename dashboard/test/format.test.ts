@@ -27,6 +27,7 @@ import {
   tradedText,
   partyClass,
   esc,
+  fmtInt,
   fmtMoney,
   mergeFeed,
   pageSlice,
@@ -101,15 +102,48 @@ test("pageSlice: a paper row newer than every transaction is not dropped", () =>
   );
 });
 
-/** Walk every page and assert each item is reachable exactly once. */
-function assertExactlyOnce(merged: (TxnRow | PaperRow)[], label: string): void {
+/** Assert the pagination invariants from docs/pagination-and-counts.md over one
+    merged feed: I1 exactly-once, I2 no empty page in range, I3 order preserved,
+    and I5 no count fragment that inverts. */
+function assertPageInvariants(merged: (TxnRow | PaperRow)[], label: string): void {
   const pages = pageCountFor(merged);
   const seen = new Map<unknown, number>();
+  const concatenated: (TxnRow | PaperRow)[] = [];
+  const txnTotal = merged.filter((i) => i.kind === "txn").length;
+  const paperTotal = merged.length - txnTotal;
+
   for (let p = 0; p < pages; p++) {
-    for (const item of pageSlice(merged, p)) seen.set(item, (seen.get(item) ?? 0) + 1);
+    const items = pageSlice(merged, p);
+    // I2 — an empty page in range renders as "no disclosures match", which
+    // would be a false statement about the filter.
+    assert.ok(items.length > 0, `${label}: page ${p} of ${pages} is empty`);
+    for (const item of items) {
+      seen.set(item, (seen.get(item) ?? 0) + 1);
+      concatenated.push(item);
+    }
+    // I5 — the count text for this page must never invert its range.
+    const text = feedCountText({
+      page: p,
+      txnMatched: txnTotal,
+      paperMatched: paperTotal,
+      txnOnPage: items.filter((i) => i.kind === "txn").length,
+      paperOnPage: items.filter((i) => i.kind === "paper").length,
+      txnTotal,
+      indeterminate: 0,
+    });
+    const range = /^(\d[\d,]*)–(\d[\d,]*) of/.exec(text);
+    if (range) {
+      const lo = Number(range[1]!.replaceAll(",", ""));
+      const hi = Number(range[2]!.replaceAll(",", ""));
+      assert.ok(lo <= hi, `${label}: page ${p} rendered an inverted range "${text}"`);
+    }
   }
+
+  // I1 — exactly once.
   assert.equal(seen.size, merged.length, `${label}: an item is on no page at all`);
   for (const [, n] of seen) assert.equal(n, 1, `${label}: an item is on more than one page`);
+  // I3 — pages concatenate to the merged feed, in order.
+  assert.deepEqual(concatenated, merged, `${label}: pagination changed the feed order`);
 }
 
 test("pageSlice: every item appears on exactly one page — every paper position × several counts", () => {
@@ -124,7 +158,7 @@ test("pageSlice: every item appears on exactly one page — every paper position
       for (let i = 0; i < rank; i++) merged.push(txn());
       merged.push(paper({ name: `rank-${rank}` }));
       for (let i = rank; i < nT; i++) merged.push(txn());
-      assertExactlyOnce(merged, `nT=${nT} rank=${rank}`);
+      assertPageInvariants(merged, `nT=${nT} rank=${rank}`);
     }
   }
 });
@@ -136,7 +170,7 @@ test("pageSlice: multiple paper rows at head, both boundaries and tail", () => {
     merged.push(txn());
   }
   merged.push(paper({ name: "tail" }));
-  assertExactlyOnce(merged, "head+boundary+tail");
+  assertPageInvariants(merged, "head+boundary+tail");
   // the tail row trails exactly 100 transactions — the regressed case
   const last = pageSlice(merged, pageCountFor(merged) - 1);
   assert.ok(
@@ -246,30 +280,52 @@ test("amountVerdict: open-ended and unparsed rows are indeterminate, never 'out'
 
 test("feedCountText: states transactions and paper filings separately", () => {
   assert.equal(
-    feedCountText({ page: 0, txnMatched: 3911, paperMatched: 37, paperOnPage: 2, txnTotal: 3911, indeterminate: 0 }),
+    feedCountText({ page: 0, txnMatched: 3911, paperMatched: 37, txnOnPage: 50, paperOnPage: 2, txnTotal: 3911, indeterminate: 0 }),
     "1–50 of 3,911 transactions · 37 paper filings (2 here)",
   );
   assert.equal(
-    feedCountText({ page: 1, txnMatched: 3911, paperMatched: 0, paperOnPage: 0, txnTotal: 3911, indeterminate: 0 }),
+    feedCountText({ page: 1, txnMatched: 3911, paperMatched: 0, txnOnPage: 50, paperOnPage: 0, txnTotal: 3911, indeterminate: 0 }),
     "51–100 of 3,911 transactions",
   );
 });
 
 test("feedCountText: never reports a bare zero while paper filings match", () => {
-  const s = feedCountText({ page: 0, txnMatched: 0, paperMatched: 4, paperOnPage: 4, txnTotal: 3911, indeterminate: 0 });
+  const s = feedCountText({ page: 0, txnMatched: 0, paperMatched: 4, txnOnPage: 0, paperOnPage: 4, txnTotal: 3911, indeterminate: 0 });
   assert.equal(s, "0 of 3,911 transactions · 4 paper filings (4 here)");
   assert.ok(s.includes("4 paper filings"), "the rendered filings must be counted");
 });
 
 test("feedCountText: the indeterminate-amount disclosure is part of the ONE string", () => {
-  // MAJ-B was this fragment reaching only a desktop-visible element; every
-  // sink now receives the same string, so it cannot be dropped per-viewport.
-  const s = feedCountText({ page: 0, txnMatched: 11, paperMatched: 0, paperOnPage: 0, txnTotal: 3911, indeterminate: 73 });
+  // This fragment once reached only a desktop-visible element; every sink now
+  // receives the same string, so it cannot be dropped per-viewport (I6).
+  const s = feedCountText({ page: 0, txnMatched: 11, paperMatched: 0, txnOnPage: 11, paperOnPage: 0, txnTotal: 3911, indeterminate: 73 });
   assert.equal(s, "1–11 of 11 transactions · 73 amount not comparable");
 });
 
+test("feedCountText: no page ever renders an inverted transaction range", () => {
+  // I5: a page can legitimately hold only trailing paper filings. Describing it
+  // with page × PAGE_SIZE arithmetic produced "51–50 of 50 transactions".
+  for (const txnMatched of [PAGE_SIZE, PAGE_SIZE * 2, PAGE_SIZE * 3]) {
+    const page = txnMatched / PAGE_SIZE; // the page past the last transaction
+    const s = feedCountText({
+      page, txnMatched, paperMatched: 1, txnOnPage: 0, paperOnPage: 1,
+      txnTotal: txnMatched, indeterminate: 0,
+    });
+    assert.ok(!/^\d[\d,]*–/.test(s), `must not print a range for a paper-only page: "${s}"`);
+    assert.equal(s, `no transactions on this page of ${fmtInt(txnMatched)} · 1 paper filing (1 here)`);
+  }
+});
+
+test("feedCountText: the range reflects what the page holds, not the page index", () => {
+  // a short final page must not claim a full PAGE_SIZE span
+  assert.equal(
+    feedCountText({ page: 2, txnMatched: 107, paperMatched: 0, txnOnPage: 7, paperOnPage: 0, txnTotal: 107, indeterminate: 0 }),
+    "101–107 of 107 transactions",
+  );
+});
+
 test("feedCountText: singular and plural agree", () => {
-  const one = feedCountText({ page: 0, txnMatched: 1, paperMatched: 1, paperOnPage: 1, txnTotal: 1, indeterminate: 0 });
+  const one = feedCountText({ page: 0, txnMatched: 1, paperMatched: 1, txnOnPage: 1, paperOnPage: 1, txnTotal: 1, indeterminate: 0 });
   assert.ok(one.includes("1 paper filing ("), "singular filing");
   assert.ok(!one.includes("filings"), "no plural when there is one");
 });
