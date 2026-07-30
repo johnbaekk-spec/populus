@@ -1,0 +1,146 @@
+---
+// Shared shell: masthead + notice footer, exactly per the design system
+// (Congress Feed.dc.html masthead/footer; Mobile.dc.html fold).
+import "@fontsource/source-serif-4/600.css";
+import "@fontsource/source-serif-4/700.css";
+import "@fontsource/public-sans/400.css";
+import "@fontsource/public-sans/500.css";
+import "@fontsource/public-sans/600.css";
+import "@fontsource/public-sans/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+import "../styles/global.css";
+import { getBuildData } from "../lib/data";
+
+interface Props {
+  title: string;
+  description: string;
+  active?: "congress" | "institutional" | "methodology";
+}
+
+const { title, description, active } = Astro.props;
+const build = getBuildData();
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script is:inline>
+      // Pre-paint theme: an explicit choice wins; otherwise the CSS
+      // prefers-color-scheme fallback applies. Kept inline to avoid FOUC.
+      (function () {
+        try {
+          var t = localStorage.getItem("populus:theme");
+          if (t === "light" || t === "dark")
+            document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="shell masthead-inner">
+        <div class="masthead-left">
+          <a href="/" class="brand" aria-label="Populus home">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Populus</span>
+          </a>
+          <nav class="site-nav" id="site-nav" aria-label="Modules">
+            <a href="/congress/" aria-current={active === "congress" ? "page" : undefined}>Congress</a>
+            <a href="/institutional/" aria-current={active === "institutional" ? "page" : undefined}>Institutional</a>
+            <span class="nav-soon">Financials <span class="badge-soon">SOON</span></span>
+            <span class="nav-soon">Macro <span class="badge-soon">SOON</span></span>
+            <a href="/methodology/" aria-current={active === "methodology" ? "page" : undefined}>Methodology</a>
+          </nav>
+        </div>
+        <div class="masthead-right">
+          <button class="search-toggle" aria-label="Search" aria-expanded="false" aria-controls="site-search-box">⌕</button>
+          <label class="site-search" id="site-search-box">
+            <span class="glyph" aria-hidden="true">⌕</span>
+            <span class="visually-hidden">Filter by member or ticker</span>
+            <input type="search" id="site-search" placeholder="member or ticker…" autocomplete="off" />
+          </label>
+          <div class="masthead-meta">
+            as of {build.generatedAt}<br />build {build.buildId}
+          </div>
+          <button class="theme-toggle" aria-label="Switch color theme" hidden>theme</button>
+          <button class="nav-burger" aria-label="Menu" aria-expanded="false" aria-controls="site-nav">☰</button>
+        </div>
+      </div>
+    </header>
+
+    <slot />
+
+    <footer class="site-footer">
+      <div class="shell site-footer-inner">
+        <div class="footer-block">
+          <strong>Prohibited uses.</strong> Use of congressional financial-disclosure
+          reports for commercial purposes, for determining credit, or for
+          solicitation is restricted by 5 U.S.C. § 13107(c). Populus republishes
+          these public records for transparency and research. Nothing here is
+          financial advice.
+        </div>
+        <div class="footer-block">
+          <strong>Sources.</strong> House Clerk PTR · Senate eFD · SEC EDGAR ·
+          congress-legislators (CC0) · kadoa seed (MIT). Per-source conditions:
+          <a href="/legal/DATA-LICENSE.md">DATA-LICENSE ↗</a> ·
+          <a href="/legal/NOTICE.txt">NOTICE ↗</a>
+        </div>
+        <div class="footer-build">
+          build {build.buildId} · code {build.codeSha}<br />
+          <span title={`manifest sha256:${build.manifestSha}`}>snapshot sha256:{build.manifestShaAbbrev}</span><br />
+          no cookies · no accounts · no tracking
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // Masthead behavior shared across pages: theme toggle, mobile nav/search.
+      const root = document.documentElement;
+      const themeBtn = document.querySelector<HTMLButtonElement>(".theme-toggle");
+      const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+      function effectiveTheme(): "light" | "dark" {
+        const attr = root.getAttribute("data-theme");
+        if (attr === "light" || attr === "dark") return attr;
+        return media.matches ? "dark" : "light";
+      }
+      function paintThemeButton(): void {
+        if (!themeBtn) return;
+        const next = effectiveTheme() === "dark" ? "light" : "dark";
+        themeBtn.textContent = next === "dark" ? "☾ dark" : "☀ light";
+        themeBtn.setAttribute("aria-label", `Switch to ${next} theme`);
+        themeBtn.hidden = false;
+      }
+      themeBtn?.addEventListener("click", () => {
+        const next = effectiveTheme() === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        try {
+          localStorage.setItem("populus:theme", next);
+        } catch {}
+        paintThemeButton();
+      });
+      media.addEventListener("change", paintThemeButton);
+      paintThemeButton();
+
+      function wireToggle(btnSel: string, target: Element | null): void {
+        const btn = document.querySelector<HTMLButtonElement>(btnSel);
+        if (!btn || !target) return;
+        btn.addEventListener("click", () => {
+          const open = target.classList.toggle("open");
+          btn.setAttribute("aria-expanded", String(open));
+          if (open && target instanceof HTMLElement)
+            target.querySelector<HTMLInputElement>("input")?.focus();
+        });
+      }
+      wireToggle(".nav-burger", document.getElementById("site-nav"));
+      wireToggle(".search-toggle", document.getElementById("site-search-box"));
+    </script>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "populus-dashboard",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Populus public dashboard — Astro static site built from the published data build (ARCHITECTURE §12).",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.5",
+    "@fontsource/public-sans": "^5.2.5",
+    "@fontsource/source-serif-4": "^5.2.5",
+    "astro": "^7.1.6"
+  }
+}

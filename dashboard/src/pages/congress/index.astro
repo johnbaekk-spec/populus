@@ -1,0 +1,182 @@
+---
+import Base from "../../layouts/Base.astro";
+import { getBuildData } from "../../lib/data";
+import { pageSlice, feedItemHtml, fmtInt, PAGE_SIZE, type RenderCtx } from "../../lib/format";
+
+const build = getBuildData();
+
+// SSR page 1 through the same renderer the client island uses.
+const ssrCtx: RenderCtx = { watched: new Set() };
+const pageOne = pageSlice(build.merged, 0);
+const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
+
+const shown = Math.min(PAGE_SIZE, build.txnCount);
+const rangeText = `1–${fmtInt(shown)} of ${fmtInt(build.txnCount)}`;
+
+const description =
+  "Congressional stock trading from primary sources — House Clerk PTRs and Senate eFD. " +
+  "Both dates on every trade, statutory amount ranges, provenance links, published imperfection.";
+---
+
+<Base title="Congressional trading — Populus" description={description} active="congress">
+  <main class="shell page" id="congress-feed" data-txn-count={build.txnCount}>
+    <!-- page header -->
+    <div class="page-head">
+      <div class="page-head-copy">
+        <div class="kicker">/congress</div>
+        <h1 class="page-title">Congressional trading</h1>
+        <p class="page-lede">
+          Periodic Transaction Reports from the House Clerk and Senate eFD. Amounts
+          are disclosed in statutory ranges and filed up to 45 days after the trade
+          — what you read here is what was filed; nothing more current exists in the
+          public record. <a href="/methodology/">How this data is made ↗</a>
+        </p>
+        <div class="mobile-meta">
+          {fmtInt(build.txnCount)} rows · as of {build.generatedAt} · ranges, filed ≤45d late
+        </div>
+      </div>
+      <div class="tiles" role="list" aria-label="Data coverage">
+        {build.tiles.map((t) => (
+          <div class="tile" role="listitem" title={t.title}>
+            <div class={`tile-value${t.muted ? " muted" : ""}`}>
+              {t.value}{t.unit && <span class="unit">{t.unit}</span>}
+            </div>
+            <div class="tile-label">{t.label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <!-- filter bar -->
+    <div class="filterbar" id="filterbar">
+      <div class="filter-group" role="group" aria-label="Chamber">
+        <span class="filter-label" aria-hidden="true">Chamber</span>
+        <div class="seg">
+          <button data-group="chamber" data-value="all" aria-pressed="true">All</button>
+          <button data-group="chamber" data-value="house" aria-pressed="false">House</button>
+          <button data-group="chamber" data-value="senate" aria-pressed="false">Senate</button>
+        </div>
+      </div>
+      <div class="filter-group" role="group" aria-label="Party">
+        <span class="filter-label" aria-hidden="true">Party</span>
+        <div class="seg">
+          <button data-group="party" data-value="all" aria-pressed="true">All</button>
+          <button data-group="party" data-value="D" class="tint-dem" aria-pressed="false" aria-label="Democratic">D</button>
+          <button data-group="party" data-value="R" class="tint-rep" aria-pressed="false" aria-label="Republican">R</button>
+          <button data-group="party" data-value="I" class="tint-ind" aria-pressed="false" aria-label="Independent">I</button>
+        </div>
+      </div>
+      <div class="filter-group" role="group" aria-label="Side">
+        <span class="filter-label" aria-hidden="true">Side</span>
+        <div class="seg">
+          <button data-group="side" data-value="all" aria-pressed="true">All</button>
+          <button data-group="side" data-value="buy" class="tint-buy" aria-pressed="false">Purchase</button>
+          <button data-group="side" data-value="sell" class="tint-sell" aria-pressed="false">Sale</button>
+          <button data-group="side" data-value="exch" aria-pressed="false">Exch.</button>
+        </div>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label" for="filter-amount">Amount ≥</label>
+        <select class="filter-select" id="filter-amount">
+          <option value="0" selected>any bucket</option>
+          <option value="15000">≥ $15K</option>
+          <option value="50000">≥ $50K</option>
+          <option value="100000">≥ $100K</option>
+          <option value="250000">≥ $250K</option>
+          <option value="500000">≥ $500K</option>
+          <option value="1000000">≥ $1M</option>
+          <option value="5000000">≥ $5M</option>
+          <option value="25000000">≥ $25M</option>
+          <option value="50000000">≥ $50M</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label" for="filter-owner">Owner</label>
+        <select class="filter-select" id="filter-owner">
+          <option value="all" selected>all</option>
+          <option value="self">self</option>
+          <option value="spouse">spouse (SP)</option>
+          <option value="child">child (DC)</option>
+          <option value="joint">joint (JT)</option>
+          <option value="none">not stated</option>
+        </select>
+      </div>
+      <label class="filter-check" for="filter-late">
+        <input type="checkbox" id="filter-late" aria-label="late filings only" />
+        late only
+      </label>
+      <div class="filter-count">
+        <span id="filter-count-line" aria-live="polite">{rangeText}</span>
+        · filtered on this device<span id="filter-reset-wrap" hidden>
+          · <button class="linklike" id="filter-reset">reset</button></span>
+        <noscript> · filters need JavaScript — full data: <a href="/congress/data/feed.v1.json">feed.v1.json</a></noscript>
+      </div>
+    </div>
+
+    <!-- feed table -->
+    <div class="feed" id="feed">
+      <div class="feed-head feed-grid-cols" aria-hidden="true">
+        <div class="col"></div>
+        <div class="col">Filed ▾</div>
+        <div class="col">Member</div>
+        <div class="col">Ticker</div>
+        <div class="col">Side · Owner</div>
+        <div class="col">Traded · Lag</div>
+        <div class="col num">Amount</div>
+        <div class="col range">Range · Flags</div>
+        <div class="col src">Src</div>
+      </div>
+
+      <div class="feed-loading" id="feed-loading" hidden aria-hidden="true">
+        <div class="bar" style="width:88%"></div>
+        <div class="bar" style="width:76%; animation-delay:0.15s"></div>
+        <div class="bar" style="width:82%; animation-delay:0.3s"></div>
+        <div class="bar" style="width:64%; animation-delay:0.45s"></div>
+      </div>
+
+      <div class="feed-empty" id="feed-empty" hidden>
+        <h2>No disclosures match — and that's an answer, not an error.</h2>
+        <p id="feed-empty-detail"></p>
+        <div class="suggestions" id="feed-empty-suggestions"></div>
+      </div>
+
+      <div id="feed-body" role="list" aria-label="Disclosed transactions" set:html={rowsHtml} />
+
+      <div class="feed-footnote" id="feed-footnote">
+        <span class="dagger">†</span> filer not yet joined to a member record —
+        name as printed on the filing <code>bioguide_id=null</code> &nbsp;&nbsp;
+        <span class="dagger">‡</span> Senate spouse amounts above $1M print only
+        as "Over $1,000,000" <code>amount_spouse_cap</code>
+      </div>
+      <div class="feed-foot">
+        <div class="view-note">
+          v_default_transactions — active filings minus superseded amendment
+          originals · <a href="/methodology/#defaults">what's excluded ↗</a>
+        </div>
+        <div class="pager">
+          <span class="pager-range" id="pager-range">{rangeText}</span>
+          <button class="pager-btn" id="pager-newer" hidden>← newer</button>
+          <button class="pager-btn" id="pager-older">older →</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    import { initFeed } from "../../scripts/feed-client";
+    initFeed();
+  </script>
+</Base>
+
+<style>
+  /* the reset control renders as an inline link inside the mono count line */
+  .linklike {
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  }
+  .linklike:hover {
+    color: var(--accent-h);
+  }
+</style>
