@@ -1,6 +1,18 @@
 # RUN M2-5 — the 13(f) list parse substrate: raw, canonical, record
 
-**Status:** DRAFT for review · **Scope:** `src/populus/parse/list13f.py` only
+**Status:** DRAFT — **NOT design-reviewed, NOT implemented.**
+**Scope:** `src/populus/parse/list13f.py` only
+
+> **Read this first.** RUN M2-5 was merged (`57a88b5`) **without** this
+> specification. The two blockers it closes — KI-1 and KI-2 in
+> `docs/build/M2-KNOWN-ISSUES.md` — are open on `main` today. They were accepted
+> at merge because neither can fire on any SEC list published to date (measured:
+> 167,083 rows, zero malformed — see §7 OQ-3 and the known-issues §6).
+>
+> A design review of this document was launched and **hung without producing
+> output**, so nothing here has been adversarially checked. Review it before
+> implementing; the open questions in §7 are open, not settled — except OQ-3,
+> which is measured and closed.
 **Why this document exists:** two consecutive adversarial review rounds produced
 blockers in this one mechanism, and each fix moved the defect instead of closing
 it. Round 1 found the R5 tuple too narrow (F1) and unknown cells coerced to blank

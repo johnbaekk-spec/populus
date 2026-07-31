@@ -1,0 +1,221 @@
+---
+import Base from "../../layouts/Base.astro";
+import { getBuildData } from "../../lib/data";
+import {
+  pageSlice,
+  pageCountFor,
+  feedCountText,
+  feedItemHtml,
+  footnoteBlock,
+  statTiles,
+  fmtInt,
+  type RenderCtx,
+} from "../../lib/format";
+
+const build = getBuildData();
+
+// SSR page 1 through the same renderer the client island uses.
+const ssrCtx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+const pageOne = pageSlice(build.merged, 0);
+const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
+const tilesHtml = statTiles(build.tiles, { label: "Data coverage" });
+const footnoteHtml = footnoteBlock(
+  [
+    {
+      mark: "†",
+      html: `filer not yet joined to a member record — name as printed on the filing <code>bioguide_id=null</code>`,
+    },
+    {
+      mark: "‡",
+      html: `Senate spouse amounts above $1M print only as "Over $1,000,000" <code>amount_spouse_cap</code>`,
+    },
+  ],
+  { id: "feed-footnote", layout: "inline" },
+);
+
+// The count is assembled by the same function the client island uses, so the
+// pre-rendered and re-rendered counts cannot drift.
+const rangeText = feedCountText({
+  page: 0,
+  txnMatched: build.txnCount,
+  paperMatched: build.paperCount,
+  txnOnPage: pageOne.filter((i) => i.kind === "txn").length,
+  paperOnPage: pageOne.filter((i) => i.kind === "paper").length,
+  txnTotal: build.txnCount,
+  indeterminate: 0,
+});
+// Whether a second page exists is a property of this build, not an assumption:
+// a reduced extract must not pre-render an "older →" that goes nowhere.
+const hasOlderPage = pageCountFor(build.merged) > 1;
+
+const description =
+  "Congressional stock trading from primary sources — House Clerk PTRs and Senate eFD. " +
+  "Both dates on every trade, statutory amount ranges, provenance links, published imperfection.";
+---
+
+<Base title="Congressional trading — Populus" description={description} active="congress">
+  <main class="shell page" id="congress-feed" data-txn-count={build.txnCount}>
+    <!-- page header -->
+    <div class="page-head">
+      <div class="page-head-copy">
+        <div class="kicker">/congress</div>
+        <h1 class="page-title">Congressional trading</h1>
+        <p class="page-lede">
+          Periodic Transaction Reports from the House Clerk and Senate eFD. Amounts
+          are disclosed in statutory ranges and filed up to 45 days after the trade
+          — what you read here is what was filed; nothing more current exists in the
+          public record. <a href="/methodology/">How this data is made ↗</a>
+        </p>
+        <div class="mobile-meta">
+          {fmtInt(build.txnCount)} rows filed since {build.filedFrom} · as of {build.generatedAt} ·
+          statutory ranges, filed up to 45d after the trade
+        </div>
+      </div>
+      <Fragment set:html={tilesHtml} />
+    </div>
+
+    <!-- filter bar. The controls live in their own wrapper so they can become a
+         horizontal scroll strip on mobile WITHOUT taking the count line — which
+         carries the indeterminate-amount disclosure, the privacy statement and
+         the reset control — out of view with them. `display: contents` keeps
+         the desktop layout exactly as designed. -->
+    <div class="filterbar" id="filterbar">
+      <div class="filter-controls">
+      <div class="filter-group" role="group" aria-label="Chamber">
+        <span class="filter-label" aria-hidden="true">Chamber</span>
+        <div class="seg">
+          <button data-group="chamber" data-value="all" aria-pressed="true">All</button>
+          <button data-group="chamber" data-value="house" aria-pressed="false">House</button>
+          <button data-group="chamber" data-value="senate" aria-pressed="false">Senate</button>
+        </div>
+      </div>
+      <div class="filter-group" role="group" aria-label="Party">
+        <span class="filter-label" aria-hidden="true">Party</span>
+        <div class="seg">
+          <button data-group="party" data-value="all" aria-pressed="true">All</button>
+          <button data-group="party" data-value="D" class="tint-dem" aria-pressed="false" aria-label="Democratic">D</button>
+          <button data-group="party" data-value="R" class="tint-rep" aria-pressed="false" aria-label="Republican">R</button>
+          <button data-group="party" data-value="I" class="tint-ind" aria-pressed="false" aria-label="Independent">I</button>
+        </div>
+      </div>
+      <div class="filter-group" role="group" aria-label="Side">
+        <span class="filter-label" aria-hidden="true">Side</span>
+        <div class="seg">
+          <button data-group="side" data-value="all" aria-pressed="true">All</button>
+          <button data-group="side" data-value="buy" class="tint-buy" aria-pressed="false">Purchase</button>
+          <button data-group="side" data-value="sell" class="tint-sell" aria-pressed="false">Sale</button>
+          <button data-group="side" data-value="exch" aria-pressed="false">Exch.</button>
+        </div>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label" for="filter-amount">Amount ≥</label>
+        <select class="filter-select" id="filter-amount">
+          <option value="0" selected>any bucket</option>
+          <option value="15000">≥ $15K</option>
+          <option value="50000">≥ $50K</option>
+          <option value="100000">≥ $100K</option>
+          <option value="250000">≥ $250K</option>
+          <option value="500000">≥ $500K</option>
+          <option value="1000000">≥ $1M</option>
+          <option value="5000000">≥ $5M</option>
+          <option value="25000000">≥ $25M</option>
+          <option value="50000000">≥ $50M</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label" for="filter-owner">Owner</label>
+        <select class="filter-select" id="filter-owner">
+          <option value="all" selected>all</option>
+          <option value="self">self</option>
+          <option value="spouse">spouse (SP)</option>
+          <option value="child">child (DC)</option>
+          <option value="joint">joint (JT)</option>
+          <option value="none">not stated</option>
+        </select>
+      </div>
+      <label class="filter-check" for="filter-late">
+        <input type="checkbox" id="filter-late" aria-label="late filings only" />
+        late only
+      </label>
+      </div>
+      <div class="filter-count">
+        <span id="filter-count-line">{rangeText}</span>{" · filtered on this device"}<span
+          id="filter-reset-wrap"
+          hidden>{" · "}<button class="linklike" id="filter-reset">reset</button></span>
+        <noscript>{" · filters, search and paging need JavaScript — the full published data is at "}<a href="/congress/data/feed.v1.json">feed.v1.json</a></noscript>
+      </div>
+    </div>
+
+    <!-- feed table -->
+    <div class="feed" id="feed">
+      <div class="feed-head feed-grid-cols" aria-hidden="true">
+        <div class="col"></div>
+        <div class="col">Filed ▾</div>
+        <div class="col">Member</div>
+        <div class="col">Ticker</div>
+        <div class="col">Side · Owner</div>
+        <div class="col">Traded · Lag</div>
+        <div class="col num">Amount</div>
+        <div class="col range">Range · Flags</div>
+        <div class="col src">Src</div>
+      </div>
+
+      <div class="feed-loading" id="feed-loading" hidden aria-hidden="true">
+        <div class="bar" style="width:88%"></div>
+        <div class="bar" style="width:76%; animation-delay:0.15s"></div>
+        <div class="bar" style="width:82%; animation-delay:0.3s"></div>
+        <div class="bar" style="width:64%; animation-delay:0.45s"></div>
+      </div>
+
+      <div class="feed-empty" id="feed-empty" hidden>
+        <h2>No disclosures match — and that's an answer, not an error.</h2>
+        <p id="feed-empty-detail"></p>
+        <div class="suggestions" id="feed-empty-suggestions"></div>
+      </div>
+
+      <div id="feed-body" role="list" aria-label="Disclosed transactions" set:html={rowsHtml} />
+
+      <Fragment set:html={footnoteHtml} />
+      <div class="feed-foot">
+        <div class="view-note">
+          v_default_transactions — active filings minus superseded amendment
+          originals · <a href="/methodology/#defaults">what's excluded ↗</a>
+        </div>
+        <div class="pager">
+          <span class="pager-range" id="pager-range" tabindex="-1">{rangeText}</span>
+          <button class="pager-btn is-unavailable" id="pager-newer" aria-disabled="true">← newer</button>
+          <button
+            class:list={["pager-btn", { "is-unavailable": !hasOlderPage }]}
+            id="pager-older"
+            aria-disabled={hasOlderPage ? "false" : "true"}>older →</button
+          >
+        </div>
+      </div>
+      <!-- Live region kept outside the mobile-hidden count line, so filter
+           results are announced on every viewport. -->
+      <p class="visually-hidden" id="feed-status" role="status" aria-live="polite"></p>
+    </div>
+  </main>
+
+  <script>
+    import { initFeed } from "../../scripts/feed-client";
+    initFeed();
+  </script>
+</Base>
+
+<style>
+  /* the reset control renders as an inline link inside the mono count line */
+  .linklike {
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  }
+  .linklike:hover {
+    color: var(--accent-h);
+  }
+</style>

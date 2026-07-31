@@ -1,0 +1,26 @@
+---
+// Plain not-found (Locked #3): HTTP 404, no client rendering — valid long-tail
+// entities ride /e/ (HTTP 200) instead; this page is for genuinely wrong URLs.
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="Not found — Populus"
+  description="This address does not exist in this build. The modules and search are one click away."
+>
+  <main class="shell page">
+    <div class="s2-block">
+      <h1 class="s1-h">There is no page at this address.</h1>
+      <p class="s1-detail">
+        Nothing was removed — this address simply is not part of the published
+        site. The search box above covers every ticker, member, and filer in
+        this build.
+      </p>
+      <div class="s4-actions">
+        <a class="cta" href="/congress/">Congressional trading →</a>
+        <a class="plain-link" href="/institutional/">Institutional 13F ↗</a>
+        <a class="plain-link" href="/methodology/">Methodology ↗</a>
+      </div>
+    </div>
+  </main>
+</Base>

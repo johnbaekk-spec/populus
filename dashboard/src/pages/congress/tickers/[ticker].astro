@@ -1,0 +1,43 @@
+---
+// Deep congressional ticker view (Congress Ticker.dc.html): two-sided
+// quarterly ribbon, members-disclosing table, full paginated disclosures.
+import Base from "../../../layouts/Base.astro";
+import { getBuildData } from "../../../lib/data";
+import { congressTickerBody, type BuildStamps } from "../../../lib/ui";
+import type { RenderCtx } from "../../../lib/format";
+
+export function getStaticPaths() {
+  const build = getBuildData();
+  return build.tickers
+    .filter((t) => !build.cutTickers.has(t.ticker))
+    .map((t) => ({ params: { ticker: t.ticker } }));
+}
+
+const { ticker } = Astro.params;
+const build = getBuildData();
+const entity = build.tickersByKey.get(ticker!)!;
+const stamps: BuildStamps = {
+  buildId: build.buildId,
+  generatedAt: build.generatedAt,
+  generatedAtDate: build.generatedAtDate,
+};
+const ssrCtx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+const bodyHtml = congressTickerBody(entity, stamps, ssrCtx);
+const description =
+  `Congressional disclosures mentioning ${entity.ticker}: what members filed, on the ` +
+  `STOCK Act's 45-day clock — statutory ranges that cannot be netted into a position.`;
+---
+
+<Base title={`${entity.ticker} — congressional disclosures — Populus`} description={description} active="congress">
+  <main class="shell page entity-page" data-entity-kind="t" data-entity-key={entity.ticker}>
+    <Fragment set:html={bodyHtml} />
+  </main>
+  <script>
+    import { initEntityPage } from "../../../scripts/entity-client";
+    initEntityPage();
+  </script>
+</Base>

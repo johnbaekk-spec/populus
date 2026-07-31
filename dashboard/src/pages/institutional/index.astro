@@ -1,0 +1,69 @@
+---
+// /institutional landing — fixes the previously-404ing masthead link. With the
+// module absent this is the S1 withheld/absent full-page state; with it
+// present, an honest filer index over the published registry (identity fields;
+// cumulative registry counts are labeled as all-period values — Locked #6).
+import Base from "../../layouts/Base.astro";
+import { getBuildData } from "../../lib/data";
+import { s1ModuleAbsent, s7Banner, breadcrumb } from "../../lib/ui";
+import { filingWindow } from "../../lib/derive";
+import { footnoteBlock, fmtInt, esc } from "../../lib/format";
+
+const build = getBuildData();
+const inst = build.inst;
+const window = inst.present ? filingWindow(build.generatedAtDate) : null;
+
+let bodyHtml: string;
+if (!inst.present) {
+  bodyHtml = s1ModuleAbsent(inst.reason);
+} else {
+  const rows = inst.filers
+    .map(
+      (f) =>
+        `<tr><td class="c-filer"><a href="/institutional/filers/${esc(String(Number(f.cik)))}/">${esc(f.filer_name)}</a></td>` +
+        `<td class="c-num">${esc(f.latest_period)}</td>` +
+        `<td class="c-num">${fmtInt(f.position_count)}<a class="fn-ref" href="#inst-index-footnotes" aria-label="footnote §">§</a></td>` +
+        `<td class="c-num c-muted mono-id">CIK ${esc(f.cik)}</td></tr>`,
+    )
+    .join("\n");
+  bodyHtml =
+    breadcrumb([{ text: "/institutional" }]) +
+    `<header class="entity-head"><div class="entity-head-copy">` +
+    `<h1 class="entity-title">Institutional 13F</h1>` +
+    `<p class="entity-lede">Quarter-end long positions in Section 13(f) securities, filed up to 45 days late, by managers over $100M — never current holdings, never a census. This build's aggregate covers ${fmtInt(
+      inst.filers.length,
+    )} filers; latest period on record ${esc(inst.watermarks.latest_period_of_report ?? "—")}.</p>` +
+    `</div></header>` +
+    (window?.open ? s7Banner(window) : "") +
+    `<section class="panel panel-wide" aria-label="Filers on record">` +
+    `<div class="panel-head"><h2 class="section-h">Filers on record</h2></div>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<caption class="visually-hidden">13F filers in this build's aggregate</caption>` +
+    `<thead><tr><th scope="col">Filer</th><th scope="col">Latest period</th><th scope="col">Positions ·§</th><th scope="col">CIK</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table></div>` +
+    footnoteBlock(
+      [
+        {
+          mark: "§",
+          html: `position counts in the filer registry accumulate over ALL periods on record for that filer — they are not a single quarter's number; per-quarter figures live on the filer page`,
+        },
+      ],
+      { id: "inst-index-footnotes" },
+    ) +
+    `</section>`;
+}
+const description = build.inst.present
+  ? "Institutional 13F module: filers, holders, quarter-over-quarter moves from the published Populus aggregate."
+  : "The institutional 13F module is not in this build — absence is stated, not simulated.";
+---
+
+<Base
+  title="Institutional 13F — Populus"
+  description={description}
+  active="institutional"
+  footer="inst13f"
+>
+  <main class="shell page">
+    <Fragment set:html={bodyHtml} />
+  </main>
+</Base>

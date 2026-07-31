@@ -1,0 +1,30 @@
+{
+  "name": "populus-dashboard",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Populus public dashboard — Astro static site built from the published data build (ARCHITECTURE §12).",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "test": "node --test \"test/*.test.ts\"",
+    "test:post": "node --test --test-concurrency=1 \"test/post/*.test.ts\"",
+    "gates": "npm run check && npm test && npm run build && npm run test:post"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.5",
+    "@fontsource/public-sans": "^5.2.5",
+    "@fontsource/source-serif-4": "^5.2.5",
+    "astro": "^7.1.6"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@types/node": "^26.1.2",
+    "typescript": "^6.0.3"
+  }
+}

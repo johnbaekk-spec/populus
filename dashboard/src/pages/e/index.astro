@@ -1,0 +1,32 @@
+---
+// Generic entity route (Locked #3): a prerendered page served HTTP 200 whose
+// client driver renders long-tail in-extract entities (S4) from their columnar
+// endpoints and out-of-extract entities as S2 with a primary-source CTA. The
+// shell paints first; the skeleton appears only below it and is never
+// indefinite (watchdog + the full failure taxonomy in qoq-presentation.md §3).
+import Base from "../../layouts/Base.astro";
+
+const description =
+  "Long-tail entity route: the record renders on your device from the same published extract " +
+  "the pre-rendered pages use — same-origin, no external calls.";
+---
+
+<Base title="Entity — Populus" description={description}>
+  <main class="shell page entity-page" id="entity-root">
+    <noscript>
+      <div class="s4-error">
+        <h1 class="s1-h">This route renders on your device, and JavaScript is off.</h1>
+        <p class="s1-detail">
+          The record itself is still published: the data endpoints under
+          <span class="mono-id">/congress/data/</span> serve the same columnar
+          extract the pre-rendered pages are built from.
+        </p>
+        <a class="plain-link" href="/congress/">back to the feed ↗</a>
+      </div>
+    </noscript>
+  </main>
+  <script>
+    import { runGenericRoute } from "../../scripts/entity-client";
+    runGenericRoute();
+  </script>
+</Base>

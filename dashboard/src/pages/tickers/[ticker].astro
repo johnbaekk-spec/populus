@@ -1,0 +1,50 @@
+---
+// Unified ticker page (Ticker Unified.dc.html) — the primary ticker surface:
+// search-first masthead, congress cards, the mapping-gated institutional
+// section (Locked #18), planned-section placeholders.
+import Base from "../../layouts/Base.astro";
+import { getBuildData, tickerInstSection } from "../../lib/data";
+import { tickerUnifiedBody, type BuildStamps } from "../../lib/ui";
+import type { RenderCtx } from "../../lib/format";
+
+export function getStaticPaths() {
+  const build = getBuildData();
+  return build.tickers
+    .filter((t) => !build.cutTickers.has(t.ticker))
+    .map((t) => ({ params: { ticker: t.ticker } }));
+}
+
+const { ticker } = Astro.params;
+const build = getBuildData();
+const entity = build.tickersByKey.get(ticker!)!;
+const inst = tickerInstSection(build, entity.ticker);
+const stamps: BuildStamps = {
+  buildId: build.buildId,
+  generatedAt: build.generatedAt,
+  generatedAtDate: build.generatedAtDate,
+};
+const ssrCtx: RenderCtx = {
+  watched: new Set(),
+  watchedTickers: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+const bodyHtml = tickerUnifiedBody(entity, inst, stamps, ssrCtx, { fullTable: false });
+const description =
+  `${entity.ticker}: every public disclosure record Populus holds — congressional trades ` +
+  `on the 45-day PTR clock and 13F quarter-end holdings, each with its own clock stated.`;
+---
+
+<Base
+  title={`${entity.ticker} — disclosures — Populus`}
+  description={description}
+  searchEmphasis={true}
+>
+  <main class="shell page entity-page" data-entity-kind="t" data-entity-key={entity.ticker}>
+    <Fragment set:html={bodyHtml} />
+  </main>
+  <script>
+    import { initEntityPage } from "../../scripts/entity-client";
+    initEntityPage();
+  </script>
+</Base>

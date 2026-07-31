@@ -1,0 +1,35 @@
+---
+// /financials module shell (Module Shells.dc.html): an honest placeholder —
+// what will ship, which caveats are already committed, which gates must pass
+// first. No fake previews of data that doesn't exist yet.
+import Base from "../../layouts/Base.astro";
+
+const description =
+  "Company financials — planned, gated, not yet published. Caveats are committed before any data ships.";
+---
+
+<Base title="Financials — planned — Populus" description={description} active="financials">
+  <main class="shell page">
+    <div class="module-shell">
+      <div class="kicker">/financials · module 3</div>
+      <h1 class="shell-title">Company financials — planned, gated, not yet published.</h1>
+      <p class="shell-lede">
+        As-reported fundamentals from SEC EDGAR XBRL for a curated company
+        universe: income statement, balance sheet, cash flow, exactly as filed —
+        with restatements shown as vintages, never silently overwritten.
+      </p>
+      <div class="caveat-box">
+        <div class="caveat-box-head">Caveats committed before any data ships</div>
+        <div class="caveat-box-body">
+          · As-reported ≠ normalized comparables — no cross-company "adjusted" figures<br />
+          · Every figure carries its accession receipt (EDGAR ↗)<br />
+          · Restated periods render both vintages, labeled<br />
+          · Curated universe published as a list; out-of-universe → EDGAR link
+        </div>
+      </div>
+      <div class="shell-foot">
+        <span class="mono-note">gates: XBRL fixture suite · universe published · budget held</span>
+      </div>
+    </div>
+  </main>
+</Base>
