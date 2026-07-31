@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f0eee7;color:#262319}
+:root{--paper:#faf9f5;--raised:#fffefb;--ink:#262319;--ink2:#5f5a4e;--ink3:#8d8779;--rule:#e5e1d6;--rule2:#cec8b9;--accent:#30567c;--accent-h:#1f3d5c;--amber:#7a5a14;--amber-bg:#f4e8cf;--buy:#2b6a52;--sell:#92483a;--dem:#49597c;--rep:#7b524f;--ind:#67624f;--hatch:repeating-linear-gradient(45deg,transparent 0 3px,#cec8b9 3px 4px)}
+[data-theme="dark"]{--paper:#1b1915;--raised:#23201a;--ink:#ece8dd;--ink2:#a8a294;--ink3:#7d7869;--rule:#35322a;--rule2:#4a463c;--accent:#8fb0d4;--accent-h:#b4cde6;--amber:#d9a94e;--amber-bg:#3a2f17;--buy:#7dbd9f;--sell:#d99180;--dem:#93a7cc;--rep:#c99a94;--ind:#a09a88;--hatch:repeating-linear-gradient(45deg,transparent 0 3px,#4a463c 3px 4px)}
+a{color:var(--accent);text-decoration-color:color-mix(in oklab,var(--accent) 40%,transparent)}
+a:hover{color:var(--accent-h)}
+</style>
+</helmet>
+<div data-theme="{{ theme }}" data-screen-label="Mobile screens" style="min-height:100vh;font-family:'Public Sans',sans-serif;color:var(--ink);padding:48px 40px 80px">
+  <div style="max-width:1400px;margin:0 auto">
+    <div style="border-bottom:3px solid var(--ink);padding-bottom:18px;margin-bottom:14px">
+      <div style="font:600 11px 'Public Sans',sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink3)">Populus · mobile ≤720px</div>
+      <h1 style="font:600 30px/1.15 'Source Serif 4',Georgia,serif;margin:8px 0 8px">Dense tables on a phone — the fold rules</h1>
+      <div style="font:400 13.5px/1.6 'Public Sans',sans-serif;color:var(--ink2);max-width:820px">Trade rows fold to two-line cards keeping grammar order: <strong>who · what · side</strong>, then <strong>range band · dual dates · flags</strong>. Wide tables (13F) scroll horizontally <em>inside their container</em> with a sticky identity column and a visible edge fade — the page never scrolls sideways. Every tap target ≥44px. Filters become a horizontally scrollable chip row pinned under the masthead.</div>
+    </div>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start">
+
+      <!-- FEED -->
+      <div style="width:390px;flex-shrink:0">
+        <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin:0 0 8px">/congress — feed</div>
+        <div style="border:1px solid var(--rule2);background:var(--paper);border-radius:4px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--rule2)">
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border:2px solid var(--ink);position:relative;display:inline-block"><span style="position:absolute;left:22%;right:34%;top:38%;bottom:38%;background:var(--accent)"></span></span><span style="font:700 17px 'Source Serif 4',serif">Populus</span></span>
+            <span style="display:flex;gap:16px;align-items:center"><span style="font:400 14px 'IBM Plex Mono',monospace;color:var(--ink2)">⌕</span><span style="font:600 13px 'Public Sans',sans-serif;color:var(--ink2)">☰</span></span>
+          </div>
+          <div style="padding:14px 16px 0">
+            <div style="font:600 21px 'Source Serif 4',serif">Congressional trading</div>
+            <div style="font:400 10px 'IBM Plex Mono',monospace;color:var(--ink3);margin-top:3px">54,213 rows · as of 07-28 06:12 UTC · ranges, filed ≤45d late</div>
+          </div>
+          <div style="display:flex;gap:8px;padding:12px 16px;overflow:hidden;border-bottom:1px solid var(--rule2)">
+            <span style="font:600 11px 'Public Sans',sans-serif;padding:7px 12px;background:var(--ink);color:var(--paper);white-space:nowrap">All</span>
+            <span style="font:500 11px 'Public Sans',sans-serif;padding:7px 12px;border:1px solid var(--rule2);white-space:nowrap">House</span>
+            <span style="font:500 11px 'Public Sans',sans-serif;padding:7px 12px;border:1px solid var(--rule2);white-space:nowrap">Senate</span>
+            <span style="font:500 11px 'Public Sans',sans-serif;padding:7px 12px;border:1px solid var(--rule2);white-space:nowrap">Purchases</span>
+            <span style="font:500 11px 'Public Sans',sans-serif;padding:7px 12px;border:1px solid var(--rule2);white-space:nowrap;color:var(--ink3)">Sales ›</span>
+          </div>
+          <sc-for list="{{ feedCards }}" as="c" hint-placeholder-count="4">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--rule);min-height:44px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+                <span style="font:600 13.5px 'Public Sans',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.member }} <span style="font:600 10.5px 'Public Sans',sans-serif;color:{{ c.affC }}">{{ c.aff }}</span></span>
+                <span style="font:600 12px 'IBM Plex Mono',monospace;color:var(--accent);flex-shrink:0">{{ c.ticker }}</span>
+                <span style="font:600 12px 'Public Sans',sans-serif;color:{{ c.sideC }};flex-shrink:0">{{ c.side }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:7px">
+                <div style="position:relative;height:9px;width:86px;background:var(--raised);border:1px solid var(--rule2);flex-shrink:0"><div style="position:absolute;top:2px;bottom:2px;left:{{ c.bandL }};width:{{ c.bandW }};background:var(--accent)"></div></div>
+                <span style="font:500 11.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">{{ c.amount }}</span>
+                <span style="font:400 10.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums;color:var(--ink3);margin-left:auto">{{ c.dates }}</span>
+                <sc-if value="{{ c.late }}" hint-placeholder-val="{{ false }}"><span style="font:700 9px 'Public Sans',sans-serif;padding:1px 5px;border-radius:2px;background:var(--amber-bg);color:var(--amber)">{{ c.lateTxt }}</span></sc-if>
+              </div>
+            </div>
+          </sc-for>
+          <div style="padding:12px 16px;text-align:center;font:600 12px 'Public Sans',sans-serif;color:var(--ink2)">older →</div>
+          <div style="padding:10px 16px;border-top:1px solid var(--rule2);font:400 8.5px/1.6 'IBM Plex Mono',monospace;color:var(--ink3)">§13107(c) prohibited uses · not financial advice · build 20260728.1</div>
+        </div>
+      </div>
+
+      <!-- MEMBER -->
+      <div style="width:390px;flex-shrink:0">
+        <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin:0 0 8px">/congress/members/P000197</div>
+        <div style="border:1px solid var(--rule2);background:var(--paper);border-radius:4px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--rule2)">
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border:2px solid var(--ink);position:relative;display:inline-block"><span style="position:absolute;left:22%;right:34%;top:38%;bottom:38%;background:var(--accent)"></span></span><span style="font:700 17px 'Source Serif 4',serif">Populus</span></span>
+            <span style="font:600 13px 'Public Sans',sans-serif;color:var(--ink2)">☰</span>
+          </div>
+          <div style="padding:16px 16px 14px;border-bottom:1px solid var(--rule2)">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div style="font:600 24px/1.1 'Source Serif 4',serif">Nancy Pelosi</div>
+              <span style="font:400 16px 'Public Sans',sans-serif;color:var(--amber);border:1px solid var(--rule2);border-radius:2px;padding:5px 10px">★</span>
+            </div>
+            <div style="font:500 12px 'Public Sans',sans-serif;color:var(--ink2);margin-top:4px"><span style="font-weight:600;color:var(--dem)">D — California 11th</span> · House · since 1987</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule2);border:1px solid var(--rule2);margin-top:12px">
+              <div style="background:var(--raised);padding:10px 12px"><div style="font:600 16px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">512</div><div style="font:600 8.5px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">transactions</div></div>
+              <div style="background:var(--raised);padding:10px 12px"><div style="font:600 16px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">$9.4M–$41M</div><div style="font:600 8.5px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">flow · 12m</div></div>
+              <div style="background:var(--raised);padding:10px 12px"><div style="font:600 16px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">+24d</div><div style="font:600 8.5px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">median lag</div></div>
+              <div style="background:var(--raised);padding:10px 12px"><div style="font:600 16px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums;color:var(--amber)">3</div><div style="font:600 8.5px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">late filings</div></div>
+            </div>
+            <div style="font:400 10.5px/1.5 'Public Sans',sans-serif;color:var(--ink3);margin-top:8px">Includes spouse (SP), child (DC), joint (JT) transactions — the filing doesn't say who directed a trade.</div>
+          </div>
+          <sc-for list="{{ memberCards }}" as="c" hint-placeholder-count="3">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--rule);min-height:44px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+                <span style="font:600 12px 'IBM Plex Mono',monospace;color:var(--accent)">{{ c.ticker }}</span>
+                <span style="font:400 11.5px 'Public Sans',sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.asset }}</span>
+                <span style="font:600 12px 'Public Sans',sans-serif;color:{{ c.sideC }};flex-shrink:0">{{ c.side }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:7px">
+                <div style="position:relative;height:9px;width:86px;background:var(--raised);border:1px solid var(--rule2);flex-shrink:0"><div style="position:absolute;top:2px;bottom:2px;left:{{ c.bandL }};width:{{ c.bandW }};background:var(--accent)"></div></div>
+                <span style="font:500 11.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">{{ c.amount }}</span>
+                <span style="font:400 10.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums;color:var(--ink3);margin-left:auto">{{ c.dates }}</span>
+                <a href="#" style="font:500 9.5px 'IBM Plex Mono',monospace;text-decoration:none;border-bottom:1px solid var(--rule2);flex-shrink:0">PTR ↗</a>
+              </div>
+            </div>
+          </sc-for>
+          <div style="padding:12px 16px;text-align:center;font:600 12px 'Public Sans',sans-serif;color:var(--ink2)">all 512 →</div>
+        </div>
+      </div>
+
+      <!-- FILER (wide table treatment) -->
+      <div style="width:390px;flex-shrink:0">
+        <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin:0 0 8px">/institutional/filers/… — wide table fold</div>
+        <div style="border:1px solid var(--rule2);background:var(--paper);border-radius:4px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--rule2)">
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border:2px solid var(--ink);position:relative;display:inline-block"><span style="position:absolute;left:22%;right:34%;top:38%;bottom:38%;background:var(--accent)"></span></span><span style="font:700 17px 'Source Serif 4',serif">Populus</span></span>
+            <span style="font:600 13px 'Public Sans',sans-serif;color:var(--ink2)">☰</span>
+          </div>
+          <div style="padding:16px 16px 12px;border-bottom:1px solid var(--rule2)">
+            <div style="font:600 22px/1.15 'Source Serif 4',serif">Berkshire Hathaway Inc</div>
+            <div style="font:400 11px 'Public Sans',sans-serif;color:var(--ink2);margin-top:4px;font-variant-numeric:tabular-nums">13F-HR · period 2024-12-31 · filed 2025-02-14 <span style="color:var(--ink3)">+45d</span></div>
+            <div style="font:400 10.5px/1.55 'Public Sans',sans-serif;color:var(--ink2);margin-top:8px;border-top:1px solid var(--rule);padding-top:8px"><strong>Not current holdings.</strong> Quarter-end longs in 13(f) securities only — no shorts, no cash.</div>
+          </div>
+          <div style="position:relative">
+            <div style="display:grid;grid-template-columns:118px 76px 76px 150px;font:600 9px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3);border-bottom:1.5px solid var(--rule2)">
+              <div style="padding:8px 0 6px 16px;background:var(--paper);position:sticky;left:0;border-right:1px solid var(--rule2)">Issuer</div>
+              <div style="padding:8px 8px 6px;text-align:right">Value</div>
+              <div style="padding:8px 8px 6px;text-align:right">% rep. ·§</div>
+              <div style="padding:8px 8px 6px 14px">Change</div>
+            </div>
+            <sc-for list="{{ filerRows }}" as="h" hint-placeholder-count="5">
+              <div style="display:grid;grid-template-columns:118px 76px 76px 150px;align-items:center;border-bottom:1px solid var(--rule);height:40px">
+                <div style="font:600 11.5px 'Public Sans',sans-serif;padding-left:16px;background:var(--paper);border-right:1px solid var(--rule2);height:100%;display:flex;align-items:center;white-space:nowrap;overflow:hidden">{{ h.issuer }}</div>
+                <div style="font:600 11.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums;text-align:right;padding-right:8px">{{ h.value }}</div>
+                <div style="font:500 11.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums;text-align:right;padding-right:8px;color:var(--ink2)">{{ h.pct }}</div>
+                <div style="padding-left:14px"><span style="font:700 9px 'Public Sans',sans-serif;letter-spacing:0.05em;padding:2px 7px;border-radius:2px;white-space:nowrap;{{ h.chipStyle }}">{{ h.chip }}</span></div>
+              </div>
+            </sc-for>
+            <div style="position:absolute;top:0;right:0;bottom:0;width:36px;background:linear-gradient(to left,var(--paper),transparent);pointer-events:none"></div>
+          </div>
+          <div style="padding:8px 16px;font:400 10px 'IBM Plex Mono',monospace;color:var(--ink3);border-top:1px solid var(--rule)">table scrolls → within its frame · identity column stays pinned</div>
+        </div>
+      </div>
+
+      <!-- TICKER -->
+      <div style="width:390px;flex-shrink:0">
+        <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin:0 0 8px">/congress/tickers/NVDA</div>
+        <div style="border:1px solid var(--rule2);background:var(--paper);border-radius:4px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--rule2)">
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border:2px solid var(--ink);position:relative;display:inline-block"><span style="position:absolute;left:22%;right:34%;top:38%;bottom:38%;background:var(--accent)"></span></span><span style="font:700 17px 'Source Serif 4',serif">Populus</span></span>
+            <span style="font:600 13px 'Public Sans',sans-serif;color:var(--ink2)">☰</span>
+          </div>
+          <div style="padding:16px;border-bottom:1px solid var(--rule2)">
+            <div style="font:600 24px/1.1 'Source Serif 4',serif"><span style="font-family:'IBM Plex Mono',monospace">NVDA</span> — NVIDIA Corp</div>
+            <div style="font:400 10.5px/1.55 'Public Sans',sans-serif;color:var(--ink2);margin-top:6px">402 filed transactions by 61 members. Filed on the 45-day clock — says nothing about NVDA itself.</div>
+            <div style="display:flex;gap:1px;background:var(--rule2);border:1px solid var(--rule2);margin-top:10px">
+              <div style="background:var(--raised);padding:9px 12px;flex:1"><div style="font:600 14px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">$18M–$74M</div><div style="font:600 8px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">flow · 12m</div></div>
+              <div style="background:var(--raised);padding:9px 12px;flex:0.7"><div style="font:600 14px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">07-24</div><div style="font:600 8px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">latest</div></div>
+            </div>
+          </div>
+          <sc-for list="{{ tickerCards }}" as="c" hint-placeholder-count="3">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--rule);min-height:44px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+                <span style="font:600 13px 'Public Sans',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.member }} <span style="font:600 10px 'Public Sans',sans-serif;color:{{ c.affC }}">{{ c.aff }}</span></span>
+                <span style="font:600 12px 'Public Sans',sans-serif;color:{{ c.sideC }};flex-shrink:0">{{ c.side }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:7px">
+                <div style="position:relative;height:9px;width:86px;background:var(--raised);border:1px solid var(--rule2);flex-shrink:0"><div style="position:absolute;top:2px;bottom:2px;left:{{ c.bandL }};width:{{ c.bandW }};background:var(--accent)"></div></div>
+                <span style="font:500 11.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums">{{ c.amount }}</span>
+                <span style="font:400 10.5px 'Public Sans',sans-serif;font-variant-numeric:tabular-nums;color:var(--ink3);margin-left:auto">{{ c.dates }}</span>
+              </div>
+            </div>
+          </sc-for>
+          <div style="padding:12px 16px;text-align:center;font:600 12px 'Public Sans',sans-serif;color:var(--ink2)">all 402 →</div>
+        </div>
+      </div>
+
+      <!-- METHODOLOGY -->
+      <div style="width:390px;flex-shrink:0">
+        <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin:0 0 8px">/methodology</div>
+        <div style="border:1px solid var(--rule2);background:var(--paper);border-radius:4px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--rule2)">
+            <span style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border:2px solid var(--ink);position:relative;display:inline-block"><span style="position:absolute;left:22%;right:34%;top:38%;bottom:38%;background:var(--accent)"></span></span><span style="font:700 17px 'Source Serif 4',serif">Populus</span></span>
+            <span style="font:600 13px 'Public Sans',sans-serif;color:var(--ink2)">☰</span>
+          </div>
+          <div style="padding:18px 16px 14px">
+            <div style="font:600 20px/1.25 'Source Serif 4',serif">Every number here is imperfect in a knowable way.</div>
+            <div style="font:400 11px/1.6 'Public Sans',sans-serif;color:var(--ink2);margin-top:8px">Per module: sources, conditions, coverage, gaps, caveats — regenerated each build.</div>
+          </div>
+          <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
+            <div style="border:1px solid var(--rule2);background:var(--raised);padding:12px 14px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 14px 'Source Serif 4',serif">M1 · Congressional</span><span style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3)">nightly</span></div>
+              <div style="display:flex;gap:14px;margin-top:8px;font:400 10.5px 'IBM Plex Mono',monospace;color:var(--ink3)"><span><strong style="font:600 14px 'Public Sans',sans-serif;color:var(--ink)">97.5%</strong> House parse</span><span><strong style="font:600 14px 'Public Sans',sans-serif;color:var(--ink)">100%</strong> Senate</span><span><strong style="font:600 14px 'Public Sans',sans-serif;color:var(--ink2)">187</strong> need OCR</span></div>
+            </div>
+            <div style="border:1px solid var(--rule2);background:var(--raised);padding:12px 14px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 14px 'Source Serif 4',serif">M2 · Institutional 13F</span><span style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3)">nightly</span></div>
+              <div style="display:flex;gap:14px;margin-top:8px;font:400 10.5px 'IBM Plex Mono',monospace;color:var(--ink3)"><span><strong style="font:600 14px 'Public Sans',sans-serif;color:var(--ink)">96.8%</strong> CUSIP cov.</span><span><strong style="font:600 14px 'Public Sans',sans-serif;color:var(--ink)">8,412</strong> filers</span><span><strong style="font:600 14px 'Public Sans',sans-serif;color:var(--ink2)">1.1%</strong> n/c</span></div>
+            </div>
+            <div style="border:1px solid var(--rule2);background:var(--raised);padding:12px 14px;opacity:0.7">
+              <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 14px 'Source Serif 4',serif;color:var(--ink2)">M3 · M4</span><span style="font:600 8.5px 'IBM Plex Mono',monospace;color:var(--ink3);border:1px solid var(--rule2);padding:1px 5px;border-radius:2px">PLANNED</span></div>
+              <div style="font:400 10.5px/1.5 'Public Sans',sans-serif;color:var(--ink2);margin-top:6px">Caveats committed before data ships.</div>
+            </div>
+            <div style="font:400 10px/1.7 'IBM Plex Mono',monospace;color:var(--ink3);border-top:1px solid var(--rule);padding-top:10px">verify: populus verify --build 20260728.1<br>no tracking · no account required · watchlist = this device</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1480},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;light&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? "light";
+    const B = { b1:["0%","25%"], b2:["25%","11.2%"], b3:["36.2%","6.3%"], b6:["57.4%","6.4%"], b7:["63.8%","14.9%"] };
+    const feedCards = [
+      { member:"Nancy Pelosi", aff:"D–CA-11", affC:"var(--dem)", ticker:"NVDA", side:"Purchase", sideC:"var(--buy)", amount:"$1M–$5M", bandL:B.b7[0], bandW:B.b7[1], dates:"11-22 → 12-21", late:false },
+      { member:"Tommy Tuberville", aff:"R–AL", affC:"var(--rep)", ticker:"CLF", side:"Sale", sideC:"var(--sell)", amount:"$15K–$50K", bandL:B.b2[0], bandW:B.b2[1], dates:"09-29 → 12-12", late:true, lateTxt:"LATE·74d" },
+      { member:"Ro Khanna", aff:"D–CA-17", affC:"var(--dem)", ticker:"CAT", side:"Purchase", sideC:"var(--buy)", amount:"$1K–$15K", bandL:B.b1[0], bandW:B.b1[1], dates:"11-13 → 12-15", late:false },
+      { member:"Markwayne Mullin", aff:"R–OK", affC:"var(--rep)", ticker:"DVN", side:"Sale", sideC:"var(--sell)", amount:"$50K–$100K", bandL:B.b3[0], bandW:B.b3[1], dates:"11-06 → 12-11", late:false }
+    ];
+    const memberCards = [
+      { ticker:"NVDA", asset:"call options $120 exp 12/26", side:"Purchase", sideC:"var(--buy)", amount:"$1M–$5M", bandL:B.b7[0], bandW:B.b7[1], dates:"06-02 → 06-24" },
+      { ticker:"AAPL", asset:"common", side:"Sale", sideC:"var(--sell)", amount:"$500K–$1M", bandL:B.b6[0], bandW:B.b6[1], dates:"05-06 → 05-30" },
+      { ticker:"GOOGL", asset:"Class A common", side:"Purchase", sideC:"var(--buy)", amount:"$1M–$5M", bandL:B.b7[0], bandW:B.b7[1], dates:"01-16 → 02-12" }
+    ];
+    const tickerCards = [
+      { member:"Ro Khanna", aff:"D–CA-17", affC:"var(--dem)", side:"Purchase", sideC:"var(--buy)", amount:"$1K–$15K", bandL:B.b1[0], bandW:B.b1[1], dates:"07-01 → 07-24" },
+      { member:"Nancy Pelosi", aff:"D–CA-11", affC:"var(--dem)", side:"Purchase", sideC:"var(--buy)", amount:"$1M–$5M", bandL:B.b7[0], bandW:B.b7[1], dates:"06-02 → 06-24" },
+      { member:"Michael McCaul", aff:"R–TX-10", affC:"var(--rep)", side:"Sale", sideC:"var(--sell)", amount:"$50K–$100K", bandL:B.b3[0], bandW:B.b3[1], dates:"05-19 → 06-11" }
+    ];
+    const chip = {
+      same:"background:var(--rule);color:var(--ink2)",
+      add:"background:color-mix(in oklab,var(--buy) 14%,var(--raised));color:var(--buy)",
+      trim:"background:color-mix(in oklab,var(--sell) 14%,var(--raised));color:var(--sell)",
+      nc:"border:1px solid var(--rule2);background-image:var(--hatch);color:var(--ink2)"
+    };
+    const filerRows = [
+      { issuer:"Apple Inc", value:"$75.1B", pct:"28.1%", chip:"unchanged", chipStyle:chip.same },
+      { issuer:"American Express", value:"$45.0B", pct:"16.8%", chip:"unchanged", chipStyle:chip.same },
+      { issuer:"Bank of America", value:"$29.9B", pct:"11.2%", chip:"trim −14.7%", chipStyle:chip.trim },
+      { issuer:"Coca-Cola Co", value:"$24.9B", pct:"9.3%", chip:"unchanged", chipStyle:chip.same },
+      { issuer:"Occidental Petro.", value:"$13.1B", pct:"4.9%", chip:"add +3.5%", chipStyle:chip.add },
+      { issuer:"Liberty Global", value:"—", pct:"—", chip:"n/c", chipStyle:chip.nc }
+    ];
+    return { theme, feedCards, memberCards, tickerCards, filerRows };
+  }
+}
+</script>
+</body>
+</html>

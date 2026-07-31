@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#faf9f5;color:#262319}
+:root{--paper:#faf9f5;--raised:#fffefb;--ink:#262319;--ink2:#5f5a4e;--ink3:#8d8779;--rule:#e5e1d6;--rule2:#cec8b9;--accent:#30567c;--accent-h:#1f3d5c;--amber:#7a5a14;--amber-bg:#f4e8cf;--buy:#2b6a52;--sell:#92483a;--dem:#49597c;--rep:#7b524f;--ind:#67624f;--hatch:repeating-linear-gradient(45deg,transparent 0 3px,#cec8b9 3px 4px)}
+[data-theme="dark"]{--paper:#1b1915;--raised:#23201a;--ink:#ece8dd;--ink2:#a8a294;--ink3:#7d7869;--rule:#35322a;--rule2:#4a463c;--accent:#8fb0d4;--accent-h:#b4cde6;--amber:#d9a94e;--amber-bg:#3a2f17;--buy:#7dbd9f;--sell:#d99180;--dem:#93a7cc;--rep:#c99a94;--ind:#a09a88;--hatch:repeating-linear-gradient(45deg,transparent 0 3px,#4a463c 3px 4px)}
+a{color:var(--accent);text-decoration-color:color-mix(in oklab,var(--accent) 40%,transparent)}
+a:hover{color:var(--accent-h)}
+</style>
+</helmet>
+<div data-theme="{{ theme }}" data-screen-label="Module shells: /financials, /macro" style="background:var(--paper);color:var(--ink);min-height:100vh;font-family:'Public Sans',sans-serif;padding:48px 40px 80px">
+<div style="max-width:1400px;margin:0 auto">
+  <div style="border-bottom:3px solid var(--ink);padding-bottom:18px;margin-bottom:32px">
+    <div style="font:600 11px 'Public Sans',sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink3)">Populus · forward-looking shells — modules not yet built</div>
+    <h1 style="font:600 30px/1.15 'Source Serif 4',Georgia,serif;margin:8px 0 8px">/financials &amp; /macro — honest placeholders, plus the macro chart concept</h1>
+    <div style="font:400 13.5px/1.6 'Public Sans',sans-serif;color:var(--ink2);max-width:800px">These routes exist from day one so the module structure is legible, but they promise nothing they can't show: what will ship, which caveats are already committed, and which gates must pass first. No fake previews of data that doesn't exist yet.</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px">
+    <!-- financials shell -->
+    <div>
+      <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin-bottom:8px">/financials — shell page, full-bleed</div>
+      <div style="border:1px solid var(--rule2);background:var(--raised);padding:44px 40px">
+        <div style="font:600 11px 'Public Sans',sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink3)">/financials · module 3</div>
+        <div style="font:600 26px/1.2 'Source Serif 4',Georgia,serif;margin:10px 0 12px;max-width:440px">Company financials — planned, gated, not yet published.</div>
+        <div style="font:400 13.5px/1.7 'Public Sans',sans-serif;color:var(--ink2);max-width:520px">As-reported fundamentals from SEC EDGAR XBRL for a curated company universe: income statement, balance sheet, cash flow, exactly as filed — with restatements shown as vintages, never silently overwritten.</div>
+        <div style="border:1px solid var(--rule2);margin-top:22px">
+          <div style="padding:10px 16px;border-bottom:1px solid var(--rule);font:600 10.5px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">Caveats committed before any data ships</div>
+          <div style="padding:12px 16px;font:400 12.5px/1.8 'Public Sans',sans-serif;color:var(--ink2)">· As-reported ≠ normalized comparables — no cross-company "adjusted" figures<br>· Every figure carries its accession receipt (EDGAR ↗)<br>· Restated periods render both vintages, labeled (chart rule C7)<br>· Curated universe published as a list; out-of-universe → EDGAR link (state S2)</div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:20px;align-items:center">
+          <a href="#" style="font:600 13px 'Public Sans',sans-serif;text-decoration:none;border:1px solid var(--ink);padding:9px 18px;color:var(--ink)">Read the module plan ↗</a>
+          <span style="font:400 11px 'IBM Plex Mono',monospace;color:var(--ink3)">gates: XBRL fixture suite · universe published · budget held</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- macro shell -->
+    <div>
+      <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin-bottom:8px">/macro — shell page, full-bleed</div>
+      <div style="border:1px solid var(--rule2);background:var(--raised);padding:44px 40px">
+        <div style="font:600 11px 'Public Sans',sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink3)">/macro · module 4</div>
+        <div style="font:600 26px/1.2 'Source Serif 4',Georgia,serif;margin:10px 0 12px;max-width:440px">Macro dashboard — planned, revision-aware from day one.</div>
+        <div style="font:400 13.5px/1.7 'Public Sans',sans-serif;color:var(--ink2);max-width:520px">Treasury curve, CPI, employment, and CFTC positioning as small multiples. Every series carries vintage semantics: a revised print never replaces history silently.</div>
+        <div style="border:1px solid var(--rule2);margin-top:22px">
+          <div style="padding:10px 16px;border-bottom:1px solid var(--rule);font:600 10.5px 'Public Sans',sans-serif;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink3)">Caveats committed before any data ships</div>
+          <div style="padding:12px 16px;font:400 12.5px/1.8 'Public Sans',sans-serif;color:var(--ink2)">· Series are revised — prior vintages render as labeled ghost strokes<br>· BLS-derived surfaces carry the BLS-required citation + disclaimer verbatim<br>· Release calendars shown; "latest" always names its as-of date<br>· No nowcasts, no forecasts — Populus reports records, not predictions</div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:20px;align-items:center">
+          <a href="#" style="font:600 13px 'Public Sans',sans-serif;text-decoration:none;border:1px solid var(--ink);padding:9px 18px;color:var(--ink)">Read the module plan ↗</a>
+          <span style="font:400 11px 'IBM Plex Mono',monospace;color:var(--ink3)">gates: vintage fixtures · ToS conditions encoded · budget held</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- macro concept -->
+    <div style="grid-column:1/-1">
+      <div style="font:600 10.5px 'IBM Plex Mono',monospace;color:var(--accent);margin:16px 0 8px">MACRO DASHBOARD — concept sketch (chart foundations applied to M4)</div>
+      <div style="border:1px solid var(--rule2);background:var(--raised);padding:28px 32px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:20px">
+          <div style="font:600 20px 'Source Serif 4',serif">United States — core readout</div>
+          <div style="font:400 11px 'IBM Plex Mono',monospace;color:var(--ink3)">small multiples · ghost stroke = prior vintage (C7) · every panel names source + as-of</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--rule2);border:1px solid var(--rule2)">
+          <!-- yield curve -->
+          <div style="background:var(--paper);padding:18px 20px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 13px 'Public Sans',sans-serif">Treasury curve</span><span style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3)">Treasury · 07-25</span></div>
+            <div style="position:relative;height:90px;margin-top:14px;border-left:1px solid var(--rule2);border-bottom:1px solid var(--rule2)">
+              <div style="position:absolute;left:4%;bottom:52%;width:12%;border-top:2px solid var(--ink);transform:rotate(-4deg)"></div>
+              <div style="position:absolute;left:16%;bottom:48%;width:22%;border-top:2px solid var(--ink);transform:rotate(-3deg)"></div>
+              <div style="position:absolute;left:38%;bottom:44%;width:28%;border-top:2px solid var(--ink);transform:rotate(4deg)"></div>
+              <div style="position:absolute;left:66%;bottom:50%;width:30%;border-top:2px solid var(--ink);transform:rotate(6deg)"></div>
+              <div style="position:absolute;left:4%;bottom:60%;width:30%;border-top:1.5px dashed var(--rule2);transform:rotate(-6deg)"></div>
+              <div style="position:absolute;left:34%;bottom:52%;width:30%;border-top:1.5px dashed var(--rule2);transform:rotate(2deg)"></div>
+              <div style="position:absolute;left:64%;bottom:54%;width:32%;border-top:1.5px dashed var(--rule2);transform:rotate(5deg)"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font:400 9px 'IBM Plex Mono',monospace;color:var(--ink3);margin-top:4px"><span>3m</span><span>2y</span><span>10y</span><span>30y</span></div>
+            <div style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3);margin-top:8px">solid: latest · dashed: one month prior</div>
+          </div>
+          <!-- CPI -->
+          <div style="background:var(--paper);padding:18px 20px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 13px 'Public Sans',sans-serif">CPI, YoY</span><span style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3)">BLS · Jun print</span></div>
+            <div style="display:flex;align-items:flex-end;gap:5px;height:90px;margin-top:14px;border-left:1px solid var(--rule2);border-bottom:1px solid var(--rule2);padding:0 6px">
+              <div style="flex:1;height:52%;background:var(--accent);opacity:0.5"></div><div style="flex:1;height:48%;background:var(--accent);opacity:0.5"></div><div style="flex:1;height:44%;background:var(--accent);opacity:0.5"></div><div style="flex:1;height:46%;background:var(--accent);opacity:0.6"></div><div style="flex:1;height:40%;background:var(--accent);opacity:0.6"></div><div style="flex:1;height:38%;background:var(--accent);opacity:0.7"></div><div style="flex:1;height:36%;background:var(--accent);opacity:0.7"></div><div style="flex:1;height:34%;background:var(--accent);opacity:0.8"></div><div style="flex:1;height:35%;background:var(--accent);opacity:0.85"></div><div style="flex:1;height:33%;background:var(--accent);opacity:0.9"></div><div style="flex:1;height:31%;background:var(--accent)"></div><div style="flex:1;height:30%;background:var(--accent);border:1.5px dashed var(--ink3);box-sizing:border-box"></div>
+            </div>
+            <div style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3);margin-top:8px">dashed bar: subject to revision · BLS citation required, rendered verbatim</div>
+          </div>
+          <!-- payrolls -->
+          <div style="background:var(--paper);padding:18px 20px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 13px 'Public Sans',sans-serif">Nonfarm payrolls, MoM Δ</span><span style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3)">BLS · Jun print</span></div>
+            <div style="position:relative;height:90px;margin-top:14px;border-left:1px solid var(--rule2)">
+              <div style="position:absolute;left:0;right:0;top:50%;border-top:1px solid var(--rule2)"></div>
+              <div style="position:absolute;left:6%;bottom:50%;width:6%;height:28%;background:var(--buy);opacity:0.8"></div>
+              <div style="position:absolute;left:16%;bottom:50%;width:6%;height:20%;background:var(--buy);opacity:0.8"></div>
+              <div style="position:absolute;left:26%;top:50%;width:6%;height:9%;background:var(--sell);opacity:0.8"></div>
+              <div style="position:absolute;left:36%;bottom:50%;width:6%;height:15%;background:var(--buy);opacity:0.8"></div>
+              <div style="position:absolute;left:46%;bottom:50%;width:6%;height:24%;background:var(--buy);opacity:0.8"></div>
+              <div style="position:absolute;left:56%;bottom:50%;width:6%;height:11%;background:var(--buy);opacity:0.8"></div>
+              <div style="position:absolute;left:66%;bottom:50%;width:6%;height:18%;background:var(--buy);opacity:0.8"></div>
+              <div style="position:absolute;left:76%;bottom:50%;width:6%;height:13%;background:var(--buy);opacity:0.5;border:1.5px dashed var(--ink3);box-sizing:border-box"></div>
+              <div style="position:absolute;left:86%;bottom:50%;width:6%;height:16%;background-image:var(--hatch);border:1px solid var(--rule2);box-sizing:border-box"></div>
+            </div>
+            <div style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3);margin-top:8px">dashed: preliminary · hatched: pending first revision — never smoothed</div>
+          </div>
+          <!-- COT -->
+          <div style="background:var(--paper);padding:18px 20px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font:600 13px 'Public Sans',sans-serif">COT — ES net positioning</span><span style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3)">CFTC · Tue 07-21</span></div>
+            <div style="position:relative;height:90px;margin-top:14px;border-left:1px solid var(--rule2)">
+              <div style="position:absolute;left:0;right:0;top:56%;border-top:1px solid var(--rule2)"></div>
+              <div style="position:absolute;left:2%;bottom:44%;width:22%;border-top:2px solid var(--ink);transform:rotate(-5deg)"></div>
+              <div style="position:absolute;left:24%;bottom:40%;width:24%;border-top:2px solid var(--ink);transform:rotate(8deg)"></div>
+              <div style="position:absolute;left:48%;bottom:50%;width:22%;border-top:2px solid var(--ink);transform:rotate(-3deg)"></div>
+              <div style="position:absolute;left:70%;bottom:46%;width:26%;border-top:2px solid var(--ink);transform:rotate(-8deg)"></div>
+            </div>
+            <div style="font:400 9.5px 'IBM Plex Mono',monospace;color:var(--ink3);margin-top:8px">weekly, reported 3 days late by design — staleness stated, not hidden</div>
+          </div>
+        </div>
+        <div style="font:400 11px/1.7 'IBM Plex Mono',monospace;color:var(--ink3);margin-top:14px">panel contract: source · as-of · n · exclusions — same G1–G7 grammar; a revised series is a vintage pair, not a corrected line</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1460},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;light&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    return { theme: this.props.theme ?? "light" };
+  }
+}
+</script>
+</body>
+</html>
