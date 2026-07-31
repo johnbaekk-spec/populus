@@ -395,6 +395,48 @@ def identity_group() -> None:
         " the archive's earliest settlement date to link it."
     ),
 )
+@click.option(
+    "--list13f-cache",
+    "list13f_cache",
+    type=click.Path(file_okay=False),
+    default="data-cache/13flist",
+    show_default=True,
+    help=(
+        "DIR of cached SEC Official 13(f) Lists to seed as definitional CUSIP"
+        " intervals (RUN M2-5). Every available quarter whose interval covers a"
+        " loaded period_of_report is seeded; on a fresh database (no periods"
+        " yet) pass --list13f-start-quarter. A missing directory seeds nothing."
+    ),
+)
+@click.option(
+    "--list13f",
+    "list13f_files",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "Explicit 13(f)-list file(s) to seed (repeatable); the quarter is taken"
+        " from the filename and its sibling variant in the same directory is used"
+        " for the R5 cross-format check. Overrides the --list13f-cache selection."
+    ),
+)
+@click.option(
+    "--list13f-start-quarter",
+    "list13f_start_quarter",
+    help=(
+        "Seed every available 13(f) list at or after this YYYYqN quarter — the"
+        " fresh-database backfill path, where no periods are loaded to select on."
+    ),
+)
+@click.option(
+    "--replace-quarter",
+    "replace_quarter",
+    is_flag=True,
+    help=(
+        "Supersede, in one transaction, a quarter already seeded from a list with"
+        " a DIFFERENT sha256 (an auditable correction). Without it, a changed list"
+        " for an already-seeded quarter is a hard error naming both hashes."
+    ),
+)
 @click.pass_context
 def identity_bootstrap(
     ctx: click.Context,
@@ -403,6 +445,10 @@ def identity_bootstrap(
     securities_path: str | None,
     db_path: str,
     as_of: str | None,
+    list13f_cache: str,
+    list13f_files: tuple[str, ...],
+    list13f_start_quarter: str | None,
+    replace_quarter: bool,
 ) -> None:
     """Seed the identity registries from cached SEC sources (no network)."""
     from populus.identity.bootstrap import (
@@ -416,7 +462,10 @@ def identity_bootstrap(
         ensure_registry,
         load_identity_registry,
     )
+    from populus.ingest.list13f import List13fIngestError, _CacheSource
+    from populus.identity.list13f_seed import List13fReseedError
     from populus.load import ensure_inst_schema
+    from populus.parse.list13f import parse_quarter
 
     tickers_path = Path(from_cache) / "company_tickers.json"
     if not tickers_path.exists():
@@ -446,6 +495,29 @@ def identity_bootstrap(
     except (IdentityRegistryError, OSError) as exc:
         raise click.ClickException(str(exc))
 
+    # Resolve the 13(f)-list source (RUN M2-5): explicit --list13f files override
+    # the --list13f-cache selection; a missing cache directory seeds nothing.
+    list13f_source = None
+    list13f_quarters: list[str] | None = None
+    if list13f_files:
+        parents = {Path(path).parent for path in list13f_files}
+        if len(parents) > 1:
+            raise click.UsageError(
+                "all --list13f files must live in one directory (its siblings are"
+                " used for the R5 cross-format check)"
+            )
+        source_dir = parents.pop()
+        derived = [parse_quarter(Path(path).name) for path in list13f_files]
+        if None in derived:
+            raise click.UsageError(
+                "a --list13f filename carries no YYYYqN quarter (expected"
+                " 13flist{YYYY}q{N}.pdf or -txt.txt)"
+            )
+        list13f_quarters = sorted(set(derived))
+        list13f_source = _CacheSource(source_dir)
+    elif list13f_cache and Path(list13f_cache).is_dir():
+        list13f_source = _CacheSource(list13f_cache)
+
     if not Path(db_path).exists():
         try:
             init_db(db_path)
@@ -470,10 +542,16 @@ def identity_bootstrap(
             run_id=f"identity-{uuid.uuid4()}",
             now=_utc_now,
             host=platform.node(),
+            list13f_source=list13f_source,
+            list13f_quarters=list13f_quarters,
+            list13f_start_quarter=list13f_start_quarter,
+            replace_quarter=replace_quarter,
         )
     except (
         FtdFormatError,
         IdentityRegistryError,
+        List13fIngestError,
+        List13fReseedError,
         sqlite3.Error,
         OSError,
         ValueError,
@@ -650,10 +728,29 @@ def build(
             f" {w['cover_failed_count']} — below the M2 ≥95% gate; congress"
             " publishes normally"
         )
+        # R11: name the quarters with no covering 13(f) list.
+        uncovered = w.get("uncovered_quarters") or []
+        if uncovered:
+            click.echo(
+                "  uncovered quarters (no definitional 13(f) list seeded): "
+                + ", ".join(uncovered)
+            )
     elif report.inst_logical_digest is not None:
         click.echo(
             f"inst module included (logical_digest"
             f" {report.inst_logical_digest[:12]}…)"
+        )
+    # R9: per-period value-coverage figures whenever inst data was measured.
+    for period in report.inst_period_coverage or []:
+        ratio = (
+            f"{period['coverage'] * 100:.2f}%"
+            if period["coverage"] is not None
+            else "N/A"
+        )
+        flag = "list" if period["covered_by_list"] else "no-list"
+        click.echo(
+            f"  period {period['period_of_report']}: {period['numerator']}"
+            f"/{period['denominator']} = {ratio} [{flag}]"
         )
     # Persist the gate outcome so `publish` can report it truthfully and can
     # DISTINGUISH "withheld by the gate" from "no institutional data ingested"
@@ -1120,4 +1217,121 @@ def backfill_audit_score(
         conn.close()
     click.echo(backfill.format_disposition(disposition))
     if disposition.status != "pass":
+        ctx.exit(1)
+
+
+# --- RUN M2-6: bulk 13F corpus (filer universe + resumable ingest) -----------
+
+
+@main.group("inst-bulk")
+def inst_bulk_group() -> None:
+    """§10.2 bulk 13F corpus: filer-universe discovery + resumable ingest."""
+
+
+def _live_bulk_client():
+    """A live SecClient over a CountingTransport (measured transport, real
+    clock). The floor/breaker are client-wide; no second HTTP client exists."""
+    from populus.inst_bulk import CountingTransport
+    from populus.net.sec_client import HttpxSecTransport, SecClient, sec_contact
+
+    contact, warning = sec_contact()
+    if warning is not None:
+        click.echo(warning, err=True)
+    transport = CountingTransport(HttpxSecTransport())
+    client = SecClient(
+        transport, contact=contact, sleep=time.sleep, monotonic=time.monotonic
+    )
+    return client, transport
+
+
+@inst_bulk_group.command("discover")
+@click.option("--filing-quarter", "filing_quarter", required=True,
+              help="Which quarterly full index to read (YYYYqN), e.g. 2026q3.")
+@click.option("--report-period", "report_period", required=True,
+              help="The locked period_of_report to keep (YYYY-MM-DD).")
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Directory for the universe file and the resumable rank journal.")
+@click.option("--top-n", "top_n", type=int, default=1000, show_default=True,
+              help="How many top-ranked filers to select (N; the Locked Decision).")
+def inst_bulk_discover(
+    filing_quarter: str, report_period: str, out_dir: str, top_n: int
+) -> None:
+    """Discover + rank the filer universe for one budgeted quarter (R1-R4)."""
+    from populus.inst_bulk import (
+        discover_universe,
+        rank_universe,
+        select_top_n,
+        write_universe,
+    )
+
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", report_period):
+        raise click.UsageError("--report-period must be a canonical YYYY-MM-DD date")
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    client, _transport = _live_bulk_client()
+    discovery = discover_universe(client, filing_quarter)
+    rank_journal = out / f"rank-journal-{filing_quarter}.json"
+    rank_result = rank_universe(
+        client, discovery.refs, report_period, journal_path=rank_journal
+    )
+    universe = select_top_n(rank_result, filing_quarter, report_period, top_n)
+    universe_path = out / f"universe-{report_period}.json"
+    write_universe(universe_path, universe)
+    click.echo(
+        f"inst-bulk discover | quarter {filing_quarter} | period {report_period}"
+        f" | refs {len(discovery.refs)} (rejected {len(discovery.rejected)})"
+        f" | ranked {len(rank_result.ranked)}"
+        f" (rank_failed {len(rank_result.rank_failed)})"
+        f" | selected {len(universe.entries)} (top-n {top_n})"
+    )
+    click.echo(f"wrote {universe_path}")
+    click.echo(f"rank journal {rank_journal}")
+
+
+@inst_bulk_group.command("ingest")
+@click.option("--db", "db_path", required=True, help="Populus database.")
+@click.option("--universe", "universe_path", required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Universe file written by inst-bulk discover.")
+@click.option("--raw-root", "raw_root", required=True, type=click.Path(file_okay=False),
+              help="Raw-archive root for the per-document cache-first ingest.")
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Directory for the resumable ingest journal.")
+@click.pass_context
+def inst_bulk_ingest(
+    ctx: click.Context, db_path: str, universe_path: str, raw_root: str, out_dir: str
+) -> None:
+    """Resumably ingest the ranked universe's complete lineage (R5/R6/R14)."""
+    from populus.amendments import ensure_views
+    from populus.inst_bulk import format_bulk_summary, load_universe, run_bulk_ingest
+    from populus.load import ensure_inst_schema
+
+    universe = load_universe(Path(universe_path))
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    journal_path = out / f"ingest-journal-{universe.report_period}.json"
+    if not Path(db_path).exists():
+        init_db(db_path)
+    conn = connect(db_path)
+    client, transport = _live_bulk_client()
+    try:
+        ensure_inst_schema(conn)
+        ensure_views(conn)
+        report = run_bulk_ingest(
+            conn,
+            universe,
+            client=client,
+            transport=transport,
+            raw_root=raw_root,
+            run_id=f"inst-bulk-{uuid.uuid4()}",
+            now=_utc_now,
+            host=platform.node(),
+            ingested_at=_utc_now(),
+            monotonic=time.monotonic,
+            journal_path=journal_path,
+        )
+    finally:
+        conn.close()
+    click.echo(format_bulk_summary(report))
+    if not report.ok:
         ctx.exit(1)

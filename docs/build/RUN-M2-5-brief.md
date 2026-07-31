@@ -134,9 +134,13 @@ tier suffers filer-to-filer spelling drift).
   with validity interval **exactly that quarter** — `[quarter_start,
   quarter_end]`, no extrapolation beyond observed lists (G14). Consecutive
   lists yield contiguous coverage. Re-seeding the same list is idempotent
-  (replay-zero, the M2-1 discipline). Canonical issuer name recorded with
-  source precedence below `securities.yaml` (owner authority) and above
-  FTD-observed names.
+  (replay-zero, the M2-1 discipline). The three-source precedence
+  `securities.yaml > sec-13f-list > sec-ftd` governs IDENTITY resolution;
+  canonical NAMES come from the definitional list — the sole persisted name
+  source (`securities.yaml` carries no name field today; FTD names are
+  observed but not persisted, unchanged). *(Amended during plan review: the
+  original wording implied a three-source NAME precedence that only one
+  persisted source could exercise.)*
 - **R8 — Backfill scope**: ingest every list covering a period present in the
   loaded corpus (config: start quarter; default = earliest loaded
   `period_of_report`). Archive availability for pre-2024 confirmed during the
@@ -151,8 +155,11 @@ tier suffers filer-to-filer spelling drift).
   answer from published data with `inst_from_published_manifest=True`. The
   withheld path (gate failing on FTD-only) remains covered by existing tests.
 - **R11 — Honest degradation for uncovered quarters**: a period *outside*
-  ingested list coverage contributes zero coverage (fail-closed, exactly as
-  today) and the gate reason names the uncovered quarters.
+  ingested list coverage keeps the unchanged FTD-only coverage arithmetic —
+  fail-closed via the unchanged 0.95 threshold, exactly as today; forcing it
+  to zero would itself be a basis change (non-goal C) — and the gate reason
+  names the uncovered quarters. *(Amended during plan review: the original
+  "contributes zero coverage" wording contradicted non-goal C.)*
 - **R12 — No regressions**: full suite green; behavioral fixes
   mutation-verified; composition truth table and pipeline-agreement suites
   untouched and green.

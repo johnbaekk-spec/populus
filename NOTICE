@@ -16,6 +16,11 @@ src/populus/licenses.json; regenerate with
 [sec-ftd]
   Source: U.S. Securities and Exchange Commission, fails-to-deliver data.
 
+[sec-13f-list]
+  Source: U.S. Securities and Exchange Commission, Official List of Section 13(f) Securities. CUSIP identifiers and descriptions © American Bankers Association, used with permission by CUSIP Global Services.
+  NOTICE: Copyright (c) American Bankers Association (ABA). All rights reserved. CUSIP Numbers and descriptions are used with permission by CUSIP Global Services (CGS), which is operated by FactSet Research Systems Inc., on behalf of the ABA. No redistribution without permission of CGS. CGS does not guarantee the accuracy or completeness of the CUSIP Numbers and standard descriptions included herein and none of CGS, ABA or FactSet shall be responsible for any errors, omissions or damages arising out of the use of such information.
+  COUNSEL-GATE: cusip-redistribution
+
 [us-govworks-treasury]
   Source: U.S. Department of the Treasury.
 

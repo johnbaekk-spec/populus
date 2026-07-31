@@ -73,6 +73,28 @@ Register version: `licenses-1.1.0`.
 - **Determination basis:** Works of the US Government (17 U.S.C. §105); the archive is an SEC compilation of reported settlement facts, and CUSIP values appear here only as they are published by the SEC in that compilation. Populus uses them solely as an identifier seed with recorded provenance, not as a redistributed identifier database. Source page and archive verified live on 2026-07-24 (M2-CONTRACT §1).
 - **Determined:** 2026-07-24 · **Review by:** 2026-10-24
 
+## `sec-13f-list` — SEC Official List of Section 13(f) Securities (index: sec.gov/rules-regulations/staff-guidance/official-list-section-13f-securities; the old sec.gov/divisions/investment/13flists.htm 301-redirects there; quarterly files at sec.gov/files/investment/13flist{YYYY}q{N}.pdf and, for the most recent quarter, the -txt.txt variant)
+
+- **Instrument:** 17 U.S.C. §105 (works of the US Government): the SEC's own quarterly compilation of the securities institutional managers must report on Form 13F; an endpoint-level determination under the §15.2 us-govworks-sec umbrella. The compilation embeds CUSIP identifiers and descriptions licensed from CUSIP Global Services (CGS)/American Bankers Association (ABA), whose redistribution notice travels with the data.
+- **Status:** determined · **Ingestible:** yes
+- **Permitted uses:**
+  - Seeding security_list_intervals with quarter-exact CUSIP validity intervals and the SEC canonical issuer name, with per-row provenance and review state
+  - Redistribution of a provenance-recorded verbatim excerpt as a repository test fixture, with the source URL, retrieval date and archive sha256 recorded alongside it
+  - Research and analysis
+- **Restrictions:**
+  - COUNSEL GATE — CUSIP redistribution: CGS/ABA assert IP in the CUSIP identifiers the SEC publishes here. Populus already redistributes CUSIPs from 13F filings and FTD, so admitting this source adds no NEW exposure class, but the counsel-gate flag records it explicitly and the P2-entry counsel gate must name it (see counsel_flags).
+  - The verbatim CGS/ABA notice (see required notices) is non-removable and travels with any redistributed excerpt or derived identity
+  - Identity seeding only: the list is used as a definitional CUSIP-validity and canonical-name source, not republished as a CUSIP identifier database
+  - Quarter identity comes from the source filename/URL cross-checked against the document's Year/Qtr header; the legend 'current as of' date is not authoritative (it is stale boilerplate on some quarters)
+  - Archive availability recorded during RUN M2-5: the index lists quarterly files back through 2024; quarters 2025Q1–2026Q2 were retrieved and cached (2026Q2 in both PDF and text; 2025Q1–2026Q1 PDF only)
+  - Retrieved under the same sec-edgar fair-access conditions (SEC-accepted User-Agent, in-code rate floor)
+- **Required notices (verbatim):**
+  > Copyright (c) American Bankers Association (ABA). All rights reserved. CUSIP Numbers and descriptions are used with permission by CUSIP Global Services (CGS), which is operated by FactSet Research Systems Inc., on behalf of the ABA. No redistribution without permission of CGS. CGS does not guarantee the accuracy or completeness of the CUSIP Numbers and standard descriptions included herein and none of CGS, ABA or FactSet shall be responsible for any errors, omissions or damages arising out of the use of such information.
+- **Counsel-gate flags:** `cusip-redistribution`
+- **Attribution:** Source: U.S. Securities and Exchange Commission, Official List of Section 13(f) Securities. CUSIP identifiers and descriptions © American Bankers Association, used with permission by CUSIP Global Services.
+- **Determination basis:** Works of the US Government (17 U.S.C. §105): the list is an SEC compilation and the definitional answer to the very question the M2 coverage gate asks ('is this CUSIP a registered 13(f) security this quarter?'). CGS/ABA assert IP in the embedded CUSIP identifiers; the SEC publishes them with the redistribution notice recorded above, which Populus carries verbatim. Populus uses the list as a dated identity/name seed with recorded provenance, not as a redistributed CUSIP database — the same posture as sec-ftd. The counsel gate (CUSIP redistribution) is flagged for the P2-entry counsel review; it adds no exposure class beyond the CUSIPs Populus already redistributes from 13F filings and FTD. Source index, quarterly files and the dual-format 2026Q2 verified live 2026-07-25 and cached 2026-07-30.
+- **Determined:** 2026-07-30 · **Review by:** 2026-10-30
+
 ## `us-govworks-treasury` — Treasury FiscalData; Treasury daily yield-curve XML
 
 - **Instrument:** US-government works (17 U.S.C. §105).

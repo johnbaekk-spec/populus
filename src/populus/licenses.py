@@ -66,6 +66,17 @@ def validate_register(register: Mapping) -> list[str]:
         for field in ("permitted_uses", "restrictions", "required_notices"):
             if field in entry and not isinstance(entry[field], list):
                 errors.append(f"{label}: {field} must be a list")
+        # counsel_flags is OPTIONAL (existing entries need no migration): when
+        # present it must be a list of non-empty strings — each names a P2-entry
+        # counsel gate the entry raises (e.g. "cusip-redistribution").
+        if "counsel_flags" in entry:
+            flags = entry["counsel_flags"]
+            if not isinstance(flags, list) or not all(
+                isinstance(flag, str) and flag.strip() for flag in flags
+            ):
+                errors.append(
+                    f"{label}: counsel_flags must be a list of non-empty strings"
+                )
         if "ingestible" in entry and not isinstance(entry["ingestible"], bool):
             errors.append(f"{label}: ingestible must be a boolean")
         if entry.get("status") not in _STATUSES:
@@ -98,6 +109,19 @@ def required_notices(register: Mapping) -> list[tuple[str, str]]:
         for notice in entry["required_notices"]:
             notices.append((entry["license_id"], notice))
     return notices
+
+
+def counsel_flags(register: Mapping, license_id: str) -> list[str]:
+    """The counsel-gate flags an entry raises (empty when it names none).
+
+    The structured surface behind the P2-entry counsel gate: `sec-13f-list`
+    carries ``["cusip-redistribution"]`` so the flag is queryable rather than
+    buried in restriction prose (R1).
+    """
+    for entry in register["entries"]:
+        if entry.get("license_id") == license_id:
+            return list(entry.get("counsel_flags", []))
+    return []
 
 
 _GENERATED_HEADER = (
@@ -149,6 +173,11 @@ def render_data_license(register: Mapping) -> str:
         if entry["required_notices"]:
             lines.append("- **Required notices (verbatim):**")
             lines.extend(f"  > {notice}" for notice in entry["required_notices"])
+        if entry.get("counsel_flags"):
+            lines.append(
+                "- **Counsel-gate flags:** "
+                + ", ".join(f"`{flag}`" for flag in entry["counsel_flags"])
+            )
         if entry["attribution"]:
             lines.append(f"- **Attribution:** {entry['attribution']}")
         lines.append(f"- **Determination basis:** {entry['determination_basis']}")
@@ -170,12 +199,15 @@ def render_notice(register: Mapping) -> str:
         "",
     ]
     for entry in register["entries"]:
-        if not entry["attribution"] and not entry["required_notices"]:
+        counsel = entry.get("counsel_flags") or []
+        if not entry["attribution"] and not entry["required_notices"] and not counsel:
             continue
         lines.append(f"[{entry['license_id']}]")
         if entry["attribution"]:
             lines.append(f"  {entry['attribution']}")
         for notice in entry["required_notices"]:
             lines.append(f"  NOTICE: {notice}")
+        for flag in counsel:
+            lines.append(f"  COUNSEL-GATE: {flag}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"

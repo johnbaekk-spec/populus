@@ -1,0 +1,34 @@
+B38564108*CMB.TECH NV                   SHS                                    E
+B38564908 CMB.TECH NV                   CALL                                   E
+B38564958 CMB.TECH NV                   PUT                                    E
+B5950S113 MDXHEALTH SA                  SHS NEW                                E
+B6S7WD106 NYXOAH S A                    SHS                                    E
+B9151N105*TITAN AMER SA                 COMMON SHARES                          E
+B9151N905 TITAN AMER SA                 CALL                                   E
+B9151N955 TITAN AMER SA                 PUT                                    E
+D18190898*DEUTSCHE BK AG                NAMEN AKT                              E
+D18190908 DEUTSCHE BK AG                CALL                                   E
+D18190958 DEUTSCHE BK AG                PUT                                    E
+F21107101*CONSTELLIUM SE                CL A SHS                               E
+F21107901 CONSTELLIUM SE                CALL                                   E
+F21107951 CONSTELLIUM SE                PUT                                    E
+F92124100*TOTALENERGIES SE              ACT                                    E
+F92124900 TOTALENERGIES SE              CALL                                   E
+F92124950 TOTALENERGIES SE              PUT                                    E
+G0R21F105 APEX TECH ACQUISITION INC     ORD SHS                    *A*         E
+G0R21F113 APEX TECH ACQUISITION INC     RIGHT 02/17/2027           *A*         E
+G0R21F121 APEX TECH ACQUISITION INC     UNIT 99/99/9999                        E
+G0R30P136 AEON ACQUISITION I CORP       UNIT 01/30/2031            *A*         E
+G0R38G104 ARMADA ACQUISITION CORP II    COM CL A                               E
+G0R38G112 ARMADA ACQUISITION CORP II    *W EXP 05/21/203                       E
+G0R38G120 ARMADA ACQUISITION CORP II    UNIT 05/21/2030                        E
+G0R38M101 ARMADA ACQUISITION CORP III   ORD SHS CL A                           E
+G0R38M119 ARMADA ACQUISITION CORP III   *W EXP 02/13/203                       E
+G0R38M127 ARMADA ACQUISITION CORP III   UNIT 02/13/2031                        E
+G0R78B106 BAIN CAP GSS INVT CORP        ORD CL A                               E
+G0R78B114 BAIN CAP GSS INVT CORP        *W EXP 01/01/202                       E
+G0R78B122 BAIN CAP GSS INVT CORP        UNIT 99/99/9999                        E
+G0R91M105 AMERICAN DRIVE ACQUISITION C  USD CL A ORD SHS                       E
+G0R91M113 AMERICAN DRIVE ACQUISITION C  *W EXP 02/06/203                       E
+G0R91M121 AMERICAN DRIVE ACQUISITION C  UNIT 12/04/2030                        E
+G00350119 LOBO TECHNOLOGIES LTD         ORD SHS CL A                           E

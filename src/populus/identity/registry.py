@@ -73,12 +73,24 @@ SECURITY_ID_REFERENCING_TABLES = (
     "security_identifiers",
     "security_supersessions",
     "inst_holdings",
+    "security_list_intervals",
 )
 
-#: Repointed by interval CUTTING rather than a plain UPDATE, because its rows
+#: Repointed by interval CUTTING rather than a plain UPDATE, because their rows
 #: carry validity intervals that may cross an ownership boundary and therefore
-#: belong to more than one owner after a revision.
-_CUT_TABLES = frozenset({"security_identifiers"})
+#: belong to more than one owner after a revision. The definitional 13(f)-list
+#: table joins this set for RUN M2-5 (a later securities.yaml revision must recut
+#: its quarter intervals exactly as it recuts the FTD identifiers).
+_CUT_TABLES = frozenset({"security_identifiers", "security_list_intervals"})
+
+#: Source precedence for IDENTITY resolution (which security a CUSIP maps to
+#: as-of a date), highest first: the declared authority, then the definitional
+#: 13(f) list, then FTD observations. `resolve_cusip` consults the FTD layer
+#: ONLY when no definitional interval covers the date (fail-closed — a disputed
+#: or ambiguous definitional binding resolves to None, never to FTD). There is
+#: deliberately NO name-precedence constant: canonical names come from the
+#: definitional list alone (the sole persisted name source).
+IDENTITY_SOURCE_PRECEDENCE = ("securities.yaml", "sec-13f-list", "sec-ftd")
 
 _SECURITY_ID_RE = re.compile(r"^sec:[a-z0-9][a-z0-9._-]{0,62}$")
 _CUSIP_RE = re.compile(r"^[0-9A-Z]{9}$")
@@ -136,6 +148,11 @@ def registry_overlap_errors(conn: sqlite3.Connection) -> list[str]:
             "security_identifiers",
             "SELECT id_type || ':' || value, valid_from, valid_to"
             " FROM security_identifiers ORDER BY id_type, value, valid_from",
+        ),
+        (
+            "security_list_intervals",
+            "SELECT id_type || ':' || value, valid_from, valid_to"
+            " FROM security_list_intervals ORDER BY id_type, value, valid_from",
         ),
     )
     for table, query in checks:
@@ -862,19 +879,60 @@ def resolve_cusip(
 ) -> str | None:
     """The security a CUSIP identified on *as_of_date*, or ``None``.
 
-    ``None`` when the value is malformed, when no interval covers the date,
-    when more than one row applies, or when the identifier is ``disputed``
-    (R18: an unreviewed reuse candidate resolves nowhere, at any date, until
-    a reviewed declaration exists).
+    Precedence-aware and fail-closed (:data:`IDENTITY_SOURCE_PRECEDENCE`): the
+    DEFINITIONAL 13(f)-list layer decides whenever it covers the date, and the
+    FTD ``security_identifiers`` layer is consulted ONLY when no definitional
+    interval covers it. A definitional layer that covers the date but resolves
+    ambiguously (more than one row) or is ``disputed`` returns ``None`` and NEVER
+    falls through to FTD — otherwise a disputed higher-precedence binding would
+    silently resolve through a lower one (F12/R18).
+
+    Still ``None`` when the value is malformed, when no interval of any source
+    covers the date, when more than one row applies, or when the applicable row
+    is ``disputed`` (R18: an unreviewed reuse candidate resolves nowhere).
     """
     value = normalize_cusip(cusip)
     if value is None:
         return None
+    list_rows = conn.execute(
+        "SELECT valid_from, valid_to, security_id, review_state"
+        " FROM security_list_intervals WHERE id_type = 'cusip' AND value = ?",
+        (value,),
+    ).fetchall()
+    if any(
+        row[0] <= as_of_date and (row[1] is None or as_of_date < row[1])
+        for row in list_rows
+    ):
+        # The definitional layer covers this date and OWNS the decision.
+        # `applicable_value` returns None for ambiguity/dispute; we deliberately
+        # do NOT fall through to FTD in that case (fail-closed precedence).
+        return applicable_value(list_rows, as_of_date)
     return applicable_value(
         conn.execute(
             "SELECT valid_from, valid_to, security_id, review_state"
             " FROM security_identifiers WHERE id_type = 'cusip' AND value = ?",
             (value,),
+        ).fetchall(),
+        as_of_date,
+    )
+
+
+def resolve_security_name(
+    conn: sqlite3.Connection, security_id: str, as_of_date: str
+) -> str | None:
+    """The canonical issuer name for *security_id* on *as_of_date*, or ``None``.
+
+    The definitional 13(f) list is the SOLE persisted name source (amended R7):
+    this returns the covering quarter's SEC canonical name, or ``None`` when no
+    quarter covers the date, more than one does, or the covering row is
+    ``disputed`` — never a fabricated fallback. `securities.yaml` carries no name
+    field today; FTD issuer names are observed but not persisted.
+    """
+    return applicable_value(
+        conn.execute(
+            "SELECT valid_from, valid_to, issuer_name, review_state"
+            " FROM security_list_intervals WHERE security_id = ?",
+            (security_id,),
         ).fetchall(),
         as_of_date,
     )
@@ -1058,6 +1116,202 @@ def _identifier_raw(
     ).decode("utf-8")
 
 
+#: Columns of security_list_intervals, in the order the seeder and the migration
+#: both bind them. Named once so the two write paths cannot drift.
+_LIST_INTERVAL_COLUMNS = (
+    "security_id",
+    "id_type",
+    "value",
+    "valid_from",
+    "valid_to",
+    "quarter",
+    "issuer_name",
+    "security_class",
+    "is_option",
+    "status_flag",
+    "provenance",
+    "confidence",
+    "review_state",
+    "license_id",
+    "source_url",
+    "list_sha256",
+    "retrieved_at",
+    "raw_path",
+    "row_ordinal",
+    "parser_version",
+    "normalization_version",
+    "source_row",
+    "raw",
+)
+
+#: Positional indices into a `_LIST_INTERVAL_COLUMNS`-ordered row tuple, derived
+#: from the tuple itself so adding a column can never silently desync the
+#: migration's rewrite (which previously hard-coded 0/3/4/11/12/21).
+_LI = {name: index for index, name in enumerate(_LIST_INTERVAL_COLUMNS)}
+
+
+def list_interval_raw(
+    *,
+    provenance: str,
+    id_type: str,
+    value: str,
+    valid_from: str,
+    valid_to: str | None,
+    quarter: str,
+    list_sha256: str,
+    row_ordinal: int | None,
+    source_row: str | None,
+) -> str:
+    """Deterministic RFC-8785 raw provenance for one list-interval row (§5.1).
+
+    A function of (source, identity, interval, quarter, retrieval sha, source
+    line) only — never of what existed before — so a clean build, a populated
+    reseed and a post-migration recut write byte-identical raw and a same-SHA
+    replay rewrites nothing.
+
+    ``source_row`` is the VERBATIM source line the identity was read from (the
+    80-char fixed-width text row, or the reconstructed PDF data row). Round-1 F9:
+    without it the stored ``raw`` was synthesized identity/interval metadata only,
+    so a published fact could not be audited against its exact source line once
+    the gitignored cache was gone. It is a pure function of the source row, so a
+    recut piece reproduces it byte-for-byte.
+    """
+    return canonical_json(
+        {
+            "source": provenance,
+            "id_type": id_type,
+            "value": value,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+            "quarter": quarter,
+            "list_sha256": list_sha256,
+            "row_ordinal": row_ordinal,
+            "source_row": source_row,
+        }
+    ).decode("utf-8")
+
+
+#: The one INSERT statement both the single-row and the batched write paths use,
+#: built from `_LIST_INTERVAL_COLUMNS` so the column list, the placeholder count
+#: and the bind order can never drift apart.
+_LIST_INTERVAL_INSERT = (
+    "INSERT INTO security_list_intervals ("
+    + ", ".join(_LIST_INTERVAL_COLUMNS)
+    + ") VALUES ("
+    + ", ".join("?" for _ in _LIST_INTERVAL_COLUMNS)
+    + ") ON CONFLICT (value, valid_from) DO NOTHING"
+)
+
+
+def list_interval_row(
+    *,
+    security_id: str,
+    value: str,
+    valid_from: str,
+    valid_to: str | None,
+    quarter: str,
+    issuer_name: str | None,
+    security_class: str | None,
+    is_option: bool,
+    status_flag: str,
+    provenance: str,
+    license_id: str,
+    review_state: str,
+    source_url: str,
+    list_sha256: str,
+    retrieved_at: str | None,
+    raw_path: str | None,
+    row_ordinal: int | None,
+    parser_version: str,
+    normalization_version: str,
+    source_row: str | None,
+    id_type: str = "cusip",
+) -> tuple:
+    """One `_LIST_INTERVAL_COLUMNS`-ordered bind tuple, incl. the derived ``raw``.
+
+    Pure — no database access — so the seeder can build a whole quarter's rows in
+    memory and hand them to :func:`insert_list_intervals` as ONE batch (round-1
+    F10) instead of issuing per-row SQL.
+    """
+    return (
+        security_id,
+        id_type,
+        value,
+        valid_from,
+        valid_to,
+        quarter,
+        issuer_name,
+        security_class,
+        1 if is_option else 0,
+        status_flag,
+        provenance,
+        confidence_for(review_state),
+        review_state,
+        license_id,
+        source_url,
+        list_sha256,
+        retrieved_at,
+        raw_path,
+        row_ordinal,
+        parser_version,
+        normalization_version,
+        source_row,
+        list_interval_raw(
+            provenance=provenance,
+            id_type=id_type,
+            value=value,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            quarter=quarter,
+            list_sha256=list_sha256,
+            row_ordinal=row_ordinal,
+            source_row=source_row,
+        ),
+    )
+
+
+def insert_list_intervals(
+    conn: sqlite3.Connection, rows: Sequence[tuple], *, mutations
+) -> int:
+    """Insert many definitional list intervals in ONE ``executemany`` (F10).
+
+    Set-based by construction: a ~22,000-row quarter costs one prepared statement
+    and one batch, not O(rows) round trips. ``ON CONFLICT (value, valid_from) DO
+    NOTHING`` keeps a same-list reseed replay-zero, exactly as the single-row path
+    did. Mutation accounting is taken from ``total_changes`` (rather than
+    ``rowcount``, which is not defined per-statement across an ``executemany``
+    with a DO NOTHING conflict clause), so a skipped duplicate is NOT counted and
+    an identical replay still reports zero writes.
+    """
+    if not rows:
+        return 0
+    before = conn.total_changes
+    conn.executemany(_LIST_INTERVAL_INSERT, rows)
+    inserted = conn.total_changes - before
+    mutations.list_intervals_inserted += inserted
+    return inserted
+
+
+def upsert_list_interval(
+    conn: sqlite3.Connection,
+    *,
+    mutations,
+    **fields,
+) -> None:
+    """Insert ONE definitional list interval, idempotent and replay-zero.
+
+    A thin wrapper over the batched path so both share one statement, one bind
+    order and one accounting rule. ``ON CONFLICT (value, valid_from) DO NOTHING``
+    makes a same-list reseed a no-op (the seeder guarantees, before calling this,
+    that any pre-existing quarter rows carry the SAME ``list_sha256`` — a changed
+    hash is a hard error or an explicit transactional replacement, never a silent
+    overwrite). Every actual insert is counted (R12: no uncounted write).
+    """
+    insert_list_intervals(
+        conn, [list_interval_row(**fields)], mutations=mutations
+    )
+
+
 def rewrite_identifier_intervals(
     conn: sqlite3.Connection,
     *,
@@ -1210,6 +1464,16 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         " confidence, review_state, license_id FROM security_identifiers"
         " ORDER BY id_type, value, valid_from, security_id"
     ).fetchall()
+    # The definitional 13(f)-list intervals are a second FK-to-securities table
+    # that carries validity intervals, so a boundary revision must recut them
+    # exactly as it recuts the FTD identifiers (RUN M2-5). Read every column in
+    # `_LIST_INTERVAL_COLUMNS` order so a cut piece can be re-inserted verbatim
+    # save its owner, interval and authority-derived review verdict.
+    list_rows = conn.execute(
+        "SELECT " + ", ".join(_LIST_INTERVAL_COLUMNS)
+        + " FROM security_list_intervals"
+        " ORDER BY id_type, value, valid_from, security_id"
+    ).fetchall()
 
     window_cache: dict[tuple[str, str], tuple[OwnerWindow, ...]] = {}
 
@@ -1237,6 +1501,26 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         _assert_reconstructs((valid_from, valid_to), pieces)
         row_plans.append((row, pieces))
         targets.setdefault(old_id, set()).update(piece[0] for piece in pieces)
+    # The list intervals feed the SAME destination sets: a security owning a
+    # value only through the definitional list must still rename/split when a
+    # revision moves that value, and a security owning it through BOTH tables
+    # takes the union of both tables' piece owners (their intervals differ, so
+    # one table alone can miss a boundary the other crosses).
+    list_row_plans: list[
+        tuple[tuple, tuple[tuple[str, str | None, str | None], ...]]
+    ] = []
+    for row in list_rows:
+        old_id, id_type, value, valid_from, valid_to = (
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+        )
+        pieces = cut_interval((valid_from, valid_to), windows_for(id_type, value))
+        _assert_reconstructs((valid_from, valid_to), pieces)
+        list_row_plans.append((row, pieces))
+        targets.setdefault(old_id, set()).update(piece[0] for piece in pieces)
     for security_id in securities:
         targets.setdefault(security_id, {security_id})
 
@@ -1256,6 +1540,7 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         # same-owner windows, so a same-owner row is never split).
         _align_authority_metadata(conn, registry, securities, mutations)
         _reconcile_review_state(conn, registry, mutations)
+        _reconcile_list_review_state(conn, registry, mutations)
         return mutations
 
     # 1 — every destination exists before anything points at it.
@@ -1313,6 +1598,61 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
             " valid_from, valid_to, provenance, confidence, review_state,"
             " license_id, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             inserts,
+        )
+
+    # 2b — cut and move the definitional list intervals the same way. A piece
+    # keeps every source/provenance column of its origin row (quarter, issuer
+    # name, class, retrieval provenance, row ordinal AND the verbatim source_row);
+    # only its owner, interval, authority-derived review verdict and deterministic
+    # raw change. Carrying source_row through unchanged is what keeps a recut fact
+    # auditable against its origin line (F9) while `raw` — a pure function of that
+    # line plus the new interval — stays byte-deterministic. This is what makes
+    # seed-then-revise converge bit-for-bit with revise-then-seed.
+    list_deletes: list[tuple[str, str]] = []
+    list_inserts: list[tuple] = []
+    for row, pieces in list_row_plans:
+        old_id, id_type, value = row[_LI["security_id"]], row[_LI["id_type"]], row[_LI["value"]]
+        valid_from, valid_to = row[_LI["valid_from"]], row[_LI["valid_to"]]
+        if len(pieces) == 1 and pieces[0] == (old_id, valid_from, valid_to):
+            continue
+        list_deletes.append((value, valid_from))
+        if len(pieces) > 1:
+            mutations.list_intervals_cut += 1
+        else:
+            mutations.list_intervals_moved += 1
+        for destination, piece_from, piece_to in pieces:
+            _state, _class, review_state = authority_state(registry, destination)
+            piece_row = list(row)
+            piece_row[_LI["security_id"]] = destination
+            piece_row[_LI["valid_from"]] = piece_from
+            piece_row[_LI["valid_to"]] = piece_to
+            piece_row[_LI["confidence"]] = confidence_for(review_state)
+            piece_row[_LI["review_state"]] = review_state
+            piece_row[_LI["raw"]] = list_interval_raw(
+                provenance=row[_LI["provenance"]],
+                id_type=id_type,
+                value=value,
+                valid_from=piece_from,
+                valid_to=piece_to,
+                quarter=row[_LI["quarter"]],
+                list_sha256=row[_LI["list_sha256"]],
+                row_ordinal=row[_LI["row_ordinal"]],
+                source_row=row[_LI["source_row"]],
+            )
+            list_inserts.append(tuple(piece_row))
+    if list_deletes:
+        conn.executemany(
+            "DELETE FROM security_list_intervals WHERE value = ? AND valid_from = ?",
+            list_deletes,
+        )
+    if list_inserts:
+        conn.executemany(
+            "INSERT INTO security_list_intervals ("
+            + ", ".join(_LIST_INTERVAL_COLUMNS)
+            + ") VALUES ("
+            + ", ".join("?" for _ in _LIST_INTERVAL_COLUMNS)
+            + ")",
+            list_inserts,
         )
 
     # Securities whose per-observation entity candidates must be reset and
@@ -1390,6 +1730,28 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         destinations = splits[old_id]
         retained = old_id in destinations
         successors = sorted(destinations - {old_id})
+        # G14 (F3): a split hands different PERIODS of one CUSIP to different
+        # owners, so a persisted holding cannot be blanket-moved like a rename — it
+        # must be repointed as-of ITS OWN filing period. The identifier and list
+        # intervals were already recut above (steps 2/2b), so `resolve_cusip`
+        # against the current tables returns the successor that owns each holding's
+        # (cusip, period_of_report). A period that no longer resolves uniquely
+        # (ambiguous or uncovered) becomes NULL — never a stale predecessor id that
+        # a later `resolve_cusip(..., period)` would contradict. The retained-owner
+        # case is handled uniformly: a holding whose period stayed with old_id
+        # resolves back to old_id and is left untouched.
+        for holding_id, cusip, period in conn.execute(
+            "SELECT holding_id, cusip, period_of_report FROM inst_holdings"
+            " WHERE security_id = ?",
+            (old_id,),
+        ).fetchall():
+            new_sid = resolve_cusip(conn, cusip, period) if cusip is not None else None
+            if new_sid != old_id:
+                conn.execute(
+                    "UPDATE inst_holdings SET security_id = ? WHERE holding_id = ?",
+                    (new_sid, holding_id),
+                )
+                mutations.holdings_repointed_on_split += 1
         if not retained:
             predecessors = [
                 predecessor
@@ -1455,7 +1817,32 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
 
     _align_authority_metadata(conn, registry, None, mutations)
     _reconcile_review_state(conn, registry, mutations)
+    _reconcile_list_review_state(conn, registry, mutations)
     return mutations
+
+
+def _reconcile_list_review_state(conn, registry, mutations) -> None:
+    """Bring each definitional list interval's review_state to the authority.
+
+    A metadata-only authority revision (a changed ``review_state`` with no
+    boundary move) leaves the intervals uncut, so their verdict must be
+    reconciled here or a populated database diverges from a clean build. Unlike
+    the FTD identifiers, list intervals are NOT subject to the reuse-horizon
+    dispute: the definitional list is quarter-dense and higher-precedence, so
+    its verdict is exactly the authority's declared ``review_state``. Idempotent
+    via the ``review_state != target`` guard, so a replay changes nothing.
+    """
+    for (security_id,) in conn.execute(
+        "SELECT DISTINCT security_id FROM security_list_intervals"
+        " ORDER BY security_id"
+    ).fetchall():
+        _state, _class, target = authority_state(registry, security_id)
+        cursor = conn.execute(
+            "UPDATE security_list_intervals SET review_state = ?, confidence = ?"
+            " WHERE security_id = ? AND review_state != ?",
+            (target, confidence_for(target), security_id, target),
+        )
+        mutations.list_intervals_metadata_updated += max(cursor.rowcount, 0)
 
 
 def _align_authority_metadata(
