@@ -61,14 +61,10 @@ The merge was made on this convergent evidence (918 green + nine all-fixed Codex
 
 ## Pending
 
-1. **(Optional) Re-run Run 6 through orchestrate for process parity** once the Fable spend limit resets — the code is already merged/green, so this only re-establishes the same plan→review→QA paper trail the other runs have:
-   ```bash
-   cd ~/projects && ORCH_ASSUME_YES=skip-human-gate ORCH_PROFILE=quality WORKFLOW_MAX_ARTIFACT_BYTES=8388608 \
-     ./orchestrate-tool/orchestrate.sh Populus "Re-validate RUN 6 (MCP server, already implemented under src/populus/mcp_server/) per docs/build/RUN-6-brief.md; ARCHITECTURE.md governs (§9.9, §11); tests green under 'uv run pytest -q'."
-   ```
-2. **Owner actions (outward-facing, P0):** publish the `populus-mcp 0.0.1` placeholder to PyPI to claim the name; pick the domain (OQ-1 — `populusfinance.com` collides with Populus Financial Group; candidates in ARCHITECTURE OQ-1).
-3. **Optional:** a deeper cross-module adversarial sweep of the whole M1.
-4. **Deferred by design:** M2 13F → M3 financials → M4 macro (one module at a time, G12); the P3 dashboard.
+**All open work now lives in [`BACKLOG.md`](BACKLOG.md)** — the four M2 findings
+carried open at merge (start with **B1/KI-4**, the published-coverage-above-100%
+honesty defect), the process items, the owner P0 actions (PyPI name, domain), and
+the M3/M4 roadmap. The former contents of this section are consolidated there.
 
 Real source corpus is cached under `~/projects/Populus/data-cache/` (gitignored): House 2013/2015/2020/2026 indexes + 312 2026 PTR PDFs, 53 Senate pages, kadoa `trades.json`, legislators YAML. Golden fixtures are committed under `tests/fixtures/`. To run the whole thing yourself: `uv run pytest -q`, then the ingest→build→publish→verify sequence in this file, then `uv run populus-mcp --data-repo ../populus-data` (or `--db <ingested.db>`).
 
