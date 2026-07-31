@@ -161,8 +161,24 @@ class Mutations:
     links_conflicted: int = 0
     links_cleared: int = 0
     links_reset_on_split: int = 0
+    #: inst_holdings rows repointed as-of their filing period when a declared split
+    #: recut a CUSIP's ownership (RUN M2-5 / F3). Zero on replay: no split, no
+    #: repoint. Distinct from the rename path's blanket move — a split needs
+    #: per-holding, period-aware resolution (G14).
+    holdings_repointed_on_split: int = 0
     securities_flagged_disputed: int = 0
     securities_cleared_by_continuity: int = 0
+    # sec-13f-list definitional intervals (RUN M2-5: seeding + registry migration)
+    list_intervals_inserted: int = 0
+    list_intervals_removed: int = 0
+    list_intervals_cut: int = 0
+    list_intervals_moved: int = 0
+    list_intervals_metadata_updated: int = 0
+    #: security_list_seed_ledger writes (F6): one per quarter seeded (even a
+    #: zero-record quarter), and one removed per replace_quarter supersession.
+    #: Zero on a same-sha replay (the ledger row already matches).
+    list_seed_ledger_written: int = 0
+    list_seed_ledger_removed: int = 0
 
 
 MUTATION_UNITS: dict[str, str] = {
@@ -188,8 +204,16 @@ MUTATION_UNITS: dict[str, str] = {
     "links_conflicted": "securities",
     "links_cleared": "securities",
     "links_reset_on_split": "securities",
+    "holdings_repointed_on_split": "inst_holdings rows",
     "securities_flagged_disputed": "securities",
     "securities_cleared_by_continuity": "securities",
+    "list_intervals_inserted": "security_list_intervals rows",
+    "list_intervals_removed": "security_list_intervals rows",
+    "list_intervals_cut": "predecessor security_list_intervals rows",
+    "list_intervals_moved": "security_list_intervals rows",
+    "list_intervals_metadata_updated": "security_list_intervals rows",
+    "list_seed_ledger_written": "security_list_seed_ledger rows",
+    "list_seed_ledger_removed": "security_list_seed_ledger rows",
 }
 
 
@@ -265,8 +289,21 @@ TICKER_MUTATION_FIELDS = (
     "tickers_opened",
     "tickers_closed_reassigned",
 )
+#: The definitional-list write family (seeding + the migration's list recut),
+#: printed under its own section so the FTD summary never claims list writes.
+LIST13F_MUTATION_FIELDS = (
+    "list_intervals_inserted",
+    "list_intervals_removed",
+    "list_intervals_cut",
+    "list_intervals_moved",
+    "list_intervals_metadata_updated",
+    "list_seed_ledger_written",
+    "list_seed_ledger_removed",
+)
 FTD_MUTATION_FIELDS = tuple(
-    name for name in MUTATION_UNITS if name not in TICKER_MUTATION_FIELDS
+    name
+    for name in MUTATION_UNITS
+    if name not in TICKER_MUTATION_FIELDS and name not in LIST13F_MUTATION_FIELDS
 )
 TICKER_STATE_FIELDS = (
     "entities_in_registry",
@@ -323,6 +360,9 @@ class BootstrapReport:
     status: str
     tickers: TickerBootstrapReport
     ftd: FtdBootstrapReport
+    #: One List13fBootstrapReport per seeded quarter (RUN M2-5), in quarter
+    #: order; empty when no 13(f)-list source was supplied.
+    list13f: tuple = ()
 
     @property
     def ok(self) -> bool:
@@ -1034,16 +1074,36 @@ def run_identity_bootstrap(
     run_id: str,
     now,
     host: str,
+    list13f_source=None,
+    list13f_quarters: Sequence[str] | None = None,
+    list13f_start_quarter: str | None = None,
+    replace_quarter: bool = False,
 ) -> BootstrapReport:
-    """Reconcile the authority and seed both registries — all or nothing.
+    """Reconcile the authority and seed every registry — all or nothing.
 
     The audit row is opened in autocommit BEFORE the data transaction, so it
-    survives the rollback that a failure triggers; the migration, both seeders
-    and the success finalization then run inside ONE ``BEGIN IMMEDIATE``. Every
-    attempted run therefore ends ``ok`` (everything committed) or ``failed``
-    (everything rolled back) — never ``running``, and never a half-migrated
-    registry under a failed run.
+    survives the rollback that a failure triggers; the migration, all three
+    seeders and the success finalization then run inside ONE ``BEGIN IMMEDIATE``.
+    Every attempted run therefore ends ``ok`` (everything committed) or
+    ``failed`` (everything rolled back) — never ``running``, and never a
+    half-migrated registry under a failed run.
+
+    When *list13f_source* is given (a cache or live 13(f)-list source), the
+    selected quarters are loaded, parsed and R5-checked BEFORE the transaction —
+    exactly like the ticker/FTD parses — and seeded inside it, after the FTD
+    pass so the definitional intervals sit above the FTD identifiers at
+    resolution (RUN M2-5, Locked Decisions 6/9).
     """
+    # Lazy imports: bootstrap.py is imported at module-load time by
+    # identity.registry (the reconcile path) and by identity.list13f_seed, so
+    # importing the 13(f)-list seeder/loader here — only when the run actually
+    # uses it — keeps the package free of an import cycle.
+    from populus.identity.list13f_seed import bootstrap_13f_list
+    from populus.ingest.list13f import (
+        prepare_list13f_quarters,
+        select_backfill_quarters,
+    )
+
     conn.execute(
         "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
         " VALUES (?, 'identity', ?, 'running', ?)",
@@ -1052,6 +1112,17 @@ def run_identity_bootstrap(
     try:
         ticker_rows, ticker_disposition = load_company_tickers(tickers_path)
         observations, ftd_disposition = parse_ftd(ftd_paths)
+        list13f_loaded = []
+        if list13f_source is not None:
+            available = list13f_source.available_quarters()
+            selected = (
+                sorted(set(list13f_quarters))
+                if list13f_quarters is not None
+                else select_backfill_quarters(
+                    conn, available, start_quarter=list13f_start_quarter
+                )
+            )
+            list13f_loaded = prepare_list13f_quarters(list13f_source, selected)
         conn.execute("BEGIN IMMEDIATE")
         try:
             migration = reconcile_identity_registry(conn, registry)
@@ -1067,6 +1138,18 @@ def run_identity_bootstrap(
                 registry=registry,
                 disposition=ftd_disposition,
                 mutations=migration,
+            )
+            list13f = tuple(
+                bootstrap_13f_list(
+                    conn,
+                    loaded.parsed,
+                    quarter=loaded.quarter,
+                    registry=registry,
+                    source_meta=loaded.source_meta,
+                    replace_quarter=replace_quarter,
+                    mutations=migration,
+                )
+                for loaded in list13f_loaded
             )
             _finalize_run_ok(
                 conn,
@@ -1087,7 +1170,9 @@ def run_identity_bootstrap(
             (now(), run_id),
         )
         raise
-    return BootstrapReport(run_id=run_id, status="ok", tickers=tickers, ftd=ftd)
+    return BootstrapReport(
+        run_id=run_id, status="ok", tickers=tickers, ftd=ftd, list13f=list13f
+    )
 
 
 # --- printed summary ----------------------------------------------------------
@@ -1145,4 +1230,26 @@ def format_bootstrap_summary(report: BootstrapReport) -> str:
             lines.append(f"    {id_type} {value} — {issuer or '<no issuer name>'}")
         if len(report.ftd.disputed) > 20:
             lines.append(f"    … and {len(report.ftd.disputed) - 20} more")
+
+    if report.list13f:
+        lines.append("sec-13f-list (definitional quarters)")
+        lines.append(
+            "  mutations [write phase, incl. the migration's list recut;"
+            " zero on an identical replay]"
+        )
+        # The list writes accumulate into the shared migration mutations object.
+        lines.extend(
+            _counter_lines(
+                report.ftd.mutations, MUTATION_UNITS, LIST13F_MUTATION_FIELDS
+            )
+        )
+        lines.append("  quarters [post-write; identical on an identical replay]")
+        for quarter_report in report.list13f:
+            marker = " (replaced)" if quarter_report.replaced else ""
+            lines.append(
+                f"    {quarter_report.quarter}: {quarter_report.records_seeded}"
+                f" records → {quarter_report.intervals_present} intervals"
+                f" ({quarter_report.options_present} option legs),"
+                f" list_sha256 {quarter_report.list_sha256[:12]}…{marker}"
+            )
     return "\n".join(lines)

@@ -139,7 +139,13 @@ def test_golden_crafted(crafted_conn, cik):
 
 
 def test_goldens_are_one_to_one_with_the_fixture_ciks():
-    goldens = {p.name.removesuffix(".expected.json") for p in EXPECTED.glob("*.expected.json")}
+    # Scoped to the CIK round-trip goldens; other fixture goldens live in the
+    # same directory (e.g. the RUN M2-5 list13f golden) and are checked elsewhere.
+    goldens = {
+        p.name.removesuffix(".expected.json")
+        for p in EXPECTED.glob("*.expected.json")
+        if "CIK" in p.name
+    }
     expected = {"real-CIK0001067983"} | {f"crafted-CIK{c}" for c in CRAFTED_CIKS}
     assert goldens == expected
 

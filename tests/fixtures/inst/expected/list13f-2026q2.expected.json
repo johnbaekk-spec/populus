@@ -1,0 +1,632 @@
+{
+  "quarter": "2026q2",
+  "disposition": {
+    "rows_read": 34,
+    "accepted": 24,
+    "accepted_option": 10,
+    "accepted_duplicate": 0,
+    "counted_deleted": 0,
+    "rejected_status_conflict": 0,
+    "rejected_definition_conflict": 0,
+    "rejected_malformed": 0,
+    "rejected_bad_check_digit": 0,
+    "rejected_bad_width": 0,
+    "rejected_bad_field": 0
+  },
+  "records": [
+    {
+      "cusip": "B38564108",
+      "issuer_name": "CMB.TECH NV",
+      "security_class": "SHS",
+      "is_option": false,
+      "has_listed_option": true,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 1,
+      "raw_source": "B38564108*CMB.TECH NV                   SHS                                    E"
+    },
+    {
+      "cusip": "B38564908",
+      "issuer_name": "CMB.TECH NV",
+      "security_class": "CALL",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 2,
+      "raw_source": "B38564908 CMB.TECH NV                   CALL                                   E"
+    },
+    {
+      "cusip": "B38564958",
+      "issuer_name": "CMB.TECH NV",
+      "security_class": "PUT",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 3,
+      "raw_source": "B38564958 CMB.TECH NV                   PUT                                    E"
+    },
+    {
+      "cusip": "B5950S113",
+      "issuer_name": "MDXHEALTH SA",
+      "security_class": "SHS NEW",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 4,
+      "raw_source": "B5950S113 MDXHEALTH SA                  SHS NEW                                E"
+    },
+    {
+      "cusip": "B6S7WD106",
+      "issuer_name": "NYXOAH S A",
+      "security_class": "SHS",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 5,
+      "raw_source": "B6S7WD106 NYXOAH S A                    SHS                                    E"
+    },
+    {
+      "cusip": "B9151N105",
+      "issuer_name": "TITAN AMER SA",
+      "security_class": "COMMON SHARES",
+      "is_option": false,
+      "has_listed_option": true,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 6,
+      "raw_source": "B9151N105*TITAN AMER SA                 COMMON SHARES                          E"
+    },
+    {
+      "cusip": "B9151N905",
+      "issuer_name": "TITAN AMER SA",
+      "security_class": "CALL",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 7,
+      "raw_source": "B9151N905 TITAN AMER SA                 CALL                                   E"
+    },
+    {
+      "cusip": "B9151N955",
+      "issuer_name": "TITAN AMER SA",
+      "security_class": "PUT",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 8,
+      "raw_source": "B9151N955 TITAN AMER SA                 PUT                                    E"
+    },
+    {
+      "cusip": "D18190898",
+      "issuer_name": "DEUTSCHE BK AG",
+      "security_class": "NAMEN AKT",
+      "is_option": false,
+      "has_listed_option": true,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 9,
+      "raw_source": "D18190898*DEUTSCHE BK AG                NAMEN AKT                              E"
+    },
+    {
+      "cusip": "D18190908",
+      "issuer_name": "DEUTSCHE BK AG",
+      "security_class": "CALL",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 10,
+      "raw_source": "D18190908 DEUTSCHE BK AG                CALL                                   E"
+    },
+    {
+      "cusip": "D18190958",
+      "issuer_name": "DEUTSCHE BK AG",
+      "security_class": "PUT",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 11,
+      "raw_source": "D18190958 DEUTSCHE BK AG                PUT                                    E"
+    },
+    {
+      "cusip": "F21107101",
+      "issuer_name": "CONSTELLIUM SE",
+      "security_class": "CL A SHS",
+      "is_option": false,
+      "has_listed_option": true,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 12,
+      "raw_source": "F21107101*CONSTELLIUM SE                CL A SHS                               E"
+    },
+    {
+      "cusip": "F21107901",
+      "issuer_name": "CONSTELLIUM SE",
+      "security_class": "CALL",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 13,
+      "raw_source": "F21107901 CONSTELLIUM SE                CALL                                   E"
+    },
+    {
+      "cusip": "F21107951",
+      "issuer_name": "CONSTELLIUM SE",
+      "security_class": "PUT",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 14,
+      "raw_source": "F21107951 CONSTELLIUM SE                PUT                                    E"
+    },
+    {
+      "cusip": "F92124100",
+      "issuer_name": "TOTALENERGIES SE",
+      "security_class": "ACT",
+      "is_option": false,
+      "has_listed_option": true,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 15,
+      "raw_source": "F92124100*TOTALENERGIES SE              ACT                                    E"
+    },
+    {
+      "cusip": "F92124900",
+      "issuer_name": "TOTALENERGIES SE",
+      "security_class": "CALL",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 16,
+      "raw_source": "F92124900 TOTALENERGIES SE              CALL                                   E"
+    },
+    {
+      "cusip": "F92124950",
+      "issuer_name": "TOTALENERGIES SE",
+      "security_class": "PUT",
+      "is_option": true,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 17,
+      "raw_source": "F92124950 TOTALENERGIES SE              PUT                                    E"
+    },
+    {
+      "cusip": "G00350119",
+      "issuer_name": "LOBO TECHNOLOGIES LTD",
+      "security_class": "ORD SHS CL A",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 34,
+      "raw_source": "G00350119 LOBO TECHNOLOGIES LTD         ORD SHS CL A                           E"
+    },
+    {
+      "cusip": "G0R21F105",
+      "issuer_name": "APEX TECH ACQUISITION INC",
+      "security_class": "ORD SHS",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "ADDED",
+      "quarter": "2026q2",
+      "row_ordinal": 18,
+      "raw_source": "G0R21F105 APEX TECH ACQUISITION INC     ORD SHS                    *A*         E"
+    },
+    {
+      "cusip": "G0R21F113",
+      "issuer_name": "APEX TECH ACQUISITION INC",
+      "security_class": "RIGHT 02/17/2027",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "ADDED",
+      "quarter": "2026q2",
+      "row_ordinal": 19,
+      "raw_source": "G0R21F113 APEX TECH ACQUISITION INC     RIGHT 02/17/2027           *A*         E"
+    },
+    {
+      "cusip": "G0R21F121",
+      "issuer_name": "APEX TECH ACQUISITION INC",
+      "security_class": "UNIT 99/99/9999",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 20,
+      "raw_source": "G0R21F121 APEX TECH ACQUISITION INC     UNIT 99/99/9999                        E"
+    },
+    {
+      "cusip": "G0R30P136",
+      "issuer_name": "AEON ACQUISITION I CORP",
+      "security_class": "UNIT 01/30/2031",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "ADDED",
+      "quarter": "2026q2",
+      "row_ordinal": 21,
+      "raw_source": "G0R30P136 AEON ACQUISITION I CORP       UNIT 01/30/2031            *A*         E"
+    },
+    {
+      "cusip": "G0R38G104",
+      "issuer_name": "ARMADA ACQUISITION CORP II",
+      "security_class": "COM CL A",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 22,
+      "raw_source": "G0R38G104 ARMADA ACQUISITION CORP II    COM CL A                               E"
+    },
+    {
+      "cusip": "G0R38G112",
+      "issuer_name": "ARMADA ACQUISITION CORP II",
+      "security_class": "*W EXP 05/21/203",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 23,
+      "raw_source": "G0R38G112 ARMADA ACQUISITION CORP II    *W EXP 05/21/203                       E"
+    },
+    {
+      "cusip": "G0R38G120",
+      "issuer_name": "ARMADA ACQUISITION CORP II",
+      "security_class": "UNIT 05/21/2030",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 24,
+      "raw_source": "G0R38G120 ARMADA ACQUISITION CORP II    UNIT 05/21/2030                        E"
+    },
+    {
+      "cusip": "G0R38M101",
+      "issuer_name": "ARMADA ACQUISITION CORP III",
+      "security_class": "ORD SHS CL A",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 25,
+      "raw_source": "G0R38M101 ARMADA ACQUISITION CORP III   ORD SHS CL A                           E"
+    },
+    {
+      "cusip": "G0R38M119",
+      "issuer_name": "ARMADA ACQUISITION CORP III",
+      "security_class": "*W EXP 02/13/203",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 26,
+      "raw_source": "G0R38M119 ARMADA ACQUISITION CORP III   *W EXP 02/13/203                       E"
+    },
+    {
+      "cusip": "G0R38M127",
+      "issuer_name": "ARMADA ACQUISITION CORP III",
+      "security_class": "UNIT 02/13/2031",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 27,
+      "raw_source": "G0R38M127 ARMADA ACQUISITION CORP III   UNIT 02/13/2031                        E"
+    },
+    {
+      "cusip": "G0R78B106",
+      "issuer_name": "BAIN CAP GSS INVT CORP",
+      "security_class": "ORD CL A",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 28,
+      "raw_source": "G0R78B106 BAIN CAP GSS INVT CORP        ORD CL A                               E"
+    },
+    {
+      "cusip": "G0R78B114",
+      "issuer_name": "BAIN CAP GSS INVT CORP",
+      "security_class": "*W EXP 01/01/202",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 29,
+      "raw_source": "G0R78B114 BAIN CAP GSS INVT CORP        *W EXP 01/01/202                       E"
+    },
+    {
+      "cusip": "G0R78B122",
+      "issuer_name": "BAIN CAP GSS INVT CORP",
+      "security_class": "UNIT 99/99/9999",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 30,
+      "raw_source": "G0R78B122 BAIN CAP GSS INVT CORP        UNIT 99/99/9999                        E"
+    },
+    {
+      "cusip": "G0R91M105",
+      "issuer_name": "AMERICAN DRIVE ACQUISITION C",
+      "security_class": "USD CL A ORD SHS",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 31,
+      "raw_source": "G0R91M105 AMERICAN DRIVE ACQUISITION C  USD CL A ORD SHS                       E"
+    },
+    {
+      "cusip": "G0R91M113",
+      "issuer_name": "AMERICAN DRIVE ACQUISITION C",
+      "security_class": "*W EXP 02/06/203",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 32,
+      "raw_source": "G0R91M113 AMERICAN DRIVE ACQUISITION C  *W EXP 02/06/203                       E"
+    },
+    {
+      "cusip": "G0R91M121",
+      "issuer_name": "AMERICAN DRIVE ACQUISITION C",
+      "security_class": "UNIT 12/04/2030",
+      "is_option": false,
+      "has_listed_option": false,
+      "status_flag": "",
+      "quarter": "2026q2",
+      "row_ordinal": 33,
+      "raw_source": "G0R91M121 AMERICAN DRIVE ACQUISITION C  UNIT 12/04/2030                        E"
+    }
+  ],
+  "raw_rows": [
+    [
+      "B38564108",
+      "CMB.TECH NV",
+      "SHS",
+      "",
+      true
+    ],
+    [
+      "B38564908",
+      "CMB.TECH NV",
+      "CALL",
+      "",
+      false
+    ],
+    [
+      "B38564958",
+      "CMB.TECH NV",
+      "PUT",
+      "",
+      false
+    ],
+    [
+      "B5950S113",
+      "MDXHEALTH SA",
+      "SHS NEW",
+      "",
+      false
+    ],
+    [
+      "B6S7WD106",
+      "NYXOAH S A",
+      "SHS",
+      "",
+      false
+    ],
+    [
+      "B9151N105",
+      "TITAN AMER SA",
+      "COMMON SHARES",
+      "",
+      true
+    ],
+    [
+      "B9151N905",
+      "TITAN AMER SA",
+      "CALL",
+      "",
+      false
+    ],
+    [
+      "B9151N955",
+      "TITAN AMER SA",
+      "PUT",
+      "",
+      false
+    ],
+    [
+      "D18190898",
+      "DEUTSCHE BK AG",
+      "NAMEN AKT",
+      "",
+      true
+    ],
+    [
+      "D18190908",
+      "DEUTSCHE BK AG",
+      "CALL",
+      "",
+      false
+    ],
+    [
+      "D18190958",
+      "DEUTSCHE BK AG",
+      "PUT",
+      "",
+      false
+    ],
+    [
+      "F21107101",
+      "CONSTELLIUM SE",
+      "CL A SHS",
+      "",
+      true
+    ],
+    [
+      "F21107901",
+      "CONSTELLIUM SE",
+      "CALL",
+      "",
+      false
+    ],
+    [
+      "F21107951",
+      "CONSTELLIUM SE",
+      "PUT",
+      "",
+      false
+    ],
+    [
+      "F92124100",
+      "TOTALENERGIES SE",
+      "ACT",
+      "",
+      true
+    ],
+    [
+      "F92124900",
+      "TOTALENERGIES SE",
+      "CALL",
+      "",
+      false
+    ],
+    [
+      "F92124950",
+      "TOTALENERGIES SE",
+      "PUT",
+      "",
+      false
+    ],
+    [
+      "G0R21F105",
+      "APEX TECH ACQUISITION INC",
+      "ORD SHS",
+      "ADDED",
+      false
+    ],
+    [
+      "G0R21F113",
+      "APEX TECH ACQUISITION INC",
+      "RIGHT 02/17/2027",
+      "ADDED",
+      false
+    ],
+    [
+      "G0R21F121",
+      "APEX TECH ACQUISITION INC",
+      "UNIT 99/99/9999",
+      "",
+      false
+    ],
+    [
+      "G0R30P136",
+      "AEON ACQUISITION I CORP",
+      "UNIT 01/30/2031",
+      "ADDED",
+      false
+    ],
+    [
+      "G0R38G104",
+      "ARMADA ACQUISITION CORP II",
+      "COM CL A",
+      "",
+      false
+    ],
+    [
+      "G0R38G112",
+      "ARMADA ACQUISITION CORP II",
+      "*W EXP 05/21/203",
+      "",
+      false
+    ],
+    [
+      "G0R38G120",
+      "ARMADA ACQUISITION CORP II",
+      "UNIT 05/21/2030",
+      "",
+      false
+    ],
+    [
+      "G0R38M101",
+      "ARMADA ACQUISITION CORP III",
+      "ORD SHS CL A",
+      "",
+      false
+    ],
+    [
+      "G0R38M119",
+      "ARMADA ACQUISITION CORP III",
+      "*W EXP 02/13/203",
+      "",
+      false
+    ],
+    [
+      "G0R38M127",
+      "ARMADA ACQUISITION CORP III",
+      "UNIT 02/13/2031",
+      "",
+      false
+    ],
+    [
+      "G0R78B106",
+      "BAIN CAP GSS INVT CORP",
+      "ORD CL A",
+      "",
+      false
+    ],
+    [
+      "G0R78B114",
+      "BAIN CAP GSS INVT CORP",
+      "*W EXP 01/01/202",
+      "",
+      false
+    ],
+    [
+      "G0R78B122",
+      "BAIN CAP GSS INVT CORP",
+      "UNIT 99/99/9999",
+      "",
+      false
+    ],
+    [
+      "G0R91M105",
+      "AMERICAN DRIVE ACQUISITION C",
+      "USD CL A ORD SHS",
+      "",
+      false
+    ],
+    [
+      "G0R91M113",
+      "AMERICAN DRIVE ACQUISITION C",
+      "*W EXP 02/06/203",
+      "",
+      false
+    ],
+    [
+      "G0R91M121",
+      "AMERICAN DRIVE ACQUISITION C",
+      "UNIT 12/04/2030",
+      "",
+      false
+    ],
+    [
+      "G00350119",
+      "LOBO TECHNOLOGIES LTD",
+      "ORD SHS CL A",
+      "",
+      false
+    ]
+  ]
+}

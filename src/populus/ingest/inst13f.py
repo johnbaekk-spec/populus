@@ -954,8 +954,13 @@ class InstCoverage:
     denominator: int
     numerator: int
     cover_failed_count: int
+    #: Default filings whose RESOLVED numerator exceeds their DECLARED total value
+    #: — a per-filing over-count that would let corpus coverage read above 100%
+    #: (F8). Any such filing makes coverage non-certifiable.
+    inflated_filing_count: int
     coverage: float | None
-    #: Measurable: nonzero denominator and no unknown (NULL) cover totals.
+    #: Measurable: nonzero denominator, no unknown (NULL) cover totals, and no
+    #: per-filing inflation.
     certifiable: bool
     #: Measurable AND at/above :data:`COVERAGE_THRESHOLD` — the gate readiness
     #: signal M2-3 consumes. Distinct from `certifiable` (QA-F6).
@@ -989,20 +994,123 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
         "   AND EXISTS (SELECT 1 FROM json_each(v_default_inst_filings.flags)"
         "               WHERE json_each.value = 'cover_failed')"
     ).fetchone()[0]
+    # A per-filing NON-INFLATION invariant (F8): no default filing's resolved
+    # numerator (Σ value_usd over its holdings with a security_id) may exceed its
+    # own DECLARED total. Without this, one filing whose holdings sum to more than
+    # its cover total (declared 100, resolved 120) drives corpus coverage above
+    # 1.0 — and a >100% ratio would sail past the ≥0.95 gate. Any inflated filing
+    # makes coverage non-certifiable; the aggregate ratio is never trusted while a
+    # component filing over-counts.
+    inflated = conn.execute(
+        """
+        SELECT COUNT(*) FROM (
+          SELECT f.filing_id, f.table_value_total_usd AS declared,
+                 COALESCE(SUM(CASE WHEN h.security_id IS NOT NULL
+                                   THEN h.value_usd END), 0) AS resolved
+          FROM v_default_inst_filings f
+          LEFT JOIN v_default_holdings h ON h.filing_id = f.filing_id
+          WHERE f.table_value_total_usd IS NOT NULL
+          GROUP BY f.filing_id, f.table_value_total_usd
+        ) WHERE resolved > declared
+        """
+    ).fetchone()[0]
     coverage = numerator / denominator if denominator > 0 else None
     # CERTIFIABLE means MEASURABLE, not "passes the gate" (LD-8): a nonzero
-    # denominator and no unknown cover totals. The ≥0.95 threshold is M2-3's
-    # publication decision, reported separately — folding it in here would
-    # mislabel a fully-measurable 94% as non-certifiable. (QA-F6)
-    certifiable = cover_failed == 0 and denominator > 0 and coverage is not None
+    # denominator, no unknown cover totals, and no per-filing inflation. The ≥0.95
+    # threshold is M2-3's publication decision, reported separately — folding it in
+    # here would mislabel a fully-measurable 94% as non-certifiable. (QA-F6)
+    certifiable = (
+        cover_failed == 0
+        and inflated == 0
+        and denominator > 0
+        and coverage is not None
+    )
     return InstCoverage(
         denominator=denominator,
         numerator=numerator,
         cover_failed_count=cover_failed,
+        inflated_filing_count=inflated,
         coverage=coverage,
         certifiable=certifiable,
         meets_threshold=bool(certifiable and coverage >= COVERAGE_THRESHOLD),
     )
+
+
+@dataclass(frozen=True)
+class PeriodCoverage:
+    """Per-``period_of_report`` value coverage (RUN M2-5 reporting; R9/R11).
+
+    Additive to the gate: the corpus-wide :func:`compute_coverage` decision and
+    its 0.95 threshold are UNCHANGED. These per-period figures are reported (on
+    a passing build) and used to NAME the quarters a withheld build did not cover
+    (``covered_by_list`` is False), never to re-key the PASS/FAIL decision.
+    """
+
+    period_of_report: str
+    denominator: int
+    numerator: int
+    coverage: float | None
+    #: Whether any definitional 13(f)-list interval spans this period.
+    covered_by_list: bool
+
+
+def _has_list_intervals(conn: sqlite3.Connection) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+            " AND name = 'security_list_intervals'"
+        ).fetchone()
+        is not None
+    )
+
+
+def compute_period_coverage(
+    conn: sqlite3.Connection,
+) -> tuple[PeriodCoverage, ...]:
+    """Value coverage per ``period_of_report`` (R9), sorted by period.
+
+    Same denominator/numerator definitions as :func:`compute_coverage`, grouped
+    by the reporting period. ``covered_by_list`` records whether a definitional
+    list interval spans the period, so a caller can name the quarters that have
+    no list (R11). Read-only; never mutates and never changes the gate.
+    """
+    denominators = dict(
+        conn.execute(
+            "SELECT period_of_report, COALESCE(SUM(table_value_total_usd), 0)"
+            " FROM v_default_inst_filings GROUP BY period_of_report"
+        ).fetchall()
+    )
+    numerators = dict(
+        conn.execute(
+            "SELECT period_of_report, COALESCE(SUM(value_usd), 0)"
+            " FROM v_default_holdings WHERE security_id IS NOT NULL"
+            " GROUP BY period_of_report"
+        ).fetchall()
+    )
+    has_list = _has_list_intervals(conn)
+    result: list[PeriodCoverage] = []
+    for period in sorted(denominators):
+        denominator = denominators[period]
+        numerator = numerators.get(period, 0)
+        coverage = numerator / denominator if denominator > 0 else None
+        covered_by_list = bool(
+            has_list
+            and conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM security_list_intervals"
+                " WHERE valid_from <= ? AND (valid_to IS NULL OR ? < valid_to))",
+                (period, period),
+            ).fetchone()[0]
+        )
+        result.append(
+            PeriodCoverage(
+                period_of_report=period,
+                denominator=denominator,
+                numerator=numerator,
+                coverage=coverage,
+                covered_by_list=covered_by_list,
+            )
+        )
+    return tuple(result)
 
 
 # --- ingest run ---------------------------------------------------------------

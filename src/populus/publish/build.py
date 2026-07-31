@@ -35,7 +35,7 @@ from populus import licenses
 from populus.amendments import ensure_views
 from populus.db import connect
 from populus.ingest import UnsafeArchivePathError
-from populus.ingest.inst13f import compute_coverage
+from populus.ingest.inst13f import compute_coverage, compute_period_coverage
 from populus.inst_agg import build_inst_agg
 from populus.normalize_inst import NORMALIZATION_VERSION as INST_NORMALIZATION_VERSION
 from populus.publish import atomic_write_bytes
@@ -1409,6 +1409,9 @@ class BuildReport:
     inst_withheld: dict | None = None
     # The inst logical digest when the inst module published (R5); None otherwise.
     inst_logical_digest: str | None = None
+    # Per-period value-coverage breakdown (RUN M2-5, R9): reporting only, present
+    # whenever inst data was measured (pass or withheld); None otherwise.
+    inst_period_coverage: list[dict] | None = None
 
 
 def _report_from_manifest(
@@ -1679,6 +1682,7 @@ def run_build(
         inst_logical: str | None = None
         inst_watermarks: dict | None = None
         inst_withheld: dict | None = None
+        inst_period_coverage: list[dict] | None = None
         if inst_present:
             build_inst_agg(snapshot, inst_agg_path, ingested_at=created_at)
             # Fail-closed gate (OWNER DECISION 2026-07-24): consume the reused
@@ -1687,6 +1691,20 @@ def run_build(
             # widened by FTD inference. Coverage is never re-keyed off
             # `total IS NULL`.
             coverage = compute_coverage(snapshot)
+            # Per-period figures are REPORTING ONLY (R9/R11): the corpus-wide
+            # gate decision above is unchanged. They ride along on the report and,
+            # for a withheld build, name the quarters that carry no list coverage.
+            period_coverage = compute_period_coverage(snapshot)
+            inst_period_coverage = [
+                {
+                    "period_of_report": period.period_of_report,
+                    "denominator": period.denominator,
+                    "numerator": period.numerator,
+                    "coverage": period.coverage,
+                    "covered_by_list": period.covered_by_list,
+                }
+                for period in period_coverage
+            ]
             if not coverage.meets_threshold:
                 if coverage.cover_failed_count > 0:
                     reason = "cover_failed"
@@ -1701,6 +1719,15 @@ def run_build(
                     "coverage": coverage.coverage,
                     "cover_failed_count": coverage.cover_failed_count,
                     "certifiable": coverage.certifiable,
+                    # R11: name the uncovered quarters (periods with no covering
+                    # definitional list). Additive — the typed `reason` set and
+                    # the 0.95 threshold are unchanged; an uncovered quarter keeps
+                    # exactly today's FTD-only arithmetic and fails closed.
+                    "uncovered_quarters": [
+                        period.period_of_report
+                        for period in period_coverage
+                        if not period.covered_by_list
+                    ],
                 }
             else:
                 agg_conn = connect(str(inst_agg_path))
@@ -1827,6 +1854,7 @@ def run_build(
         reconciled=reconciled.completed,
         inst_withheld=inst_withheld,
         inst_logical_digest=inst_logical,
+        inst_period_coverage=inst_period_coverage,
     )
 
 

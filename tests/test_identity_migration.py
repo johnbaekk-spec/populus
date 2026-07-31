@@ -20,10 +20,12 @@ import pytest
 
 from populus.db import connect, init_db
 from populus.identity.bootstrap import bootstrap_ftd, parse_ftd
+from populus.identity.list13f_seed import bootstrap_13f_list
 from populus.identity.registry import (
     SECURITY_ID_REFERENCING_TABLES,
     anchor,
     load_identity_registry,
+    parse_identity_registry,
     provisional_security_id,
     reconcile_identity_registry,
     reconcile_only,
@@ -31,6 +33,7 @@ from populus.identity.registry import (
     resolve_security_successor,
     resolve_superseded,
 )
+from populus.parse.list13f import parse_list13f_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "inst"
 IDENTITY_FIXTURES = FIXTURES / "identity"
@@ -625,4 +628,113 @@ def test_cutting_never_violates_the_global_no_overlap_index(tmp_path):
     ).fetchall()
     assert starts == []
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
+
+
+# --- RUN M2-5: definitional list intervals join the migration -----------------
+
+
+def _list_line(cusip, name="ISSUER", cls="COM"):
+    row = cusip.ljust(9)[:9] + " " + name.ljust(30)[:30] + cls.ljust(27)[:27] + "   " + " " * 9 + "E"
+    assert len(row) == 80
+    return row
+
+
+def _seed_list(conn, quarter, cusips, registry, *, sha="s1"):
+    """Reconcile then seed a quarter's list — the bootstrap's list path."""
+    parsed = parse_list13f_text("\n".join(_list_line(c) for c in cusips) + "\n", quarter=quarter)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        mutations = reconcile_identity_registry(conn, registry)
+        bootstrap_13f_list(
+            conn, parsed, quarter=quarter, registry=registry,
+            source_meta={"source_url": "u", "sha256": sha, "retrieved_at": "t", "raw_path": "p"},
+            mutations=mutations,
+        )
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return mutations
+
+
+def _list_snapshot(conn):
+    # EVERY persisted column (F15): the earlier snapshot omitted source_url,
+    # list_sha256, retrieved_at, raw_path, row_ordinal and the parser/normalization
+    # versions, so a recut that corrupted any of them converged "equal" anyway.
+    return conn.execute(
+        "SELECT security_id, id_type, value, valid_from, valid_to, quarter,"
+        " issuer_name, security_class, is_option, status_flag, provenance,"
+        " confidence, review_state, license_id, source_url, list_sha256,"
+        " retrieved_at, raw_path, row_ordinal, parser_version,"
+        " normalization_version, raw"
+        " FROM security_list_intervals ORDER BY value, valid_from"
+    ).fetchall()
+
+
+def _mid_quarter_split_registry():
+    # 2026q1 is [2026-01-01, 2026-04-01); split 037833100 at 2026-02-15.
+    return parse_identity_registry(
+        """
+classes:
+  - security_id: sec:apple-before
+    class: equity
+    identifiers: [{id_type: cusip, value: "037833100", to: "2026-02-15"}]
+    note: "apple before a mid-quarter reassignment introduced by the revision"
+    review_state: reviewed
+  - security_id: sec:apple-after
+    class: equity
+    identifiers: [{id_type: cusip, value: "037833100", from: "2026-02-15"}]
+    note: "apple after the mid-quarter reassignment"
+    review_state: reviewed
+continuities: []
+"""
+    )
+
+
+def test_list_seed_then_revise_converges_with_revise_then_seed(tmp_path):
+    # The lifecycle half of Locked Decision 6: a later securities.yaml revision
+    # recuts security_list_intervals so seed-then-revise ends bit-identical to a
+    # clean revise-then-seed — INCLUDING a mid-quarter split the revision adds.
+    revised = _mid_quarter_split_registry()
+
+    seed_then_revise = _fresh_db(tmp_path, "seed_then_revise.db")
+    _seed_list(seed_then_revise, "2026q1", ["037833100"], empty_registry())
+    reconcile_only(seed_then_revise, revised)
+
+    revise_then_seed = _fresh_db(tmp_path, "revise_then_seed.db")
+    _seed_list(revise_then_seed, "2026q1", ["037833100"], revised)
+
+    assert _list_snapshot(seed_then_revise) == _list_snapshot(revise_then_seed)
+    # The recut preserves every §5.1 provenance column verbatim on BOTH cut pieces
+    # (F15): only owner, interval, review verdict and the deterministic raw change.
+    provenance = seed_then_revise.execute(
+        "SELECT DISTINCT source_url, list_sha256, quarter, parser_version,"
+        " normalization_version FROM security_list_intervals"
+    ).fetchall()
+    assert provenance == [("u", "s1", "2026q1", "list13f-1.0.0", "list13f-norm-1.0.0")]
+    # The interval was cut at the boundary; each side resolves to its own owner
+    # (the quarter-end owner is never back-filled — G14).
+    assert resolve_cusip(seed_then_revise, "037833100", "2026-01-15") == "sec:apple-before"
+    assert resolve_cusip(seed_then_revise, "037833100", "2026-03-31") == "sec:apple-after"
+    for conn in (seed_then_revise, revise_then_seed):
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        conn.close()
+
+
+def test_post_migration_same_sha_reseed_is_replay_zero(tmp_path):
+    # The migration owns the recut; a same-SHA reseed AFTER it writes nothing,
+    # because the rows already reflect the migrated (cut) state.
+    conn = _fresh_db(tmp_path, "replay.db")
+    _seed_list(conn, "2026q1", ["037833100"], empty_registry(), sha="fixed")
+    reconcile_only(conn, _mid_quarter_split_registry())
+    before = _list_snapshot(conn)
+
+    mutations = _seed_list(conn, "2026q1", ["037833100"], _mid_quarter_split_registry(), sha="fixed")
+
+    assert mutations.list_intervals_inserted == 0
+    assert mutations.list_intervals_removed == 0
+    assert mutations.list_intervals_cut == 0
+    assert mutations.list_intervals_moved == 0
+    assert _list_snapshot(conn) == before  # nothing changed
     conn.close()

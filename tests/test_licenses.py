@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from populus.licenses import (
+    counsel_flags,
     ingestible_ids,
     load_register,
     register_ids,
@@ -19,12 +20,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The exact §15.2 register entry set. `sec-edgar` and `sec-ftd` are the RUN
 # M2-1 endpoint-level determinations under the retained `us-govworks-sec`
-# umbrella — written before any SEC ingest path or SEC-derived fixture (G11).
+# umbrella; `sec-13f-list` is the RUN M2-5 definitional-list determination —
+# each written before any ingest path or fixture derived from it exists (G11).
 SECTION_15_2_IDS = {
     "us-congress-disclosures",
     "us-govworks-sec",
     "sec-edgar",
     "sec-ftd",
+    "sec-13f-list",
     "us-govworks-treasury",
     "us-govworks-cftc",
     "bls-tos",
@@ -81,11 +84,15 @@ def test_reference_only_and_placeholders_not_ingestible():
 
 
 # Determination dates are pinned per phase: the M1 entries were determined on
-# the RUN-4 register date, the two M2 endpoint-level entries on the M2 phase-
-# entry date (M2-CONTRACT §1 live verification, 2026-07-24).
+# the RUN-4 register date, the two M2-1 endpoint-level entries on the M2 phase-
+# entry date (M2-CONTRACT §1 live verification, 2026-07-24), and the RUN M2-5
+# definitional-list entry on its own run date (live-verified 2026-07-25, cached
+# and determined 2026-07-30).
 M1_REGISTER_DATE = "2026-07-23"
 M2_REGISTER_DATE = "2026-07-24"
+M2_5_REGISTER_DATE = "2026-07-30"
 M2_ENTRY_IDS = {"sec-edgar", "sec-ftd"}
+M2_5_ENTRY_IDS = {"sec-13f-list"}
 
 
 def _one_quarter_later(iso: str) -> str:
@@ -105,11 +112,12 @@ def _one_quarter_later(iso: str) -> str:
 def test_register_dates_per_quarterly_cadence():
     register = load_register()
     for entry in register["entries"]:
-        expected_determined = (
-            M2_REGISTER_DATE
-            if entry["license_id"] in M2_ENTRY_IDS
-            else M1_REGISTER_DATE
-        )
+        if entry["license_id"] in M2_5_ENTRY_IDS:
+            expected_determined = M2_5_REGISTER_DATE
+        elif entry["license_id"] in M2_ENTRY_IDS:
+            expected_determined = M2_REGISTER_DATE
+        else:
+            expected_determined = M1_REGISTER_DATE
         assert entry["determination_date"] == expected_determined, entry["license_id"]
         # The invariant, not a second hard-coded table: review_by is exactly one
         # quarter after the determination, for every entry in every phase.
@@ -163,6 +171,51 @@ def test_sec_ftd_records_the_no_inference_condition():
     assert "point-in-time settlement-date observations" in restrictions
     permitted = " ".join(by_id["sec-ftd"]["permitted_uses"])
     assert "test fixture" in permitted
+
+
+def test_sec_13f_list_counsel_flag_and_cusip_notice():
+    # R1: the definitional-list entry carries the CUSIP-redistribution counsel
+    # flag (queryable) and the verbatim CGS/ABA notice, and both survive into the
+    # generated documents that travel with the data.
+    register = load_register()
+    by_id = {entry["license_id"]: entry for entry in register["entries"]}
+    entry = by_id["sec-13f-list"]
+    assert entry["status"] == "determined"
+    assert entry["ingestible"] is True
+    assert entry["counsel_flags"] == ["cusip-redistribution"]
+    assert counsel_flags(register, "sec-13f-list") == ["cusip-redistribution"]
+    notice = " ".join(entry["required_notices"])
+    assert "No redistribution without permission of CGS" in notice
+    assert "American Bankers Association" in notice
+    # The flag and the verbatim notice both render into DATA-LICENSE and NOTICE.
+    rendered = render_data_license(register)
+    assert "`cusip-redistribution`" in rendered
+    assert "No redistribution without permission of CGS" in rendered
+    notice_doc = render_notice(register)
+    assert "COUNSEL-GATE: cusip-redistribution" in notice_doc
+    # An entry that raises no counsel gate has no flags (the field is optional).
+    assert counsel_flags(register, "sec-ftd") == []
+
+
+def test_validate_register_rejects_malformed_counsel_flags():
+    # The counsel_flags field, when present, must be a list of non-empty strings.
+    # Mutation guard: the well-formed entry validates; each malformed shape is a
+    # named defect (so a validator that dropped the check would fail here).
+    register = load_register()
+    good = {entry["license_id"]: entry for entry in register["entries"]}["sec-13f-list"]
+    base = {"register_version": register["register_version"], "entries": [dict(good)]}
+    assert validate_register(base) == []
+    for bad in ("cusip-redistribution", ["ok", ""], ["ok", 3], []):
+        broken = {
+            "register_version": register["register_version"],
+            "entries": [dict(good, license_id="x", counsel_flags=bad)],
+        }
+        errors = validate_register(broken)
+        # An empty list is permitted (it names no gate); the others are defects.
+        if bad == []:
+            assert not any("counsel_flags" in e for e in errors)
+        else:
+            assert any("counsel_flags" in e for e in errors), bad
 
 
 def test_validate_register_catches_defects():
