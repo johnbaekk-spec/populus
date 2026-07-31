@@ -1143,6 +1143,150 @@ def inst_pair_invariant_errors(conn: sqlite3.Connection) -> list[str]:
     return errors
 
 
+# --- cover reconciliation: tolerance + conflict exclusion (M2-7) -------------
+#
+# Normative: docs/build/M2-7-cover-tolerance-spec.md. Owner decision 2026-07-31
+# ("Tolerance + flag"). A filing declares a cover total T and files an info table
+# whose RESOLVED rows sum to S. S > T by a dollar is a printed-rounding artefact;
+# S > T by half the portfolio is the filer's own two numbers disagreeing. M2-3
+# treated both as fatal, which de-certified the first real 1,000-filer corpus
+# over $19 of rounding.
+
+
+#: tol(T) = max($1,000, 0.001*T). The floor keeps a small filer's cents from
+#: being a conflict; the 0.1% term keeps a $10B filer's rounded cover line from
+#: being one. Evaluated WITHOUT floating point and WITHOUT any multiplication
+#: (spec §I1): `S - T <= max(FLOOR, T / DIVISOR)` with integer division.
+#:
+#: The earlier form `1000*(S-T) <= max(FLOOR*1000, T)` was algebraically right
+#: and arithmetically unsafe: `table_value_total_usd` is a signed 64-bit column,
+#: so SQLite PROMOTES `1000 * delta` to REAL once the product passes ~9.2e18 —
+#: reintroducing floating point inside the predicate that exists to avoid it
+#: (external review F5). Dividing instead of multiplying cannot overflow, and it
+#: is EXACTLY equivalent for integer deltas: with M = max(FLOOR, T/DIVISOR) and
+#: M' = max(FLOOR, T // DIVISOR) we always have M' <= M < M' + 1, and no integer
+#: lies in (M', M]. Proof and the domain are recorded in the spec.
+COVER_TOLERANCE_FLOOR_USD = 1_000
+COVER_TOLERANCE_DIVISOR = 1_000
+
+#: The three exhaustive, mutually exclusive dispositions (spec §Domain).
+COVER_EXACT = "cover_exact"
+COVER_ROUNDING = "cover_rounding"
+COVER_CONFLICT = "cover_conflict"
+
+def cover_tolerance_usd(declared: int) -> int:
+    """tol(T) as a whole number of dollars — max($1,000, floor(T/1,000)).
+
+    Integer division, never `0.001 * T`: the fractional part can never admit or
+    exclude an integer delta (see the module note), and float has no business in
+    a predicate evaluated at $10^12 scale by two different engines.
+    """
+    return max(COVER_TOLERANCE_FLOOR_USD, declared // COVER_TOLERANCE_DIVISOR)
+
+
+def within_cover_tolerance(declared: int, resolved: int) -> bool:
+    """Whether ``resolved`` is within tol(``declared``) of it (spec §I1).
+
+    True for every non-inflating filing (S <= T) and for inflation up to and
+    INCLUDING the tolerance — the boundary is closed on the tolerant side.
+    """
+    return resolved - declared <= cover_tolerance_usd(declared)
+
+
+def classify_cover(declared: int, resolved: int) -> str:
+    """Classify one filing's cover reconciliation. ``declared`` must be known —
+    a NULL total is UNKNOWN, which is `cover_failed`'s fail-closed business, not
+    this rule's (spec §Rule 1)."""
+    if resolved <= declared:
+        return COVER_EXACT
+    return COVER_ROUNDING if within_cover_tolerance(declared, resolved) else COVER_CONFLICT
+
+
+@dataclass(frozen=True)
+class CoverDisposition:
+    """One filing whose resolved holdings exceed its declared cover total."""
+
+    filing_id: str
+    declared_usd: int
+    resolved_usd: int
+    disposition: str
+
+    @property
+    def delta_usd(self) -> int:
+        return self.resolved_usd - self.declared_usd
+
+
+#: The populations this reconciliation may be asked about. `view` is interpolated
+#: into SQL, so it is a closed set, never caller text.
+_COVER_SCOPE_VIEWS = ("v_inst_reconciled_filings", "v_default_inst_filings")
+
+_PER_FILING_COVER_SQL = """
+SELECT f.filing_id, f.table_value_total_usd AS declared,
+       (SELECT COALESCE(SUM(h.value_usd), 0)
+        FROM inst_holdings h
+        WHERE h.filing_id = f.filing_id AND h.security_id IS NOT NULL) AS resolved
+FROM {view} f
+WHERE f.table_value_total_usd IS NOT NULL
+ORDER BY f.filing_id
+"""
+
+
+def cover_dispositions(
+    conn: sqlite3.Connection, *, view: str = "v_inst_reconciled_filings"
+) -> tuple[CoverDisposition, ...]:
+    """Every filing in *view* whose RESOLVED holdings exceed its DECLARED total,
+    classified and sorted by ``filing_id`` (spec §I8).
+
+    Default scope is the RECONCILED population — restatement survivors with
+    affiliation applied, BEFORE the cover predicate — so a conflict that
+    `v_default_inst_filings` has already excluded can still be named (§I5).
+    Pass ``view="v_default_inst_filings"`` for the fail-closed check (§I6).
+    """
+    if view not in _COVER_SCOPE_VIEWS:
+        raise ValueError(f"unknown cover-reconciliation scope: {view!r}")
+    rows = conn.execute(_PER_FILING_COVER_SQL.format(view=view)).fetchall()  # nosec B608
+    return tuple(
+        CoverDisposition(
+            filing_id=filing_id,
+            declared_usd=declared,
+            resolved_usd=resolved,
+            disposition=classify_cover(declared, resolved),
+        )
+        for filing_id, declared, resolved in rows
+        if resolved > declared
+    )
+
+
+#: Flags DERIVED from the current cover reconciliation. Like the affiliation
+#: flags they are recomputed from scratch, so they are cleared first: a filing
+#: whose amendment brought its table back into line must not keep a stale
+#: `cover_conflict`.
+_COVER_DERIVED_FLAGS = (COVER_ROUNDING, COVER_CONFLICT)
+
+
+def mark_cover_dispositions(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Stamp `cover_rounding` / `cover_conflict` on the filings that carry them;
+    return ``(rounding, conflicts)``.
+
+    ANNOTATION ONLY (spec §I7). No decision anywhere reads these flags: the
+    exclusion is derived arithmetic in `v_default_inst_filings` and in
+    :func:`cover_dispositions`, so a database that has never run this pass — an
+    already-ingested corpus, a read-only snapshot — classifies, excludes and
+    reports identically. The flag exists so a filing carries, in the database,
+    the reason it left the default population.
+    """
+    for flag in _COVER_DERIVED_FLAGS:
+        _drop_flag(conn, None, flag)
+    rounding = conflicts = 0
+    for disposition in cover_dispositions(conn):
+        _add_flag(conn, disposition.filing_id, disposition.disposition)
+        if disposition.disposition == COVER_CONFLICT:
+            conflicts += 1
+        else:
+            rounding += 1
+    return rounding, conflicts
+
+
 # --- reconciliation + coverage inputs (R16) ----------------------------------
 
 
@@ -1150,37 +1294,114 @@ def inst_pair_invariant_errors(conn: sqlite3.Connection) -> list[str]:
 #: ENFORCED by M2-3 at publish time. `certifiable` is measurability only.
 COVERAGE_THRESHOLD = 0.95
 
+#: ONE filing's denominator contribution, as SQL over an alias `f` of
+#: ``v_default_inst_filings``: max(declared, resolved), and 0 for an unknown
+#: (NULL) total. Shared verbatim by :func:`compute_coverage` and
+#: :func:`compute_period_coverage` — the per-period figures previously summed the
+#: DECLARED total alone, so a tolerated rounding filing printed a period coverage
+#: of 100.1% beside a corpus coverage of 100.0% (external review F1). Anything
+#: that reports a coverage ratio uses this term; the two can no longer drift
+#: because there is only one of them (spec §I3/Rule 5).
+_DENOMINATOR_TERM = """
+            CASE WHEN f.table_value_total_usd IS NULL THEN 0
+                 ELSE MAX(f.table_value_total_usd,
+                          (SELECT COALESCE(SUM(h.value_usd), 0)
+                           FROM inst_holdings h
+                           WHERE h.filing_id = f.filing_id
+                             AND h.security_id IS NOT NULL))
+            END"""
+
 
 @dataclass(frozen=True)
 class InstCoverage:
     denominator: int
     numerator: int
     cover_failed_count: int
-    #: Default filings whose RESOLVED numerator exceeds their DECLARED total value
-    #: — a per-filing over-count that would let corpus coverage read above 100%
-    #: (F8). Any such filing makes coverage non-certifiable.
+    #: UNRESOLVED cover conflicts: default-view filings whose RESOLVED numerator
+    #: exceeds their DECLARED total beyond tol(T) — a per-filing over-count that
+    #: would let corpus coverage read above 100% (F8). M2-7 makes this
+    #: structurally zero by excluding conflicts from the view (§I4); it is kept as
+    #: an independent fail-closed check, so a stale view or a hand-built database
+    #: still cannot certify an over-counting filing (§I6).
     inflated_filing_count: int
     coverage: float | None
     #: Measurable: nonzero denominator, no unknown (NULL) cover totals, and no
-    #: per-filing inflation.
+    #: unresolved cover conflict.
     certifiable: bool
     #: Measurable AND at/above :data:`COVERAGE_THRESHOLD` — the gate readiness
     #: signal M2-3 consumes. Distinct from `certifiable` (QA-F6).
     meets_threshold: bool = False
+    #: M2-7 dispositions, REPORTED so no exclusion is silent (§I5). Rounding
+    #: filings stay in the corpus (their denominator contribution is max(S,T));
+    #: conflict filings are excluded from numerator, denominator and the default
+    #: view, and are named here by `filing_id`.
+    cover_rounding_count: int = 0
+    cover_rounding_max_delta_usd: int = 0
+    cover_conflict_filing_ids: tuple[str, ...] = ()
+
+    @property
+    def cover_conflict_count(self) -> int:
+        return len(self.cover_conflict_filing_ids)
+
+    @property
+    def disposition_line(self) -> str:
+        return format_cover_dispositions(
+            rounding_count=self.cover_rounding_count,
+            rounding_max_delta_usd=self.cover_rounding_max_delta_usd,
+            conflict_filing_ids=self.cover_conflict_filing_ids,
+        )
+
+
+def format_cover_dispositions(
+    *,
+    rounding_count: int,
+    rounding_max_delta_usd: int,
+    conflict_filing_ids: Sequence[str],
+) -> str:
+    """The ONE rendering of the cover dispositions, for every surface that
+    prints a coverage number (spec §I5/Rule 6).
+
+    Ingest summary, bulk summary, both acceptance scripts and the CLI's build and
+    publish output all call this, so no surface can quietly omit the exclusions —
+    which four of them did until external review F3. Conflicts are named by
+    ``filing_id``; a bare count is not an explanation.
+    """
+    named = f": {', '.join(conflict_filing_ids)}" if conflict_filing_ids else ""
+    return (
+        f"cover_rounding {rounding_count} (max delta {rounding_max_delta_usd})"
+        f" | cover_conflict EXCLUDED {len(conflict_filing_ids)}{named}"
+    )
+
+
+def cover_dispositions_from_mapping(record: Mapping) -> str:
+    """:func:`format_cover_dispositions` over a build report / gate record dict,
+    tolerating an older record that predates these keys."""
+    return format_cover_dispositions(
+        rounding_count=record.get("cover_rounding_count", 0),
+        rounding_max_delta_usd=record.get("cover_rounding_max_delta_usd", 0),
+        conflict_filing_ids=record.get("cover_conflict_filing_ids") or (),
+    )
 
 
 def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
     """The never-inflated coverage inputs the M2 ≥95% gate consumes (R16/LD-8).
 
-    Denominator = Σ ``table_value_total_usd`` over ``v_default_inst_filings``
+    Denominator = Σ ``max(declared, resolved)`` over ``v_default_inst_filings``
     (incl. info-table-failed filings with a known total). Numerator = Σ
     ``value_usd`` over ``v_default_holdings`` with a non-null ``security_id``.
     Any in-scope default filing with a NULL total (a cover-failed filing of
     unknown value) makes coverage non-certifiable rather than shrinking the
     denominator (F7).
+
+    The denominator banks the LARGER of the filer's two numbers per filing
+    (M2-7 §I3): for the overwhelming majority (S <= T) that is the declared total
+    and the arithmetic is byte-identical to M2-6, while a within-tolerance
+    rounding filing contributes S rather than T, so it can never put more into
+    the numerator than into the denominator. Conflicts beyond tolerance are not
+    here at all — ``v_default_inst_filings`` has already excluded them (§I4).
     """
     denominator = conn.execute(
-        "SELECT COALESCE(SUM(table_value_total_usd), 0) FROM v_default_inst_filings"
+        f"SELECT COALESCE(SUM({_DENOMINATOR_TERM}), 0) FROM v_default_inst_filings f"
     ).fetchone()[0]
     numerator = conn.execute(
         "SELECT COALESCE(SUM(value_usd), 0) FROM v_default_holdings"
@@ -1196,31 +1417,32 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
         "   AND EXISTS (SELECT 1 FROM json_each(v_default_inst_filings.flags)"
         "               WHERE json_each.value = 'cover_failed')"
     ).fetchone()[0]
-    # A per-filing NON-INFLATION invariant (F8): no default filing's resolved
-    # numerator (Σ value_usd over its holdings with a security_id) may exceed its
-    # own DECLARED total. Without this, one filing whose holdings sum to more than
-    # its cover total (declared 100, resolved 120) drives corpus coverage above
-    # 1.0 — and a >100% ratio would sail past the ≥0.95 gate. Any inflated filing
-    # makes coverage non-certifiable; the aggregate ratio is never trusted while a
-    # component filing over-counts.
-    inflated = conn.execute(
-        """
-        SELECT COUNT(*) FROM (
-          SELECT f.filing_id, f.table_value_total_usd AS declared,
-                 COALESCE(SUM(CASE WHEN h.security_id IS NOT NULL
-                                   THEN h.value_usd END), 0) AS resolved
-          FROM v_default_inst_filings f
-          LEFT JOIN v_default_holdings h ON h.filing_id = f.filing_id
-          WHERE f.table_value_total_usd IS NOT NULL
-          GROUP BY f.filing_id, f.table_value_total_usd
-        ) WHERE resolved > declared
-        """
-    ).fetchone()[0]
+    # The per-filing NON-INFLATION invariant (F8), with M2-7's tolerance: no
+    # default filing's resolved numerator (Σ value_usd over its holdings with a
+    # security_id) may exceed its own DECLARED total by more than tol(T). Without
+    # this, one filing whose holdings sum to far more than its cover total
+    # (declared 100, resolved 120) drives corpus coverage above 1.0 — and a >100%
+    # ratio would sail past the ≥0.95 gate.
+    #
+    # Reported over the RECONCILED population, so an excluded conflict is still
+    # named (§I5); COUNTED for certifiability over the DEFAULT view, where a
+    # conflict is structurally impossible — that count staying in the certifiable
+    # test is the fail-closed backstop against a stale view (§I6).
+    dispositions = cover_dispositions(conn)
+    rounding = [d for d in dispositions if d.disposition == COVER_ROUNDING]
+    conflicts = [d for d in dispositions if d.disposition == COVER_CONFLICT]
+    unresolved_conflicts = [
+        d
+        for d in cover_dispositions(conn, view="v_default_inst_filings")
+        if d.disposition == COVER_CONFLICT
+    ]
+    inflated = len(unresolved_conflicts)
     coverage = numerator / denominator if denominator > 0 else None
     # CERTIFIABLE means MEASURABLE, not "passes the gate" (LD-8): a nonzero
-    # denominator, no unknown cover totals, and no per-filing inflation. The ≥0.95
-    # threshold is M2-3's publication decision, reported separately — folding it in
-    # here would mislabel a fully-measurable 94% as non-certifiable. (QA-F6)
+    # denominator, no unknown cover totals, and no UNRESOLVED cover conflict. The
+    # ≥0.95 threshold is M2-3's publication decision, reported separately —
+    # folding it in here would mislabel a fully-measurable 94% as
+    # non-certifiable. (QA-F6)
     certifiable = (
         cover_failed == 0
         and inflated == 0
@@ -1235,6 +1457,9 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
         coverage=coverage,
         certifiable=certifiable,
         meets_threshold=bool(certifiable and coverage >= COVERAGE_THRESHOLD),
+        cover_rounding_count=len(rounding),
+        cover_rounding_max_delta_usd=max((d.delta_usd for d in rounding), default=0),
+        cover_conflict_filing_ids=tuple(d.filing_id for d in conflicts),
     )
 
 
@@ -1272,14 +1497,18 @@ def compute_period_coverage(
     """Value coverage per ``period_of_report`` (R9), sorted by period.
 
     Same denominator/numerator definitions as :func:`compute_coverage`, grouped
-    by the reporting period. ``covered_by_list`` records whether a definitional
-    list interval spans the period, so a caller can name the quarters that have
-    no list (R11). Read-only; never mutates and never changes the gate.
+    by the reporting period — literally the same SQL term (``_DENOMINATOR_TERM``),
+    applied PER FILING before the grouping. Summing the declared total here while
+    the corpus banked max(T,S) let a tolerated rounding filing report a period
+    coverage above 100% (external review F1); a period figure is a coverage
+    figure, and §I3 admits no exceptions. ``covered_by_list`` records whether a
+    definitional list interval spans the period, so a caller can name the
+    quarters that have no list (R11). Read-only; never mutates, never gates.
     """
     denominators = dict(
         conn.execute(
-            "SELECT period_of_report, COALESCE(SUM(table_value_total_usd), 0)"
-            " FROM v_default_inst_filings GROUP BY period_of_report"
+            f"SELECT f.period_of_report, COALESCE(SUM({_DENOMINATOR_TERM}), 0)"
+            " FROM v_default_inst_filings f GROUP BY f.period_of_report"
         ).fetchall()
     )
     numerators = dict(
@@ -1385,6 +1614,11 @@ def finalize_inst_ingest(conn: sqlite3.Connection) -> FinalizeReport:
     """
     amendments_total, amendments_linked = link_inst_amendments(conn)
     affiliated_covered, affiliated_mutual = mark_affiliated_coverage(conn)
+    # M2-7 annotation pass: stamps `cover_rounding` / `cover_conflict` so a
+    # filing carries the reason it left the default population. Ordered after
+    # affiliation because it classifies the reconciled (post-affiliation)
+    # population; it feeds NO decision, so compute_coverage is unaffected by it.
+    mark_cover_dispositions(conn)
     invariant_errors = tuple(inst_pair_invariant_errors(conn))
     coverage = compute_coverage(conn)
     return FinalizeReport(
@@ -1715,6 +1949,9 @@ def format_summary(report: InstIngestReport) -> str:
             f" | meets {COVERAGE_THRESHOLD:.0%} gate"
             f" {'yes' if coverage.meets_threshold else 'no'}"
         )
+        # M2-7 §I5: never state a coverage number without stating what was
+        # tolerated and what was excluded to produce it.
+        lines.append(f"  {coverage.disposition_line}")
     if report.invariant_errors:
         lines.append(f"  INVARIANT ERRORS ({len(report.invariant_errors)}):")
         lines.extend(f"    {e}" for e in report.invariant_errors[:5])

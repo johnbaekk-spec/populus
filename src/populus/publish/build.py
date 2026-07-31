@@ -1412,6 +1412,12 @@ class BuildReport:
     # Per-period value-coverage breakdown (RUN M2-5, R9): reporting only, present
     # whenever inst data was measured (pass or withheld); None otherwise.
     inst_period_coverage: list[dict] | None = None
+    # The M2-7 cover-reconciliation dispositions behind the coverage numbers:
+    # {cover_rounding_count, cover_rounding_max_delta_usd, cover_conflict_count,
+    # cover_conflict_filing_ids}. Present whenever inst data was measured — a
+    # PASSING build states what it tolerated and excluded too, not only a
+    # withheld one (spec §I5). Reporting only; the gate is unchanged.
+    inst_cover_dispositions: dict | None = None
 
 
 def _report_from_manifest(
@@ -1673,9 +1679,17 @@ def run_build(
         # no inst_agg.db asset). The recovery journal stays congress-scoped
         # either way (R3); the inst asset is a separate staged Release asset.
         inst_agg_path = assets_dir / INST_DB_ARTIFACT
+        # Presence is asked of the RECONCILED population, never of the default
+        # view (M2-7, external review F2). The default view now excludes
+        # cover-conflict filings, so a corpus made entirely of conflicts would
+        # read as "no institutional data ingested" and the build would report an
+        # ABSENCE where the truth is a non-measurable corpus with named
+        # exclusions. Data was ingested; it was withheld. The withheld payload
+        # below names it. A corpus with no inst rows at all still reads absent,
+        # so the M1-only build stays byte-identical.
         inst_present = (
             snapshot.execute(
-                "SELECT 1 FROM v_default_inst_filings LIMIT 1"
+                "SELECT 1 FROM v_inst_reconciled_filings LIMIT 1"
             ).fetchone()
             is not None
         )
@@ -1683,6 +1697,7 @@ def run_build(
         inst_watermarks: dict | None = None
         inst_withheld: dict | None = None
         inst_period_coverage: list[dict] | None = None
+        inst_cover_dispositions: dict | None = None
         if inst_present:
             build_inst_agg(snapshot, inst_agg_path, ingested_at=created_at)
             # Fail-closed gate (OWNER DECISION 2026-07-24): consume the reused
@@ -1705,6 +1720,15 @@ def run_build(
                 }
                 for period in period_coverage
             ]
+            # M2-7 §I5: the dispositions behind the numbers, on EVERY measured
+            # build. A published coverage figure that does not say which filings
+            # were excluded to produce it is the silence the rule forbids.
+            inst_cover_dispositions = {
+                "cover_rounding_count": coverage.cover_rounding_count,
+                "cover_rounding_max_delta_usd": coverage.cover_rounding_max_delta_usd,
+                "cover_conflict_count": coverage.cover_conflict_count,
+                "cover_conflict_filing_ids": list(coverage.cover_conflict_filing_ids),
+            }
             if not coverage.meets_threshold:
                 if coverage.cover_failed_count > 0:
                     reason = "cover_failed"
@@ -1728,6 +1752,14 @@ def run_build(
                         for period in period_coverage
                         if not period.covered_by_list
                     ],
+                    # M2-7 §I5: the withheld-reason surface names the excluded
+                    # conflicts too. A `not_measurable` build must be readable as
+                    # "these filings, by filing_id", never as an unexplained no.
+                    "cover_rounding_count": coverage.cover_rounding_count,
+                    "cover_rounding_max_delta_usd": coverage.cover_rounding_max_delta_usd,
+                    "cover_conflict_filing_ids": list(
+                        coverage.cover_conflict_filing_ids
+                    ),
                 }
             else:
                 agg_conn = connect(str(inst_agg_path))
@@ -1855,6 +1887,7 @@ def run_build(
         inst_withheld=inst_withheld,
         inst_logical_digest=inst_logical,
         inst_period_coverage=inst_period_coverage,
+        inst_cover_dispositions=inst_cover_dispositions,
     )
 
 

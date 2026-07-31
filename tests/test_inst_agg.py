@@ -1013,3 +1013,141 @@ def test_an_undisclosed_prior_value_does_not_fabricate_a_move(tmp_path):
     # the exact wrong answer this fix exists to prevent — and survived mutation.
     assert row["change_kind"] == "unclassified"
     assert "change_kind_undeterminable" in row["flags"]
+
+
+# --- F4: a REFUSED clobber leaves the source byte-identical -------------------
+#
+# External review round 2, F4. M2-7 made `ensure_views` a WRITER: it replaces a
+# view whose stored SQL differs from the packaged definition, which is how an
+# existing database picks up the cover predicate. `build_inst_agg` called it
+# BEFORE checking whether `--out` aliased the source, so on exactly the stale
+# databases this change targets, a command that was ultimately REFUSED could
+# still have rewritten the source's views and altered its bytes.
+#
+# The round-1 alias tests could not catch this: they ran against a freshly
+# initialised database whose views already matched, so `ensure_views` wrote
+# nothing and the byte-identity assertion held vacuously. These run against a
+# deliberately STALE-view database, with a positive control proving the write
+# would otherwise happen.
+
+
+_STALE_DEFAULT_VIEW = (
+    "CREATE VIEW v_default_inst_filings AS"
+    " SELECT r.* FROM v_inst_reconciled_filings r"
+)
+
+
+def _stale_view_db(tmp_path, name="populus.db"):
+    """A database whose `v_default_inst_filings` predates M2-7, so `ensure_views`
+    has real work to do. Returns its path."""
+    path = tmp_path / name
+    init_db(str(path))
+    conn = connect(str(path))
+    try:
+        conn.execute("DROP VIEW v_default_inst_filings")
+        conn.execute(_STALE_DEFAULT_VIEW)
+    finally:
+        conn.close()
+    return path
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_ensure_views_really_rewrites_a_stale_database(tmp_path):
+    """The positive control for the two refusal tests below: on a stale-view
+    database `ensure_views` DOES change the file. Without this, a byte-identity
+    assertion after a refusal proves nothing — it would hold even if the
+    preflight had never been moved."""
+    path = _stale_view_db(tmp_path)
+    before = _sha256(path)
+    conn = connect(str(path))
+    try:
+        ensure_views(conn)
+    finally:
+        conn.close()
+    assert _sha256(path) != before                    # the write is real…
+    stored = connect(str(path)).execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'v_default_inst_filings'"
+    ).fetchone()[0]
+    assert "MAX(1000" in stored                       # …and it is THIS predicate
+
+    # And it is idempotent: a second call over an up-to-date database writes
+    # nothing, which is what lets a refusal path call it at all.
+    settled = _sha256(path)
+    conn = connect(str(path))
+    try:
+        ensure_views(conn)
+    finally:
+        conn.close()
+    assert _sha256(path) == settled
+
+
+@pytest.mark.parametrize("spelling", ["identical", "relative", "symlink"])
+def test_cli_inst_agg_refuses_to_clobber_a_stale_view_source(tmp_path, spelling):
+    """F4: `--out` aliasing a STALE-view source must be refused before anything
+    writes to it — schema application, `ensure_views`, anything. The source is
+    byte-identical afterwards, in all three spellings of the same file.
+
+    Mutation guard: moving `refuse_if_dest_aliases_source` back below
+    `ensure_views` in `cli.inst_agg` (or in `build_inst_agg`) changes the source
+    hash and fails the last assertion, while the exit code and message still
+    look correct — which is exactly how this shipped.
+    """
+    db_path = _stale_view_db(tmp_path)
+    before = _sha256(db_path)
+
+    if spelling == "identical":
+        out = str(db_path)
+    elif spelling == "relative":
+        (tmp_path / "sub").mkdir()
+        out = str(tmp_path / "sub" / ".." / "populus.db")
+    else:
+        link = tmp_path / "alias.db"
+        link.symlink_to(db_path)
+        out = str(link)
+
+    result = _cli(["inst-agg", "--db", str(db_path), "--out", out])
+
+    assert result.exit_code != 0, result.output
+    assert "refusing" in result.output.lower(), result.output
+    assert _sha256(db_path) == before, "a REFUSED command rewrote its source"
+    # The stale view is still stale — nothing ran, not even the harmless part.
+    stored = connect(str(db_path)).execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'v_default_inst_filings'"
+    ).fetchone()[0]
+    assert "MAX(1000" not in stored
+
+
+@pytest.mark.parametrize("spelling", ["identical", "relative", "symlink"])
+def test_build_inst_agg_refuses_before_ensure_views_touches_the_source(
+    tmp_path, spelling
+):
+    """F4 at the BUILDER seam, not only through the CLI: `build_inst_agg` is a
+    public entrypoint (`publish.build.run_build` calls it), so the preflight has
+    to be inside it and not merely in front of it."""
+    from populus.inst_agg import InstAggError
+
+    db_path = _stale_view_db(tmp_path)
+    before = _sha256(db_path)
+
+    if spelling == "identical":
+        dest = db_path
+    elif spelling == "relative":
+        (tmp_path / "sub").mkdir()
+        dest = tmp_path / "sub" / ".." / "populus.db"
+    else:
+        dest = tmp_path / "alias.db"
+        dest.symlink_to(db_path)
+
+    conn = connect(str(db_path))
+    try:
+        with pytest.raises(InstAggError, match="refusing"):
+            build_inst_agg(conn, dest, ingested_at=AT)
+    finally:
+        conn.close()
+
+    assert _sha256(db_path) == before, "a REFUSED build rewrote its source"

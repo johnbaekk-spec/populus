@@ -93,25 +93,38 @@ def test_list_seeded_corpus_clears_the_coverage_gate(tmp_path):
     conn.close()
 
 
-def test_resolved_over_declared_total_is_non_certifiable_never_over_100pct(tmp_path):
-    # F8: a filing declaring total value 100 with a resolved holding valued 120
-    # must NOT yield coverage > 1.0 and a passing gate. The per-filing inflation is
-    # detected and coverage is made non-certifiable, so meets_threshold is False.
-    # Mutation guard: dropping the non-inflation check restores coverage=1.2 and
-    # meets_threshold=True.
+def test_resolved_over_declared_total_never_reads_over_100pct(tmp_path):
+    # F8, as amended by M2-7 (owner decision 2026-07-31, "Tolerance + flag"):
+    # a filing whose resolved holdings exceed its declared total must NEVER yield
+    # coverage > 1.0 and a passing gate. M2-3 enforced that by de-certifying the
+    # corpus; M2-7 enforces it per filing — within tol(T) the denominator banks
+    # max(S,T) (here 12,000,000, so the ratio is 1.0, not 1.2), and beyond
+    # tolerance the filing is EXCLUDED from both sides and named. Neither route
+    # can produce a >100% ratio. Mutation guard: a denominator of `declared`
+    # restores coverage=1.2; dropping the view's cover stage readmits the
+    # out-of-tolerance filing at 1.2.
     conn = _fresh(tmp_path)
-    _seed_list(conn, "2026q1", [APPLE])
+    _seed_list(conn, "2026q1", [APPLE, MSFT])
     _filer(conn, "0000000001")
-    # Declared cover total 100, but the single resolved holding is worth 120.
+    # Declared cover total 10,000,000, but the single resolved holding is worth
+    # 12,000,000 — 20% over, far beyond tol(T) = $10,000.
     _load(conn, fid="inst:A-1", cik="0000000001", period="2026-03-31", filed="2026-04-15",
-          total=100,
-          holds=[_hold(ordinal=1, issuer="APPLE", cusip=APPLE, value=120,
+          total=10_000_000,
+          holds=[_hold(ordinal=1, issuer="APPLE", cusip=APPLE, value=12_000_000,
                        security_id=resolve_cusip(conn, APPLE, "2026-03-31"))])
+    # ... beside a filing that reconciles exactly, so the corpus is measurable.
+    _filer(conn, "0000000002")
+    _load(conn, fid="inst:B-1", cik="0000000002", period="2026-03-31", filed="2026-04-15",
+          total=1_000_000,
+          holds=[_hold(ordinal=1, issuer="MSFT", cusip=MSFT, value=1_000_000,
+                       security_id=resolve_cusip(conn, MSFT, "2026-03-31"))])
 
     coverage = compute_coverage(conn)
-    assert coverage.inflated_filing_count == 1
-    assert coverage.certifiable is False        # the over-count is not measurable
-    assert coverage.meets_threshold is False     # so it does NOT pass the gate
+    assert coverage.cover_conflict_filing_ids == ("inst:A-1",)   # excluded, named
+    assert coverage.inflated_filing_count == 0                   # none left inside
+    assert coverage.numerator == 1_000_000 and coverage.denominator == 1_000_000
+    assert coverage.coverage == 1.0                              # never 1.2
+    assert coverage.certifiable is True
     conn.close()
 
 

@@ -201,9 +201,16 @@ def _report_path(label: str, coverage, periods, inst_in_manifest: bool, out) -> 
         f" | meets_threshold(gate): {'yes' if coverage.meets_threshold else 'no'}"
         f" | inst in published manifest: {'yes' if inst_in_manifest else 'no'}"
     )
+    # M2-7 §I5: state the tolerated rounding and the excluded conflicts beside
+    # every coverage number, by filing_id — ONE shared rendering, so no surface
+    # can drift from another (external review F3).
+    out(f"  {coverage.disposition_line}")
     ok = True
     if not coverage.certifiable:
-        out("  <-- NON-CERTIFIABLE: cover-failed or inflated filings — not measurable")
+        out(
+            "  <-- NON-CERTIFIABLE: cover-failed or an unresolved cover conflict"
+            " — not measurable"
+        )
         ok = False
     if not coverage.meets_threshold:
         out("  <-- corpus-wide coverage does NOT meet the 0.95 gate")

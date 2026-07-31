@@ -380,6 +380,34 @@ def _load_ddl() -> str:
     )
 
 
+def refuse_if_dest_aliases_source(
+    source_conn: sqlite3.Connection, dest_path: Path | str
+) -> None:
+    """Raise :class:`InstAggError` when *dest_path* is the source database.
+
+    REFUSE to write the aggregate over its source. The destination is replaced
+    unconditionally, so aliasing it to the ingested store (e.g.
+    ``populus inst-agg --db populus.db --out populus.db``) would DESTROY the
+    canonical database and leave an aggregate in its place. Compares resolved
+    paths against the sqlite ``database_list`` of the LIVE source connection,
+    which catches symlinks, ``..`` and relative/absolute spellings of one file.
+
+    This is a PREFLIGHT: callers must run it before any statement that could
+    write to the source — schema application, ``ensure_views``, anything — so a
+    refused command leaves the source byte-identical (external review F4).
+    """
+    resolved_dest = Path(dest_path).resolve()
+    for _seq, _name, source_file in source_conn.execute("PRAGMA database_list"):
+        if not source_file:
+            continue  # in-memory or temp database — cannot alias a real path
+        if Path(source_file).resolve() == resolved_dest:
+            raise InstAggError(
+                f"refusing to write the aggregate over its own source database:"
+                f" {dest_path} resolves to the same file as {source_file}."
+                " Choose a different --out path."
+            )
+
+
 def build_inst_agg(
     source_conn: sqlite3.Connection,
     dest_path: Path | str,
@@ -393,25 +421,15 @@ def build_inst_agg(
     ensured here); *ingested_at* is injected provenance (excluded from the
     logical digest). A pre-existing *dest_path* is replaced, so a re-run over the
     same source yields the same logical content byte-for-byte under the digest.
+
+    The alias refusal runs FIRST, before ``ensure_views`` or any other statement
+    touches the source: since M2-7 ``ensure_views`` REPLACES a stale view
+    definition, and a command that is ultimately refused must leave the source
+    byte-identical (external review F4).
     """
-    ensure_views(source_conn)
     dest_path = Path(dest_path)
-    # REFUSE to write over the source database. `dest_path` is replaced
-    # unconditionally below, so aliasing it to the ingested source (e.g.
-    # `populus inst-agg --db populus.db --out populus.db`) would DESTROY the
-    # canonical store and leave an aggregate in its place. Compare resolved
-    # paths — and the sqlite `database_list` of the live source connection, which
-    # catches symlinks, `..` and relative/absolute spellings of the same file.
-    resolved_dest = dest_path.resolve()
-    for _seq, _name, source_file in source_conn.execute("PRAGMA database_list"):
-        if not source_file:
-            continue  # in-memory or temp database — cannot alias a real path
-        if Path(source_file).resolve() == resolved_dest:
-            raise InstAggError(
-                f"refusing to write the aggregate over its own source database:"
-                f" {dest_path} resolves to the same file as {source_file}."
-                " Choose a different --out path."
-            )
+    refuse_if_dest_aliases_source(source_conn, dest_path)
+    ensure_views(source_conn)
     if dest_path.exists():
         dest_path.unlink()
 

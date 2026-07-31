@@ -1,0 +1,81 @@
+## Detected Stack
+
+- Transport: `interactive-disk`, read-only.
+- Python 3.12, `uv`/hatchling, SQLite/JSON1, pytest.
+- Canonical gates: `make test`, `make security`.
+- Baseline: `871d47b6c5ab240cffadbdbbad467ef5c3635ca2`.
+- Scope: 14 modified and 2 new files; `git diff --check` clean.
+- Fresh harness evidence: `1674 passed, 7 skipped`; all source files predate that transcript.
+- Independent checks passed: AST parsing, dependency guard, classifier boundaries, SQLite integer typing, and in-memory stale-view replacement/idempotence. A second pytest invocation could not start because the review sandbox has no writable cache or temporary directory.
+
+## Reuse / Duplication Check
+
+The full-tree scan covered application code, scripts, tests, SQL, and Markdown.
+
+- One `_DENOMINATOR_TERM` now serves corpus and per-period coverage.
+- One `format_cover_dispositions` renderer, plus its mapping adapter, serves all six reporting surfaces.
+- Existing flag reconciliation, `BuildReport`, default-view staging, and aggregate-building paths were extended rather than duplicated.
+- The extracted clobber preflight is shared by the CLI and builder.
+- No parallel classifier, reporting mechanism, schema column, dependency, or module was introduced.
+
+## Simplicity Audit
+
+The implementation remains proportionate. New abstractions comprise:
+
+- `cover_tolerance_usd`, `within_cover_tolerance`, and `classify_cover`.
+- `CoverDisposition`, `cover_dispositions`, and `mark_cover_dispositions`.
+- `format_cover_dispositions` and `cover_dispositions_from_mapping`.
+- `_DENOMINATOR_TERM`.
+- `_packaged_views`, `_same_definition`, and `_normalize_sql`.
+- `refuse_if_dest_aliases_source`.
+- One intermediate view and one additive `BuildReport` field.
+
+No unnecessary architectural layer was found.
+
+## Tech Debt Introduced
+
+No behavioral debt remains from the prior findings. The per-period arithmetic, all-conflict state, reporting propagation, refusal ordering, and overflow-safe predicate are implemented and guarded.
+
+The sweep found no new TODO/FIXME, stub, disabled test, dependency, schema column, or deferred behavior. Documentation inconsistencies are listed as NITs below.
+
+## Memory Touch-Points
+
+Consulted the selected memories covering invariant-boundary updates, comprehensive decision-path coverage, branching procedures, isolated tests, reuse/scope conflicts, complete consumer enumeration, tech-debt declarations, dynamic-SQL annotations, and fail-if-removed behavioral tests.
+
+These drove the complete reporting-surface sweep, annotation-only flag check, integer-boundary verification, stale-view refusal checks, dynamic-SQL review, and hidden-debt audit. The mandatory failure-mode catalog was also applied, especially full-set propagation, freshness, behavioral-test validity, and dynamic-SQL safety.
+
+## Findings
+
+Previous blocker verification:
+
+| Previous | Result | Evidence |
+|---|---|---|
+| F1 | Resolved | Shared per-filing max denominator at `src/populus/ingest/inst13f.py:1305` and period grouping at `src/populus/ingest/inst13f.py:1510`; direct and build regressions pass. |
+| F2 | Resolved | Presence now probes `v_inst_reconciled_filings` at `src/populus/publish/build.py:1692`; the all-conflict regression verifies `not_measurable` with named IDs. |
+| F3 | Resolved | All six surfaces use the shared renderer; non-empty-conflict tests cover bulk, build, CLI build/publish, and both acceptance scripts. |
+| F4 | Resolved | CLI preflight occurs at `src/populus/cli.py:1032` and builder preflight at `src/populus/inst_agg.py:431`; stale-view byte-hash tests cover identical, relative, and symlink aliases. |
+| F5 | Resolved | The view uses overflow-safe integer division at `src/populus/views.sql:115`; SQLite typing and Python/SQL agreement checks pass through int64 scale. |
+
+#### F1 [NIT]
+
+- Claim: The `ensure_views` docstring still says `inst-agg` calls it before refusing an aliased destination, which is the opposite of the corrected ordering.
+- Evidence: `src/populus/amendments.py:36`
+- Suggested remediation: State that both CLI and builder preflight before calling `ensure_views`.
+
+#### F2 [NIT]
+
+- Claim: The submitted narrative reports a fresh post-remediation corpus re-measure, while the disk Dev Notes and resolution notes still explicitly label it as round-1-only evidence.
+- Evidence: `DEV-NOTES.md:121`
+- Suggested remediation: Reconcile the evidence wording before documentation handoff.
+
+#### F3 [NIT]
+
+- Claim: The int64-scale view test says its selected boundary would promote the superseded multiplication to REAL, but its approximately `9.22e12` delta produces an approximately `9.22e15` product, still within int64.
+- Evidence: `tests/test_cover_tolerance.py:661`
+- Suggested remediation: Describe it as a high-scale classifier/view agreement test; the preceding storage-class test already exercises the actual promotion region.
+
+## Verdict
+
+All five prior blockers are genuinely resolved. The remaining findings are documentation or test-description polish and do not affect correctness.
+
+VERDICT: APPROVED

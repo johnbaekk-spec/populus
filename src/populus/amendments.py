@@ -20,17 +20,73 @@ import sqlite3
 
 
 def ensure_views(conn: sqlite3.Connection) -> None:
-    """Apply the packaged view DDL (CREATE VIEW IF NOT EXISTS — idempotent).
+    """Apply the packaged view DDL, REPLACING any stale definition (idempotent).
 
     Called by ``db.init_db`` for fresh databases and by every RUN-4 CLI
     path, so pre-existing databases gain the views on first use.
+
+    ``views.sql`` is THE definition (M2-7): a database created by an earlier
+    release must end this call running THIS release's predicate. Under the
+    previous ``CREATE VIEW IF NOT EXISTS`` an already-ingested corpus kept its
+    original ``v_default_inst_filings`` forever, which would have kept serving
+    filings the current predicate excludes.
+
+    A view whose stored SQL already matches is left ALONE — not dropped and
+    recreated — so this stays a no-op write-wise on an up-to-date database. That
+    matters: both the ``inst-agg`` CLI and ``build_inst_agg`` preflight the
+    aliased-destination refusal BEFORE calling this function, so a refused
+    """
+    for name, statement in _packaged_views().items():
+        current = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?",
+            (name,),
+        ).fetchone()
+        if current is not None:
+            if _same_definition(current[0], statement):
+                continue
+            # `name` comes from the packaged DDL, never from caller input.
+            conn.execute(f"DROP VIEW {name}")  # nosec B608
+        conn.execute(statement)
+
+
+def _packaged_views() -> dict[str, str]:
+    """The packaged view DDL as ``{view_name: CREATE statement}``, in file order.
+
+    ``views.sql`` holds one ``CREATE VIEW`` per statement and no other statement
+    kind. A statement starts at the first line beginning ``CREATE VIEW`` — the
+    leading comment block is dropped so the text compares against
+    ``sqlite_master.sql``, which starts at the CREATE keyword, while comments
+    INSIDE a statement are kept because SQLite stores them too. Matching on
+    line start (not a substring search) is deliberate: the file's own commentary
+    mentions the CREATE syntax.
     """
     ddl = (
         importlib.resources.files("populus")
         .joinpath("views.sql")
         .read_text(encoding="utf-8")
     )
-    conn.executescript(ddl)
+    views: dict[str, str] = {}
+    for chunk in ddl.split(";"):
+        lines = chunk.splitlines()
+        starts = [i for i, line in enumerate(lines) if line.startswith("CREATE VIEW ")]
+        if not starts:
+            continue
+        statement = "\n".join(lines[starts[0]:]).strip()
+        views[statement.split()[2]] = statement
+    return views
+
+
+def _same_definition(stored: str | None, packaged: str) -> bool:
+    """Whether a stored view definition is the packaged one. Compared line-wise
+    with trailing whitespace ignored — SQLite keeps the statement text verbatim,
+    including the ``--`` comments inside it, so line structure must survive."""
+    if stored is None:
+        return False
+    return _normalize_sql(stored) == _normalize_sql(packaged)
+
+
+def _normalize_sql(sql: str) -> str:
+    return "\n".join(line.rstrip() for line in sql.strip().splitlines())
 
 
 def flag_unresolved_pair_rows(conn: sqlite3.Connection) -> int:

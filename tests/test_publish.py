@@ -2146,6 +2146,10 @@ def test_inst_gate_withholds_below_threshold_congress_publishes(tmp_path):
     assert report.inst_withheld["reason"] == "below_threshold"
     assert report.inst_withheld["certifiable"] is True   # measurable, just < 0.95
     assert abs(report.inst_withheld["coverage"] - 0.90) < 1e-9
+    # M2-7 §I5: the withheld payload also states what was tolerated and excluded
+    # on the way to this number — here, nothing.
+    assert report.inst_withheld["cover_rounding_count"] == 0
+    assert report.inst_withheld["cover_conflict_filing_ids"] == []
     assert report.inst_logical_digest is None
     manifest = read_manifest_staged(repo, report.build_id)
     assert set(manifest["modules"]) == {"congress"}
@@ -2154,6 +2158,216 @@ def test_inst_gate_withholds_below_threshold_congress_publishes(tmp_path):
     assert run_verify(repo, now=pin()).ok
     release = backend.get_release(report.build_id)
     assert set(release.assets) == {"congress.db", "journal.json"}
+
+
+def seed_inst_cover_mix(db_path: Path) -> Path:
+    """Add a three-filing 13F corpus spanning all three M2-7 dispositions:
+    exact (Q1), tolerated rounding (Q2, +$999 on a $1,000,000 cover) and an
+    excluded conflict (Q3, +$10,001 on a $10,000,000 cover — one dollar past
+    tol(T)). The surviving two clear the gate, so the module still publishes."""
+    conn = connect(str(db_path))
+    try:
+        _filer(conn, "0000000001", "Alpha Capital")
+        _security(conn, "sec:x")
+        _security(conn, "sec:round")
+        _security(conn, "sec:bad")
+        _load(conn, fid="inst:A-1", cik="0000000001", period="2026-03-31",
+              filed="2026-04-15",
+              holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111",
+                           value=1000, security_id="sec:x")])
+        _load(conn, fid="inst:A-2", cik="0000000001", period="2026-06-30",
+              filed="2026-07-15", total=1_000_000,
+              holds=[_hold(ordinal=1, issuer="R CO", cusip="333333333",
+                           value=1_000_999, security_id="sec:round")])
+        _load(conn, fid="inst:A-3", cik="0000000001", period="2026-09-30",
+              filed="2026-10-15", total=10_000_000,
+              holds=[_hold(ordinal=1, issuer="B CO", cusip="444444444",
+                           value=10_010_001, security_id="sec:bad")])
+    finally:
+        conn.close()
+    return db_path
+
+
+def seed_inst_all_conflict(db_path: Path) -> Path:
+    """A 13F corpus in which EVERY filing is a cover conflict. `inst_filings` is
+    populated and the reconciled population is non-empty, but the default view —
+    and therefore both sides of the coverage ratio — is empty."""
+    conn = connect(str(db_path))
+    try:
+        _filer(conn, "0000000001", "Alpha Capital")
+        _security(conn, "sec:bad1")
+        _security(conn, "sec:bad2")
+        _load(conn, fid="inst:C-1", cik="0000000001", period="2026-03-31",
+              filed="2026-04-15", total=10_000_000,
+              holds=[_hold(ordinal=1, issuer="B CO", cusip="444444444",
+                           value=10_010_001, security_id="sec:bad1")])
+        _load(conn, fid="inst:C-2", cik="0000000001", period="2026-06-30",
+              filed="2026-07-15", total=1_000_000,
+              holds=[_hold(ordinal=1, issuer="D CO", cusip="555555555",
+                           value=1_500_000, security_id="sec:bad2")])
+    finally:
+        conn.close()
+    return db_path
+
+
+def test_inst_build_names_the_cover_dispositions_behind_its_numbers(tmp_path):
+    """M2-7 §I5: a PASSING build states what it tolerated and what it excluded to
+    reach its coverage number — the conflict named by filing_id — and the
+    excluded filing's holdings never reach the published aggregate.
+
+    Mutation guard: dropping `inst_cover_dispositions` from the build report, or
+    readmitting the conflict to the default view, fails here.
+    """
+    db = seed_inst_cover_mix(seed_db(tmp_path / "populus.db"))
+    repo = make_repo(tmp_path)
+    backend = LocalDirBackend(repo)
+    report = run_build(db, repo, now=pin(), backend=backend)
+
+    assert report.inst_withheld is None                     # the rest publishes
+    assert report.inst_cover_dispositions == {
+        "cover_rounding_count": 1,
+        "cover_rounding_max_delta_usd": 999,
+        "cover_conflict_count": 1,
+        "cover_conflict_filing_ids": ["inst:A-3"],
+    }
+    manifest = read_manifest_staged(repo, report.build_id)
+    assert set(manifest["modules"]) == {"congress", "inst"}
+    agg = connect(str(_staged_asset(repo, report.build_id, "inst_agg.db")))
+    try:
+        periods = {row[0] for row in agg.execute(
+            "SELECT DISTINCT period_of_report FROM agg_filer_concentration"
+        )}
+    finally:
+        agg.close()
+    assert periods == {"2026-03-31", "2026-06-30"}           # never 2026-09-30
+
+
+def test_inst_build_period_coverage_never_reads_over_100pct_with_a_rounding_filing(
+    tmp_path,
+):
+    """External review round 2, F1 — through the BUILD REPORT, which is where the
+    impossible figure would have been published.
+
+    `inst_period_coverage` is the surface an operator reads per quarter. Before
+    the fix the per-period denominator summed the DECLARED cover total while the
+    numerator summed the RESOLVED holdings, so 2026-06-30 (the +$999 rounding
+    filing) reported 100.0999…% — above 100%, from a build that passed its gate.
+
+    Mutation guard: reverting `compute_period_coverage`'s denominator to
+    `SUM(table_value_total_usd)` makes the 2026-06-30 row read 1.000999 and
+    fails both the `<= 1.0` sweep and the exact max(S,T) denominator assertion.
+    """
+    db = seed_inst_cover_mix(seed_db(tmp_path / "populus.db"))
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+
+    periods = {p["period_of_report"]: p for p in report.inst_period_coverage}
+    assert set(periods) == {"2026-03-31", "2026-06-30"}    # the conflict is gone
+    for period in periods.values():
+        assert period["coverage"] is not None
+        assert period["coverage"] <= 1.0, period            # no >100% figure
+    rounding = periods["2026-06-30"]
+    assert rounding["denominator"] == 1_000_999             # max(S, T), not T
+    assert rounding["numerator"] == 1_000_999
+    assert rounding["coverage"] == 1.0                      # never 1.000999
+    # The per-period figures reconcile with the corpus-wide ones they are cut
+    # from — they could not, while the two used different denominators.
+    assert sum(p["denominator"] for p in periods.values()) == 1_001_999
+
+
+def test_an_all_conflict_corpus_is_withheld_and_names_it_never_reported_absent(
+    tmp_path,
+):
+    """External review round 2, F2: build presence was tested AFTER the cover
+    exclusion, so a corpus made entirely of conflicts read as "no institutional
+    data ingested" — an ABSENCE — when the truth is a non-measurable corpus with
+    named exclusions. Data was ingested; it was withheld.
+
+    Mutation guard: pointing the presence probe back at `v_default_inst_filings`
+    makes `inst_withheld` None and the gate record read `absent`, failing every
+    assertion below.
+    """
+    db = seed_inst_all_conflict(seed_db(tmp_path / "populus.db"))
+    conn = connect(str(db))
+    try:
+        # The precondition the defect turned on: the reconciled population is
+        # NON-EMPTY while the default view is empty.
+        assert conn.execute(
+            "SELECT COUNT(*) FROM v_inst_reconciled_filings"
+        ).fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT COUNT(*) FROM v_default_inst_filings"
+        ).fetchone()[0] == 0
+    finally:
+        conn.close()
+
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+
+    assert report.inst_withheld is not None                  # withheld, not absent
+    assert report.inst_withheld["reason"] == "not_measurable"
+    assert report.inst_withheld["certifiable"] is False
+    assert report.inst_withheld["denominator"] == 0
+    assert report.inst_withheld["coverage"] is None
+    # …and it NAMES every filing it excluded, which is the whole point (§I5).
+    assert report.inst_withheld["cover_conflict_filing_ids"] == [
+        "inst:C-1", "inst:C-2",
+    ]
+    assert report.inst_cover_dispositions["cover_conflict_count"] == 2
+    assert report.inst_logical_digest is None
+    manifest = read_manifest_staged(repo, report.build_id)
+    assert set(manifest["modules"]) == {"congress"}          # congress publishes
+
+
+def test_cli_build_output_names_the_excluded_conflicts(tmp_path):
+    """External review round 2, F3, surface 4 of 6: `populus build` printed
+    coverage figures with zero `cover_conflict` references, so the operator
+    running the build could not see which filings had been dropped from both
+    sides of the ratio. NON-EMPTY conflict set by construction.
+
+    Mutation guard: deleting the `cover_dispositions_from_mapping` echo from
+    `cli.build` fails the last two assertions.
+    """
+    db = seed_inst_cover_mix(seed_db(tmp_path / "populus.db"))
+    repo = make_repo(tmp_path)
+    result = CliRunner().invoke(
+        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "inst module included" in result.output           # the passing path…
+    assert "cover_conflict EXCLUDED 1: inst:A-3" in result.output   # …still says
+    assert "cover_rounding 1 (max delta 999)" in result.output
+
+
+def test_cli_publish_absence_notice_names_the_excluded_conflicts(tmp_path):
+    """External review round 2, F3, surface 5 of 6: the publish boundary's
+    withheld notice stated the coverage number and the reason but never the
+    excluded `filing_id`s — the last place an operator could have learned what
+    was dropped, and it was silent.
+
+    Drives the real build→publish CLI chain over an all-conflict corpus, so the
+    notice is rendered from the gate record a real build wrote (F2's path), not
+    from a hand-built dict.
+
+    Mutation guard: deleting the disposition line from `_inst_absence_notice`,
+    or dropping `cover_conflict_filing_ids` from the withheld payload, fails the
+    last assertion.
+    """
+    db = seed_inst_all_conflict(seed_db(tmp_path / "populus.db"))
+    repo = make_repo(tmp_path)
+    runner = CliRunner()
+    built = runner.invoke(
+        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+    )
+    assert built.exit_code == 0, built.output
+    assert "inst module WITHHELD (not_measurable)" in built.output
+    assert "cover_conflict EXCLUDED 2: inst:C-1, inst:C-2" in built.output
+
+    published = runner.invoke(cli_main, ["publish", "--data-repo", str(repo)])
+    assert published.exit_code == 0, published.output
+    assert "inst module: WITHHELD" in published.output
+    assert "cover_conflict EXCLUDED 2: inst:C-1, inst:C-2" in published.output
 
 
 def test_inst_gate_publishes_both_modules_when_covered(tmp_path):

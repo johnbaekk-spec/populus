@@ -271,6 +271,9 @@ def run_acceptance(out=print) -> int:
     pct = f"{coverage.coverage:.4f}" if coverage.coverage is not None else "N/A"
     out(f"coverage: {coverage.numerator}/{coverage.denominator} = {pct}"
         f" | meets_threshold {coverage.meets_threshold}")
+    # M2-7 §I5: an acceptance run that prints a coverage number prints what was
+    # tolerated and excluded to reach it (external review F3).
+    out(f"  {coverage.disposition_line}")
 
     # 6-7. build → publish → assert admission
     repo, manifest = _build_and_publish(db_path)

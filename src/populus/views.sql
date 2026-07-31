@@ -3,10 +3,17 @@
 -- Applied by populus.amendments.ensure_views (idempotent), NOT part of
 -- schema.sql, which must stay byte-identical to the §9.4 DDL block.
 --
+-- Each statement is a plain CREATE VIEW: this file is THE definition, and
+-- ensure_views makes the database match it — replacing any view whose stored
+-- SQL differs, and writing NOTHING when none does. The former
+-- `CREATE VIEW IF NOT EXISTS` left a database created by an earlier release
+-- silently running that release's predicate forever, which is exactly how a
+-- corpus would keep serving a filing this file excludes (M2-7 §I4).
+--
 -- v_default_transactions: rows of active filings, excluding the original
 -- side of every unresolved amendment pair (an active filing pointing at it
 -- through `supersedes`) — the pair never contributes twice to any number.
-CREATE VIEW IF NOT EXISTS v_default_transactions AS
+CREATE VIEW v_default_transactions AS
 SELECT t.*
 FROM transactions t
 JOIN filings f ON f.filing_id = t.filing_id
@@ -17,7 +24,7 @@ WHERE f.lifecycle = 'active'
   );
 
 -- v_amendment_pairs: both sides of every supersedes link, for inspection.
-CREATE VIEW IF NOT EXISTS v_amendment_pairs AS
+CREATE VIEW v_amendment_pairs AS
 SELECT
   a.filing_id       AS amendment_filing_id,
   a.filer_name_raw  AS amendment_filer_name_raw,
@@ -39,9 +46,10 @@ JOIN filings o ON o.filing_id = a.supersedes;
 -- views. Harmless (empty) until the inst tables carry rows.
 --
 -- v_default_inst_filings is the SINGLE authoritative default-filing predicate,
--- built filing-level in two stages so a parse-failed zero-row filing that still
--- reported a cover total counts for coverage, and affiliation can never be
--- poisoned by a stale superseded original.
+-- built filing-level in three stages so a parse-failed zero-row filing that
+-- still reported a cover total counts for coverage, affiliation can never be
+-- poisoned by a stale superseded original, and a filing whose two own numbers
+-- irreconcilably disagree is never served (M2-7).
 --
 --  1. restatement_survivors — of the active filings for a (cik, period), keep
 --     only the one no active RESTATEMENT for that period supersedes. Ordering:
@@ -52,7 +60,22 @@ JOIN filings o ON o.filing_id = a.supersedes;
 --     own normalized file number appears as an other-manager of ANOTHER
 --     surviving filing for the same period (so a superseded original's stale
 --     other_managers can neither suppress an affiliate nor be suppressed).
-CREATE VIEW IF NOT EXISTS v_default_inst_filings AS
+--     Stages 1+2 are v_inst_reconciled_filings — the population BEFORE the
+--     cover reconciliation, which the disposition report reads so an excluded
+--     filing can still be named (M2-7 §I5).
+--  3. cover reconciliation (M2-7) — drop a filing whose RESOLVED holdings sum S
+--     exceeds its DECLARED cover total T by more than tol(T) = max($1,000,
+--     0.001*T): the filer's two numbers disagree beyond rounding, so neither is
+--     servable. Within tolerance the filing stays (its denominator contribution
+--     is max(S,T), applied in compute_coverage — never T, which would overstate
+--     coverage). Integer arithmetic ONLY, and DIVISION rather than
+--     multiplication: `S - T <= MAX(1000, T / 1000)` is the same predicate
+--     `populus.ingest.inst13f.within_cover_tolerance` evaluates. Multiplying the
+--     delta by 1000 promotes to REAL past ~9.2e18 on this signed-64-bit column,
+--     putting floating point back inside the predicate that exists to keep it
+--     out; dividing cannot overflow and is exactly equivalent for integer
+--     deltas (§I1, external review F5).
+CREATE VIEW v_inst_reconciled_filings AS
 WITH restatement_survivors AS (
   SELECT f.*
   FROM inst_filings f
@@ -80,10 +103,21 @@ WHERE NOT EXISTS (                          -- affiliation, over SURVIVORS only
     AND json_extract(m.value, '$.file_number_norm') = s.file_number_norm
 );
 
+CREATE VIEW v_default_inst_filings AS
+SELECT r.*
+FROM v_inst_reconciled_filings r
+WHERE r.table_value_total_usd IS NULL          -- unknown total: cover_failed owns it
+   OR (
+        (SELECT COALESCE(SUM(h.value_usd), 0)
+         FROM inst_holdings h
+         WHERE h.filing_id = r.filing_id AND h.security_id IS NOT NULL)
+        - r.table_value_total_usd
+      ) <= MAX(1000, r.table_value_total_usd / 1000);
+
 -- v_default_holdings: holdings of the default filing set. The coverage
 -- numerator sums value_usd over this view WHERE security_id IS NOT NULL; no
 -- default number counts a position twice.
-CREATE VIEW IF NOT EXISTS v_default_holdings AS
+CREATE VIEW v_default_holdings AS
 SELECT h.*
 FROM inst_holdings h
 JOIN v_default_inst_filings f ON f.filing_id = h.filing_id;

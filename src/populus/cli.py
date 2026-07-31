@@ -740,6 +740,13 @@ def build(
             f"inst module included (logical_digest"
             f" {report.inst_logical_digest[:12]}…)"
         )
+    # M2-7 §I5: the build's own coverage output states what was tolerated and
+    # which filings were EXCLUDED to produce it — on the withheld path and on the
+    # published path alike (external review F3). One shared rendering.
+    if report.inst_cover_dispositions is not None:
+        from populus.ingest.inst13f import cover_dispositions_from_mapping
+
+        click.echo(f"  {cover_dispositions_from_mapping(report.inst_cover_dispositions)}")
     # R9: per-period value-coverage figures whenever inst data was measured.
     for period in report.inst_period_coverage or []:
         ratio = (
@@ -923,6 +930,8 @@ def _inst_absence_notice(
     if record is None:
         record = _read_inst_gate_record(data_repo, build_id)
     if isinstance(record, dict) and record.get("state") == "withheld":
+        from populus.ingest.inst13f import cover_dispositions_from_mapping
+
         coverage = record.get("coverage")
         cov = f"{coverage * 100:.2f}%" if isinstance(coverage, (int, float)) else "N/A"
         return (
@@ -930,6 +939,10 @@ def _inst_absence_notice(
             f" ({record.get('reason', 'below_threshold')}; coverage {cov},"
             f" cover_failed_count {record.get('cover_failed_count', '?')})"
             " — congress published normally"
+            # M2-7 §I5: the publish boundary reports the same dispositions the
+            # build did; a withheld notice that hides the named exclusions is
+            # exactly the silence the rule forbids (external review F3).
+            f"\n  {cover_dispositions_from_mapping(record)}"
         )
     if isinstance(record, dict) and record.get("state") == "absent":
         return "inst module: not built (no institutional data ingested)"
@@ -1001,13 +1014,22 @@ def inst_agg(db_path: str, out_path: str) -> None:
     behind the M2 ≥95% coverage gate; run standalone to inspect the aggregate.
     """
     from populus.amendments import ensure_views
-    from populus.inst_agg import InstAggError, build_inst_agg
+    from populus.inst_agg import (
+        InstAggError,
+        build_inst_agg,
+        refuse_if_dest_aliases_source,
+    )
     from populus.load import ensure_inst_schema
 
     if not Path(db_path).exists():
         raise click.ClickException(f"database {db_path} does not exist")
     conn = connect(db_path)
     try:
+        # The alias refusal comes FIRST — before the schema and view passes,
+        # both of which write. `ensure_views` replaces a stale view definition
+        # since M2-7, so preflighting after it would let a REFUSED command still
+        # alter the source database's bytes (external review F4).
+        refuse_if_dest_aliases_source(conn, out_path)
         # Every M2 entrypoint applies the inst schema before the views, so a
         # pre-existing M1/M2-1 database resolves the default 13F views.
         ensure_inst_schema(conn)

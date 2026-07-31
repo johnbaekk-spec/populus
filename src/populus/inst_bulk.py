@@ -283,7 +283,7 @@ class RankResult:
 
 def _out_orders(restatement: Mapping, other: Mapping) -> bool:
     """Whether a RESTATEMENT out-orders (supersedes) another filing — the exact
-    ordering of ``v_default_inst_filings`` (views.sql:65-70)."""
+    ordering of ``v_inst_reconciled_filings`` (views.sql:87-92)."""
     if restatement["filed_date"] > other["filed_date"]:
         return True
     if restatement["filed_date"] == other["filed_date"]:
@@ -297,7 +297,7 @@ def _out_orders(restatement: Mapping, other: Mapping) -> bool:
 
 
 def _restatement_survivors(filings: Sequence[Mapping]) -> list[Mapping]:
-    """The stage-1 survivor set of ``v_default_inst_filings`` (views.sql:56-71):
+    """The stage-1 survivor set of ``v_inst_reconciled_filings`` (views.sql:78-94):
     a filing survives unless some RESTATEMENT for the same (cik, period)
     out-orders it. With no restatement the base + every NEW_HOLDINGS amendment
     survive (their union is the merge)."""
@@ -1158,6 +1158,10 @@ def format_bulk_summary(report: BulkReport) -> str:
             f" {coverage.numerator} / {coverage.denominator} = {pct}"
             f" | meets gate {'yes' if coverage.meets_threshold else 'no'}"
         )
+        # M2-7 §I5: the bulk summary is a coverage-reporting surface, so it
+        # states the tolerated rounding and names the excluded conflicts too
+        # (external review F3 — it did not).
+        lines.append(f"  {coverage.disposition_line}")
     if report.circuit_open_url is not None:
         lines.append(
             f"  CIRCUIT OPEN: last at {report.circuit_open_url} — run stopped,"

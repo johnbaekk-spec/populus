@@ -98,3 +98,40 @@ def test_acceptance_clears_the_gate_on_the_real_corpus():
         quarters=accept.CORPUS_QUARTERS, out=lambda _line: None, run_r5=False
     )
     assert rc == 0
+
+
+def test_accept_m2_5_report_path_names_the_excluded_conflicts(tmp_path):
+    """M2-7 §I5 / external review round 2 F3, surface 6 of 6: the acceptance
+    report states the tolerated rounding and NAMES the excluded conflicts beside
+    its coverage number. Non-empty by construction — the round-1 tests asserted
+    only that the keys existed on an empty disposition set, which is precisely
+    the weakness the reviewer called out.
+
+    Driven off a real `compute_coverage` over a crafted corpus, never a
+    hand-built value object, so the surface is fed exactly what production feeds
+    it. Mutation guard: deleting the `disposition_line` line from `_report_path`
+    fails the last two assertions.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(REPO_ROOT / "tests"))
+    from test_cover_tolerance import _conflict_corpus  # crafted, hermetic
+
+    from populus.ingest.inst13f import compute_coverage, compute_period_coverage
+
+    accept = _load_accept()
+    conn = _conflict_corpus(tmp_path, "accept-m2-5-surface.db")
+    try:
+        coverage = compute_coverage(conn)
+        periods = compute_period_coverage(conn)
+    finally:
+        conn.close()
+    assert coverage.cover_conflict_filing_ids == ("inst:BAD",)   # non-empty
+
+    lines: list[str] = []
+    accept._report_path("surface", coverage, periods, True, lines.append)
+    output = "\n".join(lines)
+
+    assert "corpus-wide value coverage:" in output               # the number…
+    assert "cover_conflict EXCLUDED 1: inst:BAD" in output       # …and its cost
+    assert "cover_rounding 1 (max delta 999)" in output
