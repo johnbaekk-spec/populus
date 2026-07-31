@@ -529,3 +529,151 @@ test("feedItemHtml is deterministic — SSR and client render byte-identical row
     );
   }
 });
+
+/* ---------- RUN P3-2: the seven canonical components (R1) ---------- */
+
+test("rangeBand + dualDate: the feed row is COMPOSED of the canonical components", async () => {
+  const { rangeBand, dualDate } = await import("../src/lib/format.ts");
+  const r = txn({ low: 1001, high: 15000, traded: "2026-06-24", filed: "2026-07-21", lag: 27 });
+  const row = txnRowHtml(r, CTX);
+  assert.ok(row.includes(rangeBand(r)), "the row's band is byte-identically the component");
+  assert.ok(row.includes(dualDate(r)), "the row's date cell is byte-identically the component");
+  const open = rangeBand(txn({ low: 1_000_001, high: null }));
+  assert.ok(open.includes("open"), "open cap hatches");
+});
+
+test("flagTags: registry chips + FAIL-VISIBLE unknown flags as raw dashed tags", async () => {
+  const { flagTags } = await import("../src/lib/format.ts");
+  const known = flagTags(["amount_spouse_cap"]);
+  assert.ok(known.includes("spouse cap"));
+  const unknown = flagTags(["a_flag_from_the_future"]);
+  assert.ok(unknown.includes("a_flag_from_the_future"), "unknown flags never silently vanish");
+  assert.ok(unknown.includes("flag-raw"));
+  assert.ok(unknown.includes("dashed"));
+  const inst = flagTags(["shares_unit_mismatch", "value_undisclosed_one_side"]);
+  assert.ok(inst.includes("unit mismatch"));
+  assert.ok(inst.includes("value undisclosed one side"));
+});
+
+test("terminusRow: names its author — the source or Populus, never a bare more", async () => {
+  const { terminusRow } = await import("../src/lib/format.ts");
+  const src = terminusRow({ author: "source", html: "only 25 published" });
+  assert.ok(src.includes("Truncated by the source."));
+  const us = terminusRow({ author: "populus", html: "budget cut" });
+  assert.ok(us.includes("Truncated by Populus."));
+  assert.ok(us.includes('data-terminus-author="populus"'));
+});
+
+test("footnoteBlock: inline (feed) and stacked layouts; marks render", async () => {
+  const { footnoteBlock } = await import("../src/lib/format.ts");
+  const inline = footnoteBlock(
+    [
+      { mark: "†", html: "one" },
+      { mark: "‡", html: "two" },
+    ],
+    { id: "feed-footnote", layout: "inline" },
+  );
+  assert.ok(inline.includes('id="feed-footnote"'));
+  assert.ok(inline.includes("†"));
+  assert.ok(inline.includes("&nbsp;&nbsp;"));
+  const stacked = footnoteBlock([{ mark: "§", html: "derived" }]);
+  assert.ok(stacked.includes("footnotes-stacked"));
+  assert.ok(stacked.includes("footnote-line"));
+  assert.equal(footnoteBlock([]), "", "no entries, no block");
+});
+
+test("statTiles: value/unit/label/title with a screen-reader copy of the breakdown", async () => {
+  const { statTiles } = await import("../src/lib/format.ts");
+  const html = statTiles(
+    [{ value: "97.5", unit: "%", label: "House parse", title: "full breakdown", muted: false }],
+    { label: "Data coverage" },
+  );
+  assert.ok(html.includes('aria-label="Data coverage"'));
+  assert.ok(html.includes("97.5"));
+  assert.ok(html.includes('<span class="unit">%</span>'));
+  assert.ok(html.includes('title="full breakdown"'));
+  assert.ok(html.includes('visually-hidden">full breakdown'), "tooltip is never the only channel");
+});
+
+test("srcLink is the exported canonical G7 renderer; srcLinkDerived carries derived ·§", async () => {
+  const { srcLink, srcLinkDerived } = await import("../src/lib/format.ts");
+  const linked = srcLink("https://efdsearch.senate.gov/x/");
+  assert.ok(linked.includes("eFD"));
+  const unlinked = srcLink("http://insecure.example/");
+  assert.ok(unlinked.includes("src-missing"), "non-https stays unlinked");
+  const derived = srcLinkDerived("#f", "https://www.sec.gov/cgi-bin/browse-edgar?x=1");
+  assert.ok(derived.includes("derived&nbsp;·§"));
+  assert.ok(derived.includes("EDGAR"));
+  const noEdgar = srcLinkDerived("#f", null);
+  assert.ok(noEdgar.includes("derived&nbsp;·§"));
+  assert.ok(!noEdgar.includes("EDGAR"));
+});
+
+test("fmtUsd: K/M/B/T scales, negatives use the minus sign, sub-$1K exact", async () => {
+  const { fmtUsd } = await import("../src/lib/format.ts");
+  assert.equal(fmtUsd(950), "$950");
+  assert.equal(fmtUsd(1500), "$1.5K");
+  assert.equal(fmtUsd(2_300_000), "$2.3M");
+  assert.equal(fmtUsd(75_100_000_000), "$75.1B");
+  assert.equal(fmtUsd(1_420_000_000_000), "$1.4T");
+  assert.equal(fmtUsd(-117_400_000), "−$117M");
+  assert.equal(fmtUsd(0), "$0");
+});
+
+test("tickerHref targets the unified page; cut entities route to /e/ (Locked #4/#13)", async () => {
+  const { tickerHref, congressTickerHref, memberHrefFor, tickerHrefFor } = await import(
+    "../src/lib/format.ts"
+  );
+  assert.equal(tickerHref("NVDA"), "/tickers/NVDA/");
+  assert.equal(congressTickerHref("NVDA"), "/congress/tickers/NVDA/");
+  const ctx = { watched: new Set<string>(), cutMembers: new Set(["Z000009"]), cutTickers: new Set(["OUST"]) };
+  assert.equal(memberHrefFor("T000001", ctx), "/congress/members/T000001/");
+  assert.equal(memberHrefFor("Z000009", ctx), "/e/?k=m:Z000009");
+  assert.equal(tickerHrefFor("NVDA", ctx), "/tickers/NVDA/");
+  assert.equal(tickerHrefFor("OUST", ctx), "/e/?k=t:OUST");
+  const row = txnRowHtml(txn({ ticker: "OUST" }), ctx);
+  assert.ok(row.includes("/e/?k=t:OUST"), "listing surfaces link cut entities to /e/");
+});
+
+test("watchStarHtml: v2-store wiring attributes and storage-locality copy", async () => {
+  const { watchStarHtml } = await import("../src/lib/format.ts");
+  const off = watchStarHtml("ticker", "NVDA", "NVDA", false);
+  assert.ok(off.includes('data-watch-kind="ticker"'));
+  assert.ok(off.includes('data-watch-key="NVDA"'));
+  assert.ok(off.includes('aria-pressed="false"'));
+  assert.ok(off.includes("saved in this browser only"));
+  const on = watchStarHtml("member", "P000001", "Name", true);
+  assert.ok(on.includes("watching · saved on this device"));
+  assert.ok(on.includes("★"));
+});
+
+test("R1: each canonical component has exactly ONE implementation site", async () => {
+  const { readFileSync, readdirSync, statSync } = await import("node:fs");
+  const path = await import("node:path");
+  const root = path.resolve(import.meta.dirname, "..", "src");
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const p = path.join(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (name.endsWith(".ts") || name.endsWith(".astro")) files.push(p);
+    }
+  };
+  walk(root);
+  for (const name of [
+    "function rangeBand",
+    "function dualDate",
+    "function terminusRow",
+    "function flagTags",
+    "function footnoteBlock",
+    "function srcLink",
+    "function statTiles",
+  ]) {
+    const definers = files.filter((f) => readFileSync(f, "utf-8").includes(`export ${name}(`));
+    assert.deepEqual(
+      definers.map((f) => path.relative(root, f)),
+      ["lib/format.ts"],
+      `${name} must exist exactly once, in format.ts`,
+    );
+  }
+});

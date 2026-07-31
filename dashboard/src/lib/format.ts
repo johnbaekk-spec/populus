@@ -37,6 +37,17 @@ export interface PaperRow {
 
 export type FeedItem = TxnRow | PaperRow;
 
+/** One stat tile (StatBadge, G-grammar shared component). Defined here so the
+    markup renderer `statTiles` and the build-time tile derivations share one
+    shape; `data.ts` re-exports it for its existing callers. */
+export interface StatTile {
+  value: string;
+  unit?: string;
+  label: string;
+  title?: string; // full breakdown for the tooltip
+  muted?: boolean;
+}
+
 /* ---------- columnar wire format (client dataset) ---------- */
 
 export const DATASET_VERSION = 1;
@@ -89,6 +100,23 @@ export function fmtMoney(n: number): string {
   const v = n / unit[0];
   const s = Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10);
   return `$${s}${unit[1]}`;
+}
+
+/** Compact USD for institutional aggregate values ($7.5K, $12.4B, $1.4T).
+    Input is the aggregate's integer dollars; sub-$1K prints exact. */
+export function fmtUsd(n: number): string {
+  const sign = n < 0 ? "−" : "";
+  const abs = Math.abs(n);
+  const scale = (div: number, suffix: string): string => {
+    const v = abs / div;
+    const s = v >= 100 ? String(Math.round(v)) : (Math.round(v * 10) / 10).toFixed(1);
+    return `${sign}$${s}${suffix}`;
+  };
+  if (abs >= 1_000_000_000_000) return scale(1_000_000_000_000, "T");
+  if (abs >= 1_000_000_000) return scale(1_000_000_000, "B");
+  if (abs >= 1_000_000) return scale(1_000_000, "M");
+  if (abs >= 1_000) return scale(1_000, "K");
+  return `${sign}$${fmtInt(abs)}`;
 }
 
 /** Statutory bucket floors are $X+1 ($1,001, $15,001, …) — display the $X boundary. */
@@ -227,6 +255,16 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   capgains_unparsed: { label: "cap-gains unparsed", cls: "dashed" },
   row_incomplete: { label: "row incomplete", cls: "dashed" },
   row_orphan: { label: "row orphan", cls: "dashed" },
+  // Producer institutional flags (inst_agg.py, Locked #8 / docs/qoq-presentation.md):
+  // source facts and parse defects in the same two visual classes as above.
+  value_undisclosed_one_side: { label: "value undisclosed one side", cls: "dashed" },
+  shares_unit_mismatch: { label: "unit mismatch", cls: "dashed" },
+  classified_by_value: { label: "classified by value", cls: "dashed" },
+  change_kind_undeterminable: { label: "change n/c", cls: "dashed" },
+  identity_reconciled_by_cusip: { label: "cusip-reconciled", cls: "dashed" },
+  issuer_from_cusip6: { label: "issuer from CUSIP-6", cls: "dashed" },
+  issuer_from_name: { label: "issuer from name", cls: "dashed" },
+  concentration_unavailable: { label: "concentration unavailable", cls: "dashed" },
 };
 
 export function flagChips(
@@ -245,6 +283,24 @@ export function flagChips(
     chips.push({ label: "amount unparsed", cls: "dashed" });
   }
   return chips;
+}
+
+/* ---------- FlagTag (G6): one canonical markup renderer ----------
+   Known flags render via the registry; an UNKNOWN flag renders fail-visible as
+   a raw dashed tag with its machine name verbatim (docs/qoq-presentation.md §1)
+   — a new upstream flag must never silently disappear from the page. */
+export function flagTags(
+  flags: string[],
+  r?: Pick<TxnRow, "low" | "high">,
+): string {
+  const known = flagChips(flags, r)
+    .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
+    .join("");
+  const unknown = flags
+    .filter((f) => !FLAG_PRESENTATION[f])
+    .map((f) => `<span class="flag dashed flag-raw">${esc(f)}</span>`)
+    .join("");
+  return known + unknown;
 }
 
 /* ---------- amount filtering ----------
@@ -390,19 +446,42 @@ export function feedCountText(i: CountInputs): string {
 export interface RenderCtx {
   /** bioguide ids watched in this browser; SSR passes an empty set. */
   watched: ReadonlySet<string>;
+  /** tickers watched in this browser (watchlist v2); optional for old callers. */
+  watchedTickers?: ReadonlySet<string>;
+  /** Entities cut by the page budget (ARCHITECTURE §12.1): links to them go to
+      the generic client route /e/?k=… instead of a canonical page that was not
+      emitted. Empty/absent in ordinary builds — the dev extract sits far inside
+      every budget — so behavior is unchanged unless a cut actually happened. */
+  cutMembers?: ReadonlySet<string>;
+  cutTickers?: ReadonlySet<string>;
 }
 
-function memberHref(bioguide: string): string {
+export function memberHref(bioguide: string): string {
   return `/congress/members/${esc(encodeURIComponent(bioguide))}/`;
 }
-function tickerHref(ticker: string): string {
+/** Canonical ticker links go to the unified /tickers/{t}/ page (Locked #4);
+    the deep congressional view links onward from there. */
+export function tickerHref(ticker: string): string {
+  return `/tickers/${esc(encodeURIComponent(ticker))}/`;
+}
+export function congressTickerHref(ticker: string): string {
   return `/congress/tickers/${esc(encodeURIComponent(ticker))}/`;
 }
+export function genericEntityHref(kind: "m" | "t", key: string): string {
+  return `/e/?k=${kind}:${esc(encodeURIComponent(key))}`;
+}
+/** Budget-aware link target: canonical page when prerendered, /e/ when cut. */
+export function memberHrefFor(bioguide: string, ctx: RenderCtx): string {
+  return ctx.cutMembers?.has(bioguide) ? genericEntityHref("m", bioguide) : memberHref(bioguide);
+}
+export function tickerHrefFor(ticker: string, ctx: RenderCtx): string {
+  return ctx.cutTickers?.has(ticker) ? genericEntityHref("t", ticker) : tickerHref(ticker);
+}
 
-/** Source-document anchor. Scheme-allowlisted: the URL ultimately traces to a
-    scraped government page, so anything but https is stated as unlinkable
-    rather than rendered as a live href. */
-function srcCellHtml(doc: string, extraClass = ""): string {
+/** SrcLink (G7): source-document anchor. Scheme-allowlisted: the URL
+    ultimately traces to a scraped government page, so anything but https is
+    stated as unlinkable rather than rendered as a live href. */
+export function srcLink(doc: string, extraClass = ""): string {
   const src = srcLabel(doc);
   const cls = `cell cell-src${extraClass ? " " + extraClass : ""}`;
   if (!doc.startsWith("https://")) {
@@ -411,6 +490,21 @@ function srcCellHtml(doc: string, extraClass = ""): string {
   return (
     `<div class="${cls}"><a href="${esc(doc)}" rel="noopener" target="_blank"` +
     ` aria-label="source document (${src}) — opens in a new tab">${src}&nbsp;↗</a></div>`
+  );
+}
+
+/** SrcLink, aggregate form (G7): derived rows carry "derived ·§" resolving to
+    the printed derivation footnote, plus the primary-source link the row's
+    identity supports (an EDGAR filer page — a real URL, never a fabricated
+    per-document link the aggregate does not publish). */
+export function srcLinkDerived(footnoteHref: string, edgarUrl: string | null): string {
+  const marker = `<a class="src-derived" href="${esc(footnoteHref)}">derived&nbsp;·§</a>`;
+  if (!edgarUrl || !edgarUrl.startsWith("https://")) {
+    return `<div class="cell cell-src">${marker}</div>`;
+  }
+  return (
+    `<div class="cell cell-src">${marker} <a href="${esc(edgarUrl)}" rel="noopener" target="_blank"` +
+    ` aria-label="filer on SEC EDGAR — opens in a new tab">EDGAR&nbsp;↗</a></div>`
   );
 }
 
@@ -428,12 +522,12 @@ function starHtml(bioguide: string | null, name: string, ctx: RenderCtx): string
 function memberCellHtml(r: {
   name: string; bioguide: string | null; party: string;
   state: string | null; district: string | null; chamber: "house" | "senate";
-}): string {
+}, ctx: RenderCtx): string {
   const aff = affText(r);
   const affCls = partyClass(r.party);
   if (r.bioguide) {
     return (
-      `<a href="${memberHref(r.bioguide)}">${esc(r.name)}</a>` +
+      `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` +
       ` <span class="aff ${affCls}">${esc(aff)}</span>`
     );
   }
@@ -459,20 +553,32 @@ export function lagHtml(r: Pick<TxnRow, "lag" | "late">): string {
   return `<span class="lag" title="days to file unknown">—</span>`;
 }
 
+/** RangeBand (G1): the fixed log-scale band. Open-ended and unparsed amounts
+    render as hatch, never a fake solid bar. */
+export function rangeBand(r: Pick<TxnRow, "low" | "high">): string {
+  const band = bandGeometry(r);
+  return `<div class="band" aria-hidden="true"><div class="band-fill${band.open ? " open" : ""}" style="left:${band.left.toFixed(1)}%;width:${band.width.toFixed(1)}%"></div></div>`;
+}
+
+/** DualDate (G2): traded + filed + lag, one cell. Both dates stay in the
+    accessibility tree at every viewport; the mobile fold shows the combined
+    "traded → filed" string instead of removing either date. */
+export function dualDate(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">): string {
+  const traded = tradedText(r);
+  return `<div class="cell cell-traded"><span class="visually-hidden">Traded </span><span class="traded-date">${esc(traded)}</span><span class="mobile-dates" aria-hidden="true">${esc(traded)} → ${esc(r.filed.slice(5))}</span> ${lagHtml(r)}</div>`;
+}
+
 export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
   const side = sideLabel(r.side, r.flags);
   const owner = ownerNote(r);
   const ownerLong = ownerNoteLong(r);
   const amount = amountText(r);
   const amountUnknown = r.low == null && r.high == null;
-  const band = bandGeometry(r);
-  const chips = flagChips(r.flags, r);
-  const traded = tradedText(r);
   const spouseCapDagger = r.flags.includes("amount_spouse_cap")
     ? `<sup class="dagger" title="disclosed only as an open-ended cap">‡</sup>`
     : "";
   const tickerHtml = r.ticker
-    ? `<a href="${tickerHref(r.ticker)}">${esc(r.ticker)}</a>`
+    ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
     : `<span class="none">—<span class="visually-hidden"> no ticker disclosed</span></span>`;
   const amountSpoken = amountUnknown ? "not disclosed in a parseable range" : amount;
 
@@ -480,7 +586,7 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
 <div class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</div>
 <div class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</div>
 <div class="row-line1">
-<div class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r)}</div>
+<div class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</div>
 <div class="cell cell-ticker"><span class="visually-hidden">Ticker </span>${tickerHtml}</div>
 <div class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${
     owner
@@ -489,12 +595,10 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
   }</div>
 </div>
 <div class="row-line2">
-<div class="cell cell-traded"><span class="visually-hidden">Traded </span><span class="traded-date">${esc(traded)}</span><span class="mobile-dates" aria-hidden="true">${esc(traded)} → ${esc(r.filed.slice(5))}</span> ${lagHtml(r)}</div>
+${dualDate(r)}
 <div class="cell cell-amount${amountUnknown ? " unknown" : ""}"><span class="visually-hidden">Amount </span><span aria-hidden="true">${esc(amount)}</span><span class="visually-hidden">${esc(amountSpoken)}</span>${spouseCapDagger}</div>
-<div class="cell cell-range"><div class="band" aria-hidden="true"><div class="band-fill${band.open ? " open" : ""}" style="left:${band.left.toFixed(1)}%;width:${band.width.toFixed(1)}%"></div></div>${chips
-    .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
-    .join("")}</div>
-${srcCellHtml(r.doc)}
+<div class="cell cell-range">${rangeBand(r)}${flagTags(r.flags, r)}</div>
+${srcLink(r.doc)}
 </div>
 </div>`;
 }
@@ -505,13 +609,97 @@ export function paperRowHtml(r: PaperRow, ctx: RenderCtx): string {
 <div class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</div>
 <div class="cell paper-main">${
     r.bioguide
-      ? `<a class="who" href="${memberHref(r.bioguide)}">${esc(r.name)}</a>`
+      ? `<a class="who" href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>`
       : `<span class="who">${esc(r.name)}</span>`
   } <span class="aff ${partyClass(r.party)}">${esc(affText(r))}</span><span class="chip-ocr">paper filing — needs OCR</span><span class="paper-note">transactions filed on paper; retained and counted, not yet machine-readable</span></div>
-${srcCellHtml(r.doc)}
+${srcLink(r.doc)}
 </div>`;
 }
 
 export function feedItemHtml(item: FeedItem, ctx: RenderCtx): string {
   return item.kind === "txn" ? txnRowHtml(item, ctx) : paperRowHtml(item, ctx);
+}
+
+/* ---------- TerminusRow (G3) ---------- */
+
+/** A truncated list ends in a dashed terminus row that NAMES the truncation's
+    author — the source, or Populus itself for our own cuts. Never a bare
+    "show more" implying completeness. `html` is pre-escaped by the caller. */
+export function terminusRow(opts: {
+  author: "source" | "populus";
+  html: string;
+}): string {
+  const label = opts.author === "source" ? "Truncated by the source." : "Truncated by Populus.";
+  return (
+    `<div class="terminus" data-terminus-author="${opts.author}">` +
+    `<span class="terminus-author">${label}</span> ${opts.html}</div>`
+  );
+}
+
+/* ---------- FootnoteBlock (G5) ---------- */
+
+export interface FootnoteEntry {
+  /** printed marker: †, ‡, §, n/c, or a page-scoped suffixed form (†v, ‡u…) */
+  mark: string;
+  /** pre-escaped body html for the line */
+  html: string;
+}
+
+/** Marker registry → printed footnote lines. No tooltip-only channel: every
+    marker used on a surface resolves to a line here, and the block prints. */
+export function footnoteBlock(
+  entries: FootnoteEntry[],
+  opts: { id?: string; layout?: "inline" | "stacked"; cls?: string } = {},
+): string {
+  if (entries.length === 0) return "";
+  const layout = opts.layout ?? "stacked";
+  const cls = opts.cls ?? "feed-footnote";
+  const idAttr = opts.id ? ` id="${esc(opts.id)}"` : "";
+  const line = (e: FootnoteEntry): string =>
+    `<span class="dagger">${esc(e.mark)}</span> ${e.html}`;
+  if (layout === "inline") {
+    return `<div class="${cls}"${idAttr}>${entries.map(line).join(" &nbsp;&nbsp;\n")}</div>`;
+  }
+  return `<div class="${cls} footnotes-stacked"${idAttr}>${entries
+    .map((e) => `<div class="footnote-line">${line(e)}</div>`)
+    .join("\n")}</div>`;
+}
+
+/* ---------- StatBadge / stat tiles ---------- */
+
+/** One tile grammar site-wide: value (+unit) over an uppercase label, full
+    breakdown in the title attribute AND available to assistive tech. */
+export function statTiles(
+  tiles: StatTile[],
+  opts: { label?: string; compact?: boolean } = {},
+): string {
+  const aria = opts.label ?? "Statistics";
+  const cls = opts.compact ? "tiles tiles-entity" : "tiles";
+  const tile = (t: StatTile): string =>
+    `<div class="tile" role="listitem"${t.title ? ` title="${esc(t.title)}"` : ""}>` +
+    `<div class="tile-value${t.muted ? " muted" : ""}">${esc(t.value)}${
+      t.unit ? `<span class="unit">${esc(t.unit)}</span>` : ""
+    }</div>` +
+    `<div class="tile-label">${esc(t.label)}</div>` +
+    (t.title ? `<span class="visually-hidden">${esc(t.title)}</span>` : "") +
+    `</div>`;
+  return `<div class="${cls}" role="list" aria-label="${esc(aria)}">${tiles.map(tile).join("\n")}</div>`;
+}
+
+/* ---------- watch star (watchlist v2: members + tickers) ---------- */
+
+/** Entity-header watch star. `data-watch-kind`/`data-watch-key` drive the
+    shared v2 store; copy states the storage locality per the design. */
+export function watchStarHtml(
+  kind: "member" | "ticker",
+  key: string,
+  name: string,
+  on: boolean,
+): string {
+  return (
+    `<button class="watch-btn" data-watch-kind="${kind}" data-watch-key="${esc(key)}"` +
+    ` aria-pressed="${on}" aria-label="Watch ${esc(name)} — saved in this browser only">` +
+    `<span class="watch-glyph" aria-hidden="true">${on ? "★" : "☆"}</span>` +
+    `<span class="watch-note">${on ? "watching · saved on this device" : "watch"}</span></button>`
+  );
 }

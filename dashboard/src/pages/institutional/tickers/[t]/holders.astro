@@ -1,0 +1,77 @@
+---
+// 13F holders deep view (Ticker Holders.dc.html), bound to
+// agg_issuer_top_holders via the Locked #18 ticker→issuer contract: static
+// paths exist ONLY for tickers that resolve through the mapping AND whose
+// issuer is entity-keyed in the aggregate. Columns are exactly the published
+// ones; the mockup's Filed/Lag/shares/doc-link columns are not in the
+// aggregate and are dropped with a printed caveat (register entry).
+import Base from "../../../../layouts/Base.astro";
+import { getBuildData } from "../../../../lib/data";
+import { holdersFor, issuerPeriods } from "../../../../lib/inst";
+import { holdersBody } from "../../../../lib/ui";
+import { filingWindow, resolveTicker } from "../../../../lib/derive";
+
+export function getStaticPaths() {
+  const build = getBuildData();
+  if (!build.inst.present) return [];
+  const paths: { params: { t: string }; props: { issuerKey: string; name: string } }[] = [];
+  for (const t of build.tickers) {
+    const res = resolveTicker(build.tickerMap, t.ticker);
+    if (res.state !== "resolved") continue;
+    const rows = build.inst.holdersByIssuer.get(res.issuerKey) ?? [];
+    if (!rows.some((r) => r.issuer_key_source === "entity")) continue;
+    paths.push({ params: { t: t.ticker }, props: { issuerKey: res.issuerKey, name: res.name } });
+  }
+  return paths;
+}
+
+const { t } = Astro.params;
+const { issuerKey, name } = Astro.props as { issuerKey: string; name: string };
+const build = getBuildData();
+const inst = build.inst;
+if (!inst.present) throw new Error("holders page built without the inst module");
+const periods = issuerPeriods(inst, issuerKey);
+const period = periods.at(-1)!;
+const holders = (inst.holdersByIssuer.get(issuerKey) ?? []).filter(
+  (h) => h.issuer_key_source === "entity",
+);
+const window = filingWindow(build.generatedAtDate);
+
+const bodyHtml = holdersBody(
+  t!,
+  name,
+  holders,
+  periods,
+  period,
+  inst.watermarks.latest_filed_date,
+  inst.topn,
+  window,
+);
+
+const periodData = JSON.stringify({
+  latestFiled: inst.watermarks.latest_filed_date,
+  topn: inst.topn,
+  periods: Object.fromEntries(
+    periods.map((p) => [p, holdersFor(inst, issuerKey, p).filter((h) => h.issuer_key_source === "entity")]),
+  ),
+});
+const description =
+  `Institutional holders of ${t} per 13F filings — the top slice of the published Populus ` +
+  `aggregate, quarter-end snapshots, never current holdings.`;
+---
+
+<Base
+  title={`Who holds ${t} — 13F — Populus`}
+  description={description}
+  active="institutional"
+  footer="inst13f"
+>
+  <main class="shell page entity-page">
+    <Fragment set:html={bodyHtml} />
+    <script is:inline type="application/json" id="holders-period-data" set:html={periodData} />
+  </main>
+  <script>
+    import { initHoldersPeriods } from "../../../../scripts/entity-client";
+    initHoldersPeriods();
+  </script>
+</Base>

@@ -1,19 +1,142 @@
 ---
-// Site root. The homepage (Home.dc.html) is a later handoff; until it lands,
-// the root sends readers to the one live surface. Meta-refresh keeps this a
-// plain static file — no JS required.
+// Home (Home.dc.html): hero + honesty specimen from a REAL row in this build
+// (Locked #14), module grid with live stats — an absent module renders honest
+// absence, never a sample number — and the commitments strip.
+import Base from "../layouts/Base.astro";
+import { getBuildData, moduleAvailability, coverageSummary } from "../lib/data";
+import { fmtInt, type RenderCtx } from "../lib/format";
+import { pickSpecimen, specimenCard, moduleCard } from "../lib/ui";
+
+const build = getBuildData();
+const avail = moduleAvailability(build);
+const cov = coverageSummary(build.stats);
+const ssrCtx: RenderCtx = { watched: new Set(), cutMembers: build.cutMembers, cutTickers: build.cutTickers };
+
+const specimen = pickSpecimen(build.txns);
+const specimenHtml = specimen ? specimenCard(specimen, ssrCtx) : "";
+
+const congressCard = moduleCard(
+  "Congress",
+  "/congress/",
+  "House + Senate periodic transaction reports. Ranges, dual dates, receipts.",
+  {
+    live: avail.congress,
+    statLines: [
+      `${fmtInt(build.txnCount)} rows · updated ${build.generatedAtDate}`,
+      `${cov.housePct}% House e-file parse · ${cov.senatePct}% Senate`,
+    ],
+  },
+);
+const instStats = build.inst.present
+  ? {
+      live: true,
+      statLines: [
+        `${fmtInt(build.inst.filers.length)} filers on record`,
+        `latest period ${build.inst.watermarks.latest_period_of_report ?? "—"}`,
+      ],
+    }
+  : {
+      live: false,
+      statLines: ["not in this build — absence is stated, not simulated"],
+    };
+const instCard = moduleCard(
+  "Institutional",
+  "/institutional/",
+  "13F holdings: filers, who holds a ticker, quarter-over-quarter moves, concentration.",
+  instStats,
+);
+const finCard = moduleCard(
+  "Financials",
+  null,
+  "As-reported company financials from EDGAR XBRL, curated universe, vintage-aware.",
+  { live: false, statLines: ["gates published before data"] },
+);
+const macroCard = moduleCard(
+  "Macro",
+  null,
+  "Curve, inflation, labor, positioning — revision-aware series with vintage semantics.",
+  { live: false, statLines: ["gates published before data"] },
+);
+
+const description =
+  "The open financial-data commons: congressional trades and institutional holdings from " +
+  "primary government sources, republished with their receipts — free, verifiable, honest about its gaps.";
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="refresh" content="0; url=/congress/" />
-    <title>Populus</title>
-    <link rel="canonical" href="/congress/" />
-  </head>
-  <body>
-    <p><a href="/congress/">Populus — congressional trading</a></p>
-  </body>
-</html>
+<Base title="Populus — the people's financial data" description={description} active="home">
+  <main>
+    <div class="hero-band">
+      <div class="shell hero">
+        <div class="hero-copy">
+          <div class="hero-kicker">
+            <span class="hero-mark" aria-hidden="true"></span>
+            <span class="hero-kicker-text">The open financial-data commons</span>
+          </div>
+          <h1 class="hero-title">The people's financial data, returned to the people.</h1>
+          <p class="hero-lede">
+            US financial-disclosure data — congressional trades, institutional
+            holdings — pulled only from primary government sources, republished
+            with its receipts. Others sell this free layer back at $30–200/month;
+            here the public record itself is free forever. Convenience layers
+            (alerts, integrations) may someday be paid — the data never will be.
+          </p>
+          <p class="hero-sub">
+            The differentiator isn't coverage — anyone can scrape these filings.
+            It's that every number here tells you
+            <a href="/methodology/">exactly how stale it is, what it excludes, and how it was derived</a>.
+          </p>
+          <div class="hero-ctas">
+            <a class="cta cta-primary" href="/congress/">Browse congressional trades →</a>
+            <a class="cta-plain" href="/methodology/">Methodology ↗</a>
+          </div>
+        </div>
+        <Fragment set:html={specimenHtml} />
+      </div>
+    </div>
+
+    <div class="shell page">
+      <div class="modules-head">
+        <h2 class="section-h2">Modules</h2>
+        <div class="mono-note">freshness and coverage regenerate from stats.json on every build</div>
+      </div>
+      <div class="mod-grid">
+        <Fragment set:html={congressCard} />
+        <Fragment set:html={instCard} />
+        <Fragment set:html={finCard} />
+        <Fragment set:html={macroCard} />
+      </div>
+
+      <div class="commitments">
+        <div class="commit">
+          <div class="commit-h">The data is free forever</div>
+          <div class="commit-body">
+            MIT-licensed code, per-source data conditions recorded and honored.
+            Every row links to the government document it came from; every build
+            is verifiable by hash.
+          </div>
+        </div>
+        <div class="commit">
+          <div class="commit-h">Honest about its own gaps</div>
+          <div class="commit-body">
+            Parse coverage, unjoined names, paper filings awaiting OCR —
+            published on the <a href="/methodology/">methodology page</a>, which
+            is a product surface here, not a footer link.
+          </div>
+        </div>
+        <div class="commit">
+          <div class="commit-h">No tracking, no account required</div>
+          <div class="commit-body">
+            No cookies, no profiles, nothing gated behind sign-up. Watchlists
+            stay in your browser. Also available as an MIT-licensed MCP server
+            for analysts working inside an LLM client.
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    import { initWatchStars } from "../scripts/entity-client";
+    initWatchStars();
+  </script>
+</Base>

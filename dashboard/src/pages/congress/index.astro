@@ -6,6 +6,8 @@ import {
   pageCountFor,
   feedCountText,
   feedItemHtml,
+  footnoteBlock,
+  statTiles,
   fmtInt,
   type RenderCtx,
 } from "../../lib/format";
@@ -13,9 +15,27 @@ import {
 const build = getBuildData();
 
 // SSR page 1 through the same renderer the client island uses.
-const ssrCtx: RenderCtx = { watched: new Set() };
+const ssrCtx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
 const pageOne = pageSlice(build.merged, 0);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
+const tilesHtml = statTiles(build.tiles, { label: "Data coverage" });
+const footnoteHtml = footnoteBlock(
+  [
+    {
+      mark: "†",
+      html: `filer not yet joined to a member record — name as printed on the filing <code>bioguide_id=null</code>`,
+    },
+    {
+      mark: "‡",
+      html: `Senate spouse amounts above $1M print only as "Over $1,000,000" <code>amount_spouse_cap</code>`,
+    },
+  ],
+  { id: "feed-footnote", layout: "inline" },
+);
 
 // The count is assembled by the same function the client island uses, so the
 // pre-rendered and re-rendered counts cannot drift.
@@ -55,16 +75,7 @@ const description =
           statutory ranges, filed up to 45d after the trade
         </div>
       </div>
-      <div class="tiles" role="list" aria-label="Data coverage">
-        {build.tiles.map((t) => (
-          <div class="tile" role="listitem" title={t.title}>
-            <div class={`tile-value${t.muted ? " muted" : ""}`}>
-              {t.value}{t.unit && <span class="unit">{t.unit}</span>}
-            </div>
-            <div class="tile-label">{t.label}</div>
-          </div>
-        ))}
-      </div>
+      <Fragment set:html={tilesHtml} />
     </div>
 
     <!-- filter bar. The controls live in their own wrapper so they can become a
@@ -168,12 +179,7 @@ const description =
 
       <div id="feed-body" role="list" aria-label="Disclosed transactions" set:html={rowsHtml} />
 
-      <div class="feed-footnote" id="feed-footnote">
-        <span class="dagger">†</span> filer not yet joined to a member record —
-        name as printed on the filing <code>bioguide_id=null</code> &nbsp;&nbsp;
-        <span class="dagger">‡</span> Senate spouse amounts above $1M print only
-        as "Over $1,000,000" <code>amount_spouse_cap</code>
-      </div>
+      <Fragment set:html={footnoteHtml} />
       <div class="feed-foot">
         <div class="view-note">
           v_default_transactions — active filings minus superseded amendment

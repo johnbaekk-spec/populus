@@ -1,0 +1,34 @@
+---
+// /macro module shell (Module Shells.dc.html). The macro concept sketch in the
+// mockup is explicitly "for later" and is NOT built this run (HANDOFF.md).
+import Base from "../../layouts/Base.astro";
+
+const description =
+  "Macro dashboard — planned, revision-aware from day one. Caveats are committed before any data ships.";
+---
+
+<Base title="Macro — planned — Populus" description={description} active="macro">
+  <main class="shell page">
+    <div class="module-shell">
+      <div class="kicker">/macro · module 4</div>
+      <h1 class="shell-title">Macro dashboard — planned, revision-aware from day one.</h1>
+      <p class="shell-lede">
+        Treasury curve, CPI, employment, and CFTC positioning as small
+        multiples. Every series carries vintage semantics: a revised print never
+        replaces history silently.
+      </p>
+      <div class="caveat-box">
+        <div class="caveat-box-head">Caveats committed before any data ships</div>
+        <div class="caveat-box-body">
+          · Series are revised — prior vintages render as labeled ghost strokes<br />
+          · BLS-derived surfaces carry the BLS-required citation + disclaimer verbatim<br />
+          · Release calendars shown; "latest" always names its as-of date<br />
+          · No nowcasts, no forecasts — Populus reports records, not predictions
+        </div>
+      </div>
+      <div class="shell-foot">
+        <span class="mono-note">gates: vintage fixtures · ToS conditions encoded · budget held</span>
+      </div>
+    </div>
+  </main>
+</Base>

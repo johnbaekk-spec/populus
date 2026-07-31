@@ -3,24 +3,54 @@
 # The full declared gate set is a single repository-owned entrypoint so the
 # deterministic QA gate runner executes and records EVERY gate, not only
 # pytest:
-#   - `make test`     → frozen-lockfile install + the full test suite
+#   - `make test`     → frozen-lockfile install + the full PYTHON suite AND the
+#                       dashboard gate chain (astro check + node --test unit
+#                       suites + static build + the post-build suite). Both
+#                       toolchains install from their committed lockfiles first
+#                       (`uv sync --frozen`, `npm ci`), so the gate proves the
+#                       frozen environment on both sides.
 #   - `make security` → the §19 paid-SDK dependency guard (G1 denylist)
 #   - `make check`    → both, for local use
 #
 # The orchestration gate runner maps `make test` to the required "test" gate
 # and `make security` to the required "security" gate, so `uv sync --frozen`,
-# `uv run pytest -q`, and `uv run python scripts/dep_guard.py` are all
-# authoritatively executed with recorded exit status.
+# `uv run pytest -q`, `npm ci` + `npm run gates`
+# (check → test → build → test:post), and `uv run python scripts/dep_guard.py`
+# are ALL authoritatively executed with recorded exit status under one
+# canonical entrypoint. The dashboard suite (RUN P3-2, R19) is therefore no
+# longer green only in a separate, unrecorded invocation — it runs inside the
+# recorded `test` gate.
+#
+# Environment: the dashboard build reads ONE published data build. Locally it
+# falls back to the newest `builds/<id>` under `../populus-data`; in CI set
+# `POPULUS_BUILD_DIR` + `POPULUS_DB` explicitly (data.ts refuses the dev
+# fallback when `CI` is set) and, for the institutional preview paths,
+# `POPULUS_TICKER_MAP`.
 
-.PHONY: sync test security check
+.PHONY: sync test test-python dashboard-gates security check
 
 sync:
 	uv sync --frozen
 
-# The test gate installs from the committed lockfile first (proving the
-# frozen environment satisfies the suite) and then runs the full tree.
-test: sync
+# The test gate runs the full tree — the Python suite THEN the dashboard gate
+# chain (make evaluates prerequisites left-to-right in the default, non-parallel
+# mode the gate runner uses). No declared gate is left to a separate,
+# unrecorded command.
+test: test-python dashboard-gates
+
+# The Python side installs from the committed lockfile first (proving the
+# frozen environment satisfies the suite) and then runs the full pytest tree.
+test-python: sync
 	uv run pytest -q
+
+# The dashboard's own declared gate chain (dashboard/package.json `gates` =
+# check && test && build && test:post): astro check (tsc) + node --test unit
+# suites + static build + the post-build suite (served HTTP-status contract,
+# forced-cut orchestration harness over real dist bytes, institutional
+# fixture-preview). `npm ci` installs from the committed package-lock, mirroring
+# `uv sync --frozen` for the JS toolchain.
+dashboard-gates:
+	cd dashboard && npm ci && npm run gates
 
 # dep_guard is a supply-chain gate (the §19 paid-vendor denylist over
 # pyproject, the lockfile, and every owned import root) — the "security"

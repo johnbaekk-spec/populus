@@ -1,0 +1,45 @@
+---
+// Congress Member entity page (Congress Member.dc.html). Body rendered by the
+// same pure ui.ts function the generic client route uses — parity by
+// construction. Static paths: every member in the extract minus budget cuts
+// (Locked #13); cut members stay reachable at /e/?k=m:… with their endpoint.
+import Base from "../../../layouts/Base.astro";
+import { getBuildData } from "../../../lib/data";
+import { memberBody, type BuildStamps } from "../../../lib/ui";
+import type { RenderCtx } from "../../../lib/format";
+
+export function getStaticPaths() {
+  const build = getBuildData();
+  return build.members
+    .filter((m) => !build.cutMembers.has(m.bioguide))
+    .map((m) => ({ params: { bioguide: m.bioguide } }));
+}
+
+const { bioguide } = Astro.params;
+const build = getBuildData();
+const member = build.membersByKey.get(bioguide!)!;
+const stamps: BuildStamps = {
+  buildId: build.buildId,
+  generatedAt: build.generatedAt,
+  generatedAtDate: build.generatedAtDate,
+};
+const ssrCtx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+const bodyHtml = memberBody(member, stamps, ssrCtx);
+const description =
+  `Congressional financial disclosures for ${member.name}: every transaction as filed, ` +
+  `statutory amount ranges, dual dates, provenance links — from primary government sources.`;
+---
+
+<Base title={`${member.name} — congressional disclosures — Populus`} description={description} active="congress">
+  <main class="shell page entity-page" data-entity-kind="m" data-entity-key={member.bioguide}>
+    <Fragment set:html={bodyHtml} />
+  </main>
+  <script>
+    import { initEntityPage } from "../../../scripts/entity-client";
+    initEntityPage();
+  </script>
+</Base>

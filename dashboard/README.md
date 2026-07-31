@@ -1,25 +1,40 @@
 # Populus dashboard
 
 The public static dashboard (ARCHITECTURE §12): Astro, static output, deployed
-publisher-side on Cloudflare Pages. **This directory currently implements the
-first P3 surface — the `/congress` feed** — from the approved design project
-*UI Mockups for Project* (`Congress Feed.dc.html`, with `Mobile.dc.html` fold
-rules and the `States` empty-state specs).
+publisher-side on Cloudflare Pages. **This directory implements the full P3
+surface set** from the approved design handoff (`docs/design/handoff/`): the
+`/congress` feed (P3-1) plus — RUN P3-2 — Home, member and ticker entity
+pages, the deep congressional ticker view, the institutional filer/holders
+pages bound to the published `inst_agg` contract, `/methodology`, the
+`/financials` and `/macro` shells, states S1–S7, the global header search,
+and the generic client-rendered entity route `/e/`.
 
 ## Build
 
 ```bash
 cd dashboard
 npm ci
-npm run gates        # typecheck + tests + build (the three declared gates)
+npm run gates        # check + test + build + test:post (the declared gates, in order)
 npm run build        # emits dist/
 npm run preview      # serves dist/ on :4321
 ```
 
 Gate surfaces: `npm run check` (astro check / tsc), `npm test`
-(`node --test` over `test/*.test.ts`), `npm run build`. `src/lib/format.ts` is
-pure and environment-agnostic precisely so the honesty rules can be tested
-without a browser or a database — see `test/format.test.ts`.
+(`node --test` over `test/*.test.ts`), `npm run build`, and `npm run
+test:post` (`test/post/*.test.ts`), which `gates` sequences **strictly after**
+the build so post-build checks never run against a stale `dist/` — it spawns
+`astro preview` for the served status contract, performs its own isolated
+forced-cut build into `dist-cut/`, and builds the institutional fixture
+preview into `dist-fixture/`. `src/lib/format.ts`, `src/lib/derive.ts`, and
+`src/lib/ui.ts` are pure and environment-agnostic precisely so the honesty
+rules can be tested without a browser or a database.
+
+This whole chain also runs under the **repository's canonical `make test`**
+(root `Makefile`): its `test` target runs the Python suite and then
+`cd dashboard && npm ci && npm run gates`, so the deterministic QA gate runner
+— which executes and records `make test` and `make security` — records the
+Astro/TypeScript unit suite, the static build, and the post-build suite with
+their exit status under one entrypoint, not as a separate unrecorded command.
 
 Node is pinned by `.node-version` (§12.1 pinned-toolchain requirement). The DB
 is read with `node:sqlite` — no native dependencies.
@@ -35,6 +50,9 @@ The site builds from **one published data build** and never resolves
 | `POPULUS_DB` | path to the matching `congress.db` release snapshot (CI: required) |
 | `POPULUS_DATA_REPO` | **dev only** — a local data-repo checkout; the newest `builds/<id>` is used. Defaults to `../populus-data`. |
 | `SITE_CODE_SHA` | embedded in the footer; falls back to `git rev-parse --short HEAD` |
+| `POPULUS_TICKER_MAP` | path to a `company_tickers.json` snapshot (SEC primary source) — the Locked #18 ticker→issuer mapping input. Dev default: the committed pipeline fixture `tests/fixtures/inst/mcp/company_tickers.json`; CI: the publisher's cached snapshot. Missing → every ticker renders the honest unresolved state. |
+| `POPULUS_INST_DB` | optional override for the institutional aggregate path; default `$POPULUS_BUILD_DIR/inst_agg.db`. The module renders only when the manifest declares `inst` AND the artifact is readable. |
+| `POPULUS_TEST_PAGE_BUDGET` | **test only** — forces a small entity-page budget so the rank-cut → `/e/` path is provable (`test/post/entity-orchestration.test.ts` builds `dist-cut/` with it). Production uses the §9.10-derived constant. |
 
 What is read, all of it from published artifacts (DR-4 — published artifacts
 are the API):
@@ -66,8 +84,9 @@ are the API):
   this browser only. No cookies, no accounts, no external requests of any kind
   (fonts self-hosted via @fontsource).
 - `/legal/DATA-LICENSE.md`, `/legal/NOTICE.txt` — the build's conditions
-  register, verbatim. Root `/` meta-refreshes to `/congress/` until the
-  homepage handoff lands.
+  register, verbatim. Root `/` is the Home page (RUN P3-2) — hero, a
+  honesty-specimen card built from a real row in the build, the module grid
+  with live stats, and the commitments strip.
 
 ## Deliberate deviations from the mockup, and why
 
@@ -76,6 +95,9 @@ authoritative where following it would remove honesty content — DESIGN-BRIEF �
 forbids exactly that ("if a mockup looks cleaner because a caveat disappeared,
 it's wrong"). Three places where this implementation departs, each recorded so
 it can be reconciled design-side rather than discovered later:
+
+RUN P3-2 entries (4–17) follow the P3-1 entries (1–3); each carries its
+measurement or contract citation.
 
 1. **`--ink3` is darkened / lightened** (`#8d8779` → `#6b6659` light,
    `#7d7869` → `#948e7e` dark). The design values measure 3.39:1 and 3.68:1
@@ -101,6 +123,72 @@ it can be reconciled design-side rather than discovered later:
    Labels now read "· 49 e-filed" and the paper remainder is the fourth tile.
    `pct()` also floors and prints "100" only when numerator equals denominator,
    so 2,499/2,500 reads 99.9, never 100.
+4. **13F per-holder Filed/Lag/Shares columns and per-row document links are
+   dropped** (holders page + the unified page's institutional section). The
+   published aggregate (`src/populus/inst_agg.sql:72-86`,
+   `agg_issuer_top_holders`) carries rank, cik, filer_name, issuer identity,
+   summed `value_usd`, `security_count`, and flags — no per-holder filed date,
+   lag, share count, or accession. The mockup's columns would have been
+   fabricated. Per-row provenance is the G7 aggregate form ("derived ·§" →
+   derivation footnote) plus a real EDGAR filer link; a printed caveat states
+   the drop on both tables.
+5. **The filer page's full holdings table is replaced by the position-changes
+   table + a designed EDGAR link-out block.** M2-CONTRACT §3: per-filer
+   holdings detail is "not served — link out to EDGAR". The changes table
+   renders `agg_qoq_deltas` verbatim (producer-classified, Locked #8,
+   `docs/qoq-presentation.md`).
+6. **Institutional tables carry a defined dual-date replacement stamp**
+   (Locked #20): "quarter-end {period_of_report} · latest filing in build
+   filed {latest_filed_date}" + a printed caveat that per-filer filing dates
+   are not in the published aggregate — the G2 per-row dual-date rule is
+   scoped to sources that publish both dates; this one publishes
+   `period_of_report` plus a build-wide filed-date watermark
+   (`src/populus/publish/manifest.py:56`).
+7. **Registry counts are labeled as all-period values.** `agg_filer_registry`'s
+   `position_count`/`total_value_usd` accumulate over every retained period
+   (`src/populus/inst_agg.py:460-496` — no period predicate), so they render
+   only with the "all periods on record ·§" label (/institutional index) or
+   not at all; every period tile comes from `agg_filer_concentration`.
+8. **The ticker→issuer join is a present-day mapping, † labeled** (G14,
+   Locked #18): `company_tickers.json` parsed per `identity/bootstrap.py`
+   semantics, matched only against entity-keyed aggregate issuers; unresolved,
+   ambiguous (one ticker → two CIKs), or missing-map states render an honest
+   refusal, never a name-match or a pick.
+9. **The S7 banner's expected-filer coverage % is dropped** — no published
+   source exists for it. The banner is calendar-derived (quarter-end + 45
+   days vs the build's `generated_at`, Locked #17) and is suppressed when the
+   module is absent.
+10. **S6's starter caption reads "most-active in this build"** (was
+    "most-viewed pages this build") — this site ships no analytics, so
+    activity in the published corpus is the only honest ranking (Locked #5).
+11. **The holders terminus attributes the top-N cut to Populus, not the SEC.**
+    The mockup's "SEC aggregates publish only the top 25" does not describe
+    this pipeline: the cut is `DEFAULT_TOPN` in `src/populus/inst_agg.py:44`,
+    a Populus build parameter, and G3 requires naming the truncation's real
+    author.
+12. **The member/deep-ticker Asset column is dropped.** The view exposes
+    `asset_name`, but the deployed columnar contract (`TXN_COLS`,
+    `DATASET_VERSION` 1) does not carry it, and extending the wire format
+    mid-P3-1-QA would change `feed.v1.json` for the branch under review.
+    Follow-up: add it at `DATASET_VERSION` 2.
+13. **Home's "Run the MCP server" CTA is dropped** — no public destination
+    exists this run (the repo is not yet published); the commitments copy
+    retains the MCP mention.
+14. **Methodology's privacy section says "no analytics of any kind."** The
+    mockup's "cookieless page counts (paths, referrers, coarse geography)"
+    line described analytics this site does not have and must not claim.
+15. **QoQ chips carry no percentages.** The producer publishes `change_kind`
+    plus integer deltas; a percent-of-position is not in the aggregate, and
+    the chip vocabulary is producer-authoritative (Locked #8).
+16. **The filer page has no watch star.** The watchlist v2 store holds
+    members and tickers only (Locked #16); a star that could not persist
+    would be a lie. (S6 starters likewise draw from members + tickers.)
+17. **Methodology numbers with no stats key are dropped or replaced**
+    ("1,475 passing", "refreshed nightly", "live since 2026-Q3", the M2
+    sample tiles): every remaining tile names its `stats.json` key
+    (`methodologyM1Tiles`, asserted by test), M2 renders from the module's
+    own manifest watermarks or states absence, and cadence claims are
+    replaced by the build stamp.
 
 ## Decisions taken during implementation (vs. the mockup)
 
@@ -164,6 +252,55 @@ it can be reconciled design-side rather than discovered later:
 - Fonts: the design's three families (Source Serif 4 600/700, Public Sans
   400–700, IBM Plex Mono 400–600) are **self-hosted**, latin subsets served —
   no calls to Google Fonts (§5.6: no external requests).
+
+### RUN P3-2 decisions
+
+- **The G1–G7 components are pure string renderers in `src/lib/format.ts`**
+  (RangeBand→`rangeBand`, DualDate→`dualDate`, FlagTag→`flagTags`,
+  TerminusRow→`terminusRow`, FootnoteBlock→`footnoteBlock`, SrcLink→`srcLink`,
+  StatBadge→`statTiles`) — one implementation each (grep-enforced by test),
+  consumed by the feed, every entity page, and the client driver. `.astro`
+  wrappers were rejected: forked render paths break byte-parity verification.
+- **Entity pages render through pure body functions in `src/lib/ui.ts`**,
+  called by thin `.astro` pages for SSR and by the `/e/` client driver —
+  parity by construction, one function, two callers.
+- **The watchlist store is versioned v2** (`populus:watch:v2`,
+  `{v:2, members:[], tickers:[]}`): one-time validated migration from the
+  legacy bare array, corrupt-storage quarantine to `populus:watch:v2.corrupt`,
+  and legacy write-through of the member array until the P3-1 reconciliation
+  merge (then remove the write-through — tracked debt).
+- **Institutional pages bind to the published `inst_agg.sql` schema with
+  period-correct sourcing**: registry = identity only; period tiles from
+  `agg_filer_concentration`; changes from `agg_qoq_deltas` with the
+  producer-authoritative presentation mapping fixed in
+  [docs/qoq-presentation.md](docs/qoq-presentation.md). NULL integers render
+  em-dash (never 0), disclosed zeros print 0, undisclosed sides render the
+  hatched `n/c`.
+- **Ticker→issuer resolution is an explicit build input** (`POPULUS_TICKER_MAP`
+  → SEC `company_tickers.json`), parsed with the pipeline's own dispositions
+  (malformed / DC1 title-conflict / duplicate), ticker-direction ambiguity
+  rejected, matched only against entity-keyed issuers — the RUN M2-4 MCP
+  precedent, applied to static paths and the unified page's 13F section.
+- **The institutional happy paths are proven by a nonshipping fixture
+  envelope** (`test/fixtures/make-inst-preview.py`, Locked #19): an
+  identity-seeded corpus through the real `build_inst_agg`, wrapped in a
+  manifest extended per `populus.publish.manifest` policy and validated by
+  `validate_manifest`; `test/post/fixture-preview.test.ts` builds
+  `dist-fixture/` from it and pins both happy-path URLs plus the
+  production-leakage check. Manual institutional QA runs against this preview.
+- **Long-tail/out-of-extract entities ride `/e/` (HTTP 200)** per
+  ARCHITECTURE §12.1; `404.astro` stays a plain 404; the served status
+  contract is pinned by `test/post/http-status.test.ts`. The budget walk cuts
+  by rank (members then tickers), every cut entity keeps its endpoint, and
+  every listing link becomes `/e/?k=…` — proven under a forced cut by
+  `test/post/entity-orchestration.test.ts`, which also executes the real
+  client driver over `dist-cut` bytes through the full S4 failure taxonomy.
+- **Global search owns `#site-search`** (the feed island unhooked it): lazy
+  same-origin index fetch, "/" focus, Esc close, grouped combobox results;
+  the index's field allowlist and ≤128 KiB budget are asserted post-build.
+- **The masthead footer copy now reads "no account required"** (was "no
+  accounts") per the monetization guardrail — convenience layers may someday
+  exist; the data never gates.
 
 ## Verified
 
@@ -239,13 +376,15 @@ control's touch target, and the desktop filter bar's incidental second row —
 now a deliberate one, since the count line carries fragments the mock's
 single-row bar was never sized for.
 
-## Deferred to later handoffs (same design project)
+## Deferred / follow-ups
 
-- `Home.dc.html` (site root), `Congress Member.dc.html`,
-  `Congress Ticker.dc.html`, `Ticker Holders.dc.html`,
-  `Institutional Filer.dc.html`, `Methodology.dc.html`, `Module Shells.dc.html`
-- Long-tail client-rendered entity route + out-of-extract state (S2)
 - Filter state ↔ URL synchronisation (shareable filtered views)
+- First real-institutional-build QA pass (M2-6 in flight): the adapter is
+  fixture-proven; live verification waits for the first published
+  `inst_agg.db`
+- Watchlist legacy write-through removal after the P3-1 reconciliation merge
+- A producer-published ticker-mapping artifact (replacing the build-input
+  snapshot); `TXN_COLS` v2 with `asset_name`
 - Lighthouse ≥90 CI gate + an automated axe/Lighthouse a11y assertion over
   `dist/` at 375px and desktop in both themes; plus the §12.1 deploy workflow
   (`wrangler`, inventory, record-sign) and its `_headers`/CSP — phase-gate

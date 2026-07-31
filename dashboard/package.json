@@ -13,7 +13,8 @@
     "preview": "astro preview",
     "check": "astro check",
     "test": "node --test \"test/*.test.ts\"",
-    "gates": "npm run check && npm test && npm run build"
+    "test:post": "node --test --test-concurrency=1 \"test/post/*.test.ts\"",
+    "gates": "npm run check && npm test && npm run build && npm run test:post"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.5",

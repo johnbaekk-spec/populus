@@ -21,6 +21,7 @@ import {
   type TxnRow,
   type PaperRow,
   type FeedItem,
+  type StatTile,
   mergeFeed,
   txnToArray,
   paperToArray,
@@ -28,22 +29,34 @@ import {
   PAPER_COLS,
   DATASET_VERSION,
 } from "./format.ts";
+import {
+  groupEntities,
+  parseTickerMap,
+  buildSearchIndex,
+  budgetWalk,
+  servingSince,
+  affTextOf,
+  resolveTicker,
+  tickerDataKey,
+  DEFAULT_ENTITY_PAGE_BUDGET,
+  type MemberEntity,
+  type TickerEntity,
+  type TickerMap,
+} from "./derive.ts";
+import { loadInstitutional, readTickerMapJson, type InstData } from "./inst.ts";
 
-export interface StatTile {
-  value: string;
-  unit?: string;
-  label: string;
-  title?: string; // full breakdown for the tooltip
-  muted?: boolean;
-}
+export type { StatTile, MemberEntity, TickerEntity };
 
 export interface BuildData {
   buildId: string;
   generatedAt: string; // "YYYY-MM-DD HH:MM UTC"
+  generatedAtDate: string; // "YYYY-MM-DD" — trailing-window / S7 calendar input
   codeSha: string;
-  manifestShaAbbrev: string; // "9f2c…41aa"
+  manifestShaAbbrev: string; // first + last four hex chars, "ab12…cd34"
   manifestSha: string;
+  manifest: Record<string, any>; // parsed builds/<id>/manifest.json
   dataNote: string;
+  stats: Record<string, any>; // parsed congress/stats.json (schema-validated upstream)
   tiles: StatTile[];
   txns: TxnRow[];
   paper: PaperRow[];
@@ -55,6 +68,23 @@ export interface BuildData {
   dataset: string; // JSON string served at /congress/data/feed.v1.json
   dataLicenseMd: string;
   noticeTxt: string;
+  /* --- entities (RUN P3-2) --- */
+  members: MemberEntity[]; // every member in the extract (txn or paper)
+  membersByKey: Map<string, MemberEntity>;
+  tickers: TickerEntity[];
+  tickersByKey: Map<string, TickerEntity>;
+  cutMembers: Set<string>; // page-budget rank cuts (empty in ordinary builds)
+  cutTickers: Set<string>;
+  inst: InstData;
+  tickerMap: TickerMap | null;
+  searchIndexJson: string;
+}
+
+/** Modules present in this build's manifest — drives S1 surfaces and the S7
+    suppression rule. Derived from the manifest, never assumed. */
+export function moduleAvailability(build: BuildData): { congress: boolean; inst: boolean } {
+  const modules = build.manifest?.modules ?? {};
+  return { congress: "congress" in modules, inst: "inst" in modules };
 }
 
 /* ---------- source resolution ---------- */
@@ -119,7 +149,22 @@ function partyCode(party: unknown): string {
   return "";
 }
 
-function loadRows(dbPath: string): { txns: TxnRow[]; paper: PaperRow[] } {
+interface MemberDbMeta {
+  name: string | null;
+  party: string | null;
+  state: string | null;
+  district: string | null;
+  chamber: string | null;
+  terms: string | null;
+  txnFilingCount: number;
+  paperFilingCount: number;
+}
+
+function loadRows(dbPath: string): {
+  txns: TxnRow[];
+  paper: PaperRow[];
+  memberMeta: Map<string, MemberDbMeta>;
+} {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
     const txnRows = db
@@ -180,7 +225,68 @@ function loadRows(dbPath: string): { txns: TxnRow[]; paper: PaperRow[] } {
       doc: String(r.doc_url),
     }));
 
-    return { txns, paper };
+    // Member metadata + per-member filing counts for the entity pages: one
+    // query each, grouped in memory (Locked #2 — no per-entity SQL).
+    const memberMeta = new Map<string, MemberDbMeta>();
+    const metaRows = db
+      .prepare(
+        `SELECT m.bioguide_id, m.full_name, m.party, m.state, m.district,
+                m.chamber, m.terms
+         FROM members m
+         WHERE m.bioguide_id IN (
+           SELECT DISTINCT bioguide_id FROM v_default_transactions
+            WHERE bioguide_id IS NOT NULL
+           UNION
+           SELECT DISTINCT bioguide_id FROM filings
+            WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
+              AND bioguide_id IS NOT NULL)`,
+      )
+      .all() as Record<string, unknown>[];
+    for (const r of metaRows) {
+      memberMeta.set(String(r.bioguide_id), {
+        name: r.full_name == null ? null : String(r.full_name),
+        party: r.party == null ? null : String(r.party),
+        state: r.state == null ? null : String(r.state),
+        district: r.district == null ? null : String(r.district),
+        chamber: r.chamber == null ? null : String(r.chamber),
+        terms: r.terms == null ? null : String(r.terms),
+        txnFilingCount: 0,
+        paperFilingCount: 0,
+      });
+    }
+    const bump = (
+      rows: Record<string, unknown>[],
+      field: "txnFilingCount" | "paperFilingCount",
+    ) => {
+      for (const r of rows) {
+        const meta = memberMeta.get(String(r.bioguide_id));
+        if (meta) meta[field] = Number(r.c);
+      }
+    };
+    bump(
+      db
+        .prepare(
+          `SELECT bioguide_id, COUNT(DISTINCT filing_id) AS c
+           FROM v_default_transactions WHERE bioguide_id IS NOT NULL
+           GROUP BY bioguide_id`,
+        )
+        .all() as Record<string, unknown>[],
+      "txnFilingCount",
+    );
+    bump(
+      db
+        .prepare(
+          `SELECT bioguide_id, COUNT(*) AS c
+           FROM filings
+           WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
+             AND bioguide_id IS NOT NULL
+           GROUP BY bioguide_id`,
+        )
+        .all() as Record<string, unknown>[],
+      "paperFilingCount",
+    );
+
+    return { txns, paper, memberMeta };
   } finally {
     db.close();
   }
@@ -219,6 +325,41 @@ export function pct(num: number, den: number): string {
   if (num === den) return "100";
   const v = (num / den) * 100;
   return Math.min(99.9, Math.floor(v * 10) / 10).toFixed(1);
+}
+
+/** Per-chamber e-file parse coverage, shared by the feed tiles, Home's module
+    card, and the methodology page — one derivation, one denominator rule. */
+export function coverageSummary(stats: Record<string, any>): {
+  housePct: string;
+  houseParsed: number;
+  houseEfile: number;
+  senatePct: string;
+  senateParsed: number;
+  senateEfile: number;
+  needsOcr: number;
+} {
+  const cov = stats?.totals?.parse_coverage_primary_by_chamber_year_including_excluded;
+  if (cov == null || typeof cov !== "object") {
+    throw new Error(
+      "stats.json is missing totals.parse_coverage_primary_by_chamber_year_including_excluded" +
+        " — refusing to publish coverage derived from absent data",
+    );
+  }
+  const house = chamberParse(cov.house);
+  const senate = chamberParse(cov.senate);
+  const houseEfile = house.total - house.needsOcr;
+  const senateEfile = senate.total - senate.needsOcr;
+  return {
+    housePct: pct(house.parsed, houseEfile),
+    houseParsed: house.parsed,
+    houseEfile,
+    senatePct: pct(senate.parsed, senateEfile),
+    senateParsed: senate.parsed,
+    senateEfile,
+    needsOcr:
+      stats?.totals?.needs_ocr_filing_count_including_excluded ??
+      house.needsOcr + senate.needsOcr,
+  };
 }
 
 function buildTiles(
@@ -293,10 +434,11 @@ export function getBuildData(): BuildData {
   const stats = JSON.parse(readFileSync(statsPath, "utf-8"));
   const manifestBytes = readFileSync(path.join(buildDir, "manifest.json"));
   const manifestSha = createHash("sha256").update(manifestBytes).digest("hex");
+  const manifest = JSON.parse(manifestBytes.toString("utf-8"));
   const dataLicenseMd = readFileSync(path.join(buildDir, "DATA-LICENSE.md"), "utf-8");
   const noticeTxt = readFileSync(path.join(buildDir, "NOTICE"), "utf-8");
 
-  const { txns, paper } = loadRows(dbPath);
+  const { txns, paper, memberMeta } = loadRows(dbPath);
   const merged = mergeFeed(txns, paper);
 
   // The tile counts rows *filed* in this build's window, so it must be labelled
@@ -341,13 +483,83 @@ export function getBuildData(): BuildData {
     paper: paper.map(paperToArray),
   });
 
+  const generatedAtDate = generatedAtIso.slice(0, 10);
+
+  /* --- entity assembly (RUN P3-2, Locked #2) --- */
+  const groups = groupEntities(txns, paper);
+  const members: MemberEntity[] = [...groups.members.entries()]
+    .map(([bioguide, g]) => {
+      const meta = memberMeta.get(bioguide);
+      const first = (g.txns[0] ?? g.paper[0])!;
+      const chamber =
+        meta?.chamber === "senate" || meta?.chamber === "house" ? meta.chamber : first.chamber;
+      return {
+        bioguide,
+        name: meta?.name ?? first.name,
+        party: meta?.party != null ? partyCode(meta.party) : first.party,
+        state: meta?.state ?? first.state,
+        district: meta?.district ?? first.district,
+        chamber,
+        servingSince: servingSince(meta?.terms ?? null),
+        filingCount: (meta?.txnFilingCount ?? 0) + (meta?.paperFilingCount ?? 0),
+        txns: g.txns,
+        paper: g.paper,
+      };
+    })
+    .sort((a, b) => (a.bioguide < b.bioguide ? -1 : 1));
+  const membersByKey = new Map(members.map((m) => [m.bioguide, m]));
+
+  const tickers: TickerEntity[] = [...groups.tickers.entries()]
+    .map(([ticker, rows]) => ({ ticker, txns: rows }))
+    .sort((a, b) => (a.ticker < b.ticker ? -1 : 1));
+  const tickersByKey = new Map(tickers.map((t) => [t.ticker, t]));
+
+  // Page-budget walk (Locked #13). POPULUS_TEST_PAGE_BUDGET is a build-time
+  // test knob forcing a small budget so the generic-route path is provable;
+  // the production constant sits far above the dev extract's entity count.
+  const budgetEnv = process.env.POPULUS_TEST_PAGE_BUDGET;
+  const budget =
+    budgetEnv != null && /^\d+$/.test(budgetEnv) ? Number(budgetEnv) : DEFAULT_ENTITY_PAGE_BUDGET;
+  const { cutMembers, cutTickers } = budgetWalk(
+    members.map((m) => ({ bioguide: m.bioguide, rows: m.txns.length + m.paper.length })),
+    tickers.map((t) => ({ ticker: t.ticker, rows: t.txns.length })),
+    budget,
+  );
+
+  const inst = loadInstitutional(buildDir, manifest);
+  const mapJson = readTickerMapJson(repoRoot);
+  const tickerMap = mapJson === null ? null : parseTickerMap(mapJson);
+
+  const searchIndexJson = JSON.stringify(
+    buildSearchIndex(
+      members.map((m) => ({
+        bioguide: m.bioguide,
+        name: m.name,
+        aff: affTextOf(m),
+        rows: m.txns.length + m.paper.length,
+      })),
+      tickers.map((t) => ({
+        ticker: t.ticker,
+        name: (() => {
+          const res = resolveTicker(tickerMap, t.ticker);
+          return res.state === "resolved" ? res.name : "";
+        })(),
+        rows: t.txns.length,
+      })),
+      inst.present ? inst.filers.map((f) => ({ cik: f.cik, name: f.filer_name })) : [],
+    ),
+  );
+
   cache = {
     buildId,
     generatedAt,
+    generatedAtDate,
     codeSha,
     manifestSha,
     manifestShaAbbrev: `${manifestSha.slice(0, 4)}…${manifestSha.slice(-4)}`,
+    manifest,
     dataNote: String(stats.data_note ?? ""),
+    stats,
     tiles: buildTiles(stats, rowCount, filedFrom),
     txns,
     paper,
@@ -359,6 +571,179 @@ export function getBuildData(): BuildData {
     dataset,
     dataLicenseMd,
     noticeTxt,
+    members,
+    membersByKey,
+    tickers,
+    tickersByKey,
+    cutMembers,
+    cutTickers,
+    inst,
+    tickerMap,
+    searchIndexJson,
   };
   return cache;
+}
+
+/* ---------- per-entity endpoints (columnar, {v, kind, t, p, meta}) ---------- */
+
+/** The unified ticker page's institutional section, serialized into the ticker
+    endpoint so the client-rendered body and the prerendered body draw from one
+    structure (parity by construction). */
+export interface TickerInstSection {
+  state: "module-absent" | "no-map" | "unmapped" | "ambiguous" | "resolved-no-data" | "data";
+  name?: string; // mapped present-day issuer name (G14, † labeled)
+  cik?: string;
+  period?: string;
+  latestFiled?: string | null;
+  topn?: number;
+  holders?: {
+    rank: number;
+    cik: string;
+    name: string;
+    value: number;
+    securities: number;
+    keySource: string;
+    flags: string[];
+  }[];
+}
+
+export function tickerInstSection(build: BuildData, ticker: string): TickerInstSection {
+  if (!build.inst.present) return { state: "module-absent" };
+  const res = resolveTicker(build.tickerMap, ticker);
+  if (res.state === "no-map") return { state: "no-map" };
+  if (res.state === "unmapped") return { state: "unmapped" };
+  if (res.state === "ambiguous") return { state: "ambiguous" };
+  const rows = build.inst.holdersByIssuer.get(res.issuerKey) ?? [];
+  // Locked #18: match ONLY entity-keyed aggregate rows — a cusip6/name-keyed
+  // issuer is never joined from a present-day ticker mapping.
+  const entityRows = rows.filter((r) => r.issuer_key_source === "entity");
+  if (entityRows.length === 0) {
+    return { state: "resolved-no-data", name: res.name, cik: res.cik };
+  }
+  const periods = [...new Set(entityRows.map((r) => r.period_of_report))].sort();
+  const period = periods.at(-1)!;
+  return {
+    state: "data",
+    name: res.name,
+    cik: res.cik,
+    period,
+    latestFiled: build.inst.watermarks.latest_filed_date,
+    topn: build.inst.topn,
+    holders: entityRows
+      .filter((r) => r.period_of_report === period)
+      .map((r) => ({
+        rank: r.rank,
+        cik: r.cik,
+        name: r.filer_name,
+        value: r.value_usd,
+        securities: r.security_count,
+        keySource: r.issuer_key_source,
+        flags: r.flags,
+      })),
+  };
+}
+
+export function memberPayloadJson(build: BuildData, bioguide: string): string | null {
+  const m = build.membersByKey.get(bioguide);
+  if (!m) return null;
+  return JSON.stringify({
+    v: DATASET_VERSION,
+    kind: "m",
+    t: m.txns.map(txnToArray),
+    p: m.paper.map(paperToArray),
+    meta: {
+      bioguide: m.bioguide,
+      name: m.name,
+      party: m.party,
+      state: m.state,
+      district: m.district,
+      chamber: m.chamber,
+      servingSince: m.servingSince,
+      filingCount: m.filingCount,
+      buildId: build.buildId,
+      generatedAt: build.generatedAt,
+      generatedAtDate: build.generatedAtDate,
+    },
+  });
+}
+
+export function tickerPayloadJson(build: BuildData, ticker: string): string | null {
+  const t = build.tickersByKey.get(ticker);
+  if (!t) return null;
+  return JSON.stringify({
+    v: DATASET_VERSION,
+    kind: "t",
+    t: t.txns.map(txnToArray),
+    p: [],
+    meta: {
+      ticker: t.ticker,
+      buildId: build.buildId,
+      generatedAt: build.generatedAt,
+      generatedAtDate: build.generatedAtDate,
+      inst: tickerInstSection(build, t.ticker),
+    },
+  });
+}
+
+/** Endpoint filename keys (colon-safe) for every ticker in the extract. */
+export function tickerDataKeys(build: BuildData): { key: string; ticker: string }[] {
+  return build.tickers.map((t) => ({ key: tickerDataKey(t.ticker), ticker: t.ticker }));
+}
+
+/* ---------- methodology tiles (R8): every tile names its stats.json key ---- */
+
+export interface MethodologyTile extends StatTile {
+  /** dotted stats.json path(s) this tile derives from — asserted by tests so a
+      mockup number with no live source cannot ship */
+  statsKeys: string[];
+  sub: string; // the mono sub-line under the label
+}
+
+export function methodologyM1Tiles(stats: Record<string, any>, filedFrom: string): MethodologyTile[] {
+  const cov = coverageSummary(stats);
+  const rowCount: number = stats.default.row_count;
+  const unresolved: number = stats.totals.unresolved_pair_count;
+  const late = stats.default.late_filing.overall;
+  return [
+    {
+      value: cov.housePct,
+      unit: "%",
+      label: "House e-file parse",
+      sub: `${cov.houseParsed} / ${cov.houseEfile} e-filed`,
+      statsKeys: ["totals.parse_coverage_primary_by_chamber_year_including_excluded"],
+    },
+    {
+      value: cov.senatePct,
+      unit: "%",
+      label: "Senate e-file parse",
+      sub: `${cov.senateParsed} / ${cov.senateEfile} e-filed`,
+      statsKeys: ["totals.parse_coverage_primary_by_chamber_year_including_excluded"],
+    },
+    {
+      value: rowCount.toLocaleString("en-US"),
+      label: `rows filed since ${filedFrom}`,
+      sub: "v_default_transactions",
+      statsKeys: ["default.row_count"],
+    },
+    {
+      value: String(cov.needsOcr),
+      label: "paper filings need OCR",
+      sub: "retained, zero rows",
+      muted: true,
+      statsKeys: ["totals.needs_ocr_filing_count_including_excluded"],
+    },
+    {
+      value: String(unresolved),
+      label: "filer name-pairs unjoined",
+      sub: "bioguide_id = null",
+      muted: true,
+      statsKeys: ["totals.unresolved_pair_count"],
+    },
+    {
+      value: late.median_days_to_file == null ? "—" : `+${Math.round(late.median_days_to_file)}d`,
+      label: "median days to file",
+      sub: `${(late.late_count as number).toLocaleString("en-US")} late of ${(late.rows_with_late_status as number).toLocaleString("en-US")}`,
+      statsKeys: ["default.late_filing.overall.median_days_to_file", "default.late_filing.overall.late_count"],
+    },
+  ];
 }

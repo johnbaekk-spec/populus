@@ -18,6 +18,7 @@ import {
   type PaperRow,
   type RenderCtx,
 } from "../lib/format";
+import { loadWatchStore } from "./entity-client";
 
 interface State {
   chamber: "all" | "house" | "senate";
@@ -41,8 +42,6 @@ const DEFAULTS: State = {
   page: 0,
 };
 
-const WATCH_KEY = "populus:watch:members";
-
 export function initFeed(): void {
   const rootEl = document.getElementById("congress-feed");
   const bodyEl = document.getElementById("feed-body");
@@ -61,26 +60,20 @@ export function initFeed(): void {
   const amountSel = document.getElementById("filter-amount") as HTMLSelectElement | null;
   const ownerSel = document.getElementById("filter-owner") as HTMLSelectElement | null;
   const lateChk = document.getElementById("filter-late") as HTMLInputElement | null;
-  const searchInput = document.getElementById("site-search") as HTMLInputElement | null;
+  // #site-search belongs to the global search client now (R11); the feed no
+  // longer filters on it — search is site navigation, not a feed filter.
+  const searchInput = null as HTMLInputElement | null;
   if (!rootEl || !bodyEl || !feedEl || !countEl || !rangeEl) return;
 
   const totalAll = Number(rootEl.dataset.txnCount ?? 0);
   const state: State = { ...DEFAULTS };
   resetWrap?.removeAttribute("hidden");
 
-  /* ---------- watchlist (localStorage, this browser only) ---------- */
+  /* ---------- watchlist (shared v2 store; legacy write-through) ---------- */
 
-  let watched = new Set<string>();
-  try {
-    const raw = localStorage.getItem(WATCH_KEY);
-    if (raw) watched = new Set(JSON.parse(raw) as string[]);
-  } catch {}
+  const watchStore = loadWatchStore(localStorage);
+  const watched = watchStore.members;
 
-  function persistWatched(): void {
-    try {
-      localStorage.setItem(WATCH_KEY, JSON.stringify([...watched]));
-    } catch {}
-  }
   function paintStars(): void {
     document.querySelectorAll<HTMLButtonElement>("[data-watch]").forEach((btn) => {
       const on = watched.has(btn.dataset.watch!);
@@ -91,10 +84,7 @@ export function initFeed(): void {
   document.addEventListener("click", (ev) => {
     const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-watch]");
     if (!btn) return;
-    const id = btn.dataset.watch!;
-    if (watched.has(id)) watched.delete(id);
-    else watched.add(id);
-    persistWatched();
+    watchStore.toggle("member", btn.dataset.watch!);
     paintStars();
   });
   paintStars();
@@ -429,16 +419,6 @@ export function initFeed(): void {
     state.late = lateChk.checked;
     state.page = 0;
     apply();
-  });
-
-  let searchTimer: ReturnType<typeof setTimeout> | undefined;
-  searchInput?.addEventListener("input", () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      state.q = searchInput.value.trim();
-      state.page = 0;
-      apply();
-    }, 150);
   });
 
   resetBtn?.addEventListener("click", resetAll);

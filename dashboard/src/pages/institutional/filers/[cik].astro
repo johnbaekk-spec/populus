@@ -1,0 +1,77 @@
+---
+// Institutional Filer page (Institutional Filer.dc.html), bound to the
+// published aggregates with period-correct sourcing (Locked #6): identity from
+// agg_filer_registry; every period-scoped tile from agg_filer_concentration;
+// changes from agg_qoq_deltas. The mockup's full holdings table is
+// contractually unservable (M2-CONTRACT §3) → changes table + EDGAR link-out.
+// Route param is the UNPADDED CIK (/institutional/filers/1067983/).
+import Base from "../../../layouts/Base.astro";
+import { getBuildData } from "../../../lib/data";
+import { filerPeriods, concentrationFor, deltasFor } from "../../../lib/inst";
+import { filerBody } from "../../../lib/ui";
+import { filingWindow } from "../../../lib/derive";
+
+export function getStaticPaths() {
+  const build = getBuildData();
+  if (!build.inst.present) return [];
+  return build.inst.filers.map((f) => ({
+    params: { cik: String(Number(f.cik)) },
+    props: { cik10: f.cik },
+  }));
+}
+
+const { cik10 } = Astro.props as { cik10: string };
+const build = getBuildData();
+const inst = build.inst;
+if (!inst.present) throw new Error("filer page built without the inst module");
+const filer = inst.filers.find((f) => f.cik === cik10)!;
+const periods = filerPeriods(inst, cik10);
+const period = periods.at(-1) ?? filer.latest_period;
+const conc = concentrationFor(inst, cik10, period);
+const deltas = deltasFor(inst, cik10, period);
+const window = filingWindow(build.generatedAtDate);
+const latestFiled = inst.watermarks.latest_filed_date;
+
+const bodyHtml = filerBody(
+  { cik: cik10, name: filer.filer_name, latestPeriod: filer.latest_period },
+  periods,
+  period,
+  conc,
+  deltas,
+  latestFiled,
+  inst.topn,
+  window,
+);
+
+// Every period's data, embedded for the client-side period selector: the
+// switch re-renders through the SAME filerPeriodSectionHtml the SSR used.
+const periodData = JSON.stringify({
+  latestFiled,
+  topn: inst.topn,
+  periods: Object.fromEntries(
+    periods.map((p) => [
+      p,
+      { conc: concentrationFor(inst, cik10, p), deltas: deltasFor(inst, cik10, p) },
+    ]),
+  ),
+});
+const description =
+  `${filer.filer_name}: 13F aggregate — per-quarter concentration and producer-classified ` +
+  `position changes from the published Populus aggregate; full holdings live on EDGAR.`;
+---
+
+<Base
+  title={`${filer.filer_name} — 13F filer — Populus`}
+  description={description}
+  active="institutional"
+  footer="inst13f"
+>
+  <main class="shell page entity-page">
+    <Fragment set:html={bodyHtml} />
+    <script is:inline type="application/json" id="filer-period-data" set:html={periodData} />
+  </main>
+  <script>
+    import { initFilerPeriods } from "../../../scripts/entity-client";
+    initFilerPeriods();
+  </script>
+</Base>
