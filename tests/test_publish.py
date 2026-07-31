@@ -4069,3 +4069,329 @@ def test_a_corrupt_record_heals_to_a_null_record_when_the_pointer_omits(tmp_path
     assert result.status == "withdrawn"
     assert result.verified_omission is True
     assert _record(cache)["installed_build"] is None, "healed to an install"
+
+
+# --- RUN M2-5: coverage cleared by the definitional 13(f) list (R10/R11) -------
+
+from populus.amendments import ensure_views as _ensure_views  # noqa: E402
+from populus.identity.registry import (  # noqa: E402
+    ensure_registry as _ensure_registry,
+    load_identity_registry as _load_registry,
+    resolve_cusip as _resolve_cusip,
+)
+from populus.load import ensure_inst_schema as _ensure_inst_schema  # noqa: E402
+from populus.mcp_server import inst_queries as _iq  # noqa: E402
+from populus.net.sec_client import SecClient as _SecClient  # noqa: E402
+from populus.ingest import TransportResponse as _TransportResponse  # noqa: E402
+
+MCP_TICKERS = REPO_ROOT / "tests" / "fixtures" / "inst" / "mcp" / "company_tickers.json"
+APPLE_CUSIP = "037833100"
+
+
+class _TickerTransport:
+    """Serves company_tickers.json for live ticker resolution; 404 otherwise."""
+
+    def __init__(self) -> None:
+        self.files = {_iq.COMPANY_TICKERS_URL: MCP_TICKERS.read_bytes()}
+
+    def get(self, url, *, headers):
+        content = self.files.get(url)
+        if content is None:
+            return _TransportResponse(status_code=404, headers={}, content=b"")
+        return _TransportResponse(status_code=200, headers={}, content=content)
+
+
+def _ticker_client():
+    counter = iter(range(1, 1_000_000))
+    return _SecClient(_TickerTransport(), contact="t@example.com",
+                      sleep=lambda _s: None, monotonic=lambda: next(counter))
+
+
+BRK = "0001067983"
+#: The TRACKED real Berkshire 13F corpus — four cached filings covering three
+#: periods (2025-03-31 incl. an amendment, 2025-12-31, 2026-03-31). R10 drives the
+#: production ingest over THESE bytes rather than a hand-written filing, so broken
+#: stamping, re-ingest behaviour or seed-before-ingest ordering cannot pass (F7).
+REAL_INST_DIR = REPO_ROOT / "tests" / "fixtures" / "inst" / "real"
+
+
+def _corpus_quarters_and_rows() -> dict[str, list[str]]:
+    """Derive each quarter's 13(f)-list rows FROM THE REAL CORPUS's own filings.
+
+    The definitional list must cover the securities the corpus actually holds,
+    so the rows are read out of the cached ``form13fInfoTable`` documents rather
+    than invented: for each filing, its ``periodOfReport`` picks the quarter and
+    every ``<cusip>``/``<nameOfIssuer>`` pair becomes one fixed-width row. One row
+    per CUSIP per quarter (name chosen deterministically as the lexicographic
+    minimum), because same-CUSIP rows that disagree on issuer/class are a
+    definition conflict the parser rejects outright (F6).
+    """
+    import re as _re
+
+    from populus.parse.list13f import parse_quarter as _pq
+
+    by_quarter: dict[str, dict[str, str]] = {}
+    for cik_dir in sorted(REAL_INST_DIR.iterdir()):
+        if not cik_dir.is_dir():
+            continue
+        for acc_dir in sorted(p for p in cik_dir.iterdir() if p.is_dir()):
+            primary = acc_dir / "primary_doc.xml"
+            if not primary.is_file():
+                continue
+            period = _re.search(
+                r"periodOfReport>\s*(\d{2})-(\d{2})-(\d{4})",
+                primary.read_text(errors="replace"),
+            )
+            if period is None:
+                continue
+            month, _day, year = period.group(1), period.group(2), period.group(3)
+            quarter = f"{year}q{(int(month) - 1) // 3 + 1}"
+            assert _pq(quarter) == quarter
+            for table in sorted(acc_dir.glob("*.xml")):
+                if table.name == "primary_doc.xml":
+                    continue
+                text = table.read_text(errors="replace")
+                for entry in _re.findall(r"<infoTable>(.*?)</infoTable>", text, _re.S):
+                    cusip = _re.search(r"<[\w:]*cusip>\s*([^<\s]+)", entry)
+                    name = _re.search(r"<[\w:]*nameOfIssuer>\s*([^<]+)", entry)
+                    if cusip is None or name is None:
+                        continue
+                    value = cusip.group(1).strip().upper()
+                    issuer = " ".join(name.group(1).split())[:30]
+                    slot = by_quarter.setdefault(quarter, {})
+                    slot[value] = min(slot.get(value, issuer), issuer)
+    return {
+        quarter: [
+            _list_row(cusip, cusips[cusip])
+            for cusip in sorted(cusips)
+        ]
+        for quarter, cusips in sorted(by_quarter.items())
+    }
+
+
+def _list_row(cusip: str, issuer: str) -> str:
+    """One 80-char row in the verified fixed-width 13(f)-list layout."""
+    row = (
+        cusip.ljust(9)[:9] + " " + issuer.ljust(30)[:30] + "COM".ljust(27)
+        + "   " + " " * 9 + "E"
+    )
+    assert len(row) == 80, len(row)
+    return row
+
+
+def _write_list_cache(list_dir: Path, quarters: dict[str, list[str]]) -> None:
+    """Write each quarter's list + a full, verified §5.1 sidecar (F5 requires it)."""
+    list_dir.mkdir(parents=True, exist_ok=True)
+    for quarter, rows in quarters.items():
+        content = ("\n".join(rows) + "\n").encode("utf-8")
+        name = f"13flist{quarter}-txt.txt"
+        (list_dir / name).write_bytes(content)
+        (list_dir / f"{name}.meta.json").write_text(json.dumps({
+            "source_url": f"https://www.sec.gov/files/investment/{name}",
+            "http_status": 200,
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "retrieved_at": "2026-07-30T00:00:00Z",
+            "user_agent": "populus-mcp/0.0.1",
+        }))
+
+
+def _seed_identity_via_list(db_path: Path, tmp_path: Path) -> dict:
+    """Run the REAL production chain: identity bootstrap (tickers + FTD + the
+    13(f) lists) and then ``run_inst13f_ingest`` over the TRACKED cached Berkshire
+    filings — the locked rollout order (seed → ingest), with every ``security_id``
+    stamped by the production resolver at ingest, never hand-set (R10/F7).
+
+    Returns the measured corpus facts the caller asserts against, so the test
+    never hard-codes a figure it did not measure.
+    """
+    from populus.identity.bootstrap import run_identity_bootstrap
+    from populus.ingest.inst13f import compute_coverage, run_inst13f_ingest
+    from populus.ingest.list13f import _CacheSource
+
+    cache = tmp_path / "reg"
+    cache.mkdir()
+    (cache / "company_tickers.json").write_text(
+        json.dumps({"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc"}})
+    )
+    # FTD supplies the AAPL symbol → entity link (the list carries no tickers);
+    # it does NOT cover the 2026-Q1 quarter-end, so list coverage is what makes
+    # the gate pass.
+    ftd = cache / "cnsfails.txt"
+    ftd.write_text(
+        "SETTLEMENT DATE|CUSIP|SYMBOL|QUANTITY (FAILS)|DESCRIPTION|PRICE\n"
+        f"20250115|{APPLE_CUSIP}|AAPL|100|APPLE INC|150.00\n"
+    )
+    quarters = _corpus_quarters_and_rows()
+    assert quarters, "the tracked real corpus yielded no filings"
+    list_dir = tmp_path / "13flist"
+    _write_list_cache(list_dir, quarters)
+
+    conn = connect(str(db_path))
+    try:
+        _ensure_registry(conn)
+        _ensure_inst_schema(conn)
+        _ensure_views(conn)
+        run_identity_bootstrap(
+            conn,
+            tickers_path=cache / "company_tickers.json",
+            ftd_paths=[ftd],
+            registry=_load_registry(),
+            snapshot_date="2025-01-01",  # AAPL→CIK valid before the FTD date
+            run_id="reg-1",
+            now=lambda: "2026-07-23T00:00:00Z",
+            host="h",
+            list13f_source=_CacheSource(list_dir),
+            list13f_quarters=sorted(quarters),
+        )
+        # Covered by the LIST for the whole quarter; FTD alone does not reach
+        # 2026-03-31 — and both sources bind to ONE security_id.
+        sid = _resolve_cusip(conn, APPLE_CUSIP, "2026-03-31")
+        assert sid is not None
+        assert _resolve_cusip(conn, APPLE_CUSIP, "2025-01-15") == sid  # FTD date
+
+        # THE PRODUCTION INGEST over the tracked cached filings. Nothing is
+        # inserted by a test helper: filer, filings and holdings all come from the
+        # real parser, and each holding's security_id is stamped by resolve_cusip
+        # inside the ingest. Mutating the resolver to return None would leave the
+        # holdings unresolved and collapse the coverage → gate → serve chain.
+        run_inst13f_ingest(
+            conn,
+            run_id="inst-r10",
+            now=lambda: "2026-07-23T00:00:00Z",
+            host="h",
+            ingested_at="2026-07-23T00:00:00Z",
+            ciks=[BRK],
+            cache_dir=str(REAL_INST_DIR),
+        )
+        holdings, stamped = conn.execute(
+            "SELECT COUNT(*), COUNT(security_id) FROM v_default_holdings"
+        ).fetchone()
+        assert holdings > 0, "the real corpus ingested no holdings"
+        measured = {
+            "holdings": holdings,
+            "stamped": stamped,
+            "coverage": compute_coverage(conn).coverage,
+            "period_total": conn.execute(
+                "SELECT SUM(value_usd) FROM v_default_holdings h"
+                " JOIN v_default_inst_filings f ON f.filing_id = h.filing_id"
+                " WHERE f.cik = ? AND f.period_of_report = '2026-03-31'",
+                (BRK,),
+            ).fetchone()[0],
+            "filer_name": conn.execute(
+                "SELECT name_raw FROM inst_filers WHERE cik = ?", (BRK,)
+            ).fetchone()[0],
+        }
+        return measured
+    finally:
+        conn.close()
+
+
+def test_r10_full_lifecycle_serves_inst_from_the_published_manifest(tmp_path, monkeypatch):
+    """R10: build → publish with the gate PASSING (via the 13(f) list) → the real
+    SnapshotClient installs inst → both inst tools answer with
+    inst_from_published_manifest=True. NOTHING is mocked: the production
+    _resolve_snapshot() runs the real client, and its UNMODIFIED output drives
+    build_server."""
+    import sys
+
+    from populus.mcp_server import server as srv_mod
+
+    db = seed_db(tmp_path / "populus.db")
+    measured = _seed_identity_via_list(db, tmp_path)
+    # The real corpus really was ingested and really was fully stamped by the
+    # production resolver — the precondition the gate then measures.
+    assert measured["stamped"] == measured["holdings"]
+    assert measured["coverage"] >= 0.95
+    repo = make_repo(tmp_path)
+    publish_build(db, repo)
+
+    # The gate passed on the list-seeded corpus: inst is in the published manifest.
+    manifest = read_manifest(repo, latest_pointer(repo)["build_id"])
+    assert "inst" in manifest["modules"]
+
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(sys, "argv",
+                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+    monkeypatch.setattr(srv_mod, "_utc_now", pin())
+
+    resolved = srv_mod._resolve_snapshot()  # the REAL client, no mock
+    assert resolved["inst_from_published_manifest"] is True
+    assert resolved["inst_db_path"] is not None
+
+    # The UNMODIFIED resolver output drives build_server (a hand-built
+    # inst_from_published_manifest=True would not satisfy R10).
+    server = srv_mod.build_server(**resolved, sec_client=_ticker_client())
+
+    def call(name, **kwargs):
+        return server._tool_manager.get_tool(name).fn(**kwargs)
+
+    # inst_from_published_manifest=True surfaces as the health provenance stamp —
+    # the server is serving inst from a VERIFIED published manifest (not --inst-db).
+    assert call("inst_health")["results"]["provenance"] == "published-snapshot"
+
+    filer_env = call("inst_filer_holdings", cik=BRK, period="2026-03-31")
+    ticker_env = call("inst_ticker_holders", ticker="AAPL", period="2026-03-31")
+
+    # Neither data-plane answer carries the "UNVERIFIED SOURCE" prefix an
+    # unpublished (--inst-db) snapshot would stamp — they came from the manifest.
+    assert "UNVERIFIED SOURCE" not in json.dumps(filer_env)
+    assert "UNVERIFIED SOURCE" not in json.dumps(ticker_env)
+    # Real data from the tracked corpus: the served totals must equal what was
+    # MEASURED in the source database (not a figure written into the test), and
+    # Berkshire must appear among Apple's institutional holders.
+    filer_results = filer_env["results"]
+    assert filer_results["cik"] == BRK
+    assert filer_results["filer"]["filer_name"] == measured["filer_name"]
+    assert filer_results["concentration"]["total_value_usd"] == measured["period_total"]
+    assert filer_results["concentration"]["total_value_usd"] > 0
+    holders = ticker_env["results"]["holders"]
+    assert any(h["cik"] == BRK for h in holders)
+
+
+def _seed_inst_ftd_only_uncovered(db_path: Path):
+    """An inst corpus whose only period has valid FTD coverage but NO 13(f) list:
+    coverage stays at the FTD-only figure (below the gate) and the quarter is
+    uncovered-by-list."""
+    from populus.identity.bootstrap import FtdObservation, Mutations, bootstrap_ftd
+
+    conn = connect(str(db_path))
+    try:
+        _ensure_registry(conn)
+        _ensure_inst_schema(conn)
+        _ensure_views(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        bootstrap_ftd(
+            conn,
+            [FtdObservation(settlement_date="2026-06-30", id_type="cusip",
+                            value=APPLE_CUSIP, symbol=None, issuer_name="APPLE INC")],
+            registry=_load_registry(), mutations=Mutations(),
+        )
+        conn.execute("COMMIT")
+        sid = _resolve_cusip(conn, APPLE_CUSIP, "2026-06-30")  # FTD-resolved
+        assert sid is not None
+        _filer(conn, "0000000001", "Alpha Capital")
+        _load(conn, fid="inst:A-1", cik="0000000001", period="2026-06-30", filed="2026-07-15",
+              holds=[
+                  _hold(ordinal=1, issuer="APPLE INC", cusip=APPLE_CUSIP, value=900,
+                        security_id=sid),
+                  _hold(ordinal=2, issuer="MSFT", cusip="594918104", value=100,
+                        security_id=None),  # no list, no FTD → unresolved
+              ])
+    finally:
+        conn.close()
+
+
+def test_build_withheld_reason_names_the_uncovered_quarter(tmp_path):
+    """R11: a below-gate build names the quarters that carry no definitional list.
+    Mutation guard: dropping the naming would leave uncovered_quarters empty."""
+    db = seed_db(tmp_path / "populus.db")
+    _seed_inst_ftd_only_uncovered(db)
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert report.inst_withheld is not None
+    assert abs(report.inst_withheld["coverage"] - 0.90) < 1e-9  # FTD-only, not zero
+    assert report.inst_withheld["uncovered_quarters"] == ["2026-06-30"]
+    # The per-period breakdown rides along on the report (R9).
+    periods = {p["period_of_report"]: p for p in report.inst_period_coverage}
+    assert periods["2026-06-30"]["covered_by_list"] is False

@@ -56,6 +56,7 @@ REGISTRY_TABLES = {
     "securities",
     "security_identifiers",
     "security_supersessions",
+    "security_list_intervals",
 }
 M1_TABLES = {"members", "member_aliases", "filings", "transactions", "ingest_runs"}
 
@@ -321,7 +322,14 @@ def test_every_resolver_requires_an_as_of_date():
     # expressible.
     from populus.identity import registry as registry_module
 
-    dated = {"resolve_cusip", "resolve_entity_by_cik", "resolve_ticker_as_of"}
+    # resolve_security_name (RUN M2-5) is dated too — it returns the covering
+    # quarter's list name or None, never a date-free "current" name (G14).
+    dated = {
+        "resolve_cusip",
+        "resolve_entity_by_cik",
+        "resolve_ticker_as_of",
+        "resolve_security_name",
+    }
     found = {
         name
         for name in dir(registry_module)
@@ -815,11 +823,13 @@ def test_security_id_referencing_tables_is_the_enforced_constant():
     # RUN M2-2 (LD-3) added inst_holdings.security_id as an FK to securities, so
     # the constant that drives promotion/split repointing must list it too; the
     # FK-completeness interlock (test_identity_migration.py) set-compares this
-    # tuple to the live PRAGMA foreign_key_list tables.
+    # tuple to the live PRAGMA foreign_key_list tables. RUN M2-5 added
+    # security_list_intervals (the definitional 13(f)-list table).
     assert SECURITY_ID_REFERENCING_TABLES == (
         "security_identifiers",
         "security_supersessions",
         "inst_holdings",
+        "security_list_intervals",
     )
 
 

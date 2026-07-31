@@ -1036,3 +1036,77 @@ def test_cli_reports_an_invalid_authority_file(tmp_path):
     assert result.exit_code == 1
     assert "999999999" in result.output
     assert "Traceback" not in result.output
+
+
+# --- RUN M2-5: the 13(f)-list CLI path (T9) -----------------------------------
+
+
+def _write_list(list_dir, cusip):
+    import hashlib
+
+    row = cusip.ljust(9) + " " + "APPLE INC".ljust(30) + "COM".ljust(27) + "   " + " " * 9 + "E"
+    assert len(row) == 80
+    content = (row + "\n").encode("utf-8")
+    (list_dir / "13flist2026q1-txt.txt").write_bytes(content)
+    # A full, verified §5.1 sidecar — cache mode now requires and checks it (F10).
+    (list_dir / "13flist2026q1-txt.txt.meta.json").write_text(
+        json.dumps({
+            "source_url": "https://www.sec.gov/files/investment/13flist2026q1-txt.txt",
+            "http_status": 200,
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "retrieved_at": "2026-07-30T00:00:00Z",
+            "user_agent": "populus-mcp/0.0.1",
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_cli_list13f_seeds_and_the_replace_quarter_correction_flow(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "company_tickers.json").write_text(SAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+    list_dir = tmp_path / "13flist"
+    list_dir.mkdir()
+    db = tmp_path / "i.db"
+
+    def run(*extra):
+        return CliRunner().invoke(
+            main,
+            ["identity", "bootstrap", "--from-cache", str(cache), "--db", str(db),
+             "--list13f-cache", str(list_dir), "--list13f-start-quarter", "2026q1", *extra],
+        )
+
+    _write_list(list_dir, "037833100")
+    first = run()
+    assert first.exit_code == 0, first.output
+    assert "sec-13f-list" in first.output
+
+    # A same-content reseed is replay-zero and stays exit 0.
+    replay = run()
+    assert replay.exit_code == 0, replay.output
+
+    # A CHANGED list (different content ⇒ different sha) is a hard error naming
+    # both hashes, unless --replace-quarter is given.
+    _write_list(list_dir, "594918104")
+    rejected = run()
+    assert rejected.exit_code != 0
+    assert "different" in rejected.output and "sha256" in rejected.output
+    assert "Traceback" not in rejected.output
+
+    replaced = run("--replace-quarter")
+    assert replaced.exit_code == 0, replaced.output
+    conn = connect(str(db))
+    try:
+        shas = {s for (s,) in conn.execute("SELECT DISTINCT list_sha256 FROM security_list_intervals")}
+        assert len(shas) == 1  # only the corrected list remains
+        assert conn.execute(
+            "SELECT 1 FROM security_list_intervals WHERE value = '594918104'"
+        ).fetchone() is not None
+        # F14: the correction supersedes the WHOLE prior quarter — the old CUSIP,
+        # absent from the corrected list, must be GONE (not left retagged).
+        assert conn.execute(
+            "SELECT 1 FROM security_list_intervals WHERE value = '037833100'"
+        ).fetchone() is None
+    finally:
+        conn.close()

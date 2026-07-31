@@ -79,6 +79,82 @@ CREATE TABLE IF NOT EXISTS security_identifiers (
 CREATE UNIQUE INDEX IF NOT EXISTS security_identifier_no_overlap
   ON security_identifiers (id_type, value, valid_from);
 
+-- The DEFINITIONAL identity source (RUN M2-5): the SEC Official List of Section
+-- 13(f) Securities registers each quarter's CUSIP universe with the interval
+-- EXACTLY that quarter, [quarter_start, next_quarter_start) half-open (G14 — no
+-- extrapolation beyond the observed list). A SEPARATE table from
+-- security_identifiers on purpose: the two sources have different precedence
+-- (registry.resolve_cusip decides via this table first and only consults the
+-- FTD security_identifiers when NO definitional interval covers the date), and
+-- keeping them apart leaves the FTD write path byte-for-byte untouched. Full
+-- §5.1 provenance lives ON the fact row: every seeded identity traces to its
+-- retrieval event (retrieved_at, source_url, list_sha256, raw_path), its source
+-- line (row_ordinal AND the verbatim source_row), and its transformation
+-- (parser/normalization versions).
+CREATE TABLE IF NOT EXISTS security_list_intervals (
+  security_id  TEXT NOT NULL REFERENCES securities(security_id),
+  id_type      TEXT NOT NULL CHECK (id_type IN ('cusip')),
+  value        TEXT NOT NULL,
+  valid_from   DATE NOT NULL,                -- [quarter_start, next_quarter_start),
+  valid_to     DATE,                         -- intersected with securities.yaml windows
+  quarter      TEXT NOT NULL,                -- 'YYYYqN' — the replacement/superseding key
+  issuer_name  TEXT,                         -- the SEC canonical name (the sole persisted name source)
+  security_class TEXT,                       -- the issuer-description column as printed
+  is_option    INTEGER NOT NULL CHECK (is_option IN (0, 1)),
+  status_flag  TEXT NOT NULL,                -- '' (continuing) | 'ADDED' (DELETED never seeds)
+  provenance   TEXT NOT NULL,                -- 'sec-13f-list'
+  confidence   TEXT NOT NULL CHECK (confidence IN ('high','medium','low')),
+  review_state TEXT NOT NULL CHECK (review_state IN ('auto','reviewed','disputed')),
+  license_id   TEXT NOT NULL,
+  source_url   TEXT NOT NULL,
+  list_sha256  TEXT NOT NULL,
+  retrieved_at TEXT,
+  raw_path     TEXT,
+  row_ordinal  INTEGER,
+  parser_version TEXT NOT NULL,
+  normalization_version TEXT NOT NULL,
+  -- The VERBATIM source row this identity was read from: the original 80-char
+  -- fixed-width text line, or the reconstructed PDF data row (its positioned
+  -- words re-joined in reading order). With row_ordinal and raw_path it makes a
+  -- published or migrated fact auditable against its exact source line WITHOUT
+  -- retaining the external gitignored cache (§5.1, round-1 F9). Carried verbatim
+  -- through an authority-revision recut, so every cut piece keeps its origin line
+  -- and the recut stays byte-deterministic.
+  source_row   TEXT,
+  raw          JSON CHECK (raw IS NULL OR (json_valid(raw) AND json_type(raw) = 'object')),
+  -- One definitional row per (value, valid_from): the replay-zero idempotency
+  -- key and the ownership-boundary-cut key, mirroring security_identifiers'
+  -- no-overlap discipline on the lookup side.
+  PRIMARY KEY (value, valid_from)
+);
+CREATE INDEX IF NOT EXISTS security_list_interval_value
+  ON security_list_intervals (value);
+CREATE INDEX IF NOT EXISTS security_list_interval_security
+  ON security_list_intervals (security_id);
+
+-- The quarter-level SEED LEDGER (RUN M2-5 / F3-round1 F6): one row per
+-- (quarter, provenance) recording the source hash and retrieval provenance of
+-- the list that seeded it — written EVEN WHEN THE QUARTER SEEDS ZERO RECORDS
+-- (a DELETED-only list). The replay/replacement decision is driven from HERE,
+-- not from security_list_intervals: a valid zero-record quarter leaves no
+-- interval rows, so a hash history that lived only on interval rows was blind to
+-- it and a different-sha reseed slipped through without the mandated hard error.
+-- A later securities.yaml revision recuts the intervals but NOT this ledger — the
+-- source (quarter + sha) is unchanged by a re-owner, so a post-migration same-sha
+-- reseed stays replay-zero.
+CREATE TABLE IF NOT EXISTS security_list_seed_ledger (
+  quarter      TEXT NOT NULL,
+  provenance   TEXT NOT NULL,                -- 'sec-13f-list'
+  list_sha256  TEXT NOT NULL,                -- the retrieval sha of the seeding file
+  source_url   TEXT NOT NULL,
+  retrieved_at TEXT,
+  raw_path     TEXT,
+  records_seeded INTEGER NOT NULL,           -- 0 for a DELETED-only quarter
+  parser_version TEXT NOT NULL,
+  normalization_version TEXT NOT NULL,
+  PRIMARY KEY (quarter, provenance)          -- the replay/replacement key
+);
+
 CREATE TABLE IF NOT EXISTS entity_tickers (
   entity_id  TEXT NOT NULL REFERENCES entities(entity_id),
   ticker     TEXT NOT NULL,
