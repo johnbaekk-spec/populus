@@ -48,7 +48,7 @@ def _clean(text: str) -> str:
     """
     return nfc(text.replace("\x00", ""))
 
-PARSER_VERSION = "house-ptr-1.0.0"
+PARSER_VERSION = "house-ptr-1.1.0"
 WRAP_PITCH_TOLERANCE = 1.5
 
 # Words closer than this vertically belong to one printed line (pdfplumber's
@@ -110,6 +110,21 @@ _STRUCTURAL_VALIDATORS = {
     "date": COLUMN_SIGNATURES["date"],
     "notification": COLUMN_SIGNATURES["date"],
 }
+
+
+def _has_typed_cell(cells: dict[str, str]) -> bool:
+    """Whether any cell matches its OWN column's signature (M1-C).
+
+    The row-shaped test for sub-line continuation. Unlike
+    :func:`_is_structural_cells` it also counts ``amount`` and ``capgains``:
+    opening a row on an amount alone is forbidden (R24), but a line bearing a
+    real amount is still transaction-shaped and must never be folded into a
+    comment.
+    """
+    return any(
+        column in cells and signature.match(cells[column])
+        for column, signature in COLUMN_SIGNATURES.items()
+    )
 
 
 def _is_structural_cells(cells: dict[str, str]) -> bool:
@@ -512,6 +527,15 @@ class _Segmenter:
         self.text_fallback = text_fallback
         self.candidates: list[RowCandidate] = []
         self.open_candidate: RowCandidate | None = None
+        # M1-C: True while a COMMENT sub-line's printed value is still
+        # eligible to wrap onto following lines. Cleared by a structural line
+        # (a row is never a sub-line's tail) and by any non-comment sub-line.
+        #
+        # Deliberately comment-only: a FILING STATUS/SUBHOLDING OF value is
+        # not captured anywhere, so folding its tail in would DELETE text.
+        # Those tails keep opening flagged orphans — visible, per F4 — and
+        # they are 32 of the 673 continuations measured across the corpus.
+        self.comment_open = False
 
     # -- candidate lifecycle
 
@@ -522,6 +546,7 @@ class _Segmenter:
         self._fill(candidate, cells)
         self.candidates.append(candidate)
         self.open_candidate = candidate
+        self.comment_open = False
 
     def _open_orphan(self) -> RowCandidate:
         candidate = RowCandidate(
@@ -550,6 +575,31 @@ class _Segmenter:
         if comment_kind == "comment" and value:
             candidate.comment_parts.append(value)
         candidate.block_open = False
+        self.comment_open = comment_kind == "comment"
+
+    def feed_subline_continuation(self, cells: dict[str, str]) -> None:
+        """Append a wrapped sub-line's tail to the sub-line it continues.
+
+        A long ``DESCRIPTION:``/``COMMENTS:`` line wraps like any other, but
+        its tail arrives after the sub-line has already closed the row block,
+        so the asset-continuation branch cannot take it (M1-C). Routing it
+        here keeps the printed text with the sub-line that printed it; the
+        alternative the parser used before was to open a flagged orphan,
+        which fabricated a transaction row the document never disclosed.
+
+        A non-comment sub-line's value is not captured, so neither is its
+        tail — dropping both is what keeps the two consistent.
+        """
+        if self.open_candidate is None:
+            return
+        # Rejoin the wrapped line in printed order. The cells are only an
+        # artefact of where words fell relative to the column anchors; the
+        # printed line read left to right is what the filer wrote.
+        text = " ".join(
+            cells[column] for column in _COLUMN_ORDER if column in cells
+        )
+        if text:
+            self.open_candidate.comment_parts.append(text)
 
     # -- fragments (typed routing, R24/R25)
 
@@ -564,6 +614,25 @@ class _Segmenter:
         own cell of a single new flagged orphan candidate — never in another
         column of the open candidate (R25).
         """
+        # M1-C: prose tail of a still-wrapping COMMENT sub-line. Gated on
+        # three conditions together, so this can never swallow row-shaped
+        # data: a comment must be open (a structural line clears it), the
+        # geometry must allow a wrap, and NO cell may match its own column's
+        # signature.
+        #
+        # That last test is the existing R25 recognizer table, reused rather
+        # than re-invented, so "row-shaped" cannot drift between this decision
+        # and the structural one. Column position alone is NOT sufficient:
+        # wrapped prose spans the full printed width, so its words land in the
+        # side/date/amount buckets while matching none of those shapes.
+        if (
+            self.comment_open
+            and wrap_ok
+            and cells
+            and not _has_typed_cell(cells)
+        ):
+            self.feed_subline_continuation(cells)
+            return
         orphan: RowCandidate | None = None
         target = self.open_candidate
         for column in _COLUMN_ORDER:
