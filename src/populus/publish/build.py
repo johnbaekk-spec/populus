@@ -1673,7 +1673,33 @@ def run_build(
         # no inst_agg.db asset). The recovery journal stays congress-scoped
         # either way (R3); the inst asset is a separate staged Release asset.
         inst_agg_path = assets_dir / INST_DB_ARTIFACT
-        inst_present = (
+        # Absence is decided by SCHEMA, not by whether a query happened to fail.
+        #
+        # An M1-ONLY database has no inst tables at all. `ensure_views` applies
+        # the inst view DDL unconditionally (SQLite accepts a view over a
+        # missing table), so the view exists while `inst_filings` does not, and
+        # probing the view raises rather than answering "absent". Discovered
+        # rebuilding a published congress.db, which carries the congress module
+        # only (RUN M1-B, stage B).
+        #
+        # The first version caught `sqlite3.OperationalError` around the probe,
+        # which read EVERY operational fault as "institutional data absent" — a
+        # malformed view, an incompatible schema, a locked or corrupt database
+        # could silently publish a congress-only build and drop a real
+        # institutional corpus on the floor (code review round 1, F3). So the
+        # missing-table case is now identified positively, against
+        # `sqlite_master`, and the probe itself is left UNGUARDED: if the table
+        # is there, any error querying the view is a genuine fault and
+        # propagates out of `run_build` as a visible publication failure
+        # (R13/R16/R18).
+        inst_table_present = (
+            snapshot.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                " AND name = 'inst_filings'"
+            ).fetchone()
+            is not None
+        )
+        inst_present = inst_table_present and (
             snapshot.execute(
                 "SELECT 1 FROM v_default_inst_filings LIMIT 1"
             ).fetchone()

@@ -4395,3 +4395,150 @@ def test_build_withheld_reason_names_the_uncovered_quarter(tmp_path):
     # The per-period breakdown rides along on the report (R9).
     periods = {p["period_of_report"]: p for p in report.inst_period_coverage}
     assert periods["2026-06-30"]["covered_by_list"] is False
+
+
+def test_build_from_an_m1_only_database_yields_an_m1_build(tmp_path):
+    """A database carrying no inst TABLES is inst-absent (RUN M1-B, stage B).
+
+    `ensure_views` applies the inst view DDL unconditionally — SQLite accepts a
+    view over a missing table — so on an M1-only database the view exists while
+    `inst_filings` does not. Probing it must read as "absent" and produce the
+    byte-identical M1 build the guard promises, not raise. This is the shape of
+    every published `congress.db`, so without it a published corpus cannot be
+    rebuilt from.
+    """
+    import sqlite3 as sqlite3_module
+
+    from populus.amendments import ensure_views
+    from populus.db import connect, init_db
+    from populus.publish.build import LocalDirBackend, run_build
+
+    db_path = tmp_path / "m1-only.db"
+    init_db(str(db_path))
+    conn = connect(str(db_path))
+    try:
+        # Reproduce the published shape exactly: a released congress.db carries
+        # the congress module ONLY — verified against
+        # populus-data releases/data-20260724.3/congress.db, which holds no
+        # inst table, index, or view.
+        for name in ("v_default_inst_filings", "v_default_holdings"):
+            conn.execute(f"DROP VIEW IF EXISTS {name}")  # nosec B608
+        for name in ("inst_holdings", "inst_filings", "inst_filers"):
+            conn.execute(f"DROP TABLE IF EXISTS {name}")  # nosec B608
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name LIKE 'inst%'"
+            " OR name LIKE 'v_default_inst%'"
+        ).fetchone() is None
+
+        # This is what run_build does first, and it is what creates the trap:
+        # the inst view DDL applies over a table that does not exist.
+        ensure_views(conn)
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'view'"
+            " AND name = 'v_default_inst_filings'"
+        ).fetchone() is not None
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+            " AND name = 'inst_filings'"
+        ).fetchone() is None
+        with pytest.raises(sqlite3_module.OperationalError):
+            conn.execute("SELECT 1 FROM v_default_inst_filings LIMIT 1")
+    finally:
+        conn.close()
+
+    repo = tmp_path / "data-repo"
+    repo.mkdir()
+    backend = LocalDirBackend(repo)
+    report = run_build(
+        db_path, repo, now=lambda: datetime(2026, 7, 31, tzinfo=timezone.utc),
+        backend=backend,
+    )
+    manifest = json.loads(
+        (repo / ".staging" / report.build_id / "build" / "manifest.json").read_text()
+        if (repo / ".staging" / report.build_id / "build" / "manifest.json").exists()
+        else (repo / ".staging" / report.build_id / "manifest.json").read_text()
+    )
+    # An M1 build: the congress module only, no inst module, no inst_agg asset.
+    assert "inst" not in manifest.get("modules", {})
+    assert "congress" in manifest["modules"]
+
+
+def test_a_broken_institutional_schema_fails_the_build_it_does_not_read_absent(
+    tmp_path,
+):
+    """An operational fault probing the inst view must PROPAGATE (F3).
+
+    The M1-only guard above must identify absence by SCHEMA — `inst_filings`
+    missing from `sqlite_master` — never by "the probe raised". A database that
+    HAS an institutional corpus but whose view or schema is broken is a genuine
+    publication failure: swallowing it would publish a congress-only build and
+    silently drop real institutional data.
+    """
+    import sqlite3 as sqlite3_module
+
+    from populus.db import connect, init_db
+    from populus.publish.build import LocalDirBackend, run_build
+
+    db_path = tmp_path / "broken-inst.db"
+    init_db(str(db_path))
+    conn = connect(str(db_path))
+    try:
+        for name in ("v_default_holdings", "v_default_inst_filings"):
+            conn.execute(f"DROP VIEW IF EXISTS {name}")  # nosec B608
+        for name in ("inst_holdings", "inst_filings", "inst_filers"):
+            conn.execute(f"DROP TABLE IF EXISTS {name}")  # nosec B608
+        # The table IS there — so this is NOT an inst-absent database — but its
+        # schema is incompatible with the view the build reads it through.
+        conn.execute("CREATE TABLE inst_filings (filing_id TEXT PRIMARY KEY)")
+        conn.commit()
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+            " AND name = 'inst_filings'"
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+    repo = tmp_path / "data-repo"
+    repo.mkdir()
+    with pytest.raises(sqlite3_module.OperationalError):
+        run_build(
+            db_path, repo, now=lambda: datetime(2026, 7, 31, tzinfo=timezone.utc),
+            backend=LocalDirBackend(repo),
+        )
+
+
+def test_a_malformed_institutional_view_fails_the_build(tmp_path):
+    """The other half of F3: the inst tables are intact and populated, and the
+    VIEW the build reads them through is broken. `ensure_views` is
+    `CREATE VIEW IF NOT EXISTS`, so it will not repair it — and the fault must
+    surface rather than be reported as "no institutional data"."""
+    import sqlite3 as sqlite3_module
+
+    from populus.db import connect, init_db
+    from populus.publish.build import LocalDirBackend, run_build
+
+    db_path = tmp_path / "malformed-view.db"
+    init_db(str(db_path))
+    conn = connect(str(db_path))
+    try:
+        conn.execute("DROP VIEW IF EXISTS v_default_holdings")
+        conn.execute("DROP VIEW IF EXISTS v_default_inst_filings")
+        conn.execute(
+            "CREATE VIEW v_default_inst_filings AS"
+            " SELECT * FROM inst_filings_that_do_not_exist"
+        )
+        conn.commit()
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+            " AND name = 'inst_filings'"
+        ).fetchone() is not None          # NOT an inst-absent database
+    finally:
+        conn.close()
+
+    repo = tmp_path / "data-repo"
+    repo.mkdir()
+    with pytest.raises(sqlite3_module.OperationalError):
+        run_build(
+            db_path, repo, now=lambda: datetime(2026, 7, 31, tzinfo=timezone.utc),
+            backend=LocalDirBackend(repo),
+        )

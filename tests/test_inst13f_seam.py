@@ -24,6 +24,7 @@ import bulk_corpus as bc
 from bulk_corpus import FilerSpec, FilingSpec, filer_lineage, filer_url_map
 
 import populus.inst_bulk as ib
+import populus.ingest.checkpoint as checkpoint_mod
 import populus.ingest.inst13f as inst13f
 from populus.amendments import ensure_views
 from populus.db import connect, init_db
@@ -354,7 +355,13 @@ def _replace_until(tmp_path, work: Path, stop_after: Path, monkeypatch):
         if Path(path) == stop_after:
             raise _Interrupt(f"crash immediately after writing {Path(path).name}")
 
+    # Both durable writes are spied: the document bytes go through inst13f's
+    # own writer, and the checkpoint sidecar through the shared
+    # ``populus.ingest.checkpoint`` primitive the House fetch also uses
+    # (RUN M1-B, R1). Patching only one would silently stop observing half
+    # the ordering this test exists to guard.
     monkeypatch.setattr(inst13f, "atomic_write_bytes", spy)
+    monkeypatch.setattr(checkpoint_mod, "atomic_write_bytes", spy)
     conn = _fresh_db(tmp_path)
     with pytest.raises(_Interrupt):
         _ingest(conn, _replacement_map(), work)

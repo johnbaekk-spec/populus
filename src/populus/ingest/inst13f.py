@@ -21,7 +21,6 @@ committed sidecars (a missing sidecar → NULL + a flag, never the clock; R15/R1
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sqlite3
@@ -33,6 +32,11 @@ from pathlib import Path
 
 from populus.identity.registry import normalize_cik, resolve_cusip
 from populus.ingest import UnsafeArchivePathError, archive_path
+from populus.ingest.checkpoint import (
+    commit_checkpoint,
+    read_checkpoint,
+    sha256_hex,
+)
 from populus.load import (
     InstFilingRow,
     InstParsedRow,
@@ -101,10 +105,6 @@ def _archive_base(cik10: str, accession_nodash: str) -> str:
     )
 
 
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 # --- per-document resume checkpoints (RUN M2-6, R13) --------------------------
 #
 # The checkpoint sidecars ARE the existing provenance sidecars: submissions-
@@ -112,71 +112,14 @@ def _sha256(data: bytes) -> str:
 # fetch-meta.json carries one slot per document under ``documents[filename]``.
 # ``doc_key`` is ``None`` for the single-document submissions sidecar, else the
 # document filename.
-
-
-def _read_checkpoint(meta_path: Path, doc_key: str | None) -> tuple[str | None, str | None]:
-    """The committed ``(response_hash, retrieved_at)`` for a document, or
-    ``(None, None)`` when no checkpoint exists yet."""
-    if not meta_path.exists():
-        return None, None
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None, None
-    if doc_key is None:
-        return meta.get("response_hash"), meta.get("retrieved_at")
-    entry = (meta.get("documents") or {}).get(doc_key)
-    if not isinstance(entry, dict):
-        return None, None
-    return entry.get("response_hash"), entry.get("retrieved_at")
-
-
-def _commit_checkpoint(
-    meta_path: Path,
-    doc_key: str | None,
-    *,
-    url: str,
-    response_hash: str,
-    retrieved_at: str | None,
-) -> None:
-    """Durably record a document's expected hash BEFORE its bytes are written.
-
-    Read-modify-write of the shared sidecar so sibling documents' checkpoints
-    survive; the top-level ``retrieved_at`` stays the max over recorded docs so
-    the offline ``_CacheSource`` reads the same provenance it always has.
-    """
-    if doc_key is None:
-        payload = {
-            "retrieved_at": retrieved_at,
-            "source_url": url,
-            "response_hash": response_hash,
-        }
-        atomic_write_bytes(
-            meta_path, (json.dumps(payload, indent=2) + "\n").encode("utf-8")
-        )
-        return
-    meta: dict = {}
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            meta = {}
-    documents = dict(meta.get("documents") or {})
-    documents[doc_key] = {
-        "source_url": url,
-        "response_hash": response_hash,
-        "retrieved_at": retrieved_at,
-    }
-    retrieved_values = [
-        entry.get("retrieved_at")
-        for entry in documents.values()
-        if isinstance(entry, dict) and entry.get("retrieved_at")
-    ]
-    meta["documents"] = documents
-    meta["retrieved_at"] = max(retrieved_values) if retrieved_values else None
-    atomic_write_bytes(
-        meta_path, (json.dumps(meta, indent=2) + "\n").encode("utf-8")
-    )
+#
+# The three primitives now live in ``populus.ingest.checkpoint`` (RUN M1-B, R1)
+# so the House PTR fetch resumes on the same implementation instead of a second
+# copy of the ordering rule. These module-private aliases keep every existing
+# inst call site (and any offline tooling reading them) unchanged.
+_sha256 = sha256_hex
+_read_checkpoint = read_checkpoint
+_commit_checkpoint = commit_checkpoint
 
 
 # --- obtained document + the two sources (cache / live) ----------------------

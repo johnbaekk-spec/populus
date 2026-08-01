@@ -229,3 +229,147 @@ def test_cli_stats_writes_and_prints(stats_db, tmp_path, make_filing):
     result = runner.invoke(cli_main, ["stats", "--db", str(db_path)])
     assert result.exit_code == 0
     assert json.loads(result.output)["stats_version"] == "stats-1.0.0"
+
+
+# --- per-era gate + join keys (RUN M1-B, R6/R15) -----------------------------
+
+
+def test_efile_parse_gate_key_is_published_per_chamber_year(stats_db):
+    from populus.amendments import ensure_views
+
+    ensure_views(stats_db)
+    totals = compute_stats(stats_db, now=NOW)["totals"]
+    gate = totals["efile_parse_gate_by_chamber_year_including_excluded"]
+
+    # house 2026: one parsed e-file filing, two clean rows → a passing era.
+    house_2026 = gate["house"]["2026"]
+    assert house_2026 == {
+        "clean_efile_rows": 2,
+        "efile_rows": 2,
+        "efile_parse_rate": 1.0,
+        "row_denominator_known": True,
+        "efile_filings": 1,
+        "measurable_efile_filings": 1,
+        "unmeasurable_efile_filings": 0,
+        "efile_filing_measurable_rate": 1.0,
+        "status": "pass",
+        "meets_gate": True,
+    }
+    # house 2020 holds only the needs_ocr filing — no e-file census at all.
+    assert gate["house"]["2020"]["efile_filings"] == 0
+    assert gate["house"]["2020"]["status"] == "no_efile_filings"
+    # kadoa filings are excluded from the gate entirely.
+    assert "kadoa" not in gate
+
+
+def test_member_join_key_is_published_per_chamber_year(stats_db):
+    from populus.amendments import ensure_views
+
+    ensure_views(stats_db)
+    totals = compute_stats(stats_db, now=NOW)["totals"]
+    join = totals["member_join_primary_by_chamber_year_including_excluded"]
+
+    assert join["house"]["2026"] == {
+        "filings": 1,
+        "filings_joined": 1,
+        "rows": 2,
+        "rows_joined": 2,
+        "join_rate": 1.0,
+    }
+    # The unjoined senate filers surface per era rather than being averaged
+    # away by the modern corpus.
+    assert join["senate"]["2026"]["filings_joined"] == 0
+    assert join["senate"]["2026"]["join_rate"] == 0.0
+
+
+def test_the_published_gate_figures_are_the_same_computation_as_the_summary(stats_db):
+    """One computation, not two that can disagree: stats.json sources its era
+    figures from populus.parse_gate, the module the ingest summary prints."""
+    from populus.amendments import ensure_views
+    from populus.parse_gate import compute_parse_gate
+
+    ensure_views(stats_db)
+    published = compute_stats(stats_db, now=NOW)["totals"][
+        "efile_parse_gate_by_chamber_year_including_excluded"
+    ]
+    for era in compute_parse_gate(stats_db).eras:
+        cell = published[era.chamber][era.year]
+        assert cell["status"] == era.status
+        assert cell["meets_gate"] == era.meets_gate
+        assert cell["efile_parse_rate"] == era.efile_parse_rate
+        assert cell["unmeasurable_efile_filings"] == era.unmeasurable_efile_filings
+
+
+def test_the_existing_per_year_key_is_untouched_by_the_additive_keys(stats_db):
+    from populus.amendments import ensure_views
+
+    ensure_views(stats_db)
+    totals = compute_stats(stats_db, now=NOW)["totals"]
+    coverage = totals["parse_coverage_primary_by_chamber_year_including_excluded"]
+    # Same shape as before: chamber → year → {status: count, total}.
+    assert coverage["house"]["2026"] == {"parsed": 1, "total": 1}
+    assert coverage["house"]["2020"] == {"needs_ocr": 1, "total": 1}
+
+
+def test_stats_with_the_new_keys_validate_and_render_byte_stably(stats_db):
+    from populus.amendments import ensure_views
+
+    ensure_views(stats_db)
+    first = compute_stats(stats_db, now=NOW)
+    jsonschema.validate(first, SCHEMA)
+    second = compute_stats(stats_db, now=NOW)
+    assert render_stats(first) == render_stats(second)
+    # The nested era dicts are sorted like everything else in the document.
+    rendered = render_stats(first)
+    assert rendered.endswith("\n")
+    assert json.loads(rendered) == first
+
+
+def test_an_unmeasurable_era_is_published_as_such_not_hidden(
+    initialized_db, make_filing, make_row
+):
+    from populus.amendments import ensure_views
+    from populus.load import load_filing
+
+    conn = initialized_db
+    ensure_views(conn)
+    make_filing(
+        conn, filing_id="house:hist", filed_date="2015-04-01",
+        parse_status="failed", doc_url="https://example.invalid/hist",
+    )
+    load_filing(
+        conn, "house:hist", [], parse_status="failed",
+        parser_version="t", normalization_version="t",
+    )
+    stats = compute_stats(conn, now=NOW)
+    jsonschema.validate(stats, SCHEMA)
+    era = stats["totals"]["efile_parse_gate_by_chamber_year_including_excluded"][
+        "house"
+    ]["2015"]
+    assert era["status"] == "unmeasurable"
+    assert era["meets_gate"] is False
+    assert era["row_denominator_known"] is False
+    assert era["efile_parse_rate"] is None
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "efile_parse_gate_by_chamber_year_including_excluded",
+        "member_join_primary_by_chamber_year_including_excluded",
+        "parse_coverage_primary_by_chamber_year_including_excluded",
+    ],
+)
+def test_the_schema_requires_each_per_year_key(stats_db, key):
+    """`additionalProperties: false` catches an ADDED key; only `required`
+    catches a key that silently stops being published. Dropping one from the
+    schema must therefore fail here, not pass quietly."""
+    from populus.amendments import ensure_views
+
+    ensure_views(stats_db)
+    stats = compute_stats(stats_db, now=NOW)
+    jsonschema.validate(stats, SCHEMA)
+
+    del stats["totals"][key]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(stats, SCHEMA)

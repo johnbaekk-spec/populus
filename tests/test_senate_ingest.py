@@ -1747,3 +1747,268 @@ def test_cli_cached_corpus_acceptance(tmp_path):
     assert "parsed 49" in result.output
     assert "needs_ocr 4" in result.output
     assert "efile rows: 991 clean / 991 total = 100.0%" in result.output
+
+
+# --- submitted-date window seam (RUN M1-B, R14) ------------------------------
+
+
+def _index_body(transport):
+    """The DataTables search body of the first index POST."""
+    return next(d for m, u, _h, d in transport.calls if m == "POST" and u == DATA_URL)
+
+
+def test_default_body_is_byte_identical_to_the_watermark_behaviour(
+    tmp_path, initialized_db
+):
+    """The seam is default-inert: with neither option, the request is exactly
+    the one the incremental job has always sent."""
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)])
+    transport.route("GET", _doc_url("ptr", U1), _resp(200, EFILE_1ROW))
+    _run_live(initialized_db, transport, FakeClock(), raw_root=tmp_path / "raw")
+
+    body = _index_body(transport)
+    assert body["submitted_start_date"] == "01/01/2012"   # empty store (LD5)
+    assert body["submitted_end_date"] == ""               # no upper bound
+    assert body == senate._index_post_body(
+        "tok123", submitted_start_date="01/01/2012", start=0
+    )
+
+
+def test_an_explicit_start_bound_is_sent(tmp_path, initialized_db):
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)])
+    transport.route("GET", _doc_url("ptr", U1), _resp(200, EFILE_1ROW))
+    run_senate_ingest(
+        initialized_db, raw_root=tmp_path / "raw", run_id="run-start",
+        now=_now_factory(), host="testhost", transport=transport,
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+        jitter=lambda: 0.0, submitted_start_date="01/01/2015",
+    )
+    body = _index_body(transport)
+    assert body["submitted_start_date"] == "01/01/2015"
+    assert body["submitted_end_date"] == ""
+
+
+def test_an_explicit_end_bound_is_sent(tmp_path, initialized_db):
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)])
+    transport.route("GET", _doc_url("ptr", U1), _resp(200, EFILE_1ROW))
+    run_senate_ingest(
+        initialized_db, raw_root=tmp_path / "raw", run_id="run-end",
+        now=_now_factory(), host="testhost", transport=transport,
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+        jitter=lambda: 0.0, submitted_end_date="03/31/2016",
+    )
+    body = _index_body(transport)
+    assert body["submitted_start_date"] == "01/01/2012"   # still derived
+    assert body["submitted_end_date"] == "03/31/2016"
+
+
+def test_both_bounds_select_exactly_the_window(tmp_path, initialized_db):
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)])
+    transport.route("GET", _doc_url("ptr", U1), _resp(200, EFILE_1ROW))
+    report = run_senate_ingest(
+        initialized_db, raw_root=tmp_path / "raw", run_id="run-window",
+        now=_now_factory(), host="testhost", transport=transport,
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+        jitter=lambda: 0.0,
+        submitted_start_date="01/01/2015", submitted_end_date="03/31/2016",
+    )
+    body = _index_body(transport)
+    assert (body["submitted_start_date"], body["submitted_end_date"]) == (
+        "01/01/2015", "03/31/2016",
+    )
+    assert report.window == ("01/01/2015", "03/31/2016")
+    assert "senate window: submitted 01/01/2015 → 03/31/2016" in senate.format_summary(
+        report
+    )
+
+
+def test_a_historical_insert_cannot_regress_the_derived_watermark(
+    tmp_path, initialized_db
+):
+    """Why the historical window is safe against a current corpus: the derived
+    start is MAX(filed_date) − 90 days, so inserting OLDER filings leaves it
+    exactly where it was."""
+    cache = _make_cache(
+        tmp_path, [_index_row(U1, filed="07/01/2026")], {f"ptr_{U1}.html": EFILE_1ROW}
+    )
+    _run_cache(initialized_db, cache)
+    before = senate._submitted_start_date(initialized_db)
+
+    cache_old = _make_cache(
+        tmp_path / "old",
+        [_index_row(U2, title_date="02/10/2015", filed="02/10/2015")],
+        {f"ptr_{U2}.html": EFILE_BOND},
+    )
+    _run_cache(initialized_db, cache_old, run_id="run-hist")
+    assert senate._submitted_start_date(initialized_db) == before
+
+
+def test_cli_accepts_the_window_options_for_senate(tmp_path):
+    cache = _make_cache(tmp_path, [_index_row(U1)], {f"ptr_{U1}.html": EFILE_1ROW})
+    result = CliRunner().invoke(
+        cli_main,
+        ["ingest", "congress-senate", "--from-cache", str(cache),
+         "--db", str(tmp_path / "populus.db"),
+         "--submitted-start", "01/01/2015", "--submitted-end", "03/31/2016"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "parse gate (e-file rows, per chamber-year):" in result.output
+
+
+@pytest.mark.parametrize("option", ["--submitted-start", "--submitted-end"])
+def test_cli_rejects_the_window_options_for_other_jobs(tmp_path, option):
+    for job in ("congress-house", "members", "inst-13f"):
+        result = CliRunner().invoke(
+            cli_main,
+            ["ingest", job, "--db", str(tmp_path / "populus.db"),
+             option, "01/01/2015"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "congress-senate" in result.output
+
+
+@pytest.mark.parametrize("value", ["2015-01-01", "1/1/2015", "01/2015", "nonsense"])
+def test_cli_rejects_a_malformed_window_bound(tmp_path, value):
+    result = CliRunner().invoke(
+        cli_main,
+        ["ingest", "congress-senate", "--db", str(tmp_path / "populus.db"),
+         "--from-cache", str(tmp_path), "--submitted-start", value],
+    )
+    assert result.exit_code == 2
+    assert "MM/DD/YYYY" in result.output
+
+
+# --- cross-year amendment pair (RUN M1-B, R10) -------------------------------
+
+
+def test_cross_year_amendment_pair_links_flags_both_sides_and_excludes_original(
+    tmp_path, initialized_db
+):
+    """A 2015 original whose amendment is submitted in 2016 — the pair a
+    2015-only window could never observe, which is why the Phase A Senate window
+    carries the Q1-2016 tail."""
+    from populus.amendments import ensure_views
+
+    ensure_views(initialized_db)
+    rows = [
+        _index_row(U1, title_date="12/15/2015", filed="12/15/2015"),
+        _index_row(U2, title_date="12/15/2015", filed="01/20/2016", amendment=True),
+    ]
+    cache = _make_cache(
+        tmp_path, rows,
+        {f"ptr_{U1}.html": EFILE_1ROW, f"ptr_{U2}.html": EFILE_BOND},
+    )
+    report = _run_cache(initialized_db, cache)
+    assert report.ok, senate.format_summary(report)
+    assert (report.amendments_total, report.amendments_paired) == (1, 1)
+
+    *_, kind, supersedes, _lifecycle = _filing(initialized_db, U2)
+    assert (kind, supersedes) == ("ptr_amendment", f"senate:{U1}")
+    # Both sides flagged — the amendment from normalization, the original from
+    # the propagation pass.
+    assert all("amendment_unresolved" in f for f in _row_flags(initialized_db, U1))
+    assert all("amendment_unresolved" in f for f in _row_flags(initialized_db, U2))
+
+    # And the default view excludes the superseded original — no double count.
+    default_filings = {
+        f for (f,) in initialized_db.execute(
+            "SELECT DISTINCT filing_id FROM v_default_transactions"
+        )
+    }
+    assert f"senate:{U1}" not in default_filings
+    assert f"senate:{U2}" in default_filings
+
+
+# --- session instrumentation (RUN M1-B, R20) ---------------------------------
+
+
+def test_senate_retry_path_counts_two_attempts_one_retry_and_one_backoff(
+    tmp_path, initialized_db
+):
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)])
+    transport.route(
+        "GET", _doc_url("ptr", U1), _resp(429), _resp(200, EFILE_1ROW)
+    )
+    clock = FakeClock()
+    report = _run_live(initialized_db, transport, clock, raw_root=tmp_path / "raw")
+    assert report.ok, senate.format_summary(report)
+
+    # home GET + agreement POST + index POST + detail 429 + detail 200
+    assert report.fetch.attempts == 5
+    assert report.fetch.retries == 1
+    assert report.fetch.status_counts == {200: 3, 302: 1, 429: 1}
+    assert report.fetch.backoff_sleep_s == BACKOFF_SCHEDULE[0]
+    assert BACKOFF_SCHEDULE[0] in clock.sleeps
+
+    summary = senate.format_summary(report)
+    assert "senate transport: attempts 5 | retries 1" in summary
+    assert "status mix 200:3, 302:1, 429:1" in summary
+
+
+def test_senate_no_retry_path_counts_no_retries_and_no_backoff(
+    tmp_path, initialized_db
+):
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)])
+    transport.route("GET", _doc_url("ptr", U1), _resp(200, EFILE_1ROW))
+    clock = FakeClock()
+    report = _run_live(initialized_db, transport, clock, raw_root=tmp_path / "raw")
+    assert report.fetch.attempts == 4
+    assert report.fetch.retries == 0
+    assert report.fetch.backoff_sleep_s == 0.0
+    assert report.fetch.status_counts == {200: 3, 302: 1}
+
+
+def test_senate_elapsed_comes_from_the_injected_monotonic_and_is_none_in_cache_mode(
+    tmp_path, initialized_db
+):
+    class _RecordingClock:
+        def __init__(self):
+            self.now = 5_000_000.0
+            self.seen: list[float] = []
+
+        def monotonic(self) -> float:
+            self.seen.append(self.now)
+            self.now += 2.5
+            return self.seen[-1]
+
+        def sleep(self, _seconds: float) -> None:
+            pass
+
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)])
+    transport.route("GET", _doc_url("ptr", U1), _resp(200, EFILE_1ROW))
+    clock = _RecordingClock()
+    report = _run_live(initialized_db, transport, clock, raw_root=tmp_path / "raw")
+    assert report.elapsed_s == clock.seen[-1] - clock.seen[0]
+    assert report.elapsed_s > 0
+
+    cache = _make_cache(tmp_path, [_index_row(U3)], {f"ptr_{U3}.html": EFILE_1ROW})
+    cached = _run_cache(initialized_db, cache, run_id="run-cache-elapsed")
+    assert cached.elapsed_s is None
+    assert cached.fetch.attempts == 0
+    assert "elapsed n/a (cache mode)" in senate.format_summary(cached)
+
+
+def test_a_tripped_breaker_still_reports_what_the_session_actually_did(
+    tmp_path, initialized_db
+):
+    """The counters are finalized on every exit path, including the one that
+    stops the job — an operational record that vanished on the failure path
+    would be worthless exactly when it is needed."""
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1), _index_row(U2), _index_row(U3)])
+    for uuid in (U1, U2, U3):
+        transport.route("GET", _doc_url("ptr", uuid), _resp(403))
+    report = _run_live(
+        initialized_db, transport, FakeClock(), raw_root=tmp_path / "raw"
+    )
+    assert report.circuit_open_url is not None
+    assert report.fetch.attempts > 0
+    assert report.fetch.status_counts[403] == CIRCUIT_403_THRESHOLD
+    assert "senate transport: attempts" in senate.format_summary(report)

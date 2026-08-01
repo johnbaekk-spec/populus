@@ -36,6 +36,7 @@ import lxml.html
 from populus.amendments import flag_unresolved_pair_rows
 from populus.ingest import (
     USER_AGENT,
+    FetchMetrics,
     TransportResponse,
     UnsafeArchivePathError,
     archive_path,
@@ -52,6 +53,7 @@ from populus.parse.senate_ptr import (
     MissingTableError,
     parse_ptr_page,
 )
+from populus.parse_gate import ParseGateReport, format_gate_report
 
 if TYPE_CHECKING:
     from populus.ingest.house import ReparseReport, ReparseSelector
@@ -198,6 +200,15 @@ class _PoliteSession:
     protocol regression is then diagnosable instead of being misread as
     bot-blocking. Attaches the identifying UA and the session cookie on
     every fetch.
+
+    Counts its own work (RUN M1-B, R20/LD13) in the same shape as the House
+    fetcher and :class:`populus.inst_bulk.CountingTransport`: ``attempts`` is
+    every request that left this process (retries included), ``status_counts``
+    the answered status mix, ``retries`` the 429/5xx answers that actually
+    triggered a backoff, and ``backoff_sleep_s`` the seconds slept in them.
+    Politeness spacing is not backoff and is not counted; the Senate's
+    per-request cost differs from the House's by an order of magnitude (2.0 s
+    floor vs 0.25 s), which is exactly why both are measured separately.
     """
 
     def __init__(
@@ -215,6 +226,18 @@ class _PoliteSession:
         self._jar = _CookieJar()
         self._last_fetch: float | None = None
         self._consecutive_403 = 0
+        self.attempts = 0
+        self.status_counts: Counter[int] = Counter()
+        self.retries = 0
+        self.backoff_sleep_s = 0.0
+
+    def metrics(self) -> FetchMetrics:
+        return FetchMetrics(
+            attempts=self.attempts,
+            retries=self.retries,
+            backoff_sleep_s=self.backoff_sleep_s,
+            status_counts=dict(self.status_counts),
+        )
 
     def get(
         self, url: str, *, headers: Mapping[str, str] | None = None
@@ -244,10 +267,12 @@ class _PoliteSession:
             if cookie is not None:
                 merged["Cookie"] = cookie
             self._space()
+            self.attempts += 1
             if data is None:
                 response = self._transport.get(url, headers=merged)
             else:
                 response = self._transport.post(url, data=data, headers=merged)
+            self.status_counts[response.status_code] += 1
             self._last_fetch = self._monotonic()
             self._jar.absorb(response.headers)
             if response.status_code == 403:
@@ -259,6 +284,8 @@ class _PoliteSession:
             if response.status_code == 429 or 500 <= response.status_code <= 599:
                 delay = next(delays, None)
                 if delay is not None:
+                    self.retries += 1
+                    self.backoff_sleep_s += delay
                     self._sleep(delay)
                     continue
             return response
@@ -388,14 +415,27 @@ def _csrf_token(html: bytes) -> str | None:
 
 
 def _index_post_body(
-    token: str, *, submitted_start_date: str, start: int
+    token: str,
+    *,
+    submitted_start_date: str,
+    start: int,
+    submitted_end_date: str | None = None,
 ) -> dict[str, str]:
+    """The DataTables search body.
+
+    ``submitted_end_date`` is the RUN M1-B window seam (R14) and is
+    **default-inert**: omitted, the body is byte-identical to the open-ended
+    "start → forever" request the incremental job has always sent. eFD exposes
+    one continuous submitted-date window, so bounding a historical era means
+    supplying both ends — without the end bound a 2015 request would walk
+    forward through every subsequent year.
+    """
     return {
         "csrfmiddlewaretoken": token,
         "report_types": "[11]",
         "filer_types": "[]",
         "submitted_start_date": submitted_start_date,
-        "submitted_end_date": "",
+        "submitted_end_date": submitted_end_date or "",
         "candidate_state": "",
         "senator_state": "",
         "office_id": "",
@@ -412,6 +452,7 @@ def discover(
     session: _PoliteSession | None = None,
     cache_dir: Path | None = None,
     submitted_start_date: str | None = None,
+    submitted_end_date: str | None = None,
 ) -> SenateDiscoverResult:
     """Obtain the PTR index: live handshake + paginated POSTs, or cache read.
 
@@ -469,7 +510,10 @@ def discover(
         response = session.post(
             DATA_URL,
             data=_index_post_body(
-                token, submitted_start_date=submitted_start_date, start=start
+                token,
+                submitted_start_date=submitted_start_date,
+                submitted_end_date=submitted_end_date,
+                start=start,
             ),
             headers={"Referer": HOME_URL},
         )
@@ -683,6 +727,14 @@ class SenateIngestReport:
     failure_kinds: Counter = field(default_factory=Counter)
     circuit_open_url: str | None = None
     reconciliation: Reconciliation | None = None
+    # R20: what the polite session actually did, and the monotonic wall-clock
+    # of the run. `elapsed_s` is None in cache mode, where no clock is injected.
+    fetch: FetchMetrics = field(default_factory=FetchMetrics)
+    elapsed_s: float | None = None
+    # R14: the exact window this run requested (None = the derived watermark
+    # start / open end), recorded so the operational artifact can state which
+    # era the figures describe.
+    window: tuple[str, str | None] | None = None
 
     @property
     def index_count(self) -> int:
@@ -746,6 +798,8 @@ def run_senate_ingest(
     sleep: Callable[[float], None] | None = None,
     monotonic: Callable[[], float] | None = None,
     jitter: Callable[[], float] | None = None,
+    submitted_start_date: str | None = None,
+    submitted_end_date: str | None = None,
 ) -> SenateIngestReport:
     """One ingest invocation: handshake → index → fetch → parse → load →
     link amendments → reconcile, under exactly one ``ingest_runs`` row.
@@ -754,6 +808,13 @@ def run_senate_ingest(
     completion, ``failed`` on a raised exception, and ``circuit_open`` when
     the consecutive-403 breaker trips (LD6 — persisted filings stand;
     unattempted UUIDs surface as unaccounted; exit 1).
+
+    ``submitted_start_date`` / ``submitted_end_date`` (MM/DD/YYYY) bound the
+    requested window (R14). Both default to today's exact behaviour: the start
+    derived from the store's watermark by :func:`_submitted_start_date`, and no
+    end bound at all. Because that derived start is
+    ``MAX(filed_date) − 90 days``, inserting OLDER filings can never regress it
+    — a historical window is safe to run against a current corpus.
     """
     conn.execute(
         "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
@@ -761,6 +822,15 @@ def run_senate_ingest(
         (run_id, now(), host),
     )
     report = SenateIngestReport(run_id=run_id)
+    session_box: list[_PoliteSession] = []
+    started = monotonic() if monotonic is not None else None
+
+    def _finalize() -> None:
+        if session_box:
+            report.fetch = session_box[0].metrics()
+        if started is not None and monotonic is not None:
+            report.elapsed_s = monotonic() - started
+
     try:
         _ingest(
             conn,
@@ -772,11 +842,15 @@ def run_senate_ingest(
             sleep=sleep,
             monotonic=monotonic,
             jitter=jitter,
+            submitted_start_date=submitted_start_date,
+            submitted_end_date=submitted_end_date,
+            session_box=session_box,
         )
     except CircuitOpenError as exc:
         report.circuit_open_url = exc.url
         if report.index_uuids:
             report.reconciliation = reconcile(conn, report.index_uuids)
+        _finalize()
         conn.execute(
             "UPDATE ingest_runs SET finished_at = ?, status = 'circuit_open',"
             " new_filings = ?, rows_loaded = ?, parse_failures = ?"
@@ -785,6 +859,7 @@ def run_senate_ingest(
         )
         return report
     except BaseException:
+        _finalize()
         conn.execute(
             "UPDATE ingest_runs SET finished_at = ?, status = 'failed',"
             " new_filings = ?, rows_loaded = ?, parse_failures = ?"
@@ -792,6 +867,7 @@ def run_senate_ingest(
             (now(), report.new_filings, report.rows_loaded, report.parse_failures, run_id),
         )
         raise
+    _finalize()
     conn.execute(
         "UPDATE ingest_runs SET finished_at = ?, status = ?, new_filings = ?,"
         " rows_loaded = ?, parse_failures = ? WHERE run_id = ?",
@@ -818,9 +894,15 @@ def _ingest(
     sleep: Callable[[float], None] | None,
     monotonic: Callable[[], float] | None,
     jitter: Callable[[], float] | None,
+    submitted_start_date: str | None = None,
+    submitted_end_date: str | None = None,
+    session_box: list | None = None,
 ) -> None:
     """Discover + process the index, mutating *report* as work commits so a
     fatal error still finalizes the audit with the true committed counters.
+
+    *session_box* receives the constructed session so the caller can read its
+    R20 counters on every exit path, including the tripped-breaker one.
     """
     session: _PoliteSession | None = None
     if cache_dir is None:
@@ -831,11 +913,20 @@ def _ingest(
         session = _PoliteSession(
             transport, sleep=sleep, monotonic=monotonic, jitter=jitter
         )
+        if session_box is not None:
+            session_box.append(session)
+    window_start = (
+        submitted_start_date
+        if submitted_start_date is not None
+        else _submitted_start_date(conn)
+    )
+    report.window = (window_start, submitted_end_date)
     discovered = discover(
         raw_root=raw_root,
         session=session,
         cache_dir=cache_dir,
-        submitted_start_date=_submitted_start_date(conn),
+        submitted_start_date=window_start,
+        submitted_end_date=submitted_end_date,
     )
     report.note = discovered.note
     report.discovery_failed = discovered.failed
@@ -1120,9 +1211,23 @@ def reparse_senate(
 # --- summaries (R13/R14) ------------------------------------------------------
 
 
-def format_summary(report: SenateIngestReport) -> str:
-    """The one-screen reconciliation summary the CLI prints."""
+def format_summary(
+    report: SenateIngestReport, *, gate: ParseGateReport | None = None
+) -> str:
+    """The one-screen reconciliation summary the CLI prints.
+
+    With a *gate* (the CLI computes one from the same connection before it
+    closes), the summary also carries the per-era e-file gate lines, the per-era
+    member-join lines, and the OWNER DECISION REQUIRED block whenever any era is
+    ``miss`` or ``unmeasurable`` (RUN M1-B, R5).
+    """
     lines: list[str] = []
+    if report.window is not None:
+        start, end = report.window
+        lines.append(
+            f"senate window: submitted {start} → {end or '(open end)'}"
+            + ("" if end else " [derived/incremental]")
+        )
     if report.note is not None:
         lines.append(f"senate | {report.note}")
     else:
@@ -1192,11 +1297,14 @@ def format_summary(report: SenateIngestReport) -> str:
         )
     else:
         lines.append("efile rows: 0 clean / 0 total")
+    lines.append(report.fetch.format_line("senate", elapsed_s=report.elapsed_s))
     lines.append(
         f"run {report.run_id}: new_filings {report.new_filings}"
         f" | rows_loaded {report.rows_loaded}"
         f" | parse_failures {report.parse_failures}"
     )
+    if gate is not None:
+        lines.append(format_gate_report(gate))
     return "\n".join(lines)
 
 

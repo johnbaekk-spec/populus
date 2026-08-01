@@ -20,6 +20,49 @@
         { "type": "null" }
       ]
     },
+    "era_parse_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean_efile_rows",
+        "efile_rows",
+        "efile_parse_rate",
+        "row_denominator_known",
+        "efile_filings",
+        "measurable_efile_filings",
+        "unmeasurable_efile_filings",
+        "efile_filing_measurable_rate",
+        "status",
+        "meets_gate"
+      ],
+      "properties": {
+        "clean_efile_rows": { "$ref": "#/$defs/count" },
+        "efile_rows": { "$ref": "#/$defs/count" },
+        "efile_parse_rate": { "$ref": "#/$defs/rate" },
+        "row_denominator_known": { "type": "boolean" },
+        "efile_filings": { "$ref": "#/$defs/count" },
+        "measurable_efile_filings": { "$ref": "#/$defs/count" },
+        "unmeasurable_efile_filings": { "$ref": "#/$defs/count" },
+        "efile_filing_measurable_rate": { "$ref": "#/$defs/rate" },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "miss", "unmeasurable", "no_efile_filings"]
+        },
+        "meets_gate": { "type": "boolean" }
+      }
+    },
+    "era_member_join": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filings", "filings_joined", "rows", "rows_joined", "join_rate"],
+      "properties": {
+        "filings": { "$ref": "#/$defs/count" },
+        "filings_joined": { "$ref": "#/$defs/count" },
+        "rows": { "$ref": "#/$defs/count" },
+        "rows_joined": { "$ref": "#/$defs/count" },
+        "join_rate": { "$ref": "#/$defs/rate" }
+      }
+    },
     "late_stats": {
       "type": "object",
       "additionalProperties": false,
@@ -124,6 +167,8 @@
         "filing_count_by_source_including_excluded",
         "source_document_count_including_excluded",
         "parse_coverage_primary_by_chamber_year_including_excluded",
+        "efile_parse_gate_by_chamber_year_including_excluded",
+        "member_join_primary_by_chamber_year_including_excluded",
         "needs_ocr_filing_count_including_excluded",
         "member_count",
         "unresolved_pair_count"
@@ -147,6 +192,20 @@
               "type": "object",
               "additionalProperties": { "$ref": "#/$defs/count" }
             }
+          }
+        },
+        "efile_parse_gate_by_chamber_year_including_excluded": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/$defs/era_parse_gate" }
+          }
+        },
+        "member_join_primary_by_chamber_year_including_excluded": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/$defs/era_member_join" }
           }
         },
         "needs_ocr_filing_count_including_excluded": { "$ref": "#/$defs/count" },

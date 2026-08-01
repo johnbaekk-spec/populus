@@ -12,7 +12,7 @@
 # `uv run pytest -q`, and `uv run python scripts/dep_guard.py` are all
 # authoritatively executed with recorded exit status.
 
-.PHONY: sync test security check accept-m2-5 accept-m2-6
+.PHONY: sync test security check accept-m2-5 accept-m2-6 accept-m1-b
 
 sync:
 	uv sync --frozen
@@ -47,5 +47,23 @@ accept-m2-5:
 # does not describe.
 accept-m2-6: sync
 	uv run python scripts/accept_m2_6.py
+
+# RUN M1-B Phase A acceptance (R11/R16): the mandatory synchronous DEV gate.
+# Fully hermetic (committed tests/fixtures/ bytes, zero sockets, autouse
+# no-network guard) and it NEVER skips. It drives the whole historical chain —
+# discover → verified-settled + resumable fetch → evaluate → load → member join
+# → cross-year amendment pair → per-era gate → gate-miss surfacing → stats
+# render/validate → build → publish → verify → consumer + budget assertions —
+# over fake transports behind the real ingest paths.
+#
+# It asserts the CHAIN and the gate BEHAVIOUR (above the gate, below it, and
+# unmeasurable), NOT that the fixtures meet >=97%: a below-gate era is a
+# decision surfaced for the owner, never a build failure. That is the
+# deliberate difference from accept-m2-6.
+#
+# Depends on `sync` for the same reason accept-m2-6 does: the gate must run in
+# the same frozen-lockfile environment as `make test`.
+accept-m1-b: sync
+	uv run python scripts/accept_m1_b.py
 
 check: test security
