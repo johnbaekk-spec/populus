@@ -122,6 +122,61 @@ denominator entry. The change moves it from "counted as a defective row" to
 is the tiebreaker (§5.1): the source shows one wrapped comment, and one wrapped
 comment is what the record should hold.
 
+## Measured outcome
+
+Reparsed all 8,298 House filings from the raw archive (`parsed 2169 | partial
+69 | needs_ocr 2437 | failed 0`), re-joined members, re-measured:
+
+| | before | after |
+|---|---|---|
+| orphan rows (corpus) | 2,510 | **632** |
+| `v_default_transactions` | 60,357 | **58,479** |
+| eras passing the 0.97 gate | 5 / 14 | **11 / 14** |
+
+The 1,878-row drop is the repair, not a loss: those rows were wrapped comment
+text emitted as transactions, now returned to the comments they printed in.
+
+| era | before | after | |
+|---|---|---|---|
+| house 2014 | 98.4% | 99.2% | pass |
+| house 2015 | 97.9% | 99.9% | pass |
+| house 2016 | 96.6% | 98.6% | **pass** |
+| house 2017 | 94.2% | 97.3% | **pass** |
+| house 2018 | 93.2% | 94.7% | miss |
+| house 2019 | 94.5% | 96.0% | miss |
+| house 2020 | 95.0% | 95.5% | miss |
+| house 2021 | 96.8% | 97.3% | **pass** |
+| house 2022 | 96.9% | 99.3% | **pass** |
+| house 2023 | 85.9% | 99.3% | **pass** |
+| house 2024 | 98.3% | 99.2% | pass |
+| house 2025 | 93.3% | 99.6% | **pass** |
+| house 2026 | 97.5% | 99.8% | pass |
+| senate 2026 | 100.0% | 100.0% | pass |
+
+## The remaining three eras are a DIFFERENT mechanism (follow-up M1-D)
+
+2018/2019/2020 still miss, and the dominant flag there is no longer
+`row_orphan` but `amount_unparsed` (117 / 151 / 254). It is a **split amount
+cell that never rejoins**, and the counts prove the pairing:
+
+```
+'$15,001 -'  32      '$50,000'   32
+'$100,001 -'  6      '$250,000'   6
+'$50,001 -'   6      '$100,000'   6
+```
+
+Each low half appears exactly as often as its high half — two fragments of one
+printed amount, landing on separate lines, where `_complete_cell`'s amount
+oracle declines to join them (it refuses once `block_open` is False, which a
+sub-line sets). A smaller residue is prose landing in the amount column
+(`'Company LLC'`, 27).
+
+Deliberately **not** fixed here: it is a distinct mechanism on a different code
+path (R24's completion oracle rather than sub-line wrapping), it carries its
+own risk of over-joining unrelated fragments, and folding it into an already
+large reversal would make both harder to review. Scoped and measured above so
+the follow-up starts from evidence.
+
 ## Blast radius
 
 Congressional House parse only. No schema change, no migration. Rollback is
