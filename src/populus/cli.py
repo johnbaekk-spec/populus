@@ -28,6 +28,11 @@ from pathlib import Path
 import click
 
 from populus.db import connect, init_db
+from populus.parse_gate import compute_parse_gate
+
+# The eFD submitted-date window options are MM/DD/YYYY, the exact shape the
+# index POST body carries (RUN M1-B, R14).
+_MDY_OPTION = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 
 INGEST_JOB_OWNERS = {
     "congress-house": 2,
@@ -127,6 +132,23 @@ def _one_selector(ctx: click.Context, param: click.Parameter, value: object) -> 
     multiple=True,
     help="inst-13f only: a filer CIK to ingest (repeatable). Required for live.",
 )
+@click.option(
+    "--submitted-start",
+    "submitted_start",
+    help=(
+        "congress-senate only: MM/DD/YYYY lower bound on the eFD submitted-date"
+        " window. Default: derived from the store's watermark (§9.2)."
+    ),
+)
+@click.option(
+    "--submitted-end",
+    "submitted_end",
+    help=(
+        "congress-senate only: MM/DD/YYYY upper bound on the eFD submitted-date"
+        " window. Default: no upper bound. Required to request a bounded"
+        " historical era rather than 'start → forever'."
+    ),
+)
 @click.pass_context
 def ingest(
     ctx: click.Context,
@@ -139,6 +161,8 @@ def ingest(
     kadoa_trades: str | None,
     aliases_path: str | None,
     ciks: tuple[str, ...],
+    submitted_start: str | None,
+    submitted_end: str | None,
 ) -> None:
     """Run an ingest JOB: discover → fetch → parse → normalize → load."""
     if job != "members" and (house_index or kadoa_trades or aliases_path):
@@ -147,7 +171,20 @@ def ingest(
         )
     if job != "inst-13f" and ciks:
         raise click.UsageError("--cik applies only to ingest inst-13f")
+    if job != "congress-senate" and (submitted_start or submitted_end):
+        raise click.UsageError(
+            "--submitted-start/--submitted-end apply only to ingest"
+            " congress-senate (the eFD index is one continuous submitted-date"
+            " window; the House is addressed by --year)"
+        )
+    for option, value in (
+        ("--submitted-start", submitted_start),
+        ("--submitted-end", submitted_end),
+    ):
+        if value is not None and _MDY_OPTION.match(value) is None:
+            raise click.UsageError(f"{option} must be MM/DD/YYYY (got {value!r})")
     if job == "congress-house":
+        from populus.amendments import ensure_views
         from populus.ingest import house
 
         if db_path is None:
@@ -161,6 +198,10 @@ def ingest(
         years = [year] if year is not None else house.default_years(date.today())
         conn = connect(db_path)
         try:
+            # The per-era gate report reads v_default_transactions; applying the
+            # idempotent view DDL here means a pre-view database gains it on
+            # first use rather than failing at summary time.
+            ensure_views(conn)
             report = house.run_house_ingest(
                 conn,
                 years=years,
@@ -173,12 +214,14 @@ def ingest(
                 sleep=time.sleep,
                 monotonic=time.monotonic,
             )
+            summary = house.format_summary(report, gate=compute_parse_gate(conn))
         finally:
             conn.close()
-        click.echo(house.format_summary(report))
+        click.echo(summary)
         if not report.ok:
             ctx.exit(1)
     elif job == "congress-senate":
+        from populus.amendments import ensure_views
         from populus.ingest import senate
 
         if db_path is None:
@@ -196,6 +239,7 @@ def ingest(
             init_db(db_path)
         conn = connect(db_path)
         try:
+            ensure_views(conn)
             report = senate.run_senate_ingest(
                 conn,
                 raw_root=raw_root if raw_root is not None else from_cache,
@@ -209,10 +253,13 @@ def ingest(
                 sleep=time.sleep,
                 monotonic=time.monotonic,
                 jitter=lambda: random.uniform(0.0, 1.0),
+                submitted_start_date=submitted_start,
+                submitted_end_date=submitted_end,
             )
+            summary = senate.format_summary(report, gate=compute_parse_gate(conn))
         finally:
             conn.close()
-        click.echo(senate.format_summary(report))
+        click.echo(summary)
         if not report.ok:
             ctx.exit(1)
     elif job == "congress-backfill":

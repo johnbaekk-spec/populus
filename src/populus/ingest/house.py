@@ -32,9 +32,17 @@ from lxml import etree
 from populus.amendments import flag_unresolved_pair_rows
 from populus.ingest import (
     USER_AGENT,
+    FetchMetrics,
     TransportResponse,
     UnsafeArchivePathError,
     archive_path as _archive_path,
+)
+from populus.ingest.checkpoint import (
+    archive_verified,
+    commit_checkpoint,
+    read_checkpoint,
+    read_provenance,
+    sha256_hex,
 )
 from populus.load import ParsedRow, load_filing, upsert_filing
 from populus.normalize import (
@@ -49,6 +57,8 @@ from populus.parse.house_ptr import (
     classify,
     parse_ptr,
 )
+from populus.parse_gate import ParseGateReport, format_gate_report
+from populus.publish import atomic_write_bytes
 
 MIN_SPACING_S = 0.25
 BACKOFF_SCHEDULE = (1.0, 2.0, 4.0)
@@ -96,6 +106,16 @@ class _PoliteFetcher:
     per ``BACKOFF_SCHEDULE`` on 429 AND 5xx; 404 (and any other status) is
     permanent. Exhausted retries return the final failing response — the
     caller records the failure, never papers over it.
+
+    Counts its own work (RUN M1-B, R20/LD13), in the shape
+    :class:`populus.inst_bulk.CountingTransport` established: ``attempts`` is
+    every request that left this process (retries included), ``status_counts``
+    the answered status mix, ``retries`` the derived count of 429/5xx answers
+    that actually triggered a backoff, and ``backoff_sleep_s`` the seconds
+    slept in those backoffs. The counters live HERE rather than in a transport
+    wrapper because this loop is the only place that can tell a backoff retry
+    apart from a fresh request — which is exactly the figure Phase B sizing
+    needs. Spacing sleeps are politeness, not backoff, and are not counted.
     """
 
     def __init__(
@@ -109,6 +129,10 @@ class _PoliteFetcher:
         self._sleep = sleep
         self._monotonic = monotonic
         self._last_request: float | None = None
+        self.attempts = 0
+        self.status_counts: Counter[int] = Counter()
+        self.retries = 0
+        self.backoff_sleep_s = 0.0
 
     def fetch(
         self, url: str, *, headers: Mapping[str, str] | None = None
@@ -117,14 +141,29 @@ class _PoliteFetcher:
         delays = iter(BACKOFF_SCHEDULE)
         while True:
             self._space()
+            self.attempts += 1
             response = self._transport.get(url, headers=merged)
+            self.status_counts[response.status_code] += 1
             self._last_request = self._monotonic()
             if response.status_code == 429 or 500 <= response.status_code <= 599:
                 delay = next(delays, None)
                 if delay is not None:
+                    # A retry is an answer that triggered a backoff — a 429
+                    # answered after the schedule is exhausted is a failure the
+                    # caller records, never a retry that happened.
+                    self.retries += 1
+                    self.backoff_sleep_s += delay
                     self._sleep(delay)
                     continue
             return response
+
+    def metrics(self) -> FetchMetrics:
+        return FetchMetrics(
+            attempts=self.attempts,
+            retries=self.retries,
+            backoff_sleep_s=self.backoff_sleep_s,
+            status_counts=dict(self.status_counts),
+        )
 
     def _space(self) -> None:
         if self._last_request is None:
@@ -299,6 +338,11 @@ def discover(
             {
                 "etag": response_headers.get("etag"),
                 "last_modified": response_headers.get("last-modified"),
+                # §5.1 provenance parity with the per-document sidecars
+                # (RUN M1-B, R2): the archived ZIP's own hash, additive beside
+                # the conditional-GET validators. `stats.read_house_meta` reads
+                # only `last_modified`, so nothing downstream shifts.
+                "response_hash": sha256_hex(response.content),
             }
         ),
         encoding="utf-8",
@@ -482,6 +526,10 @@ class YearReport:
     clean_efile_rows: int = 0
     total_efile_rows: int = 0
     text_fallback_rows: int = 0
+    # R3: archived documents whose bytes verified against filings.response_hash
+    # (skipped, zero transport) vs those that did not and were re-obtained.
+    settled_verified: int = 0
+    settled_reobtained: int = 0
     failure_kinds: Counter = field(default_factory=Counter)
     reconciliation: Reconciliation | None = None
 
@@ -490,6 +538,18 @@ class YearReport:
 class IngestReport:
     run_id: str
     years: list[YearReport] = field(default_factory=list)
+    # R20: what the polite fetcher actually did, and the monotonic wall-clock
+    # of the run. `elapsed_s` is None in cache mode, where no clock is injected.
+    fetch: FetchMetrics = field(default_factory=FetchMetrics)
+    elapsed_s: float | None = None
+
+    @property
+    def settled_verified(self) -> int:
+        return sum(y.settled_verified for y in self.years)
+
+    @property
+    def settled_reobtained(self) -> int:
+        return sum(y.settled_reobtained for y in self.years)
 
     @property
     def failed_docids(self) -> int:
@@ -575,8 +635,19 @@ def run_house_ingest(
         (run_id, now(), host),
     )
     report = IngestReport(run_id=run_id)
+    fetcher: _PoliteFetcher | None = None
+    # R20: monotonic only — never the wall clock — and only where the CLI
+    # injected one, so cache-mode runs report `elapsed_s = None` rather than
+    # a fabricated zero.
+    started = monotonic() if monotonic is not None else None
+
+    def _finalize() -> None:
+        if fetcher is not None:
+            report.fetch = fetcher.metrics()
+        if started is not None and monotonic is not None:
+            report.elapsed_s = monotonic() - started
+
     try:
-        fetcher: _PoliteFetcher | None = None
         if cache_dir is None:
             if transport is None or sleep is None or monotonic is None:
                 raise ValueError(
@@ -598,6 +669,10 @@ def run_house_ingest(
                 now=now,
             )
     except BaseException:
+        # The instrumentation is finalized on EVERY exit path, exactly like the
+        # audit row: a run that died mid-year still made real fetches, and those
+        # are the figures the operational record needs (R20).
+        _finalize()
         conn.execute(
             "UPDATE ingest_runs SET finished_at = ?, status = 'failed',"
             " new_filings = ?, rows_loaded = ?, parse_failures = ?"
@@ -605,6 +680,7 @@ def run_house_ingest(
             (now(), report.new_filings, report.rows_loaded, report.parse_failures, run_id),
         )
         raise
+    _finalize()
     conn.execute(
         "UPDATE ingest_runs SET finished_at = ?, status = ?, new_filings = ?,"
         " rows_loaded = ?, parse_failures = ? WHERE run_id = ?",
@@ -642,17 +718,68 @@ def _ingest_year(
     if discovered.note is not None:
         return
 
-    # Settled = archived (R17): a fetch-failed filing has raw_path NULL and
-    # stays re-fetch-eligible; every archived outcome is terminal for ingest.
-    settled = {
-        filing_id
-        for (filing_id,) in conn.execute(
-            "SELECT filing_id FROM filings WHERE raw_path IS NOT NULL"
+    # Settled = archived AND VERIFIED (RUN M1-B, R3/LD9). A row alone is not
+    # evidence: `raw_path IS NOT NULL` used to skip a filing forever even when
+    # its archived document had gone missing or been corrupted at rest, because
+    # the decision was made before anything could inspect the bytes. Eligibility
+    # now requires raw_path AND response_hash AND an archived file that
+    # re-hashes to that stored hash AND — in live mode — a readable provenance
+    # sidecar agreeing with it; anything else falls through to the
+    # checkpoint-first obtain path and is refetched exactly once. A fetch-failed
+    # filing still has raw_path NULL and stays re-fetch-eligible.
+    #
+    # One pre-pass query as before; the added cost is a bounded local read and
+    # hash per candidate, which is the price of never silently skipping a
+    # corrupt document (a size or mtime check would miss same-length
+    # corruption, the exact case this guards).
+    archive_root = cache_dir if cache_dir is not None else raw_root
+    archived = {
+        filing_id: (raw_path, response_hash)
+        for filing_id, raw_path, response_hash in conn.execute(
+            "SELECT filing_id, raw_path, response_hash FROM filings"
+            " WHERE raw_path IS NOT NULL"
         )
     }
     for doc_id in discovered.docids:
-        if f"house:{doc_id}" in settled:
-            continue
+        stored = archived.get(f"house:{doc_id}")
+        if stored is not None:
+            raw_path, response_hash = stored
+            try:
+                verified = archive_verified(
+                    _archive_path(archive_root, raw_path), response_hash
+                )
+                if verified and cache_dir is None:
+                    # Boundary 1 of the provenance-boundary spec. LIVE MODE
+                    # ONLY: the §5.1 sidecar is part of what "settled" MEANS,
+                    # not a by-product of it (R2/LD3).
+                    #
+                    # The bytes agreeing with the DATABASE hash is a second,
+                    # independent consistency check — emphatically not the rule
+                    # (round 2 mistook it for the rule and skipped documents
+                    # whose sidecar had been deleted, destroying `source_url`
+                    # and `retrieved_at` permanently). The rule itself is the
+                    # shared predicate, evaluated here exactly as boundary 2
+                    # evaluates it — one rule, one implementation (spec I1).
+                    #
+                    # Cache mode is deliberately exempt: it writes no sidecar by
+                    # contract and has no transport with which to make one, so
+                    # applying the rule there would make every cached corpus
+                    # permanently unsettleable (spec I6).
+                    meta_path = _archive_path(
+                        raw_root, _sidecar_relpath(raw_path)
+                    )
+                    if not _checkpoint_is_complete(
+                        meta_path,
+                        expected_hash=response_hash,
+                        url=DOC_URL_TEMPLATE.format(year=year, doc_id=doc_id),
+                    ):
+                        verified = False
+            except UnsafeArchivePathError:
+                verified = False
+            if verified:
+                year_report.settled_verified += 1
+                continue
+            year_report.settled_reobtained += 1
         entry = discovered.entries[doc_id]
         pdf_bytes = _obtain_document(
             doc_id=doc_id,
@@ -660,6 +787,7 @@ def _ingest_year(
             raw_root=raw_root,
             fetcher=fetcher,
             cache_dir=cache_dir,
+            now=now,
         )
         outcome = _process_docid(
             conn, entry=entry, pdf_bytes=pdf_bytes, now=now
@@ -678,6 +806,52 @@ def _ingest_year(
     year_report.reconciliation = reconcile(conn, discovered.docids, year)
 
 
+def _sidecar_relpath(relpath: str) -> str:
+    """The per-document provenance sidecar beside an archived PDF (LD3)."""
+    return f"{relpath}.fetch-meta.json"
+
+
+def _checkpoint_is_complete(
+    meta_path: Path, *, expected_hash: str | None, url: str
+) -> bool:
+    """THE durability predicate for a checkpoint (M1-B provenance-boundary spec).
+
+    ``docs/build/M1-B-provenance-boundary-spec.md`` states the rule once:
+
+        a document is durable iff its checkpoint carries the COMPLETE §5.1
+        provenance set — ``response_hash``, ``retrieved_at``, ``source_url`` —
+        with ``source_url`` equal to the canonical URL, AND its bytes re-hash to
+        that ``response_hash``; anything less is fetch-required.
+
+    This function owns the checkpoint half of that sentence. Both resume
+    boundaries call it and neither re-derives "complete" from field reads of its
+    own (spec I1) — three review rounds each found a different call site quietly
+    answering this question with a weaker rule of its own making, which is the
+    defect this single predicate exists to end.
+
+    Every field is load-bearing (spec I2): a hash proves the bytes, a timestamp
+    proves *when* the source said so, and a URL proves *which* source.
+    ``source_url`` is compared against the caller's canonical URL rather than
+    merely being present (spec I3) — a sidecar naming a different document is
+    confident and wrong, and would survive any presence-only check. And
+    ``retrieved_at`` must be non-empty, not merely present (spec I4): ``null``
+    and ``""`` are absence wearing a key, and are exactly the residue the
+    removed round-1 self-heal branch left in real archives.
+    """
+    entry = read_provenance(meta_path, None)
+    if entry is None:
+        return False
+    response_hash = entry.get("response_hash")
+    if not isinstance(response_hash, str) or not response_hash:
+        return False
+    if expected_hash is not None and response_hash != expected_hash:
+        return False
+    retrieved_at = entry.get("retrieved_at")
+    if not isinstance(retrieved_at, str) or not retrieved_at.strip():
+        return False
+    return entry.get("source_url") == url
+
+
 def _obtain_document(
     *,
     doc_id: str,
@@ -685,12 +859,33 @@ def _obtain_document(
     raw_root: Path,
     fetcher: _PoliteFetcher | None,
     cache_dir: Path | None,
+    now: Callable[[], str],
 ) -> bytes | None:
-    """Cached read or polite fetch + archive; ``None`` means fetch failure.
+    """Cached read or checkpoint-first polite fetch; ``None`` means fetch failure.
 
     Both the URL and the archive path are built only from a DocID that
     already passed :func:`_validate_doc_id` at the index boundary, and the
     resolved path is proven to stay inside its root before any write.
+
+    The live path is cache-first and checkpoint-before-bytes (RUN M1-B, R2),
+    on the shared :mod:`populus.ingest.checkpoint` primitives:
+
+    * archived bytes that re-hash to their committed checkpoint are returned
+      from disk with ZERO transport — this is what makes a re-run over a
+      verified archive free, on a fresh database as much as on the same one;
+    * verify-or-refetch is the whole rule: bytes whose checkpoint is absent or
+      unreadable are NOT verifiable, so they are re-fetched rather than
+      trusted. There is no self-heal path that mints a sidecar out of
+      unverified bytes;
+    * a non-200 is never checkpointed and never archived (mirroring the inst
+      guard), so a transient 404 can never freeze into a durable empty file
+      that is then never re-fetched — ``raw_path`` stays NULL and the filing
+      stays re-fetch-eligible;
+    * on 200 the checkpoint lands atomically FIRST and the bytes second, so a
+      crash between them leaves an absent-bytes state that resumes with
+      exactly one fetch.
+
+    Cache mode is untouched: it reads committed bytes and writes no sidecar.
     """
     relpath = _archive_relpath(year, doc_id)
     if cache_dir is not None:
@@ -699,13 +894,44 @@ def _obtain_document(
             return None
         return pdf_path.read_bytes()
     assert fetcher is not None
-    response = fetcher.fetch(DOC_URL_TEMPLATE.format(year=year, doc_id=doc_id))
+    url = DOC_URL_TEMPLATE.format(year=year, doc_id=doc_id)
+    target = _archive_path(raw_root, relpath)
+    meta_path = _archive_path(raw_root, _sidecar_relpath(relpath))
+
+    # Boundary 2 of the provenance-boundary spec, and the ONLY boundary a
+    # fresh-database resume passes through: the settled pre-pass has no rows to
+    # skip there, so an incomplete sidecar reaching zero transport would never
+    # be repaired by anything. Round 2 hardened the pre-pass and left this
+    # accepting a hash-only checkpoint — round 3's finding exactly.
+    if _checkpoint_is_complete(meta_path, expected_hash=None, url=url) and (
+        target.exists()
+    ):
+        on_disk = target.read_bytes()
+        expected, _retrieved_at = read_checkpoint(meta_path, None)
+        if sha256_hex(on_disk) == expected:
+            return on_disk
+        # Mismatch: corrupt at rest, or a superseded in-flight replacement —
+        # never durable bytes. Fall through and refetch exactly once.
+    # Anything less than the complete provenance set ⇒ FETCH-REQUIRED. Absent,
+    # unparseable, hash-less, timestamp-less, or naming another document's URL:
+    # all of it is a document that cannot prove where it came from, and bytes
+    # alone can never supply the proof. Fetch-required is a REPAIR, not a
+    # failure — one fetch rewrites the checkpoint complete, and the document is
+    # durable at zero transport from the next run onward (spec I5).
+
+    response = fetcher.fetch(url)
     if response.status_code != 200:
         return None
-    archive_path = _archive_path(raw_root, relpath)
-    archive_path.parent.mkdir(parents=True, exist_ok=True)
-    archive_path.write_bytes(response.content)
-    return response.content
+    content = response.content
+    commit_checkpoint(
+        meta_path,
+        None,
+        url=url,
+        response_hash=sha256_hex(content),
+        retrieved_at=now(),
+    )
+    atomic_write_bytes(target, content)
+    return content
 
 
 @dataclass(frozen=True)
@@ -908,8 +1134,17 @@ def reparse_house(
 # --- summaries ---------------------------------------------------------------
 
 
-def format_summary(report: IngestReport) -> str:
-    """The per-year reconciliation summary the CLI prints (R13)."""
+def format_summary(
+    report: IngestReport, *, gate: ParseGateReport | None = None
+) -> str:
+    """The per-year reconciliation summary the CLI prints (R13).
+
+    With a *gate* (the CLI computes one from the same connection before it
+    closes), the summary also carries the per-era e-file gate lines, the per-era
+    member-join lines, and — whenever any era is ``miss`` or ``unmeasurable`` —
+    the OWNER DECISION REQUIRED block (RUN M1-B, R5). The gate is passed in
+    rather than computed here so this stays a pure formatter over the report.
+    """
     lines: list[str] = []
     clean_total = 0
     efile_total = 0
@@ -950,6 +1185,8 @@ def format_summary(report: IngestReport) -> str:
             f" | text_fallback {year_report.text_fallback_rows}"
             f" | conflicts {year_report.conflicts}"
             f" | dup docids {year_report.dup_docids}"
+            f" | settled_verified {year_report.settled_verified}"
+            f" | settled_reobtained {year_report.settled_reobtained}"
         )
         if reconciliation and reconciliation.unaccounted:
             lines.append(
@@ -965,11 +1202,14 @@ def format_summary(report: IngestReport) -> str:
         )
     else:
         lines.append("efile rows: 0 clean / 0 total")
+    lines.append(report.fetch.format_line("house", elapsed_s=report.elapsed_s))
     lines.append(
         f"run {report.run_id}: new_filings {report.new_filings}"
         f" | rows_loaded {report.rows_loaded}"
         f" | parse_failures {report.parse_failures}"
     )
+    if gate is not None:
+        lines.append(format_gate_report(gate))
     return "\n".join(lines)
 
 

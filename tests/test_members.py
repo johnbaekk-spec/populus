@@ -859,3 +859,121 @@ def test_end_to_end_cache_acceptance(tmp_path):
     assert disposition.binomial_upper_bound == pytest.approx(0.0198, abs=0.0005)
 
     conn.close()
+
+
+# --- historical-era join (RUN M1-B, R9) --------------------------------------
+
+
+def test_historical_era_joins_via_a_temporal_alias_and_unjoined_stay_visible(
+    initialized_db, make_member, make_alias, make_filing, make_row
+):
+    """The 2015 shape: a member who left Congress before the modern corpus
+    begins, reached through an alias valid only in their era, and a second
+    filer nobody can resolve — retained, flagged NULL, and counted."""
+    from populus.amendments import ensure_views
+    from populus.load import load_filing
+    from populus.members import apply_member_join
+    from populus.parse_gate import compute_join_coverage
+
+    conn = initialized_db
+    ensure_views(conn)
+    make_member(
+        conn,
+        "H000001",
+        first="Ellen",
+        last="Historic",
+        terms=[
+            {
+                "type": "rep",
+                "start": "2013-01-03",
+                "end": "2017-01-03",
+                "state": "VA",
+                "district": 1,
+            }
+        ],
+    )
+    make_alias(
+        conn,
+        alias="Historic, Ellen",
+        bioguide_id="H000001",
+        valid_from="2013-01-03",
+        valid_to="2017-01-03",
+    )
+
+    for filing_id, filer, filed in (
+        ("house:20002703", "Historic, Ellen", "2015-03-02"),
+        ("house:20003021", "Vanished, Victor", "2015-04-09"),
+    ):
+        make_filing(
+            conn,
+            filing_id=filing_id,
+            filer_name_raw=filer,
+            filed_date=filed,
+            doc_url=f"https://example.invalid/{filing_id}",
+        )
+        load_filing(
+            conn,
+            filing_id,
+            [make_row(asset_name=f"Asset {filing_id}")],
+            parse_status="parsed",
+            parser_version="t",
+            normalization_version="t",
+        )
+
+    report = apply_member_join(conn)
+    assert report.by_source["house-clerk"].joined == 1
+
+    joined = dict(
+        conn.execute("SELECT filing_id, bioguide_id FROM filings ORDER BY filing_id")
+    )
+    assert joined["house:20002703"] == "H000001"
+    assert joined["house:20003021"] is None       # explicit NULL, never dropped
+    # The denormalized row column moved with it (the §9.4 CI invariant).
+    assert conn.execute(
+        "SELECT DISTINCT bioguide_id FROM transactions"
+        " WHERE filing_id = 'house:20002703'"
+    ).fetchone() == ("H000001",)
+
+    # And the era measurement sees exactly that, filer named.
+    era = next(
+        c for c in compute_join_coverage(conn) if (c.chamber, c.year) == ("house", "2015")
+    )
+    assert (era.filings_joined, era.filings, era.filings_unjoined) == (1, 2, 1)
+    assert (era.rows_joined, era.rows) == (1, 2)
+    assert era.unresolved_filers == ("Vanished, Victor",)
+
+
+def test_a_2015_filing_does_not_resolve_through_a_modern_only_alias(
+    initialized_db, make_member, make_alias
+):
+    """Temporal aliases are what make the era join honest: an alias opened for
+    the modern corpus must not reach back and attribute a 2015 filing."""
+    from populus.members import build_resolver
+
+    make_member(
+        initialized_db,
+        "M000001",
+        first="Modern",
+        last="Member",
+        terms=[
+            {
+                "type": "rep",
+                "start": "2019-01-03",
+                "end": "2027-01-03",
+                "state": "CA",
+                "district": 12,
+            }
+        ],
+    )
+    make_alias(
+        initialized_db,
+        alias="Member, Modern",
+        bioguide_id="M000001",
+        valid_from="2019-01-03",
+    )
+    resolver = build_resolver(initialized_db)
+    assert resolver.resolve("Member, Modern", "house", "2015-03-02").bioguide_id is None
+    assert (
+        resolver.resolve("Member, Modern", "house", "2020-03-02").bioguide_id
+        == "M000001"
+    )

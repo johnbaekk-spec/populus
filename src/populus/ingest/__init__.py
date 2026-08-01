@@ -10,7 +10,7 @@ parsing chain into Senate runs, and vice versa).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import populus
@@ -26,6 +26,45 @@ class TransportResponse:
     status_code: int
     headers: Mapping[str, str]
     content: bytes
+
+
+@dataclass(frozen=True)
+class FetchMetrics:
+    """What one polite fetcher actually did (RUN M1-B, R20).
+
+    Part of the shared transport contract for the same reason
+    :class:`TransportResponse` is: both chambers' fetchers report it, and the
+    operational record (request counts, retries, status mix, backoff seconds)
+    must mean the same thing in both summaries so Phase B sizing can be
+    re-derived from measurement instead of a planning prior.
+
+    ``attempts`` counts every request that left the process, retries included;
+    ``retries`` counts only the 429/5xx answers that actually triggered a
+    backoff. Politeness spacing is not backoff and is not in
+    ``backoff_sleep_s``.
+    """
+
+    attempts: int = 0
+    retries: int = 0
+    backoff_sleep_s: float = 0.0
+    status_counts: Mapping[int, int] = field(default_factory=dict)
+
+    def format_line(self, label: str, *, elapsed_s: float | None) -> str:
+        """The one-line operational record both ``format_summary``s print."""
+        mix = (
+            ", ".join(
+                f"{status}:{count}" for status, count in sorted(self.status_counts.items())
+            )
+            or "none"
+        )
+        elapsed = "n/a (cache mode)" if elapsed_s is None else f"{elapsed_s:.1f}s"
+        return (
+            f"{label} transport: attempts {self.attempts}"
+            f" | retries {self.retries}"
+            f" | status mix {mix}"
+            f" | backoff_sleep_s {self.backoff_sleep_s:.1f}"
+            f" | elapsed {elapsed}"
+        )
 
 
 class UnsafeArchivePathError(ValueError):

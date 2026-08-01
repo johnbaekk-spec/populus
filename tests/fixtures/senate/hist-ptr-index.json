@@ -1,0 +1,43 @@
+{
+  "draw": 0,
+  "recordsTotal": 5,
+  "recordsFiltered": 5,
+  "data": [
+    [
+      "Ellen",
+      "Historic",
+      "Historic, Ellen (Senator)",
+      "<a href=\"/search/view/ptr/40fbe259-f282-4982-a53f-1c7278d041cd/\" target=\"_blank\">Periodic Transaction Report for 12/15/2015</a>",
+      "12/15/2015"
+    ],
+    [
+      "Ellen",
+      "Historic",
+      "Historic, Ellen (Senator)",
+      "<a href=\"/search/view/ptr/a5fdbba4-9c67-4002-b931-1cd910ce590d/\" target=\"_blank\">Periodic Transaction Report for 12/15/2015 (Amendment 1)</a>",
+      "01/20/2016"
+    ],
+    [
+      "Sam",
+      "Second",
+      "Second, Sam (Senator)",
+      "<a href=\"/search/view/ptr/4f4d76c6-52ab-4edb-884d-b6c43e7b1bbe/\" target=\"_blank\">Periodic Transaction Report for 06/02/2015</a>",
+      "06/09/2015"
+    ],
+    [
+      "Victor",
+      "Vanished",
+      "Vanished, Victor (Senator)",
+      "<a href=\"/search/view/ptr/029f67f3-121a-406c-bddf-a9a7e7d6267b/\" target=\"_blank\">Periodic Transaction Report for 08/11/2015</a>",
+      "08/18/2015"
+    ],
+    [
+      "Pat",
+      "Paperone",
+      "Paperone, Pat (Senator)",
+      "<a href=\"/search/view/paper/3a4c5095-028a-4614-a692-836719da4e63/\" target=\"_blank\">Periodic Transaction Report for 03/03/2015</a>",
+      "03/10/2015"
+    ]
+  ],
+  "result": "ok"
+}

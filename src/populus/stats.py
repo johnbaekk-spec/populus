@@ -26,6 +26,8 @@ from collections.abc import Callable, Mapping
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+from populus.parse_gate import compute_parse_gate
+
 STATS_VERSION = "stats-1.0.0"
 
 DATA_NOTE = (
@@ -212,6 +214,37 @@ def compute_stats(
         "SELECT COUNT(*) FROM filings WHERE supersedes IS NOT NULL"
     ).fetchone()
 
+    # Per-era gate + join coverage (RUN M1-B, R6/R15). Both are ADDITIVE: the
+    # existing keys and their shapes are untouched, and
+    # parse_coverage_primary_by_chamber_year_including_excluded still auto-
+    # extends by year with no code change. The gate figures come from
+    # populus.parse_gate so the published numbers and the ones the ingest
+    # summary prints are one computation, never two that can disagree.
+    gate = compute_parse_gate(conn)
+    efile_gate: dict[str, dict[str, dict]] = {}
+    for era in gate.eras:
+        efile_gate.setdefault(era.chamber, {})[era.year] = {
+            "clean_efile_rows": era.clean_efile_rows,
+            "efile_rows": era.efile_rows,
+            "efile_parse_rate": era.efile_parse_rate,
+            "row_denominator_known": era.row_denominator_known,
+            "efile_filings": era.efile_filings,
+            "measurable_efile_filings": era.measurable_efile_filings,
+            "unmeasurable_efile_filings": era.unmeasurable_efile_filings,
+            "efile_filing_measurable_rate": era.efile_filing_measurable_rate,
+            "status": era.status,
+            "meets_gate": era.meets_gate,
+        }
+    member_join: dict[str, dict[str, dict]] = {}
+    for era in gate.join:
+        member_join.setdefault(era.chamber, {})[era.year] = {
+            "filings": era.filings,
+            "filings_joined": era.filings_joined,
+            "rows": era.rows,
+            "rows_joined": era.rows_joined,
+            "join_rate": era.join_rate,
+        }
+
     totals = {
         "filing_count_including_excluded": filing_count,
         "transaction_count_including_excluded": txn_count,
@@ -222,6 +255,8 @@ def compute_stats(
             s: documents_by_source[s] for s in sorted(documents_by_source)
         },
         "parse_coverage_primary_by_chamber_year_including_excluded": parse_coverage,
+        "efile_parse_gate_by_chamber_year_including_excluded": efile_gate,
+        "member_join_primary_by_chamber_year_including_excluded": member_join,
         "needs_ocr_filing_count_including_excluded": needs_ocr,
         "member_count": member_count,
         "unresolved_pair_count": pair_count,

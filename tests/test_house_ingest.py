@@ -344,7 +344,13 @@ def test_discover_live_conditional_get(tmp_path):
     assert (raw_root / "2026FD.zip").read_bytes() == zip_bytes
     assert (raw_root / "2026FD.xml").exists()
     meta = json.loads((raw_root / "2026FD.zip.meta.json").read_text())
-    assert meta == {"etag": '"tag-1"', "last_modified": "Fri, 10 Jul 2026 00:00:00 GMT"}
+    # The conditional-GET validators, plus the archived ZIP's own hash for
+    # §5.1 provenance parity with the per-document sidecars (RUN M1-B, R2).
+    assert meta == {
+        "etag": '"tag-1"',
+        "last_modified": "Fri, 10 Jul 2026 00:00:00 GMT",
+        "response_hash": hashlib.sha256(zip_bytes).hexdigest(),
+    }
 
     second = discover(year=2026, raw_root=raw_root, fetcher=fetcher)
     assert second.docids == ("20034916",)
@@ -1308,3 +1314,946 @@ def test_cached_2026_corpus_acceptance(tmp_path):
         assert rate >= 0.97, house.format_summary(report)
     finally:
         conn.close()
+
+
+# --- resumable fetch: checkpoint-before-bytes sidecars (RUN M1-B, R2) --------
+
+
+def _sidecar(raw_root, doc_id, year=2026):
+    return Path(raw_root) / "pdfs" / str(year) / f"{doc_id}.pdf.fetch-meta.json"
+
+
+def _archived(raw_root, doc_id, year=2026):
+    return Path(raw_root) / "pdfs" / str(year) / f"{doc_id}.pdf"
+
+
+class CountingHouseTransport:
+    """Counts every request that leaves the process, then delegates."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.attempts = 0
+        self.pdf_attempts = 0
+
+    def get(self, url, *, headers):
+        self.attempts += 1
+        if "/ptr-pdfs/" in url:
+            self.pdf_attempts += 1
+        return self._inner.get(url, headers=headers)
+
+
+def _live_transport(members, pdfs, year=2026):
+    transport = FakeTransport()
+    transport.route(
+        house.INDEX_URL_TEMPLATE.format(year=year),
+        _resp(200, _index_zip(year, members), {"ETag": '"t"'}),
+    )
+    for doc_id, data in pdfs.items():
+        transport.route(_pdf_url(doc_id, year), _resp(200, data))
+    return transport
+
+
+def test_live_fetch_writes_the_provenance_sidecar_checkpoint_first(
+    tmp_path, initialized_db
+):
+    transport = _live_transport([WITTMAN], {"20034916": EFILE_2026})
+    raw_root = tmp_path / "raw"
+    report = _run(
+        initialized_db, raw_root=raw_root, transport=transport,
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert report.ok, house.format_summary(report)
+
+    sidecar = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    # §5.1 provenance fields, and the hash that necessarily preceded the bytes.
+    assert sidecar["source_url"] == _pdf_url("20034916")
+    assert sidecar["response_hash"] == hashlib.sha256(EFILE_2026).hexdigest()
+    assert sidecar["retrieved_at"] is not None
+    assert _archived(raw_root, "20034916").read_bytes() == EFILE_2026
+
+
+def _spy_writes(monkeypatch) -> list[str]:
+    """Record the order of durable writes across BOTH writers.
+
+    The document bytes go through the House module's own ``atomic_write_bytes``
+    and the checkpoint sidecar through the shared
+    ``populus.ingest.checkpoint`` primitive, so a spy on one alone would observe
+    half the ordering this guards.
+    """
+    import populus.ingest.checkpoint as checkpoint_mod
+
+    order: list[str] = []
+    real_write = house.atomic_write_bytes
+
+    def spy(path, data):
+        real_write(path, data)
+        order.append(Path(path).name)
+
+    monkeypatch.setattr(house, "atomic_write_bytes", spy)
+    monkeypatch.setattr(checkpoint_mod, "atomic_write_bytes", spy)
+    return order
+
+
+def test_the_checkpoint_is_written_before_the_bytes(tmp_path, initialized_db, monkeypatch):
+    """The ordering rule itself, not just its end state: a checkpoint that
+    landed AFTER its bytes would leave bytes no resume could verify."""
+    order = _spy_writes(monkeypatch)
+    _run(
+        initialized_db, raw_root=tmp_path / "raw",
+        transport=_live_transport([WITTMAN], {"20034916": EFILE_2026}),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert order == ["20034916.pdf.fetch-meta.json", "20034916.pdf"]
+
+
+def test_a_crash_between_the_checkpoint_and_the_bytes_refetches_exactly_once(
+    tmp_path, initialized_db, monkeypatch
+):
+    """Resume from the ACTUAL intermediate state the ordering produces: the
+    sidecar is durable, the bytes never landed. Exactly one refetch follows —
+    and never a duplicate request for bytes that ARE durable."""
+
+    class _Interrupt(RuntimeError):
+        pass
+
+    import populus.ingest.checkpoint as checkpoint_mod
+
+    real_write = house.atomic_write_bytes
+    written: list[str] = []
+
+    def spy(path, data):
+        real_write(path, data)
+        written.append(Path(path).name)
+        if Path(path).name.endswith(".fetch-meta.json"):
+            raise _Interrupt("crash immediately after the checkpoint")
+
+    monkeypatch.setattr(house, "atomic_write_bytes", spy)
+    monkeypatch.setattr(checkpoint_mod, "atomic_write_bytes", spy)
+
+    raw_root = tmp_path / "raw"
+    with pytest.raises(_Interrupt):
+        _run(
+            initialized_db, raw_root=raw_root,
+            transport=_live_transport([WITTMAN], {"20034916": EFILE_2026}),
+            sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+        )
+    monkeypatch.undo()
+    # The checkpoint is durable; the bytes are not.
+    assert written == ["20034916.pdf.fetch-meta.json"]
+    assert _sidecar(raw_root, "20034916").exists()
+    assert not _archived(raw_root, "20034916").exists()
+
+    counting = CountingHouseTransport(
+        _live_transport([WITTMAN], {"20034916": EFILE_2026})
+    )
+    resumed = _run(
+        initialized_db, raw_root=raw_root, transport=counting, run_id="run-resume",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert resumed.ok, house.format_summary(resumed)
+    assert counting.pdf_attempts == 1                 # exactly one
+    assert _archived(raw_root, "20034916").read_bytes() == EFILE_2026
+
+    again = CountingHouseTransport(
+        _live_transport([WITTMAN], {"20034916": EFILE_2026})
+    )
+    _run(
+        initialized_db, raw_root=raw_root, transport=again, run_id="run-resume-2",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert again.pdf_attempts == 0                    # and never a second
+
+
+def test_a_non_200_ptr_is_never_checkpointed_or_archived(tmp_path, initialized_db):
+    """A 404 must not freeze into a durable empty file: no sidecar, no bytes,
+    raw_path NULL, and the filing stays re-fetch-eligible forever."""
+    transport = _live_transport([WITTMAN], {})
+    transport.route(_pdf_url("20034916"), _resp(404))
+    raw_root = tmp_path / "raw"
+    report = _run(
+        initialized_db, raw_root=raw_root, transport=transport,
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert report.ok is False
+    assert not _sidecar(raw_root, "20034916").exists()
+    assert not _archived(raw_root, "20034916").exists()
+    status, raw_path, response_hash, *_ = _filing(initialized_db, "20034916")
+    assert (status, raw_path, response_hash) == ("failed", None, None)
+
+
+def test_archived_bytes_without_a_checkpoint_are_refetched_never_self_healed(
+    tmp_path, initialized_db
+):
+    """Unverifiable bytes are never promoted to durable provenance (F1).
+
+    Bytes on disk with no sidecar have nothing to verify against — legacy,
+    partial, misplaced, and corrupted archives all look identical. Minting a
+    sidecar out of them would record a hash of whatever happened to be there,
+    with a null ``retrieved_at``, and report ZERO transport for a document
+    never checked against the source. The live path must fetch instead.
+    """
+    members = [WITTMAN]
+    pdfs = {"20034916": EFILE_2026}
+    raw_root = tmp_path / "raw"
+    _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    # The exact state a pre-existing archive presents: bytes, no checkpoint.
+    # Wrong bytes, of the same length, so a self-heal would checkpoint a hash
+    # that is not the source's and freeze the corruption in as "durable".
+    _sidecar(raw_root, "20034916").unlink()
+    _archived(raw_root, "20034916").write_bytes(b"X" * len(EFILE_2026))
+
+    counting = CountingHouseTransport(_live_transport(members, pdfs))
+    report = _run(
+        initialized_db, raw_root=raw_root, transport=counting,
+        run_id="run-no-checkpoint",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert report.ok, house.format_summary(report)
+    assert counting.pdf_attempts == 1                     # fetched, not trusted
+    assert _archived(raw_root, "20034916").read_bytes() == EFILE_2026
+
+    sidecar = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    assert sidecar["response_hash"] == hashlib.sha256(EFILE_2026).hexdigest()
+    assert sidecar["retrieved_at"] is not None      # genuine retrieval, never null
+
+    # And the healed archive is settled again: no perpetual refetch loop.
+    again = CountingHouseTransport(_live_transport(members, pdfs))
+    _run(
+        initialized_db, raw_root=raw_root, transport=again, run_id="run-no-cp-2",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert again.pdf_attempts == 0
+
+
+def test_an_unreadable_checkpoint_is_fetch_required_not_trusted(
+    tmp_path, initialized_db
+):
+    """A truncated/garbage sidecar reads back as "no checkpoint" — which must
+    mean fetch-required, exactly as an absent one does.
+
+    Driven from a FRESH database, so there is no stored ``filings.response_hash``
+    to settle the filing before the archive is consulted: the only evidence on
+    offer is the sidecar, and it is unreadable. This is the exact inverse of
+    ``test_fresh_database_over_a_verified_archive_makes_zero_ptr_transport`` —
+    zero transport is earned by a verifiable checkpoint, never by bytes alone.
+    """
+    members = [WITTMAN]
+    pdfs = {"20034916": EFILE_2026}
+    raw_root = tmp_path / "raw"
+    _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    _sidecar(raw_root, "20034916").write_text("{not json", encoding="utf-8")
+
+    fresh_path = tmp_path / "fresh.db"
+    init_db(str(fresh_path))
+    fresh = connect(str(fresh_path))
+    try:
+        counting = CountingHouseTransport(_live_transport(members, pdfs))
+        report = _run(
+            fresh, raw_root=raw_root, transport=counting, run_id="run-badmeta",
+            sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+        )
+        assert report.ok, house.format_summary(report)
+        assert counting.pdf_attempts == 1
+    finally:
+        fresh.close()
+    sidecar = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    assert sidecar["retrieved_at"] is not None
+
+
+def test_cache_mode_writes_no_sidecar(tmp_path, initialized_db):
+    cache = _make_cache(tmp_path, 2026, [WITTMAN], {"20034916": EFILE_2026})
+    report = _run(initialized_db, raw_root=cache, cache_dir=cache)
+    assert report.ok, house.format_summary(report)
+    assert not _sidecar(cache, "20034916").exists()
+
+
+# --- verified-settled eligibility (RUN M1-B, R3/LD9) -------------------------
+
+
+def test_missing_and_corrupt_archives_each_refetch_exactly_once_on_the_same_db(
+    tmp_path, initialized_db
+):
+    """The bug this closes: `raw_path IS NOT NULL` skipped a filing forever even
+    when its archived document was gone or corrupt, because the decision was
+    made before anything could inspect the bytes."""
+    members = [WITTMAN, FIELDS, PAPER_ROGERS]
+    pdfs = {
+        "20034916": EFILE_2026,
+        "20034800": EFILE_2026_B,
+        "9116146": PAPER_2026,
+    }
+    raw_root = tmp_path / "raw"
+    first = _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert first.ok, house.format_summary(first)
+    assert first.settled_verified == 0      # nothing was settled yet
+    assert first.settled_reobtained == 0
+
+    # One archive deleted, one corrupted to the SAME length (a size check would
+    # miss it), one left intact.
+    _archived(raw_root, "20034916").unlink()
+    intact = _archived(raw_root, "20034800").read_bytes()
+    _archived(raw_root, "20034800").write_bytes(b"X" * len(intact))
+
+    counting = CountingHouseTransport(_live_transport(members, pdfs))
+    second = _run(
+        initialized_db, raw_root=raw_root, transport=counting, run_id="run-test-2",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert second.ok, house.format_summary(second)
+    assert counting.pdf_attempts == 2       # exactly the two broken ones
+    assert second.settled_reobtained == 2
+    assert second.settled_verified == 1     # the intact paper filing
+    assert _archived(raw_root, "20034800").read_bytes() == intact  # healed
+
+    # And a THIRD run over the now-verified archive fetches nothing more.
+    third_counter = CountingHouseTransport(_live_transport(members, pdfs))
+    third = _run(
+        initialized_db, raw_root=raw_root, transport=third_counter,
+        run_id="run-test-3",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert third_counter.pdf_attempts == 0
+    assert third.settled_verified == 3
+    assert third.settled_reobtained == 0
+
+
+def test_fresh_database_over_a_verified_archive_makes_zero_ptr_transport(
+    tmp_path, initialized_db, tmp_path_factory
+):
+    """The resume proof that cannot pass by skipping settled rows: a brand-new
+    database has no rows to skip, so every document must come from the verified
+    archive rather than the network."""
+    members = [WITTMAN, FIELDS]
+    pdfs = {"20034916": EFILE_2026, "20034800": EFILE_2026_B}
+    raw_root = tmp_path / "raw"
+    first = _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert first.ok, house.format_summary(first)
+
+    fresh_path = tmp_path / "fresh.db"
+    init_db(str(fresh_path))
+    fresh = connect(str(fresh_path))
+    try:
+        counting = CountingHouseTransport(_live_transport(members, pdfs))
+        resumed = _run(
+            fresh, raw_root=raw_root, transport=counting, run_id="run-fresh",
+            sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+        )
+        assert resumed.ok, house.format_summary(resumed)
+        assert counting.pdf_attempts == 0            # ZERO transport
+        assert resumed.settled_verified == 0         # nothing was skipped …
+        assert resumed.new_filings == 2              # … the corpus fully reloaded
+        assert resumed.years[0].reconciliation.total == 2
+    finally:
+        fresh.close()
+
+
+@pytest.mark.parametrize("damage", ["absent", "unreadable"])
+def test_settled_skip_on_the_same_db_requires_the_sidecar_too(
+    tmp_path, initialized_db, damage
+):
+    """A settled skip requires the PROVENANCE, not just the bytes (round 2, F1).
+
+    The settled pre-pass and `_obtain_document` are two resume boundaries, and
+    the pre-pass used to bypass the other's checkpoint requirement: it verified
+    the archived bytes against the database hash and skipped, never looking at
+    the sidecar. Delete or corrupt a sidecar while leaving its bytes intact and
+    that document's source URL and retrieval time were gone permanently — every
+    later run did zero transport and no path could ever restore them.
+
+    Same database, intact bytes, damaged sidecar: exactly one fetch, and full
+    §5.1 provenance rewritten.
+    """
+    members = [WITTMAN]
+    pdfs = {"20034916": EFILE_2026}
+    raw_root = tmp_path / "raw"
+    _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    original = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    assert original["retrieved_at"] is not None
+
+    # The bytes stay exactly right — only the provenance is damaged, so the
+    # database-hash check alone still says "settled".
+    if damage == "absent":
+        _sidecar(raw_root, "20034916").unlink()
+    else:
+        _sidecar(raw_root, "20034916").write_text("{truncated", encoding="utf-8")
+    assert _archived(raw_root, "20034916").read_bytes() == EFILE_2026
+
+    counting = CountingHouseTransport(_live_transport(members, pdfs))
+    report = _run(
+        initialized_db, raw_root=raw_root, transport=counting, run_id="run-nosidecar",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert report.ok, house.format_summary(report)
+    assert report.settled_verified == 0        # NOT skipped on the DB hash alone
+    assert report.settled_reobtained == 1
+    assert counting.pdf_attempts == 1          # exactly one fetch
+
+    restored = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    assert restored["source_url"] == _pdf_url("20034916")
+    assert restored["response_hash"] == hashlib.sha256(EFILE_2026).hexdigest()
+    assert restored["retrieved_at"] is not None
+    assert _archived(raw_root, "20034916").read_bytes() == EFILE_2026
+
+    # Provenance restored ⇒ genuinely settled again, at zero transport.
+    again = CountingHouseTransport(_live_transport(members, pdfs))
+    third = _run(
+        initialized_db, raw_root=raw_root, transport=again, run_id="run-nosidecar-2",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert again.pdf_attempts == 0
+    assert third.settled_verified == 1
+
+
+def test_a_sidecar_disagreeing_with_the_stored_hash_is_not_settled(
+    tmp_path, initialized_db
+):
+    """A readable sidecar that names a DIFFERENT hash is not evidence for these
+    bytes — the two provenance records contradict each other, so the document is
+    re-obtained rather than one of them being quietly preferred."""
+    members = [WITTMAN]
+    pdfs = {"20034916": EFILE_2026}
+    raw_root = tmp_path / "raw"
+    _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    sidecar_path = _sidecar(raw_root, "20034916")
+    meta = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    meta["response_hash"] = hashlib.sha256(b"something else").hexdigest()
+    sidecar_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    counting = CountingHouseTransport(_live_transport(members, pdfs))
+    report = _run(
+        initialized_db, raw_root=raw_root, transport=counting, run_id="run-badhash",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert report.settled_verified == 0
+    assert counting.pdf_attempts == 1
+    restored = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert restored["response_hash"] == hashlib.sha256(EFILE_2026).hexdigest()
+
+
+# --- the provenance boundary: complete §5.1 set or fetch-required -----------
+# docs/build/M1-B-provenance-boundary-spec.md. Three review rounds each found a
+# different boundary enforcing a weaker rule; these tests pin the ONE rule at
+# BOTH boundaries, including the fresh-database path where the settled pre-pass
+# is structurally inert and `_obtain_document` is the only thing deciding.
+
+
+def _seed_live_archive(tmp_path, initialized_db):
+    """One document fetched for real, leaving a complete archive + sidecar."""
+    members = [WITTMAN]
+    pdfs = {"20034916": EFILE_2026}
+    raw_root = tmp_path / "raw"
+    _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    return members, pdfs, raw_root
+
+
+def _rewrite_sidecar(raw_root, mutate):
+    path = _sidecar(raw_root, "20034916")
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    mutate(meta)
+    path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
+def _fetches(raw_root, members, pdfs, db, run_id):
+    counting = CountingHouseTransport(_live_transport(members, pdfs))
+    report = _run(
+        db, raw_root=raw_root, transport=counting, run_id=run_id,
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    return counting.pdf_attempts, report
+
+
+def _fresh_db(tmp_path, name="fresh.db"):
+    path = tmp_path / name
+    init_db(str(path))
+    return connect(str(path))
+
+
+def test_a_hash_only_checkpoint_is_not_durable(tmp_path, initialized_db):
+    """The round-3 finding, at the boundary it was found on.
+
+    A checkpoint carrying only `response_hash` — no `retrieved_at`, no
+    `source_url` — matched the bytes and therefore read as durable forever. This
+    is the exact residue the removed round-1 self-heal branch wrote into real
+    archives, so it is not hypothetical.
+    """
+    members, pdfs, raw_root = _seed_live_archive(tmp_path, initialized_db)
+    _rewrite_sidecar(
+        raw_root,
+        lambda meta: meta.clear()
+        or meta.update({"response_hash": hashlib.sha256(EFILE_2026).hexdigest()}),
+    )
+    # Fresh DB: the settled pre-pass has no rows, so `_obtain_document` alone
+    # decides — which is precisely why hardening the pre-pass was insufficient.
+    fresh = _fresh_db(tmp_path)
+    try:
+        attempts, report = _fetches(raw_root, members, pdfs, fresh, "run-hashonly")
+        assert report.ok, house.format_summary(report)
+        assert attempts == 1
+    finally:
+        fresh.close()
+    restored = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    assert restored["source_url"] == _pdf_url("20034916")
+    assert restored["retrieved_at"] is not None
+
+
+@pytest.mark.parametrize(
+    "field", ["response_hash", "retrieved_at", "source_url"]
+)
+@pytest.mark.parametrize("boundary", ["same_db", "fresh_db"])
+def test_a_checkpoint_missing_any_provenance_field_is_fetch_required(
+    tmp_path, initialized_db, field, boundary
+):
+    """Every field of the §5.1 set is load-bearing, at BOTH boundaries (I2).
+
+    A hash proves the bytes, a timestamp proves *when* the source said so, and a
+    URL proves *which* source. Provenance missing any one of the three is not
+    provenance, and no field may be inferred from the others.
+    """
+    members, pdfs, raw_root = _seed_live_archive(tmp_path, initialized_db)
+    _rewrite_sidecar(raw_root, lambda meta: meta.pop(field))
+
+    if boundary == "same_db":
+        attempts, report = _fetches(
+            raw_root, members, pdfs, initialized_db, f"run-{field}-same"
+        )
+        assert report.settled_verified == 0
+        assert report.settled_reobtained == 1
+    else:
+        fresh = _fresh_db(tmp_path)
+        try:
+            attempts, report = _fetches(
+                raw_root, members, pdfs, fresh, f"run-{field}-fresh"
+            )
+        finally:
+            fresh.close()
+    assert report.ok, house.format_summary(report)
+    assert attempts == 1
+
+    restored = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    assert restored["response_hash"] == hashlib.sha256(EFILE_2026).hexdigest()
+    assert restored["retrieved_at"]
+    assert restored["source_url"] == _pdf_url("20034916")
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_a_blank_retrieved_at_is_absence_wearing_a_key(
+    tmp_path, initialized_db, blank
+):
+    """`null`, `""`, and whitespace are not a retrieval time (I4). A
+    presence-only check would wave all three through — and `null` is exactly
+    what the removed round-1 self-heal branch wrote."""
+    members, pdfs, raw_root = _seed_live_archive(tmp_path, initialized_db)
+    _rewrite_sidecar(raw_root, lambda meta: meta.__setitem__("retrieved_at", blank))
+    fresh = _fresh_db(tmp_path)
+    try:
+        attempts, _ = _fetches(raw_root, members, pdfs, fresh, "run-blank-time")
+    finally:
+        fresh.close()
+    assert attempts == 1
+
+
+def test_a_checkpoint_naming_a_different_source_url_is_fetch_required(
+    tmp_path, initialized_db
+):
+    """`source_url` is VERIFIED against the canonical URL, not merely present
+    (I3). A sidecar naming another document's URL is worse than one naming
+    none: it is confident and wrong, and survives any presence-only check."""
+    members, pdfs, raw_root = _seed_live_archive(tmp_path, initialized_db)
+    _rewrite_sidecar(
+        raw_root,
+        lambda meta: meta.__setitem__("source_url", _pdf_url("29999999")),
+    )
+    fresh = _fresh_db(tmp_path)
+    try:
+        attempts, _ = _fetches(raw_root, members, pdfs, fresh, "run-wrong-url")
+    finally:
+        fresh.close()
+    assert attempts == 1
+    restored = json.loads(_sidecar(raw_root, "20034916").read_text(encoding="utf-8"))
+    assert restored["source_url"] == _pdf_url("20034916")
+
+
+def test_settled_skip_requires_complete_provenance_not_just_a_hash(
+    tmp_path, initialized_db
+):
+    """Boundary 1 evaluates the same rule: a sidecar whose hash agrees with the
+    database but which carries no retrieval time is not a settled skip."""
+    members, pdfs, raw_root = _seed_live_archive(tmp_path, initialized_db)
+    _rewrite_sidecar(raw_root, lambda meta: meta.pop("retrieved_at"))
+    attempts, report = _fetches(
+        raw_root, members, pdfs, initialized_db, "run-settled-incomplete"
+    )
+    assert report.settled_verified == 0
+    assert report.settled_reobtained == 1
+    assert attempts == 1
+    # Repaired, and settled at zero transport thereafter (I5).
+    again, third = _fetches(
+        raw_root, members, pdfs, initialized_db, "run-settled-repaired"
+    )
+    assert again == 0
+    assert third.settled_verified == 1
+
+
+def test_a_fresh_database_refetches_an_incomplete_checkpoint(
+    tmp_path, initialized_db
+):
+    """Boundary 3, the negative of the zero-transport resume proof.
+
+    `test_fresh_database_over_a_verified_archive_makes_zero_ptr_transport` shows
+    a COMPLETE archive costs nothing on a fresh database. This shows an
+    incomplete one is not silently reused there — the case that has no other
+    guard, because the settled pre-pass has no rows to consult.
+    """
+    members, pdfs, raw_root = _seed_live_archive(tmp_path, initialized_db)
+    _rewrite_sidecar(raw_root, lambda meta: meta.pop("source_url"))
+    fresh = _fresh_db(tmp_path)
+    try:
+        attempts, report = _fetches(raw_root, members, pdfs, fresh, "run-fresh-incomplete")
+        assert report.ok, house.format_summary(report)
+        assert attempts == 1
+        assert report.new_filings == 1
+    finally:
+        fresh.close()
+
+    # And now a second fresh database over the repaired archive is free again.
+    fresh2 = _fresh_db(tmp_path, "fresh2.db")
+    try:
+        attempts2, _ = _fetches(raw_root, members, pdfs, fresh2, "run-fresh-repaired")
+        assert attempts2 == 0
+    finally:
+        fresh2.close()
+
+
+def test_the_completeness_predicate_rejects_every_incomplete_shape(tmp_path):
+    """The predicate itself, driven directly over the full rejection set.
+
+    Behavioural coverage alone leaves one line unkillable: a checkpoint with NO
+    `response_hash` is *also* rejected downstream, because `sha256_hex(bytes)`
+    can never equal `None`. Dropping the presence check therefore changes no
+    observable behaviour, and a mutation of it survives every end-to-end test.
+    That makes it redundant, not wrong — it states the "complete set" reading
+    explicitly and guards a future refactor of the comparison. Pinning it here
+    is what keeps it honest rather than decorative.
+    """
+    url = _pdf_url("20034916")
+    good = {
+        "source_url": url,
+        "response_hash": "a" * 64,
+        "retrieved_at": "2026-07-31T00:00:00Z",
+    }
+    meta_path = tmp_path / "doc.pdf.fetch-meta.json"
+
+    def check(payload, *, expected_hash=None):
+        if payload is None:
+            meta_path.unlink(missing_ok=True)
+        elif isinstance(payload, str):
+            meta_path.write_text(payload, encoding="utf-8")
+        else:
+            meta_path.write_text(json.dumps(payload), encoding="utf-8")
+        return house._checkpoint_is_complete(
+            meta_path, expected_hash=expected_hash, url=url
+        )
+
+    assert check(good) is True
+    assert check(good, expected_hash="a" * 64) is True
+
+    assert check(None) is False                      # absent
+    assert check("{not json") is False               # unparseable
+    assert check("[]") is False                      # not an object
+    for field in ("source_url", "response_hash", "retrieved_at"):
+        assert check({k: v for k, v in good.items() if k != field}) is False
+    assert check({**good, "response_hash": ""}) is False
+    assert check({**good, "response_hash": 12345}) is False
+    assert check({**good, "retrieved_at": None}) is False
+    assert check({**good, "retrieved_at": "   "}) is False
+    assert check({**good, "source_url": _pdf_url("29999999")}) is False
+    assert check({**good, "source_url": None}) is False
+    # The DB-hash consistency check, when the caller supplies one.
+    assert check(good, expected_hash="b" * 64) is False
+
+
+def test_both_resume_boundaries_share_one_completeness_predicate(
+    tmp_path, initialized_db, monkeypatch
+):
+    """I1 — one predicate, no second opinion.
+
+    Forcing `_checkpoint_is_complete` to refuse must make BOTH boundaries fetch.
+    If either had kept its own field reads, that boundary would still skip, and
+    the whole class of defect this spec exists to end would still be reachable.
+    """
+    members, pdfs, raw_root = _seed_live_archive(tmp_path, initialized_db)
+    monkeypatch.setattr(
+        house, "_checkpoint_is_complete", lambda *a, **k: False
+    )
+
+    same_attempts, same_report = _fetches(
+        raw_root, members, pdfs, initialized_db, "run-pred-same"
+    )
+    assert same_attempts == 1, "boundary 1 did not consult the shared predicate"
+    assert same_report.settled_verified == 0
+
+    fresh = _fresh_db(tmp_path)
+    try:
+        fresh_attempts, _ = _fetches(raw_root, members, pdfs, fresh, "run-pred-fresh")
+    finally:
+        fresh.close()
+    assert fresh_attempts == 1, "boundary 2 did not consult the shared predicate"
+
+
+def test_cache_mode_settles_without_a_sidecar(tmp_path, initialized_db):
+    """Cache mode is deliberately exempt from the sidecar requirement: it writes
+    no sidecar by contract and has no transport with which to make one, so
+    requiring one there would make every cached corpus permanently unsettleable."""
+    cache = _make_cache(tmp_path, 2026, [WITTMAN], {"20034916": EFILE_2026})
+    first = _run(initialized_db, raw_root=cache, cache_dir=cache)
+    assert first.ok, house.format_summary(first)
+    assert not _sidecar(cache, "20034916").exists()
+
+    second = _run(
+        initialized_db, raw_root=cache, cache_dir=cache, run_id="run-cache-2"
+    )
+    assert second.ok, house.format_summary(second)
+    assert second.settled_verified == 1        # settled, with no sidecar in sight
+    assert second.settled_reobtained == 0
+
+
+def test_an_archive_row_whose_response_hash_is_null_is_not_settled(
+    tmp_path, initialized_db
+):
+    """raw_path alone is not evidence — without a stored hash the bytes cannot
+    be verified, so the filing is re-obtained rather than trusted."""
+    members = [WITTMAN]
+    pdfs = {"20034916": EFILE_2026}
+    raw_root = tmp_path / "raw"
+    _run(
+        initialized_db, raw_root=raw_root, transport=_live_transport(members, pdfs),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    initialized_db.execute(
+        "UPDATE filings SET response_hash = NULL WHERE filing_id = 'house:20034916'"
+    )
+    counting = CountingHouseTransport(_live_transport(members, pdfs))
+    report = _run(
+        initialized_db, raw_root=raw_root, transport=counting, run_id="run-nohash",
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    assert report.settled_reobtained == 1
+    assert report.settled_verified == 0
+    # Zero transport all the same: the sidecar still verifies the bytes.
+    assert counting.pdf_attempts == 0
+    assert _filing(initialized_db, "20034916")[2] == hashlib.sha256(
+        EFILE_2026
+    ).hexdigest()
+
+
+def test_settled_counters_appear_in_the_summary(tmp_path, initialized_db):
+    raw_root = tmp_path / "raw"
+    _run(
+        initialized_db, raw_root=raw_root,
+        transport=_live_transport([WITTMAN], {"20034916": EFILE_2026}),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    report = _run(
+        initialized_db, raw_root=raw_root, run_id="run-2",
+        transport=_live_transport([WITTMAN], {"20034916": EFILE_2026}),
+        sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
+    )
+    summary = house.format_summary(report)
+    assert "settled_verified 1" in summary
+    assert "settled_reobtained 0" in summary
+
+
+# --- needs_ocr counting on the 2015 paper corpus (RUN M1-B, R7) --------------
+
+
+PAPER_2015 = (FIXTURES / "2015_9106099.pdf").read_bytes()
+PAPER_2015_B = (FIXTURES / "2015_9106250.pdf").read_bytes()
+EFILE_2015_B = (FIXTURES / "2015_20003021.pdf").read_bytes()
+
+HIST_EFILE = {"docid": "20002703", "last": "Historic", "first": "Ellen", "filed": "3/2/2015"}
+HIST_EFILE_B = {"docid": "20003021", "last": "Second", "first": "Sam", "filed": "4/9/2015"}
+HIST_PAPER = {"docid": "9106099", "last": "Paperone", "first": "Pat", "filed": "5/1/2015"}
+HIST_PAPER_B = {"docid": "9106250", "last": "Papertwo", "first": "Pia", "filed": "6/1/2015"}
+
+
+def test_2015_paper_is_needs_ocr_retained_counted_and_out_of_both_censuses(
+    tmp_path, initialized_db
+):
+    from populus.amendments import ensure_views
+    from populus.parse_gate import compute_parse_gate
+
+    ensure_views(initialized_db)
+    members = [HIST_EFILE, HIST_EFILE_B, HIST_PAPER, HIST_PAPER_B]
+    cache = _make_cache(
+        tmp_path, 2015, members,
+        {
+            "20002703": EFILE_2015,
+            "20003021": EFILE_2015_B,
+            "9106099": PAPER_2015,
+            "9106250": PAPER_2015_B,
+        },
+    )
+    report = run_house_ingest(
+        initialized_db, years=[2015], raw_root=cache, cache_dir=cache,
+        run_id="run-2015", now=_now_factory(), host="testhost",
+    )
+    counts = report.years[0].reconciliation.status_counts
+    assert counts["needs_ocr"] == 2                # retained + counted
+
+    # Retained WITH its document link — never dropped.
+    status, _raw, _hash, row_count, doc_url, *_ = _filing(initialized_db, "9106099")
+    assert status == "needs_ocr"
+    assert doc_url.endswith("/2015/9106099.pdf")
+    assert row_count == 0
+
+    era = next(
+        e for e in compute_parse_gate(initialized_db).eras
+        if (e.chamber, e.year) == ("house", "2015")
+    )
+    assert era.needs_ocr_filings == 2
+    assert era.efile_filings == 2                  # paper in NEITHER census
+    assert era.measurable_efile_filings + era.unmeasurable_efile_filings == 2
+
+
+# --- archive-only reparse by parser_version (RUN M1-B, R8) -------------------
+
+
+def test_reparse_by_parser_version_restamps_historical_filings_without_transport(
+    tmp_path, initialized_db
+):
+    """Readiness for owner option (b): a parser extension re-evaluates the
+    archived era from disk. No re-fetch, no parser fork, and no parser change is
+    made in this run."""
+    members = [HIST_EFILE]
+    cache = _make_cache(tmp_path, 2015, members, {"20002703": EFILE_2015})
+    run_house_ingest(
+        initialized_db, years=[2015], raw_root=cache, cache_dir=cache,
+        run_id="run-2015", now=_now_factory(), host="testhost",
+    )
+    initialized_db.execute(
+        "UPDATE filings SET parser_version = 'house-ptr-OLD'"
+        " WHERE filing_id = 'house:20002703'"
+    )
+
+    reads: list[Path] = []
+
+    def _read(path):
+        reads.append(Path(path))
+        return Path(path).read_bytes()
+
+    selection = select_reparse_targets(
+        initialized_db, ReparseSelector(parser_version="house-ptr-OLD")
+    )
+    assert [f for f, _p in selection.targets] == ["house:20002703"]
+
+    report = reparse_house(
+        initialized_db, raw_root=cache,
+        selector=ReparseSelector(parser_version="house-ptr-OLD"),
+        read_archive=_read,
+    )
+    assert report.ok
+    assert reads == [Path(cache) / "pdfs" / "2015" / "20002703.pdf"]  # archive only
+    (stamped,) = initialized_db.execute(
+        "SELECT parser_version FROM filings WHERE filing_id = 'house:20002703'"
+    ).fetchone()
+    assert stamped == house_ptr.PARSER_VERSION       # re-stamped, re-evaluated
+
+
+# --- fetcher instrumentation (RUN M1-B, R20) ---------------------------------
+
+
+def test_retry_path_counts_two_attempts_one_retry_and_one_backoff(
+    tmp_path, initialized_db
+):
+    transport = _live_transport([WITTMAN], {})
+    transport.route(_pdf_url("20034916"), _resp(429), _resp(200, EFILE_2026))
+    clock = FakeClock()
+    report = _run(
+        initialized_db, raw_root=tmp_path / "raw", transport=transport,
+        sleep=clock.sleep, monotonic=clock.monotonic,
+    )
+    assert report.ok, house.format_summary(report)
+    # index (1) + PTR 429 (1) + PTR 200 (1)
+    assert report.fetch.attempts == 3
+    assert report.fetch.retries == 1
+    assert report.fetch.status_counts == {200: 2, 429: 1}
+    assert report.fetch.backoff_sleep_s == BACKOFF_SCHEDULE[0]
+    assert BACKOFF_SCHEDULE[0] in clock.sleeps
+
+    summary = house.format_summary(report)
+    assert "house transport: attempts 3 | retries 1" in summary
+    assert "status mix 200:2, 429:1" in summary
+
+
+def test_no_retry_path_counts_one_attempt_per_request_and_no_backoff(
+    tmp_path, initialized_db
+):
+    clock = FakeClock()
+    report = _run(
+        initialized_db, raw_root=tmp_path / "raw",
+        transport=_live_transport([WITTMAN], {"20034916": EFILE_2026}),
+        sleep=clock.sleep, monotonic=clock.monotonic,
+    )
+    assert report.fetch.attempts == 2            # index + one PTR
+    assert report.fetch.retries == 0
+    assert report.fetch.backoff_sleep_s == 0.0
+    assert report.fetch.status_counts == {200: 2}
+
+
+def test_elapsed_comes_from_the_injected_monotonic_and_is_none_in_cache_mode(
+    tmp_path, initialized_db
+):
+    class _RecordingClock:
+        """Absurd values a real monotonic clock could never produce, so a
+        wall-clock read would be unmistakable."""
+
+        def __init__(self):
+            self.now = 1_000_000.0
+            self.seen: list[float] = []
+
+        def monotonic(self) -> float:
+            self.seen.append(self.now)
+            self.now += 12.5
+            return self.seen[-1]
+
+        def sleep(self, _seconds: float) -> None:
+            pass
+
+    clock = _RecordingClock()
+    report = _run(
+        initialized_db, raw_root=tmp_path / "raw",
+        transport=_live_transport([WITTMAN], {"20034916": EFILE_2026}),
+        sleep=clock.sleep, monotonic=clock.monotonic,
+    )
+    assert report.elapsed_s == clock.seen[-1] - clock.seen[0]
+    assert report.elapsed_s > 0
+    assert f"elapsed {report.elapsed_s:.1f}s" in house.format_summary(report)
+
+    cache = _make_cache(tmp_path, 2026, [WITTMAN], {"20034916": EFILE_2026})
+    cache_report = _run(
+        initialized_db, raw_root=cache, cache_dir=cache, run_id="run-cache",
+    )
+    assert cache_report.elapsed_s is None        # no clock injected, none faked
+    assert cache_report.fetch.attempts == 0
+    assert "elapsed n/a (cache mode)" in house.format_summary(cache_report)
