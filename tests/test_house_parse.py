@@ -316,12 +316,13 @@ def test_positioned_spouse_cap_amount_reassembles():
     assert candidates[0].asset_text == "U.S. Treasury Note due 2/28/2029 [GS]"
 
 
-def test_post_comment_text_is_never_absorbed_into_the_comment():
-    # R7 negative control: DESCRIPTION closed the row block, so the wrapped
-    # comment tail that follows CANNOT be swallowed by the prior candidate —
-    # it opens a flagged orphan (observable), and the previous candidate's
-    # comment stays byte-identical. A genuine malformed row printed after a
-    # comment therefore stays visible instead of disappearing.
+def test_a_wrapped_comment_tail_continues_its_comment_not_a_new_row():
+    # M1-C (docs/build/M1-C-subline-wrap-decision.md) REVERSES the original
+    # R7/F4 control, which made this prose tail open a flagged orphan. The
+    # 13-year backfill measured that mechanism manufacturing 1,761 phantom
+    # transaction rows out of wrapped DESCRIPTION lines, dragging 9 of 14
+    # House eras under the 97% gate. A long comment wraps like any other
+    # printed line; its tail is comment text, not a disclosure event.
     continuation_words = tuple(
         Word(t, x)
         for t, x in [
@@ -337,13 +338,55 @@ def test_post_comment_text_is_never_absorbed_into_the_comment():
         _structural_line(156.0, asset="Second Row Corp (SRC)"),
     ]
     candidates = segment_rows(lines, ANCHORS)
-    assert len(candidates) == 3
-    assert candidates[0].comment_text == "All investment decisions related to"
+    assert len(candidates) == 2
     assert candidates[0].structural_flags() == set()
+    # The tail is kept, joined to the comment it continues — never dropped.
+    comment = candidates[0].comment_text or ""
+    assert comment.startswith("All investment decisions related to")
+    assert "advisors." in comment
+    assert candidates[1].asset_text == "Second Row Corp (SRC)"
+
+
+def test_a_row_shaped_fragment_after_a_comment_still_opens_a_flagged_orphan():
+    # The safety condition M1-C rests on, and the property that keeps the
+    # original R7/F4 concern intact: a fragment carrying ANY typed cell is
+    # row-shaped, so it can never be absorbed into a comment. Measured on
+    # an AMOUNT-bearing fragment: the sharpest case, because R24 forbids an
+    # amount from opening a row structurally, so only the typed-cell test
+    # keeps it out of the comment. It lands in a flagged orphan, visible.
+    row_shaped = tuple(
+        Word(t, x)
+        for t, x in [("FINAL", 101.0), ("PAYMENT", 150.0), ("$1,001 - $15,000", 430.0)]
+    )
+    lines = [
+        _structural_line(100.0),
+        _subline(118.0, "DESCRIPTION: a filer comment"),
+        Line(top=130.7, words=row_shaped),
+        _structural_line(156.0, asset="Second Row Corp (SRC)"),
+    ]
+    candidates = segment_rows(lines, ANCHORS)
+    assert len(candidates) == 3
+    assert candidates[0].comment_text == "a filer comment"
     orphan = candidates[1]
     assert {"row_incomplete", "row_orphan"} <= orphan.structural_flags()
-    assert "advisors." in (orphan.asset_text or "")
     assert candidates[2].asset_text == "Second Row Corp (SRC)"
+
+
+def test_a_structural_line_closes_the_subline_wrap_window():
+    # A row is never a sub-line's tail: once a structural line opens a row,
+    # prose that follows is asset continuation on THAT row, so a later
+    # comment cannot reach backwards past it.
+    lines = [
+        _structural_line(100.0),
+        _subline(118.0, "DESCRIPTION: a filer comment"),
+        _structural_line(143.0, asset="Second Row Corp (SRC)"),
+        Line(top=155.7, words=(Word("Series", 101.0), Word("B", 150.0))),
+    ]
+    candidates = segment_rows(lines, ANCHORS)
+    assert len(candidates) == 2
+    assert candidates[0].comment_text == "a filer comment"
+    assert candidates[1].asset_text == "Second Row Corp (SRC) Series B"
+    assert candidates[1].structural_flags() == set()
 
 
 def test_post_comment_row_shaped_text_opens_its_own_candidate():
