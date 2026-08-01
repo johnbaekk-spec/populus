@@ -61,7 +61,7 @@ def test_acceptance_passes_and_prints_measured_figures():
     assert "verify: ok" in output
     assert "congress/feed.json == the DB's expected latest 500" in output
     assert "qualifying slice(s) carry 2015 rows" in output
-    assert "/ 4000 M1 budget" in output
+    assert "/ 8500 M1 budget" in output
     assert "ACCEPTANCE PASSED" in output
 
 
@@ -110,10 +110,10 @@ def test_the_feed_contract_check_is_exact_not_containment():
 
 def test_the_file_budget_is_a_hard_cap():
     accept = _load_accept()
-    assert accept.FILE_BUDGET == 4000            # ARCHITECTURE.md §9.10
-    assert accept.within_file_budget(3999, 4000) is True
-    assert accept.within_file_budget(4000, 4000) is True
-    assert accept.within_file_budget(4001, 4000) is False
+    assert accept.FILE_BUDGET == 8500            # ARCHITECTURE.md §9.10 (2026-08-01)
+    assert accept.within_file_budget(8499, 8500) is True
+    assert accept.within_file_budget(8500, 8500) is True
+    assert accept.within_file_budget(8501, 8500) is False
 
 
 def test_an_over_budget_corpus_fails_the_acceptance_end_to_end(tmp_path):

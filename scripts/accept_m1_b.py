@@ -58,8 +58,9 @@ SCHEMA_PATH = REPO_ROOT / "tests" / "schemas" / "stats.schema.json"
 MOMENT = datetime(2026, 7, 31, tzinfo=timezone.utc)
 NOW_ISO = "2026-07-31T00:00:00Z"
 ERA = "2015"
-# ARCHITECTURE.md §9.10: the hard M1 published-file budget.
-FILE_BUDGET = 4000
+# ARCHITECTURE.md §9.10: the hard M1 published-file budget (owner decision
+# 2026-08-01: raised from 4,000 — the 13-year corpus measured 3,856 tickers).
+FILE_BUDGET = 8500
 
 HOUSE_2015_PDFS = {
     "20002703": "2015_20002703.pdf",

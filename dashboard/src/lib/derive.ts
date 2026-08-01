@@ -749,10 +749,11 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
 
 /* ---------- budget walk (ARCHITECTURE §9.10/§12.1, Locked #13) ---------- */
 
-/** Headroom under the §9.10 ≤4,000 module-1 page cap: entity pages other than
-    the fixed routes. A member consumes one page; a ticker consumes two
-    (unified + deep congressional view). */
-export const DEFAULT_ENTITY_PAGE_BUDGET = 3800;
+/** Headroom under the §9.10 ≤8,500 module-1 page cap (owner decision
+    2026-08-01: raised from 4,000 for the 13-year corpus's 3,856-ticker tail):
+    entity pages other than the fixed routes. A member consumes one page; a
+    ticker consumes two (unified + deep congressional view). */
+export const DEFAULT_ENTITY_PAGE_BUDGET = 8300;
 
 export interface BudgetCut {
   cutMembers: Set<string>;
