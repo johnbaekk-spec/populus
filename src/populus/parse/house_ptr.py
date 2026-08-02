@@ -48,7 +48,7 @@ def _clean(text: str) -> str:
     """
     return nfc(text.replace("\x00", ""))
 
-PARSER_VERSION = "house-ptr-1.1.0"
+PARSER_VERSION = "house-ptr-1.2.0"
 WRAP_PITCH_TOLERANCE = 1.5
 
 # Words closer than this vertically belong to one printed line (pdfplumber's
@@ -633,6 +633,22 @@ class _Segmenter:
         ):
             self.feed_subline_continuation(cells)
             return
+        # M1-D: an open structural row stays the continuation context even if
+        # this line opens an orphan. Opening an orphan reassigns
+        # ``open_candidate``, which severed a row from its own later wrap
+        # lines: a continued page REPRINTS the cap-gains glyph, that duplicate
+        # cannot complete an already-filled cell, and the orphan it opened
+        # then captured the row's real wrap line (asset tail + the second half
+        # of a split amount). The orphan is still appended and still flagged —
+        # R25/F4 visibility is untouched — it just no longer steals context
+        # from a row whose block nothing has closed.
+        resume = (
+            self.open_candidate
+            if self.open_candidate is not None
+            and self.open_candidate.opened_by_structural
+            and self.open_candidate.block_open
+            else None
+        )
         orphan: RowCandidate | None = None
         target = self.open_candidate
         for column in _COLUMN_ORDER:
@@ -650,6 +666,8 @@ class _Segmenter:
                 orphan = self._open_orphan()
                 target = orphan
             self._fill(orphan, {column: value})
+        if orphan is not None and resume is not None:
+            self.open_candidate = resume
 
     @staticmethod
     def _complete_cell(candidate: RowCandidate, column: str, value: str) -> bool:
