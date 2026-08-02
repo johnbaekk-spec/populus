@@ -20,6 +20,33 @@ from typing import Any
 from populus.canonical import assign_identity, canonical_json
 
 
+SUBLINE_COLUMNS = ("filing_status", "subholding_of", "location")
+
+
+def ensure_subline_columns(conn: sqlite3.Connection) -> None:
+    """Add the M1-E per-row sub-line columns when absent (idempotent).
+
+    Purely additive: three nullable TEXT columns on ``transactions``, so an
+    existing database gains them without a rewrite and every stored row keeps
+    its ``txn_id`` — the columns are outside ``raw_row``, which is the identity
+    fingerprint's input, exactly so that adding them cannot churn identity.
+
+    ``ALTER TABLE ... ADD COLUMN`` is guarded by ``PRAGMA table_info`` rather
+    than by catching the duplicate-column error, so a genuine DDL failure is
+    never swallowed as "already applied".
+    """
+    if not conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'"
+    ).fetchone():
+        return
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
+    }
+    for column in SUBLINE_COLUMNS:
+        if column not in existing:
+            conn.execute(f"ALTER TABLE transactions ADD COLUMN {column} TEXT")
+
+
 def ensure_inst_schema(conn: sqlite3.Connection) -> None:
     """Apply the packaged inst DDL (all ``IF NOT EXISTS`` — idempotent).
 
@@ -62,6 +89,12 @@ class ParsedRow:
     amount_label: str | None = None
     cap_gains_over_200: int | None = None
     comment: str | None = None
+    # M1-E per-row sub-lines. Outside raw_row on purpose: raw_row is the
+    # identity fingerprint's input, so carrying these there would change every
+    # stored txn_id.
+    filing_status: str | None = None
+    subholding_of: str | None = None
+    location: str | None = None
     flags: list[str] = field(default_factory=list)
     kadoa_id: str | None = None
 
@@ -554,10 +587,11 @@ def _insert_transaction_rows(
           row_ordinal, source_row_no, bioguide_id, chamber, owner,
           ticker, asset_name, asset_type, side, transaction_date,
           filed_date, days_to_file, is_late, amount_low, amount_high,
-          amount_label, cap_gains_over_200, comment, flags, source,
+          amount_label, cap_gains_over_200, comment,
+          filing_status, subholding_of, location, flags, source,
           license_id, kadoa_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                  ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -584,6 +618,9 @@ def _insert_transaction_rows(
                 row.amount_label,
                 row.cap_gains_over_200,
                 row.comment,
+                row.filing_status,
+                row.subholding_of,
+                row.location,
                 json.dumps(row.flags, ensure_ascii=False),
                 source,
                 license_id,

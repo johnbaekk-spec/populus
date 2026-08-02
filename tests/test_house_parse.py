@@ -235,18 +235,35 @@ def test_wrap_within_pitch_attaches():
     assert candidates[0].structural_flags() == set()
 
 
-def test_asset_only_line_after_closed_block_opens_flagged_candidate():
-    # The block was closed by FILING STATUS — asset text afterwards is a new
-    # (incomplete, orphan) candidate, never a silent merge (F4).
+def test_untyped_text_after_a_filing_status_continues_that_sub_line():
+    # M1-E (owner decision 2026-08-01). Before the sub-line columns existed
+    # this text had nowhere to live, so it opened a flagged orphan — a
+    # fabricated "transaction" with no side, date, or amount. FILING STATUS is
+    # now captured, so its wrapped tail continues it and NOTHING is dropped.
     lines = [
         _structural_line(100.0),
         _subline(118.0, "FILING STATUS: New"),
         _asset_line(143.0, "Stray Asset Text"),
     ]
     candidates = segment_rows(lines, ANCHORS)
-    assert len(candidates) == 2
+    assert len(candidates) == 1
     assert candidates[0].asset_text == "Acme Corp (ACME)"
-    assert candidates[1].asset_text == "Stray Asset Text"
+    assert candidates[0].filing_status_text == "New Stray Asset Text"
+    assert candidates[0].structural_flags() == set()
+
+
+def test_row_shaped_text_after_a_filing_status_still_opens_a_flagged_orphan():
+    # The F4 property M1-E must not lose: only UNTYPED prose continues a
+    # sub-line. Anything carrying a real column signature is transaction-
+    # shaped and stays visible as a flagged orphan.
+    lines = [
+        _structural_line(100.0),
+        _subline(118.0, "FILING STATUS: New"),
+        Line(top=143.0, words=(Word("Stray", 101.0), Word("$1,001 - $15,000", 430.0))),
+    ]
+    candidates = segment_rows(lines, ANCHORS)
+    assert len(candidates) == 2
+    assert candidates[0].filing_status_text == "New"
     assert {"row_incomplete", "row_orphan"} <= candidates[1].structural_flags()
 
 
@@ -291,7 +308,7 @@ def test_a_closed_block_still_hands_context_to_the_orphan():
     lines = [
         _structural_line(100.0),
         _subline(118.0, "FILING STATUS: New"),
-        _asset_line(143.0, "Stray Asset Text"),
+        Line(top=143.0, words=(Word("Stray", 101.0), Word("$1,001 - $15,000", 430.0))),
         _asset_line(153.5, "More Stray Text"),
     ]
     candidates = segment_rows(lines, ANCHORS)

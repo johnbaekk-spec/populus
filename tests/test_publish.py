@@ -312,7 +312,10 @@ def test_run_build_manifest_exact_shape_and_licensing(tmp_path):
     }
     assert module["schema_version"] == MANIFEST_SCHEMA_VERSION
     assert module["client_compat"] == CLIENT_COMPAT
-    assert module["digest_projection_version"] == "1"
+    # M1-E bumped the congress projection to "2": the byte envelope gained the
+    # filing_status/subholding_of/location columns, and digests.py states that
+    # a module's projection version bumps exactly when its envelope changes.
+    assert module["digest_projection_version"] == "2"
     assert set(module["watermarks"]) == {
         "house_index_last_modified",
         "senate_max_filed_date",

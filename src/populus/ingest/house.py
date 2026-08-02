@@ -437,6 +437,9 @@ def evaluate_document(
             row_ordinal=ptr_row.row_ordinal,
             source_row_no=ptr_row.source_row_no,
             structural_flags=ptr_row.structural_flags,
+            filing_status=ptr_row.filing_status,
+            subholding_of=ptr_row.subholding_of,
+            location=ptr_row.location,
         )
         for ptr_row in parsed.rows
     )

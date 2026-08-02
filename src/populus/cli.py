@@ -185,6 +185,7 @@ def ingest(
             raise click.UsageError(f"{option} must be MM/DD/YYYY (got {value!r})")
     if job == "congress-house":
         from populus.amendments import ensure_views
+        from populus.load import ensure_subline_columns
         from populus.ingest import house
 
         if db_path is None:
@@ -202,6 +203,7 @@ def ingest(
             # idempotent view DDL here means a pre-view database gains it on
             # first use rather than failing at summary time.
             ensure_views(conn)
+            ensure_subline_columns(conn)
             report = house.run_house_ingest(
                 conn,
                 years=years,
@@ -222,6 +224,7 @@ def ingest(
             ctx.exit(1)
     elif job == "congress-senate":
         from populus.amendments import ensure_views
+        from populus.load import ensure_subline_columns
         from populus.ingest import senate
 
         if db_path is None:
@@ -240,6 +243,7 @@ def ingest(
         conn = connect(db_path)
         try:
             ensure_views(conn)
+            ensure_subline_columns(conn)
             report = senate.run_senate_ingest(
                 conn,
                 raw_root=raw_root if raw_root is not None else from_cache,
@@ -265,6 +269,7 @@ def ingest(
     elif job == "congress-backfill":
         from populus import backfill
         from populus.amendments import ensure_views
+        from populus.load import ensure_subline_columns
 
         if db_path is None:
             raise click.UsageError("--db is required for ingest congress-backfill")
@@ -286,6 +291,7 @@ def ingest(
         conn = connect(db_path)
         try:
             ensure_views(conn)
+            ensure_subline_columns(conn)
             report = backfill.run_backfill_ingest(
                 conn,
                 trades_path=trades_path,
@@ -300,6 +306,7 @@ def ingest(
             ctx.exit(1)
     elif job == "inst-13f":
         from populus.amendments import ensure_views
+        from populus.load import ensure_subline_columns
         from populus.ingest import inst13f
         from populus.load import ensure_inst_schema
         from populus.net.sec_client import HttpxSecTransport, SecClient, sec_contact
@@ -327,6 +334,7 @@ def ingest(
             # views on first M2 use (F19/F33).
             ensure_inst_schema(conn)
             ensure_views(conn)
+            ensure_subline_columns(conn)
             common = dict(
                 run_id=f"inst-{uuid.uuid4()}",
                 now=_utc_now,
@@ -359,6 +367,7 @@ def ingest(
     else:  # members
         from populus import members
         from populus.amendments import ensure_views
+        from populus.load import ensure_subline_columns
 
         if db_path is None:
             raise click.UsageError("--db is required for ingest members")
@@ -382,6 +391,7 @@ def ingest(
         conn = connect(db_path)
         try:
             ensure_views(conn)
+            ensure_subline_columns(conn)
             run_report = members.run_members_ingest(
                 conn,
                 legislators_dir=from_cache,

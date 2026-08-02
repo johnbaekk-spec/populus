@@ -297,6 +297,9 @@ def normalize_row(
     structural_flags: Iterable[str] = (),
     asset_display_cell: str | None = None,
     asset_type_cell: str | None = None,
+    filing_status: str | None = None,
+    subholding_of: str | None = None,
+    location: str | None = None,
 ) -> ParsedRow:
     """Compose the field normalizers into a loadable :class:`ParsedRow`.
 
@@ -359,5 +362,8 @@ def normalize_row(
         amount_label=amount_label,
         cap_gains_over_200=cap_gains,
         comment=normalize_comment(raw_row.get("comment")),
+        filing_status=normalize_comment(filing_status),
+        subholding_of=normalize_comment(subholding_of),
+        location=normalize_comment(location),
         flags=flags,
     )

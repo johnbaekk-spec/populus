@@ -253,3 +253,66 @@ defect:
    folding a tail in would **delete** text. Giving them a home requires storing
    sub-line values (`filing_status`, `subholding_of`, `location`) — a schema
    addition and a genuine feature, not a defect fix.
+
+---
+
+# M1-E — sub-line values get columns, so wrapped label text has a home
+
+**Owner decision 2026-08-01** (chosen over reclassifying exact dollar amounts).
+`PARSER_VERSION` 1.2.0 → **1.3.0**; congress digest projection **1 → 2**.
+
+## What M1-C could not do, and why this unblocks it
+
+M1-C restricted sub-line continuation to *comments* because a
+`FILING STATUS:`/`SUBHOLDING OF:`/`LOCATION:` value was stored **nowhere** —
+folding a wrapped tail into a field that does not exist would have deleted the
+text outright, the silent loss F4 guards. So those tails kept becoming flagged
+orphan "transactions" (144/67/67 in 2018/19/20).
+
+M1-E adds the three columns, which gives every sub-line kind a home, and the
+continuation rule then extends to all of them under the same three guards
+(sub-line open, wrap geometry, no cell matching its own column signature).
+
+## Identity is deliberately untouched
+
+The columns are on `transactions` and **NOT** in `raw_row`. `raw_row` is the
+RFC 8785 fingerprint's input, so adding fields there would have changed the
+`txn_id` of **every House transaction ever published** — a silent break for
+any consumer holding those ids. Verified after the change: `raw_row` still
+carries exactly its original seven keys.
+
+Migration is `load.ensure_subline_columns` — additive `ALTER TABLE ... ADD
+COLUMN` guarded by `PRAGMA table_info`, applied by `init_db` and by every CLI
+path that already applies `ensure_views`, so an existing database gains the
+columns on first use with no rewrite and no identity churn.
+
+The congress **projection version bumps 1 → 2** because `digests.py` states a
+module's version bumps exactly when its byte envelope changes, and the envelope
+gained three columns. Two governance tests caught this before publish: the
+schema-vs-ARCHITECTURE equality test and the independent digest envelope.
+
+## Measured
+
+Reparse of all 8,298 filings, `failed 0` (`parsed 5501 | partial 360 |
+needs_ocr 2437`):
+
+| | M1-D | M1-E |
+|---|---|---|
+| orphan rows | 558 | **212** |
+| `v_default_transactions` | 58,405 | 58,059 |
+| rows carrying `filing_status` | — | **56,605** |
+| rows carrying `subholding_of` | — | **43,837** |
+| eras passing 0.97 | 11/14 | **13/14** |
+
+**2018 95.1 → 97.7% and 2019 96.8 → 97.1% both CROSS.** The gain is corpus-wide
+rather than confined to the target eras — 2017 97.3 → 99.9%, 2016 98.6 → 99.8%,
+2015 → 100.0% — because the same wrapped-label mechanism was costing rows in
+every year, just not always enough to fail the gate.
+
+## The one remaining era
+
+**2020 stays at 95.9%**, held by category (1) from the M1-D record: exact dollar
+amounts (`'$94.91'`, `'$505.24'`) that the parser reads perfectly but which are
+not Appendix C range buckets. The owner explicitly declined to reclassify them,
+which is the right call — it would pass the era without improving a single
+parsed value. It stays honestly labelled as a miss.
