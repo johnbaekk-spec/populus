@@ -182,3 +182,74 @@ the follow-up starts from evidence.
 Congressional House parse only. No schema change, no migration. Rollback is
 `git revert` + `populus reparse` at the prior `PARSER_VERSION`, which restores
 the previous rows byte-for-byte from the raw archive.
+
+---
+
+# M1-D — an orphan must not steal an open row's continuation context
+
+**Date:** 2026-08-01 · `PARSER_VERSION` 1.1.0 → **1.2.0**
+
+## Mechanism
+
+The M1-C follow-up predicted "split amount cells never rejoin". That was the
+symptom; the cause is different and sits one level up. Traced on
+`2018/20009671`, a row that runs off the bottom of a page:
+
+```
+STRUCT top=710.7 (page N)   'CNo FINL gRoUP INC B/E' … amount '$15,001 -' capgains 'gfedc'
+frag   top=107.2 (page N+1) {'capgains': 'gfedc'}          ← page reprints the glyph
+frag   top=116.7            {'asset': '05.250% …', 'amount': '$50,000'}
+```
+
+The continued page **reprints the cap-gains glyph**. The row's own
+`capgains_cell` is already filled, so the duplicate completes nothing and opens
+an orphan — and `_open_orphan()` reassigns `open_candidate`. The row's *real*
+continuation line then attached to that orphan. Segmenter trace, before:
+
+```
+after 'JT CNo FINL gRoUP INC B/E P 05'  -> candidates=1 open_is_orphan=False
+after 'gfedc'                           -> candidates=2 open_is_orphan=True
+after '05.250% 053025 [CS] $50,000'     -> candidates=3 open_is_orphan=True
+```
+
+One printed row became three records, and the amount stayed `'$15,001 -'`.
+
+## Decision
+
+While a **structural** candidate's block is still open, it remains the
+continuation context: an orphan opened by a fragment on that line is still
+appended and still flagged (R25/F4 visibility untouched), but `open_candidate`
+is restored afterwards. Scoped precisely — once a sub-line closes the block,
+the prior behaviour stands, pinned by
+`test_a_closed_block_still_hands_context_to_the_orphan`.
+
+## Measured
+
+Reparse of all 8,298 filings, `failed 0`: orphans **632 → 558**,
+`amount_unparsed` **711 → 561**, `v_default_transactions` 58,479 → 58,405.
+Per-era: 2018 94.7→95.1%, 2019 96.0→**96.8%**, 2020 95.5→95.9%. **1,809 tests.**
+
+Eras passing stays **11/14** — a real data-quality gain that does not move the
+three remaining eras across the line.
+
+## What is actually left in 2018/2019/2020 — both are OWNER DECISIONS, not bugs
+
+Measured after M1-D, the residue is two categories and neither is a parser
+defect:
+
+1. **Exact dollar amounts** (99 / 105 / 226) — `'$94.91'`, `'$505.24'`,
+   `'$20.04'`. The parser reads these perfectly; they are simply not Appendix C
+   range buckets, so `normalize_amount` flags `amount_unparsed`, which counts
+   as a parse defect. Whether a well-formed exact amount should count against a
+   *parse* gate is a measurement-definition question. **Deliberately not
+   changed here:** reclassifying it would move rows out of the gate's numerator
+   and make the three eras pass without improving a single parsed value. That
+   is gate-weakening and it is the owner's call, not the parser's.
+
+2. **Wrapped tails of NON-comment sub-lines** (144 / 67 / 67, still equal
+   counts) — e.g. `'THEREFoRE SHoULD NoT BE ADDED To THE oVERALL ToTAL'`
+   continuing a `SUBHOLDING OF:`/`LOCATION:` line. M1-C excluded these on
+   purpose: those sub-line values are not stored anywhere in the schema, so
+   folding a tail in would **delete** text. Giving them a home requires storing
+   sub-line values (`filing_status`, `subholding_of`, `location`) — a schema
+   addition and a genuine feature, not a defect fix.

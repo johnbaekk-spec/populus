@@ -250,6 +250,58 @@ def test_asset_only_line_after_closed_block_opens_flagged_candidate():
     assert {"row_incomplete", "row_orphan"} <= candidates[1].structural_flags()
 
 
+def test_an_orphan_does_not_steal_an_open_rows_later_wrap_lines():
+    # M1-D. A continued page REPRINTS the cap-gains glyph; the duplicate
+    # cannot complete the row's already-filled capgains cell, so it opens an
+    # orphan. Before the fix that orphan became `open_candidate` and captured
+    # the row's REAL wrap line — the asset tail and the second half of a
+    # split amount — leaving '$15,001 -' unjoined (measured on 2018/20009671).
+    # The orphan is still emitted and still flagged; it just may not steal the
+    # continuation context of a row whose block nothing has closed.
+    struct = Line(
+        top=100.0,
+        words=(
+            Word("SP", 62.0),
+            *(Word(t, 101.0 + 10 * i) for i, t in enumerate("CNO FINL GROUP INC B/E".split())),
+            Word("P", 248.0),
+            Word("01/05/2026", 313.0),
+            Word("01/07/2026", 365.0),
+            Word("$15,001 -", 430.0),
+            Word("gfedc", 505.0),          # the row's OWN cap-gains glyph
+        ),
+    )
+    lines = [
+        struct,
+        Line(top=110.5, words=(Word("gfedc", 505.0),)),   # continued page reprints it
+        Line(top=121.0, words=(Word("05.250%", 101.0), Word("$50,000", 430.0))),
+    ]
+    candidates = segment_rows(lines, ANCHORS)
+    row = candidates[0]
+    assert row.amount_label == "$15,001 - $50,000"
+    assert row.asset_text == "CNO FINL GROUP INC B/E 05.250%"
+    assert row.structural_flags() == set()
+    # the duplicate glyph is still surfaced, never silently dropped
+    assert len(candidates) == 2
+    assert {"row_incomplete", "row_orphan"} <= candidates[1].structural_flags()
+
+
+def test_a_closed_block_still_hands_context_to_the_orphan():
+    # The M1-D restore is scoped to a row whose block is still OPEN. Once a
+    # sub-line closes it, the pre-M1-D behaviour stands unchanged (F4).
+    lines = [
+        _structural_line(100.0),
+        _subline(118.0, "FILING STATUS: New"),
+        _asset_line(143.0, "Stray Asset Text"),
+        _asset_line(153.5, "More Stray Text"),
+    ]
+    candidates = segment_rows(lines, ANCHORS)
+    assert candidates[0].asset_text == "Acme Corp (ACME)"
+    orphan = candidates[1]
+    assert {"row_incomplete", "row_orphan"} <= orphan.structural_flags()
+    # the second stray line continues the ORPHAN, not the closed row
+    assert "More Stray Text" in (orphan.asset_text or "")
+
+
 def test_id_owner_only_line_emitted_incomplete():
     # A structural signal with no transaction columns still opens and emits.
     lines = [
