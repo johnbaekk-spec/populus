@@ -43,7 +43,7 @@ LOGICAL_PROJECTIONS: dict[str, dict[str, frozenset[str]]] = {
         "agg_filer_concentration": frozenset({"ingested_at"}),
     },
 }
-LOGICAL_PROJECTION_VERSIONS = {"congress": "1", "inst": "1"}
+LOGICAL_PROJECTION_VERSIONS = {"congress": "2", "inst": "1"}
 # Back-compat aliases: the unqualified names are the congress projection v1, so
 # every existing caller that passes nothing keeps the exact same envelope.
 LOGICAL_PROJECTION_V1: dict[str, frozenset[str]] = LOGICAL_PROJECTIONS["congress"]

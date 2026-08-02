@@ -48,7 +48,7 @@ def _clean(text: str) -> str:
     """
     return nfc(text.replace("\x00", ""))
 
-PARSER_VERSION = "house-ptr-1.2.0"
+PARSER_VERSION = "house-ptr-1.3.0"
 WRAP_PITCH_TOLERANCE = 1.5
 
 # Words closer than this vertically belong to one printed line (pdfplumber's
@@ -150,17 +150,27 @@ _COLUMN_ORDER = (
 # STATUS:" to "F S:" — recognizers therefore match on the de-spaced,
 # uppercased line text (T3a).
 _SUBLINE_PREFIXES = (
-    ("FILINGSTATUS:", None),
-    ("FS:", None),
-    ("SUBHOLDINGOF:", None),
-    ("SO:", None),
-    ("LOCATION:", None),
-    ("L:", None),
+    ("FILINGSTATUS:", "filing_status"),
+    ("FS:", "filing_status"),
+    ("SUBHOLDINGOF:", "subholding_of"),
+    ("SO:", "subholding_of"),
+    ("LOCATION:", "location"),
+    ("L:", "location"),
     ("DESCRIPTION:", "comment"),
     ("D:", "comment"),
     ("COMMENTS:", "comment"),
     ("C:", "comment"),
 )
+
+# M1-E: every sub-line kind now has a home on the candidate, so each one's
+# wrapped tail continues its own field. Before this the non-comment kinds
+# carried ``None`` and their tails could only become flagged orphan rows.
+_SUBLINE_PARTS = {
+    "comment": "comment_parts",
+    "filing_status": "filing_status_parts",
+    "subholding_of": "subholding_of_parts",
+    "location": "location_parts",
+}
 
 _REGION_END_PREFIXES = (
     "*FORTHECOMPLETELIST",
@@ -260,6 +270,11 @@ class RowCandidate:
     amount_parts: list[str] = field(default_factory=list)
     capgains_cell: str | None = None
     comment_parts: list[str] = field(default_factory=list)
+    # M1-E: the non-comment sub-lines printed under the row. Captured so a
+    # wrapped tail has somewhere to go other than a fabricated orphan row.
+    filing_status_parts: list[str] = field(default_factory=list)
+    subholding_of_parts: list[str] = field(default_factory=list)
+    location_parts: list[str] = field(default_factory=list)
     block_open: bool = True
 
     @property
@@ -273,6 +288,18 @@ class RowCandidate:
     @property
     def comment_text(self) -> str | None:
         return " ".join(self.comment_parts) if self.comment_parts else None
+
+    @property
+    def filing_status_text(self) -> str | None:
+        return " ".join(self.filing_status_parts) or None
+
+    @property
+    def subholding_of_text(self) -> str | None:
+        return " ".join(self.subholding_of_parts) or None
+
+    @property
+    def location_text(self) -> str | None:
+        return " ".join(self.location_parts) or None
 
     def structural_flags(self) -> set[str]:
         flags: set[str] = set()
@@ -299,6 +326,10 @@ class PtrRow:
     source_row_no: int | None
     row_ordinal: int
     structural_flags: frozenset[str]
+    # M1-E sub-lines: outside raw_row so identity is untouched.
+    filing_status: str | None = None
+    subholding_of: str | None = None
+    location: str | None = None
 
 
 @dataclass(frozen=True)
@@ -527,15 +558,15 @@ class _Segmenter:
         self.text_fallback = text_fallback
         self.candidates: list[RowCandidate] = []
         self.open_candidate: RowCandidate | None = None
-        # M1-C: True while a COMMENT sub-line's printed value is still
-        # eligible to wrap onto following lines. Cleared by a structural line
-        # (a row is never a sub-line's tail) and by any non-comment sub-line.
+        # M1-C/M1-E: the ``*_parts`` attribute of the sub-line whose printed
+        # value is still eligible to wrap onto following lines, or None.
+        # Cleared by a structural line — a row is never a sub-line's tail.
         #
-        # Deliberately comment-only: a FILING STATUS/SUBHOLDING OF value is
-        # not captured anywhere, so folding its tail in would DELETE text.
-        # Those tails keep opening flagged orphans — visible, per F4 — and
-        # they are 32 of the 673 continuations measured across the corpus.
-        self.comment_open = False
+        # M1-C could only do this for comments, because the other sub-line
+        # values were stored nowhere and folding their tails in would have
+        # DELETED text. M1-E gave each kind a column, so every kind's tail now
+        # continues its own field.
+        self.open_subline: str | None = None
 
     # -- candidate lifecycle
 
@@ -546,7 +577,7 @@ class _Segmenter:
         self._fill(candidate, cells)
         self.candidates.append(candidate)
         self.open_candidate = candidate
-        self.comment_open = False
+        self.open_subline = None
 
     def _open_orphan(self) -> RowCandidate:
         candidate = RowCandidate(
@@ -554,6 +585,10 @@ class _Segmenter:
         )
         self.candidates.append(candidate)
         self.open_candidate = candidate
+        # A new candidate ends the previous sub-line's wrap window (M1-E):
+        # text after this point continues the ORPHAN, and must never be
+        # appended to the previous row's sub-line field.
+        self.open_subline = None
         return candidate
 
     @staticmethod
@@ -572,25 +607,29 @@ class _Segmenter:
         candidate = self.open_candidate
         if candidate is None:
             candidate = self._open_orphan()
-        if comment_kind == "comment" and value:
-            candidate.comment_parts.append(value)
+        parts_attr = _SUBLINE_PARTS.get(comment_kind or "")
+        if parts_attr is not None and value:
+            getattr(candidate, parts_attr).append(value)
         candidate.block_open = False
-        self.comment_open = comment_kind == "comment"
+        self.open_subline = parts_attr
 
     def feed_subline_continuation(self, cells: dict[str, str]) -> None:
         """Append a wrapped sub-line's tail to the sub-line it continues.
 
-        A long ``DESCRIPTION:``/``COMMENTS:`` line wraps like any other, but
-        its tail arrives after the sub-line has already closed the row block,
-        so the asset-continuation branch cannot take it (M1-C). Routing it
-        here keeps the printed text with the sub-line that printed it; the
-        alternative the parser used before was to open a flagged orphan,
-        which fabricated a transaction row the document never disclosed.
+        A long sub-line wraps like any other printed line, but its tail
+        arrives after the sub-line has already closed the row block, so the
+        asset-continuation branch cannot take it (M1-C). Routing it here keeps
+        the printed text with the sub-line that printed it; the alternative
+        the parser used before was to open a flagged orphan, which fabricated
+        a transaction row the document never disclosed.
 
-        A non-comment sub-line's value is not captured, so neither is its
-        tail — dropping both is what keeps the two consistent.
+        M1-E extends this from comments to EVERY sub-line kind. M1-C had to
+        restrict it to comments because a ``FILING STATUS:``/``SUBHOLDING
+        OF:``/``LOCATION:`` value was stored nowhere, so folding a tail in
+        would have deleted text. Those values are now columns of their own, so
+        each kind's tail continues its own field and nothing is dropped.
         """
-        if self.open_candidate is None:
+        if self.open_candidate is None or self.open_subline is None:
             return
         # Rejoin the wrapped line in printed order. The cells are only an
         # artefact of where words fell relative to the column anchors; the
@@ -599,7 +638,7 @@ class _Segmenter:
             cells[column] for column in _COLUMN_ORDER if column in cells
         )
         if text:
-            self.open_candidate.comment_parts.append(text)
+            getattr(self.open_candidate, self.open_subline).append(text)
 
     # -- fragments (typed routing, R24/R25)
 
@@ -614,11 +653,10 @@ class _Segmenter:
         own cell of a single new flagged orphan candidate — never in another
         column of the open candidate (R25).
         """
-        # M1-C: prose tail of a still-wrapping COMMENT sub-line. Gated on
-        # three conditions together, so this can never swallow row-shaped
-        # data: a comment must be open (a structural line clears it), the
-        # geometry must allow a wrap, and NO cell may match its own column's
-        # signature.
+        # M1-C/M1-E: prose tail of a still-wrapping sub-line. Gated on three
+        # conditions together, so this can never swallow row-shaped data: a
+        # sub-line must be open (a structural line clears it), the geometry
+        # must allow a wrap, and NO cell may match its own column's signature.
         #
         # That last test is the existing R25 recognizer table, reused rather
         # than re-invented, so "row-shaped" cannot drift between this decision
@@ -626,7 +664,7 @@ class _Segmenter:
         # wrapped prose spans the full printed width, so its words land in the
         # side/date/amount buckets while matching none of those shapes.
         if (
-            self.comment_open
+            self.open_subline is not None
             and wrap_ok
             and cells
             and not _has_typed_cell(cells)
@@ -954,6 +992,9 @@ def _emit(candidates: list[RowCandidate]) -> list[PtrRow]:
                 source_row_no=source_row_no,
                 row_ordinal=ordinal,
                 structural_flags=frozenset(candidate.structural_flags()),
+                filing_status=candidate.filing_status_text,
+                subholding_of=candidate.subholding_of_text,
+                location=candidate.location_text,
             )
         )
     return rows

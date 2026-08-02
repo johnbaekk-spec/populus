@@ -522,6 +522,14 @@ CREATE TABLE transactions (
   amount_label  TEXT,                       -- as printed
   cap_gains_over_200 INTEGER CHECK (cap_gains_over_200 IN (0,1)),
   comment       TEXT,
+  -- M1-E per-row sub-lines printed beneath a House transaction row. Captured
+  -- as their own columns and DELIBERATELY NOT in raw_row: raw_row is the
+  -- identity fingerprint's input, so adding fields there would change every
+  -- existing txn_id. Before these existed the parser had nowhere to put a
+  -- wrapped sub-line tail, so the tail became a flagged orphan "transaction".
+  filing_status TEXT,                       -- "FILING STATUS:" as printed
+  subholding_of TEXT,                       -- "SUBHOLDING OF:" as printed
+  location      TEXT,                       -- "LOCATION:" as printed
   flags         TEXT NOT NULL DEFAULT '[]'  -- JSON array: ["missing_ticker","date_anomaly",…]
                 CHECK (json_valid(flags) AND json_type(flags) = 'array'),
   source        TEXT NOT NULL,
