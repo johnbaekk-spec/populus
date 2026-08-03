@@ -60,9 +60,11 @@ def test_report_path_gates_on_meets_threshold_certifiable_manifest_and_uncovered
     sink = lambda _line: None  # noqa: E731
 
     assert accept._report_path("ok", good, [covered], True, sink) is True
-    # Non-certifiable (e.g. an inflated filing) at a 100% ratio must FAIL.
+    # Non-certifiable (e.g. an inflated filing) must FAIL. Its reported coverage
+    # is None (KI-4/B1: an inflated population is not measurable, and the
+    # dataclass guard refuses a ratio above 1 outright).
     inflated = InstCoverage(denominator=100, numerator=120, cover_failed_count=0,
-                            inflated_filing_count=1, coverage=1.2, certifiable=False,
+                            inflated_filing_count=1, coverage=None, certifiable=False,
                             meets_threshold=False)
     assert accept._report_path("inflated", inflated, [covered], True, sink) is False
     # inst absent from the published manifest must FAIL despite perfect coverage.
@@ -135,3 +137,55 @@ def test_accept_m2_5_report_path_names_the_excluded_conflicts(tmp_path):
     assert "corpus-wide value coverage:" in output               # the number…
     assert "cover_conflict EXCLUDED 1: inst:BAD" in output       # …and its cost
     assert "cover_rounding 1 (max delta 999)" in output
+
+
+# --- KI-4 / B1: the acceptance report renders unmeasurable coverage honestly --
+
+
+def test_report_path_renders_unmeasurable_coverage_with_raw_sums():
+    """S6 + S7 unmeasurable arms: the corpus line and the period line both state
+    `unmeasurable` with raw sums beside them; the period gets an explicit
+    UNMEASURABLE marker (not the BELOW-GATE one) and the path still fails."""
+    accept = _load_accept()
+    from populus.ingest.inst13f import InstCoverage, PeriodCoverage
+
+    coverage = InstCoverage(denominator=1_000_000, numerator=1_500_000,
+                            cover_failed_count=1, inflated_filing_count=0,
+                            coverage=None, certifiable=False,
+                            meets_threshold=False)
+    period = PeriodCoverage(period_of_report="2026-03-31",
+                            denominator=1_000_000, numerator=1_500_000,
+                            coverage=None, covered_by_list=True)
+    lines: list[str] = []
+    ok = accept._report_path("ki4", coverage, [period], True, lines.append)
+    output = "\n".join(lines)
+
+    assert ok is False
+    assert "corpus-wide value coverage: 1500000/1000000 = unmeasurable" in output
+    assert "2026-03-31 [LIST]: 1500000/1000000 = unmeasurable" in output
+    assert "UNMEASURABLE" in output               # the explicit period marker
+    assert "BELOW 0.95 GATE" not in output        # not conflated with below-gate
+    for forbidden in ("N/A", "1.5000", "0.0000"):
+        assert forbidden not in output, forbidden
+
+
+def test_report_path_renders_a_measurable_ratio_exactly():
+    """S6 + S7 measurable arms: units and precision (fraction, 4 decimals) are
+    byte-identical to the pre-fix output."""
+    accept = _load_accept()
+    from populus.ingest.inst13f import InstCoverage, PeriodCoverage
+
+    coverage = InstCoverage(denominator=10_000_000, numerator=9_996_000,
+                            cover_failed_count=0, inflated_filing_count=0,
+                            coverage=0.9996, certifiable=True,
+                            meets_threshold=True)
+    period = PeriodCoverage(period_of_report="2026-03-31",
+                            denominator=10_000_000, numerator=9_996_000,
+                            coverage=0.9996, covered_by_list=True)
+    lines: list[str] = []
+    ok = accept._report_path("ki4", coverage, [period], True, lines.append)
+    output = "\n".join(lines)
+
+    assert ok is True
+    assert "corpus-wide value coverage: 9996000/10000000 = 0.9996" in output
+    assert "2026-03-31 [LIST]: 9996000/10000000 = 0.9996" in output

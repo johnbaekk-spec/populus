@@ -412,15 +412,22 @@ def test_failed_zero_row_filing_drags_coverage_down(crafted_conn):
     )
     restored = compute_coverage(crafted_conn)
 
-    # Exact denominator contribution, unchanged numerator, lower coverage.
+    # Exact denominator contribution, unchanged numerator, lower ratio. The
+    # crafted corpus carries ≥2 cover-failed filings, so the REPORTED coverage
+    # is None throughout (KI-4/B1) — the drag is proven on the RAW sums, which
+    # is where the filing-level denominator contract lives (R3).
     assert with_failed.denominator - without.denominator == 5000000000
     assert with_failed.numerator == without.numerator          # numerator untouched
-    assert with_failed.coverage < without.coverage             # strictly drags it down
-    assert restored.denominator == with_failed.denominator     # fixture restored
-    # And the ratio really is numerator / FILING-LEVEL denominator.
-    assert with_failed.coverage == pytest.approx(
+    assert (
         with_failed.numerator / with_failed.denominator
-    )
+        < with_failed.numerator / without.denominator
+    )                                                          # strictly drags it down
+    assert restored.denominator == with_failed.denominator     # fixture restored
+    # A non-measurable population reports None — never the raw quotient (R2) —
+    # and stays non-certifiable exactly as before (R4).
+    assert with_failed.coverage is None
+    assert without.coverage is None
+    assert without.certifiable is False
     # Leave the shared module-scoped fixture as we found it.
     crafted_conn.execute(
         "UPDATE inst_holdings SET security_id = NULL WHERE security_id = 'sec:coverage-probe'"

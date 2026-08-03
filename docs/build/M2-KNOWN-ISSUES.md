@@ -1,6 +1,7 @@
 # MODULE 2 — known issues carried at merge
 
-**Status:** open, accepted at merge · **Recorded:** 2026-07-31
+**Status:** KI-1..3 open, accepted at merge · KI-4 **remediated 2026-07-31**
+(BACKLOG B1 — see the §4 annotation) · **Recorded:** 2026-07-31
 **Applies to:** `main` from `57a88b5` (Merge RUN M2-5) onward
 **Source:** two adversarial code-review rounds of RUN M2-5 (16 findings, then 9).
 Ten findings were fixed and independently verified before merge; the four below
@@ -114,6 +115,39 @@ the *published number* does not. On a project whose stated purpose is calibratin
 trust in numbers, a ratio above 100% is the wrong thing to print even when it is
 correctly refused. **Of the four, fix this one first.**
 
+> **REMEDIATED 2026-07-31 (BACKLOG B1, branch
+> `fix/b1-ki4-coverage-never-above-one`).** The reported ratio is now derived
+> AFTER the gate flags, and only for a MEASURABLE population: `certifiable` AND
+> the independent integer test `numerator <= denominator`. An inflated,
+> cover-failed, or over-run population — corpus and per-period alike — reports
+> `coverage = None`, never a clamped number, with raw
+> `numerator`/`denominator` retained for diagnosis; `certifiable` and
+> `meets_threshold` are byte-identical to the pre-fix gate. Construction guards
+> on `InstCoverage`/`PeriodCoverage` refuse any ratio above 1, and every
+> coverage-printing surface renders `None` as `unmeasurable` through one
+> validating renderer (`render_coverage_ratio`), which also refuses
+> out-of-range or non-numeric values loaded from pre-fix `.staging/` gate
+> records on disk. Two notes on the mechanism as described above: it predates
+> M2-7 (merged since) — the denominator now banks `max(declared, resolved)` and
+> the default view excludes beyond-tolerance conflicts, so the
+> declared-100/resolved-120 reproduction lands at ≤ 1.0 by arithmetic; the
+> remaining live >1 path was a NULL-total filing (denominator term 0) whose
+> resolved holdings still count, closed by the same rule. The reviewer's missed
+> mutation ("set the reported coverage to 99.0") is killed by the construction
+> guards and named mutation M3 in the B1 mutation table
+> (`tests/test_cover_tolerance.py`, KI-4 section). **Measured result: 36
+> mutants, 34 killed and 2 proved equivalent, 0 unexplained survivors** — the plan's approved M1–M18
+> inventory with M12a–M12h expanded to the eight render surfaces, plus nine
+> review-added mutants. Runner and per-mutant outcomes:
+> `docs/build/RUN-B1-evidence/`. The two survivors (both deleting a
+> `math.isfinite` test that the `0 <= v <= 1` range check already subsumes) are
+> unkillable by construction, with the proof table recorded beside the outcomes —
+> which also records the consequence: those `isfinite` calls are redundant
+> defence-in-depth, deliberately retained. An earlier run of a
+> smaller, non-conforming table killed only 15 of 21: four survivors were genuine
+> gaps where every case carried more than one disqualifier, so removing any
+> single one left another to catch it. Each now has a test that isolates it.
+
 ---
 
 ## 5. Remediation
@@ -131,7 +165,13 @@ KI-3 and KI-4 are localized and need no specification: require and parse the
 trailer, hard-failing on a recognized-but-unparseable one; and return `coverage
 = None` for an inflated population while retaining numerator/denominator for
 diagnosis, asserting that neither corpus nor per-period coverage is ever
-published above 1.
+published above 1. **The KI-4 half was implemented 2026-07-31 (BACKLOG B1),
+then externally reviewed — the review found four blockers, including two
+reachable defects at the persisted publish boundary that the in-process rule
+could not reach (a pre-fix record pairing `reason: cover_failed` with an
+in-range `0.0` still printed `0.00%`; an oversized JSON integer raised
+`OverflowError` instead of rendering `unmeasurable`). Both are fixed and pinned
+by mutants. See the §4 annotation; KI-3 remains open.**
 
 Three further findings from the same round were also left open and are lower
 value: incomplete sidecar value-type schema validation, incomplete

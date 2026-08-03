@@ -1,0 +1,84 @@
+M1: KILLED — corpus rule exists at all
+M2: KILLED — no clamping — None, not min(raw,1)
+M3: KILLED — reported value is the real ratio (the KI-4 named miss: 99.0)
+M4: KILLED — inflated feeds certifiable
+M5: KILLED — cover_failed feeds certifiable
+M6: KILLED — the independent numerator<=denominator term
+M7: KILLED — <= not < (an exact-100% corpus stays measurable)
+M8: KILLED — per-period rule exists at all (unconditional ratio)
+M9a: KILLED — per-period cover-failed set
+M9b: KILLED — per-period inflated set
+M10: KILLED — R3: raw sums RETAINED when reporting None
+M11: KILLED — the InstCoverage __post_init__ guard
+M12a: KILLED — S1 ingest summary
+M12b: KILLED — S2 bulk summary
+M12c: KILLED — S3 CLI build withheld notice
+M12d: KILLED — S4 CLI build per-period lines
+M12e: KILLED — S5 CLI publish gate record
+M12f: KILLED — S6 M2-5 acceptance corpus line
+M12g: KILLED — S7 M2-5 acceptance period line
+M12h: KILLED — S8 M2-6 acceptance
+M13: KILLED — range check in the renderer
+M14: KILLED — finite/type check: bool/str rejection
+M14b: SURVIVED — finite/type check: NaN/inf rejection (the finite half of approved M14)
+M15: KILLED — R4: the gate reads RAW, not the reported field
+M16: KILLED — percent scaling honoured
+M17: KILLED — digits honoured
+M18: KILLED — S5 raw numerator/denominator append
+R1: KILLED — F1: record reason disqualifier
+R2: KILLED — F1: record certifiable disqualifier
+R3: KILLED — F1: mapping-side over-run disqualifier
+R4: KILLED — F2: integers range-checked without float coercion
+R5: KILLED — F7: corpus numerator bounded from BELOW
+R6: KILLED — F7: per-period numerator bounded from BELOW
+R7: SURVIVED — F5: NaN rejected at construction
+R8: KILLED — F5: negatives rejected at construction
+R9: KILLED — the PeriodCoverage __post_init__ guard
+
+=== 34/36 killed ===
+  !! M14b: SURVIVED — finite/type check: NaN/inf rejection (the finite half of approved M14)
+  !! R7: SURVIVED — F5: NaN rejected at construction
+
+=== SURVIVOR ANALYSIS ===
+
+Two survivors, both in the SAME equivalence class, both proved rather than
+asserted. Neither is a test gap.
+
+M14b — delete `math.isfinite` from `render_coverage_ratio`'s float path
+R7    — delete the `math.isfinite` raise from `_reject_non_proportion`
+
+Both survive for one reason: **the `0 <= value <= 1` range check already
+subsumes finiteness.** All comparisons against NaN are False, and both
+infinities fall outside [0, 1], so the range test alone rejects exactly the
+same values. Demonstrated across the float domain:
+
+    value    guarded  unguarded  identical
+    nan       True     True       True
+    inf       True     True       True
+    -inf      True     True       True
+    0.5       False    False      True
+    1.0       False    False      True
+    1.5       True     True       True
+    -0.5      True     True       True
+
+No input distinguishes the mutated code from the original, so no test could
+kill either mutant. The consequence worth recording: **the `math.isfinite`
+calls are redundant defence-in-depth.** They are deliberately retained — they
+document intent and survive a future edit that widens the range check — but the
+range check is what actually enforces the domain.
+
+The plan's approved M14 ("remove the finite/type check — accept NaN, inf, bool,
+str") is therefore split and reported honestly:
+  * M14  (type/bool half) — KILLED. Removing it lets a bool through as
+    "100.00%", which the domain test catches.
+  * M14b (finite half)    — EQUIVALENT, per the proof above.
+Reporting only the killed half would overstate the evidence.
+
+The plan's M13 ("remove the RANGE check", keeping isfinite) is the mirror image
+and IS behaviour-changing: it lets a finite out-of-range float through. KILLED.
+
+=== TOTAL: 34 KILLED, 2 PROVED EQUIVALENT, 0 UNEXPLAINED SURVIVORS (36 mutants) ===
+Scope: the plan's approved inventory M1-M18 — with M12a-M12h expanded to the
+eight named render surfaces S1-S8, and M14 split into its type and finite halves
+— plus 9 review-added mutants (R1-R9) covering external-review findings F1, F2,
+F5 and F7.

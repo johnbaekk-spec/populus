@@ -46,6 +46,7 @@ from populus.ingest import TransportResponse
 from populus.ingest.inst13f import (
     _archive_base,
     finalize_inst_ingest,
+    render_coverage_ratio,
     run_inst13f_ingest,
 )
 from populus.net.sec_client import SecCircuitOpenError, SecClient
@@ -1148,11 +1149,7 @@ def format_bulk_summary(report: BulkReport) -> str:
         )
     coverage = report.coverage
     if coverage is not None:
-        pct = (
-            f"{coverage.coverage * 100:.2f}%"
-            if coverage.coverage is not None
-            else "N/A"
-        )
+        pct = render_coverage_ratio(coverage.coverage)
         lines.append(
             "value-coverage:"
             f" {coverage.numerator} / {coverage.denominator} = {pct}"

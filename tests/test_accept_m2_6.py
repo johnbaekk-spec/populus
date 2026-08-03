@@ -100,3 +100,60 @@ def test_acceptance_report_names_a_non_empty_conflict_set(monkeypatch):
     assert "= 1.0000 | meets_threshold True" in output
     assert "cover_conflict EXCLUDED 1: inst:ACC-CONFLICT" in output
     assert "cover_rounding 2 (max delta 999)" in output
+
+
+# --- KI-4 / B1: the acceptance renders unmeasurable coverage honestly ---------
+
+
+def test_acceptance_renders_unmeasurable_coverage_and_fails_the_gate(monkeypatch):
+    """S8 unmeasurable arm: a None coverage renders `unmeasurable` — never
+    N/A — with the raw sums beside it, and the acceptance gate check still
+    fails on it (a non-measurable corpus can never pass). Same
+    `dataclasses.replace`-on-the-way-out technique as the conflict-set test."""
+    import dataclasses
+
+    accept = _load_accept()
+    import populus.inst_bulk as ib
+
+    real_run = ib.run_bulk_ingest
+
+    def _with_unmeasurable(*args, **kwargs):
+        report = real_run(*args, **kwargs)
+        report.coverage = dataclasses.replace(report.coverage, coverage=None)
+        return report
+
+    monkeypatch.setattr(ib, "run_bulk_ingest", _with_unmeasurable)
+
+    lines: list[str] = []
+    rc = accept.run_acceptance(out=lines.append)
+    output = "\n".join(lines)
+
+    assert rc != 0
+    assert "= unmeasurable | meets_threshold" in output   # raw sums precede it
+    assert "coverage did not meet the 0.95 gate" in output
+    assert "N/A" not in output
+
+
+def test_acceptance_renders_a_measurable_ratio_exactly(monkeypatch):
+    """S8 measurable arm: units and precision (fraction, 4 decimals) are
+    byte-identical to the pre-fix output, and 0.9996 still clears the gate."""
+    import dataclasses
+
+    accept = _load_accept()
+    import populus.inst_bulk as ib
+
+    real_run = ib.run_bulk_ingest
+
+    def _with_ratio(*args, **kwargs):
+        report = real_run(*args, **kwargs)
+        report.coverage = dataclasses.replace(report.coverage, coverage=0.9996)
+        return report
+
+    monkeypatch.setattr(ib, "run_bulk_ingest", _with_ratio)
+
+    lines: list[str] = []
+    rc = accept.run_acceptance(out=lines.append)
+    output = "\n".join(lines)
+
+    assert rc == 0, output
+    assert "= 0.9996 | meets_threshold True" in output

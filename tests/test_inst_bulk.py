@@ -927,3 +927,44 @@ def test_finalize_runs_each_global_pass_once_regardless_of_n(tmp_path, monkeypat
     conn.close()
     # Five filers driven, but each global pass ran exactly once (deferred finalize).
     assert counts == {"link": 1, "affiliate": 1, "coverage": 1, "invariant": 1}
+
+
+# --- KI-4 / B1: the bulk summary renders unmeasurable coverage honestly ------
+
+
+def test_bulk_summary_renders_unmeasurable_coverage_with_raw_sums():
+    # S2: `unmeasurable` — never N/A, 0%, or 100% — with the raw sums beside it
+    # for diagnosis (R5/R3).
+    from populus.ingest.inst13f import InstCoverage
+    from populus.inst_bulk import BulkReport, format_bulk_summary
+
+    coverage = InstCoverage(denominator=1_000_000, numerator=1_500_000,
+                            cover_failed_count=1, inflated_filing_count=0,
+                            coverage=None, certifiable=False,
+                            meets_threshold=False)
+    text = format_bulk_summary(
+        BulkReport(run_id="r", filing_quarter="2026q1",
+                   report_period="2026-03-31", universe_size=0,
+                   coverage=coverage)
+    )
+    assert "value-coverage: 1500000 / 1000000 = unmeasurable" in text
+    for forbidden in ("N/A", "0.00%", "100.00%", "150.00%"):
+        assert forbidden not in text, forbidden
+
+
+def test_bulk_summary_renders_a_measurable_ratio_exactly():
+    # S2 measurable arm: units and precision (percent, 2 decimals) are
+    # byte-identical to the pre-fix output.
+    from populus.ingest.inst13f import InstCoverage
+    from populus.inst_bulk import BulkReport, format_bulk_summary
+
+    coverage = InstCoverage(denominator=10_000_000, numerator=9_996_000,
+                            cover_failed_count=0, inflated_filing_count=0,
+                            coverage=0.9996, certifiable=True,
+                            meets_threshold=True)
+    text = format_bulk_summary(
+        BulkReport(run_id="r", filing_quarter="2026q1",
+                   report_period="2026-03-31", universe_size=0,
+                   coverage=coverage)
+    )
+    assert "value-coverage: 9996000 / 10000000 = 99.96%" in text

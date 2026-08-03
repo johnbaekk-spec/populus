@@ -1,0 +1,52 @@
+## Detected Stack
+
+- Transport: `interactive-disk`, read-only.
+- Python 3.12.13, uv 0.10.9, Hatch, pytest 9.1.1, Click, and SQLite.
+- Astro 7 / TypeScript 6 dashboard, unchanged.
+- All 327 relevant tests collect successfully; `git diff --check` passes.
+
+## Reuse / Duplication Check
+
+The full-tree scan found one mutation runner and one shared coverage renderer. All 36 mutant IDs are unique; no approved or review-added ID is missing, and every anchor matches exactly once.
+
+## Simplicity Audit
+
+The row-by-row comparison found no remaining implementation mismatch:
+
+- M3 uses `99.0`.
+- M8 removes every measurability condition except the necessary positive-denominator guard.
+- M10 zeroes both numerator and denominator.
+- M14 is honestly split into killed type/bool coverage and equivalent finite coverage.
+
+M14b and R7 are genuinely equivalent. For floats, `[0,1]` rejects NaN and both infinities. Oversized integers bypass the float-only finite check in both versions and are rejected through exact integer comparison.
+
+Write-free mutation probes produced intended assertion or domain-guard failures for M3, M8, M10, M13, M14, and M16; M14b and R7 remained green. All 36 mutated sources parse successfully, so no sampled kill was attributable to collection, import, anchor, or syntax failure.
+
+## Tech Debt Introduced
+
+No new source debt was found. The redundant finite checks are explicitly documented as defense-in-depth.
+
+The unreconciled evidence documents remain an active F3 defect, not acceptable deferred debt.
+
+## Memory Touch-Points
+
+- `behavioral-test-validity`, `test-evidence-validity`, and `stale-review-snapshot-detection` drove the write-free mutation and current-document probes.
+- `gate-list-completeness`, `full-tree-gate-scope`, and `gate-function-exit-codes` drove reconciliation of the four gate claims.
+- `gate-first-before-read-not-dependency`, `isolated-test-files-concurrent-features`, `phase-gate-discipline`, and `gate-evaluates-threshold-directly` were consulted and produced no additional finding.
+- The mandatory failure-mode catalog drove the evidence-honesty and propagation sweep.
+
+## Findings
+
+#### F3 [BLOCKER]
+- Requirement/contract: Prior F3 and the delta contract require DEV-NOTES.md and QA-REPORT.md to contain reconciled current evidence, with preserved historical statements clearly identified as history.
+- Claim: PARTIALLY-FIXED — the four mutant meanings, outcome table, split-equivalence proof, and sampled kills are valid, but both evidence documents still contain contradictory current statements.
+- Evidence: command result: reconciliation grep still finds “single surviving mutant (R7)” and “Explicitly NOT verified” in DEV-NOTES.md, plus the unclosed claims “negative ratios are unguarded,” “No test asserts NaN behaviour,” and “three of four gates run” in QA-REPORT.md; current git diff totals are +1088/−50 while Dev Notes claims +1083/−50.
+- Impact: The underlying mutation evidence is sound, but the required Dev/QA handoff remains internally non-authoritative and can mislead readers about survivors, test coverage, gate execution, and current diff scope.
+- Remediation: Reconcile every current statement to 34 killed and two equivalent survivors (M14b and R7), the existing NaN/negative test and guards, all four executed gates, and the current diff totals; explicitly label any preserved superseded statement as historical.
+- Status: open
+
+## Verdict
+
+F3 is PARTIALLY-FIXED: the mutation contract is now valid, but the required document reconciliation is incomplete.
+
+VERDICT: CHANGES_REQUESTED

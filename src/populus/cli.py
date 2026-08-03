@@ -776,9 +776,11 @@ def build(
     # Surface the M2 gate decision for the inst module (R8): a withheld notice
     # (below the >=95% value-coverage gate) is the honest, owner-accepted
     # outcome, not an error — congress still publishes.
+    from populus.ingest.inst13f import render_coverage_ratio
+
     if report.inst_withheld is not None:
         w = report.inst_withheld
-        cov = f"{w['coverage'] * 100:.2f}%" if w["coverage"] is not None else "N/A"
+        cov = render_coverage_ratio(w["coverage"])
         click.echo(
             f"inst module WITHHELD ({w['reason']}): value-coverage"
             f" {w['numerator']}/{w['denominator']} = {cov} | cover_failed_count"
@@ -806,11 +808,7 @@ def build(
         click.echo(f"  {cover_dispositions_from_mapping(report.inst_cover_dispositions)}")
     # R9: per-period value-coverage figures whenever inst data was measured.
     for period in report.inst_period_coverage or []:
-        ratio = (
-            f"{period['coverage'] * 100:.2f}%"
-            if period["coverage"] is not None
-            else "N/A"
-        )
+        ratio = render_coverage_ratio(period["coverage"])
         flag = "list" if period["covered_by_list"] else "no-list"
         click.echo(
             f"  period {period['period_of_report']}: {period['numerator']}"
@@ -987,10 +985,23 @@ def _inst_absence_notice(
     if record is None:
         record = _read_inst_gate_record(data_repo, build_id)
     if isinstance(record, dict) and record.get("state") == "withheld":
-        from populus.ingest.inst13f import cover_dispositions_from_mapping
+        from populus.ingest.inst13f import (
+            cover_dispositions_from_mapping,
+            render_record_coverage,
+        )
 
-        coverage = record.get("coverage")
-        cov = f"{coverage * 100:.2f}%" if isinstance(coverage, (int, float)) else "N/A"
+        # The record came off DISK: a pre-fix `.staging/` gate record can carry
+        # an out-of-range or non-numeric value, so the validating renderer —
+        # not a format string — decides whether it is printable (R12), and the
+        # raw sums ride beside it so a refused record stays diagnosable (R3).
+        # It validates the POPULATION, not merely the number: an in-range 0.0 on
+        # a `cover_failed` record, or 1.0 on a masked inflation, describes a
+        # population that was never measurable (external review F1).
+        cov = render_record_coverage(record)
+        numerator = record.get("numerator")
+        denominator = record.get("denominator")
+        if numerator is not None and denominator is not None:
+            cov = f"{cov} (raw {numerator}/{denominator})"
         return (
             f"inst module: WITHHELD by the M2 ≥95% value-coverage gate"
             f" ({record.get('reason', 'below_threshold')}; coverage {cov},"

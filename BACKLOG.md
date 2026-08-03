@@ -14,7 +14,7 @@
 
 Full detail, reproductions and file:line: [`docs/build/M2-KNOWN-ISSUES.md`](docs/build/M2-KNOWN-ISSUES.md).
 
-- [ ] **B1 · KI-4 — coverage is published above 100%.** An over-counting
+- [x] **B1 · KI-4 — coverage is published above 100%.** An over-counting
       amendment composition makes an inflated filing *print* `coverage = 1.2`.
       The gate correctly fails closed; the **published number** is wrong.
       **Do this one first.** It is the only M2 finding that needs no malformed
@@ -23,6 +23,27 @@ Full detail, reproductions and file:line: [`docs/build/M2-KNOWN-ISSUES.md`](docs
       *Fix:* return `coverage = None` for an inflated population, keep
       numerator/denominator for diagnosis, assert corpus **and** per-period
       coverage never publish above 1.
+      **DONE 2026-07-31** (branch `fix/b1-ki4-coverage-never-above-one`):
+      `compute_coverage` / `compute_period_coverage` report a ratio only for a
+      measurable population (`certifiable` AND integer
+      `numerator <= denominator`); inflated, cover-failed, and over-run
+      populations report `coverage = None` with raw sums retained; construction
+      guards refuse any ratio above 1; all eight printing surfaces render
+      `None` as `unmeasurable` through one validating renderer, which also
+      refuses out-of-range values from pre-fix `.staging/` gate records.
+      `certifiable`/`meets_threshold` byte-identical — no population's
+      publishability moved. See `docs/build/M2-KNOWN-ISSUES.md` §4.
+
+- [ ] **B1a · (follow-up, owner decision) Should `numerator > denominator`
+      de-certify?** Deliberately NOT changed in B1 (its R4 froze
+      publishability): a hand-built or edge database with a NULL-total,
+      non-`cover_failed` filing that still carries resolved holdings can clear
+      the ≥0.95 gate on an unmeasurable population — it now *reports*
+      `unmeasurable` where it used to report a >1 number, but it still
+      publishes. No known live trigger (a `13F-NT` notice reports no holdings).
+      One-line change to `certifiable` plus a re-run of the gate-outcome tests,
+      once decided. Executable demonstration:
+      `tests/test_cover_tolerance.py::test_corpus_coverage_is_none_when_the_numerator_exceeds_a_certifiable_denominator`.
 
 - [ ] **B2 · KI-1 + KI-2 — the parse substrate.** An invalid status cell
       collapses to the same canonical value as a blank one, so the R5

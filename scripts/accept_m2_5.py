@@ -188,12 +188,15 @@ def _report_path(label: str, coverage, periods, inst_in_manifest: bool, out) -> 
     REAL publication gate — corpus-wide meets_threshold AND certifiable AND `inst`
     admitted to the published manifest AND every corpus period list-covered and
     ≥0.95 (F7). Coverage alone is no longer enough."""
+    from populus.ingest.inst13f import render_coverage_ratio
+
     out(f"\n=== {label} ===")
+    # KI-4/B1: the ratio token goes through the ONE validating renderer — a
+    # non-measurable population prints `unmeasurable`, with the raw sums always
+    # beside it for diagnosis.
     out(
         f"corpus-wide value coverage: {coverage.numerator}/{coverage.denominator}"
-        f" = {coverage.coverage:.4f}"
-        if coverage.coverage is not None
-        else f"corpus-wide value coverage: N/A ({coverage.numerator}/{coverage.denominator})"
+        f" = {render_coverage_ratio(coverage.coverage, percent=False, digits=4)}"
     )
     out(
         f"  certifiable(measurable): {'yes' if coverage.certifiable else 'no'}"
@@ -219,7 +222,7 @@ def _report_path(label: str, coverage, periods, inst_in_manifest: bool, out) -> 
         out("  <-- inst was NOT admitted to the published manifest")
         ok = False
     for period in periods:
-        ratio = f"{period.coverage:.4f}" if period.coverage is not None else "N/A"
+        ratio = render_coverage_ratio(period.coverage, percent=False, digits=4)
         flag = "LIST" if period.covered_by_list else "no-list"
         marker = ""
         if not period.covered_by_list:
@@ -227,7 +230,12 @@ def _report_path(label: str, coverage, periods, inst_in_manifest: bool, out) -> 
             # the seeded lists do not cover the corpus and is an acceptance failure.
             marker = "  <-- UNCOVERED (no list) — unexpected for the acceptance corpus"
             ok = False
-        elif period.coverage is None or period.coverage < COVERAGE_GATE:
+        elif period.coverage is None:
+            # KI-4/B1: not-measurable is its own verdict, never conflated with a
+            # measured below-gate number.
+            marker = "  <-- UNMEASURABLE — not a proportion; raw sums retained"
+            ok = False
+        elif period.coverage < COVERAGE_GATE:
             marker = "  <-- BELOW 0.95 GATE"
             ok = False
         out(

@@ -11,6 +11,8 @@ Hermetic and always-run: crafted corpora, no network, no fixture rewrite.
 
 from __future__ import annotations
 
+import pytest
+
 from populus.amendments import ensure_views
 from populus.db import connect, init_db
 from populus.identity.registry import ensure_registry
@@ -308,8 +310,13 @@ def test_conflict_and_rounding_are_named_in_stats_and_withheld_surfaces(tmp_path
 def test_a_conflict_left_inside_the_view_still_fails_closed(tmp_path):
     # A database whose v_default_inst_filings predates M2-7 (the CREATE VIEW IF
     # NOT EXISTS trap) still contains the conflict. `certifiable` must refuse it
-    # rather than publish a >100% ratio. Mutation guard: dropping
-    # `inflated == 0` from certifiable lets this publish at 1.001.
+    # rather than certify a ratio built on a contradicted filing. Since M2-7's
+    # max(S, T) banking the raw ratio here is a MASKED 1.0 (not 1.001): the
+    # denominator banks the inflated resolved sum, so the fabricated-looking
+    # 100% sits on a filing whose own cover contradicts it — which is why the
+    # REPORTED coverage is None (KI-4/B1). Mutation guard: dropping
+    # `inflated == 0` from certifiable certifies the contradicted corpus;
+    # reporting the raw ratio regardless publishes the masked 1.0.
     conn = _fresh(tmp_path)
     _file(conn, fid="inst:BAD", cik="0000000001",
           declared=10_000_000, resolved=10_010_001)
@@ -328,6 +335,9 @@ def test_a_conflict_left_inside_the_view_still_fails_closed(tmp_path):
     assert coverage.inflated_filing_count == 1
     assert coverage.certifiable is False
     assert coverage.meets_threshold is False
+    assert coverage.coverage is None            # the masked 1.0 is not reported
+    assert coverage.numerator == 10_010_001     # raw sums stay for diagnosis (R3)
+    assert coverage.denominator == 10_010_001
     conn.close()
 
 
@@ -723,3 +733,455 @@ def test_bulk_summary_names_the_excluded_conflicts(tmp_path):
     assert "value-coverage:" in text                       # the number is stated…
     assert "cover_conflict EXCLUDED 1: inst:BAD" in text   # …and so is the cost
     assert "cover_rounding 1 (max delta 999)" in text
+
+
+# =============================================================================
+# KI-4 / BACKLOG B1: a coverage ratio is REPORTED only for a MEASURABLE
+# population — never above 1, never clamped, never a number built over an
+# unknown or contradicted total. Raw numerator/denominator stay on the record
+# for diagnosis (R3); `certifiable`/`meets_threshold` are byte-identical to the
+# pre-fix gate (R4).
+# =============================================================================
+
+
+def _cover_failed_filing(conn, *, fid, cik, period, value, resolved):
+    """One cover-FAILED filing: UNKNOWN (NULL) cover total + the `cover_failed`
+    flag, so it contributes 0 to the denominator. ``resolved`` controls whether
+    its single holding carries a security_id (counted in the numerator) or is
+    unresolved (counted nowhere)."""
+    _filer(conn, cik)
+    sid = _security(conn, f"sec:{MSFT}") if resolved else None
+    _load(conn, fid=fid, cik=cik, period=period, filed="2026-04-15", total=None,
+          parse_status="failed", failure_kind="cover_malformed",
+          flags=["cover_failed"],
+          holds=[_hold(ordinal=1, issuer="ISSUER", cusip=MSFT, value=value,
+                       security_id=sid)])
+
+
+def test_corpus_coverage_is_none_for_a_cover_failed_overrun(tmp_path):
+    # The live >1 shape: a NULL-total cover-failed filing contributes 0 to the
+    # denominator while its resolved holding counts fully in the numerator.
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001",
+          declared=1_000_000, resolved=1_000_000)
+    _cover_failed_filing(conn, fid="inst:CF", cik="0000000002",
+                         period="2026-03-31", value=500_000, resolved=True)
+
+    coverage = compute_coverage(conn)
+    assert coverage.denominator == 1_000_000    # CF contributes 0 (R3)
+    assert coverage.numerator == 1_500_000      # raw sums retained (R3)
+    assert coverage.coverage is None            # never 1.5 (R1/R2)
+    # R4 pins: every gate flag identical to the pre-fix behaviour.
+    assert coverage.cover_failed_count == 1
+    assert coverage.inflated_filing_count == 0
+    assert coverage.certifiable is False
+    assert coverage.meets_threshold is False
+    conn.close()
+
+
+def test_corpus_coverage_is_none_when_the_numerator_exceeds_a_certifiable_denominator(
+    tmp_path,
+):
+    # A NULL-total filing NOT flagged cover_failed that still carries a resolved
+    # holding: invisible to the cover-failed count (the flag is required),
+    # invisible to cover_dispositions (NULL totals are skipped), yet in the
+    # default view — so `certifiable` stays True while the raw ratio is 1.5.
+    # The integer `numerator <= denominator` term is the only guard (R1), and
+    # the gate must NOT move (R4): this shape publishes today and still does.
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001",
+          declared=1_000_000, resolved=1_000_000)
+    _filer(conn, "0000000002")
+    sid = _security(conn, f"sec:{MSFT}")
+    _load(conn, fid="inst:NULLTOT", cik="0000000002", period="2026-03-31",
+          filed="2026-04-15", total=None,
+          holds=[_hold(ordinal=1, issuer="ISSUER", cusip=MSFT, value=500_000,
+                       security_id=sid)])
+
+    coverage = compute_coverage(conn)
+    assert coverage.denominator == 1_000_000
+    assert coverage.numerator == 1_500_000
+    assert coverage.cover_failed_count == 0     # the flag is required
+    assert coverage.inflated_filing_count == 0  # NULL totals are never classified
+    assert coverage.certifiable is True         # R4: publishability unchanged
+    assert coverage.meets_threshold is True     # R4: still clears the gate
+    assert coverage.coverage is None            # …but 1.5 is not a proportion
+    conn.close()
+
+
+def test_corpus_coverage_is_none_for_a_cover_failed_population_below_one(tmp_path):
+    # Measurability is not about the ratio's size: a cover-failed corpus whose
+    # raw ratio is 0.8 is still a ratio built over an UNKNOWN total (the failed
+    # filing's denominator term is 0), so it reports None, not 0.8 (R2).
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001",
+          declared=1_000_000, resolved=800_000)
+    _cover_failed_filing(conn, fid="inst:CF", cik="0000000002",
+                         period="2026-03-31", value=500_000, resolved=False)
+
+    coverage = compute_coverage(conn)
+    assert coverage.denominator == 1_000_000    # > 0: not the zero-denominator path
+    assert coverage.numerator == 800_000        # the unresolved holding adds nothing
+    assert coverage.cover_failed_count == 1
+    assert coverage.certifiable is False
+    assert coverage.coverage is None            # never 0.8 (R2)
+    conn.close()
+
+
+def test_period_coverage_is_none_for_overrun_and_cover_failed_periods_only(tmp_path):
+    # The per-period figures carry the corpus rule's obligations (R6): an
+    # affected period reports None with raw sums retained; an unaffected period
+    # keeps its numeric ratio — the None must not spread.
+    conn = _fresh(tmp_path)
+    # P1: the cover-failed OVERRUN pair (raw 1.5).
+    _file(conn, fid="inst:P1-OK", cik="0000000001", period="2026-03-31",
+          declared=1_000_000, resolved=1_000_000)
+    _cover_failed_filing(conn, fid="inst:P1-CF", cik="0000000002",
+                         period="2026-03-31", value=500_000, resolved=True)
+    # P2: the cover-failed BELOW-ONE pair (raw 0.8).
+    _file(conn, fid="inst:P2-OK", cik="0000000003", period="2026-06-30",
+          declared=1_000_000, resolved=800_000)
+    _cover_failed_filing(conn, fid="inst:P2-CF", cik="0000000004",
+                         period="2026-06-30", value=500_000, resolved=False)
+    # P3: clean.
+    _file(conn, fid="inst:P3-OK", cik="0000000005", period="2026-09-30",
+          declared=10_000_000, resolved=9_000_000)
+
+    periods = {p.period_of_report: p for p in compute_period_coverage(conn)}
+    assert set(periods) == {"2026-03-31", "2026-06-30", "2026-09-30"}
+    assert periods["2026-03-31"].coverage is None           # raw 1.5, cover-failed
+    assert periods["2026-03-31"].denominator == 1_000_000   # raw sums retained (R3)
+    assert periods["2026-03-31"].numerator == 1_500_000
+    assert periods["2026-06-30"].coverage is None           # raw 0.8, cover-failed
+    assert periods["2026-06-30"].denominator == 1_000_000
+    assert periods["2026-06-30"].numerator == 800_000
+    assert periods["2026-09-30"].coverage == 0.9            # unaffected period
+    assert periods["2026-09-30"].denominator == 10_000_000
+    assert periods["2026-09-30"].numerator == 9_000_000
+    conn.close()
+
+
+def test_period_coverage_is_none_for_an_inflated_period(tmp_path):
+    # The I6 stale-view technique: a pre-M2-7 view readmits the conflict, whose
+    # period's raw ratio is a masked 1.0 (max-banking). That period reports
+    # None; an untouched period keeps its number (R6).
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:BAD", cik="0000000001", period="2026-03-31",
+          declared=10_000_000, resolved=10_010_001)
+    _file(conn, fid="inst:GOOD", cik="0000000002", period="2026-06-30",
+          declared=10_000_000, resolved=9_000_000, cusip=MSFT)
+    conn.execute("DROP VIEW v_default_holdings")
+    conn.execute("DROP VIEW v_default_inst_filings")
+    conn.execute(  # the M2-2/M2-6 definition, verbatim in shape: no cover stage
+        "CREATE VIEW v_default_inst_filings AS"
+        " SELECT r.* FROM v_inst_reconciled_filings r"
+    )
+    conn.execute(
+        "CREATE VIEW v_default_holdings AS SELECT h.* FROM inst_holdings h"
+        " JOIN v_default_inst_filings f ON f.filing_id = h.filing_id"
+    )
+
+    periods = {p.period_of_report: p for p in compute_period_coverage(conn)}
+    assert set(periods) == {"2026-03-31", "2026-06-30"}
+    assert periods["2026-03-31"].coverage is None            # masked 1.0, inflated
+    assert periods["2026-03-31"].denominator == 10_010_001   # raw sums retained
+    assert periods["2026-03-31"].numerator == 10_010_001
+    assert periods["2026-06-30"].coverage == 0.9             # unaffected period
+    conn.close()
+
+
+def test_coverage_dataclasses_refuse_a_ratio_above_one():
+    # R1 is structural for in-process records: no InstCoverage or PeriodCoverage
+    # can even be constructed with a ratio above 1.
+    from populus.ingest.inst13f import InstCoverage, PeriodCoverage
+
+    with pytest.raises(ValueError):
+        InstCoverage(denominator=100, numerator=120, cover_failed_count=0,
+                     inflated_filing_count=0, coverage=1.2, certifiable=False,
+                     meets_threshold=False)
+    with pytest.raises(ValueError):
+        PeriodCoverage(period_of_report="2026-03-31", denominator=100,
+                       numerator=120, coverage=1.2, covered_by_list=True)
+    # None and a genuinely-measured 100% both construct fine.
+    InstCoverage(denominator=100, numerator=100, cover_failed_count=0,
+                 inflated_filing_count=0, coverage=1.0, certifiable=True,
+                 meets_threshold=True)
+    InstCoverage(denominator=0, numerator=0, cover_failed_count=0,
+                 inflated_filing_count=0, coverage=None, certifiable=False,
+                 meets_threshold=False)
+    PeriodCoverage(period_of_report="2026-03-31", denominator=100,
+                   numerator=100, coverage=1.0, covered_by_list=True)
+    PeriodCoverage(period_of_report="2026-03-31", denominator=0, numerator=0,
+                   coverage=None, covered_by_list=False)
+
+
+def test_render_coverage_ratio_domain_units_and_precision():
+    # The mapping-side guard (R12): only a real, finite number in [0, 1] is
+    # printable; everything else — including a bool, a string, or an
+    # out-of-range value from a pre-fix gate record on disk — is unmeasurable.
+    from populus.ingest.inst13f import render_coverage_ratio
+
+    for value in (None, 1.2, -0.1, float("nan"), float("inf"), True, "0.99"):
+        assert render_coverage_ratio(value) == "unmeasurable", value
+        assert (
+            render_coverage_ratio(value, percent=False, digits=4)
+            == "unmeasurable"
+        ), value
+    # Units and precision, on the same value: both output contracts survive.
+    assert render_coverage_ratio(0.9996, percent=True, digits=2) == "99.96%"
+    assert render_coverage_ratio(0.9996, percent=False, digits=4) == "0.9996"
+    # A genuinely measured boundary is still printable — only unmeasurable
+    # values are refused.
+    assert render_coverage_ratio(1.0, percent=True, digits=2) == "100.00%"
+    assert render_coverage_ratio(0.0, percent=True, digits=2) == "0.00%"
+
+
+def test_ingest_summary_renders_unmeasurable_coverage_with_raw_sums(tmp_path):
+    # S1: the ingest summary states `unmeasurable` — never N/A, 0%, or 100% —
+    # and keeps the raw sums beside it for diagnosis.
+    from populus.ingest.inst13f import InstIngestReport, format_summary
+
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001",
+          declared=1_000_000, resolved=1_000_000)
+    _cover_failed_filing(conn, fid="inst:CF", cik="0000000002",
+                         period="2026-03-31", value=500_000, resolved=True)
+    coverage = compute_coverage(conn)
+    conn.close()
+
+    text = format_summary(InstIngestReport(run_id="r", coverage=coverage))
+    assert "value-coverage: 1500000 / 1000000 = unmeasurable" in text
+    for forbidden in ("N/A", "0.00%", "100.00%", "150.00%"):
+        assert forbidden not in text, forbidden
+
+
+def test_ingest_summary_renders_a_measurable_ratio_exactly(tmp_path):
+    # S1 measurable arm: the existing units and precision (percent, 2 decimals)
+    # are byte-identical to the pre-fix output.
+    from populus.ingest.inst13f import InstIngestReport, format_summary
+
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001",
+          declared=10_000_000, resolved=9_996_000)
+    coverage = compute_coverage(conn)
+    conn.close()
+
+    text = format_summary(InstIngestReport(run_id="r", coverage=coverage))
+    assert "value-coverage: 9996000 / 10000000 = 99.96%" in text
+
+
+# --- External review round 2: F1, F2, F5 regressions -----------------------
+# Each of these FAILS on the pre-remediation implementation. F1/F2 are the two
+# reachable defects the round found at the PERSISTED publish boundary — the one
+# place an in-process guard cannot reach, because the value came off disk.
+
+
+def test_legacy_cover_failed_record_with_an_in_range_zero_is_unmeasurable():
+    """F1: a pre-fix record can pair `reason: cover_failed` with a perfectly
+    in-range 0.0. Validating only the NUMBER printed `0.00%` — presenting a
+    population that was never measurable as a measured zero."""
+    from populus.ingest.inst13f import render_record_coverage
+
+    record = {
+        "state": "withheld",
+        "reason": "cover_failed",
+        "coverage": 0.0,
+        "numerator": 0,
+        "denominator": 100,
+        "cover_failed_count": 1,
+    }
+    assert render_record_coverage(record) == "unmeasurable"
+
+
+def test_legacy_masked_inflation_record_with_an_in_range_one_is_unmeasurable():
+    """F1: the mirror image — a masked inflation carrying 1.0 printed
+    `100.00%`, the most flattering possible reading of an uncertifiable
+    population."""
+    from populus.ingest.inst13f import render_record_coverage
+
+    record = {
+        "state": "withheld",
+        "reason": "not_measurable",
+        "coverage": 1.0,
+        "numerator": 10010001,
+        "denominator": 10010001,
+        "certifiable": False,
+    }
+    assert render_record_coverage(record) == "unmeasurable"
+
+
+def test_legacy_record_numerator_exceeding_denominator_is_unmeasurable():
+    """F1: the over-run disqualifier applies mapping-side too, even when the
+    record names no disqualifying reason."""
+    from populus.ingest.inst13f import render_record_coverage
+
+    assert (
+        render_record_coverage(
+            {"reason": "below_threshold", "coverage": 0.5, "numerator": 150, "denominator": 100}
+        )
+        == "unmeasurable"
+    )
+
+
+def test_a_measurable_legacy_record_still_renders_its_exact_ratio():
+    """F1 must not over-None: a certifiable below-threshold record is genuinely
+    measurable and keeps its exact rendering."""
+    from populus.ingest.inst13f import render_record_coverage
+
+    record = {
+        "reason": "below_threshold",
+        "coverage": 0.9853,
+        "numerator": 98,
+        "denominator": 100,
+        "certifiable": True,
+        "cover_failed_count": 0,
+    }
+    assert render_record_coverage(record) == "98.53%"
+
+
+def test_render_coverage_ratio_survives_an_oversized_json_integer():
+    """F2: JSON decodes integers of unbounded magnitude. `math.isfinite`
+    coerces its argument, so testing finiteness before the range check raised
+    OverflowError and turned a successful publish notice into a traceback."""
+    from populus.ingest.inst13f import render_coverage_ratio
+
+    assert render_coverage_ratio(10**400) == "unmeasurable"
+    assert render_coverage_ratio(-(10**400)) == "unmeasurable"
+
+
+def test_coverage_dataclasses_reject_nan_and_negative_ratios():
+    """F5: an upper bound alone admitted NaN (`nan > 1` is False) and
+    negatives, leaving the renderer as the only line of defence."""
+    from populus.ingest.inst13f import InstCoverage, PeriodCoverage
+
+    def _inst(coverage):
+        return InstCoverage(
+            denominator=1,
+            numerator=1,
+            cover_failed_count=0,
+            inflated_filing_count=0,
+            coverage=coverage,
+            certifiable=True,
+            meets_threshold=False,
+        )
+
+    for bad in (float("nan"), float("inf"), -0.5, True):
+        with pytest.raises(ValueError):
+            _inst(bad)
+        with pytest.raises(ValueError):
+            PeriodCoverage(
+                period_of_report="2026-06-30",
+                denominator=1,
+                numerator=1,
+                coverage=bad,
+                covered_by_list=True,
+            )
+    assert _inst(None).coverage is None
+    assert _inst(0.5).coverage == 0.5
+
+
+# --- Mutation survivors: tests that isolate a single disqualifier -----------
+# The first mutation run killed only 15/21. Four survivors were genuine test
+# gaps: every existing case carried MORE THAN ONE disqualifier, so removing any
+# single one left another to catch it — the tests asserted an end state, not the
+# property (memory `mutation-tests-pin-properties`). Each test below is the
+# minimal corpus or record that isolates exactly one.
+
+
+def test_a_marginal_overrun_at_float_scale_is_still_unmeasurable(tmp_path):
+    """Kills M6. At 10^16 the quotient of an over-run is correctly-rounded to
+    EXACTLY 1.0, so a float `raw <= 1.0` bound calls it measurable and publishes
+    100.00% for a corpus that over-counts. Only the INTEGER comparison sees it —
+    this is the case the plan rejected the float bound for, and nothing tested
+    it."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001",
+          declared=10**16, resolved=10**16)
+    _filer(conn, "0000000002")
+    sid = _security(conn, f"sec:{MSFT}")
+    _load(conn, fid="inst:NULLTOT", cik="0000000002", period="2026-03-31",
+          filed="2026-04-15", total=None,
+          holds=[_hold(ordinal=1, issuer="ISSUER", cusip=MSFT, value=1,
+                       security_id=sid)])
+
+    coverage = compute_coverage(conn)
+    assert coverage.numerator == 10**16 + 1
+    assert coverage.denominator == 10**16
+    assert coverage.numerator > coverage.denominator          # an over-run…
+    assert coverage.numerator / coverage.denominator == 1.0    # …invisible to floats
+    assert coverage.certifiable is True
+    assert coverage.coverage is None
+    conn.close()
+
+
+def test_period_coverage_is_none_for_an_overrun_period_with_no_other_defect(tmp_path):
+    """Kills M8. Every prior per-period over-run case was ALSO cover-failed, so
+    the cover-failed set caught it and the over-run term could be deleted
+    unnoticed. This period is over-run and nothing else."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001", period="2026-03-31",
+          declared=1_000_000, resolved=1_000_000)
+    _filer(conn, "0000000002")
+    sid = _security(conn, f"sec:{MSFT}")
+    _load(conn, fid="inst:NULLTOT", cik="0000000002", period="2026-03-31",
+          filed="2026-04-15", total=None,
+          holds=[_hold(ordinal=1, issuer="ISSUER", cusip=MSFT, value=500_000,
+                       security_id=sid)])
+
+    periods = {p.period_of_report: p for p in compute_period_coverage(conn)}
+    p1 = periods["2026-03-31"]
+    assert p1.numerator == 1_500_000 and p1.denominator == 1_000_000
+    assert p1.coverage is None
+    conn.close()
+
+
+def test_record_reason_alone_makes_it_unmeasurable():
+    """Kills M18. Prior legacy records carried a disqualifying reason AND a
+    failing count/flag, so the reason check was redundant in every test."""
+    from populus.ingest.inst13f import render_record_coverage
+
+    assert render_record_coverage({"reason": "cover_failed", "coverage": 0.5}) == "unmeasurable"
+    assert render_record_coverage({"reason": "not_measurable", "coverage": 0.5}) == "unmeasurable"
+
+
+def test_record_certifiable_false_alone_makes_it_unmeasurable():
+    """Kills M20. Same redundancy, for the `certifiable` disqualifier."""
+    from populus.ingest.inst13f import render_record_coverage
+
+    assert (
+        render_record_coverage(
+            {"reason": "below_threshold", "coverage": 0.5, "certifiable": False}
+        )
+        == "unmeasurable"
+    )
+
+
+def test_a_signed_negative_holding_reports_unmeasurable_instead_of_crashing(tmp_path):
+    """External review F7 — a regression introduced BY the F5 remediation.
+
+    `_to_int` accepts a signed value, so a negative holding reaches the
+    numerator. HEAD returned `coverage=-0.1, certifiable=True`; the full-domain
+    construction guard then turned that same input into a ValueError, crashing a
+    computation that previously produced a record — an R4 violation caused by a
+    NIT fix. Measurability must bound the numerator from BELOW so the value
+    never reaches the guard, while the gate flags stay exactly as HEAD had them.
+    """
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OK", cik="0000000001", period="2026-03-31",
+          declared=100, resolved=100)
+    _filer(conn, "0000000002")
+    sid = _security(conn, f"sec:{MSFT}")
+    _load(conn, fid="inst:NEG", cik="0000000002", period="2026-03-31",
+          filed="2026-04-15", total=None,
+          holds=[_hold(ordinal=1, issuer="ISSUER", cusip=MSFT, value=-110,
+                       security_id=sid)])
+
+    coverage = compute_coverage(conn)          # must not raise
+    assert coverage.numerator < 0              # the signed value survived ingest
+    assert coverage.coverage is None           # …and is not a proportion
+    assert coverage.certifiable is True        # R4: gate flags unmoved
+    assert coverage.meets_threshold is False
+
+    periods = {p.period_of_report: p for p in compute_period_coverage(conn)}
+    assert periods["2026-03-31"].coverage is None   # must not raise either
+    conn.close()

@@ -2373,6 +2373,150 @@ def test_cli_publish_absence_notice_names_the_excluded_conflicts(tmp_path):
     assert "cover_conflict EXCLUDED 2: inst:C-1, inst:C-2" in published.output
 
 
+# --- KI-4 / B1: the CLI build + publish surfaces render unmeasurable coverage
+# honestly (S3 withheld notice, S4 per-period lines, S5 publish boundary) ------
+
+
+def seed_inst_cover_failed_overrun(db_path: Path) -> Path:
+    """A 13F corpus whose value coverage is NOT MEASURABLE (KI-4/B1): one exact
+    filing beside a cover-failed filing of UNKNOWN (NULL) total whose resolved
+    holding still counts, so the raw corpus ratio overruns (1,500,000 over
+    1,000,000) while the gate fails closed — plus a clean second period at
+    exactly 0.9996, so the per-period surface shows both arms at once."""
+    conn = connect(str(db_path))
+    try:
+        _filer(conn, "0000000001", "Alpha Capital")
+        _filer(conn, "0000000002", "Beta Capital")
+        _filer(conn, "0000000003", "Gamma Capital")
+        _security(conn, "sec:x")
+        _security(conn, "sec:y")
+        _security(conn, "sec:z")
+        _load(conn, fid="inst:K-1", cik="0000000001", period="2026-03-31",
+              filed="2026-04-15", total=1_000_000,
+              holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111",
+                           value=1_000_000, security_id="sec:x")])
+        _load(conn, fid="inst:K-2", cik="0000000002", period="2026-03-31",
+              filed="2026-04-15", total=None, parse_status="failed",
+              failure_kind="cover_malformed", flags=["cover_failed"],
+              holds=[_hold(ordinal=1, issuer="Y CO", cusip="222222222",
+                           value=500_000, security_id="sec:y")])
+        _load(conn, fid="inst:K-3", cik="0000000003", period="2026-06-30",
+              filed="2026-07-15", total=10_000_000,
+              holds=[_hold(ordinal=1, issuer="Z CO", cusip="333333333",
+                           value=9_996_000, security_id="sec:z")])
+    finally:
+        conn.close()
+    return db_path
+
+
+def test_cli_build_withheld_notice_renders_unmeasurable_coverage(tmp_path):
+    """S3 unmeasurable arm: the withheld notice states `unmeasurable` — never
+    N/A, 0%, or a >100% number — with the raw sums beside it (R5/R12)."""
+    db = seed_inst_cover_failed_overrun(seed_db(tmp_path / "populus.db"))
+    repo = make_repo(tmp_path)
+    result = CliRunner().invoke(
+        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "inst module WITHHELD (cover_failed)" in result.output
+    # Corpus raw sums: 1,000,000 + 500,000 + 9,996,000 over 1,000,000 + 0 +
+    # 10,000,000 — retained beside the unmeasurable verdict.
+    assert "value-coverage 11496000/11000000 = unmeasurable" in result.output
+    for forbidden in ("N/A", "0.00%", "104.51%"):
+        assert forbidden not in result.output, forbidden
+
+
+def test_cli_build_period_lines_render_both_arms_exactly(tmp_path):
+    """S4: an affected period line reads `unmeasurable` with raw sums; an
+    unaffected period keeps the exact pre-fix units and precision (percent,
+    2 decimals)."""
+    db = seed_inst_cover_failed_overrun(seed_db(tmp_path / "populus.db"))
+    repo = make_repo(tmp_path)
+    result = CliRunner().invoke(
+        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "period 2026-03-31: 1500000/1000000 = unmeasurable" in result.output
+    assert "period 2026-06-30: 9996000/10000000 = 99.96%" in result.output
+    assert "150.00%" not in result.output
+
+
+def seed_inst_below_gate_measurable(db_path: Path) -> Path:
+    """One clean filing at exactly 0.8996 — measurable, certifiable, below the
+    0.95 gate — so the withheld notice renders a NUMERIC ratio."""
+    conn = connect(str(db_path))
+    try:
+        _filer(conn, "0000000001", "Alpha Capital")
+        _security(conn, "sec:x")
+        _load(conn, fid="inst:M-1", cik="0000000001", period="2026-03-31",
+              filed="2026-04-15", total=10_000_000,
+              holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111",
+                           value=8_996_000, security_id="sec:x")])
+    finally:
+        conn.close()
+    return db_path
+
+
+def test_cli_build_withheld_notice_renders_a_measurable_ratio_exactly(tmp_path):
+    """S3 measurable arm: a measurable below-gate corpus keeps the exact
+    pre-fix units and precision (percent, 2 decimals)."""
+    db = seed_inst_below_gate_measurable(seed_db(tmp_path / "populus.db"))
+    repo = make_repo(tmp_path)
+    result = CliRunner().invoke(
+        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "inst module WITHHELD (below_threshold)" in result.output
+    assert "value-coverage 8996000/10000000 = 89.96%" in result.output
+
+
+def test_publish_absence_notice_renders_unmeasurable_with_raw_sums(tmp_path):
+    """S5 unmeasurable arm: the publish boundary states `unmeasurable` and the
+    record's raw sums, never N/A/0%/100% (R5/R3)."""
+    from populus.cli import _inst_absence_notice
+
+    record = {"state": "withheld", "reason": "cover_failed", "coverage": None,
+              "numerator": 1_500_000, "denominator": 1_000_000,
+              "cover_failed_count": 1}
+    notice = _inst_absence_notice(str(tmp_path), "20260731.1", record)
+    assert "WITHHELD" in notice
+    assert "unmeasurable" in notice
+    assert "raw 1500000/1000000" in notice          # raw sums for diagnosis
+    for forbidden in ("N/A", "0.00%", "100.00%", "150.00%"):
+        assert forbidden not in notice, forbidden
+
+
+def test_publish_absence_notice_renders_a_measurable_ratio_exactly(tmp_path):
+    """S5 measurable arm: exact pre-fix units and precision, with the raw sums
+    appended for diagnosis."""
+    from populus.cli import _inst_absence_notice
+
+    record = {"state": "withheld", "reason": "below_threshold",
+              "coverage": 0.9996, "numerator": 9_996_000,
+              "denominator": 10_000_000, "cover_failed_count": 0}
+    notice = _inst_absence_notice(str(tmp_path), "20260731.1", record)
+    assert "coverage 99.96%" in notice
+    assert "raw 9996000/10000000" in notice
+
+
+def test_publish_absence_notice_refuses_a_legacy_out_of_range_record(tmp_path):
+    """S5-legacy (R12): a pre-fix `.staging/` gate record carrying `1.2` must
+    render as unmeasurable at the publish boundary — never `120.00%` — while
+    its raw sums stay readable for diagnosis. Dataclass guards cannot vet a
+    mapping loaded from disk; this is the mapping-side guard."""
+    from populus.cli import _inst_absence_notice
+
+    record = {"state": "withheld", "reason": "below_threshold", "coverage": 1.2,
+              "numerator": 120, "denominator": 100, "cover_failed_count": 0}
+    notice = _inst_absence_notice(str(tmp_path), "20260731.1", record)
+    assert "unmeasurable" in notice
+    assert "120.00%" not in notice
+    assert "raw 120/100" in notice
+
+
 def test_inst_gate_publishes_both_modules_when_covered(tmp_path):
     """R10b: a fully-covered corpus publishes BOTH modules; verify recomputes
     both; inst_agg.db ships as a Release asset in journal-first order."""

@@ -1,0 +1,40 @@
+            return report
+    
+        monkeypatch.setattr(ib, "run_bulk_ingest", _with_unmeasurable)
+    
+        lines: list[str] = []
+        rc = accept.run_acceptance(out=lines.append)
+        output = "\n".join(lines)
+    
+        assert rc != 0
+>       assert "= unmeasurable | meets_threshold" in output   # raw sums precede it
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: assert '= unmeasurable | meets_threshold' in 'RUN M2-6 acceptance — hermetic bulk 13F corpus (committed fixtures, zero sockets)\ndiscover: 13 refs (rejected 0) fro...e-read every durable document with ZERO transport (5 filers, 11 holdings)\n\nACCEPTANCE FAILED: see the markers above.'
+
+tests/test_accept_m2_6.py:132: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_cover_tolerance.py::test_a_conflict_left_inside_the_view_still_fails_closed
+FAILED tests/test_cover_tolerance.py::test_corpus_coverage_is_none_for_a_cover_failed_overrun
+FAILED tests/test_cover_tolerance.py::test_corpus_coverage_is_none_when_the_numerator_exceeds_a_certifiable_denominator
+FAILED tests/test_cover_tolerance.py::test_corpus_coverage_is_none_for_a_cover_failed_population_below_one
+FAILED tests/test_cover_tolerance.py::test_period_coverage_is_none_for_overrun_and_cover_failed_periods_only
+FAILED tests/test_cover_tolerance.py::test_period_coverage_is_none_for_an_inflated_period
+FAILED tests/test_cover_tolerance.py::test_coverage_dataclasses_refuse_a_ratio_above_one
+FAILED tests/test_cover_tolerance.py::test_render_coverage_ratio_domain_units_and_precision
+FAILED tests/test_cover_tolerance.py::test_ingest_summary_renders_unmeasurable_coverage_with_raw_sums
+FAILED tests/test_cover_tolerance.py::test_legacy_cover_failed_record_with_an_in_range_zero_is_unmeasurable
+FAILED tests/test_cover_tolerance.py::test_legacy_masked_inflation_record_with_an_in_range_one_is_unmeasurable
+FAILED tests/test_cover_tolerance.py::test_legacy_record_numerator_exceeding_denominator_is_unmeasurable
+FAILED tests/test_cover_tolerance.py::test_a_measurable_legacy_record_still_renders_its_exact_ratio
+FAILED tests/test_cover_tolerance.py::test_render_coverage_ratio_survives_an_oversized_json_integer
+FAILED tests/test_cover_tolerance.py::test_coverage_dataclasses_reject_nan_and_negative_ratios
+FAILED tests/test_publish.py::test_cli_build_withheld_notice_renders_unmeasurable_coverage
+FAILED tests/test_publish.py::test_cli_build_period_lines_render_both_arms_exactly
+FAILED tests/test_publish.py::test_publish_absence_notice_renders_unmeasurable_with_raw_sums
+FAILED tests/test_publish.py::test_publish_absence_notice_renders_a_measurable_ratio_exactly
+FAILED tests/test_publish.py::test_publish_absence_notice_refuses_a_legacy_out_of_range_record
+FAILED tests/test_inst_ingest.py::test_failed_zero_row_filing_drags_coverage_down
+FAILED tests/test_inst_bulk.py::test_bulk_summary_renders_unmeasurable_coverage_with_raw_sums
+FAILED tests/test_accept_m2_5.py::test_report_path_renders_unmeasurable_coverage_with_raw_sums
+FAILED tests/test_accept_m2_6.py::test_acceptance_renders_unmeasurable_coverage_and_fails_the_gate
+24 failed, 296 passed, 2 skipped in 19.46s

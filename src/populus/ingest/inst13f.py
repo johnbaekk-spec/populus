@@ -22,6 +22,7 @@ committed sidecars (a missing sidecar → NULL + a flag, never the clock; R15/R1
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from collections import Counter
@@ -1147,12 +1148,18 @@ def classify_cover(declared: int, resolved: int) -> str:
 
 @dataclass(frozen=True)
 class CoverDisposition:
-    """One filing whose resolved holdings exceed its declared cover total."""
+    """One filing whose resolved holdings exceed its declared cover total.
+
+    Carries ``period_of_report`` so the per-period coverage figures can apply
+    the SAME disqualifiers as the corpus figure (KI-4/B1) without a third copy
+    of the tolerance predicate.
+    """
 
     filing_id: str
     declared_usd: int
     resolved_usd: int
     disposition: str
+    period_of_report: str
 
     @property
     def delta_usd(self) -> int:
@@ -1167,7 +1174,8 @@ _PER_FILING_COVER_SQL = """
 SELECT f.filing_id, f.table_value_total_usd AS declared,
        (SELECT COALESCE(SUM(h.value_usd), 0)
         FROM inst_holdings h
-        WHERE h.filing_id = f.filing_id AND h.security_id IS NOT NULL) AS resolved
+        WHERE h.filing_id = f.filing_id AND h.security_id IS NOT NULL) AS resolved,
+       f.period_of_report
 FROM {view} f
 WHERE f.table_value_total_usd IS NOT NULL
 ORDER BY f.filing_id
@@ -1194,8 +1202,9 @@ def cover_dispositions(
             declared_usd=declared,
             resolved_usd=resolved,
             disposition=classify_cover(declared, resolved),
+            period_of_report=period_of_report,
         )
-        for filing_id, declared, resolved in rows
+        for filing_id, declared, resolved, period_of_report in rows
         if resolved > declared
     )
 
@@ -1255,6 +1264,37 @@ _DENOMINATOR_TERM = """
             END"""
 
 
+#: The cover-FAILED predicate over ``v_default_inst_filings``: an UNKNOWN
+#: (NULL) cover total on a filing flagged `cover_failed`. A valid `13F-NT`
+#: notice's NULL total is a genuine ZERO contribution, not an unknown one, so
+#: the flag is required (QA-F3). Shared verbatim by the corpus count and the
+#: per-period set (KI-4/B1), so the two cannot drift.
+_COVER_FAILED_PREDICATE = (
+    " table_value_total_usd IS NULL"
+    "   AND EXISTS (SELECT 1 FROM json_each(v_default_inst_filings.flags)"
+    "               WHERE json_each.value = 'cover_failed')"
+)
+
+
+def _reject_non_proportion(value) -> None:
+    """The construction-time domain guard for a reported coverage ratio (R1).
+
+    A reported ratio is either None (not measurable) or a real, finite,
+    non-boolean number in [0, 1]. Rejecting only ``> 1`` let NaN through —
+    ``float("nan") > 1`` is False — and said nothing about negatives, which made
+    the renderer the sole line of defence for values a record should never have
+    been able to hold in the first place (external review F5).
+    """
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"coverage must be a real number or None: {value!r}")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"coverage must be finite: {value!r}")
+    if not 0 <= value <= 1:
+        raise ValueError(f"coverage outside [0, 1] is not a proportion: {value!r}")
+
+
 @dataclass(frozen=True)
 class InstCoverage:
     denominator: int
@@ -1267,6 +1307,10 @@ class InstCoverage:
     #: an independent fail-closed check, so a stale view or a hand-built database
     #: still cannot certify an over-counting filing (§I6).
     inflated_filing_count: int
+    #: The REPORTED ratio (KI-4/B1): a proportion only for a MEASURABLE
+    #: population — `certifiable` AND `numerator <= denominator` — else None.
+    #: Never above 1, never clamped; a non-measurable population's raw sums
+    #: stay on `numerator`/`denominator` for diagnosis.
     coverage: float | None
     #: Measurable: nonzero denominator, no unknown (NULL) cover totals, and no
     #: unresolved cover conflict.
@@ -1281,6 +1325,15 @@ class InstCoverage:
     cover_rounding_count: int = 0
     cover_rounding_max_delta_usd: int = 0
     cover_conflict_filing_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # R1 structurally: no in-process record can carry a ratio that is not a
+        # proportion. A non-measurable population is None, never a clamped
+        # number (KI-4/B1). The domain is enforced in FULL — real, finite,
+        # non-bool, within [0, 1] — because an upper bound alone admitted NaN
+        # (`nan > 1` is False) and negatives, leaving the renderer as the only
+        # thing standing between them and a surface (external review F5).
+        _reject_non_proportion(self.coverage)
 
     @property
     def cover_conflict_count(self) -> int:
@@ -1326,6 +1379,83 @@ def cover_dispositions_from_mapping(record: Mapping) -> str:
     )
 
 
+def render_coverage_ratio(value, *, digits: int = 2, percent: bool = True) -> str:
+    """The ONE rendering of a coverage ratio, for every surface that prints one
+    (KI-4/B1). A ratio is printable only when it is a real, finite number in
+    [0, 1]; anything else — None, a bool, a string, NaN, or an out-of-range
+    value from a PRE-FIX gate record still on disk — renders as
+    ``unmeasurable``, never as 0%, 100%, N/A, or a blank (R5/R12).
+
+    Dataclass guards cannot vet a mapping loaded from disk; this is the
+    mapping-side guard. ``percent``/``digits`` preserve each surface's existing
+    output contract byte-for-byte: percent at 2 decimals on the operator
+    surfaces, a bare fraction at 4 decimals in the acceptance scripts.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "unmeasurable"
+    # Range-check INTEGERS without converting to float. A JSON document may
+    # legitimately decode to an int of unbounded magnitude, and `math.isfinite`
+    # coerces its argument — so testing finiteness first raised
+    # `OverflowError: int too large to convert to float` and turned an
+    # otherwise-successful publish notice into a traceback (external review F2).
+    # Integers are exact and never NaN, so the range test alone settles them.
+    if isinstance(value, int):
+        return _format_coverage_ratio(value, digits, percent) if 0 <= value <= 1 else "unmeasurable"
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        return "unmeasurable"
+    return _format_coverage_ratio(value, digits, percent)
+
+
+def _format_coverage_ratio(value, digits: int, percent: bool) -> str:
+    if percent:
+        return f"{value * 100:.{digits}f}%"
+    return f"{value:.{digits}f}"
+
+
+#: Withheld-record reasons that name a NON-MEASURABLE population. A record
+#: carrying one of these is unmeasurable no matter what numeric coverage it
+#: also carries — a PRE-FIX record can pair `reason: cover_failed` with an
+#: in-range `0.0`, or a masked inflation with an in-range `1.0` (external
+#: review F1), and a bare range check calls both printable.
+_NOT_MEASURABLE_REASONS = frozenset({"cover_failed", "not_measurable"})
+
+
+def render_record_coverage(record: Mapping, *, digits: int = 2, percent: bool = True) -> str:
+    """Render the coverage ratio of a PERSISTED gate record (KI-4/B1, R12).
+
+    :func:`render_coverage_ratio` validates the number; this validates the
+    POPULATION the number describes. Measurability is derived from the record's
+    own fields — `reason`, `certifiable`, `cover_failed_count`, and the raw sums
+    — because a value can be perfectly in-range and still describe a population
+    that was never measurable: a pre-fix `cover_failed` record carrying `0.0`
+    printed ``0.00%`` and a masked inflation carrying `1.0` printed ``100.00%``,
+    presenting an unmeasurable population as measured-zero or perfect coverage
+    (external review F1). Missing fields are tolerated — an older record simply
+    contributes no disqualifier — so this never becomes stricter than the
+    evidence the record actually carries.
+    """
+    if record.get("reason") in _NOT_MEASURABLE_REASONS:
+        return "unmeasurable"
+    if record.get("certifiable") is False:
+        return "unmeasurable"
+    cover_failed = record.get("cover_failed_count")
+    if isinstance(cover_failed, int) and not isinstance(cover_failed, bool) and cover_failed > 0:
+        return "unmeasurable"
+    conflicts = record.get("cover_conflict_count")
+    if isinstance(conflicts, int) and not isinstance(conflicts, bool) and conflicts > 0:
+        return "unmeasurable"
+    numerator, denominator = record.get("numerator"), record.get("denominator")
+    if (
+        isinstance(numerator, int)
+        and isinstance(denominator, int)
+        and not isinstance(numerator, bool)
+        and not isinstance(denominator, bool)
+        and numerator > denominator
+    ):
+        return "unmeasurable"
+    return render_coverage_ratio(record.get("coverage"), digits=digits, percent=percent)
+
+
 def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
     """The never-inflated coverage inputs the M2 ≥95% gate consumes (R16/LD-8).
 
@@ -1342,6 +1472,20 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
     rounding filing contributes S rather than T, so it can never put more into
     the numerator than into the denominator. Conflicts beyond tolerance are not
     here at all — ``v_default_inst_filings`` has already excluded them (§I4).
+
+    The REPORTED ``coverage`` is a ratio only for a MEASURABLE population
+    (KI-4/B1): ``certifiable`` — which already encodes a zero denominator, a
+    cover-failed filing, and an unresolved conflict — AND the independent
+    integer test ``numerator <= denominator``, which catches a NULL-total
+    filing that is NOT flagged cover-failed (in the view at denominator 0,
+    holdings counted) and is deliberately an integer comparison, never
+    ``raw <= 1.0``: correctly-rounded division can return exactly 1.0 for a
+    quotient marginally above 1 at 10^12 scale. A non-measurable population
+    reports None — never a clamped number — while ``numerator``/``denominator``
+    and both counts stay as computed, so the defect remains diagnosable (R3).
+    ``certifiable`` and ``meets_threshold`` are computed from the RAW ratio
+    before the reported field is derived, so the gate is byte-identical to the
+    pre-fix behaviour for every input (R4).
     """
     denominator = conn.execute(
         f"SELECT COALESCE(SUM({_DENOMINATOR_TERM}), 0) FROM v_default_inst_filings f"
@@ -1356,9 +1500,7 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
     # make coverage non-certifiable and must not block M2-3's publish. (QA-F3)
     cover_failed = conn.execute(
         "SELECT COUNT(*) FROM v_default_inst_filings"
-        " WHERE table_value_total_usd IS NULL"
-        "   AND EXISTS (SELECT 1 FROM json_each(v_default_inst_filings.flags)"
-        "               WHERE json_each.value = 'cover_failed')"
+        f" WHERE {_COVER_FAILED_PREDICATE}"
     ).fetchone()[0]
     # The per-filing NON-INFLATION invariant (F8), with M2-7's tolerance: no
     # default filing's resolved numerator (Σ value_usd over its holdings with a
@@ -1380,18 +1522,29 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
         if d.disposition == COVER_CONFLICT
     ]
     inflated = len(unresolved_conflicts)
-    coverage = numerator / denominator if denominator > 0 else None
+    raw = numerator / denominator if denominator > 0 else None
     # CERTIFIABLE means MEASURABLE, not "passes the gate" (LD-8): a nonzero
     # denominator, no unknown cover totals, and no UNRESOLVED cover conflict. The
     # ≥0.95 threshold is M2-3's publication decision, reported separately —
     # folding it in here would mislabel a fully-measurable 94% as
-    # non-certifiable. (QA-F6)
+    # non-certifiable. (QA-F6) Both gate flags come from the RAW ratio, before
+    # the reported field is derived (R4).
     certifiable = (
         cover_failed == 0
         and inflated == 0
         and denominator > 0
-        and coverage is not None
+        and raw is not None
     )
+    # The reported-ratio rule (KI-4/B1): a ratio only for a measurable
+    # population. `numerator <= denominator` is an INTEGER comparison, and
+    # independent of `certifiable` — see the docstring.
+    # `0 <= numerator` is NOT redundant: `_to_int` accepts a SIGNED holding
+    # value, so a negative numerator is a reachable input. Before this term the
+    # full-domain construction guard turned that input into a ValueError —
+    # crashing a computation HEAD answered with a record, which is itself an R4
+    # violation (external review F7). Bounding measurability here keeps the
+    # crash impossible AND the gate flags untouched.
+    coverage = raw if (certifiable and 0 <= numerator <= denominator) else None
     return InstCoverage(
         denominator=denominator,
         numerator=numerator,
@@ -1399,7 +1552,7 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
         inflated_filing_count=inflated,
         coverage=coverage,
         certifiable=certifiable,
-        meets_threshold=bool(certifiable and coverage >= COVERAGE_THRESHOLD),
+        meets_threshold=bool(certifiable and raw >= COVERAGE_THRESHOLD),
         cover_rounding_count=len(rounding),
         cover_rounding_max_delta_usd=max((d.delta_usd for d in rounding), default=0),
         cover_conflict_filing_ids=tuple(d.filing_id for d in conflicts),
@@ -1419,9 +1572,16 @@ class PeriodCoverage:
     period_of_report: str
     denominator: int
     numerator: int
+    #: The REPORTED per-period ratio, under the SAME measurability rule as the
+    #: corpus figure (KI-4/B1): None for an inflated, cover-failed, or over-run
+    #: period; raw sums retained either way.
     coverage: float | None
     #: Whether any definitional 13(f)-list interval spans this period.
     covered_by_list: bool
+
+    def __post_init__(self) -> None:
+        # R1 structurally, per period, over the full domain (KI-4/B1, F5).
+        _reject_non_proportion(self.coverage)
 
 
 def _has_list_intervals(conn: sqlite3.Connection) -> bool:
@@ -1447,7 +1607,30 @@ def compute_period_coverage(
     figure, and §I3 admits no exceptions. ``covered_by_list`` records whether a
     definitional list interval spans the period, so a caller can name the
     quarters that have no list (R11). Read-only; never mutates, never gates.
+
+    The REPORTED per-period ``coverage`` carries the corpus rule's three
+    disqualifiers (KI-4/B1), from the SAME predicates: a period containing an
+    unresolved cover conflict (via :func:`cover_dispositions` over the default
+    view), a cover-failed filing (via the shared ``_COVER_FAILED_PREDICATE``),
+    or whose integer numerator exceeds its denominator reports None — raw sums
+    retained. The corpus and period paths apply the SAME predicates at their
+    respective aggregation levels; that is not a guarantee the two figures
+    always agree, since an over-run confined to one period can be offset in the
+    corpus sums while that period stays unmeasurable (external review F6).
+    Unaffected periods keep their numeric ratio (R6).
     """
+    inflated_periods = {
+        d.period_of_report
+        for d in cover_dispositions(conn, view="v_default_inst_filings")
+        if d.disposition == COVER_CONFLICT
+    }
+    cover_failed_periods = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT period_of_report FROM v_default_inst_filings"
+            f" WHERE {_COVER_FAILED_PREDICATE}"
+        )
+    }
     denominators = dict(
         conn.execute(
             f"SELECT f.period_of_report, COALESCE(SUM({_DENOMINATOR_TERM}), 0)"
@@ -1466,7 +1649,14 @@ def compute_period_coverage(
     for period in sorted(denominators):
         denominator = denominators[period]
         numerator = numerators.get(period, 0)
-        coverage = numerator / denominator if denominator > 0 else None
+        # The same measurability rule as the corpus figure (KI-4/B1).
+        measurable = (
+            denominator > 0
+            and 0 <= numerator <= denominator  # signed holdings are reachable (F7)
+            and period not in inflated_periods
+            and period not in cover_failed_periods
+        )
+        coverage = numerator / denominator if measurable else None
         covered_by_list = bool(
             has_list
             and conn.execute(
@@ -1883,7 +2073,7 @@ def format_summary(report: InstIngestReport) -> str:
         )
     coverage = report.coverage
     if coverage is not None:
-        pct = f"{coverage.coverage * 100:.2f}%" if coverage.coverage is not None else "N/A"
+        pct = render_coverage_ratio(coverage.coverage)
         lines.append(
             "value-coverage:"
             f" {coverage.numerator} / {coverage.denominator} = {pct}"

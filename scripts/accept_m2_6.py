@@ -268,7 +268,11 @@ def run_acceptance(out=print) -> int:
         f" retries {report.session_metrics['retries']}"
         f" 304s {report.session_metrics['not_modified']}"
         f" cache_hits {report.session_metrics['cache_hits']}")
-    pct = f"{coverage.coverage:.4f}" if coverage.coverage is not None else "N/A"
+    from populus.ingest.inst13f import render_coverage_ratio
+
+    # KI-4/B1: the ratio token goes through the ONE validating renderer; the
+    # raw sums stay beside it for diagnosis.
+    pct = render_coverage_ratio(coverage.coverage, percent=False, digits=4)
     out(f"coverage: {coverage.numerator}/{coverage.denominator} = {pct}"
         f" | meets_threshold {coverage.meets_threshold}")
     # M2-7 §I5: an acceptance run that prints a coverage number prints what was
