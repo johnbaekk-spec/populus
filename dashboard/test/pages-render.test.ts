@@ -278,7 +278,11 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
   assert.ok(html.includes("$2.3K"), "period tile from agg_filer_concentration");
   assert.ok(html.includes("100.0%"), "topn share from bps");
   assert.ok(html.includes("M2-CONTRACT §3"), "the EDGAR link-out names its contract");
-  assert.ok(html.includes("federated to EDGAR, never served"));
+  // M2-CONTRACT §3 was amended 2026-08-02: holdings will be SERVED, not federated.
+  // Until RUN M2-8 publishes the projection the page must say so honestly, and it
+  // must never re-assert the retired "never served" claim.
+  assert.ok(html.includes("not rendered here yet"));
+  assert.ok(!html.includes("never served"));
   assert.ok(html.includes("CIK 0001067983"));
   assert.ok(html.includes('id="filer-footnotes"'), "the marker registry prints on the page");
 });

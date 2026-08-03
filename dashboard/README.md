@@ -137,6 +137,13 @@ measurement or contract citation.
    holdings detail is "not served — link out to EDGAR". The changes table
    renders `agg_qoq_deltas` verbatim (producer-classified, Locked #8,
    `docs/qoq-presentation.md`).
+   > **SUPERSEDED 2026-08-01 — still accurate for the code as it stands today.**
+   > M2-CONTRACT §3 has been reversed by owner decision: per-filer holdings detail
+   > **is** to be served (`docs/build/M2-8-holdings-publication-decision.md`). This
+   > entry describes current behaviour and stays until RUN M2-8 task T8 restores
+   > the designed holdings table; the EDGAR link then becomes provenance rather
+   > than a substitute. The user-facing copy asserting the old rule lives at
+   > `src/lib/ui.ts:1016` and must be replaced in the same task.
 6. **Institutional tables carry a defined dual-date replacement stamp**
    (Locked #20): "quarter-end {period_of_report} · latest filing in build
    filed {latest_filed_date}" + a printed caveat that per-filer filing dates

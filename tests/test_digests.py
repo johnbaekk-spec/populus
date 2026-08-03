@@ -365,8 +365,12 @@ INST_PROJECTED_COLUMNS = {
         "issuer_name", "issuer_key_source", "value_usd", "security_count", "flags",
     ],
     "agg_filer_concentration": [
+        # RUN M2-8 T6 added max_position_share_bps. This list is a DELIBERATE
+        # independent restatement of the projection — it caught the new column,
+        # which is exactly its job. Keep it in DDL order.
         "cik", "period_of_report", "position_count", "total_value_usd",
-        "null_value_positions", "topn_value_usd", "topn_share_bps", "hhi", "flags",
+        "null_value_positions", "topn_value_usd", "topn_share_bps", "hhi",
+        "max_position_share_bps", "flags",
     ],
 }
 INST_PROJECTED_PKS = {
