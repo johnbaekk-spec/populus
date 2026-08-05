@@ -1,0 +1,16 @@
+M1: KILLED — the certificate-identity pin
+M2: KILLED — the OIDC issuer pin
+M3: KILLED — the subject-digest match
+M4: KILLED — the SLSA predicate filter
+M5: KILLED — the trust-configuration pin — §14 calls this the root of trust
+M6: KILLED — R9: a quota failure must not read as tampering
+M7: KILLED — unknown subject refused, no default identity
+M8: KILLED — R19: the lookup repository
+M9: KILLED — cache keyed by pin, not digest alone
+M10: KILLED — R15: a failing attest() stops the publish
+M-GUARD: KILLED — THE GUARD ITSELF: a reintroduced omission must fail it
+M-WF-ORDER: KILLED — R1: the attest step must exist and precede Verify
+M-WF-FLAG: KILLED — R1: Verify must demand the real provider
+M-WF-TOKEN: KILLED — R9: authenticated lookups in CI
+
+=== 14/14 killed ===

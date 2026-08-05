@@ -717,6 +717,41 @@ _BACKEND_OPTIONS = [
 ]
 
 
+#: Attestation selection is EXPLICIT at the CLI boundary and has no default.
+#: A run that forgets to choose must fail loudly rather than inherit a provider
+#: that answers "verified" to everything (RUN P3-3a R14).
+def _attestation_option(command):
+    return click.option(
+        "--attestation",
+        "attestation_choice",
+        required=True,
+        type=click.Choice(("sigstore", "staging-noop")),
+        help="Which attestation provider to use. No default: an unsigned "
+             "publish must be a deliberate choice, never an omission.",
+    )(command)
+
+
+def _make_attestation(choice: str):
+    """Build the selected provider.
+
+    `sigstore` needs a live bundle fetcher and trust configuration; until those
+    are wired for the operator's environment this refuses rather than silently
+    downgrading — the whole point of the explicit flag.
+    """
+    from populus.publish.attestation import build_provider
+
+    if choice == "sigstore":
+        from populus.client.snapshot import github_bundle_fetcher
+        from populus.publish.attestation import github_trust_config
+
+        return build_provider(
+            "sigstore",
+            fetcher=github_bundle_fetcher(),
+            trust_config=github_trust_config(),
+        )
+    return build_provider(choice)
+
+
 def _with_backend_options(command):
     for option in reversed(_BACKEND_OPTIONS):
         command = option(command)
@@ -731,6 +766,7 @@ def _with_backend_options(command):
     show_default=True,
     help="Populus database to snapshot.",
 )
+@_attestation_option
 @_with_backend_options
 @click.option(
     "--raw-root",
@@ -744,9 +780,9 @@ def build(
     backend: str,
     repo_slug: str | None,
     raw_root: str | None,
+    attestation_choice: str,
 ) -> None:
     """Assemble a staged build: snapshot, digests, slices, licenses, journal."""
-    from populus.publish.attestation import StagingNoop
     from populus.publish.build import BackendError, PublishError, run_build
     from populus.publish.digests import DigestError
 
@@ -758,7 +794,7 @@ def build(
             now=_utc_now_dt,
             raw_root=raw_root,
             backend=make_backend(data_repo),
-            attestation=StagingNoop(),
+            attestation=_make_attestation(attestation_choice),
         )
     except (PublishError, BackendError, DigestError, OSError) as exc:
         raise click.ClickException(str(exc))
@@ -824,6 +860,7 @@ def build(
 
 
 @main.command()
+@_attestation_option
 @_with_backend_options
 @click.option("--build", "build_id", help="Publish this staged build (default: newest).")
 @click.option(
@@ -839,9 +876,9 @@ def publish(
     build_id: str | None,
     rollback_to: str | None,
     dry_run: bool,
+    attestation_choice: str,
 ) -> None:
     """Publish per the §5.5 protocol; refuses partial builds."""
-    from populus.publish.attestation import StagingNoop
     from populus.publish.build import BackendError, PublishError, run_publish
 
     make_backend = _make_backend(backend, repo_slug)
@@ -861,7 +898,7 @@ def publish(
             now=_utc_now_dt,
             backend=make_backend(data_repo),
             build_id=build_id,
-            attestation=StagingNoop(),
+            attestation=_make_attestation(attestation_choice),
             dry_run=dry_run,
             rollback_to=rollback_to,
         )
@@ -1014,6 +1051,7 @@ def _inst_absence_notice(
     )
 
 
+@_attestation_option
 @main.command()
 @click.option(
     "--data-repo",
@@ -1028,14 +1066,13 @@ def _inst_absence_notice(
     type=click.Path(exists=True, dir_okay=False),
     help="§13.5 reconciliation: logical digest + row counts of this database.",
 )
-def verify(data_repo: str, db_path: str | None) -> None:
+def verify(data_repo: str, db_path: str | None, attestation_choice: str) -> None:
     """Recompute artifact hashes vs manifest; DB integrity checks."""
-    from populus.publish.attestation import StagingNoop
     from populus.publish.build import PublishError, run_verify
 
     try:
         report = run_verify(
-            data_repo, now=_utc_now_dt, db_path=db_path, attestation=StagingNoop()
+            data_repo, now=_utc_now_dt, db_path=db_path, attestation=_make_attestation(attestation_choice)
         )
     except (PublishError, OSError) as exc:
         raise click.ClickException(str(exc))
@@ -1414,3 +1451,76 @@ def inst_bulk_ingest(
     click.echo(format_bulk_summary(report))
     if not report.ok:
         ctx.exit(1)
+
+
+@main.command("preflight-attestation")
+@click.option(
+    "--data-repo",
+    "data_repo",
+    default="../populus-data",
+    show_default=True,
+    help="The populus-data working tree whose pointer and manifest to check.",
+)
+def preflight_attestation(data_repo: str) -> None:
+    """Prove the attestation chain works BEFORE arming anything.
+
+    A positive gate, not a refusal that fires after the fact: it resolves the
+    published pointer and manifest, verifies both against the pinned identity
+    and issuer, and exits non-zero **naming the failed check** otherwise.
+
+    Exit codes are deliberately distinguishable: a verification failure and an
+    unreachable attestation API are different problems, and reporting a rate
+    limit as tampering would be its own honesty defect.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from populus.client.snapshot import github_bundle_fetcher
+    from populus.publish.attestation import (
+        UNAVAILABLE,
+        SigstoreAttestation,
+        github_trust_config,
+    )
+
+    repo = _Path(data_repo)
+    pointer_path = repo / "latest.json"
+    if not pointer_path.exists():
+        raise click.ClickException(f"no pointer at {pointer_path}")
+    pointer_bytes = pointer_path.read_bytes()
+    pointer = _json.loads(pointer_bytes)
+    manifest_path = repo / pointer["manifest_path"]
+    if not manifest_path.exists():
+        raise click.ClickException(f"no manifest at {manifest_path}")
+
+    provider = SigstoreAttestation(
+        fetcher=github_bundle_fetcher(), trust_config=github_trust_config()
+    )
+    failures: list[str] = []
+    unavailable = False
+    for name, payload in (
+        ("latest.json", pointer_bytes),
+        ("manifest.json", manifest_path.read_bytes()),
+    ):
+        result = provider.verify(name, payload)
+        if result.ok:
+            click.echo(f"  ok   {name}: {result.detail}")
+            continue
+        if result.outcome == UNAVAILABLE:
+            unavailable = True
+        failures.append(f"{name}: {result.detail}")
+        click.echo(f"  FAIL {name}: {result.detail}")
+
+    if unavailable:
+        raise click.ClickException(
+            "attestation lookup was UNAVAILABLE — this is not a verification "
+            "failure. Retry, or supply GH_TOKEN to lift the 60/hour "
+            "unauthenticated rate limit."
+        )
+    if failures:
+        raise click.ClickException(
+            "attestation preflight FAILED:\n  " + "\n  ".join(failures)
+        )
+    click.echo(
+        f"attestation preflight OK — pointer and manifest for build "
+        f"{pointer['build_id']} verify against the pinned identity."
+    )

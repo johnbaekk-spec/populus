@@ -118,5 +118,6 @@ persist_tuple(
     sha256(pointer_bytes).hexdigest(),  # the VERIFIED digest, never a placeholder
 )
 EOF
-python3 scripts/monitor.py --state-dir /var/populus-monitor --repo johnbaekk-spec/populus-data
+python3 scripts/monitor.py --attestation=sigstore \
+  --state-dir /var/populus-monitor --repo johnbaekk-spec/populus-data
 ```

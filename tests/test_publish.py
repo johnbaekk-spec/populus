@@ -1845,24 +1845,24 @@ def test_cli_build_publish_verify_end_to_end(tmp_path):
     repo = make_repo(tmp_path)
     runner = CliRunner()
     result = runner.invoke(
-        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+        cli_main, ["build", "--attestation=staging-noop", "--db", str(db), "--data-repo", str(repo)]
     )
     assert result.exit_code == 0, result.output
     assert "staged build" in result.output
 
     result = runner.invoke(
-        cli_main, ["publish", "--data-repo", str(repo), "--dry-run"]
+        cli_main, ["publish", "--attestation=staging-noop", "--data-repo", str(repo), "--dry-run"]
     )
     assert result.exit_code == 0, result.output
     assert "dry-run" in result.output
     assert not (repo / "latest.json").exists()
 
-    result = runner.invoke(cli_main, ["publish", "--data-repo", str(repo)])
+    result = runner.invoke(cli_main, ["publish", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert result.exit_code == 0, result.output
     assert "published build" in result.output
 
     result = runner.invoke(
-        cli_main, ["verify", "--data-repo", str(repo), "--db", str(db)]
+        cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo), "--db", str(db)]
     )
     assert result.exit_code == 0, result.output
     assert "verify ok" in result.output
@@ -1872,7 +1872,7 @@ def test_cli_gh_backend_requires_repo_slug(tmp_path):
     repo = make_repo(tmp_path)
     result = CliRunner().invoke(
         cli_main,
-        ["publish", "--data-repo", str(repo), "--backend", "gh-release"],
+        ["publish", "--attestation=staging-noop", "--data-repo", str(repo), "--backend", "gh-release"],
         env={"GH_REPO": None},
     )
     assert result.exit_code == 2
@@ -1881,7 +1881,7 @@ def test_cli_gh_backend_requires_repo_slug(tmp_path):
 
 def test_cli_verify_fails_cleanly_without_pointer(tmp_path):
     repo = make_repo(tmp_path)
-    result = CliRunner().invoke(cli_main, ["verify", "--data-repo", str(repo)])
+    result = CliRunner().invoke(cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert "latest.json" in result.output
@@ -1897,7 +1897,7 @@ def test_cli_verify_surfaces_malformed_manifest_cleanly(published):
     pointer["manifest_sha256"] = hashlib.sha256(malformed).hexdigest()
     (repo / "latest.json").write_text(render_pointer(pointer), encoding="utf-8")
 
-    result = CliRunner().invoke(cli_main, ["verify", "--data-repo", str(repo)])
+    result = CliRunner().invoke(cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert result.exit_code == 1
     # Clean click failure, not a leaked ValueError/JSONDecodeError traceback.
     assert isinstance(result.exception, SystemExit)
@@ -1912,7 +1912,7 @@ def test_cli_verify_db_surfaces_corrupt_db_cleanly(published, tmp_path):
     corrupt = tmp_path / "corrupt.db"
     corrupt.write_bytes(b"definitely not a sqlite database")
     result = CliRunner().invoke(
-        cli_main, ["verify", "--data-repo", str(repo), "--db", str(corrupt)]
+        cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo), "--db", str(corrupt)]
     )
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
@@ -1931,7 +1931,7 @@ def test_cli_publish_rollback_surfaces_malformed_target_cleanly(tmp_path):
 
     result = CliRunner().invoke(
         cli_main,
-        ["publish", "--data-repo", str(repo), "--rollback-to", first.build_id],
+        ["publish", "--attestation=staging-noop", "--data-repo", str(repo), "--rollback-to", first.build_id],
     )
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
@@ -1982,16 +1982,32 @@ def test_publish_workflow_shape(tmp_path):
 def test_publish_workflow_gh_token_step_scoped(tmp_path):
     workflow = _load_workflow("publish.yml")
     job = workflow["jobs"]["publish"]
-    token_steps = [
-        step
-        for step in job["steps"]
-        if "GH_TOKEN" in (step.get("env") or {})
+    # The property is that the long-lived PAT is step-scoped to build/publish.
+    # This used to be expressed by counting ANY step with a GH_TOKEN, which
+    # conflated the PAT with the job's own ephemeral `github.token`. RUN P3-3a
+    # gives the Verify step `github.token` so its attestation lookups are
+    # authenticated (unauthenticated: 60/hour shared per runner IP, making a
+    # quota error indistinguishable from tampering in the step that gates the
+    # pointer commit). The assertion below is therefore SHARPENED, not relaxed:
+    # it now pins the PAT specifically, and additionally forbids any OTHER
+    # secret from appearing as GH_TOKEN anywhere in the job.
+    pat = "${{ secrets.DATA_REPO_PAT }}"
+    pat_steps = [
+        step for step in job["steps"] if (step.get("env") or {}).get("GH_TOKEN") == pat
     ]
-    assert len(token_steps) == 2
-    for step in token_steps:
+    assert len(pat_steps) == 2
+    for step in pat_steps:
         run = step.get("run", "")
         assert "populus build" in run or "populus publish" in run
-        assert step["env"]["GH_TOKEN"] == "${{ secrets.DATA_REPO_PAT }}"
+
+    for step in job["steps"]:
+        token = (step.get("env") or {}).get("GH_TOKEN")
+        if token is None or token == pat:
+            continue
+        assert token == "${{ github.token }}", (
+            f"step {step.get('name')!r} sets GH_TOKEN to {token!r}: only the "
+            "step-scoped PAT or the job's own ephemeral token are permitted"
+        )
     # Never in a run body, never echoed (R33).
     for step in job["steps"]:
         run = step.get("run", "")
@@ -2334,7 +2350,7 @@ def test_cli_build_output_names_the_excluded_conflicts(tmp_path):
     db = seed_inst_cover_mix(seed_db(tmp_path / "populus.db"))
     repo = make_repo(tmp_path)
     result = CliRunner().invoke(
-        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+        cli_main, ["build", "--attestation=staging-noop", "--db", str(db), "--data-repo", str(repo)]
     )
 
     assert result.exit_code == 0, result.output
@@ -2361,13 +2377,13 @@ def test_cli_publish_absence_notice_names_the_excluded_conflicts(tmp_path):
     repo = make_repo(tmp_path)
     runner = CliRunner()
     built = runner.invoke(
-        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+        cli_main, ["build", "--attestation=staging-noop", "--db", str(db), "--data-repo", str(repo)]
     )
     assert built.exit_code == 0, built.output
     assert "inst module WITHHELD (not_measurable)" in built.output
     assert "cover_conflict EXCLUDED 2: inst:C-1, inst:C-2" in built.output
 
-    published = runner.invoke(cli_main, ["publish", "--data-repo", str(repo)])
+    published = runner.invoke(cli_main, ["publish", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert published.exit_code == 0, published.output
     assert "inst module: WITHHELD" in published.output
     assert "cover_conflict EXCLUDED 2: inst:C-1, inst:C-2" in published.output
@@ -2845,7 +2861,7 @@ def test_resolve_snapshot_reports_gate_withholding_through_the_real_client(
     repo = make_repo(tmp_path)
     publish_build(db, repo)
     cache = tmp_path / "cache"
-    argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
 
@@ -2945,7 +2961,7 @@ def test_a_withdrawal_whose_cleanup_fails_still_fails_closed_in_production(
     repo = make_repo(tmp_path)
     publish_build(db, repo)
     cache = tmp_path / "cache"
-    argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
     assert srv_mod._resolve_snapshot()["inst_db_path"] is not None
@@ -3482,7 +3498,7 @@ def _resolve(repo, cache, monkeypatch, *, moment=None):
     from populus.mcp_server import server as srv_mod
 
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin(moment) if moment else pin())
     return srv_mod._resolve_snapshot()
 
@@ -3695,7 +3711,7 @@ def test_a_corrupt_anchor_cannot_resurrect_a_withheld_build_via_replay(tmp_path)
     assert client.db_path() is None, "the withheld build was resurrected"
 
     # And through the PRODUCTION resolver — the path that stamps provenance.
-    monkey_argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    monkey_argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     real_argv = sys.argv
     real_now = srv_mod._utc_now
     sys.argv = monkey_argv
@@ -3739,7 +3755,7 @@ def test_the_resolver_module_boundary_absorbs_an_inst_io_failure(tmp_path, monke
 
     monkeypatch.setattr(shutil_mod, "rmtree", _stuck)
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
 
     resolved = srv_mod._resolve_snapshot()          # must NOT raise
@@ -4004,7 +4020,7 @@ def test_a_pending_withdrawal_is_flagged_to_the_resolver(tmp_path, monkeypatch):
     monkeypatch.setattr(snap_mod, "persist_tuple",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
 
     resolved = srv_mod._resolve_snapshot()
@@ -4052,7 +4068,7 @@ def test_a_deleted_anchor_beside_a_record_cannot_resurrect_a_withheld_build(tmp_
     assert client.db_path() is None, f"{withheld_build} was resurrected"
 
     real_argv, real_now = sys.argv, srv_mod._utc_now
-    sys.argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    sys.argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     srv_mod._utc_now = later
     try:
         resolved = srv_mod._resolve_snapshot()
@@ -4134,7 +4150,7 @@ def test_a_pending_withdrawal_reaches_the_health_tools(tmp_path, monkeypatch):
     monkeypatch.setattr(snap_mod, "persist_tuple",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", later)
     resolved = srv_mod._resolve_snapshot()
     assert resolved["inst_stale_withdrawal_pending"] is True
@@ -4180,7 +4196,7 @@ def test_an_unreadable_repo_file_does_not_take_down_the_server(tmp_path, monkeyp
 
     monkeypatch.setattr(Path, "read_bytes", _unreadable)
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo),
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo),
                          "--cache", str(tmp_path / "cache")])
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
 
@@ -4206,7 +4222,7 @@ def test_an_unanchored_refusal_reaches_the_operator_with_remediation(
 
     later = pin(NOW + timedelta(days=1))
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", later)
     resolved = srv_mod._resolve_snapshot()
     assert resolved["inst_db_path"] is None
@@ -4529,7 +4545,7 @@ def test_r10_full_lifecycle_serves_inst_from_the_published_manifest(tmp_path, mo
 
     cache = tmp_path / "cache"
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
 
     resolved = srv_mod._resolve_snapshot()  # the REAL client, no mock

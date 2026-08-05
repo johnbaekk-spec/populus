@@ -270,6 +270,13 @@ def _discord_alert(message: str) -> None:
             print(f"ALERT DELIVERY FAILED: {type(exc).__name__}", file=sys.stderr)
 
 
+def _attestation_provider(choice: str):
+    """Build the provider the operator selected. Never guesses."""
+    from populus.publish.attestation import build_provider
+
+    return build_provider(choice)
+
+
 def main(argv: list[str] | None = None) -> int:
     import os
 
@@ -284,6 +291,14 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="OWNER/REPO of the private populus-data staging repo.",
     )
+    parser.add_argument(
+        "--attestation",
+        required=True,
+        choices=("sigstore", "staging-noop"),
+        help="Which attestation provider verifies the pointer and manifest. "
+             "Required: the monitor is a §5.5 consumer like any other, and a "
+             "silently unverified monitor is worse than none.",
+    )
     args = parser.parse_args(argv)
     token = os.environ.get("GH_TOKEN")
     if not token:
@@ -297,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         fetcher,
         now=lambda: datetime.now(timezone.utc),
         alert=_discord_alert,
+        attestation=_attestation_provider(args.attestation),
     )
 
 

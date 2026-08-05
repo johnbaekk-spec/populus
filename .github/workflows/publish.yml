@@ -32,6 +32,16 @@ jobs:
       github.ref == 'refs/heads/main' &&
       vars.POPULUS_PUBLISH_ARMED == 'true'
     runs-on: ubuntu-latest
+    # RUN P3-3a R1/R9 — job-scoped least privilege (§14). `attestations: write`
+    # is required to create bundles and also permits reading them back, so the
+    # Verify step's lookups are authenticated: without a token they fall to the
+    # 60/hour unauthenticated cap shared per runner IP, and a quota error would
+    # be indistinguishable from tampering in the step that gates the pointer
+    # commit. This job still holds NO Cloudflare credential (§14 invariant).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - name: Check out populus
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -59,7 +69,7 @@ jobs:
           GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
           GH_REPO: johnbaekk-spec/populus-data
         run: >-
-          uv run populus build --db populus.db --data-repo populus-data
+          uv run populus build --attestation=sigstore --db populus.db --data-repo populus-data
           --backend gh-release --repo "$GH_REPO" --raw-root raw
 
       - name: Publish
@@ -67,11 +77,24 @@ jobs:
           GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
           GH_REPO: johnbaekk-spec/populus-data
         run: >-
-          uv run populus publish --data-repo populus-data
+          uv run populus publish --attestation=sigstore --data-repo populus-data
           --backend gh-release --repo "$GH_REPO"
 
+      # R1: the attest step sits BETWEEN Publish and Verify deliberately. Verify
+      # exits non-zero on a failed verdict, and the Commit step below has no
+      # `if: always()`, so a missing or failed attestation blocks the pointer
+      # commit. The ordering IS the enforcement — do not reorder these.
+      - name: Attest published artifacts
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: |
+            populus-data/latest.json
+            populus-data/builds/*/manifest.json
+
       - name: Verify
-        run: uv run populus verify --data-repo populus-data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run populus verify --data-repo populus-data --attestation=sigstore
 
       - name: Commit manifest and pointer (rebase-retry x3, §13.3)
         working-directory: populus-data

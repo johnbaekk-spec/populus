@@ -402,10 +402,13 @@ def test_stats_requires_db_option():
 @pytest.mark.parametrize(
     "args",
     [
-        ["build", "--db", "absent.db", "--data-repo", "absent-repo"],
-        ["publish", "--data-repo", "absent-repo"],
-        ["publish", "--dry-run", "--data-repo", "absent-repo"],
-        ["verify", "--data-repo", "absent-repo"],
+        # `--attestation` is explicit here because it is now required at every
+        # entry point; these cases are about missing DATA prerequisites, not
+        # about provider selection (RUN P3-3a R16).
+        ["build", "--attestation=staging-noop", "--db", "absent.db", "--data-repo", "absent-repo"],
+        ["publish", "--attestation=staging-noop", "--data-repo", "absent-repo"],
+        ["publish", "--attestation=staging-noop", "--dry-run", "--data-repo", "absent-repo"],
+        ["verify", "--attestation=staging-noop", "--data-repo", "absent-repo"],
     ],
 )
 def test_pipeline_commands_fail_cleanly_without_prerequisites(args, tmp_path, monkeypatch):

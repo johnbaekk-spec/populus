@@ -1118,6 +1118,20 @@ def _complete_extra_module_assets(
             )
 
 
+
+def _require_attested(result) -> None:
+    """A failing attest() stops the publish.
+
+    All three call sites previously discarded this value, so a provider that
+    reported failure was ignored and the publish continued. For the sigstore
+    provider attest() is a seam (the workflow's attest step does the signing),
+    but the seam must remain usable by a provider that CAN fail — otherwise the
+    check is decorative.
+    """
+    if not result.ok:
+        raise PublishError(f"attestation failed: {result.detail}")
+
+
 def _complete_build(
     data_repo: Path,
     build_id: str,
@@ -1251,7 +1265,7 @@ def _complete_build(
     materialize_from_journal(journal_bytes, builds_dir)
     actions.append(f"materialize:{build_id}")
 
-    attestation.attest("manifest.json", manifest_bytes)
+    _require_attested(attestation.attest("manifest.json", manifest_bytes))
 
     latest_path = data_repo / "latest.json"
     current: dict | None = None
@@ -1280,7 +1294,7 @@ def _complete_build(
             manifest_sha256=manifest_sha,
         )
         pointer_bytes = render_pointer(pointer).encode("utf-8")
-        attestation.attest("latest.json", pointer_bytes)
+        _require_attested(attestation.attest("latest.json", pointer_bytes))
         atomic_write_bytes(latest_path, pointer_bytes)
         actions.append(f"pointer:{pointer_version}")
 
@@ -2141,7 +2155,7 @@ def _publish_rollback(
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
     )
     pointer_bytes = render_pointer(pointer).encode("utf-8")
-    attestation.attest("latest.json", pointer_bytes)
+    _require_attested(attestation.attest("latest.json", pointer_bytes))
     atomic_write_bytes(latest_path, pointer_bytes)
     return PublishReport(
         rollback_to, pointer_version, False, (f"pointer:{pointer_version}",)
