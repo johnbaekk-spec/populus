@@ -48,10 +48,59 @@ Each passes the §2.2 admission test (primary, free, redistributable, adds cross
 | Dataset | Pipeline | MCP | Dashboard (P3, declared only) |
 |---|---|---|---|
 | M2 13F cross-filer aggregates (filer registry, QoQ deltas, top-holders, concentration) | R → `inst_agg.db` | snapshot | build-time slices, top filers ≤1,500 pages |
-| M2 13F per-filer holdings detail | — | **F** (EDGAR live via §11.4 client) | not served — link out to EDGAR |
+| ~~M2 13F per-filer holdings detail~~ | ~~—~~ | ~~**F** (EDGAR live via §11.4 client)~~ | ~~not served — link out to EDGAR~~ |
+| **M2 13F per-filer holdings detail** *(amended 2026-08-01)* | **R** → serving projection | **snapshot** (published) + **F** (live, scoped per §3.1) | **served** — full position list, bucketed shards in the Pages bundle |
 | Identity registries (`entities/securities/*_identifiers/entity_tickers`) | R (substrate) | (internal join) | — |
 
-Size: `inst_agg.db` snapshot bounded to aggregates (not the full holdings universe); per-filer detail is federated (zero Populus storage of the long tail). Registry tables are small (≤ low-MB). No new always-on infra ($0/mo holds; DR-8 federate-live for the tail).
+~~Size: `inst_agg.db` snapshot bounded to aggregates (not the full holdings universe); per-filer detail is federated (zero Populus storage of the long tail). Registry tables are small (≤ low-MB). No new always-on infra ($0/mo holds; DR-8 federate-live for the tail).~~
+
+**Size *(amended 2026-08-01)*:** `inst_agg.db` snapshot bounded to aggregates.
+Per-filer detail is **replicated**: a canonical audit store (~950 B/row measured —
+per-row §5.1 provenance + `raw_row`, ops-local, **never published**, reconstructible
+from archived raw XML) and a derived **serving projection** (≤90 B/row target,
+published as bucketed JSON shards inside the Pages bundle, **current period and
+the immediately prior period** — owner decision OD-5, 2026-08-02, so a reader can
+inspect what was added and removed behind any displayed change; both periods share
+one bucket file, so this costs bytes, not files).
+Registry tables remain small (≤ low-MB). **No new always-on infra — $0/mo still
+holds**; the constraint that binds is the §12.1 static-file cap, not storage
+(worst case, including M3's committed reservation, metadata and a hard-capped
+spill list: **bucketed = 13,224 files vs the 15,000 cap**, 1,776 headroom;
+per-entity sharding would be ~21,251 and breach both that cap and Cloudflare's
+20,000 limit).
+
+### 3.1 Retained federated boundary *(normative, added 2026-08-01)*
+
+Live EDGAR via the §11.4 client remains the path for exactly two cases, and must be
+asserted on both sides in tests:
+
+1. **Filings newer than the published build** — answered live, flagged as
+   post-snapshot.
+2. **Filers outside the published universe.** OD-2 (2026-08-02) locks a **no-cutoff**
+   universe, so this set is empty by construction for any discovered period. Retained
+   only for a filer appearing in EDGAR after discovery ran, or a period not yet
+   ingested — never a value-ranked cutoff.
+
+> **Reversal notice.** The struck row above was the original Pattern-F treatment
+> (introduced `db8adc2`, per `ARCHITECTURE.md` DR-8). It is reversed by owner
+> decision 2026-08-01. DR-8 itself is **not** overturned — it assigns "cross-entity
+> aggregation products" to Pattern R, and per-filer holdings are the inseparable
+> substrate of three such products (all-holders-of-issuer, cross-filer activity,
+> outsized-vs-own-history) that no per-entity API can answer. Full rationale,
+> measurements, retained properties, and residual risk:
+> [`M2-8-holdings-publication-decision.md`](./M2-8-holdings-publication-decision.md).
+> Build plan: [`RUN-M2-8-plan.md`](./RUN-M2-8-plan.md).
+>
+> **Parameters locked by the owner 2026-08-02** (superseding this amendment's
+> earlier "four owner decisions still open" note): **OD-1** backfill via the
+> primary per-filer EDGAR walk — SEC bulk datasets are *not* adopted as a source;
+> **OD-2** every eligible filer, discovered independently per period (no cutoff);
+> **OD-3** outsized-flag thresholds `MIN_BASELINE_PERIODS=4`, `MULT=150`,
+> `FLOOR_BPS=500`; **OD-4** ops storage ceiling **40 GB** (raised from 20 GB on 2026-08-02 after
+> measurement) covering canonical store and raw archives, with **K = 6 periods**
+> measuring ~32 GB; **OD-5** the current *and prior*
+> period are browsable. OQ-9's source half is closed by OD-1; its
+> archival-for-reproducibility half remains open.
 
 ## 4. Schema (canonical tables; raw/normalized twins; §5.4 + §9.4 idioms)
 
@@ -83,7 +132,7 @@ Size: `inst_agg.db` snapshot bounded to aggregates (not the full holdings univer
 ## 6. MCP tools (≤5, analyst questions, DR-9 budget; §11.2/§11.3 envelope)
 
 1. `inst_filer_lookup(query)` — name/CIK → canonical filer(s).
-2. `inst_filer_holdings(cik, period?, mode='snapshot'|'qoq')` — a filer's holdings for a period, with QoQ deltas; **F** for arbitrary/latest per-filer detail (live EDGAR via §11.4), snapshot for published aggregates.
+2. `inst_filer_holdings(cik, period?, mode='snapshot'|'qoq')` — a filer's holdings for a period, with QoQ deltas; ~~**F** for arbitrary/latest per-filer detail (live EDGAR via §11.4), snapshot for published aggregates.~~ ***Amended 2026-08-01 (§3.1):*** **snapshot** serves published per-filer detail and aggregates for the published universe; **F** (live EDGAR via §11.4) is scoped to post-build filings and off-universe filers.
 3. `inst_ticker_holders(ticker, period?)` — which 13F filers hold an issuer (CUSIP→security→as-of ticker), ranked by value.
 4. `inst_biggest_moves(period?, side='new'|'add'|'trim'|'exit', limit=50)` — largest QoQ position changes across filers.
 5. `inst_health()` — coverage (filings parsed, value-coverage % of CUSIPs resolved), freshness, unit-regime mix, caveats.

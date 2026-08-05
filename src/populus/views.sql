@@ -121,3 +121,62 @@ CREATE VIEW v_default_holdings AS
 SELECT h.*
 FROM inst_holdings h
 JOIN v_default_inst_filings f ON f.filing_id = h.filing_id;
+
+-- ---------------------------------------------------------------------------
+-- RUN M2-8 (T5, plan R8) — the PER-FILER REPORTED population.
+--
+-- v_default_* answers cross-entity questions, so it drops a survivor whose file
+-- number appears as another survivor's other-manager: an issuer total must count
+-- an affiliate relationship ONCE. That is correct there and WRONG for a filer's
+-- own page, which promises "every position this filer reported". Building that
+-- page on v_default_holdings silently deletes the filer's own rows while the page
+-- claims completeness (external review round 2, F13).
+--
+-- So this chain applies stages 1 and 3 and DELIBERATELY OMITS stage 2:
+--   1. restatement survivors   — identical predicate to v_inst_reconciled_filings
+--   2. affiliation suppression — OMITTED ON PURPOSE
+--   3. cover reconciliation    — identical predicate to v_default_inst_filings
+--
+-- Stage 1 is restated here rather than refactored out because tests assert the
+-- stored SQL text of the existing views and inst_bulk.py cites views.sql line
+-- numbers; changing those definitions to share a CTE would churn both for no
+-- behavioural gain. The duplication is instead pinned behaviourally by
+-- test_filer_reported_views.py, which asserts the exact set relationship:
+--   v_filer_reported_filings  ==  v_default_inst_filings  UNION  {affiliate-suppressed survivors that pass cover}
+-- so the two survivor predicates cannot drift apart silently.
+CREATE VIEW v_filer_reported_filings AS
+WITH restatement_survivors AS (
+  SELECT f.*
+  FROM inst_filings f
+  WHERE f.lifecycle = 'active'
+    AND NOT EXISTS (
+      SELECT 1 FROM inst_filings r
+      WHERE r.lifecycle = 'active' AND r.amendment_type = 'RESTATEMENT'
+        AND r.cik = f.cik AND r.period_of_report = f.period_of_report
+        AND r.filing_id <> f.filing_id
+        AND ( r.filed_date > f.filed_date
+           OR (r.filed_date = f.filed_date
+               AND COALESCE(r.amendment_no,0) > COALESCE(f.amendment_no,0))
+           OR (r.filed_date = f.filed_date
+               AND COALESCE(r.amendment_no,0) = COALESCE(f.amendment_no,0)
+               AND r.accession > f.accession) )
+    )
+)
+SELECT s.*
+FROM restatement_survivors s
+WHERE s.table_value_total_usd IS NULL          -- unknown total: cover_failed owns it
+   OR (
+        (SELECT COALESCE(SUM(h.value_usd), 0)
+         FROM inst_holdings h
+         WHERE h.filing_id = s.filing_id AND h.security_id IS NOT NULL)
+        - s.table_value_total_usd
+      ) <= MAX(1000, s.table_value_total_usd / 1000);
+
+-- v_filer_reported_holdings: what the filer itself reported, after amendment
+-- composition, with no cross-filer suppression. The filer page and the
+-- per-filer concentration/flag baseline read THIS; issuer totals keep reading
+-- v_default_holdings (plan R8, R14; review round 3 F5).
+CREATE VIEW v_filer_reported_holdings AS
+SELECT h.*
+FROM inst_holdings h
+JOIN v_filer_reported_filings f ON f.filing_id = h.filing_id;

@@ -440,16 +440,24 @@ def build_inst_agg(
     # and still gets a concentration row — it never silently disappears (G3).
     filer_periods: dict[str, list[str]] = defaultdict(list)
     for cik, period in source_conn.execute(
-        "SELECT DISTINCT cik, period_of_report FROM v_default_inst_filings"
+        "SELECT DISTINCT cik, period_of_report FROM v_filer_reported_filings"
         " ORDER BY cik, period_of_report"
     ):
         filer_periods[cik].append(period)
 
-    # --- default filer set (a notice-only filer still gets a registry row) ----
+    # --- filer set (a notice-only filer still gets a registry row) -----------
+    # QA-1 (RUN M2-8): seeded from v_filer_reported_filings, NOT the
+    # affiliation-suppressed default set. The registry is a PER-FILER identity
+    # structure and the dashboard's getStaticPaths iterates it, so seeding it from
+    # the suppressed view meant a filer covered by an affiliate had correct
+    # holdings and a correct concentration row but NO registry row — and therefore
+    # no page at all. That left the F13 fix delivering nothing end-to-end.
+    # Cross-entity issuer aggregates still read v_default_holdings below, so an
+    # affiliate relationship is still counted exactly once in issuer totals.
     filers: dict[str, dict] = {}
     for cik, filer_name, latest_period in source_conn.execute(
         "SELECT fil.cik, fr.name_raw, MAX(fil.period_of_report)"
-        " FROM v_default_inst_filings fil"
+        " FROM v_filer_reported_filings fil"
         " JOIN inst_filers fr ON fr.cik = fil.cik"
         " GROUP BY fil.cik, fr.name_raw"
     ):
@@ -496,28 +504,12 @@ def build_inst_agg(
         " LEFT JOIN securities s ON s.security_id = h.security_id"
         " ORDER BY h.cik, h.period_of_report, h.holding_id"
     ):
-        registry = filers.setdefault(
-            cik,
-            {
-                "filer_name": cik,
-                "latest_period": period,
-                "position_count": 0,
-                "total_value_usd": 0,
-                "null_value_positions": 0,
-                "unkeyed_positions": 0,
-            },
-        )
-        registry["position_count"] += 1
-        if value_usd is not None:
-            registry["total_value_usd"] += value_usd
-        else:
-            registry["null_value_positions"] += 1
-
+        # QA-1: registry COUNTS are accumulated in the second pass, over
+        # v_filer_reported_holdings, for the same reason as concentration — they
+        # describe the filer's own reported book, not the deduplicated one.
         pk = _position_key(security_id, cusip)
         put_bucket = _put_call_bucket(put_call)
-        if pk is None:
-            registry["unkeyed_positions"] += 1
-        else:
+        if pk is not None:
             # Unit is part of the GRAIN: an SH position and a PRN position of the
             # same security are different things and must never share an
             # accumulator, or shares/deltas become meaningless (QA-F2).
@@ -544,6 +536,55 @@ def build_inst_agg(
         bucket["tokens"].add(pk if pk is not None else f"row:{holding_id}")
         if issuer_name_raw < bucket["issuer_name"]:
             bucket["issuer_name"] = issuer_name_raw
+
+        # NOTE (RUN M2-8 T6): per-filer concentration is NOT accumulated here.
+        # This loop reads v_default_holdings, which suppresses a filer covered by
+        # an affiliate — correct for cross-entity issuer totals, wrong for a
+        # filer's own book, and the flag baseline inherits the error (external
+        # review round 3, F5). Concentration is accumulated in the second pass
+        # below, over v_filer_reported_holdings.
+
+    # --- second pass: PER-FILER inputs, from the non-suppressed view ---------
+    # v_filer_reported_holdings applies restatement/NEW-HOLDINGS composition and
+    # cover reconciliation but NOT cross-filer affiliation suppression, so a
+    # filer's concentration is measured over the book it actually reported
+    # (plan R8/R14; review round 3 F5, round 4 F4). Cross-entity aggregates above
+    # keep reading v_default_holdings so an issuer total counts an affiliate once.
+    for (
+        cik,
+        period,
+        security_id,
+        cusip,
+        value_usd,
+        put_call,
+        holding_id,
+    ) in source_conn.execute(
+        "SELECT h.cik, h.period_of_report, h.security_id, h.cusip, h.value_usd,"
+        "       h.put_call, h.holding_id"
+        " FROM v_filer_reported_holdings h"
+        " ORDER BY h.cik, h.period_of_report, h.holding_id"
+    ):
+        pk = _position_key(security_id, cusip)
+        put_bucket = _put_call_bucket(put_call)
+
+        registry = filers.setdefault(
+            cik,
+            {
+                "filer_name": cik,
+                "latest_period": period,
+                "position_count": 0,
+                "total_value_usd": 0,
+                "null_value_positions": 0,
+                "unkeyed_positions": 0,
+            },
+        )
+        registry["position_count"] += 1
+        if value_usd is not None:
+            registry["total_value_usd"] += value_usd
+        else:
+            registry["null_value_positions"] += 1
+        if pk is None:
+            registry["unkeyed_positions"] += 1
 
         cbucket = conc[(cik, period)]
         cbucket["position_count"] += 1
@@ -652,8 +693,9 @@ def build_inst_agg(
         dest.executemany(
             "INSERT INTO agg_filer_concentration (cik, period_of_report,"
             " position_count, total_value_usd, null_value_positions,"
-            " topn_value_usd, topn_share_bps, hhi, flags, ingested_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " topn_value_usd, topn_share_bps, hhi, max_position_share_bps,"
+            " flags, ingested_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             concentration_rows,
         )
         dest.executemany(
@@ -735,10 +777,14 @@ def _concentration_rows(
             topn_value = sum(values[:topn])
             topn_share_bps = topn_value * 10000 // total
             hhi = sum(v * v for v in values) * 10000 // (total * total)
+            # The LARGEST SINGLE position's share (R14) — a different statistic
+            # from topn_share_bps, and the one the outsized flag compares against.
+            max_position_share_bps = (values[0] * 10000 // total) if values else 0
         else:
             topn_value = sum(values[:topn])  # 0 when every value is 0/NULL
             topn_share_bps = None
             hhi = None
+            max_position_share_bps = None
             flags.add("concentration_unavailable")
         rows.append(
             (
@@ -750,6 +796,7 @@ def _concentration_rows(
                 topn_value,
                 topn_share_bps,
                 hhi,
+                max_position_share_bps,
                 _flags_json(flags),
                 ingested_at,
             )

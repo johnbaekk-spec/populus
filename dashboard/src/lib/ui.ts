@@ -1012,8 +1012,8 @@ export function filerPeriodSectionHtml(
 export function filerEdgarBlock(cik: string, filerName: string): string {
   return (
     `<section class="edgar-block" aria-label="Full holdings on EDGAR">` +
-    `<h2 class="section-h">The full holdings table lives at the source.</h2>` +
-    `<p>Populus publishes aggregate slices of this filer — registry, concentration, top-holder ranks, and quarter-over-quarter changes. The complete per-filing holdings detail is deliberately not served here (M2-CONTRACT §3: per-filer holdings detail is federated to EDGAR, never served). The primary source is one click away and is the record itself:</p>` +
+    `<h2 class="section-h">The full holdings table is not rendered here yet.</h2>` +
+    `<p>Populus currently publishes aggregate slices of this filer — registry, concentration, top-holder ranks, and quarter-over-quarter changes. The complete per-filing position list is <strong>being built</strong> (RUN M2-8); M2-CONTRACT §3 was amended on 2026-08-02 so that it will be served here rather than federated to EDGAR. Until that build publishes, the primary source is one click away and is the record itself:</p>` +
     `<a class="cta" href="${esc(edgarFilerUrl(cik))}" rel="noopener" target="_blank">Open ${esc(
       filerName,
     )}'s 13F filings on SEC EDGAR ↗</a>` +

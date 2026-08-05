@@ -3,7 +3,9 @@
    integer columns that are NULL when legitimately unavailable (never a
    fabricated zero), canonical sorted JSON flag arrays, and the five tables the
    producer ships. Per M2-CONTRACT §3 the dashboard receives aggregate slices
-   only; per-filer holdings detail is federated to EDGAR, never served here.
+   only. Per-filer holdings detail is NOT yet read here; M2-CONTRACT §3 was amended
+   2026-08-02 to serve it, and RUN M2-8 adds the serving projection this module
+   will read. Until then this file intentionally reads agg_* only.
 
    Period-correct sourcing (Locked #6): `agg_filer_registry` supplies identity
    (name, latest_period) — its count/value fields accumulate over ALL retained

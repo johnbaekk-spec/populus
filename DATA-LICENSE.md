@@ -51,7 +51,7 @@ Register version: `licenses-1.1.0`.
   - Request-rate floor of at most 2 requests/second is enforced in code, never in configuration (G6)
   - No User-Agent rotation, no source-address rotation, no retry storm: sustained 403 latches a circuit breaker that stops the job
   - §105 does not automatically cover every third-party document hosted on EDGAR; per-document conditions still govern
-  - Per-filer holdings detail is federated at question time, not replicated wholesale
+  - Per-filer holdings detail is replicated into an ops-local canonical store and served as a derived projection; it is NOT federated-only (amended 2026-08-02, M2-CONTRACT §3/§3.1). Live federation is retained only for filings newer than the published build and periods not yet ingested
 - **Attribution:** Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov), retrieved per-record with the source URL retained.
 - **Determination basis:** Works of the US Government are not subject to domestic copyright (17 U.S.C. §105), and facts and figures in filings are not copyrightable. SEC publishes fair-access conditions (rate ceiling, identifying User-Agent) as access conditions, not redistribution restrictions; Populus encodes them in the client. Endpoints verified live end-to-end on 2026-07-24 (M2-CONTRACT §1), including the User-Agent correction recorded above.
 - **Determined:** 2026-07-24 · **Review by:** 2026-10-24

@@ -59,7 +59,7 @@
         "Request-rate floor of at most 2 requests/second is enforced in code, never in configuration (G6)",
         "No User-Agent rotation, no source-address rotation, no retry storm: sustained 403 latches a circuit breaker that stops the job",
         "§105 does not automatically cover every third-party document hosted on EDGAR; per-document conditions still govern",
-        "Per-filer holdings detail is federated at question time, not replicated wholesale"
+        "Per-filer holdings detail is replicated into an ops-local canonical store and served as a derived projection; it is NOT federated-only (amended 2026-08-02, M2-CONTRACT \u00a73/\u00a73.1). Live federation is retained only for filings newer than the published build and periods not yet ingested"
       ],
       "required_notices": [],
       "attribution": "Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov), retrieved per-record with the source URL retained.",

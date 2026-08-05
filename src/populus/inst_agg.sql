@@ -85,6 +85,22 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
   PRIMARY KEY (issuer_key, period_of_report, rank)
 );
 
+-- Per-filer portfolio concentration.
+--
+-- GRAIN NOTE (RUN M2-8 T6, QA-2/QA-3): these rows are computed from
+-- v_filer_reported_holdings, NOT v_default_holdings. Two consequences that are
+-- intended but must not be discovered later:
+--   1. The row population WIDENS — every filer-period in the filer-reported set
+--      gets a row, including affiliation-suppressed filers that previously had
+--      none (filer-reported is a superset of default). Published row counts and
+--      the inst logical digest change accordingly.
+--   2. topn_value_usd / topn_share_bps / hhi now describe the filer's OWN
+--      reported book, so their VALUES change for any affiliated filer. That is
+--      the point (review F5: the flag baseline must not inherit a truncated
+--      book), but it is a change to an already-published number.
+-- Cross-entity issuer totals keep reading v_default_holdings so an affiliate
+-- relationship is still counted exactly once.
+--
 -- Per-filer portfolio concentration: top-N share (basis points) and an integer
 -- HHI, computed ONLY when total_value_usd > 0; when the total is 0 (or every
 -- value is NULL) both are stored NULL + concentration_unavailable — the digest
@@ -98,6 +114,12 @@ CREATE TABLE IF NOT EXISTS agg_filer_concentration (
   topn_value_usd       INTEGER NOT NULL,          -- summed value of the top-N positions
   topn_share_bps       INTEGER,                   -- topn/total in bps; NULL when total <= 0 (F5)
   hhi                  INTEGER,                   -- integer HHI in bps; NULL when total <= 0 (F5)
+  -- RUN M2-8 (T6, plan R14): the LARGEST SINGLE position's share, which is what
+  -- the outsized-position flag compares against. topn_share_bps is a COMBINED
+  -- top-N share and is a different statistic entirely — a book of five 10%
+  -- positions has topn_share_bps 5000 and max_position_share_bps 1000 (external
+  -- review round 2, F11). NULL on the same condition as the other two.
+  max_position_share_bps INTEGER,
   flags                TEXT NOT NULL,             -- canonical sorted JSON array
   ingested_at          TEXT NOT NULL,             -- volatile; excluded from the projection
   PRIMARY KEY (cik, period_of_report)
