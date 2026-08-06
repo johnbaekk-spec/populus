@@ -45,13 +45,44 @@ REQUIRED_CONGRESS_ARTIFACTS = (
 WATERMARK_KEYS = ("house_index_last_modified", "senate_max_filed_date")
 
 # --- the institutional 13F module (§5.5; M2-CONTRACT §5.6 — RUN M2-3) ---------
-# The inst module carries exactly one artifact: the derived cross-filer
-# aggregate database. Its watermarks are 13F-shaped (report period + filed
-# date), disjoint from congress's House/Senate freshness keys.
+# The inst module carries TWO database artifacts (RUN M2-8 T8, plan R9):
+#   inst_agg.db      — the derived cross-filer aggregate (M2-3)
+#   inst_serving.db  — the per-filer SERVING projection (M2-8), which the MCP
+#                      snapshot path reads for published per-filer detail
+# Until M2-8 the module carried exactly one, and `module_db_artifact()` returned
+# a scalar. External review r3 F9 flagged that a second asset is NOT an ordinary
+# extra entry: three call sites in publish/build.py resolved that scalar, so a
+# second artifact would have been silently skipped at preflight, verification and
+# rollback. The policy now carries a TUPLE and those sites iterate.
+# Its watermarks are 13F-shaped (report period + filed date), disjoint from
+# congress's House/Senate freshness keys.
 INST_MODULE = "inst"
 INST_DB_ARTIFACT = "inst_agg.db"
+INST_SERVING_ARTIFACT = "inst_serving.db"
 INST_SCHEMA_VERSION = "1.0"
 INST_CLIENT_COMPAT = ">=0.0.1,<1"
+# DEVIATION FROM R10, RECORDED (QA M2-8 M12).
+#
+# R10 says "the manifest policy requires the new artifact". `inst_serving.db` is
+# NOT in this tuple, and that is deliberate: `validate_manifest` runs over
+# manifests this release did not write — the rollback target, the pointer's
+# current build, the client's cached manifest — and every build that predates
+# RUN M2-8 legitimately has no serving artifact. A hard entry here would make
+# each of those invalid, i.e. it would refuse to roll back to a build that was
+# correct when it was published.
+#
+# What made that unsafe was not the mechanism but the missing half: nothing
+# failed when a POST-M2-8 build omitted the artifact, so "optional" and "absent
+# because nobody wrote the producer" were indistinguishable — which is exactly
+# the state the increment shipped in. The compensating control lives at the
+# PRODUCER instead (`publish/build.py`, beside the inst manifest assembly): a
+# build that publishes `inst_agg.db` and cannot produce `inst_serving.db` raises
+# `PublishError`. Old manifests keep validating; new builds cannot regress.
+#
+# The alternative considered and not taken: gate the requirement on
+# `schema_version >= 1.1`. It is a cleaner long-run shape, but it needs an inst
+# schema-version bump — a published-contract change with its own client-compat
+# consequences — and is an owner decision, not a QA remediation.
 REQUIRED_INST_ARTIFACTS = (INST_DB_ARTIFACT,)
 INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
 
@@ -64,21 +95,45 @@ _MODULE_POLICY: dict[str, dict] = {
         "required": REQUIRED_CONGRESS_ARTIFACTS,
         "watermarks": WATERMARK_KEYS,
         "db_artifact": DB_ARTIFACT,
+        "db_artifacts": (DB_ARTIFACT,),
     },
     INST_MODULE: {
         "required": REQUIRED_INST_ARTIFACTS,
         "watermarks": INST_WATERMARK_KEYS,
         "db_artifact": INST_DB_ARTIFACT,
+        # Both carry a logical_digest and both must be verified. `inst_serving.db`
+        # is OPTIONAL in REQUIRED_INST_ARTIFACTS (a build predating M2-8 has none)
+        # but when present it is verified exactly like the aggregate.
+        "db_artifacts": (INST_DB_ARTIFACT, INST_SERVING_ARTIFACT),
     },
 }
 # Every module's database artifact name — the artifacts that MUST carry a
 # `logical_digest` (§5.5). Kept as a set so `_validate_artifact` is module-blind.
-_DB_ARTIFACTS = frozenset(policy["db_artifact"] for policy in _MODULE_POLICY.values())
+_DB_ARTIFACTS = frozenset(
+    name for policy in _MODULE_POLICY.values() for name in policy["db_artifacts"]
+)
 
 
 def module_db_artifact(module: str = MODULE) -> str:
-    """The database artifact name for *module* (e.g. ``inst`` → ``inst_agg.db``)."""
+    """The PRIMARY database artifact for *module* (e.g. ``inst`` → ``inst_agg.db``).
+
+    Retained for callers that genuinely want one name. Anything that VERIFIES,
+    uploads, resumes or rolls back must use :func:`module_db_artifacts` instead —
+    resolving the scalar here is exactly how a second asset gets silently skipped
+    (external review r3 F9).
+    """
     return _MODULE_POLICY[module]["db_artifact"]
+
+
+def module_db_artifacts(module: str = MODULE) -> tuple[str, ...]:
+    """EVERY database artifact for *module*, in deterministic order.
+
+    Each carries a `logical_digest` and each must be verified independently. A
+    module may legitimately publish a subset (a pre-M2-8 build has no
+    `inst_serving.db`), so callers skip a name the manifest does not list — but
+    they must never skip a name the manifest DOES list.
+    """
+    return tuple(_MODULE_POLICY[module]["db_artifacts"])
 
 _BUILD_ID = re.compile(r"^\d{8}\.\d+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")

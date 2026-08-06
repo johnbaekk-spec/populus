@@ -508,13 +508,35 @@ def test_shape_holding_fields():
            "unit_basis": "whole", "ssh_prnamt": 150, "ssh_prnamt_type": "SH",
            "put_call": None, "security_id": None, "flags": ["missing_security"]}
     shaped = env.shape_holding(row, period_of_report="2026-03-31",
-                               filed_date="2026-05-15", doc_url="https://x/doc")
+                               filed_date="2026-05-15", doc_url="https://x/doc",
+                               accession="0001193125-26-226661")
     assert shaped["period_of_report"] == "2026-03-31"  # both dates (G4)
     assert shaped["filed_date"] == "2026-05-15"
     assert shaped["value_usd"] == 2000 and shaped["unit_basis"] == "whole"  # G5
     assert "quarter-end market value" in shaped["value_label"]
     assert shaped["source"] == "sec-edgar" and shaped["doc_url"] == "https://x/doc"
     assert shaped["flags"] == ["missing_security"]
+    # §5.1 `source_record_id`: the identity of the filing that disclosed THIS row.
+    assert shaped["accession"] == "0001193125-26-226661"
+
+
+def test_shape_holding_requires_an_accession_rather_than_defaulting_to_null():
+    """QA M2-8 R2 N4: `accession` had a `= None` default, so a caller that simply
+    forgot it shipped `accession: null` on every row — and one of the two callers
+    did. `null` is indistinguishable from "this filing has no accession", which
+    is never true of a 13F.
+
+    Both planes have the value in hand, so the parameter is REQUIRED and the
+    omission is a TypeError at the call site instead of a silent null in the
+    payload. Mutation guard: restoring the default flips this to no error.
+    """
+    with pytest.raises(TypeError):
+        env.shape_holding(                       # type: ignore[call-arg]
+            {"issuer_name_raw": "APPLE INC"},
+            period_of_report="2026-03-31",
+            filed_date="2026-05-15",
+            doc_url="https://x/doc",
+        )
 
 
 def test_congress_envelope_unchanged():
@@ -861,6 +883,53 @@ def test_federated_detail_composes_the_real_base_and_new_holdings_amendment():
     assert all(h["period_of_report"] == "2025-03-31" for h in r["holdings"])
 
 
+def test_every_live_plane_row_carries_its_OWN_accession():
+    """QA M2-8 R2 N4 — the half of the §5.1 contract the published plane already
+    keeps (`test_every_published_row_carries_its_own_accession`).
+
+    `server.py:605` states the contract: *"Rows are shaped exactly like the
+    federated ones so a client parses both planes identically."* The remediation
+    added `accession` to `shape_holding`, passed it on the published plane, and
+    left the live call site untouched — so `mode='snapshot'` returned a real
+    accession and `mode='detail'` returned `null` for the same holding, defended
+    by a docstring claiming the live path has no accession to give. It does:
+    `inst_queries._holding_to_dict` puts `source_accession` in the very dict this
+    call site iterates, beside the `source_filed_date` and `source_doc_url` it
+    already reads.
+
+    A composed period mixes a base with its amendments, so the accessions must
+    DIFFER across rows and match the composition trail — one restamped value
+    would be worse than none.
+
+    Mutation guard: dropping `accession=` from the live shaper call is a
+    TypeError; passing `detail["accession"]` alone collapses the two groups.
+    """
+    files = {iq.COMPANY_TICKERS_URL: MCP_TICKERS.read_bytes()}
+    files.update(_detail_url_map(REAL_DIR, REAL_CIK, MERGE_BASE_NODASH))
+    files.update(_detail_url_map(REAL_DIR, REAL_CIK, MERGE_AMENDMENT_NODASH))
+    server = build_server(
+        db_path=":memory:", build_id="cong-1", inst_db_path=None,
+        sec_client=_clock_client(_FakeSecTransport(files)), now=_now,
+    )
+    r = _call(server, "inst_filer_holdings", cik=REAL_CIK,
+              period="2025-03-31", mode="detail")["results"]
+
+    holdings = r["holdings"]
+    assert holdings, "the composed live answer carried no holdings"
+    for h in holdings:
+        assert h.get("accession"), f"a live-plane row carries no accession: {h}"
+    # Per-row, not per-answer: the 110 base rows and the amendment's 4 carry
+    # their own filing's identity, in the same split as `filed_date` (G4).
+    by_accession = {}
+    for h in holdings:
+        by_accession.setdefault(h["accession"], []).append(h)
+    trail = {c["accession"]: c["rows"] for c in r["composition"]}
+    assert {a: len(v) for a, v in by_accession.items()} == trail == {
+        "0000950123-25-005701": 110, "0000950123-25-008361": 4}
+    # And the identity is the FILING's, never the envelope's top-level stamp.
+    assert set(by_accession) == set(trail)
+
+
 def test_an_amendment_without_its_base_is_labeled_incomplete():
     """An amendment-only period composes to an INCOMPLETE position list — the F2
     failure one level down. It must be labeled, not read as a full portfolio."""
@@ -1126,6 +1195,25 @@ def test_published_resolution_marks_provenance_and_absence_honestly(monkeypatch)
             if self.module is None:
                 return Path("c.db")
             return Path("i.db") if MODULES and "inst" in MODULES else None
+        def serving_db_path(self):
+            # QA M2-8: this used to `return None` unconditionally, so the
+            # assertion below ("the serving projection did NOT resolve") held no
+            # matter what the production logic did — inverting `snapshot.py`
+            # left it green. It now applies the REAL rule: the MANIFEST is the
+            # authority, and the artifact resolves only when the module
+            # enumerates it by name.
+            manifest = self.current_manifest()
+            if manifest is None:
+                return None
+            entries = manifest.get("modules", {}).get(self.module, {}).get("artifacts")
+            if not isinstance(entries, list):
+                return None
+            if not any(
+                isinstance(e, dict) and e.get("name") == "inst_serving.db"
+                for e in entries
+            ):
+                return None
+            return Path("i_serving.db")
 
     monkeypatch.setattr(sys, "argv", ["populus-mcp", "--attestation=staging-noop"])
     monkeypatch.setattr("populus.client.snapshot.SnapshotClient", _Client)
@@ -1136,6 +1224,33 @@ def test_published_resolution_marks_provenance_and_absence_honestly(monkeypatch)
     present = srv_mod._resolve_snapshot()
     assert present["inst_from_published_manifest"] is True
     assert present["inst_absent_reason"] is None
+    # The aggregate resolved; the serving projection did NOT. The two artifacts
+    # are resolved independently, so this state must be reported as itself — the
+    # aggregate's path must never be handed over as the serving one (R10).
+    assert present["inst_serving_db_path"] is None
+    assert "inst_serving.db" in present["inst_serving_absent_reason"]
+    assert "NOT used in its place" in present["inst_serving_absent_reason"]
+
+    # The OTHER direction, which no test exercised: a manifest that DOES
+    # enumerate the serving artifact must resolve it, and must not report an
+    # absence reason. Without this case the assertions above are satisfied by a
+    # resolver that can only ever answer None.
+    MODULES = {
+        "congress": {},
+        "inst": {
+            "watermarks": {},
+            "artifacts": [
+                {"name": "inst_agg.db"},
+                {"name": "inst_serving.db"},
+            ],
+        },
+    }
+    published = srv_mod._resolve_snapshot()
+    assert published["inst_serving_db_path"] is not None, (
+        "a manifest enumerating the serving artifact must resolve it")
+    assert published["inst_serving_absent_reason"] is None
+    assert published["inst_serving_db_path"] != published["inst_db_path"], (
+        "the aggregate's path was handed over as the serving one (R10)")
 
     MODULES = {"congress": {}}                      # gate withheld inst
     absent = srv_mod._resolve_snapshot()

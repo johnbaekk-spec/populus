@@ -27,7 +27,7 @@
 # fallback when `CI` is set) and, for the institutional preview paths,
 # `POPULUS_TICKER_MAP`.
 
-.PHONY: sync test test-python dashboard-gates security check accept-m2-5 accept-m2-6 accept-m1-b
+.PHONY: sync test test-python dashboard-gates security check accept-m2-5 accept-m2-6 accept-m2-8 accept-m1-b
 
 sync:
 	uv sync --frozen
@@ -77,6 +77,24 @@ accept-m2-5:
 # does not describe.
 accept-m2-6: sync
 	uv run python scripts/accept_m2_6.py
+
+# RUN M2-8 acceptance (R20): the mandatory synchronous DEV gate for the serving
+# increment. Hermetic (committed fixtures, no network) and it NEVER skips: it
+# drives corpus -> serving projection -> inst_serving.db -> logical digest ->
+# manifest/producer contract -> MCP seam -> the ACTIVITY grain over a real
+# two-period aggregate -> the loader's column contract -> flag constants ->
+# the budget gate driven in BOTH directions, and prints the measured `dist/`
+# file count when a built tree exists.
+#
+# The forward file-budget PROJECTION is reported, not asserted: it currently
+# breaches the 15,000 self-cap on an inherited M1 overrun, and that is an owner
+# decision surfaced by the gate — the same rule accept-m1-b applies to a
+# below-gate era. The ENFORCING measured-tree gate lives in the dashboard's
+# post-build suite, where a real `dist/` exists.
+#
+# Depends on `sync` for the same reason accept-m2-6 does.
+accept-m2-8: sync
+	uv run python scripts/accept_m2_8.py
 
 # RUN M1-B Phase A acceptance (R11/R16): the mandatory synchronous DEV gate.
 # Fully hermetic (committed tests/fixtures/ bytes, zero sockets, autouse

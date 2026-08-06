@@ -43,6 +43,54 @@ LOGICAL_PROJECTIONS: dict[str, dict[str, frozenset[str]]] = {
         "agg_filer_concentration": frozenset({"ingested_at"}),
     },
 }
+
+# --- RUN M2-8 T8: projections are per ARTIFACT, not per module ----------------
+# The inst module now publishes TWO databases with DIFFERENT schemas
+# (`inst_agg.db` aggregates, `inst_serving.db` the per-filer serving
+# projection). Digesting the serving DB under the aggregate's projection would
+# look for tables it does not have. `LOGICAL_PROJECTIONS` stays keyed by module
+# for every existing caller; this map overrides it per artifact name where the
+# two differ.
+ARTIFACT_PROJECTIONS: dict[str, dict[str, frozenset[str]]] = {
+    "inst_serving.db": {
+        # NOTHING is excluded here, and that is the point: unlike `inst_agg.db`
+        # (which drops a volatile `ingested_at` from every table), the serving
+        # projection is DERIVED — it carries no ingest timestamp and no build
+        # identity, so every column is reproducible from the corpus and every
+        # column is digested. An earlier comment claimed "volatile provenance is
+        # excluded exactly as elsewhere" while every value below is an empty
+        # frozenset; it described a rule this artifact does not need.
+        "serving_filings": frozenset(),
+        "serving_filer_rows": frozenset(),
+        "serving_issuer_holder_rows": frozenset(),
+        "serving_activity": frozenset(),
+    },
+}
+
+
+def projection_for(artifact_name: str, module: str) -> dict[str, frozenset[str]]:
+    """The logical projection for one artifact.
+
+    Falls back to the module projection, so every pre-M2-8 caller is unchanged;
+    an artifact whose schema differs from its module's primary database declares
+    itself in `ARTIFACT_PROJECTIONS`.
+    """
+    override = ARTIFACT_PROJECTIONS.get(artifact_name)
+    if override is not None:
+        return override
+    return LOGICAL_PROJECTIONS[module]
+#: One version per MODULE, and it covers EVERY artifact projection that module
+#: publishes — `LOGICAL_PROJECTIONS[<module>]` plus every `ARTIFACT_PROJECTIONS`
+#: override for one of its artifacts. The manifest carries a single
+#: `digest_projection_version` per module (`build.py`), so a change to either map
+#: must bump the module's version here or consumers get no signal that the byte
+#: envelope moved.
+#:
+#: `inst` stays "1" through the addition of `inst_serving.db`: the artifact had no
+#: producer until now, so no published build ever carried version "1" WITHOUT the
+#: serving projection — there is no earlier envelope for a consumer to be confused
+#: by. Any subsequent edit to `ARTIFACT_PROJECTIONS["inst_serving.db"]` is a real
+#: envelope change and must bump it.
 LOGICAL_PROJECTION_VERSIONS = {"congress": "2", "inst": "1"}
 # Back-compat aliases: the unqualified names are the congress projection v1, so
 # every existing caller that passes nothing keeps the exact same envelope.

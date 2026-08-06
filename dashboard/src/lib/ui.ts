@@ -917,7 +917,7 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
   {
     mark: "‡e",
-    html: `"exit" = absent this quarter: sold, delisted, moved to confidential treatment, or migrated to an affiliated filer — the filing does not say which`,
+    html: `"exit" = absent this quarter: disposed, delisted, under confidential treatment, or reported instead by an affiliated manager — the filing does not say which`,
   },
   {
     mark: "n/c",
@@ -1012,8 +1012,8 @@ export function filerPeriodSectionHtml(
 export function filerEdgarBlock(cik: string, filerName: string): string {
   return (
     `<section class="edgar-block" aria-label="Full holdings on EDGAR">` +
-    `<h2 class="section-h">The full holdings table is not rendered here yet.</h2>` +
-    `<p>Populus currently publishes aggregate slices of this filer — registry, concentration, top-holder ranks, and quarter-over-quarter changes. The complete per-filing position list is <strong>being built</strong> (RUN M2-8); M2-CONTRACT §3 was amended on 2026-08-02 so that it will be served here rather than federated to EDGAR. Until that build publishes, the primary source is one click away and is the record itself:</p>` +
+    `<h2 class="section-h">The complete filing on EDGAR.</h2>` +
+    `<p>The position list above is served from the published Populus build — every position this filer reported for the selected quarter, as it reported it. This block is <strong>provenance, not a substitute</strong>: the filing itself is the record, and it is one click away. Serving this list is <a href="/methodology/">M2-CONTRACT §3</a>, amended 2026-08-02; §3.1 keeps live EDGAR for filings newer than this build.</p>`+
     `<a class="cta" href="${esc(edgarFilerUrl(cik))}" rel="noopener" target="_blank">Open ${esc(
       filerName,
     )}'s 13F filings on SEC EDGAR ↗</a>` +
@@ -1051,7 +1051,17 @@ export function filerBody(
     )}</span> · <span class="mono-id">CIK ${esc(filer.cik)}</span> · <a class="mono-note" href="${esc(
       edgarFilerUrl(filer.cik),
     )}" rel="noopener" target="_blank">EDGAR ↗</a></div>` +
-    `<div class="explainer"><span class="explainer-h">What a 13F is — and is not.</span> A quarter-end snapshot of long positions in Section 13(f) securities, filed up to 45 days later. No shorts, no cash, no bonds outside the 13(f) list. This page is <strong>not current holdings</strong> and never a complete portfolio. <a href="/methodology/#m2">methodology §13F ↗</a></div>` +
+    // QA M2-8 M6: this used to be a THIRD phrasing of the §5 data_note, under a
+    // heading one character away from the canonical box's ("What a 13F is — and
+    // is not." vs "What a 13F is — and is not"), rendering on the same page — so
+    // a reader met two same-titled blocks with different wording and no way to
+    // know which was authoritative. It now states the one claim the header
+    // itself must carry and POINTS at the canonical box rather than restating it.
+    `<div class="explainer"><span class="explainer-h">A quarter-end snapshot.</span> ` +
+    `Filed up to 45 days later, so this page is <strong>not current holdings</strong> ` +
+    `and never a complete portfolio. ` +
+    `<a href="#inst-data-note">what a 13F is — and is not ↓</a> · ` +
+    `<a href="/methodology/#m2">methodology §13F ↗</a></div>` +
     `</div>` +
     `</header>` +
     (window?.open ? s7Banner(window) : "") +

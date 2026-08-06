@@ -69,14 +69,22 @@ def _filer_fn(conn, cik, file_number_norm, name="Test Filer"):
 
 
 def _load_fn(conn, *, fid, cik, period, filed, holds, file_number_norm,
-             other_managers=(), total=None):
-    """Load one filing with an explicit file number and other-manager list."""
+             other_managers=(), total=None, submission_type="13F-HR",
+             is_amendment=0, amendment_type=None, parse_status="parsed"):
+    """Load one filing with an explicit file number and other-manager list.
+
+    The amendment fields are parameters because the R13 exit cases are defined
+    by them: a period's composition is authoritative-full only when it has
+    exactly one base and every amendment in it carries a KNOWN type. Defaults
+    reproduce the original signature (a clean parsed base) exactly.
+    """
     if total is None:
         total = sum(h.value_usd for h in holds if h.value_usd is not None)
     filing = InstFilingRow(
         filing_id=fid, cik=cik, accession=fid.split(":", 1)[1],
-        submission_type="13F-HR", period_of_report=period, filed_date=filed,
-        form_version=None, unit_basis="whole", is_amendment=0, amendment_type=None,
+        submission_type=submission_type, period_of_report=period, filed_date=filed,
+        form_version=None, unit_basis="whole", is_amendment=is_amendment,
+        amendment_type=amendment_type,
         amendment_no=None, amends=None, is_confidential_omitted=None,
         conf_denied_expired=None, filing_manager_raw="Test Filer",
         form13f_file_number=file_number_norm, file_number_norm=file_number_norm,
@@ -85,7 +93,7 @@ def _load_fn(conn, *, fid, cik, period, filed, holds, file_number_norm,
         table_entry_total=len(holds), table_value_total=total,
         table_value_total_usd=total, row_count=len(holds), sum_value_usd=total,
         value_total_delta=0, resolved_rows=len(holds), resolved_value_usd=total,
-        parse_status="parsed", failure_kind=None, flags=[],
+        parse_status=parse_status, failure_kind=None, flags=[],
         doc_url="d", table_url="t", table_filename="f.xml", table_raw_path="rp",
         source_url="s", retrieved_at=None, raw_path="r", index_response_hash=None,
         response_hash=None, table_response_hash=None, parser_version="p",

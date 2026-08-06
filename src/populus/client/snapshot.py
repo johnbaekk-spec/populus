@@ -36,6 +36,8 @@ from packaging.version import InvalidVersion, Version
 import populus
 from populus.publish.attestation import AttestationProvider, StagingNoop
 from populus.publish.manifest import (
+    INST_MODULE,
+    INST_SERVING_ARTIFACT,
     MODULE,
     module_artifacts,
     module_db_artifact,
@@ -505,6 +507,57 @@ class SnapshotClient:
             return None
         candidate = self._safe_under(
             self._module, build_id, module_db_artifact(self._module)
+        )
+        return candidate if candidate.is_file() else None
+
+    def serving_db_path(self) -> Path | None:
+        """This build's ``inst_serving.db``, or ``None`` when it publishes none.
+
+        RUN M2-8 T9 (plan R10/R17). From M2-8 the inst module publishes TWO
+        database artifacts — the cross-filer aggregate and the per-filer SERVING
+        projection — and the retained federated boundary (M2-CONTRACT §3.1) is
+        decided from the SERVING one: it, and only it, knows which
+        ``(cik, period)`` pairs the build actually published.
+
+        Absence is EXPLICIT and never substituted. A pre-M2-8 build publishes no
+        serving artifact, so this returns ``None`` and the caller must say so.
+        Handing back ``inst_agg.db`` instead would answer a per-filer detail
+        question with cross-filer aggregates, and — worse — would let the
+        boundary read "inside the published universe" for a filer whose
+        positions were never published at all, silently suppressing the live
+        path that is the only correct answer there.
+
+        The MANIFEST is the authority on what the build published: a file
+        sitting in the cache directory that the manifest does not enumerate was
+        never hash-verified by :meth:`_build_complete`, so it is not served.
+        """
+        if self._module != INST_MODULE:
+            # Not an "absent artifact" — a category error. congress publishes no
+            # serving projection, so a caller asking this of it has confused the
+            # modules and must be told, not handed a null it will read as
+            # "this build simply predates M2-8".
+            raise ValueError(
+                f"module {self._module!r} publishes no serving artifact:"
+                f" {INST_SERVING_ARTIFACT!r} exists only for the"
+                f" {INST_MODULE!r} module"
+            )
+        build_id = self.current_build()
+        if build_id is None:
+            return None
+        manifest = self.current_manifest()
+        if manifest is None:
+            return None
+        try:
+            entries = module_artifacts(manifest, self._module)
+        except (KeyError, TypeError):
+            return None
+        if not isinstance(entries, list) or not any(
+            isinstance(entry, dict) and entry.get("name") == INST_SERVING_ARTIFACT
+            for entry in entries
+        ):
+            return None
+        candidate = self._safe_under(
+            self._module, build_id, INST_SERVING_ARTIFACT
         )
         return candidate if candidate.is_file() else None
 

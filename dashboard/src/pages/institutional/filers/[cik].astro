@@ -2,10 +2,13 @@
 // Institutional Filer page (Institutional Filer.dc.html), bound to the
 // published aggregates with period-correct sourcing (Locked #6): identity from
 // agg_filer_registry; every period-scoped tile from agg_filer_concentration;
-// changes from agg_qoq_deltas. The mockup's full holdings table is
-// contractually unservable (M2-CONTRACT §3) → changes table + EDGAR link-out.
+// changes from agg_qoq_deltas. The filer's COMPLETE reported position list —
+// the selected quarter and the one before it (OD-5) — is served below the
+// aggregate by <HoldingsTable>: M2-CONTRACT §3 was amended 2026-08-02 and the
+// EDGAR link is now provenance for those rows, not a substitute for them.
 // Route param is the UNPADDED CIK (/institutional/filers/1067983/).
 import Base from "../../../layouts/Base.astro";
+import HoldingsTable from "../../../components/HoldingsTable.astro";
 import { getBuildData } from "../../../lib/data";
 import { filerPeriods, concentrationFor, deltasFor } from "../../../lib/inst";
 import { filerBody } from "../../../lib/ui";
@@ -56,8 +59,8 @@ const periodData = JSON.stringify({
   ),
 });
 const description =
-  `${filer.filer_name}: 13F aggregate — per-quarter concentration and producer-classified ` +
-  `position changes from the published Populus aggregate; full holdings live on EDGAR.`;
+  `${filer.filer_name}: every position reported on its 13F for the selected quarter and the ` +
+  `one before it, plus per-quarter concentration and producer-classified position changes.`;
 ---
 
 <Base
@@ -68,6 +71,7 @@ const description =
 >
   <main class="shell page entity-page">
     <Fragment set:html={bodyHtml} />
+    <HoldingsTable kind="filer" cik={cik10} filerName={filer.filer_name} period={period} />
     <script is:inline type="application/json" id="filer-period-data" set:html={periodData} />
   </main>
   <script>
