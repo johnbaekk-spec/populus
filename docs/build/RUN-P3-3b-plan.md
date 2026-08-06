@@ -1,51 +1,61 @@
 # RUN P3-3b — Deploy the dashboard, and sign what went live
 
-> ## ⛔ STATUS: BLOCKED ON AN EMPIRICAL FACT NOBODY HAS ESTABLISHED
+> ## ✅ UNBLOCKED — the domain is Active with zero deployments
 >
-> **Revision 4** — addresses plan-review round 3 (7 blockers, 10 nits). **This plan
-> is not ready to implement,** and the reason is a measurement, not a design gap.
+> **Revision 5** — the round-3 blocker is resolved by measurement, and it resolved
+> *against* the reviewer's inference. **Revision 3's design stands as written.**
 >
-> Round 3 did what three rounds of documentation-reading did not: it **probed the
-> live domain**. Independently re-confirmed:
+> Owner drove the domain to Active without creating any deployment. Verified on the
+> Cloudflare side (`/pages/projects/publicfilings/domains`): `status: "active"`,
+> `verification_data.status: "active"`,
+> `validation_data: {status: "active", method: "http"}`,
+> `certificate_authority: "google"`, and the project `domains` array now reads
+> `["publicfilings.pages.dev", "publicfilings.org"]` — while `latest_deployment` is
+> still **null**. Independently confirmed from outside the account:
 >
 > ```
-> http://publicfilings.org/.well-known/acme-challenge/probe   522
-> https://publicfilings.org/                                  522
-> https://publicfilings.pages.dev/                            522
-> CAA record: none        NS: amos/erin.ns.cloudflare.com
+> $ curl -sv https://publicfilings.org/
+> subject: CN=publicfilings.org
+> issuer:  C=US; O=Google Trust Services; CN=WE1
+> SSL certificate verify ok.        expire date: Nov 1 2026
 > ```
 >
-> Cloudflare validates Pages custom domains over **HTTP** — it must reach an
-> endpoint on the domain. The project has **zero deployments**, so nothing serves,
-> so the validation path times out, so the domain stays `Initializing`. **That is a
-> real chicken-and-egg, and it is evidence that revision 3's Rollout prerequisite 4
-> — "owner activates the domain before arming" — may be impossible to satisfy.**
+> **Round 3's 522 measurement was real; the inference from it was wrong.** The
+> reviewer read "522 on `/.well-known/acme-challenge/`" as *validation is blocked*.
+> It only ever meant *nothing is serving yet* — which is true and will stay true
+> until the first deployment. Three things make the inference a mistake:
+> Cloudflare validated through the zone it already controls (`publicfilings.org` is
+> an active zone in this same account, apex CNAME → `publicfilings.pages.dev`,
+> proxied), so no origin content was needed; the certificate came from **Google
+> Trust Services**, not Let's Encrypt, so an ACME-path probe was not exercising the
+> mechanism actually in use; and most directly, **an HTTPS 522 is itself proof the
+> certificate works** — TLS terminated successfully before the origin lookup failed.
+> The evidence was in the original measurement and was read backwards.
 >
-> The uncomfortable implication: **revision 2's premise was probably right** (a
-> deployment is what unblocks the domain) even though its *mechanism* was wrong on
-> three counts. Revision 3 asserted the opposite premise on the strength of
-> documentary silence — the same argument-from-silence, run in reverse. Neither
-> revision established the fact.
+> The correction that matters for method: **probing beats arguing from
+> documentation silence, but only when the probe measures the mechanism in use.**
+> Revisions 2 and 3 argued from silence in opposite directions; round 3 probed and
+> was still wrong, because it probed the wrong path and misread the status code it
+> got. See `probe-dont-argue-from-silence`.
 >
-> **The leading candidate design (needs a round 4 review, NOT adopted here):**
-> verify run 1 against the **`*.pages.dev` production URL**, which exists as soon
-> as the project has a deployment and needs no custom-domain validation; record
-> `verification_host` in the generation so the record says which host was proved;
-> assert custom-domain `active` as a precondition on every *subsequent* run. This
-> is not an exemption from verification — it verifies the host that exists and
-> names it — and it is bounded to the runs before activation. It must be reviewed,
-> not assumed: three first-run mechanisms have now been rejected, and the pattern
-> is that each looked obviously correct when written.
+> **Consequences for the plan, all simplifying:**
+> - **Rollout prerequisite 4 is SATISFIED**, not merely satisfiable. Domain
+>   activation stays an owner provisioning step that never touches the per-deploy
+>   path — which is exactly the property that made it survivable.
+> - **The `*.pages.dev`-first fallback is dropped.** It is not needed, and it is
+>   not carried as an alternative.
+> - **R11's precondition assertion gains a real pollable surface.** The
+>   `/pages/projects/{project}/domains` subresource returns `status`,
+>   `verification_data` and `validation_data`, so the per-run check is programmatic
+>   rather than by eye. (The *project* endpoint's bare string array remains
+>   unusable for status — that finding stands.)
+> - **Two Cloudflare claims are corrected:** the CA here is Google Trust Services,
+>   so this plan's earlier Let's Encrypt rate-limiting citation was wrong twice
+>   over — wrong as documentation, and wrong as the applicable CA.
 >
-> **Owner decision required before this plan can be finalized.** Either drive the
-> domain to `status: active` on
-> `GET /accounts/{id}/pages/projects/publicfilings/domains` and report the result
-> (which would vindicate prerequisite 4), or confirm it cannot be done without a
-> deployment (which selects the pages.dev-first design). One API call and a manual
-> Cloudflare dashboard attempt settle it.
->
-> Everything below is revision 4 and is otherwise remediated. R11, R14, TD-4 and
-> Rollout prerequisite 4 are the requirements this decision rewrites.
+> **Still open before implementation:** six round-3 blockers (B2–B7) were remediated
+> in revision 4 but have not been re-reviewed. A confirmation round is in flight.
+> No implementation exists — `src/populus/deploy/` is still absent.
 >
 > ---
 >
@@ -546,8 +556,13 @@ Re-measured in this tree:
   hardcodes three commands.
 - ARCHITECTURE still contains `"verification_scope": "full"` (`:300`) and
   "full served-tree" (`:895`).
-- Pages project `publicfilings`, **zero deployments**, `production_branch: main`,
-  domain attached and `Initializing`. `DATA_REPO_PAT` and `Pages:Edit` unset;
+- Pages project `publicfilings`, **zero deployments** (`latest_deployment: null`),
+  `production_branch: main`. **Custom domain `publicfilings.org` is `status:
+  active`** — `verification_data.status: active`,
+  `validation_data: {status: active, method: http}`,
+  `certificate_authority: google`; project `domains` now
+  `["publicfilings.pages.dev", "publicfilings.org"]`. Apex `CNAME → publicfilings.pages.dev`,
+  proxied. `DATA_REPO_PAT` and `Pages:Edit` unset;
   both `*_ARMED` unprovisioned — **the publish workflow has never run.**
 - **Cloudflare API facts, verified against current documentation (round 3
   re-verified all of these independently):**
@@ -563,12 +578,16 @@ Re-measured in this tree:
   zone holds, grey-cloud/proxy state, "Cache Everything" page rules. **Cloudflare
   does not document Let's Encrypt rate-limiting as a cause** — revisions 2 and 3
   both asserted it; it is community lore.
-- **Measured, not documented — the live state that blocks this plan:**
-  `http://publicfilings.org/.well-known/acme-challenge/probe`,
-  `https://publicfilings.org/` and `https://publicfilings.pages.dev/` **all return
-  522**; no CAA record; NS `amos/erin.ns.cloudflare.com`. With zero deployments
-  there is no origin, so HTTP validation has nothing to reach. See the status
-  banner: this is the open question the plan cannot close by itself.
+- **Measured from outside the account — and the measurement corrects an earlier
+  misreading.** All of `http://publicfilings.org/.well-known/acme-challenge/probe`,
+  `https://publicfilings.org/` and `https://publicfilings.pages.dev/` return
+  **522**; no CAA record; NS `amos/erin.ns.cloudflare.com`. The 522 means only
+  *nothing is serving yet*, which stays true until the first deployment — it does
+  **not** indicate blocked validation. The TLS layer proves it:
+  `subject: CN=publicfilings.org`, `issuer: C=US; O=Google Trust Services; CN=WE1`,
+  `SSL certificate verify ok`, expiring 2026-11-01. An HTTPS 522 requires a
+  completed TLS handshake, so the certificate was already valid when round 3 read
+  the same status code as evidence of failure.
 
 ## Detected Stack
 
@@ -840,15 +859,15 @@ binding and the gate's verification step carry a killing mutant.
    against `GET /accounts/{id}/tokens` and absent from `GET /user/tokens` (R22).
 3. Create the `Pages:Edit` token **only once this run's code exists**, from the
    account API-tokens page so it is enumerable alongside its sibling.
-4. **Activate the custom domain and confirm `status: active`** via
-   `GET /accounts/{id}/pages/projects/publicfilings/domains` — **before arming.**
-   This is the prerequisite that replaces three rejected first-run mechanisms. It
-   is one-time provisioning of exactly the same kind as items 1–3, and it never
-   touches the per-deploy path, which is why it survives the objections that killed
-   the in-workflow variants. If the domain will not leave `Initializing`, the
-   documented causes are DNS/ACME validation being blocked and Let's Encrypt
-   rate-limiting — **not** the absence of a deployment; resolve it with Cloudflare
-   before proceeding rather than deploying at it.
+4. ~~Activate the custom domain and confirm `status: active`~~ — **DONE.**
+   `GET /accounts/{id}/pages/projects/publicfilings/domains` reports
+   `status: "active"` with a Google Trust Services certificate issued, and
+   `latest_deployment` still null. This is the prerequisite that replaced three
+   rejected first-run mechanisms: one-time provisioning of the same kind as items
+   1–3, never touching the per-deploy path. **It did not require a deployment** —
+   Cloudflare validated through the zone it already controls. R11 re-asserts the
+   active status per run against the same endpoint, so a later deactivation aborts
+   before the production upload.
 
 **Then:**
 
