@@ -570,3 +570,36 @@ def test_a_skipped_signer_fails_the_run() -> None:
             "is not a failure, and skipped is the case R20 exists for"
         )
         assert "exit 1" in bodies, f"job {name!r} does not fail the run"
+
+
+def test_no_name_is_read_as_both_a_secret_and_a_variable() -> None:
+    """`secrets.X` and `vars.X` are different namespaces, and the wrong one is silent.
+
+    GitHub does not error when you read a repository VARIABLE through
+    `secrets.` — the expression resolves to the empty string, so a deploy job
+    targets account "" and project "", and every YAML-shape assertion still
+    passes. Found live: `publish.yml` read CLOUDFLARE_ACCOUNT_ID as a secret
+    while `record-sign.yml` read the same name as a variable.
+
+    Cross-workflow disagreement is detectable without any network call, and one
+    of the two is always wrong.
+    """
+    workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+    as_secret: dict[str, list[str]] = {}
+    as_var: dict[str, list[str]] = {}
+    for path in workflows:
+        text = path.read_text(encoding="utf-8")
+        for name in re.findall(r"secrets\.([A-Z0-9_]+)", text):
+            as_secret.setdefault(name, []).append(path.name)
+        for name in re.findall(r"vars\.([A-Z0-9_]+)", text):
+            as_var.setdefault(name, []).append(path.name)
+    conflicted = sorted(set(as_secret) & set(as_var))
+    assert conflicted == [], (
+        "these names are read through BOTH namespaces, so at least one call "
+        "site resolves to the empty string at runtime: "
+        + "; ".join(
+            f"{name} (secrets in {sorted(set(as_secret[name]))}, "
+            f"vars in {sorted(set(as_var[name]))})"
+            for name in conflicted
+        )
+    )
