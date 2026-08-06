@@ -32,6 +32,23 @@ jobs:
       github.ref == 'refs/heads/main' &&
       vars.POPULUS_PUBLISH_ARMED == 'true'
     runs-on: ubuntu-latest
+    # RUN P3-3a R1/R9 — job-scoped least privilege (§14). `attestations: write`
+    # is required to create bundles and also permits reading them back, so the
+    # Verify step's lookups are authenticated: without a token they fall to the
+    # 60/hour unauthenticated cap shared per runner IP, and a quota error would
+    # be indistinguishable from tampering in the step that gates the pointer
+    # commit. This job still holds NO Cloudflare credential (§14 invariant).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    # Consumed by the deploy and sign jobs. `deployed` is false when the build
+    # was preserved or reconciled rather than assembled — already published and
+    # journal-sealed, so re-deploying it would re-produce a sealed journal for
+    # artifacts that never changed.
+    outputs:
+      build_id: ${{ steps.stage.outputs.build_id }}
+      deployed: ${{ steps.stage.outputs.fresh }}
     steps:
       - name: Check out populus
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -49,29 +66,184 @@ jobs:
       - name: Sync (frozen lockfile)
         run: uv sync --frozen
 
+      # RUN P3-3b R18/R20 — the previous deploy must have left a VERIFIED,
+      # attestation-backed generation before this run publishes anything.
+      #
+      # Named "Gate on ..." and not "Verify ...": `_step_index` in
+      # tests/test_attestation_structure.py resolves steps by substring, so a
+      # step whose name contains "verify" placed before the Attest step would
+      # capture that lookup and break three unrelated ordering assertions for a
+      # reason none of them states.
+      #
+      # It holds NO Cloudflare credential — §14 forbids this job one — so the
+      # live check is an unauthenticated fetch of the site's own marker, and the
+      # generation comes from the populus-data checkout this job already has.
+      - name: Gate on prior deployment generation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          uv run python -m populus.deploy.record gate
+          --data-repo populus-data
+          --domain publicfilings.org
+
       - name: Ingest (live, raw-archived)
         run: |
           uv run populus ingest congress-house --db populus.db --raw-root raw
           uv run populus ingest congress-senate --db populus.db --raw-root raw
 
-      - name: Build
+      # --- the two-phase build seam (RUN P3-3b R2) --------------------------
+      # The site is built BETWEEN these two steps: it reads manifest.json to
+      # decide which surfaces exist, and its file count is what finalize-build
+      # patches into stats.json. stage-build writes a provisional manifest;
+      # finalize-build discards it, re-assembles, and only then journals (R35).
+      #
+      # stage-build exits 3 when the build was preserved or reconciled rather
+      # than assembled. That is recovery working correctly, not an error — but
+      # there is then nothing to build a site from and nothing to deploy, so the
+      # remaining steps are skipped and the summary says so out loud (an
+      # operator who dispatched a redeploy must not read a green run as a
+      # deploy).
+      - name: Stage build
+        id: stage
+        env:
+          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
+          GH_REPO: johnbaekk-spec/populus-data
+        run: |
+          set +e
+          uv run populus stage-build --attestation=sigstore --db populus.db \
+            --data-repo populus-data --backend gh-release --repo "$GH_REPO" \
+            --raw-root raw | tee stage.out
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" = "3" ]; then
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Build preserved — nothing deployed"
+              echo
+              echo "Recovery adopted an existing build. It is already published"
+              echo "and sealed, so the site build and deploy were skipped."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [ "$status" = "0" ] || exit "$status"
+          echo "fresh=true" >> "$GITHUB_OUTPUT"
+          # The build directory is reported by the CLI, never spelled here: the
+          # §13.4 guard forbids a staging path literal in any step body.
+          # `grep` exits 1 on no match, so under `set -e` a missing key fails the
+          # step. The earlier `sed` extractor exited 0 and wrote nothing, which
+          # would have handed every downstream job an empty build id.
+          grep '^build_dir=' stage.out >> "$GITHUB_OUTPUT"
+          grep '^build_id=' stage.out >> "$GITHUB_OUTPUT"
+          grep '^staging_dir=' stage.out >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        if: steps.stage.outputs.fresh == 'true'
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: dashboard/.node-version
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install site dependencies (frozen)
+        if: steps.stage.outputs.fresh == 'true'
+        working-directory: dashboard
+        run: npm ci
+
+      # Every variable is step-scoped: tests/test_publish.py asserts there is no
+      # workflow-level or job-level `env:` block at all (§14 least privilege).
+      # POPULUS_TICKER_MAP is set to a path that does not exist on purpose —
+      # there is no real ticker registry on a runner, and the dashboard refuses
+      # a tests/fixtures path under CI, so the site renders the honest no-map
+      # state rather than serving fixture-derived tickers as production data
+      # (RUN P3-3b TD-7). SITE_CODE_SHA is the FULL sha; the verifier compares
+      # the populus:code_sha marker exactly, never by prefix.
+      - name: Build site
+        id: site
+        if: steps.stage.outputs.fresh == 'true'
+        working-directory: dashboard
+        env:
+          CI: "true"
+          POPULUS_BUILD_DIR: ${{ github.workspace }}/${{ steps.stage.outputs.build_dir }}
+          POPULUS_DB: ${{ github.workspace }}/populus.db
+          POPULUS_TICKER_MAP: ${{ github.workspace }}/no-ticker-registry.json
+          # Without this the site renders "this build withheld the institutional
+          # module — deliberately" for a MISCONFIGURATION: inst.ts looks for
+          # inst_agg.db under the build dir while build.py stages it under
+          # assets/. On an honesty-first site, claiming a deliberate withholding
+          # that never happened is the worst available failure.
+          POPULUS_INST_DB: ${{ github.workspace }}/${{ steps.stage.outputs.staging_dir }}/assets/inst_agg.db
+          SITE_CODE_SHA: ${{ github.sha }}
+        run: |
+          npm run build
+          count=$(find dist -type f | wc -l | tr -d ' ')
+          [ "$count" -gt 0 ] || { echo "site build produced no files"; exit 1; }
+          echo "file_count=$count" >> "$GITHUB_OUTPUT"
+
+      # The artifact BOTH the deploy job and the signer download. Nothing
+      # created it before this step, so `download-artifact` in two separate jobs
+      # was reaching for a name that never existed — and neither job would have
+      # said anything useful about why.
+      #
+      # `populus snapshot-site` freezes dashboard/dist into the §12.1 envelope:
+      # `site/` plus a SIBLING `inventory.json` outside it, so the inventory
+      # never inventories itself. The signer recomputes that inventory from the
+      # tree and refuses to believe the shipped copy, which is the point.
+      - name: Package the site artifact
+        if: steps.stage.outputs.fresh == 'true'
+        run: >-
+          uv run populus snapshot-site --source dashboard/dist --dest site-artifact
+
+      - name: Upload the site artifact
+        if: steps.stage.outputs.fresh == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: site-${{ steps.stage.outputs.build_id }}
+          path: site-artifact
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Finalize build
+        if: steps.stage.outputs.fresh == 'true'
         env:
           GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
           GH_REPO: johnbaekk-spec/populus-data
         run: >-
-          uv run populus build --db populus.db --data-repo populus-data
-          --backend gh-release --repo "$GH_REPO" --raw-root raw
+          uv run populus finalize-build
+          --staging-dir "$(dirname '${{ steps.stage.outputs.build_dir }}')"
+          --site-file-count '${{ steps.site.outputs.file_count }}'
+          --dist-dir dashboard/dist
+          --data-repo populus-data --backend gh-release --repo "$GH_REPO"
 
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
           GH_REPO: johnbaekk-spec/populus-data
         run: >-
-          uv run populus publish --data-repo populus-data
+          uv run populus publish --attestation=sigstore --data-repo populus-data
           --backend gh-release --repo "$GH_REPO"
 
+      # R1: the attest step sits BETWEEN Publish and Verify deliberately. Verify
+      # exits non-zero on a failed verdict, and the Commit step below has no
+      # `if: always()`, so a missing or failed attestation blocks the pointer
+      # commit. The ordering IS the enforcement — do not reorder these.
+      - name: Attest published artifacts
+        # Pinned to the COMMIT, not the `v2` tag OBJECT. `96b4a1ef…` — what this
+        # line held — is the annotated tag object; `e8998f94…` is the commit it
+        # points at. Both are immutable, so this was never a supply-chain hole,
+        # but `uses:` resolving a tag-object sha is not something GitHub
+        # documents, and this workflow has never run: a first armed deploy is a
+        # bad place to discover the answer. The §14 pin test passes either way
+        # (both are 40-hex), which is exactly why this needed a human to notice.
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            populus-data/latest.json
+            populus-data/builds/*/manifest.json
+
       - name: Verify
-        run: uv run populus verify --data-repo populus-data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run populus verify --data-repo populus-data --attestation=sigstore
 
       - name: Commit manifest and pointer (rebase-retry x3, §13.3)
         working-directory: populus-data
@@ -88,3 +260,102 @@ jobs:
           done
           echo "push failed after 3 rebase retries (no force push, ever)" >&2
           exit 1
+
+  # RUN P3-3b R7/T9 — the deploy job is ISOLATED, and the isolation is the point.
+  #
+  # §14 as amended: no JOB holds both `Pages Write` and GitHub write/attestation
+  # authority. The operative fact is not the permissions block on its own —
+  # workflow artifacts are a shared cross-job channel that `permissions:` does
+  # not govern — it is that a job with NO `id-token: write` cannot mint an
+  # attestation at all, whatever else it can reach. So this job carries the
+  # Cloudflare token and `contents: read`, and nothing else.
+  #
+  # It never writes to populus-data, never attests, and is not trusted by the
+  # signer: record-sign.yml re-derives every value from the artifact and the
+  # Pages API rather than believing anything produced here (R13).
+  deploy:
+    needs: publish
+    if: needs.publish.result == 'success' && needs.publish.outputs.deployed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      deployment_id: ${{ steps.deploy.outputs.deployment_id }}
+    steps:
+      - name: Check out populus
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download the built site
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: site-${{ needs.publish.outputs.build_id }}
+          path: site-artifact
+
+      # `wrangler` is invoked through `npx`, so this job needs Node too. Without
+      # it `npx` runs against whatever the runner image happens to ship —
+      # unpinned drift on the one tool that actually moves the bytes.
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: dashboard/.node-version
+
+      - name: Install uv (version-pinned)
+        run: python3 -m pip install --quiet 'uv==0.7.13'
+
+      - name: Sync (frozen lockfile)
+        run: uv sync --frozen
+
+      # The token is STEP-scoped, never job-scoped: tests/test_publish.py
+      # asserts there is no job-level `env:` block anywhere in this workflow.
+      - name: Deploy to preview, verify, then production
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_EDIT_TOKEN }}
+          # `vars.`, not `secrets.` — these are repository VARIABLES (the account
+          # id and project name are not secret, and are already provisioned as
+          # variables). Read through `secrets.` they resolve to the empty string
+          # silently, and the deploy would target account "" project "".
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+        run: >-
+          uv run python -m populus.deploy.orchestrator
+          --source site-artifact/site
+          --inventory site-artifact/inventory.json
+          --custom-domain publicfilings.org
+          --production-branch main
+
+  # R20 — a SKIPPED signer job reports success. If POPULUS_RECORD_SIGN_ARMED
+  # were unset while publishing stayed armed, the deploy would complete, no
+  # generation would be written, and nothing would notice until the R18 gate
+  # fired a day later. `needs.sign.result` is therefore asserted explicitly
+  # below; `skipped` is not `success`.
+  sign:
+    needs: [publish, deploy]
+    uses: ./.github/workflows/record-sign.yml
+    secrets:
+      DATA_REPO_PAT: ${{ secrets.DATA_REPO_PAT }}
+      CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
+    with:
+      # These names are validated against record-sign.yml's declared inputs at
+      # PARSE time — an undeclared one rejects the whole workflow before any job
+      # starts, including publish.
+      artifact-name: site-${{ needs.publish.outputs.build_id }}
+      cf-production-deployment-id: ${{ needs.deploy.outputs.deployment_id }}
+
+  assert-signed:
+    needs: [deploy, sign]
+    if: always() && needs.deploy.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: A skipped or failed signer is a failed run
+        run: |
+          result='${{ needs.sign.result }}'
+          if [ "$result" != "success" ]; then
+            echo "::error::the deployment signer did not succeed (result=$result)."
+            echo "::error::A deployment went live with no attested generation."
+            echo "::error::Check POPULUS_RECORD_SIGN_ARMED — an unset variable"
+            echo "::error::skips the job, and a skipped job reports success (R20)."
+            exit 1
+          fi
+          echo "deployment generation signed and attested"

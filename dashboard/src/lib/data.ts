@@ -11,7 +11,6 @@
                         ../populus-data of this repository. DEV ONLY.
 */
 
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -52,11 +51,20 @@ export interface BuildData {
   generatedAt: string; // "YYYY-MM-DD HH:MM UTC"
   generatedAtDate: string; // "YYYY-MM-DD" — trailing-window / S7 calendar input
   codeSha: string;
-  manifestShaAbbrev: string; // first + last four hex chars, "ab12…cd34"
-  manifestSha: string;
+  /* No manifest digest field exists, deliberately (Locked #6, R19): the
+     manifest is re-assembled after the site builds, so any digest the site
+     could compute is stale by construction. `manifest` (the parsed document)
+     stays because module availability is derived from it, never assumed. */
   manifest: Record<string, any>; // parsed builds/<id>/manifest.json
   dataNote: string;
   stats: Record<string, any>; // parsed congress/stats.json (schema-validated upstream)
+  /** The RAW bytes of congress/stats.json, verbatim and unparsed. `/stats.json`
+      must be BYTE-equal to the canonical copy (R24, ARCHITECTURE §12.1) and the
+      producer renders it as
+      `json.dumps(…, ensure_ascii=False, indent=2, sort_keys=True) + "\n"`
+      (`src/populus/stats.py`), which JS re-serialization cannot reproduce. So
+      the bytes are carried through, never round-tripped. */
+  statsJson: string;
   tiles: StatTile[];
   txns: TxnRow[];
   paper: PaperRow[];
@@ -137,6 +145,13 @@ function resolveSources(): { buildDir: string; dbPath: string; buildId: string }
     dbPath: path.join(dataRepo, "releases", `data-${buildId}`, "congress.db"),
     buildId,
   };
+}
+
+/** Where the ONE canonical `stats.json` lives inside the data build. The site's
+    `/stats.json` route serves these exact bytes (R24), so the byte-equality
+    check has a single named source rather than a path re-derived per caller. */
+export function statsSourcePath(): string {
+  return path.join(resolveSources().buildDir, "congress", "stats.json");
 }
 
 /* ---------- row loading ---------- */
@@ -430,11 +445,13 @@ export function getBuildData(): BuildData {
   const { buildDir, dbPath, buildId } = resolveSources();
   if (!existsSync(dbPath)) throw new Error(`congress.db not found at ${dbPath}`);
 
+  // Keep the raw text as well as the parse: `/stats.json` re-serves these exact
+  // bytes (R24). Reading only the parse — as this did — made the canonical bytes
+  // unreachable from the dashboard, and no re-serialization can recover them.
   const statsPath = path.join(buildDir, "congress", "stats.json");
-  const stats = JSON.parse(readFileSync(statsPath, "utf-8"));
-  const manifestBytes = readFileSync(path.join(buildDir, "manifest.json"));
-  const manifestSha = createHash("sha256").update(manifestBytes).digest("hex");
-  const manifest = JSON.parse(manifestBytes.toString("utf-8"));
+  const statsJson = readFileSync(statsPath, "utf-8");
+  const stats = JSON.parse(statsJson);
+  const manifest = JSON.parse(readFileSync(path.join(buildDir, "manifest.json"), "utf-8"));
   const dataLicenseMd = readFileSync(path.join(buildDir, "DATA-LICENSE.md"), "utf-8");
   const noticeTxt = readFileSync(path.join(buildDir, "NOTICE"), "utf-8");
 
@@ -555,11 +572,10 @@ export function getBuildData(): BuildData {
     generatedAt,
     generatedAtDate,
     codeSha,
-    manifestSha,
-    manifestShaAbbrev: `${manifestSha.slice(0, 4)}…${manifestSha.slice(-4)}`,
     manifest,
     dataNote: String(stats.data_note ?? ""),
     stats,
+    statsJson,
     tiles: buildTiles(stats, rowCount, filedFrom),
     txns,
     paper,

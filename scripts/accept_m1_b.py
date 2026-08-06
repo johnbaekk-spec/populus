@@ -680,6 +680,7 @@ def assert_corpus(
 
     from populus.db import connect
     from populus.parse_gate import compute_parse_gate, format_gate_report
+    from populus.publish.attestation import StagingNoop
     from populus.publish.build import (
         FEED_LIMIT,
         SLICE_LIMIT,
@@ -742,13 +743,17 @@ def assert_corpus(
 
     # 8. build → publish → verify, on a local repo.
     backend = LocalDirBackend(data_repo)
+    # Hermetic acceptance (no network, no published bundles): StagingNoop is
+    # correct here, but it is passed EXPLICITLY — an implicit default is the
+    # defect this run removes (RUN P3-3a R13).
     run_build(
-        db_path, data_repo, now=lambda: MOMENT, raw_root=raw_root, backend=backend
+        db_path, data_repo, now=lambda: MOMENT, raw_root=raw_root,
+        backend=backend, attestation=StagingNoop()
     )
-    run_publish(data_repo, now=lambda: MOMENT, backend=backend)
+    run_publish(data_repo, now=lambda: MOMENT, backend=backend, attestation=StagingNoop())
     latest = json.loads((data_repo / "latest.json").read_text(encoding="utf-8"))
     build_dir = data_repo / "builds" / latest["build_id"]
-    verify = run_verify(data_repo, now=lambda: MOMENT)
+    verify = run_verify(data_repo, now=lambda: MOMENT, attestation=StagingNoop())
     out(
         f"publish: build {latest['build_id']}"
         f" | verify: {'ok' if verify.ok else 'FAILED'}"

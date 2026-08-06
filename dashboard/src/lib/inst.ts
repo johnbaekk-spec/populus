@@ -306,13 +306,42 @@ export function entityKeyedIssuers(inst: InstData): Set<string> {
   return keys;
 }
 
+/** True when a path points inside the repository's test fixtures. Matched on the
+    resolved path, so a relative argument, a `..` walk and the dev default all
+    answer the same. */
+function isTestFixturePath(p: string): boolean {
+  return path.resolve(p).split(path.sep).join("/").includes("/tests/fixtures/");
+}
+
 /** Read the ticker-map snapshot named by POPULUS_TICKER_MAP (Locked #18).
     Dev default: the committed pipeline fixture. A missing file is an explicit
-    null — every consumer then renders the honest no-map state. */
+    null — every consumer then renders the honest no-map state.
+
+    CI refuses a fixture-derived map (R1). The refusal rejects the fixture PATH,
+    not merely an unset variable: no real `company_tickers.json` exists on a
+    runner (it reaches this tree only through `populus identity bootstrap
+    --from-cache`, and `data-cache/` is not in git), so the fixture is the only
+    path a refusal-on-unset would leave satisfiable — the same defect one step
+    later. A build that shipped these mappings would present fixture data as
+    production truth, and the served-tree sweep could not detect it, because the
+    served bytes would faithfully equal the built bytes. The intended production
+    setting is an explicitly ABSENT path: this returns null and the site renders
+    the honest no-map state (TD-7). */
 export function readTickerMapJson(repoRoot: string): unknown | null {
+  const envPath = process.env.POPULUS_TICKER_MAP;
   const mapPath =
-    process.env.POPULUS_TICKER_MAP ??
-    path.join(repoRoot, "tests", "fixtures", "inst", "mcp", "company_tickers.json");
+    envPath ?? path.join(repoRoot, "tests", "fixtures", "inst", "mcp", "company_tickers.json");
+  if (process.env.CI && isTestFixturePath(mapPath)) {
+    throw new Error(
+      `POPULUS_TICKER_MAP resolves into tests/fixtures (${mapPath}) — a CI build` +
+        " must not ship fixture-derived ticker mappings as production data." +
+        (envPath === undefined
+          ? " The variable is unset, so the dev fixture default applied."
+          : "") +
+        " Point it at a real company_tickers.json snapshot, or at an explicitly" +
+        " absent path to publish the honest no-map state (TD-7).",
+    );
+  }
   if (!existsSync(mapPath)) return null;
   return JSON.parse(readFileSync(mapPath, "utf-8"));
 }

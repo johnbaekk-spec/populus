@@ -190,7 +190,12 @@ const description =
         <div class="pub-card"><div class="pub-h">Raw documents retained</div><div class="pub-body">Every parsed filing links to its archived government document; reparses never re-fetch, so the archive is the evidence.</div></div>
       </div>
       <div class="mono-note verify-line">
-        verify this page: <span class="verify-cmd">populus verify --build {build.buildId} --manifest sha256:{build.manifestSha}</span>
+        {/* No `--manifest sha256:…` argument: R2 re-assembles the manifest
+            after this site builds, so a digest rendered here would be stale by
+            construction and every reader who pasted the command would get a
+            mismatch (Locked #6). `--build` alone is sufficient — `populus
+            verify` resolves the manifest from the build id. */}
+        verify this page: <span class="verify-cmd">populus verify --build {build.buildId}</span>
       </div>
     </section>
 

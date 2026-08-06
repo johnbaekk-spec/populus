@@ -101,12 +101,16 @@ def _seed_cusip(conn, cusip: str) -> None:
 
 
 def _build_and_publish(db_path: Path) -> tuple[Path, dict]:
+    from populus.publish.attestation import StagingNoop
     from populus.publish.build import LocalDirBackend, run_build, run_publish
 
     repo = Path(tempfile.mkdtemp(prefix="accept-m2-6-repo-"))
     backend = LocalDirBackend(repo)
-    run_build(db_path, repo, now=lambda: MOMENT, backend=backend)
-    run_publish(repo, now=lambda: MOMENT, backend=backend)
+    # Hermetic acceptance (no network, no published bundles): StagingNoop is
+    # correct here, but it is passed EXPLICITLY — an implicit default is the
+    # defect this run removes (RUN P3-3a R13).
+    run_build(db_path, repo, now=lambda: MOMENT, backend=backend, attestation=StagingNoop())
+    run_publish(repo, now=lambda: MOMENT, backend=backend, attestation=StagingNoop())
     latest = json.loads((repo / "latest.json").read_text(encoding="utf-8"))
     manifest = json.loads(
         (repo / "builds" / latest["build_id"] / "manifest.json").read_text(
@@ -119,11 +123,13 @@ def _build_and_publish(db_path: Path) -> tuple[Path, dict]:
 def _install_and_serve(repo: Path, out) -> bool:
     """Install the published snapshot and serve it — the F6/R15 lifecycle."""
     from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
+    from populus.publish.attestation import StagingNoop
     from populus.mcp_server.server import _inst_watermarks, build_server
 
     cache = Path(tempfile.mkdtemp(prefix="accept-m2-6-cache-"))
     inst_client = SnapshotClient(
-        cache, LocalRepoFetcher(repo), now=lambda: MOMENT, module="inst"
+        cache, LocalRepoFetcher(repo), now=lambda: MOMENT, module="inst",
+        attestation=StagingNoop(),
     )
     inst_client.refresh()
     inst_db = inst_client.db_path()

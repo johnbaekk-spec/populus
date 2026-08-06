@@ -23,6 +23,7 @@ import {
   holdersFor,
   issuerPeriods,
   entityKeyedIssuers,
+  readTickerMapJson,
   type InstData,
 } from "../src/lib/inst.ts";
 import { qoqPresentation } from "../src/lib/derive.ts";
@@ -170,4 +171,55 @@ test("filerTiles: NULL concentration renders n/a ·§, never 0 (synthetic)", () 
   const hhi = tiles.find((t) => t.label.startsWith("HHI"))!;
   assert.equal(hhi.value, "n/a ·§");
   assert.ok(!topn.value.includes("0%"), "an unavailable concentration is never a fabricated 0");
+});
+
+/* ---------- the CI ticker-map refusal (R1 / TD-7) ---------- */
+
+function withEnv(vars: Record<string, string | undefined>, fn: () => void): void {
+  const prev: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(vars)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+const FIXTURE_MAP = path.join(REPO_ROOT, "tests", "fixtures", "inst", "mcp", "company_tickers.json");
+
+test("CI refuses a tests/fixtures ticker map — the PATH, not merely an unset variable (R1)", () => {
+  // Explicitly pointed at the fixture: the served bytes would faithfully match
+  // the built bytes, so no served-tree sweep could ever catch this.
+  withEnv({ CI: "true", POPULUS_TICKER_MAP: FIXTURE_MAP }, () => {
+    assert.throws(() => readTickerMapJson(REPO_ROOT), /tests\/fixtures/);
+  });
+  // Unset is the same defect wearing a different hat — the dev default IS the
+  // fixture, which is exactly why refusing only "unset" would not close it.
+  withEnv({ CI: "true", POPULUS_TICKER_MAP: undefined }, () => {
+    assert.throws(() => readTickerMapJson(REPO_ROOT), /must not ship fixture-derived/);
+  });
+  // The check resolves the path, so a relative spelling is not an escape hatch.
+  withEnv({ CI: "true", POPULUS_TICKER_MAP: "../tests/fixtures/inst/mcp/company_tickers.json" }, () => {
+    assert.throws(() => readTickerMapJson(REPO_ROOT), /must not ship fixture-derived/);
+  });
+});
+
+test("TD-7: under CI an ABSENT path is the honest no-map state, not a failure", () => {
+  withEnv({ CI: "true", POPULUS_TICKER_MAP: path.join(REPO_ROOT, "no-such-map.json") }, () => {
+    assert.equal(readTickerMapJson(REPO_ROOT), null, "the production setting must not throw");
+  });
+});
+
+test("outside CI the committed fixture stays the dev default — the refusal is CI-scoped", () => {
+  withEnv({ CI: undefined, POPULUS_TICKER_MAP: undefined }, () => {
+    const map = readTickerMapJson(REPO_ROOT);
+    assert.ok(map && typeof map === "object", "local renders keep the mapped path");
+  });
 });

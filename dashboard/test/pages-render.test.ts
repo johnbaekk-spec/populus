@@ -17,9 +17,14 @@ import {
   filerBody,
   type BuildStamps,
 } from "../src/lib/ui.ts";
-import type { MemberEntity, TickerEntity } from "../src/lib/derive.ts";
-import type { TickerInstSection } from "../src/lib/data.ts";
-import type { TopHolderRow } from "../src/lib/inst.ts";
+import {
+  parseTickerMap,
+  resolveTicker,
+  type MemberEntity,
+  type TickerEntity,
+} from "../src/lib/derive.ts";
+import { tickerInstSection, type BuildData, type TickerInstSection } from "../src/lib/data.ts";
+import { readTickerMapJson, type TopHolderRow } from "../src/lib/inst.ts";
 import { type TxnRow, type RenderCtx } from "../src/lib/format.ts";
 
 const CTX: RenderCtx = { watched: new Set() };
@@ -215,6 +220,49 @@ test("unified ticker: section index, planned placeholders, own-clock lede", () =
   assert.ok(html.includes("PLANNED"));
   assert.ok(html.includes("each section keeps its own clock") || html.includes("Each section keeps its own clock"));
   assert.ok(html.includes("full congressional view ↗"));
+});
+
+/* ---------- TD-7: the ticker surface CI actually deploys ---------- */
+
+/* Every unified-ticker case above hands the renderer a hand-written state
+   literal, and every OTHER suite runs with POPULUS_TICKER_MAP unset — which
+   loads the committed fixture. So the gates have only ever exercised the MAPPED
+   path, while the deployed site takes the other one: the CI refusal rejects a
+   tests/fixtures map, no real company_tickers.json exists on a runner, so
+   POPULUS_TICKER_MAP points at an explicitly absent path (TD-7). This drives
+   that deployed chain through the real functions end to end — env →
+   readTickerMapJson → null → tickerInstSection → renderer — rather than
+   asserting a state literal somebody typed. */
+test("TD-7 no-map: an absent ticker map renders the honest state through the real chain", () => {
+  const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+  const prev = process.env.POPULUS_TICKER_MAP;
+  process.env.POPULUS_TICKER_MAP = path.join(repoRoot, "no-such-company_tickers.json");
+  try {
+    const mapJson = readTickerMapJson(repoRoot);
+    assert.equal(mapJson, null, "an absent path is an explicit null, never a silent fallback");
+    const tickerMap = mapJson === null ? null : parseTickerMap(mapJson);
+    assert.equal(tickerMap, null);
+    assert.equal(resolveTicker(tickerMap, TICKER.ticker).state, "no-map");
+
+    // The real data-layer function the ticker page calls. Only `inst` and
+    // `tickerMap` are read on this branch — and the module must be PRESENT, or
+    // the page answers module-absent and this copy never renders at all.
+    const build = { inst: { present: true }, tickerMap } as unknown as BuildData;
+    const section = tickerInstSection(build, TICKER.ticker);
+    assert.deepEqual(section, { state: "no-map" });
+
+    const html = unified(section);
+    assert.ok(
+      html.includes("This build carries no ticker→issuer mapping input"),
+      "no-map states its OWN reason, not the unmapped 'not in the SEC file' one",
+    );
+    assert.ok(html.includes("Not resolved to an issuer — deliberately."));
+    assert.ok(!html.includes("Ranked holders"), "no holders table is fabricated with no map");
+    assert.ok(html.includes("sec.gov"), "the primary-source escape hatch survives the no-map state");
+  } finally {
+    if (prev === undefined) delete process.env.POPULUS_TICKER_MAP;
+    else process.env.POPULUS_TICKER_MAP = prev;
+  }
 });
 
 /* ---------- deep congress ticker ---------- */

@@ -11,6 +11,8 @@ when the inst module is absent), while ``inst_filer_holdings(mode='detail')`` an
 from __future__ import annotations
 
 import argparse
+
+from populus.publish.attestation import PROVIDER_CHOICES
 import os
 import statistics
 import sys
@@ -976,6 +978,25 @@ def _inst_watermarks(manifest: dict | None) -> dict[str, Any] | None:
     return watermarks if isinstance(watermarks, dict) else None
 
 
+def _attestation_provider(args):
+    """Build the provider the operator selected. Never guesses.
+
+    `sigstore` needs its fetcher and verifier wired here; without them
+    `build_provider` raises, which previously made `--attestation=sigstore`
+    unusable at this entry point even though it was offered in `choices`.
+    """
+    from populus.client.snapshot import github_bundle_fetcher
+    from populus.publish.attestation import build_provider, github_trust_config
+
+    if args.attestation == "sigstore":
+        return build_provider(
+            "sigstore",
+            fetcher=github_bundle_fetcher(),
+            trust_config=github_trust_config(),
+        )
+    return build_provider(args.attestation)
+
+
 def _resolve_snapshot() -> dict[str, Any]:
     """CLI/env → the snapshot inputs for ``build_server``.
 
@@ -992,7 +1013,19 @@ def _resolve_snapshot() -> dict[str, Any]:
     p.add_argument("--data-repo", default=os.environ.get("POPULUS_DATA_REPO", "../populus-data"),
                    help="Local populus-data working tree to resolve the snapshot from.")
     p.add_argument("--cache", default=os.environ.get("POPULUS_CACHE", str(Path.home() / ".cache" / "populus")))
+    # No default: an entry point that forgets to choose must fail loudly rather
+    # than inherit a no-op verifier that answers "verified" to everything
+    # (RUN P3-3a R14). The --db dev-bypass path never builds a SnapshotClient,
+    # so it is exempt and documented as such.
+    p.add_argument(
+        "--attestation",
+        choices=PROVIDER_CHOICES,
+        help="Which attestation provider verifies the snapshot. Required unless "
+             "--db is given (that path reads a local DB and verifies nothing).",
+    )
     args = p.parse_args()
+    if args.db is None and args.attestation is None:
+        p.error("--attestation is required when resolving a published snapshot")
     resolved: dict[str, Any] = {
         "inst_db_path": args.inst_db,
         "inst_build_id": None,
@@ -1022,7 +1055,12 @@ def _resolve_snapshot() -> dict[str, Any]:
         return resolved
     # Resolve via the published snapshot (staging: local data-repo).
     from populus.client.snapshot import LocalRepoFetcher, SnapshotClient
-    client = SnapshotClient(args.cache, LocalRepoFetcher(args.data_repo), now=_utc_now)
+    client = SnapshotClient(
+        args.cache,
+        LocalRepoFetcher(args.data_repo),
+        now=_utc_now,
+        attestation=_attestation_provider(args),
+    )
     congress_outcome = client.refresh()
     db = client.db_path()
     if db is None:
@@ -1077,7 +1115,11 @@ def _resolve_inst_module(args, resolved: dict) -> None:
     # with `verified_omission=True` and `db_path()` is None — a legitimate
     # absent-module signal, not an error (QA-r4-F6).
     inst_client = SnapshotClient(
-        args.cache, LocalRepoFetcher(args.data_repo), now=_utc_now, module="inst"
+        args.cache,
+        LocalRepoFetcher(args.data_repo),
+        now=_utc_now,
+        module="inst",
+        attestation=_attestation_provider(args),
     )
     outcome = inst_client.refresh()
     # `db_path()` alone decides serving — it routes through `serving_build()`,

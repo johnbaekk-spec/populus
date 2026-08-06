@@ -16,6 +16,7 @@ dependencies = [
     "pyyaml",
     "click",
     "rfc8785",
+    "sigstore>=3.6.1",
     "mcp>=1.28.1",
 ]
 
