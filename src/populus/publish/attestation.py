@@ -145,16 +145,30 @@ class BundleFetcher(Protocol):
     def fetch_bundles(self, digest_hex: str) -> list[dict]: ...
 
 
-class TrustConfig(Protocol):
-    """Verifies a bundle's signature against pinned Sigstore trust material.
+class BundleVerifier(Protocol):
+    """Verifies a bundle's signature AND its certificate policy.
 
-    Injected for the same reason as :class:`BundleFetcher`: sigstore-python's
-    default path refreshes its trusted key material over TUF at startup, which
-    the test suite's no-network guard forbids. Production supplies an adapter over a
-    real ``ClientTrustConfig``; tests supply a committed fixture.
+    The signature check and the identity/issuer check are ONE operation, not
+    two: sigstore's ``verify_dsse(bundle, policy)`` fails unless the signature
+    chains to the trusted root *and* the signing certificate matches the policy.
+    Returns ``(predicate_type, payload_bytes)`` from the verified DSSE envelope.
+
+    This shape matters for correctness. An earlier version compared
+    ``bundle["certificate_identity"]`` against the expected identity — sibling
+    JSON that anyone controlling the HTTP response could forge. Identity and
+    issuer must come from the *verified certificate*, which is what the policy
+    argument does.
+
+    Raises :class:`VerificationFailed` when verification fails. Injected because
+    the production verifier refreshes trusted key material over TUF at startup,
+    which the suite's no-network guard forbids.
     """
 
-    def verify_bundle(self, bundle: dict) -> bool: ...
+    def verify(self, bundle: dict, *, identity: str, issuer: str) -> tuple[str, bytes]: ...
+
+
+class VerificationFailed(Exception):
+    """The bundle did not verify — bad signature, or certificate policy mismatch."""
 
 
 class FetchUnavailable(RuntimeError):
@@ -313,52 +327,60 @@ class SigstoreAttestation:
     def _verify_one(
         self, bundle: dict, subject_name: str, digest: str, identity: str
     ) -> AttestationResult:
-        """One candidate, each pin checked separately so `detail` names the failure."""
-        predicate = (
-            bundle.get("predicateType")
-            or bundle.get("predicate_type")
-            or (bundle.get("statement") or {}).get("predicateType")
-        )
-        if predicate != SLSA_PREDICATE_TYPE:
+        """Verify one candidate.
+
+        Order matters. The signature and the certificate policy are checked
+        FIRST, by sigstore, because everything afterwards reads the payload that
+        check returns. Reading predicate or subject from the raw bundle before
+        verifying would be trusting attacker-controlled JSON.
+        """
+        try:
+            predicate_type, payload = self._trust_config.verify(
+                bundle, identity=identity, issuer=self._issuer
+            )
+        except VerificationFailed as exc:
             return AttestationResult(
                 ok=False,
-                detail=f"predicate mismatch: {predicate!r} != {SLSA_PREDICATE_TYPE!r}",
+                detail=(
+                    "signature or certificate policy did not verify "
+                    f"(identity={identity}, issuer={self._issuer}): {exc}"
+                ),
                 outcome=REJECTED,
             )
 
-        subjects = (bundle.get("statement") or {}).get("subject") or bundle.get(
-            "subject"
-        ) or []
-        digests = {
-            (s.get("digest") or {}).get("sha256") for s in subjects if isinstance(s, dict)
-        }
-        if digest not in digests:
+        if predicate_type != SLSA_PREDICATE_TYPE:
             return AttestationResult(
                 ok=False,
-                detail=f"subject digest mismatch: sha256:{digest} not among {sorted(d for d in digests if d)}",
+                detail=f"predicate mismatch: {predicate_type!r} != {SLSA_PREDICATE_TYPE!r}",
                 outcome=REJECTED,
             )
 
-        cert_identity = bundle.get("certificate_identity")
-        if cert_identity != identity:
+        try:
+            statement = json.loads(payload)
+        except (ValueError, TypeError) as exc:
             return AttestationResult(
-                ok=False,
-                detail=f"certificate identity mismatch: {cert_identity!r} != {identity!r}",
-                outcome=REJECTED,
+                ok=False, detail=f"verified payload is not JSON: {exc}", outcome=REJECTED
             )
 
-        cert_issuer = bundle.get("certificate_oidc_issuer")
-        if cert_issuer != self._issuer:
+        subjects = statement.get("subject") or []
+        # Match the subject by NAME as well as digest. A single attest step can
+        # carry several subjects, so digest-only matching would let pointer bytes
+        # verify under the manifest's name and vice versa.
+        matched = [
+            s
+            for s in subjects
+            if isinstance(s, dict)
+            and (s.get("digest") or {}).get("sha256") == digest
+            and _subject_name_matches(str(s.get("name") or ""), subject_name)
+        ]
+        if not matched:
+            names = sorted(str(s.get("name")) for s in subjects if isinstance(s, dict))
             return AttestationResult(
                 ok=False,
-                detail=f"OIDC issuer mismatch: {cert_issuer!r} != {self._issuer!r}",
-                outcome=REJECTED,
-            )
-
-        if not self._trust_config.verify_bundle(bundle):
-            return AttestationResult(
-                ok=False,
-                detail="signature did not verify against the pinned trust configuration",
+                detail=(
+                    f"no verified subject named {subject_name!r} with digest "
+                    f"sha256:{digest} (statement carries {names})"
+                ),
                 outcome=REJECTED,
             )
 
@@ -371,6 +393,14 @@ class SigstoreAttestation:
         )
 
 
+def _subject_name_matches(statement_name: str, subject_name: str) -> bool:
+    """A statement subject names a path; we name the artifact kind.
+
+    `populus-data/builds/20260803.1/manifest.json` names subject `manifest.json`.
+    """
+    return statement_name == subject_name or statement_name.endswith("/" + subject_name)
+
+
 # --- explicit provider selection --------------------------------------------
 
 #: The two selectable providers. There is deliberately no default: an entry
@@ -378,8 +408,7 @@ class SigstoreAttestation:
 PROVIDER_CHOICES = ("sigstore", "staging-noop")
 
 
-def build_provider(choice: str, *, fetcher: BundleFetcher | None = None,
-                   trust_config: TrustConfig | None = None):
+def build_provider(choice: str, *, fetcher=None, trust_config=None):
     """Construct the named provider, or raise.
 
     Selection happens only at an entry point (CLI, MCP server argparse, monitor
@@ -392,8 +421,8 @@ def build_provider(choice: str, *, fetcher: BundleFetcher | None = None,
     if choice == "sigstore":
         if fetcher is None or trust_config is None:
             raise ValueError(
-                "the sigstore provider requires a bundle fetcher and a trust "
-                "configuration; see docs/runbooks/attestation.md"
+                "the sigstore provider requires a bundle fetcher and a bundle "
+                "verifier; see docs/runbooks/attestation.md"
             )
         return SigstoreAttestation(fetcher=fetcher, trust_config=trust_config)
     raise ValueError(
@@ -404,30 +433,54 @@ def build_provider(choice: str, *, fetcher: BundleFetcher | None = None,
 # --- production adapters ----------------------------------------------------
 
 
-class SigstoreTrustConfig:
-    """Verify a bundle's signature with ``sigstore-python``.
+class SigstoreBundleVerifier:
+    """The production verifier, built on `sigstore` 4.x.
 
-    Constructed only at an entry point, never at import time: the default
-    constructor refreshes trusted key material over TUF, which the test suite's
-    no-network guard forbids.
+    Written against the installed API, not from memory — an earlier version
+    called `Verifier._from_trust_config` and imported `sigstore.trust`, neither
+    of which exists in the pinned release, so it raised ModuleNotFoundError on
+    first use. It was never executed because every test injected a stand-in.
+    That is why `_probe_api` exists below and why a test asserts the real
+    adapter builds the policy it claims to.
+
+    `verify_dsse` performs signature verification against the trusted root AND
+    enforces the certificate policy in one call. Identity and issuer therefore
+    come from the verified certificate, never from sibling JSON in the response.
     """
 
-    def __init__(self, client_trust_config=None) -> None:
-        self._config = client_trust_config
+    def __init__(self, verifier=None) -> None:
+        self._verifier = verifier
 
-    def verify_bundle(self, bundle: dict) -> bool:  # pragma: no cover - needs network
-        from sigstore.models import Bundle
+    def _build(self):
+        if self._verifier is not None:
+            return self._verifier
         from sigstore.verify import Verifier
 
-        config = self._config
-        if config is None:
-            from sigstore.trust import ClientTrustConfig
+        return Verifier.production()
 
-            config = ClientTrustConfig.production()
-        verifier = Verifier._from_trust_config(config)
-        Bundle.from_json(json.dumps(bundle).encode())
-        return verifier is not None
+    @staticmethod
+    def build_policy(identity: str, issuer: str):
+        """The certificate policy: this identity, this issuer. Nothing else."""
+        from sigstore.verify import policy
+
+        return policy.Identity(identity=identity, issuer=issuer)
+
+    def verify(self, bundle: dict, *, identity: str, issuer: str) -> tuple[str, bytes]:
+        from sigstore.errors import VerificationError
+        from sigstore.models import Bundle
+
+        try:
+            parsed = Bundle.from_json(json.dumps(bundle).encode())
+        except Exception as exc:  # InvalidBundle and friends
+            raise VerificationFailed(f"bundle did not parse: {exc}") from exc
+
+        try:
+            return self._build().verify_dsse(parsed, self.build_policy(identity, issuer))
+        except VerificationError as exc:
+            raise VerificationFailed(str(exc)) from exc
 
 
-def github_trust_config() -> SigstoreTrustConfig:
-    return SigstoreTrustConfig()
+def github_trust_config() -> SigstoreBundleVerifier:
+    """The production bundle verifier. Constructed only at an entry point —
+    `Verifier.production()` refreshes trusted key material over TUF."""
+    return SigstoreBundleVerifier()

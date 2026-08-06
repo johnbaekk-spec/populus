@@ -34,7 +34,7 @@ so this implements a specification rather than inventing one.
 | R12 | Structural guard is the mechanism | Done — `tests/test_attestation_structure.py` |
 | R13 | Production omissions fixed | Done — **11**, guard green |
 | R14 | Explicit selection at five entry points | Done — CLI, MCP argparse, monitor CLI, workflow, acceptance scripts |
-| R15 | Failing `attest()` stops the publish | Done — `_require_attested` at all three sites |
+| R15 | Failing `attest()` stops the publish | **Partial, relabelled after code review** — the helper raises and is pinned by M10, but **no production path can reach it**: both providers return `ok=True` for a mapped subject, and all three call sites pass mapped subjects. The real gate is R1's workflow step order, which was traced and confirmed. Kept as defensive design for a provider that *can* fail. |
 | R16 | Broken callers updated | Done — see Changed Files |
 | R17 | `preflight-attestation` | Done |
 | R18 | Docs corrected everywhere | Done — acceptance grep clean |
@@ -110,7 +110,7 @@ because three rounds of human enumeration produced three wrong answers.
    run in anger; manual publishes are gated only by the operator's flag. Owner
    action.
 3. **Third-party verification** waits on the §15.3 counsel gate.
-4. **`attest()` is a seam, not a signer** for the Sigstore provider.
+4. **`attest()` is a seam, not a signer** for the Sigstore provider — and R15's three raises are consequently **unreachable in production today**. Declared rather than presented as a live control.
 5. **Test call sites keep the defaulted parameter** — exempt by design.
 6. **Deployment-generation attestation** unexercised until P3-3b; R19 mitigates.
 

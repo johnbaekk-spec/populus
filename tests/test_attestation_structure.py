@@ -36,13 +36,26 @@ def _attestation_taking_names() -> set[str]:
     """Every callable that accepts an ``attestation`` argument, by inspection.
 
     Derived rather than listed, so adding a new one is automatically covered.
+
+    Discovery walks EVERY module under `populus`, not a hardcoded three — an
+    earlier version listed `publish.build`, `publish.pointer` and
+    `client.snapshot`, so an attestation-taking function added anywhere else
+    would have been invisible and the guard would have passed vacuously.
     """
-    from populus.client import snapshot as snapshot_mod
-    from populus.publish import build as build_mod
-    from populus.publish import pointer as pointer_mod
+    import importlib
+    import pkgutil
+
+    import populus
+
+    modules = []
+    for info in pkgutil.walk_packages(populus.__path__, "populus."):
+        try:
+            modules.append(importlib.import_module(info.name))
+        except Exception:  # pragma: no cover - optional/broken imports
+            continue
 
     names: set[str] = set()
-    for module in (build_mod, pointer_mod, snapshot_mod):
+    for module in modules:
         for name, obj in vars(module).items():
             if name.startswith("_"):
                 continue
@@ -89,8 +102,17 @@ def _omitting_call_sites() -> list[str]:
                 continue
             if any(kw.arg == "attestation" for kw in node.keywords):
                 continue
-            # `**kwargs` forwarding is opaque to AST; treat it as passing.
+            # `**kwargs` forwarding is opaque to AST. Treating it as "passing"
+            # was a hole: a production call could forward a dict that happens not
+            # to contain `attestation` and slip through. Flag it instead — a
+            # handful of false positives is the right trade for a guard whose
+            # entire job is catching what a search cannot see.
             if any(kw.arg is None for kw in node.keywords):
+                rel = path.relative_to(REPO_ROOT)
+                offenders.append(
+                    f"{rel}:{node.lineno} {name}(**kwargs) — forwards opaquely; "
+                    "pass `attestation` explicitly"
+                )
                 continue
             rel = path.relative_to(REPO_ROOT)
             offenders.append(f"{rel}:{node.lineno} {name}(...)")
@@ -174,6 +196,18 @@ def test_publish_job_has_attestation_permissions() -> None:
     perms = _publish_job()["permissions"]
     assert perms.get("id-token") == "write", "missing id-token: write"
     assert perms.get("attestations") == "write", "missing attestations: write"
+
+
+def test_publish_job_permissions_are_least_privilege() -> None:
+    """`contents: read` is what bounds the GH_TOKEN relaxation in
+    test_publish_workflow_gh_token_step_scoped: any number of steps may now
+    carry `github.token`, which is only safe while that token cannot write to
+    the repo. A flip to `contents: write` must fail here."""
+    perms = _publish_job()["permissions"]
+    assert perms.get("contents") == "read", (
+        "the publish job's github.token must stay read-only — steps are "
+        "permitted to carry it freely on that basis"
+    )
 
 
 def test_attest_step_precedes_verify() -> None:

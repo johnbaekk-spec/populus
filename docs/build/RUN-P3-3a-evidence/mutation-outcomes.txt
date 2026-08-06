@@ -1,16 +1,17 @@
-M1: KILLED — the certificate-identity pin
+M1: KILLED — the certificate-identity pin — the policy we hand sigstore must be the one the SUBJECT requires, not a hardcoded default
 M2: KILLED — the OIDC issuer pin
 M3: KILLED — the subject-digest match
+M3b: KILLED — the subject-NAME binding — digest-only matching lets pointer bytes verify under the manifest's name
 M4: KILLED — the SLSA predicate filter
-M5: KILLED — the trust-configuration pin — §14 calls this the root of trust
+M5: KILLED — the signature/policy check — §14 calls this the root of trust
 M6: KILLED — R9: a quota failure must not read as tampering
 M7: KILLED — unknown subject refused, no default identity
 M8: KILLED — R19: the lookup repository
 M9: KILLED — cache keyed by pin, not digest alone
-M10: KILLED — R15: a failing attest() stops the publish
+M10: KILLED — R15: the _require_attested HELPER raises on a failing verdict (no production path can reach it — both providers return ok=True for a mapped subject; the real gate is the workflow step order)
 M-GUARD: KILLED — THE GUARD ITSELF: a reintroduced omission must fail it
 M-WF-ORDER: KILLED — R1: the attest step must exist and precede Verify
 M-WF-FLAG: KILLED — R1: Verify must demand the real provider
 M-WF-TOKEN: KILLED — R9: authenticated lookups in CI
 
-=== 14/14 killed ===
+=== 15/15 killed ===

@@ -1488,7 +1488,15 @@ def preflight_attestation(data_repo: str) -> None:
         raise click.ClickException(f"no pointer at {pointer_path}")
     pointer_bytes = pointer_path.read_bytes()
     pointer = _json.loads(pointer_bytes)
-    manifest_path = repo / pointer["manifest_path"]
+    # `manifest_path` comes from an untrusted pointer document. `run_verify`
+    # routes it through `resolve_within`; preflight must too, or a crafted
+    # `latest.json` turns this into an arbitrary local file read.
+    from populus.publish.manifest import resolve_within
+
+    try:
+        manifest_path = resolve_within(repo, pointer["manifest_path"])
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(f"manifest path unsafe: {exc}")
     if not manifest_path.exists():
         raise click.ClickException(f"no manifest at {manifest_path}")
 

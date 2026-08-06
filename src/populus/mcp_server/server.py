@@ -979,9 +979,21 @@ def _inst_watermarks(manifest: dict | None) -> dict[str, Any] | None:
 
 
 def _attestation_provider(args):
-    """Build the provider the operator selected. Never guesses."""
-    from populus.publish.attestation import build_provider
+    """Build the provider the operator selected. Never guesses.
 
+    `sigstore` needs its fetcher and verifier wired here; without them
+    `build_provider` raises, which previously made `--attestation=sigstore`
+    unusable at this entry point even though it was offered in `choices`.
+    """
+    from populus.client.snapshot import github_bundle_fetcher
+    from populus.publish.attestation import build_provider, github_trust_config
+
+    if args.attestation == "sigstore":
+        return build_provider(
+            "sigstore",
+            fetcher=github_bundle_fetcher(),
+            trust_config=github_trust_config(),
+        )
     return build_provider(args.attestation)
 
 

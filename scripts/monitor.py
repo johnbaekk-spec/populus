@@ -271,9 +271,21 @@ def _discord_alert(message: str) -> None:
 
 
 def _attestation_provider(choice: str):
-    """Build the provider the operator selected. Never guesses."""
-    from populus.publish.attestation import build_provider
+    """Build the provider the operator selected. Never guesses.
 
+    The monitor is a §5.5 consumer like any other, so `sigstore` must be
+    genuinely selectable here — the deployed launchd command in
+    docs/runbooks/rollback.md uses it.
+    """
+    from populus.client.snapshot import github_bundle_fetcher
+    from populus.publish.attestation import build_provider, github_trust_config
+
+    if choice == "sigstore":
+        return build_provider(
+            "sigstore",
+            fetcher=github_bundle_fetcher(),
+            trust_config=github_trust_config(),
+        )
     return build_provider(choice)
 
 

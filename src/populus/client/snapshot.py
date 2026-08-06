@@ -1005,11 +1005,13 @@ class GitHubBundleFetcher:
     :class:`FetchUnavailable` rather than returning an empty list.
     """
 
-    def __init__(self, repo: str | None = None, token: str | None = None) -> None:
+    def __init__(self, repo: str | None = None, token: str | None = None,
+                 transport=None) -> None:
         from populus.publish.attestation import ATTESTATION_REPO
 
         self._repo = repo or ATTESTATION_REPO
         self._token = token
+        self._transport = transport  # injected in tests; None uses the real network
 
     def fetch_bundles(self, digest_hex: str) -> list[dict]:
         import httpx
@@ -1019,7 +1021,9 @@ class GitHubBundleFetcher:
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         try:
-            response = httpx.get(url, headers=headers, timeout=30.0)
+            client = httpx.Client(transport=self._transport, timeout=30.0)
+            with client:
+                response = client.get(url, headers=headers)
         except httpx.HTTPError as exc:
             raise _fetch_unavailable(f"transport error contacting {url}: {exc}") from exc
 
@@ -1032,7 +1036,17 @@ class GitHubBundleFetcher:
             )
         if response.status_code >= 400:
             raise _fetch_unavailable(f"HTTP {response.status_code} from {url}")
-        return list((response.json() or {}).get("attestations") or [])
+        # The API wraps each bundle: {"attestations":[{"bundle":{...}, ...}]}.
+        # Returning the wrapper would hand `_verify_one` an object that is not a
+        # Sigstore bundle and can never parse — unwrap to the bundle itself.
+        payload = response.json() or {}
+        bundles = []
+        for entry in payload.get("attestations") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("bundle"), dict):
+                bundles.append(entry["bundle"])
+            elif isinstance(entry, dict):
+                bundles.append(entry)
+        return bundles
 
 
 def github_bundle_fetcher(token: str | None = None) -> GitHubBundleFetcher:

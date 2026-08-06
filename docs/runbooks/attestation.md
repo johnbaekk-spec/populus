@@ -43,13 +43,15 @@ Two consequences follow, and both are honest limits rather than oversights:
 
 ## What is signed
 
-The publish workflow attests, via SHA-pinned `actions/attest-build-provenance`:
+The publish workflow attests two paths directly, via SHA-pinned
+`actions/attest-build-provenance` — `populus-data/latest.json` and
+`populus-data/builds/*/manifest.json`:
 
 | Subject | Required certificate identity |
 |---|---|
 | `manifest.json` | `publish.yml@refs/heads/main` |
 | each `latest.json` generation | `publish.yml@refs/heads/main` |
-| every Release asset | `publish.yml@refs/heads/main` |
+| every Release asset | **not attested directly** — covered transitively: the attested `manifest.json` carries each asset's sha256 and byte size, and `run_verify` checks assets against it |
 | deployment generations (arrives with P3-3b) | `record-sign.yml@refs/heads/main` |
 
 Identity is resolved **per subject kind**. A subject name that maps to nothing is
