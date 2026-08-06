@@ -64,13 +64,93 @@ jobs:
           uv run populus ingest congress-house --db populus.db --raw-root raw
           uv run populus ingest congress-senate --db populus.db --raw-root raw
 
-      - name: Build
+      # --- the two-phase build seam (RUN P3-3b R2) --------------------------
+      # The site is built BETWEEN these two steps: it reads manifest.json to
+      # decide which surfaces exist, and its file count is what finalize-build
+      # patches into stats.json. stage-build writes a provisional manifest;
+      # finalize-build discards it, re-assembles, and only then journals (R35).
+      #
+      # stage-build exits 3 when the build was preserved or reconciled rather
+      # than assembled. That is recovery working correctly, not an error — but
+      # there is then nothing to build a site from and nothing to deploy, so the
+      # remaining steps are skipped and the summary says so out loud (an
+      # operator who dispatched a redeploy must not read a green run as a
+      # deploy).
+      - name: Stage build
+        id: stage
+        env:
+          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
+          GH_REPO: johnbaekk-spec/populus-data
+        run: |
+          set +e
+          uv run populus stage-build --attestation=sigstore --db populus.db \
+            --data-repo populus-data --backend gh-release --repo "$GH_REPO" \
+            --raw-root raw | tee stage.out
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" = "3" ]; then
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Build preserved — nothing deployed"
+              echo
+              echo "Recovery adopted an existing build. It is already published"
+              echo "and sealed, so the site build and deploy were skipped."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [ "$status" = "0" ] || exit "$status"
+          echo "fresh=true" >> "$GITHUB_OUTPUT"
+          # The build directory is reported by the CLI, never spelled here: the
+          # §13.4 guard forbids a staging path literal in any step body.
+          grep '^build_dir=' stage.out >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        if: steps.stage.outputs.fresh == 'true'
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: dashboard/.node-version
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install site dependencies (frozen)
+        if: steps.stage.outputs.fresh == 'true'
+        working-directory: dashboard
+        run: npm ci
+
+      # Every variable is step-scoped: tests/test_publish.py asserts there is no
+      # workflow-level or job-level `env:` block at all (§14 least privilege).
+      # POPULUS_TICKER_MAP is set to a path that does not exist on purpose —
+      # there is no real ticker registry on a runner, and the dashboard refuses
+      # a tests/fixtures path under CI, so the site renders the honest no-map
+      # state rather than serving fixture-derived tickers as production data
+      # (RUN P3-3b TD-7). SITE_CODE_SHA is the FULL sha; the verifier compares
+      # the populus:code_sha marker exactly, never by prefix.
+      - name: Build site
+        id: site
+        if: steps.stage.outputs.fresh == 'true'
+        working-directory: dashboard
+        env:
+          CI: "true"
+          POPULUS_BUILD_DIR: ${{ github.workspace }}/${{ steps.stage.outputs.build_dir }}
+          POPULUS_DB: ${{ github.workspace }}/populus.db
+          POPULUS_TICKER_MAP: ${{ github.workspace }}/no-ticker-registry.json
+          SITE_CODE_SHA: ${{ github.sha }}
+        run: |
+          npm run build
+          count=$(find dist -type f | wc -l | tr -d ' ')
+          [ "$count" -gt 0 ] || { echo "site build produced no files"; exit 1; }
+          echo "file_count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Finalize build
+        if: steps.stage.outputs.fresh == 'true'
         env:
           GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
           GH_REPO: johnbaekk-spec/populus-data
         run: >-
-          uv run populus build --attestation=sigstore --db populus.db --data-repo populus-data
-          --backend gh-release --repo "$GH_REPO" --raw-root raw
+          uv run populus finalize-build
+          --staging-dir "$(dirname '${{ steps.stage.outputs.build_dir }}')"
+          --site-file-count '${{ steps.site.outputs.file_count }}'
+          --data-repo populus-data --backend gh-release --repo "$GH_REPO"
 
       - name: Publish
         env:

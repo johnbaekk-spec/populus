@@ -1998,14 +1998,27 @@ def test_publish_workflow_gh_token_step_scoped(tmp_path):
     # pointer commit). The assertion below is therefore SHARPENED, not relaxed:
     # it now pins the PAT specifically, and additionally forbids any OTHER
     # secret from appearing as GH_TOKEN anywhere in the job.
+    #
+    # RUN P3-3b T5 AMENDMENT, recorded not silent: `populus build` was split
+    # into `stage-build` + `finalize-build` around the site build (the manifest
+    # cannot be final until the site exists, because stats.json carries the
+    # served file count). They cannot share a step, so the count moves 2 -> 3
+    # and "populus build" is no longer a substring of either phase. The
+    # PROPERTY is unchanged — the long-lived PAT appears only on the steps that
+    # write to populus-data, and nowhere else — and the allowed set is still
+    # enumerated exactly rather than loosened to a prefix match.
     pat = "${{ secrets.DATA_REPO_PAT }}"
+    pat_bearing = {"populus stage-build", "populus finalize-build", "populus publish"}
     pat_steps = [
         step for step in job["steps"] if (step.get("env") or {}).get("GH_TOKEN") == pat
     ]
-    assert len(pat_steps) == 2
+    assert len(pat_steps) == 3
     for step in pat_steps:
         run = step.get("run", "")
-        assert "populus build" in run or "populus publish" in run
+        assert any(command in run for command in pat_bearing), (
+            f"a step holds the data-repo PAT but runs none of {sorted(pat_bearing)}: "
+            f"{step.get('name')!r}"
+        )
 
     for step in job["steps"]:
         token = (step.get("env") or {}).get("GH_TOKEN")

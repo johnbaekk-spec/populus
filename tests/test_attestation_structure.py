@@ -359,3 +359,62 @@ def test_no_job_holds_both_pages_write_and_github_write() -> None:
         assert perms.get("contents") != "write", (
             f"job {name!r} holds Pages authority and `contents: write` (§14)"
         )
+
+
+# --- R1/R2: the site-build seam and its env contract -------------------------
+
+
+def test_the_build_seam_is_complete() -> None:
+    """R2 — staging without finalizing publishes `site_file_count: null`.
+
+    `require_site_file_count` catches that at publish time, but only once the
+    gate is wired; a workflow that stages and never finalizes should not get
+    that far. Cheap to check here, and it fails for the right reason.
+    """
+    runs = " ".join(str(step.get("run", "")) for _, step in _all_steps())
+    if "populus stage-build" not in runs:
+        return  # single-phase build; nothing to complete
+    assert "populus finalize-build" in runs, (
+        "the workflow stages a build but never finalizes it — the published "
+        "stats.json would carry `site_file_count: null` and describe a site "
+        "nobody counted"
+    )
+
+
+def test_the_site_build_supplies_the_whole_env_contract() -> None:
+    """R1 — `data.ts` refuses only two of these under CI; the rest fail open.
+
+    `POPULUS_TICKER_MAP` is the dangerous one: unset, `inst.ts` falls back to a
+    committed TEST FIXTURE, and the site would serve fixture-derived ticker
+    mappings as production data. The served-tree sweep cannot detect that,
+    because the served bytes would faithfully match the built bytes.
+    """
+    site_steps = [
+        step
+        for _, step in _all_steps()
+        if "npm run build" in str(step.get("run", ""))
+    ]
+    if not site_steps:
+        return  # no site build in this workflow yet
+    for step in site_steps:
+        env = step.get("env") or {}
+        for required in (
+            "POPULUS_BUILD_DIR",
+            "POPULUS_DB",
+            "POPULUS_TICKER_MAP",
+            "SITE_CODE_SHA",
+        ):
+            assert required in env, (
+                f"site build step {step.get('name')!r} does not set {required} — "
+                "see R1; an unset POPULUS_TICKER_MAP silently ships fixture data"
+            )
+        assert "fixtures" not in str(env["POPULUS_TICKER_MAP"]), (
+            "POPULUS_TICKER_MAP points into a fixtures path — that is the "
+            "production-data hazard R1 exists to close (TD-7)"
+        )
+        # R19: the verifier compares populus:code_sha EXACTLY, so a shortened
+        # sha would fail every deploy. Pin the full one.
+        assert env["SITE_CODE_SHA"] == "${{ github.sha }}", (
+            "SITE_CODE_SHA must be the full github.sha — the marker comparison "
+            "is exact, never a prefix match"
+        )
