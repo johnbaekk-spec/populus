@@ -1,328 +1,291 @@
-# Review Brief: RUN P3-3a — Make the attestation chain real (produce AND verify)
+# Review Brief: RUN P3-3b — Deploy the dashboard, and sign what went live
 
-**Plan:** `PLAN.md` (byte-identical durable copy at `docs/build/RUN-P3-3a-plan.md`), validates as `plan-v1`
-**Branch:** `plan/p3-3-deploy`, based on `main` @ `cb8bfc5`, worktree `/Users/johnbaek/projects/Populus-p3-3`
-**Review round:** CODE review, round 1 — the plan phase closed at revision 4 after three rounds (9 → 7 → 5 blockers)
+**Plan:** `PLAN.md` (byte-identical durable copy at `docs/build/RUN-P3-3b-plan.md`), validates as `plan-v1`
+**Branch:** `plan/p3-3-deploy` @ `41b037d`, worktree `/Users/johnbaek/projects/Populus-p3-3`
+**Review round:** 3 of 3 — **revision 3**. Round 2 returned 7 blockers + 9 nits; every one is answered below. Requirements grew from 23 to 26.
 **Transport:** `interactive-disk`. Schema `review-brief-v1`.
 **Reviewer:** Claude (external Codex quota exhausted). Same bar.
 
-**This is a CODE review.** Implementation is complete: see `DEV-NOTES.md` and
-the working diff. All five Makefile gates pass on a frozen tree, and the
-mutation table is 14/14. There is no QA report — no orchestrated QA phase ran.
+**This is a PLAN review. No implementation exists** — `src/populus/deploy/` is
+absent. "Diff Context" describes proposed interfaces only.
 
-**Three things to look at first, all called out by the implementer rather than
-found by a reviewer:**
+**Focus areas for round 3, in priority order:**
 
-1. **A security test was edited.** `test_publish.py`'s `GH_TOKEN` step-scoping
-   assertion counted *any* step carrying a token and required each to equal the
-   PAT. The Verify step now carries `github.token` (the job's ephemeral token,
-   not a secret), which broke the count while the property held. It was
-   **sharpened** — pins the PAT to exactly two steps AND forbids any other
-   secret as `GH_TOKEN` anywhere — but editing a security assertion so one's own
-   change passes deserves scrutiny. Judge it.
-2. **`attest()` is a seam, not a signer.** The Actions step signs; the provider
-   cannot mint a bundle. Enforcement is the workflow step order
-   (attest → verify → commit). Check that this is genuinely enforcing, and that
-   the three `PublishError` raises are not dead code dressed as a control.
-3. **The `httpx` adapter moved** from `publish/attestation.py` to
-   `client/snapshot.py` because `test_dep_guard.py` forbids `httpx` outside four
-   allowlisted modules. Confirm this was the right call versus widening the
-   allowlist.
-
-**Focus areas, round 3:** whether round 2's seven blockers are closed; whether
-the blast radius is now complete (round 2 found three of five standing gates and
-the shipped MCP server outside scope); and whether R1's step ordering is genuine
-enforcement rather than another unwired half.
+1. **Is the first-run design finally sound — and is it sound for the right
+   reason?** Three mechanisms have now been rejected (a `bootstrap` input, a
+   code-level exemption, activation polling). Revision 3 does not replace the third
+   with a fourth: it moves domain activation **out of the deploy path entirely**
+   into owner prerequisite 4, and **declares the residual risk as TD-4 instead of
+   engineering it away.** Attack both halves — is the prerequisite genuinely
+   one-time and checkable, and is TD-4 an honest declaration or a way of writing
+   off a problem that still needs solving?
+2. **Round 2 found provider facts wrong, not just design gaps.** Revision 2 polled
+   a field the pinned endpoint does not return and specified a delete the provider
+   refuses. Every Cloudflare claim in revision 3 is now cited. **Re-check them
+   against current documentation** — this is the class of error that has survived
+   two rounds.
+3. **Scope, for the fourth time.** Planned Files grew by 13. Round 2 derived every
+   one of those independently. Do the same again: the failure mode here is not a
+   wrong list, it is a list assembled from the previous reviewer's findings rather
+   than from the tree.
 
 ## Summary of Changes
 
-Round 2 confirmed revision 2 fixed the measurement problem — five fallbacks,
-three discarded `attest()` results and nine protocol-typed parameters all
-re-grepped exactly as stated. What it found instead was that **the widening was
-drawn one step short again, in the same direction**: making `attestation`
-required breaks **three of the five standing gates**, and
-`mcp_server/server.py:1025/:1079` — the **shipped MCP server** — constructs
-`SnapshotClient` with no provider and silently inherits the no-op. Revision 2's
-own acceptance grep would have passed while that stayed broken, because the file
-simply *omits* the argument rather than containing the searched string.
+The dashboard is built and gate-passing; nothing deploys it. This run implements
+§12.1's publisher-side protocol — site build, frozen snapshot, isolated deploy
+job with preview→verify→production→verify→rollback, and the `record-sign.yml`
+body that writes an attested deployment generation.
 
-**Owner decision this revision: `attestation_phase` is CUT** to a named follow-on
-(P3-3c). Round 2 established it had no schema vehicle — `tests/schemas/` holds
-only `stats.schema.json`, both validators are code and closed-world, and
-`pointer_version` is the replay counter, not a schema version — while live
-published builds and a separately-deployed monitor would reject the new field.
-It defended against *implicit* paths to a fake verdict, and R10/R11 remove those
-entirely.
+**What revision 3 changed.**
 
-Revision 3 therefore: **produces** attestations with real enforcement (the attest
-step lands between the existing `Publish` and `Verify` steps, and Verify runs
-`--attestation=sigstore`, so a missing or failed attestation blocks the pointer
-commit); **verifies** them; and **closes every omission path** across six sites
-and four entry points, with the full caller blast radius — three acceptance
-scripts and four test modules — in scope.
+Round 2 falsified revision 2's central mechanism on three independent counts, each
+verified against Cloudflare's own documentation: `GET /pages/projects/{project}`
+returns `domains` as an **array of strings** with no status (per-domain `status`
+lives only on the `…/{project}/domains` subresource); nothing documents a
+deployment causing activation (the documented causes of a stuck domain are
+**DNS/ACME validation failure and Let's Encrypt rate-limiting**); and deletion
+**"will not delete the active production deployment if one exists"**, so revision
+2's compensation was not an available operation.
+
+Revision 3 therefore stops trying to solve the first run in code. **Domain
+activation becomes owner prerequisite 4**, confirmed via the domains subresource
+before arming — the same kind of one-time provisioning as the token prerequisites
+beside it, and the reason it survives objections that killed three in-workflow
+designs is that it never touches the per-deploy path. The first run's genuine
+residual risk — no rollback target, and no permitted delete — is **restored as
+TD-4**, which revision 1 had declared honestly and revision 2 deleted on the
+strength of a mechanism that does not exist.
+
+Round 2 also found four defects nothing had caught: **nothing in the tree emits
+`dist/stats.json`** (R24) though ARCHITECTURE `:684` requires byte-equality with
+the canonical copy; the provisional manifest would **self-list** through
+`build.py:1849`'s rglob (R2); `methodology/index.astro:193` renders the **full**
+manifest digest in a reader-facing verify command — a larger instance of the
+defect R19 was fixing on the footer; and the existing verifier would **refuse** a
+deployment generation outright, because `actions/attest-build-provenance` names
+subjects by basename while `resolve_identity` (`attestation.py:92`) requires the
+`deployments/` prefix (R25).
+
+**Owner input received mid-revision, folded in.** `CLOUDFLARE_PAGES_READ_TOKEN`
+was verified account-owned against `GET /accounts/{id}/tokens` — closing R22's open
+question — with a **single-element** `["Pages Read"]` permission array, which lets
+the signer assert "read is all I have" rather than merely "I have read". The same
+enumeration surfaced a pre-existing **user-owned**, non-expiring token with broad
+zone-level Read that the account endpoint cannot see. That does not breach §14's
+separation invariant, but it **falsifies the completeness claim the audit story
+rests on** — recorded as **R26** and **TD-5**.
+
+## Round-2 Finding Ledger
+
+Treat "resolved" as a claim to falsify.
+
+| # | Round-2 finding | Resolution in revision 3 | Verify at |
+|---|---|---|---|
+| **B1** | R11 polls `domains[]`, a string array with no status | Pinned the `/domains` subresource; the project endpoint is explicitly never read for status | R11; Architecture; Testing |
+| **B2** | The activation premise is undocumented; failure unbounded | Premise removed from the deploy path entirely → owner prerequisite 4; documented real causes recorded | R11, R14; Rollout 4; Current State |
+| **B3** | Deleting the sole deployment is refused by Cloudflare | **No DELETE endpoint in the design.** TD-4 restored with a removal condition | R11; TD-4; Architecture |
+| **B4** | `dist/stats.json` has no emitter | New **R24** + `dashboard/src/pages/stats.json.ts`; ordering stated | R24, T7 |
+| **B5** | Provisional manifest self-lists via `:1849` rglob; journal invariant | `finalize_build` deletes it before re-assembly; self-listing + journal-recovery fixtures | R2, T5 |
+| **B6** | `methodology/index.astro:193` renders the full digest | Added to Planned Files and T7; `--manifest` argument dropped | R19, T7 |
+| **B7** | Verifier refuses a generation — basename vs `deployments/` prefix | New **R25**: explicit `subject-name`, round-trip fixture | R25, T10 |
+| **N1** | "~180 callers" is 49, only 4 production | Corrected with the four named | R2 |
+| **N2** | R21's breakage citation wrong (`:241` is a docstring) | Corrected to `:245`'s `assert invocations`, and its real trigger | R21 |
+| **N3** | Gate step named "verify" trips `_step_index` → 3 tests | Step renamed; `_step_index` hardened under T12 | R18, T11, T12 |
+| **N4** | Doc-regression check would delete the revision-history record | Scoped to exclude the revision-history table | R16 |
+| **N5** | §17(h) credential fixtures silently narrowed | Added to Testing Strategy | Testing; T10 |
+| **N6** | R7's justification false in the respect that matters | Rewritten: the real reason is no `id-token: write`; artifact channel named | R7, R5 |
+| **N7** | `stage_build` `**kwargs` forwarding fails the guard | Explicit-keyword requirement stated | T5 |
+| **N8** | CSP `_headers` foreclosed and undeclared | Added to Non-goals | Non-goals |
+| **N9** | `monitor.py` correctly not a hazard | Recorded as such | Current State |
+
+**Round-2 findings NOT carried:** none.
 
 ## Detected Stack
 
-- **Python 3.12+** under `src/populus/` — uv/Hatch, `uv sync --frozen`, committed
-  `uv.lock`; stdlib `sqlite3`; `click` CLI (`CliRunner`); pytest with an
-  **autouse no-network guard** (`tests/conftest.py:14-23`, "network access is
-  forbidden").
-- Runtime deps (`pyproject.toml`): `httpx`, `lxml`, `packaging`, `pdfplumber`,
-  `pypdf`, `pyyaml`, `click`, `rfc8785`, **`mcp>=1.28.1`** — round 1 (F12) caught
-  that revision 1's brief omitted `mcp`.
-- **Astro 7 / TypeScript 6** under `dashboard/` — **untouched**.
-- **GitHub Actions** — `publish.yml`, `record-sign.yml`, both in `populus`.
-- Gates: **five** — `test`, `security`, `accept-m2-5`, `accept-m2-6`, `accept-m1-b`.
+Python 3.12+ (uv/Hatch, `uv sync --frozen`, `click`, pytest with an autouse
+no-network guard); Astro 7 / TypeScript 6 (`dashboard/.node-version` 24.16.0,
+`npm ci`); GitHub Actions; five Makefile gates — and note `make test` runs
+`npm run gates` (`Makefile:52-53`), so `dashboard/test/*.test.ts` is inside it.
 
 ## Reuse / Duplication Check
 
-Carried from PLAN.md's Reuse Map; re-verified against `main` @ `cb8bfc5`.
-
-| Existing | Decision | Verified |
-|---|---|---|
-| `AttestationProvider` protocol (`attestation.py:46`) | **Reuse unchanged** | **nine protocol-typed parameters** (`build.py:1127/1300/1482/2059/2157/2334`, `pointer.py:202`, `client/snapshot.py:269`, `scripts/monitor.py:91`) **plus three CLI supply sites** (`cli.py:749/844/1033`) — round-2 F21's correction to revision 2's undifferentiated "twelve" |
-| `AttestationResult` (`:39`) | **Reuse unchanged** | `ok`/`detail` carries the failed-check name |
-| `StagingNoop` (`:59`) | **Keep, never a default** | §5.5 mandates an unattested P1 path; existing publish/pointer suites pass it deliberately |
-| `P2_OIDC_ISSUER` (`:35`) | **Reuse** | already correct |
-| `Fetcher` protocol pattern (`client/snapshot.py`) | **Reuse** | makes R8's offline fixtures constructible under the socket guard |
-| `publish.yml`'s existing `Verify`-before-`Commit` order | **Reuse as the enforcement point — new in rev 3** | no new gate needed; R1 makes the existing one meaningful |
-| artifact-vs-manifest size + hash check (`snapshot.py:586`, `:920`) | **Reuse** | §5.5 element 8 is already implemented; the plan does not rebuild it |
-| `cli.py` `@main.command()` + `CliRunner` | **Extend** | established shape |
-| `src/populus/net/` SEC client | **Do NOT reuse** | SEC-specific host allowlist and UA |
+Carried from PLAN.md. Two rows changed since round 2: the dashboard row now names
+`pages/methodology/index.astro`, and a new row covers the three
+`dashboard/test/*.test.ts` fixture files that `make test` executes.
 
 ## Simplicity Audit
 
-Carried from PLAN.md. Minimum coherent design is one provider class, one
-subject→identity mapping, four explicit entry points, and **deletions**.
+Revision 3 moves the first-run problem **out of the codebase**: no bootstrap
+input, no polling loop, no timeout, no exemption, no compensating special case —
+a precondition assertion and a rollback, both of which the steady-state path needs
+anyway. The residual risk is declared rather than engineered around.
 
-**Cutting `attestation_phase` removed the only new data structure, the only
-schema change, and the only live-consumer risk** — revision 3 is smaller than
-revision 2 despite covering more files, because the added files are callers being
-made explicit rather than new mechanism.
-
-**Rejected as over-abstraction:** a provider registry; an abstract verification
-pipeline; caching beyond a digest-keyed dict; the phase field (deferred to P3-3c,
-not abandoned); a default value on any selection surface.
-
-**Accepted and declared:** four entry points each need an explicit choice, which
-is more surface than one central default. That is the point — a central default
-is exactly what six sites silently inherited.
+The file list grew because round 2 re-derived the blast radius. The orchestrator
+remains deliberate complexity so that ordering guarantees are failing tests rather
+than opinions.
 
 ## Tech Debt Introduced
 
-Carried from PLAN.md. Four declared items:
-
-1. **No P2-marked-artifact refusal until P3-3c.** With R10/R11 there is no
-   *implicit* path to a no-op verdict, but a **deliberate**
-   `--attestation=staging-noop` on a P2 build is still accepted. Owner: project
-   owner. Removal condition: a compatibility mechanism for the closed-world
-   validators plus a monitor upgrade ordering.
-2. **Third-party verification blocked** by the §15.3 counsel gate on `populus-data`.
-3. **`attest()` is a seam, not a signer** for the Sigstore provider — the Actions
-   step signs. Stated plainly rather than implied; enforcement is R1's ordering.
-   This is the honest restatement round-2 F17 asked for.
-4. **Deployment-generation attestation unexercised until P3-3b**; R16's drift test
-   is the mitigation.
-
-**No hidden debt:** no diff exists. Re-run that check at code review.
+1. **TD-8 / TD-10** — unchanged.
+2. **§17's P3 gate does not close** — the ≥3-nightly requirement is time-based.
+3. **Third-party verification** waits on the §15.3 counsel gate.
+4. **TD-4 — the first production deploy has no automated compensation.** Bounded
+   by R9 (the same bytes already passed the full inventory sweep on preview).
+   Removal condition: the first successful deploy.
+5. **TD-5 — the credential audit surface is incomplete by construction.**
+   User-owned tokens are invisible to `GET /accounts/{id}/tokens`. Owner decision;
+   R26 records the fact.
 
 ## Memory Touch-Points
 
-- **`specify-before-rewriting`** — both the split and this widening are responses
-  to repeated blockers in one mechanism.
-- **`verify-against-a-frozen-tree`** — hash the tree around gate runs.
-- **`reversing-a-reviewed-decision`** — **new and decisive in rev 3.** §5.5's
-  "P1 is unattested by necessity" was a reviewed decision; R3 overturns it because
-  its premise (the attesting workflow lives in a private repo) is false — the
-  workflow is in public `populus`. Property kept, mechanism replaced, record written.
-- **`mutation-tests-pin-properties`** — the mutant list now covers the workflow
-  step ordering and each of the four entry points, not just provider internals.
-- **`review-scope-decides-the-verdict`** — review scoped to plan and spec.
-- **`orchestrate-worktree-isolation`** — the main checkout's root slots belong to
-  the live RUN M2-8.
-- **`plan-v1-literal-rid-tokens`** — the DoD enumerates R1–R16 literally.
+- **`measure-the-mechanism`** — rounds 1 and 2 each found scope derived from the
+  draft rather than the tree. Revision 3's additions all cite file:line.
+- **`reversing-a-reviewed-decision`** — TD-4's restoration is the clearest case:
+  revision 1 was right, revision 2 removed it on a false premise, revision 3 puts
+  it back **and records why**, rather than quietly reinstating it.
+- **`specify-before-rewriting`** — three rejected first-run mechanisms in one
+  problem is the signal; revision 3 stops iterating on the mechanism and changes
+  what kind of thing it is.
+- **`mutation-tests-pin-properties`**, **`verify-against-a-frozen-tree`**,
+  **`review-scope-decides-the-verdict`**, **`orchestrate-worktree-isolation`**.
 
 ## Repo Structure Conformance
 
-| Planned addition | Conventional location | Actual location | Conforms? | Notes |
-|---|---|---|---|---|
-| `SigstoreAttestation` + identity mapping | beside the seam | `src/populus/publish/attestation.py` | yes | same module as the protocol and `StagingNoop` |
-| MCP-server provider selection | the server's own `argparse` surface | `src/populus/mcp_server/server.py` | yes | symmetric with the click flag; round-2 F14 |
-| acceptance-script provider args | `scripts/accept_*.py` | the three existing scripts | yes | hermetic, so `StagingNoop` **explicitly** |
-| `--attestation` flag, `preflight-attestation` | `src/populus/cli.py` | `src/populus/cli.py` | yes | extends the existing command block |
-| attest step + permissions | the publishing workflow | `.github/workflows/publish.yml` | yes | modifies an existing workflow; adds none |
-| tests | flat `tests/test_<area>.py` | `test_attestation.py`, plus edits to `test_publish.py`, `test_pointer_state.py` | yes | matches convention |
-| schemas | `tests/schemas/` | `manifest.schema.json`, `pointer.schema.json` | yes | sibling of the existing `stats.schema.json` |
-| offline bundle + trusted-root fixtures | `tests/fixtures/<area>/` | `tests/fixtures/attestation/` | yes | matches `tests/fixtures/inst/…` convention |
-| runbook | `docs/runbooks/` | `docs/runbooks/attestation.md` | yes | siblings: `disaster-recovery.md`, `rollback.md` |
-
-**No new modules, packages, or top-level directories.**
+`src/populus/deploy/` mirrors `src/populus/publish/`. Tests one-per-module under
+`tests/`; fixtures under `tests/fixtures/deploy/`. `dashboard/src/pages/stats.json.ts`
+follows Astro's endpoint-route convention. No new top-level directory.
 
 ## Failure-Mode Sweep
 
-- **F0 verify-don't-assume** — ✓ **and this is exactly where revision 1 failed.**
-  It claimed five protocol dependents (twelve), one fallback (five), zero dropped
-  `attest()` results (three), and a private `populus` (public). Every Current
-  State line in revision 2 was re-measured. The reviewer should re-measure again.
-- **F1 gate-list completeness** — ✓ five gates.
-- **F2 full-tree gate scope** — ✓ Makefile entrypoints.
-- **F3 verify end-to-end** — ✓ owner-side verification is reachable in this run
-  and is Rollout step 3; third-party is explicitly out of scope behind a named
-  external gate.
-- **F4 honest handoff** — ✓ Non-goals and Tech Debt name both external gates
-  (§15.3 counsel flip; P3-3b).
-- **F5 no self-signing** — ✓ this review precedes merge.
-- **N/A:** data-migration — `attestation_phase` is additive with a compatibility
-  test (R12), not a migration.
+- **F0 verify-don't-assume** — round 2 proved revision 2 failed this **for the
+  provider**. Every Cloudflare claim is now cited to documentation; every code
+  claim to file:line.
+- **F1 gate-list completeness** — five gates; R3 exists because *three* files
+  validate the schema, and revision 2 leaned on the one that is normally skipped.
+- **F2 full-tree gate scope** — Makefile entrypoints, now traced into
+  `npm run gates`.
+- **F3 verify end-to-end** — Rollout step 8 is the real proof; four owner
+  prerequisites.
+- **F4 honest handoff** — Non-goals covers every §17 item not closed, plus the CSP
+  foreclosure; §17(h) is in scope rather than dropped.
+- **F5 no self-signing** — 4 code-review blockers plus 15 across two plan rounds.
+  Expecting a third.
 
 ## Diff Context
 
 **No diff exists.** Proposed shape only.
 
-### `.github/workflows/publish.yml` — the producing half (new in rev 2)
-**What's changing:** add `id-token: write` + `attestations: write` to the publish
-job; add an attest step over `manifest.json`, each `latest.json` generation, and
-every Release asset.
-**Key decision:** this is what round 1 found missing entirely. Without it the
-verifier has nothing to verify and P3-3b stays blocked.
+### `src/populus/deploy/` (new)
+`snapshot.py` (R4's seven steps); `cloudflare.py` — project GET for
+`production_branch`, **`/domains` subresource for per-domain status**, deployments
+list, rollback, and **no delete**; `verify.py` (marker parsing by `<meta>` name,
+inventory sweep, provider checks); `orchestrator.py` (the ordered sequence).
 
-### `src/populus/publish/attestation.py`
-**Proposed:** `SigstoreAttestation(repo, identities, issuer, *, fetcher, trusted_root)`.
-**Key decisions:**
-- `identities` is a **subject→identity mapping** (round-1 F7: a single identity
-  per instance cannot express the per-subject-kind requirement it was traced to).
-  Unknown subject name → `ok=False`, never a default identity.
-- `fetcher` and `trusted_root` are injectable (round-1 F8: both the bundle fetch
-  and Sigstore's TUF root refresh are network operations, and every test runs
-  under an autouse socket guard).
-- `verify()` returns `ok=False` naming the failed check; never raises past the seam.
+### `.github/workflows/publish.yml`
+Site build (absent today), immutable artifact, isolated deploy job, the verifying
+pre-publish gate, and the caller-side job that turns a skipped signer into a
+failed run. Deploy job holds the Cloudflare token and **no GitHub write scopes**.
 
-### `build.py`, `client/snapshot.py`, `scripts/monitor.py` — the deletions
-**What's changing:** remove all five `or StagingNoop()` defaults (`attestation`
-becomes required); make the three `attest()` sites raise `PublishError` on
-`ok=False`.
-**Key decision:** the class is not the hazard — the implicit defaults are.
+### `.github/workflows/record-sign.yml`
+Replaces the `echo` no-op; adds the `secrets:` block it lacks today; attests the
+generation under the explicit subject name `deployments/<gen>.json` (R25).
 
-### `manifest.py`, `pointer.py` — the P2 discriminator
-**What's changing:** add `attestation_phase`; refuse a `StagingNoop` verdict on a
-P2-marked artifact in `run_publish` and `evaluate_pointer`.
-**Key decision:** data-derived, not environment-derived.
+### `src/populus/publish/build.py`
+`stage_build()` / `finalize_build(staged, *, site_file_count)` with the provisional
+manifest deleted before re-assembly; `run_build` retained for its 4 production
+callers; `attestation=` forwarded by explicit keyword.
 
-### `ARCHITECTURE.md`
-**What's changing:** `:350`'s lookup endpoint **and** its certificate identity
-(both wrong, both on one line); `:778` and `:349`, which tie attestation
-availability to the wrong repository's visibility; a correction note against
-`REVIEW-RESPONSE.md:88/:126`.
+### `dashboard/`
+Markers, `SITE_CODE_SHA`, digest removal from **both** pages, the
+`dist/stats.json` emitter, and the three test-fixture files `make test` runs.
 
 ## Review Checklist
 
-- [ ] Per-finding disposition for round 2's F13–F21.
-- [ ] **Is the blast radius complete NOW?** Round 2 found seven files outside
-      scope, three of them standing gates. Re-grep every caller of `run_build`,
-      `run_publish`, `run_verify`, `SnapshotClient(`, and `evaluate_pointer(`
-      across `src/`, `scripts/` and `tests/`. Is anything still missing?
-- [ ] **Is R1's ordering genuine enforcement?** The attest step sits between
-      `Publish` and `Verify`, and Verify runs `--attestation=sigstore`, so a
-      missing attestation should fail Verify and block the pointer commit. Trace
-      it: does `populus verify` actually fail when no bundle exists, or does it
-      pass because `verify()` returns `ok=False` somewhere that is not checked?
-- [ ] **R10's acceptance is a test, not a grep** — revision 2's grep would have
-      passed while `mcp_server/server.py` stayed broken. Does the stated test
-      actually catch *omission* at every one of the six sites?
-- [ ] **R3's decision record.** Overturning §5.5's "P1 is unattested" is a
-      reviewed-decision reversal. Is the premise-falsification argument correct —
-      does attestation availability genuinely depend on `populus`'s visibility and
-      not `populus-data`'s?
-- [ ] **R15's targeted grep.** Does it return nothing after the amendments while
-      leaving `:724`/`:778`'s correct `populus-data` mentions intact?
-- [ ] **Is cutting `attestation_phase` safe?** With R10/R11, is there genuinely no
-      *implicit* path to a no-op verdict left — or does cutting it reopen something?
-- [ ] Is the mutant list sufficient, especially for the workflow ordering and the
-      four entry points?
-- [ ] Anything in Non-goals **narrowed** rather than explicitly deferred?
+- [ ] **Is prerequisite 4 genuinely checkable and one-time?** It asserts
+      `status: active` on the domains subresource before arming. Can the domain
+      revert to a non-active state later — and if so, does R11's per-run
+      precondition assertion catch it, or does it only abort *after* the preview
+      deploy has already happened?
+- [ ] **Is TD-4 an honest declaration or a write-off?** The claim is that a
+      production-only failure after a green preview indicates routing or cache
+      rather than bad bytes. Is that reasoning sound, and is "owner remediates via
+      runbook" acceptable for a one-time window, or does it need a mechanism?
+- [ ] **Re-verify every Cloudflare claim.** The `domains` string-array shape, the
+      domains-subresource status values, the active-production-deployment delete
+      refusal, and the documented causes of a stuck `Initializing`. Two rounds of
+      provider facts have been wrong.
+- [ ] **R25 — is the subject-name fix correct?** It asserts
+      `actions/attest-build-provenance` accepts `subject-name` + `subject-digest`
+      in place of `subject-path`, and that `deployments/<gen>.json` satisfies both
+      `resolve_identity`'s prefix arm (`attestation.py:92`) and
+      `_subject_name_matches` (`:396-401`). Check the action's actual input contract.
+- [ ] **R24 — is an Astro endpoint route the right emitter,** and does the stated
+      ordering (canonical patched before `:1849`'s rglob, `dist/` after
+      enumeration) actually hold? It rests on "patching an existing file adds no
+      files to the walk."
+- [ ] **R2/B5 — does deleting the provisional manifest before re-assembly fully
+      restore today's behaviour?** Consider `build_journal`'s text inlining
+      (`:686-690`) and `materialize_from_journal` (`:853-875`) recovery.
+- [ ] **Scope, independently.** Re-derive rather than checking the list.
+- [ ] **R20 — is a caller-side `if: always()` assertion job the right mechanism,**
+      and does the workflow-semantics fixture actually prove it detects the skip?
+- [ ] **R26 — does recording the blind spot suffice,** or does §14's invariant need
+      restating given a credential exists that no account-level audit can see?
+- [ ] Is anything in Non-goals narrowed rather than deferred?
+- [ ] Is the mutant list sufficient for ordering, the marker contract, R25's
+      subject binding, and R18's verification step?
 
 ## Open Questions
 
-Round 2's three were answered and adopted (see Previous Review Feedback). What
-remains uncertain:
-
-1. **Is `attest()`-as-a-seam honest enough?** For the Sigstore provider it cannot
-   fail, because the Actions step does the signing. R12 still requires the three
-   call sites to raise on `ok=False`. Is that dead code that should be deleted, or
-   correctly-preserved seam behaviour for a future provider that can fail?
-2. **Should the acceptance scripts pass `StagingNoop` or a fixture-backed real
-   provider?** They are hermetic and offline, so the no-op is the honest choice —
-   but it means three of five gates never exercise the real path.
-3. **Is four entry points the right number**, or should selection be centralised
-   in one factory that each entry point calls, so a fifth entry point added later
-   cannot forget?
+1. **Is prerequisite 4 acceptable, or does moving a precondition to the owner
+   count as the same evasion three in-workflow designs were rejected for?** The
+   argument for it: it is provisioning, like the three token prerequisites, and it
+   is verified by an API call whose result is recorded. The argument against: the
+   run still cannot prove it end-to-end without a human first.
+2. **Should TD-4 block the run?** It is a genuine one-time window where an
+   unverified deployment can serve. The alternative — deleting the Pages project
+   as compensation — requires removing the CNAME first and returns the domain to
+   the state prerequisite 4 exists to clear.
+3. **Does R26 belong in this run at all?** It records a pre-existing credential
+   fact discovered while provisioning. Arguably it is a §14 documentation task, not
+   a deploy-run requirement.
 
 ## Constraints & Context
 
-- **`populus` is PUBLIC** (verified `gh repo view … --json isPrivate` → `false`),
-  so attestation creation and unauthenticated lookup both work today. Round 1's
-  F1 flagged revision 1 for saying otherwise — that measurement was true when
-  written and the repo was flipped between writing and review.
-- **`populus-data` is private until the §15.3 counsel gate** — DR-5 says it
-  *"starts private (staging) and flips public only after"* it. Revision 1 misread
-  this as "stays private" (round-1 F4), which made its own goal unreachable.
-- **The protocol shape cannot change** — twelve dependents.
-- **`tests/conftest.py` forbids network in every test** — drives R7.
-- **`sigstore-python` clears G1**: `dep_guard.py` denylists only
-  `{polygon, massive, quiverquant, unusual-whales, unusualwhales}`, and
-  `ARCHITECTURE.md:350` already names `sigstore-python` as the intended verifier.
-- **Unauthenticated attestation lookups are rate-limited to 60/hour** — the
-  runbook must say so, or an operator will read a 403 as a verification failure.
-- **Closed by architecture rounds 9–11; do not reopen as "simplification":** the
-  deploy job and record signer stay separate workflows; they never share one
-  Cloudflare token; the signer verifies the full inventory, not marker files. None
-  are in P3-3a's scope, but a reviewer may reach for them by reflex.
+- **§14 separation invariant**, as amended by R7: no **job** holds both
+  `Pages Write` and GitHub write/attestation authority — and per R7's corrected
+  reasoning, the operative fact is that a Pages-Write job without `id-token: write`
+  cannot mint an attestation, *not* the permission block alone.
+- **Cloudflare Direct Upload has no promote operation**; production is a second
+  upload, rollback an explicit API call, and **deletion of an active production
+  deployment is refused**.
+- **The deploy token is account-scoped.** No security property may rest on
+  Cloudflare-side state being unrestorable.
+- **Free tier:** 20,000 files, 25 MiB/file, 500 deploys/month.
+- **`tests/conftest.py` forbids network** → injected transports.
+- **`publish.yml` runs on `schedule`** — revision 3 adds no input.
+- **Live infrastructure:** account `d7b5e4995e76a76c9899695b54c61226`; project
+  `publicfilings`, zero deployments, `production_branch: main`; domain attached and
+  `Initializing` (prerequisite 4 must clear this).
+  `CLOUDFLARE_PAGES_READ_TOKEN` **account-owned, verified**, `["Pages Read"]` only,
+  expires 2027-08-03. `DATA_REPO_PAT` and `Pages:Edit` not set; both `*_ARMED`
+  unprovisioned — **the publish workflow has never run.**
+- **Closed by architecture rounds 9–11 — do not reopen as "simplification":**
+  merging the deploy job and record signer; sharing one Cloudflare token;
+  verifying marker files instead of the full inventory.
 
 ## Previous Review Feedback
 
-### Round 2 — 7 blockers, 2 nits; all addressed
+**Round 2: 7 blockers + 9 nits — all addressed**, ledger above.
+**Round 1: 8 blockers + 4 nits — all addressed** in revision 2; three of those
+resolutions were themselves corrected by round 2 (F1 incomplete, F3's justification
+measurably wrong, F7 a misdiagnosis).
+**Predecessor draft** (`docs/build/RUN-P3-3b-plan-draft.md`): three rounds,
+16 → 7 → 7 blockers.
 
-- **F13 (blast radius: 3 of 5 gates + 6 files outside scope)** → **R13**; all
-  seven files in Planned Files. DoD R13 is now "all five Makefile gates exit 0",
-  the direct check that the radius is complete.
-- **F14 (shipped MCP server silently unverified)** → **R10** extended to six sites
-  including `server.py:1025/:1079`; R11 gives the server its own explicit argparse
-  surface; **DoD R10 is a test, not a grep** — revision 2's grep would have passed
-  while this stayed broken.
-- **F15 (no schema vehicle; closed-world validators; live consumers)** → the
-  field is **CUT** to P3-3c by owner decision.
-- **F16 (R11 guarded 2 of 5 verdict sites; phase provenance unspecified)** →
-  dissolved by the cut. R10/R11 remove every implicit path instead.
-- **F17 (produce and verify unwired; `attest()` unspecified)** → **R1** puts the
-  attest step between the existing `Publish` and `Verify` steps and runs Verify
-  with `--attestation=sigstore`, so a failed attestation blocks the pointer
-  commit. `attest()` is honestly restated as a seam, not a signer (Tech Debt 3).
-- **F18 (R1 reverses §5.5's P1 decision without a record; DoD grep unsatisfiable)**
-  → **R3** is an explicit decision record naming the falsified premise; **R15**
-  widened from four sites to seven; the DoD grep is now targeted so `:724`/`:778`'s
-  correct mentions survive.
-- **F19 (defaultless flag breaks the nightly)** → **R11** covers all four entry
-  points including `publish.yml`'s three invocations; T10 adds them; a workflow
-  lint test pins it.
-- **F20 (nit: bare trusted root would still trigger TUF)** → **R8** names a
-  committed **trust configuration**.
-- **F21 (nit: "twelve dependents" mixed two categories)** → Constraints now say
-  nine protocol-typed parameters plus three CLI supply sites.
-
-**Round-2 answers adopted:** cut the phase field rather than split producing from
-the deletions (the reviewer's answer to Open Question 3); keep `--attestation`
-defaultless everywhere including read-only commands, because "read-only
-ergonomics" is exactly the argument that produced the six omission sites — the
-worst of which is inside `verify`.
-
-### Round 1 — 9 blockers, 3 nits; all addressed
-
-F1 stale repo measurement (timing artifact; repo flipped between writing and
-review) → R2. F2 Success Criteria contradicted the DoD → fixture-based success,
-live chain a post-merge milestone. F3 nothing attested → the widening, now R1.
-F4 DR-5 misread as "stays private" → owner-side vs third-party split. F5 five
-fallbacks + three dropped results → R10/R12. F6 discriminator undefined →
-superseded by the cut. F7 single-identity constructor → R6 mapping. F8 fixtures
-unconstructible under the socket guard → R8 seams. F9 ARCHITECTURE
-under-corrected → R15. F10 monitor "unchanged" → in scope. F11 orphan clause →
-handoff note. F12 dep list / rate limit → corrected.
+**The pattern across all five rounds, stated plainly:** every rejected finding has
+been *a claim that looked verified but was not* — a grep that could not see an
+omission, a green test exercising only a fake, a precondition its own plan could
+reset, a marker check that passed on a replaced page, and now an API field that
+does not exist and an operation the provider declines. **The highest-value move is
+to pick the claim in this document that is least checkable and check it.**
