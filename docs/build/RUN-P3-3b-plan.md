@@ -55,6 +55,26 @@
 >   so this plan's earlier Let's Encrypt rate-limiting citation was wrong twice
 >   over — wrong as documentation, and wrong as the applicable CA.
 >
+> **Revision 7 — round 5 caught my own fix reproducing the defect it fixed.**
+> R27 was written to replace an untestable §17(h) fixture with a testable property
+> — and shipped with **no mutant and no seam**: the plan named "the signer path"
+> while `src/populus/deploy/` contained no signer module at all. Fifth consecutive
+> round to find a fix that reads as done. Now: `record.py` + `tests/test_deploy_record.py`
+> are in Planned Files, R27 is scoped to that module's call surface (the deploy job
+> legitimately POSTs), and its mutant is named.
+>
+> **The ticker map is now a decision, not a mechanism.** Round 5 proved revision 6's
+> "stage a real `company_tickers.json`" was a branch CI can never take — no source
+> exists on a runner, `populus-data` carries no copy, `build.py` emits none. Staging
+> one would also have published an SEC file as congress-module data under congress
+> licenses, inflated every recovery journal by ~1 MB, and made the manifest artifact
+> set environment-dependent. **The site ships the honest no-map state (TD-7)** —
+> worse than a real map, far better than fixture data served as production truth.
+>
+> Also: two more undeclared guard collisions (`env` must be step-scoped; the
+> journal path can't appear in a `run` body), four stale citations including one the
+> last sweep **over-corrected**, and the TD list renumbered.
+>
 > **Revision 6 — the confirmation round landed and found four more.** Round 4
 > checked the six round-3 remediations: B4, B6 and B7 held; **B2 and B3 were
 > text-only** (the sentence asserting the fix was present, the task/test/DoD wiring
@@ -164,14 +184,38 @@ exposure exists exactly once and is gone permanently after the first success.
   `readTickerMapJson` **unconditionally**, feeding the search index (`:544`) and
   `resolveTicker` (`:612`), so a congress-only nightly ships it too.
 
-  **Fix, both halves:** (a) `stage_build` **stages a real `company_tickers.json`
-  into the build directory as an enumerated, manifest-listed artifact**, and the
-  workflow points `POPULUS_TICKER_MAP` at that staged copy — so the map is covered
-  by the manifest digest and the served-tree sweep like every other artifact; when
-  no registry copy exists the variable is set to an explicitly absent path, which
-  `inst.ts:316` already renders as the honest no-map state. (b) The CI refusal
-  rejects **the fixture path itself**, not merely an unset variable, so the escape
-  hatch is closed by construction. The workflow lint asserts the full env contract.
+  **Fix — and it is a decision, not a mechanism, because no mechanism exists.**
+  Round 5 established there is **no source for a real ticker map on a CI runner**:
+  the file reaches this tree only via `populus identity bootstrap --from-cache
+  data-cache/inst/registry` (`cli.py:428,527`), `data-cache/` is not in git,
+  `populus-data` carries no copy (checked), `build.py` emits none, and no fetch path
+  exists outside that flag. Revision 6 proposed staging "a real
+  `company_tickers.json`" — a branch CI could never take. So:
+
+  **(a) The production site ships the honest no-map state.**
+  `POPULUS_TICKER_MAP` is set to an explicitly absent path; `inst.ts:316` already
+  returns `null` for that, `resolveTicker` is null-safe, and the ticker surfaces
+  render `no-map` rather than inventing names. This is a real degradation —
+  search-index ticker names become `""` (`data.ts:544`) and ticker pages show the
+  no-map state (`:612`) — and it is **declared as TD-7**, not hidden. It is
+  strictly better than the alternative it replaces: fixture-derived mappings
+  presented as production data, which R15's sweep cannot detect because the served
+  bytes would faithfully match the built bytes.
+  **(b) The CI refusal rejects the fixture path itself**, not merely an unset
+  variable, so the escape hatch is closed by construction. The workflow lint
+  asserts the full env contract.
+
+  **Staging the map into `build_dir` is explicitly rejected**, because round 5
+  showed it collides with three invariants the provisional-manifest analysis (R2)
+  had already surfaced and nobody re-ran for this file: `build.py:1849-1865` would
+  publish an SEC file as **congress-module data under congress ingestible
+  licenses** (`manifest.py:33` `LICENSING_ARTIFACTS`); `build_journal` (`:685-689`)
+  inlines every build-dir file verbatim, growing every recovery journal by ~1 MB;
+  and because the file exists only when a registry copy does, the **manifest
+  artifact set would become environment-dependent** — the same build id producing
+  different artifacts locally and in CI, which `tests/test_publish.py:329-341`
+  cannot catch because line `:339` is a **subset** assertion (`} <= names`), not the
+  exact-set check revision 2 claimed.
   (`SITE_CODE_SHA` has no CI refusal either, but R19's exact marker comparison makes
   that one fail closed.)
 
@@ -187,8 +231,18 @@ exposure exists exactly once and is gone permanently after the first success.
   determine which and state it. R21 declares the analogous break at
   `test_attestation_structure.py:245`; revision 4 declared this one nowhere.
 
-  **T8 collides with a third guard that must be declared, not quietly
-  relaxed.** `tests/test_publish.py:1977` asserts no publish-job step's `run` body
+  **Two further guards, declared here rather than discovered during
+  implementation.** `tests/test_publish.py:1962` asserts `"env" not in workflow`
+  and `:1966` asserts `"env" not in job` — so **all four env vars must be
+  step-scoped**; a workflow-level or job-level `env:` block fails immediately.
+  And `:1979` asserts `"journal" not in run` for every publish-job step, which
+  constrains T5's `finalize-build` CLI surface (it writes the journal) exactly as
+  `:1978`'s `.staging` guard constrains T8 — same declare-don't-relax obligation,
+  resolved the same way: the journal path is derived inside the command, never
+  named in the `run` body.
+
+  **T8 collides with a further guard that must be declared, not quietly
+  relaxed.** `tests/test_publish.py:1978` asserts no publish-job step's `run` body
   contains `.staging`, while R1 requires building from
   `populus-data/.staging/<id>/build`. Resolution: **derive the staged path in a
   helper** so the literal never appears in a `run` body, leaving the guard intact
@@ -251,7 +305,7 @@ exposure exists exactly once and is gone permanently after the first success.
 - **R24** — **Something must emit `dist/stats.json`, and nothing currently does.**
   ARCHITECTURE `:689` requires the count written "into the one `stats.json` in
   *both* places identically … assert the two copies are byte-equal", and `:686`
-  and `:851` make the served copy a per-deploy gate. In this tree
+  and `:856` make the served copy a per-deploy gate. In this tree
   `dashboard/public/` contains only `favicon.svg`, `dashboard/astro.config.mjs` has
   no copy step, and `dashboard/src/lib/data.ts:433-434` only **reads** the file.
   Add an emitter (an Astro endpoint route, `dashboard/src/pages/stats.json.ts`,
@@ -401,7 +455,7 @@ exposure exists exactly once and is gone permanently after the first success.
   and `_subject_name_matches` (`:396-401`) requires the in-bundle statement name to
   equal the queried name or end with `"/" + name`. But
   `actions/attest-build-provenance` with `subject-path` names subjects by
-  **basename** — which is exactly why `SUBJECT_IDENTITIES` (`:55-58`) maps the bare
+  **basename** — which is exactly why `SUBJECT_IDENTITIES` (`:54-57`) maps the bare
   `"manifest.json"` against `publish.yml:91`'s full
   `populus-data/builds/*/manifest.json` path. A generation written to
   `builds/<id>/deployments/<gen>.json` would therefore attest under the subject
@@ -461,7 +515,7 @@ exposure exists exactly once and is gone permanently after the first success.
   no `--attestation=sigstore`), and `test_verify_step_is_authenticated` (`:236`).
   Name it "Gate on prior deployment generation" and harden `_step_index` under T12.
 - **R20** — **A skipped signer job is a failure, not a success — and the mechanism
-  must be named, not just the requirement.** `record-sign.yml:24` gates on
+  must be named, not just the requirement.** `record-sign.yml:23` gates on
   `POPULUS_RECORD_SIGN_ARMED` at the **job** level, so if that variable were unset
   while publishing stayed armed, the job would be **skipped and report success**:
   the deploy completes, no generation is written, and nothing notices until R18
@@ -516,9 +570,10 @@ exposure exists exactly once and is gone permanently after the first success.
   as rounds 1 and 2 (a claim that reads as verified because someone verified
   something adjacent). The single-element `["Pages Read"]` array remains a genuinely
   valuable property; it is **provisioning-time evidence recorded in §14**, not a
-  runtime assertion. §17(h)'s credential *fixtures* are unaffected — they are
-  mocked, and they test the signer's behaviour given a bad token, not its ability
-  to introspect one.
+  runtime assertion. §17(h)'s credential fixtures are **not** left as-is either — see
+  **R27**, which amends them on the record, because "fails closed on a
+  `Pages Write`-scoped token" is unobservable for the same reason this paragraph
+  gives.
 - **R27** — **§17(h)'s "fails closed on a `Pages Write`-scoped token" is not an
   observable property, and the spec is amended rather than faked.** §17(h)
   (`ARCHITECTURE.md:856`) requires the signer to fail closed when handed a
@@ -533,6 +588,19 @@ exposure exists exactly once and is gone permanently after the first success.
   over-scoped token by the signer's own behaviour instead of by a scope check it
   cannot perform. Revision 4 demoted R22's runtime assertion but left this fixture
   standing — the same claim, one file over.
+
+  **The property needs a seam and a mutant, or it passes vacuously.** The signer's
+  body has no module in this plan: `src/populus/deploy/` was enumerated as
+  `snapshot.py`/`cloudflare.py`/`verify.py`/`orchestrator.py`, none of which is the
+  signer, so "the signer path" named a path with no code. **`src/populus/deploy/record.py`
+  and `tests/test_deploy_record.py` are added** (T10), and R27 is scoped over
+  **`record.py`'s Cloudflare call surface only** — the deploy job legitimately
+  issues non-GET calls (upload, `POST …/rollback`), so an unscoped property would be
+  false by construction. **Killing mutant, stated:** make `record.py` issue one
+  `POST`; the injected-transport fixture must fail. Without that mutant a test that
+  merely calls the read functions and asserts no writes were seen proves nothing —
+  which is the exact failure R27 exists to remove, and round 5 caught it reproduced
+  one file over.
 - **R26** — **`GET /accounts/{id}/tokens` is not a complete inventory of what can
   reach this zone, and §14 must stop implying it is.** Owner enumeration found a
   pre-existing **user-owned** token — `Cloudflare Agent (auto-generated)`, id
@@ -546,7 +614,12 @@ exposure exists exactly once and is gone permanently after the first success.
   as the enumeration surface, and records that user-owned tokens are outside this
   run's control. **Whether that specific token is revoked or scoped down is an
   owner decision, not a task in this run** (TD-5).
-- **R23** — **`docs/runbooks/deploy.md`** records the first-run behaviour, the
+- **R23** — **`docs/runbooks/deploy.md`** *and* **`docs/runbooks/rollback.md`** —
+  §13.5 (`ARCHITECTURE.md:747`) makes "restore the dashboard to the rollback target
+  deterministically" part of the only supported rollback procedure from P3 on, so
+  the rollback runbook cannot stay silent on the dashboard;
+  `tests/test_publish.py:2048-2059` runs `bash -n` over its fenced bash blocks.
+  `deploy.md` records the first-run behaviour, the
   arming order, and the rollback path; §17's P3 status states what this run closes
   and what it does not.
 
@@ -555,8 +628,9 @@ exposure exists exactly once and is gone permanently after the first success.
 The site build and its manifest dependency; the three-outcome build seam and the
 stats schema; the snapshot; `src/populus/deploy/`; the deploy job; the
 `record-sign.yml` body and its secrets block; the machine-readable markers; the
-verifying pre-publish gate; the structural-guard extension; docs and the two
-spec amendments.
+verifying pre-publish gate; the structural-guard extension; the signer body; docs
+and the **four** spec amendments (§12.1 step 4, §17(h), §14's headline, §14's
+credential inventory).
 
 ## Non-goals
 
@@ -571,11 +645,11 @@ spec amendments.
 - **TD-8 / TD-10** — declared, unchanged.
 - **`.github/dependabot.yml` does not exist**, and this run does not create it.
   §12.1 step 1 places the Wrangler pin "under §14's SHA-pinning **and Dependabot
-  discipline**" (`ARCHITECTURE.md:693`), but the repo has only two files under
+  discipline**" (`ARCHITECTURE.md:688`), but the repo has only two files under
   `.github/` — both workflows. R1 delivers the exact-version pin and the committed
   lockfile; the Dependabot half is **pre-existing debt, declared here rather than
   silently claimed as satisfied** (TD-6).
-- **A CSP `_headers` file** — `dashboard/README.md:390` lists it as a P3 completion
+- **A CSP `_headers` file** — `dashboard/README.md:397` lists it as a P3 completion
   item, but R16's control-path probe expects a **404 on `/_headers`**
   (ARCHITECTURE `:322`), so shipping one is a hard verification failure. Deferred
   explicitly rather than silently foreclosed; reconciling the two is P3-3c work.
@@ -697,7 +771,9 @@ no-network guard); Astro 7 / TypeScript 6 (`dashboard/.node-version` 24.16.0,
 the only endpoint that carries it;
 `GET …/deployments?env=production` → `id`, `environment`, `url`;
 `POST …/deployments/{id}/rollback`), `verify.py` (markers by parsed `<meta>`,
-inventory sweep, provider checks), `orchestrator.py` (the ordered sequence).
+inventory sweep, provider checks), `orchestrator.py` (the ordered sequence), and **`record.py` — the signer body**
+(R13/R27), read-only against Cloudflare and the module R27's no-non-GET property is
+scoped over.
 
 **No `DELETE …/deployments/{id}`** — revision 2 pinned it as the first-run
 compensation, and Cloudflare refuses it for an active production deployment. The
@@ -749,6 +825,8 @@ plan does not call an endpoint whose documented behaviour is to decline.
 - `src/populus/deploy/cloudflare.py`
 - `src/populus/deploy/verify.py`
 - `src/populus/deploy/orchestrator.py`
+- `src/populus/deploy/record.py`
+- `src/populus/publish/manifest.py`
 - `src/populus/cli.py`
 - `src/populus/publish/build.py`
 - `src/populus/stats.py`
@@ -782,6 +860,7 @@ plan does not call an endpoint whose documented behaviour is to decline.
 - `tests/test_deploy_cloudflare.py`
 - `tests/test_deploy_verify.py`
 - `tests/test_deploy_orchestrator.py`
+- `tests/test_deploy_record.py`
 - `tests/fixtures/deploy/cf_project.json`
 - `tests/fixtures/deploy/cf_domains.json`
 - `tests/fixtures/deploy/cf_deployments.json`
@@ -841,7 +920,9 @@ needs regenerating.
   the explicit subject name `deployments/<gen>.json`**, with a round-trip
   attest→verify fixture. **No runtime token-scope introspection** — a Pages-Read
   token cannot call the endpoint that returns policies (R22); the scope is
-  provisioning-time evidence in §14. (R13, R15, R16, R17, R22, R25)
+  provisioning-time evidence in §14; **the signer body lands in
+  `src/populus/deploy/record.py`** with `tests/test_deploy_record.py`.
+  (R13, R15, R16, R17, R22, R25, R27)
 - **T11** — The verifying pre-publish gate with its first-run predicate, named so
   it does not collide with `_step_index("verify")`; the caller-side assertion job
   that turns a **skipped signer** into a failed run, with a workflow-semantics
@@ -864,7 +945,7 @@ needs regenerating.
   halves of R7's reasoning**; **delete ARCHITECTURE's two `"full"` residues**
   (leaving the revision-history row) and add the scoped regression check; §14
   `Pages:Edit` entry and **the R26 dual-endpoint enumeration note**; §17 P3 status;
-  STATUS. (R7, R16, R22, R23, R25, R26)
+  STATUS. (R7, R9, R16, R22, R23, R25, R26, R27)
 
 ## Testing Strategy
 
@@ -906,7 +987,8 @@ needs regenerating.
 | **TD-10 documented non-detection** asserted as *not detected* | `test_deploy_verify.py` |
 
 Each ordering guarantee, each disqualifier, the marker contract, R25's subject
-binding and the gate's verification step carry a killing mutant.
+binding, **R27's no-non-GET property** (mutant: make `record.py` issue one `POST`)
+and the gate's verification step carry a killing mutant.
 
 ## Verification Matrix
 
@@ -1009,16 +1091,27 @@ different trust assumptions. That is the security argument, not duplication.
    `stats.json` hash, and `ARCHITECTURE.md:320` says in terms that marker checks
    alone are insufficient — so without R9's amendment this entry would be a
    write-off with a citation attached.
-   so a production-only failure indicates routing or cache rather than bad bytes.
    Owner: project owner. **Removal condition: the first successful deploy** — after
    which every run has a rollback target and this entry is deleted permanently.
    *(Revision 1 declared this honestly; revision 2 deleted the declaration on the
    strength of a delete-compensation the provider refuses. It is restored.)*
-6. **TD-6 — §12.1 step 1's Dependabot discipline is unmet.** No
+5. **TD-6 — §12.1 step 1's Dependabot discipline is unmet.** No
    `.github/dependabot.yml` exists. The Wrangler exact pin and committed lockfile
    land in this run; automated update surveillance does not. Owner: project owner.
    Removal condition: add the manifest. Declared rather than claimed.
-5. **TD-5 — the credential audit surface is incomplete by construction.**
+6. **TD-7 — the production site ships with no ticker map.** No source for a real
+   `company_tickers.json` exists on a CI runner (R1), so `POPULUS_TICKER_MAP` points
+   at an explicitly absent path and the ticker surfaces render the honest no-map
+   state: search-index ticker names are `""` (`data.ts:544`) and ticker pages show
+   `no-map` (`:612`). Chosen over the alternative it replaces — fixture-derived
+   mappings served as production data, which the served-tree sweep **cannot**
+   detect. Owner: project owner. Removal condition: a real registry source staged
+   into the pipeline (an ingest step, or a copy committed to `populus-data`).
+   **Test/production divergence to watch:** with the variable unset locally,
+   `inst.ts:314-315` falls back to the fixture, so `dashboard/test/*.test.ts` always
+   exercise the *mapped* path while CI deploys the *no-map* path —
+   `pages-render.test.ts` needs a no-map case or the deployed surfaces are untested.
+7. **TD-5 — the credential audit surface is incomplete by construction.**
    `GET /accounts/{id}/tokens` does not enumerate user-owned tokens; a
    pre-existing, non-expiring, user-owned token with broad zone-level Read
    (`Cloudflare Agent (auto-generated)`) is invisible to it. Owner: project owner.
@@ -1031,8 +1124,9 @@ different trust assumptions. That is the security argument, not duplication.
 - **`measure-the-mechanism`** — round 1 found the dashboard contract and both
   stats validators outside scope; revision 2 lists them because they were
   *derived* from the tree, not from the draft.
-- **`reversing-a-reviewed-decision`** — two spec amendments (§14's headline, the
-  `"full"` residues) are recorded corrections, not silent edits.
+- **`reversing-a-reviewed-decision`** — **four** spec amendments are recorded
+  corrections, not silent edits; the `"full"` residues are a separate deletion.
+  Five review rounds have each caught at least one fix that read as done and was not.
 - **`specify-before-rewriting`** — §12.1 is the specification; defects found *in
   it* are fixed there.
 - **`mutation-tests-pin-properties`** — ordering, disqualifiers, the marker
