@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "errors": [],
+  "messages": [],
+  "result": [
+    {
+      "id": "b7c9e21d5f4840a3b6e8c1d0f2a35947",
+      "name": "publicfilings.org",
+      "status": "active",
+      "verification_data": {
+        "status": "active"
+      },
+      "validation_data": {
+        "status": "active",
+        "method": "http"
+      },
+      "certificate_authority": "google",
+      "zone_tag": "9c0e5a7b2d1f43869a4c8e0b5d7f2136",
+      "created_on": "2026-08-02T09:15:47.883012Z"
+    }
+  ]
+}

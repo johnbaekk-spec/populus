@@ -296,14 +296,49 @@ def test_a_post_m2_8_build_cannot_publish_the_aggregate_without_the_projection()
 
 
 def test_the_real_build_routes_through_the_completeness_control():
-    """The control is only worth anything if `run_build` calls it — the previous
-    increment is a standing demonstration that a correct function with no call
-    site is indistinguishable from no function."""
+    """The control is only worth anything if the real build path calls it — the
+    previous increment is a standing demonstration that a correct function with
+    no call site is indistinguishable from no function.
+
+    P3-3 split the build into `run_build` -> `stage_build` -> `_seal_build`
+    (+ `finalize_build` -> `_seal_build`), which moved the call site out of
+    `run_build`. Grepping one function's source therefore stopped reaching it.
+    Rather than relax the assertion to whichever function happens to hold the
+    call today, this walks the ACTUAL call graph from `run_build` and requires
+    the control to be reachable — so a future refactor may move it again but
+    may not drop it.
+    """
+    import ast
     import inspect
 
-    from populus.publish.build import run_build
+    from populus.publish import build as build_mod
 
-    assert "require_complete_inst_module(" in inspect.getsource(run_build)
+    module = ast.parse(inspect.getsource(build_mod))
+    calls: dict[str, set[str]] = {}
+    for node in ast.walk(module):
+        if isinstance(node, ast.FunctionDef):
+            calls[node.name] = {
+                c.func.id if isinstance(c.func, ast.Name) else c.func.attr
+                for c in ast.walk(node)
+                if isinstance(c, ast.Call)
+                and isinstance(c.func, (ast.Name, ast.Attribute))
+            }
+
+    seen, frontier = set(), ["run_build"]
+    while frontier:
+        fn = frontier.pop()
+        if fn in seen:
+            continue
+        seen.add(fn)
+        frontier.extend(calls.get(fn, set()) - seen)
+
+    assert "require_complete_inst_module" in seen, (
+        "the completeness control is no longer reachable from run_build; it has"
+        f" been orphaned by a refactor. Reached: {sorted(seen & set(calls))}"
+    )
+    # Non-vacuity: the walk must actually traverse the P3-3 seam, or a graph that
+    # silently collapsed to {run_build} would satisfy the assertion above.
+    assert {"stage_build", "_seal_build"} <= seen
 
 
 def test_the_module_digest_version_covers_every_artifact_projection_it_publishes():

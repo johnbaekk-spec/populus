@@ -1046,3 +1046,70 @@ class SnapshotClient:
         return RefreshResult(
             "installed", build_id, version, f"installed build {build_id}"
         )
+
+
+class GitHubBundleFetcher:
+    """Fetch attestation bundles from the public GitHub API.
+
+    Unauthenticated lookups are capped at 60/hour per client address, so
+    a token is strongly preferred in CI — without one a quota error is
+    indistinguishable from "never attested" to any caller that only looks at
+    ``ok``. That is why quota and transport failures raise
+    :class:`FetchUnavailable` rather than returning an empty list.
+    """
+
+    def __init__(self, repo: str | None = None, token: str | None = None,
+                 transport=None) -> None:
+        from populus.publish.attestation import ATTESTATION_REPO
+
+        self._repo = repo or ATTESTATION_REPO
+        self._token = token
+        self._transport = transport  # injected in tests; None uses the real network
+
+    def fetch_bundles(self, digest_hex: str) -> list[dict]:
+        import httpx
+
+        url = f"https://api.github.com/repos/{self._repo}/attestations/sha256:{digest_hex}"
+        headers = {"Accept": "application/vnd.github+json"}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        try:
+            client = httpx.Client(transport=self._transport, timeout=30.0)
+            with client:
+                response = client.get(url, headers=headers)
+        except httpx.HTTPError as exc:
+            raise _fetch_unavailable(f"transport error contacting {url}: {exc}") from exc
+
+        if response.status_code == 404:
+            return []  # a real answer: nothing was attested for this digest
+        if response.status_code in (403, 429):
+            raise _fetch_unavailable(
+                f"rate limited or forbidden (HTTP {response.status_code}); "
+                "unauthenticated attestation lookups are capped at 60/hour"
+            )
+        if response.status_code >= 400:
+            raise _fetch_unavailable(f"HTTP {response.status_code} from {url}")
+        # The API wraps each bundle: {"attestations":[{"bundle":{...}, ...}]}.
+        # Returning the wrapper would hand `_verify_one` an object that is not a
+        # Sigstore bundle and can never parse — unwrap to the bundle itself.
+        payload = response.json() or {}
+        bundles = []
+        for entry in payload.get("attestations") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("bundle"), dict):
+                bundles.append(entry["bundle"])
+            elif isinstance(entry, dict):
+                bundles.append(entry)
+        return bundles
+
+
+def github_bundle_fetcher(token: str | None = None) -> GitHubBundleFetcher:
+    """The production bundle fetcher, reading GH_TOKEN if no token is passed."""
+    import os
+
+    return GitHubBundleFetcher(token=token or os.environ.get("GH_TOKEN"))
+
+
+def _fetch_unavailable(message: str):
+    from populus.publish.attestation import FetchUnavailable
+
+    return FetchUnavailable(message)

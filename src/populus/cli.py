@@ -717,62 +717,51 @@ _BACKEND_OPTIONS = [
 ]
 
 
+#: Attestation selection is EXPLICIT at the CLI boundary and has no default.
+#: A run that forgets to choose must fail loudly rather than inherit a provider
+#: that answers "verified" to everything (RUN P3-3a R14).
+def _attestation_option(command):
+    return click.option(
+        "--attestation",
+        "attestation_choice",
+        required=True,
+        type=click.Choice(("sigstore", "staging-noop")),
+        help="Which attestation provider to use. No default: an unsigned "
+             "publish must be a deliberate choice, never an omission.",
+    )(command)
+
+
+def _make_attestation(choice: str):
+    """Build the selected provider.
+
+    `sigstore` needs a live bundle fetcher and trust configuration; until those
+    are wired for the operator's environment this refuses rather than silently
+    downgrading — the whole point of the explicit flag.
+    """
+    from populus.publish.attestation import build_provider
+
+    if choice == "sigstore":
+        from populus.client.snapshot import github_bundle_fetcher
+        from populus.publish.attestation import github_trust_config
+
+        return build_provider(
+            "sigstore",
+            fetcher=github_bundle_fetcher(),
+            trust_config=github_trust_config(),
+        )
+    return build_provider(choice)
+
+
 def _with_backend_options(command):
     for option in reversed(_BACKEND_OPTIONS):
         command = option(command)
     return command
 
 
-@main.command()
-@click.option(
-    "--db",
-    "db_path",
-    default="populus.db",
-    show_default=True,
-    help="Populus database to snapshot.",
-)
-@_with_backend_options
-@click.option(
-    "--raw-root",
-    "raw_root",
-    type=click.Path(file_okay=False),
-    help="Raw-archive root holding the House index meta sidecars (watermarks).",
-)
-def build(
-    db_path: str,
-    data_repo: str,
-    backend: str,
-    repo_slug: str | None,
-    raw_root: str | None,
-) -> None:
-    """Assemble a staged build: snapshot, digests, slices, licenses, journal."""
-    from populus.publish.attestation import StagingNoop
-    from populus.publish.build import BackendError, PublishError, run_build
-    from populus.publish.digests import DigestError
-
-    make_backend = _make_backend(backend, repo_slug)
-    try:
-        report = run_build(
-            db_path,
-            data_repo,
-            now=_utc_now_dt,
-            raw_root=raw_root,
-            backend=make_backend(data_repo),
-            attestation=StagingNoop(),
-        )
-    except (PublishError, BackendError, DigestError, OSError) as exc:
-        raise click.ClickException(str(exc))
-    for completed in report.reconciled:
-        click.echo(f"reconciled in-flight build {completed}")
-    click.echo(
-        f"staged build {report.build_id} ({report.artifact_count} artifacts,"
-        f" logical_digest {report.logical_digest[:12]}…) at {report.staging_dir}"
-    )
-    if report.skipped_tickers:
-        click.echo(
-            f"skipped {len(report.skipped_tickers)} non-conforming ticker"
-            f" slice(s): {', '.join(report.skipped_tickers)}"
-        )
+def _echo_inst_gate_outcome(report) -> None:
+    """Print the M2 gate outcome. Shared so the honesty surface does not
+    depend on which command assembled the build (QA-F5).
+    """
     # Surface the M2 gate decision for the inst module (R8): a withheld notice
     # (below the >=95% value-coverage gate) is the honest, owner-accepted
     # outcome, not an error — congress still publishes.
@@ -820,10 +809,279 @@ def build(
     # DISTINGUISH "withheld by the gate" from "no institutional data ingested"
     # (QA-F5). This lives in .staging/ — operational state, never a published
     # artifact, so it touches no manifest, digest or inventory.
-    _write_inst_gate_record(data_repo, report)
 
 
 @main.command()
+@click.option(
+    "--db",
+    "db_path",
+    default="populus.db",
+    show_default=True,
+    help="Populus database to snapshot.",
+)
+@_attestation_option
+@_with_backend_options
+@click.option(
+    "--raw-root",
+    "raw_root",
+    type=click.Path(file_okay=False),
+    help="Raw-archive root holding the House index meta sidecars (watermarks).",
+)
+def build(
+    db_path: str,
+    data_repo: str,
+    backend: str,
+    repo_slug: str | None,
+    raw_root: str | None,
+    attestation_choice: str,
+) -> None:
+    """Assemble a staged build: snapshot, digests, slices, licenses, journal."""
+    from populus.publish.build import BackendError, PublishError, run_build
+    from populus.publish.digests import DigestError
+
+    make_backend = _make_backend(backend, repo_slug)
+    try:
+        report = run_build(
+            db_path,
+            data_repo,
+            now=_utc_now_dt,
+            raw_root=raw_root,
+            backend=make_backend(data_repo),
+            attestation=_make_attestation(attestation_choice),
+        )
+    except (PublishError, BackendError, DigestError, OSError) as exc:
+        raise click.ClickException(str(exc))
+    for completed in report.reconciled:
+        click.echo(f"reconciled in-flight build {completed}")
+    click.echo(
+        f"staged build {report.build_id} ({report.artifact_count} artifacts,"
+        f" logical_digest {report.logical_digest[:12]}…) at {report.staging_dir}"
+    )
+    if report.skipped_tickers:
+        click.echo(
+            f"skipped {len(report.skipped_tickers)} non-conforming ticker"
+            f" slice(s): {', '.join(report.skipped_tickers)}"
+        )
+    _echo_inst_gate_outcome(report)
+    _write_inst_gate_record(data_repo, report)
+
+
+@main.command("stage-build")
+@click.option(
+    "--db",
+    "db_path",
+    default="populus.db",
+    show_default=True,
+    help="Populus database to snapshot.",
+)
+@_attestation_option
+@_with_backend_options
+@click.option(
+    "--raw-root",
+    "raw_root",
+    type=click.Path(file_okay=False),
+    help="Raw-archive root holding the House index meta sidecars (watermarks).",
+)
+def stage_build_cmd(
+    db_path: str,
+    data_repo: str,
+    backend: str,
+    repo_slug: str | None,
+    raw_root: str | None,
+    attestation_choice: str,
+) -> None:
+    """Phase 1 of 2: assemble artifacts and a PROVISIONAL manifest.
+
+    The site build runs between this and ``finalize-build``: it reads
+    ``manifest.json`` to decide which surfaces exist, and its file count is what
+    ``finalize-build`` patches into ``stats.json``. Nothing is journalled here —
+    the recovery journal stays last (R35).
+
+    Prints the staging directory so the workflow can pass it onward, and the
+    build id. Exits non-zero if the build was preserved or reconciled rather
+    than freshly assembled, because there is then nothing to build a site from
+    and nothing to deploy.
+    """
+    from populus.publish.build import (
+        BackendError,
+        PublishError,
+        stage_build,
+        write_stage_state,
+    )
+    from populus.publish.digests import DigestError
+
+    make_backend = _make_backend(backend, repo_slug)
+    try:
+        staged = stage_build(
+            db_path,
+            data_repo,
+            now=_utc_now_dt,
+            raw_root=raw_root,
+            backend=make_backend(data_repo),
+            attestation=_make_attestation(attestation_choice),
+        )
+        write_stage_state(staged)
+    except (PublishError, BackendError, DigestError, OSError) as exc:
+        raise click.ClickException(str(exc))
+
+    if not staged.fresh:
+        # Not an error in itself — recovery did its job — but the caller must
+        # not go on to build and deploy a site for a build that is already
+        # published and journal-sealed.
+        click.echo(
+            f"build {staged.build_id} was preserved/reconciled, not assembled —"
+            " no site build and no deploy for this run"
+        )
+        raise SystemExit(3)
+    # Machine-readable `key=value` lines, deliberately in the same shape the
+    # workflow appends straight to $GITHUB_OUTPUT. The earlier version emitted
+    # `staged <id> at <dir>` and the workflow recovered the id with a `sed`
+    # regex over that prose — which exits 0 on no match, so a reworded log line
+    # would have silently produced an EMPTY build id, a `site-` artifact name,
+    # and a green run. A log line is not a contract; these two are.
+    click.echo(f"build_id={staged.build_id}")
+    click.echo(f"build_dir={Path(staged.staging_dir) / 'build'}")
+    click.echo(f"staging_dir={staged.staging_dir}")
+    click.echo(f"staged {staged.build_id} at {staged.staging_dir}")
+
+
+@main.command("snapshot-site")
+@click.option(
+    "--source",
+    "source",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="The site build output to freeze (dashboard/dist).",
+)
+@click.option(
+    "--dest",
+    "dest",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="Destination directory; receives site/ and a SIBLING inventory.json.",
+)
+def snapshot_site_cmd(source: str, dest: str) -> None:
+    """Freeze the built site into the §12.1 upload envelope.
+
+    Produces ``<dest>/site/`` plus ``<dest>/inventory.json`` — the inventory is
+    a **sibling** of the tree, never inside it, so it never inventories itself
+    and is never deployed.
+
+    The freeze is what makes "the bytes we hashed are the bytes we uploaded"
+    true (R4): everything downstream reads the sealed copy, so the source can
+    keep changing without moving the digest.
+    """
+    import shutil
+
+    from populus.deploy.snapshot import SnapshotError, freeze_tree
+    from populus.publish.digests import DigestError
+    from populus.publish.inventory import write_inventory
+
+    dest_path = Path(dest)
+    dest_path.mkdir(parents=True, exist_ok=True)
+    site_dir = dest_path / "site"
+    if site_dir.exists():
+        raise click.ClickException(f"{site_dir} already exists — refusing to overwrite")
+    try:
+        snapshot = freeze_tree(source, parent=dest_path)
+        try:
+            # Move the sealed tree into place under its published name. The seal
+            # is advisory (we own the files), so the modes come back off first.
+            for path in sorted(snapshot.path.rglob("*"), reverse=True):
+                path.chmod(0o700 if path.is_dir() else 0o600)
+            snapshot.path.chmod(0o700)
+            snapshot.path.rename(site_dir)
+        except BaseException:
+            snapshot.cleanup()
+            raise
+        inventory = write_inventory(site_dir, dest_path / "inventory.json")
+    except (SnapshotError, DigestError, OSError) as exc:
+        raise click.ClickException(str(exc))
+    click.echo(f"dist_digest={inventory['dist_digest']}")
+    click.echo(f"file_count={len(inventory['files'])}")
+    click.echo(
+        f"froze {len(inventory['files'])} files into {site_dir}"
+        f" (dist_digest {inventory['dist_digest'][:12]}…)"
+    )
+
+
+@main.command("finalize-build")
+@click.option(
+    "--staging-dir",
+    "staging_dir",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="The .staging/<build_id>/ directory `stage-build` reported.",
+)
+@click.option(
+    "--site-file-count",
+    "site_file_count",
+    required=True,
+    type=int,
+    help="Number of files the site build emitted (R3: never defaulted).",
+)
+@click.option(
+    "--dist-dir",
+    "dist_dir",
+    type=click.Path(file_okay=False),
+    help="The site build output. Its stats.json is patched with the same bytes "
+         "as the canonical copy and the two are asserted byte-equal (R24, §12.1 "
+         "step 2). Omit only when there is no site — the wrapper build path.",
+)
+@_with_backend_options
+def finalize_build_cmd(
+    staging_dir: str,
+    site_file_count: int,
+    dist_dir: str | None,
+    data_repo: str,
+    backend: str,
+    repo_slug: str | None,
+) -> None:
+    """Phase 2 of 2: patch the served file count, re-seal, write the journal.
+
+    ``--site-file-count`` is required and has no default. ``run_build`` — the
+    single-phase wrapper — publishes ``site_file_count: null`` precisely so that
+    a workflow which forgets this step produces an obviously-unfinished build
+    rather than a plausible wrong number.
+    """
+    from populus.publish.build import (
+        BackendError,
+        PublishError,
+        finalize_build,
+        read_stage_state,
+        require_site_file_count,
+    )
+    from populus.publish.digests import DigestError
+
+    make_backend = _make_backend(backend, repo_slug)
+    try:
+        staged = read_stage_state(
+            staging_dir, data_repo=data_repo, backend=make_backend(data_repo)
+        )
+        report = finalize_build(
+            staged, site_file_count=site_file_count, dist_dir=dist_dir
+        )
+    except (PublishError, BackendError, DigestError, OSError) as exc:
+        raise click.ClickException(str(exc))
+    # QA-F5, restored at the new entry point: `populus build` wrote this record
+    # and the two-phase path did not, so a WITHHELD M2 module published as "no
+    # build-time gate record — rebuild to record the reason" when the truth was
+    # "withheld by the >=95% value-coverage gate". The honesty surface must not
+    # depend on which command assembled the build.
+    _write_inst_gate_record(data_repo, report)
+    _echo_inst_gate_outcome(report)
+    click.echo(
+        f"finalized build {report.build_id} ({report.artifact_count} artifacts,"
+        f" site_file_count {site_file_count}) at {report.staging_dir}"
+    )
+    # R3: the count is asserted here, at the boundary the deploying path crosses,
+    # rather than trusted. `require_site_file_count` had no production caller at
+    # all until this line -- four green tests over dead code.
+    require_site_file_count(report.staging_dir)
+
+
+@main.command()
+@_attestation_option
 @_with_backend_options
 @click.option("--build", "build_id", help="Publish this staged build (default: newest).")
 @click.option(
@@ -839,9 +1097,9 @@ def publish(
     build_id: str | None,
     rollback_to: str | None,
     dry_run: bool,
+    attestation_choice: str,
 ) -> None:
     """Publish per the §5.5 protocol; refuses partial builds."""
-    from populus.publish.attestation import StagingNoop
     from populus.publish.build import BackendError, PublishError, run_publish
 
     make_backend = _make_backend(backend, repo_slug)
@@ -861,7 +1119,7 @@ def publish(
             now=_utc_now_dt,
             backend=make_backend(data_repo),
             build_id=build_id,
-            attestation=StagingNoop(),
+            attestation=_make_attestation(attestation_choice),
             dry_run=dry_run,
             rollback_to=rollback_to,
         )
@@ -1014,6 +1272,7 @@ def _inst_absence_notice(
     )
 
 
+@_attestation_option
 @main.command()
 @click.option(
     "--data-repo",
@@ -1028,14 +1287,13 @@ def _inst_absence_notice(
     type=click.Path(exists=True, dir_okay=False),
     help="§13.5 reconciliation: logical digest + row counts of this database.",
 )
-def verify(data_repo: str, db_path: str | None) -> None:
+def verify(data_repo: str, db_path: str | None, attestation_choice: str) -> None:
     """Recompute artifact hashes vs manifest; DB integrity checks."""
-    from populus.publish.attestation import StagingNoop
     from populus.publish.build import PublishError, run_verify
 
     try:
         report = run_verify(
-            data_repo, now=_utc_now_dt, db_path=db_path, attestation=StagingNoop()
+            data_repo, now=_utc_now_dt, db_path=db_path, attestation=_make_attestation(attestation_choice)
         )
     except (PublishError, OSError) as exc:
         raise click.ClickException(str(exc))
@@ -1414,3 +1672,84 @@ def inst_bulk_ingest(
     click.echo(format_bulk_summary(report))
     if not report.ok:
         ctx.exit(1)
+
+
+@main.command("preflight-attestation")
+@click.option(
+    "--data-repo",
+    "data_repo",
+    default="../populus-data",
+    show_default=True,
+    help="The populus-data working tree whose pointer and manifest to check.",
+)
+def preflight_attestation(data_repo: str) -> None:
+    """Prove the attestation chain works BEFORE arming anything.
+
+    A positive gate, not a refusal that fires after the fact: it resolves the
+    published pointer and manifest, verifies both against the pinned identity
+    and issuer, and exits non-zero **naming the failed check** otherwise.
+
+    Exit codes are deliberately distinguishable: a verification failure and an
+    unreachable attestation API are different problems, and reporting a rate
+    limit as tampering would be its own honesty defect.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from populus.client.snapshot import github_bundle_fetcher
+    from populus.publish.attestation import (
+        UNAVAILABLE,
+        SigstoreAttestation,
+        github_trust_config,
+    )
+
+    repo = _Path(data_repo)
+    pointer_path = repo / "latest.json"
+    if not pointer_path.exists():
+        raise click.ClickException(f"no pointer at {pointer_path}")
+    pointer_bytes = pointer_path.read_bytes()
+    pointer = _json.loads(pointer_bytes)
+    # `manifest_path` comes from an untrusted pointer document. `run_verify`
+    # routes it through `resolve_within`; preflight must too, or a crafted
+    # `latest.json` turns this into an arbitrary local file read.
+    from populus.publish.manifest import resolve_within
+
+    try:
+        manifest_path = resolve_within(repo, pointer["manifest_path"])
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(f"manifest path unsafe: {exc}")
+    if not manifest_path.exists():
+        raise click.ClickException(f"no manifest at {manifest_path}")
+
+    provider = SigstoreAttestation(
+        fetcher=github_bundle_fetcher(), trust_config=github_trust_config()
+    )
+    failures: list[str] = []
+    unavailable = False
+    for name, payload in (
+        ("latest.json", pointer_bytes),
+        ("manifest.json", manifest_path.read_bytes()),
+    ):
+        result = provider.verify(name, payload)
+        if result.ok:
+            click.echo(f"  ok   {name}: {result.detail}")
+            continue
+        if result.outcome == UNAVAILABLE:
+            unavailable = True
+        failures.append(f"{name}: {result.detail}")
+        click.echo(f"  FAIL {name}: {result.detail}")
+
+    if unavailable:
+        raise click.ClickException(
+            "attestation lookup was UNAVAILABLE — this is not a verification "
+            "failure. Retry, or supply GH_TOKEN to lift the 60/hour "
+            "unauthenticated rate limit."
+        )
+    if failures:
+        raise click.ClickException(
+            "attestation preflight FAILED:\n  " + "\n  ".join(failures)
+        )
+    click.echo(
+        f"attestation preflight OK — pointer and manifest for build "
+        f"{pointer['build_id']} verify against the pinned identity."
+    )

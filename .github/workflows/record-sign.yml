@@ -1,17 +1,60 @@
-# Reusable record signer (ARCHITECTURE.md §12.1 step 6, §14) — a NO-OP SHELL
-# until P3: the guard requires POPULUS_RECORD_SIGN_ARMED == 'true', which is
-# not provisioned before the dashboard exists. The workflow_call shape, the
-# three attestation permissions, and the Pages-Read-only token env name are
-# the settled §14 contract; the P3 body implements the inventory-wide
-# served-tree verification and attests the deployment generation.
+# Reusable record signer (ARCHITECTURE.md §12.1 step 6, §5.5, §14).
 #
 # This is a SEPARATE reusable workflow because GitHub attestations identify a
-# workflow, not a job — record-sign.yml is the distinct, pinnable signer
-# identity (§5.5). It must hold Pages READ only, never Pages Write.
+# workflow, not a job — `record-sign.yml` is the distinct, pinnable signer
+# identity verifiers pin for deployment generations (§5.5). It holds Pages
+# READ only, never Pages Write, and it trusts NO deploy-job output: `build_id`
+# comes from the attested pointer/manifest, `code_sha`/`dist_digest`/the
+# inventory from the artifact this workflow downloads itself, and the
+# production deployment id from the Cloudflare API read with its own token.
+# Whatever the caller passes about the deployment is a CLAIM, cross-checked.
+#
+# Still gated on POPULUS_RECORD_SIGN_ARMED at the job level: a run whose signer
+# is unarmed writes nothing, which the caller-side assertion job turns into a
+# failed run rather than a green skip (R20).
 name: record-sign
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      # The artifact the deploy leg uploaded: `site/**` plus the sibling
+      # `inventory.json` (§12.1 envelope). Named, not guessed.
+      artifact-name:
+        type: string
+        # REQUIRED, and deliberately with no default. `site` was the default and
+        # the publisher uploads `site-<build_id>`, so a caller that omitted this
+        # would download nothing and fail in the signer with a message about a
+        # missing artifact rather than about the mismatch. A default that is
+        # wrong for the only real caller is worse than no default.
+        required: true
+      # Provenance metadata the signer cannot re-derive: a download step is not
+      # told the artifact's id, and nothing in the verification depends on it —
+      # the bytes are proved by dist_digest/inventory_digest, which ARE
+      # recomputed here. Recorded as declared, or null when absent.
+      dist-artifact-id:
+        type: string
+        required: false
+        default: ""
+      dist-artifact-expires-at:
+        type: string
+        required: false
+        default: ""
+      # The deploy job's claim about which deployment went live. It is checked
+      # against the Pages API answer and never substituted for it; a mismatch
+      # is a finding that refuses the attestation.
+      cf-production-deployment-id:
+        type: string
+        required: false
+        default: ""
+    # A called workflow inherits NOTHING: secrets a caller does not pass
+    # resolve to the empty string. This block used to be absent while the body
+    # already referenced CLOUDFLARE_PAGES_READ_TOKEN, so the signer would have
+    # failed on a missing credential — closed, but for the wrong reason.
+    secrets:
+      DATA_REPO_PAT:
+        required: true
+      CLOUDFLARE_PAGES_READ_TOKEN:
+        required: true
 
 permissions:
   contents: write
@@ -23,12 +66,93 @@ jobs:
     if: vars.POPULUS_RECORD_SIGN_ARMED == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Verify served tree and record deployment generation (P3 body)
+      - name: Check out populus
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check out populus-data (private staging)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: johnbaekk-spec/populus-data
+          token: ${{ secrets.DATA_REPO_PAT }}
+          path: populus-data
+
+      - name: Install uv (version-pinned)
+        run: python3 -m pip install --quiet 'uv==0.7.13'
+
+      - name: Sync (frozen lockfile)
+        run: uv sync --frozen
+
+      # The signer locates the immutable artifact through GitHub context — this
+      # run, this artifact name — and downloads it itself (§5.5). No job output
+      # is consulted for its contents; the tree is re-hashed on arrival.
+      - name: Download the deployed site artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: artifact
+
+      # Every variable is step-scoped (§14 least privilege). GH_TOKEN is the
+      # job's own ephemeral token, present so the pointer/manifest attestation
+      # lookups are authenticated: unauthenticated they share a 60/hour cap per
+      # runner IP, and a quota error in the step that decides whether to attest
+      # must never be confusable with a verification failure.
+      #
+      # The project name and the custom domain are locked here (§14), the
+      # account id is a non-secret Actions variable, and the Pages token is the
+      # signer's own Pages-Read-only credential.
+      - name: Verify the served tree and record the deployment generation
+        id: record
         env:
           CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          uv run python -m populus.deploy.record
+          --data-repo populus-data
+          --artifact artifact
+          --project publicfilings
+          --domain publicfilings.org
+          --workflow-run-id '${{ github.run_id }}'
+          --dist-artifact-id '${{ inputs.dist-artifact-id }}'
+          --dist-artifact-expires-at '${{ inputs.dist-artifact-expires-at }}'
+          --claimed-deployment-id '${{ inputs.cf-production-deployment-id }}'
+          --attestation sigstore
+
+      # R25 — subject-name + subject-digest, NEVER subject-path. With a path the
+      # action names the subject by BASENAME, so a generation written to
+      # builds/<id>/deployments/<gen>.json would attest as `<gen>.json` —
+      # a name `attestation.resolve_identity` refuses outright (it is neither in
+      # SUBJECT_IDENTITIES nor under the `deployments/` prefix), and which
+      # `_subject_name_matches` would then fail to match against the pinned
+      # name. Both readings fail, so the record would be unverifiable by the
+      # verifier this project already ships. The name comes from the signer's
+      # own output, so this file cannot drift from the code that pinned it.
+      #
+      # Pinned to the commit `v2` resolves to: `v2` is an ANNOTATED tag, so its
+      # ref sha (96b4a1ef…, the value publish.yml carries) names a tag object
+      # rather than the commit e8998f9… below.
+      - name: Attest the deployment generation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ steps.record.outputs.subject_name }}
+          subject-digest: ${{ steps.record.outputs.subject_digest }}
+
+      # Attest BEFORE commit, for the same reason publish.yml attests before it
+      # commits the pointer: the ordering is the enforcement. A generation that
+      # could not be attested is never pushed, so the §13.2 monitor and the
+      # pre-publish gate see "no record" rather than an unsigned one.
+      - name: Commit the deployment generation (rebase-retry x3, §13.3)
+        working-directory: populus-data
         run: |
-          echo "record-sign: no-op until P3 (POPULUS_RECORD_SIGN_ARMED gates execution)."
-          echo "P3 implements §12.1 step 6: download the immutable dist artifact,"
-          echo "recompute dist_digest and inventory_digest, fetch every inventoried"
-          echo "path from the deployment URL with redirects disabled, run the"
-          echo "closure-narrowing provider checks, then attest the generation."
+          git config user.name "populus-record-sign[bot]"
+          git config user.email "populus-record-sign@users.noreply.github.com"
+          git add builds
+          git commit -m "deploy: record generation ${{ steps.record.outputs.generation }}"
+          for attempt in 1 2 3; do
+            if git pull --rebase && git push; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "push failed after 3 rebase retries (no force push, ever)" >&2
+          exit 1

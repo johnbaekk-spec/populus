@@ -112,13 +112,17 @@ def _build_and_publish(db_path: Path) -> dict:
     import json
     from datetime import datetime, timezone
 
+    from populus.publish.attestation import StagingNoop
     from populus.publish.build import LocalDirBackend, run_build, run_publish
 
     repo = Path(tempfile.mkdtemp(prefix="accept-m2-5-repo-"))
     moment = datetime(2026, 7, 30, tzinfo=timezone.utc)
     backend = LocalDirBackend(repo)
-    run_build(db_path, repo, now=lambda: moment, backend=backend)
-    run_publish(repo, now=lambda: moment, backend=backend)
+    # Hermetic acceptance (no network, no published bundles): StagingNoop is
+    # correct here, but it is passed EXPLICITLY — an implicit default is the
+    # defect this run removes (RUN P3-3a R13).
+    run_build(db_path, repo, now=lambda: moment, backend=backend, attestation=StagingNoop())
+    run_publish(repo, now=lambda: moment, backend=backend, attestation=StagingNoop())
     latest = json.loads((repo / "latest.json").read_text(encoding="utf-8"))
     manifest = json.loads(
         (repo / "builds" / latest["build_id"] / "manifest.json").read_text(encoding="utf-8")

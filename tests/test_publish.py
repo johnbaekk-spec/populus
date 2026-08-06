@@ -39,8 +39,14 @@ from populus.publish.build import (
     journal_valid,
     materialize_from_journal,
     next_build_id,
+    STAGE_STATE_FILE,
+    finalize_build,
+    read_stage_state,
     reconcile_inflight,
+    require_site_file_count,
     run_build,
+    stage_build,
+    write_stage_state,
     run_publish,
     run_verify,
 )
@@ -52,6 +58,7 @@ from populus.publish.manifest import (
     validate_manifest,
 )
 from populus.publish.pointer import build_pointer, render_pointer
+from populus.stats import render_stats
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -1845,24 +1852,24 @@ def test_cli_build_publish_verify_end_to_end(tmp_path):
     repo = make_repo(tmp_path)
     runner = CliRunner()
     result = runner.invoke(
-        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+        cli_main, ["build", "--attestation=staging-noop", "--db", str(db), "--data-repo", str(repo)]
     )
     assert result.exit_code == 0, result.output
     assert "staged build" in result.output
 
     result = runner.invoke(
-        cli_main, ["publish", "--data-repo", str(repo), "--dry-run"]
+        cli_main, ["publish", "--attestation=staging-noop", "--data-repo", str(repo), "--dry-run"]
     )
     assert result.exit_code == 0, result.output
     assert "dry-run" in result.output
     assert not (repo / "latest.json").exists()
 
-    result = runner.invoke(cli_main, ["publish", "--data-repo", str(repo)])
+    result = runner.invoke(cli_main, ["publish", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert result.exit_code == 0, result.output
     assert "published build" in result.output
 
     result = runner.invoke(
-        cli_main, ["verify", "--data-repo", str(repo), "--db", str(db)]
+        cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo), "--db", str(db)]
     )
     assert result.exit_code == 0, result.output
     assert "verify ok" in result.output
@@ -1872,7 +1879,7 @@ def test_cli_gh_backend_requires_repo_slug(tmp_path):
     repo = make_repo(tmp_path)
     result = CliRunner().invoke(
         cli_main,
-        ["publish", "--data-repo", str(repo), "--backend", "gh-release"],
+        ["publish", "--attestation=staging-noop", "--data-repo", str(repo), "--backend", "gh-release"],
         env={"GH_REPO": None},
     )
     assert result.exit_code == 2
@@ -1881,7 +1888,7 @@ def test_cli_gh_backend_requires_repo_slug(tmp_path):
 
 def test_cli_verify_fails_cleanly_without_pointer(tmp_path):
     repo = make_repo(tmp_path)
-    result = CliRunner().invoke(cli_main, ["verify", "--data-repo", str(repo)])
+    result = CliRunner().invoke(cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert "latest.json" in result.output
@@ -1897,7 +1904,7 @@ def test_cli_verify_surfaces_malformed_manifest_cleanly(published):
     pointer["manifest_sha256"] = hashlib.sha256(malformed).hexdigest()
     (repo / "latest.json").write_text(render_pointer(pointer), encoding="utf-8")
 
-    result = CliRunner().invoke(cli_main, ["verify", "--data-repo", str(repo)])
+    result = CliRunner().invoke(cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert result.exit_code == 1
     # Clean click failure, not a leaked ValueError/JSONDecodeError traceback.
     assert isinstance(result.exception, SystemExit)
@@ -1912,7 +1919,7 @@ def test_cli_verify_db_surfaces_corrupt_db_cleanly(published, tmp_path):
     corrupt = tmp_path / "corrupt.db"
     corrupt.write_bytes(b"definitely not a sqlite database")
     result = CliRunner().invoke(
-        cli_main, ["verify", "--data-repo", str(repo), "--db", str(corrupt)]
+        cli_main, ["verify", "--attestation=staging-noop", "--data-repo", str(repo), "--db", str(corrupt)]
     )
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
@@ -1931,7 +1938,7 @@ def test_cli_publish_rollback_surfaces_malformed_target_cleanly(tmp_path):
 
     result = CliRunner().invoke(
         cli_main,
-        ["publish", "--data-repo", str(repo), "--rollback-to", first.build_id],
+        ["publish", "--attestation=staging-noop", "--data-repo", str(repo), "--rollback-to", first.build_id],
     )
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
@@ -1982,16 +1989,45 @@ def test_publish_workflow_shape(tmp_path):
 def test_publish_workflow_gh_token_step_scoped(tmp_path):
     workflow = _load_workflow("publish.yml")
     job = workflow["jobs"]["publish"]
-    token_steps = [
-        step
-        for step in job["steps"]
-        if "GH_TOKEN" in (step.get("env") or {})
+    # The property is that the long-lived PAT is step-scoped to build/publish.
+    # This used to be expressed by counting ANY step with a GH_TOKEN, which
+    # conflated the PAT with the job's own ephemeral `github.token`. RUN P3-3a
+    # gives the Verify step `github.token` so its attestation lookups are
+    # authenticated (unauthenticated: 60/hour shared per runner IP, making a
+    # quota error indistinguishable from tampering in the step that gates the
+    # pointer commit). The assertion below is therefore SHARPENED, not relaxed:
+    # it now pins the PAT specifically, and additionally forbids any OTHER
+    # secret from appearing as GH_TOKEN anywhere in the job.
+    #
+    # RUN P3-3b T5 AMENDMENT, recorded not silent: `populus build` was split
+    # into `stage-build` + `finalize-build` around the site build (the manifest
+    # cannot be final until the site exists, because stats.json carries the
+    # served file count). They cannot share a step, so the count moves 2 -> 3
+    # and "populus build" is no longer a substring of either phase. The
+    # PROPERTY is unchanged — the long-lived PAT appears only on the steps that
+    # write to populus-data, and nowhere else — and the allowed set is still
+    # enumerated exactly rather than loosened to a prefix match.
+    pat = "${{ secrets.DATA_REPO_PAT }}"
+    pat_bearing = {"populus stage-build", "populus finalize-build", "populus publish"}
+    pat_steps = [
+        step for step in job["steps"] if (step.get("env") or {}).get("GH_TOKEN") == pat
     ]
-    assert len(token_steps) == 2
-    for step in token_steps:
+    assert len(pat_steps) == 3
+    for step in pat_steps:
         run = step.get("run", "")
-        assert "populus build" in run or "populus publish" in run
-        assert step["env"]["GH_TOKEN"] == "${{ secrets.DATA_REPO_PAT }}"
+        assert any(command in run for command in pat_bearing), (
+            f"a step holds the data-repo PAT but runs none of {sorted(pat_bearing)}: "
+            f"{step.get('name')!r}"
+        )
+
+    for step in job["steps"]:
+        token = (step.get("env") or {}).get("GH_TOKEN")
+        if token is None or token == pat:
+            continue
+        assert token == "${{ github.token }}", (
+            f"step {step.get('name')!r} sets GH_TOKEN to {token!r}: only the "
+            "step-scoped PAT or the job's own ephemeral token are permitted"
+        )
     # Never in a run body, never echoed (R33).
     for step in job["steps"]:
         run = step.get("run", "")
@@ -2334,7 +2370,7 @@ def test_cli_build_output_names_the_excluded_conflicts(tmp_path):
     db = seed_inst_cover_mix(seed_db(tmp_path / "populus.db"))
     repo = make_repo(tmp_path)
     result = CliRunner().invoke(
-        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+        cli_main, ["build", "--attestation=staging-noop", "--db", str(db), "--data-repo", str(repo)]
     )
 
     assert result.exit_code == 0, result.output
@@ -2361,13 +2397,13 @@ def test_cli_publish_absence_notice_names_the_excluded_conflicts(tmp_path):
     repo = make_repo(tmp_path)
     runner = CliRunner()
     built = runner.invoke(
-        cli_main, ["build", "--db", str(db), "--data-repo", str(repo)]
+        cli_main, ["build", "--attestation=staging-noop", "--db", str(db), "--data-repo", str(repo)]
     )
     assert built.exit_code == 0, built.output
     assert "inst module WITHHELD (not_measurable)" in built.output
     assert "cover_conflict EXCLUDED 2: inst:C-1, inst:C-2" in built.output
 
-    published = runner.invoke(cli_main, ["publish", "--data-repo", str(repo)])
+    published = runner.invoke(cli_main, ["publish", "--attestation=staging-noop", "--data-repo", str(repo)])
     assert published.exit_code == 0, published.output
     assert "inst module: WITHHELD" in published.output
     assert "cover_conflict EXCLUDED 2: inst:C-1, inst:C-2" in published.output
@@ -2894,7 +2930,7 @@ def test_resolve_snapshot_reports_gate_withholding_through_the_real_client(
     repo = make_repo(tmp_path)
     publish_build(db, repo)
     cache = tmp_path / "cache"
-    argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
 
@@ -2994,7 +3030,7 @@ def test_a_withdrawal_whose_cleanup_fails_still_fails_closed_in_production(
     repo = make_repo(tmp_path)
     publish_build(db, repo)
     cache = tmp_path / "cache"
-    argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
     assert srv_mod._resolve_snapshot()["inst_db_path"] is not None
@@ -3531,7 +3567,7 @@ def _resolve(repo, cache, monkeypatch, *, moment=None):
     from populus.mcp_server import server as srv_mod
 
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin(moment) if moment else pin())
     return srv_mod._resolve_snapshot()
 
@@ -3744,7 +3780,7 @@ def test_a_corrupt_anchor_cannot_resurrect_a_withheld_build_via_replay(tmp_path)
     assert client.db_path() is None, "the withheld build was resurrected"
 
     # And through the PRODUCTION resolver — the path that stamps provenance.
-    monkey_argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    monkey_argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     real_argv = sys.argv
     real_now = srv_mod._utc_now
     sys.argv = monkey_argv
@@ -3788,7 +3824,7 @@ def test_the_resolver_module_boundary_absorbs_an_inst_io_failure(tmp_path, monke
 
     monkeypatch.setattr(shutil_mod, "rmtree", _stuck)
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
 
     resolved = srv_mod._resolve_snapshot()          # must NOT raise
@@ -4053,7 +4089,7 @@ def test_a_pending_withdrawal_is_flagged_to_the_resolver(tmp_path, monkeypatch):
     monkeypatch.setattr(snap_mod, "persist_tuple",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin(NOW + timedelta(days=1)))
 
     resolved = srv_mod._resolve_snapshot()
@@ -4101,7 +4137,7 @@ def test_a_deleted_anchor_beside_a_record_cannot_resurrect_a_withheld_build(tmp_
     assert client.db_path() is None, f"{withheld_build} was resurrected"
 
     real_argv, real_now = sys.argv, srv_mod._utc_now
-    sys.argv = ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)]
+    sys.argv = ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)]
     srv_mod._utc_now = later
     try:
         resolved = srv_mod._resolve_snapshot()
@@ -4183,7 +4219,7 @@ def test_a_pending_withdrawal_reaches_the_health_tools(tmp_path, monkeypatch):
     monkeypatch.setattr(snap_mod, "persist_tuple",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", later)
     resolved = srv_mod._resolve_snapshot()
     assert resolved["inst_stale_withdrawal_pending"] is True
@@ -4229,7 +4265,7 @@ def test_an_unreadable_repo_file_does_not_take_down_the_server(tmp_path, monkeyp
 
     monkeypatch.setattr(Path, "read_bytes", _unreadable)
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo),
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo),
                          "--cache", str(tmp_path / "cache")])
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
 
@@ -4255,7 +4291,7 @@ def test_an_unanchored_refusal_reaches_the_operator_with_remediation(
 
     later = pin(NOW + timedelta(days=1))
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", later)
     resolved = srv_mod._resolve_snapshot()
     assert resolved["inst_db_path"] is None
@@ -4578,7 +4614,7 @@ def test_r10_full_lifecycle_serves_inst_from_the_published_manifest(tmp_path, mo
 
     cache = tmp_path / "cache"
     monkeypatch.setattr(sys, "argv",
-                        ["populus-mcp", "--data-repo", str(repo), "--cache", str(cache)])
+                        ["populus-mcp", "--attestation=staging-noop", "--data-repo", str(repo), "--cache", str(cache)])
     monkeypatch.setattr(srv_mod, "_utc_now", pin())
 
     resolved = srv_mod._resolve_snapshot()  # the REAL client, no mock
@@ -4819,3 +4855,406 @@ def test_a_malformed_institutional_view_is_healed_not_read_as_absence(tmp_path):
     finally:
         conn.close()
     assert report.build_id
+
+
+# --- T5: the two-phase build seam (R2/R24) -----------------------------------
+
+
+def test_stage_build_writes_a_provisional_manifest_the_site_can_read(tmp_path):
+    """R2 — `data.ts:86` derives which surfaces exist from `manifest.modules`,
+    so the manifest has to exist BEFORE the site build, not after it."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert staged.fresh and staged.deployable
+    build_dir = Path(staged.staging_dir) / "build"
+    manifest = json.loads((build_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert "congress" in manifest["modules"]
+    # The journal stays LAST (R35): staging must not have sealed anything.
+    assert not (repo / STAGING_DIR / staged.build_id / "journal.json").exists()
+
+
+def test_the_final_manifest_does_not_list_itself(tmp_path):
+    """The self-listing hazard: `build_dir.rglob` hashes everything it finds.
+
+    Today `manifest.json` is written after the walk, which is the ONLY reason it
+    is never self-listed. A provisional manifest left in place through the final
+    walk would gain a self-entry whose digest is stale the instant the manifest
+    is re-rendered.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+    assert (build_dir / "manifest.json").exists(), "provisional manifest missing"
+    report = finalize_build(staged, site_file_count=41)
+    manifest = json.loads((build_dir / "manifest.json").read_text(encoding="utf-8"))
+    names = {
+        entry["name"]
+        for module in manifest["modules"].values()
+        for entry in module["artifacts"]
+    }
+    assert "manifest.json" not in names, "the manifest listed itself"
+    assert report.build_id == staged.build_id
+
+
+def test_journal_recovery_reproduces_the_committed_manifest_byte_for_byte(tmp_path):
+    """R35 — `materialize_from_journal` is the recovery anchor.
+
+    If the journal sealed a manifest that disagrees with the tree (the exact
+    failure a surviving provisional manifest would cause), recovery silently
+    reconstructs different bytes than were published.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    finalize_build(staged, site_file_count=41)
+    build_dir = Path(staged.staging_dir) / "build"
+    committed = (build_dir / "manifest.json").read_bytes()
+    journal = journal_load(
+        (repo / STAGING_DIR / staged.build_id / "journal.json").read_bytes()
+    )
+    assert journal["artifacts"]["manifest.json"].encode("utf-8") == committed
+
+
+def test_two_phase_and_single_phase_agree_on_everything_but_the_count(tmp_path):
+    """The wrapper must not be a different build, only a build with no site."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    db_a = seed_db(tmp_path / "a.db")
+    repo_a = make_repo(tmp_path / "a")
+    one_shot = run_build(db_a, repo_a, now=pin(), backend=LocalDirBackend(repo_a))
+
+    db_b = seed_db(tmp_path / "b.db")
+    repo_b = make_repo(tmp_path / "b")
+    staged = stage_build(db_b, repo_b, now=pin(), backend=LocalDirBackend(repo_b))
+    two_phase = finalize_build(staged)
+
+    assert one_shot.build_id == two_phase.build_id
+    assert one_shot.artifact_count == two_phase.artifact_count
+    assert one_shot.logical_digest == two_phase.logical_digest
+    manifest_a = json.loads(
+        (Path(one_shot.staging_dir) / "build" / "manifest.json").read_text("utf-8")
+    )
+    manifest_b = json.loads(
+        (Path(two_phase.staging_dir) / "build" / "manifest.json").read_text("utf-8")
+    )
+    assert manifest_a == manifest_b
+
+
+def test_the_wrapper_publishes_a_null_site_file_count(tmp_path):
+    """R3 — `run_build` has no site to count, so it must not invent one.
+
+    The non-null assertion lives in the workflow (a publish-time check), which
+    is what stops this wrapper from satisfying it by accident.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats = json.loads(
+        (Path(report.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert stats.get("site_file_count") is None
+
+
+def test_finalize_patches_the_count_through_the_same_renderer(tmp_path):
+    """R24 — one writer, so the canonical bytes stay comparable to the served copy."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    finalize_build(staged, site_file_count=137)
+    stats_path = Path(staged.staging_dir) / "build" / "congress" / "stats.json"
+    stats = json.loads(stats_path.read_text("utf-8"))
+    assert stats["site_file_count"] == 137
+    assert stats_path.read_text("utf-8") == render_stats(stats)
+
+
+def test_the_count_is_inside_the_manifest_digest(tmp_path):
+    """Patching stats after the provisional manifest must not leave it stale."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+    provisional = json.loads((build_dir / "manifest.json").read_text("utf-8"))
+    finalize_build(staged, site_file_count=137)
+    final = json.loads((build_dir / "manifest.json").read_text("utf-8"))
+    before = find_artifact(provisional, "congress/stats.json")["sha256"]
+    after = find_artifact(final, "congress/stats.json")["sha256"]
+    assert before != after, "the manifest still carries the pre-count stats digest"
+    actual = hashlib.sha256(
+        (build_dir / "congress" / "stats.json").read_bytes()
+    ).hexdigest()
+    assert after == actual
+
+
+def test_a_nonsense_site_file_count_is_refused(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    with pytest.raises(PublishError, match="must be positive"):
+        finalize_build(staged, site_file_count=0)
+
+
+def test_a_preserved_build_is_not_deployable_and_finalizes_untouched(tmp_path):
+    """R2 — a preserved build is already published and journal-sealed.
+
+    Re-producing it would re-journal artifacts that never changed, so the deploy
+    leg must be skipped rather than re-run.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    first = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert not staged.fresh
+    assert not staged.deployable
+    assert staged.report is not None
+    report = finalize_build(staged, site_file_count=999)
+    assert report is staged.report
+    assert report.build_id == first.build_id
+    # The count was ignored, because there is nothing to re-seal.
+    stats = json.loads(
+        (Path(first.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert stats.get("site_file_count") is None
+
+
+def test_stage_state_survives_a_process_boundary(tmp_path):
+    """T5 — the workflow builds the site BETWEEN the two phases, in a new process.
+
+    So the handle has to round-trip through disk. This is the property that
+    makes the CLI seam possible at all.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    write_stage_state(staged)
+
+    revived = read_stage_state(
+        staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo)
+    )
+    report = finalize_build(revived, site_file_count=88)
+    assert report.build_id == staged.build_id
+    stats = json.loads(
+        (Path(staged.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert stats["site_file_count"] == 88
+
+
+def test_the_stage_state_sidecar_is_never_a_published_artifact(tmp_path):
+    """It lives beside `build/`, not inside it — anything inside is manifested."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    path = write_stage_state(staged)
+    build_dir = Path(staged.staging_dir) / "build"
+    assert path.parent == Path(staged.staging_dir)
+    assert not str(path).startswith(str(build_dir) + "/")
+
+    finalize_build(staged, site_file_count=41)
+    manifest = json.loads((build_dir / "manifest.json").read_text("utf-8"))
+    names = {
+        entry["name"]
+        for module in manifest["modules"].values()
+        for entry in module["artifacts"]
+    }
+    assert STAGE_STATE_FILE not in names
+
+
+def test_finalizing_a_preserved_build_from_disk_refuses_loudly(tmp_path):
+    """A preserved build has nothing to finalize; the CLI must say so, not guess."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert not staged.fresh
+    write_stage_state(staged)
+    with pytest.raises(PublishError, match="nothing to finalize"):
+        read_stage_state(
+            staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo)
+        )
+
+
+# --- T6: the publish-time site_file_count assertion (R3) ---------------------
+
+
+def test_publish_time_assertion_rejects_a_null_count(tmp_path):
+    """R3 — the schema permits null; the DEPLOYING path must not.
+
+    A build that never ran the site seam would otherwise publish stats claiming
+    to describe a site nobody counted.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    with pytest.raises(PublishError, match="did not run for this build"):
+        require_site_file_count(report.staging_dir)
+
+
+def test_publish_time_assertion_accepts_a_finalized_build(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    finalize_build(staged, site_file_count=64)
+    assert require_site_file_count(staged.staging_dir) == 64
+
+
+def test_publish_time_assertion_rejects_a_pre_seam_build(tmp_path):
+    """An absent key is a different failure from a null one, and says so."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats_path = Path(report.staging_dir) / "build" / "congress" / "stats.json"
+    stats = json.loads(stats_path.read_text("utf-8"))
+    del stats["site_file_count"]
+    stats_path.write_text(render_stats(stats), encoding="utf-8")
+    with pytest.raises(PublishError, match="predates"):
+        require_site_file_count(report.staging_dir)
+
+
+@pytest.mark.parametrize("bogus", [0, -1, True, "12", 1.5])
+def test_publish_time_assertion_rejects_nonsense_counts(tmp_path, bogus):
+    """`True` is the interesting one: in Python it is an int, and it is not a count."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats_path = Path(report.staging_dir) / "build" / "congress" / "stats.json"
+    stats = json.loads(stats_path.read_text("utf-8"))
+    stats["site_file_count"] = bogus
+    stats_path.write_text(render_stats(stats), encoding="utf-8")
+    with pytest.raises(PublishError):
+        require_site_file_count(report.staging_dir)
+
+
+def test_compute_stats_always_emits_the_key(tmp_path):
+    """Present-and-null, never absent: an absent key is invisible to consumers."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats = json.loads(
+        (Path(report.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert "site_file_count" in stats
+    assert stats["site_file_count"] is None
+
+
+# --- the two-phase seam must not trust the sidecar (code review) --------------
+
+
+def test_a_forged_build_id_in_the_sidecar_is_refused(tmp_path):
+    """QA round 7's invariant, reintroduced by the process boundary and now closed.
+
+    A hand-edited `stage-state.json` published real congress.db bytes under an
+    identity that never passed through `next_build_id`'s durable high-water
+    mark — one immutable build id naming two different byte sets. The directory
+    is the authority; the sidecar's copy is a cross-check.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    write_stage_state(staged)
+
+    sidecar = Path(staged.staging_dir) / STAGE_STATE_FILE
+    payload = json.loads(sidecar.read_text("utf-8"))
+    payload["build_id"] = "20200101.7"
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PublishError, match="identity is in dispute"):
+        read_stage_state(staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo))
+
+
+def test_a_forged_db_logical_in_the_sidecar_is_ignored(tmp_path):
+    """It flows into the manifest's congress.db entry, and the journal check
+    cannot catch it because the journal was written from the same forged value."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    real = staged._state["db_logical"]
+    write_stage_state(staged)
+
+    sidecar = Path(staged.staging_dir) / STAGE_STATE_FILE
+    payload = json.loads(sidecar.read_text("utf-8"))
+    payload["db_logical"] = "0" * 64
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    revived = read_stage_state(staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo))
+    assert revived._state["db_logical"] == real, "the forged digest was believed"
+
+
+def test_a_staging_dir_not_named_like_a_build_id_is_refused(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    write_stage_state(staged)
+    renamed = Path(staged.staging_dir).parent / "not-a-build-id"
+    Path(staged.staging_dir).rename(renamed)
+    with pytest.raises(PublishError, match="not named after a valid build id"):
+        read_stage_state(renamed, data_repo=repo, backend=LocalDirBackend(repo))
+
+
+def test_both_stats_copies_are_patched_and_byte_equal(tmp_path):
+    """R24 / §12.1 step 2 — 'both places identically'.
+
+    The site build emits dist/stats.json from the PROVISIONAL document, whose
+    count is still null. Patching only the canonical copy leaves the live site
+    reporting null forever while the published manifest reports the integer.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+
+    # Stand in for the site build: it copies the provisional bytes verbatim.
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "stats.json").write_bytes((build_dir / "congress" / "stats.json").read_bytes())
+    assert json.loads((dist / "stats.json").read_text())["site_file_count"] is None
+
+    finalize_build(staged, site_file_count=12543, dist_dir=dist)
+
+    served = (dist / "stats.json").read_bytes()
+    canonical = (build_dir / "congress" / "stats.json").read_bytes()
+    assert served == canonical, "the two stats.json copies are not byte-equal"
+    assert json.loads(served)["site_file_count"] == 12543
+
+
+def test_a_missing_served_stats_is_refused_not_ignored(tmp_path):
+    """Silently skipping the patch is how the served copy stays null."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    empty = tmp_path / "dist"
+    empty.mkdir()
+    with pytest.raises(PublishError, match="no served stats.json"):
+        finalize_build(staged, site_file_count=41, dist_dir=empty)
+
+
+def test_the_byte_equality_assertion_can_actually_fire(tmp_path, monkeypatch):
+    """Pins the guard, not just the happy path.
+
+    Both copies are written from one `rendered` string, so in normal operation
+    they cannot differ and the assertion is unreachable — which means a mutation
+    deleting it survives every other test. What it genuinely guards is the two
+    WRITERS disagreeing: `_write_staged` and `Path.write_text` differing on
+    encoding or newline handling. So make them disagree and require the error.
+    """
+    from populus.publish import build as build_mod
+
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "stats.json").write_bytes((build_dir / "congress" / "stats.json").read_bytes())
+
+    real_write = build_mod._write_staged
+
+    def divergent_write(target_dir, relpath, payload):
+        if relpath == "congress/stats.json":
+            payload = payload + "\n"  # one byte of drift, as an encoding bug would
+        return real_write(target_dir, relpath, payload)
+
+    monkeypatch.setattr(build_mod, "_write_staged", divergent_write)
+    with pytest.raises(PublishError, match="byte-equality does not hold"):
+        finalize_build(staged, site_file_count=99, dist_dir=dist)

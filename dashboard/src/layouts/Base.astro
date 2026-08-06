@@ -35,6 +35,14 @@ const build = getBuildData();
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {/* Machine-readable build markers (R19). Deploy verification PARSES these
+        by name and compares the values exactly — never a substring search over
+        the footer's free text, which a whole-footer replacement would still
+        satisfy. Every page carries them, so a per-page tamper is detectable.
+        `code_sha` is the full commit sha in CI (SITE_CODE_SHA); the short git
+        fallback is dev-only. */}
+    <meta name="populus:build_id" content={build.buildId} />
+    <meta name="populus:code_sha" content={build.codeSha} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <script is:inline>
       // Pre-paint theme: an explicit choice wins; otherwise the CSS
@@ -119,9 +127,14 @@ const build = getBuildData();
           <a href="/legal/DATA-LICENSE.md">DATA-LICENSE ↗</a> ·
           <a href="/legal/NOTICE.txt">NOTICE ↗</a>
         </div>
+        {/* No manifest digest is rendered here, or anywhere else (Locked #6,
+            R19): the manifest is re-assembled AFTER this site builds, so any
+            digest printed by a page is stale by construction — a reader who
+            checked it would be told the build is corrupt. The build id names
+            the release; `populus verify --build <id>` resolves the manifest
+            from it. The <meta> markers above are the machine-readable copy. */}
         <div class="footer-build">
           build {build.buildId} · code {build.codeSha}<br />
-          <span title={`manifest sha256:${build.manifestSha}`}>snapshot sha256:{build.manifestShaAbbrev}</span><br />
           no cookies · no account required · no tracking
         </div>
       </div>

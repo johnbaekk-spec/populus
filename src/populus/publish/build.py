@@ -1159,6 +1159,20 @@ def _complete_extra_module_assets(
                 )
 
 
+
+def _require_attested(result) -> None:
+    """A failing attest() stops the publish.
+
+    All three call sites previously discarded this value, so a provider that
+    reported failure was ignored and the publish continued. For the sigstore
+    provider attest() is a seam (the workflow's attest step does the signing),
+    but the seam must remain usable by a provider that CAN fail — otherwise the
+    check is decorative.
+    """
+    if not result.ok:
+        raise PublishError(f"attestation failed: {result.detail}")
+
+
 def _complete_build(
     data_repo: Path,
     build_id: str,
@@ -1292,7 +1306,7 @@ def _complete_build(
     materialize_from_journal(journal_bytes, builds_dir)
     actions.append(f"materialize:{build_id}")
 
-    attestation.attest("manifest.json", manifest_bytes)
+    _require_attested(attestation.attest("manifest.json", manifest_bytes))
 
     latest_path = data_repo / "latest.json"
     current: dict | None = None
@@ -1321,7 +1335,7 @@ def _complete_build(
             manifest_sha256=manifest_sha,
         )
         pointer_bytes = render_pointer(pointer).encode("utf-8")
-        attestation.attest("latest.json", pointer_bytes)
+        _require_attested(attestation.attest("latest.json", pointer_bytes))
         atomic_write_bytes(latest_path, pointer_bytes)
         actions.append(f"pointer:{pointer_version}")
 
@@ -1513,6 +1527,410 @@ def _write_staged(build_dir: Path, relpath: str, text: str) -> None:
     atomic_write_bytes(target, text.encode("utf-8"))
 
 
+@dataclass(frozen=True)
+class StagedBuild:
+    """A build whose data artifacts exist but whose manifest is not yet final.
+
+    §12.1 needs the site built *from* the verified data build, and the site
+    build reads ``manifest.json`` to decide which surfaces exist
+    (``dashboard/src/lib/data.ts:86``). But the manifest cannot be final until
+    the site exists, because ``stats.json`` carries the served file count. That
+    circularity is why the build is two phases rather than one:
+
+    ``stage_build`` → data artifacts + a **provisional** manifest → the site
+    builds against it → ``finalize_build`` patches the count, discards the
+    provisional manifest, re-assembles from the same walk, and only then writes
+    the recovery journal (which must stay LAST, R35).
+
+    ``report`` is set when nothing was assembled — a preserved or reconciled
+    build. Those are already published and journal-sealed, so ``finalize_build``
+    returns them untouched and the caller must not deploy from them.
+    """
+
+    build_id: str
+    staging_dir: str
+    fresh: bool
+    report: BuildReport | None = None
+    # Everything `_seal_build` needs; only meaningful when `fresh` is True.
+    _state: dict | None = None
+
+    @property
+    def deployable(self) -> bool:
+        """Whether this run produced bytes a deploy leg should publish.
+
+        A preserved or reconciled build is already live; re-deploying it would
+        re-produce a sealed journal for artifacts that never changed.
+        """
+        return self.fresh
+
+
+#: Where ``stage_build`` parks the state ``finalize_build`` needs when the two
+#: phases run in different processes (the workflow runs the site build between
+#: them). Deliberately a sibling of ``build/``, never inside it: anything under
+#: ``build_dir`` is walked into the manifest, and this file is scaffolding, not
+#: a published artifact.
+STAGE_STATE_FILE = "stage-state.json"
+
+
+def _stage_state_path(staging_dir: Path | str) -> Path:
+    return Path(staging_dir) / STAGE_STATE_FILE
+
+
+def write_stage_state(staged: StagedBuild) -> Path:
+    """Persist *staged* so a later process can finalize it.
+
+    Only the values that cannot be recovered from the staged tree are written.
+    ``stats_document`` is not among them — it is already on disk at
+    ``build/congress/stats.json``, and re-reading it there keeps one copy
+    authoritative instead of two that can disagree.
+    """
+    path = _stage_state_path(staged.staging_dir)
+    if not staged.fresh or staged._state is None:
+        payload = {"fresh": False, "build_id": staged.build_id}
+    else:
+        state = staged._state
+        payload = {
+            "fresh": True,
+            "build_id": state["build_id"],
+            "created_at": state["created_at"],
+            "previous_build_id": state["previous_build_id"],
+            "watermarks": state["watermarks"],
+            "db_logical": state["db_logical"],
+            "inst_logical": state["inst_logical"],
+            "inst_watermarks": state["inst_watermarks"],
+            "inst_withheld": state["inst_withheld"],
+            "inst_period_coverage": state["inst_period_coverage"],
+            "inst_cover_dispositions": state["inst_cover_dispositions"],
+            "skipped_tickers": list(state["skipped_tickers"]),
+            "adopted": state["adopted"],
+            "reconciled": list(state["reconciled"]),
+        }
+    atomic_write_bytes(path, _render_json(payload).encode("utf-8"))
+    return path
+
+
+def _recompute_db_logical(snapshot_path: Path) -> str:
+    """The congress logical digest, read from the snapshot rather than believed.
+
+    `finalize_build` runs in a different process from `stage_build`, so every
+    value crossing that boundary is attacker-controlled in the same sense a file
+    on disk is. Anything cheap to recompute is recomputed.
+    """
+    if not snapshot_path.is_file():
+        raise PublishError(f"staged build is missing {snapshot_path}")
+    snapshot = connect(str(snapshot_path))
+    try:
+        ensure_views(snapshot)
+        return logical_digest(snapshot)
+    finally:
+        snapshot.close()
+
+
+def read_stage_state(
+    staging_dir: Path | str, *, data_repo: Path | str, backend: ReleaseBackend
+) -> StagedBuild:
+    """Rebuild a :class:`StagedBuild` written by :func:`write_stage_state`."""
+    staging_dir = Path(staging_dir)
+    path = _stage_state_path(staging_dir)
+    if not path.is_file():
+        raise PublishError(
+            f"no staged build state at {path} — run `populus stage-build` first"
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise PublishError(f"staged build state is unreadable: {exc}") from exc
+
+    if not payload.get("fresh"):
+        raise PublishError(
+            "the staged build was preserved or reconciled, not freshly assembled"
+            " — there is nothing to finalize and nothing to deploy"
+        )
+
+    # The build id comes from the DIRECTORY, never from the sidecar.
+    #
+    # Trusting `payload["build_id"]` reintroduced the exact failure QA round 7
+    # exists to prevent: a hand-edited sidecar published real congress.db bytes
+    # under a fabricated identity that never passed through `next_build_id`'s
+    # durable high-water mark, so one immutable build id could name two
+    # different byte sets. The directory is the authority because it is what
+    # `stage_build` actually allocated; the sidecar's copy is kept only as a
+    # cross-check, and a disagreement is a hard error rather than a silent
+    # preference for either side.
+    build_id = staging_dir.name
+    if _BUILD_ID.match(build_id) is None:
+        raise PublishError(
+            f"staging directory {staging_dir} is not named after a valid build id"
+        )
+    claimed = payload.get("build_id")
+    if claimed != build_id:
+        raise PublishError(
+            f"staged build state claims build_id {claimed!r} but lives in "
+            f"{build_id!r} — refusing to finalize a build whose identity is in "
+            "dispute"
+        )
+
+    build_dir = staging_dir / "build"
+    stats_path = build_dir / "congress" / "stats.json"
+    if not stats_path.is_file():
+        raise PublishError(f"staged build is missing {stats_path}")
+    state = {
+        "build_dir": build_dir,
+        "staging_dir": staging_dir,
+        "data_repo": Path(data_repo),
+        "snapshot_path": staging_dir / "assets" / DB_ARTIFACT,
+        "inst_agg_path": staging_dir / "assets" / INST_DB_ARTIFACT,
+        "register": licenses.load_register(),
+        "backend": backend,
+        "stats_document": json.loads(stats_path.read_text(encoding="utf-8")),
+        "build_id": build_id,
+        "created_at": payload["created_at"],
+        "previous_build_id": payload["previous_build_id"],
+        "watermarks": payload["watermarks"],
+        # Recomputed from the snapshot, never taken from the sidecar. A forged
+        # `db_logical` flows straight into the manifest's congress.db entry, and
+        # `journal_load`'s consistency check compares it against the journal —
+        # which was written from the same forged value, so the two agree.
+        # `run_verify` would catch it, but only after Publish has made the
+        # Release immutable.
+        "db_logical": _recompute_db_logical(staging_dir / "assets" / DB_ARTIFACT),
+        "inst_logical": payload["inst_logical"],
+        "inst_watermarks": payload["inst_watermarks"],
+        "inst_withheld": payload["inst_withheld"],
+        "inst_period_coverage": payload["inst_period_coverage"],
+        "inst_cover_dispositions": payload["inst_cover_dispositions"],
+        "skipped_tickers": payload["skipped_tickers"],
+        "adopted": payload["adopted"],
+        "reconciled": payload["reconciled"],
+    }
+    return StagedBuild(
+        build_id=build_id,
+        staging_dir=str(staging_dir),
+        fresh=True,
+        _state=state,
+    )
+
+
+def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
+    """Assemble the manifest from ``build_dir`` and, when final, the journal.
+
+    Called twice per fresh build. The provisional pass exists only so the site
+    build has a manifest to read; the final pass is the one whose bytes are
+    published.
+
+    **The provisional manifest must not survive into the final walk.**
+    ``build_dir.rglob("*")`` hashes every file it finds, and today
+    ``manifest.json`` is written *after* the walk, which is the only reason the
+    manifest never lists itself. A provisional manifest left in place would
+    acquire a self-entry whose digest goes stale the moment this function
+    re-renders it — and `validate_manifest` would then reject the result, or
+    worse, `build_journal` would seal a manifest that disagrees with the tree it
+    describes. So the final pass deletes it first, restoring exactly the file
+    set the single-phase build used to see.
+    """
+    build_dir: Path = state["build_dir"]
+    manifest_path = build_dir / "manifest.json"
+    if not provisional and manifest_path.exists():
+        manifest_path.unlink()
+
+    register = state["register"]
+    backend: ReleaseBackend = state["backend"]
+    build_id: str = state["build_id"]
+    snapshot_path: Path = state["snapshot_path"]
+    data_license_ids = sorted(licenses.ingestible_ids(register))
+    register_license_ids = sorted(licenses.register_ids(register))
+    locator_kind, locator_value = backend.locator(build_id, DB_ARTIFACT)
+    entries = [
+        ArtifactEntry(
+            name=DB_ARTIFACT,
+            sha256=sha256_file(snapshot_path),
+            bytes=snapshot_path.stat().st_size,
+            license_ids=tuple(data_license_ids),
+            path=locator_value if locator_kind == "path" else None,
+            url=locator_value if locator_kind == "url" else None,
+            logical_digest=state["db_logical"],
+        )
+    ]
+    for path in sorted(build_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        relpath = path.relative_to(build_dir).as_posix()
+        entries.append(
+            ArtifactEntry(
+                name=relpath,
+                sha256=sha256_file(path),
+                bytes=path.stat().st_size,
+                license_ids=tuple(
+                    register_license_ids
+                    if relpath in LICENSING_ARTIFACTS
+                    else data_license_ids
+                ),
+                path=f"builds/{build_id}/{relpath}",
+            )
+        )
+    manifest = build_manifest(
+        build_id=build_id,
+        created_at=state["created_at"],
+        previous_build_id=state["previous_build_id"],
+        watermarks=state["watermarks"],
+        artifacts=entries,
+    )
+    # Post-assembly injection of the inst module when it cleared the gate (R3/R7).
+    # `build_manifest` stays congress-scoped (zero M1 regression); the inst
+    # aggregate is a separate Release asset alongside congress.db.
+    inst_logical = state["inst_logical"]
+    if inst_logical is not None:
+        inst_agg_path: Path = state["inst_agg_path"]
+        inst_kind, inst_value = backend.locator(build_id, INST_DB_ARTIFACT)
+        inst_entry = ArtifactEntry(
+            name=INST_DB_ARTIFACT,
+            sha256=sha256_file(inst_agg_path),
+            bytes=inst_agg_path.stat().st_size,
+            license_ids=tuple(data_license_ids),
+            path=inst_value if inst_kind == "path" else None,
+            url=inst_value if inst_kind == "url" else None,
+            logical_digest=inst_logical,
+        )
+        inst_serving_logical = state["inst_serving_logical"]
+        require_complete_inst_module(inst_logical, inst_serving_logical)
+        inst_artifacts = [inst_entry.to_dict()]
+        # The SECOND inst database (RUN M2-8 T8, R9). Enumerated here or it is
+        # not published at all: `_complete_extra_module_assets`,
+        # `_preflight_module_assets`, `run_verify`, `run_rollback` and the client
+        # installer all iterate `module_db_artifacts` and skip a name the
+        # manifest does not list, so a missing entry silently disables all five.
+        #
+        # This lives in `_seal_build` because P3-3 moved manifest assembly here
+        # and made it run TWICE — provisionally so the site build can read
+        # `manifest.modules`, then finally once the served file count is known.
+        # Both passes must enumerate the serving artifact: the provisional pass
+        # is what `data.ts` reads to decide the institutional surfaces exist.
+        if inst_serving_logical is not None:
+            inst_serving_path: Path = state["inst_serving_path"]
+            serving_kind, serving_value = backend.locator(
+                build_id, INST_SERVING_ARTIFACT
+            )
+            inst_artifacts.append(
+                ArtifactEntry(
+                    name=INST_SERVING_ARTIFACT,
+                    sha256=sha256_file(inst_serving_path),
+                    bytes=inst_serving_path.stat().st_size,
+                    license_ids=tuple(data_license_ids),
+                    path=serving_value if serving_kind == "path" else None,
+                    url=serving_value if serving_kind == "url" else None,
+                    logical_digest=inst_serving_logical,
+                ).to_dict()
+            )
+        manifest["modules"][INST_MODULE] = {
+            "schema_version": INST_SCHEMA_VERSION,
+            "client_compat": INST_CLIENT_COMPAT,
+            "deprecation": None,
+            "normalization_version": INST_NORMALIZATION_VERSION,
+            "digest_projection_version": LOGICAL_PROJECTION_VERSIONS[INST_MODULE],
+            "watermarks": state["inst_watermarks"],
+            "artifacts": inst_artifacts,
+        }
+    manifest_errors = validate_manifest(
+        manifest, register_ids=licenses.register_ids(register)
+    )
+    if manifest_errors:
+        raise PublishError(
+            "assembled manifest failed validation: " + "; ".join(manifest_errors)
+        )
+    _write_staged(build_dir, "manifest.json", render_manifest(manifest))
+    if provisional:
+        return None
+
+    # --- the recovery journal, durably staged LAST (R35) ----------------------
+    staging_dir: Path = state["staging_dir"]
+    journal_bytes = build_journal(staging_dir, manifest, snapshot_path)
+    atomic_write_bytes(
+        _staged_journal_path(state["data_repo"], build_id), journal_bytes
+    )
+
+    return BuildReport(
+        build_id=build_id,
+        staging_dir=str(staging_dir),
+        previous_build_id=state["previous_build_id"],
+        logical_digest=state["db_logical"],
+        # Every module's artifacts, matching `_report_from_manifest` — a fresh
+        # two-module build must not report only the congress count (QA-F4 nit).
+        artifact_count=sum(
+            len(module.get("artifacts", []))
+            for module in manifest.get("modules", {}).values()
+        ),
+        skipped_tickers=tuple(state["skipped_tickers"]),
+        adopted=state["adopted"],
+        reconciled=state["reconciled"],
+        inst_withheld=state["inst_withheld"],
+        inst_logical_digest=inst_logical,
+        inst_period_coverage=state["inst_period_coverage"],
+        inst_cover_dispositions=state["inst_cover_dispositions"],
+    )
+
+
+def finalize_build(
+    staged: StagedBuild,
+    *,
+    site_file_count: int | None = None,
+    dist_dir: Path | str | None = None,
+) -> BuildReport:
+    """Complete *staged*: patch the served file count, re-seal, write the journal.
+
+    ``site_file_count`` is the number of files the site build emitted. It is
+    optional because the single-phase wrapper has no site to count; when it is
+    ``None`` the staged ``stats.json`` keeps the ``null`` ``compute_stats``
+    wrote, which is what every non-deploying caller wants. **The deploying path
+    must pass a real count** — R3 puts that assertion in the workflow, not in
+    the schema, precisely so this wrapper cannot satisfy it by accident.
+
+    A preserved or reconciled build is returned untouched: it is already sealed.
+    """
+    if staged.report is not None:
+        return staged.report
+    state = staged._state
+    if state is None:  # pragma: no cover — constructed only by stage_build
+        raise PublishError("staged build carries no state to finalize")
+
+    if site_file_count is not None:
+        if site_file_count <= 0:
+            raise PublishError(
+                f"site_file_count must be positive, got {site_file_count}"
+            )
+        stats_document = dict(state["stats_document"])
+        stats_document["site_file_count"] = site_file_count
+        state["stats_document"] = stats_document
+        # ONE writer, TWO destinations. §12.1 step 2 requires the count written
+        # "into the one stats.json in *both* places identically … assert the two
+        # copies are byte-equal", and the site build has already emitted its copy
+        # from the PROVISIONAL document (count still null) by the time we get
+        # here. Patching only the canonical copy would leave the live site
+        # serving `site_file_count: null` forever while the published manifest
+        # reports the real integer — two documents §12.1 promises are identical.
+        rendered = render_stats(stats_document)
+        _write_staged(state["build_dir"], "congress/stats.json", rendered)
+        if dist_dir is not None:
+            served = Path(dist_dir) / "stats.json"
+            if not served.is_file():
+                raise PublishError(
+                    f"no served stats.json at {served} — the site build did not "
+                    "emit one, so the two copies cannot be made identical (R24)"
+                )
+            served.write_text(rendered, encoding="utf-8")
+            # Assert rather than assume: this is the byte-equality §12.1 names,
+            # and it is the only place both copies exist at once.
+            canonical = (state["build_dir"] / "congress" / "stats.json").read_bytes()
+            if served.read_bytes() != canonical:
+                raise PublishError(
+                    "the served and canonical stats.json differ after patching — "
+                    "R24's byte-equality does not hold"
+                )
+
+    report = _seal_build(state, provisional=False)
+    assert report is not None  # provisional=False always returns a report
+    return report
+
+
 def run_build(
     db_path: Path | str | None,
     data_repo: Path | str,
@@ -1522,6 +1940,39 @@ def run_build(
     backend: ReleaseBackend,
     attestation: AttestationProvider | None = None,
 ) -> BuildReport:
+    """Assemble and finalize one staged build in a single call.
+
+    The single-phase entry point every existing caller uses (4 in production:
+    ``cli.py``, ``accept_m1_b.py``, ``accept_m2_5.py``, ``accept_m2_6.py``; the
+    rest are tests). It stages and finalizes with **no site file count**, so the
+    published ``stats.json`` keeps ``site_file_count: null`` — the deploying
+    path uses ``stage_build``/``finalize_build`` directly.
+
+    ``attestation`` is forwarded as an **explicit keyword**, never through
+    ``**kwargs``: ``tests/test_attestation_structure.py`` walks call sites for
+    exactly this parameter and treats kwargs-forwarding as an omission, because
+    a forwarded parameter cannot be seen by a signature-level guard.
+    """
+    staged = stage_build(
+        db_path,
+        data_repo,
+        now=now,
+        raw_root=raw_root,
+        backend=backend,
+        attestation=attestation,
+    )
+    return finalize_build(staged)
+
+
+def stage_build(
+    db_path: Path | str | None,
+    data_repo: Path | str,
+    *,
+    now: Callable[[], datetime],
+    raw_root: Path | str | None = None,
+    backend: ReleaseBackend,
+    attestation: AttestationProvider | None = None,
+) -> StagedBuild:
     """Assemble one staged build under ``.staging/<build_id>/`` (§5.5).
 
     Recovery-first (F1): shared state is reconciled BEFORE the source database
@@ -1565,13 +2016,22 @@ def run_build(
             journal_valid(staged_journal)
             and journal_load(staged_journal)["build_id"] == staged_id
         ):
-            return _report_from_manifest(
+            preserved = _report_from_manifest(
                 staged_id,
                 journal_manifest(journal_load(staged_journal)),
                 staging_dir=str(staging_root / staged_id),
                 adopted=True,
                 preserved=True,
                 reconciled=reconciled.completed,
+            )
+            # Already sealed and published: nothing to finalize, nothing to
+            # deploy. Re-producing it would re-journal a build whose journal is
+            # the authority on its own contents.
+            return StagedBuild(
+                build_id=staged_id,
+                staging_dir=str(staging_root / staged_id),
+                fresh=False,
+                report=preserved,
             )
         rebuild_id = staged_id  # invalid journal → rebuild this id from source
 
@@ -1581,13 +2041,19 @@ def run_build(
             completed_id = max(reconciled.completed, key=_build_id_key)
             manifest_file = data_repo / "builds" / completed_id / "manifest.json"
             manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-            return _report_from_manifest(
+            completed = _report_from_manifest(
                 completed_id,
                 manifest,
                 staging_dir="",
                 adopted=False,
                 preserved=True,
                 reconciled=reconciled.completed,
+            )
+            return StagedBuild(
+                build_id=completed_id,
+                staging_dir="",
+                fresh=False,
+                report=completed,
             )
         raise PublishError(
             f"a source database is required to assemble a new build"
@@ -1896,121 +2362,46 @@ def run_build(
             )
         previous_build_id = current["build_id"]
 
-    # --- manifest -------------------------------------------------------------
-    data_license_ids = sorted(licenses.ingestible_ids(register))
-    register_license_ids = sorted(licenses.register_ids(register))
-    locator_kind, locator_value = backend.locator(build_id, DB_ARTIFACT)
-    entries = [
-        ArtifactEntry(
-            name=DB_ARTIFACT,
-            sha256=sha256_file(snapshot_path),
-            bytes=snapshot_path.stat().st_size,
-            license_ids=tuple(data_license_ids),
-            path=locator_value if locator_kind == "path" else None,
-            url=locator_value if locator_kind == "url" else None,
-            logical_digest=db_logical,
-        )
-    ]
-    for path in sorted(build_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        relpath = path.relative_to(build_dir).as_posix()
-        entries.append(
-            ArtifactEntry(
-                name=relpath,
-                sha256=sha256_file(path),
-                bytes=path.stat().st_size,
-                license_ids=tuple(
-                    register_license_ids
-                    if relpath in LICENSING_ARTIFACTS
-                    else data_license_ids
-                ),
-                path=f"builds/{build_id}/{relpath}",
-            )
-        )
-    manifest = build_manifest(
-        build_id=build_id,
-        created_at=created_at,
-        previous_build_id=previous_build_id,
-        watermarks=watermarks,
-        artifacts=entries,
-    )
-    # Post-assembly injection of the inst module when it cleared the gate (R3/R7).
-    # `build_manifest` stays congress-scoped (zero M1 regression); the inst
-    # aggregate is a separate Release asset alongside congress.db.
-    if inst_logical is not None:
-        inst_kind, inst_value = backend.locator(build_id, INST_DB_ARTIFACT)
-        inst_entry = ArtifactEntry(
-            name=INST_DB_ARTIFACT,
-            sha256=sha256_file(inst_agg_path),
-            bytes=inst_agg_path.stat().st_size,
-            license_ids=tuple(data_license_ids),
-            path=inst_value if inst_kind == "path" else None,
-            url=inst_value if inst_kind == "url" else None,
-            logical_digest=inst_logical,
-        )
-        require_complete_inst_module(inst_logical, inst_serving_logical)
-        inst_artifacts = [inst_entry.to_dict()]
-        # The SECOND inst database (RUN M2-8 T8, R9). Enumerated here or it is
-        # not published at all: `_complete_extra_module_assets`,
-        # `_preflight_module_assets`, `run_verify`, `run_rollback` and the client
-        # installer all iterate `module_db_artifacts` and skip a name the
-        # manifest does not list, so a missing entry silently disables all five.
-        if inst_serving_logical is not None:
-            serving_kind, serving_value = backend.locator(
-                build_id, INST_SERVING_ARTIFACT
-            )
-            inst_artifacts.append(
-                ArtifactEntry(
-                    name=INST_SERVING_ARTIFACT,
-                    sha256=sha256_file(inst_serving_path),
-                    bytes=inst_serving_path.stat().st_size,
-                    license_ids=tuple(data_license_ids),
-                    path=serving_value if serving_kind == "path" else None,
-                    url=serving_value if serving_kind == "url" else None,
-                    logical_digest=inst_serving_logical,
-                ).to_dict()
-            )
-        manifest["modules"][INST_MODULE] = {
-            "schema_version": INST_SCHEMA_VERSION,
-            "client_compat": INST_CLIENT_COMPAT,
-            "deprecation": None,
-            "normalization_version": INST_NORMALIZATION_VERSION,
-            "digest_projection_version": LOGICAL_PROJECTION_VERSIONS[INST_MODULE],
-            "watermarks": inst_watermarks,
-            "artifacts": inst_artifacts,
-        }
-    manifest_errors = validate_manifest(
-        manifest, register_ids=licenses.register_ids(register)
-    )
-    if manifest_errors:
-        raise PublishError(
-            "assembled manifest failed validation: " + "; ".join(manifest_errors)
-        )
-    _write_staged(build_dir, "manifest.json", render_manifest(manifest))
-
-    # --- the recovery journal, durably staged LAST (R35) ----------------------
-    journal_bytes = build_journal(staging_dir, manifest, snapshot_path)
-    atomic_write_bytes(_staged_journal_path(data_repo, build_id), journal_bytes)
-
-    return BuildReport(
+    # --- state handed to the sealing phase ------------------------------------
+    # Everything `_seal_build` needs, captured once. The manifest is assembled
+    # from `build_dir` twice — provisionally now so the site build has something
+    # to read, and finally in `finalize_build` after the served file count is
+    # known — so the assembly itself lives in `_seal_build`, not here.
+    state = {
+        "build_dir": build_dir,
+        "staging_dir": staging_dir,
+        "data_repo": data_repo,
+        "snapshot_path": snapshot_path,
+        "inst_agg_path": inst_agg_path,
+        "build_id": build_id,
+        "created_at": created_at,
+        "previous_build_id": previous_build_id,
+        "watermarks": watermarks,
+        "register": register,
+        "backend": backend,
+        "db_logical": db_logical,
+        "inst_logical": inst_logical,
+        # RUN M2-8: `_seal_build` enumerates the serving artifact from these.
+        "inst_serving_path": inst_serving_path,
+        "inst_serving_logical": inst_serving_logical,
+        "inst_watermarks": inst_watermarks,
+        "inst_withheld": inst_withheld,
+        "inst_period_coverage": inst_period_coverage,
+        "inst_cover_dispositions": inst_cover_dispositions,
+        "skipped_tickers": skipped_tickers,
+        "adopted": adopted,
+        "reconciled": reconciled.completed,
+        "stats_document": stats_document,
+    }
+    # The provisional manifest: written so `data.ts` can read `manifest.modules`
+    # and decide which surfaces exist. It is NOT journalled — the journal stays
+    # last, after finalize re-assembles (R35).
+    _seal_build(state, provisional=True)
+    return StagedBuild(
         build_id=build_id,
         staging_dir=str(staging_dir),
-        previous_build_id=previous_build_id,
-        logical_digest=db_logical,
-        # Every module's artifacts, matching `_report_from_manifest` — a fresh
-        # two-module build must not report only the congress count (QA-F4 nit).
-        artifact_count=sum(
-            len(module.get("artifacts", []))
-            for module in manifest.get("modules", {}).values()
-        ),
-        skipped_tickers=tuple(skipped_tickers),
-        adopted=adopted,
-        reconciled=reconciled.completed,
-        inst_withheld=inst_withheld,
-        inst_logical_digest=inst_logical,
-        inst_period_coverage=inst_period_coverage,
-        inst_cover_dispositions=inst_cover_dispositions,
+        fresh=True,
+        _state=state,
     )
 
 
@@ -2244,11 +2635,55 @@ def _publish_rollback(
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
     )
     pointer_bytes = render_pointer(pointer).encode("utf-8")
-    attestation.attest("latest.json", pointer_bytes)
+    _require_attested(attestation.attest("latest.json", pointer_bytes))
     atomic_write_bytes(latest_path, pointer_bytes)
     return PublishReport(
         rollback_to, pointer_version, False, (f"pointer:{pointer_version}",)
     )
+
+
+def require_site_file_count(staging_dir: Path | str) -> int:
+    """Assert a staged build carries a real served-file count, and return it.
+
+    **This is deliberately a publish-time check and not a schema rule.** The
+    schema requires the key and permits ``null``, because
+    ``tests/schemas/stats.schema.json`` is closed-world and is validated in
+    three places (``tests/test_stats.py``, ``scripts/accept_m1_b.py``,
+    ``tests/test_members.py``) that build stats without ever running the site
+    seam — making it a non-nullable integer there would break standing gates
+    over builds that have no site by design.
+
+    So the schema answers "is this document well-formed?" and this answers "did
+    the deploying path actually run?". Those are different questions, and
+    collapsing them into one would either break the gates or lose the ability to
+    tell "nobody wrote a count" from "this build never needed one".
+
+    The deploying workflow calls this between ``finalize-build`` and the deploy
+    leg. Nothing else should: the single-phase ``run_build`` wrapper publishes
+    ``null`` on purpose.
+    """
+    stats_path = Path(staging_dir) / "build" / "congress" / "stats.json"
+    if not stats_path.is_file():
+        raise PublishError(f"no staged stats.json at {stats_path}")
+    try:
+        stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise PublishError(f"staged stats.json is unreadable: {exc}") from exc
+    if "site_file_count" not in stats:
+        raise PublishError(
+            "staged stats.json has no `site_file_count` key — it predates the"
+            " §12.1 site seam and cannot be deployed"
+        )
+    count = stats["site_file_count"]
+    if count is None:
+        raise PublishError(
+            "staged stats.json carries `site_file_count: null` — the site build"
+            " and `populus finalize-build` did not run for this build, so the"
+            " published stats would describe a site that was never counted"
+        )
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise PublishError(f"`site_file_count` must be a positive integer, got {count!r}")
+    return count
 
 
 def run_publish(

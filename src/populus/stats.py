@@ -320,6 +320,13 @@ def compute_stats(
         "totals": totals,
         "freshness": freshness,
         "unresolved_names": unresolved_names,
+        # How many files the deployed site is made of (§12.1). `compute_stats`
+        # runs long before any site exists, so it publishes the honest `null`
+        # and `finalize_build` patches the real count in. The key is always
+        # PRESENT so the closed-world schema can require it, which is what makes
+        # "nobody wrote a count" distinguishable from "this build predates the
+        # field" — an absent key would be silently tolerated by every consumer.
+        "site_file_count": None,
     }
 
 

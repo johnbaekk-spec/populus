@@ -611,12 +611,12 @@ def test_inst_db_dev_bypass_resolution(monkeypatch):
     # inst absent (snapshot tools degrade, detail still federates).
     from populus.mcp_server import server as srv_mod
 
-    monkeypatch.setattr(sys, "argv", ["populus-mcp", "--db", "c.db", "--inst-db", "i.db"])
+    monkeypatch.setattr(sys, "argv", ["populus-mcp", "--attestation=staging-noop", "--db", "c.db", "--inst-db", "i.db"])
     both = srv_mod._resolve_snapshot()
     assert both["db_path"] == "c.db" and both["inst_db_path"] == "i.db"
     assert both["build_id"] is None and both["inst_build_id"] is None
 
-    monkeypatch.setattr(sys, "argv", ["populus-mcp", "--db", "c.db"])
+    monkeypatch.setattr(sys, "argv", ["populus-mcp", "--attestation=staging-noop", "--db", "c.db"])
     congress_only = srv_mod._resolve_snapshot()
     assert congress_only["db_path"] == "c.db"
     assert congress_only["inst_db_path"] is None  # inst degrades honestly
@@ -1129,7 +1129,7 @@ def test_main_forwards_every_resolved_value_to_the_server(monkeypatch, tmp_path)
 
     # A real resolver run over a real published snapshot — not a literal.
     db = seed_db_for_resolver(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["populus-mcp", "--db", str(db)])
+    monkeypatch.setattr(sys, "argv", ["populus-mcp", "--attestation=staging-noop", "--db", str(db)])
     real_resolved = srv_mod._resolve_snapshot()
     assert real_resolved, "the resolver produced nothing to check"
     # Capture the REAL signature before build_server is monkeypatched away.
@@ -1215,7 +1215,7 @@ def test_published_resolution_marks_provenance_and_absence_honestly(monkeypatch)
                 return None
             return Path("i_serving.db")
 
-    monkeypatch.setattr(sys, "argv", ["populus-mcp"])
+    monkeypatch.setattr(sys, "argv", ["populus-mcp", "--attestation=staging-noop"])
     monkeypatch.setattr("populus.client.snapshot.SnapshotClient", _Client)
     monkeypatch.setattr("populus.client.snapshot.LocalRepoFetcher",
                         lambda *a, **k: None)

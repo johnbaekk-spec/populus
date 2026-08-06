@@ -213,6 +213,39 @@ HTTPX_ALLOWED = {
     "ingest/senate.py",
     "client/snapshot.py",
     "net/sec_client.py",
+    # RUN P3-3b: the deploy-side modules talk to the Cloudflare Pages API and to
+    # the served site. Every one takes an INJECTED transport and opens nothing at
+    # import time, so the suite stays hermetic under `tests/conftest.py` — the
+    # same posture as `client/snapshot.py` above. Listed individually rather than
+    # as a `deploy/` prefix: a new module in that package should have to justify
+    # itself here, which is the entire point of an allowlist.
+    "deploy/cloudflare.py",
+    # `deploy/orchestrator.py` EARNED this the same way `deploy/record.py` did,
+    # and only once it grew an entry point: `publish.yml` runs the deploy as its
+    # own process (`python -m populus.deploy.orchestrator`), so something in that
+    # module has to build the served-tree client the verifier is handed — the CLI
+    # does not own this entry point and no other module hands one out. It is one
+    # function, `_default_http_client`, reached only from `main()`; the ordered
+    # sequence and every helper it calls take an INJECTED client and name no
+    # transport at all, which is what keeps the suite hermetic and what lets the
+    # ordering tests drive the REAL verifier. `tests/test_deploy_orchestrator.py`
+    # pins that split per-function rather than trusting this comment.
+    "deploy/orchestrator.py",
+    # `deploy/record.py` EARNED this in T10, and the reason is narrow enough to
+    # state exactly: `record-sign.yml` runs the signer as its own process
+    # (`python -m populus.deploy.record`), so something in that module has to
+    # build the served-tree client — the CLI does not own this entry point and
+    # no other module hands one out. It is one function, `_default_http_client`,
+    # reached only from `main()`; every verification path takes an INJECTED
+    # client, which is what keeps the suite hermetic and what makes R27's
+    # verb-asserting transport fixture possible at all.
+    "deploy/record.py",
+    # `deploy/verify.py` is deliberately NOT here: it names no transport library
+    # at all and takes an injected client, so it needs no permission. An
+    # allowlist entry for a module that has not earned one is a small standing
+    # grant of exactly the authority this guard exists to withhold — it was
+    # added speculatively for all three deploy modules and pulled back once
+    # verify.py turned out not to need it.
 }
 # RUN 5: publish/build.py invokes the gh CLI (argv-list subprocess, never a
 # shell) as the GhReleaseBackend command transport — injectable in tests, so
@@ -221,7 +254,22 @@ NETWORK_PRIMITIVES_SANS_SUBPROCESS = re.compile(
     r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
-SUBPROCESS_ALLOWED = {"publish/build.py"}
+SUBPROCESS_ALLOWED = {
+    "publish/build.py",
+    # RUN P3-3b: `deploy/upload.py` invokes a PINNED `wrangler pages deploy` as
+    # the Cloudflare Pages Direct Upload transport — argv list, never a shell,
+    # exactly the GhReleaseBackend shape above, and the command runner is
+    # INJECTED so the suite drives the real uploader without spawning anything.
+    # It is here rather than using the HTTP API because Direct Upload is not a
+    # PUT of a directory: the protocol hashes each asset with blake3 over
+    # `base64(content) + extension` and negotiates check-missing/upload/manifest,
+    # and blake3 is neither in the standard library nor worth a new dependency
+    # to re-implement a client Cloudflare already ships. Note the consequence,
+    # which is deliberate: this module gets `subprocess` and NOT httpx, so it
+    # cannot grow an HTTP call — every fact it reports is read back through
+    # `deploy/cloudflare.py`.
+    "deploy/upload.py",
+}
 
 
 def test_owned_source_has_no_network_primitives():
