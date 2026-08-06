@@ -42,6 +42,13 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    # Consumed by the deploy and sign jobs. `deployed` is false when the build
+    # was preserved or reconciled rather than assembled — already published and
+    # journal-sealed, so re-deploying it would re-produce a sealed journal for
+    # artifacts that never changed.
+    outputs:
+      build_id: ${{ steps.stage.outputs.build_id }}
+      deployed: ${{ steps.stage.outputs.fresh }}
     steps:
       - name: Check out populus
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -58,6 +65,26 @@ jobs:
 
       - name: Sync (frozen lockfile)
         run: uv sync --frozen
+
+      # RUN P3-3b R18/R20 — the previous deploy must have left a VERIFIED,
+      # attestation-backed generation before this run publishes anything.
+      #
+      # Named "Gate on ..." and not "Verify ...": `_step_index` in
+      # tests/test_attestation_structure.py resolves steps by substring, so a
+      # step whose name contains "verify" placed before the Attest step would
+      # capture that lookup and break three unrelated ordering assertions for a
+      # reason none of them states.
+      #
+      # It holds NO Cloudflare credential — §14 forbids this job one — so the
+      # live check is an unauthenticated fetch of the site's own marker, and the
+      # generation comes from the populus-data checkout this job already has.
+      - name: Gate on prior deployment generation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          uv run python -m populus.deploy.record gate
+          --data-repo populus-data
+          --domain publicfilings.org
 
       - name: Ingest (live, raw-archived)
         run: |
@@ -103,6 +130,7 @@ jobs:
           # The build directory is reported by the CLI, never spelled here: the
           # §13.4 guard forbids a staging path literal in any step body.
           grep '^build_dir=' stage.out >> "$GITHUB_OUTPUT"
+          sed -n 's/^staged \([0-9.]*\) at .*/build_id=\1/p' stage.out >> "$GITHUB_OUTPUT"
 
       - name: Set up Node
         if: steps.stage.outputs.fresh == 'true'
@@ -165,7 +193,14 @@ jobs:
       # `if: always()`, so a missing or failed attestation blocks the pointer
       # commit. The ordering IS the enforcement — do not reorder these.
       - name: Attest published artifacts
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        # Pinned to the COMMIT, not the `v2` tag OBJECT. `96b4a1ef…` — what this
+        # line held — is the annotated tag object; `e8998f94…` is the commit it
+        # points at. Both are immutable, so this was never a supply-chain hole,
+        # but `uses:` resolving a tag-object sha is not something GitHub
+        # documents, and this workflow has never run: a first armed deploy is a
+        # bad place to discover the answer. The §14 pin test passes either way
+        # (both are 40-hex), which is exactly why this needed a human to notice.
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
             populus-data/latest.json
@@ -191,3 +226,86 @@ jobs:
           done
           echo "push failed after 3 rebase retries (no force push, ever)" >&2
           exit 1
+
+  # RUN P3-3b R7/T9 — the deploy job is ISOLATED, and the isolation is the point.
+  #
+  # §14 as amended: no JOB holds both `Pages Write` and GitHub write/attestation
+  # authority. The operative fact is not the permissions block on its own —
+  # workflow artifacts are a shared cross-job channel that `permissions:` does
+  # not govern — it is that a job with NO `id-token: write` cannot mint an
+  # attestation at all, whatever else it can reach. So this job carries the
+  # Cloudflare token and `contents: read`, and nothing else.
+  #
+  # It never writes to populus-data, never attests, and is not trusted by the
+  # signer: record-sign.yml re-derives every value from the artifact and the
+  # Pages API rather than believing anything produced here (R13).
+  deploy:
+    needs: publish
+    if: needs.publish.result == 'success' && needs.publish.outputs.deployed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      deployment_id: ${{ steps.deploy.outputs.deployment_id }}
+    steps:
+      - name: Check out populus
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download the built site
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: site-${{ needs.publish.outputs.build_id }}
+          path: site-artifact
+
+      - name: Install uv (version-pinned)
+        run: python3 -m pip install --quiet 'uv==0.7.13'
+
+      - name: Sync (frozen lockfile)
+        run: uv sync --frozen
+
+      # The token is STEP-scoped, never job-scoped: tests/test_publish.py
+      # asserts there is no job-level `env:` block anywhere in this workflow.
+      - name: Deploy to preview, verify, then production
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_EDIT_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+        run: >-
+          uv run python -m populus.deploy.orchestrator
+          --source site-artifact/site
+          --inventory site-artifact/inventory.json
+          --custom-domain publicfilings.org
+
+  # R20 — a SKIPPED signer job reports success. If POPULUS_RECORD_SIGN_ARMED
+  # were unset while publishing stayed armed, the deploy would complete, no
+  # generation would be written, and nothing would notice until the R18 gate
+  # fired a day later. `needs.sign.result` is therefore asserted explicitly
+  # below; `skipped` is not `success`.
+  sign:
+    needs: [publish, deploy]
+    uses: ./.github/workflows/record-sign.yml
+    secrets:
+      DATA_REPO_PAT: ${{ secrets.DATA_REPO_PAT }}
+      CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
+    with:
+      build_id: ${{ needs.publish.outputs.build_id }}
+      deployment_id: ${{ needs.deploy.outputs.deployment_id }}
+
+  assert-signed:
+    needs: [deploy, sign]
+    if: always() && needs.deploy.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: A skipped or failed signer is a failed run
+        run: |
+          result='${{ needs.sign.result }}'
+          if [ "$result" != "success" ]; then
+            echo "::error::the deployment signer did not succeed (result=$result)."
+            echo "::error::A deployment went live with no attested generation."
+            echo "::error::Check POPULUS_RECORD_SIGN_ARMED — an unset variable"
+            echo "::error::skips the job, and a skipped job reports success (R20)."
+            exit 1
+          fi
+          echo "deployment generation signed and attested"

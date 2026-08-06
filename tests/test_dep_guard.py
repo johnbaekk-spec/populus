@@ -220,13 +220,21 @@ HTTPX_ALLOWED = {
     # as a `deploy/` prefix: a new module in that package should have to justify
     # itself here, which is the entire point of an allowlist.
     "deploy/cloudflare.py",
+    # `deploy/record.py` EARNED this in T10, and the reason is narrow enough to
+    # state exactly: `record-sign.yml` runs the signer as its own process
+    # (`python -m populus.deploy.record`), so something in that module has to
+    # build the served-tree client — the CLI does not own this entry point and
+    # no other module hands one out. It is one function, `_default_http_client`,
+    # reached only from `main()`; every verification path takes an INJECTED
+    # client, which is what keeps the suite hermetic and what makes R27's
+    # verb-asserting transport fixture possible at all.
+    "deploy/record.py",
     # `deploy/verify.py` is deliberately NOT here: it names no transport library
     # at all and takes an injected client, so it needs no permission. An
     # allowlist entry for a module that has not earned one is a small standing
     # grant of exactly the authority this guard exists to withhold — it was
     # added speculatively for all three deploy modules and pulled back once
-    # verify.py turned out not to need it. Add `deploy/record.py` if and when it
-    # actually imports httpx, not before.
+    # verify.py turned out not to need it.
 }
 # RUN 5: publish/build.py invokes the gh CLI (argv-list subprocess, never a
 # shell) as the GhReleaseBackend command transport — injectable in tests, so

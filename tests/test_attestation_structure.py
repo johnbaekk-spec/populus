@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 from pathlib import Path
 
 import pytest
@@ -492,3 +493,80 @@ def test_the_revision_history_record_is_still_there() -> None:
         "the revision-history record of the round-11 scope correction is gone — "
         "the correction is only durable while the reason for it survives"
     )
+
+
+def test_every_needs_output_reference_is_declared() -> None:
+    """A `needs.<job>.outputs.<name>` that no job declares resolves to "".
+
+    GitHub does not error on this — the expression is simply empty, so a deploy
+    job would download an artifact named `site-` and a signer would attest a
+    build id of nothing. Nothing else in this suite would notice, because every
+    YAML-shape assertion still passes. Found exactly that way.
+    """
+    doc = _workflow_doc()
+    declared = {
+        f"{job_name}.{output}"
+        for job_name, job in doc["jobs"].items()
+        for output in (job.get("outputs") or {})
+    }
+    referenced: set[str] = set()
+    for job_name, job in doc["jobs"].items():
+        for match in re.finditer(
+            r"needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)",
+            yaml.safe_dump(job, width=10**6),
+        ):
+            referenced.add(f"{match.group(1)}.{match.group(2)}")
+    missing = sorted(referenced - declared)
+    assert missing == [], (
+        "these `needs.*.outputs.*` references resolve to the empty string "
+        f"because no job declares them: {missing}"
+    )
+
+
+def test_a_skipped_signer_fails_the_run() -> None:
+    """R20 — the asymmetry that makes this necessary.
+
+    `POPULUS_RECORD_SIGN_ARMED` gates the signer at JOB level. Unset while
+    publishing stays armed, the job is **skipped and reports success**: the
+    deploy completes, no generation is written, and nothing notices until the
+    R18 gate fires a day later. `needs.<job>.result` distinguishes `skipped`
+    from `success`, but only if something actually asserts on it.
+
+    A skipped DEPLOY job is legitimate — it is `needs: publish`, skipped
+    whenever publish is skipped, which is the entire unarmed state. Tightening
+    that would make every unarmed nightly a failure. A skipped signer means a
+    deployment went live unrecorded; a skipped deploy means nothing went live.
+    """
+    jobs = _jobs()
+    # `width` matters: yaml.safe_dump wraps at 80 columns by default and will
+    # split `needs.sign.result` across a line continuation, so a substring
+    # search silently finds nothing and this test passes by failing to look.
+    guards = {
+        name: job
+        for name, job in jobs.items()
+        if "needs.sign.result" in yaml.safe_dump(job, width=10**6)
+    }
+    assert guards, (
+        "no job asserts on `needs.sign.result` — if the signer is skipped the "
+        "run still reports success and a deployment goes live with no attested "
+        "generation (R20)"
+    )
+    for name, job in guards.items():
+        # Read the step bodies directly. Re-dumping to YAML and searching the
+        # result matches against escaping artifacts (`!= \"success\"`) rather
+        # than against what the shell will actually run — the same class of
+        # mistake as comparing a re-serialized document to canonical bytes.
+        bodies = " ".join(str(step.get("run", "")) for step in (job.get("steps") or []))
+        assert "always()" in str(job.get("if", "")), (
+            f"job {name!r} guards the signer but is not `if: always()` — it "
+            "would itself be skipped in exactly the case it exists to catch"
+        )
+        assert "!= " in bodies and "success" in bodies, (
+            f"job {name!r} must fail on any non-success signer result; "
+            "`skipped` is not `failure`, so testing for failure alone misses it"
+        )
+        assert "= \"failure\"" not in bodies and "= 'failure'" not in bodies, (
+            f"job {name!r} tests for `failure` specifically — a SKIPPED signer "
+            "is not a failure, and skipped is the case R20 exists for"
+        )
+        assert "exit 1" in bodies, f"job {name!r} does not fail the run"
