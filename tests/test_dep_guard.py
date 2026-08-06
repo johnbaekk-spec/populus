@@ -220,8 +220,13 @@ HTTPX_ALLOWED = {
     # as a `deploy/` prefix: a new module in that package should have to justify
     # itself here, which is the entire point of an allowlist.
     "deploy/cloudflare.py",
-    "deploy/verify.py",
-    "deploy/record.py",
+    # `deploy/verify.py` is deliberately NOT here: it names no transport library
+    # at all and takes an injected client, so it needs no permission. An
+    # allowlist entry for a module that has not earned one is a small standing
+    # grant of exactly the authority this guard exists to withhold — it was
+    # added speculatively for all three deploy modules and pulled back once
+    # verify.py turned out not to need it. Add `deploy/record.py` if and when it
+    # actually imports httpx, not before.
 }
 # RUN 5: publish/build.py invokes the gh CLI (argv-list subprocess, never a
 # shell) as the GhReleaseBackend command transport — injectable in tests, so
