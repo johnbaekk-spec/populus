@@ -147,11 +147,11 @@ from a fixer's report.
 | Gate | Result |
 |---|---|
 | `make check` | 0 |
-| pytest | **1924 passed, 8 skipped** |
+| pytest | **2296 passed, 8 skipped** (post-merge with P3-3) |
 | dashboard `node --test` | **224/224** (221 + 3 new antisymmetry tests) |
 | `tsc --noEmit` | clean |
 | astro build | 8,170 pages |
-| post-build gate | 36/36 |
+| post-build gate | 39/39 (P3-3 added 3) |
 | `dep_guard` | OK |
 | `accept-m2-5 / m2-6 / m2-8 / m1-b` | all rc=0 |
 | measured `dist/` | 12,545 files (cap 18,000, provider 20,000) |
@@ -168,7 +168,46 @@ reported as a pass and is not one here.
   by QA round 3 as documentation asserting unimplemented behaviour; pre-existing,
   out of this increment's scope.
 - **`inst_serving.db` has never been measured at full scale** — see §3, P1.
-- **Deployment does not exist.** No site-deploy workflow, no Cloudflare project or
-  token, no domain (OQ-1), and both existing workflows are disarmed behind repo
-  variables that are unset. This increment is one build away from deployable; the
-  deploy path itself is unbuilt (P3-3).
+- **Deployment now exists — P3-3 landed while this branch was open** (merged as
+  PR #9/#10, `origin/main` at `5e2b4d2`). `publish.yml` carries a real deploy leg
+  (preview -> verify -> production via `populus.deploy.orchestrator`), OQ-1 is
+  decided as **publicfilings.org**, and everything it needs is provisioned:
+  `CLOUDFLARE_PAGES_EDIT_TOKEN`, `DATA_REPO_PAT`, `CLOUDFLARE_ACCOUNT_ID`,
+  `CLOUDFLARE_PAGES_PROJECT`, and both `POPULUS_PUBLISH_ARMED` and
+  `POPULUS_RECORD_SIGN_ARMED` set to `true`.
+
+  The last dispatch (run `31119399761`, 2026-08-06 16:19 UTC) **failed on GitHub
+  infrastructure, not on this code**: the publish job recorded zero steps, waited
+  ~15 minutes and was cancelled with *"The job was not acquired by Runner of type
+  hosted."* The repository is public, so Actions minutes are not the cause. A
+  re-run is the remedy, and it must happen AFTER this branch merges — a re-run
+  today would deploy a `main` that does not yet contain these surfaces.
+
+### Integration with P3-3
+
+This branch was cut before P3-3 and merged `origin/main` at `ec90bb4`. One real
+conflict, in `publish/build.py`: P3-3 moved manifest assembly out of `stage_build`
+into a new `_seal_build(state, provisional=...)` that runs **twice** — provisionally
+so the site build can read `manifest.modules`, then finally once the served file
+count is known.
+
+Main's `_seal_build` carried the **pre-M2-8** single-artifact form
+(`"artifacts": [inst_entry.to_dict()]`). Taking either side wholesale would have
+silently stopped publishing `inst_serving.db` — the same *declared but never
+produced* class that dominated all three QA rounds. The M2-8 enumeration was
+therefore ported into `_seal_build`, with `inst_serving_path` and
+`inst_serving_logical` threaded through the `state` dict, so **both** passes
+enumerate the serving artifact.
+
+`test_the_real_build_routes_through_the_completeness_control` broke on this: it
+asserted `require_complete_inst_module(` appeared in `inspect.getsource(run_build)`,
+and the refactor moved the call out of that function. The property still held, so
+the test was not relaxed to whichever function holds the call today — it now walks
+the **actual call graph** from `run_build` and requires the control to be reachable,
+with a non-vacuity assertion that the walk really traverses the P3-3 seam. A future
+refactor may move the control again; it may not drop it. Mutation-verified: deleting
+the call fails the test.
+
+The 18,000 file cap and P3-3's deploy path do not interact — `site_file_count` is a
+stats value and the deploy inventory counts independently; the cap is enforced only
+by the post-build gate and `check_measured_tree`.
