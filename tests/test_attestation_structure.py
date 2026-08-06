@@ -175,20 +175,79 @@ def test_every_omission_capable_parameter_is_known() -> None:
 # --- R1 / R9 / R14: the workflow contract ----------------------------------
 
 
+def _workflow_doc() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+
+def _jobs() -> dict[str, dict]:
+    """Every job in the publish workflow, not just ``publish``.
+
+    R21: reading only ``jobs["publish"]`` made a new job invisible to every
+    assertion below — a deploy job could hold any permission it liked and no
+    guard would notice. Callers that genuinely mean the publish job say so.
+    """
+    return _workflow_doc()["jobs"]
+
+
 def _publish_job() -> dict:
-    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    return doc["jobs"]["publish"]
+    return _jobs()["publish"]
 
 
-def _steps() -> list[dict]:
-    return _publish_job()["steps"]
+def _steps(job: str = "publish") -> list[dict]:
+    return _jobs()[job].get("steps") or []
 
 
-def _step_index(name_fragment: str) -> int:
-    for i, step in enumerate(_steps()):
-        if name_fragment.lower() in str(step.get("name", "")).lower():
-            return i
-    raise AssertionError(f"no step named like {name_fragment!r}")
+def _all_steps() -> list[tuple[str, dict]]:
+    """``(job name, step)`` across every job."""
+    return [(name, step) for name, job in _jobs().items() for step in (job.get("steps") or [])]
+
+
+def _step_index(name_fragment: str, job: str = "publish") -> int:
+    """Index of the uniquely-matching step, or fail.
+
+    Returning the *first* substring match let an unrelated new step capture the
+    lookup: a pre-publish gate named "Verify prior generation" placed before
+    "Attest published artifacts" would silently become ``_step_index("verify")``
+    and flip three unrelated assertions green-to-red for a reason none of them
+    names. Requiring uniqueness turns that into one loud, accurate failure.
+    """
+    matches = [
+        i
+        for i, step in enumerate(_steps(job))
+        if name_fragment.lower() in str(step.get("name", "")).lower()
+    ]
+    if not matches:
+        raise AssertionError(f"no step named like {name_fragment!r} in job {job!r}")
+    if len(matches) > 1:
+        names = [str(_steps(job)[i].get("name")) for i in matches]
+        raise AssertionError(
+            f"{name_fragment!r} matches {len(matches)} steps in job {job!r}: {names}. "
+            "Rename one, or scope the lookup — an ambiguous match makes every "
+            "ordering assertion below meaningless."
+        )
+    return matches[0]
+
+
+def _attestation_taking_commands() -> list[str]:
+    """CLI subcommands that actually accept ``--attestation``, derived not listed.
+
+    R21: the hardcoded ``["build", "publish", "verify"]`` could not see a new
+    entry point, and could not tell that ``populus deploy`` and the pre-publish
+    gate legitimately take no such flag. Asking the CLI removes both failure
+    modes — a new attestation-taking command joins automatically, and a command
+    without the option is never asserted to carry it.
+    """
+    import click
+
+    from populus.cli import main
+
+    ctx = click.Context(main)
+    out = []
+    for name in main.list_commands(ctx):
+        command = main.get_command(ctx, name)
+        if any("--attestation" in getattr(p, "opts", []) for p in command.params):
+            out.append(name)
+    return sorted(out)
 
 
 def test_publish_job_has_attestation_permissions() -> None:
@@ -236,12 +295,67 @@ def test_verify_step_is_authenticated() -> None:
     assert "GH_TOKEN" in (verify.get("env") or {}), "Verify step has no GH_TOKEN"
 
 
-@pytest.mark.parametrize("command", ["build", "publish", "verify"])
-def test_every_populus_invocation_selects_a_provider(command: str) -> None:
-    """R14 — a defaultless flag with un-updated callers breaks the very workflow
-    that is supposed to prove the chain (round-3 F19)."""
-    runs = [str(s.get("run", "")) for s in _steps()]
-    invocations = [r for r in runs if f"populus {command}" in r]
-    assert invocations, f"no `populus {command}` invocation found"
-    for run in invocations:
-        assert "--attestation" in run, f"`populus {command}` omits --attestation"
+def test_every_populus_invocation_selects_a_provider() -> None:
+    """R14/R21 — a defaultless flag with un-updated callers breaks the very
+    workflow that is supposed to prove the chain (round-3 F19).
+
+    The command list is derived from the CLI rather than hardcoded, so a new
+    attestation-taking subcommand is covered the day it exists, and a command
+    that takes no such option (``populus deploy``, the pre-publish gate) is
+    never asserted to carry one.
+    """
+    commands = _attestation_taking_commands()
+    assert commands, "no CLI command takes --attestation — guard is vacuous"
+    runs = [str(step.get("run", "")) for _, step in _all_steps()]
+    for command in commands:
+        invocations = [r for r in runs if f"populus {command}" in r]
+        if not invocations:
+            # Not every attestation-taking command must appear in the workflow;
+            # the ones that do must carry the flag. `test_workflow_invokes_the_
+            # attested_pipeline` below pins the ones that must be present.
+            continue
+        for run in invocations:
+            assert "--attestation" in run, f"`populus {command}` omits --attestation"
+
+
+def test_workflow_invokes_the_attested_pipeline() -> None:
+    """The derived list must not let the workflow drop the chain entirely.
+
+    Deriving from the CLI removes drift, but on its own it would also pass a
+    workflow that stopped invoking the pipeline at all. These are the entry
+    points the deploy chain cannot lose; T5's split renames the first, so this
+    set is what must be updated deliberately rather than discovered in CI.
+    """
+    runs = " ".join(str(step.get("run", "")) for _, step in _all_steps())
+    for required in ("populus publish", "populus verify"):
+        assert required in runs, f"workflow no longer invokes `{required}`"
+    assert (
+        "populus build" in runs
+        or ("populus stage-build" in runs and "populus finalize-build" in runs)
+    ), "workflow invokes neither `populus build` nor the staged build seam"
+
+
+def test_no_job_holds_both_pages_write_and_github_write() -> None:
+    """§14 as amended (R7): the invariant is per-JOB, and every job is checked.
+
+    Reading only ``jobs["publish"]`` meant a deploy job could carry the
+    Cloudflare token alongside ``attestations: write`` and no guard would see
+    it. The operative property is that a job holding Pages authority cannot
+    mint an attestation, which requires ``id-token: write``.
+    """
+    for name, job in _jobs().items():
+        rendered = yaml.safe_dump(job)
+        holds_pages_write = "CLOUDFLARE_API_TOKEN" in rendered or "wrangler" in rendered
+        if not holds_pages_write:
+            continue
+        perms = job.get("permissions") or {}
+        assert perms.get("id-token") != "write", (
+            f"job {name!r} holds Pages authority and `id-token: write` — it can "
+            "mint an attestation for bytes it also controls (§14)"
+        )
+        assert perms.get("attestations") != "write", (
+            f"job {name!r} holds Pages authority and `attestations: write` (§14)"
+        )
+        assert perms.get("contents") != "write", (
+            f"job {name!r} holds Pages authority and `contents: write` (§14)"
+        )
