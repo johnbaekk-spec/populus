@@ -859,6 +859,129 @@ def build(
     _write_inst_gate_record(data_repo, report)
 
 
+@main.command("stage-build")
+@click.option(
+    "--db",
+    "db_path",
+    default="populus.db",
+    show_default=True,
+    help="Populus database to snapshot.",
+)
+@_attestation_option
+@_with_backend_options
+@click.option(
+    "--raw-root",
+    "raw_root",
+    type=click.Path(file_okay=False),
+    help="Raw-archive root holding the House index meta sidecars (watermarks).",
+)
+def stage_build_cmd(
+    db_path: str,
+    data_repo: str,
+    backend: str,
+    repo_slug: str | None,
+    raw_root: str | None,
+    attestation_choice: str,
+) -> None:
+    """Phase 1 of 2: assemble artifacts and a PROVISIONAL manifest.
+
+    The site build runs between this and ``finalize-build``: it reads
+    ``manifest.json`` to decide which surfaces exist, and its file count is what
+    ``finalize-build`` patches into ``stats.json``. Nothing is journalled here —
+    the recovery journal stays last (R35).
+
+    Prints the staging directory so the workflow can pass it onward, and the
+    build id. Exits non-zero if the build was preserved or reconciled rather
+    than freshly assembled, because there is then nothing to build a site from
+    and nothing to deploy.
+    """
+    from populus.publish.build import (
+        BackendError,
+        PublishError,
+        stage_build,
+        write_stage_state,
+    )
+    from populus.publish.digests import DigestError
+
+    make_backend = _make_backend(backend, repo_slug)
+    try:
+        staged = stage_build(
+            db_path,
+            data_repo,
+            now=_utc_now_dt,
+            raw_root=raw_root,
+            backend=make_backend(data_repo),
+            attestation=_make_attestation(attestation_choice),
+        )
+        write_stage_state(staged)
+    except (PublishError, BackendError, DigestError, OSError) as exc:
+        raise click.ClickException(str(exc))
+
+    if not staged.fresh:
+        # Not an error in itself — recovery did its job — but the caller must
+        # not go on to build and deploy a site for a build that is already
+        # published and journal-sealed.
+        click.echo(
+            f"build {staged.build_id} was preserved/reconciled, not assembled —"
+            " no site build and no deploy for this run"
+        )
+        raise SystemExit(3)
+    click.echo(f"staged {staged.build_id} at {staged.staging_dir}")
+    click.echo(f"build_dir={Path(staged.staging_dir) / 'build'}")
+
+
+@main.command("finalize-build")
+@click.option(
+    "--staging-dir",
+    "staging_dir",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="The .staging/<build_id>/ directory `stage-build` reported.",
+)
+@click.option(
+    "--site-file-count",
+    "site_file_count",
+    required=True,
+    type=int,
+    help="Number of files the site build emitted (R3: never defaulted).",
+)
+@_with_backend_options
+def finalize_build_cmd(
+    staging_dir: str,
+    site_file_count: int,
+    data_repo: str,
+    backend: str,
+    repo_slug: str | None,
+) -> None:
+    """Phase 2 of 2: patch the served file count, re-seal, write the journal.
+
+    ``--site-file-count`` is required and has no default. ``run_build`` — the
+    single-phase wrapper — publishes ``site_file_count: null`` precisely so that
+    a workflow which forgets this step produces an obviously-unfinished build
+    rather than a plausible wrong number.
+    """
+    from populus.publish.build import (
+        BackendError,
+        PublishError,
+        finalize_build,
+        read_stage_state,
+    )
+    from populus.publish.digests import DigestError
+
+    make_backend = _make_backend(backend, repo_slug)
+    try:
+        staged = read_stage_state(
+            staging_dir, data_repo=data_repo, backend=make_backend(data_repo)
+        )
+        report = finalize_build(staged, site_file_count=site_file_count)
+    except (PublishError, BackendError, DigestError, OSError) as exc:
+        raise click.ClickException(str(exc))
+    click.echo(
+        f"finalized build {report.build_id} ({report.artifact_count} artifacts,"
+        f" site_file_count {site_file_count}) at {report.staging_dir}"
+    )
+
+
 @main.command()
 @_attestation_option
 @_with_backend_options

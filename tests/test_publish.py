@@ -39,8 +39,14 @@ from populus.publish.build import (
     journal_valid,
     materialize_from_journal,
     next_build_id,
+    STAGE_STATE_FILE,
+    finalize_build,
+    read_stage_state,
     reconcile_inflight,
+    require_site_file_count,
     run_build,
+    stage_build,
+    write_stage_state,
     run_publish,
     run_verify,
 )
@@ -52,6 +58,7 @@ from populus.publish.manifest import (
     validate_manifest,
 )
 from populus.publish.pointer import build_pointer, render_pointer
+from populus.stats import render_stats
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -4786,3 +4793,284 @@ def test_a_malformed_institutional_view_is_healed_not_read_as_absence(tmp_path):
     finally:
         conn.close()
     assert report.build_id
+
+
+# --- T5: the two-phase build seam (R2/R24) -----------------------------------
+
+
+def test_stage_build_writes_a_provisional_manifest_the_site_can_read(tmp_path):
+    """R2 — `data.ts:86` derives which surfaces exist from `manifest.modules`,
+    so the manifest has to exist BEFORE the site build, not after it."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert staged.fresh and staged.deployable
+    build_dir = Path(staged.staging_dir) / "build"
+    manifest = json.loads((build_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert "congress" in manifest["modules"]
+    # The journal stays LAST (R35): staging must not have sealed anything.
+    assert not (repo / STAGING_DIR / staged.build_id / "journal.json").exists()
+
+
+def test_the_final_manifest_does_not_list_itself(tmp_path):
+    """The self-listing hazard: `build_dir.rglob` hashes everything it finds.
+
+    Today `manifest.json` is written after the walk, which is the ONLY reason it
+    is never self-listed. A provisional manifest left in place through the final
+    walk would gain a self-entry whose digest is stale the instant the manifest
+    is re-rendered.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+    assert (build_dir / "manifest.json").exists(), "provisional manifest missing"
+    report = finalize_build(staged, site_file_count=41)
+    manifest = json.loads((build_dir / "manifest.json").read_text(encoding="utf-8"))
+    names = {
+        entry["name"]
+        for module in manifest["modules"].values()
+        for entry in module["artifacts"]
+    }
+    assert "manifest.json" not in names, "the manifest listed itself"
+    assert report.build_id == staged.build_id
+
+
+def test_journal_recovery_reproduces_the_committed_manifest_byte_for_byte(tmp_path):
+    """R35 — `materialize_from_journal` is the recovery anchor.
+
+    If the journal sealed a manifest that disagrees with the tree (the exact
+    failure a surviving provisional manifest would cause), recovery silently
+    reconstructs different bytes than were published.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    finalize_build(staged, site_file_count=41)
+    build_dir = Path(staged.staging_dir) / "build"
+    committed = (build_dir / "manifest.json").read_bytes()
+    journal = journal_load(
+        (repo / STAGING_DIR / staged.build_id / "journal.json").read_bytes()
+    )
+    assert journal["artifacts"]["manifest.json"].encode("utf-8") == committed
+
+
+def test_two_phase_and_single_phase_agree_on_everything_but_the_count(tmp_path):
+    """The wrapper must not be a different build, only a build with no site."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    db_a = seed_db(tmp_path / "a.db")
+    repo_a = make_repo(tmp_path / "a")
+    one_shot = run_build(db_a, repo_a, now=pin(), backend=LocalDirBackend(repo_a))
+
+    db_b = seed_db(tmp_path / "b.db")
+    repo_b = make_repo(tmp_path / "b")
+    staged = stage_build(db_b, repo_b, now=pin(), backend=LocalDirBackend(repo_b))
+    two_phase = finalize_build(staged)
+
+    assert one_shot.build_id == two_phase.build_id
+    assert one_shot.artifact_count == two_phase.artifact_count
+    assert one_shot.logical_digest == two_phase.logical_digest
+    manifest_a = json.loads(
+        (Path(one_shot.staging_dir) / "build" / "manifest.json").read_text("utf-8")
+    )
+    manifest_b = json.loads(
+        (Path(two_phase.staging_dir) / "build" / "manifest.json").read_text("utf-8")
+    )
+    assert manifest_a == manifest_b
+
+
+def test_the_wrapper_publishes_a_null_site_file_count(tmp_path):
+    """R3 — `run_build` has no site to count, so it must not invent one.
+
+    The non-null assertion lives in the workflow (a publish-time check), which
+    is what stops this wrapper from satisfying it by accident.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats = json.loads(
+        (Path(report.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert stats.get("site_file_count") is None
+
+
+def test_finalize_patches_the_count_through_the_same_renderer(tmp_path):
+    """R24 — one writer, so the canonical bytes stay comparable to the served copy."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    finalize_build(staged, site_file_count=137)
+    stats_path = Path(staged.staging_dir) / "build" / "congress" / "stats.json"
+    stats = json.loads(stats_path.read_text("utf-8"))
+    assert stats["site_file_count"] == 137
+    assert stats_path.read_text("utf-8") == render_stats(stats)
+
+
+def test_the_count_is_inside_the_manifest_digest(tmp_path):
+    """Patching stats after the provisional manifest must not leave it stale."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+    provisional = json.loads((build_dir / "manifest.json").read_text("utf-8"))
+    finalize_build(staged, site_file_count=137)
+    final = json.loads((build_dir / "manifest.json").read_text("utf-8"))
+    before = find_artifact(provisional, "congress/stats.json")["sha256"]
+    after = find_artifact(final, "congress/stats.json")["sha256"]
+    assert before != after, "the manifest still carries the pre-count stats digest"
+    actual = hashlib.sha256(
+        (build_dir / "congress" / "stats.json").read_bytes()
+    ).hexdigest()
+    assert after == actual
+
+
+def test_a_nonsense_site_file_count_is_refused(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    with pytest.raises(PublishError, match="must be positive"):
+        finalize_build(staged, site_file_count=0)
+
+
+def test_a_preserved_build_is_not_deployable_and_finalizes_untouched(tmp_path):
+    """R2 — a preserved build is already published and journal-sealed.
+
+    Re-producing it would re-journal artifacts that never changed, so the deploy
+    leg must be skipped rather than re-run.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    first = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert not staged.fresh
+    assert not staged.deployable
+    assert staged.report is not None
+    report = finalize_build(staged, site_file_count=999)
+    assert report is staged.report
+    assert report.build_id == first.build_id
+    # The count was ignored, because there is nothing to re-seal.
+    stats = json.loads(
+        (Path(first.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert stats.get("site_file_count") is None
+
+
+def test_stage_state_survives_a_process_boundary(tmp_path):
+    """T5 — the workflow builds the site BETWEEN the two phases, in a new process.
+
+    So the handle has to round-trip through disk. This is the property that
+    makes the CLI seam possible at all.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    write_stage_state(staged)
+
+    revived = read_stage_state(
+        staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo)
+    )
+    report = finalize_build(revived, site_file_count=88)
+    assert report.build_id == staged.build_id
+    stats = json.loads(
+        (Path(staged.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert stats["site_file_count"] == 88
+
+
+def test_the_stage_state_sidecar_is_never_a_published_artifact(tmp_path):
+    """It lives beside `build/`, not inside it — anything inside is manifested."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    path = write_stage_state(staged)
+    build_dir = Path(staged.staging_dir) / "build"
+    assert path.parent == Path(staged.staging_dir)
+    assert not str(path).startswith(str(build_dir) + "/")
+
+    finalize_build(staged, site_file_count=41)
+    manifest = json.loads((build_dir / "manifest.json").read_text("utf-8"))
+    names = {
+        entry["name"]
+        for module in manifest["modules"].values()
+        for entry in module["artifacts"]
+    }
+    assert STAGE_STATE_FILE not in names
+
+
+def test_finalizing_a_preserved_build_from_disk_refuses_loudly(tmp_path):
+    """A preserved build has nothing to finalize; the CLI must say so, not guess."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert not staged.fresh
+    write_stage_state(staged)
+    with pytest.raises(PublishError, match="nothing to finalize"):
+        read_stage_state(
+            staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo)
+        )
+
+
+# --- T6: the publish-time site_file_count assertion (R3) ---------------------
+
+
+def test_publish_time_assertion_rejects_a_null_count(tmp_path):
+    """R3 — the schema permits null; the DEPLOYING path must not.
+
+    A build that never ran the site seam would otherwise publish stats claiming
+    to describe a site nobody counted.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    with pytest.raises(PublishError, match="did not run for this build"):
+        require_site_file_count(report.staging_dir)
+
+
+def test_publish_time_assertion_accepts_a_finalized_build(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    finalize_build(staged, site_file_count=64)
+    assert require_site_file_count(staged.staging_dir) == 64
+
+
+def test_publish_time_assertion_rejects_a_pre_seam_build(tmp_path):
+    """An absent key is a different failure from a null one, and says so."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats_path = Path(report.staging_dir) / "build" / "congress" / "stats.json"
+    stats = json.loads(stats_path.read_text("utf-8"))
+    del stats["site_file_count"]
+    stats_path.write_text(render_stats(stats), encoding="utf-8")
+    with pytest.raises(PublishError, match="predates"):
+        require_site_file_count(report.staging_dir)
+
+
+@pytest.mark.parametrize("bogus", [0, -1, True, "12", 1.5])
+def test_publish_time_assertion_rejects_nonsense_counts(tmp_path, bogus):
+    """`True` is the interesting one: in Python it is an int, and it is not a count."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats_path = Path(report.staging_dir) / "build" / "congress" / "stats.json"
+    stats = json.loads(stats_path.read_text("utf-8"))
+    stats["site_file_count"] = bogus
+    stats_path.write_text(render_stats(stats), encoding="utf-8")
+    with pytest.raises(PublishError):
+        require_site_file_count(report.staging_dir)
+
+
+def test_compute_stats_always_emits_the_key(tmp_path):
+    """Present-and-null, never absent: an absent key is invisible to consumers."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    stats = json.loads(
+        (Path(report.staging_dir) / "build" / "congress" / "stats.json").read_text("utf-8")
+    )
+    assert "site_file_count" in stats
+    assert stats["site_file_count"] is None

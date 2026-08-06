@@ -10,14 +10,24 @@
     "default",
     "totals",
     "freshness",
-    "unresolved_names"
+    "unresolved_names",
+    "site_file_count"
   ],
   "$defs": {
-    "count": { "type": "integer", "minimum": 0 },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
     "rate": {
       "oneOf": [
-        { "type": "number", "minimum": 0, "maximum": 1 },
-        { "type": "null" }
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "era_parse_gate": {
@@ -36,31 +46,70 @@
         "meets_gate"
       ],
       "properties": {
-        "clean_efile_rows": { "$ref": "#/$defs/count" },
-        "efile_rows": { "$ref": "#/$defs/count" },
-        "efile_parse_rate": { "$ref": "#/$defs/rate" },
-        "row_denominator_known": { "type": "boolean" },
-        "efile_filings": { "$ref": "#/$defs/count" },
-        "measurable_efile_filings": { "$ref": "#/$defs/count" },
-        "unmeasurable_efile_filings": { "$ref": "#/$defs/count" },
-        "efile_filing_measurable_rate": { "$ref": "#/$defs/rate" },
+        "clean_efile_rows": {
+          "$ref": "#/$defs/count"
+        },
+        "efile_rows": {
+          "$ref": "#/$defs/count"
+        },
+        "efile_parse_rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "row_denominator_known": {
+          "type": "boolean"
+        },
+        "efile_filings": {
+          "$ref": "#/$defs/count"
+        },
+        "measurable_efile_filings": {
+          "$ref": "#/$defs/count"
+        },
+        "unmeasurable_efile_filings": {
+          "$ref": "#/$defs/count"
+        },
+        "efile_filing_measurable_rate": {
+          "$ref": "#/$defs/rate"
+        },
         "status": {
           "type": "string",
-          "enum": ["pass", "miss", "unmeasurable", "no_efile_filings"]
+          "enum": [
+            "pass",
+            "miss",
+            "unmeasurable",
+            "no_efile_filings"
+          ]
         },
-        "meets_gate": { "type": "boolean" }
+        "meets_gate": {
+          "type": "boolean"
+        }
       }
     },
     "era_member_join": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["filings", "filings_joined", "rows", "rows_joined", "join_rate"],
+      "required": [
+        "filings",
+        "filings_joined",
+        "rows",
+        "rows_joined",
+        "join_rate"
+      ],
       "properties": {
-        "filings": { "$ref": "#/$defs/count" },
-        "filings_joined": { "$ref": "#/$defs/count" },
-        "rows": { "$ref": "#/$defs/count" },
-        "rows_joined": { "$ref": "#/$defs/count" },
-        "join_rate": { "$ref": "#/$defs/rate" }
+        "filings": {
+          "$ref": "#/$defs/count"
+        },
+        "filings_joined": {
+          "$ref": "#/$defs/count"
+        },
+        "rows": {
+          "$ref": "#/$defs/count"
+        },
+        "rows_joined": {
+          "$ref": "#/$defs/count"
+        },
+        "join_rate": {
+          "$ref": "#/$defs/rate"
+        }
       }
     },
     "late_stats": {
@@ -73,23 +122,49 @@
         "median_days_to_file"
       ],
       "properties": {
-        "rows_with_late_status": { "$ref": "#/$defs/count" },
-        "late_count": { "$ref": "#/$defs/count" },
-        "late_rate": { "$ref": "#/$defs/rate" },
-        "median_days_to_file": { "type": ["number", "null"] }
+        "rows_with_late_status": {
+          "$ref": "#/$defs/count"
+        },
+        "late_count": {
+          "$ref": "#/$defs/count"
+        },
+        "late_rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "median_days_to_file": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
       }
     }
   },
   "properties": {
-    "stats_version": { "const": "stats-1.0.0" },
-    "generated_at": { "type": "string", "minLength": 1 },
-    "data_note": { "type": "string", "minLength": 1 },
+    "stats_version": {
+      "const": "stats-1.0.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "data_note": {
+      "type": "string",
+      "minLength": 1
+    },
     "default": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["row_count", "source_mix", "late_filing", "join_coverage"],
+      "required": [
+        "row_count",
+        "source_mix",
+        "late_filing",
+        "join_coverage"
+      ],
       "properties": {
-        "row_count": { "$ref": "#/$defs/count" },
+        "row_count": {
+          "$ref": "#/$defs/count"
+        },
         "source_mix": {
           "type": "object",
           "additionalProperties": false,
@@ -101,29 +176,51 @@
             "by_source"
           ],
           "properties": {
-            "primary_count": { "$ref": "#/$defs/count" },
-            "primary_rate": { "$ref": "#/$defs/rate" },
-            "kadoa_count": { "$ref": "#/$defs/count" },
-            "kadoa_rate": { "$ref": "#/$defs/rate" },
+            "primary_count": {
+              "$ref": "#/$defs/count"
+            },
+            "primary_rate": {
+              "$ref": "#/$defs/rate"
+            },
+            "kadoa_count": {
+              "$ref": "#/$defs/count"
+            },
+            "kadoa_rate": {
+              "$ref": "#/$defs/rate"
+            },
             "by_source": {
               "type": "object",
-              "additionalProperties": { "$ref": "#/$defs/count" }
+              "additionalProperties": {
+                "$ref": "#/$defs/count"
+              }
             }
           }
         },
         "late_filing": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["overall", "by_chamber"],
+          "required": [
+            "overall",
+            "by_chamber"
+          ],
           "properties": {
-            "overall": { "$ref": "#/$defs/late_stats" },
+            "overall": {
+              "$ref": "#/$defs/late_stats"
+            },
             "by_chamber": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["house", "senate"],
+              "required": [
+                "house",
+                "senate"
+              ],
               "properties": {
-                "house": { "$ref": "#/$defs/late_stats" },
-                "senate": { "$ref": "#/$defs/late_stats" }
+                "house": {
+                  "$ref": "#/$defs/late_stats"
+                },
+                "senate": {
+                  "$ref": "#/$defs/late_stats"
+                }
               }
             }
           }
@@ -138,19 +235,35 @@
             "by_source"
           ],
           "properties": {
-            "primary_rows": { "$ref": "#/$defs/count" },
-            "primary_joined": { "$ref": "#/$defs/count" },
-            "primary_join_rate": { "$ref": "#/$defs/rate" },
+            "primary_rows": {
+              "$ref": "#/$defs/count"
+            },
+            "primary_joined": {
+              "$ref": "#/$defs/count"
+            },
+            "primary_join_rate": {
+              "$ref": "#/$defs/rate"
+            },
             "by_source": {
               "type": "object",
               "additionalProperties": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["rows", "joined", "join_rate"],
+                "required": [
+                  "rows",
+                  "joined",
+                  "join_rate"
+                ],
                 "properties": {
-                  "rows": { "$ref": "#/$defs/count" },
-                  "joined": { "$ref": "#/$defs/count" },
-                  "join_rate": { "$ref": "#/$defs/rate" }
+                  "rows": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "joined": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "join_rate": {
+                    "$ref": "#/$defs/rate"
+                  }
                 }
               }
             }
@@ -174,15 +287,23 @@
         "unresolved_pair_count"
       ],
       "properties": {
-        "filing_count_including_excluded": { "$ref": "#/$defs/count" },
-        "transaction_count_including_excluded": { "$ref": "#/$defs/count" },
+        "filing_count_including_excluded": {
+          "$ref": "#/$defs/count"
+        },
+        "transaction_count_including_excluded": {
+          "$ref": "#/$defs/count"
+        },
         "filing_count_by_source_including_excluded": {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/count" }
+          "additionalProperties": {
+            "$ref": "#/$defs/count"
+          }
         },
         "source_document_count_including_excluded": {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/count" }
+          "additionalProperties": {
+            "$ref": "#/$defs/count"
+          }
         },
         "parse_coverage_primary_by_chamber_year_including_excluded": {
           "type": "object",
@@ -190,7 +311,9 @@
             "type": "object",
             "additionalProperties": {
               "type": "object",
-              "additionalProperties": { "$ref": "#/$defs/count" }
+              "additionalProperties": {
+                "$ref": "#/$defs/count"
+              }
             }
           }
         },
@@ -198,19 +321,29 @@
           "type": "object",
           "additionalProperties": {
             "type": "object",
-            "additionalProperties": { "$ref": "#/$defs/era_parse_gate" }
+            "additionalProperties": {
+              "$ref": "#/$defs/era_parse_gate"
+            }
           }
         },
         "member_join_primary_by_chamber_year_including_excluded": {
           "type": "object",
           "additionalProperties": {
             "type": "object",
-            "additionalProperties": { "$ref": "#/$defs/era_member_join" }
+            "additionalProperties": {
+              "$ref": "#/$defs/era_member_join"
+            }
           }
         },
-        "needs_ocr_filing_count_including_excluded": { "$ref": "#/$defs/count" },
-        "member_count": { "$ref": "#/$defs/count" },
-        "unresolved_pair_count": { "$ref": "#/$defs/count" }
+        "needs_ocr_filing_count_including_excluded": {
+          "$ref": "#/$defs/count"
+        },
+        "member_count": {
+          "$ref": "#/$defs/count"
+        },
+        "unresolved_pair_count": {
+          "$ref": "#/$defs/count"
+        }
       }
     },
     "freshness": {
@@ -224,24 +357,66 @@
         "last_ingest_runs"
       ],
       "properties": {
-        "house_index_last_modified": { "type": ["string", "null"] },
+        "house_index_last_modified": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "house_index_last_modified_by_year": {
           "type": "object",
-          "additionalProperties": { "type": ["string", "null"] }
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         },
-        "house_db_max_filed_date": { "type": ["string", "null"] },
-        "senate_db_max_filed_date": { "type": ["string", "null"] },
+        "house_db_max_filed_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "senate_db_max_filed_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "last_ingest_runs": {
           "type": "object",
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["run_id", "started_at", "finished_at", "status"],
+            "required": [
+              "run_id",
+              "started_at",
+              "finished_at",
+              "status"
+            ],
             "properties": {
-              "run_id": { "type": "string" },
-              "started_at": { "type": ["string", "null"] },
-              "finished_at": { "type": ["string", "null"] },
-              "status": { "type": ["string", "null"] }
+              "run_id": {
+                "type": "string"
+              },
+              "started_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "finished_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         }
@@ -252,14 +427,42 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["filer_name_raw", "chamber", "source", "filing_count"],
+        "required": [
+          "filer_name_raw",
+          "chamber",
+          "source",
+          "filing_count"
+        ],
         "properties": {
-          "filer_name_raw": { "type": "string" },
-          "chamber": { "enum": ["house", "senate"] },
-          "source": { "enum": ["house-clerk", "senate-efd", "kadoa"] },
-          "filing_count": { "$ref": "#/$defs/count" }
+          "filer_name_raw": {
+            "type": "string"
+          },
+          "chamber": {
+            "enum": [
+              "house",
+              "senate"
+            ]
+          },
+          "source": {
+            "enum": [
+              "house-clerk",
+              "senate-efd",
+              "kadoa"
+            ]
+          },
+          "filing_count": {
+            "$ref": "#/$defs/count"
+          }
         }
       }
+    },
+    "site_file_count": {
+      "description": "Files in the deployed site tree (§12.1). Null until finalize_build patches it; the non-null requirement is a PUBLISH-TIME assertion, not a schema rule, so that the single-phase build wrapper cannot satisfy it by accident.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
     }
   }
 }
