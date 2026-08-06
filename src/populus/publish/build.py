@@ -37,10 +37,16 @@ from populus.db import connect
 from populus.ingest import UnsafeArchivePathError
 from populus.ingest.inst13f import compute_coverage, compute_period_coverage
 from populus.inst_agg import build_inst_agg
+from populus.inst_serving import (
+    build_serving_projection,
+    publication_periods,
+    write_serving_db,
+)
 from populus.normalize_inst import NORMALIZATION_VERSION as INST_NORMALIZATION_VERSION
 from populus.publish import atomic_write_bytes
 from populus.publish.attestation import AttestationProvider, StagingNoop
 from populus.publish.digests import (
+    projection_for,
     LOGICAL_PROJECTION_VERSIONS,
     LOGICAL_PROJECTIONS,
     DigestError,
@@ -53,6 +59,7 @@ from populus.publish.manifest import (
     INST_DB_ARTIFACT,
     INST_MODULE,
     INST_SCHEMA_VERSION,
+    INST_SERVING_ARTIFACT,
     JOURNAL_ASSET,
     LICENSING_ARTIFACTS,
     MODULE,
@@ -60,6 +67,7 @@ from populus.publish.manifest import (
     build_manifest,
     find_artifact,
     module_db_artifact,
+    module_db_artifacts,
     pointer_manifest_identity_error,
     render_manifest,
     resolve_within,
@@ -1044,6 +1052,36 @@ def _committed_build_conflict(
     return None
 
 
+def require_complete_inst_module(
+    aggregate_digest: str | None, serving_digest: str | None
+) -> None:
+    """R10's compensating control (QA M2-8 M12): both inst databases, or neither.
+
+    `REQUIRED_INST_ARTIFACTS` deliberately does NOT list `inst_serving.db`. A
+    hard entry there would invalidate every pre-M2-8 manifest — including a
+    rollback target that was correct when it was published — which is a real
+    constraint and the right call for the VALIDATOR.
+
+    But optionality is only safe if something fails when a POST-M2-8 build omits
+    the artifact, and nothing did: "optional" and "absent because nobody wrote
+    the producer" were indistinguishable, which is exactly the state the
+    increment shipped in. Every published build reported
+    `per_filer_detail.published = false` and every per-filer request fell through
+    to live EDGAR, while the manifest reported the module as published.
+
+    So the requirement lives at the PRODUCER instead. Old manifests keep
+    validating; a new build cannot silently regress to aggregate-only.
+    """
+    if aggregate_digest is not None and serving_digest is None:
+        raise PublishError(
+            f"the inst module cleared its gate and produced {INST_DB_ARTIFACT}"
+            f" but not {INST_SERVING_ARTIFACT}. Since RUN M2-8 both are required"
+            " of a build that publishes the module — per-filer detail would"
+            " otherwise fall back to live EDGAR while the manifest reports the"
+            " module as published (plan R9/R10)."
+        )
+
+
 def _complete_extra_module_assets(
     data_repo: Path,
     build_id: str,
@@ -1069,53 +1107,56 @@ def _complete_extra_module_assets(
     for module_name in sorted(manifest.get("modules", {})):
         if module_name == MODULE:
             continue  # congress.db is sourced from the journal itself
-        db_name = module_db_artifact(module_name)
-        entry = find_artifact(manifest, db_name, module=module_name)
-        if entry is None:
-            continue
-        if backend.verify_asset(
-            build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
-        ):
-            continue  # already uploaded and verified — idempotent
-        if not draft:
-            raise PublishError(
-                f"release data-{build_id} is published but module {module_name!r}"
-                f" asset {db_name} is missing or does not verify — refusing to"
-                " re-publish an inconsistent release"
+        # EVERY database artifact for the module, not just the primary one
+        # (RUN M2-8 T8; external review r3 F9). Resolving a single name here is
+        # how a second asset gets silently skipped at upload and verification.
+        for db_name in module_db_artifacts(module_name):
+            entry = find_artifact(manifest, db_name, module=module_name)
+            if entry is None:
+                continue  # a build predating this artifact legitimately has none
+            if backend.verify_asset(
+                build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
+            ):
+                continue  # already uploaded and verified — idempotent
+            if not draft:
+                raise PublishError(
+                    f"release data-{build_id} is published but module {module_name!r}"
+                    f" asset {db_name} is missing or does not verify — refusing to"
+                    " re-publish an inconsistent release"
+                )
+            staged_asset = (
+                Path(data_repo) / STAGING_DIR / build_id / "assets" / db_name
             )
-        staged_asset = (
-            Path(data_repo) / STAGING_DIR / build_id / "assets" / db_name
-        )
-        if not staged_asset.is_file():
-            raise PublishError(
-                f"module {module_name!r} Release asset {db_name} for"
-                f" data-{build_id} is neither a verified draft asset nor present"
-                " in staging: the congress-scoped recovery journal cannot"
-                " regenerate it. The release is still a draft and the pointer is"
-                " unmoved — run the drafts-only cleanup (docs/runbooks/rollback.md"
-                " Appendix A) and rebuild under a new build_id to regenerate it"
-                " (TD-M2-3-1)."
-            )
-        data = staged_asset.read_bytes()
-        if (
-            hashlib.sha256(data).hexdigest() != entry["sha256"]
-            or len(data) != entry["bytes"]
-        ):
-            raise PublishError(
-                f"staged {db_name} for data-{build_id} does not match its"
-                " manifest entry — refusing to upload an inconsistent asset"
-            )
-        upload_file = Path(scratch) / db_name
-        upload_file.write_bytes(data)
-        backend.upload(build_id, upload_file, name=db_name, clobber=True)
-        actions.append(f"upload:{db_name}")
-        if not backend.verify_asset(
-            build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
-        ):
-            raise PublishError(
-                f"{db_name} asset on data-{build_id} failed verification after"
-                " upload"
-            )
+            if not staged_asset.is_file():
+                raise PublishError(
+                    f"module {module_name!r} Release asset {db_name} for"
+                    f" data-{build_id} is neither a verified draft asset nor present"
+                    " in staging: the congress-scoped recovery journal cannot"
+                    " regenerate it. The release is still a draft and the pointer is"
+                    " unmoved — run the drafts-only cleanup (docs/runbooks/rollback.md"
+                    " Appendix A) and rebuild under a new build_id to regenerate it"
+                    " (TD-M2-3-1)."
+                )
+            data = staged_asset.read_bytes()
+            if (
+                hashlib.sha256(data).hexdigest() != entry["sha256"]
+                or len(data) != entry["bytes"]
+            ):
+                raise PublishError(
+                    f"staged {db_name} for data-{build_id} does not match its"
+                    " manifest entry — refusing to upload an inconsistent asset"
+                )
+            upload_file = Path(scratch) / db_name
+            upload_file.write_bytes(data)
+            backend.upload(build_id, upload_file, name=db_name, clobber=True)
+            actions.append(f"upload:{db_name}")
+            if not backend.verify_asset(
+                build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
+            ):
+                raise PublishError(
+                    f"{db_name} asset on data-{build_id} failed verification after"
+                    " upload"
+                )
 
 
 def _complete_build(
@@ -1716,6 +1757,8 @@ def run_build(
             is not None
         )
         inst_logical: str | None = None
+        inst_serving_logical: str | None = None
+        inst_serving_path = assets_dir / INST_SERVING_ARTIFACT
         inst_watermarks: dict | None = None
         inst_withheld: dict | None = None
         inst_period_coverage: list[dict] | None = None
@@ -1791,6 +1834,42 @@ def run_build(
                     )
                 finally:
                     agg_conn.close()
+                # --- RUN M2-8 T8 (R9): the per-filer SERVING artifact ----------
+                # `manifest.py` declares this artifact, `digests.py` declares its
+                # projection, six publication boundaries thread it, the MCP
+                # snapshot path reads it and `snapshot.py` installs it. THIS is
+                # the call site that makes any of that reachable — without it
+                # every build reported `per_filer_detail.published = false` and
+                # every per-filer request fell through to live EDGAR.
+                #
+                # The projection reads the composed views (in the snapshot) AND
+                # `agg_qoq_deltas` (in the aggregate just written), so the
+                # aggregate is ATTACHed for the duration. ATTACH does not write
+                # to `main`, and the DETACH is unconditional, so congress.db's
+                # bytes — hashed after this block — are untouched either way.
+                inst_serving_periods = publication_periods(snapshot)
+                snapshot.execute(
+                    "ATTACH DATABASE ? AS inst_agg", (str(inst_agg_path),)
+                )
+                try:
+                    serving_projection = build_serving_projection(
+                        snapshot, periods=inst_serving_periods
+                    )
+                finally:
+                    snapshot.execute("DETACH DATABASE inst_agg")
+                write_serving_db(
+                    serving_projection,
+                    str(inst_serving_path),
+                    source_conn=snapshot,
+                )
+                serving_conn = connect(str(inst_serving_path))
+                try:
+                    inst_serving_logical = logical_digest(
+                        serving_conn,
+                        projection_for(INST_SERVING_ARTIFACT, INST_MODULE),
+                    )
+                finally:
+                    serving_conn.close()
                 inst_watermarks = {
                     "latest_period_of_report": snapshot.execute(
                         "SELECT MAX(period_of_report) FROM v_default_inst_filings"
@@ -1870,6 +1949,28 @@ def run_build(
             url=inst_value if inst_kind == "url" else None,
             logical_digest=inst_logical,
         )
+        require_complete_inst_module(inst_logical, inst_serving_logical)
+        inst_artifacts = [inst_entry.to_dict()]
+        # The SECOND inst database (RUN M2-8 T8, R9). Enumerated here or it is
+        # not published at all: `_complete_extra_module_assets`,
+        # `_preflight_module_assets`, `run_verify`, `run_rollback` and the client
+        # installer all iterate `module_db_artifacts` and skip a name the
+        # manifest does not list, so a missing entry silently disables all five.
+        if inst_serving_logical is not None:
+            serving_kind, serving_value = backend.locator(
+                build_id, INST_SERVING_ARTIFACT
+            )
+            inst_artifacts.append(
+                ArtifactEntry(
+                    name=INST_SERVING_ARTIFACT,
+                    sha256=sha256_file(inst_serving_path),
+                    bytes=inst_serving_path.stat().st_size,
+                    license_ids=tuple(data_license_ids),
+                    path=serving_value if serving_kind == "path" else None,
+                    url=serving_value if serving_kind == "url" else None,
+                    logical_digest=inst_serving_logical,
+                ).to_dict()
+            )
         manifest["modules"][INST_MODULE] = {
             "schema_version": INST_SCHEMA_VERSION,
             "client_compat": INST_CLIENT_COMPAT,
@@ -1877,7 +1978,7 @@ def run_build(
             "normalization_version": INST_NORMALIZATION_VERSION,
             "digest_projection_version": LOGICAL_PROJECTION_VERSIONS[INST_MODULE],
             "watermarks": inst_watermarks,
-            "artifacts": [inst_entry.to_dict()],
+            "artifacts": inst_artifacts,
         }
     manifest_errors = validate_manifest(
         manifest, register_ids=licenses.register_ids(register)
@@ -1949,36 +2050,38 @@ def _preflight_module_assets(
             for module_name in sorted(staged_manifest.get("modules", {})):
                 if module_name == MODULE:
                     continue  # congress.db comes from the journal itself
-                db_name = module_db_artifact(module_name)
-                entry = find_artifact(staged_manifest, db_name, module=module_name)
-                if entry is None:
-                    continue
-                if backend.verify_asset(
-                    build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
-                ):
-                    continue  # already uploaded and verified on the release
-                staged_asset = assets_dir / db_name
-                if not staged_asset.is_file():
-                    # Same operator guidance as the in-flight refusal: the
-                    # congress-scoped journal cannot regenerate a module asset,
-                    # so the resolution is the drafts-only cleanup + rebuild.
-                    raise PublishError(
-                        f"module {module_name!r} asset {db_name} is neither staged"
-                        f" at {staged_asset} nor a verified release asset —"
-                        " refusing to publish an incomplete multi-module build."
-                        " Run the drafts-only cleanup (docs/runbooks/rollback.md"
-                        " Appendix A) and rebuild under a new build_id to"
-                        " regenerate it (TD-M2-3-1)."
-                    )
-                if (
-                    sha256_file(staged_asset) != entry["sha256"]
-                    or staged_asset.stat().st_size != entry["bytes"]
-                ):
-                    raise PublishError(
-                        f"staged module asset {db_name} does not match the"
-                        f" manifest (sha256/bytes) — refusing an inconsistent"
-                        " publish"
-                    )
+                # EVERY database artifact, not just the primary one — the resume/reconcile
+                # path must not silently skip a second asset either (review r3 F9).
+                for db_name in module_db_artifacts(module_name):
+                    entry = find_artifact(staged_manifest, db_name, module=module_name)
+                    if entry is None:
+                        continue
+                    if backend.verify_asset(
+                        build_id, db_name, sha256=entry["sha256"], size=entry["bytes"]
+                    ):
+                        continue  # already uploaded and verified on the release
+                    staged_asset = assets_dir / db_name
+                    if not staged_asset.is_file():
+                        # Same operator guidance as the in-flight refusal: the
+                        # congress-scoped journal cannot regenerate a module asset,
+                        # so the resolution is the drafts-only cleanup + rebuild.
+                        raise PublishError(
+                            f"module {module_name!r} asset {db_name} is neither staged"
+                            f" at {staged_asset} nor a verified release asset —"
+                            " refusing to publish an incomplete multi-module build."
+                            " Run the drafts-only cleanup (docs/runbooks/rollback.md"
+                            " Appendix A) and rebuild under a new build_id to"
+                            " regenerate it (TD-M2-3-1)."
+                        )
+                    if (
+                        sha256_file(staged_asset) != entry["sha256"]
+                        or staged_asset.stat().st_size != entry["bytes"]
+                    ):
+                        raise PublishError(
+                            f"staged module asset {db_name} does not match the"
+                            f" manifest (sha256/bytes) — refusing an inconsistent"
+                            " publish"
+                        )
 
 
 def _preflight(
@@ -2434,7 +2537,11 @@ def run_verify(
     # inst_agg.db (inst projection), each under its own module's allowlist.
     stats_bytes: bytes | None = None
     for module_name in sorted(manifest["modules"]):
-        db_artifact = module_db_artifact(module_name)
+        # The set of names that must be logical-digest verified for this module.
+        # A membership test, not an equality test: with two inst databases an
+        # `== db_artifact` comparison verifies the aggregate and silently skips
+        # the serving projection (review r3 F9).
+        db_artifacts = set(module_db_artifacts(module_name))
         for entry in manifest["modules"][module_name]["artifacts"]:
             name = entry["name"]
             if entry.get("path") is not None:
@@ -2453,7 +2560,7 @@ def run_verify(
                     errors.append(f"{name}: sha256 differs from the manifest")
                 elif name == "congress/stats.json":
                     stats_bytes = artifact_file.read_bytes()
-                elif name == db_artifact:
+                elif name in db_artifacts:
                     # F2: a LOCAL (path) database artifact is integrity- and
                     # logical-digest-checked here (under its module's own
                     # projection), with no --db required.
@@ -2461,7 +2568,7 @@ def run_verify(
                         _verify_local_db_artifact(
                             artifact_file,
                             entry,
-                            projection=LOGICAL_PROJECTIONS[module_name],
+                            projection=projection_for(name, module_name),
                             label=name,
                         )
                     )

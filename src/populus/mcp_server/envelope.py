@@ -122,8 +122,30 @@ def shape_holding(
     period_of_report: str,
     filed_date: str,
     doc_url: str | None,
+    accession: str | None,
 ) -> dict[str, Any]:
-    """One 13F holding for a tool result — both dates + value-with-unit + doc_url."""
+    """One 13F holding for a tool result — both dates + value-with-unit + doc_url.
+
+    `accession` is the §5.1 per-record `source_record_id`: the identity of the
+    filing that disclosed THIS row. It is REQUIRED, with no default, and it is
+    per-row for the same reason `filed_date` and `doc_url` are — a composed
+    period mixes a base filing with its amendments, so one accession stamped
+    across every row would misreport which document disclosed what.
+
+    BOTH planes have it in hand. The published path joins the serving
+    projection's filing dictionary (`_SERVING_DETAIL_SQL` selects `f.accession`);
+    the live federated path carries `source_accession` on every composed row
+    (`inst_queries._holding_to_dict`, beside the `source_filed_date` and
+    `source_doc_url` the caller already reads). An earlier version of this
+    signature defaulted to `None` and justified it with "the live federated path
+    shapes rows before an accession is resolved" — which the adjacent module
+    contradicted, and which shipped `accession: null` on every live-plane
+    holding while `server.py:605` promises "rows are shaped exactly like the
+    federated ones so a client parses both planes identically". `null` there is
+    indistinguishable from "this filing has no accession", which is never true.
+    The parameter is required now so that omission cannot recur silently
+    (QA M2-8 R2 N4).
+    """
     flags = row.get("flags")
     if isinstance(flags, str):
         try:
@@ -131,6 +153,7 @@ def shape_holding(
         except ValueError:
             flags = [flags] if flags else []
     return {
+        "accession": accession,
         "issuer_name": row.get("issuer_name_raw") or row.get("issuer_name"),
         "cusip": row.get("cusip"),
         "cusip_raw": row.get("cusip_raw"),

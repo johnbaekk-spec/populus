@@ -2,10 +2,18 @@
 // 13F holders deep view (Ticker Holders.dc.html), bound to
 // agg_issuer_top_holders via the Locked #18 ticker→issuer contract: static
 // paths exist ONLY for tickers that resolve through the mapping AND whose
-// issuer is entity-keyed in the aggregate. Columns are exactly the published
-// ones; the mockup's Filed/Lag/shares/doc-link columns are not in the
-// aggregate and are dropped with a printed caveat (register entry).
+// issuer is entity-keyed in the aggregate — i.e. as-of-resolved identity, the
+// same standard the full holder list below is served under.
+//
+// Two sections, deliberately not merged: the ranked top-N slice from
+// agg_issuer_top_holders (unchanged), then <HoldingsTable>, which serves the
+// as-of-resolved holder list from the M2-8 issuer projection with the
+// unresolved row count, unresolved value and identity coverage BESIDE it. That
+// projection carries per-row filed dates, lags and document links, so those
+// columns are no longer dropped there — the caveat on the aggregate table
+// still applies to the aggregate table.
 import Base from "../../../../layouts/Base.astro";
+import HoldingsTable from "../../../../components/HoldingsTable.astro";
 import { getBuildData } from "../../../../lib/data";
 import { holdersFor, issuerPeriods } from "../../../../lib/inst";
 import { holdersBody } from "../../../../lib/ui";
@@ -56,8 +64,8 @@ const periodData = JSON.stringify({
   ),
 });
 const description =
-  `Institutional holders of ${t} per 13F filings — the top slice of the published Populus ` +
-  `aggregate, quarter-end snapshots, never current holdings.`;
+  `Institutional holders of ${t} per 13F filings — the as-of-resolved holder list with the ` +
+  `unresolved remainder counted beside it; quarter-end snapshots, never current holdings.`;
 ---
 
 <Base
@@ -68,6 +76,13 @@ const description =
 >
   <main class="shell page entity-page">
     <Fragment set:html={bodyHtml} />
+    <HoldingsTable
+      kind="holders"
+      issuerKey={issuerKey}
+      issuerName={name}
+      ticker={t!}
+      period={period}
+    />
     <script is:inline type="application/json" id="holders-period-data" set:html={periodData} />
   </main>
   <script>

@@ -273,7 +273,17 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
     25,
     null,
   );
-  assert.ok(html.includes("What a 13F is — and is not."));
+  // QA M2-8 M6: the header explainer must NOT restate the §5 data_note. It used
+  // to open "What a 13F is — and is not." — one character from the canonical
+  // caveat box's heading — and both rendered on this page with different
+  // wording, so a reader met two same-titled blocks and no way to tell which was
+  // authoritative. The header now carries the one claim it must (G2: the page is
+  // not current holdings) and POINTS at the canonical box.
+  assert.ok(
+    !html.includes("What a 13F is — and is not."),
+    "the header must not carry a second phrasing of the §5 data_note",
+  );
+  assert.ok(html.includes('href="#inst-data-note"'), "the header links INTO the canonical box");
   assert.ok(html.includes("not current holdings"));
   assert.ok(html.includes("$2.3K"), "period tile from agg_filer_concentration");
   assert.ok(html.includes("100.0%"), "topn share from bps");
@@ -281,7 +291,11 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
   // M2-CONTRACT §3 was amended 2026-08-02: holdings will be SERVED, not federated.
   // Until RUN M2-8 publishes the projection the page must say so honestly, and it
   // must never re-assert the retired "never served" claim.
-  assert.ok(html.includes("not rendered here yet"));
+  // T11 landed: the holdings table renders, so the EDGAR block is now
+  // PROVENANCE rather than a stand-in. Asserting the retired copy would pin the
+  // page to a claim it no longer makes.
+  assert.ok(html.includes("provenance, not a substitute"));
+  assert.ok(!html.includes("not rendered here yet"));
   assert.ok(!html.includes("never served"));
   assert.ok(html.includes("CIK 0001067983"));
   assert.ok(html.includes('id="filer-footnotes"'), "the marker registry prints on the page");

@@ -57,9 +57,27 @@ outsized(f, p, i)   := eligible(f, p)
 *immediately preceding* `p` in the published period sequence.
 
 **Note the multiplication form.** The predicate is written
-`share * 100 > baseline * MULT`, **not** `share > baseline * MULT / 100`, so no
-integer division truncates the threshold. These are not equivalent; the divided
-form silently rounds the bar *down* and admits positions that should fail.
+`share * 100 > baseline * MULT` rather than `share > baseline * MULT / 100`.
+
+> **CORRECTION 2026-08-05 — the original justification here was mathematically
+> false, and it survived six external review rounds unchallenged.** This section
+> claimed the two forms "are not equivalent" and that the divided form "silently
+> rounds the bar down and admits positions that should fail". For **integer**
+> `share` they are exactly equivalent, and an exhaustive check over
+> `base ∈ [0,3000) × share ∈ [0,6000)` (18M pairs) found **zero** divergences.
+>
+> Proof: let `x = base*MULT/100`, so `base*MULT//100 = floor(x)`. If
+> `share > floor(x)` then `share >= floor(x)+1 > x`, hence `share*100 > base*MULT`.
+> Conversely `share*100 > base*MULT` gives `share > x >= floor(x)`. The predicates
+> coincide.
+>
+> It was found by a **surviving mutation**: swapping in the divided form broke no
+> test, because no test could break — there is no input that distinguishes them.
+>
+> **The multiplication form is still the one to write**, for two honest reasons
+> rather than one false one: it needs no reasoning about truncation to read, and it
+> stays correct if `share` ever stops being an integer. But it is a readability and
+> robustness choice, **not** a correctness fix, and the code must not claim otherwise.
 
 ### 2.1 Source of every input — this is where round-3 F5 bit
 
@@ -166,8 +184,21 @@ would misclassify one of them.
 3. Allow a partial-NULL denominator → rows 13, 14 flip.
 4. Substitute `topn_share_bps` for `max_share` → row 16 flips.
 5. Compute inputs from `v_default_holdings` → row 17 loses the position.
-6. Rewrite the predicate as `share > baseline * MULT / 100` → row 3 flips (the
-   truncating division lowers the bar).
+6. ~~Rewrite the predicate as `share > baseline * MULT / 100` → row 3 flips (the
+   truncating division lowers the bar).~~ **RETRACTED 2026-08-05 (QA M2-8 M16).**
+   This mutation is unsatisfiable and contradicts §2's own correction 100 lines
+   above: for **integer** `share` the two forms are exactly equivalent, proven
+   there and confirmed by an exhaustive 18M-pair check with zero divergences. No
+   implementation can make this mutation change behaviour, so demanding it of one
+   — while `inst_flags.py:4-5` states "where the two disagree, the spec wins and
+   this file is the defect" — made the spec require a defect. The property the
+   mutation was reaching for is that the bar is a STRICT threshold, which is
+   mutation 7. Replaced by:
+
+   6. Rewrite the predicate as `share * 100 > baseline * MULT * 10` (or any other
+      rescaling of one side) → rows near the boundary flip. This is a real
+      mutation: it changes the multiplier, which the equivalence proof does not
+      cover.
 7. Change `>` to `>=` → row 3 flips.
 8. Let the flag feed a filter/sort anywhere → an ordering assertion must fail.
 9. Emit the flag with a banned word → the wording gate must fail.

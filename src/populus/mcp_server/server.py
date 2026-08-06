@@ -4,14 +4,33 @@ Read-only over a published snapshot. Congress analyst tools plus the M2
 institutional (13F) tools, plus ``populus_health``; every response uses the
 honesty envelope (§11.3). The congress tools read the published ``congress.db``;
 the inst snapshot tools read the published ``inst_agg.db`` (and degrade honestly
-when the inst module is absent), while ``inst_filer_holdings(mode='detail')`` and
-``inst_ticker_holders`` federate to SEC EDGAR live at question time (§11.4).
+when the inst module is absent), while ``inst_ticker_holders`` federates to SEC
+EDGAR live at question time (§11.4).
+
+**The retained federated boundary (M2-CONTRACT §3.1, RUN M2-8 T9 / plan
+R10+R17).** Per-filer holdings detail used to be Pattern F for *any* period —
+the module published aggregates only, so every position list was a live EDGAR
+fetch. M2-8 publishes the per-filer projection as ``inst_serving.db``, and the
+live path narrows to exactly two cases:
+
+1. **filings newer than the published build** — a period after the build's
+   published coverage; and
+2. **filers/periods outside the published universe** — a filer discovered after
+   the build ran, or a period not yet ingested.
+
+Everything the build DID publish is answered from ``inst_serving.db`` and
+touches no network, whichever mode was asked for. When the serving artifact is
+absent the boundary cannot be evaluated at all; the live path stays open (it is
+the only answer left) but every such response says so on its face — the one
+thing that is never done is answering a per-filer detail question out of the
+cross-filer aggregate.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import statistics
 import sys
 from collections import Counter
@@ -100,6 +119,135 @@ _FLOW_CAVEAT_QOQ = _FLOW_CAVEAT + " Compare `delta_universe` for this filer's"
 _FLOW_CAVEAT_QOQ += " full position count."
 
 
+# --- the published serving projection: the CONSUMER half of the contract -----
+#
+# `inst_serving.db` is a Release asset built by `publish/` from
+# `populus.inst_serving.build_serving_projection` (plan §C, task T8). The
+# producer owns the writer; this is the only place that reads it, and the names
+# below are the whole coupling surface — the two table names the producer
+# declares in `publish/digests.py` `ARTIFACT_PROJECTIONS`, plus the row keys the
+# projection already emits (`ServingProjection.filer_rows`, `FilingRef.as_dict`).
+# The third projected table, `serving_issuer_holder_rows`, is the dashboard's
+# grain and is deliberately NOT required here: the boundary must not depend on a
+# table it never reads.
+#
+# The filing dictionary is a SEPARATE table, not columns repeated on every row:
+# that is the R5 provenance compression (one entry per filing instead of ~600k
+# duplicated strings), and every holding row carries its `filing_key` so the
+# per-record provenance contract still holds.
+_SERVING_HOLDINGS = "serving_filer_rows"
+_SERVING_FILINGS = "serving_filings"
+_SERVING_REQUIRED_TABLES = (_SERVING_HOLDINGS, _SERVING_FILINGS)
+
+#: A published book can be very large (the measured worst case is a
+#: 37,140-position filer), so the published-detail list is bounded and discloses
+#: its own truncation — the `inst_filer_lookup` idiom, not a second pagination
+#: rule. The live path is one filing and stays unbounded, as it already was.
+_DETAIL_LIMIT_DEFAULT = 500
+_DETAIL_LIMIT_MAX = 5000
+
+#: What is said when no serving artifact was resolved at all. Named once so the
+#: resolver, the boundary and health cannot drift into three different stories.
+_SERVING_ABSENT_DEFAULT = (
+    "this server resolved no published per-filer serving projection"
+    " (inst_serving.db), so no per-filer holdings detail is published to serve"
+)
+
+
+def _serving_schema_error(conn: sqlite3.Connection) -> str | None:
+    """Why *conn* cannot be used as a serving projection, or ``None``.
+
+    A file that is a valid SQLite database but not THIS schema must be refused
+    by name rather than blowing up inside a tool call — and must never be
+    quietly replaced by the aggregate, which is a different grain answering a
+    different question.
+    """
+    try:
+        present = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            )
+        }
+    except sqlite3.Error as exc:
+        return f"the serving projection could not be read ({exc})"
+    missing = [name for name in _SERVING_REQUIRED_TABLES if name not in present]
+    if missing:
+        return (
+            "the file supplied as the serving projection does not carry the"
+            f" published per-filer schema (missing {', '.join(missing)}), so no"
+            " published detail is served from it"
+        )
+    return None
+
+
+def _serving_periods_for(conn: sqlite3.Connection, cik: str) -> list[str]:
+    """Every period this build PUBLISHED for *cik*, newest first (possibly [])."""
+    return [
+        row[0]
+        for row in conn.execute(
+            f"SELECT DISTINCT period FROM {_SERVING_HOLDINGS}"
+            " WHERE cik = ? ORDER BY period DESC",
+            (cik,),
+        )
+    ]
+
+
+def _serving_latest_period(conn: sqlite3.Connection) -> str | None:
+    """The newest period ANY filer was published for — the build's coverage edge.
+
+    This is what separates boundary case (a) from case (b): a request past this
+    date is a filing newer than the published build, not a filer the build
+    declined to cover.
+    """
+    row = conn.execute(f"SELECT MAX(period) FROM {_SERVING_HOLDINGS}").fetchone()
+    return row[0] if row is not None else None
+
+
+#: The published-detail row projection, joined to its filing dictionary entry.
+#: Columns are named explicitly (never ``h.*``) so a producer-side column
+#: addition cannot silently reorder or shadow a field this reads.
+_SERVING_DETAIL_SQL = (
+    "SELECT h.security_id, h.cusip, h.issuer_name, h.title_of_class,"
+    "       h.value_usd, h.shares, h.ssh_type, h.put_call, h.position_key,"
+    "       h.flags, h.filing_key,"
+    "       f.accession, f.submission_type, f.period_of_report, f.filed_date,"
+    "       f.doc_url, f.source"
+    f" FROM {_SERVING_HOLDINGS} h"
+    f" LEFT JOIN {_SERVING_FILINGS} f ON f.filing_key = h.filing_key"
+    " WHERE h.cik = ? AND h.period = ?"
+    " ORDER BY h.rowid"
+    " LIMIT ? OFFSET ?"
+)
+
+#: The published position count for one (cik, period) — the true total behind a
+#: paged answer. Counted in SQL rather than by materialising the rows: the named
+#: outlier holds 37,140 positions and the previous implementation built a dict
+#: for every one of them before slicing to at most 5,000.
+_SERVING_DETAIL_COUNT_SQL = (
+    f"SELECT COUNT(*) FROM {_SERVING_HOLDINGS} WHERE cik = ? AND period = ?"
+)
+
+
+def _serving_detail_rows(
+    conn: sqlite3.Connection,
+    cik: str,
+    period: str,
+    *,
+    limit: int,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """One page of published detail rows, bounded in SQL."""
+    return [
+        dict(row)
+        for row in conn.execute(_SERVING_DETAIL_SQL, (cik, period, limit, offset))
+    ]
+
+
+def _serving_detail_count(conn: sqlite3.Connection, cik: str, period: str) -> int:
+    return int(conn.execute(_SERVING_DETAIL_COUNT_SQL, (cik, period)).fetchone()[0])
+
+
 def _inst_health_caveats(
     from_published_manifest: bool,
     *,
@@ -185,6 +333,8 @@ def build_server(
     inst_absent_reason: str | None = None,
     inst_absent_gate_withheld: bool = False,
     inst_stale_withdrawal_pending: bool = False,
+    inst_serving_db_path: str | None = None,
+    inst_serving_absent_reason: str | None = None,
     sec_client: SecClient | None = None,
 ) -> FastMCP:
     """Construct the FastMCP app bound to the read-only snapshot(s).
@@ -201,10 +351,42 @@ def build_server(
     resolved through a VERIFIED published manifest. A ``--inst-db`` bypass points
     at an arbitrary local file that never passed the M2-3 publish gate, so no
     coverage guarantee may be asserted for it (QA-F6).
+
+    ``inst_serving_db_path`` is the published per-filer projection
+    (``inst_serving.db``) — a SEPARATE artifact from the aggregate, and the
+    oracle for the M2-CONTRACT §3.1 federated boundary. It is optional because a
+    pre-M2-8 build publishes none; when it is absent ``inst_serving_absent_reason``
+    says why, and that reason travels onto every response whose routing it
+    changed. The aggregate is NEVER used in its place.
     """
     mcp = FastMCP("populus")
     conn = q.connect(db_path)
     inst_conn = q.connect(inst_db_path) if inst_db_path else None
+
+    # The serving projection is opened and schema-checked ONCE, here, so a tool
+    # call can never discover mid-answer that the artifact is unusable and have
+    # to invent a story about it. Every failure resolves to the same shape: no
+    # connection, plus a stated reason.
+    serving_conn: sqlite3.Connection | None = None
+    serving_absent: str | None = inst_serving_absent_reason
+    if inst_serving_db_path:
+        try:
+            candidate = q.connect(inst_serving_db_path)
+        except sqlite3.Error as exc:
+            serving_absent = (
+                f"the published serving projection at {inst_serving_db_path}"
+                f" could not be opened ({type(exc).__name__}: {exc})"
+            )
+        else:
+            schema_error = _serving_schema_error(candidate)
+            if schema_error is None:
+                serving_conn = candidate
+                serving_absent = None
+            else:
+                candidate.close()
+                serving_absent = schema_error
+    elif serving_absent is None:
+        serving_absent = _SERVING_ABSENT_DEFAULT
 
     def as_of() -> str:
         return now().isoformat()
@@ -330,6 +512,203 @@ def build_server(
         "the institutional (13F) module is not present in the current published"
         " snapshot"
     )
+
+    # --- the retained federated boundary (M2-CONTRACT §3.1; R10/R17) ---------
+
+    def _boundary(cik: str, period: str | None) -> dict[str, Any]:
+        """Where a per-filer detail request must be answered.
+
+        ONE routing decision, made in ONE place, for both `mode='snapshot'` and
+        `mode='detail'` — the boundary is a property of the (cik, period), not
+        of the word the caller happened to use. Two federated cases exist and no
+        others:
+
+          post_snapshot   the period is newer than the build's coverage edge
+          off_universe    the filer/period is not in the published universe
+
+        Anything the build published routes to `published` with no network I/O.
+        A missing serving artifact yields `universe_unavailable`: the boundary
+        was NOT evaluated, so the response must not claim the request was found
+        to be off-universe — and must not be answered from the aggregate either.
+        """
+        if serving_conn is None:
+            return {
+                "route": "federated",
+                "reason": "universe_unavailable",
+                "boundary_evaluated": False,
+                "period": period,
+                "detail": serving_absent or _SERVING_ABSENT_DEFAULT,
+            }
+        published_periods = _serving_periods_for(serving_conn, cik)
+        # An omitted period means "the newest you have" — which, inside the
+        # published universe, is the build's newest for THIS filer. It is not a
+        # licence to go live: "latest" is case (a) only when the caller names a
+        # period the build does not reach.
+        target = period or (published_periods[0] if published_periods else None)
+        if target is not None and target in published_periods:
+            return {
+                "route": "published",
+                "reason": "in_published_universe",
+                "boundary_evaluated": True,
+                "period": target,
+                "published_periods": published_periods,
+            }
+        latest = _serving_latest_period(serving_conn)
+        # ISO YYYY-MM-DD sorts lexicographically, and `period` was canonicalized
+        # by the caller, so this comparison is the date comparison.
+        post = period is not None and latest is not None and period > latest
+        return {
+            "route": "federated",
+            "reason": "post_snapshot" if post else "off_universe",
+            "boundary_evaluated": True,
+            "period": period,
+            "published_periods": published_periods,
+            "published_latest_period": latest,
+        }
+
+    def _boundary_block(decision: dict[str, Any]) -> dict[str, Any]:
+        """The routing decision, on the face of the response that it produced."""
+        explanation = {
+            "in_published_universe": "this filer and period are in the published"
+            " universe, so the answer comes from the published serving"
+            " projection and NO live SEC request was made (M2-CONTRACT §3.1).",
+            "post_snapshot": "the requested period is newer than the published"
+            " build's coverage, so it was answered live from SEC EDGAR"
+            " (M2-CONTRACT §3.1 case 1).",
+            "off_universe": "this filer/period is not in the published universe"
+            " — a filer discovered after the build ran, or a period not yet"
+            " ingested — so it was answered live from SEC EDGAR"
+            " (M2-CONTRACT §3.1 case 2).",
+            "universe_unavailable": "the published serving projection is not"
+            " available, so the federated boundary could NOT be evaluated: this"
+            " answer was fetched live, and that is not a finding that the filer"
+            " is outside the published universe.",
+        }[decision["reason"]]
+        block = {
+            "federated_boundary": {
+                "route": decision["route"],
+                "reason": decision["reason"],
+                "boundary_evaluated": decision["boundary_evaluated"],
+                "explanation": explanation,
+            }
+        }
+        for key in ("published_periods", "published_latest_period", "detail"):
+            if key in decision:
+                block["federated_boundary"][key] = decision[key]
+        return block
+
+    def _published_positions(
+        cik: str, period: str, limit: int, offset: int = 0
+    ) -> dict[str, Any]:
+        """One PAGE of the published position list for an in-universe (cik, period).
+
+        Rows are shaped exactly like the federated ones so a client parses both
+        planes identically; each carries its OWN filing's filed date and
+        document, because a composed period mixes a base filing with its
+        amendments and restamping them all with one date would misreport when
+        those positions were disclosed (G4).
+
+        QA M2-8 M9: `limit` is capped at 5,000 and there was no cursor, so
+        32,140 of the named 37,140-position filer's rows were permanently
+        unreachable through this boundary — while the truncation note advised
+        "Raise `limit` (max 5000)", advice already at its ceiling. R11's
+        "complete position list" was not reachable. The truncation was always
+        signalled honestly; what was missing was the recovery path, and the
+        house idiom for it (`env.encode_cursor`) already existed on
+        `congress_recent_trades`.
+        """
+        total = _serving_detail_count(serving_conn, cik, period)
+        rows = _serving_detail_rows(
+            serving_conn, cik, period, limit=limit, offset=offset
+        )
+        shaped = [
+            env.shape_holding(
+                {
+                    "issuer_name": row["issuer_name"],
+                    "cusip": row["cusip"],
+                    "title_of_class": row["title_of_class"],
+                    "value_usd": row["value_usd"],
+                    "ssh_prnamt": row["shares"],
+                    "ssh_prnamt_type": row["ssh_type"],
+                    "put_call": row["put_call"],
+                    "security_id": row["security_id"],
+                    "flags": row["flags"],
+                },
+                period_of_report=period,
+                filed_date=row["filed_date"],
+                doc_url=row["doc_url"],
+                # Already selected by `_SERVING_DETAIL_SQL` and previously
+                # discarded one line later — a §5.1 provenance field in hand.
+                accession=row["accession"],
+            )
+            for row in rows
+        ]
+        block: dict[str, Any] = {
+            "period_of_report": period,
+            "served_from": "published-serving-projection",
+            "holdings": shaped,
+            "position_count_published": total,
+            "returned": len(shaped),
+            "offset": offset,
+            "truncated": offset + len(shaped) < total,
+            # `unit_basis` is a FILING-level attribute of the raw disclosure. The
+            # published projection stores values already normalized to whole
+            # USD, so the per-filing regime is not carried and `unit_basis` on
+            # these rows is null — declared here rather than left to look like
+            # an unparseable value (G3/G5).
+            "unit_basis_note": "values in the published projection are"
+            " normalized to whole USD, so the per-filing unit regime"
+            " (`unit_basis`) is not carried on these rows; it is available on"
+            " the live federated path.",
+        }
+        if block["truncated"]:
+            block["next_cursor"] = env.encode_cursor(offset + len(shaped))
+            block["truncation_note"] = (
+                f"{total} published positions; rows {offset + 1}–"
+                f"{offset + len(shaped)} in published order are returned. Pass"
+                " `cursor=next_cursor` to continue — the complete list is"
+                f" reachable in pages of at most {_DETAIL_LIMIT_MAX}."
+            )
+        else:
+            block["next_cursor"] = None
+        return block
+
+    def _snapshot_positions(cik: str, period: str | None, limit: int) -> dict[str, Any]:
+        """The aggregate profile's companion position list, or a stated absence.
+
+        Routed on the profile's ALREADY-RESOLVED period, never on the caller's
+        possibly-omitted one: the profile and the position list must describe
+        the same quarter, and the aggregate (all retained periods) and the
+        serving projection (the two browsable periods, OD-5) do not have the
+        same idea of "latest".
+
+        When the build published no detail for this (cik, period) the block says
+        so and names the reason. It never degrades to an empty `holdings` list —
+        "no positions published" and "this filer held nothing" are different
+        facts and only one of them is true (G3).
+        """
+        if period is None:
+            return {
+                "published_detail_unavailable": {
+                    "reason": "no period could be resolved for this filer, so"
+                    " there is no quarter to serve a published position list for"
+                }
+            }
+        decision = _boundary(cik, period)
+        if decision["route"] == "published":
+            return {
+                "published_detail": _published_positions(cik, period, limit),
+                **_boundary_block(decision),
+            }
+        return {
+            "published_detail_unavailable": {
+                "reason": decision.get("detail")
+                or "this filer and period are not in the published per-filer"
+                " universe, so no published position list exists for them",
+                "retry": "mode='detail' fetches this period live from SEC EDGAR",
+            },
+            **_boundary_block(decision),
+        }
 
     @mcp.tool()
     def congress_recent_trades(
@@ -544,9 +923,13 @@ def build_server(
 
     @mcp.tool()
     def inst_filer_holdings(
-        cik: str, period: str | None = None, mode: str = "snapshot"
+        cik: str,
+        period: str | None = None,
+        mode: str = "snapshot",
+        limit: int = _DETAIL_LIMIT_DEFAULT,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
-        """A 13F filer's holdings. mode='snapshot': the published aggregate profile (position count, total value, concentration) for a quarter-end period or the latest. mode='qoq': the filer's quarter-over-quarter position changes. mode='detail': the position list fetched LIVE from SEC EDGAR — quarter-end holdings with both dates and each position's value + unit_basis; check composition_complete, because an unparseable filing or an unread history shard can make it partial. Use inst_filer_lookup to get the CIK; period is a quarter-end date like 2026-03-31."""
+        """A 13F filer's holdings. mode='snapshot': the published aggregate profile (position count, total value, concentration) plus, when this filer+period is in the published universe, the full published position list. mode='qoq': the filer's quarter-over-quarter position changes. mode='detail': the position list — served from the published snapshot when the build published it (no network), and fetched LIVE from SEC EDGAR only for a period newer than the build or a filer/period outside the published universe; on the live path check composition_complete, because an unparseable filing or an unread history shard can make it partial. Every response carries `federated_boundary` saying which path answered it and why. Use inst_filer_lookup to get the CIK; period is a quarter-end date like 2026-03-31; limit bounds one page of the published position list, and `cursor` (from a previous response's `next_cursor`) continues it — a filer with more positions than `limit` is paged, never truncated beyond reach."""
         if mode not in ("snapshot", "qoq", "detail"):
             return _inst_env(
                 results={"error": "mode must be 'snapshot', 'qoq', or 'detail';"
@@ -565,13 +948,42 @@ def build_server(
                     results={"error": "period must be an ISO quarter-end date"
                              " YYYY-MM-DD, e.g. 2026-03-31"}
                 )
+        limit = max(1, min(int(limit), _DETAIL_LIMIT_MAX))
+        try:
+            offset = env.decode_cursor(cursor)
+        except ValueError:
+            return _inst_env(
+                results={"error": "cursor is not a cursor this server issued;"
+                         " pass the `next_cursor` value from a previous response"
+                         " verbatim, or omit it to start from the first page"}
+            )
         if mode == "detail":
+            # M2-CONTRACT §3.1: the live path is not the default for detail any
+            # more. Route FIRST — a request the build published is answered from
+            # the published projection, and the SEC client is never reached.
+            decision = _boundary(norm, period)
+            if decision["route"] == "published":
+                return _inst_env(
+                    results={
+                        "mode": "detail",
+                        "cik": norm,
+                        **_published_positions(
+                            norm, decision["period"], limit, offset
+                        ),
+                        **_boundary_block(decision),
+                    },
+                    extra_note="Served from the published per-filer projection,"
+                    " not a live SEC fetch: this filer and period are inside the"
+                    " published universe. The holdings are the quarter-end"
+                    " snapshot, not current positions (G10).",
+                )
             # Federated live fetch — available even when the inst module is
             # absent from the published snapshot.
             if sec_client is None:
                 return _inst_env(
                     results={"error": "live detail is unavailable: this server"
-                             " was started without a SEC federated client"},
+                             " was started without a SEC federated client",
+                             **_boundary_block(decision)},
                     # A federated CONFIGURATION failure is still a federated
                     # outcome; the snapshot-default envelope would stamp it with
                     # inst_build_id (QA-r5-F2).
@@ -582,16 +994,19 @@ def build_server(
                     sec_client, norm, period, ingested_at=as_of()
                 )
             except iq.InstDetailUnavailable as exc:
-                return _inst_env(results={"error": str(exc)},
+                return _inst_env(results={"error": str(exc),
+                                          **_boundary_block(decision)},
                                  live_source=_live_failure("data.sec.gov/submissions"))
             except SecCircuitOpenError as exc:
                 return _inst_env(
-                    results={"error": f"SEC circuit breaker is open: {exc}"},
+                    results={"error": f"SEC circuit breaker is open: {exc}",
+                             **_boundary_block(decision)},
                     live_source=_live_failure("data.sec.gov/submissions"),
                 )
             except SecUrlError as exc:
                 return _inst_env(
-                    results={"error": f"refusing SEC fetch: {exc}"},
+                    results={"error": f"refusing SEC fetch: {exc}",
+                             **_boundary_block(decision)},
                     live_source=_live_failure("data.sec.gov/submissions"),
                 )
             except Exception as exc:  # noqa: BLE001 — tool boundary
@@ -604,20 +1019,26 @@ def build_server(
                     results={
                         "error": "live SEC fetch failed"
                         f" ({type(exc).__name__}: {exc}); the published snapshot"
-                        " modes (mode='snapshot'/'qoq') are unaffected"
+                        " modes (mode='snapshot'/'qoq') are unaffected",
+                        **_boundary_block(decision),
                     },
                     live_source=_live_failure("data.sec.gov/submissions"),
                 )
-            # Each row is stamped with ITS OWN filing's date and document —
-            # a composed period mixes a base and its amendment, and restamping
-            # the base rows with the amendment's filed date would misreport when
-            # those positions were disclosed (G4/QA-F2).
+            # Each row is stamped with ITS OWN filing's date, document and
+            # ACCESSION — a composed period mixes a base and its amendment, and
+            # restamping the base rows with the amendment's provenance would
+            # misreport which document disclosed those positions (G4/QA-F2).
+            # `source_accession` is the third sibling of the two below and was
+            # dropped here while the published plane passed it, so the same
+            # client parsing both planes saw a real accession from one and
+            # `null` from the other (QA M2-8 R2 N4).
             holdings = [
                 env.shape_holding(
                     h,
                     period_of_report=detail["period_of_report"],
                     filed_date=h.get("source_filed_date") or detail["filed_date"],
                     doc_url=h.get("source_doc_url") or detail["doc_url"],
+                    accession=h.get("source_accession") or detail["accession"],
                 )
                 for h in detail["holdings"]
             ]
@@ -645,6 +1066,7 @@ def build_server(
                     "identity_note": "security identity is left unresolved on the"
                     " live federated path (no as-of registry at question time);"
                     " each holding carries its raw CUSIP + issuer name (G14).",
+                    **_boundary_block(decision),
                 },
                 live_source=detail["live_source"],
                 extra_note="Live per-filer detail fetched from SEC EDGAR at"
@@ -682,8 +1104,15 @@ def build_server(
                          " inst_filer_lookup, or retry with mode='detail' for a"
                          " live fetch"}
             )
+        # R10: `mode='snapshot'` now serves the published per-filer DETAIL, not
+        # only the aggregate profile — that is the half of the reversal that
+        # makes the narrowed federated boundary honest. Without it, narrowing
+        # `detail` would just remove an answer.
         return _inst_env(
-            results={"mode": "snapshot", "cik": norm, **_filed_through(), **profile}
+            results={
+                "mode": "snapshot", "cik": norm, **_filed_through(), **profile,
+                **_snapshot_positions(norm, profile.get("period_of_report"), limit),
+            }
         )
 
     @mcp.tool()
@@ -892,6 +1321,21 @@ def build_server(
                 " single quarter named in `freshness` — an all-time filer and"
                 " position census, not a quarterly one",
                 "issuer_keying": stats["issuer_keying"],
+                # Which side of the M2-CONTRACT §3.1 boundary this server can
+                # actually serve. Two DIFFERENT artifacts back this module, and
+                # the aggregate being present says nothing about whether the
+                # per-filer projection is — an operator debugging "why is
+                # everything going live?" needs that fact stated, not inferred.
+                "per_filer_detail": {
+                    "published": serving_conn is not None,
+                    "artifact": "inst_serving.db",
+                    **({} if serving_conn is not None
+                       else {"reason": serving_absent or _SERVING_ABSENT_DEFAULT}),
+                    "boundary": "M2-CONTRACT §3.1 — published (cik, period) pairs"
+                    " are served from this artifact; only periods newer than the"
+                    " build and filers/periods outside the published universe go"
+                    " live to SEC EDGAR",
+                },
                 "caveats": _inst_health_caveats(
                     inst_from_published_manifest,
                     stale_withdrawal_pending=inst_stale_withdrawal_pending,
@@ -989,6 +1433,11 @@ def _resolve_snapshot() -> dict[str, Any]:
     p.add_argument("--db", help="Read-only path to an ingested populus DB (dev bypass).")
     p.add_argument("--inst-db", help="Read-only path to an inst_agg.db (dev bypass,"
                    " mirrors --db for the institutional module).")
+    p.add_argument("--inst-serving-db", help="Read-only path to an inst_serving.db"
+                   " (dev bypass for the published per-filer projection). It is a"
+                   " SEPARATE artifact from --inst-db; without it no published"
+                   " per-filer detail is served and the §3.1 federated boundary"
+                   " cannot be evaluated.")
     p.add_argument("--data-repo", default=os.environ.get("POPULUS_DATA_REPO", "../populus-data"),
                    help="Local populus-data working tree to resolve the snapshot from.")
     p.add_argument("--cache", default=os.environ.get("POPULUS_CACHE", str(Path.home() / ".cache" / "populus")))
@@ -998,6 +1447,11 @@ def _resolve_snapshot() -> dict[str, Any]:
         "inst_build_id": None,
         "inst_watermarks": None,
         "inst_from_published_manifest": False,
+        # The per-filer serving projection is resolved SEPARATELY from the
+        # aggregate: one being present proves nothing about the other, and
+        # substituting one for the other is the exact failure R10 forbids.
+        "inst_serving_db_path": args.inst_serving_db,
+        "inst_serving_absent_reason": None,
         # Why inst is absent, DECIDED HERE where the facts are (QA-r2-F3).
         # `populus_health` may only report what actually happened; it must not
         # assume the coverage gate withheld the module.
@@ -1007,6 +1461,11 @@ def _resolve_snapshot() -> dict[str, Any]:
     }
     if args.inst_db is not None:
         resolved["inst_absent_reason"] = None  # present, but unverified
+    if args.inst_serving_db is None:
+        resolved["inst_serving_absent_reason"] = (
+            "no --inst-serving-db was supplied and none has been resolved from"
+            " the published snapshot yet"
+        )
     if args.db:
         # Dev bypass: use only the explicitly-provided per-module paths; do not
         # touch the published snapshot (so `--db` alone leaves inst degrading
@@ -1018,6 +1477,13 @@ def _resolve_snapshot() -> dict[str, Any]:
                 "this server was started with --db (a development bypass of the"
                 " published snapshot) and no --inst-db, so no institutional"
                 " database was loaded. NO coverage-gate decision was consulted."
+            )
+        if args.inst_serving_db is None:
+            resolved["inst_serving_absent_reason"] = (
+                "this server was started with --db (a development bypass of the"
+                " published snapshot) and no --inst-serving-db, so no published"
+                " per-filer projection was loaded and the M2-CONTRACT §3.1"
+                " federated boundary cannot be evaluated."
             )
         return resolved
     # Resolve via the published snapshot (staging: local data-repo).
@@ -1061,6 +1527,15 @@ def _resolve_snapshot() -> dict[str, Any]:
                     f" {type(exc).__name__}: {exc}. This is a resolution"
                     " failure, NOT a statement about the coverage gate — no"
                     " gate decision was observed."
+                ),
+                # The serving projection lives inside the same module, so the
+                # same failure took it out. Say so — leaving the earlier generic
+                # reason would report a different cause than actually occurred.
+                inst_serving_db_path=None,
+                inst_serving_absent_reason=(
+                    "the institutional module could not be resolved"
+                    f" ({type(exc).__name__}: {exc}), so its per-filer serving"
+                    " projection was not resolved either."
                 ),
             )
     return resolved
@@ -1125,6 +1600,15 @@ def _resolve_inst_module(args, resolved: dict) -> None:
                 # nothing to act on (QA-VERIFY-N-f).
                 + (f" {outcome.message}" if getattr(outcome, "message", "") else "")
             )
+        # The module is absent, so its serving projection is too — and for the
+        # SAME reason. Restating it here keeps the boundary's story identical to
+        # the module's instead of falling back to the generic default.
+        resolved["inst_serving_db_path"] = None
+        resolved["inst_serving_absent_reason"] = (
+            "no published per-filer projection (inst_serving.db) is served"
+            f" because the institutional module itself is absent:"
+            f" {resolved['inst_absent_reason']}"
+        )
         return
     resolved["inst_db_path"] = str(inst_db)
     resolved["inst_build_id"] = inst_client.current_build()
@@ -1132,6 +1616,38 @@ def _resolve_inst_module(args, resolved: dict) -> None:
     # Resolved through the verified pointer→manifest chain, so the M2-3 publish
     # gate demonstrably held for these bytes (QA-F6).
     resolved["inst_from_published_manifest"] = True
+    # The serving projection is a SECOND artifact of the same module, resolved by
+    # name through the manifest (R10). A build that predates M2-8 publishes none;
+    # that is a legitimate absence, and the aggregate above is NOT a substitute
+    # for it — `serving_db_path()` will not hand one back in its place.
+    if args.inst_serving_db is None:
+        # Scoped exactly like the module-level guard above, one level down: a
+        # problem with the SECOND artifact must not delete the FIRST. Without
+        # this, an unreadable serving projection would take the aggregate, the
+        # qoq tool and inst health down with it.
+        try:
+            serving_db = inst_client.serving_db_path()
+        except Exception as exc:  # noqa: BLE001 — artifact boundary
+            serving_db = None
+            reason = (
+                "the per-filer serving projection could not be resolved"
+                f" ({type(exc).__name__}: {exc}); the published aggregate is"
+                " unaffected and is NOT used in its place."
+            )
+        else:
+            reason = (
+                f"the published build {inst_client.current_build()!r} does not"
+                " carry a per-filer serving projection (inst_serving.db) in its"
+                " verified manifest, so no published per-filer detail is served"
+                " and the M2-CONTRACT §3.1 federated boundary cannot be"
+                " evaluated. The cross-filer aggregate is NOT used in its place."
+            )
+        if serving_db is None:
+            resolved["inst_serving_db_path"] = None
+            resolved["inst_serving_absent_reason"] = reason
+        else:
+            resolved["inst_serving_db_path"] = str(serving_db)
+            resolved["inst_serving_absent_reason"] = None
     if getattr(outcome, "observed_omission", False):
         # A verified manifest OMITTED the module but the withdrawal could not be
         # committed, so these bytes — though genuinely published once — are no
@@ -1172,6 +1688,11 @@ def main() -> None:
         inst_absent_reason=resolved["inst_absent_reason"],
         inst_absent_gate_withheld=resolved["inst_absent_gate_withheld"],
         inst_stale_withdrawal_pending=resolved["inst_stale_withdrawal_pending"],
+        # Same lesson as `inst_from_published_manifest` above (QA-r2-F2): a
+        # resolver value that main() does not forward is inert in production and
+        # only ever works under direct test construction.
+        inst_serving_db_path=resolved["inst_serving_db_path"],
+        inst_serving_absent_reason=resolved["inst_serving_absent_reason"],
         sec_client=_build_sec_client(),
     ).run()
 

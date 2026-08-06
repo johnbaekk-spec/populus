@@ -1,0 +1,331 @@
+---
+/* RUN M2-8 T11/T12 (plan R11, R12, R16) — the holdings/holders surface.
+
+   This component owns the READ; `lib/holdings.ts` owns every pure decision
+   (normalise, fold, diff, paginate, render). The split is deliberate: the
+   inline pager at the bottom of this file imports those same renderers, so the
+   SSR page and every client-paged page come out of ONE function. A lib module
+   importing `node:sqlite` could not be in the browser bundle, and re-rendering
+   pages by a second, browser-only path is exactly how page 2 drifts from page 1.
+
+   SOURCE: the build's `inst_serving.db` — `serving_filer_rows`,
+   `serving_issuer_holder_rows`, `serving_filings` (`src/populus/inst_serving.py`,
+   where the table and column names ARE the contract). Its path comes from
+   `lib/activity.ts::resolveServingDbPath` rather than a second resolver, so
+   every M2-8 surface in a build reads the same artifact.
+
+   The §5 `data_note` is `activity.ts`'s canonical `institutionalDataNoteHtml()`,
+   not a second copy: it renders on both surfaces here, beside the numbers, and
+   no prop can switch it off.
+
+   Rows are read PER ENTITY through the artifact's own indexes — a full-universe
+   corpus is millions of rows and must never be pulled into a page render. The
+   corpus-wide coverage denominator is the one thing that cannot be per-entity,
+   so it is a GROUP BY whose counters go through the same
+   `coverageFromCounters` rule the row walk uses.
+
+   A malformed row is a HARD failure and fails the build — never an empty table
+   that reads as "this filer reported nothing". */
+import { existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { edgarFilerUrl } from "../lib/derive.ts";
+import { institutionalDataNoteHtml, resolveServingDbPath } from "../lib/activity.ts";
+import {
+  capRows,
+  coverageFromCounters,
+  holdingsFootnotesHtml,
+  isAsOfResolved,
+  parseFilerShard,
+  parseIssuerShard,
+  projectionAbsentHtml,
+  sortHolderRows,
+  sortHoldingRows,
+  surfaceHtml,
+  type FilerHoldingRow,
+  type FilerSurfacePayload,
+  type FilingDict,
+  type HolderCoverage,
+  type HoldersSurfacePayload,
+  type IssuerHolderRow,
+  type SurfacePayload,
+} from "../lib/holdings.ts";
+
+interface FilerProps {
+  kind: "filer";
+  cik: string;
+  filerName: string;
+  period: string;
+}
+interface HoldersProps {
+  kind: "holders";
+  issuerKey: string;
+  issuerName: string;
+  ticker: string;
+  period: string;
+}
+export type Props = FilerProps | HoldersProps;
+
+const props = Astro.props as Props;
+
+/* An .astro frontmatter re-runs for every page, and a build renders up to 1,500
+   filer pages plus every ticker's holders page. The connection, the filing
+   dictionary and the per-period coverage counters are therefore memoised on
+   globalThis: this component is the only server-side reader of the artifact,
+   and `lib/holdings.ts` must stay browser-safe (see the header), so a second
+   server-only module would have been the only other home for them. */
+interface ServingCache {
+  db: DatabaseSync | null;
+  filings: FilingDict;
+  coverage: Map<string, HolderCoverage>;
+}
+const cacheHolder = globalThis as unknown as { __populusServingDb?: Map<string, ServingCache> };
+cacheHolder.__populusServingDb ??= new Map<string, ServingCache>();
+
+const dbPath = resolveServingDbPath();
+const cacheKey = dbPath ?? "(unresolvable)";
+let cache = cacheHolder.__populusServingDb.get(cacheKey);
+if (!cache) {
+  cache = { db: null, filings: {}, coverage: new Map<string, HolderCoverage>() };
+  if (dbPath && existsSync(dbPath)) {
+    // A present-but-unreadable artifact degrades to honest absence rather than
+    // failing the whole site build; a MALFORMED ROW does not (see below).
+    try {
+      cache.db = new DatabaseSync(dbPath, { readOnly: true });
+    } catch {
+      cache.db = null;
+    }
+  }
+  if (cache.db) {
+    const rows = cache.db
+      .prepare(
+        `SELECT filing_key, accession, submission_type, period_of_report, filed_date,
+                doc_url, source
+           FROM serving_filings ORDER BY filing_key`,
+      )
+      .all() as Record<string, unknown>[];
+    for (const row of rows) {
+      cache.filings[String(row.filing_key)] = {
+        accession: String(row.accession ?? ""),
+        submission_type: String(row.submission_type ?? ""),
+        period_of_report: String(row.period_of_report ?? ""),
+        filed_date: String(row.filed_date ?? ""),
+        doc_url: row.doc_url == null ? null : String(row.doc_url),
+        source: String(row.source ?? ""),
+      };
+    }
+  }
+  cacheHolder.__populusServingDb.set(cacheKey, cache);
+}
+const db = cache.db;
+
+/* ---------- payload ---------- */
+
+let payload: SurfacePayload | null = null;
+
+if (db && props.kind === "filer") {
+  const raw = db
+    .prepare(
+      // `put_call_bucket` / `unit_key` are the PRODUCER's grain discriminators —
+      // the tokens `agg_qoq_deltas` keys on. They are read rather than
+      // recomputed: deriving the grain here independently means a normalization
+      // change on the producer side silently desynchronizes this table's diff
+      // from the aggregate it references, with nothing to notice.
+      `SELECT cik, period, filing_key, security_id, cusip, issuer_name, title_of_class,
+              value_usd, shares, ssh_type, put_call, position_key,
+              put_call_bucket, unit_key, flags
+         FROM serving_filer_rows WHERE cik = ? ORDER BY period, rowid`,
+    )
+    .all(props.cik) as Record<string, unknown>[];
+  // Same normaliser and same hard-failure guards as a JSON shard would get.
+  const rows = parseFilerShard({ filings: cache.filings, rows: raw }).rows;
+  if (rows.length > 0) {
+    const periods = [...new Set(rows.map((r) => r.period))].sort();
+    // OD-5: the selected quarter and the one before it, both browsable.
+    const current = periods.includes(props.period) ? props.period : periods[periods.length - 1]!;
+    const earlier = periods.filter((p) => p < current);
+    const prior = earlier.length > 0 ? earlier[earlier.length - 1]! : null;
+    const rowsByPeriod: Record<string, FilerHoldingRow[]> = {};
+    const totalsByPeriod: Record<string, number> = {};
+    for (const period of prior ? [prior, current] : [current]) {
+      const capped = capRows(sortHoldingRows(rows.filter((r) => r.period === period)));
+      rowsByPeriod[period] = capped.rows;
+      totalsByPeriod[period] = capped.total;
+    }
+    payload = {
+      kind: "filer",
+      cik: props.cik,
+      filerName: props.filerName,
+      periods,
+      current,
+      prior,
+      filings: cache.filings,
+      rowsByPeriod,
+      totalsByPeriod,
+    } satisfies FilerSurfacePayload;
+  }
+} else if (db && props.kind === "holders") {
+  const raw = db
+    .prepare(
+      `SELECT issuer_key, issuer_key_source, issuer_name, period, filer_key, filer_name,
+              affiliate_group_key, value_usd, value_undisclosed_component, security_count,
+              filing_keys, issuer_dedup_total_usd
+         FROM serving_issuer_holder_rows WHERE issuer_key = ? ORDER BY period, rowid`,
+    )
+    .all(props.issuerKey) as Record<string, unknown>[];
+  const rows = parseIssuerShard({ filings: cache.filings, rows: raw }).rows;
+  if (rows.length > 0) {
+    const periods = [...new Set(rows.map((r) => r.period))].sort();
+    const current = periods.includes(props.period) ? props.period : periods[periods.length - 1]!;
+    const rowsByPeriod: Record<string, IssuerHolderRow[]> = {};
+    const totalsByPeriod: Record<string, number> = {};
+    const coverageByPeriod: Record<string, HolderCoverage> = {};
+    const dedupByPeriod: Record<string, number | null> = {};
+    for (const period of periods) {
+      const resolved = rows.filter((r) => r.period === period && isAsOfResolved(r));
+      const capped = capRows(sortHolderRows(resolved));
+      rowsByPeriod[period] = capped.rows;
+      totalsByPeriod[period] = capped.total;
+
+      /* Coverage counts EVERY holder row in the build for the period, not this
+         issuer's rows: an unresolved row is by definition not attached to an
+         issuer, so the only honest denominator is the corpus-wide one. Counted
+         in SQL because the corpus is millions of rows; the RULE that turns the
+         counters into a ratio is the shared one, not a second implementation. */
+      let cov = cache.coverage.get(period);
+      if (!cov) {
+        const c = db
+          .prepare(
+            `SELECT
+               SUM(CASE WHEN issuer_key_source = 'entity' THEN 1 ELSE 0 END) AS resolved_rows,
+               SUM(CASE WHEN issuer_key_source = 'entity' AND value_usd IS NOT NULL
+                        THEN value_usd ELSE 0 END) AS resolved_value,
+               SUM(CASE WHEN issuer_key_source = 'entity' AND value_usd IS NULL
+                        THEN 1 ELSE 0 END) AS resolved_undisclosed,
+               SUM(CASE WHEN issuer_key_source <> 'entity' THEN 1 ELSE 0 END) AS unresolved_rows,
+               SUM(CASE WHEN issuer_key_source <> 'entity' AND value_usd IS NOT NULL
+                        THEN value_usd ELSE 0 END) AS unresolved_value,
+               SUM(CASE WHEN issuer_key_source <> 'entity' AND value_usd IS NULL
+                        THEN 1 ELSE 0 END) AS unresolved_undisclosed
+             FROM serving_issuer_holder_rows WHERE period = ?`,
+          )
+          .get(period) as Record<string, unknown> | undefined;
+        cov = coverageFromCounters(
+          {
+            resolvedRows: Number(c?.resolved_rows ?? 0),
+            resolvedValueUsd: Number(c?.resolved_value ?? 0),
+            resolvedUndisclosedRows: Number(c?.resolved_undisclosed ?? 0),
+            unresolvedRows: Number(c?.unresolved_rows ?? 0),
+            unresolvedValueUsd: Number(c?.unresolved_value ?? 0),
+            unresolvedUndisclosedRows: Number(c?.unresolved_undisclosed ?? 0),
+          },
+          period,
+        );
+        cache.coverage.set(period, cov);
+      }
+      coverageByPeriod[period] = cov;
+
+      // The de-duplicated issuer total is one figure per (issuer, period); a
+      // NULL on any row means a component was undisclosed, so no total is
+      // asserted at all rather than a partial sum presented as one.
+      const forPeriod = rows.filter((r) => r.period === period);
+      dedupByPeriod[period] = forPeriod.some((r) => r.issuer_dedup_total_usd == null)
+        ? null
+        : (forPeriod[0]?.issuer_dedup_total_usd ?? null);
+    }
+    payload = {
+      kind: "holders",
+      ticker: props.ticker,
+      issuerName: props.issuerName,
+      periods,
+      current,
+      filings: cache.filings,
+      rowsByPeriod,
+      totalsByPeriod,
+      coverageByPeriod,
+      dedupByPeriod,
+    } satisfies HoldersSurfacePayload;
+  }
+}
+
+const edgarUrl = props.kind === "filer" ? edgarFilerUrl(props.cik) : null;
+
+const bodyHtml =
+  payload == null
+    ? projectionAbsentHtml(props.kind, edgarUrl)
+    : surfaceHtml(payload, { view: "current", page: 0, period: payload.current });
+
+/* `</script>` inside an issuer or filer name would otherwise close the embed. */
+const payloadJson =
+  payload == null ? "" : JSON.stringify(payload).replaceAll("<", "\\u003c");
+---
+
+<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface={props.kind}>
+  <div data-holdings-body set:html={bodyHtml} />
+</section>
+<Fragment set:html={institutionalDataNoteHtml()} />
+<Fragment set:html={holdingsFootnotesHtml()} />
+{
+  payload && (
+    <script type="application/json" id="holdings-data" is:inline set:html={payloadJson} />
+  )
+}
+
+<script>
+  import { surfaceHtml, type SurfacePayload, type SurfaceState } from "../lib/holdings.ts";
+
+  /* The pager and the view switch re-render through the SAME surfaceHtml the
+     SSR used — parity by construction, not by convention. Without JS the page
+     keeps its server-rendered first page, which is why the pager states the
+     total and the noscript note names what is showing. */
+  const dataEl = document.getElementById("holdings-data");
+  const body = document.querySelector<HTMLElement>("[data-holdings-body]");
+  if (dataEl && body) {
+    let payload: SurfacePayload | null = null;
+    try {
+      payload = JSON.parse(dataEl.textContent ?? "") as SurfacePayload;
+    } catch {
+      payload = null; // malformed embed: the SSR page stays — no partial re-render
+    }
+    if (payload) {
+      const state: SurfaceState = { view: "current", page: 0, period: payload.current };
+      const draw = (): void => {
+        body.innerHTML = surfaceHtml(payload!, state);
+        const range = body.querySelector<HTMLElement>(".pager-range");
+        range?.focus();
+      };
+      body.addEventListener("click", (ev) => {
+        const target = ev.target as Element;
+        const pageBtn = target.closest<HTMLButtonElement>("[data-holdings-page]");
+        if (pageBtn) {
+          if (pageBtn.getAttribute("aria-disabled") === "true") return;
+          state.page = Math.max(0, state.page + (pageBtn.dataset.holdingsPage === "next" ? 1 : -1));
+          draw();
+          return;
+        }
+        const viewBtn = target.closest<HTMLButtonElement>("[data-holdings-view]");
+        if (viewBtn) {
+          state.view = viewBtn.dataset.holdingsView as SurfaceState["view"];
+          state.page = 0; // a page index from another view means nothing here
+          if (payload!.kind === "filer") {
+            state.period =
+              state.view === "prior" && payload!.prior ? payload!.prior : payload!.current;
+          }
+          draw();
+        }
+      });
+      // The page's own quarter chips drive the aggregate section; this surface
+      // follows them so the page never shows two quarters at once. Delegated on
+      // document because the other script may replace its own subtree.
+      document.addEventListener("click", (ev) => {
+        const chip = (ev.target as Element).closest<HTMLElement>("[data-period-chips] [data-period]");
+        if (!chip) return;
+        const period = chip.dataset.period;
+        if (!period) return;
+        state.period = period;
+        state.page = 0;
+        state.view = "current";
+        draw();
+      });
+    }
+  }
+</script>

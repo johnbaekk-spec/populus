@@ -703,3 +703,113 @@ export function watchStarHtml(
     `<span class="watch-note">${on ? "watching · saved on this device" : "watch"}</span></button>`
   );
 }
+
+/* ================================================================================
+   Institutional shared primitives — ONE definition each (QA M2-8 M7).
+
+   Three agents wrote `holdings.ts` and `activity.ts` in parallel into one
+   worktree and produced six duplicated helper pairs. Two of them CONTRADICTED
+   each other under comments claiming the same rule, and neither divergence was
+   visible to any test. The lesson recorded from that seam is to name the shared
+   module BEFORE the fan-out, not after — this is that module.
+   ============================================================================ */
+
+/** Days since the UTC epoch for a strict `YYYY-MM-DD`, or NULL.
+
+    ONE date parser. The two copies anchored differently — `/^\d{4}-\d{2}-\d{2}/`
+    (prefix) versus `/^(\d{4})-(\d{2})-(\d{2})$/` (whole string) — so a value
+    like `"2026-03-31T00:00:00Z"` parsed in one module and was NULL in the other,
+    and the same row could carry a lag on one surface and "—" on the next.
+    Anchored WHOLE here: a timestamp is not a report date, and silently taking
+    its prefix is a guess. */
+export function utcDayNumber(iso: string | null | undefined): number | null {
+  if (typeof iso !== "string") return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(t) ? Math.round(t / 86_400_000) : null;
+}
+
+/** Elapsed reporting lag in days: `filed_date − period_of_report`. NULL when
+    either date is missing or unparseable — never a zero standing in for
+    unknown. */
+export function reportingLagDays(
+  periodOfReport: string | null,
+  filedDate: string | null,
+): number | null {
+  const p = utcDayNumber(periodOfReport);
+  const f = utcDayNumber(filedDate);
+  if (p === null || f === null) return null;
+  return f - p;
+}
+
+/** A finite number, or NULL. NULL stays NULL; an unreadable value is NULL too.
+
+    ONE numeric coercion. The two copies disagreed on unreadable input — one
+    finite-checked, one returned `Number(v)` and let `NaN` reach `fmtUsd` as
+    `$NaN` and `compareActivity` as a non-deterministic comparator — and BOTH
+    turned `""` into a reported `0`. An empty cell is an absent value, not a
+    zero, and this file's whole premise is that a fabricated 0 is a false claim.
+    So the empty/whitespace string is NULL here, explicitly. */
+export function intOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "string" && v.trim() === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The elements of a JSON array column, or `[]`.
+
+    ONE array reader. The two copies had inverse asymmetries: one accepted a
+    bare scalar as a single-element list and refused a non-`[`-prefixed string,
+    the other refused scalars entirely. A `filing_keys` column is a canonical
+    JSON array by producer contract (`serving_*.filing_keys`), so that is what
+    is parsed; anything else yields `[]` rather than a guessed shape. */
+export function jsonArrayOf(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (raw == null) return [];
+  if (typeof raw !== "string" || !raw.startsWith("[")) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** One filing reference, as far as the shared filed-date rule needs it. */
+export interface FiledDateCandidate {
+  filed_date: string;
+  accession: string;
+}
+
+/** The LATEST filing of a composition: max `filed_date`, ties broken by
+    `accession` ascending — i.e. the LARGEST accession wins the tie.
+
+    ONE tie-break. The two copies ran in OPPOSITE directions under comments
+    claiming the identical rule: `holdings.ts` sorted ascending and took the last
+    (largest accession) while `activity.ts` kept `ref.accession < best.accession`
+    (smallest). Measured on two same-day amendments, the filer page's provenance
+    link and the activity feed cited DIFFERENT documents for the same
+    composition.
+
+    Largest-wins is the house rule, not a coin flip: `views.sql`'s
+    restatement-survivor predicate resolves a same-`filed_date`,
+    same-`amendment_no` pair with `r.accession > f.accession`, so the survivor —
+    the authoritative filing — is the larger accession. A filed-date resolver
+    that picked the smaller would cite a document the composition rules already
+    superseded. */
+export function latestFiling<T extends FiledDateCandidate>(refs: readonly T[]): T | null {
+  let best: T | null = null;
+  for (const ref of refs) {
+    if (typeof ref.filed_date !== "string" || ref.filed_date === "") continue;
+    if (
+      best === null ||
+      ref.filed_date > best.filed_date ||
+      (ref.filed_date === best.filed_date && ref.accession > best.accession)
+    ) {
+      best = ref;
+    }
+  }
+  return best;
+}

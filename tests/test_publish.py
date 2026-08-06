@@ -2386,13 +2386,46 @@ def test_inst_gate_publishes_both_modules_when_covered(tmp_path):
     manifest = read_manifest_staged(repo, report.build_id)
     assert set(manifest["modules"]) == {"congress", "inst"}
 
+    # RUN M2-8 T8 (R9): the inst module publishes TWO databases. This is the
+    # end-to-end proof that something PRODUCES `inst_serving.db` — the manifest
+    # entry, the digest, the six threaded boundaries and both consumers were all
+    # written before any call site was, so every build shipped
+    # `per_filer_detail.published = false` while ARCHITECTURE.md documented the
+    # asset as live. A unit test of `write_serving_db` cannot see that; only a
+    # real `run_build` can.
+    inst_entry = find_artifact(manifest, "inst_serving.db", module="inst")
+    assert inst_entry is not None, (
+        "run_build did not enumerate inst_serving.db — nothing produces the"
+        " artifact and every downstream boundary silently no-ops")
+    assert inst_entry["logical_digest"], "the serving artifact carries no digest"
+    assert inst_entry["bytes"] > 0
+
     run_publish(repo, now=pin(), backend=backend)
-    # Journal first, then congress.db, then inst_agg.db (P1 order preserved).
+    # Journal first, then congress.db, then the inst assets (P1 order preserved).
     uploads = [op[1] for op in backend.ops if op[0] == "upload"]
-    assert uploads == ["journal.json", "congress.db", "inst_agg.db"]
+    assert uploads == [
+        "journal.json", "congress.db", "inst_agg.db", "inst_serving.db",
+    ]
     release = backend.get_release(report.build_id)
-    assert set(release.assets) == {"congress.db", "inst_agg.db", "journal.json"}
-    assert (repo / "releases" / f"data-{report.build_id}" / "inst_agg.db").is_file()
+    assert set(release.assets) == {
+        "congress.db", "inst_agg.db", "inst_serving.db", "journal.json",
+    }
+    released = repo / "releases" / f"data-{report.build_id}"
+    assert (released / "inst_agg.db").is_file()
+    assert (released / "inst_serving.db").is_file()
+
+    # The published artifact really carries the serving grains — an empty or
+    # schema-only database would satisfy every assertion above.
+    serving = connect(str(released / "inst_serving.db"))
+    try:
+        tables = {r[0] for r in serving.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"serving_filings", "serving_filer_rows",
+                "serving_issuer_holder_rows", "serving_activity"} <= tables
+        assert serving.execute(
+            "SELECT COUNT(*) FROM serving_filer_rows").fetchone()[0] > 0
+    finally:
+        serving.close()
 
     verify = run_verify(repo, now=pin())
     assert verify.ok, verify.errors
@@ -2639,12 +2672,18 @@ def _inst_build(tmp_path, name="runner"):
 
 
 def test_fresh_runner_inst_completes_when_all_assets_uploaded(tmp_path):
-    """R12: with journal + congress.db + inst_agg.db all uploaded and published,
-    a fresh runner (no staging) completes the same build_id."""
+    """R12: with journal + congress.db + BOTH inst databases uploaded and
+    published, a fresh runner (no staging) completes the same build_id.
+
+    `inst_serving.db` is in the list because the congress-scoped recovery journal
+    cannot regenerate a module asset: on a fresh runner every enumerated module
+    database must already be a verified release asset or the publish is refused.
+    Leaving it out is the *other* test (`..._refuses_loudly_...`).
+    """
     runner, build_id, source_db = _inst_build(tmp_path)
     b = LocalDirBackend(runner)
     b.ensure_draft(build_id)
-    for name in ("journal.json", "congress.db", "inst_agg.db"):
+    for name in ("journal.json", "congress.db", "inst_agg.db", "inst_serving.db"):
         src = (_staged(runner, build_id) / name if name == "journal.json"
                else _staged_asset(runner, build_id, name))
         b.upload(build_id, src, name=name)
@@ -2659,7 +2698,9 @@ def test_fresh_runner_inst_completes_when_all_assets_uploaded(tmp_path):
     assert build_id in {report.build_id, *report.reconciled}
     release = backend.get_release(build_id)
     assert not release.draft  # the fresh runner PUBLISHED the draft
-    assert set(release.assets) == {"congress.db", "inst_agg.db", "journal.json"}
+    assert set(release.assets) == {
+        "congress.db", "inst_agg.db", "inst_serving.db", "journal.json",
+    }
     assert latest_pointer(repo)["build_id"] == build_id
     assert "delete_release" not in backend.op_names()
 
@@ -2720,7 +2761,8 @@ def test_fresh_runner_inst_refuses_loudly_at_pre_inst_window(tmp_path):
     assert final.build_id == rebuilt.build_id
     released = runner_backend.get_release(rebuilt.build_id)
     assert not released.draft
-    assert {"congress.db", "inst_agg.db", "journal.json"} <= set(released.assets)
+    assert {"congress.db", "inst_agg.db", "inst_serving.db", "journal.json"} <= set(
+        released.assets)
     assert latest_pointer(runner)["build_id"] == rebuilt.build_id
     # The interrupted identity is gone and never republished.
     assert runner_backend.get_release(build_id) is None
@@ -2734,13 +2776,20 @@ def test_same_runner_inst_uploads_from_staging(tmp_path):
     b.ensure_draft(build_id)
     b.upload(build_id, _staged(runner, build_id) / "journal.json", name="journal.json")
     b.upload(build_id, _staged_asset(runner, build_id, "congress.db"), name="congress.db")
-    # inst_agg.db not uploaded, but .staging/ is intact.
+    # neither inst asset uploaded, but .staging/ is intact.
     backend = RecordingBackend(runner)
     run_publish(runner, now=pin(), backend=backend)
     release = backend.get_release(build_id)
     assert not release.draft
-    assert set(release.assets) == {"congress.db", "inst_agg.db", "journal.json"}
-    assert "inst_agg.db" in [op[1] for op in backend.ops if op[0] == "upload"]
+    assert set(release.assets) == {
+        "congress.db", "inst_agg.db", "inst_serving.db", "journal.json",
+    }
+    uploaded = [op[1] for op in backend.ops if op[0] == "upload"]
+    # BOTH inst databases recover from staging — `_complete_extra_module_assets`
+    # iterates `module_db_artifacts`, so a regression to a scalar lookup would
+    # re-upload only the aggregate and silently drop the serving artifact.
+    assert "inst_agg.db" in uploaded
+    assert "inst_serving.db" in uploaded
     assert latest_pointer(runner)["build_id"] == build_id
 
 

@@ -18,6 +18,11 @@ import {
   amountText,
   amountVerdict,
   bandGeometry,
+  intOrNull,
+  jsonArrayOf,
+  latestFiling,
+  reportingLagDays,
+  utcDayNumber,
   affText,
   sideLabel,
   ownerNote,
@@ -676,4 +681,76 @@ test("R1: each canonical component has exactly ONE implementation site", async (
       `${name} must exist exactly once, in format.ts`,
     );
   }
+});
+
+/* ---------- institutional shared primitives (QA M2-8 M7) ----------
+
+   Three agents wrote holdings.ts and activity.ts in parallel and produced six
+   duplicated helper pairs, two of which contradicted each other under comments
+   claiming the same rule. These pin the ONE definition each now has. */
+
+test("intOrNull: an empty cell is ABSENT, not zero", () => {
+  // `Number("") === 0` and 0 is finite, so BOTH previous copies reported a
+  // fabricated 0 for an empty string — in modules whose headers forbid exactly
+  // that. Mutation guard: deleting the empty-string branch fails here.
+  assert.equal(intOrNull(""), null);
+  assert.equal(intOrNull("   "), null);
+  assert.equal(intOrNull(null), null);
+  assert.equal(intOrNull(undefined), null);
+  // and an unreadable value is NULL, never NaN reaching fmtUsd as "$NaN"
+  assert.equal(intOrNull("not a number"), null);
+  assert.equal(intOrNull(NaN), null);
+  assert.equal(intOrNull(Infinity), null);
+  // real values survive, including a legitimate zero
+  assert.equal(intOrNull(0), 0);
+  assert.equal(intOrNull("0"), 0);
+  assert.equal(intOrNull("1234"), 1234);
+  assert.equal(intOrNull(-5), -5);
+});
+
+test("jsonArrayOf: a JSON array column, and nothing guessed", () => {
+  assert.deepEqual(jsonArrayOf("[1,2,3]"), [1, 2, 3]);
+  assert.deepEqual(jsonArrayOf([1, 2]), [1, 2]);
+  assert.deepEqual(jsonArrayOf(null), []);
+  assert.deepEqual(jsonArrayOf(""), []);
+  assert.deepEqual(jsonArrayOf("{}"), []);
+  assert.deepEqual(jsonArrayOf("[malformed"), []);
+  // The two previous copies had INVERSE asymmetries here: one treated a bare
+  // scalar as a one-element list, the other refused it. `filing_keys` is a
+  // canonical JSON array by producer contract, so a scalar is a shape defect.
+  assert.deepEqual(jsonArrayOf("7"), []);
+});
+
+test("utcDayNumber is anchored to the WHOLE string, not a prefix", () => {
+  // The two copies anchored differently (`/^\d{4}-\d{2}-\d{2}/` vs `$`), so a
+  // timestamp parsed on one surface and was NULL on the next.
+  assert.equal(utcDayNumber("2026-03-31"), Date.UTC(2026, 2, 31) / 86_400_000);
+  assert.equal(utcDayNumber("2026-03-31T00:00:00Z"), null);
+  assert.equal(utcDayNumber("2026-3-1"), null);
+  assert.equal(utcDayNumber(null), null);
+});
+
+test("reportingLagDays: NULL in, NULL out — never a zero standing in for unknown", () => {
+  assert.equal(reportingLagDays("2026-03-31", "2026-05-15"), 45);
+  assert.equal(reportingLagDays("2026-03-31", null), null);
+  assert.equal(reportingLagDays(null, "2026-05-15"), null);
+  assert.equal(reportingLagDays("2026-03-31", "garbage"), null);
+  // a filing on the period end is a real 0-day lag, distinct from unknown
+  assert.equal(reportingLagDays("2026-03-31", "2026-03-31"), 0);
+});
+
+test("latestFiling: max filed_date, ties to the LARGER accession", () => {
+  // ONE tie-break. The two copies ran in OPPOSITE directions under comments
+  // claiming the same rule; largest-wins matches views.sql's restatement-
+  // survivor predicate (`r.accession > f.accession`).
+  const refs = [
+    { filed_date: "2026-05-10", accession: "A-1" },
+    { filed_date: "2026-05-20", accession: "A-2" },
+    { filed_date: "2026-05-20", accession: "A-0" },
+  ];
+  assert.equal(latestFiling(refs)!.accession, "A-2");
+  assert.equal(latestFiling([...refs].reverse())!.accession, "A-2", "order-dependent");
+  assert.equal(latestFiling([]), null);
+  // a ref with no usable filed_date cannot be "latest"
+  assert.equal(latestFiling([{ filed_date: "", accession: "Z-9" }]), null);
 });
