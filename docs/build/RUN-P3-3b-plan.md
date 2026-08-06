@@ -3,7 +3,9 @@
 > ## ✅ UNBLOCKED — the domain is Active with zero deployments
 >
 > **Revision 5** — the round-3 blocker is resolved by measurement, and it resolved
-> *against* the reviewer's inference. **Revision 3's design stands as written.**
+> *against* the reviewer's inference. **Revision 3's first-run and domain design
+> stands as written** — scoped precisely: revisions 4–6 changed eight other
+> requirements, and this banner speaks only to the activation question.
 >
 > Owner drove the domain to Active without creating any deployment. Verified on the
 > Cloudflare side (`/pages/projects/publicfilings/domains`): `status: "active"`,
@@ -53,9 +55,19 @@
 >   so this plan's earlier Let's Encrypt rate-limiting citation was wrong twice
 >   over — wrong as documentation, and wrong as the applicable CA.
 >
-> **Still open before implementation:** six round-3 blockers (B2–B7) were remediated
-> in revision 4 but have not been re-reviewed. A confirmation round is in flight.
-> No implementation exists — `src/populus/deploy/` is still absent.
+> **Revision 6 — the confirmation round landed and found four more.** Round 4
+> checked the six round-3 remediations: B4, B6 and B7 held; **B2 and B3 were
+> text-only** (the sentence asserting the fix was present, the task/test/DoD wiring
+> that would make it true was not), and **B5's fix moved the defect one step later**
+> rather than closing it. That is the third consecutive round to catch a claim that
+> merely *reads* as fixed. All four are now remediated with mechanism, not prose —
+> §12.1 step 4 and §17(h) join §14's two as **recorded spec amendments** (T13), and
+> the ticker map becomes a staged, manifest-listed artifact instead of a refusal
+> whose only escape hatch was the forbidden fixture.
+>
+> **State: 27 requirements, 13 tasks, four spec amendments, six declared TD items.**
+> No implementation exists — `src/populus/deploy/` is still absent. Round 4's
+> remediations have not themselves been re-reviewed.
 >
 > ---
 >
@@ -142,11 +154,40 @@ exposure exists exactly once and is gone permanently after the first success.
   deploy **fixture-derived ticker mappings as production data** — and R15's sweep
   cannot detect it, because the served bytes would faithfully equal the built
   bytes. This is a live hazard in the existing dashboard, not only a plan defect.
-  Fix: add a CI refusal in `inst.ts` alongside `data.ts`'s, and have the workflow
-  lint assert the full env contract. (`SITE_CODE_SHA` has no CI refusal either, but
-  R19's exact marker comparison makes that one fail closed.)
+  **Refusing an unset variable is not enough — the runner has no other file to
+  point at.** `company_tickers.json` lives only in `data-cache/inst/registry`
+  (`cli.py:428,527`); `build.py` emits none; `publish.yml:62-73` ingests congress
+  only. So on the runner the *only* path satisfying `POPULUS_TICKER_MAP` is the
+  forbidden fixture, and a refusal-on-unset converts a silent hazard into a hard
+  failure whose one available remedy is to point at the fixture — the same defect
+  moved one step later. And the exposure is not inst-only: `data.ts:530` calls
+  `readTickerMapJson` **unconditionally**, feeding the search index (`:544`) and
+  `resolveTicker` (`:612`), so a congress-only nightly ships it too.
 
-  **T8 collides with an existing guard that must be declared, not quietly
+  **Fix, both halves:** (a) `stage_build` **stages a real `company_tickers.json`
+  into the build directory as an enumerated, manifest-listed artifact**, and the
+  workflow points `POPULUS_TICKER_MAP` at that staged copy — so the map is covered
+  by the manifest digest and the served-tree sweep like every other artifact; when
+  no registry copy exists the variable is set to an explicitly absent path, which
+  `inst.ts:316` already renders as the honest no-map state. (b) The CI refusal
+  rejects **the fixture path itself**, not merely an unset variable, so the escape
+  hatch is closed by construction. The workflow lint asserts the full env contract.
+  (`SITE_CODE_SHA` has no CI refusal either, but R19's exact marker comparison makes
+  that one fail closed.)
+
+  **T5 collides with a SECOND guard in the same file, and it is not optional.**
+  `tests/test_publish.py:1998` asserts `len(pat_steps) == 2` and `:2001` requires
+  every PAT-bearing step's `run` to contain `"populus build"` or `"populus publish"`.
+  T5 splits `populus build` (`publish.yml:67-73`) into `stage-build` +
+  `finalize-build` around the site build — they **cannot** share a step, and
+  `"populus build" not in "populus stage-build"`. Resolution, on the record: the
+  substring set becomes `{"populus stage-build", "populus finalize-build",
+  "populus publish"}` and the count becomes **3** if both phases need the PAT, or
+  stays 2 if `finalize-build` writes only inside the runner workspace — T5 must
+  determine which and state it. R21 declares the analogous break at
+  `test_attestation_structure.py:245`; revision 4 declared this one nowhere.
+
+  **T8 collides with a third guard that must be declared, not quietly
   relaxed.** `tests/test_publish.py:1977` asserts no publish-job step's `run` body
   contains `.staging`, while R1 requires building from
   `populus-data/.staging/<id>/build`. Resolution: **derive the staged path in a
@@ -159,7 +200,10 @@ exposure exists exactly once and is gone permanently after the first success.
   **already-reconciled completed** build (`:1557`), and only past `:1569` a
   **fresh** assembly. The seam is:
   `stage_build()` → writes the data artifacts **and a provisional manifest** (the
-  site needs it, R19) → site builds → `finalize_build(staged, *, site_file_count)`
+  site needs it, R19) → site builds →
+  `finalize_build(staged, *, site_file_count, dist_dir)` — **`dist_dir` is in the
+  signature because R24 requires this same writer to patch `dist/stats.json`, and a
+  function that cannot see `dist/` cannot be the single writer**
   → patches `stats.json` with the count, **re-assembles the manifest**, writes the
   journal. `run_build` is retained as a wrapper for its **49 call sites across 8
   files — of which exactly 4 are production** (`src/populus/cli.py:791`,
@@ -205,7 +249,7 @@ exposure exists exactly once and is gone permanently after the first success.
   Byte-equality is a *separate* obligation and nullability does not discharge it —
   see **R24**, without which there is no `dist/` copy to be equal to.
 - **R24** — **Something must emit `dist/stats.json`, and nothing currently does.**
-  ARCHITECTURE `:684` requires the count written "into the one `stats.json` in
+  ARCHITECTURE `:689` requires the count written "into the one `stats.json` in
   *both* places identically … assert the two copies are byte-equal", and `:686`
   and `:851` make the served copy a per-deploy gate. In this tree
   `dashboard/public/` contains only `favicon.svg`, `dashboard/astro.config.mjs` has
@@ -243,7 +287,7 @@ exposure exists exactly once and is gone permanently after the first success.
   independently in the signer — reusing `publish/digests.py` verbatim.
   **What anchors the signer's copy must be named, because the workflow artifact
   does not.** The signer recomputes `inventory_digest` from the artifact it
-  downloads (ARCHITECTURE `:688`), which is self-consistent against a wholesale
+  downloads (ARCHITECTURE `:693`), which is self-consistent against a wholesale
   artifact replacement. The anchor is the **served tree**: R15's inventory-wide
   sweep compares the signer's recomputed digests against what the live domain
   actually returns. `dist_digest` alone has no attested external anchor and must
@@ -270,7 +314,18 @@ exposure exists exactly once and is gone permanently after the first success.
 - **R8** — **Production identity asserted before any upload**: the workflow-locked
   branch must equal the project's configured `production_branch`. Mismatch aborts
   **before** uploading. Live: project `publicfilings`, branch `main`.
-- **R9** — **Preview first, verified before production is touched.**
+- **R9** — **Preview first, verified INVENTORY-WIDE before production is touched.**
+  §12.1 step 4 currently specifies preview verification as **markers plus a
+  `stats.json` hash** (ARCHITECTURE `:691`) — while `ARCHITECTURE.md:320` states in
+  terms that marker checks alone are **not** sufficient, because a marker-preserving
+  tamper is exactly what the inventory sweep exists to catch. **§12.1 step 4 is
+  therefore amended** (T13) to require the same inventory-wide sweep R15 specifies
+  for the signer. This is not a nicety: **TD-4's entire bound depends on it.** TD-4
+  accepts one unverified-serving window on the strength of "the identical bytes
+  already passed the preview sweep" — if the preview only checks markers, that
+  sentence is vacuous and TD-4 becomes a write-off. Revision 4 asserted the
+  amendment inside TD-4's own prose and put it in no task, no test and no DoD line;
+  round 4 correctly called that text-only.
 - **R10** — **Production is a second upload of provably the same bytes**, digest
   re-checked immediately before.
 - **R11** — **Production is verified on the live custom domain — always, with no
@@ -372,14 +427,14 @@ exposure exists exactly once and is gone permanently after the first success.
 - **R16** — **The three closure-narrowing provider checks run**, pinned to a
   **recorded real Cloudflare response**. `verification_scope` is recorded as
   `expected_paths`, never `"full"`. **ARCHITECTURE still carries both `"full"`
-  residues** — `:300`'s normative example and `:895`'s TD-8 wording — which a
-  prior review round recorded as fixed and revision 1 dropped. Both are corrected
-  and a **documentation regression check** forbids the strings — **scoped to
-  exclude the revision-history table.** "full served-tree" occurs *three* times:
-  `:9` is the revision-history row recording that `"full served-tree verification"
-  was false`, i.e. the durable record of the round-11 correction. Deleting that to
-  satisfy a grep would be precisely the silent drop this requirement exists to
-  punish.
+  residues** — `ARCHITECTURE.md:302`'s normative example and `:900`'s TD-8 wording
+  — which a prior review round recorded as fixed and revision 1 dropped. Both are
+  corrected and a **documentation regression check** forbids the strings — **scoped
+  to exclude the revision-history table.** "full served-tree" occurs *twice*:
+  `:900` (the residue) and `:9`, the revision-history row recording that
+  `"full served-tree verification" was false` — the durable record of the round-11
+  correction. Deleting `:9` to satisfy a grep would be precisely the silent drop
+  this requirement exists to punish. *(Revision 4 said three; it is two.)*
 - **R17** — **A lookup failure is not a verification failure.** `unavailable`
   propagates through the signer; a rate-limited Cloudflare API must not read as
   tampering.
@@ -464,6 +519,20 @@ exposure exists exactly once and is gone permanently after the first success.
   runtime assertion. §17(h)'s credential *fixtures* are unaffected — they are
   mocked, and they test the signer's behaviour given a bad token, not its ability
   to introspect one.
+- **R27** — **§17(h)'s "fails closed on a `Pages Write`-scoped token" is not an
+  observable property, and the spec is amended rather than faked.** §17(h)
+  (`ARCHITECTURE.md:856`) requires the signer to fail closed when handed a
+  write-scoped token. A Cloudflare `Pages Edit` token **succeeds at every read the
+  signer performs** — there is no field in any response that distinguishes it, and
+  R22 established that the signer cannot introspect its own scope. The requirement
+  is therefore untestable except by mocking a distinction that does not exist,
+  which is how a fixture comes to assert nothing. **§17(h) is amended on the record**
+  (T13) to the property that is both testable and the one actually wanted: the
+  signer **never issues a non-GET Cloudflare request**, enforced by the injected
+  transport failing the test on any write verb. That bounds the blast radius of an
+  over-scoped token by the signer's own behaviour instead of by a scope check it
+  cannot perform. Revision 4 demoted R22's runtime assertion but left this fixture
+  standing — the same claim, one file over.
 - **R26** — **`GET /accounts/{id}/tokens` is not a complete inventory of what can
   reach this zone, and §14 must stop implying it is.** Owner enumeration found a
   pre-existing **user-owned** token — `Cloudflare Agent (auto-generated)`, id
@@ -500,9 +569,15 @@ spec amendments.
 - **The M1 House/Senate UA switch** — a one-line follow-up once the domain serves.
   The SEC UA must never change.
 - **TD-8 / TD-10** — declared, unchanged.
+- **`.github/dependabot.yml` does not exist**, and this run does not create it.
+  §12.1 step 1 places the Wrangler pin "under §14's SHA-pinning **and Dependabot
+  discipline**" (`ARCHITECTURE.md:693`), but the repo has only two files under
+  `.github/` — both workflows. R1 delivers the exact-version pin and the committed
+  lockfile; the Dependabot half is **pre-existing debt, declared here rather than
+  silently claimed as satisfied** (TD-6).
 - **A CSP `_headers` file** — `dashboard/README.md:390` lists it as a P3 completion
   item, but R16's control-path probe expects a **404 on `/_headers`**
-  (ARCHITECTURE `:320`), so shipping one is a hard verification failure. Deferred
+  (ARCHITECTURE `:322`), so shipping one is a hard verification failure. Deferred
   explicitly rather than silently foreclosed; reconciling the two is P3-3c work.
 
 ## Constraints
@@ -554,8 +629,8 @@ Re-measured in this tree:
   `echo` no-op, gated on unprovisioned `POPULUS_RECORD_SIGN_ARMED` at job level.
 - `test_attestation_structure.py:180` reads only the `publish` job; `:239`
   hardcodes three commands.
-- ARCHITECTURE still contains `"verification_scope": "full"` (`:300`) and
-  "full served-tree" (`:895`).
+- ARCHITECTURE still contains `"verification_scope": "full"` (`:302`) and
+  "full served-tree" (`:900`).
 - Pages project `publicfilings`, **zero deployments** (`latest_deployment: null`),
   `production_branch: main`. **Custom domain `publicfilings.org` is `status:
   active`** — `verification_data.status: active`,
@@ -574,10 +649,14 @@ Re-measured in this tree:
   successful production builds. The deployments list supports `env=production` and
   carries `uses_functions`, which R16's no-Functions check needs.
   **Documented causes of a stuck `Initializing`:** blocked HTTP validation
-  (something intercepting `/.well-known/acme-challenge/`), missing CAA records,
-  zone holds, grey-cloud/proxy state, "Cache Everything" page rules. **Cloudflare
-  does not document Let's Encrypt rate-limiting as a cause** — revisions 2 and 3
-  both asserted it; it is community lore.
+  (something intercepting `/.well-known/acme-challenge/`), CAA records that exclude
+  the issuing CA, zone holds, grey-cloud/proxy state, "Cache Everything" page rules.
+  **Cloudflare does not document Let's Encrypt rate-limiting as a cause** —
+  revisions 2 and 3 both asserted it; it is community lore, and the CA here is
+  Google Trust Services regardless. *(An **absent** CAA set is permissive, not
+  blocking — this zone has none and the certificate issued fine. "Missing CAA
+  records", as revision 4 phrased it, was contradicted by this plan's own
+  measurement.)*
 - **Measured from outside the account — and the measurement corrects an earlier
   misreading.** All of `http://publicfilings.org/.well-known/acme-challenge/probe`,
   `https://publicfilings.org/` and `https://publicfilings.pages.dev/` return
@@ -643,8 +722,8 @@ plan does not call an endpoint whose documented behaviour is to decline.
   precondition is restorable by the deploy job's own DELETE call.
 - **Domain-activation polling** (revision 2) — rejected on three independent
   grounds: the pinned endpoint returns no per-domain status, the premise that a
-  deployment causes activation is undocumented (the documented causes of a stuck
-  domain are DNS/ACME and CA rate-limiting, neither fixed by deploying), and the
+  deployment causes activation is undocumented — and, as it turned out, **false**:
+  the domain later reached `active` with zero deployments (see the banner) — and the
   paired delete-compensation is refused by the provider.
 - **A code-level first-run exemption** / **a hand-run bootstrap** (draft) —
   rejected across three earlier rounds.
@@ -771,7 +850,14 @@ needs regenerating.
   list from the workflow rather than hardcoding it, add deploy entry points to the
   pinned name set, and **harden `_step_index` against first-substring collisions**
   (`:187-191`). (R21)
-- **T13** — Docs and spec amendments: `docs/runbooks/deploy.md` covering the
+- **T13** — Docs and spec amendments. **The amendment list is now four, not two** —
+  each recorded with its reason, never edited to make a change pass:
+  (1) **§12.1 step 4** gains the inventory-wide preview sweep (R9) — without it
+  TD-4's bound is vacuous; (2) **§17(h)** is restated from the unobservable
+  "fails closed on a `Pages Write`-scoped token" to "issues no non-GET Cloudflare
+  request" (R27); (3) **§14's headline** to "no **job** holds both", with both
+  halves of R7's reasoning; (4) **§14's credential inventory** names both token
+  endpoints (R26). Plus: `docs/runbooks/deploy.md` covering the
   first-run behaviour, TD-4's remediation, the arming order, the rollback path and
   **the visible non-fresh-build skip**; `docs/runbooks/attestation.md:55` gains
   R25's subject-name convention; §14 headline "no **job** holds both" **with both
@@ -799,6 +885,9 @@ needs regenerating.
 | injected `_redirects` hijacking an inventoried path fails | `test_deploy_verify.py` |
 | Functions-reporting deployment fails; **each control path poisoned separately** | `test_deploy_verify.py` |
 | Cloudflare API unavailable → `unavailable`, not "tampered" | `test_deploy_verify.py` |
+| **preview sweep (R9)**: a marker-preserving tamper that passes markers **and** the `stats.json` hash still **fails** the preview inventory sweep — the fixture that makes TD-4's bound non-vacuous | `test_deploy_verify.py` |
+| **env contract**: workflow lint asserts all four vars; a `POPULUS_TICKER_MAP` pointing at `tests/fixtures/**` is **refused under CI** | `test_attestation_structure.py`, `test_publish.py` |
+| ticker map is a **manifest-listed staged artifact**, covered by the served-tree sweep | `test_publish.py` |
 | **gate**: unattested / wrong-identity generation FAILS | `test_publish.py` |
 | **gate**: first-run predicate — no deployment + zero generations passes; any other unresolvable state fails closed | `test_publish.py` |
 | **gate** does not call the Cloudflare API | `test_publish.py` |
@@ -809,8 +898,9 @@ needs regenerating.
 | build seam: fresh / preserved / reconciled outcomes | `test_publish.py` |
 | **final manifest does not list itself**; journal-materialized recovery is byte-identical to the committed manifest | `test_publish.py` |
 | non-fresh build **surfaces the skipped deploy in the job summary**, not only in logs | `test_attestation_structure.py` |
+| stats byte-equality is asserted **with a killing mutant** — under the single-writer mechanism it is true by construction, so the mutant makes the `dist/` emitter re-serialize (parse + `JSON.stringify`) and the assertion must fail; without it the row tests nothing | `test_publish.py` |
 | stats: byte-equality between the canonical and `dist/` copies; the `dist/` emitter produces them; 15,000-cap; nullable schema passes **all three** closed-world validators; publish-time non-null assertion | `test_stats.py`, `test_publish.py`, `dashboard/test/pages-render.test.ts` |
-| **§17(h) credential fixtures**: the signer fails closed with a missing token and with a `Pages Write`-scoped token, and succeeds with `Pages Read` | `test_deploy_verify.py` |
+| **§17(h) credential fixtures (amended)**: the signer fails closed with a **missing** token, succeeds with `Pages Read`, and **never issues a non-GET Cloudflare call** — the injected transport fails the test on any write verb | `test_deploy_verify.py` (signer path, T10) |
 | workflow lint: all jobs scanned; deploy job has no GitHub write scopes; command list derived not hardcoded | `test_attestation_structure.py` |
 | **doc regression**: `"verification_scope": "full"` and "full served-tree" absent from ARCHITECTURE **outside the revision-history table** | `test_attestation_structure.py` |
 | **TD-10 documented non-detection** asserted as *not detected* | `test_deploy_verify.py` |
@@ -822,7 +912,7 @@ binding and the gate's verification step carry a killing mutant.
 
 | Req | Verified by |
 |---|---|
-| R1 | T8; workflow lint asserts the build step, node file and pinned Wrangler |
+| R1 | T8; workflow lint asserts the build step, node file, pinned Wrangler **and the full four-var env contract**; fixture-path refusal test |
 | R2 | T5; three-outcome fixtures; CLI-surface test; self-listing and journal-recovery fixtures |
 | R3 | T6; all three closed-world validators pass; non-null assertion test |
 | R24 | T7/T5; `dist/stats.json` exists and is byte-equal to the canonical copy |
@@ -832,7 +922,8 @@ binding and the gate's verification step carry a killing mutant.
 | R6 | T1/T8; artifact layout test |
 | R7 | T9/T13; permission assertion; §14 amended |
 | R8 | T2; mismatch-aborts fixture |
-| R9 | T3/T4; preview-failure fixture |
+| R9 | T3/T4/T13; preview-failure fixture **and** the marker-preserving-tamper sweep fixture; §12.1 step 4 amended |
+| R27 | T10/T13; no-non-GET-request fixture; §17(h) amended on the record |
 | R10 | T4; mutate-between-uploads fixture |
 | R11 | T2/T4; inactive-domain-aborts and rollback fixtures; no-DELETE assertion |
 | R12 | T4; the four ordering mutants |
@@ -911,15 +1002,22 @@ different trust assumptions. That is the security argument, not duplication.
    no prior deployment to roll back to, and Cloudflare will not delete an active
    production deployment. A first run that passes preview verification but fails
    production verification leaves an unverified deployment serving. Bounded by R9:
-   the identical bytes already passed the preview sweep — **which requires
-   amending §12.1 step 4** (T13), since as written it specifies only markers plus a
-   `stats.json` hash, and `ARCHITECTURE.md:316` states in terms that marker checks
-   alone are insufficient. Without that amendment the bound is vacuous;
+   the identical bytes already passed the **inventory-wide** preview sweep that R9
+   now requires and T13 amends §12.1 step 4 to specify, so a production-only failure
+   indicates routing or cache rather than bad bytes. That amendment is what makes
+   this bound real: as §12.1 step 4 stands today it checks only markers plus a
+   `stats.json` hash, and `ARCHITECTURE.md:320` says in terms that marker checks
+   alone are insufficient — so without R9's amendment this entry would be a
+   write-off with a citation attached.
    so a production-only failure indicates routing or cache rather than bad bytes.
    Owner: project owner. **Removal condition: the first successful deploy** — after
    which every run has a rollback target and this entry is deleted permanently.
    *(Revision 1 declared this honestly; revision 2 deleted the declaration on the
    strength of a delete-compensation the provider refuses. It is restored.)*
+6. **TD-6 — §12.1 step 1's Dependabot discipline is unmet.** No
+   `.github/dependabot.yml` exists. The Wrangler exact pin and committed lockfile
+   land in this run; automated update surveillance does not. Owner: project owner.
+   Removal condition: add the manifest. Declared rather than claimed.
 5. **TD-5 — the credential audit surface is incomplete by construction.**
    `GET /accounts/{id}/tokens` does not enumerate user-owned tokens; a
    pre-existing, non-expiring, user-owned token with broad zone-level Read
@@ -977,7 +1075,11 @@ different trust assumptions. That is the security argument, not duplication.
 - **R6** done: `inventory.json` sibling to `site/`.
 - **R7** done: the deploy job holds no GitHub write scopes; §14's headline amended.
 - **R8** done: branch mismatch aborts before upload.
-- **R9** done: preview failure leaves production untouched.
+- **R9** done: preview failure leaves production untouched, **and the preview
+  verification is inventory-wide** — a marker-preserving tamper fails it, so TD-4's
+  bound rests on a check that actually runs.
+- **R27** done: §17(h) amended on the record; the signer issues no non-GET
+  Cloudflare request and the transport fails the test if it does.
 - **R10** done: mutation between uploads aborts.
 - **R11** done: custom-domain verification runs on **every** deploy; the active
   status is read from the `/domains` subresource; an inactive domain aborts before
