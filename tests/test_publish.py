@@ -5087,3 +5087,125 @@ def test_compute_stats_always_emits_the_key(tmp_path):
     )
     assert "site_file_count" in stats
     assert stats["site_file_count"] is None
+
+
+# --- the two-phase seam must not trust the sidecar (code review) --------------
+
+
+def test_a_forged_build_id_in_the_sidecar_is_refused(tmp_path):
+    """QA round 7's invariant, reintroduced by the process boundary and now closed.
+
+    A hand-edited `stage-state.json` published real congress.db bytes under an
+    identity that never passed through `next_build_id`'s durable high-water
+    mark — one immutable build id naming two different byte sets. The directory
+    is the authority; the sidecar's copy is a cross-check.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    write_stage_state(staged)
+
+    sidecar = Path(staged.staging_dir) / STAGE_STATE_FILE
+    payload = json.loads(sidecar.read_text("utf-8"))
+    payload["build_id"] = "20200101.7"
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PublishError, match="identity is in dispute"):
+        read_stage_state(staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo))
+
+
+def test_a_forged_db_logical_in_the_sidecar_is_ignored(tmp_path):
+    """It flows into the manifest's congress.db entry, and the journal check
+    cannot catch it because the journal was written from the same forged value."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    real = staged._state["db_logical"]
+    write_stage_state(staged)
+
+    sidecar = Path(staged.staging_dir) / STAGE_STATE_FILE
+    payload = json.loads(sidecar.read_text("utf-8"))
+    payload["db_logical"] = "0" * 64
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    revived = read_stage_state(staged.staging_dir, data_repo=repo, backend=LocalDirBackend(repo))
+    assert revived._state["db_logical"] == real, "the forged digest was believed"
+
+
+def test_a_staging_dir_not_named_like_a_build_id_is_refused(tmp_path):
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    write_stage_state(staged)
+    renamed = Path(staged.staging_dir).parent / "not-a-build-id"
+    Path(staged.staging_dir).rename(renamed)
+    with pytest.raises(PublishError, match="not named after a valid build id"):
+        read_stage_state(renamed, data_repo=repo, backend=LocalDirBackend(repo))
+
+
+def test_both_stats_copies_are_patched_and_byte_equal(tmp_path):
+    """R24 / §12.1 step 2 — 'both places identically'.
+
+    The site build emits dist/stats.json from the PROVISIONAL document, whose
+    count is still null. Patching only the canonical copy leaves the live site
+    reporting null forever while the published manifest reports the integer.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+
+    # Stand in for the site build: it copies the provisional bytes verbatim.
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "stats.json").write_bytes((build_dir / "congress" / "stats.json").read_bytes())
+    assert json.loads((dist / "stats.json").read_text())["site_file_count"] is None
+
+    finalize_build(staged, site_file_count=12543, dist_dir=dist)
+
+    served = (dist / "stats.json").read_bytes()
+    canonical = (build_dir / "congress" / "stats.json").read_bytes()
+    assert served == canonical, "the two stats.json copies are not byte-equal"
+    assert json.loads(served)["site_file_count"] == 12543
+
+
+def test_a_missing_served_stats_is_refused_not_ignored(tmp_path):
+    """Silently skipping the patch is how the served copy stays null."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    empty = tmp_path / "dist"
+    empty.mkdir()
+    with pytest.raises(PublishError, match="no served stats.json"):
+        finalize_build(staged, site_file_count=41, dist_dir=empty)
+
+
+def test_the_byte_equality_assertion_can_actually_fire(tmp_path, monkeypatch):
+    """Pins the guard, not just the happy path.
+
+    Both copies are written from one `rendered` string, so in normal operation
+    they cannot differ and the assertion is unreachable — which means a mutation
+    deleting it survives every other test. What it genuinely guards is the two
+    WRITERS disagreeing: `_write_staged` and `Path.write_text` differing on
+    encoding or newline handling. So make them disagree and require the error.
+    """
+    from populus.publish import build as build_mod
+
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = Path(staged.staging_dir) / "build"
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "stats.json").write_bytes((build_dir / "congress" / "stats.json").read_bytes())
+
+    real_write = build_mod._write_staged
+
+    def divergent_write(target_dir, relpath, payload):
+        if relpath == "congress/stats.json":
+            payload = payload + "\n"  # one byte of drift, as an encoding bug would
+        return real_write(target_dir, relpath, payload)
+
+    monkeypatch.setattr(build_mod, "_write_staged", divergent_write)
+    with pytest.raises(PublishError, match="byte-equality does not hold"):
+        finalize_build(staged, site_file_count=99, dist_dir=dist)

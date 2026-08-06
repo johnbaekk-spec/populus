@@ -67,6 +67,34 @@ The record would be unverifiable by the verifier this project already ships.
 :func:`sign_deployment` refuses to write anything whose subject name does not
 resolve to the record-signer identity. The workflow attests the name this module
 emits (``subject-name`` + ``subject-digest``), so the YAML cannot drift from it.
+
+**Every recorded number states its host (§5.5).** The sweep runs against the
+*deployment-specific* provider origin, whose hostname is per-deployment and is
+not the site's domain; the custom-domain leg checks one path on the domain
+itself. A record that said ``files_verified: 12543`` and named neither host
+invited exactly one reading — "the domain served 12,543 correct files" — which
+is false. So :func:`sign_deployment` records ``swept_origin``
+beside ``files_verified``/``files_total``, and ``domain`` beside
+``domain_scope``/``domain_files_verified``/``domain_files_total``. Two hosts,
+two scopes, four numbers, and none of them anonymous. ``TD10_NOTE`` does not
+cover this: it is about what the *expected-paths* scope cannot see on the host
+it swept, not about which host that was.
+
+**Two entry points, one module** (:data:`SUBCOMMANDS`).
+
+* ``sign`` (R13) is everything above, run by ``record-sign.yml`` after a deploy.
+* ``gate`` (R18) is run by ``publish.yml`` *before* the next publish, and it is
+  a different program with a different trust posture: it holds **no Cloudflare
+  credential** (§14 forbids the publish job one), so its only live read is an
+  unauthenticated fetch of the domain's own ``populus:code_sha`` marker. It
+  **verifies** the highest deployment generation's attestation against the
+  pinned ``record-sign.yml`` identity rather than merely resolving its path —
+  an unsigned file that is present is exactly what R18's revision 1 accepted,
+  and it must fail. See :func:`gate_publish`.
+
+The flat, subcommand-less argv form is ``sign``, because ``record-sign.yml``
+predates the split and invokes the signer with flags only. That is a contract,
+not a convenience: see :func:`_normalize_argv`.
 """
 
 from __future__ import annotations
@@ -75,15 +103,18 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from populus.deploy.cloudflare import CustomDomain, PagesClient, PagesRejected, PagesUnavailable
 from populus.deploy.verify import (
+    CACHE_BUST_PARAM,
     DEFAULT_MARKER_PATH,
     DEFAULT_STATS_PATH,
     MARKER_BUILD_ID,
@@ -91,10 +122,12 @@ from populus.deploy.verify import (
     TD10_NOTE,
     VERIFICATION_SCOPE,
     HttpGetter,
+    HttpResponse,
     VerificationResult,
     VerifyUnavailable,
     check_markers,
     read_markers,
+    served_path,
     sweep_inventory,
     verify_deployment,
 )
@@ -115,20 +148,28 @@ from populus.publish.pointer import rfc3339z
 
 __all__ = [
     "ACCOUNT_ID_ENV",
+    "DOMAIN_SCOPE",
     "EXIT_MISCONFIGURED",
     "EXIT_REJECTED",
     "EXIT_UNAVAILABLE",
     "EXIT_VERIFIED",
+    "MISCONFIGURED",
     "PAGES_READ_TOKEN_ENV",
+    "SUBCOMMANDS",
     "ArtifactFacts",
     "CloudflareReads",
+    "GateResult",
+    "Generation",
     "ProductionDeployment",
+    "RecordMisconfigured",
     "RecordRefused",
     "RecordUnavailable",
     "SigningResult",
     "artifact_facts",
     "attested_build_id",
+    "gate_publish",
     "generation_subject_name",
+    "highest_generation",
     "main",
     "next_generation",
     "render_generation",
@@ -161,6 +202,41 @@ EXIT_REJECTED = 1
 EXIT_UNAVAILABLE = 2
 EXIT_MISCONFIGURED = 3
 
+#: A fourth outcome, alongside ``verified``/``rejected``/``unavailable``. It is
+#: declared here rather than in :mod:`populus.publish.attestation` because it is
+#: not an attestation verdict: it means the *inputs* were wrong (a checkout that
+#: is not there, a credential that is unset), which is neither "we asked and the
+#: answer was no" nor "we could not ask".
+MISCONFIGURED = "misconfigured"
+
+#: What the custom-domain leg actually covers (§5.5). The deployment origin is
+#: swept at :data:`~populus.deploy.verify.VERIFICATION_SCOPE`; the domain is
+#: checked for the marker page and nothing else, and the record says so under
+#: its own key so no number is read against the wrong host.
+DOMAIN_SCOPE = "marker_only"
+
+#: The two entry points. Order is the argv order a caller may use; the flat
+#: form with no subcommand at all is :data:`DEFAULT_SUBCOMMAND`.
+SUBCOMMANDS = ("sign", "gate")
+DEFAULT_SUBCOMMAND = "sign"
+
+#: ``YYYYMMDD.N`` — the same shape ``populus.publish.build`` allocates. Kept as
+#: a literal rather than imported from that module (it is private there, and
+#: importing the release-backend module into the signer would drag the ``gh``
+#: release-tool shell-out seam along with it); ``tests/test_deploy_record.py``
+#: pins the two
+#: patterns equal so they cannot drift.
+_BUILD_ID_PATTERN = re.compile(r"^\d{8}\.\d+$")
+
+#: The gate's own copy of :mod:`populus.deploy.verify`'s fetch policy. It is
+#: duplicated, deliberately and with a drift test: the gate fetches **one** path
+#: and has no inventory to sweep, so it cannot go through ``sweep_inventory``,
+#: and reaching into ``verify._fetch`` would bind a private name across a module
+#: boundary — which is exactly the coupling that made a stray ``importlib.reload``
+#: able to break ``except VerifyUnavailable`` from another test file.
+_GATE_NO_ANSWER_STATUSES = frozenset({403, 408, 425, 429})
+_GATE_REQUEST_HEADERS = {"cache-control": "no-cache", "pragma": "no-cache"}
+
 
 class RecordRefused(Exception):
     """We reached everything we needed to and the answer was no."""
@@ -168,6 +244,16 @@ class RecordRefused(Exception):
 
 class RecordUnavailable(Exception):
     """No verdict was reached (R17) — nothing is attested, nothing is accused."""
+
+
+class RecordMisconfigured(Exception):
+    """The inputs are wrong — not a verdict about anything that was deployed.
+
+    A missing ``populus-data`` checkout is the case this exists for: the gate
+    cannot tell "nothing has ever been deployed" from "the checkout step did not
+    run" by looking at an absent directory, and guessing either way is how a
+    first-run predicate becomes a permanent bypass.
+    """
 
 
 @dataclass(frozen=True)
@@ -189,13 +275,51 @@ class CloudflareReads:
     One class, two methods, no write verb reachable from here (R27). The class
     exists so the property is a shape a reader and a test can both check, rather
     than an absence someone has to prove by reading every line of the module.
+
+    :data:`READ_SURFACE` is documentation, not enforcement: a review round
+    correctly called the surface test decoration, because adding a method *and*
+    adding its name to the constant kept the assertion green. Two things carry
+    the property instead. The test now pins the surface to a **literal** set
+    written in the test file, so growing the constant is what fails. And every
+    request this class issues leaves through :meth:`_get`, which refuses any
+    verb but ``GET`` at run time rather than promising not to be handed one.
+
+    What that still does not do is make ``PagesClient.rollback`` unreachable —
+    ``self._client`` holds a full client and Python has no way to take a method
+    away. So the AST guard in ``tests/test_deploy_record.py`` pins the set of
+    ``self._client`` attributes this module touches, and the transport fixture
+    fails on the verb. Three readings, none of which is a promise.
     """
 
-    #: Pinned so a test can assert the surface did not quietly grow.
+    #: Pinned so a test can assert the surface did not quietly grow. The test
+    #: compares it against a literal, so editing this line does not silence it.
     READ_SURFACE = ("active_custom_domain", "production_deployment")
 
     def __init__(self, client: PagesClient) -> None:
         self._client = client
+
+    def _get(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        method: str = "GET",
+    ) -> Any:
+        """The one place this class reaches the transport, and it reads only.
+
+        ``method`` is a parameter so the refusal is **executable**. A helper
+        that merely hardcoded the verb would be a helper someone could later
+        generalise in one line; this one raises on the attempt, and a test makes
+        the attempt. The default is the only accepted value, so every real call
+        site below simply omits it.
+        """
+        if method != "GET":
+            raise PagesRejected(
+                f"CloudflareReads was asked to issue {method!r}: this class is "
+                "the signer's entire Cloudflare surface and it is read-only "
+                "(R27, §17(h) as amended)"
+            )
+        return self._client._request(method, path, params=params)
 
     def production_deployment(self) -> ProductionDeployment:
         """``GET …/deployments?env=production`` — the raw newest production entry.
@@ -205,8 +329,8 @@ class CloudflareReads:
         from :class:`~populus.deploy.cloudflare.PagesClient`, so this reads the
         same endpoint the deploy path reads, through the same transport.
         """
-        result = self._client._request(
-            "GET", self._client._deployments_path(), params={"env": "production"}
+        result = self._get(
+            self._client._deployments_path(), params={"env": "production"}
         )
         if not isinstance(result, list):
             raise PagesRejected(
@@ -235,7 +359,16 @@ class CloudflareReads:
         )
 
     def active_custom_domain(self, domain: str) -> CustomDomain:
-        """``GET …/projects/{project}/domains`` — the only endpoint with status."""
+        """``GET …/projects/{project}/domains`` — the only endpoint with status.
+
+        Delegated rather than routed through :meth:`_get`, and the reason is
+        worth a line: the status comparison, the "not attached to this project"
+        message and the ``ACTIVE_DOMAIN_STATUS`` constant all live in
+        :mod:`populus.deploy.cloudflare`, and re-implementing them here to reach
+        them through the local helper would mean two copies of the one check R11
+        turns on. It is a read either way — the client's own verb guard and the
+        injected transport's assertion both cover it.
+        """
         return self._client.assert_custom_domain_active(domain)
 
 
@@ -278,6 +411,46 @@ class SigningResult:
         if self.document is None:
             return None
         return f"sha256:{hashlib.sha256(self.document).hexdigest()}"
+
+
+@dataclass(frozen=True)
+class Generation:
+    """One deployment generation on disk, located but not yet believed."""
+
+    build_id: str
+    generation: int
+    path: Path
+
+    @property
+    def subject_name(self) -> str:
+        return generation_subject_name(self.generation)
+
+
+@dataclass(frozen=True)
+class GateResult:
+    """What the pre-publish gate concluded (R18).
+
+    ``first_run`` is a separate field rather than an inference from
+    ``generation is None``: "the gate passed because nothing has ever been
+    deployed" and "the gate passed because generation 7 verified" are different
+    enough that an operator reading a green run must not have to work out which
+    one happened.
+    """
+
+    outcome: str
+    detail: str
+    build_id: str | None = None
+    generation: int | None = None
+    code_sha: str | None = None
+    first_run: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome == VERIFIED
+
+    @property
+    def unavailable(self) -> bool:
+        return self.outcome == UNAVAILABLE
 
 
 def generation_subject_name(generation: int) -> str:
@@ -491,8 +664,43 @@ def sign_deployment(
         )
     except RecordUnavailable as exc:
         return SigningResult(outcome=UNAVAILABLE, detail=f"no verdict: {exc}")
-    except (RecordRefused, PagesRejected) as exc:
+    except VerifyUnavailable as exc:
+        # The one that was missing, and the one that mattered most. Every
+        # verification path below is *supposed* to convert this to
+        # `RecordUnavailable` before it reaches here — `verify_deployment`
+        # catches it, `_confirm_domain` catches it — so an escape means one of
+        # those conversions was removed, or the raising module was re-imported
+        # under a second identity (which is precisely what a stray
+        # `importlib.reload` in another test file did). Uncaught it left `main`
+        # to die with a traceback, and a Python traceback exits 1, which is
+        # `EXIT_REJECTED`: a Cloudflare outage would have paged identically to
+        # "the site was tampered with", contradicting the contract stated at the
+        # top of this module. Fail-safe, not fail-silent — it is UNAVAILABLE.
+        return SigningResult(
+            outcome=UNAVAILABLE,
+            detail=(
+                f"no verdict: a served-tree lookup did not answer and the outage "
+                f"reached the top level unconverted: {exc}"
+            ),
+        )
+    except RecordRefused as exc:
         return SigningResult(outcome=REJECTED, detail=f"refused to attest: {exc}")
+    except PagesRejected as exc:
+        # Still REJECTED — the Pages API answered and the answer did not line up
+        # — but the detail names the source, because this class covers a
+        # configuration fault ("the domain is not attached to this project") as
+        # well as a real finding, and an operator must not read the first as the
+        # second. The exit code cannot separate them: downgrading every
+        # `PagesRejected` would also downgrade "Cloudflare says a different
+        # deployment is live", which is the finding this signer exists to make.
+        return SigningResult(
+            outcome=REJECTED,
+            detail=(
+                f"refused to attest — the Cloudflare Pages API answered and the "
+                f"answer did not line up (check the project's configuration "
+                f"before reading this as tampering): {exc}"
+            ),
+        )
     except PagesUnavailable as exc:
         # R17 again, one layer down: the Pages API not answering is an outage.
         return SigningResult(outcome=UNAVAILABLE, detail=f"no verdict: {exc}")
@@ -565,7 +773,7 @@ def _sign(
             f"record may only ever claim {VERIFICATION_SCOPE!r}"
         )
 
-    _confirm_domain(
+    domain_files_verified = _confirm_domain(
         http,
         domain,
         inventory=facts.inventory,
@@ -590,9 +798,22 @@ def _sign(
         "dist_digest": facts.dist_digest,
         "dist_digest_version": DIST_DIGEST_VERSION,
         "inventory_digest": facts.inventory_digest,
+        # --- the deployment-origin leg: which host, what scope, how many ---
+        # `swept_origin` is not decoration. Without it `files_verified` names no
+        # host, and a reader of a record for a custom domain has every reason to
+        # assume it describes that domain. It describes the provider origin.
+        "swept_origin": deployment.url,
         "verification_scope": verification.verification_scope,
         "files_verified": verification.files_verified,
         "files_total": verification.files_total,
+        # --- the custom-domain leg: same three questions, different answers ---
+        # One path was checked here, out of the same inventory total, which is
+        # why `domain_files_total` is the inventory count rather than 1: "1/5"
+        # states the gap, "1/1" would hide it behind a full-marks fraction.
+        "domain": domain,
+        "domain_scope": DOMAIN_SCOPE,
+        "domain_files_verified": domain_files_verified,
+        "domain_files_total": verification.files_total,
         "workflow_run_id": workflow_run_id,
         "dist_artifact_id": dist_artifact_id or None,
         "dist_artifact_expires_at": dist_artifact_expires_at or None,
@@ -615,7 +836,9 @@ def _sign(
         detail=(
             f"generation {generation} for build {build_id}: "
             f"{verification.files_verified}/{verification.files_total} files "
-            f"verified at {VERIFICATION_SCOPE} on deployment {deployment.id}"
+            f"verified at {VERIFICATION_SCOPE} on {deployment.url} "
+            f"(deployment {deployment.id}); {domain_files_verified}/"
+            f"{verification.files_total} at {DOMAIN_SCOPE} on {domain}"
         ),
         record=record,
         document=document,
@@ -634,7 +857,7 @@ def _confirm_domain(
     build_id: str,
     code_sha: str,
     marker_path: str,
-) -> None:
+) -> int:
     """Confirm the live custom domain serves this same build (§5.5).
 
     §5.5 defines this leg as *identity plus markers*, not a second byte proof of
@@ -644,6 +867,17 @@ def _confirm_domain(
     a hand-rolled fetch, over a one-path envelope, so the domain leg inherits
     exactly the same policy: redirects disabled, cache-busted, decoded-body hash
     **and** length compared, outages raised as outages.
+
+    Returns the number of paths confirmed **on the domain** — one — so the
+    caller records a count it measured rather than a constant it assumed.
+
+    The cache-bust is :func:`~uuid.uuid4`, matching
+    :func:`~populus.deploy.verify.verify_deployment`. It used to be
+    ``sha256(build_id:code_sha)``, which is a *function of the build*: §5.5
+    anticipates one build being deployed more than once (recovery, rollback,
+    a re-run), so generation 2's domain URL was byte-identical to generation 1's
+    and an edge cache could answer the second check from the first check's
+    stored body. A cache-bust that repeats is not a cache-bust.
     """
     files = [
         entry
@@ -665,7 +899,7 @@ def _confirm_domain(
             http,
             f"https://{domain}",
             envelope,
-            cache_bust=hashlib.sha256(f"{build_id}:{code_sha}".encode()).hexdigest()[:16],
+            cache_bust=uuid4().hex,
             keep=(marker_path,),
         )
     except VerifyUnavailable as exc:
@@ -682,6 +916,302 @@ def _confirm_domain(
             f"the custom domain {domain} does not serve this deployment: "
             + "; ".join(findings)
         )
+    return sweep.files_verified
+
+
+# --- the pre-publish gate (R18) ----------------------------------------------
+
+
+def highest_generation(data_repo: Path | str) -> Generation | None:
+    """The newest deployment generation in a `populus-data` checkout, or None.
+
+    "Newest" is ``(build id, generation)``, in that order. Generation numbers
+    restart at 1 for every build (:func:`next_generation`), so comparing them
+    across builds would rank ``20260101.1`` generation 3 above ``20260805.1``
+    generation 1 — the reverse of the truth, and silently.
+
+    Two things are refusals rather than skips, for the same reason
+    :func:`next_generation` refuses an unnumbered file: a gate that shrugged at
+    a directory it could not order would be a gate that could be turned off by
+    creating one. A build directory whose name is not ``YYYYMMDD.N``, and a
+    generation file whose stem is not an integer, both raise.
+
+    Returns None only when there are genuinely zero generations — which is half
+    of the first-run predicate and must therefore mean exactly one thing.
+    """
+    builds = Path(data_repo) / "builds"
+    if not builds.is_dir():
+        return None
+
+    best: tuple[tuple[int, int, int], Generation] | None = None
+    for directory in sorted(p for p in builds.iterdir() if p.is_dir()):
+        deployments = directory / DEPLOYMENTS_DIRNAME
+        if not deployments.is_dir():
+            continue
+        entries = sorted(deployments.glob("*.json"))
+        if not entries:
+            continue
+        order = _build_order(directory.name)
+        for existing in entries:
+            try:
+                number = int(existing.stem)
+            except ValueError:
+                raise RecordRefused(
+                    f"{existing} is not a numbered generation; the gate will not "
+                    "guess which generation is the current one"
+                ) from None
+            key = (*order, number)
+            if best is None or key > best[0]:
+                best = (
+                    key,
+                    Generation(
+                        build_id=directory.name, generation=number, path=existing
+                    ),
+                )
+    return None if best is None else best[1]
+
+
+def gate_publish(
+    *,
+    data_repo: Path | str,
+    http: HttpGetter,
+    attestation: AttestationProvider,
+    domain: str,
+    marker_path: str = DEFAULT_MARKER_PATH,
+) -> GateResult:
+    """R18: the previous deploy must have left a **verified** generation.
+
+    Revision 1 of R18 said the gate "resolves ``builds/<id>/deployments/``",
+    which an unsigned file satisfies. §13.2 and §12.1 step 6 want something
+    stronger and this function is it. In order:
+
+    1. Find the highest generation in the checkout ``publish.yml`` already has
+       (:func:`highest_generation`). No network, no Cloudflare.
+    2. Read the **live domain's** ``populus:code_sha`` marker over an
+       unauthenticated GET. The publish job holds no Cloudflare credential —
+       §14 forbids it one — so the domain's own answer is the only live signal
+       available, and it is also the right one: the question is what the public
+       is being served, not what the provider's control plane says.
+    3. **Verify the generation's attestation** against the identity
+       :func:`~populus.publish.attestation.resolve_identity` pins for a
+       ``deployments/`` subject, which is ``record-sign.yml@refs/heads/main``.
+       The document's bytes are not parsed for a single value before this
+       passes — same order as :func:`attested_build_id`, same reason.
+    4. Require the attested record's ``code_sha`` to equal what the domain
+       serves.
+
+    **The first-run predicate, and only it:** pass when the domain resolves to
+    no deployment *and* the checkout holds zero generations. Every other
+    unresolvable state fails closed — including "the domain serves nothing but
+    seven generations exist" (a rollback nobody recorded) and "the domain serves
+    a build but no generation exists" (a deploy whose signer was skipped, which
+    is R20's failure arriving a day late).
+
+    An outage is never a refusal here either: a 429 from the domain, a transport
+    failure or an attestation-API quota error returns ``unavailable``, because
+    "the publish gate could not ask" must not be reportable as "the last deploy
+    was tampered with".
+    """
+    try:
+        return _gate(
+            data_repo=data_repo,
+            http=http,
+            attestation=attestation,
+            domain=domain,
+            marker_path=marker_path,
+        )
+    except RecordMisconfigured as exc:
+        return GateResult(outcome=MISCONFIGURED, detail=f"misconfigured: {exc}")
+    except RecordUnavailable as exc:
+        return GateResult(outcome=UNAVAILABLE, detail=f"no verdict: {exc}")
+    except VerifyUnavailable as exc:
+        # The same escape hatch `sign_deployment` grew, for the same reason: an
+        # outage that reaches the top level unconverted must not exit 1.
+        return GateResult(
+            outcome=UNAVAILABLE,
+            detail=f"no verdict: the live check did not answer: {exc}",
+        )
+    except RecordRefused as exc:
+        return GateResult(outcome=REJECTED, detail=f"refused to publish: {exc}")
+
+
+def _gate(
+    *,
+    data_repo: Path | str,
+    http: HttpGetter,
+    attestation: AttestationProvider,
+    domain: str,
+    marker_path: str,
+) -> GateResult:
+    repo = Path(data_repo)
+    if not repo.is_dir():
+        raise RecordMisconfigured(
+            f"no populus-data checkout at {repo}: an absent directory is not "
+            "evidence that nothing was ever deployed, and the first-run "
+            "predicate must not be satisfiable by a checkout step that failed"
+        )
+
+    found = highest_generation(repo)
+    served = _domain_code_sha(http, domain, marker_path=marker_path)
+
+    if found is None and served is None:
+        return GateResult(
+            outcome=VERIFIED,
+            first_run=True,
+            detail=(
+                f"first run: {domain} resolves to no deployment and {repo} holds "
+                "zero deployment generations. This is the only state in which "
+                "the gate passes without verifying one (R18/R14)."
+            ),
+        )
+    if found is None:
+        raise RecordRefused(
+            f"{domain} serves a deployment (populus:code_sha {served!r}) but "
+            f"{repo} holds zero deployment generations. Something went live "
+            "unrecorded — the first-run predicate needs BOTH halves, and this "
+            "is the shape R20's skipped signer leaves behind"
+        )
+    if served is None:
+        raise RecordRefused(
+            f"{repo} records generation {found.generation} for build "
+            f"{found.build_id} but {domain} resolves to no deployment. The gate "
+            "cannot confirm the recorded deployment is the live one, and will "
+            "not publish over an unexplained state"
+        )
+
+    document = found.path.read_bytes()
+    subject_name = found.subject_name
+    if resolve_identity(subject_name) != P2_RECORD_SIGN_IDENTITY:
+        raise RecordRefused(
+            f"subject name {subject_name!r} does not resolve to the record-signer "
+            f"identity ({P2_RECORD_SIGN_IDENTITY}); the gate verifies against the "
+            "identity the signer is pinned to and nothing else (R18/R25)"
+        )
+    # Attestation FIRST. Everything below reads values out of these bytes, and a
+    # present-but-unsigned file is exactly what revision 1 of this requirement
+    # would have accepted.
+    _require_attested(attestation, subject_name, document)
+
+    recorded = _load_json(document, str(found.path))
+    if recorded.get("generation") != found.generation:
+        raise RecordRefused(
+            f"{found.path} is generation {found.generation} by its name but "
+            f"{recorded.get('generation')!r} by its contents"
+        )
+    if recorded.get("build_id") != found.build_id:
+        raise RecordRefused(
+            f"{found.path} sits under build {found.build_id!r} but records build "
+            f"{recorded.get('build_id')!r}"
+        )
+    code_sha = recorded.get("code_sha")
+    if not isinstance(code_sha, str) or not code_sha:
+        raise RecordRefused(
+            f"the attested {found.path} carries no code_sha; there is nothing to "
+            "compare against what the domain serves"
+        )
+    if code_sha != served:
+        raise RecordRefused(
+            f"{domain} serves populus:code_sha {served!r}; the attested "
+            f"generation {found.generation} for build {found.build_id} records "
+            f"{code_sha!r} (compared exactly, never by prefix). The live site is "
+            "not the deployment that was signed"
+        )
+
+    return GateResult(
+        outcome=VERIFIED,
+        build_id=found.build_id,
+        generation=found.generation,
+        code_sha=code_sha,
+        detail=(
+            f"generation {found.generation} for build {found.build_id} is "
+            f"attested under {subject_name} and its code_sha {code_sha} is what "
+            f"{domain} serves"
+        ),
+    )
+
+
+def _domain_code_sha(
+    http: HttpGetter, domain: str, *, marker_path: str
+) -> str | None:
+    """The ``populus:code_sha`` the live domain serves, or None for "nothing".
+
+    None means the domain **answered** and the answer was 404: there is no
+    deployment behind it. That is a resolution, not an outage, which is what
+    makes it usable as half of the first-run predicate. An outage — transport
+    failure, 429, 5xx — raises instead, and never reaches the predicate.
+
+    Unauthenticated by construction: this function is handed a plain HTTP client
+    and no credential exists in this code path to hand it. The publish job holds
+    none (§14), and the gate asks the public site the public's question.
+
+    *marker_path* stays an **inventory** path throughout; the URL is built
+    through :func:`~populus.deploy.verify.served_path` because Cloudflare Pages
+    307-redirects ``index.html`` to ``/``. Without that rewrite this function
+    would take the provider's redirect as a hijack and refuse every publish
+    forever — a gate that fails closed on nothing at all is still a gate that
+    never opens.
+    """
+    url = (
+        f"https://{domain}/{served_path(marker_path)}"
+        f"?{CACHE_BUST_PARAM}={uuid4().hex}"
+    )
+    response = _gate_fetch(http, url)
+    status = response.status_code
+    if status == 404:
+        return None
+    if 300 <= status < 400:
+        raise RecordRefused(
+            f"{url} answered HTTP {status} redirect to "
+            f"{response.headers.get('location', '')!r}; a 3xx on the marker page "
+            "is a hijack, not a hop to follow"
+        )
+    if status != 200:
+        raise RecordRefused(
+            f"{url} answered HTTP {status}; the gate reads 200 as 'this is what "
+            "is live' and 404 as 'nothing is live', and has no reading for this"
+        )
+    return _one_marker(read_markers(response.content), MARKER_CODE_SHA, marker_path)
+
+
+def _gate_fetch(http: HttpGetter, url: str) -> HttpResponse:
+    """One cache-busted, redirect-disabled GET, with R17's split preserved.
+
+    A local copy of :func:`populus.deploy.verify._fetch`'s policy rather than a
+    call to it: that function is private, the gate has no inventory to sweep so
+    ``sweep_inventory`` does not fit, and binding another module's private name
+    is the coupling that let a reload in one test file break an ``except``
+    clause in another. ``tests/test_deploy_record.py`` pins the two policies
+    equal so the copy cannot drift.
+
+    ``AssertionError`` is re-raised for the same reason it is there: it is what
+    the suite's no-network guard raises, and laundering a real network call into
+    a tidy ``unavailable`` would hide it.
+    """
+    try:
+        response = http.get(url, headers=_GATE_REQUEST_HEADERS, follow_redirects=False)
+    except AssertionError:
+        raise
+    except Exception as exc:  # transport-layer failure of any shape
+        raise RecordUnavailable(f"transport error fetching {url}: {exc}") from exc
+
+    status = response.status_code
+    if status in _GATE_NO_ANSWER_STATUSES or status >= 500:
+        raise RecordUnavailable(
+            f"HTTP {status} fetching {url}: no verdict was reached (a rate limit "
+            "or an origin error is an outage, never evidence of tampering)"
+        )
+    return response
+
+
+def _build_order(build_id: str) -> tuple[int, int]:
+    """``YYYYMMDD.N`` → a sortable key, or a refusal."""
+    if _BUILD_ID_PATTERN.match(build_id) is None:
+        raise RecordRefused(
+            f"build directory {build_id!r} is not a <YYYYMMDD>.<n> build id; the "
+            "gate will not guess which of two builds deployed later"
+        )
+    date_part, sequence = build_id.split(".")
+    return int(date_part), int(sequence)
 
 
 # --- internals ---------------------------------------------------------------
@@ -742,14 +1272,27 @@ def _default_http_client():
     return httpx.Client(follow_redirects=False, timeout=30.0)
 
 
-def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="populus-record-sign",
-        description=(
-            "Verify the live production deployment and write the next attested "
-            "deployment generation (ARCHITECTURE §12.1 step 6)."
-        ),
-    )
+def _normalize_argv(argv: Sequence[str] | None) -> list[str]:
+    """Insert the implicit ``sign`` subcommand — the compatibility contract.
+
+    ``record-sign.yml`` invokes ``python -m populus.deploy.record --data-repo …``
+    with flags and no subcommand, and it predates the split. Rewriting that
+    workflow to add the word ``sign`` would be a two-file change whose halves
+    ship at different times; a run between the two would fail on argv, in the
+    step that decides whether a live deployment gets attested at all. So the
+    flat form keeps working, permanently, and this is the one function that says
+    so.
+
+    ``-h``/``--help`` alone is passed through untouched, so top-level help lists
+    the subcommands instead of silently answering for ``sign``.
+    """
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if tokens and (tokens[0] in SUBCOMMANDS or tokens[0] in ("-h", "--help")):
+        return tokens
+    return [DEFAULT_SUBCOMMAND, *tokens]
+
+
+def _add_sign_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-repo", required=True, help="populus-data checkout")
     parser.add_argument(
         "--artifact", required=True, help="directory holding site/ and inventory.json"
@@ -771,7 +1314,62 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         choices=("sigstore", "staging-noop"),
         help="no default: an unsigned run must be chosen out loud",
     )
-    return parser.parse_args(argv)
+
+
+def _add_gate_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--data-repo", required=True, help="populus-data checkout")
+    parser.add_argument("--domain", required=True, help="the live custom domain")
+    parser.add_argument(
+        "--marker-path",
+        default=DEFAULT_MARKER_PATH,
+        help="the page carrying the populus:code_sha marker",
+    )
+    parser.add_argument(
+        # Unlike `sign`, this one HAS a default — and the default is the strong
+        # provider, never the no-op. The property the defaultless flag protects
+        # is "no entry point silently inherits StagingNoop"; defaulting to
+        # sigstore satisfies it in the fail-closed direction, and it is what
+        # lets `publish.yml` call the gate with two flags. Choosing the no-op
+        # here is still a thing you have to type.
+        "--attestation",
+        default="sigstore",
+        choices=("sigstore", "staging-noop"),
+        help="default sigstore; staging-noop verifies nothing and must be chosen",
+    )
+
+
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="populus-record",
+        description=(
+            "The deployment record: sign a generation after a deploy (§12.1 "
+            "step 6), or gate the next publish on the last one (R18)."
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_sign_arguments(
+        subparsers.add_parser(
+            "sign",
+            help="verify the live deployment and write the next generation",
+            description=(
+                "Verify the live production deployment and write the next "
+                "attested deployment generation (ARCHITECTURE §12.1 step 6). "
+                "This is also what a bare, subcommand-less argv runs."
+            ),
+        )
+    )
+    _add_gate_arguments(
+        subparsers.add_parser(
+            "gate",
+            help="refuse to publish unless the last deploy left a verified generation",
+            description=(
+                "Require an attestation-verified deployment generation whose "
+                "code_sha matches what the live domain serves (R18). Issues no "
+                "Cloudflare request and holds no Cloudflare credential."
+            ),
+        )
+    )
+    return parser.parse_args(_normalize_argv(argv))
 
 
 def _build_attestation(choice: str):
@@ -797,15 +1395,45 @@ def _emit_outputs(result: SigningResult) -> None:
     destination = os.environ.get("GITHUB_OUTPUT")
     if not destination:
         return
-    lines = [
-        f"outcome={result.outcome}",
-        f"generation={result.generation if result.generation is not None else ''}",
-        f"subject_name={result.subject_name or ''}",
-        f"subject_digest={result.subject_digest or ''}",
-        f"record_path={result.path if result.path is not None else ''}",
+    pairs = [
+        ("outcome", result.outcome),
+        ("generation", "" if result.generation is None else str(result.generation)),
+        ("subject_name", result.subject_name or ""),
+        ("subject_digest", result.subject_digest or ""),
+        ("record_path", "" if result.path is None else str(result.path)),
     ]
     with open(destination, "a", encoding="utf-8") as handle:
-        handle.write("\n".join(lines) + "\n")
+        for name, value in pairs:
+            handle.write(_github_output_entry(name, value))
+
+
+def _github_output_entry(name: str, value: str) -> str:
+    """One ``$GITHUB_OUTPUT`` entry, with the newline hole closed.
+
+    ``name=value`` is line-oriented, so a value containing a newline writes a
+    second line that the runner parses as *another output* — the file format's
+    standard injection. Every value emitted here is derived (an outcome
+    constant, an integer, a subject name this module built, a digest, a path),
+    so none of them contains one today; a path with a newline in it is the one
+    that is not obviously impossible, and "obviously impossible" is how this
+    class of hole is always argued.
+
+    So: a value with no newline gets the plain form, and a value with one gets
+    the heredoc form under a random delimiter, which is what the runner
+    documents for multi-line values. The delimiter is
+    :func:`~uuid.uuid4`-derived, so a value cannot contain it; the check below
+    is nonetheless made rather than assumed, and refuses rather than emitting
+    something the runner would misparse.
+    """
+    if "\n" not in value and "\r" not in value:
+        return f"{name}={value}\n"
+    delimiter = f"ghadelim_{uuid4().hex}"
+    if delimiter in value:  # pragma: no cover - 128 bits says otherwise
+        raise RecordRefused(
+            f"cannot emit output {name!r}: its value contains the random "
+            "heredoc delimiter, so no framing of it is unambiguous"
+        )
+    return f"{name}<<{delimiter}\n{value}\n{delimiter}\n"
 
 
 def main(
@@ -816,15 +1444,77 @@ def main(
     attestation_factory=None,
     now: datetime | None = None,
 ) -> int:
-    """Run the signer. The factories exist so this path is testable offline.
+    """Run ``sign`` or ``gate``. The factories exist so both are testable offline.
 
-    Fails closed on a **missing** credential (§17(h)): no account id or no
-    `Pages Read` token means the signer cannot read the Pages API, and a signer
-    that cannot read the Pages API must not fall back to trusting the deploy
-    job's claim. It exits before any call is made.
+    **The argv contract, unchanged where it matters.** A bare flag list with no
+    subcommand still runs the signer, because ``record-sign.yml`` invokes it
+    that way (see :func:`_normalize_argv`). ``gate`` is reached only by naming
+    it, which is what ``publish.yml`` does.
+
+    Exit codes are shared by both: ``0`` verified, ``1`` rejected, ``2``
+    unavailable, ``3`` misconfigured. The sign path fails closed on a **missing**
+    credential (§17(h)): no account id or no `Pages Read` token means the signer
+    cannot read the Pages API, and a signer that cannot read the Pages API must
+    not fall back to trusting the deploy job's claim. It exits before any call is
+    made. The gate needs no credential at all and asks for none.
     """
     args = _parse_args(argv)
+    if args.command == "gate":
+        return _main_gate(
+            args, http_factory=http_factory, attestation_factory=attestation_factory
+        )
+    return _main_sign(
+        args,
+        pages_factory=pages_factory,
+        http_factory=http_factory,
+        attestation_factory=attestation_factory,
+        now=now,
+    )
 
+
+def _main_gate(
+    args: argparse.Namespace, *, http_factory=None, attestation_factory=None
+) -> int:
+    """R18's entry point. It builds no Pages client and reads no Pages token.
+
+    That is not an oversight to be tidied up later: §14 forbids the publish job
+    a Cloudflare credential, so there is nothing to read, and a gate that grew a
+    fallback to the control plane would be a gate that needs the credential §14
+    withholds.
+    """
+    owned, http = _http(http_factory)
+    try:
+        attestation = (
+            attestation_factory()
+            if attestation_factory is not None
+            else _build_attestation(args.attestation)
+        )
+        result = gate_publish(
+            data_repo=args.data_repo,
+            http=http,
+            attestation=attestation,
+            domain=args.domain,
+            marker_path=args.marker_path,
+        )
+    finally:
+        if owned:
+            http.close()
+
+    if result.ok:
+        print(f"record-gate: {result.detail}")
+        return EXIT_VERIFIED
+    print(f"record-gate: {result.detail}", file=sys.stderr)
+    return _exit_code(result.outcome)
+
+
+def _main_sign(
+    args: argparse.Namespace,
+    *,
+    pages_factory=None,
+    http_factory=None,
+    attestation_factory=None,
+    now: datetime | None = None,
+) -> int:
     if pages_factory is None:
         account_id = os.environ.get(ACCOUNT_ID_ENV, "").strip()
         token = os.environ.get(PAGES_READ_TOKEN_ENV, "").strip()
@@ -845,27 +1535,30 @@ def main(
     else:
         pages = pages_factory()
 
-    http = http_factory() if http_factory is not None else _default_http_client()
-    attestation = (
-        attestation_factory()
-        if attestation_factory is not None
-        else _build_attestation(args.attestation)
-    )
-
-    result = sign_deployment(
-        data_repo=args.data_repo,
-        artifact_dir=args.artifact,
-        pages=pages,
-        http=http,
-        attestation=attestation,
-        domain=args.domain,
-        workflow_run_id=args.workflow_run_id,
-        now=now or datetime.now(timezone.utc),
-        dist_artifact_id=args.dist_artifact_id,
-        dist_artifact_expires_at=args.dist_artifact_expires_at,
-        claimed_deployment_id=args.claimed_deployment_id or None,
-        claimed_dist_digest=args.claimed_dist_digest or None,
-    )
+    owned, http = _http(http_factory)
+    try:
+        attestation = (
+            attestation_factory()
+            if attestation_factory is not None
+            else _build_attestation(args.attestation)
+        )
+        result = sign_deployment(
+            data_repo=args.data_repo,
+            artifact_dir=args.artifact,
+            pages=pages,
+            http=http,
+            attestation=attestation,
+            domain=args.domain,
+            workflow_run_id=args.workflow_run_id,
+            now=now or datetime.now(timezone.utc),
+            dist_artifact_id=args.dist_artifact_id,
+            dist_artifact_expires_at=args.dist_artifact_expires_at,
+            claimed_deployment_id=args.claimed_deployment_id or None,
+            claimed_dist_digest=args.claimed_dist_digest or None,
+        )
+    finally:
+        if owned:
+            http.close()
     _emit_outputs(result)
 
     if result.ok:
@@ -873,7 +1566,31 @@ def main(
         print(f"record-sign: wrote {result.path} as {result.subject_name}")
         return EXIT_VERIFIED
     print(f"record-sign: {result.detail}", file=sys.stderr)
-    return EXIT_UNAVAILABLE if result.unavailable else EXIT_REJECTED
+    return _exit_code(result.outcome)
+
+
+def _http(http_factory) -> tuple[bool, HttpGetter]:
+    """The client, and whether **we** own it and must therefore close it.
+
+    An injected client belongs to its caller — closing it would be reaching into
+    someone else's resource — but the one :func:`_default_http_client` builds
+    belongs to this process and nothing was closing it. That leaked a connection
+    pool on every run; harmless in a job that exits immediately, which is
+    exactly why it would have survived indefinitely.
+    """
+    if http_factory is not None:
+        return False, http_factory()
+    return True, _default_http_client()
+
+
+def _exit_code(outcome: str) -> int:
+    """One mapping, shared by both entry points, so they cannot disagree."""
+    return {
+        VERIFIED: EXIT_VERIFIED,
+        REJECTED: EXIT_REJECTED,
+        UNAVAILABLE: EXIT_UNAVAILABLE,
+        MISCONFIGURED: EXIT_MISCONFIGURED,
+    }[outcome]
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised via main()

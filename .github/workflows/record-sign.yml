@@ -21,8 +21,12 @@ on:
       # `inventory.json` (§12.1 envelope). Named, not guessed.
       artifact-name:
         type: string
-        required: false
-        default: site
+        # REQUIRED, and deliberately with no default. `site` was the default and
+        # the publisher uploads `site-<build_id>`, so a caller that omitted this
+        # would download nothing and fail in the signer with a message about a
+        # missing artifact rather than about the mismatch. A default that is
+        # wrong for the only real caller is worse than no default.
+        required: true
       # Provenance metadata the signer cannot re-derive: a download step is not
       # told the artifact's id, and nothing in the verification depends on it —
       # the bytes are proved by dist_digest/inventory_digest, which ARE

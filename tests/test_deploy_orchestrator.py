@@ -34,22 +34,35 @@ from populus.deploy.cloudflare import (
     Deployment,
     PagesClient,
     PagesRejected,
+    PagesUnavailable,
 )
 from populus.deploy.orchestrator import (
+    ACCOUNT_ID_ENV,
+    API_TOKEN_ENV,
+    EXIT_DEPLOYED,
+    EXIT_MISCONFIGURED,
+    EXIT_REJECTED,
+    EXIT_UNAVAILABLE,
+    EXIT_UNCOMPENSATED,
     PREVIEW,
     PRODUCTION,
+    PROJECT_ENV,
     RUNBOOK,
+    ArtifactRefused,
     DeployAborted,
     DeployOutcome,
     FirstRunUncompensated,
     PreviewVerificationFailed,
     ProductionVerificationFailed,
     UploadedDeployment,
+    artifact_expectations,
+    main,
     run_deployment,
 )
-from populus.deploy.verify import VerificationResult
+from populus.deploy.verify import VerificationResult, check_no_functions
 from populus.publish.attestation import REJECTED, UNAVAILABLE, VERIFIED
 from populus.publish.digests import dist_digest
+from populus.publish.inventory import build_inventory, render_inventory
 
 DOMAIN = "publicfilings.org"
 DOMAIN_URL = "https://publicfilings.org"
@@ -88,16 +101,22 @@ class FakePages:
         production_branch: str = BRANCH,
         active_domains: tuple[str, ...] = (DOMAIN,),
         latest_id: str | None = PRIOR,
+        rollback_uses_functions: Any = False,
+        fail_with: Exception | None = None,
     ) -> None:
         self.__dict__["unexpected_attributes"] = []
         self._log = log
         self.configured_branch = production_branch
         self.active_domains = set(active_domains)
         self.latest_id = latest_id
+        self.rollback_uses_functions = rollback_uses_functions
+        self.fail_with = fail_with
         self.rollbacks: list[str] = []
 
     def assert_production_branch(self, expected: str) -> str:
         self._log.append(("assert-branch", expected))
+        if self.fail_with is not None:
+            raise self.fail_with
         if expected != self.configured_branch:
             raise PagesRejected(
                 f"production branch mismatch: workflow {expected!r} vs project "
@@ -120,10 +139,19 @@ class FakePages:
             return None
         return _deployment(self.latest_id)
 
-    def rollback(self, deployment_id: str) -> Deployment:
+    def rollback_payload(self, deployment_id: str) -> dict:
+        """The provider's RAW object, exactly as ``PagesDeploySurface`` returns one.
+
+        Spelled ``rollback_payload`` and not ``rollback`` because the difference
+        is the defect: ``PagesClient.rollback`` answers with a typed
+        ``Deployment`` whose ``uses_functions`` is ``bool(...)`` of a
+        possibly-absent field, and a sequence that reconstructs a mapping from
+        it can never fail closed on the provider having said nothing. A fake
+        that offered both names would let the laundering path keep passing.
+        """
         self._log.append(("rollback", deployment_id))
         self.rollbacks.append(deployment_id)
-        return _deployment(deployment_id)
+        return _raw_deployment(deployment_id, self.rollback_uses_functions)
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):
@@ -135,6 +163,12 @@ class FakePages:
         )
 
 
+#: Passed as ``rollback_uses_functions`` to leave the field OUT of the provider
+#: payload entirely — the state R16's no-Functions check must fail closed on,
+#: and the one a reconstruction can never produce.
+OMIT = object()
+
+
 def _deployment(identifier: str) -> Deployment:
     return Deployment(
         id=identifier,
@@ -142,6 +176,17 @@ def _deployment(identifier: str) -> Deployment:
         url=f"https://{identifier}.publicfilings.pages.dev",
         uses_functions=False,
     )
+
+
+def _raw_deployment(identifier: str, uses_functions: Any = False) -> dict:
+    payload = {
+        "id": identifier,
+        "environment": "production",
+        "url": f"https://{identifier}.publicfilings.pages.dev",
+    }
+    if uses_functions is not OMIT:
+        payload["uses_functions"] = uses_functions
+    return payload
 
 
 @dataclass
@@ -795,13 +840,539 @@ def test_an_uploader_that_reports_the_wrong_environment_aborts(
     assert harness.verify.calls == []
 
 
-def test_the_module_calls_exactly_one_cloudflare_surface(harness: Harness) -> None:
+def test_the_sequence_reimplements_no_transport_and_no_cloudflare_surface() -> None:
     """The sequence is composed, not reimplemented.
 
     The orchestrator owns the *order*; the endpoint pinning lives in
-    ``cloudflare`` and the sweep lives in ``verify``. If this module grew its own
-    HTTP call the injection story — and the hermetic suite — would be over.
+    ``cloudflare`` and the sweep lives in ``verify``. If the ordered sequence
+    grew its own HTTP call the injection story — and the hermetic suite — would
+    be over.
+
+    This replaces a blanket ``"httpx" not in inspect.getsource(orchestrator)``,
+    and the replacement is deliberate and narrower rather than weaker. The
+    module gained an entry point (``publish.yml`` runs it as its own process),
+    and something in it therefore has to build the served-tree client the
+    verifier is handed — exactly as ``deploy/record.py`` does, for exactly the
+    same reason. A blanket string check would now be false, so the property is
+    pinned where it actually lives: **no function the sequence reaches names a
+    transport**, the one that does is reached only from ``main()``, and the
+    Cloudflare host still appears nowhere at all.
     """
-    source = inspect.getsource(orchestrator)
-    assert "httpx" not in source
-    assert cloudflare.API_HOST not in source
+    assert cloudflare.API_HOST not in inspect.getsource(orchestrator)
+
+    sequence = (
+        orchestrator.run_deployment,
+        orchestrator._upload,
+        orchestrator._require_seal_intact,
+        orchestrator._fail_production,
+        orchestrator._td4_message,
+        orchestrator._domain_url,
+        orchestrator.artifact_expectations,
+    )
+    for function in sequence:
+        assert "httpx" not in inspect.getsource(function), function.__name__
+
+    naming_a_transport = sorted(
+        name
+        for name, value in vars(orchestrator).items()
+        if inspect.isfunction(value) and "httpx" in inspect.getsource(value)
+    )
+    assert naming_a_transport == ["_default_http_client"]
+    assert "_default_http_client" not in inspect.getsource(orchestrator.run_deployment)
+
+
+# --- R16: the rollback re-verification reads the RAW provider payload ---------
+
+
+def test_the_rollback_reverification_receives_the_raw_provider_payload(
+    harness: Harness,
+) -> None:
+    """A provider answer omitting ``uses_functions`` must still fail closed.
+
+    The deploy-side twin of ``test_deploy_record.py``'s
+    ``test_a_missing_uses_functions_field_fails_closed``. The orchestrator used
+    to rebuild this mapping from the typed ``Deployment``, always setting
+    ``"uses_functions": deployment.uses_functions`` — and
+    ``cloudflare._deployment`` computes that as ``bool(entry.get(...))``, so an
+    absent provider signal arrived as a confident ``False``.
+    ``check_no_functions`` fails closed *only* on the key being ABSENT, which
+    the reconstruction made impossible: the check could not have fired on this
+    path no matter what Cloudflare answered.
+
+    Mutant: put a reconstruction back (`{"id": …, "uses_functions": d.uses_functions}`)
+    — the key reappears, ``check_no_functions`` returns clean, and this fails.
+    """
+    harness.client.rollback_uses_functions = OMIT
+    harness.with_verifier(plan=[True, False, True])
+
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run()
+
+    # Non-vacuity: the run really did reach the rollback re-verification.
+    assert harness.client.rollbacks == [PRIOR]
+    restored = harness.verify.calls[-1].deployment
+    assert restored["id"] == PRIOR
+    assert "uses_functions" not in restored
+    findings = check_no_functions(restored)
+    assert findings and "fails closed" in findings[0]
+
+
+def test_a_provider_payload_that_does_carry_the_field_still_passes(
+    harness: Harness,
+) -> None:
+    """The companion half: the check is about the field, not about the dict.
+
+    Without this, the test above would also pass against a payload that carried
+    nothing at all, and "fails closed on absence" would be indistinguishable
+    from "always fails".
+    """
+    harness.with_verifier(plan=[True, False, True])
+
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run()
+
+    restored = harness.verify.calls[-1].deployment
+    assert restored["uses_functions"] is False
+    assert check_no_functions(restored) == []
+
+
+def test_the_sequence_never_reaches_for_the_laundering_rollback(
+    harness: Harness,
+) -> None:
+    """``PagesClient.rollback`` returns a typed deployment, so it is not used.
+
+    ``FakePages`` exposes ``rollback_payload`` and records anything else reached
+    for, so a sequence that called ``client.rollback(...)`` would both fail and
+    say which name it wanted. The source assertion covers the case where a
+    future edit reconstructs the mapping *after* calling the raw method.
+    """
+    harness.with_verifier(plan=[True, False, True])
+
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run()
+
+    assert harness.client.unexpected_attributes == []
+    source = inspect.getsource(orchestrator._fail_production)
+    assert "rollback_payload" in source
+    assert not re.search(r"""["']uses_functions["']\s*:""", source)
+
+
+# --- the entry point ----------------------------------------------------------
+#
+# `publish.yml` runs this module as its own process. Until it had a `main()` the
+# deploy step exited 0 having done nothing: a green job that deployed nothing,
+# whose empty `deployment_id` output then made the signer's cross-check skip
+# itself. Every test below drives `main()` — argv, environment, `$GITHUB_OUTPUT`
+# and the exit code — rather than `run_deployment`, because that gap was
+# invisible to a suite that only ever called the function.
+
+
+BUILD_ID = "20260805.1"
+CODE_SHA = "a" * 40
+ACCOUNT = "acct-1"
+PROJECT = "populus-site"
+TOKEN = "tok-1"
+
+
+@pytest.fixture
+def artifact(tmp_path: Path) -> tuple[Path, Path]:
+    """A downloaded site artifact: ``site/`` plus its SIBLING ``inventory.json``."""
+    root = tmp_path / "site-artifact"
+    source = root / "site"
+    for relpath, payload in SITE.items():
+        target = source / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+    inventory = root / "inventory.json"
+    inventory.write_bytes(render_inventory(build_inventory(source)))
+    return source, inventory
+
+
+@dataclass
+class Cli:
+    """The entry point with every seam faked, so no process and no connection."""
+
+    log: list[tuple]
+    client: FakePages
+    upload: FakeUploader
+    verify: FakeVerifier
+    source: Path
+    inventory: Path
+    output: Path
+
+    def argv(self, *extra: str) -> list[str]:
+        return [
+            "--source",
+            str(self.source),
+            "--inventory",
+            str(self.inventory),
+            "--custom-domain",
+            DOMAIN,
+            *extra,
+        ]
+
+    def run(self, *extra: str, pages: bool = True, **kwargs: Any) -> int:
+        factories: dict[str, Any] = {
+            "upload_factory": lambda: self.upload,
+            "verifier_factory": lambda: self.verify,
+        }
+        if pages:
+            factories["pages_factory"] = lambda: self.client
+        factories.update(kwargs)
+        return main(self.argv(*extra), **factories)
+
+    @property
+    def emitted(self) -> dict[str, str]:
+        """``$GITHUB_OUTPUT`` parsed as the ``key=value`` lines it is written as."""
+        if not self.output.exists():
+            return {}
+        return dict(
+            line.split("=", 1)
+            for line in self.output.read_text(encoding="utf-8").splitlines()
+            if line
+        )
+
+
+@pytest.fixture
+def cli(tmp_path: Path, artifact: tuple[Path, Path], monkeypatch) -> Cli:
+    source, inventory = artifact
+    output = tmp_path / "github-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv(ACCOUNT_ID_ENV, ACCOUNT)
+    monkeypatch.setenv(PROJECT_ENV, PROJECT)
+    monkeypatch.setenv(API_TOKEN_ENV, TOKEN)
+    log: list[tuple] = []
+    return Cli(
+        log=log,
+        client=FakePages(log),
+        upload=FakeUploader(log),
+        verify=FakeVerifier(log),
+        source=source,
+        inventory=inventory,
+        output=output,
+    )
+
+
+def test_the_entry_point_runs_the_whole_sequence(cli: Cli) -> None:
+    """The defect this file exists to close: no ``main()`` at all.
+
+    Without one the module exited 0 with an empty ``deployment_id``, and every
+    assertion below is one the old state fails: the sequence ran, both uploads
+    happened, both verifications happened, and the workflow was handed the id
+    of the deployment that verified.
+    """
+    assert cli.run() == EXIT_DEPLOYED
+
+    assert cli.upload.environments == [PREVIEW, PRODUCTION]
+    assert cli.verify.stages == [PREVIEW, PRODUCTION]
+    assert cli.emitted["outcome"] == "deployed"
+    assert cli.emitted["deployment_id"] == "dep-production"
+    assert cli.emitted["preview_deployment_id"] == "dep-preview"
+    assert cli.emitted["dist_digest"] == cli.upload.calls[0].digest
+    assert cli.emitted["rolled_back_to"] == ""
+
+
+def test_the_entry_point_parses_the_flags_the_workflow_passes(cli: Cli) -> None:
+    """``--source``, ``--inventory``, ``--custom-domain`` and nothing else.
+
+    That is the literal command in ``publish.yml``, so the defaults have to
+    carry the rest: the production branch R8 asserts, and a preview branch that
+    differs from it. A default that matched production would publish the
+    "preview" straight to production.
+    """
+    assert cli.run() == EXIT_DEPLOYED
+
+    assert ("assert-branch", "main") in cli.log
+    assert ("assert-domain", DOMAIN) in cli.log
+    preview_call, production_call = cli.upload.calls
+    assert preview_call.branch == orchestrator.DEFAULT_PREVIEW_BRANCH
+    assert production_call.branch == "main"
+    assert preview_call.branch != production_call.branch
+    assert cli.verify.calls[-1].base_url == DOMAIN_URL
+
+
+def test_the_production_branch_lock_can_be_stated_explicitly(cli: Cli) -> None:
+    """R8's lock is a value, not a constant baked into the module."""
+    cli.client.configured_branch = "trunk"
+
+    assert cli.run("--production-branch", "trunk") == EXIT_DEPLOYED
+    assert ("assert-branch", "trunk") in cli.log
+    assert cli.upload.calls[1].branch == "trunk"
+
+
+def test_the_pages_client_is_built_from_the_environment(cli: Cli, monkeypatch) -> None:
+    """The three credentials the workflow injects, read by these exact names.
+
+    Read through the wrong context (``secrets.`` for a repository VARIABLE) they
+    resolve to the empty string silently, so the names are pinned here and the
+    emptiness is refused below.
+    """
+    seen: dict[str, str] = {}
+
+    def _client(account_id: str, project: str, token: str) -> FakePages:
+        seen.update(account_id=account_id, project=project, token=token)
+        return cli.client
+
+    monkeypatch.setattr(orchestrator, "PagesClient", _client)
+
+    assert cli.run(pages=False) == EXIT_DEPLOYED
+    assert seen == {"account_id": ACCOUNT, "project": PROJECT, "token": TOKEN}
+
+
+@pytest.mark.parametrize("unset", [ACCOUNT_ID_ENV, PROJECT_ENV, API_TOKEN_ENV])
+def test_a_missing_credential_exits_misconfigured_before_any_upload(
+    cli: Cli, monkeypatch, unset: str, capsys
+) -> None:
+    """Fail closed, and fail *early*: nothing is uploaded and nothing is claimed.
+
+    An empty account id or project is not a runtime error somewhere useful — it
+    is a deploy that targets account ``""`` and fails far from its cause.
+    """
+    monkeypatch.setenv(unset, "")
+
+    assert cli.run(pages=False) == EXIT_MISCONFIGURED
+
+    assert unset in capsys.readouterr().err
+    assert cli.upload.calls == []
+    assert cli.log == []
+    assert cli.emitted["outcome"] == "misconfigured"
+    assert cli.emitted["deployment_id"] == ""
+
+
+def test_a_production_verification_failure_exits_rejected(cli: Cli) -> None:
+    """Exit 1, the rollback target reported, and **no** deployment id claimed."""
+    cli.verify = FakeVerifier(cli.log, plan=[True, False, True])
+
+    assert cli.run() == EXIT_REJECTED
+
+    assert cli.client.rollbacks == [PRIOR]
+    assert cli.emitted["outcome"] == "rejected"
+    assert cli.emitted["rolled_back_to"] == PRIOR
+    assert cli.emitted["deployment_id"] == ""
+
+
+def test_a_first_run_failure_exits_with_its_own_code(cli: Cli, capsys) -> None:
+    """TD-4 is not an ordinary rejection and must not page like one.
+
+    Unverified bytes are serving, no rollback happened, and none was possible.
+    A caller that could only see "non-zero" would treat this as the compensated
+    case, which is the one situation where nothing is serving unverified.
+    """
+    cli.client.latest_id = None
+    cli.verify = FakeVerifier(cli.log, plan=[True, False])
+
+    assert cli.run() == EXIT_UNCOMPENSATED
+
+    assert EXIT_UNCOMPENSATED != EXIT_REJECTED
+    assert cli.client.rollbacks == []
+    assert RUNBOOK in capsys.readouterr().err
+    assert cli.emitted["outcome"] == "uncompensated"
+    assert cli.emitted["deployment_id"] == ""
+
+
+def test_a_preview_verification_failure_exits_rejected(cli: Cli) -> None:
+    """R9: production was never touched, and the exit code says rejected."""
+    cli.verify = FakeVerifier(cli.log, plan=[False])
+
+    assert cli.run() == EXIT_REJECTED
+
+    assert cli.upload.environments == [PREVIEW]
+    assert cli.emitted["deployment_id"] == ""
+
+
+def test_an_unreachable_pages_api_exits_unavailable(cli: Cli) -> None:
+    """R17: a 429 is an outage, and an outage is not a negative answer.
+
+    Same non-zero exit as a rejection would make a rate limit indistinguishable
+    from tampering on the loudest channel the project has.
+    """
+    cli.client.fail_with = PagesUnavailable("Cloudflare could not answer: HTTP 429")
+
+    assert cli.run() == EXIT_UNAVAILABLE
+
+    assert EXIT_UNAVAILABLE != EXIT_REJECTED
+    assert cli.upload.calls == []
+    assert cli.emitted["outcome"] == "unavailable"
+
+
+def test_a_rejecting_pages_api_exits_rejected(cli: Cli) -> None:
+    """The other half of R17: Cloudflare answered, and the answer was no."""
+    cli.client.configured_branch = "trunk"
+
+    assert cli.run() == EXIT_REJECTED
+
+    assert cli.upload.calls == []
+    assert cli.emitted["outcome"] == "rejected"
+
+
+def test_the_exit_codes_are_all_distinct() -> None:
+    """Four situations, four codes. A collision silently merges two pages."""
+    codes = [
+        EXIT_DEPLOYED,
+        EXIT_REJECTED,
+        EXIT_UNAVAILABLE,
+        EXIT_MISCONFIGURED,
+        EXIT_UNCOMPENSATED,
+    ]
+    assert len(set(codes)) == len(codes)
+    assert EXIT_DEPLOYED == 0
+
+
+def test_an_unset_github_output_is_not_an_error(cli: Cli, monkeypatch) -> None:
+    """Running outside Actions is a normal thing to do (an operator, a rehearsal)."""
+    monkeypatch.delenv("GITHUB_OUTPUT")
+
+    assert cli.run() == EXIT_DEPLOYED
+    assert not cli.output.exists()
+
+
+def test_the_outputs_are_appended_in_the_key_equals_value_form(cli: Cli) -> None:
+    """The literal ``$GITHUB_OUTPUT`` contract, and appended rather than truncating.
+
+    A step that wrote over the file would discard whatever an earlier step in
+    the same job had already put there.
+    """
+    cli.output.write_text("earlier_step=kept\n", encoding="utf-8")
+
+    assert cli.run() == EXIT_DEPLOYED
+
+    lines = cli.output.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "earlier_step=kept"
+    assert "deployment_id=dep-production" in lines
+    assert all("=" in line for line in lines)
+
+
+# --- what the artifact says about itself, checked before any upload -----------
+
+
+def test_an_inventory_that_is_not_the_tree_aborts_with_zero_uploads(
+    cli: Cli, capsys
+) -> None:
+    """The sweep is scoped to the shipped inventory, so it has to BE the tree.
+
+    A tree that gained, lost or changed a file after its inventory was rendered
+    would be verified against the wrong list — every path in the list could pass
+    while an added file served anything at all.
+    """
+    (cli.source / "assets" / "app.js").write_bytes(b"console.log(2)\n")
+
+    assert cli.run() == EXIT_REJECTED
+
+    assert "is not the inventory of" in capsys.readouterr().err
+    assert cli.upload.calls == []
+    assert cli.log == []
+    assert cli.emitted["outcome"] == "rejected"
+
+
+def test_the_expectations_come_from_the_built_tree(cli: Cli) -> None:
+    """``build_id``/``code_sha``/``stats.json`` are read from the artifact itself.
+
+    Not from a job input: the deploy job asks "is what is serving what we
+    built", and an expectation supplied by the same caller that supplied the
+    bytes makes that question circular. Tying the build id to an attested
+    pointer is the signer's job, in another workflow under another identity.
+    """
+    expectations = artifact_expectations(cli.source, cli.inventory)
+
+    assert expectations.build_id == BUILD_ID
+    assert expectations.code_sha == CODE_SHA
+    assert expectations.stats_bytes == SITE["stats.json"]
+    assert expectations.inventory["dist_digest"] == dist_digest(cli.source)
+
+
+@pytest.mark.parametrize(
+    "index,reason",
+    [
+        (b"<!doctype html><p>no markers here</p>", "0 'populus:build_id'"),
+        (
+            b'<!doctype html><meta name="populus:build_id" content="20260805.1">'
+            b'<meta name="populus:build_id" content="20260805.2">'
+            b'<meta name="populus:code_sha" content="' + b"a" * 40 + b'">',
+            "2 'populus:build_id'",
+        ),
+        (
+            b'<!doctype html><meta name="populus:build_id" content="">'
+            b'<meta name="populus:code_sha" content="' + b"a" * 40 + b'">',
+            "empty 'populus:build_id'",
+        ),
+    ],
+)
+def test_a_tree_whose_markers_are_not_exactly_one_is_refused(
+    cli: Cli, index: bytes, reason: str
+) -> None:
+    """Zero, two, or empty is not a value the served page can be compared to."""
+    (cli.source / "index.html").write_bytes(index)
+    cli.inventory.write_bytes(render_inventory(build_inventory(cli.source)))
+
+    with pytest.raises(ArtifactRefused, match=re.escape(reason)):
+        artifact_expectations(cli.source, cli.inventory)
+
+
+def test_a_missing_source_or_inventory_is_refused(cli: Cli, tmp_path: Path) -> None:
+    """Both halves of the §12.1 envelope, named separately when absent."""
+    with pytest.raises(ArtifactRefused, match="is not a directory"):
+        artifact_expectations(tmp_path / "nope", cli.inventory)
+    with pytest.raises(ArtifactRefused, match="does not exist"):
+        artifact_expectations(cli.source, tmp_path / "nope.json")
+
+
+# --- the entry point wires the REAL production objects -----------------------
+
+
+def test_the_default_uploader_is_the_wrangler_uploader(cli: Cli, monkeypatch) -> None:
+    """Not a fake, and bound to the project name the environment supplied.
+
+    ``main`` builds it only when the caller injects nothing, so this is the one
+    place the production wiring itself is asserted.
+    """
+    built: dict[str, Any] = {}
+
+    def _uploader(**kwargs: Any) -> FakeUploader:
+        built.update(kwargs)
+        return cli.upload
+
+    monkeypatch.setattr("populus.deploy.upload.WranglerUploader", _uploader)
+
+    assert (
+        main(
+            cli.argv(),
+            pages_factory=lambda: cli.client,
+            verifier_factory=lambda: cli.verify,
+        )
+        == EXIT_DEPLOYED
+    )
+    assert built["project"] == PROJECT
+    assert built["lookup"] is cli.client
+
+
+def test_the_default_verifier_is_bound_to_the_artifact(cli: Cli, monkeypatch) -> None:
+    """The real ``DeploymentVerifier``, holding the tree's own expectations.
+
+    The client comes from the injected factory, which is what keeps this test
+    hermetic while still proving ``main`` constructs the production verifier
+    rather than something that only looks like one.
+    """
+    built: dict[str, Any] = {}
+    sentinel = object()
+
+    def _verifier(**kwargs: Any) -> FakeVerifier:
+        built.update(kwargs)
+        return cli.verify
+
+    monkeypatch.setattr("populus.deploy.upload.DeploymentVerifier", _verifier)
+
+    assert (
+        main(
+            cli.argv(),
+            pages_factory=lambda: cli.client,
+            upload_factory=lambda: cli.upload,
+            http_factory=lambda: sentinel,
+        )
+        == EXIT_DEPLOYED
+    )
+    assert built == {
+        "client": sentinel,
+        "build_id": BUILD_ID,
+        "code_sha": CODE_SHA,
+        "stats_bytes": SITE["stats.json"],
+    }

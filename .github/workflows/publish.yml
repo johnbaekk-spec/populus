@@ -129,8 +129,12 @@ jobs:
           echo "fresh=true" >> "$GITHUB_OUTPUT"
           # The build directory is reported by the CLI, never spelled here: the
           # §13.4 guard forbids a staging path literal in any step body.
+          # `grep` exits 1 on no match, so under `set -e` a missing key fails the
+          # step. The earlier `sed` extractor exited 0 and wrote nothing, which
+          # would have handed every downstream job an empty build id.
           grep '^build_dir=' stage.out >> "$GITHUB_OUTPUT"
-          sed -n 's/^staged \([0-9.]*\) at .*/build_id=\1/p' stage.out >> "$GITHUB_OUTPUT"
+          grep '^build_id=' stage.out >> "$GITHUB_OUTPUT"
+          grep '^staging_dir=' stage.out >> "$GITHUB_OUTPUT"
 
       - name: Set up Node
         if: steps.stage.outputs.fresh == 'true'
@@ -162,12 +166,41 @@ jobs:
           POPULUS_BUILD_DIR: ${{ github.workspace }}/${{ steps.stage.outputs.build_dir }}
           POPULUS_DB: ${{ github.workspace }}/populus.db
           POPULUS_TICKER_MAP: ${{ github.workspace }}/no-ticker-registry.json
+          # Without this the site renders "this build withheld the institutional
+          # module — deliberately" for a MISCONFIGURATION: inst.ts looks for
+          # inst_agg.db under the build dir while build.py stages it under
+          # assets/. On an honesty-first site, claiming a deliberate withholding
+          # that never happened is the worst available failure.
+          POPULUS_INST_DB: ${{ github.workspace }}/${{ steps.stage.outputs.staging_dir }}/assets/inst_agg.db
           SITE_CODE_SHA: ${{ github.sha }}
         run: |
           npm run build
           count=$(find dist -type f | wc -l | tr -d ' ')
           [ "$count" -gt 0 ] || { echo "site build produced no files"; exit 1; }
           echo "file_count=$count" >> "$GITHUB_OUTPUT"
+
+      # The artifact BOTH the deploy job and the signer download. Nothing
+      # created it before this step, so `download-artifact` in two separate jobs
+      # was reaching for a name that never existed — and neither job would have
+      # said anything useful about why.
+      #
+      # `populus snapshot-site` freezes dashboard/dist into the §12.1 envelope:
+      # `site/` plus a SIBLING `inventory.json` outside it, so the inventory
+      # never inventories itself. The signer recomputes that inventory from the
+      # tree and refuses to believe the shipped copy, which is the point.
+      - name: Package the site artifact
+        if: steps.stage.outputs.fresh == 'true'
+        run: >-
+          uv run populus snapshot-site --source dashboard/dist --dest site-artifact
+
+      - name: Upload the site artifact
+        if: steps.stage.outputs.fresh == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: site-${{ steps.stage.outputs.build_id }}
+          path: site-artifact
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Finalize build
         if: steps.stage.outputs.fresh == 'true'
@@ -178,6 +211,7 @@ jobs:
           uv run populus finalize-build
           --staging-dir "$(dirname '${{ steps.stage.outputs.build_dir }}')"
           --site-file-count '${{ steps.site.outputs.file_count }}'
+          --dist-dir dashboard/dist
           --data-repo populus-data --backend gh-release --repo "$GH_REPO"
 
       - name: Publish
@@ -257,6 +291,14 @@ jobs:
           name: site-${{ needs.publish.outputs.build_id }}
           path: site-artifact
 
+      # `wrangler` is invoked through `npx`, so this job needs Node too. Without
+      # it `npx` runs against whatever the runner image happens to ship —
+      # unpinned drift on the one tool that actually moves the bytes.
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: dashboard/.node-version
+
       - name: Install uv (version-pinned)
         run: python3 -m pip install --quiet 'uv==0.7.13'
 
@@ -280,6 +322,7 @@ jobs:
           --source site-artifact/site
           --inventory site-artifact/inventory.json
           --custom-domain publicfilings.org
+          --production-branch main
 
   # R20 — a SKIPPED signer job reports success. If POPULUS_RECORD_SIGN_ARMED
   # were unset while publishing stayed armed, the deploy would complete, no
@@ -293,8 +336,11 @@ jobs:
       DATA_REPO_PAT: ${{ secrets.DATA_REPO_PAT }}
       CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
     with:
-      build_id: ${{ needs.publish.outputs.build_id }}
-      deployment_id: ${{ needs.deploy.outputs.deployment_id }}
+      # These names are validated against record-sign.yml's declared inputs at
+      # PARSE time — an undeclared one rejects the whole workflow before any job
+      # starts, including publish.
+      artifact-name: site-${{ needs.publish.outputs.build_id }}
+      cf-production-deployment-id: ${{ needs.deploy.outputs.deployment_id }}
 
   assert-signed:
     needs: [deploy, sign]

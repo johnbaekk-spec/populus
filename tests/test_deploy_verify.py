@@ -19,6 +19,13 @@ The tests are organised by the defect each one exists to catch:
 * **R17** — an outage is not an accusation.
 * **TD-10** — the sweep cannot see *additions*. That is asserted as **not
   detected**, so the limit stays pinned instead of drifting into a claim.
+* **The served-URL mapping** — Cloudflare Pages 307s HTML away from its literal
+  path, so a verbatim sweep of this dashboard (8,170 of 12,543 files are
+  `<route>/index.html`) reported a divergence per page and never reached the
+  marker check at all. The fixture origin therefore *is* a Pages origin: it
+  serves at the mapped URL and answers the literal HTML path with the
+  provider's own 307. Both halves are pinned — the mapping, and the fact that
+  the mapping bought nothing: a 3xx on the *mapped* URL is still a divergence.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from __future__ import annotations
 import ast
 import gzip
 import hashlib
-import importlib
+import importlib.util  # `.util` explicitly: plain `importlib` does not bind it
 import json
 import re
 from pathlib import Path
@@ -46,6 +53,7 @@ from populus.deploy.verify import (
     check_markers,
     check_stats,
     read_markers,
+    served_path,
     verify_deployment,
 )
 from populus.publish import attestation
@@ -122,7 +130,19 @@ def recorded_deployment() -> dict:
 
 
 class _Origin:
-    """A static origin: serves a byte map, 404s everything else.
+    """A Cloudflare Pages origin: byte map at the *served* URL, 404 otherwise.
+
+    Its tables are keyed by **inventory** path (``congress/index.html``) — the
+    coordinates the build and the envelope speak — and it answers at the path
+    Pages actually serves them from (``/congress/``), because that is what the
+    real provider does and a fixture that served HTML at its literal path would
+    make every test here a statement about a server that does not exist.
+
+    The literal HTML path is answered with the provider's own **307**, carrying
+    the documented ``location`` (``/contact.html`` → ``/contact``,
+    ``/about/index.html`` → ``/about/``, ``/index.html`` → ``/``) — verified by
+    probe against a live Pages origin, cache-busting query string and all. So a
+    verifier that forgot to map gets exactly the 3xx production would hand it.
 
     ``overrides`` replaces the response for one path (poisoning a control path,
     injecting a redirect, adding a header); ``raiser`` makes the transport fail
@@ -145,19 +165,39 @@ class _Origin:
         self.catch_all = catch_all
         self.seen: list[str] = []
 
+    @staticmethod
+    def _by_served(table: dict) -> dict:
+        """Re-key an inventory-path table by the URL path Pages answers on.
+
+        Rebuilt per request rather than cached: several tests add a path after
+        construction, and a cached map would quietly serve the stale tree.
+        """
+        return {served_path(key): value for key, value in table.items()}
+
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.seen.append(str(request.url))
         if self.raiser is not None:
             raise self.raiser
         path = request.url.path.lstrip("/")
-        if path in self.overrides:
-            return self.overrides[path]
-        if path in self.served:
+        overrides = self._by_served(self.overrides)
+        if path in overrides:
+            return overrides[path]
+        served = self._by_served(self.served)
+        if path in served:
             return httpx.Response(
                 200,
-                content=self.served[path],
-                headers=self.extra_headers.get(path, {}),
+                content=served[path],
+                headers=self._by_served(self.extra_headers).get(path, {}),
             )
+        if served_path(path) != path:
+            # The provider quirk, reproduced: an HTML path is never served at
+            # its literal URL. Query string preserved, exactly as probing a
+            # live Pages origin showed (`?populus-verify=…` does not suppress
+            # the hop; it is carried onto the target).
+            target = f"/{served_path(path)}"
+            if request.url.query:
+                target += f"?{request.url.query.decode()}"
+            return httpx.Response(307, headers={"location": target})
         if self.catch_all is not None:
             return httpx.Response(200, content=self.catch_all)
         return httpx.Response(404, content=b"<!doctype html><title>404</title>")
@@ -485,6 +525,261 @@ def test_served_stats_must_be_byte_equal_not_json_equal(tmp_path):
     assert "byte-equal" in result.findings[0]
 
 
+# --- inventory path → served URL (the Pages directory format) ----------------
+#
+# The dashboard builds with Astro's `format: "directory"`, so 8,170 of its
+# 12,543 files are HTML that Cloudflare Pages refuses to serve at its literal
+# path — it 307s to the directory/extension-less form. Fetching verbatim
+# produced 8,170 divergences on a *healthy* deployment and, because only a 200
+# populates `bodies`, meant `check_markers` never ran at all. These pin the
+# mapping and, just as importantly, pin that the mapping did not buy the pass
+# by weakening anything.
+
+
+@pytest.mark.parametrize(
+    ("inventory_path", "expected"),
+    [
+        ("congress/index.html", "congress/"),
+        ("congress/members/P000197/index.html", "congress/members/P000197/"),
+        ("index.html", ""),
+        ("404.html", "404"),
+        ("assets/app.js", "assets/app.js"),
+        ("assets/styles.css", "assets/styles.css"),
+        ("stats.json", "stats.json"),
+        ("favicon.svg", "favicon.svg"),
+        ("congress/data/feed.v1.json", "congress/data/feed.v1.json"),
+    ],
+    ids=[
+        "directory-index",
+        "nested-directory-index",
+        "root-index",
+        "bare-html",
+        "js",
+        "css",
+        "json",
+        "svg",
+        "data-shard",
+    ],
+)
+def test_an_inventory_path_maps_to_the_url_the_provider_serves(inventory_path, expected):
+    """The documented rewrite, one case per row.
+
+    `/about/index.html` → `/about/` keeps its trailing slash and `/contact.html`
+    → `/contact` loses its extension, both per Cloudflare's own wording; every
+    non-HTML asset is left alone, because Pages serves those verbatim.
+    """
+    assert served_path(inventory_path) == expected
+
+
+def test_every_inventoried_path_is_fetched_at_its_served_url(tmp_path):
+    """End to end: the exact URL set, not just the mapping function.
+
+    A `.html` anywhere in a requested URL would mean the sweep is asking for a
+    path this provider answers with a 307.
+    """
+    site = _site()
+    origin = _Origin(site)
+    client = origin.client()
+    result = _run(origin, _inventory(tmp_path, site), client=client, cache_bust="deadbeef")
+
+    assert result.ok is True
+    requested = {url.split("?")[0] for url, _follow in client.calls}
+    assert requested == {
+        f"{PREVIEW_URL}/",  # index.html, served at the site root
+        f"{PREVIEW_URL}/congress/",  # congress/index.html
+        f"{PREVIEW_URL}/assets/app.js",
+        f"{PREVIEW_URL}/assets/site.css",
+        f"{PREVIEW_URL}/congress/data/feed.v1.json",
+        f"{PREVIEW_URL}/stats.json",
+        f"{PREVIEW_URL}/_redirects",
+        f"{PREVIEW_URL}/_headers",
+        f"{PREVIEW_URL}/_worker.js",
+        f"{PREVIEW_URL}/populus-never-published-deadbeef",
+    }
+    assert not any("index.html" in url for url, _follow in client.calls)
+    # The site root still gets the cache-buster, and gets it as a query.
+    assert f"{PREVIEW_URL}/?populus-verify=deadbeef" in {url for url, _f in client.calls}
+
+
+def test_the_fixture_origin_reproduces_the_provider_307(tmp_path):
+    """Guards the guard: the fixture must not drift into serving HTML literally.
+
+    If this origin ever answers 200 at `/index.html`, every test above stops
+    being evidence about Cloudflare Pages — the mapping could be deleted and
+    nothing would notice.
+    """
+    site = _site()
+    origin = _Origin(site)
+    client = httpx.Client(transport=httpx.MockTransport(origin.handler))
+
+    for literal, location in (
+        ("/index.html", "/"),
+        ("/congress/index.html", "/congress/"),
+    ):
+        response = client.get(
+            f"{PREVIEW_URL}{literal}?populus-verify=deadbeef", follow_redirects=False
+        )
+        assert response.status_code == 307, literal
+        # The query string does not suppress the hop; it rides along.
+        assert response.headers["location"] == f"{location}?populus-verify=deadbeef"
+
+
+def test_a_site_of_only_directory_style_pages_verifies_clean(tmp_path):
+    """The shape the dashboard actually ships: every page is `<route>/index.html`."""
+    site = {
+        "index.html": _page(),
+        "congress/index.html": _page(extra="<h1>Congress</h1>"),
+        "congress/members/P000197/index.html": _page(extra="<h1>Member</h1>"),
+        "institutional/index.html": _page(extra="<h1>13F</h1>"),
+        "404.html": _page(extra="<h1>Not found</h1>"),
+        "stats.json": STATS_JSON,
+    }
+    origin = _Origin(site)
+    client = origin.client()
+    result = _run(origin, _inventory(tmp_path, site), client=client)
+
+    assert result.findings == ()
+    assert result.ok is True
+    assert result.diverged_paths == ()
+    assert result.files_verified == result.files_total == len(site)
+    # Five of six inventory entries are HTML — the case that used to emit a
+    # divergence per page.
+    assert sum(1 for path in site if path.endswith(".html")) == 5
+
+
+def test_a_tamper_on_a_directory_style_page_is_still_caught(tmp_path):
+    """The rewrite must not have bought the pass by loosening the comparison."""
+    site = {
+        "index.html": _page(),
+        "congress/index.html": _page(extra="<h1>Congress</h1>"),
+        "congress/members/P000197/index.html": _page(extra="<h1>Member</h1>"),
+        "stats.json": STATS_JSON,
+    }
+    inventory = _inventory(tmp_path, site)
+    site["congress/members/P000197/index.html"] = _page(
+        extra="<h1>Member</h1><script>fetch('//evil.invalid')</script>"
+    )
+
+    result = _run(_Origin(site), inventory)
+
+    assert result.ok is False
+    assert result.outcome == attestation.REJECTED
+    # Named in inventory coordinates, not in the URL the fetch used.
+    assert result.diverged_paths == ("congress/members/P000197/index.html",)
+    assert "sha256" in result.findings[0]
+
+
+def test_a_redirect_on_the_mapped_url_is_still_a_divergence(tmp_path):
+    """The no-follow property survives the rewrite — this is the whole bargain.
+
+    The alternative fix (accept one 3xx whose ``location`` looks canonical and
+    re-fetch) was rejected because it cannot tell the provider's own rewrite
+    from an injected `_redirects` line aiming a page at its own directory. Here
+    the hop is served on the *already-mapped* URL and its target holds the
+    correct bytes: a follow-then-compare verifier passes this deployment.
+    """
+    site = _site()
+    inventory = _inventory(tmp_path, site)
+    origin = _Origin(
+        site,
+        overrides={
+            "congress/index.html": httpx.Response(
+                302, headers={"location": "/congress/hijacked/"}
+            )
+        },
+    )
+    origin.served["congress/hijacked/index.html"] = site["congress/index.html"]
+
+    result = _run(origin, inventory)
+
+    assert result.ok is False
+    assert result.outcome == attestation.REJECTED
+    assert result.diverged_paths == ("congress/index.html",)
+    assert "302" in result.findings[0] and "hijacked" in result.findings[0]
+
+
+def test_a_redirect_on_the_mapped_root_url_is_still_a_divergence(tmp_path):
+    """Same property at the root, where the mapping is most aggressive."""
+    site = _site()
+    inventory = _inventory(tmp_path, site)
+    origin = _Origin(
+        site, overrides={"index.html": httpx.Response(301, headers={"location": "/home/"})}
+    )
+
+    result = _run(origin, inventory)
+
+    assert result.ok is False
+    assert "index.html" in result.diverged_paths
+    assert any("301" in finding and "/home/" in finding for finding in result.findings)
+
+
+def test_the_marker_page_body_is_captured_so_check_markers_actually_runs(tmp_path):
+    """Before the mapping, `bodies` was empty and the marker check never ran.
+
+    Only a 200 populates `bodies`, and the marker page's literal URL is a 307 —
+    so `marker_body` was `None` and R19 was reported as "markers unreadable"
+    rather than being evaluated. The fixture proves the check *ran*: the sweep
+    is satisfied (the inventory is built over the served page), so the single
+    finding can only have come from `check_markers` reading a real body.
+    """
+    site = _site()
+    site["index.html"] = _page().replace(CODE_SHA.encode(), b"0" * 40)
+    inventory = _inventory(tmp_path, site)
+
+    result = _run(_Origin(site), inventory)
+
+    assert result.ok is False
+    assert result.diverged_paths == ()  # the sweep is content; R19 is not
+    assert len(result.findings) == 1
+    assert MARKER_CODE_SHA in result.findings[0]
+    assert "mismatch" in result.findings[0]
+    assert not any("unreadable" in finding for finding in result.findings)
+
+
+def test_the_marker_and_stats_defaults_stay_inventory_paths(tmp_path):
+    """`served_path` is applied at fetch time and nowhere else.
+
+    `DEFAULT_MARKER_PATH` indexes the envelope, names the file inside the
+    downloaded artifact (`populus.deploy.record` opens `site/index.html` by it)
+    and keys `bodies`. Rewriting it to `""` would break all three while fixing
+    nothing — the URL is already mapped where the URL is built.
+    """
+    assert verify_module.DEFAULT_MARKER_PATH == "index.html"
+    assert verify_module.DEFAULT_STATS_PATH == "stats.json"
+
+    site = _site()
+    sweep = verify_module.sweep_inventory(
+        _Origin(site).client(),
+        PREVIEW_URL,
+        _inventory(tmp_path, site),
+        cache_bust="deadbeef",
+        keep=(verify_module.DEFAULT_MARKER_PATH,),
+    )
+    assert sweep.divergences == ()
+    assert set(sweep.bodies) == {"index.html"}  # keyed by inventory path
+    body = sweep.bodies["index.html"]
+    assert check_markers(body, build_id=BUILD_ID, code_sha=CODE_SHA) == []
+
+
+def test_two_inventory_entries_served_from_one_url_are_refused(tmp_path):
+    """The mapping is not injective, and a collision is an input problem.
+
+    `about.html` and a bare `about` are two distinct files that Pages serves
+    from one URL. Verifying one of them twice and the other never is not a
+    verdict, so it raises rather than resolving into `ok` or `rejected`.
+    """
+    site = _site()
+    inventory = _inventory(tmp_path, site)
+    entry = dict(inventory["files"][0])
+    entry["path"] = "about.html"
+    inventory["files"].append(entry)
+    inventory["files"].append({**entry, "path": "about"})
+
+    with pytest.raises(VerifyInputError) as raised:
+        _run(_Origin(site), inventory)
+    assert "about.html" in str(raised.value) and "/about" in str(raised.value)
+
+
 # --- redirects disabled ------------------------------------------------------
 
 
@@ -742,10 +1037,28 @@ def test_the_module_opens_nothing_and_names_no_transport_library():
     client is one whose redirect policy lives outside the code that depends on
     it, and redirects-disabled is the property a hijacked path is caught by. A
     later change that adds a default client should have to delete this test on
-    purpose. Re-importing under the autouse no-network guard proves import time
-    performs no I/O.
+    purpose. Re-executing the module body under the autouse no-network guard
+    proves import time performs no I/O.
+
+    **Why this is not ``importlib.reload`` any more.** It was, and the reload
+    was a live test-order bug. ``reload`` re-executes the body into the *same*
+    module object, rebinding ``verify.VerifyUnavailable`` to a brand-new class
+    while ``populus.deploy.record`` — imported earlier and never reloaded —
+    still holds the original. ``record.py``'s ``except VerifyUnavailable`` then
+    stopped catching what the reloaded ``_fetch`` raised, so
+    ``pytest tests/test_deploy_verify.py tests/test_deploy_record.py`` failed
+    while the reverse order passed; alphabetical default collection is the only
+    reason CI ever read green. A teardown fixture cannot undo it — reloading
+    again mints a *third* class rather than restoring the first — so the fix is
+    to stop mutating the shared module at all: execute the body into a fresh
+    throwaway namespace that ``sys.modules`` never sees. The property under test
+    is unchanged. ``tests/test_deploy_record.py`` pins the class identity, so a
+    reintroduced reload fails loudly instead of hiding in the collection order.
     """
-    importlib.reload(verify_module)
+    spec = importlib.util.find_spec("populus.deploy.verify")
+    throwaway = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(throwaway)  # import-time I/O would trip the guard
+    assert throwaway is not verify_module, "the shared module was mutated in place"
 
     primitives = re.compile(
         r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"

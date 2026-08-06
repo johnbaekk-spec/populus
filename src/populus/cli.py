@@ -758,6 +758,59 @@ def _with_backend_options(command):
     return command
 
 
+def _echo_inst_gate_outcome(report) -> None:
+    """Print the M2 gate outcome. Shared so the honesty surface does not
+    depend on which command assembled the build (QA-F5).
+    """
+    # Surface the M2 gate decision for the inst module (R8): a withheld notice
+    # (below the >=95% value-coverage gate) is the honest, owner-accepted
+    # outcome, not an error — congress still publishes.
+    if report.inst_withheld is not None:
+        w = report.inst_withheld
+        cov = f"{w['coverage'] * 100:.2f}%" if w["coverage"] is not None else "N/A"
+        click.echo(
+            f"inst module WITHHELD ({w['reason']}): value-coverage"
+            f" {w['numerator']}/{w['denominator']} = {cov} | cover_failed_count"
+            f" {w['cover_failed_count']} — below the M2 ≥95% gate; congress"
+            " publishes normally"
+        )
+        # R11: name the quarters with no covering 13(f) list.
+        uncovered = w.get("uncovered_quarters") or []
+        if uncovered:
+            click.echo(
+                "  uncovered quarters (no definitional 13(f) list seeded): "
+                + ", ".join(uncovered)
+            )
+    elif report.inst_logical_digest is not None:
+        click.echo(
+            f"inst module included (logical_digest"
+            f" {report.inst_logical_digest[:12]}…)"
+        )
+    # M2-7 §I5: the build's own coverage output states what was tolerated and
+    # which filings were EXCLUDED to produce it — on the withheld path and on the
+    # published path alike (external review F3). One shared rendering.
+    if report.inst_cover_dispositions is not None:
+        from populus.ingest.inst13f import cover_dispositions_from_mapping
+
+        click.echo(f"  {cover_dispositions_from_mapping(report.inst_cover_dispositions)}")
+    # R9: per-period value-coverage figures whenever inst data was measured.
+    for period in report.inst_period_coverage or []:
+        ratio = (
+            f"{period['coverage'] * 100:.2f}%"
+            if period["coverage"] is not None
+            else "N/A"
+        )
+        flag = "list" if period["covered_by_list"] else "no-list"
+        click.echo(
+            f"  period {period['period_of_report']}: {period['numerator']}"
+            f"/{period['denominator']} = {ratio} [{flag}]"
+        )
+    # Persist the gate outcome so `publish` can report it truthfully and can
+    # DISTINGUISH "withheld by the gate" from "no institutional data ingested"
+    # (QA-F5). This lives in .staging/ — operational state, never a published
+    # artifact, so it touches no manifest, digest or inventory.
+
+
 @main.command()
 @click.option(
     "--db",
@@ -809,53 +862,7 @@ def build(
             f"skipped {len(report.skipped_tickers)} non-conforming ticker"
             f" slice(s): {', '.join(report.skipped_tickers)}"
         )
-    # Surface the M2 gate decision for the inst module (R8): a withheld notice
-    # (below the >=95% value-coverage gate) is the honest, owner-accepted
-    # outcome, not an error — congress still publishes.
-    if report.inst_withheld is not None:
-        w = report.inst_withheld
-        cov = f"{w['coverage'] * 100:.2f}%" if w["coverage"] is not None else "N/A"
-        click.echo(
-            f"inst module WITHHELD ({w['reason']}): value-coverage"
-            f" {w['numerator']}/{w['denominator']} = {cov} | cover_failed_count"
-            f" {w['cover_failed_count']} — below the M2 ≥95% gate; congress"
-            " publishes normally"
-        )
-        # R11: name the quarters with no covering 13(f) list.
-        uncovered = w.get("uncovered_quarters") or []
-        if uncovered:
-            click.echo(
-                "  uncovered quarters (no definitional 13(f) list seeded): "
-                + ", ".join(uncovered)
-            )
-    elif report.inst_logical_digest is not None:
-        click.echo(
-            f"inst module included (logical_digest"
-            f" {report.inst_logical_digest[:12]}…)"
-        )
-    # M2-7 §I5: the build's own coverage output states what was tolerated and
-    # which filings were EXCLUDED to produce it — on the withheld path and on the
-    # published path alike (external review F3). One shared rendering.
-    if report.inst_cover_dispositions is not None:
-        from populus.ingest.inst13f import cover_dispositions_from_mapping
-
-        click.echo(f"  {cover_dispositions_from_mapping(report.inst_cover_dispositions)}")
-    # R9: per-period value-coverage figures whenever inst data was measured.
-    for period in report.inst_period_coverage or []:
-        ratio = (
-            f"{period['coverage'] * 100:.2f}%"
-            if period["coverage"] is not None
-            else "N/A"
-        )
-        flag = "list" if period["covered_by_list"] else "no-list"
-        click.echo(
-            f"  period {period['period_of_report']}: {period['numerator']}"
-            f"/{period['denominator']} = {ratio} [{flag}]"
-        )
-    # Persist the gate outcome so `publish` can report it truthfully and can
-    # DISTINGUISH "withheld by the gate" from "no institutional data ingested"
-    # (QA-F5). This lives in .staging/ — operational state, never a published
-    # artifact, so it touches no manifest, digest or inventory.
+    _echo_inst_gate_outcome(report)
     _write_inst_gate_record(data_repo, report)
 
 
@@ -926,8 +933,76 @@ def stage_build_cmd(
             " no site build and no deploy for this run"
         )
         raise SystemExit(3)
-    click.echo(f"staged {staged.build_id} at {staged.staging_dir}")
+    # Machine-readable `key=value` lines, deliberately in the same shape the
+    # workflow appends straight to $GITHUB_OUTPUT. The earlier version emitted
+    # `staged <id> at <dir>` and the workflow recovered the id with a `sed`
+    # regex over that prose — which exits 0 on no match, so a reworded log line
+    # would have silently produced an EMPTY build id, a `site-` artifact name,
+    # and a green run. A log line is not a contract; these two are.
+    click.echo(f"build_id={staged.build_id}")
     click.echo(f"build_dir={Path(staged.staging_dir) / 'build'}")
+    click.echo(f"staging_dir={staged.staging_dir}")
+    click.echo(f"staged {staged.build_id} at {staged.staging_dir}")
+
+
+@main.command("snapshot-site")
+@click.option(
+    "--source",
+    "source",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="The site build output to freeze (dashboard/dist).",
+)
+@click.option(
+    "--dest",
+    "dest",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="Destination directory; receives site/ and a SIBLING inventory.json.",
+)
+def snapshot_site_cmd(source: str, dest: str) -> None:
+    """Freeze the built site into the §12.1 upload envelope.
+
+    Produces ``<dest>/site/`` plus ``<dest>/inventory.json`` — the inventory is
+    a **sibling** of the tree, never inside it, so it never inventories itself
+    and is never deployed.
+
+    The freeze is what makes "the bytes we hashed are the bytes we uploaded"
+    true (R4): everything downstream reads the sealed copy, so the source can
+    keep changing without moving the digest.
+    """
+    import shutil
+
+    from populus.deploy.snapshot import SnapshotError, freeze_tree
+    from populus.publish.digests import DigestError
+    from populus.publish.inventory import write_inventory
+
+    dest_path = Path(dest)
+    dest_path.mkdir(parents=True, exist_ok=True)
+    site_dir = dest_path / "site"
+    if site_dir.exists():
+        raise click.ClickException(f"{site_dir} already exists — refusing to overwrite")
+    try:
+        snapshot = freeze_tree(source, parent=dest_path)
+        try:
+            # Move the sealed tree into place under its published name. The seal
+            # is advisory (we own the files), so the modes come back off first.
+            for path in sorted(snapshot.path.rglob("*"), reverse=True):
+                path.chmod(0o700 if path.is_dir() else 0o600)
+            snapshot.path.chmod(0o700)
+            snapshot.path.rename(site_dir)
+        except BaseException:
+            snapshot.cleanup()
+            raise
+        inventory = write_inventory(site_dir, dest_path / "inventory.json")
+    except (SnapshotError, DigestError, OSError) as exc:
+        raise click.ClickException(str(exc))
+    click.echo(f"dist_digest={inventory['dist_digest']}")
+    click.echo(f"file_count={len(inventory['files'])}")
+    click.echo(
+        f"froze {len(inventory['files'])} files into {site_dir}"
+        f" (dist_digest {inventory['dist_digest'][:12]}…)"
+    )
 
 
 @main.command("finalize-build")
@@ -945,10 +1020,19 @@ def stage_build_cmd(
     type=int,
     help="Number of files the site build emitted (R3: never defaulted).",
 )
+@click.option(
+    "--dist-dir",
+    "dist_dir",
+    type=click.Path(file_okay=False),
+    help="The site build output. Its stats.json is patched with the same bytes "
+         "as the canonical copy and the two are asserted byte-equal (R24, §12.1 "
+         "step 2). Omit only when there is no site — the wrapper build path.",
+)
 @_with_backend_options
 def finalize_build_cmd(
     staging_dir: str,
     site_file_count: int,
+    dist_dir: str | None,
     data_repo: str,
     backend: str,
     repo_slug: str | None,
@@ -965,6 +1049,7 @@ def finalize_build_cmd(
         PublishError,
         finalize_build,
         read_stage_state,
+        require_site_file_count,
     )
     from populus.publish.digests import DigestError
 
@@ -973,13 +1058,26 @@ def finalize_build_cmd(
         staged = read_stage_state(
             staging_dir, data_repo=data_repo, backend=make_backend(data_repo)
         )
-        report = finalize_build(staged, site_file_count=site_file_count)
+        report = finalize_build(
+            staged, site_file_count=site_file_count, dist_dir=dist_dir
+        )
     except (PublishError, BackendError, DigestError, OSError) as exc:
         raise click.ClickException(str(exc))
+    # QA-F5, restored at the new entry point: `populus build` wrote this record
+    # and the two-phase path did not, so a WITHHELD M2 module published as "no
+    # build-time gate record — rebuild to record the reason" when the truth was
+    # "withheld by the >=95% value-coverage gate". The honesty surface must not
+    # depend on which command assembled the build.
+    _write_inst_gate_record(data_repo, report)
+    _echo_inst_gate_outcome(report)
     click.echo(
         f"finalized build {report.build_id} ({report.artifact_count} artifacts,"
         f" site_file_count {site_file_count}) at {report.staging_dir}"
     )
+    # R3: the count is asserted here, at the boundary the deploying path crosses,
+    # rather than trusted. `require_site_file_count` had no production caller at
+    # all until this line -- four green tests over dead code.
+    require_site_file_count(report.staging_dir)
 
 
 @main.command()

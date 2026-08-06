@@ -1568,6 +1568,23 @@ def write_stage_state(staged: StagedBuild) -> Path:
     return path
 
 
+def _recompute_db_logical(snapshot_path: Path) -> str:
+    """The congress logical digest, read from the snapshot rather than believed.
+
+    `finalize_build` runs in a different process from `stage_build`, so every
+    value crossing that boundary is attacker-controlled in the same sense a file
+    on disk is. Anything cheap to recompute is recomputed.
+    """
+    if not snapshot_path.is_file():
+        raise PublishError(f"staged build is missing {snapshot_path}")
+    snapshot = connect(str(snapshot_path))
+    try:
+        ensure_views(snapshot)
+        return logical_digest(snapshot)
+    finally:
+        snapshot.close()
+
+
 def read_stage_state(
     staging_dir: Path | str, *, data_repo: Path | str, backend: ReleaseBackend
 ) -> StagedBuild:
@@ -1588,6 +1605,30 @@ def read_stage_state(
             "the staged build was preserved or reconciled, not freshly assembled"
             " — there is nothing to finalize and nothing to deploy"
         )
+
+    # The build id comes from the DIRECTORY, never from the sidecar.
+    #
+    # Trusting `payload["build_id"]` reintroduced the exact failure QA round 7
+    # exists to prevent: a hand-edited sidecar published real congress.db bytes
+    # under a fabricated identity that never passed through `next_build_id`'s
+    # durable high-water mark, so one immutable build id could name two
+    # different byte sets. The directory is the authority because it is what
+    # `stage_build` actually allocated; the sidecar's copy is kept only as a
+    # cross-check, and a disagreement is a hard error rather than a silent
+    # preference for either side.
+    build_id = staging_dir.name
+    if _BUILD_ID.match(build_id) is None:
+        raise PublishError(
+            f"staging directory {staging_dir} is not named after a valid build id"
+        )
+    claimed = payload.get("build_id")
+    if claimed != build_id:
+        raise PublishError(
+            f"staged build state claims build_id {claimed!r} but lives in "
+            f"{build_id!r} — refusing to finalize a build whose identity is in "
+            "dispute"
+        )
+
     build_dir = staging_dir / "build"
     stats_path = build_dir / "congress" / "stats.json"
     if not stats_path.is_file():
@@ -1601,11 +1642,17 @@ def read_stage_state(
         "register": licenses.load_register(),
         "backend": backend,
         "stats_document": json.loads(stats_path.read_text(encoding="utf-8")),
-        "build_id": payload["build_id"],
+        "build_id": build_id,
         "created_at": payload["created_at"],
         "previous_build_id": payload["previous_build_id"],
         "watermarks": payload["watermarks"],
-        "db_logical": payload["db_logical"],
+        # Recomputed from the snapshot, never taken from the sidecar. A forged
+        # `db_logical` flows straight into the manifest's congress.db entry, and
+        # `journal_load`'s consistency check compares it against the journal —
+        # which was written from the same forged value, so the two agree.
+        # `run_verify` would catch it, but only after Publish has made the
+        # Release immutable.
+        "db_logical": _recompute_db_logical(staging_dir / "assets" / DB_ARTIFACT),
         "inst_logical": payload["inst_logical"],
         "inst_watermarks": payload["inst_watermarks"],
         "inst_withheld": payload["inst_withheld"],
@@ -1616,7 +1663,7 @@ def read_stage_state(
         "reconciled": payload["reconciled"],
     }
     return StagedBuild(
-        build_id=payload["build_id"],
+        build_id=build_id,
         staging_dir=str(staging_dir),
         fresh=True,
         _state=state,
@@ -1755,6 +1802,7 @@ def finalize_build(
     staged: StagedBuild,
     *,
     site_file_count: int | None = None,
+    dist_dir: Path | str | None = None,
 ) -> BuildReport:
     """Complete *staged*: patch the served file count, re-seal, write the journal.
 
@@ -1781,11 +1829,31 @@ def finalize_build(
         stats_document = dict(state["stats_document"])
         stats_document["site_file_count"] = site_file_count
         state["stats_document"] = stats_document
-        # Rendered by the SAME writer that produced the canonical copy, so the
-        # bytes stay byte-comparable with the served copy (R24).
-        _write_staged(
-            state["build_dir"], "congress/stats.json", render_stats(stats_document)
-        )
+        # ONE writer, TWO destinations. §12.1 step 2 requires the count written
+        # "into the one stats.json in *both* places identically … assert the two
+        # copies are byte-equal", and the site build has already emitted its copy
+        # from the PROVISIONAL document (count still null) by the time we get
+        # here. Patching only the canonical copy would leave the live site
+        # serving `site_file_count: null` forever while the published manifest
+        # reports the real integer — two documents §12.1 promises are identical.
+        rendered = render_stats(stats_document)
+        _write_staged(state["build_dir"], "congress/stats.json", rendered)
+        if dist_dir is not None:
+            served = Path(dist_dir) / "stats.json"
+            if not served.is_file():
+                raise PublishError(
+                    f"no served stats.json at {served} — the site build did not "
+                    "emit one, so the two copies cannot be made identical (R24)"
+                )
+            served.write_text(rendered, encoding="utf-8")
+            # Assert rather than assume: this is the byte-equality §12.1 names,
+            # and it is the only place both copies exist at once.
+            canonical = (state["build_dir"] / "congress" / "stats.json").read_bytes()
+            if served.read_bytes() != canonical:
+                raise PublishError(
+                    "the served and canonical stats.json differ after patching — "
+                    "R24's byte-equality does not hold"
+                )
 
     report = _seal_build(state, provisional=False)
     assert report is not None  # provisional=False always returns a report

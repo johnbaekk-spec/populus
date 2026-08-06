@@ -403,6 +403,11 @@ def test_the_site_build_supplies_the_whole_env_contract() -> None:
             "POPULUS_BUILD_DIR",
             "POPULUS_DB",
             "POPULUS_TICKER_MAP",
+            # Without this the site renders "withheld — deliberately" for a
+            # misconfiguration: inst.ts looks under the build dir, build.py
+            # stages the db under assets/. The whole institutional module
+            # silently disappears and the page claims it was on purpose.
+            "POPULUS_INST_DB",
             "SITE_CODE_SHA",
         ):
             assert required in env, (
@@ -602,4 +607,167 @@ def test_no_name_is_read_as_both_a_secret_and_a_variable() -> None:
             f"vars in {sorted(set(as_var[name]))})"
             for name in conflicted
         )
+    )
+
+
+def test_every_downloaded_artifact_is_uploaded_somewhere() -> None:
+    """A `download-artifact` whose name nothing uploads fails at RUN time, in a
+    different job, with a message about the artifact rather than about the gap.
+
+    Two jobs downloaded `site-<build_id>` while no workflow contained a single
+    `upload-artifact` step. Nothing structural noticed, because each job's YAML
+    is individually valid.
+    """
+    workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
+    uploaded: set[str] = set()
+    downloaded: list[tuple[str, str]] = []
+    for path in workflows:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job in (doc.get("jobs") or {}).values():
+            for step in (job.get("steps") or []):
+                uses = str(step.get("uses", ""))
+                name = str((step.get("with") or {}).get("name", ""))
+                if "actions/upload-artifact" in uses:
+                    uploaded.add(_artifact_shape(name))
+                elif "actions/download-artifact" in uses:
+                    downloaded.append((path.name, _artifact_shape(name)))
+    # A name that is ENTIRELY an expression is supplied by the caller, so this
+    # workflow cannot know it. Those are covered by the reusable-workflow input
+    # check below instead: the input must be `required` with no default, so a
+    # caller cannot silently get a wrong one.
+    missing = sorted(
+        f"{wf}: downloads {shape!r}"
+        for wf, shape in downloaded
+        if shape != "*" and shape not in uploaded
+    )
+    assert missing == [], (
+        "these artifact names are downloaded but never uploaded by any workflow "
+        f"in this repo: {missing}. Uploaded names: {sorted(uploaded)}"
+    )
+
+
+def _artifact_shape(name: str) -> str:
+    """Collapse `${{ … }}` expressions so a name matches across jobs.
+
+    The producer says `site-${{ steps.stage.outputs.build_id }}` and the consumer
+    says `site-${{ needs.publish.outputs.build_id }}` — the same artifact by
+    construction, different expression text.
+    """
+    return re.sub(r"\$\{\{[^}]*\}\}", "*", name).strip()
+
+
+def test_a_caller_supplied_artifact_name_has_no_default() -> None:
+    """A default that is wrong for the only real caller is worse than none.
+
+    `record-sign.yml`'s `artifact-name` defaulted to `site` while the publisher
+    uploads `site-<build_id>`. A caller that omitted the input would download
+    nothing and fail inside the signer with a message about a missing artifact
+    rather than about the mismatch.
+    """
+    for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        trigger = doc.get("on") or doc.get(True) or {}
+        inputs = ((trigger.get("workflow_call") or {}).get("inputs")) or {}
+        # Only inputs actually USED as an artifact name. `dist-artifact-id` and
+        # `dist-artifact-expires-at` are optional provenance metadata recorded as
+        # null when absent — matching on the word "artifact" swept those in and
+        # would have forced a requirement the design deliberately does not have.
+        rendered = path.read_text(encoding="utf-8")
+        name_inputs = {
+            m for m in inputs if f"name: ${{{{ inputs.{m} }}}}" in rendered
+        }
+        for name, spec in inputs.items():
+            if name not in name_inputs:
+                continue
+            assert spec.get("required") is True, (
+                f"{path.name}: `{name}` must be required — a caller that omits "
+                "it gets a name nothing uploaded"
+            )
+            assert "default" not in spec, (
+                f"{path.name}: `{name}` carries a default; the only real caller "
+                "supplies a different value, so the default can only ever be wrong"
+            )
+
+
+def test_reusable_workflow_calls_pass_only_declared_inputs() -> None:
+    """GitHub validates `with:` against the callee's inputs at PARSE time.
+
+    An undeclared input rejects the ENTIRE workflow before any job starts —
+    including the publish job that works today. This actually happened: the
+    `sign` job passed `build_id`/`deployment_id` while `record-sign.yml`
+    declared `artifact-name`/`cf-production-deployment-id`/two others. Zero
+    overlap, five plan reviews, a green suite, and nothing could run.
+    """
+    workflows_dir = REPO_ROOT / ".github" / "workflows"
+    problems: list[str] = []
+    for path in sorted(workflows_dir.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in (doc.get("jobs") or {}).items():
+            uses = str(job.get("uses", ""))
+            if not uses.startswith("./.github/workflows/"):
+                continue
+            # `lstrip("./")` strips CHARACTERS, not a prefix — it ate the
+            # leading dot of ".github". Use removeprefix.
+            callee_path = REPO_ROOT / uses.removeprefix("./")
+            assert callee_path.is_file(), f"{path.name}:{job_name} calls missing {uses}"
+            callee = yaml.safe_load(callee_path.read_text(encoding="utf-8"))
+            trigger = callee.get("on") or callee.get(True) or {}
+            call = (trigger.get("workflow_call") or {})
+            declared = set((call.get("inputs") or {}).keys())
+            declared_secrets = set((call.get("secrets") or {}).keys())
+            passed = set((job.get("with") or {}).keys())
+            passed_secrets = set((job.get("secrets") or {}).keys())
+            for undeclared in sorted(passed - declared):
+                problems.append(
+                    f"{path.name}:{job_name} passes input {undeclared!r} which "
+                    f"{callee_path.name} does not declare"
+                )
+            for undeclared in sorted(passed_secrets - declared_secrets):
+                problems.append(
+                    f"{path.name}:{job_name} passes secret {undeclared!r} which "
+                    f"{callee_path.name} does not declare"
+                )
+            required = {
+                name
+                for name, spec in (call.get("inputs") or {}).items()
+                if (spec or {}).get("required") is True
+            }
+            for absent in sorted(required - passed):
+                problems.append(
+                    f"{path.name}:{job_name} omits required input {absent!r} of "
+                    f"{callee_path.name}"
+                )
+    assert problems == [], "reusable-workflow call mismatches:\n  " + "\n  ".join(problems)
+
+
+def test_every_populus_subcommand_the_workflows_invoke_exists() -> None:
+    """A workflow can name a subcommand that was never written.
+
+    This happened three times in one run: `python -m populus.deploy.orchestrator`
+    with no `main()`, `record.py gate` with no such subparser, and
+    `populus snapshot-site` referenced in a step written ten minutes before the
+    command existed. Each is syntactically fine YAML and fails only on a runner.
+    """
+    import click
+
+    from populus.cli import main as cli_main
+
+    ctx = click.Context(cli_main)
+    known = set(cli_main.list_commands(ctx))
+    invoked: set[tuple[str, str]] = set()
+    for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job in (doc.get("jobs") or {}).values():
+            for step in (job.get("steps") or []):
+                for match in re.finditer(
+                    r"populus\s+([a-z][a-z0-9-]*)", str(step.get("run", ""))
+                ):
+                    invoked.add((path.name, match.group(1)))
+    unknown = sorted(
+        f"{wf}: `populus {cmd}`" for wf, cmd in invoked if cmd not in known
+    )
+    assert unknown == [], (
+        "workflows invoke subcommands that do not exist: "
+        + "; ".join(unknown)
+        + f". Known: {sorted(known)}"
     )

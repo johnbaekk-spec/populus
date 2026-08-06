@@ -27,6 +27,23 @@ looks right to whoever asks the way we ask and wrong to everyone else;
 following the hop and hashing what comes back would launder that into a pass.
 The hop itself is the finding.
 
+**Why the URL fetched is not the inventory path.** Cloudflare Pages does not
+serve HTML at its literal path: it 307s `…/index.html` to the directory form
+and `…/x.html` to the extension-less form, documented as "`/contact.html` will
+be redirected to `/contact`, and `/about/index.html` will be redirected to
+`/about/`", and confirmed by probe (a cache-busting query string does not
+suppress it; the parameter is carried onto the redirect target). The dashboard
+builds with Astro's `format: "directory"`, so 8,170 of its 12,543 files are
+HTML — fetching each at its literal path would produce 8,170 divergences on a
+healthy deployment and *no* marker check at all, since only a 200 populates
+``bodies``. Every inventory path is therefore mapped through
+:func:`served_path` to the URL the provider actually answers on, **and the
+mapped URL is still fetched with redirects disabled**. That ordering is the
+whole point: the alternative — follow one hop when the ``location`` looks
+canonical — cannot distinguish the provider's own rewrite from a `_redirects`
+line aiming a page at its own directory, so it would retire the detection this
+module exists for. A 3xx on a *mapped* URL remains a divergence.
+
 **Why the scope is `expected_paths` and never "full".** Fetching every
 inventoried path proves every *expected* file is present and correct. It does
 not prove closure: an *added* file, route or provider control is invisible to
@@ -93,6 +110,7 @@ __all__ = [
     "check_stats",
     "probe_control_paths",
     "read_markers",
+    "served_path",
     "sweep_inventory",
     "verify_deployment",
 ]
@@ -174,8 +192,18 @@ _REQUEST_HEADERS = {"cache-control": "no-cache", "pragma": "no-cache"}
 #: attestation fetcher's treatment of 403/429. Everything >= 500 joins them.
 _NO_ANSWER_STATUSES = frozenset({403, 408, 425, 429})
 
+#: Both are **inventory** paths, not URLs, and stay that way: they index the
+#: envelope, name the file inside the downloaded artifact
+#: (``populus.deploy.record`` opens ``site/index.html`` with this), and key
+#: :attr:`SweepResult.bodies`. :func:`served_path` is applied at the moment of
+#: fetching and nowhere else, so the mapping never leaks into an identifier.
 DEFAULT_MARKER_PATH = "index.html"
 DEFAULT_STATS_PATH = "stats.json"
+
+#: The document Pages serves for a directory, and the suffix it strips. Named
+#: because :func:`served_path` and the collision guard must agree on them.
+_INDEX_DOCUMENT = "index.html"
+_HTML_SUFFIX = ".html"
 
 
 class VerifyInputError(ValueError):
@@ -425,6 +453,11 @@ def probe_control_paths(
     A never-published path is probed alongside them: a catch-all rewrite
     (`/* /index.html 200`) answers 200 for a path that has never existed, and
     that is the only cheap signal of one.
+
+    These paths are probed **literally**, without :func:`served_path`: the
+    claim being tested is that the control file is not served where it lives,
+    and none of them is HTML, so the provider's index/extension rewrite does
+    not apply to any of them anyway.
     """
     findings: list[str] = []
     probes = list(control_paths) + [f"/populus-never-published-{cache_bust}"]
@@ -455,6 +488,37 @@ def check_headers(
     ]
 
 
+# --- inventory path → served URL path ----------------------------------------
+
+
+def served_path(path: str) -> str:
+    """The URL path the provider answers 200 on for the inventoried *path*.
+
+    Three rewrites, matching what Cloudflare Pages documents and what probing a
+    live Pages origin returns:
+
+    * ``index.html`` → ``""`` (the site root; the observed ``location`` is ``/``)
+    * ``<dir>/index.html`` → ``<dir>/`` (trailing slash kept — Pages redirects
+      `/about/index.html` to `/about/`, not to `/about`)
+    * ``<name>.html`` → ``<name>``
+
+    Everything else — ``.js``, ``.css``, ``.json``, images, fonts — is returned
+    unchanged, because Pages serves non-HTML assets at their literal path.
+
+    This is a rewrite of the *request*, never of the *identity*: the returned
+    value is used to build one URL and is not stored, reported or compared.
+    Divergences, ``bodies`` keys and ``diverged_paths`` all stay in inventory
+    coordinates, so a finding still names the file the build produced.
+    """
+    if path == _INDEX_DOCUMENT:
+        return ""
+    if path.endswith(f"/{_INDEX_DOCUMENT}"):
+        return path[: -len(_INDEX_DOCUMENT)]
+    if path.endswith(_HTML_SUFFIX):
+        return path[: -len(_HTML_SUFFIX)]
+    return path
+
+
 # --- the inventory-wide sweep (R15) ------------------------------------------
 
 
@@ -474,10 +538,15 @@ def sweep_inventory(
     and a hash-only comparison accepts an entry whose recorded length the
     served body contradicts.
 
+    Each entry is fetched at :func:`served_path` of its inventory path — the
+    URL the provider answers on — still with redirects disabled, so a 3xx on
+    that mapped URL is reported exactly as it always was.
+
     *keep* names paths whose decoded body the caller still needs (the marker
     page, ``stats.json``) — retained from **this** fetch rather than fetched
     again, so the marker check and the sweep are statements about one response
-    and not two.
+    and not two. Its keys are inventory paths: the mapping is a fetch-time
+    detail and a caller that asked for ``index.html`` gets ``index.html`` back.
     """
     entries = _entries(inventory)
     kept = set(keep)
@@ -489,15 +558,18 @@ def sweep_inventory(
     verified = 0
 
     for entry in entries:
-        fetched = _fetch(client, _url(base_url, entry.path, cache_bust))
+        served = served_path(entry.path)
+        fetched = _fetch(client, _url(base_url, served, cache_bust))
         status = fetched.status_code
         if 300 <= status < 400:
             location = fetched.headers.get("location", "")
             divergences.append(
                 Divergence(
                     entry.path,
-                    f"HTTP {status} redirect to {location!r} — a 3xx on an "
-                    "inventoried path is a hijack, not a hop to follow",
+                    f"HTTP {status} at /{served} redirect to {location!r} — a 3xx "
+                    "on the served URL of an inventoried path is a hijack, not a "
+                    "hop to follow (the provider's own index/extension rewrite is "
+                    "already applied, so there is nothing legitimate left to hop)",
                 )
             )
             continue
@@ -683,6 +755,13 @@ def _entries(inventory: Mapping[str, Any]) -> list[_Entry]:
 
     entries: list[_Entry] = []
     seen: set[str] = set()
+    # Two entries can be distinct files and still be served from one URL —
+    # `about.html` and a bare `about`, or `.html` and `index.html`. The tree
+    # this ships (12,543 files) has no such pair, but the mapping is not
+    # injective in general and a silent collision would let one of the two be
+    # verified twice while the other was never fetched at all. Raised, not
+    # folded into a verdict: the ambiguity is in the inputs.
+    served_by: dict[str, str] = {}
     for raw in files:
         if not isinstance(raw, Mapping):
             raise VerifyInputError(f"inventory entry is not a mapping: {raw!r}")
@@ -700,12 +779,28 @@ def _entries(inventory: Mapping[str, Any]) -> list[_Entry]:
         if path in seen:
             raise VerifyInputError(f"inventory lists {path!r} twice")
         seen.add(path)
+        served = served_path(path)
+        collides_with = served_by.get(served)
+        if collides_with is not None:
+            raise VerifyInputError(
+                f"inventory entries {collides_with!r} and {path!r} are both "
+                f"served at /{served} — one URL cannot verify two files, and "
+                "guessing which one it answered for is not verification"
+            )
+        served_by[served] = path
         entries.append(_Entry(path=path, size=size, sha256=digest))
     return entries
 
 
 def _url(base_url: str, path: str, cache_bust: str) -> str:
-    """§12.1 path → URL, verbatim: no extension stripping, no index rewriting.
+    """Origin + ``/`` + *path* + the cache-buster, verbatim.
+
+    *path* is taken as already-served coordinates: :func:`sweep_inventory`
+    passes it through :func:`served_path` first, and the control probes pass
+    their literal path because a control file must 404 where it literally
+    lives. Doing the rewrite in one named place instead of here keeps this
+    function a formatter and keeps the provider quirk somewhere a reader can
+    find it.
 
     Plain string work rather than a URL library, for the same reason the SEC
     client's host guard is plain string work: the parsers that would be
