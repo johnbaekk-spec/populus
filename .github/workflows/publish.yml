@@ -331,6 +331,21 @@ jobs:
   # below; `skipped` is not `success`.
   sign:
     needs: [publish, deploy]
+    # A called workflow CANNOT escalate beyond the calling job's token. Without
+    # this block the job inherits the workflow-level `contents: read`, while
+    # record-sign.yml declares contents/id-token/attestations write — and GitHub
+    # rejects the escalation at STARTUP, before any job runs. Two dispatches
+    # died as `startup_failure` with no annotation and a valid-per-actionlint
+    # file before this was found.
+    #
+    # These are granted on the CALLING job, not raised workflow-wide, so §14's
+    # per-job least privilege holds: the publish and deploy jobs keep their own
+    # narrower grants. This job mints the deployment attestation and commits the
+    # generation to populus-data, which is what each scope is for.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/record-sign.yml
     secrets:
       DATA_REPO_PAT: ${{ secrets.DATA_REPO_PAT }}

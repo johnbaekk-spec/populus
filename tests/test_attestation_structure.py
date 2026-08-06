@@ -771,3 +771,45 @@ def test_every_populus_subcommand_the_workflows_invoke_exists() -> None:
         + "; ".join(unknown)
         + f". Known: {sorted(known)}"
     )
+
+
+def test_a_reusable_workflow_call_grants_what_the_callee_declares() -> None:
+    """A called workflow cannot escalate beyond the CALLING JOB's token.
+
+    Omit `permissions:` on the calling job and it inherits the workflow-level
+    grant; if the callee declares more, GitHub fails the run at STARTUP — before
+    any job runs, with no annotation, and with a file that `actionlint` passes
+    clean. Two dispatches died exactly that way.
+
+    Checking it here is cheap and the alternative is discovering it on a live
+    dispatch, which is where it was in fact discovered.
+    """
+    workflows_dir = REPO_ROOT / ".github" / "workflows"
+    problems: list[str] = []
+    for path in sorted(workflows_dir.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        workflow_perms = doc.get("permissions") or {}
+        for job_name, job in (doc.get("jobs") or {}).items():
+            uses = str(job.get("uses", ""))
+            if not uses.startswith("./.github/workflows/"):
+                continue
+            callee = yaml.safe_load(
+                (REPO_ROOT / uses.removeprefix("./")).read_text(encoding="utf-8")
+            )
+            needed = callee.get("permissions") or {}
+            granted = job.get("permissions")
+            effective = workflow_perms if granted is None else granted
+            for scope, level in needed.items():
+                if level != "write":
+                    continue
+                if effective.get(scope) != "write":
+                    problems.append(
+                        f"{path.name}:{job_name} calls {uses} which needs "
+                        f"`{scope}: write`, but the calling job grants "
+                        f"`{scope}: {effective.get(scope, 'nothing')}`"
+                        + ("" if granted is not None else " (inherited)")
+                    )
+    assert problems == [], (
+        "reusable-workflow permission escalations — these fail at startup:\n  "
+        + "\n  ".join(problems)
+    )
