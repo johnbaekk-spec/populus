@@ -1,0 +1,739 @@
+"""§12.1 R9/R11/R15/R16/R17/R19: what the live site actually served.
+
+A deployment is green only on live proof, and this module is where the proof is
+taken. It answers one question — *are the bytes on the domain the bytes we
+hashed?* — inventory-wide, because the marker-only version of that question is
+vacuous.
+
+**Why marker checks are not enough** (ARCHITECTURE §12.1, the sentence at
+`:320`). A deploy job that has been compromised can keep `build_id`, `code_sha`
+and `stats.json` exactly right and replace every HTML and JS file behind them —
+the three fields it left alone are precisely the three a marker check reads. So
+:func:`verify_deployment` fetches **every path in the published inventory**,
+compares the content-decoded body hash **and** its length against the recorded
+entry, and names the exact paths that diverged.
+
+**Why markers are still parsed by name.** The site also embeds `build_id` in a
+page-level JSON blob, so ``build_id in document`` is True even when the whole
+footer has been replaced. Markers are therefore read from
+``<meta name="populus:…" content="…">`` **by name** and compared with ``==``.
+Never containment, and never an abbreviation: the dashboard's dev fallback
+truncates a sha to 7 characters, and a 7-character prefix "matching" a full
+digest is exactly the false pass this refuses.
+
+**Why redirects are disabled.** A 3xx on an inventoried path is a failure, not
+something to follow. An injected `_redirects` can point a path at content that
+looks right to whoever asks the way we ask and wrong to everyone else;
+following the hop and hashing what comes back would launder that into a pass.
+The hop itself is the finding.
+
+**Why the scope is `expected_paths` and never "full".** Fetching every
+inventoried path proves every *expected* file is present and correct. It does
+not prove closure: an *added* file, route or provider control is invisible to
+it, because Cloudflare treats `_redirects`, `_headers`, `_worker.js` and
+Functions as configuration rather than serving them as assets. Three bounded
+provider checks narrow that gap — a no-Functions assertion, 404 probes on the
+control paths (plus one never-published path, which is what a `/* … 200` splat
+rewrite would trip), and a response-header allowlist. What remains is declared
+as **TD-10**, and a test pins the non-detection as *not detected* so the limit
+stays a known limit instead of quietly becoming a claim.
+
+**Why an outage is not an accusation** (R17). A transport failure, a 429 or a
+5xx means no answer was obtained; it is reported as ``unavailable``, exactly as
+``populus.publish.attestation`` separates ``UNAVAILABLE`` from ``REJECTED`` —
+the same constants are imported here rather than re-declared, so the two cannot
+drift. Reading a rate limit as tampering would raise a false alarm on the
+loudest channel the system has.
+
+**No client is built here.** The caller passes one in, already configured; this
+module opens nothing at import or at call time and names no transport library.
+The dep guard's network-primitive allowlist covers this module, and this module
+does not use the permission: a client constructed here would be a client whose
+redirect policy, timeout and proxy settings live somewhere other than the code
+that depends on them, and ``follow_redirects=False`` is load-bearing enough
+that it is passed explicitly on every call instead. That also keeps the suite
+hermetic (``tests/conftest.py`` forbids real network I/O) and keeps this module
+what it is: verification logic over fetched bytes. The
+same routine runs against a preview origin and against the live custom domain —
+R9 and R11 are one code path with a different ``base_url``, which is why
+neither host appears anywhere below.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from html import unescape
+from typing import Any, Protocol
+from uuid import uuid4
+
+from populus.publish.attestation import REJECTED, UNAVAILABLE, VERIFIED
+from populus.publish.digests import DIST_DIGEST_VERSION
+
+__all__ = [
+    "ALLOWED_RESPONSE_HEADERS",
+    "CONTROL_PATHS",
+    "Divergence",
+    "MARKER_BUILD_ID",
+    "MARKER_CODE_SHA",
+    "REJECTED",
+    "SweepResult",
+    "TD10_NOTE",
+    "UNAVAILABLE",
+    "VERIFICATION_SCOPE",
+    "VERIFIED",
+    "VerificationResult",
+    "VerifyInputError",
+    "VerifyUnavailable",
+    "check_headers",
+    "check_markers",
+    "check_no_functions",
+    "check_stats",
+    "probe_control_paths",
+    "read_markers",
+    "sweep_inventory",
+    "verify_deployment",
+]
+
+#: The two machine-readable markers the site emits (R19). Free text in the
+#: footer is not a marker; a `<meta>` with these names is.
+MARKER_BUILD_ID = "populus:build_id"
+MARKER_CODE_SHA = "populus:code_sha"
+
+#: What a record may claim about its own coverage. There is deliberately no
+#: ``"full"`` anywhere in this module — see the docstring and TD-10.
+VERIFICATION_SCOPE = "expected_paths"
+
+#: Carried into every verified result so the honest limit travels with the
+#: claim rather than living only in a document nobody reads at 3am.
+TD10_NOTE = (
+    "scope proves every expected path is present and correct; it does not prove "
+    "closure — an added file or provider control is TD-10, narrowed by the "
+    "no-Functions, control-path and header checks but not eliminated"
+)
+
+#: Provider control files Cloudflare consumes as configuration instead of
+#: serving. Each is probed **separately**, and every one is probed on every run:
+#: a loop that stopped at the first answer would let one poisoned path hide
+#: behind another.
+CONTROL_PATHS = ("/_redirects", "/_headers", "/_worker.js")
+
+#: Response headers a static Pages asset is expected to carry. Anything else is
+#: a finding, because an injected `_headers` is how a static deployment grows
+#: behaviour. Notably absent, and absent on purpose: ``set-cookie``,
+#: ``location`` and the ``access-control-*`` family — the three an attacker
+#: would actually want.
+ALLOWED_RESPONSE_HEADERS = frozenset(
+    {
+        "accept-ranges",
+        "age",
+        "alt-svc",
+        "cache-control",
+        "cf-cache-status",
+        "cf-ray",
+        "connection",
+        "content-encoding",
+        "content-language",
+        "content-length",
+        "content-type",
+        "cross-origin-embedder-policy",
+        "cross-origin-opener-policy",
+        "cross-origin-resource-policy",
+        "date",
+        "etag",
+        "expires",
+        "keep-alive",
+        "last-modified",
+        "nel",
+        "permissions-policy",
+        "referrer-policy",
+        "report-to",
+        "reporting-endpoints",
+        "server",
+        "server-timing",
+        "strict-transport-security",
+        "transfer-encoding",
+        "vary",
+        "x-content-type-options",
+        "x-frame-options",
+    }
+)
+
+#: §12.1 samples headers rather than asserting them tree-wide; the marker page
+#: and `stats.json` are always in the sample.
+HEADER_SAMPLE_SIZE = 10
+
+#: Appended to every fetch so an edge cache cannot answer for the origin.
+CACHE_BUST_PARAM = "populus-verify"
+
+_REQUEST_HEADERS = {"cache-control": "no-cache", "pragma": "no-cache"}
+
+#: Statuses that mean *we did not get an answer* (R17), mirroring the
+#: attestation fetcher's treatment of 403/429. Everything >= 500 joins them.
+_NO_ANSWER_STATUSES = frozenset({403, 408, 425, 429})
+
+DEFAULT_MARKER_PATH = "index.html"
+DEFAULT_STATS_PATH = "stats.json"
+
+
+class VerifyInputError(ValueError):
+    """The inputs are malformed — a bug or a corrupt envelope, not a verdict.
+
+    Raised, never folded into a verdict: "the inventory we were handed is not
+    an inventory" must not be reportable as "the site is fine" *or* as "the
+    site was tampered with".
+    """
+
+
+class VerifyUnavailable(RuntimeError):
+    """No verdict was reached (R17): transport failure, 429, 5xx.
+
+    Raised internally and converted to an ``unavailable`` result at the top
+    level. It is a distinct type for the same reason
+    :class:`populus.publish.attestation.FetchUnavailable` is: a caller must not
+    be able to reach "tampered" by squinting at a quota error.
+    """
+
+
+class HttpResponse(Protocol):
+    """The three things this module reads off a response.
+
+    ``body`` is the **content-decoded** payload — any transfer/content encoding
+    already removed — which is what the inventory's ``sha256``/``bytes`` were
+    computed over. The wire length is deliberately not consulted: a gzipped
+    asset's ``content-length`` header describes the compressed bytes and would
+    disagree with the inventory on every compressible file.
+    """
+
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def content(self) -> bytes: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+
+class HttpGetter(Protocol):
+    """An already-configured client. Injected, never constructed here.
+
+    ``follow_redirects`` is passed explicitly on every call rather than being
+    left to the client's default, so the redirects-disabled property is a
+    property of *this* module and cannot be undone by how a caller happened to
+    build its client.
+    """
+
+    def get(
+        self, url: str, *, headers: Mapping[str, str], follow_redirects: bool
+    ) -> HttpResponse: ...
+
+
+@dataclass(frozen=True)
+class _Entry:
+    path: str
+    size: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class Divergence:
+    """One inventoried path whose served bytes are not the recorded bytes."""
+
+    path: str
+    reason: str
+
+    def __str__(self) -> str:  # pragma: no cover - formatting only
+        return f"{self.path}: {self.reason}"
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    """Outcome of the inventory-wide sweep."""
+
+    divergences: tuple[Divergence, ...]
+    files_verified: int
+    files_total: int
+    bodies: dict[str, bytes] = field(default_factory=dict)
+    headers: dict[str, Mapping[str, str]] = field(default_factory=dict)
+
+    @property
+    def diverged_paths(self) -> tuple[str, ...]:
+        return tuple(sorted({d.path for d in self.divergences}))
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """What was checked, what failed, and whether we got an answer at all."""
+
+    ok: bool
+    outcome: str
+    detail: str
+    verification_scope: str = VERIFICATION_SCOPE
+    files_verified: int = 0
+    files_total: int = 0
+    divergences: tuple[Divergence, ...] = ()
+    findings: tuple[str, ...] = ()
+
+    @property
+    def unavailable(self) -> bool:
+        return self.outcome == UNAVAILABLE
+
+    @property
+    def diverged_paths(self) -> tuple[str, ...]:
+        """Exactly which inventoried paths diverged, sorted."""
+        return tuple(sorted({d.path for d in self.divergences}))
+
+    def as_record(self) -> dict:
+        """The §12.1 step 6 verification block for a deployment generation."""
+        return {
+            "verification_scope": self.verification_scope,
+            "files_verified": self.files_verified,
+            "files_total": self.files_total,
+            "outcome": self.outcome,
+            "diverged_paths": list(self.diverged_paths),
+            "non_detection": TD10_NOTE,
+        }
+
+
+# --- marker parsing (R19) ----------------------------------------------------
+
+_META_TAG = re.compile(r"<meta\b([^>]*?)/?>", re.IGNORECASE | re.DOTALL)
+_ATTRIBUTE = re.compile(
+    r"""([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))"""
+)
+
+
+def read_markers(document: str | bytes) -> dict[str, list[str]]:
+    """Every ``<meta name=… content=…>`` in *document*, keyed by name.
+
+    Values are lists because a duplicate marker is a real state a tampered page
+    can be in, and collapsing it here would decide the question silently.
+    Attribute order, quoting style and extra attributes are all tolerated; what
+    is not tolerated is finding the value anywhere other than the ``content``
+    of a ``<meta>`` whose ``name`` matches.
+    """
+    if isinstance(document, bytes):
+        text = document.decode("utf-8", errors="replace")
+    else:
+        text = document
+
+    found: dict[str, list[str]] = {}
+    for match in _META_TAG.finditer(text):
+        attributes: dict[str, str] = {}
+        for attribute in _ATTRIBUTE.finditer(match.group(1)):
+            name = attribute.group(1).lower()
+            value = next(v for v in attribute.groups()[1:] if v is not None)
+            attributes.setdefault(name, unescape(value))
+        marker = attributes.get("name")
+        if marker is not None and "content" in attributes:
+            found.setdefault(marker, []).append(attributes["content"])
+    return found
+
+
+def check_markers(document: str | bytes, *, build_id: str, code_sha: str) -> list[str]:
+    """Compare the named markers to the expected values, **exactly**.
+
+    ``==`` on the full value, in both directions: neither a served
+    abbreviation of the expected sha nor a served superstring of it passes.
+    Containment is the defect this function exists to not have.
+    """
+    markers = read_markers(document)
+    findings: list[str] = []
+    for name, expected in ((MARKER_BUILD_ID, build_id), (MARKER_CODE_SHA, code_sha)):
+        values = markers.get(name, [])
+        if not values:
+            findings.append(
+                f"marker {name!r} is absent: the page carries no such <meta> "
+                "(a value appearing elsewhere in the document is not a marker)"
+            )
+        elif len(values) > 1:
+            findings.append(
+                f"marker {name!r} appears {len(values)} times ({values!r}); an "
+                "honest page emits exactly one, so no exact statement is possible"
+            )
+        elif values[0] != expected:
+            findings.append(
+                f"marker {name!r} mismatch: served {values[0]!r} != expected "
+                f"{expected!r} (compared exactly, not by containment)"
+            )
+    return findings
+
+
+# --- stats.json byte-equality (R3) -------------------------------------------
+
+
+def check_stats(served: bytes, expected: bytes) -> list[str]:
+    """The served ``stats.json`` must be the built one, byte for byte.
+
+    Byte equality, not JSON equality: the canonical copy is rendered once with
+    a named serialization, and a re-serialized copy that parses to the same
+    object is a different artifact from the one the manifest lists.
+    """
+    if served == expected:
+        return []
+    return [
+        "stats.json is not byte-equal to the built copy: "
+        f"served sha256={hashlib.sha256(served).hexdigest()} ({len(served)} bytes) "
+        f"!= built sha256={hashlib.sha256(expected).hexdigest()} "
+        f"({len(expected)} bytes)"
+    ]
+
+
+# --- the three closure-narrowing provider checks (R16) -----------------------
+
+
+def check_no_functions(deployment: Mapping[str, Any]) -> list[str]:
+    """The deployment must report that it runs no Functions/Worker.
+
+    Fails **closed** on a missing signal. The site is pure static; if the
+    provider payload does not carry ``uses_functions`` we cannot assert its
+    absence, and "the field wasn't there" must never read as "there are none".
+    """
+    if not isinstance(deployment, Mapping):
+        raise VerifyInputError(f"deployment payload is not a mapping: {type(deployment)!r}")
+    if "uses_functions" not in deployment:
+        return [
+            "deployment payload carries no 'uses_functions' field: the "
+            "no-Functions assertion cannot be made, so it fails closed"
+        ]
+    value = deployment["uses_functions"]
+    if value is not False:
+        return [
+            f"deployment reports uses_functions={value!r}: this site is pure "
+            "static, and a Functions/Worker deployment is not verifiable by "
+            "fetching assets"
+        ]
+    return []
+
+
+def probe_control_paths(
+    client: HttpGetter,
+    base_url: str,
+    *,
+    cache_bust: str,
+    control_paths: Sequence[str] = CONTROL_PATHS,
+) -> list[str]:
+    """Every control path must 404 — each probed on its own.
+
+    All probes run on every call. Returning at the first bad answer would let a
+    poisoned `/_headers` hide behind a poisoned `/_redirects`, which is the
+    shape a "these all 404" check usually rots into.
+
+    A never-published path is probed alongside them: a catch-all rewrite
+    (`/* /index.html 200`) answers 200 for a path that has never existed, and
+    that is the only cheap signal of one.
+    """
+    findings: list[str] = []
+    probes = list(control_paths) + [f"/populus-never-published-{cache_bust}"]
+    for probe in probes:
+        fetched = _fetch(client, _url(base_url, probe.lstrip("/"), cache_bust))
+        if fetched.status_code != 404:
+            findings.append(
+                f"control-path probe {probe} answered HTTP "
+                f"{fetched.status_code}, expected 404 — the deployment is "
+                "serving or acting on a provider control file"
+            )
+    return findings
+
+
+def check_headers(
+    headers: Mapping[str, str],
+    *,
+    path: str,
+    allowlist: frozenset[str] = ALLOWED_RESPONSE_HEADERS,
+) -> list[str]:
+    """Flag any response header outside the allowlist."""
+    unexpected = sorted(name.lower() for name in headers if name.lower() not in allowlist)
+    if not unexpected:
+        return []
+    return [
+        f"unexpected response header(s) on {path}: {unexpected} — a static "
+        "asset gained behaviour it was not built with"
+    ]
+
+
+# --- the inventory-wide sweep (R15) ------------------------------------------
+
+
+def sweep_inventory(
+    client: HttpGetter,
+    base_url: str,
+    inventory: Mapping[str, Any],
+    *,
+    cache_bust: str,
+    keep: Sequence[str] = (),
+    header_paths: Sequence[str] = (),
+) -> SweepResult:
+    """Fetch **every** inventoried path and compare hash and length.
+
+    This is the load-bearing check. Both fields are compared, and which one
+    disagreed is reported: a length-only comparison passes any same-size edit,
+    and a hash-only comparison accepts an entry whose recorded length the
+    served body contradicts.
+
+    *keep* names paths whose decoded body the caller still needs (the marker
+    page, ``stats.json``) — retained from **this** fetch rather than fetched
+    again, so the marker check and the sweep are statements about one response
+    and not two.
+    """
+    entries = _entries(inventory)
+    kept = set(keep)
+    wanted_headers = set(header_paths)
+
+    divergences: list[Divergence] = []
+    bodies: dict[str, bytes] = {}
+    headers: dict[str, Mapping[str, str]] = {}
+    verified = 0
+
+    for entry in entries:
+        fetched = _fetch(client, _url(base_url, entry.path, cache_bust))
+        status = fetched.status_code
+        if 300 <= status < 400:
+            location = fetched.headers.get("location", "")
+            divergences.append(
+                Divergence(
+                    entry.path,
+                    f"HTTP {status} redirect to {location!r} — a 3xx on an "
+                    "inventoried path is a hijack, not a hop to follow",
+                )
+            )
+            continue
+        if status != 200:
+            divergences.append(Divergence(entry.path, f"HTTP {status}, expected 200"))
+            continue
+
+        body = fetched.content
+        if entry.path in kept:
+            bodies[entry.path] = body
+        if entry.path in wanted_headers:
+            headers[entry.path] = fetched.headers
+
+        digest = hashlib.sha256(body).hexdigest()
+        wrong_digest = digest != entry.sha256
+        wrong_length = len(body) != entry.size
+        if wrong_digest or wrong_length:
+            reasons = []
+            if wrong_digest:
+                reasons.append(f"sha256 {digest} != {entry.sha256}")
+            if wrong_length:
+                reasons.append(f"length {len(body)} != {entry.size}")
+            divergences.append(Divergence(entry.path, "; ".join(reasons)))
+            continue
+        verified += 1
+
+    return SweepResult(
+        divergences=tuple(divergences),
+        files_verified=verified,
+        files_total=len(entries),
+        bodies=bodies,
+        headers=headers,
+    )
+
+
+# --- the whole verification (R9/R11/R15/R16/R17/R19) -------------------------
+
+
+def verify_deployment(
+    client: HttpGetter,
+    base_url: str,
+    *,
+    inventory: Mapping[str, Any],
+    build_id: str,
+    code_sha: str,
+    stats_bytes: bytes,
+    deployment: Mapping[str, Any],
+    marker_path: str = DEFAULT_MARKER_PATH,
+    stats_path: str = DEFAULT_STATS_PATH,
+    control_paths: Sequence[str] = CONTROL_PATHS,
+    header_allowlist: frozenset[str] = ALLOWED_RESPONSE_HEADERS,
+    header_sample_size: int = HEADER_SAMPLE_SIZE,
+    cache_bust: str | None = None,
+) -> VerificationResult:
+    """Verify what *base_url* serves against the inventory and the markers.
+
+    One routine for both live checks: the preview origin (R9) and the custom
+    domain (R11) differ only in *base_url*. That is deliberate — §12.1 step 4
+    is amended to run this same inventory-wide sweep on the preview, because
+    TD-4's bound ("the identical bytes already passed the preview sweep") is
+    vacuous if the preview only read markers.
+    """
+    entries = _entries(inventory)
+    known = {entry.path for entry in entries}
+    for required in (marker_path, stats_path):
+        if required not in known:
+            raise VerifyInputError(
+                f"{required!r} is not in the inventory, so the sweep would not "
+                "cover it; verification cannot be scoped to paths it cannot see"
+            )
+
+    bust = cache_bust or uuid4().hex
+    sample = _header_sample(marker_path, stats_path, entries, header_sample_size)
+
+    # No network yet: the provider payload is already in hand, and a Functions
+    # deployment is not made verifiable by fetching more assets.
+    findings: list[str] = check_no_functions(deployment)
+
+    try:
+        sweep = sweep_inventory(
+            client,
+            base_url,
+            inventory,
+            cache_bust=bust,
+            keep=(marker_path, stats_path),
+            header_paths=sample,
+        )
+
+        marker_body = sweep.bodies.get(marker_path)
+        if marker_body is None:
+            findings.append(
+                f"markers unreadable: {marker_path} did not serve 200 (see the "
+                "divergence for that path)"
+            )
+        else:
+            findings.extend(
+                check_markers(marker_body, build_id=build_id, code_sha=code_sha)
+            )
+
+        stats_body = sweep.bodies.get(stats_path)
+        if stats_body is None:
+            findings.append(f"stats.json unreadable: {stats_path} did not serve 200")
+        else:
+            findings.extend(check_stats(stats_body, stats_bytes))
+
+        findings.extend(
+            probe_control_paths(
+                client, base_url, cache_bust=bust, control_paths=control_paths
+            )
+        )
+
+        for path in sample:
+            observed = sweep.headers.get(path)
+            if observed is not None:
+                findings.extend(
+                    check_headers(observed, path=path, allowlist=header_allowlist)
+                )
+    except VerifyUnavailable as exc:
+        # R17: we did not get an answer. Not a divergence, not a finding, and
+        # emphatically not tampering — the caller retries or alarms as an
+        # outage, and nothing is attested either way.
+        return VerificationResult(
+            ok=False,
+            outcome=UNAVAILABLE,
+            detail=f"verification unavailable: {exc}",
+            files_total=len(entries),
+        )
+
+    findings.extend(str(divergence) for divergence in sweep.divergences)
+    ok = not findings
+    detail = (
+        f"{VERIFICATION_SCOPE}: {sweep.files_verified}/{sweep.files_total} files "
+        f"verified at {base_url}; {TD10_NOTE}"
+        if ok
+        else f"{VERIFICATION_SCOPE}: {len(findings)} finding(s) at {base_url}"
+    )
+    return VerificationResult(
+        ok=ok,
+        outcome=VERIFIED if ok else REJECTED,
+        detail=detail,
+        files_verified=sweep.files_verified,
+        files_total=sweep.files_total,
+        divergences=sweep.divergences,
+        findings=tuple(findings),
+    )
+
+
+# --- internals ---------------------------------------------------------------
+
+
+def _header_sample(
+    marker_path: str, stats_path: str, entries: Sequence[_Entry], size: int
+) -> tuple[str, ...]:
+    """The sampled paths: the two load-bearing ones first, then inventory order."""
+    sample: list[str] = []
+    for candidate in (marker_path, stats_path, *(entry.path for entry in entries)):
+        if candidate not in sample:
+            sample.append(candidate)
+        if len(sample) >= max(size, 2):
+            break
+    return tuple(sample)
+
+
+def _entries(inventory: Mapping[str, Any]) -> list[_Entry]:
+    """Validate the §12.1 envelope and return its entries.
+
+    A malformed envelope raises rather than returning an empty list: a sweep
+    over zero files would report ``0/0 verified`` and pass.
+    """
+    if not isinstance(inventory, Mapping):
+        raise VerifyInputError(f"inventory is not a mapping: {type(inventory)!r}")
+    version = inventory.get("dist_digest_version")
+    if version != DIST_DIGEST_VERSION:
+        raise VerifyInputError(
+            f"inventory declares dist_digest_version {version!r}, this verifier "
+            f"understands {DIST_DIGEST_VERSION!r}"
+        )
+    files = inventory.get("files")
+    if not isinstance(files, Sequence) or isinstance(files, (str, bytes)):
+        raise VerifyInputError("inventory 'files' is not a list")
+    if not files:
+        raise VerifyInputError("inventory lists no files; there is nothing to verify")
+
+    entries: list[_Entry] = []
+    seen: set[str] = set()
+    for raw in files:
+        if not isinstance(raw, Mapping):
+            raise VerifyInputError(f"inventory entry is not a mapping: {raw!r}")
+        path = raw.get("path")
+        size = raw.get("bytes")
+        digest = raw.get("sha256")
+        if not isinstance(path, str) or not path or path.startswith("/"):
+            raise VerifyInputError(f"inventory entry has a bad 'path': {path!r}")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise VerifyInputError(f"inventory entry {path!r} has a bad 'bytes': {size!r}")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise VerifyInputError(
+                f"inventory entry {path!r} has a bad 'sha256': {digest!r}"
+            )
+        if path in seen:
+            raise VerifyInputError(f"inventory lists {path!r} twice")
+        seen.add(path)
+        entries.append(_Entry(path=path, size=size, sha256=digest))
+    return entries
+
+
+def _url(base_url: str, path: str, cache_bust: str) -> str:
+    """§12.1 path → URL, verbatim: no extension stripping, no index rewriting.
+
+    Plain string work rather than a URL library, for the same reason the SEC
+    client's host guard is plain string work: the parsers that would be
+    convenient here are the ones this codebase does not import.
+    """
+    separator = "&" if "?" in path else "?"
+    return f"{base_url.rstrip('/')}/{path}{separator}{CACHE_BUST_PARAM}={cache_bust}"
+
+
+def _fetch(client: HttpGetter, url: str) -> HttpResponse:
+    """One cache-busted fetch with redirects disabled.
+
+    Anything the client raises is an outage, not a verdict (R17) — except
+    ``AssertionError``, which is what the suite's no-network guard raises. That
+    one is re-raised so an accidental real fetch fails the test loudly instead
+    of being laundered into a tidy ``unavailable``.
+    """
+    try:
+        response = client.get(url, headers=_REQUEST_HEADERS, follow_redirects=False)
+    except AssertionError:
+        raise
+    except Exception as exc:  # transport-layer failure of any shape
+        raise VerifyUnavailable(f"transport error fetching {url}: {exc}") from exc
+
+    status = response.status_code
+    if status in _NO_ANSWER_STATUSES or status >= 500:
+        raise VerifyUnavailable(
+            f"HTTP {status} fetching {url}: no verdict was reached (a rate limit "
+            "or an origin error is an outage, never evidence of tampering)"
+        )
+    return response

@@ -852,6 +852,7 @@ plan does not call an endpoint whose documented behaviour is to decline.
 - `tests/test_inst_ingest.py`
 - `tests/test_attestation_structure.py`
 - `tests/test_attestation.py`
+- `tests/test_dep_guard.py`
 - `dashboard/src/lib/inst.ts`
 - `dashboard/README.md`
 - `dashboard/test/post/http-status.test.ts`
@@ -868,6 +869,15 @@ plan does not call an endpoint whose documented behaviour is to decline.
 - `docs/runbooks/attestation.md`
 - `ARCHITECTURE.md`
 - `STATUS.md`
+
+**`tests/test_dep_guard.py` was the sixth scope miss, found during T2.** Its
+`HTTPX_ALLOWED` set names exactly four modules; anything else under
+`src/populus/` mentioning `httpx` fails the gate. All three new deploy modules
+(`cloudflare.py`, `verify.py`, `record.py`) trip it. Seven plan revisions and
+five review rounds — including three that re-derived the blast radius
+independently — all missed it, because the file's relevance is invisible unless
+you know that allowlist exists. Added individually rather than as a `deploy/`
+prefix: a new module in that package should have to justify itself.
 
 **Why the list grew by 13.** Round 2 re-derived the blast radius independently and
 found every addition above. `accept_m2_5`/`accept_m2_6` are production `run_build`

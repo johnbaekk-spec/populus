@@ -418,3 +418,77 @@ def test_the_site_build_supplies_the_whole_env_contract() -> None:
             "SITE_CODE_SHA must be the full github.sha — the marker comparison "
             "is exact, never a prefix match"
         )
+
+
+# --- R16: the documentation regression check ---------------------------------
+
+ARCHITECTURE = REPO_ROOT / "ARCHITECTURE.md"
+
+#: The revision-history table is where corrections are RECORDED, so it quotes
+#: the very strings this check forbids. Excluding it is not a loophole — it is
+#: the difference between "the spec still claims full coverage" and "the spec
+#: records that it once did and was wrong". Deleting the record to satisfy a
+#: grep is the silent-drop failure this check exists to prevent, and it has
+#: already happened once on this plan (round-2 F8).
+_REVISION_TABLE_END = "## "
+
+
+def _architecture_body() -> list[tuple[int, str]]:
+    """`(line number, text)` for every line after the revision-history table."""
+    lines = ARCHITECTURE.read_text(encoding="utf-8").splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if line.startswith(_REVISION_TABLE_END)),
+        0,
+    )
+    return [(i + 1, line) for i, line in enumerate(lines) if i >= start]
+
+
+@pytest.mark.parametrize(
+    "forbidden,why",
+    [
+        (
+            '"verification_scope": "full"',
+            "the served-tree scope is `expected_paths`; `full` was a scope "
+            "OVERCLAIM — fetching every inventory path cannot detect ADDED "
+            "files or provider controls (round-11 C2, TD-10)",
+        ),
+        (
+            "full served-tree",
+            "same overclaim in prose; the verification is inventory-wide, "
+            "which is not the same as complete",
+        ),
+    ],
+)
+def test_architecture_does_not_reclaim_full_verification_scope(
+    forbidden: str, why: str
+) -> None:
+    """R16 — a correction that can silently revert is not a correction.
+
+    Round 11 corrected this overclaim. Revision 1 of the P3-3b plan dropped the
+    correction, round 2 caught it, and it had to be restored. Nothing structural
+    stopped that regression, so this is that structure.
+    """
+    offenders = [
+        f"ARCHITECTURE.md:{number}: {line.strip()[:120]}"
+        for number, line in _architecture_body()
+        if forbidden in line
+    ]
+    assert offenders == [], (
+        f"ARCHITECTURE.md reclaims {forbidden!r} outside the revision history — "
+        f"{why}.\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_revision_history_record_is_still_there() -> None:
+    """The other half: the check above must not be satisfiable by DELETING the record.
+
+    Without this, a future run could make the regression check pass by removing
+    the round-11 row — trading a visible overclaim for a lost audit trail, which
+    is strictly worse.
+    """
+    head = ARCHITECTURE.read_text(encoding="utf-8").splitlines()
+    table = [line for line in head[:40] if line.startswith("|")]
+    assert any("full served-tree" in line for line in table), (
+        "the revision-history record of the round-11 scope correction is gone — "
+        "the correction is only durable while the reason for it survives"
+    )

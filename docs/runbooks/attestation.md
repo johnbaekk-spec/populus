@@ -58,6 +58,40 @@ Identity is resolved **per subject kind**. A subject name that maps to nothing i
 refused — there is deliberately no default identity, so a deployment generation
 can never be accepted on the publish workflow's signature.
 
+### Deployment generations are attested under an explicit subject name
+
+A deployment generation is written to
+`populus-data/builds/<build_id>/deployments/<gen>.json` and **must be attested
+under the subject name `deployments/<gen>.json`** — the directory component is
+part of the name, not decoration. The signer therefore passes
+`subject-name: deployments/<gen>.json` together with `subject-digest` to
+`actions/attest-build-provenance`, in place of `subject-path`.
+
+This is a pinned convention rather than a style choice, because the naive
+alternative fails **both** of this module's checks at once. With `subject-path`
+the action names the subject by its **basename**, so the generation would be
+attested as `<gen>.json`, and:
+
+- `resolve_identity` (`src/populus/publish/attestation.py`) returns `None` —
+  *refuse* — for any name that is neither in `SUBJECT_IDENTITIES` nor prefixed
+  with `DEPLOYMENT_SUBJECT_PREFIX` (`deployments/`). `resolve_identity("3.json")`
+  is a refusal, and there is no default identity to fall back to.
+- `_subject_name_matches` requires the in-bundle statement name to **equal** the
+  queried name or end with `"/" + name`. A caller asking for
+  `deployments/3.json` matches no statement named `3.json`.
+
+So a basename-attested generation is unverifiable from either direction, and the
+failure looks like a missing bundle rather than a naming mistake. The explicit
+`subject-name` satisfies the prefix arm and the exact-match arm together.
+
+The contrast with `manifest.json` is deliberate, not an inconsistency:
+`publish.yml` attests it *by path* (`populus-data/builds/*/manifest.json`), the
+action reduces that to the basename, and `SUBJECT_IDENTITIES` maps the bare
+`"manifest.json"` to match. The two subject kinds use opposite mechanisms
+because they are named by opposite means. A round-trip attest → verify fixture
+pins the generation convention, and a generation attested by basename must be
+**refused** by that fixture.
+
 `ATTESTATION_REPO` is the single source both identities and the lookup URL derive
 from; a drift test pins all three to it.
 
@@ -154,5 +188,8 @@ network), they legitimately want the no-op, and they carry no trust posture.
    that can carry the field, and both validators reject unknown keys, so live
    builds and the deployed monitor would break).
 3. **Third-party verification** waits on the §15.3 counsel gate.
-4. **Deployment-generation attestation** is unexercised until P3-3b; a drift test
-   keeps its identity constant honest in the meantime.
+4. **Deployment-generation attestation** is unexercised until P3-3b's signer
+   lands; a drift test keeps its identity constant honest in the meantime, and
+   the subject-name convention above is the contract that signer must meet — it
+   is pinned by the verifier today, whether or not anything writes a generation
+   yet.

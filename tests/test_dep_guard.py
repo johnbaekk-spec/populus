@@ -213,6 +213,15 @@ HTTPX_ALLOWED = {
     "ingest/senate.py",
     "client/snapshot.py",
     "net/sec_client.py",
+    # RUN P3-3b: the deploy-side modules talk to the Cloudflare Pages API and to
+    # the served site. Every one takes an INJECTED transport and opens nothing at
+    # import time, so the suite stays hermetic under `tests/conftest.py` — the
+    # same posture as `client/snapshot.py` above. Listed individually rather than
+    # as a `deploy/` prefix: a new module in that package should have to justify
+    # itself here, which is the entire point of an allowlist.
+    "deploy/cloudflare.py",
+    "deploy/verify.py",
+    "deploy/record.py",
 }
 # RUN 5: publish/build.py invokes the gh CLI (argv-list subprocess, never a
 # shell) as the GhReleaseBackend command transport — injectable in tests, so

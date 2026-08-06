@@ -49,20 +49,51 @@ The site builds from **one published data build** and never resolves
 | `POPULUS_BUILD_DIR` | path to `builds/<build_id>` of the data repo (CI: required, from the staged verified build) |
 | `POPULUS_DB` | path to the matching `congress.db` release snapshot (CI: required) |
 | `POPULUS_DATA_REPO` | **dev only** — a local data-repo checkout; the newest `builds/<id>` is used. Defaults to `../populus-data`. |
-| `SITE_CODE_SHA` | embedded in the footer; falls back to `git rev-parse --short HEAD` |
-| `POPULUS_TICKER_MAP` | path to a `company_tickers.json` snapshot (SEC primary source) — the Locked #18 ticker→issuer mapping input. Dev default: the committed pipeline fixture `tests/fixtures/inst/mcp/company_tickers.json`; CI: the publisher's cached snapshot. Missing → every ticker renders the honest unresolved state. |
+| `SITE_CODE_SHA` | the commit the site was generated from. Emitted verbatim as `<meta name="populus:code_sha">` on every page and echoed in the footer; CI passes the **full** `github.sha` because deploy verification compares the marker exactly. Dev fallback: `git rev-parse --short HEAD`. |
+| `POPULUS_TICKER_MAP` | path to a `company_tickers.json` snapshot (SEC primary source) — the Locked #18 ticker→issuer mapping input. Dev default: the committed pipeline fixture `tests/fixtures/inst/mcp/company_tickers.json`. **Under `CI` a path resolving into `tests/fixtures/` is refused** (including the unset default), because a build that shipped fixture mappings would present them as production data and the served-tree sweep could not detect it — the served bytes would faithfully equal the built bytes. An absent path → `null` → every ticker renders the honest no-map state, which is what the deployed site ships (TD-7: no real snapshot exists on a runner). |
 | `POPULUS_INST_DB` | optional override for the institutional aggregate path; default `$POPULUS_BUILD_DIR/inst_agg.db`. The module renders only when the manifest declares `inst` AND the artifact is readable. |
 | `POPULUS_TEST_PAGE_BUDGET` | **test only** — forces a small entity-page budget so the rank-cut → `/e/` path is provable (`test/post/entity-orchestration.test.ts` builds `dist-cut/` with it). Production uses the §9.10-derived constant. |
 
 What is read, all of it from published artifacts (DR-4 — published artifacts
 are the API):
 
-- `builds/<id>/congress/stats.json` → stat tiles, as-of timestamp, data note
-- `builds/<id>/manifest.json` → hashed for the footer's `snapshot sha256:` line
+- `builds/<id>/congress/stats.json` → stat tiles, as-of timestamp, data note —
+  **and its raw bytes, re-served verbatim at `/stats.json`** (see below)
+- `builds/<id>/manifest.json` → module availability (`modules` keys). The
+  manifest is **not** hashed for display: it is re-assembled after this site
+  builds, so any digest a page rendered would be stale by construction.
 - `builds/<id>/DATA-LICENSE.md`, `NOTICE` → served verbatim at `/legal/…`
 - `releases/data-<id>/congress.db` → feed rows (`v_default_transactions`
   joined to `filings` for `doc_url` and `members` for name/party/state), plus
   active `needs_ocr` filings for the paper-filing rows
+
+### Build markers and `/stats.json`
+
+Two things the deploy verification reads out of the built site:
+
+- **`<meta name="populus:build_id">` and `<meta name="populus:code_sha">`**, on
+  every page. Verification parses them **by name and compares the values
+  exactly** — never a substring search over the footer, which a whole-footer
+  replacement would still satisfy. The footer keeps the same two values as
+  human-readable text and renders **no digest at all**: the manifest is
+  re-assembled after the site builds, so a rendered digest is stale by
+  construction and a reader who checked it would be told the build is corrupt.
+  The methodology page's verify command is `populus verify --build <id>` for the
+  same reason — `--build` alone resolves the manifest.
+- **`/stats.json`** (`src/pages/stats.json.ts`), the raw bytes of
+  `builds/<id>/congress/stats.json` passed through **verbatim**. The two copies
+  must be byte-equal; the producer renders that file as
+  `json.dumps(…, ensure_ascii=False, indent=2, sort_keys=True) + "\n"`, so the
+  route must never parse and re-serialize. `test/post/http-status.test.ts` pins
+  the served bytes, the emitted `dist/` bytes, and the canonical copy together.
+
+Note for anyone running the gates on a CI runner: they are not runnable under a
+bare `CI=1` (the data layer already refuses the newest-local-build fallback
+there), and if the four-variable contract is supplied, the two builds that
+deliberately use fixture inputs — `test/post/fixture-preview.test.ts` and
+`test/post/entity-orchestration.test.ts` — hit the `POPULUS_TICKER_MAP` fixture
+refusal and would need `CI` cleared in their child environment. Neither is a
+shipping build; the production `dist/` leakage check stays as it is.
 
 ## What's implemented
 
@@ -287,7 +318,10 @@ measurement or contract citation.
   → SEC `company_tickers.json`), parsed with the pipeline's own dispositions
   (malformed / DC1 title-conflict / duplicate), ticker-direction ambiguity
   rejected, matched only against entity-keyed issuers — the RUN M2-4 MCP
-  precedent, applied to static paths and the unified page's 13F section.
+  precedent, applied to static paths and the unified page's 13F section. The
+  **deployed** site currently carries no map at all (TD-7), so those surfaces
+  render the no-map state; `test/pages-render.test.ts` drives that chain end to
+  end, because every other suite runs with the dev fixture loaded.
 - **The institutional happy paths are proven by a nonshipping fixture
   envelope** (`test/fixtures/make-inst-preview.py`, Locked #19): an
   identity-seeded corpus through the real `build_inst_agg`, wrapped in a

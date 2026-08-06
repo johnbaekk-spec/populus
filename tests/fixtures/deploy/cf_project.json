@@ -1,0 +1,40 @@
+{
+  "success": true,
+  "errors": [],
+  "messages": [],
+  "result": {
+    "id": "4f1a8c2e6b3d4a7f9e0c5b2d8a6f1c34",
+    "name": "publicfilings",
+    "subdomain": "publicfilings.pages.dev",
+    "domains": [
+      "publicfilings.pages.dev",
+      "publicfilings.org"
+    ],
+    "production_branch": "main",
+    "latest_deployment": null,
+    "canonical_deployment": null,
+    "created_on": "2026-07-28T18:42:11.204871Z",
+    "build_config": {
+      "build_command": null,
+      "destination_dir": null,
+      "root_dir": null,
+      "web_analytics_tag": null,
+      "web_analytics_token": null
+    },
+    "source": null,
+    "deployment_configs": {
+      "preview": {
+        "env_vars": null,
+        "compatibility_date": null,
+        "compatibility_flags": [],
+        "usage_model": "standard"
+      },
+      "production": {
+        "env_vars": null,
+        "compatibility_date": null,
+        "compatibility_flags": [],
+        "usage_model": "standard"
+      }
+    }
+  }
+}

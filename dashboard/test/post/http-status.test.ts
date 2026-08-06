@@ -14,6 +14,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { searchIndexValid } from "../../src/lib/derive.ts";
+import { statsSourcePath } from "../../src/lib/data.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..", "..");
 const DIST = path.join(DASH, "dist");
@@ -97,6 +98,71 @@ test("real search index: allowlist shape + ≤128 KiB budget (R11)", async () =>
   }
   for (const f of index.filers) {
     assert.equal(f.length, 2);
+  }
+});
+
+/* ---------- R24: the dist/stats.json copy ---------- */
+
+test("stats.json: emitted, served, and BYTE-equal to the canonical build copy (R24)", async () => {
+  const canonical = readFileSync(statsSourcePath());
+  const emitted = readFileSync(path.join(DIST, "stats.json"));
+  assert.deepEqual(
+    emitted,
+    canonical,
+    "dist/stats.json must be the canonical bytes verbatim — the producer renders" +
+      " them with json.dumps(ensure_ascii=False, indent=2, sort_keys=True) + newline," +
+      " which no JS re-serialization reproduces",
+  );
+  const r = await fetch(`${BASE}/stats.json`);
+  assert.equal(r.status, 200, "/stats.json is served, not a 404");
+  const served = Buffer.from(await r.arrayBuffer());
+  assert.deepEqual(served, canonical, "the SERVED bytes equal the canonical copy too");
+  // Byte-equality with an empty file would be vacuous; the count key is the
+  // field the deploy gate patches into both copies.
+  assert.ok(canonical.length > 0, "the canonical copy is not empty");
+  JSON.parse(served.toString("utf-8"));
+});
+
+/* ---------- R19: machine-readable markers, and no digest anywhere ---------- */
+
+test("every page carries both build markers, identical across the dist (R19)", () => {
+  const pages = walkFiles(DIST, [".html"]);
+  assert.ok(pages.length > 1000, "the full page set is under test");
+  const reBuild = /<meta name="populus:build_id" content="([^"]*)"/;
+  const reSha = /<meta name="populus:code_sha" content="([^"]*)"/;
+  let buildId: string | null = null;
+  let codeSha: string | null = null;
+  for (const f of pages) {
+    const text = readFileSync(f, "utf-8");
+    const rel = path.relative(DIST, f);
+    const b = reBuild.exec(text);
+    const s = reSha.exec(text);
+    assert.ok(b, `${rel} carries no populus:build_id marker`);
+    assert.ok(s, `${rel} carries no populus:code_sha marker`);
+    assert.ok(b[1], `${rel} has an EMPTY build_id marker — an exact comparison would pass on ""`);
+    assert.ok(s[1], `${rel} has an EMPTY code_sha marker`);
+    buildId ??= b[1];
+    codeSha ??= s[1];
+    assert.equal(b[1], buildId, `${rel} disagrees with the rest of the dist about build_id`);
+    assert.equal(s[1], codeSha, `${rel} disagrees with the rest of the dist about code_sha`);
+  }
+  assert.match(buildId!, /^\d{8}\.\d+$/, "the marker carries a real build id");
+});
+
+test("no page renders a digest the site cannot know (Locked #6 / R19)", () => {
+  // The manifest is re-assembled AFTER this build, so any 64-hex digest on a
+  // page is stale by construction — footer, methodology command, anywhere.
+  const hex64 = /[0-9a-f]{64}/;
+  for (const f of walkFiles(DIST, [".html"])) {
+    const text = readFileSync(f, "utf-8");
+    assert.ok(
+      !hex64.test(text),
+      `${path.relative(DIST, f)} renders a 64-hex digest — the site cannot know one`,
+    );
+    assert.ok(
+      !text.includes("--manifest sha256:"),
+      `${path.relative(DIST, f)} tells readers a verify command carrying a stale digest`,
+    );
   }
 });
 
