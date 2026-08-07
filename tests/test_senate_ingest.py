@@ -459,7 +459,7 @@ def test_handshake_token_agreement_cookies_and_archive(tmp_path, initialized_db)
     assert "csrftoken=abc" in headers["Cookie"]
     assert "sessionid=sess1" in headers["Cookie"]
     assert data["report_types"] == "[11]"
-    assert data["submitted_start_date"] == "01/01/2012"  # empty store (LD5)
+    assert data["submitted_start_date"] == "01/01/2012 00:00:00"  # empty store (LD5)
     assert data["start"] == "0"
     assert data["length"] == str(PAGE_LENGTH)
     assert data["csrfmiddlewaretoken"] == "tok123"
@@ -641,7 +641,7 @@ def test_window_seeded_store_is_max_senate_filed_minus_90_days(
     _route_handshake(transport, [])
     _run_live(initialized_db, transport, clock, raw_root=tmp_path / "raw")
     (_m, _u_, _h, data), = [c for c in transport.calls if c[1] == DATA_URL]
-    assert data["submitted_start_date"] == "04/02/2026"  # 2026-07-01 − 90 d
+    assert data["submitted_start_date"] == "04/02/2026 00:00:00"  # 2026-07-01 − 90 d
 
 
 # --- politeness floors (R2/G6) -----------------------------------------------
@@ -1768,7 +1768,7 @@ def test_default_body_is_byte_identical_to_the_watermark_behaviour(
     _run_live(initialized_db, transport, FakeClock(), raw_root=tmp_path / "raw")
 
     body = _index_body(transport)
-    assert body["submitted_start_date"] == "01/01/2012"   # empty store (LD5)
+    assert body["submitted_start_date"] == "01/01/2012 00:00:00"   # empty store (LD5)
     assert body["submitted_end_date"] == ""               # no upper bound
     assert body == senate._index_post_body(
         "tok123", submitted_start_date="01/01/2012", start=0
@@ -1786,7 +1786,7 @@ def test_an_explicit_start_bound_is_sent(tmp_path, initialized_db):
         jitter=lambda: 0.0, submitted_start_date="01/01/2015",
     )
     body = _index_body(transport)
-    assert body["submitted_start_date"] == "01/01/2015"
+    assert body["submitted_start_date"] == "01/01/2015 00:00:00"
     assert body["submitted_end_date"] == ""
 
 
@@ -1801,8 +1801,8 @@ def test_an_explicit_end_bound_is_sent(tmp_path, initialized_db):
         jitter=lambda: 0.0, submitted_end_date="03/31/2016",
     )
     body = _index_body(transport)
-    assert body["submitted_start_date"] == "01/01/2012"   # still derived
-    assert body["submitted_end_date"] == "03/31/2016"
+    assert body["submitted_start_date"] == "01/01/2012 00:00:00"   # still derived
+    assert body["submitted_end_date"] == "03/31/2016 00:00:00"
 
 
 def test_both_bounds_select_exactly_the_window(tmp_path, initialized_db):
@@ -1817,8 +1817,10 @@ def test_both_bounds_select_exactly_the_window(tmp_path, initialized_db):
         submitted_start_date="01/01/2015", submitted_end_date="03/31/2016",
     )
     body = _index_body(transport)
+    # The WIRE format carries " 00:00:00" (eFD 503s a bare date — see
+    # `_efd_datetime`); the report and summary keep the human date-only form.
     assert (body["submitted_start_date"], body["submitted_end_date"]) == (
-        "01/01/2015", "03/31/2016",
+        "01/01/2015 00:00:00", "03/31/2016 00:00:00",
     )
     assert report.window == ("01/01/2015", "03/31/2016")
     assert "senate window: submitted 01/01/2015 → 03/31/2016" in senate.format_summary(
@@ -2012,3 +2014,28 @@ def test_a_tripped_breaker_still_reports_what_the_session_actually_did(
     assert report.fetch.attempts > 0
     assert report.fetch.status_counts[403] == CIRCUIT_403_THRESHOLD
     assert "senate transport: attempts" in senate.format_summary(report)
+
+
+def test_the_wire_date_always_carries_a_time_component():
+    """eFD answers 503 — not 400 — to a submitted-date without a time.
+
+    Established 2026-08-07 by a controlled pair on one session, three seconds
+    apart: `08/01/2026 00:00:00` → 200, `08/01/2026` → 503. The date-only form
+    worked historically; the server changed under us, and the 503 spent a day
+    masquerading as an outage (it survived five wrong hypotheses: IP blocking,
+    headers, connection reuse, page length, user-agent). Every path into the
+    body — CLI windows, watermark defaults, era bounds — must pass through the
+    one normalizer, so no caller can reintroduce the bare form.
+    """
+    body = senate._index_post_body("tok", submitted_start_date="01/01/2012", start=0)
+    assert body["submitted_start_date"].endswith(" 00:00:00")
+    bounded = senate._index_post_body(
+        "tok", submitted_start_date="01/01/2015", submitted_end_date="12/31/2015", start=0
+    )
+    assert bounded["submitted_end_date"].endswith(" 00:00:00")
+    # A value that already carries a time must pass through untouched, not
+    # gain a second one.
+    explicit = senate._index_post_body(
+        "tok", submitted_start_date="01/01/2015 12:30:00", start=0
+    )
+    assert explicit["submitted_start_date"] == "01/01/2015 12:30:00"

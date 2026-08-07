@@ -414,6 +414,24 @@ def _csrf_token(html: bytes) -> str | None:
     return node.get("value") or None
 
 
+def _efd_datetime(date: str) -> str:
+    """``MM/DD/YYYY`` → ``MM/DD/YYYY 00:00:00``; a value with a time passes through.
+
+    eFD's search backend answers **503** — not 400 — to a submitted-date without
+    a time component. Established 2026-08-07 by a controlled pair on one session,
+    three seconds apart: ``08/01/2026 00:00:00`` → 200, ``08/01/2026`` → 503.
+    The date-only form worked historically, so this is a server-side parsing
+    change presenting as an outage — it cost two CI runs and a five-hypothesis
+    diagnosis (IP blocking, headers, connection reuse, page length, user-agent)
+    precisely because 503 reads as "their problem".
+
+    Normalized here, at the single point where dates enter the request body, so
+    every caller (CLI-provided windows, watermark-derived defaults, era bounds)
+    is covered without any of them knowing eFD's quirk exists.
+    """
+    return date if " " in date else f"{date} 00:00:00"
+
+
 def _index_post_body(
     token: str,
     *,
@@ -434,8 +452,8 @@ def _index_post_body(
         "csrfmiddlewaretoken": token,
         "report_types": "[11]",
         "filer_types": "[]",
-        "submitted_start_date": submitted_start_date,
-        "submitted_end_date": submitted_end_date or "",
+        "submitted_start_date": _efd_datetime(submitted_start_date),
+        "submitted_end_date": _efd_datetime(submitted_end_date) if submitted_end_date else "",
         "candidate_state": "",
         "senator_state": "",
         "office_id": "",
