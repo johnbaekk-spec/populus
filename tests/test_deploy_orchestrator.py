@@ -23,6 +23,7 @@ import inspect
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
@@ -1015,6 +1016,11 @@ class Cli:
         factories: dict[str, Any] = {
             "upload_factory": lambda: self.upload,
             "verifier_factory": lambda: self.verify,
+            # No readiness sleeps in the suite. The real poller waits for a
+            # brand-new Pages origin to start routing (12 x 5s); left
+            # un-injected here it made this file take 19 minutes, and a slow
+            # suite is a suite people stop running.
+            "readiness_factory": lambda: (lambda url, *, stage: None),
         }
         if pages:
             factories["pages_factory"] = lambda: self.client
@@ -1337,6 +1343,7 @@ def test_the_default_uploader_is_the_wrangler_uploader(cli: Cli, monkeypatch) ->
         main(
             cli.argv(),
             pages_factory=lambda: cli.client,
+            readiness_factory=lambda: (lambda url, *, stage: None),
             verifier_factory=lambda: cli.verify,
         )
         == EXIT_DEPLOYED
@@ -1365,6 +1372,7 @@ def test_the_default_verifier_is_bound_to_the_artifact(cli: Cli, monkeypatch) ->
         main(
             cli.argv(),
             pages_factory=lambda: cli.client,
+            readiness_factory=lambda: (lambda url, *, stage: None),
             upload_factory=lambda: cli.upload,
             http_factory=lambda: sentinel,
         )
@@ -1376,3 +1384,28 @@ def test_the_default_verifier_is_bound_to_the_artifact(cli: Cli, monkeypatch) ->
         "code_sha": CODE_SHA,
         "stats_bytes": SITE["stats.json"],
     }
+
+
+def test_the_readiness_poller_never_sleeps_for_real_in_the_suite() -> None:
+    """A slow suite is a suite people stop running.
+
+    The readiness poller waits for a brand-new Pages origin to start routing
+    (12 x 5s). Un-injected, two tests that drove `main()` for its production
+    wiring paid the full backoff against a mocked 522 and this file took
+    **19 minutes**. Every `main()` call here injects a no-op; this asserts the
+    poller itself honours an injected sleep, so the next person to add a
+    `main()` test has a fast default to reach for and a named reason.
+    """
+    from populus.deploy.upload import await_origin
+
+    class _Dead:
+        def get(self, url: str, **kwargs: Any) -> Any:
+            return SimpleNamespace(status_code=522)
+
+    slept: list[float] = []
+    ready = await_origin(_Dead(), attempts=3, delay_seconds=5.0, sleep=slept.append)
+    ready("https://example.invalid/", stage="preview")
+
+    # Exhausts its attempts, sleeps BETWEEN them only, and never raises: a dead
+    # origin is the sweep's verdict to render, not this helper's.
+    assert slept == [5.0, 5.0]
