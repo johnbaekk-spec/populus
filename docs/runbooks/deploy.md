@@ -210,3 +210,46 @@ preview-verify-then-production protocol and writes a **new appended generation**
   become possible only now, and both remain open P3 gates.
 - Delete TD-4 from the plan's debt list and delete §4 of this runbook: the
   exposure it describes cannot recur once a rollback target exists.
+
+
+## TD-4 incident: a deployment went live and could not be attested
+
+**Symptom.** The `Gate on prior deployment generation` step refuses:
+
+```
+<domain> serves a deployment (populus:code_sha '<sha>') but populus-data holds
+zero deployment generations. Something went live unrecorded.
+```
+
+**What happened.** The deploy job put bytes on the domain and the signer then
+refused to attest them. The gate now blocks every publish — including the one
+carrying the fix. This is the deadlock TD-4 predicts, and it is the gate working
+correctly: it will not publish over a state nobody has explained.
+
+**What NOT to do.** Do not attest the live build to clear the gate — that
+records a provenance claim for something you know is wrong, which is the one
+thing this system exists to prevent. Do not try to delete the deployment;
+Cloudflare refuses to delete an active production deployment.
+
+**Clearing it.**
+
+1. Fix the underlying defect and merge it.
+2. Read the sha the domain is actually serving:
+
+```bash
+curl -s https://publicfilings.org/ | grep -o 'populus:code_sha" content="[^"]*"'
+```
+
+3. Re-dispatch naming that exact sha:
+
+```bash
+gh workflow run publish.yml --repo johnbaekk-spec/populus --ref main -f acknowledge_unrecorded_code_sha=<sha>
+```
+
+The acknowledgement clears **only** this state, for **one** run, and attests
+nothing. It must match the live sha exactly, so it cannot be set once and left
+on, and it is unavailable to the nightly schedule. The verdict records that a
+human overrode a gate and which deployment they overrode.
+
+4. That run deploys the fixed build and writes the first real generation. The
+   override is never needed again; the next run has a generation to verify.
