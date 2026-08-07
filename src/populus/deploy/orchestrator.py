@@ -295,6 +295,32 @@ class DeployOutcome:
     rollback_target: str | None
 
 
+class OriginReadiness(Protocol):
+    """Polls a freshly-uploaded origin until it answers, or gives up."""
+
+    def __call__(self, url: str, *, stage: str) -> None: ...
+
+
+def _await(ready: OriginReadiness | None, url: str, *, stage: str) -> None:
+    """Wait for a just-uploaded deployment to start serving, before verifying.
+
+    Cloudflare returns the deployment URL the moment the upload is accepted,
+    but the edge needs a few seconds to route it — until then every path
+    answers **522**, which R17 correctly classifies as "no verdict reached"
+    rather than tampering. So the sweep ran against an origin that did not
+    exist yet and the whole deploy aborted on an outage that was really a race
+    (run 7: `HTTP 522 fetching .../404?populus-verify=...`; the same URL
+    answered 200 moments later).
+
+    This waits for readiness — it does NOT retry verification. A tampered or
+    genuinely broken deployment still fails; the only thing tolerated is the
+    interval before a brand-new origin is reachable at all. Injected so the
+    suite stays hermetic and the timeout is testable.
+    """
+    if ready is not None:
+        ready(url, stage=stage)
+
+
 def run_deployment(
     *,
     client: PagesSurface,
@@ -305,6 +331,7 @@ def run_deployment(
     verify: Verifier,
     preview_branch: str = DEFAULT_PREVIEW_BRANCH,
     runbook: str = RUNBOOK,
+    await_origin: OriginReadiness | None = None,
 ) -> DeployOutcome:
     """Run the §12.1 deploy sequence in order, or raise saying where it stopped.
 
@@ -339,6 +366,7 @@ def run_deployment(
     try:
         # --- (5) preview, verified inventory-wide (R9) -----------------------
         preview = _upload(upload, snapshot, environment=PREVIEW, branch=preview_branch)
+        _await(await_origin, preview.url, stage=PREVIEW)
         preview_result = verify(
             preview.url,
             stage=PREVIEW,
@@ -360,6 +388,7 @@ def run_deployment(
 
         # --- (7) R11: verify the live custom domain --------------------------
         domain_url = _domain_url(custom_domain)
+        _await(await_origin, f"https://{custom_domain}", stage=PRODUCTION)
         production_result = verify(
             domain_url,
             stage=PRODUCTION,
@@ -707,6 +736,7 @@ def main(
     upload_factory=None,
     http_factory=None,
     verifier_factory=None,
+    readiness_factory=None,
 ) -> int:
     """Run the §12.1 deploy sequence as a process. The factories keep it testable.
 
@@ -718,6 +748,7 @@ def main(
     the cause, and the cause is a variable read through the wrong context.
     """
     from populus.deploy.upload import (
+        await_origin,
         DeploymentVerifier,
         PagesDeploySurface,
         WranglerUploader,
@@ -768,11 +799,12 @@ def main(
             lookup=pages,
             **({"package": args.wrangler_package} if args.wrangler_package else {}),
         )
+    readiness_client = http_factory() if http_factory is not None else _default_http_client()
     if verifier_factory is not None:
         verify = verifier_factory()
     else:
         verify = DeploymentVerifier(
-            client=http_factory() if http_factory is not None else _default_http_client(),
+            client=readiness_client,
             build_id=expectations.build_id,
             code_sha=expectations.code_sha,
             stats_bytes=expectations.stats_bytes,
@@ -787,6 +819,14 @@ def main(
             upload=upload,
             verify=verify,
             preview_branch=args.preview_branch,
+            # Injected so the suite never sleeps: a test that drives main()
+            # end to end would otherwise pay the real backoff on every mocked
+            # 522, which is how this poller first made the tests hang.
+            await_origin=(
+                readiness_factory()
+                if readiness_factory is not None
+                else await_origin(readiness_client)
+            ),
         )
     except FirstRunUncompensated as exc:
         # TD-4: the bytes are live and unverified. This is its own exit code

@@ -405,3 +405,41 @@ class DeploymentVerifier:
             stats_bytes=self.stats_bytes,
             deployment=deployment,
         )
+
+
+def await_origin(
+    client: Any,
+    *,
+    attempts: int = 12,
+    delay_seconds: float = 5.0,
+    sleep: Any = None,
+) -> Any:
+    """A readiness poller for a freshly-uploaded Pages origin.
+
+    Cloudflare hands back the deployment URL as soon as the upload is accepted,
+    but the edge takes a few seconds to route it; until then every path answers
+    **522**. The verifier is right to call that "no verdict" — so the fix is to
+    stop asking too early, not to soften the verdict.
+
+    Returns when the origin answers anything that is not a 5xx, or after
+    ``attempts`` tries. Deliberately does NOT raise on exhaustion: if the origin
+    truly never comes up, the sweep that follows will say so with its own
+    evidence, and this helper has no business pre-empting that verdict.
+    """
+    import time
+
+    naptime = sleep if sleep is not None else time.sleep
+
+    def _ready(url: str, *, stage: str) -> None:
+        for attempt in range(attempts):
+            try:
+                response = client.get(url, follow_redirects=False)
+            except Exception:  # transport not up yet — indistinguishable from 522
+                pass
+            else:
+                if response.status_code < 500:
+                    return
+            if attempt < attempts - 1:
+                naptime(delay_seconds)
+
+    return _ready
