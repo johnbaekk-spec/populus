@@ -705,7 +705,17 @@ export function tickerPayloadJson(build: BuildData, ticker: string): string | nu
 export function tickerDataKeys(build: BuildData): { key: string; ticker: string }[] {
   // Every ticker, no filter (Locked #13): tickerDataKey escapes every unsafe
   // byte, so even a ticker with a raw newline gets a well-formed endpoint.
-  return build.tickers.map((t) => ({ key: tickerDataKey(t.ticker), ticker: t.ticker }));
+  // Over-long keys carry a digest tail, so injectivity is asserted here — a
+  // collision must fail the BUILD, never serve one ticker's data as another's.
+  const keys = build.tickers.map((t) => ({ key: tickerDataKey(t.ticker), ticker: t.ticker }));
+  const seen = new Map<string, string>();
+  for (const { key, ticker } of keys) {
+    const prior = seen.get(key);
+    if (prior !== undefined && prior !== ticker)
+      throw new Error(`ticker data key collision: ${JSON.stringify(prior)} and ${JSON.stringify(ticker)} both map to ${key}`);
+    seen.set(key, ticker);
+  }
+  return keys;
 }
 
 /* ---------- methodology tiles (R8): every tile names its stats.json key ---- */

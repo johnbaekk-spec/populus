@@ -499,7 +499,25 @@ export function tickerDataKey(ticker: string): string {
       for (const byte of new TextEncoder().encode(ch))
         out += "~" + byte.toString(16).toUpperCase().padStart(2, "0");
   }
+  // The real Senate corpus contains a "ticker" of newlines and ~40 spaces;
+  // escaping tripled it past the 255-byte filename limit (ENAMETOOLONG on the
+  // runner). Over-long keys keep a readable prefix and gain a digest tail.
+  // Injectivity is no longer structural for these, so `tickerDataKeys` asserts
+  // key uniqueness at build time — a collision fails the build loudly rather
+  // than serving one ticker's data under another's name.
+  if (out.length > 120) out = out.slice(0, 80) + "~~" + fnv1a64(ticker);
   return out;
+}
+
+/** FNV-1a 64-bit, hex — sync and dependency-free so the /e/ client computes
+    the identical key with the identical code. */
+function fnv1a64(s: string): string {
+  let h = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(s)) {
+    h ^= BigInt(byte);
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, "0");
 }
 
 export function memberDataPath(bioguide: string): string {
