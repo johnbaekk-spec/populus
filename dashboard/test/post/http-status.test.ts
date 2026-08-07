@@ -211,3 +211,19 @@ test("S3 stays live on the feed (verify-only per R10)", () => {
   assert.ok(feed.includes("No disclosures match — and that's an answer, not an error."));
   assert.ok(feed.includes("feed-empty"));
 });
+
+test("the build_id marker is the manifest's, not the directory name (R19)", () => {
+  // Run 10 deployed a site whose populus:build_id was the literal string
+  // "build": CI points POPULUS_BUILD_DIR at `.staging/<id>/build`, and the id
+  // was taken from basename(). Dev never saw it — its fallback path ends in
+  // the id. The record signer caught it and refused to attest, which is
+  // precisely what it exists for; nothing else in the pipeline noticed.
+  const manifest = JSON.parse(
+    readFileSync(path.join(path.dirname(statsSourcePath()), "..", "manifest.json"), "utf-8"),
+  );
+  const html = readFileSync(path.join(DIST, "index.html"), "utf-8");
+  const marker = /<meta name="populus:build_id" content="([^"]*)"/.exec(html);
+  assert.ok(marker, "no populus:build_id marker");
+  assert.equal(marker[1], manifest.build_id);
+  assert.notEqual(marker[1], "build", "the directory name leaked into the marker");
+});
