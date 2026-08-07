@@ -477,10 +477,17 @@ export function congressTickerHref(ticker: string): string {
  * its endpoint (Locked #13) and the /e/ fallback keeps working.
  */
 export function pathSafeTicker(ticker: string): boolean {
+  // ':' was allowed here briefly (it IS page-safe for a Linux build and a URL)
+  // — but actions/upload-artifact refuses any file whose PATH contains a colon
+  // (Windows-invalid chars), and the deploy travels as an artifact. Proven on
+  // the runner: "The path for one of the files in artifact is not valid:
+  // /site/congress/tickers/CRYPTO:BTC/index.html". Colon tickers ride the /e/
+  // fallback like every other path-hostile form; their DATA endpoints are
+  // unaffected (tickerDataKey escapes ':' to ~3A).
   return (
     ticker.length > 0 &&
     ticker.length <= 200 &&
-    /^[A-Za-z0-9][A-Za-z0-9.:_-]*$/.test(ticker)
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(ticker)
   );
 }
 

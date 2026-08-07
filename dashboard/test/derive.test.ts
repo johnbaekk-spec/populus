@@ -531,7 +531,10 @@ test("path-hostile tickers ride the /e/ fallback, never a dead page", () => {
   const hostile = "--\n                    AM";
   assert.equal(pathSafeTicker(hostile), false);
   assert.equal(pathSafeTicker("AAPL"), true);
-  assert.equal(pathSafeTicker("BRK:B"), true); // colon is page-safe via encodeURIComponent
+  // AMENDED, reason recorded: ':' is page-safe for the build and the URL, but
+  // actions/upload-artifact refuses colon paths (Windows-invalid), and the
+  // deploy travels as an artifact — proven on the runner with CRYPTO:BTC.
+  assert.equal(pathSafeTicker("BRK:B"), false);
   const ctx = { cutTickers: new Set() };
   assert.ok(tickerHrefFor(hostile, ctx).startsWith("/e/?k=t:"));
   assert.ok(tickerHrefFor("AAPL", ctx).startsWith("/tickers/")); // Locked #4: canonical page
