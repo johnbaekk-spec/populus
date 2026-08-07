@@ -2316,3 +2316,33 @@ def test_an_unreachable_domain_with_a_generation_is_still_an_outage(tmp_path):
     assert result.outcome == UNAVAILABLE
     assert result.first_run is False
     assert result.ok is False
+
+
+# --- TD-4's clearing path: narrow, single-use, loud -------------------------
+
+
+def test_the_override_clears_only_the_exact_live_sha(tmp_path):
+    """Run 10 put a deployment live that could not be attested (its build_id
+    marker was wrong), so the gate blocked every subsequent publish — including
+    the one carrying the fix. Attesting a known-bad build or deleting an active
+    production deployment were the only other exits, and both are worse.
+
+    The acknowledgement must name the sha the domain actually serves, so it
+    cannot be set once and left on.
+    """
+    repo = _data_repo(tmp_path)
+
+    right, _ = _gate(repo, acknowledged_code_sha=CODE_SHA)
+    assert right.ok is True
+    assert "OVERRIDE" in right.detail and CODE_SHA in right.detail
+
+    wrong, _ = _gate(repo, acknowledged_code_sha="0" * 40)
+    assert wrong.outcome == REJECTED, "a stale acknowledgement cleared the gate"
+
+
+def test_the_override_clears_no_other_refusal(tmp_path):
+    """It is scoped to live-deployment-with-zero-generations. Every other
+    refusal — an unsigned generation, a sha mismatch — must be untouched."""
+    repo = _deployed(tmp_path)  # a generation EXISTS
+    result, _ = _gate(repo, served={}, acknowledged_code_sha=CODE_SHA)
+    assert result.outcome == REJECTED, "the override leaked into another state"

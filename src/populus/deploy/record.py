@@ -978,6 +978,7 @@ def gate_publish(
     attestation: AttestationProvider,
     domain: str,
     marker_path: str = DEFAULT_MARKER_PATH,
+    acknowledged_code_sha: str = "",
 ) -> GateResult:
     """R18: the previous deploy must have left a **verified** generation.
 
@@ -1019,6 +1020,7 @@ def gate_publish(
             attestation=attestation,
             domain=domain,
             marker_path=marker_path,
+            acknowledged_code_sha=acknowledged_code_sha,
         )
     except RecordMisconfigured as exc:
         return GateResult(outcome=MISCONFIGURED, detail=f"misconfigured: {exc}")
@@ -1042,6 +1044,7 @@ def _gate(
     attestation: AttestationProvider,
     domain: str,
     marker_path: str,
+    acknowledged_code_sha: str = "",
 ) -> GateResult:
     repo = Path(data_repo)
     if not repo.is_dir():
@@ -1088,11 +1091,43 @@ def _gate(
             ),
         )
     if found is None:
+        # The documented clearing path for TD-4's one real deadlock: a
+        # deployment went live and could not be attested, so the gate blocks
+        # every future publish -- INCLUDING the one carrying the fix. Left
+        # unresolvable, the only escapes are attesting a build known to be
+        # wrong, or deleting an active production deployment Cloudflare refuses
+        # to delete.
+        #
+        # So the operator may acknowledge it -- and the acknowledgement is
+        # deliberately expensive to give:
+        #   * it must name the EXACT code_sha the domain is serving, so it
+        #     cannot be set once and forgotten, and cannot be guessed;
+        #   * it lives on `workflow_dispatch` only, so a scheduled nightly can
+        #     never carry one;
+        #   * it clears exactly this state (live deployment, zero generations)
+        #     and no other refusal;
+        #   * it is recorded in the verdict, so the run log says a human
+        #     overrode a safety gate and which deployment they overrode.
+        # It does not attest anything. The next successful run writes the first
+        # real generation and this path is never reachable again.
+        if acknowledged_code_sha and acknowledged_code_sha == served:
+            return GateResult(
+                outcome=VERIFIED,
+                first_run=True,
+                detail=(
+                    f"OVERRIDE: an operator acknowledged the unrecorded "
+                    f"deployment serving {served!r} on {domain}. The gate is "
+                    "cleared for THIS run only; nothing was attested, and the "
+                    "next run must produce a real generation (TD-4 runbook)."
+                ),
+            )
         raise RecordRefused(
             f"{domain} serves a deployment (populus:code_sha {served!r}) but "
             f"{repo} holds zero deployment generations. Something went live "
             "unrecorded — the first-run predicate needs BOTH halves, and this "
-            "is the shape R20's skipped signer leaves behind"
+            "is the shape R20's skipped signer leaves behind. If this is a "
+            "known incident, re-dispatch with acknowledge_unrecorded_code_sha "
+            f"set to {served!r} (see docs/runbooks/deploy.md, TD-4)"
         )
     if served is None:
         raise RecordRefused(
@@ -1348,6 +1383,16 @@ def _add_gate_arguments(parser: argparse.ArgumentParser) -> None:
         help="the page carrying the populus:code_sha marker",
     )
     parser.add_argument(
+        "--acknowledge-unrecorded-code-sha",
+        default="",
+        help=(
+            "TD-4 clearing path: acknowledge a live-but-unrecorded deployment "
+            "by naming the EXACT code_sha it serves. Clears only that one "
+            "state, for one run, and attests nothing. See "
+            "docs/runbooks/deploy.md."
+        ),
+    )
+    parser.add_argument(
         # Unlike `sign`, this one HAS a default — and the default is the strong
         # provider, never the no-op. The property the defaultless flag protects
         # is "no entry point silently inherits StagingNoop"; defaulting to
@@ -1518,6 +1563,7 @@ def _main_gate(
             attestation=attestation,
             domain=args.domain,
             marker_path=args.marker_path,
+            acknowledged_code_sha=args.acknowledge_unrecorded_code_sha,
         )
     finally:
         if owned:
