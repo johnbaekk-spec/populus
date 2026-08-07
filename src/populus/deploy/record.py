@@ -1052,7 +1052,30 @@ def _gate(
         )
 
     found = highest_generation(repo)
-    served = _domain_code_sha(http, domain, marker_path=marker_path)
+
+    # A domain with no deployment behind it and a domain whose origin is having
+    # an outage are the SAME observation: Cloudflare answers 522 either way,
+    # because "no origin" is literally what a Pages project with zero
+    # deployments has. The status code cannot separate them, and R17 is right
+    # that an outage must never be read as evidence.
+    #
+    # The separation comes from the predicate's other half, which is independent
+    # of the network: the checkout either holds a generation or it does not. An
+    # unreachable domain is therefore allowed to mean "nothing was ever
+    # deployed" ONLY when populus-data independently proves nothing was ever
+    # deployed. If a generation exists, an unreachable domain is exactly the
+    # outage R17 describes and still refuses to answer.
+    #
+    # This is not a widening of the first-run predicate — it is the predicate as
+    # R18 states it ("the domain resolves to no deployment AND the checkout
+    # holds zero generations"), reached in the case where the first half is
+    # observed as an outage rather than as a clean answer.
+    try:
+        served = _domain_code_sha(http, domain, marker_path=marker_path)
+    except (RecordUnavailable, VerifyUnavailable):
+        if found is not None:
+            raise
+        served = None
 
     if found is None and served is None:
         return GateResult(

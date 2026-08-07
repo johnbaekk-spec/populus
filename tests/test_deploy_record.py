@@ -2265,3 +2265,51 @@ def test_the_workflow_commits_only_the_generation():
 )
 def test_the_workflow_has_the_step_the_protocol_requires(fragment):
     assert _step(fragment) is not None
+
+
+# --- the first-run predicate must survive an UNREACHABLE domain --------------
+
+
+class _DeadOrigin(_Origin):
+    """A domain with nothing behind it: Cloudflare answers 522, not 404.
+
+    This is what a Pages project with zero deployments actually serves — "no
+    origin" is precisely what 522 means — so the FIRST observation of a
+    never-deployed domain is outage-shaped, not clean.
+    """
+
+    def __init__(self) -> None:
+        super().__init__({})
+
+    def handler(self, request):
+        self.hosts.append(request.url.host)
+        return httpx.Response(522, text="")
+
+
+def test_an_unreachable_domain_with_zero_generations_is_the_first_run(tmp_path):
+    """Found by dispatching, not by any fixture.
+
+    The gate required a CLEAN "no deployment" answer before evaluating the
+    predicate, so on the real first run it read 522 as an outage and refused —
+    unreachable in exactly the state it exists for. The run died at the gate
+    before ingesting anything.
+    """
+    result, _ = _gate(_data_repo(tmp_path), origin=_DeadOrigin())
+
+    assert result.ok is True and result.outcome == VERIFIED
+    assert result.first_run is True
+    assert "first run" in result.detail
+
+
+def test_an_unreachable_domain_with_a_generation_is_still_an_outage(tmp_path):
+    """The half that must NOT move.
+
+    An unreachable domain may mean "never deployed" only while the checkout
+    independently agrees nothing was ever deployed. Once a generation exists,
+    R17 holds and the gate refuses to answer rather than guessing.
+    """
+    result, _ = _gate(_deployed(tmp_path), origin=_DeadOrigin())
+
+    assert result.outcome == UNAVAILABLE
+    assert result.first_run is False
+    assert result.ok is False
