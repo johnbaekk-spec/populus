@@ -1,4 +1,5 @@
 ---
+import { pathSafeTicker } from "../../lib/format.ts";
 // Unified ticker page (Ticker Unified.dc.html) — the primary ticker surface:
 // search-first masthead, congress cards, the mapping-gated institutional
 // section (Locked #18), planned-section placeholders.
@@ -11,6 +12,10 @@ export function getStaticPaths() {
   const build = getBuildData();
   return build.tickers
     .filter((t) => !build.cutTickers.has(t.ticker))
+    // TD-6, dashboard side: a ticker that cannot round-trip as a route param
+    // (the Senate corpus contains one with a literal newline) gets no page;
+    // links route it to the /e/ fallback instead (tickerHrefFor).
+    .filter((t) => pathSafeTicker(t.ticker))
     .map((t) => ({ params: { ticker: t.ticker } }));
 }
 

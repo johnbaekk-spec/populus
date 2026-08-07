@@ -37,9 +37,10 @@ import {
   groupEntities,
   edgarFilerUrl,
   bioguideProfileUrl,
+  pathSafeTicker,
 } from "../src/lib/derive.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
-import { DATASET_VERSION, type TxnRow, type PaperRow } from "../src/lib/format.ts";
+import { DATASET_VERSION, type TxnRow, type PaperRow, tickerHrefFor } from "../src/lib/format.ts";
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
@@ -311,11 +312,20 @@ test("parseEntityKey: strict shapes; ticker keys keep colon charset; CIKs pad", 
   assert.deepEqual(parseEntityKey("f:12345678901"), { ok: false, reason: "malformed" });
 });
 
-test("tickerDataKey: colon-safe endpoint names, collision-free", () => {
-  assert.equal(tickerDataKey("CRYPTO:BTC"), "CRYPTO~BTC");
-  assert.equal(tickerDataKey("CADE$A"), "CADE$A");
+test("tickerDataKey: escaped endpoint names, collision-free", () => {
+  // AMENDED with the encoding change, reason recorded (reversing-a-reviewed-
+  // decision): the bare ':'→'~' scheme could not represent tickers with raw
+  // whitespace — the first full Senate corpus contains one with a literal
+  // newline, and the CI build died on the route's own emitted key. The escape
+  // form is now ~XX per UTF-8 byte for every unsafe char, ':' and '$'
+  // included; the escape char itself is escaped, which the old scheme never
+  // did (BRK:B and a literal BRK~B collided). The PROPERTY (collision-free,
+  // path-safe, payload carries the real ticker) is unchanged; only the byte
+  // mechanism moved. Keys are per-build — nothing durable pins the old form.
+  assert.equal(tickerDataKey("CRYPTO:BTC"), "CRYPTO~3ABTC");
+  assert.equal(tickerDataKey("CADE$A"), "CADE~24A");
   assert.equal(memberDataPath("P000197"), "/congress/data/members/P000197.v1.json");
-  assert.equal(tickerDataPath("CRYPTO:BTC"), "/congress/data/tickers/CRYPTO~BTC.v1.json");
+  assert.equal(tickerDataPath("CRYPTO:BTC"), "/congress/data/tickers/CRYPTO~3ABTC.v1.json");
 });
 
 /* ---------- fetch-outcome classifier (spec §3, every outcome) ---------- */
@@ -497,4 +507,32 @@ test("groupEntities: rows bucket by bioguide and ticker, order preserved", () =>
 test("primary-source URLs are https and entity-scoped", () => {
   assert.ok(edgarFilerUrl("0001067983").startsWith("https://www.sec.gov/"));
   assert.ok(bioguideProfileUrl("P000197").includes("P000197"));
+});
+
+test("tickerDataKey survives the Senate corpus's path-hostile ticker", () => {
+  // The first full Senate ingest delivered a "ticker" containing a literal
+  // newline; Astro cannot round-trip a static param with raw whitespace and
+  // the CI build died with NoMatchingStaticPathFound on the route's own key.
+  const hostile = "--\n                    AM";
+  const key = tickerDataKey(hostile);
+  assert.match(key, /^[A-Za-z0-9._~-]+$/);
+  assert.ok(!/\s/.test(key));
+  // Injective across near-collisions: the escape char itself, the legacy colon
+  // form, and lookalikes must map to distinct keys — a collision serves one
+  // ticker's data as another's.
+  const keys = ["BRK:B", "BRK~B", "BRK~3AB", "BRK B", hostile, "--AM"].map(tickerDataKey);
+  assert.equal(new Set(keys).size, keys.length, `collision in ${keys}`);
+  // Plain tickers pass through untouched.
+  assert.equal(tickerDataKey("AAPL"), "AAPL");
+  assert.equal(tickerDataKey("BRK.B"), "BRK.B");
+});
+
+test("path-hostile tickers ride the /e/ fallback, never a dead page", () => {
+  const hostile = "--\n                    AM";
+  assert.equal(pathSafeTicker(hostile), false);
+  assert.equal(pathSafeTicker("AAPL"), true);
+  assert.equal(pathSafeTicker("BRK:B"), true); // colon is page-safe via encodeURIComponent
+  const ctx = { cutTickers: new Set() };
+  assert.ok(tickerHrefFor(hostile, ctx).startsWith("/e/?k=t:"));
+  assert.ok(tickerHrefFor("AAPL", ctx).startsWith("/tickers/")); // Locked #4: canonical page
 });

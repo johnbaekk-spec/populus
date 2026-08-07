@@ -1,4 +1,5 @@
 ---
+import { pathSafeTicker } from "../../../lib/derive.ts";
 // Deep congressional ticker view (Congress Ticker.dc.html): two-sided
 // quarterly ribbon, members-disclosing table, full paginated disclosures.
 import Base from "../../../layouts/Base.astro";
@@ -10,6 +11,9 @@ export function getStaticPaths() {
   const build = getBuildData();
   return build.tickers
     .filter((t) => !build.cutTickers.has(t.ticker))
+    // TD-6, dashboard side: a ticker that cannot round-trip as a route param
+    // (the Senate corpus contains one with a literal newline) gets no page.
+    .filter((t) => pathSafeTicker(t.ticker))
     .map((t) => ({ params: { ticker: t.ticker } }));
 }
 
