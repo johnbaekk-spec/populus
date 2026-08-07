@@ -536,3 +536,18 @@ test("path-hostile tickers ride the /e/ fallback, never a dead page", () => {
   assert.ok(tickerHrefFor(hostile, ctx).startsWith("/e/?k=t:"));
   assert.ok(tickerHrefFor("AAPL", ctx).startsWith("/tickers/")); // Locked #4: canonical page
 });
+
+test("over-long hostile tickers cap under the filename limit, digest-tailed", () => {
+  // The REAL corpus form: multiple newlines and ~40 spaces — the escaped key
+  // tripled past 255 bytes and the runner died with ENAMETOOLONG.
+  const monster = "--\n" + " ".repeat(40) + "\n" + " ".repeat(40) + "AM";
+  const key = tickerDataKey(monster);
+  assert.ok(key.length + ".v1.json".length <= 200, `key too long: ${key.length}`);
+  assert.match(key, /^[A-Za-z0-9._~-]+$/);
+  assert.ok(!/\s/.test(key));
+  // Distinct monsters stay distinct (digest tail differs).
+  const other = tickerDataKey(monster + "X");
+  assert.notEqual(key, other);
+  // Short keys are untouched by the cap.
+  assert.equal(tickerDataKey("AAPL"), "AAPL");
+});
