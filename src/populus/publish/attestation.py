@@ -81,6 +81,11 @@ UNAVAILABLE = "unavailable"
 #: build-provenance attestation and is filtered out before any other check.
 SLSA_PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
 
+#: What verify_dsse's first return value actually is: the DSSE envelope's
+#: payload type, the same string for EVERY in-toto statement regardless of
+#: predicate. The predicateType is a field inside the payload.
+IN_TOTO_ENVELOPE_TYPE = "application/vnd.in-toto+json"
+
 
 def resolve_identity(subject_name: str) -> str | None:
     """The certificate identity required for ``subject_name``, or None.
@@ -348,10 +353,19 @@ class SigstoreAttestation:
                 outcome=REJECTED,
             )
 
-        if predicate_type != SLSA_PREDICATE_TYPE:
+        # sigstore's verify_dsse returns the DSSE ENVELOPE payload type — for
+        # every in-toto statement that is "application/vnd.in-toto+json". The
+        # SLSA predicateType lives INSIDE the statement JSON. The first real
+        # bundle GitHub minted proved the distinction: P3-3a compared the
+        # envelope type against the SLSA URL, and the fixtures had been built to
+        # match the code's misreading — both agreed, both wrong vs reality
+        # ("predicate mismatch: 'application/vnd.in-toto+json' !=
+        # 'https://slsa.dev/provenance/v1'" on run 6's Verify step). Both layers
+        # are now checked, each against its own contract.
+        if predicate_type != IN_TOTO_ENVELOPE_TYPE:
             return AttestationResult(
                 ok=False,
-                detail=f"predicate mismatch: {predicate_type!r} != {SLSA_PREDICATE_TYPE!r}",
+                detail=f"envelope type mismatch: {predicate_type!r} != {IN_TOTO_ENVELOPE_TYPE!r}",
                 outcome=REJECTED,
             )
 
@@ -360,6 +374,17 @@ class SigstoreAttestation:
         except (ValueError, TypeError) as exc:
             return AttestationResult(
                 ok=False, detail=f"verified payload is not JSON: {exc}", outcome=REJECTED
+            )
+
+        statement_predicate = statement.get("predicateType")
+        if statement_predicate != SLSA_PREDICATE_TYPE:
+            return AttestationResult(
+                ok=False,
+                detail=(
+                    f"predicate mismatch: {statement_predicate!r} != "
+                    f"{SLSA_PREDICATE_TYPE!r}"
+                ),
+                outcome=REJECTED,
             )
 
         subjects = statement.get("subject") or []

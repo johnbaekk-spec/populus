@@ -854,7 +854,9 @@ class _Verifier:
             raise VerificationFailed(f"certificate identity {identity!r} does not match")
         if issuer != P2_OIDC_ISSUER:
             raise VerificationFailed(f"issuer {issuer!r} does not match")
-        return SLSA_PREDICATE_TYPE, self._payload
+        # The REAL verify_dsse contract (run 6): first element is the DSSE
+        # ENVELOPE type; the SLSA predicateType lives inside the statement.
+        return "application/vnd.in-toto+json", self._payload
 
 
 def _statement(name: str, document: bytes) -> bytes:
@@ -862,6 +864,7 @@ def _statement(name: str, document: bytes) -> bytes:
     return json.dumps(
         {
             "_type": "https://in-toto.io/Statement/v1",
+            "predicateType": SLSA_PREDICATE_TYPE,
             "subject": [
                 {
                     "name": name,

@@ -47,10 +47,17 @@ def bundle() -> dict:
     return {"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json"}
 
 
-def statement(*, digest: str = DIGEST, name: str = "populus-data/manifest.json") -> bytes:
-    """A verified in-toto statement payload, as `verify_dsse` returns it."""
+def statement(*, digest: str = DIGEST, name: str = "populus-data/manifest.json",
+              predicate_type: str = SLSA_PREDICATE_TYPE) -> bytes:
+    """A verified in-toto statement payload, as `verify_dsse` returns it.
+
+    AMENDED with the first REAL bundle (run 6): the statement carries its own
+    `predicateType` field — that is where SLSA lives, not in the envelope type.
+    The old fixture omitted it because the code never read it; fixture and code
+    agreed with each other and disagreed with GitHub."""
     return json.dumps(
         {"_type": "https://in-toto.io/Statement/v1",
+         "predicateType": predicate_type,
          "subject": [{"name": name, "digest": {"sha256": digest}}]}
     ).encode()
 
@@ -76,7 +83,7 @@ class FakeVerifier:
     policy enforces — so a test can prove our code passes the right policy,
     rather than comparing attacker-controlled JSON as the old design did."""
 
-    def __init__(self, *, predicate=SLSA_PREDICATE_TYPE, payload=None,
+    def __init__(self, *, predicate="application/vnd.in-toto+json", payload=None,
                  fail=None, expect_identity=P2_PUBLISH_IDENTITY,
                  expect_issuer=P2_OIDC_ISSUER):
         self._predicate = predicate
@@ -146,9 +153,23 @@ def test_subject_digest_mismatch_is_rejected_and_named() -> None:
     assert "no verified subject" in result.detail
 
 
-def test_wrong_predicate_type_is_rejected_and_named() -> None:
+def test_wrong_envelope_type_is_rejected_and_named() -> None:
+    """A DSSE envelope that is not an in-toto statement at all."""
     result = provider(
-        trust=FakeVerifier(predicate="https://in-toto.io/attestation/link")
+        trust=FakeVerifier(predicate="application/octet-stream")
+    ).verify("manifest.json", SUBJECT)
+    assert result.ok is False and result.outcome == REJECTED
+    assert "envelope type mismatch" in result.detail
+
+
+def test_wrong_statement_predicate_is_rejected_and_named() -> None:
+    """The SLSA check reads the STATEMENT's predicateType — the layer the first
+    real bundle proved matters (the envelope type is the same for every
+    in-toto statement, so checking only it accepts any predicate)."""
+    result = provider(
+        trust=FakeVerifier(
+            payload=statement(predicate_type="https://in-toto.io/attestation/link")
+        )
     ).verify("manifest.json", SUBJECT)
     assert result.ok is False and result.outcome == REJECTED
     assert "predicate mismatch" in result.detail
