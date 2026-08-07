@@ -467,6 +467,23 @@ export function tickerHref(ticker: string): string {
 export function congressTickerHref(ticker: string): string {
   return `/congress/tickers/${esc(encodeURIComponent(ticker))}/`;
 }
+/** Whether a ticker can round-trip as a raw Astro static-route param.
+ *
+ * The first full Senate corpus delivered a "ticker" containing a literal
+ * newline; a param with raw whitespace dies at build time with
+ * NoMatchingStaticPathFound on the route's own emitted key. Page routes use
+ * the raw ticker as their param, so they filter on this; DATA routes never
+ * need it — `tickerDataKey` escapes every unsafe byte, so every ticker keeps
+ * its endpoint (Locked #13) and the /e/ fallback keeps working.
+ */
+export function pathSafeTicker(ticker: string): boolean {
+  return (
+    ticker.length > 0 &&
+    ticker.length <= 200 &&
+    /^[A-Za-z0-9][A-Za-z0-9.:_-]*$/.test(ticker)
+  );
+}
+
 export function genericEntityHref(kind: "m" | "t", key: string): string {
   return `/e/?k=${kind}:${esc(encodeURIComponent(key))}`;
 }
@@ -475,7 +492,11 @@ export function memberHrefFor(bioguide: string, ctx: RenderCtx): string {
   return ctx.cutMembers?.has(bioguide) ? genericEntityHref("m", bioguide) : memberHref(bioguide);
 }
 export function tickerHrefFor(ticker: string, ctx: RenderCtx): string {
-  return ctx.cutTickers?.has(ticker) ? genericEntityHref("t", ticker) : tickerHref(ticker);
+  // Path-unsafe tickers ride the same fallback as budget-cut ones: the /e/
+  // client page, whose data endpoint exists for EVERY ticker (Locked #13).
+  return ctx.cutTickers?.has(ticker) || !pathSafeTicker(ticker)
+    ? genericEntityHref("t", ticker)
+    : tickerHref(ticker);
 }
 
 /** SrcLink (G7): source-document anchor. Scheme-allowlisted: the URL

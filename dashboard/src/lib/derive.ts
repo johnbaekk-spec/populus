@@ -7,6 +7,8 @@
    sumRanges, S4 taxonomy, ticker→issuer mapping, institutional time stamp)
    and dashboard/docs/pagination-and-counts.md (reused unchanged). */
 
+import { pathSafeTicker } from "./format.ts";
+export { pathSafeTicker };
 import {
   type TxnRow,
   type PaperRow,
@@ -484,7 +486,20 @@ export function parseEntityKey(raw: string | null): EntityKey {
     maps to `~`, which no ticker contains — colons are hostile to some
     filesystems/CDNs in static file names. Deterministic and collision-free. */
 export function tickerDataKey(ticker: string): string {
-  return ticker.replaceAll(":", "~");
+  // Injective, filename- and route-safe for EVERY ticker (Locked #13 says
+  // every ticker gets a data endpoint, and the Senate corpus contains tickers
+  // with raw whitespace). Safe bytes pass through; anything else — including
+  // the legacy ':' and the escape character itself — becomes ~XX per UTF-8
+  // byte. Deterministic and collision-free, so the same function computes the
+  // same key at build time and in the /e/ client.
+  let out = "";
+  for (const ch of ticker) {
+    if (/^[A-Za-z0-9._-]$/.test(ch)) out += ch;
+    else
+      for (const byte of new TextEncoder().encode(ch))
+        out += "~" + byte.toString(16).toUpperCase().padStart(2, "0");
+  }
+  return out;
 }
 
 export function memberDataPath(bioguide: string): string {

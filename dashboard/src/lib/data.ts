@@ -703,6 +703,8 @@ export function tickerPayloadJson(build: BuildData, ticker: string): string | nu
 
 /** Endpoint filename keys (colon-safe) for every ticker in the extract. */
 export function tickerDataKeys(build: BuildData): { key: string; ticker: string }[] {
+  // Every ticker, no filter (Locked #13): tickerDataKey escapes every unsafe
+  // byte, so even a ticker with a raw newline gets a well-formed endpoint.
   return build.tickers.map((t) => ({ key: tickerDataKey(t.ticker), ticker: t.ticker }));
 }
 
