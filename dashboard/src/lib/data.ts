@@ -110,7 +110,21 @@ function resolveSources(): { buildDir: string; dbPath: string; buildId: string }
   const envBuildDir = process.env.POPULUS_BUILD_DIR;
   const envDb = process.env.POPULUS_DB;
   if (envBuildDir && envDb) {
-    return { buildDir: envBuildDir, dbPath: envDb, buildId: path.basename(envBuildDir) };
+    // The build id comes from the MANIFEST inside the build, never from the
+    // directory name. CI points POPULUS_BUILD_DIR at
+    // `.staging/<build_id>/build`, so basename() yields the literal string
+    // "build" — which is what the site published as its populus:build_id
+    // marker on run 10, and what the record signer refused to attest:
+    // "the downloaded artifact was built for 'build' but the attested pointer
+    // publishes '20260807.4'". Dev never saw it because its fallback path ends
+    // in the id. The manifest is the authority on its own identity.
+    const manifestPath = path.join(envBuildDir, "manifest.json");
+    if (!existsSync(manifestPath))
+      throw new Error(`POPULUS_BUILD_DIR has no manifest.json: ${manifestPath}`);
+    const declared = JSON.parse(readFileSync(manifestPath, "utf-8"))?.build_id;
+    if (typeof declared !== "string" || declared.length === 0)
+      throw new Error(`manifest.json declares no build_id: ${manifestPath}`);
+    return { buildDir: envBuildDir, dbPath: envDb, buildId: declared };
   }
   if (envBuildDir || envDb) {
     throw new Error("POPULUS_BUILD_DIR and POPULUS_DB must be set together");
