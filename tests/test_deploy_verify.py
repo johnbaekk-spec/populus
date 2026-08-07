@@ -903,7 +903,14 @@ def test_an_unexpected_response_header_fails(tmp_path):
 
 
 def test_the_allowlist_excludes_the_headers_an_injection_would_add():
-    for header in ("set-cookie", "location", "access-control-allow-origin"):
+    # AMENDED against the first real deployment (run 9), reason recorded:
+    # `access-control-allow-origin` was listed here as an injection signal, but
+    # Cloudflare Pages sets it NATIVELY on every served asset — so its presence
+    # says nothing about tampering, and its absence from the allowlist rejected
+    # an entirely honest deployment (10 findings; production untouched). The
+    # headers below remain real signals: a static site has no reason to set a
+    # cookie or a redirect, and neither is provider boilerplate.
+    for header in ("set-cookie", "location", "x-powered-by"):
         assert header not in ALLOWED_RESPONSE_HEADERS
 
 
@@ -1083,3 +1090,23 @@ def test_result_records_the_counts_it_actually_checked(tmp_path):
     assert record["diverged_paths"] == []
     assert "TD-10" in record["non_detection"]
     assert hashlib.sha256(STATS_JSON).hexdigest()  # stats bytes are what we compared
+
+
+def test_a_rejection_names_the_findings_not_just_the_count(tmp_path):
+    """Run 9 rejected with "10 finding(s)" and nothing else.
+
+    Diagnosing it meant re-running the sweep by hand against a preview that
+    happened to still exist. A verifier that refuses without saying what it saw
+    turns every failure into an investigation — and on the deploy path the
+    evidence is gone as soon as the next deployment replaces it.
+    """
+    site = _site()
+    inventory = _inventory(tmp_path, site)
+    tampered = dict(site)
+    tampered["assets/app.js"] = site["assets/app.js"] + b"// injected\n"
+    result = _run(_Origin(tampered), inventory)
+
+    assert result.ok is False
+    assert "assets/app.js" in result.detail, (
+        f"the diverged path is not named in the detail: {result.detail!r}"
+    )
