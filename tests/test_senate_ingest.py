@@ -2039,3 +2039,55 @@ def test_the_wire_date_always_carries_a_time_component():
         "tok", submitted_start_date="01/01/2015 12:30:00", start=0
     )
     assert explicit["submitted_start_date"] == "01/01/2015 12:30:00"
+
+
+def test_a_transport_timeout_is_retried_like_a_5xx():
+    """Run 8 died on a bare `httpx.ReadTimeout` after the whole House leg had
+    already succeeded — hours of work lost to one slow eFD response.
+
+    A transport failure is the same operational event as a 5xx: eFD did not
+    answer this time. It rides the EXISTING backoff ladder rather than a second
+    policy that could drift from the first.
+    """
+    calls = {"n": 0}
+
+    class FlakyTransport:
+        def get(self, url, *, headers):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise senate.TransportFailure("GET: ReadTimeout: timed out")
+            return senate.TransportResponse(status_code=200, content=b"ok", headers={})
+
+        def post(self, url, *, data, headers):  # pragma: no cover - unused here
+            raise AssertionError("not reached")
+
+    slept: list[float] = []
+    session = senate._PoliteSession(
+        transport=FlakyTransport(), sleep=slept.append,
+        monotonic=lambda: 0.0, jitter=lambda: 0.0,
+    )
+    response = session.get("https://efdsearch.senate.gov/search/home/", headers={})
+
+    assert response.status_code == 200, "the retry did not recover the request"
+    assert calls["n"] == 2, "the timeout was not retried"
+    assert session.retries == 1
+    assert slept, "the retry did not back off"
+    # Counted under the synthetic status so the transport summary shows it.
+    assert session.status_counts[senate.TRANSPORT_FAILURE_STATUS] == 1
+
+
+def test_a_transport_that_never_answers_still_gives_up():
+    """The ladder is finite: an eFD that is genuinely down must not spin forever."""
+    class DeadTransport:
+        def get(self, url, *, headers):
+            raise senate.TransportFailure("GET: ConnectError: refused")
+
+        def post(self, url, *, data, headers):  # pragma: no cover
+            raise AssertionError("not reached")
+
+    session = senate._PoliteSession(
+        transport=DeadTransport(), sleep=lambda _: None,
+        monotonic=lambda: 0.0, jitter=lambda: 0.0,
+    )
+    response = session.get("https://efdsearch.senate.gov/search/home/", headers={})
+    assert response.status_code == senate.TRANSPORT_FAILURE_STATUS

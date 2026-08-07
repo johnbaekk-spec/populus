@@ -64,6 +64,12 @@ BACKOFF_SCHEDULE = (2.0, 4.0, 8.0)
 CIRCUIT_403_THRESHOLD = 3
 
 PAGE_LENGTH = 100
+
+#: Synthetic status for "the transport itself failed". Inside the 5xx band so
+#: the retry ladder treats it as a server-side non-answer, and 599 is not a
+#: code eFD can actually return, so a real response can never be mistaken for
+#: one of these.
+TRANSPORT_FAILURE_STATUS = 599
 RESCAN_DAYS = 90
 BACKFILL_START = date(2012, 1, 1)
 
@@ -127,24 +133,30 @@ class HttpxSenateTransport:
     def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
         import httpx
 
-        return _to_transport_response(
-            httpx.get(url, headers=dict(headers), timeout=60.0, follow_redirects=False)
-        )
+        try:
+            return _to_transport_response(
+                httpx.get(url, headers=dict(headers), timeout=60.0, follow_redirects=False)
+            )
+        except httpx.HTTPError as exc:
+            raise TransportFailure(f"GET {url}: {type(exc).__name__}: {exc}") from exc
 
     def post(
         self, url: str, *, data: Mapping[str, str], headers: Mapping[str, str]
     ) -> TransportResponse:
         import httpx
 
-        return _to_transport_response(
-            httpx.post(
-                url,
-                data=dict(data),
-                headers=dict(headers),
-                timeout=60.0,
-                follow_redirects=False,
+        try:
+            return _to_transport_response(
+                httpx.post(
+                    url,
+                    data=dict(data),
+                    headers=dict(headers),
+                    timeout=60.0,
+                    follow_redirects=False,
+                )
             )
-        )
+        except httpx.HTTPError as exc:
+            raise TransportFailure(f"POST {url}: {type(exc).__name__}: {exc}") from exc
 
 
 class _CookieJar:
@@ -176,6 +188,15 @@ class _CookieJar:
         if not self._cookies:
             return None
         return "; ".join(f"{n}={v}" for n, v in self._cookies.items())
+
+
+class TransportFailure(RuntimeError):
+    """The HTTP transport failed before any status was received.
+
+    A named domain error rather than a leaked ``httpx`` exception, so the
+    politeness session (and its tests) never import the transport library and
+    an injected transport can raise it directly.
+    """
 
 
 class CircuitOpenError(RuntimeError):
@@ -268,10 +289,25 @@ class _PoliteSession:
                 merged["Cookie"] = cookie
             self._space()
             self.attempts += 1
-            if data is None:
-                response = self._transport.get(url, headers=merged)
-            else:
-                response = self._transport.post(url, data=data, headers=merged)
+            # A transport-level failure (read timeout, connection reset) is the
+            # same operational event as a 5xx: eFD did not answer this time.
+            # Left uncaught it escaped the retry ladder entirely and killed a
+            # multi-hour ingest on one slow response -- run 8 died with a bare
+            # httpx.ReadTimeout after the full House leg had already succeeded.
+            # Mapped onto the synthetic status below so the EXISTING backoff,
+            # retry accounting and circuit logic handle it, rather than growing
+            # a second parallel policy that could drift from the first.
+            try:
+                if data is None:
+                    response = self._transport.get(url, headers=merged)
+                else:
+                    response = self._transport.post(url, data=data, headers=merged)
+            except TransportFailure as exc:
+                response = TransportResponse(
+                    status_code=TRANSPORT_FAILURE_STATUS,
+                    content=str(exc).encode(),
+                    headers={},
+                )
             self.status_counts[response.status_code] += 1
             self._last_fetch = self._monotonic()
             self._jar.absorb(response.headers)
