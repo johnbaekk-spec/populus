@@ -146,6 +146,11 @@ CONTROL_PATHS = ("/_redirects", "/_headers", "/_worker.js")
 ALLOWED_RESPONSE_HEADERS = frozenset(
     {
         "accept-ranges",
+        # Cloudflare Pages sets this on served assets. Observed on the first
+        # REAL deployment (run 9); the allowlist had been written from the spec
+        # and had never seen a live response, which is exactly what the code
+        # review said it could not verify without one.
+        "access-control-allow-origin",
         "age",
         "alt-svc",
         "cache-control",
@@ -166,6 +171,12 @@ ALLOWED_RESPONSE_HEADERS = frozenset(
         "last-modified",
         "nel",
         "permissions-policy",
+        # Preview deployments carry `x-robots-tag: noindex` — Cloudflare adds it
+        # so preview URLs are not indexed. Allowed rather than required: it is
+        # present on preview and absent on production, so demanding it either
+        # way would make one of the two legs fail for a reason unrelated to the
+        # bytes.
+        "x-robots-tag",
         "referrer-policy",
         "report-to",
         "reporting-endpoints",
@@ -704,7 +715,17 @@ def verify_deployment(
         f"{VERIFICATION_SCOPE}: {sweep.files_verified}/{sweep.files_total} files "
         f"verified at {base_url}; {TD10_NOTE}"
         if ok
-        else f"{VERIFICATION_SCOPE}: {len(findings)} finding(s) at {base_url}"
+        # NAME the findings, do not just count them. Run 9 rejected with
+        # "10 finding(s)" and nothing else, and diagnosing it meant re-running
+        # the sweep by hand against a preview that happened to still exist. A
+        # verifier that refuses without saying what it saw makes every failure
+        # an investigation. Capped so a wholesale divergence cannot bury the
+        # log, with the remainder counted.
+        else (
+            f"{VERIFICATION_SCOPE}: {len(findings)} finding(s) at {base_url}: "
+            + "; ".join(str(f) for f in findings[:8])
+            + (f"; (+{len(findings) - 8} more)" if len(findings) > 8 else "")
+        )
     )
     return VerificationResult(
         ok=ok,
