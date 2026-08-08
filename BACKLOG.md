@@ -5,7 +5,9 @@
 *within* each section; sections are ordered by kind, not urgency.
 
 **Shipped:** M1 (congressional trading, 6 runs) · M2 (institutional 13F, 6 runs
-— identity coverage 0.9996, `inst` serving) · P3-2 (public dashboard frontend).
+— identity coverage 0.9996, `inst` serving) · P3-2 (public dashboard frontend)
+· **P3-3a/P3-3b — `publicfilings.org` live 2026-08-08 with a signed,
+independently-verifiable deployment record.**
 **In flight:** RUN M1-B (congressional 2013–2025 backfill).
 
 ---
@@ -90,6 +92,62 @@ One module at a time (G12).
 - [ ] **B12 · M3** — company financials.
 - [ ] **B13 · M4** — macro.
 - [ ] **B14 · P3 remaining dashboard surfaces** beyond the P3-2 frontend.
+
+---
+
+## 5. Carried open from RUN P3-3b (site went live 2026-08-08)
+
+`publicfilings.org` is live and serving an **attestation-verified** build:
+generation 1 for `20260808.1`, 5379/5379 files swept, `verification_scope:
+expected_paths`. Twelve runs; ten first-contact defects, all fixed and
+mutation-pinned. These two are what P3-3b knowingly did **not** close.
+
+- [ ] **B15 · Ticker names are missing site-wide — the honest no-map state
+      (TD-7).** `POPULUS_TICKER_MAP` points at a deliberately absent path on
+      CI, because `company_tickers.json` exists only under
+      `data-cache/inst/registry` on a workstation: it is not in git, `build.py`
+      emits none, and `publish.yml` ingests congress only. So the deployed site
+      renders `no-map` on ticker surfaces and the search index carries empty
+      ticker names.
+
+      **This was chosen, not overlooked.** The alternative the code originally
+      had was falling back to `tests/fixtures/inst/mcp/company_tickers.json` —
+      shipping *fixture* data as production truth, which the served-tree sweep
+      cannot detect because the served bytes would faithfully match the built
+      bytes. Refusing a fixtures path under CI is now enforced
+      (`dashboard/src/lib/inst.ts`) and lint-asserted in
+      `tests/test_attestation_structure.py`.
+
+      **To close:** give the pipeline a real registry source — either an ingest
+      step that fetches SEC's `company_tickers.json` under the existing SEC UA
+      policy (**the SEC UA must never change**), or a copy committed to
+      `populus-data` and staged into the build as a manifest-listed artifact so
+      it is covered by the digest and the sweep. Then point
+      `POPULUS_TICKER_MAP` at the staged copy and delete the absent-path
+      placeholder in `publish.yml`.
+
+- [ ] **B16 · The TD-4 override exists and has been used once — decide whether
+      it stays.** A live-but-unattested deployment deadlocks the R18 gate: it
+      refuses to publish over an unexplained state, including the publish
+      carrying the fix. Cloudflare will not delete an active production
+      deployment, and attesting a known-bad build to clear a gate is the one
+      thing this system exists to prevent. So
+      `acknowledge_unrecorded_code_sha` was added: it must name the exact
+      `code_sha` the domain serves, is `workflow_dispatch`-only (a nightly can
+      never carry one), clears **only** that state, attests nothing, and records
+      in the verdict that a human overrode a gate.
+
+      **It was used once, on 2026-08-08, to clear the deadlock run 10 created.**
+      Procedure and the explicit "what not to do" are in
+      [`docs/runbooks/deploy.md`](docs/runbooks/deploy.md); mutants pin that any
+      other sha and an always-on form both fail.
+
+      **Decide:** keep it as the documented TD-4 clearing path, or remove it now
+      that generation 1 exists and the deadlock cannot recur in the same shape.
+      Keeping it is defensible — the deadlock is structural, not a one-off — but
+      an override that is never exercised is an override nobody remembers is
+      there. If it stays, it belongs in §14's credential/override inventory and
+      in the quarterly review.
 
 ---
 
