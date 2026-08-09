@@ -30,18 +30,17 @@ import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { edgarFilerUrl } from "../lib/derive.ts";
 import { institutionalDataNoteHtml, resolveServingDbPath } from "../lib/activity.ts";
+import { assembleFilerPayload, readServingFilings } from "../lib/filer-payload.ts";
+import { filerAggregateInputs, getBuildData, topFilerCiks } from "../lib/data.ts";
 import {
   capRows,
   coverageFromCounters,
   holdingsFootnotesHtml,
   isAsOfResolved,
-  parseFilerShard,
   parseIssuerShard,
   projectionAbsentHtml,
   sortHolderRows,
-  sortHoldingRows,
   surfaceHtml,
-  type FilerHoldingRow,
   type FilerSurfacePayload,
   type FilingDict,
   type HolderCoverage,
@@ -96,23 +95,9 @@ if (!cache) {
     }
   }
   if (cache.db) {
-    const rows = cache.db
-      .prepare(
-        `SELECT filing_key, accession, submission_type, period_of_report, filed_date,
-                doc_url, source
-           FROM serving_filings ORDER BY filing_key`,
-      )
-      .all() as Record<string, unknown>[];
-    for (const row of rows) {
-      cache.filings[String(row.filing_key)] = {
-        accession: String(row.accession ?? ""),
-        submission_type: String(row.submission_type ?? ""),
-        period_of_report: String(row.period_of_report ?? ""),
-        filed_date: String(row.filed_date ?? ""),
-        doc_url: row.doc_url == null ? null : String(row.doc_url),
-        source: String(row.source ?? ""),
-      };
-    }
+    // ONE dictionary reader (filer-payload.readServingFilings) — shared with
+    // the tail shard planner so the two cannot parse the artifact differently.
+    cache.filings = readServingFilings(cache.db);
   }
   cacheHolder.__populusServingDb.set(cacheKey, cache);
 }
@@ -123,44 +108,36 @@ const db = cache.db;
 let payload: SurfacePayload | null = null;
 
 if (db && props.kind === "filer") {
-  const raw = db
-    .prepare(
-      // `put_call_bucket` / `unit_key` are the PRODUCER's grain discriminators —
-      // the tokens `agg_qoq_deltas` keys on. They are read rather than
-      // recomputed: deriving the grain here independently means a normalization
-      // change on the producer side silently desynchronizes this table's diff
-      // from the aggregate it references, with nothing to notice.
-      `SELECT cik, period, filing_key, security_id, cusip, issuer_name, title_of_class,
-              value_usd, shares, ssh_type, put_call, position_key,
-              put_call_bucket, unit_key, flags
-         FROM serving_filer_rows WHERE cik = ? ORDER BY period, rowid`,
-    )
-    .all(props.cik) as Record<string, unknown>[];
-  // Same normaliser and same hard-failure guards as a JSON shard would get.
-  const rows = parseFilerShard({ filings: cache.filings, rows: raw }).rows;
-  if (rows.length > 0) {
-    const periods = [...new Set(rows.map((r) => r.period))].sort();
-    // OD-5: the selected quarter and the one before it, both browsable.
-    const current = periods.includes(props.period) ? props.period : periods[periods.length - 1]!;
-    const earlier = periods.filter((p) => p < current);
-    const prior = earlier.length > 0 ? earlier[earlier.length - 1]! : null;
-    const rowsByPeriod: Record<string, FilerHoldingRow[]> = {};
-    const totalsByPeriod: Record<string, number> = {};
-    for (const period of prior ? [prior, current] : [current]) {
-      const capped = capRows(sortHoldingRows(rows.filter((r) => r.period === period)));
-      rowsByPeriod[period] = capped.rows;
-      totalsByPeriod[period] = capped.total;
-    }
+  /* RUN M2-11 (plan R22): the SQL and the period/cap/sort logic that lived here
+     are EXTRACTED to `lib/filer-payload.assembleFilerPayload` — the ONE
+     server-side assembler, shared with the tail shard endpoints so the
+     pre-rendered page and a shard-served tail filer cannot assemble
+     differently. This component renders the holdings-surface subset of the
+     composite payload; empty `periods` is the same honest-absence state that
+     zero rows was before the extraction. */
+  const build = getBuildData();
+  const registry = build.inst.present
+    ? build.inst.filers.find((f) => f.cik === props.cik)
+    : undefined;
+  const full = assembleFilerPayload(db, {
+    cik: props.cik,
+    filerName: props.filerName,
+    latestPeriod: registry?.latest_period ?? props.period,
+    requestedPeriod: props.period,
+    filings: cache.filings,
+    agg: filerAggregateInputs(build, props.cik),
+  });
+  if (full.periods.length > 0) {
     payload = {
       kind: "filer",
-      cik: props.cik,
-      filerName: props.filerName,
-      periods,
-      current,
-      prior,
-      filings: cache.filings,
-      rowsByPeriod,
-      totalsByPeriod,
+      cik: full.cik,
+      filerName: full.filerName,
+      periods: full.periods,
+      current: full.current,
+      prior: full.prior,
+      filings: full.filings,
+      rowsByPeriod: full.rowsByPeriod,
+      totalsByPeriod: full.totalsByPeriod,
     } satisfies FilerSurfacePayload;
   }
 } else if (db && props.kind === "holders") {
@@ -173,6 +150,10 @@ if (db && props.kind === "filer") {
     )
     .all(props.issuerKey) as Record<string, unknown>[];
   const rows = parseIssuerShard({ filings: cache.filings, rows: raw }).rows;
+  // R22: the top/tail budget state rides on every holder row so the embedded
+  // payload's client re-render produces the same href the SSR did (filerHref).
+  const tops = topFilerCiks(getBuildData());
+  for (const row of rows) row.filer_tier = tops.has(row.filer_key) ? "top" : "tail";
   if (rows.length > 0) {
     const periods = [...new Set(rows.map((r) => r.period))].sort();
     const current = periods.includes(props.period) ? props.period : periods[periods.length - 1]!;

@@ -243,7 +243,11 @@ test("a non-numeric filer key renders as text, never as a link to /filers/NaN/",
      404 dressed as a link. Both surfaces now use one rule.
 
      Mutation guard: reverting either call site to `String(Number(...))` fails. */
-  assert.match(filerLinkHtml("0001067983", "BERKSHIRE"), /href="\/institutional\/filers\/1067983\/"/);
+  assert.match(filerLinkHtml("0001067983", "BERKSHIRE", "top"), /href="\/institutional\/filers\/1067983\/"/);
+  // R22: the tail (and default) direction routes through the ONE href
+  // primitive to /e/ — reachable by construction, never a dressed 404.
+  assert.match(filerLinkHtml("0001067983", "BERKSHIRE", "tail"), /href="\/e\/\?k=f:1067983"/);
+  assert.match(filerLinkHtml("0001067983", "BERKSHIRE"), /href="\/e\/\?k=f:1067983"/);
   for (const bad of ["not-a-cik", "", "12abc", " "]) {
     const html = filerLinkHtml(bad, "SOME FILER");
     assert.ok(!html.includes("NaN"), `NaN reached a URL for key ${JSON.stringify(bad)}`);
@@ -971,7 +975,12 @@ function servingSchema(): string {
 /** Every template literal in the component that is actually a query over the
     serving artifact — prose in the header quotes table names in backticks too. */
 function componentQueries(): string[] {
-  const src = readFileSync(COMPONENT, "utf-8");
+  // RUN M2-11 (R22): the filings + filer reads are EXTRACTED to the shared
+  // assembler (`lib/filer-payload.ts`) — the component imports them — so the
+  // DDL sweep reads both files: the queries this surface ships are the union.
+  const src =
+    readFileSync(COMPONENT, "utf-8") +
+    readFileSync(path.resolve(import.meta.dirname, "..", "src", "lib", "filer-payload.ts"), "utf-8");
   return [...src.matchAll(/`([^`]*\bserving_[^`]*)`/g)]
     .map((m) => m[1]!)
     .filter((sql) => /\bSELECT\b/i.test(sql) && /\bFROM\b/i.test(sql));

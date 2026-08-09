@@ -123,6 +123,11 @@ export interface IssuerHolderRow {
   /** DISTINCT from `value_usd` — the issuer's de-duplicated total across
       affiliated managers. Never summed with the per-filer value. */
   issuer_dedup_total_usd: number | null;
+  /** R22: top/tail budget state for the row's filer link, attached by the
+      server-side reader (it is not an artifact column) and carried through the
+      embedded payload so the client re-render links identically. Absent means
+      unknown, which `filerLinkHtml` treats as tail — the reachable direction. */
+  filer_tier?: FilerBudgetState;
 }
 
 /** A batch of rows plus the dictionary they resolve through — one table read
@@ -139,12 +144,86 @@ export interface IssuerShard {
 
 /* ---------- the §5 structural caveat (R16) — non-removable ---------- */
 
-/* There is no copy of the note here on purpose. `lib/activity.ts` already owns
-   the canonical M2-CONTRACT §5 clauses and their markup
-   (`institutionalDataNoteHtml`), and a second copy of a non-removable legal
-   caveat is exactly the thing that drifts. The component renders THAT one on
-   both surfaces; it is server-side markup that the client pager never
-   re-renders, so this module staying browser-safe costs nothing. */
+/* MOVED here from `lib/activity.ts` in RUN M2-11 (plan R22): still the ONE
+   canonical copy — activity.ts re-exports it — but it must live in a
+   browser-safe module now, because the `/e/` driver's in-extract filer path
+   renders the note on the client and activity.ts imports `node:sqlite`. */
+
+/** M2-CONTRACT §5 / ARCHITECTURE §9.8, clause by clause so a fold test can name
+    the missing one instead of failing on a blob.
+
+    THE canonical §5 note for every dashboard surface, and the ONLY one. It is
+    pinned clause-for-clause against `populus.normalize_inst.INST_DATA_NOTE` — the
+    Python constant the MCP envelope and the ingest CLI carry — by
+    `test/activity.test.ts`, so the two cannot drift.
+
+    QA M2-8 M6: three divergent texts shipped, two of them on the SAME page. This
+    list had silently dropped three substantive qualifiers present in the Python
+    constant ("so managers below that threshold are absent entirely", "with
+    unit_basis carried on every record", and the §5.2 citation) — restored above.
+    The third text, a `.explainer` paragraph in `ui.ts` under the near-identical
+    heading "What a 13F is — and is not.", rendered directly above this box on
+    every filer page; it is now a pointer INTO this box rather than a fourth
+    phrasing of it. */
+export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: string }[] = [
+  {
+    id: "long-only",
+    text:
+      "13F reports cover LONG positions in Section 13(f) securities (US exchange-traded equities" +
+      " plus reportable options, warrants, certain convertibles) held by managers with at least" +
+      " $100M in such securities — so managers below that threshold are absent entirely. No short" +
+      " positions, no cash, no non-13(f) assets — not a full portfolio, and not a census of" +
+      " institutional ownership.",
+  },
+  {
+    id: "snapshot-lag",
+    text:
+      "Positions are quarter-end snapshots filed up to 45 days late — not current holdings. A" +
+      " position may have been changed or closed before you ever see it, and is older still by" +
+      " however long ago that quarter ended.",
+  },
+  {
+    id: "era-units",
+    text:
+      "Values are the manager's stated market value at quarter-end in era-dependent units (whole" +
+      " dollars for form versions effective 2023-01-03 onward, thousands before), normalized here" +
+      " to whole dollars with unit_basis carried on every record.",
+  },
+  {
+    id: "affiliates",
+    text:
+      "Affiliated managers may report the same position (otherManager), so one position can appear" +
+      " under more than one filer.",
+  },
+  {
+    id: "confidential",
+    text:
+      "Positions under confidential treatment may be omitted until a later amendment discloses them.",
+  },
+  {
+    id: "not-advice",
+    text:
+      "These are disclosures, not investment advice (ARCHITECTURE.md \u00a75.2 /" +
+      " M2-CONTRACT \u00a75).",
+  },
+];
+
+/**
+ * The §5 structural caveat as markup. Non-removable: every clause is a
+ * `.caveat-line`, which the fold guard and the print block both protect, and the
+ * block carries `data-inst-data-note` so a test can find it on any surface.
+ */
+export function institutionalDataNoteHtml(): string {
+  return (
+    `<section class="caveat-box" id="inst-data-note" data-inst-data-note aria-label="What a 13F is and is not">` +
+    `<div class="caveat-box-head">What a 13F is — and is not</div>` +
+    `<div class="caveat-box-body">` +
+    INSTITUTIONAL_DATA_NOTE_CLAUSES.map(
+      (c) => `<p class="caveat-line" data-note-clause="${esc(c.id)}">${esc(c.text)}</p>`,
+    ).join("") +
+    `</div></section>`
+  );
+}
 
 /* ================================================================== parsing */
 
@@ -1001,15 +1080,79 @@ function sharesCell(shares: number | null, unit: string | null): string {
   return `${fmtInt(shares)}<span class="mono-note">${unitNote}</span>`;
 }
 
-/** A link to a filer page, or plain text when the key cannot address one.
+/* ------------------- the filer budget + the ONE href primitive (R22) ------ */
+
+/** Where a filer's page lives under the LD-7 budget: "top" = one of the 1,500
+    pre-rendered pages; "tail" = addressable through the `/e/` driver via the
+    routing index + shard family. Carried on payload seams so a client renderer
+    can produce the same href the SSR did. */
+export type FilerBudgetState = "top" | "tail";
+
+/** LD-7: the pre-rendered filer page budget. A hard contract number, mirrored
+    by `inst_budget.M2_FILER_PAGES` — the projection and the route must agree. */
+export const FILER_PAGE_BUDGET = 1_500;
+
+export interface FilerSelectionInput {
+  cik: string;
+  /** The filer's LATEST-PERIOD reported total value (LD-7 — from the period
+      concentration row, NOT the registry's cumulative all-period total). NULL
+      when the period has no concentration row; nulls sort after every number,
+      because an unknown total is not a small one. */
+  latestPeriodValueUsd: number | null;
+}
+
+/** LD-7, in exactly one place: descending latest-period reported total value,
+    ties broken by ASCENDING CIK, cut at the budget. Used by BOTH the
+    `[cik].astro` route's `getStaticPaths` and the link-producer seam
+    (`data.ts` tiers), so the pages that exist and the links that point at them
+    cannot disagree. Deterministic: two builds of one corpus select the same
+    1,500. Exported so the determinism and the boundary (rank 1,500 vs 1,501)
+    are pinned by tests. */
+export function selectTopFilers(
+  rows: readonly FilerSelectionInput[],
+  budget = FILER_PAGE_BUDGET,
+): string[] {
+  const ordered = [...rows].sort((a, b) => {
+    const av = a.latestPeriodValueUsd;
+    const bv = b.latestPeriodValueUsd;
+    if (av == null && bv != null) return 1;
+    if (bv == null && av != null) return -1;
+    if (av != null && bv != null && av !== bv) return bv - av;
+    return a.cik < b.cik ? -1 : a.cik > b.cik ? 1 : 0;
+  });
+  return ordered.slice(0, budget).map((r) => r.cik);
+}
+
+/** THE filer-href decision primitive (R22): CIK + budget state → the canonical
+    page href (top) or the `/e/` driver href (tail). Every link producer routes
+    through here — a sweep test fails any unconditional
+    `/institutional/filers/` literal outside this module. The tail href uses
+    the `f:` entity key `derive.parseEntityKey` already accepts (it pads the
+    CIK itself), so the driver and this primitive speak the same key. */
+export function filerHref(cik: string, state: FilerBudgetState): string {
+  const unpadded = String(Number(cik));
+  if (state === "top") return `/institutional/filers/${unpadded}/`;
+  return `/e/?k=f:${unpadded}`;
+}
+
+/** A link to a filer surface, or plain text when the key cannot address one.
 
     `String(Number(key))` renders "NaN" for a non-numeric key, producing
     `/institutional/filers/NaN/` — a URL `getStaticPaths` never emits, i.e. a 404
     dressed as a link. `filer_key` is a zero-padded CIK by producer contract and
     the route is the unpadded integer, so the coercion is right for every key the
     producer writes; this makes the failure mode visible instead of linking into
-    nothing. Exported so the activity feed uses the same rule. */
-export function filerLinkHtml(filerKey: string, filerName: string): string {
+    nothing. Exported so the activity feed uses the same rule.
+
+    `tier` decides top vs tail through `filerHref` (R22). It defaults to "tail"
+    deliberately: the `/e/` shell is prerendered and never 404s, so an unknown
+    tier degrades to a reachable page — the safe direction — while a "top"
+    default would dress a 404 as a link for every tail filer. */
+export function filerLinkHtml(
+  filerKey: string,
+  filerName: string,
+  tier: FilerBudgetState = "tail",
+): string {
   const cik = Number(filerKey);
   if (!Number.isFinite(cik) || !/^\d+$/.test(filerKey.trim())) {
     return (
@@ -1017,7 +1160,7 @@ export function filerLinkHtml(filerKey: string, filerName: string): string {
       `${esc(filerName)}</span>`
     );
   }
-  return `<a href="/institutional/filers/${esc(String(cik))}/">${esc(filerName)}</a>`;
+  return `<a href="${esc(filerHref(filerKey, tier))}">${esc(filerName)}</a>`;
 }
 
 function positionCell(row: {
@@ -1258,7 +1401,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
           : "";
       return (
         `<tr>` +
-        `<td class="c-filer">${filerLinkHtml(row.filer_key, row.filer_name)} ${affiliate}</td>` +
+        `<td class="c-filer">${filerLinkHtml(row.filer_key, row.filer_name, row.filer_tier ?? "tail")} ${affiliate}</td>` +
         `<td class="c-num c-strong">${valueCell(
           row.value_usd,
           row.value_undisclosed_component

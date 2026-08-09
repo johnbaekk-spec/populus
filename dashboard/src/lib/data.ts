@@ -42,7 +42,23 @@ import {
   type TickerEntity,
   type TickerMap,
 } from "./derive.ts";
-import { loadInstitutional, readTickerMapJson, type InstData } from "./inst.ts";
+import {
+  concentrationFor,
+  deltasFor,
+  filerPeriods,
+  loadInstitutional,
+  readTickerMapJson,
+  type InstData,
+} from "./inst.ts";
+import { filingWindow } from "./derive.ts";
+import { selectTopFilers, type FilerBudgetState } from "./holdings.ts";
+import { resolveServingDbPath } from "./activity.ts";
+import {
+  assembleFilerPayload,
+  readServingFilings,
+  type FilerAggregateInputs,
+} from "./filer-payload.ts";
+import { paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
 
 export type { StatTile, MemberEntity, TickerEntity };
 
@@ -577,7 +593,15 @@ export function getBuildData(): BuildData {
         })(),
         rows: t.txns.length,
       })),
-      inst.present ? inst.filers.map((f) => ({ cik: f.cik, name: f.filer_name })) : [],
+      inst.present
+        ? // R22: search hits must carry the top/tail target too — a tail
+          // filer hit linking to the pre-rendered route is a dressed 404.
+          inst.filers.map((f) => ({
+            cik: f.cik,
+            name: f.filer_name,
+            top: instTopFilerCiks(inst).has(f.cik),
+          }))
+        : [],
     ),
   );
 
@@ -634,6 +658,10 @@ export interface TickerInstSection {
     securities: number;
     keySource: string;
     flags: string[];
+    /** R22: top/tail target for the holder's filer link — the client body
+        renderer routes through `filerHref` with this, so a tail filer in a
+        browser ticker payload never links into a 404. */
+    tier: FilerBudgetState;
   }[];
 }
 
@@ -669,8 +697,222 @@ export function tickerInstSection(build: BuildData, ticker: string): TickerInstS
         securities: r.security_count,
         keySource: r.issuer_key_source,
         flags: r.flags,
+        tier: filerTier(build, r.cik),
       })),
   };
+}
+
+/* ---------- R22: the filer budget seams + the tail shard family ---------- */
+
+/** Mirrored from `src/populus/inst_budget.py::FILER_TAIL_SHARDS_RESERVED` — a
+    hard shard budget the tail family must fit inside (the walk FAILS past it,
+    never truncates — LD-9/LD-10). Pinned against the Python constant by test. */
+/* internal: exported for tests (F1) — the mirror test reads it; no other module does. */
+export const FILER_TAIL_SHARDS_MAX = 256;
+
+/** LD-7 selection over the loaded aggregate — the ONE call site of
+    `holdings.selectTopFilers` inputs: latest-period reported total value comes
+    from the period concentration row (Locked #6 — the registry total is
+    cumulative over ALL periods and is NOT a quarter's number). Memoized per
+    aggregate object: `getStaticPaths`, every link producer, and the shard
+    planner must see the same 1,500. */
+const topFilerCache = new WeakMap<object, Set<string>>();
+function instTopFilerCiks(inst: InstData): Set<string> {
+  if (!inst.present) return new Set();
+  let tops = topFilerCache.get(inst);
+  if (!tops) {
+    tops = new Set(
+      selectTopFilers(
+        inst.filers.map((f) => ({
+          cik: f.cik,
+          latestPeriodValueUsd:
+            concentrationFor(inst, f.cik, f.latest_period)?.total_value_usd ?? null,
+        })),
+      ),
+    );
+    topFilerCache.set(inst, tops);
+  }
+  return tops;
+}
+
+export function topFilerCiks(build: BuildData): Set<string> {
+  return instTopFilerCiks(build.inst);
+}
+
+export function filerTier(build: BuildData, cik: string): FilerBudgetState {
+  return topFilerCiks(build).has(cik) ? "top" : "tail";
+}
+
+/** The aggregate half of a FilerPayloadV1 — exactly the `ui.filerBody` inputs
+    the pre-rendered `[cik].astro` page uses, computed by ONE function so the
+    page, the component, and the shard planner cannot drift (R22 parity). */
+export function filerAggregateInputs(build: BuildData, cik: string): FilerAggregateInputs {
+  const inst = build.inst;
+  if (!inst.present) {
+    return { concByPeriod: {}, deltasByPeriod: {}, latestFiled: null, topn: 25, window: null };
+  }
+  const periods = filerPeriods(inst, cik);
+  return {
+    concByPeriod: Object.fromEntries(periods.map((p) => [p, concentrationFor(inst, cik, p)])),
+    deltasByPeriod: Object.fromEntries(periods.map((p) => [p, deltasFor(inst, cik, p)])),
+    latestFiled: inst.watermarks.latest_filed_date,
+    topn: inst.topn,
+    window: filingWindow(build.generatedAtDate),
+  };
+}
+
+interface FilerShardFile {
+  name: string;
+  body: string;
+  /** MEASURED byte length of `body` — not an estimate. */
+  bytes: number;
+  ciks: string[];
+}
+
+interface FilerShardFamily {
+  present: boolean;
+  /** Named absence, stated in the index body — a client must never have to
+      infer "no tail" from an empty object. The ONLY absence is a genuinely
+      absent module: with the module present, an unlocatable or unreadable
+      serving artifact THROWS (build failure) rather than publishing an empty
+      index whose every tail link is dead (Codex F7). */
+  reason: "module-absent" | null;
+  /** cik10 → shard name, for EVERY published tail filer (LD-9 completeness:
+      the index is generated from the same projection that selected the top
+      1,500, so a missing entry is impossible by construction — and asserted). */
+  index: Record<string, string>;
+  indexBody: string;
+  shards: FilerShardFile[];
+}
+
+function absentFamily(reason: Exclude<FilerShardFamily["reason"], null>): FilerShardFamily {
+  return {
+    present: false,
+    reason,
+    index: {},
+    indexBody: `{"v":1,"kind":"filer-index","absent":${JSON.stringify(reason)},"shards":{}}`,
+    shards: [],
+  };
+}
+
+/* One plan per build process: the index endpoint, the shard endpoints, and the
+   post-build assertions must all describe the same family. */
+let filerFamilyCache: { key: string; family: FilerShardFamily } | null = null;
+
+/**
+ * The tail shard family (R22, LD-9, LD-10): every published filer OUTSIDE the
+ * LD-7 top 1,500, assembled by the ONE assembler into byte-bounded shards of
+ * ≤ 1 MiB serialized, addressed by a routing index. The walk FAILS the build —
+ * never truncates, never grants an oversized payload a dedicated shard — so a
+ * published tail filer is in exactly one shard or there is no build.
+ */
+export function filerTailShards(build: BuildData): FilerShardFamily {
+  const inst = build.inst;
+  const dbPath = resolveServingDbPath();
+  const key = `${build.buildId}|${dbPath ?? "(unresolvable)"}`;
+  if (filerFamilyCache && filerFamilyCache.key === key) return filerFamilyCache.family;
+
+  let family: FilerShardFamily;
+  if (!inst.present) family = absentFamily("module-absent");
+  else {
+    // Codex F7: the absent-family path is reserved for a genuinely absent
+    // module. With inst.present, a missing/unreadable serving artifact is a
+    // BUILD FAILURE naming the path — never a silent empty routing index
+    // whose every tail link is dead.
+    if (!dbPath) {
+      throw new Error(
+        "inst module is present but no serving artifact path resolves " +
+          "(POPULUS_INST_SERVING_DB / POPULUS_INST_DB / POPULUS_BUILD_DIR all unset) — " +
+          "refusing to publish an empty filer routing index (R22)",
+      );
+    }
+    if (!existsSync(dbPath)) {
+      throw new Error(
+        `inst module is present but the serving artifact ${dbPath} does not exist — ` +
+          `refusing to publish an empty filer routing index (R22)`,
+      );
+    }
+    let db: DatabaseSync;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+    } catch (err) {
+      throw new Error(
+        `inst module is present but the serving artifact ${dbPath} cannot be opened ` +
+          `(${(err as Error).message}) — refusing to publish an empty filer routing index (R22)`,
+      );
+    }
+    {
+      try {
+        const filings = readServingFilings(db);
+        const tops = instTopFilerCiks(inst);
+        const tail = inst.filers
+          .filter((f) => !tops.has(f.cik))
+          .sort((a, b) => (a.cik < b.cik ? -1 : a.cik > b.cik ? 1 : 0));
+        const servingDb = db;
+        const items = tail.map((f) => {
+          const payload = assembleFilerPayload(servingDb, {
+            cik: f.cik,
+            filerName: f.filer_name,
+            latestPeriod: f.latest_period,
+            requestedPeriod: f.latest_period,
+            filings,
+            agg: filerAggregateInputs(build, f.cik),
+          });
+          // The entry's exact serialized bytes inside the shard's object body.
+          return { key: f.cik, json: `${JSON.stringify(f.cik)}:${JSON.stringify(payload)}` };
+        });
+        // Envelope reservation at its worst case (largest shard number/count
+        // the walk could emit), so the measured body only comes in under it.
+        const overheadBytes = Buffer.byteLength(
+          `{"v":1,"kind":"filer-shard","shard":${FILER_TAIL_SHARDS_MAX - 1},` +
+            `"shard_count":${FILER_TAIL_SHARDS_MAX},"entries":{}}`,
+        );
+        const plan = paginateByBytes(items, {
+          overheadBytes,
+          shardLimit: FILER_TAIL_SHARDS_MAX,
+          itemNoun: "filer",
+        });
+        const index: Record<string, string> = {};
+        const shards: FilerShardFile[] = plan.shards.map((s) => {
+          const name = String(s.index);
+          const body =
+            `{"v":1,"kind":"filer-shard","shard":${s.index},` +
+            `"shard_count":${plan.shards.length},` +
+            `"entries":{${s.entries.map((e) => e.json).join(",")}}}`;
+          const bytes = Buffer.byteLength(body);
+          if (bytes > SHARD_RESPONSE_CEILING_BYTES) {
+            // Unreachable by construction (the reservation is an upper bound).
+            // Fail closed rather than publish a shard over the LD-10 ceiling.
+            throw new Error(
+              `filer shard ${name} measured ${bytes} bytes, over the ` +
+                `${SHARD_RESPONSE_CEILING_BYTES}-byte LD-10 ceiling`,
+            );
+          }
+          for (const e of s.entries) index[e.key] = name;
+          return { name, body, bytes, ciks: s.entries.map((e) => e.key) };
+        });
+        // LD-9 completeness, asserted rather than trusted: every tail filer in
+        // exactly one shard, and the index maps all of them.
+        for (const f of tail) {
+          if (index[f.cik] === undefined) {
+            throw new Error(
+              `published tail filer ${f.cik} is missing from the routing index — ` +
+                `the shard family is incomplete, which is a build failure (R22)`,
+            );
+          }
+        }
+        const indexBody =
+          `{"v":1,"kind":"filer-index","absent":null,"shards":{` +
+          tail.map((f) => `${JSON.stringify(f.cik)}:${JSON.stringify(index[f.cik])}`).join(",") +
+          `}}`;
+        family = { present: true, reason: null, index, indexBody, shards };
+      } finally {
+        db.close();
+      }
+    }
+  }
+  filerFamilyCache = { key, family };
+  return family;
 }
 
 export function memberPayloadJson(build: BuildData, bioguide: string): string | null {

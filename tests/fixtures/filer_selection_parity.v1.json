@@ -1,0 +1,14 @@
+{
+  "comment": "Shared LD-7 selection-rule interchange fixture (R22 parity). Two implementations must both consume this file and produce `expected` exactly: scripts/measure_inst_derive.py::select_top_filers (Python, tests/test_inst_snapshot_script.py) and dashboard/src/lib/holdings.ts::selectTopFilers (TypeScript, dashboard test to be wired by the dashboard agent). Rule: descending latestPeriodValueUsd, nulls after every number (a null must lose even to a disclosed 0 with a higher CIK), ties ascending CIK, cut at budget.",
+  "budget": 5,
+  "rows": [
+    {"cik": "0000000005", "latestPeriodValueUsd": 100},
+    {"cik": "0000000001", "latestPeriodValueUsd": null},
+    {"cik": "0000000009", "latestPeriodValueUsd": 250},
+    {"cik": "0000000003", "latestPeriodValueUsd": 100},
+    {"cik": "0000000007", "latestPeriodValueUsd": null},
+    {"cik": "0000000002", "latestPeriodValueUsd": 900},
+    {"cik": "0000000008", "latestPeriodValueUsd": 0}
+  ],
+  "expected": ["0000000002", "0000000009", "0000000003", "0000000005", "0000000008"]
+}

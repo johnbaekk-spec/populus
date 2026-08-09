@@ -8,6 +8,9 @@
    and dashboard/docs/pagination-and-counts.md (reused unchanged). */
 
 import { pathSafeTicker } from "./format.ts";
+// Deliberate module cycle with holdings.ts (function declarations only, used
+// at call time — safe under ESM): the ONE filer-href primitive lives there.
+import { filerHref } from "./holdings.ts";
 export { pathSafeTicker };
 import {
   type TxnRow,
@@ -704,19 +707,22 @@ export interface SearchIndex {
   v: 1;
   tickers: [string, string, number][]; // [ticker, mapped issuer name or "", txn count]
   members: [string, string, string, number][]; // [bioguide, name, affiliation, row count]
-  filers: [string, string][]; // [cik (unpadded), filer name]
+  filers: [string, string, 0 | 1][]; // [cik (unpadded), filer name, 1 = top-1500 pre-rendered]
 }
 
 export function buildSearchIndex(
   members: readonly { bioguide: string; name: string; aff: string; rows: number }[],
   tickers: readonly { ticker: string; name: string; rows: number }[],
-  filers: readonly { cik: string; name: string }[],
+  filers: readonly { cik: string; name: string; top: boolean }[],
 ): SearchIndex {
   return {
     v: 1,
     tickers: tickers.map((t) => [t.ticker, t.name, t.rows]),
     members: members.map((m) => [m.bioguide, m.name, m.aff, m.rows]),
-    filers: filers.map((f) => [f.cik.replace(/^0+/, ""), f.name]),
+    // R22: the tier flag rides in the index so a client hit can address the
+    // top/tail target through filerHref — a tail hit must not link to a
+    // pre-rendered route that does not exist.
+    filers: filers.map((f) => [f.cik.replace(/^0+/, ""), f.name, f.top ? 1 : 0]),
   };
 }
 
@@ -766,14 +772,16 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
     if (++count >= limit) break;
   }
   count = 0;
-  for (const [cik, name] of index.filers) {
+  for (const [cik, name, top] of index.filers) {
     if (!name.toLowerCase().includes(lower)) continue;
     hits.push({
       kind: "filer",
       key: cik,
       label: name,
       sub: `CIK ${cik.padStart(10, "0")}`,
-      href: `/institutional/filers/${encodeURIComponent(cik)}/`,
+      // ONE href primitive (R22): older indexes without the tier flag resolve
+      // as tail — the /e/ shell is prerendered and never 404s.
+      href: filerHref(cik, top === 1 ? "top" : "tail"),
     });
     if (++count >= limit) break;
   }

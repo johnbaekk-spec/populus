@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  RUN M2-11 R7b/R7c — launchd unit for the runner-controller run-cycle.
+
+  Installed in the OWNER (controller) domain, never the runner account's:
+  the credential (a fine-grained PAT the controller mints per-cycle
+  registration tokens from) and this unit live in a privilege domain the
+  runner account cannot read. KeepAlive is the loop: run-cycle performs one
+  destroy → restore → register → wait cycle and exits; launchd re-invokes it,
+  so every job starts from a verified-empty, freshly imaged root.
+
+  PRIVILEGE MODEL (F8): this daemon runs as root (UserName below) — the
+  CONTROLLER identity, which it needs to terminate runner-UID processes,
+  rebuild the root, and read the credential. The controller itself DROPS to
+  RUNNER_USER via `sudo -u` for every runner-owned operation (config.sh,
+  run.sh); it refuses to run them if RUNNER_USER is unset or equals the
+  controller's own user. Runner code therefore never executes with
+  root/controller authority.
+
+  Paths below are the runbook's canonical layout
+  (docs/runbooks/self-hosted-runner.md); the owner substitutes real values at
+  install time (the REPLACED-AT-INSTALL* tokens). StandardOut/ErrorPath are
+  controller-domain logs — the wipe can never destroy the evidence of the
+  wipe.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.populus.runner-controller</string>
+
+  <!-- The controller identity: root, in the system domain. Runner-owned
+       operations are executed as RUNNER_USER via sudo -u, never as this
+       user (F8). -->
+  <key>UserName</key>
+  <string>root</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/populus-runner/controller/runner-controller.sh</string>
+    <string>run-cycle</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>RUNNER_BASE_DIR</key>
+    <string>/usr/local/populus-runner/roots</string>
+    <key>RUNNER_ROOT</key>
+    <string>/usr/local/populus-runner/roots/active</string>
+    <!-- RUNNER_UID and RUNNER_USER MUST denote the same account: the
+         controller verifies `id -u $RUNNER_USER` == RUNNER_UID (nonzero,
+         not its own uid) before any terminate/wipe/register (F7). -->
+    <key>RUNNER_UID</key>
+    <string>REPLACED-AT-INSTALL</string>
+    <key>RUNNER_USER</key>
+    <string>REPLACED-AT-INSTALL-USERNAME</string>
+    <key>RUNNER_IMAGE_TARBALL</key>
+    <string>/usr/local/populus-runner/controller/runner-image.tar.gz</string>
+    <key>RUNNER_REPO_URL</key>
+    <string>https://github.com/johnbaekk-spec/populus</string>
+    <key>CONTROLLER_LOG_EXPORT_DIR</key>
+    <string>/usr/local/populus-runner/controller/exported-logs</string>
+    <key>CONTROLLER_CREDENTIAL_FILE</key>
+    <string>/usr/local/populus-runner/controller/registration.credential</string>
+    <key>CONTROLLER_TOOLCHAIN_MANIFEST</key>
+    <string>/usr/local/populus-runner/controller/toolchain.manifest</string>
+    <key>CONTROLLER_STATE_DIR</key>
+    <string>/usr/local/populus-runner/controller/state</string>
+    <!-- F6: tools the manifest MUST list (basenames); an empty or
+         comment-only manifest, a duplicate path, or a missing required
+         tool refuses registration. These same names also drive the PATH
+         binding: the runner's PATH is built from the VALIDATED manifest
+         entries' directories, and each tool here must resolve under it to
+         its manifest path or registration refuses toolchain-path-unbound.
+         There is no PATH to configure here — deriving it is the point. -->
+    <key>REQUIRED_TOOLCHAIN_TOOLS</key>
+    <string>uv node</string>
+  </dict>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- A refusal exits non-zero fast; don't let launchd spin on it. -->
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/usr/local/populus-runner/controller/logs/controller.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/populus-runner/controller/logs/controller.err.log</string>
+</dict>
+</plist>

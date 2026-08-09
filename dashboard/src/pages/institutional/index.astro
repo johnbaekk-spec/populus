@@ -4,10 +4,11 @@
 // present, an honest filer index over the published registry (identity fields;
 // cumulative registry counts are labeled as all-period values — Locked #6).
 import Base from "../../layouts/Base.astro";
-import { getBuildData } from "../../lib/data";
+import { getBuildData, filerTier } from "../../lib/data";
 import { s1ModuleAbsent, s7Banner, breadcrumb } from "../../lib/ui";
 import { filingWindow } from "../../lib/derive";
 import { footnoteBlock, fmtInt, esc } from "../../lib/format";
+import { filerHref } from "../../lib/holdings";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
 
 const build = getBuildData();
@@ -24,8 +25,11 @@ if (!inst.present) {
 } else {
   const rows = inst.filers
     .map(
+      // ONE href primitive (R22): a tail filer routes to /e/, a top filer to
+      // its pre-rendered page — an unconditional page link here was a 404 for
+      // every filer past the LD-7 cut.
       (f) =>
-        `<tr><td class="c-filer"><a href="/institutional/filers/${esc(String(Number(f.cik)))}/">${esc(f.filer_name)}</a></td>` +
+        `<tr><td class="c-filer"><a href="${esc(filerHref(f.cik, filerTier(build, f.cik)))}">${esc(f.filer_name)}</a></td>` +
         `<td class="c-num">${esc(f.latest_period)}</td>` +
         `<td class="c-num">${fmtInt(f.position_count)}<a class="fn-ref" href="#inst-index-footnotes" aria-label="footnote §">§</a></td>` +
         `<td class="c-num c-muted mono-id">CIK ${esc(f.cik)}</td></tr>`,
@@ -56,7 +60,7 @@ if (!inst.present) {
       { id: "inst-index-footnotes" },
     ) +
     `</section>` +
-    activitySectionHtml(feed);
+    activitySectionHtml(feed, { tierOf: (cik) => filerTier(build, cik) });
 }
 const description = build.inst.present
   ? "Institutional 13F module: filers, holders, quarter-over-quarter moves from the published Populus aggregate."

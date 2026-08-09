@@ -9,18 +9,27 @@
 // Route param is the UNPADDED CIK (/institutional/filers/1067983/).
 import Base from "../../../layouts/Base.astro";
 import HoldingsTable from "../../../components/HoldingsTable.astro";
-import { getBuildData } from "../../../lib/data";
+import { getBuildData, topFilerCiks } from "../../../lib/data";
 import { filerPeriods, concentrationFor, deltasFor } from "../../../lib/inst";
 import { filerBody } from "../../../lib/ui";
 import { filingWindow } from "../../../lib/derive";
 
 export function getStaticPaths() {
+  // RUN M2-11 (plan R22/LD-7): pre-render ONLY the top 1,500 by descending
+  // latest-period reported total value, ties ascending CIK — the same exported
+  // selection (`selectTopFilers` via `topFilerCiks`) every link producer uses,
+  // so the pages that exist and the links that point at them cannot disagree.
+  // Every other published filer is addressable through /e/ via the routing
+  // index + shard family, never a 404.
   const build = getBuildData();
   if (!build.inst.present) return [];
-  return build.inst.filers.map((f) => ({
-    params: { cik: String(Number(f.cik)) },
-    props: { cik10: f.cik },
-  }));
+  const tops = topFilerCiks(build);
+  return build.inst.filers
+    .filter((f) => tops.has(f.cik))
+    .map((f) => ({
+      params: { cik: String(Number(f.cik)) },
+      props: { cik10: f.cik },
+    }));
 }
 
 const { cik10 } = Astro.props as { cik10: string };

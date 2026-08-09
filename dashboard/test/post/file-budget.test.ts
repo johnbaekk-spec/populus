@@ -20,6 +20,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync, lstatSync } from "node:fs";
 import path from "node:path";
 
+import { getBuildData, topFilerCiks } from "../../src/lib/data.ts";
+
 const DASH = path.resolve(import.meta.dirname, "..", "..");
 const REPO_ROOT = path.resolve(DASH, "..");
 const DIST = path.join(DASH, "dist");
@@ -115,7 +117,7 @@ test("the measurement is not vacuous: the whole built tree is counted", () => {
   assert.ok(measured.maxBytes > 0 && measured.largest.length > 0);
 });
 
-test("R19 GATE: the built tree fits under the 15,000-file self-cap", () => {
+test("R19 GATE: the built tree fits under the 18,000-file self-cap", () => {
   const measured = measure(DIST);
   const breakdown = [...measured.byTopLevel.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -136,6 +138,94 @@ test("R19 GATE: no single deployed file exceeds the 25 MiB provider limit", () =
     `${measured.largest} is ${measured.maxBytes} B, over the ${MAX_SHARD_BYTES} B ` +
       `per-file limit — Cloudflare rejects the file outright, so this must fail ` +
       `at build time rather than at deploy time`,
+  );
+});
+
+test("R22 GATE (measured): the filer shard family in the built tree", () => {
+  /* RUN M2-11 (plan R22, LD-9, LD-10) — assertions over the MEASURED tree
+     only; the projection terms live in tests/test_inst_shard_budget.py and are
+     asserted nowhere here (round-4 F6).
+
+     Module presence is read off the tree itself: pre-rendered filer pages
+     exist iff the inst module shipped. When it did, the routing index must
+     exist beside the shards, and every shard must sit under the LD-10 1 MiB
+     client-response ceiling (mirrored from inst_budget.py, one source). */
+  const FILER_SHARD_CEILING = pyInt(BUDGET, "FILER_SHARD_BYTE_CEILING");
+  const FILER_SHARDS_MAX = pyInt(BUDGET, "FILER_TAIL_SHARDS_RESERVED");
+  const pagesDir = path.join(DIST, "institutional", "filers");
+  const dataDir = path.join(DIST, "institutional", "data", "filers");
+  const modulePresent =
+    existsSync(pagesDir) && readdirSync(pagesDir).length > 0;
+  const indexFile = path.join(dataDir, "index.v1.json");
+  assert.ok(
+    existsSync(indexFile),
+    "the routing index must be emitted in every build — with the module absent " +
+      "its body names the absence; a 404 could not (LD-9)",
+  );
+  if (!modulePresent) return;
+  const index = JSON.parse(readFileSync(indexFile, "utf-8")) as {
+    v: number;
+    shards: Record<string, string>;
+  };
+  assert.equal(index.v, 1);
+  const shardFiles = readdirSync(dataDir).filter(
+    (f) => f !== "index.v1.json" && f.endsWith(".v1.json"),
+  );
+  assert.ok(
+    shardFiles.length <= FILER_SHARDS_MAX,
+    `${shardFiles.length} filer shards exceed the ${FILER_SHARDS_MAX} reservation`,
+  );
+  for (const f of shardFiles) {
+    const size = statSync(path.join(dataDir, f)).size;
+    assert.ok(
+      size <= FILER_SHARD_CEILING,
+      `${f} is ${size} B, over the ${FILER_SHARD_CEILING} B LD-10 client-response ceiling`,
+    );
+  }
+  // Every shard the index routes to must exist on disk, and vice versa.
+  const named = new Set(Object.values(index.shards));
+  for (const shard of named) {
+    assert.ok(
+      shardFiles.includes(`${shard}.v1.json`),
+      `the index routes to shard ${shard}, which is not in the tree`,
+    );
+  }
+  for (const f of shardFiles) {
+    assert.ok(
+      named.has(f.replace(/\.v1\.json$/, "")) || Object.keys(index.shards).length === 0,
+      `shard file ${f} is routed to by no index entry`,
+    );
+  }
+});
+
+test("R22 GATE (F7): routing-index cardinality == publishedFilers − prerenderedFilers", () => {
+  /* Codex F7's demanded gate: with the module present, the routing index must
+     carry the FULL tail — every published filer that did not get a
+     pre-rendered page. An empty (or partial) index here means tail links go
+     dead while the build still "succeeds", which is exactly the silent state
+     filerTailShards now throws on. Counts come from the same build the tree
+     was rendered from (the post suite runs in the build's environment). */
+  const pagesDir = path.join(DIST, "institutional", "filers");
+  const modulePresent = existsSync(pagesDir) && readdirSync(pagesDir).length > 0;
+  if (!modulePresent) return;
+  const build = getBuildData();
+  assert.ok(build.inst.present, "filer pages exist, so the inst module must be present");
+  const publishedFilers = build.inst.present ? build.inst.filers.length : 0;
+  const prerenderedFilers = topFilerCiks(build).size;
+  const index = JSON.parse(
+    readFileSync(path.join(DIST, "institutional", "data", "filers", "index.v1.json"), "utf-8"),
+  ) as { shards: Record<string, string> };
+  assert.equal(
+    Object.keys(index.shards).length,
+    publishedFilers - prerenderedFilers,
+    `the routing index must address the FULL tail: ${publishedFilers} published − ` +
+      `${prerenderedFilers} pre-rendered filers`,
+  );
+  // ...and the pre-rendered page count agrees with the selection.
+  assert.equal(
+    readdirSync(pagesDir).length,
+    prerenderedFilers,
+    "one pre-rendered page per selected top filer",
   );
 });
 

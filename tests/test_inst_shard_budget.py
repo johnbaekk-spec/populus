@@ -24,6 +24,9 @@ import pytest
 
 from populus.inst_budget import (
     ACTIVITY_SHARDS_MAX,
+    FILER_ROUTING_INDEX_FILES,
+    FILER_SHARD_BYTE_CEILING,
+    FILER_TAIL_SHARDS_RESERVED,
     GLOBAL_FILE_CAP,
     M1_MEASURED_PAGES,
     M2_FILER_PAGES,
@@ -209,6 +212,8 @@ def test_the_projections_measured_base_accounts_for_the_whole_tree():
         m2_filer_pages=0,
         activity_shards=0,
         m3_reserved=0,
+        filer_tail_shards=0,
+        routing_index_files=0,
     )
     assert base == M1_MEASURED_PAGES + SITE_CHROME_FILES == 12_545, (
         f"the projection's base is {base:,} against a measured tree of 12,545 —"
@@ -272,11 +277,21 @@ def test_the_corrected_projection_FITS_the_raised_cap_with_recorded_headroom():
     assert projected == (
         M1_MEASURED_PAGES + SITE_CHROME_FILES + M2_FILER_PAGES
         + ACTIVITY_SHARDS_MAX + M3_RESERVED
+        + FILER_TAIL_SHARDS_RESERVED + FILER_ROUTING_INDEX_FILES
     )
-    assert (projected, GLOBAL_FILE_CAP - projected) == (16_173, 1_827), (
-        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 1,827 recorded in"
-        " DEV-NOTES.md and accept_m2_8.py. Restate all three together or they"
-        " will disagree again"
+    # RUN M2-11 (R27): the pre-M2-11 subtotal is RESTATED, not deleted — the
+    # 16,173/1,827 pair recorded at the 2026-08-05 owner decision holds with
+    # the two new terms zeroed, and the new whole-formula pair sits beside it.
+    pre_m2_11 = worst_case_file_count(
+        measured_files=M1_MEASURED_PAGES,
+        filer_tail_shards=0,
+        routing_index_files=0,
+    )
+    assert (pre_m2_11, GLOBAL_FILE_CAP - pre_m2_11) == (16_173, 1_827)
+    assert (projected, GLOBAL_FILE_CAP - projected) == (16_430, 1_570), (
+        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 1,570 this suite"
+        " records. Restate the constants and this test together or they will"
+        " disagree again"
     )
 
 
@@ -289,3 +304,60 @@ def test_todays_real_tree_still_fits_under_the_cap():
                          largest_file="congress/data/feed.v1.json")
     check_measured_tree(today)          # measured 2026-08-05, must not raise
     assert today.file_count < GLOBAL_FILE_CAP
+
+
+# --- RUN M2-11 (R27): the filer tail family's terms are REAL parameters ------
+
+
+def test_the_filer_tail_shard_term_is_a_load_bearing_parameter():
+    """Each term must move the total by its own size, or it is not summed —
+    the C5(a)/R2-N1 defect class this module exists to prevent.
+
+    Mutation guard: a mutant defaulting `filer_tail_shards` to 0 (or dropping
+    it from the sum) fails here by exactly the reservation's size.
+    """
+    with_term = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+    without = worst_case_file_count(
+        measured_files=M1_MEASURED_PAGES, filer_tail_shards=0
+    )
+    assert with_term - without == FILER_TAIL_SHARDS_RESERVED == 256
+
+
+def test_the_routing_index_term_is_a_load_bearing_parameter():
+    """One file is still a file class (LD-9). Mutation guard: a mutant
+    defaulting `routing_index_files` to 0 fails here."""
+    with_term = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+    without = worst_case_file_count(
+        measured_files=M1_MEASURED_PAGES, routing_index_files=0
+    )
+    assert with_term - without == FILER_ROUTING_INDEX_FILES == 1
+
+
+def test_every_prior_term_survives_the_new_formula():
+    """R27: the new terms RETAIN every existing term — including M3's committed
+    2,064, the exact omitted-term defect round 3 caught. Zeroing each term must
+    move the total by that term's own size, independently."""
+    full = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+    for kwarg, size in [
+        ("site_chrome_files", SITE_CHROME_FILES),
+        ("m2_filer_pages", M2_FILER_PAGES),
+        ("activity_shards", ACTIVITY_SHARDS_MAX),
+        ("m3_reserved", M3_RESERVED),
+        ("filer_tail_shards", FILER_TAIL_SHARDS_RESERVED),
+        ("routing_index_files", FILER_ROUTING_INDEX_FILES),
+    ]:
+        without = worst_case_file_count(
+            measured_files=M1_MEASURED_PAGES, **{kwarg: 0}
+        )
+        assert full - without == size, (
+            f"{kwarg} does not move the projection by its own size — a term the"
+            " formula names but does not sum is the C5 defect"
+        )
+
+
+def test_the_ld10_ceiling_sits_under_the_provider_limit():
+    """The 1 MiB client-response ceiling (LD-10) is the READER's bound; the
+    provider's 25 MiB stays only a hard ceiling. Both are constants here so
+    the dashboard mirrors cannot drift from a second source."""
+    assert FILER_SHARD_BYTE_CEILING == 1024 * 1024
+    assert FILER_SHARD_BYTE_CEILING < MAX_SHARD_BYTES

@@ -34,7 +34,7 @@ const INDEX = buildSearchIndex(
     { ticker: "NVDA", name: "NVIDIA Corp", rows: 35 },
     { ticker: "AAPL", name: "Apple Inc.", rows: 20 },
   ],
-  [{ cik: "0001067983", name: "Berkshire Hathaway Inc" }],
+  [{ cik: "0001067983", name: "Berkshire Hathaway Inc", top: true }],
 );
 
 /* ---------- results rendering ---------- */

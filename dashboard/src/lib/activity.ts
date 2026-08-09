@@ -41,7 +41,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { filerLinkHtml } from "./holdings.ts";
+import { filerLinkHtml, type FilerBudgetState } from "./holdings.ts";
+import { fillShardsByBytes, type ShardableItem } from "./shards.ts";
 import {
   esc,
   flagTags,
@@ -489,6 +490,12 @@ interface FilledPage {
  * There is no no-candidate case (plan R13 step 4): a page always accepts its
  * first record, so a single record larger than the whole ceiling occupies its own
  * page rather than blocking the walk. That is asserted in the tests, not assumed.
+ *
+ * RUN M2-11 (plan R22): the fill algorithm itself now lives in `lib/shards.ts`
+ * — ONE byte-bounded rule shared with the filer shard family. This wrapper
+ * keeps activity's observable behaviour bit-for-bit: truncate-and-state past
+ * the shard cap, and an over-ceiling record owns its page. The filer family
+ * configures the SAME core to fail instead (LD-10).
  */
 function fillPages(
   ordered: ActivityFeedRecord[],
@@ -496,40 +503,39 @@ function fillPages(
   limits: PaginationLimits,
   overhead: number,
 ): { pages: FilledPage[]; dropped: ActivityFeedRecord[] } {
-  const pages: FilledPage[] = [];
-  let i = 0;
-  while (i < ordered.length && pages.length < limits.shardLimit) {
-    const page: FilledPage = { records: [], recordJsons: [], filingKeys: [], projectedBytes: overhead };
-    const keys = new Set<number>();
-    while (i < ordered.length && page.records.length < limits.recordLimit) {
-      const record = ordered[i]!;
-      const json = serializeFeedRecord(record);
-      let cost = Buffer.byteLength(json) + (page.recordJsons.length > 0 ? 1 : 0);
-      const fresh: number[] = [];
-      let entryCount = keys.size;
-      for (const k of referencedFilingKeys(record)) {
-        if (keys.has(k)) continue;
-        const ref = filings[String(k)];
-        // An unresolvable key is a provenance GAP, recorded on the row as an
-        // unresolved filed date — it is not a reason to drop the row (G3).
-        if (!ref) continue;
-        cost += Buffer.byteLength(serializeFilingEntry(k, ref)) + (entryCount > 0 ? 1 : 0);
-        entryCount += 1;
-        fresh.push(k);
-      }
-      if (page.projectedBytes + cost > limits.byteLimit && page.records.length > 0) break;
-      page.records.push(record);
-      page.recordJsons.push(json);
-      for (const k of fresh) keys.add(k);
-      page.projectedBytes += cost;
-      i += 1;
-      // A single record that alone exceeds the ceiling owns this page.
-      if (page.projectedBytes > limits.byteLimit) break;
-    }
-    page.filingKeys = [...keys].sort((a, b) => a - b);
-    pages.push(page);
-  }
-  return { pages, dropped: ordered.slice(i) };
+  const items: ShardableItem[] = ordered.map((record, index) => ({
+    key: String(index),
+    json: serializeFeedRecord(record),
+    // An unresolvable key is a provenance GAP, recorded on the row as an
+    // unresolved filed date — it is not a reason to drop the row (G3).
+    deps: referencedFilingKeys(record).flatMap((k) => {
+      const ref = filings[String(k)];
+      return ref ? [{ key: String(k), serialized: serializeFilingEntry(k, ref) }] : [];
+    }),
+  }));
+  const { shards } = fillShardsByBytes(
+    items,
+    {
+      ceilingBytes: limits.byteLimit,
+      overheadBytes: overhead,
+      itemLimit: limits.recordLimit,
+      shardLimit: limits.shardLimit,
+    },
+    { onOverflow: "truncate", onOversizedItem: "own-shard", itemNoun: "activity record" },
+  );
+  let offset = 0;
+  const pages: FilledPage[] = shards.map((shard) => {
+    const count = shard.itemKeys.length;
+    const page: FilledPage = {
+      records: ordered.slice(offset, offset + count),
+      recordJsons: shard.itemJsons,
+      filingKeys: shard.depKeys.map(Number).sort((a, b) => a - b),
+      projectedBytes: shard.projectedBytes,
+    };
+    offset += count;
+    return page;
+  });
+  return { pages, dropped: ordered.slice(offset) };
 }
 
 /**
@@ -670,81 +676,14 @@ export function scanBannedWording(html: string): string[] {
 
 /* ---------- R16: the §5 data_note, non-removable ---------- */
 
-/** M2-CONTRACT §5 / ARCHITECTURE §9.8, clause by clause so a fold test can name
-    the missing one instead of failing on a blob.
-
-    THE canonical §5 note for every dashboard surface, and the ONLY one. It is
-    pinned clause-for-clause against `populus.normalize_inst.INST_DATA_NOTE` — the
-    Python constant the MCP envelope and the ingest CLI carry — by
-    `test/activity.test.ts`, so the two cannot drift.
-
-    QA M2-8 M6: three divergent texts shipped, two of them on the SAME page. This
-    list had silently dropped three substantive qualifiers present in the Python
-    constant ("so managers below that threshold are absent entirely", "with
-    unit_basis carried on every record", and the §5.2 citation) — restored above.
-    The third text, a `.explainer` paragraph in `ui.ts` under the near-identical
-    heading "What a 13F is — and is not.", rendered directly above this box on
-    every filer page; it is now a pointer INTO this box rather than a fourth
-    phrasing of it. */
-export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: string }[] = [
-  {
-    id: "long-only",
-    text:
-      "13F reports cover LONG positions in Section 13(f) securities (US exchange-traded equities" +
-      " plus reportable options, warrants, certain convertibles) held by managers with at least" +
-      " $100M in such securities — so managers below that threshold are absent entirely. No short" +
-      " positions, no cash, no non-13(f) assets — not a full portfolio, and not a census of" +
-      " institutional ownership.",
-  },
-  {
-    id: "snapshot-lag",
-    text:
-      "Positions are quarter-end snapshots filed up to 45 days late — not current holdings. A" +
-      " position may have been changed or closed before you ever see it, and is older still by" +
-      " however long ago that quarter ended.",
-  },
-  {
-    id: "era-units",
-    text:
-      "Values are the manager's stated market value at quarter-end in era-dependent units (whole" +
-      " dollars for form versions effective 2023-01-03 onward, thousands before), normalized here" +
-      " to whole dollars with unit_basis carried on every record.",
-  },
-  {
-    id: "affiliates",
-    text:
-      "Affiliated managers may report the same position (otherManager), so one position can appear" +
-      " under more than one filer.",
-  },
-  {
-    id: "confidential",
-    text:
-      "Positions under confidential treatment may be omitted until a later amendment discloses them.",
-  },
-  {
-    id: "not-advice",
-    text:
-      "These are disclosures, not investment advice (ARCHITECTURE.md \u00a75.2 /" +
-      " M2-CONTRACT \u00a75).",
-  },
-];
-
-/**
- * The §5 structural caveat as markup. Non-removable: every clause is a
- * `.caveat-line`, which the fold guard and the print block both protect, and the
- * block carries `data-inst-data-note` so a test can find it on any surface.
- */
-export function institutionalDataNoteHtml(): string {
-  return (
-    `<section class="caveat-box" id="inst-data-note" data-inst-data-note aria-label="What a 13F is and is not">` +
-    `<div class="caveat-box-head">What a 13F is — and is not</div>` +
-    `<div class="caveat-box-body">` +
-    INSTITUTIONAL_DATA_NOTE_CLAUSES.map(
-      (c) => `<p class="caveat-line" data-note-clause="${esc(c.id)}">${esc(c.text)}</p>`,
-    ).join("") +
-    `</div></section>`
-  );
-}
+/* Still ONE canonical copy. RUN M2-11 (plan R22): the clauses and the markup
+   moved to `lib/holdings.ts` — which is browser-safe — because the `/e/`
+   driver's in-extract filer path renders the note on the client, and this
+   module's `node:sqlite`/`node:fs` imports cannot ship in the browser bundle.
+   Re-exported here so every existing import site (the component, the tests,
+   the pages) keeps reading it from this module unchanged. */
+export { INSTITUTIONAL_DATA_NOTE_CLAUSES, institutionalDataNoteHtml } from "./holdings.ts";
+import { institutionalDataNoteHtml } from "./holdings.ts";
 
 /* ---------- rendering ---------- */
 
@@ -817,15 +756,15 @@ function filedCell(r: ActivityFeedRecord): string {
   );
 }
 
-export function activityRowHtml(r: ActivityFeedRecord): string {
+export function activityRowHtml(r: ActivityFeedRecord, tier: FilerBudgetState = "tail"): string {
   const label = CHANGE_LABEL[r.change_kind] ?? CHANGE_LABEL.unclassified;
   const filerName = r.filer_name && r.filer_name.trim() !== "" ? r.filer_name : `CIK ${r.cik}`;
   return (
     `<tr>` +
-    // ONE filer-link rule (holdings.filerLinkHtml): `String(Number(key))` renders
-    // "NaN" for a non-numeric key, producing `/institutional/filers/NaN/` — a URL
-    // `getStaticPaths` never emits, i.e. a 404 dressed as a link.
-    `<td class="c-filer">${filerLinkHtml(r.cik, filerName)}</td>` +
+    // ONE filer-link rule (holdings.filerLinkHtml), which routes through the
+    // ONE href primitive (R22): the caller supplies the top/tail budget state;
+    // the default is tail — the reachable direction, never a dressed 404.
+    `<td class="c-filer">${filerLinkHtml(r.cik, filerName, tier)}</td>` +
     `<td class="c-pos">${issuerCell(r)}</td>` +
     `<td><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span>` +
     `<span class="visually-hidden"> ${esc(label.spoken)}</span>` +
@@ -890,6 +829,9 @@ export interface ActivityFeedOptions {
   rowLimit?: number;
   /** Same-origin shard base, stated on the page so the full set is reachable. */
   shardBase?: string;
+  /** R22: top/tail budget state per filer CIK, from the LD-7 selection. Rows
+      render tail links when omitted — reachable through /e/, never a 404. */
+  tierOf?: (cik: string) => FilerBudgetState;
 }
 
 /** The absent state: stated, never simulated. */
@@ -946,7 +888,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     );
   }
 
-  const body = rows.map(activityRowHtml).join("\n");
+  const body = rows.map((r) => activityRowHtml(r, opts.tierOf?.(r.cik) ?? "tail")).join("\n");
   return (
     `<section class="panel panel-wide" aria-label="Cross-filer activity">` +
     `<div class="panel-head"><h2 class="section-h">Largest reported quarter-over-quarter changes</h2>` +

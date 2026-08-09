@@ -24,6 +24,7 @@ import {
   type StorageLike,
 } from "../../src/scripts/entity-client.ts";
 import { tickerDataKey } from "../../src/lib/derive.ts";
+import { FILER_INDEX_PATH } from "../../src/lib/filer-payload.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..", "..");
 const DIST_CUT = path.join(DASH, "dist-cut");
@@ -173,17 +174,153 @@ test("404 → S2 out-of-extract with the primary-source CTA", async () => {
   assert.ok(s2.includes("sec.gov"));
 });
 
-test("filer keys go straight to S2 — no filer endpoints exist to fetch", async () => {
-  let fetched = 0;
-  const h = harness("?k=f:1999999", async () => {
-    fetched++;
-    return { kind: "http", status: 200, body: null };
+/* RUN M2-11 R22 replaced the "filer keys go straight to S2" contract: a filer
+   key now fetches the routing index to LEARN whether the filer is in the
+   published extract. The PROPERTY these two tests pin is unchanged — an
+   out-of-extract filer still lands S2 with the 13F primary-source CTA — but the
+   mechanism is one index fetch, never zero. The old zero-fetch assertion would
+   now pass only if the index fetch were dropped, which is the R22 regression
+   these tests exist to catch. */
+
+test("filer key with a 404 routing index → S2 after exactly one fetch", async () => {
+  const urls: string[] = [];
+  const h = harness("?k=f:1999999", async (url) => {
+    urls.push(url);
+    return { kind: "http", status: 404, body: null };
   });
   const handle = runEntityDriver(h.deps);
   await handle.done;
   assert.equal(handle.state(), "s2");
-  assert.equal(fetched, 0, "no fetch is attempted for a filer key");
+  assert.deepEqual(urls, [FILER_INDEX_PATH], "exactly the index, nothing else");
   assert.ok(h.renders.at(-1)!.includes("13F"));
+});
+
+test("filer key absent from a real routing index → S2, no shard fetched", async () => {
+  const urls: string[] = [];
+  const h = harness("?k=f:1999999", async (url) => {
+    urls.push(url);
+    // a valid index that simply does not carry this CIK
+    return { kind: "http", status: 200, body: { v: 1, kind: "filer-index", absent: null, shards: {} } };
+  });
+  const handle = runEntityDriver(h.deps);
+  await handle.done;
+  assert.equal(handle.state(), "s2");
+  assert.deepEqual(urls, [FILER_INDEX_PATH], "absence decided by the index — no shard fetch");
+  assert.ok(h.renders.at(-1)!.includes("13F"));
+});
+
+test("STRICT (F6): a routing index with an undeclared key → bad_payload naming it", async () => {
+  const h = harness("?k=f:1999999", async () => ({
+    kind: "http",
+    status: 200,
+    body: { v: 1, kind: "filer-index", absent: null, shards: {}, injected: true },
+  }));
+  const handle = runEntityDriver(h.deps);
+  await handle.done;
+  assert.equal(handle.state(), "bad_payload");
+  // esc() renders the quotes as &quot; — assert on the words either side.
+  assert.ok(h.renders.at(-1)!.includes("undeclared key"));
+  assert.ok(h.renders.at(-1)!.includes("injected"));
+});
+
+test("STRICT (F6): a shard envelope with an undeclared key → bad_payload naming it", async () => {
+  const h = harness("?k=f:1999999", async (url) => {
+    if (url === FILER_INDEX_PATH)
+      return {
+        kind: "http",
+        status: 200,
+        body: { v: 1, kind: "filer-index", absent: null, shards: { "0001999999": "0" } },
+      };
+    return {
+      kind: "http",
+      status: 200,
+      body: { v: 1, kind: "filer-shard", shard: 0, shard_count: 1, entries: {}, smuggled: 1 },
+    };
+  });
+  const handle = runEntityDriver(h.deps);
+  await handle.done;
+  assert.equal(handle.state(), "bad_payload");
+  assert.ok(h.renders.at(-1)!.includes("undeclared key"));
+  assert.ok(h.renders.at(-1)!.includes("smuggled"));
+});
+
+/* Codex F5: envelope validation must require PRESENCE + type of every
+   discriminator and geometry field, not merely reject unknown keys — an index
+   missing `kind`, or a shard missing `shard_count`, was accepted before. */
+
+const validIndexBody = () => ({
+  v: 1,
+  kind: "filer-index",
+  absent: null,
+  shards: { "0001999999": "0" } as Record<string, unknown>,
+});
+const validShardBody = () => ({
+  v: 1,
+  kind: "filer-shard",
+  shard: 0,
+  shard_count: 1,
+  entries: {} as Record<string, unknown>,
+});
+
+async function runFilerWith(
+  indexBody: unknown,
+  shardBody: unknown,
+): Promise<{ state: string; lastRender: string }> {
+  const h = harness("?k=f:1999999", async (url) => {
+    if (url === FILER_INDEX_PATH) return { kind: "http", status: 200, body: indexBody };
+    return { kind: "http", status: 200, body: shardBody };
+  });
+  const handle = runEntityDriver(h.deps);
+  await handle.done;
+  return { state: handle.state(), lastRender: h.renders.at(-1)! };
+}
+
+test("F5: each required routing-index field, DELETED → bad_payload naming it", async () => {
+  for (const field of ["v", "kind", "absent", "shards"] as const) {
+    const body = validIndexBody() as Record<string, unknown>;
+    delete body[field];
+    const r = await runFilerWith(body, validShardBody());
+    assert.equal(r.state, "bad_payload", `index without ${field} must be bad_payload`);
+    assert.ok(
+      r.lastRender.includes(field === "v" ? "version" : field),
+      `the defect names ${field}`,
+    );
+  }
+});
+
+test("F5: each required shard-envelope field, DELETED → bad_payload naming it", async () => {
+  for (const field of ["v", "kind", "shard", "shard_count", "entries"] as const) {
+    const body = validShardBody() as Record<string, unknown>;
+    delete body[field];
+    const r = await runFilerWith(validIndexBody(), body);
+    assert.equal(r.state, "bad_payload", `shard without ${field} must be bad_payload`);
+    assert.ok(
+      r.lastRender.includes(field === "v" ? "version" : field),
+      `the defect names ${field}`,
+    );
+  }
+});
+
+test("F5: a non-string shards-map value → bad_payload, never a silent S2", async () => {
+  const body = validIndexBody();
+  body.shards = { "0001999999": 7 };
+  const r = await runFilerWith(body, validShardBody());
+  assert.equal(r.state, "bad_payload");
+  assert.ok(r.lastRender.includes("non-string shard name"));
+  assert.ok(r.lastRender.includes("0001999999"));
+});
+
+test("F5: wrong kind discriminators → bad_payload naming the kind", async () => {
+  const idx = validIndexBody() as Record<string, unknown>;
+  idx.kind = "filer-shard";
+  const r1 = await runFilerWith(idx, validShardBody());
+  assert.equal(r1.state, "bad_payload");
+  assert.ok(r1.lastRender.includes("filer-index"));
+  const shard = validShardBody() as Record<string, unknown>;
+  shard.kind = "filer-index";
+  const r2 = await runFilerWith(validIndexBody(), shard);
+  assert.equal(r2.state, "bad_payload");
+  assert.ok(r2.lastRender.includes("filer-shard"));
 });
 
 test("HTTP 5xx → honest server_error with retry; retry succeeds", async () => {
@@ -296,4 +433,32 @@ test("member happy path over real dist-cut bytes (cut member)", async () => {
   assert.ok(html.includes("bioguide"), "member body renders");
   assert.ok(html.includes("<caption"), "same real-table renderer as SSR");
   assert.equal(pages.size, 10, "exactly the budgeted member pages were emitted");
+});
+
+
+/* F3: routing/payload identity binding. The payload is a REAL one — the
+   cross-runtime parity fixture's canonical serialization — so the test proves
+   the mismatch is caught on data that would otherwise render perfectly. */
+test("F3: a shard entry declaring a different cik than its routing is bad_payload, never rendered", async () => {
+  const parity = JSON.parse(
+    readFileSync(path.join(DASH, "..", "tests", "fixtures", "filer_payload_parity.v1.json"), "utf8"),
+  ) as { cases: { name: string; expected: string | null }[] };
+  const valid = parity.cases.find((c) => c.expected !== null)!;
+  const other = JSON.parse(valid.expected!) as { cik: string };
+  const routedCik = "0009999990";
+  assert.notEqual(other.cik, routedCik, "fixture is vacuous unless the ciks differ");
+
+  const index = { v: 1, kind: "filer-index", absent: null, shards: { [routedCik]: "s0" } };
+  const shard = {
+    v: 1, kind: "filer-shard", shard: 0, shard_count: 1,
+    entries: { [routedCik]: other },
+  };
+  const h = harness(`?k=f:${Number(routedCik)}`, async (url) =>
+    url.includes("index.v1.json")
+      ? { kind: "http", status: 200, body: index }
+      : { kind: "http", status: 200, body: shard });
+  const handle = runEntityDriver(h.deps);
+  await handle.done;
+  assert.equal(handle.state(), "bad_payload", "a foreign-cik payload must fail closed");
+  assert.ok(/cik mismatch/i.test(h.renders.at(-1)!), "the defect is named");
 });
