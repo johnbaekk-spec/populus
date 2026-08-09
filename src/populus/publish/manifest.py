@@ -86,6 +86,68 @@ INST_CLIENT_COMPAT = ">=0.0.1,<1"
 REQUIRED_INST_ARTIFACTS = (INST_DB_ARTIFACT,)
 INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
 
+# --- the inst source-provenance artifact (RUN M2-11, R24) ---------------------
+# When a build derives the inst module from an accepted external snapshot
+# (`stage-build --inst-db`), it publishes `inst_source.json`: the snapshot's
+# whole-file SHA-256 plus the metadata fields read from the snapshot's own
+# `inst_source_meta` table — so provenance can never drift from identity.
+#
+# It is an ORDINARY path-backed artifact, deliberately NOT in the inst module's
+# `db_artifacts` tuple: that tuple is DB-only with logical-digest semantics and
+# drives Release-asset handling through five consumers; a JSON there would be
+# misclassified by every one of them. The generic installer already installs
+# path-backed artifacts with zero code change. It is also NOT in any module's
+# `required` set: every manifest written before RUN M2-11 legitimately has none,
+# and validation must keep accepting those (rollback targets included). The
+# compensating control is the PRODUCER guard in publish/build.py: a build given
+# --inst-db that fails to emit it raises PublishError.
+INST_SOURCE_ARTIFACT = "inst_source.json"
+INST_SOURCE_SCHEMA = "inst_source/v1"
+_INST_SOURCE_FIELDS = {
+    "schema",
+    "snapshot_sha256",
+    "snapshot_schema_version",
+    "snapshot_version",
+    "created_at_utc",
+    "view_definition_digest",
+}
+
+
+def validate_inst_source(document: object) -> list[str]:
+    """Strict ``inst_source/v1`` validation; returns every defect (R24).
+
+    Exact field set, no extras: the artifact is a published contract, so an
+    unknown field is a defect today rather than a compatibility hazard later.
+    """
+    if not isinstance(document, dict):
+        return ["inst_source document is not a JSON object"]
+    errors: list[str] = []
+    present = set(document)
+    for missing in sorted(_INST_SOURCE_FIELDS - present):
+        errors.append(f"missing field {missing!r}")
+    for extra in sorted(present - _INST_SOURCE_FIELDS):
+        errors.append(f"unexpected field {extra!r}")
+    if errors:
+        return errors
+    if document["schema"] != INST_SOURCE_SCHEMA:
+        errors.append(f"schema must be {INST_SOURCE_SCHEMA!r}")
+    for hex_field in ("snapshot_sha256", "view_definition_digest"):
+        value = document[hex_field]
+        if not isinstance(value, str) or _SHA256.match(value) is None:
+            errors.append(f"{hex_field} must be 64 lowercase hex characters")
+    if not isinstance(document["snapshot_schema_version"], str) or not document[
+        "snapshot_schema_version"
+    ]:
+        errors.append("snapshot_schema_version must be a non-empty string")
+    version = document["snapshot_version"]
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        errors.append("snapshot_version must be a positive integer")
+    try:
+        parse_rfc3339z(document["created_at_utc"])
+    except (TypeError, ValueError):
+        errors.append("created_at_utc must be a strict RFC3339-Z timestamp")
+    return errors
+
 # Per-module structural policy: what each KNOWN module requires. Generic
 # validation admits any module named here (well-formed per its policy) and
 # rejects any module NOT named here; a separable standard-build parameter then
@@ -353,6 +415,14 @@ def _validate_artifact(
         not isinstance(logical, str) or _SHA256.match(logical) is None
     ):
         errors.append(f"{label}: logical_digest must be 64 lowercase hex characters")
+    # RUN M2-11 (R24): the provenance artifact is ordinary, never a database —
+    # a logical_digest on it would signal DB semantics to the five consumers
+    # that key on that field, so its presence is a defect, not a nicety.
+    if entry.get("name") == INST_SOURCE_ARTIFACT and logical is not None:
+        errors.append(
+            f"{label}: {INST_SOURCE_ARTIFACT} is an ordinary path-backed"
+            " provenance artifact and must not carry a logical_digest"
+        )
     return errors
 
 

@@ -49,6 +49,11 @@ from test_inst_agg import _entity, _filer, _hold, _load, _security  # noqa: E402
 from populus.amendments import ensure_views  # noqa: E402
 from populus.db import connect, init_db  # noqa: E402
 from populus.inst_agg import build_inst_agg  # noqa: E402
+from populus.inst_serving import (  # noqa: E402
+    build_serving_projection,
+    publication_periods,
+    write_serving_db,
+)
 from populus.normalize_inst import NORMALIZATION_VERSION  # noqa: E402
 from populus.publish.digests import (  # noqa: E402
     LOGICAL_PROJECTION_VERSIONS,
@@ -106,8 +111,10 @@ def seed_source(conn) -> None:
                        shares=20, unit="PRN", security_id="sec:bond")])
 
 
-def build_fixture_agg(outdir: Path) -> tuple[Path, Path, dict]:
-    """Seed → aggregate → self-check. Returns (source_db, agg_db, watermarks)."""
+def build_fixture_agg(outdir: Path) -> tuple[Path, Path, Path, dict]:
+    """Seed → aggregate → serving → self-check.
+
+    Returns (source_db, agg_db, serving_db, watermarks)."""
     source_dir = outdir / "source"
     source_dir.mkdir(parents=True, exist_ok=True)
     src = source_dir / "populus.db"
@@ -119,6 +126,13 @@ def build_fixture_agg(outdir: Path) -> tuple[Path, Path, dict]:
     ensure_views(conn)
     agg = outdir / "inst_agg.db"
     report = build_inst_agg(conn, agg, ingested_at=AT)
+    # Codex F7: with the inst module present, the dashboard REFUSES a build
+    # whose serving artifact is missing (it would publish an empty routing
+    # index with every tail link dead), so the envelope must carry a real
+    # inst_serving.db — built by the same producer code the pipeline uses.
+    serving = outdir / "inst_serving.db"
+    proj = build_serving_projection(conn, periods=publication_periods(conn))
+    write_serving_db(proj, str(serving), source_conn=conn)
     row = conn.execute(
         "SELECT MAX(period_of_report), MAX(filed_date) FROM v_default_inst_filings"
     ).fetchone()
@@ -151,7 +165,7 @@ def build_fixture_agg(outdir: Path) -> tuple[Path, Path, dict]:
         f" {report.issuer_rows} issuer rows, {report.concentration_rows} concentration rows",
         file=sys.stderr,
     )
-    return src, agg, watermarks
+    return src, agg, serving, watermarks
 
 
 def resolve_dev_build(data_repo: Path) -> tuple[str, Path, Path]:
@@ -169,13 +183,16 @@ def resolve_dev_build(data_repo: Path) -> tuple[str, Path, Path]:
     return build_id, builds / build_id, db
 
 
-def assemble_envelope(outdir: Path, agg: Path, watermarks: dict, data_repo: Path) -> dict:
+def assemble_envelope(
+    outdir: Path, agg: Path, serving: Path, watermarks: dict, data_repo: Path
+) -> dict:
     build_id, dev_build_dir, congress_db = resolve_dev_build(data_repo)
     dest = outdir / "builds" / build_id
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(dev_build_dir, dest)
     shutil.copy2(agg, dest / INST_DB_ARTIFACT)
+    shutil.copy2(serving, dest / "inst_serving.db")
 
     manifest = json.loads((dest / "manifest.json").read_text(encoding="utf-8"))
     agg_bytes = (dest / INST_DB_ARTIFACT).read_bytes()
@@ -226,13 +243,13 @@ def main() -> None:
     args = parser.parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
 
-    src, agg, watermarks = build_fixture_agg(args.outdir)
+    src, agg, serving, watermarks = build_fixture_agg(args.outdir)
     if args.agg_only:
         print(json.dumps({"agg_db": str(agg), "source_db": str(src),
                           "watermarks": watermarks, "ticker_map": str(MAP_FIXTURE)}))
         return
 
-    result = assemble_envelope(args.outdir, agg, watermarks, args.data_repo)
+    result = assemble_envelope(args.outdir, agg, serving, watermarks, args.data_repo)
     print("# build the fixture preview with:", file=sys.stderr)
     print(
         f"POPULUS_BUILD_DIR={result['build_dir']} POPULUS_DB={result['congress_db']}"

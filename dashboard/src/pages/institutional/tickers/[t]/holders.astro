@@ -14,7 +14,7 @@
 // still applies to the aggregate table.
 import Base from "../../../../layouts/Base.astro";
 import HoldingsTable from "../../../../components/HoldingsTable.astro";
-import { getBuildData } from "../../../../lib/data";
+import { getBuildData, filerTier } from "../../../../lib/data";
 import { holdersFor, issuerPeriods } from "../../../../lib/inst";
 import { holdersBody } from "../../../../lib/ui";
 import { filingWindow, resolveTicker } from "../../../../lib/derive";
@@ -40,9 +40,12 @@ const inst = build.inst;
 if (!inst.present) throw new Error("holders page built without the inst module");
 const periods = issuerPeriods(inst, issuerKey);
 const period = periods.at(-1)!;
-const holders = (inst.holdersByIssuer.get(issuerKey) ?? []).filter(
-  (h) => h.issuer_key_source === "entity",
-);
+// R22: the top/tail budget state rides on every holder row — through the SSR
+// body AND the embedded period payload below — so the client period switch
+// re-renders the same filerHref targets the SSR produced.
+const holders = (inst.holdersByIssuer.get(issuerKey) ?? [])
+  .filter((h) => h.issuer_key_source === "entity")
+  .map((h) => ({ ...h, tier: filerTier(build, h.cik) }));
 const window = filingWindow(build.generatedAtDate);
 
 const bodyHtml = holdersBody(
@@ -60,7 +63,12 @@ const periodData = JSON.stringify({
   latestFiled: inst.watermarks.latest_filed_date,
   topn: inst.topn,
   periods: Object.fromEntries(
-    periods.map((p) => [p, holdersFor(inst, issuerKey, p).filter((h) => h.issuer_key_source === "entity")]),
+    periods.map((p) => [
+      p,
+      holdersFor(inst, issuerKey, p)
+        .filter((h) => h.issuer_key_source === "entity")
+        .map((h) => ({ ...h, tier: filerTier(build, h.cik) })),
+    ]),
   ),
 });
 const description =

@@ -15,8 +15,102 @@ rebuilds rows or re-derives pairs — Senate ingest, ``reparse_senate``, and
 
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
 import sqlite3
+
+#: Every view the institutional derivation reads (RUN M2-11, R3). The coverage
+#: gate reads the default pair, presence probes read the reconciled population,
+#: and the aggregate/serving builders read the per-filer reported pair — so a
+#: snapshot whose stored SQL for ANY of these differs from the shipped
+#: ``views.sql`` would derive published numbers from a predicate this release
+#: never reviewed. ``verify_views`` refuses that snapshot instead.
+INST_DERIVATION_VIEWS = (
+    "v_inst_reconciled_filings",
+    "v_default_inst_filings",
+    "v_default_holdings",
+    "v_filer_reported_filings",
+    "v_filer_reported_holdings",
+)
+
+
+class ViewVerificationError(RuntimeError):
+    """A database's stored view SQL differs from the shipped ``views.sql``.
+
+    Carries the offending view's name in ``view_name`` so a caller can refuse
+    with a message that names it (plan R3)."""
+
+    def __init__(self, view_name: str, message: str) -> None:
+        super().__init__(message)
+        self.view_name = view_name
+
+
+def verify_views(
+    conn: sqlite3.Connection,
+    *,
+    views: tuple[str, ...] = INST_DERIVATION_VIEWS,
+) -> None:
+    """Read-only check that *conn*'s stored view SQL is the packaged DDL (R3).
+
+    The comparison source is ``views.sql`` — THE definition (M2-7) — normalized
+    exactly as :func:`ensure_views` normalizes it, so the two functions can
+    never disagree about what "matching" means. Unlike ``ensure_views`` this
+    NEVER writes: it is the gate a read-only snapshot handle runs before any
+    institutional derivation, where repairing a stale view is not an option —
+    the snapshot is immutable by design, so drift means the snapshot itself is
+    wrong and must be re-cut.
+
+    Raises :class:`ViewVerificationError` naming the first offending view,
+    with the remediation (re-cut via ``scripts/inst_snapshot.py``) in the
+    message. Verifies only the institutional derivation's views by default;
+    a congress-only view is not this gate's business.
+    """
+    packaged = _packaged_views()
+    for name in views:
+        statement = packaged.get(name)
+        if statement is None:  # a name absent from views.sql is a code defect
+            raise ViewVerificationError(
+                name,
+                f"view {name} is not defined in the packaged views.sql —"
+                " the verification list and the shipped DDL disagree",
+            )
+        stored = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?",
+            (name,),
+        ).fetchone()
+        if stored is None:
+            raise ViewVerificationError(
+                name,
+                f"snapshot is missing view {name} — the institutional"
+                " derivation would fail or silently read the wrong population."
+                " Re-cut the snapshot with scripts/inst_snapshot.py, which"
+                " applies the shipped views.sql before finalizing.",
+            )
+        if not _same_definition(stored[0], statement):
+            raise ViewVerificationError(
+                name,
+                f"snapshot view {name} does not match the shipped views.sql"
+                " definition — refusing to derive from a predicate this"
+                " release never reviewed. Re-cut the snapshot with"
+                " scripts/inst_snapshot.py against the current release.",
+            )
+
+
+def packaged_view_digest() -> str:
+    """SHA-256 over the normalized packaged view DDL, in file order.
+
+    Written into ``inst_source_meta`` by ``scripts/inst_snapshot.py`` and read
+    back by stage-build into ``inst_source.json`` (R24) — provenance for WHICH
+    view definitions a snapshot was cut with, distinct from ``verify_views``,
+    which enforces that they still match at derive time.
+    """
+    digest = hashlib.sha256()
+    for name, statement in _packaged_views().items():
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(_normalize_sql(statement).encode("utf-8"))
+        digest.update(b"\x00")
+    return digest.hexdigest()
 
 
 def ensure_views(conn: sqlite3.Connection) -> None:

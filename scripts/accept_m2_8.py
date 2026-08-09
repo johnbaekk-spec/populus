@@ -92,6 +92,8 @@ def main() -> int:  # noqa: PLR0915 - a linear acceptance script, deliberately f
         check_geometry,
         check_measured_tree,
         measure_tree,
+        FILER_ROUTING_INDEX_FILES,
+        FILER_TAIL_SHARDS_RESERVED,
         worst_case_file_count,
     )
     from populus.inst_flags import FLOOR_BPS, MIN_BASELINE_PERIODS, MULT
@@ -418,10 +420,16 @@ def main() -> int:  # noqa: PLR0915 - a linear acceptance script, deliberately f
     # Every term is PRINTED, so a term that stops being summed is visible in the
     # output rather than only in a total that quietly shrank (QA M2-8 R2 N1).
     projected_total = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+    # RUN M2-11 R27 added two terms (tail filer shards + the routing index) to
+    # `worst_case_file_count`. This expectation is RESTATED with both — the
+    # dropped-term guard fired on the M2-11 branch exactly as designed when the
+    # formula grew and this sum did not, which is the guard working, recorded
+    # here so the restatement is a decision, not a silent re-tune.
     check(
         projected_total
         == M1_MEASURED_PAGES + SITE_CHROME_FILES + M2_FILER_PAGES
-        + ACTIVITY_SHARDS_MAX + M3_RESERVED,
+        + ACTIVITY_SHARDS_MAX + M3_RESERVED
+        + FILER_TAIL_SHARDS_RESERVED + FILER_ROUTING_INDEX_FILES,
         "the forward projection sums every committed term",
         "the forward projection dropped a term — the total understates the"
         " breach the owner acts on, which is the C5(a) defect returning",
@@ -432,6 +440,8 @@ def main() -> int:  # noqa: PLR0915 - a linear acceptance script, deliberately f
           f" + M2 filer pages {M2_FILER_PAGES:,}"
           f" + activity shards {ACTIVITY_SHARDS_MAX}"
           f" + M3 reservation {M3_RESERVED:,}"
+          f" + tail filer shards {FILER_TAIL_SHARDS_RESERVED}"
+          f" + routing index {FILER_ROUTING_INDEX_FILES}"
           f" = {projected_total:,} vs self-cap {GLOBAL_FILE_CAP:,}")
     if projected_total > GLOBAL_FILE_CAP:
         NOTES.append(

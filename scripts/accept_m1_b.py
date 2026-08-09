@@ -442,11 +442,16 @@ def _stage_senate(conn, tmp: Path, out) -> bool:
     finally:
         live_conn.close()
     body = transport.bodies[0] if transport.bodies else {}
+    # The eFD search 503s a bare date and accepts the timestamped form — measured,
+    # three seconds apart (senate._efd_datetime docstring). The window seam therefore
+    # NORMALIZES both bounds; this expectation asserts the normalized wire values,
+    # restated 2026-08-08 when the normalization landed and this stale bare-date
+    # expectation began failing on main.
     if (body.get("submitted_start_date"), body.get("submitted_end_date")) != (
-        "01/01/2015",
-        "03/31/2016",
+        "01/01/2015 00:00:00",
+        "03/31/2016 00:00:00",
     ):
-        out(f"  <-- the window seam did not send both bounds: {body!r:.200}")
+        out(f"  <-- the window seam did not send both normalized bounds: {body!r:.200}")
         ok = False
     else:
         out(

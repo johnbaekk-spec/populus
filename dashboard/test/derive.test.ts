@@ -422,19 +422,21 @@ test("buildSearchIndex: exact tuple-arity allowlist; searchIndexValid guards sha
   const index = buildSearchIndex(
     [{ bioguide: "P000197", name: "Test Person", aff: "D–CA-11", rows: 12 }],
     [{ ticker: "NVDA", name: "NVIDIA Corp", rows: 35 }],
-    [{ cik: "0001067983", name: "BERKSHIRE HATHAWAY INC" }],
+    [{ cik: "0001067983", name: "BERKSHIRE HATHAWAY INC", top: true }],
   );
   assert.equal(index.v, 1);
   assert.deepEqual(index.tickers, [["NVDA", "NVIDIA Corp", 35]]);
   assert.deepEqual(index.members, [["P000197", "Test Person", "D–CA-11", 12]]);
-  assert.deepEqual(index.filers, [["1067983", "BERKSHIRE HATHAWAY INC"]], "CIK serialized unpadded");
+  // R22: the third scalar is the top/tail tier flag — a client hit must know
+  // whether the pre-rendered route exists for this filer.
+  assert.deepEqual(index.filers, [["1067983", "BERKSHIRE HATHAWAY INC", 1]], "CIK serialized unpadded");
   assert.ok(searchIndexValid(index));
   assert.ok(!searchIndexValid({ v: 2 }));
   // The allowlist is the tuple arity itself: every entry is exactly the
   // documented scalars, nothing extra can ride along unnoticed.
   for (const t of index.tickers) assert.equal(t.length, 3);
   for (const m of index.members) assert.equal(m.length, 4);
-  for (const f of index.filers) assert.equal(f.length, 2);
+  for (const f of index.filers) assert.equal(f.length, 3);
 });
 
 test("searchQuery: ticker prefix, name substring, grouped, capped", () => {
@@ -447,7 +449,10 @@ test("searchQuery: ticker prefix, name substring, grouped, capped", () => {
       { ticker: "NVDA", name: "NVIDIA Corp", rows: 35 },
       { ticker: "NVCR", name: "", rows: 2 },
     ],
-    [{ cik: "0001067983", name: "Berkshire Hathaway Inc" }],
+    [
+      { cik: "0001067983", name: "Berkshire Hathaway Inc", top: true },
+      { cik: "0000000042", name: "Berkshire Tail Capital", top: false },
+    ],
   );
   const nv = searchQuery(index, "nv");
   assert.deepEqual(nv.filter((h) => h.kind === "ticker").map((h) => h.key), ["NVDA", "NVCR"]);
@@ -457,6 +462,10 @@ test("searchQuery: ticker prefix, name substring, grouped, capped", () => {
   const berk = searchQuery(index, "berkshire");
   assert.equal(berk[0]!.kind, "filer");
   assert.equal(berk[0]!.href, "/institutional/filers/1067983/");
+  // R22: a tail filer hit routes through /e/ — the pre-rendered route does not
+  // exist past the LD-7 cut, so linking it would be a dressed 404.
+  assert.equal(berk[1]!.kind, "filer");
+  assert.equal(berk[1]!.href, "/e/?k=f:42");
   assert.deepEqual(searchQuery(index, "  "), [], "blank query returns nothing");
 });
 

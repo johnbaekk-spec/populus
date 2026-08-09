@@ -228,7 +228,9 @@ test("instStamp: quarter-end + build filed-date watermark; caveat text is fixed"
 /* ---------- holders table (R6) ---------- */
 
 test("holdersTableHtml: exactly the published columns — no Shares/Filed/Lag/doc-link", () => {
-  const html = holdersTableHtml([holder()], "2026-03-31", "2026-05-15", 25);
+  // R22: rows carry the top/tail budget state; a top row keeps the unpadded
+  // pre-rendered route, a tail row routes through /e/ (asserted below).
+  const html = holdersTableHtml([{ ...holder(), tier: "top" as const }], "2026-03-31", "2026-05-15", 25);
   assert.ok(html.includes(">Filer<"));
   assert.ok(html.includes(">Value ▾<"));
   assert.ok(html.includes(">Securities<"));
@@ -243,6 +245,13 @@ test("holdersTableHtml: exactly the published columns — no Shares/Filed/Lag/do
   assert.ok(html.includes(INST_STAMP_CAVEAT));
   assert.ok(html.includes(">entity<"), "issuer_key_source disclosed per row");
   assert.ok(html.includes("/institutional/filers/1067983/"), "filer links use the unpadded CIK route");
+  // The tail (and tier-less legacy payload) direction: the /e/ href, never a
+  // pre-rendered route that the LD-7 cut does not emit — a dressed 404.
+  const tail = holdersTableHtml([{ ...holder(), tier: "tail" as const }], "2026-03-31", "2026-05-15", 25);
+  assert.ok(tail.includes("/e/?k=f:1067983"), "a tail holder routes through /e/");
+  assert.ok(!tail.includes("/institutional/filers/1067983/"));
+  const legacy = holdersTableHtml([holder()], "2026-03-31", "2026-05-15", 25);
+  assert.ok(legacy.includes("/e/?k=f:1067983"), "an unknown tier degrades to the reachable /e/ route");
 });
 
 /* ---------- changes table (R7 / Locked #8) ---------- */

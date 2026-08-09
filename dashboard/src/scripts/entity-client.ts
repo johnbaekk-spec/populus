@@ -27,6 +27,7 @@ import {
 import {
   memberBody,
   tickerUnifiedBody,
+  filerBody,
   entityTxnRowsHtml,
   entityTableCountText,
   s2OutOfExtract,
@@ -36,6 +37,22 @@ import {
   holdersTableHtml,
   type BuildStamps,
 } from "../lib/ui.ts";
+import {
+  holdingsFootnotesHtml,
+  institutionalDataNoteHtml,
+  projectionAbsentHtml,
+  surfaceHtml,
+  type FilerSurfacePayload,
+  type SurfaceState,
+} from "../lib/holdings.ts";
+import {
+  FILER_INDEX_PATH,
+  FilerPayloadError,
+  filerShardPath,
+  parseFilerPayload,
+  type FilerPayloadV1,
+} from "../lib/filer-payload.ts";
+import { edgarFilerUrl } from "../lib/derive.ts";
 import type { TickerInstSection } from "../lib/data.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "../lib/inst.ts";
 
@@ -195,6 +212,10 @@ export interface DriverHandle {
   older: () => void;
   newer: () => void;
   toggleWatch: (kind: "member" | "ticker", key: string) => void;
+  /** R22 filer surface controls — no-ops unless an in-extract filer is loaded */
+  holdingsPage: (dir: "prev" | "next") => void;
+  holdingsView: (view: "current" | "prior" | "diff") => void;
+  holdingsPeriod: (period: string) => void;
   done: Promise<void>;
 }
 
@@ -205,6 +226,15 @@ interface LoadedEntity {
   inst?: TickerInstSection;
   stamps: BuildStamps;
 }
+
+/* RUN M2-11 (plan R22): the in-extract filer path. A tail filer resolves
+   through the routing index to its shard, is STRICT-validated by
+   parseFilerPayload, and renders through the SAME body path the pre-rendered
+   pages use (ui.filerBody + holdings.surfaceHtml) — parity by construction.
+   The driver's existing error taxonomy is preserved exactly: a malformed
+   index/shard/payload is bad_payload, a wrong version is version_mismatch,
+   HTTP 404 on the index or a CIK absent from it is the out-of-extract S2, and
+   5xx/network/timeout keep their states. */
 
 export const DRIVER_WATCHDOG_MS = 15_000;
 
@@ -270,10 +300,9 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       return;
     }
     if (parsed.kind === "f") {
-      // In-extract filers are always prerendered (they are few); a filer that
-      // reaches the generic route is out-of-extract by construction.
-      state = "s2";
-      deps.render(s2OutOfExtract("f", parsed.key));
+      // R22: top filers are pre-rendered; tail filers resolve index -> shard.
+      // A CIK the index does not carry is genuinely out-of-extract (S2).
+      await loadFiler(parsed.key);
       return;
     }
     const endpoint = endpointFor()!;
@@ -386,6 +415,363 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
     }
   }
 
+  let loadedFiler: FilerPayloadV1 | null = null;
+  let filerState: SurfaceState = { view: "current", page: 0, period: "" };
+  /** The aggregate period the chips select — drives filerBody's tiles/changes. */
+  let filerAggPeriod = "";
+
+  function filerSurfaceOf(p: FilerPayloadV1): FilerSurfacePayload {
+    return {
+      kind: "filer",
+      cik: p.cik,
+      filerName: p.filerName,
+      periods: p.periods,
+      current: p.current,
+      prior: p.prior,
+      filings: p.filings,
+      rowsByPeriod: p.rowsByPeriod,
+      totalsByPeriod: p.totalsByPeriod,
+    };
+  }
+
+  function filerHtml(p: FilerPayloadV1): string {
+    const aggPeriods = Object.keys(p.concByPeriod).sort();
+    const aggPeriod = aggPeriods.includes(filerAggPeriod)
+      ? filerAggPeriod
+      : (aggPeriods[aggPeriods.length - 1] ?? p.latestPeriod);
+    const surface =
+      p.periods.length > 0
+        ? surfaceHtml(filerSurfaceOf(p), filerState)
+        : projectionAbsentHtml("filer", edgarFilerUrl(p.cik));
+    return (
+      filerBody(
+        { cik: p.cik, name: p.filerName, latestPeriod: p.latestPeriod },
+        aggPeriods,
+        aggPeriod,
+        p.concByPeriod[aggPeriod] ?? null,
+        p.deltasByPeriod[aggPeriod] ?? [],
+        p.latestFiled,
+        p.topn,
+        p.window,
+      ) +
+      `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
+      `<div data-holdings-body>` +
+      surface +
+      `</div></section>` +
+      institutionalDataNoteHtml() +
+      holdingsFootnotesHtml()
+    );
+  }
+
+  function renderFiler(): void {
+    const p = loadedFiler!;
+    try {
+      deps.render(filerHtml(p));
+      state = "body";
+    } catch {
+      state = "render_error";
+      deps.render(
+        s4Error(
+          "render_error",
+          FILER_INDEX_PATH,
+          "The published record downloaded, but the page template threw while drawing it.",
+          false,
+        ),
+      );
+    }
+  }
+
+  async function loadFiler(cik10: string): Promise<void> {
+    const label = `/e/ · f:${cik10}`;
+    state = "loading";
+    deps.render(s4Skeleton(FILER_INDEX_PATH, label));
+
+    let settled = false;
+    const cancelWatchdog = deps.schedule(() => {
+      if (settled) return;
+      settled = true;
+      state = "timeout";
+      deps.render(
+        s4Error(
+          "timeout",
+          FILER_INDEX_PATH,
+          "The extract endpoint has not answered within the watchdog window.",
+          true,
+        ),
+      );
+    }, watchdogMs);
+
+    const fail = (
+      kind: "network_error" | "server_error" | "bad_payload" | "version_mismatch",
+      endpoint: string,
+      detail: string,
+      retryable: boolean,
+    ): void => {
+      state = kind;
+      deps.render(s4Error(kind, endpoint, detail, retryable));
+    };
+
+    const idx = await deps.fetchJson(FILER_INDEX_PATH);
+    if (settled) return;
+    if (idx.kind === "network") {
+      settled = true;
+      cancelWatchdog();
+      fail("network_error", FILER_INDEX_PATH, "The request did not complete — no response arrived.", true);
+      return;
+    }
+    if (idx.status === 404) {
+      // No index in this deploy: nothing is in-extract through this path.
+      settled = true;
+      cancelWatchdog();
+      state = "s2";
+      deps.render(s2OutOfExtract("f", cik10));
+      return;
+    }
+    if (idx.status < 200 || idx.status >= 300) {
+      settled = true;
+      cancelWatchdog();
+      fail("server_error", FILER_INDEX_PATH, `The endpoint answered HTTP ${idx.status}.`, true);
+      return;
+    }
+    const idxBody = idx.body as Record<string, unknown> | null;
+    if (typeof idxBody !== "object" || idxBody === null) {
+      settled = true;
+      cancelWatchdog();
+      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is not a JSON object.", true);
+      return;
+    }
+    if (typeof idxBody.v !== "number") {
+      settled = true;
+      cancelWatchdog();
+      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index has no version field.", true);
+      return;
+    }
+    if (idxBody.v !== 1) {
+      settled = true;
+      cancelWatchdog();
+      fail(
+        "version_mismatch",
+        FILER_INDEX_PATH,
+        `The routing index is version ${String(idxBody.v)}; this page's code speaks a different version. Reloading may pick up matching code.`,
+        false,
+      );
+      return;
+    }
+    // STRICT (R22): the index envelope carries exactly {v, kind, absent,
+    // shards} — an unknown key means this is not the contract the code speaks,
+    // and stripping it silently would mask producer drift.
+    for (const key of Object.keys(idxBody)) {
+      if (key !== "v" && key !== "kind" && key !== "absent" && key !== "shards") {
+        settled = true;
+        cancelWatchdog();
+        fail(
+          "bad_payload",
+          FILER_INDEX_PATH,
+          `Defect: the routing index carries the undeclared key ${JSON.stringify(key)}.`,
+          true,
+        );
+        return;
+      }
+    }
+    // Codex F5: required discriminators must be PRESENT and typed — an
+    // envelope missing `kind` or `absent` is not this contract, and accepting
+    // it would let a producer drift ship as a "valid" index.
+    if (idxBody.kind === undefined) {
+      settled = true;
+      cancelWatchdog();
+      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is missing its kind discriminator.", true);
+      return;
+    }
+    if (idxBody.kind !== "filer-index") {
+      settled = true;
+      cancelWatchdog();
+      fail(
+        "bad_payload",
+        FILER_INDEX_PATH,
+        `Defect: the routing index kind is ${JSON.stringify(idxBody.kind)}, not "filer-index".`,
+        true,
+      );
+      return;
+    }
+    if (!("absent" in idxBody)) {
+      settled = true;
+      cancelWatchdog();
+      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is missing its absent field.", true);
+      return;
+    }
+    if (idxBody.absent !== null && typeof idxBody.absent !== "string") {
+      settled = true;
+      cancelWatchdog();
+      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index absent field is neither a string nor null.", true);
+      return;
+    }
+    const shardsMap = idxBody.shards;
+    if (shardsMap === undefined) {
+      settled = true;
+      cancelWatchdog();
+      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is missing its shards map.", true);
+      return;
+    }
+    if (typeof shardsMap !== "object" || shardsMap === null || Array.isArray(shardsMap)) {
+      settled = true;
+      cancelWatchdog();
+      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index carries no shard map.", true);
+      return;
+    }
+    // Codex F5: every shards-map VALUE must be a string shard name. A non-string
+    // value is a defective index, not an absence — absence is a MISSING key.
+    for (const [mapCik, mapValue] of Object.entries(shardsMap as Record<string, unknown>)) {
+      if (typeof mapValue !== "string") {
+        settled = true;
+        cancelWatchdog();
+        fail(
+          "bad_payload",
+          FILER_INDEX_PATH,
+          `Defect: the routing index maps CIK ${mapCik} to a non-string shard name.`,
+          true,
+        );
+        return;
+      }
+    }
+    const shardName = (shardsMap as Record<string, unknown>)[cik10];
+    if (typeof shardName !== "string") {
+      // Not published in the tail family (module absent, or genuinely outside
+      // the extract): today's S2, with its primary-source CTA.
+      settled = true;
+      cancelWatchdog();
+      state = "s2";
+      deps.render(s2OutOfExtract("f", cik10));
+      return;
+    }
+
+    const shardEndpoint = filerShardPath(shardName);
+    const shard = await deps.fetchJson(shardEndpoint);
+    if (settled) return;
+    settled = true;
+    cancelWatchdog();
+    if (shard.kind === "network") {
+      fail("network_error", shardEndpoint, "The request did not complete — no response arrived.", true);
+      return;
+    }
+    if (shard.status < 200 || shard.status >= 300) {
+      // The index PROMISED this shard, so even a 404 here is a defect of the
+      // published family, not an out-of-extract state.
+      fail("server_error", shardEndpoint, `The endpoint answered HTTP ${shard.status}.`, true);
+      return;
+    }
+    const shardBody = shard.body as Record<string, unknown> | null;
+    if (typeof shardBody !== "object" || shardBody === null) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard is not a JSON object.", true);
+      return;
+    }
+    if (typeof shardBody.v !== "number") {
+      fail("bad_payload", shardEndpoint, "Defect: the shard has no version field.", true);
+      return;
+    }
+    if (shardBody.v !== 1) {
+      fail(
+        "version_mismatch",
+        shardEndpoint,
+        `The shard is version ${String(shardBody.v)}; this page's code speaks a different version. Reloading may pick up matching code.`,
+        false,
+      );
+      return;
+    }
+    // STRICT (R22): the shard envelope carries exactly {v, kind, shard,
+    // shard_count, entries}; each entry is then strict-validated by
+    // parseFilerPayload, so the whole delivery path rejects unknown keys.
+    for (const key of Object.keys(shardBody)) {
+      if (!["v", "kind", "shard", "shard_count", "entries"].includes(key)) {
+        fail(
+          "bad_payload",
+          shardEndpoint,
+          `Defect: the shard carries the undeclared key ${JSON.stringify(key)}.`,
+          true,
+        );
+        return;
+      }
+    }
+    // Codex F5: the shard envelope's discriminator and geometry fields must be
+    // PRESENT and typed, not merely "no unknown keys".
+    if (shardBody.kind === undefined) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its kind discriminator.", true);
+      return;
+    }
+    if (shardBody.kind !== "filer-shard") {
+      fail(
+        "bad_payload",
+        shardEndpoint,
+        `Defect: the shard kind is ${JSON.stringify(shardBody.kind)}, not "filer-shard".`,
+        true,
+      );
+      return;
+    }
+    if (shardBody.shard === undefined) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its shard number.", true);
+      return;
+    }
+    if (typeof shardBody.shard !== "number" || !Number.isFinite(shardBody.shard)) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard number is not a finite number.", true);
+      return;
+    }
+    if (shardBody.shard_count === undefined) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its shard_count.", true);
+      return;
+    }
+    if (typeof shardBody.shard_count !== "number" || !Number.isFinite(shardBody.shard_count)) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard_count is not a finite number.", true);
+      return;
+    }
+    const entries = shardBody.entries;
+    if (entries === undefined) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its entries object.", true);
+      return;
+    }
+    if (typeof entries !== "object" || entries === null || Array.isArray(entries)) {
+      fail("bad_payload", shardEndpoint, "Defect: the shard carries no entries object.", true);
+      return;
+    }
+    const entry = (entries as Record<string, unknown>)[cik10];
+    if (entry === undefined) {
+      fail(
+        "bad_payload",
+        shardEndpoint,
+        `Defect: the routing index names this shard for CIK ${cik10}, but the shard does not carry it.`,
+        true,
+      );
+      return;
+    }
+    let payload: FilerPayloadV1;
+    try {
+      payload = parseFilerPayload(entry);
+      // F3: the entry was routed under cik10; a payload declaring another CIK
+      // would render a DIFFERENT manager's portfolio at this URL. Fail closed.
+      if (payload.cik !== cik10) {
+        throw new FilerPayloadError(
+          "bad_payload",
+          `shard entry cik mismatch: routed as ${cik10}, payload declares ${payload.cik}`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof FilerPayloadError && err.code === "version") {
+        fail(
+          "version_mismatch",
+          shardEndpoint,
+          `The payload is version ${String(err.got)}; this page's code speaks a different version. Reloading may pick up matching code.`,
+          false,
+        );
+      } else {
+        fail("bad_payload", shardEndpoint, `Defect: ${(err as Error).message}.`, true);
+      }
+      return;
+    }
+    loadedFiler = payload;
+    filerState = { view: "current", page: 0, period: payload.current };
+    filerAggPeriod = "";
+    deps.setTitle(`${payload.filerName} — 13F filer — Populus`);
+    renderFiler();
+  }
+
   function maxPage(): number {
     if (!loaded) return 0;
     const txns = loaded.kind === "m" ? loaded.member!.txns : loaded.ticker!.txns;
@@ -409,6 +795,27 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
     toggleWatch: (kind, key) => {
       deps.watch.toggle(kind, key);
       if (loaded) renderLoaded();
+    },
+    holdingsPage: (dir) => {
+      if (!loadedFiler) return;
+      filerState.page = Math.max(0, filerState.page + (dir === "next" ? 1 : -1));
+      renderFiler();
+    },
+    holdingsView: (view) => {
+      if (!loadedFiler) return;
+      filerState.view = view;
+      filerState.page = 0; // a page index from another view means nothing here
+      filerState.period =
+        view === "prior" && loadedFiler.prior ? loadedFiler.prior : loadedFiler.current;
+      renderFiler();
+    },
+    holdingsPeriod: (period) => {
+      if (!loadedFiler) return;
+      filerAggPeriod = period;
+      filerState.period = period;
+      filerState.page = 0;
+      filerState.view = "current";
+      renderFiler();
     },
     done,
   };
@@ -616,6 +1023,24 @@ export function runGenericRoute(): void {
     const el = ev.target as Element;
     if (el.closest("[data-retry]")) {
       void handle.retry();
+      return;
+    }
+    // R22 filer surface controls (no-ops unless a filer payload is loaded).
+    const pageBtn = el.closest<HTMLButtonElement>("[data-holdings-page]");
+    if (pageBtn) {
+      if (pageBtn.getAttribute("aria-disabled") !== "true") {
+        handle.holdingsPage(pageBtn.dataset.holdingsPage === "next" ? "next" : "prev");
+      }
+      return;
+    }
+    const viewBtn = el.closest<HTMLButtonElement>("[data-holdings-view]");
+    if (viewBtn) {
+      handle.holdingsView(viewBtn.dataset.holdingsView as "current" | "prior" | "diff");
+      return;
+    }
+    const periodChip = el.closest<HTMLElement>("[data-period-chips] [data-period]");
+    if (periodChip && periodChip.dataset.period) {
+      handle.holdingsPeriod(periodChip.dataset.period);
       return;
     }
     const older = el.closest("[data-entity-older]");

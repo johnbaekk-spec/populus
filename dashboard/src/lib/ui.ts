@@ -58,6 +58,7 @@ import {
   edgarTickerUrl,
   bioguideProfileUrl,
 } from "./derive.ts";
+import { filerHref, type FilerBudgetState } from "./holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "./inst.ts";
 import type { TickerInstSection } from "./data.ts";
 
@@ -507,7 +508,8 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
     .map(
       (h) =>
         `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
-        `<td class="c-filer"><a href="/institutional/filers/${esc(String(Number(h.cik)))}/">${esc(h.name)}</a></td>` +
+        // ONE href primitive (R22): the payload carries the top/tail target.
+        `<td class="c-filer"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
         `<td class="c-num c-strong">${esc(fmtUsd(h.value))}</td>` +
         `<td class="c-num">${fmtInt(h.securities)}</td>` +
         `<td class="c-flags">${flagTags(h.flags)}</td>` +
@@ -748,7 +750,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
 export function holdersBody(
   ticker: string,
   issuerName: string,
-  holders: TopHolderRow[],
+  holders: (TopHolderRow & { tier?: FilerBudgetState })[],
   periods: string[],
   period: string,
   latestFiled: string | null,
@@ -815,7 +817,7 @@ export function holdersBody(
 }
 
 export function holdersTableHtml(
-  rows: TopHolderRow[],
+  rows: (TopHolderRow & { tier?: FilerBudgetState })[],
   period: string,
   latestFiled: string | null,
   topn: number,
@@ -824,7 +826,9 @@ export function holdersTableHtml(
     .map(
       (h) =>
         `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
-        `<td class="c-filer"><a href="/institutional/filers/${esc(String(Number(h.cik)))}/">${esc(h.filer_name)}</a></td>` +
+        // ONE href primitive (R22): tier rides on the row through the SSR call
+        // AND the embedded period payload, so both renders link identically.
+        `<td class="c-filer"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.filer_name)}</a></td>` +
         `<td class="c-num c-strong">${esc(fmtUsd(h.value_usd))}</td>` +
         `<td class="c-num">${fmtInt(h.security_count)}</td>` +
         `<td class="c-keysrc"><span class="mono-note">${esc(h.issuer_key_source)}</span></td>` +

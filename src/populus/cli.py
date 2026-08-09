@@ -866,6 +866,37 @@ def build(
     _write_inst_gate_record(data_repo, report)
 
 
+def _refuse_bad_inst_db(inst_db: str) -> None:
+    """Cheap CLI-side refusals for `--inst-db` (RUN M2-11, R2).
+
+    A missing path, a directory, or a snapshot file this process could still
+    WRITE is refused before any build work starts — the deep enforcement
+    (`mode=ro` open, view verification, in-file metadata) lives in
+    `stage_build`; these are the mistakes worth naming at the command line,
+    each with its remediation.
+    """
+    import os
+
+    path = Path(inst_db)
+    if not path.exists():
+        raise click.ClickException(
+            f"--inst-db {inst_db} does not exist — cut an accepted snapshot"
+            " with scripts/inst_snapshot.py and point --inst-db at the"
+            " finalized inst-source-v<N>.db"
+        )
+    if path.is_dir():
+        raise click.ClickException(
+            f"--inst-db {inst_db} is a directory — pass the finalized"
+            " inst-source-v<N>.db file cut by scripts/inst_snapshot.py"
+        )
+    if os.access(path, os.W_OK):
+        raise click.ClickException(
+            f"--inst-db {inst_db} is writable by this process — an accepted"
+            " snapshot is immutable (0444). Re-finalize it with"
+            " scripts/inst_snapshot.py, or chmod 444 the file it produced."
+        )
+
+
 @main.command("stage-build")
 @click.option(
     "--db",
@@ -882,6 +913,15 @@ def build(
     type=click.Path(file_okay=False),
     help="Raw-archive root holding the House index meta sidecars (watermarks).",
 )
+@click.option(
+    "--inst-db",
+    "inst_db",
+    default=None,
+    help="Accepted institutional source snapshot (RUN M2-11, R1): the"
+    " finalized, read-only inst-source-v<N>.db cut by scripts/inst_snapshot.py."
+    " When given, the inst module derives from it; when absent, the build is"
+    " byte-identical to a congress-only build.",
+)
 def stage_build_cmd(
     db_path: str,
     data_repo: str,
@@ -889,6 +929,7 @@ def stage_build_cmd(
     repo_slug: str | None,
     raw_root: str | None,
     attestation_choice: str,
+    inst_db: str | None,
 ) -> None:
     """Phase 1 of 2: assemble artifacts and a PROVISIONAL manifest.
 
@@ -910,6 +951,9 @@ def stage_build_cmd(
     )
     from populus.publish.digests import DigestError
 
+    if inst_db is not None:
+        _refuse_bad_inst_db(inst_db)
+
     make_backend = _make_backend(backend, repo_slug)
     try:
         staged = stage_build(
@@ -919,6 +963,7 @@ def stage_build_cmd(
             raw_root=raw_root,
             backend=make_backend(data_repo),
             attestation=_make_attestation(attestation_choice),
+            inst_db_path=inst_db,
         )
         write_stage_state(staged)
     except (PublishError, BackendError, DigestError, OSError) as exc:

@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Protocol
 
 from populus import licenses
-from populus.amendments import ensure_views
+from populus.amendments import ViewVerificationError, ensure_views, verify_views
 from populus.db import connect
 from populus.ingest import UnsafeArchivePathError
 from populus.ingest.inst13f import compute_coverage, compute_period_coverage
@@ -60,6 +60,9 @@ from populus.publish.manifest import (
     INST_MODULE,
     INST_SCHEMA_VERSION,
     INST_SERVING_ARTIFACT,
+    INST_SOURCE_ARTIFACT,
+    INST_SOURCE_SCHEMA,
+    validate_inst_source,
     JOURNAL_ASSET,
     LICENSING_ARTIFACTS,
     MODULE,
@@ -1082,6 +1085,329 @@ def require_complete_inst_module(
         )
 
 
+def _inst_data_present(conn: sqlite3.Connection) -> bool:
+    """Whether *conn* carries institutional data to derive from.
+
+    Absence is decided by SCHEMA, not by whether a query happened to fail.
+
+    An M1-ONLY database has no inst tables at all. `ensure_views` applies
+    the inst view DDL unconditionally (SQLite accepts a view over a
+    missing table), so the view exists while `inst_filings` does not, and
+    probing the view raises rather than answering "absent". Discovered
+    rebuilding a published congress.db, which carries the congress module
+    only (RUN M1-B, stage B).
+
+    The first version caught `sqlite3.OperationalError` around the probe,
+    which read EVERY operational fault as "institutional data absent" — a
+    malformed view, an incompatible schema, a locked or corrupt database
+    could silently publish a congress-only build and drop a real
+    institutional corpus on the floor (code review round 1, F3). So the
+    missing-table case is identified positively, against `sqlite_master`,
+    and the probe itself is left UNGUARDED: if the table is there, any
+    error querying the view is a genuine fault and propagates out of
+    `run_build` as a visible publication failure (R13/R16/R18).
+
+    Presence is asked of the RECONCILED population, never of the default
+    view (M2-7, external review F2): the default view excludes
+    cover-conflict filings, so a corpus made entirely of conflicts must
+    read as withheld-with-named-exclusions, not as absence.
+    """
+    inst_table_present = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+            " AND name = 'inst_filings'"
+        ).fetchone()
+        is not None
+    )
+    return inst_table_present and (
+        conn.execute(
+            "SELECT 1 FROM v_inst_reconciled_filings LIMIT 1"
+        ).fetchone()
+        is not None
+    )
+
+
+def _read_inst_source_meta(conn: sqlite3.Connection) -> dict:
+    """The snapshot's own ``inst_source_meta`` row, strictly (R24).
+
+    Written into the snapshot by ``scripts/inst_snapshot.py`` BEFORE the file
+    was hashed, so every provenance field stage-build publishes comes from
+    inside the hashed bytes — no filename parsing, no filesystem timestamps.
+    Exactly one row; anything else means the snapshot was not cut by the R23
+    protocol and is refused.
+    """
+    remediation = (
+        " — this snapshot was not finalized by scripts/inst_snapshot.py;"
+        " re-cut it with that protocol"
+    )
+    if (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+            " AND name = 'inst_source_meta'"
+        ).fetchone()
+        is None
+    ):
+        raise PublishError(f"snapshot has no inst_source_meta table{remediation}")
+    rows = conn.execute(
+        "SELECT schema_version, snapshot_version, created_at_utc,"
+        " view_definition_digest FROM inst_source_meta"
+    ).fetchall()
+    if len(rows) != 1:
+        raise PublishError(
+            f"inst_source_meta must carry exactly one row, found {len(rows)}"
+            f"{remediation}"
+        )
+    schema_version, snapshot_version, created_at_utc, view_digest = rows[0]
+    return {
+        "schema_version": schema_version,
+        "snapshot_version": snapshot_version,
+        "created_at_utc": created_at_utc,
+        "view_definition_digest": view_digest,
+    }
+
+
+def _derive_inst_module(
+    source: sqlite3.Connection,
+    *,
+    inst_agg_path: Path,
+    inst_serving_path: Path,
+    created_at: str,
+    end_read_txn: Callable[[], None] | None = None,
+) -> dict:
+    """The full inst gate + derivation against *source*, for both input shapes.
+
+    *source* is either the congress build snapshot (the pre-M2-11 path) or the
+    accepted external snapshot's read-only handle (RUN M2-11, R1). Everything
+    here READS *source* and writes only the two derived databases, so the same
+    sequence serves both; the read-only enforcement on the external handle is
+    the connection's own ``mode=ro`` (R2), not a property of this function.
+
+    ``end_read_txn`` is the external-snapshot seam (R16): the caller's single
+    explicit read transaction must span through ``build_serving_projection``,
+    but SQLite refuses DETACH inside an open transaction, so the caller hands
+    in its commit and it runs after the projection is fully read, before the
+    DETACH. ``None`` (the congress path) preserves today's behaviour exactly.
+    """
+    build_inst_agg(source, inst_agg_path, ingested_at=created_at)
+    # Fail-closed gate (OWNER DECISION 2026-07-24): consume the reused
+    # compute_coverage's `meets_threshold` at exactly COVERAGE_THRESHOLD,
+    # keyed on the cover_failed flag — never re-derived here, never
+    # widened by FTD inference. Coverage is never re-keyed off
+    # `total IS NULL`.
+    coverage = compute_coverage(source)
+    # Per-period figures are REPORTING ONLY (R9/R11): the corpus-wide
+    # gate decision above is unchanged. They ride along on the report and,
+    # for a withheld build, name the quarters that carry no list coverage.
+    period_coverage = compute_period_coverage(source)
+    derived: dict = {
+        "inst_logical": None,
+        "inst_serving_logical": None,
+        "inst_watermarks": None,
+        "inst_withheld": None,
+        "inst_period_coverage": [
+            {
+                "period_of_report": period.period_of_report,
+                "denominator": period.denominator,
+                "numerator": period.numerator,
+                "coverage": period.coverage,
+                "covered_by_list": period.covered_by_list,
+            }
+            for period in period_coverage
+        ],
+        # M2-7 §I5: the dispositions behind the numbers, on EVERY measured
+        # build. A published coverage figure that does not say which filings
+        # were excluded to produce it is the silence the rule forbids.
+        "inst_cover_dispositions": {
+            "cover_rounding_count": coverage.cover_rounding_count,
+            "cover_rounding_max_delta_usd": coverage.cover_rounding_max_delta_usd,
+            "cover_conflict_count": coverage.cover_conflict_count,
+            "cover_conflict_filing_ids": list(coverage.cover_conflict_filing_ids),
+        },
+    }
+    if not coverage.meets_threshold:
+        if coverage.cover_failed_count > 0:
+            reason = "cover_failed"
+        elif not coverage.certifiable:
+            reason = "not_measurable"
+        else:
+            reason = "below_threshold"
+        derived["inst_withheld"] = {
+            "reason": reason,
+            "denominator": coverage.denominator,
+            "numerator": coverage.numerator,
+            "coverage": coverage.coverage,
+            "cover_failed_count": coverage.cover_failed_count,
+            "certifiable": coverage.certifiable,
+            # R11: name the uncovered quarters (periods with no covering
+            # definitional list). Additive — the typed `reason` set and
+            # the 0.95 threshold are unchanged; an uncovered quarter keeps
+            # exactly today's FTD-only arithmetic and fails closed.
+            "uncovered_quarters": [
+                period.period_of_report
+                for period in period_coverage
+                if not period.covered_by_list
+            ],
+            # M2-7 §I5: the withheld-reason surface names the excluded
+            # conflicts too. A `not_measurable` build must be readable as
+            # "these filings, by filing_id", never as an unexplained no.
+            "cover_rounding_count": coverage.cover_rounding_count,
+            "cover_rounding_max_delta_usd": coverage.cover_rounding_max_delta_usd,
+            "cover_conflict_filing_ids": list(coverage.cover_conflict_filing_ids),
+        }
+        return derived
+    agg_conn = connect(str(inst_agg_path))
+    try:
+        derived["inst_logical"] = logical_digest(
+            agg_conn, LOGICAL_PROJECTIONS[INST_MODULE]
+        )
+    finally:
+        agg_conn.close()
+    # --- RUN M2-8 T8 (R9): the per-filer SERVING artifact ----------
+    # The projection reads the composed views (in *source*) AND
+    # `agg_qoq_deltas` (in the aggregate just written), so the
+    # aggregate is ATTACHed for the duration. ATTACH does not write
+    # to *source*, and the DETACH is unconditional, so the source's
+    # bytes are untouched either way.
+    inst_serving_periods = publication_periods(source)
+    # The watermarks are read HERE — before the single read transaction ends —
+    # so they describe the same snapshot state as every derived artifact
+    # (review F5: reading them after the COMMIT let them describe a different
+    # source state; only the DETACH may follow the COMMIT).
+    inst_watermarks = {
+        "latest_period_of_report": source.execute(
+            "SELECT MAX(period_of_report) FROM v_default_inst_filings"
+        ).fetchone()[0],
+        "latest_filed_date": source.execute(
+            "SELECT MAX(filed_date) FROM v_default_inst_filings"
+        ).fetchone()[0],
+    }
+    source.execute("ATTACH DATABASE ? AS inst_agg", (str(inst_agg_path),))
+    try:
+        serving_projection = build_serving_projection(
+            source, periods=inst_serving_periods
+        )
+    finally:
+        # SQLite refuses DETACH inside an open transaction, so the external
+        # snapshot's single read transaction ends here — AFTER every read the
+        # projection performs, which is exactly the span R16 requires.
+        if end_read_txn is not None:
+            end_read_txn()
+        source.execute("DETACH DATABASE inst_agg")
+    write_serving_db(
+        serving_projection,
+        str(inst_serving_path),
+        source_conn=source,
+    )
+    serving_conn = connect(str(inst_serving_path))
+    try:
+        derived["inst_serving_logical"] = logical_digest(
+            serving_conn,
+            projection_for(INST_SERVING_ARTIFACT, INST_MODULE),
+        )
+    finally:
+        serving_conn.close()
+    derived["inst_watermarks"] = inst_watermarks
+    return derived
+
+
+def _derive_inst_from_snapshot(
+    inst_db_path: Path,
+    *,
+    inst_agg_path: Path,
+    inst_serving_path: Path,
+    created_at: str,
+) -> tuple[dict, dict]:
+    """Derive the inst module from an accepted external snapshot (R1/R2/R16/R24).
+
+    Returns ``(derived, inst_source_document)``. The sequence is the R16
+    identity contract, in order:
+
+    1. the snapshot's whole-file SHA-256 is computed BEFORE the file is opened
+       — the identity is the bytes on disk, not what a connection sees;
+    2. the file is opened ``mode=ro&immutable=1`` — permitted because the R23
+       protocol finalized it as genuinely immutable (0444, sidecar-free); a
+       write attempt through any derive path is a hard failure (R2);
+    3. ONE explicit read transaction spans view verification, metadata capture,
+       the coverage gate, the aggregate build, and the serving projection, so
+       every derived number observed one snapshot state (R16);
+    4. provenance fields come from the ``inst_source_meta`` row INSIDE the
+       hashed file (R24) — provenance cannot drift from identity.
+    """
+    if not inst_db_path.is_file():
+        raise PublishError(
+            f"inst snapshot {inst_db_path} does not exist — cut one with"
+            " scripts/inst_snapshot.py"
+        )
+    snapshot_sha = sha256_file(inst_db_path)
+    inst_conn = sqlite3.connect(
+        f"file:{inst_db_path}?mode=ro&immutable=1", uri=True, isolation_level=None
+    )
+    try:
+        committed = False
+
+        def _end_read_txn() -> None:
+            nonlocal committed
+            if not committed:
+                inst_conn.execute("COMMIT")
+                committed = True
+
+        inst_conn.execute("BEGIN")
+        try:
+            try:
+                verify_views(inst_conn)
+            except ViewVerificationError as exc:
+                raise PublishError(str(exc)) from exc
+            meta = _read_inst_source_meta(inst_conn)
+            if _inst_data_present(inst_conn):
+                derived = _derive_inst_module(
+                    inst_conn,
+                    inst_agg_path=inst_agg_path,
+                    inst_serving_path=inst_serving_path,
+                    created_at=created_at,
+                    end_read_txn=_end_read_txn,
+                )
+            else:
+                derived = {
+                    "inst_logical": None,
+                    "inst_serving_logical": None,
+                    "inst_watermarks": None,
+                    "inst_withheld": None,
+                    "inst_period_coverage": None,
+                    "inst_cover_dispositions": None,
+                }
+            _end_read_txn()
+        except sqlite3.OperationalError as exc:
+            # R2: the snapshot is read-only in every path. A derive-path write
+            # attempt surfaces from SQLite as "attempt to write a readonly
+            # database" — a publication invariant violation, not an incidental
+            # operational fault.
+            if "readonly" in str(exc).lower():
+                raise PublishError(
+                    f"a derivation path attempted to WRITE the read-only inst"
+                    f" snapshot {inst_db_path}: {exc} — the snapshot is"
+                    " immutable by contract (R2)"
+                ) from exc
+            raise
+    finally:
+        inst_conn.close()
+    document = {
+        "schema": INST_SOURCE_SCHEMA,
+        "snapshot_sha256": snapshot_sha,
+        "snapshot_schema_version": meta["schema_version"],
+        "snapshot_version": meta["snapshot_version"],
+        "created_at_utc": meta["created_at_utc"],
+        "view_definition_digest": meta["view_definition_digest"],
+    }
+    source_errors = validate_inst_source(document)
+    if source_errors:
+        raise PublishError(
+            "snapshot metadata does not form a valid inst_source/v1 document: "
+            + "; ".join(source_errors)
+            + " — re-cut the snapshot with scripts/inst_snapshot.py"
+        )
+    return derived, document
+
+
 def _complete_extra_module_assets(
     data_repo: Path,
     build_id: str,
@@ -1972,8 +2298,16 @@ def stage_build(
     raw_root: Path | str | None = None,
     backend: ReleaseBackend,
     attestation: AttestationProvider | None = None,
+    inst_db_path: Path | str | None = None,
 ) -> StagedBuild:
     """Assemble one staged build under ``.staging/<build_id>/`` (§5.5).
+
+    ``inst_db_path`` (RUN M2-11, R1): the accepted external inst snapshot.
+    When given, institutional presence, coverage, watermarks and both derived
+    databases come from THAT file — opened read-only, one read transaction,
+    identity captured as its whole-file SHA-256 plus its own
+    ``inst_source_meta`` fields, published as ``inst_source.json`` (R24).
+    When ``None``, behaviour is byte-identical to before the parameter existed.
 
     Recovery-first (F1): shared state is reconciled BEFORE the source database
     is required or opened, so a fresh runner completes an interrupted publish
@@ -2186,164 +2520,64 @@ def stage_build(
         # no inst_agg.db asset). The recovery journal stays congress-scoped
         # either way (R3); the inst asset is a separate staged Release asset.
         inst_agg_path = assets_dir / INST_DB_ARTIFACT
-        # Absence is decided by SCHEMA, not by whether a query happened to fail.
-        #
-        # An M1-ONLY database has no inst tables at all. `ensure_views` applies
-        # the inst view DDL unconditionally (SQLite accepts a view over a
-        # missing table), so the view exists while `inst_filings` does not, and
-        # probing the view raises rather than answering "absent". Discovered
-        # rebuilding a published congress.db, which carries the congress module
-        # only (RUN M1-B, stage B).
-        #
-        # The first version caught `sqlite3.OperationalError` around the probe,
-        # which read EVERY operational fault as "institutional data absent" — a
-        # malformed view, an incompatible schema, a locked or corrupt database
-        # could silently publish a congress-only build and drop a real
-        # institutional corpus on the floor (code review round 1, F3). So the
-        # missing-table case is now identified positively, against
-        # `sqlite_master`, and the probe itself is left UNGUARDED: if the table
-        # is there, any error querying the view is a genuine fault and
-        # propagates out of `run_build` as a visible publication failure
-        # (R13/R16/R18).
-        inst_table_present = (
-            snapshot.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table'"
-                " AND name = 'inst_filings'"
-            ).fetchone()
-            is not None
-        )
-        # Presence is asked of the RECONCILED population, never of the default
-        # view (M2-7, external review F2): the default view excludes
-        # cover-conflict filings, so a corpus made entirely of conflicts must
-        # read as withheld-with-named-exclusions, not as absence.
-        inst_present = inst_table_present and (
-            snapshot.execute(
-                "SELECT 1 FROM v_inst_reconciled_filings LIMIT 1"
-            ).fetchone()
-            is not None
-        )
-        inst_logical: str | None = None
-        inst_serving_logical: str | None = None
         inst_serving_path = assets_dir / INST_SERVING_ARTIFACT
-        inst_watermarks: dict | None = None
-        inst_withheld: dict | None = None
-        inst_period_coverage: list[dict] | None = None
-        inst_cover_dispositions: dict | None = None
-        if inst_present:
-            build_inst_agg(snapshot, inst_agg_path, ingested_at=created_at)
-            # Fail-closed gate (OWNER DECISION 2026-07-24): consume the reused
-            # compute_coverage's `meets_threshold` at exactly COVERAGE_THRESHOLD,
-            # keyed on the cover_failed flag — never re-derived here, never
-            # widened by FTD inference. Coverage is never re-keyed off
-            # `total IS NULL`.
-            coverage = compute_coverage(snapshot)
-            # Per-period figures are REPORTING ONLY (R9/R11): the corpus-wide
-            # gate decision above is unchanged. They ride along on the report and,
-            # for a withheld build, name the quarters that carry no list coverage.
-            period_coverage = compute_period_coverage(snapshot)
-            inst_period_coverage = [
-                {
-                    "period_of_report": period.period_of_report,
-                    "denominator": period.denominator,
-                    "numerator": period.numerator,
-                    "coverage": period.coverage,
-                    "covered_by_list": period.covered_by_list,
-                }
-                for period in period_coverage
-            ]
-            # M2-7 §I5: the dispositions behind the numbers, on EVERY measured
-            # build. A published coverage figure that does not say which filings
-            # were excluded to produce it is the silence the rule forbids.
-            inst_cover_dispositions = {
-                "cover_rounding_count": coverage.cover_rounding_count,
-                "cover_rounding_max_delta_usd": coverage.cover_rounding_max_delta_usd,
-                "cover_conflict_count": coverage.cover_conflict_count,
-                "cover_conflict_filing_ids": list(coverage.cover_conflict_filing_ids),
+        if inst_db_path is not None:
+            # RUN M2-11 (R1): the accepted external snapshot is the ONLY inst
+            # input — presence, coverage, watermarks and both derived databases
+            # come from its read-only handle, never from the congress snapshot.
+            derived, inst_source_document = _derive_inst_from_snapshot(
+                Path(inst_db_path),
+                inst_agg_path=inst_agg_path,
+                inst_serving_path=inst_serving_path,
+                created_at=created_at,
+            )
+            # `manifest.py` declares this artifact, `digests.py` declares its
+            # projection, six publication boundaries thread it, the MCP
+            # snapshot path reads it and `snapshot.py` installs it. THIS is
+            # the call site that makes any of that reachable — without it
+            # every build reported `per_filer_detail.published = false` and
+            # every per-filer request fell through to live EDGAR (M2-8 T8).
+            #
+            # The provenance artifact is an ordinary staged file under
+            # `build_dir`, so `_seal_build`'s walk enumerates it and the
+            # recovery journal carries it verbatim — the generic installer
+            # then handles it with zero code change (R24).
+            _write_staged(
+                build_dir,
+                INST_SOURCE_ARTIFACT,
+                _render_json(inst_source_document),
+            )
+            # Producer guard (R24): a build given --inst-db that fails to
+            # emit its provenance is refused — "optional" must never be
+            # indistinguishable from "absent because nobody wrote it".
+            if not (build_dir / INST_SOURCE_ARTIFACT).is_file():
+                raise PublishError(
+                    f"stage-build was given --inst-db but did not emit"
+                    f" {INST_SOURCE_ARTIFACT} — refusing to publish an inst"
+                    " module whose source identity is unrecorded (R24)"
+                )
+        elif _inst_data_present(snapshot):
+            derived = _derive_inst_module(
+                snapshot,
+                inst_agg_path=inst_agg_path,
+                inst_serving_path=inst_serving_path,
+                created_at=created_at,
+            )
+        else:
+            derived = {
+                "inst_logical": None,
+                "inst_serving_logical": None,
+                "inst_watermarks": None,
+                "inst_withheld": None,
+                "inst_period_coverage": None,
+                "inst_cover_dispositions": None,
             }
-            if not coverage.meets_threshold:
-                if coverage.cover_failed_count > 0:
-                    reason = "cover_failed"
-                elif not coverage.certifiable:
-                    reason = "not_measurable"
-                else:
-                    reason = "below_threshold"
-                inst_withheld = {
-                    "reason": reason,
-                    "denominator": coverage.denominator,
-                    "numerator": coverage.numerator,
-                    "coverage": coverage.coverage,
-                    "cover_failed_count": coverage.cover_failed_count,
-                    "certifiable": coverage.certifiable,
-                    # R11: name the uncovered quarters (periods with no covering
-                    # definitional list). Additive — the typed `reason` set and
-                    # the 0.95 threshold are unchanged; an uncovered quarter keeps
-                    # exactly today's FTD-only arithmetic and fails closed.
-                    "uncovered_quarters": [
-                        period.period_of_report
-                        for period in period_coverage
-                        if not period.covered_by_list
-                    ],
-                    # M2-7 §I5: the withheld-reason surface names the excluded
-                    # conflicts too. A `not_measurable` build must be readable as
-                    # "these filings, by filing_id", never as an unexplained no.
-                    "cover_rounding_count": coverage.cover_rounding_count,
-                    "cover_rounding_max_delta_usd": coverage.cover_rounding_max_delta_usd,
-                    "cover_conflict_filing_ids": list(
-                        coverage.cover_conflict_filing_ids
-                    ),
-                }
-            else:
-                agg_conn = connect(str(inst_agg_path))
-                try:
-                    inst_logical = logical_digest(
-                        agg_conn, LOGICAL_PROJECTIONS[INST_MODULE]
-                    )
-                finally:
-                    agg_conn.close()
-                # --- RUN M2-8 T8 (R9): the per-filer SERVING artifact ----------
-                # `manifest.py` declares this artifact, `digests.py` declares its
-                # projection, six publication boundaries thread it, the MCP
-                # snapshot path reads it and `snapshot.py` installs it. THIS is
-                # the call site that makes any of that reachable — without it
-                # every build reported `per_filer_detail.published = false` and
-                # every per-filer request fell through to live EDGAR.
-                #
-                # The projection reads the composed views (in the snapshot) AND
-                # `agg_qoq_deltas` (in the aggregate just written), so the
-                # aggregate is ATTACHed for the duration. ATTACH does not write
-                # to `main`, and the DETACH is unconditional, so congress.db's
-                # bytes — hashed after this block — are untouched either way.
-                inst_serving_periods = publication_periods(snapshot)
-                snapshot.execute(
-                    "ATTACH DATABASE ? AS inst_agg", (str(inst_agg_path),)
-                )
-                try:
-                    serving_projection = build_serving_projection(
-                        snapshot, periods=inst_serving_periods
-                    )
-                finally:
-                    snapshot.execute("DETACH DATABASE inst_agg")
-                write_serving_db(
-                    serving_projection,
-                    str(inst_serving_path),
-                    source_conn=snapshot,
-                )
-                serving_conn = connect(str(inst_serving_path))
-                try:
-                    inst_serving_logical = logical_digest(
-                        serving_conn,
-                        projection_for(INST_SERVING_ARTIFACT, INST_MODULE),
-                    )
-                finally:
-                    serving_conn.close()
-                inst_watermarks = {
-                    "latest_period_of_report": snapshot.execute(
-                        "SELECT MAX(period_of_report) FROM v_default_inst_filings"
-                    ).fetchone()[0],
-                    "latest_filed_date": snapshot.execute(
-                        "SELECT MAX(filed_date) FROM v_default_inst_filings"
-                    ).fetchone()[0],
-                }
+        inst_logical: str | None = derived["inst_logical"]
+        inst_serving_logical: str | None = derived["inst_serving_logical"]
+        inst_watermarks: dict | None = derived["inst_watermarks"]
+        inst_withheld: dict | None = derived["inst_withheld"]
+        inst_period_coverage: list[dict] | None = derived["inst_period_coverage"]
+        inst_cover_dispositions: dict | None = derived["inst_cover_dispositions"]
     finally:
         snapshot.close()
 

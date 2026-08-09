@@ -1,0 +1,286 @@
+{
+  "note": "F2 cross-runtime byte-parity fixture: BOTH runtimes — scripts/measure_inst_derive.py::build_filer_payload (T0) and dashboard/src/lib/filer-payload.ts::assembleFilerPayload (production) — must reproduce each case's canonical serialized FilerPayloadV1 byte-for-byte (JSON.stringify semantics: no whitespace, non-ASCII unescaped). rawRows/generateRows expand to serving_filer_rows in 'columns' order; concByPeriod/deltasByPeriod keys MUST be in sorted period order (the Python side derives them sorted). Cases over 100KB carry only sha256+length; equality of hashes over the full serialization IS byte equality.",
+  "columns": [
+    "cik",
+    "period",
+    "filing_key",
+    "security_id",
+    "cusip",
+    "issuer_name",
+    "title_of_class",
+    "value_usd",
+    "shares",
+    "ssh_type",
+    "put_call",
+    "position_key",
+    "put_call_bucket",
+    "unit_key",
+    "flags"
+  ],
+  "cases": [
+    {
+      "name": "flags_sort_ties_null_heavy_referenced_only",
+      "args": {
+        "cik": "0001067983",
+        "filerName": "SOCIÉTÉ TEST MANAGERS",
+        "latestPeriod": "2026-03-31",
+        "requestedPeriod": "2026-03-31"
+      },
+      "rawRows": [
+        [
+          "0001067983",
+          "2025-12-31",
+          2,
+          "sec:aapl",
+          "037833100",
+          "APPLE INC",
+          "COM",
+          700,
+          4,
+          "SH",
+          "LONG",
+          "sid:sec:aapl",
+          "LONG",
+          "SH",
+          "[\"ff_scaled_x1000\"]"
+        ],
+        [
+          "0001067983",
+          "2026-03-31",
+          1,
+          "sec:aapl",
+          "037833100",
+          "APPLE INC",
+          "COM",
+          900,
+          5,
+          "SH",
+          "LONG",
+          "sid:sec:aapl",
+          "LONG",
+          "SH",
+          "[\"ff_a\",\"ff_b\"]"
+        ],
+        [
+          "0001067983",
+          "2026-03-31",
+          1,
+          null,
+          "999999998",
+          "ZETA CORP",
+          "COM",
+          500,
+          9,
+          "SH",
+          "LONG",
+          "cusip:999999998",
+          "LONG",
+          "SH",
+          "[]"
+        ],
+        [
+          "0001067983",
+          "2026-03-31",
+          3,
+          null,
+          "111111112",
+          "ALPHA CORP",
+          "COM",
+          500,
+          2,
+          "SH",
+          "LONG",
+          "sid:z2",
+          "LONG",
+          "SH",
+          "[]"
+        ],
+        [
+          "0001067983",
+          "2026-03-31",
+          3,
+          null,
+          "111111111",
+          "ALPHA CORP",
+          "COM",
+          500,
+          1,
+          "SH",
+          "LONG",
+          "sid:z1",
+          "LONG",
+          "SH",
+          "[]"
+        ],
+        [
+          "0001067983",
+          "2026-03-31",
+          null,
+          null,
+          null,
+          "MYSTÈRE SA",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "LONG",
+          "UNKNOWN",
+          "[]"
+        ]
+      ],
+      "filings": {
+        "1": {
+          "accession": "0000000000-26-000001",
+          "submission_type": "13F-HR",
+          "period_of_report": "2026-03-31",
+          "filed_date": "2026-05-15",
+          "doc_url": "https://x/f1.xml",
+          "source": "sec-edgar"
+        },
+        "2": {
+          "accession": "0000000000-25-000002",
+          "submission_type": "13F-HR",
+          "period_of_report": "2025-12-31",
+          "filed_date": "2026-02-10",
+          "doc_url": null,
+          "source": "sec-edgar"
+        },
+        "9": {
+          "accession": "0000000000-26-000009",
+          "submission_type": "13F-HR",
+          "period_of_report": "2026-03-31",
+          "filed_date": "2026-05-01",
+          "doc_url": null,
+          "source": "sec-edgar"
+        }
+      },
+      "agg": {
+        "concByPeriod": {
+          "2025-12-31": null,
+          "2026-03-31": {
+            "cik": "0001067983",
+            "period_of_report": "2026-03-31",
+            "position_count": 5,
+            "total_value_usd": 2400,
+            "null_value_positions": 1,
+            "topn_value_usd": 1900,
+            "topn_share_bps": null,
+            "hhi": null,
+            "flags": [
+              "ff_scaled_x1000"
+            ]
+          }
+        },
+        "deltasByPeriod": {
+          "2025-12-31": [],
+          "2026-03-31": [
+            {
+              "cik": "0001067983",
+              "position_key": "sid:sec:aapl",
+              "put_call": "LONG",
+              "curr_period": "2026-03-31",
+              "prev_period": "2025-12-31",
+              "change_kind": "add",
+              "prev_value_usd": 700,
+              "curr_value_usd": 900,
+              "delta_value_usd": 200,
+              "prev_shares": 4,
+              "curr_shares": 5,
+              "delta_shares": 1,
+              "ssh_prnamt_type": "SH",
+              "flags": []
+            }
+          ]
+        },
+        "latestFiled": "2026-05-15",
+        "topn": 25,
+        "window": {
+          "open": true,
+          "quarterEnd": "2026-06-30",
+          "deadline": "2026-08-14"
+        }
+      },
+      "expected_sha256": "d38bee34922043bd72a04360e2fccf5eb2f5601abd74f50c7320d21364901b29",
+      "expected_utf8_bytes": 3109,
+      "expected": "{\"v\":1,\"kind\":\"filer\",\"cik\":\"0001067983\",\"filerName\":\"SOCIÉTÉ TEST MANAGERS\",\"latestPeriod\":\"2026-03-31\",\"periods\":[\"2025-12-31\",\"2026-03-31\"],\"current\":\"2026-03-31\",\"prior\":\"2025-12-31\",\"filings\":{\"1\":{\"accession\":\"0000000000-26-000001\",\"submission_type\":\"13F-HR\",\"period_of_report\":\"2026-03-31\",\"filed_date\":\"2026-05-15\",\"doc_url\":\"https://x/f1.xml\",\"source\":\"sec-edgar\"},\"2\":{\"accession\":\"0000000000-25-000002\",\"submission_type\":\"13F-HR\",\"period_of_report\":\"2025-12-31\",\"filed_date\":\"2026-02-10\",\"doc_url\":null,\"source\":\"sec-edgar\"}},\"rowsByPeriod\":{\"2025-12-31\":[{\"cik\":\"0001067983\",\"period\":\"2025-12-31\",\"filing_key\":\"2\",\"security_id\":\"sec:aapl\",\"cusip\":\"037833100\",\"issuer_name\":\"APPLE INC\",\"title_of_class\":\"COM\",\"value_usd\":700,\"shares\":4,\"ssh_type\":\"SH\",\"put_call\":\"LONG\",\"position_key\":\"sid:sec:aapl\",\"put_call_bucket\":\"LONG\",\"unit_key\":\"SH\",\"flags\":[\"ff_scaled_x1000\"]}],\"2026-03-31\":[{\"cik\":\"0001067983\",\"period\":\"2026-03-31\",\"filing_key\":\"1\",\"security_id\":\"sec:aapl\",\"cusip\":\"037833100\",\"issuer_name\":\"APPLE INC\",\"title_of_class\":\"COM\",\"value_usd\":900,\"shares\":5,\"ssh_type\":\"SH\",\"put_call\":\"LONG\",\"position_key\":\"sid:sec:aapl\",\"put_call_bucket\":\"LONG\",\"unit_key\":\"SH\",\"flags\":[\"ff_a\",\"ff_b\"]},{\"cik\":\"0001067983\",\"period\":\"2026-03-31\",\"filing_key\":\"3\",\"security_id\":null,\"cusip\":\"111111111\",\"issuer_name\":\"ALPHA CORP\",\"title_of_class\":\"COM\",\"value_usd\":500,\"shares\":1,\"ssh_type\":\"SH\",\"put_call\":\"LONG\",\"position_key\":\"sid:z1\",\"put_call_bucket\":\"LONG\",\"unit_key\":\"SH\",\"flags\":[]},{\"cik\":\"0001067983\",\"period\":\"2026-03-31\",\"filing_key\":\"3\",\"security_id\":null,\"cusip\":\"111111112\",\"issuer_name\":\"ALPHA CORP\",\"title_of_class\":\"COM\",\"value_usd\":500,\"shares\":2,\"ssh_type\":\"SH\",\"put_call\":\"LONG\",\"position_key\":\"sid:z2\",\"put_call_bucket\":\"LONG\",\"unit_key\":\"SH\",\"flags\":[]},{\"cik\":\"0001067983\",\"period\":\"2026-03-31\",\"filing_key\":\"1\",\"security_id\":null,\"cusip\":\"999999998\",\"issuer_name\":\"ZETA CORP\",\"title_of_class\":\"COM\",\"value_usd\":500,\"shares\":9,\"ssh_type\":\"SH\",\"put_call\":\"LONG\",\"position_key\":\"cusip:999999998\",\"put_call_bucket\":\"LONG\",\"unit_key\":\"SH\",\"flags\":[]},{\"cik\":\"0001067983\",\"period\":\"2026-03-31\",\"filing_key\":null,\"security_id\":null,\"cusip\":null,\"issuer_name\":\"MYSTÈRE SA\",\"title_of_class\":null,\"value_usd\":null,\"shares\":null,\"ssh_type\":null,\"put_call\":null,\"position_key\":null,\"put_call_bucket\":\"LONG\",\"unit_key\":\"UNKNOWN\",\"flags\":[]}]},\"totalsByPeriod\":{\"2025-12-31\":1,\"2026-03-31\":5},\"concByPeriod\":{\"2025-12-31\":null,\"2026-03-31\":{\"cik\":\"0001067983\",\"period_of_report\":\"2026-03-31\",\"position_count\":5,\"total_value_usd\":2400,\"null_value_positions\":1,\"topn_value_usd\":1900,\"topn_share_bps\":null,\"hhi\":null,\"flags\":[\"ff_scaled_x1000\"]}},\"deltasByPeriod\":{\"2025-12-31\":[],\"2026-03-31\":[{\"cik\":\"0001067983\",\"position_key\":\"sid:sec:aapl\",\"put_call\":\"LONG\",\"curr_period\":\"2026-03-31\",\"prev_period\":\"2025-12-31\",\"change_kind\":\"add\",\"prev_value_usd\":700,\"curr_value_usd\":900,\"delta_value_usd\":200,\"prev_shares\":4,\"curr_shares\":5,\"delta_shares\":1,\"ssh_prnamt_type\":\"SH\",\"flags\":[]}]},\"latestFiled\":\"2026-05-15\",\"topn\":25,\"window\":{\"open\":true,\"quarterEnd\":\"2026-06-30\",\"deadline\":\"2026-08-14\"}}"
+    },
+    {
+      "name": "window_null_empty_rows",
+      "args": {
+        "cik": "0000009999",
+        "filerName": "NO ROWS LLC",
+        "latestPeriod": "2026-03-31",
+        "requestedPeriod": "2026-03-31"
+      },
+      "rawRows": [],
+      "filings": {
+        "9": {
+          "accession": "0000000000-26-000009",
+          "submission_type": "13F-HR",
+          "period_of_report": "2026-03-31",
+          "filed_date": "2026-05-01",
+          "doc_url": null,
+          "source": "sec-edgar"
+        }
+      },
+      "agg": {
+        "concByPeriod": {},
+        "deltasByPeriod": {},
+        "latestFiled": null,
+        "topn": 25,
+        "window": null
+      },
+      "expected_sha256": "8ca80adeece728410994a85e2b8648ada0e804a13827bdcaa529cbcdaa705e05",
+      "expected_utf8_bytes": 276,
+      "expected": "{\"v\":1,\"kind\":\"filer\",\"cik\":\"0000009999\",\"filerName\":\"NO ROWS LLC\",\"latestPeriod\":\"2026-03-31\",\"periods\":[],\"current\":\"2026-03-31\",\"prior\":null,\"filings\":{},\"rowsByPeriod\":{},\"totalsByPeriod\":{},\"concByPeriod\":{},\"deltasByPeriod\":{},\"latestFiled\":null,\"topn\":25,\"window\":null}"
+    },
+    {
+      "name": "cap_boundary_over_embed_cap",
+      "args": {
+        "cik": "0001067983",
+        "filerName": "CAP BOUNDARY MANAGERS",
+        "latestPeriod": "2026-03-31",
+        "requestedPeriod": "2026-03-31"
+      },
+      "rawRows": [],
+      "generateRows": {
+        "count": 40,
+        "period": "2026-03-31",
+        "padLength": 60000,
+        "padChar": "é"
+      },
+      "filings": {},
+      "agg": {
+        "concByPeriod": {
+          "2026-03-31": {
+            "cik": "0001067983",
+            "period_of_report": "2026-03-31",
+            "position_count": 40,
+            "total_value_usd": 39999220,
+            "null_value_positions": 1,
+            "topn_value_usd": 1900,
+            "topn_share_bps": null,
+            "hhi": null,
+            "flags": [
+              "ff_scaled_x1000"
+            ]
+          }
+        },
+        "deltasByPeriod": {
+          "2026-03-31": []
+        },
+        "latestFiled": "2026-05-15",
+        "topn": 25,
+        "window": {
+          "open": false,
+          "quarterEnd": "2026-03-31",
+          "deadline": "2026-05-15"
+        }
+      },
+      "expected_sha256": "0bca0090e5b5011dcff0f604875171997082c4bb0ec6ea7052bc8a74f7936579",
+      "expected_utf8_bytes": 4090676
+    }
+  ]
+}

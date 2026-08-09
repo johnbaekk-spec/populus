@@ -88,6 +88,9 @@ from pathlib import Path
 
 __all__ = [
     "ACTIVITY_SHARDS_MAX",
+    "FILER_ROUTING_INDEX_FILES",
+    "FILER_SHARD_BYTE_CEILING",
+    "FILER_TAIL_SHARDS_RESERVED",
     "GLOBAL_FILE_CAP",
     "M1_MEASURED_PAGES",
     "M2_FILER_PAGES",
@@ -142,6 +145,32 @@ M3_RESERVED = 2_064                   # M3's committed 2,000 pages + ~64 shards
 #: were never built. They are deleted rather than zeroed: a zero constant reads
 #: as "measured zero", which is a different claim from "this does not exist".
 ACTIVITY_SHARDS_MAX = 64
+
+# --- M2-11 filer tail family — RESERVATIONS pending T0 measurement -----------
+#: RUN M2-11 (plan R22/R27, LD-9/LD-10). The long-tail filer delivery adds two
+#: NEW file classes, and the C5/N1 defect class this module documents is
+#: exactly "a file class the projection does not sum" — so both are REAL
+#: PARAMETERS of ``worst_case_file_count`` from the day the routes exist, not
+#: constants referenced by nothing.
+#:
+#: The shard COUNT is a committed reservation, not a measurement: LD-10 derives
+#: the real count at T0 from the serialized tail corpus under the 1 MiB
+#: client-response ceiling; the reservation is the hard budget the family must
+#: fit inside (the dashboard walk FAILS the build past it — never truncates,
+#: unlike activity). 256 shards x 1 MiB comfortably bounds the measured
+#: 9,458-filer corpus minus the 1,500 pre-rendered pages; if T0 disagrees,
+#: re-measure and restate BOTH this constant and the exact-value tests, never
+#: silently. Mirrored by ``dashboard/src/lib/data.ts::FILER_TAIL_SHARDS_MAX``.
+FILER_TAIL_SHARDS_RESERVED = 256
+#: The routing index (LD-9): one versioned file mapping every published tail
+#: CIK to its shard. Counted because "1" omitted is still an omitted class.
+FILER_ROUTING_INDEX_FILES = 1
+#: LD-10 (owner-approved 2026-08-08): the per-shard CLIENT-RESPONSE ceiling —
+#: the reader's bound, distinct from the provider's 25 MiB hard limit above.
+#: Mirrored by ``dashboard/src/lib/shards.ts::SHARD_RESPONSE_CEILING_BYTES``
+#: and enforced on the measured post-build tree by
+#: ``dashboard/test/post/file-budget.test.ts``.
+FILER_SHARD_BYTE_CEILING = 1024 * 1024
 
 # Pagination (plan R13): ONE byte-aware rule. A page closes at whichever binds
 # first. There is no second selection rule — `{500, 1000, 2000}` was a
@@ -274,6 +303,8 @@ def worst_case_file_count(
     m2_filer_pages: int = M2_FILER_PAGES,
     m3_reserved: int = M3_RESERVED,
     activity_shards: int = ACTIVITY_SHARDS_MAX,
+    filer_tail_shards: int = FILER_TAIL_SHARDS_RESERVED,
+    routing_index_files: int = FILER_ROUTING_INDEX_FILES,
 ) -> int:
     """Projected total once every committed reservation lands, in file counts.
 
@@ -294,6 +325,12 @@ def worst_case_file_count(
     module's committed budget produces a number that looks safe and is not,
     because the 18,000 cap is global, not per-module.
 
+    RUN M2-11 (R27): `filer_tail_shards` and `routing_index_files` are the two
+    file classes the bounded long-tail delivery adds (LD-9/LD-10). They are
+    parameters — with every prior term retained, including M3's committed
+    2,064 — because both historical defects in this module (C5(a), R2 N1) were
+    a real file class that a constant named and the sum omitted.
+
     NOT a gate. This is a forecast over modules that are not built; asserting a
     forecast is how the previous version shipped a proof that measured nothing.
     Compare it to `GLOBAL_FILE_CAP` and REPORT the result.
@@ -304,4 +341,6 @@ def worst_case_file_count(
         + m2_filer_pages
         + activity_shards
         + m3_reserved
+        + filer_tail_shards
+        + routing_index_files
     )
