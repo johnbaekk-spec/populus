@@ -455,7 +455,7 @@ test("an embed cap withholds rows loudly: exact count named, total still true (G
     page: 0,
     totalRows: capped.total,
   });
-  assert.ok(html.includes("Truncated by Populus."), "a cut list ends in a named terminus");
+  assert.ok(html.includes("Truncated by Public Filings."), "a cut list ends in a named terminus");
   assert.ok(html.includes("150 of this filer's 250 reported rows"), "the exact withheld count");
   const uncapped = holdingsTableHtml({
     cik: "0001067983",
@@ -465,7 +465,7 @@ test("an embed cap withholds rows loudly: exact count named, total still true (G
     filings: FILINGS,
     page: 0,
   });
-  assert.ok(!uncapped.includes("Truncated by Populus."), "no terminus when nothing was cut");
+  assert.ok(!uncapped.includes("Truncated by Public Filings."), "no terminus when nothing was cut");
 });
 
 /* =========================================================== R11: the filer */

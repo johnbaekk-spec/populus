@@ -560,12 +560,12 @@ test("flagTags: registry chips + FAIL-VISIBLE unknown flags as raw dashed tags",
   assert.ok(inst.includes("value undisclosed one side"));
 });
 
-test("terminusRow: names its author — the source or Populus, never a bare more", async () => {
+test("terminusRow: names its author — the source or Public Filings, never a bare more", async () => {
   const { terminusRow } = await import("../src/lib/format.ts");
   const src = terminusRow({ author: "source", html: "only 25 published" });
   assert.ok(src.includes("Truncated by the source."));
   const us = terminusRow({ author: "populus", html: "budget cut" });
-  assert.ok(us.includes("Truncated by Populus."));
+  assert.ok(us.includes("Truncated by Public Filings."));
   assert.ok(us.includes('data-terminus-author="populus"'));
 });
 

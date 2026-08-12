@@ -36,12 +36,12 @@ const ssrCtx: RenderCtx = {
 };
 const bodyHtml = tickerUnifiedBody(entity, inst, stamps, ssrCtx, { fullTable: false });
 const description =
-  `${entity.ticker}: every public disclosure record Populus holds — congressional trades ` +
+  `${entity.ticker}: every public disclosure record Public Filings holds — congressional trades ` +
   `on the 45-day PTR clock and 13F quarter-end holdings, each with its own clock stated.`;
 ---
 
 <Base
-  title={`${entity.ticker} — disclosures — Populus`}
+  title={`${entity.ticker} — disclosures — Public Filings`}
   description={description}
   searchEmphasis={true}
 >

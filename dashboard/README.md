@@ -1,4 +1,4 @@
-# Populus dashboard
+# Public Filings dashboard
 
 The public static dashboard (ARCHITECTURE §12): Astro, static output, deployed
 publisher-side on Cloudflare Pages. **This directory implements the full P3
@@ -199,10 +199,10 @@ measurement or contract citation.
 10. **S6's starter caption reads "most-active in this build"** (was
     "most-viewed pages this build") — this site ships no analytics, so
     activity in the published corpus is the only honest ranking (Locked #5).
-11. **The holders terminus attributes the top-N cut to Populus, not the SEC.**
+11. **The holders terminus attributes the top-N cut to Public Filings, not the SEC.**
     The mockup's "SEC aggregates publish only the top 25" does not describe
     this pipeline: the cut is `DEFAULT_TOPN` in `src/populus/inst_agg.py:44`,
-    a Populus build parameter, and G3 requires naming the truncation's real
+    a Public Filings build parameter, and G3 requires naming the truncation's real
     author.
 12. **The member/deep-ticker Asset column is dropped.** The view exposes
     `asset_name`, but the deployed columnar contract (`TXN_COLS`,

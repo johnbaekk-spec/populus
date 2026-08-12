@@ -240,7 +240,7 @@ test("holdersTableHtml: exactly the published columns — no Shares/Filed/Lag/do
   assert.ok(!/<th[^>]*>Lag<\/th>/.test(html), "per-holder lags are not published");
   assert.ok(html.includes("derived&nbsp;·§"), "aggregate rows carry the derived receipt");
   assert.ok(html.includes("EDGAR"), "and the real primary-source link");
-  assert.ok(html.includes('data-terminus-author="populus"'), "top-N cut attributed to Populus");
+  assert.ok(html.includes('data-terminus-author="populus"'), "top-N cut attributed to Public Filings");
   assert.ok(html.includes("quarter-end 2026-03-31"));
   assert.ok(html.includes(INST_STAMP_CAVEAT));
   assert.ok(html.includes(">entity<"), "issuer_key_source disclosed per row");

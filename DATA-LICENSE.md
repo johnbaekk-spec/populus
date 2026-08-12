@@ -1,8 +1,8 @@
 <!-- GENERATED FILE — do not edit by hand. Source of truth: src/populus/licenses.json; regenerate with `python scripts/render_licenses.py`. -->
 
-# Populus data conditions register (DATA-LICENSE)
+# Public Filings data conditions register (DATA-LICENSE)
 
-Populus **code** is MIT-licensed (see [LICENSE](LICENSE)). Populus **data** is not one license: every source enters through this conditions register (ARCHITECTURE.md §15), which records what each source permits, what it restricts, and which notices must travel with the data. "Public record" is never treated as synonymous with "public domain". No source is ingested before its entry exists (G11).
+Public Filings **code** is MIT-licensed (see [LICENSE](LICENSE)). Public Filings **data** is not one license: every source enters through this conditions register (ARCHITECTURE.md §15), which records what each source permits, what it restricts, and which notices must travel with the data. "Public record" is never treated as synonymous with "public domain". No source is ingested before its entry exists (G11).
 
 Register version: `licenses-1.1.0`.
 
@@ -21,7 +21,7 @@ Register version: `licenses-1.1.0`.
 - **Required notices (verbatim):**
   > 5 U.S.C. §13107(c)(1): It shall be unlawful for any person to obtain or use a report— (A) for any unlawful purpose; (B) for any commercial purpose, other than by news and communications media for dissemination to the general public; (C) for determining or establishing the credit rating of any individual; or (D) for use, directly or indirectly, in the solicitation of money for any political, charitable, or other purpose.
 - **Attribution:** Source: U.S. House of Representatives Office of the Clerk; U.S. Senate Office of Public Records (eFD).
-- **Determination basis:** Public records regime under the Ethics in Government Act / STOCK Act. Populus's posture — free public dissemination, open source, data never sold — is designed to sit inside the §13107(c)(1)(B) media-dissemination exception and matches incumbent practice; 'free product' is not itself a legal determination — counsel review is the P2-entry gate and precedes the first public data artifact.
+- **Determination basis:** Public records regime under the Ethics in Government Act / STOCK Act. Public Filings' posture — free public dissemination, open source, data never sold — is designed to sit inside the §13107(c)(1)(B) media-dissemination exception and matches incumbent practice; 'free product' is not itself a legal determination — counsel review is the P2-entry gate and precedes the first public data artifact.
 - **Determined:** 2026-07-23 · **Review by:** 2026-10-23
 
 ## `us-govworks-sec` — SEC EDGAR / data.sec.gov
@@ -53,7 +53,7 @@ Register version: `licenses-1.1.0`.
   - §105 does not automatically cover every third-party document hosted on EDGAR; per-document conditions still govern
   - Per-filer holdings detail is replicated into an ops-local canonical store and served as a derived projection; it is NOT federated-only (amended 2026-08-02, M2-CONTRACT §3/§3.1). Live federation is retained only for filings newer than the published build and periods not yet ingested
 - **Attribution:** Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov), retrieved per-record with the source URL retained.
-- **Determination basis:** Works of the US Government are not subject to domestic copyright (17 U.S.C. §105), and facts and figures in filings are not copyrightable. SEC publishes fair-access conditions (rate ceiling, identifying User-Agent) as access conditions, not redistribution restrictions; Populus encodes them in the client. Endpoints verified live end-to-end on 2026-07-24 (M2-CONTRACT §1), including the User-Agent correction recorded above.
+- **Determination basis:** Works of the US Government are not subject to domestic copyright (17 U.S.C. §105), and facts and figures in filings are not copyrightable. SEC publishes fair-access conditions (rate ceiling, identifying User-Agent) as access conditions, not redistribution restrictions; Public Filings encodes them in the client. Endpoints verified live end-to-end on 2026-07-24 (M2-CONTRACT §1), including the User-Agent correction recorded above.
 - **Determined:** 2026-07-24 · **Review by:** 2026-10-24
 
 ## `sec-ftd` — SEC fails-to-deliver data (cnsfails<YYYYMM>[ab].zip)
@@ -70,7 +70,7 @@ Register version: `licenses-1.1.0`.
   - Every seeded row keeps provenance 'sec-ftd' and an explicit review_state; unresolved or disputed identifiers surface by issuer name with a flag, never dropped (G3)
   - Retrieved under the same sec-edgar fair-access conditions (SEC-accepted User-Agent, in-code rate floor)
 - **Attribution:** Source: U.S. Securities and Exchange Commission, fails-to-deliver data.
-- **Determination basis:** Works of the US Government (17 U.S.C. §105); the archive is an SEC compilation of reported settlement facts, and CUSIP values appear here only as they are published by the SEC in that compilation. Populus uses them solely as an identifier seed with recorded provenance, not as a redistributed identifier database. Source page and archive verified live on 2026-07-24 (M2-CONTRACT §1).
+- **Determination basis:** Works of the US Government (17 U.S.C. §105); the archive is an SEC compilation of reported settlement facts, and CUSIP values appear here only as they are published by the SEC in that compilation. Public Filings uses them solely as an identifier seed with recorded provenance, not as a redistributed identifier database. Source page and archive verified live on 2026-07-24 (M2-CONTRACT §1).
 - **Determined:** 2026-07-24 · **Review by:** 2026-10-24
 
 ## `sec-13f-list` — SEC Official List of Section 13(f) Securities (index: sec.gov/rules-regulations/staff-guidance/official-list-section-13f-securities; the old sec.gov/divisions/investment/13flists.htm 301-redirects there; quarterly files at sec.gov/files/investment/13flist{YYYY}q{N}.pdf and, for the most recent quarter, the -txt.txt variant)
@@ -82,7 +82,7 @@ Register version: `licenses-1.1.0`.
   - Redistribution of a provenance-recorded verbatim excerpt as a repository test fixture, with the source URL, retrieval date and archive sha256 recorded alongside it
   - Research and analysis
 - **Restrictions:**
-  - COUNSEL GATE — CUSIP redistribution: CGS/ABA assert IP in the CUSIP identifiers the SEC publishes here. Populus already redistributes CUSIPs from 13F filings and FTD, so admitting this source adds no NEW exposure class, but the counsel-gate flag records it explicitly and the P2-entry counsel gate must name it (see counsel_flags).
+  - COUNSEL GATE — CUSIP redistribution: CGS/ABA assert IP in the CUSIP identifiers the SEC publishes here. Public Filings already redistributes CUSIPs from 13F filings and FTD, so admitting this source adds no NEW exposure class, but the counsel-gate flag records it explicitly and the P2-entry counsel gate must name it (see counsel_flags).
   - The verbatim CGS/ABA notice (see required notices) is non-removable and travels with any redistributed excerpt or derived identity
   - Identity seeding only: the list is used as a definitional CUSIP-validity and canonical-name source, not republished as a CUSIP identifier database
   - Quarter identity comes from the source filename/URL cross-checked against the document's Year/Qtr header; the legend 'current as of' date is not authoritative (it is stale boilerplate on some quarters)
@@ -92,7 +92,7 @@ Register version: `licenses-1.1.0`.
   > Copyright (c) American Bankers Association (ABA). All rights reserved. CUSIP Numbers and descriptions are used with permission by CUSIP Global Services (CGS), which is operated by FactSet Research Systems Inc., on behalf of the ABA. No redistribution without permission of CGS. CGS does not guarantee the accuracy or completeness of the CUSIP Numbers and standard descriptions included herein and none of CGS, ABA or FactSet shall be responsible for any errors, omissions or damages arising out of the use of such information.
 - **Counsel-gate flags:** `cusip-redistribution`
 - **Attribution:** Source: U.S. Securities and Exchange Commission, Official List of Section 13(f) Securities. CUSIP identifiers and descriptions © American Bankers Association, used with permission by CUSIP Global Services.
-- **Determination basis:** Works of the US Government (17 U.S.C. §105): the list is an SEC compilation and the definitional answer to the very question the M2 coverage gate asks ('is this CUSIP a registered 13(f) security this quarter?'). CGS/ABA assert IP in the embedded CUSIP identifiers; the SEC publishes them with the redistribution notice recorded above, which Populus carries verbatim. Populus uses the list as a dated identity/name seed with recorded provenance, not as a redistributed CUSIP database — the same posture as sec-ftd. The counsel gate (CUSIP redistribution) is flagged for the P2-entry counsel review; it adds no exposure class beyond the CUSIPs Populus already redistributes from 13F filings and FTD. Source index, quarterly files and the dual-format 2026Q2 verified live 2026-07-25 and cached 2026-07-30.
+- **Determination basis:** Works of the US Government (17 U.S.C. §105): the list is an SEC compilation and the definitional answer to the very question the M2 coverage gate asks ('is this CUSIP a registered 13(f) security this quarter?'). CGS/ABA assert IP in the embedded CUSIP identifiers; the SEC publishes them with the redistribution notice recorded above, which Public Filings carries verbatim. Public Filings uses the list as a dated identity/name seed with recorded provenance, not as a redistributed CUSIP database — the same posture as sec-ftd. The counsel gate (CUSIP redistribution) is flagged for the P2-entry counsel review; it adds no exposure class beyond the CUSIPs Public Filings already redistributes from 13F filings and FTD. Source index, quarterly files and the dual-format 2026Q2 verified live 2026-07-25 and cached 2026-07-30.
 - **Determined:** 2026-07-30 · **Review by:** 2026-10-30
 
 ## `us-govworks-treasury` — Treasury FiscalData; Treasury daily yield-curve XML

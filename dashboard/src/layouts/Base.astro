@@ -12,6 +12,7 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import "../styles/global.css";
 import { getBuildData } from "../lib/data";
+import Mark from "../components/Mark.astro";
 
 interface Props {
   title: string;
@@ -60,9 +61,9 @@ const build = getBuildData();
     <header class:list={["masthead", { "masthead-search-first": searchEmphasis }]}>
       <div class="shell masthead-inner">
         <div class="masthead-left">
-          <a href="/" class="brand" aria-label="Populus home">
-            <span class="brand-mark" aria-hidden="true"></span>
-            <span class="brand-name">Populus</span>
+          <a href="/" class="brand" aria-label="Public Filings home">
+            <Mark class="brand-mark" />
+            <span class="brand-name">Public Filings</span>
           </a>
           <nav class="site-nav" id="site-nav" aria-label="Modules">
             <a href="/congress/" aria-current={active === "congress" ? "page" : undefined}>Congress</a>
@@ -117,7 +118,7 @@ const build = getBuildData();
           <div class="footer-block">
             <strong>Prohibited uses.</strong> Use of congressional financial-disclosure
             reports for commercial purposes, for determining credit, or for
-            solicitation is restricted by 5 U.S.C. § 13107(c). Populus republishes
+            solicitation is restricted by 5 U.S.C. § 13107(c). Public Filings republishes
             these public records for transparency and research. Nothing here is
             financial advice.
           </div>

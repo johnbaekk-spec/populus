@@ -279,7 +279,7 @@ test("congressTickerBody: two-sided ribbon, exclusions footnote, netting caveat"
 
 /* ---------- holders + filer bodies ---------- */
 
-test("holdersBody: period chips, top-N as a Populus build parameter, mapping footnote", () => {
+test("holdersBody: period chips, top-N as a Public Filings build parameter, mapping footnote", () => {
   const html = holdersBody(
     "AAPL",
     "Apple Inc.",

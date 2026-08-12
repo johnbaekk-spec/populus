@@ -63,12 +63,12 @@ if (!inst.present) {
     activitySectionHtml(feed, { tierOf: (cik) => filerTier(build, cik) });
 }
 const description = build.inst.present
-  ? "Institutional 13F module: filers, holders, quarter-over-quarter moves from the published Populus aggregate."
+  ? "Institutional 13F module: filers, holders, quarter-over-quarter moves from the published Public Filings aggregate."
   : "The institutional 13F module is not in this build — absence is stated, not simulated.";
 ---
 
 <Base
-  title="Institutional 13F — Populus"
+  title="Institutional 13F — Public Filings"
   description={description}
   active="institutional"
   footer="inst13f"
