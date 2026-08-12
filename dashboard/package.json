@@ -10,11 +10,12 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
+    "build:bounded": "node -e 'const {totalmem}=require(\"node:os\"); if(totalmem()<34359738368){console.error(\"full build requires at least 32 GiB physical RAM\"); process.exit(1)}' && NODE_OPTIONS=--max-old-space-size=24576 astro build",
     "preview": "astro preview",
     "check": "astro check",
     "test": "node --test \"test/*.test.ts\"",
     "test:post": "node --test --test-concurrency=1 \"test/post/*.test.ts\"",
-    "gates": "npm run check && npm test && npm run build && npm run test:post"
+    "gates": "npm run check && npm test && npm run build:bounded && npm run test:post"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.5",

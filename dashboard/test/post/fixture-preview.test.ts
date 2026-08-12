@@ -47,7 +47,7 @@ test("the envelope's manifest declares the inst module per producer policy", () 
   );
   const inst = manifest.modules.inst;
   assert.ok(inst, "inst module present");
-  assert.equal(inst.schema_version, "1.0");
+  assert.equal(inst.schema_version, "1.1");
   assert.equal(inst.watermarks.latest_period_of_report, "2026-03-31");
   assert.equal(inst.watermarks.latest_filed_date, "2026-05-15");
   assert.ok(inst.artifacts[0].logical_digest, "the db artifact carries its logical digest");

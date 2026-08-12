@@ -59,7 +59,7 @@ WATERMARK_KEYS = ("house_index_last_modified", "senate_max_filed_date")
 INST_MODULE = "inst"
 INST_DB_ARTIFACT = "inst_agg.db"
 INST_SERVING_ARTIFACT = "inst_serving.db"
-INST_SCHEMA_VERSION = "1.0"
+INST_SCHEMA_VERSION = "1.1"
 INST_CLIENT_COMPAT = ">=0.0.1,<1"
 # DEVIATION FROM R10, RECORDED (QA M2-8 M12).
 #
@@ -79,10 +79,10 @@ INST_CLIENT_COMPAT = ">=0.0.1,<1"
 # build that publishes `inst_agg.db` and cannot produce `inst_serving.db` raises
 # `PublishError`. Old manifests keep validating; new builds cannot regress.
 #
-# The alternative considered and not taken: gate the requirement on
-# `schema_version >= 1.1`. It is a cleaner long-run shape, but it needs an inst
-# schema-version bump — a published-contract change with its own client-compat
-# consequences — and is an owner decision, not a QA remediation.
+# Schema 1.1 now signals the independently reviewed QoQ table→view contract
+# change.  It still does not make the serving artifact validator-mandatory:
+# rollback and cached pre-M2-8 manifests remain valid, while the producer guard
+# below remains the compatibility-safe boundary for every newly written build.
 REQUIRED_INST_ARTIFACTS = (INST_DB_ARTIFACT,)
 INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
 

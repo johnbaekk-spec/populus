@@ -6,6 +6,10 @@ future edit that breaks one fails with the reason attached rather than a bare di
 
 from __future__ import annotations
 
+import sqlite3
+
+import pytest
+
 from populus.inst_serving import (
     affiliate_groups,
     authoritative_full_periods,
@@ -49,6 +53,206 @@ def test_every_row_resolves_to_its_filing_through_the_dictionary(tmp_path):
     ref = next(iter(proj.filings.values()))
     for wanted in ("accession", "submission_type", "period_of_report", "filed_date"):
         assert wanted in ref.as_dict()
+
+
+def test_projection_uses_one_reported_holdings_pass_and_no_default_holdings_scan(
+    tmp_path,
+):
+    """The full serving projection must not re-enter either holdings view."""
+    conn = _fresh(tmp_path, "single-pass.db")
+    _seed_affiliate_pair(conn)
+    conn.commit()
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        projection = build_serving_projection(conn, periods=("2026-03-31",))
+    finally:
+        conn.set_trace_callback(None)
+
+    assert projection.filer_rows and projection.issuer_holder_rows
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    reported_reads = [
+        statement
+        for statement in normalized
+        if " from v_filer_reported_holdings h" in statement
+    ]
+    assert len(reported_reads) == 1, reported_reads
+    assert " left join securities s " in reported_reads[0]
+    assert " left join v_default_inst_filings d " in reported_reads[0]
+    assert not any(" from v_default_holdings" in statement for statement in normalized)
+
+
+def test_combined_holding_pass_matches_independent_legacy_queries(tmp_path):
+    """The one-pass refactor preserves the complete two holding-derived grains."""
+    from collections import defaultdict
+
+    from populus.inst_agg import _issuer_key, _position_key, _put_call_bucket, _unit_key
+
+    conn = _fresh(tmp_path, "combined-parity.db")
+    _seed_affiliate_pair(conn)
+    second_class = "037833200"
+    sid_a = _security(conn, "sec:combined-a")
+    sid_b = _security(conn, "sec:combined-b")
+    _filer_fn(conn, "0000000099", "028-00099", "Dense Filer")
+    _load_fn(
+        conn,
+        fid="inst:DENSE",
+        cik="0000000099",
+        period="2026-03-31",
+        filed="2026-04-15",
+        file_number_norm="028-00099",
+        holds=[
+            _hold(
+                ordinal=1,
+                issuer="DENSE ISSUER",
+                cusip=APPLE,
+                value=125,
+                shares=10,
+                unit="SH",
+                security_id=sid_a,
+            ),
+            _hold(
+                ordinal=2,
+                issuer="DENSE ISSUER",
+                cusip=second_class,
+                value=None,
+                shares=None,
+                unit="PRN",
+                put_call="PUT",
+                security_id=sid_b,
+            ),
+        ],
+    )
+    conn.commit()
+    periods = ("2026-03-31",)
+    projection = build_serving_projection(conn, periods=periods)
+    filings = build_filing_dictionary(conn)
+    names = dict(conn.execute("SELECT cik,name_raw FROM inst_filers ORDER BY cik"))
+
+    expected_filer_rows = []
+    for row in conn.execute(
+        "SELECT h.cik,h.period_of_report,h.filing_id,h.security_id,h.cusip,"
+        " h.issuer_name_raw,h.title_of_class,h.value_usd,h.ssh_prnamt,"
+        " h.ssh_prnamt_type,h.put_call,h.flags"
+        " FROM v_filer_reported_holdings h WHERE h.period_of_report=?"
+        " ORDER BY h.cik,h.period_of_report,h.holding_id",
+        periods,
+    ):
+        (
+            cik,
+            period,
+            filing_id,
+            security_id,
+            cusip,
+            issuer_name,
+            title_of_class,
+            value_usd,
+            shares,
+            share_type,
+            put_call,
+            flags,
+        ) = row
+        ref = filings.get(filing_id)
+        expected_filer_rows.append(
+            {
+                "cik": cik,
+                "period": period,
+                "filing_key": ref.filing_key if ref else None,
+                "security_id": security_id,
+                "cusip": cusip,
+                "issuer_name": issuer_name,
+                "title_of_class": title_of_class,
+                "value_usd": value_usd,
+                "shares": shares,
+                "ssh_type": share_type,
+                "put_call": put_call,
+                "position_key": _position_key(security_id, cusip),
+                "put_call_bucket": _put_call_bucket(put_call),
+                "unit_key": _unit_key(share_type),
+                "flags": flags,
+            }
+        )
+
+    reported: dict[tuple, dict] = {}
+    for row in conn.execute(
+        "SELECT h.cik,h.period_of_report,h.security_id,h.cusip,h.issuer_name_raw,"
+        " h.value_usd,s.entity_id,s.entity_link_state,h.filing_id"
+        " FROM v_filer_reported_holdings h"
+        " LEFT JOIN securities s ON s.security_id=h.security_id"
+        " WHERE h.period_of_report=?"
+        " ORDER BY h.cik,h.period_of_report,h.holding_id",
+        periods,
+    ):
+        cik, period, security_id, cusip, issuer_name, value, entity_id, state, fid = row
+        issuer_key, source = _issuer_key(entity_id, state, cusip, issuer_name)
+        bucket = reported.setdefault(
+            (issuer_key, period, cik),
+            {
+                "issuer_key_source": source,
+                "issuer_name": issuer_name,
+                "value_usd": 0,
+                "undisclosed": False,
+                "securities": set(),
+                "filing_keys": set(),
+            },
+        )
+        if value is None:
+            bucket["undisclosed"] = True
+        else:
+            bucket["value_usd"] += value
+        if security_id is not None or cusip is not None:
+            bucket["securities"].add(security_id or f"cusip:{cusip}")
+        if fid in filings:
+            bucket["filing_keys"].add(filings[fid].filing_key)
+        if issuer_name is not None and (
+            bucket["issuer_name"] is None or issuer_name < bucket["issuer_name"]
+        ):
+            bucket["issuer_name"] = issuer_name
+
+    dedup_total: dict[tuple[str, str], int] = defaultdict(int)
+    dedup_undisclosed: set[tuple[str, str]] = set()
+    for period, entity_id, state, cusip, issuer_name, value in conn.execute(
+        "SELECT h.period_of_report,s.entity_id,s.entity_link_state,h.cusip,"
+        " h.issuer_name_raw,h.value_usd FROM v_default_holdings h"
+        " LEFT JOIN securities s ON s.security_id=h.security_id"
+        " WHERE h.period_of_report=? ORDER BY h.holding_id",
+        periods,
+    ):
+        issuer_key, _source = _issuer_key(entity_id, state, cusip, issuer_name)
+        total_key = (issuer_key, period)
+        if value is None:
+            dedup_undisclosed.add(total_key)
+        else:
+            dedup_total[total_key] += value
+
+    groups = {period: affiliate_groups(conn, period) for period in periods}
+    expected_issuer_rows = []
+    for issuer_key, period, cik in sorted(reported):
+        bucket = reported[(issuer_key, period, cik)]
+        total_key = (issuer_key, period)
+        expected_issuer_rows.append(
+            {
+                "issuer_key": issuer_key,
+                "issuer_key_source": bucket["issuer_key_source"],
+                "issuer_name": bucket["issuer_name"],
+                "period": period,
+                "filer_key": cik,
+                "filer_name": names.get(cik, cik),
+                "affiliate_group_key": groups[period].get(cik, cik),
+                "value_usd": None if bucket["undisclosed"] else bucket["value_usd"],
+                "value_undisclosed_component": bucket["undisclosed"],
+                "security_count": len(bucket["securities"]),
+                "filing_keys": sorted(bucket["filing_keys"]),
+                "issuer_dedup_total_usd": (
+                    None
+                    if total_key in dedup_undisclosed
+                    else dedup_total.get(total_key, 0)
+                ),
+            }
+        )
+
+    assert projection.filer_rows == expected_filer_rows
+    assert projection.issuer_holder_rows == expected_issuer_rows
 
 
 def test_filing_keys_do_not_depend_on_insertion_order(tmp_path):
@@ -544,6 +748,206 @@ def _project_with_aggregate(conn, tmp_path, name="agg.db"):
         return build_serving_projection(conn, periods=periods), periods
     finally:
         conn.execute("DETACH DATABASE inst_agg")
+
+
+def test_valid_version_2_empty_and_unselected_periods_are_empty_streams(tmp_path):
+    """Missing period dictionary rows are valid when no backing row references them."""
+    from populus.inst_agg import build_inst_agg
+
+    conn = _fresh(tmp_path, "empty-compact.db")
+    sid = _security(conn, f"sec:{APPLE}")
+    _filer_fn(conn, "0000000042", "028-00042", "One Period")
+    _load_fn(
+        conn,
+        fid="inst:ONLY",
+        cik="0000000042",
+        period="2026-03-31",
+        filed="2026-04-15",
+        file_number_norm="028-00042",
+        holds=[
+            _hold(
+                ordinal=1,
+                issuer="APPLE INC",
+                cusip=APPLE,
+                value=1,
+                security_id=sid,
+            )
+        ],
+    )
+    conn.commit()
+    aggregate_path = tmp_path / "empty-compact-agg.db"
+    build_inst_agg(conn, aggregate_path, ingested_at="2026-08-10T00:00:00Z")
+    aggregate = sqlite3.connect(str(aggregate_path))
+    assert aggregate.execute("SELECT COUNT(*) FROM _agg_qoq_deltas").fetchone()[0] == 0
+    assert aggregate.execute("SELECT COUNT(*) FROM _agg_qoq_periods").fetchone()[0] == 0
+    aggregate.close()
+
+    conn.execute("ATTACH DATABASE ? AS empty_agg", (str(aggregate_path),))
+    try:
+        assert build_serving_projection(
+            conn, periods=("2026-03-31",)
+        ).activity_rows == []
+        assert build_serving_projection(
+            conn, periods=("2026-06-30",)
+        ).activity_rows == []
+    finally:
+        conn.execute("DETACH DATABASE empty_agg")
+
+
+def test_compact_path_never_reads_the_public_compatibility_view(tmp_path):
+    """Version-2 serving must decode private rows rather than re-enter the view."""
+    from populus.inst_agg import build_inst_agg
+
+    conn = _fresh(tmp_path, "compact-no-view.db")
+    _seed_two_periods(conn)
+    aggregate_path = tmp_path / "compact-no-view-agg.db"
+    build_inst_agg(conn, aggregate_path, ingested_at="2026-08-10T00:00:00Z")
+    conn.execute("ATTACH DATABASE ? AS compact_agg", (str(aggregate_path),))
+
+    def deny_public_view(action, name, _column, _database, _trigger):
+        if action == sqlite3.SQLITE_READ and name == "agg_qoq_deltas":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    conn.set_authorizer(deny_public_view)
+    try:
+        projection = build_serving_projection(
+            conn, periods=("2025-12-31", "2026-03-31")
+        )
+        assert projection.activity_rows
+    finally:
+        conn.set_authorizer(None)
+        conn.execute("DETACH DATABASE compact_agg")
+
+
+def test_genuine_legacy_public_table_matches_version_2_activity(tmp_path):
+    """The compatibility fallback remains exact for a physical legacy table."""
+    from populus.inst_agg import build_inst_agg
+
+    conn = _fresh(tmp_path, "legacy-fallback.db")
+    _seed_two_periods(conn)
+    aggregate_path = tmp_path / "v2-for-legacy.db"
+    build_inst_agg(conn, aggregate_path, ingested_at="2026-08-10T00:00:00Z")
+    current = sqlite3.connect(str(aggregate_path))
+    rows = current.execute("SELECT * FROM agg_qoq_deltas").fetchall()
+    current.close()
+
+    conn.execute("ATTACH DATABASE ? AS current_agg", (str(aggregate_path),))
+    try:
+        expected = build_serving_projection(
+            conn, periods=("2025-12-31", "2026-03-31")
+        ).activity_rows
+    finally:
+        conn.execute("DETACH DATABASE current_agg")
+
+    legacy_path = tmp_path / "legacy-agg.db"
+    legacy = sqlite3.connect(str(legacy_path))
+    legacy.execute(
+        "CREATE TABLE agg_qoq_deltas ("
+        "cik TEXT,position_key TEXT,put_call TEXT,curr_period TEXT,"
+        "prev_period TEXT,change_kind TEXT,prev_value_usd INTEGER,"
+        "curr_value_usd INTEGER,delta_value_usd INTEGER,prev_shares INTEGER,"
+        "curr_shares INTEGER,delta_shares INTEGER,ssh_prnamt_type TEXT,"
+        "flags TEXT,ingested_at TEXT)"
+    )
+    legacy.executemany(
+        "INSERT INTO agg_qoq_deltas VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows
+    )
+    legacy.commit()
+    legacy.close()
+
+    conn.execute("ATTACH DATABASE ? AS legacy_agg", (str(legacy_path),))
+    try:
+        actual = build_serving_projection(
+            conn, periods=("2025-12-31", "2026-03-31")
+        ).activity_rows
+    finally:
+        conn.execute("DETACH DATABASE legacy_agg")
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            "UPDATE _agg_qoq_deltas SET filer_id=999999",
+            "orphaned dictionary reference",
+        ),
+        (
+            "UPDATE _agg_qoq_deltas SET curr_period_id=999999",
+            "orphaned dictionary reference",
+        ),
+        (
+            "UPDATE _agg_qoq_deltas SET prev_period_id=999999",
+            "orphaned dictionary reference",
+        ),
+        (
+            "UPDATE agg_build_meta SET value='1' WHERE key='aggregate_version'",
+            "contradictory version metadata",
+        ),
+        ("DROP TABLE _agg_qoq_periods", "partial"),
+        ("UPDATE _agg_qoq_deltas SET flags_mask=32", "invalid compact QoQ"),
+    ],
+)
+def test_corrupt_version_2_storage_fails_closed_before_activity(
+    tmp_path, mutation, message
+):
+    from populus.inst_agg import InstAggError, build_inst_agg
+
+    conn = _fresh(tmp_path, f"corrupt-{abs(hash(mutation))}.db")
+    _seed_two_periods(conn)
+    aggregate_path = tmp_path / f"corrupt-{abs(hash(mutation))}-agg.db"
+    build_inst_agg(conn, aggregate_path, ingested_at="2026-08-10T00:00:00Z")
+    aggregate = sqlite3.connect(str(aggregate_path))
+    aggregate.execute("PRAGMA ignore_check_constraints=ON")
+    aggregate.execute(mutation)
+    aggregate.commit()
+    aggregate.close()
+
+    conn.execute("ATTACH DATABASE ? AS corrupt_agg", (str(aggregate_path),))
+    try:
+        with pytest.raises(InstAggError, match=message):
+            build_serving_projection(
+                conn, periods=("2025-12-31", "2026-03-31")
+            )
+    finally:
+        conn.execute("DETACH DATABASE corrupt_agg")
+
+
+def test_multiple_reachable_aggregate_schemas_fail_closed(tmp_path):
+    from populus.inst_agg import InstAggError, build_inst_agg
+
+    conn = _fresh(tmp_path, "multiple-aggregate.db")
+    _seed_two_periods(conn)
+    aggregate_path = tmp_path / "multiple-aggregate-agg.db"
+    build_inst_agg(conn, aggregate_path, ingested_at="2026-08-10T00:00:00Z")
+    conn.execute("ATTACH DATABASE ? AS agg_one", (str(aggregate_path),))
+    conn.execute("ATTACH DATABASE ? AS agg_two", (str(aggregate_path),))
+    try:
+        with pytest.raises(InstAggError, match="multiple reachable"):
+            build_serving_projection(
+                conn, periods=("2025-12-31", "2026-03-31")
+            )
+    finally:
+        conn.execute("DETACH DATABASE agg_two")
+        conn.execute("DETACH DATABASE agg_one")
+
+
+def test_quoted_aggregate_schema_name_is_safe_and_functional(tmp_path):
+    from populus.inst_agg import build_inst_agg
+
+    conn = _fresh(tmp_path, "quoted-aggregate.db")
+    _seed_two_periods(conn)
+    aggregate_path = tmp_path / "quoted-aggregate-agg.db"
+    build_inst_agg(conn, aggregate_path, ingested_at="2026-08-10T00:00:00Z")
+    conn.execute('ATTACH DATABASE ? AS "agg""quoted"', (str(aggregate_path),))
+    try:
+        projection = build_serving_projection(
+            conn, periods=("2025-12-31", "2026-03-31")
+        )
+        assert projection.activity_rows
+    finally:
+        conn.execute('DETACH DATABASE "agg""quoted"')
 
 
 #: Three more real CUSIPs, so the undisclosed-value fixture below can hold one

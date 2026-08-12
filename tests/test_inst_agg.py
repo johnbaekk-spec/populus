@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from populus.amendments import ensure_views
+from populus.amendments import ensure_views, materialized_inst_derivation_views
 from populus.db import connect, init_db
 from populus.ingest.inst13f import run_inst13f_ingest
 from populus.inst_agg import build_inst_agg
@@ -118,7 +118,12 @@ def _load(conn, *, fid, cik, period, filed, holds, total=_UNSET,
 def _agg(conn, tmp_path, name="inst_agg.db"):
     ensure_views(conn)
     out = tmp_path / name
-    build_inst_agg(conn, out, ingested_at=AT)
+    baseline_report = build_inst_agg(conn, out, ingested_at=AT)
+    materialized_out = out.with_name(f"{out.stem}-materialized{out.suffix}")
+    with materialized_inst_derivation_views(conn):
+        materialized_report = build_inst_agg(conn, materialized_out, ingested_at=AT)
+    assert materialized_report == baseline_report
+    assert _complete_aggregate_rows(materialized_out) == _complete_aggregate_rows(out)
     return connect(str(out))
 
 
@@ -126,6 +131,28 @@ def _rows(conn, sql, params=()):
     cur = conn.execute(sql, params)
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def _complete_aggregate_rows(path):
+    conn = connect(str(path))
+    try:
+        keys = {
+            "agg_filer_registry": "cik",
+            "agg_qoq_deltas": (
+                "cik,position_key,put_call,ssh_prnamt_type,curr_period"
+            ),
+            "agg_issuer_top_holders": "issuer_key,period_of_report,rank",
+            "agg_filer_concentration": "cik,period_of_report",
+            "agg_build_meta": "key",
+        }
+        return {
+            table: [tuple(row) for row in conn.execute(
+                f"SELECT * FROM {table} ORDER BY {order}"  # nosec B608
+            ).fetchall()]
+            for table, order in keys.items()
+        }
+    finally:
+        conn.close()
 
 
 # --- R1a/F5 filer registry ----------------------------------------------------
@@ -1151,3 +1178,525 @@ def test_build_inst_agg_refuses_before_ensure_views_touches_the_source(
         conn.close()
 
     assert _sha256(db_path) == before, "a REFUSED build rewrote its source"
+
+
+@pytest.mark.parametrize("case", ["signed_value", "signed_shares", "huge_shares"])
+def test_materialized_bulk_eligibility_falls_back_without_numeric_drift(
+    tmp_path, monkeypatch, case
+):
+    """Aggregate delta R4/R5: signed cancellation and an unprojected share
+    total above int64 retain the arbitrary-precision Python oracle."""
+    import populus.inst_agg as inst_agg_module
+
+    conn = _db(tmp_path)
+    ensure_views(conn)
+    cik = "0000000001"
+    _filer(conn, cik)
+    max_i64 = 2**63 - 1
+    if case == "signed_value":
+        values = (max_i64, 1, -1)
+        shares = (1, 1, 1)
+    elif case == "signed_shares":
+        values = (0, 0, 0)
+        shares = (max_i64, 1, -1)
+    else:
+        values = (0, 0)
+        shares = (max_i64, 1)
+    holds = [
+        _hold(
+            ordinal=index,
+            issuer="EXACT NUMERIC",
+            cusip="123456789",
+            value=value,
+            shares=share,
+        )
+        for index, (value, share) in enumerate(zip(values, shares), start=1)
+    ]
+    _load(
+        conn,
+        fid=f"inst:{case}",
+        cik=cik,
+        period="2026-03-31",
+        filed="2026-04-15",
+        holds=holds,
+        total=sum(values),
+    )
+
+    baseline_path = tmp_path / f"{case}-baseline.db"
+    baseline_report = build_inst_agg(conn, baseline_path, ingested_at=AT)
+    baseline_rows = _complete_aggregate_rows(baseline_path)
+
+    calls = 0
+    oracle = inst_agg_module._build_inst_agg_python
+
+    def recording_oracle(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return oracle(*args, **kwargs)
+
+    monkeypatch.setattr(inst_agg_module, "_build_inst_agg_python", recording_oracle)
+    materialized_path = tmp_path / f"{case}-materialized.db"
+    with materialized_inst_derivation_views(conn):
+        materialized_report = build_inst_agg(
+            conn, materialized_path, ingested_at=AT
+        )
+        assert conn.execute(
+            "SELECT name FROM sqlite_temp_schema"
+            " WHERE name LIKE '_populus_inst_agg_%'"
+            " AND name <> '_populus_inst_agg_input'"
+        ).fetchall() == []
+    assert calls == 1
+    assert materialized_report == baseline_report
+    assert _complete_aggregate_rows(materialized_path) == baseline_rows
+    conn.close()
+
+
+def test_materialized_bulk_hhi_uses_exact_big_integer_square(tmp_path):
+    """R9: a position square above int64 remains exact without REAL or a
+    per-position Python aggregate callback."""
+    conn = _db(tmp_path)
+    ensure_views(conn)
+    cik = "0000000001"
+    _filer(conn, cik)
+    value = 4_000_000_000
+    _load(
+        conn,
+        fid="inst:huge-square",
+        cik=cik,
+        period="2026-03-31",
+        filed="2026-04-15",
+        holds=[
+            _hold(
+                ordinal=1,
+                issuer="HUGE SQUARE",
+                cusip="123456789",
+                value=value,
+                shares=1,
+            )
+        ],
+    )
+    baseline_path = tmp_path / "huge-square-baseline.db"
+    bulk_path = tmp_path / "huge-square-bulk.db"
+    build_inst_agg(conn, baseline_path, ingested_at=AT)
+    before_functions = conn.execute(
+        "SELECT name,builtin,type,enc,narg,flags FROM pragma_function_list"
+        " ORDER BY name,builtin,type,enc,narg,flags"
+    ).fetchall()
+    with materialized_inst_derivation_views(conn):
+        build_inst_agg(conn, bulk_path, ingested_at=AT)
+        assert conn.execute(
+            "SELECT name,builtin,type,enc,narg,flags FROM pragma_function_list"
+            " ORDER BY name,builtin,type,enc,narg,flags"
+        ).fetchall() == before_functions
+    assert _complete_aggregate_rows(bulk_path) == _complete_aggregate_rows(
+        baseline_path
+    )
+    out = connect(str(bulk_path))
+    try:
+        row = out.execute(
+            "SELECT total_value_usd,topn_share_bps,hhi,"
+            " max_position_share_bps FROM agg_filer_concentration"
+        ).fetchone()
+        assert tuple(row) == (value, 10_000, 10_000, 10_000)
+        assert all(isinstance(item, int) for item in row)
+    finally:
+        out.close()
+        conn.close()
+
+
+def test_materialized_bulk_restores_cache_and_uses_ordered_fresh_destination(
+    tmp_path,
+):
+    """Throughput delta: physical hints are scoped and every large SELECT is
+    primary-key ordered without changing the logical artifact."""
+    import populus.inst_agg as inst_agg_module
+
+    conn = _db(tmp_path)
+    ensure_views(conn)
+    _filer(conn, "0000000001")
+    _load(
+        conn, fid="inst:physical", cik="0000000001", period="2026-03-31",
+        filed="2026-04-15",
+        holds=[_hold(ordinal=1, issuer="PHYSICAL", cusip="123456789", value=1)],
+    )
+    conn.execute("PRAGMA temp.cache_size=-1234")
+    out = tmp_path / "physical.db"
+    with materialized_inst_derivation_views(conn):
+        build_inst_agg(conn, out, ingested_at=AT)
+        assert conn.execute("PRAGMA temp.cache_size").fetchone()[0] == -1234
+    dest = connect(str(out))
+    try:
+        assert dest.execute("PRAGMA page_size").fetchone()[0] == 32_768
+        assert dest.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert dest.execute("PRAGMA synchronous").fetchone()[0] == 2
+    finally:
+        dest.close()
+        conn.close()
+    assert "ORDER BY cik,position_key,put_call,ssh_prnamt_type,curr_period" in (
+        inst_agg_module._QOQ_SOURCE_SQL
+    )
+
+
+def test_compact_qoq_iterator_is_exactly_equal_to_the_public_view(tmp_path):
+    """Schema-1.1 private decoding preserves every tuple and public sort key."""
+    from populus.inst_agg import compact_qoq_rows
+
+    conn = _db(tmp_path)
+    _filer(conn, "0000000002")
+    _security(conn, "sec:z")
+    for suffix, period, value, put_call, share_type in (
+        ("1", "2025-12-31", 100, None, "SH"),
+        ("2", "2026-03-31", 150, None, "SH"),
+        ("3", "2026-03-31", 25, "CALL", "PRN"),
+    ):
+        _load(
+            conn,
+            fid=f"inst:compact-{suffix}",
+            cik="0000000002",
+            period=period,
+            filed="2026-05-15",
+            holds=[
+                _hold(
+                    ordinal=1,
+                    issuer="COMPACT",
+                    cusip="123456789",
+                    value=value,
+                    security_id="sec:z",
+                    put_call=put_call,
+                    unit=share_type,
+                )
+            ],
+        )
+    aggregate_path = tmp_path / "compact-equality.db"
+    build_inst_agg(conn, aggregate_path, ingested_at=AT)
+    aggregate = connect(str(aggregate_path))
+    periods = ("2025-12-31", "2026-03-31")
+    public_rows = [
+        tuple(row)
+        for row in aggregate.execute(
+            "SELECT cik,position_key,put_call,curr_period,prev_period,change_kind,"
+            " prev_value_usd,curr_value_usd,delta_value_usd,prev_shares,"
+            " curr_shares,delta_shares,ssh_prnamt_type,flags"
+            " FROM agg_qoq_deltas WHERE curr_period IN (?,?)"
+            " ORDER BY cik,curr_period,position_key,put_call,ssh_prnamt_type",
+            periods,
+        )
+    ]
+    compact_rows = list(
+        compact_qoq_rows(aggregate, schema="main", periods=periods) or ()
+    )
+    assert compact_rows
+    assert compact_rows == public_rows
+    aggregate.close()
+    conn.close()
+
+
+def test_compact_qoq_decoder_covers_every_enum_and_flag_mask():
+    """All 3×5×3 enum combinations and all 32 canonical flag masks decode."""
+    import populus.inst_agg as inst_agg_module
+
+    observed_masks = set()
+    for put_code, put_value in inst_agg_module._QOQ_PUT_CALL_VALUES.items():
+        for change_code, change_value in inst_agg_module._QOQ_CHANGE_KIND_VALUES.items():
+            for unit_code, unit_value in inst_agg_module._QOQ_UNIT_VALUES.items():
+                for mask, flags in inst_agg_module._QOQ_FLAG_VALUES.items():
+                    decoded = inst_agg_module._decode_compact_qoq_row(
+                        (
+                            "0000000001",
+                            "sid:test",
+                            put_code,
+                            "2025-12-31",
+                            change_code,
+                            1,
+                            2,
+                            1,
+                            3,
+                            4,
+                            1,
+                            unit_code,
+                            mask,
+                        ),
+                        curr_period="2026-03-31",
+                    )
+                    assert decoded[2] == put_value
+                    assert decoded[5] == change_value
+                    assert decoded[12] == unit_value
+                    assert decoded[13] == flags
+                    observed_masks.add(mask)
+    assert observed_masks == set(range(32))
+
+
+def test_prepared_aggregate_reuses_heavy_stages_and_restores_settings(
+    tmp_path, monkeypatch
+):
+    import populus.inst_agg as inst_agg_module
+
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001")
+    _security(conn, "sec:x")
+    for suffix, period, value in (
+        ("1", "2025-12-31", 100),
+        ("2", "2026-03-31", 150),
+    ):
+        _load(
+            conn,
+            fid=f"inst:prepared-{suffix}",
+            cik="0000000001",
+            period=period,
+            filed="2026-05-15",
+            holds=[
+                _hold(
+                    ordinal=1,
+                    issuer="PREPARED",
+                    cusip="123456789",
+                    value=value,
+                    security_id="sec:x",
+                )
+            ],
+        )
+    baseline = tmp_path / "prepared-baseline.db"
+    build_inst_agg(conn, baseline, ingested_at=AT)
+
+    calls = {"position": 0, "issuer": 0, "concentration": 0}
+    for key, name in (
+        ("position", "_create_position_stage"),
+        ("issuer", "_create_issuer_stages"),
+        ("concentration", "_create_concentration_stage"),
+    ):
+        original = getattr(inst_agg_module, name)
+
+        def counted(*args, _key=key, _original=original, **kwargs):
+            calls[_key] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(inst_agg_module, name, counted)
+
+    conn.execute("PRAGMA threads=0")
+    conn.execute("PRAGMA temp.cache_size=-1234")
+    prepared_out = tmp_path / "prepared.db"
+    wrong_out = tmp_path / "wrong-connection.db"
+    other_path = tmp_path / "other.db"
+    init_db(str(other_path))
+    other = connect(str(other_path))
+    _filer(other, "0000000002")
+    _load(
+        other,
+        fid="inst:other-1",
+        cik="0000000002",
+        period="2026-03-31",
+        filed="2026-05-15",
+        holds=[_hold(ordinal=1, issuer="OTHER", cusip="987654321", value=1)],
+    )
+    try:
+        with materialized_inst_derivation_views(conn):
+            with inst_agg_module.prepared_materialized_inst_aggregate(conn) as token:
+                assert token.bulk_eligible and token.fallback_reason is None
+                assert conn.execute("PRAGMA threads").fetchone()[0] == 8
+                assert conn.execute("PRAGMA temp.cache_size").fetchone()[0] == -262_144
+                names = {
+                    row[0]
+                    for row in conn.execute("SELECT name FROM sqlite_temp_schema")
+                }
+                assert {
+                    "_populus_inst_agg_positions",
+                    "_populus_inst_agg_issuer_holders",
+                    "_populus_inst_agg_issuer_names",
+                } <= names
+                assert "_populus_inst_agg_conc_positions" not in names
+                assert calls == {"position": 1, "issuer": 1, "concentration": 0}
+
+                with materialized_inst_derivation_views(other):
+                    with pytest.raises(
+                        inst_agg_module.InstAggError,
+                        match="belongs to another connection",
+                    ):
+                        build_inst_agg(
+                            other,
+                            wrong_out,
+                            ingested_at=AT,
+                            _prepared=token,
+                        )
+                assert not wrong_out.exists()
+
+                report = build_inst_agg(
+                    conn, prepared_out, ingested_at=AT, _prepared=token
+                )
+                assert report.qoq_rows == 1
+                assert calls == {"position": 1, "issuer": 1, "concentration": 1}
+                assert conn.execute(
+                    "SELECT COUNT(*) FROM temp._populus_inst_agg_conc_positions"
+                ).fetchone()[0] == 2
+                assert conn.execute(
+                    "SELECT COUNT(*) FROM temp._populus_inst_agg_matches"
+                ).fetchone()[0] == 1
+                with pytest.raises(
+                    inst_agg_module.InstAggError, match="already been consumed"
+                ):
+                    build_inst_agg(
+                        conn,
+                        tmp_path / "prepared-reused.db",
+                        ingested_at=AT,
+                        _prepared=token,
+                    )
+
+            assert conn.execute("PRAGMA threads").fetchone()[0] == 0
+            assert conn.execute("PRAGMA temp.cache_size").fetchone()[0] == -1234
+            bulk_names = {name for _kind, name in inst_agg_module._BULK_TEMP_OBJECTS}
+            assert not bulk_names & {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_temp_schema")
+            }
+            with pytest.raises(
+                inst_agg_module.InstAggError, match="no longer active"
+            ):
+                inst_agg_module._validate_prepared_token(token, conn)
+    finally:
+        other.close()
+        conn.close()
+
+    assert _complete_aggregate_rows(prepared_out) == _complete_aggregate_rows(
+        baseline
+    )
+
+
+def test_prepared_signed_fallback_is_observable_before_destination_mutation(tmp_path):
+    import populus.inst_agg as inst_agg_module
+
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001")
+    _load(
+        conn,
+        fid="inst:signed-1",
+        cik="0000000001",
+        period="2026-03-31",
+        filed="2026-05-15",
+        holds=[
+            _hold(
+                ordinal=1,
+                issuer="SIGNED",
+                cusip="123456789",
+                value=-10,
+                shares=-1,
+            )
+        ],
+        total=-10,
+    )
+    out = tmp_path / "signed-fallback.db"
+    with materialized_inst_derivation_views(conn):
+        with inst_agg_module.prepared_materialized_inst_aggregate(conn) as token:
+            assert not token.bulk_eligible
+            assert token.fallback_reason == "signed_input"
+            assert not out.exists()
+            names = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_temp_schema")
+            }
+            assert "_populus_inst_agg_positions" not in names
+            assert "_populus_inst_agg_issuer_holders" not in names
+            build_inst_agg(conn, out, ingested_at=AT, _prepared=token)
+            assert out.exists()
+    conn.close()
+
+
+def test_prepared_primary_failure_cleans_destination_namespace_and_settings(
+    tmp_path, monkeypatch
+):
+    import populus.inst_agg as inst_agg_module
+
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001")
+    _load(
+        conn,
+        fid="inst:failure-1",
+        cik="0000000001",
+        period="2026-03-31",
+        filed="2026-05-15",
+        holds=[_hold(ordinal=1, issuer="FAIL", cusip="123456789", value=1)],
+    )
+    conn.execute("PRAGMA threads=0")
+    conn.execute("PRAGMA temp.cache_size=-2222")
+    out = tmp_path / "failed.db"
+    with pytest.raises(RuntimeError, match="injected match failure"):
+        with materialized_inst_derivation_views(conn):
+            with inst_agg_module.prepared_materialized_inst_aggregate(conn) as token:
+                monkeypatch.setattr(
+                    inst_agg_module,
+                    "_create_match_stages",
+                    lambda _conn: (_ for _ in ()).throw(
+                        RuntimeError("injected match failure")
+                    ),
+                )
+                build_inst_agg(conn, out, ingested_at=AT, _prepared=token)
+    assert not out.exists()
+    assert conn.execute("PRAGMA threads").fetchone()[0] == 0
+    assert conn.execute("PRAGMA temp.cache_size").fetchone()[0] == -2222
+    bulk_names = {name for _kind, name in inst_agg_module._BULK_TEMP_OBJECTS}
+    assert not bulk_names & {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_temp_schema")
+    }
+    conn.close()
+
+
+def test_deferred_concentration_is_cancellable_and_removes_partial_destination(
+    tmp_path, monkeypatch
+):
+    """The moved stage remains under the aggregate guard and owned cleanup."""
+    import populus.inst_agg as inst_agg_module
+
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001")
+    _load(
+        conn,
+        fid="inst:cancel-concentration",
+        cik="0000000001",
+        period="2026-03-31",
+        filed="2026-05-15",
+        holds=[_hold(ordinal=1, issuer="CANCEL", cusip="123456789", value=1)],
+    )
+    out = tmp_path / "cancelled-concentration.db"
+
+    class Guard:
+        armed = False
+
+        def register(self, _connection):
+            return None
+
+        def unregister(self, _connection):
+            return None
+
+        def checkpoint(self):
+            if self.armed:
+                raise TimeoutError("injected concentration deadline")
+
+    guard = Guard()
+    original = inst_agg_module._create_concentration_stage
+
+    def create_then_arm(source):
+        original(source)
+        guard.armed = True
+
+    monkeypatch.setattr(
+        inst_agg_module, "_create_concentration_stage", create_then_arm
+    )
+    with materialized_inst_derivation_views(conn):
+        with inst_agg_module.prepared_materialized_inst_aggregate(conn) as token:
+            assert conn.execute(
+                "SELECT 1 FROM sqlite_temp_schema"
+                " WHERE name='_populus_inst_agg_conc_positions'"
+            ).fetchone() is None
+            with pytest.raises(TimeoutError, match="concentration deadline"):
+                build_inst_agg(
+                    conn,
+                    out,
+                    ingested_at=AT,
+                    _execution_guard=guard,
+                    _prepared=token,
+                )
+            assert not out.exists()
+            assert conn.execute(
+                "SELECT 1 FROM sqlite_temp_schema"
+                " WHERE name='_populus_inst_agg_conc_positions'"
+            ).fetchone() is not None
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_temp_schema"
+        " WHERE name='_populus_inst_agg_conc_positions'"
+    ).fetchone() is None
+    conn.close()

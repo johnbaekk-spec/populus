@@ -42,27 +42,84 @@ CREATE TABLE IF NOT EXISTS agg_filer_registry (
 -- happened, ranked first by inst_biggest_moves (QA-VERIFY5-B2). delta_shares
 -- only when ssh_prnamt_type is
 -- equal in both quarters, else NULL + shares_unit_mismatch (never a fake 0).
-CREATE TABLE IF NOT EXISTS agg_qoq_deltas (
-  cik             TEXT NOT NULL,
-  position_key    TEXT NOT NULL,                  -- 'sid:<security_id>' or 'cusip:<cusip>'
-  put_call        TEXT NOT NULL,                  -- 'LONG' | 'PUT' | 'CALL'
-  curr_period     TEXT NOT NULL,
-  prev_period     TEXT NOT NULL,
-  change_kind     TEXT NOT NULL                   -- new | add | trim | exit
-      CHECK (change_kind IN ('new','add','trim','exit','unclassified')),
-  prev_value_usd  INTEGER,                        -- NULL when that quarter's
-  curr_value_usd  INTEGER,                        -- value was never disclosed
-  delta_value_usd INTEGER,                        -- NULL when either side is
-  prev_shares     INTEGER,                         -- NULL when the prior unit is unknown
-  curr_shares     INTEGER,                         -- NULL when the current unit is unknown
-  delta_shares    INTEGER,                         -- NULL when units are incompatible (F4)
-  ssh_prnamt_type TEXT NOT NULL,                   -- 'SH' | 'PRN' | 'UNKNOWN' — part of the
-                                                   -- GRAIN: SH and PRN subpositions are never
-                                                   -- merged (QA-F2), so this is never 'mixed'
-  flags           TEXT NOT NULL,                   -- canonical sorted JSON array
-  ingested_at     TEXT NOT NULL,                   -- volatile; excluded from the projection
-  PRIMARY KEY (cik, position_key, put_call, ssh_prnamt_type, curr_period)
+-- Schema 1.1 keeps the public relation byte-for-byte readable while storing its
+-- high-cardinality repeated strings once.  The private dictionaries/backing
+-- table are not projected.  The view is deliberately read-only: aggregate
+-- artifacts are produced from scratch, and no consumer is allowed to mutate a
+-- published derived relation.
+CREATE TABLE IF NOT EXISTS _agg_qoq_filers (
+  filer_id INTEGER PRIMARY KEY,
+  cik      TEXT NOT NULL UNIQUE
 );
+
+CREATE TABLE IF NOT EXISTS _agg_qoq_periods (
+  period_id INTEGER PRIMARY KEY,
+  period    TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS _agg_qoq_deltas (
+  filer_id          INTEGER NOT NULL,
+  position_key      TEXT NOT NULL,                -- 'sid:<security_id>' or 'cusip:<cusip>'
+  put_call_code     INTEGER NOT NULL CHECK (put_call_code BETWEEN 0 AND 2),
+  curr_period_id    INTEGER NOT NULL,
+  prev_period_id    INTEGER NOT NULL,
+  change_kind_code  INTEGER NOT NULL CHECK (change_kind_code BETWEEN 0 AND 4),
+  prev_value_usd    INTEGER,
+  curr_value_usd    INTEGER,
+  delta_value_usd   INTEGER,
+  prev_shares       INTEGER,
+  curr_shares       INTEGER,
+  delta_shares      INTEGER,
+  unit_code         INTEGER NOT NULL CHECK (unit_code BETWEEN 0 AND 2),
+  flags_mask        INTEGER NOT NULL CHECK (flags_mask BETWEEN 0 AND 31),
+  PRIMARY KEY (
+    filer_id, position_key, put_call_code, unit_code, curr_period_id
+  )
+) WITHOUT ROWID;
+
+CREATE VIEW IF NOT EXISTS agg_qoq_deltas AS
+SELECT
+  f.cik,
+  q.position_key,
+  CASE q.put_call_code
+    WHEN 0 THEN 'LONG' WHEN 1 THEN 'PUT' ELSE 'CALL'
+  END AS put_call,
+  cp.period AS curr_period,
+  pp.period AS prev_period,
+  CASE q.change_kind_code
+    WHEN 0 THEN 'new'
+    WHEN 1 THEN 'add'
+    WHEN 2 THEN 'trim'
+    WHEN 3 THEN 'exit'
+    ELSE 'unclassified'
+  END AS change_kind,
+  q.prev_value_usd,
+  q.curr_value_usd,
+  q.delta_value_usd,
+  q.prev_shares,
+  q.curr_shares,
+  q.delta_shares,
+  CASE q.unit_code
+    WHEN 0 THEN 'SH' WHEN 1 THEN 'PRN' ELSE 'UNKNOWN'
+  END AS ssh_prnamt_type,
+  '[' || rtrim(
+    CASE WHEN q.flags_mask & 1
+      THEN '"change_kind_undeterminable",' ELSE '' END ||
+    CASE WHEN q.flags_mask & 2
+      THEN '"classified_by_value",' ELSE '' END ||
+    CASE WHEN q.flags_mask & 4
+      THEN '"identity_reconciled_by_cusip",' ELSE '' END ||
+    CASE WHEN q.flags_mask & 8
+      THEN '"shares_unit_mismatch",' ELSE '' END ||
+    CASE WHEN q.flags_mask & 16
+      THEN '"value_undisclosed_one_side",' ELSE '' END,
+    ','
+  ) || ']' AS flags,
+  (SELECT value FROM agg_build_meta WHERE key = 'ingested_at') AS ingested_at
+FROM _agg_qoq_deltas q
+JOIN _agg_qoq_filers f ON f.filer_id = q.filer_id
+JOIN _agg_qoq_periods cp ON cp.period_id = q.curr_period_id
+JOIN _agg_qoq_periods pp ON pp.period_id = q.prev_period_id;
 
 -- Top holders per ISSUER: for each issuer x period, the top-N filers ranked by
 -- the value they hold in that issuer, after summing a filer's value across ALL

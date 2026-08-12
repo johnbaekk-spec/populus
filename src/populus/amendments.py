@@ -18,6 +18,9 @@ from __future__ import annotations
 import hashlib
 import importlib.resources
 import sqlite3
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 #: Every view the institutional derivation reads (RUN M2-11, R3). The coverage
 #: gate reads the default pair, presence probes read the reconciled population,
@@ -32,6 +35,131 @@ INST_DERIVATION_VIEWS = (
     "v_filer_reported_filings",
     "v_filer_reported_holdings",
 )
+
+_INST_COVERAGE_TOTALS_NAME = "_populus_inst_coverage_totals"
+_INST_COVERAGE_TOTALS_INDEX_NAME = "_populus_inst_coverage_totals_by_filing"
+_INST_AGG_INPUT_NAME = "_populus_inst_agg_input"
+
+_MATERIALIZED_INST_OBJECTS = (
+    "_populus_inst_affiliation_sources",
+    "_populus_inst_affiliation_edges",
+    "_populus_inst_affiliation_edges_lookup",
+    "v_inst_reconciled_filings",
+    _INST_COVERAGE_TOTALS_NAME,
+    _INST_COVERAGE_TOTALS_INDEX_NAME,
+    "v_filer_reported_filings",
+    "v_filer_reported_filings_by_filing",
+    "v_filer_reported_holdings",
+    "v_default_inst_filings",
+    "v_default_inst_filings_by_filing",
+    "v_default_holdings",
+    _INST_AGG_INPUT_NAME,
+)
+
+# The restatement-survivor candidate set shared by the ingestion affiliation pass
+# and connection-local publish materialization.  Keep main-qualified table names:
+# caller TEMP state must never redirect the reviewed persistent population.
+_INST_RESTATEMENT_SURVIVORS_SQL = """
+SELECT f.filing_id, f.period_of_report, f.file_number_norm, f.other_managers
+FROM main.inst_filings f
+WHERE f.lifecycle = 'active'
+  AND NOT EXISTS (
+    SELECT 1 FROM main.inst_filings r
+    WHERE r.lifecycle = 'active' AND r.amendment_type = 'RESTATEMENT'
+      AND r.cik = f.cik AND r.period_of_report = f.period_of_report
+      AND r.filing_id <> f.filing_id
+      AND ( r.filed_date > f.filed_date
+         OR (r.filed_date = f.filed_date
+             AND COALESCE(r.amendment_no,0) > COALESCE(f.amendment_no,0))
+         OR (r.filed_date = f.filed_date
+             AND COALESCE(r.amendment_no,0) = COALESCE(f.amendment_no,0)
+             AND r.accession > f.accession) )
+  )
+"""
+
+_INST_AFFILIATION_EDGES_SQL = """
+CREATE TEMP TABLE _populus_inst_affiliation_edges AS
+SELECT
+  c.period_of_report,
+  json_extract(m.value, '$.file_number_norm') AS manager_file_number,
+  c.filing_id AS source_filing_id
+FROM temp._populus_inst_affiliation_sources c,
+     json_each(c.other_managers) m
+WHERE json_extract(m.value, '$.file_number_norm') IS NOT NULL
+"""
+
+_MATERIALIZED_INST_RECONCILED_FILINGS_SQL = """
+CREATE TEMP TABLE v_inst_reconciled_filings AS
+SELECT f.*
+FROM main.inst_filings f
+JOIN temp._populus_inst_affiliation_sources s ON s.filing_id = f.filing_id
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM temp._populus_inst_affiliation_edges AS a
+       INDEXED BY _populus_inst_affiliation_edges_lookup
+  WHERE a.period_of_report = f.period_of_report
+    AND f.file_number_norm IS NOT NULL
+    AND a.manager_file_number = f.file_number_norm
+    AND a.source_filing_id <> f.filing_id
+)
+"""
+
+_MATERIALIZED_FILER_REPORTED_FILINGS_SQL = """
+CREATE TEMP TABLE v_filer_reported_filings AS
+SELECT *
+FROM main.v_filer_reported_filings
+"""
+
+_MATERIALIZED_DEFAULT_INST_FILINGS_SQL = """
+CREATE TEMP TABLE v_default_inst_filings AS
+SELECT p.*
+FROM temp.v_filer_reported_filings p
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM temp._populus_inst_affiliation_edges AS a
+       INDEXED BY _populus_inst_affiliation_edges_lookup
+  WHERE a.period_of_report = p.period_of_report
+    AND p.file_number_norm IS NOT NULL
+    AND a.manager_file_number = p.file_number_norm
+    AND a.source_filing_id <> p.filing_id
+)
+"""
+
+_MATERIALIZED_INST_COVERAGE_TOTALS_SQL = f"""
+CREATE TEMP TABLE {_INST_COVERAGE_TOTALS_NAME} AS
+SELECT filing_id, COALESCE(SUM(value_usd), 0) AS resolved_usd
+FROM main.inst_holdings
+WHERE security_id IS NOT NULL
+GROUP BY filing_id
+"""
+
+_MATERIALIZED_INST_AGG_INPUT_SQL = f"""
+CREATE TEMP TABLE {_INST_AGG_INPUT_NAME} AS
+SELECT
+  h.cik,
+  h.period_of_report,
+  h.security_id,
+  h.cusip,
+  h.issuer_name_raw,
+  h.value_usd,
+  h.ssh_prnamt,
+  h.ssh_prnamt_type,
+  h.put_call,
+  s.entity_id,
+  s.entity_link_state,
+  CASE
+    WHEN h.security_id IS NULL AND h.cusip IS NULL THEN h.holding_id
+    ELSE NULL
+  END AS unkeyed_token,
+  CASE WHEN d.filing_id IS NULL THEN 0 ELSE 1 END AS is_default
+FROM main.inst_holdings AS h
+JOIN temp.v_filer_reported_filings AS r
+  ON r.filing_id = h.filing_id
+LEFT JOIN main.securities AS s
+  ON s.security_id = h.security_id
+LEFT JOIN temp.v_default_inst_filings AS d
+  ON d.filing_id = h.filing_id
+"""
 
 
 class ViewVerificationError(RuntimeError):
@@ -141,6 +269,127 @@ def ensure_views(conn: sqlite3.Connection) -> None:
             # `name` comes from the packaged DDL, never from caller input.
             conn.execute(f"DROP VIEW {name}")  # nosec B608
         conn.execute(statement)
+
+
+@contextmanager
+def materialized_inst_derivation_views(
+    conn: sqlite3.Connection,
+) -> Iterator[None]:
+    """Freeze institutional filing sets and coverage totals in local TEMP.
+
+    A verified persistent view supplies the canonical cover-passing candidates
+    once.  Its frozen, indexed reported set serves the per-filer consumers and
+    the affiliation anti-join that produces the frozen default set.
+    The restatement-survivor affiliation sources and their normalized manager
+    edges are staged once, the anti-join is index-served, and the canonical
+    pre-cover reconciled population is frozen before private affiliation staging
+    disappears.  Eligible holding values are aggregated once by filing for the
+    coverage/disposition consumers.  One narrow aggregate input table freezes
+    every filer-reported holding plus exact default membership and issuer inputs.
+    Both packaged holdings views are shadowed in TEMP so their unqualified filing
+    references resolve to the corresponding frozen tables.  Persistent objects
+    are never changed.  Caller-owned TEMP state is refused rather than replaced,
+    and only objects successfully created here are removed on every exit path.
+    """
+    placeholders = ", ".join("?" for _ in _MATERIALIZED_INST_OBJECTS)
+    collisions = conn.execute(
+        f"SELECT type, name FROM sqlite_temp_schema WHERE name IN ({placeholders})"
+        " ORDER BY name",  # nosec B608 — fixed placeholder count, values bound
+        _MATERIALIZED_INST_OBJECTS,
+    ).fetchall()
+    if collisions:
+        names = ", ".join(name for _type, name in collisions)
+        raise RuntimeError(
+            "refusing institutional TEMP materialization because caller-owned"
+            f" object(s) already exist: {names}"
+        )
+
+    # A public caller must not be able to freeze data from a stale packaged view.
+    # This read-only gate runs before the first query against a main data table.
+    verify_views(conn)
+
+    created_objects: list[tuple[str, str]] = []
+    try:
+        conn.execute(
+            "CREATE TEMP TABLE _populus_inst_affiliation_sources AS "
+            + _INST_RESTATEMENT_SURVIVORS_SQL
+        )
+        created_objects.append(("TABLE", "_populus_inst_affiliation_sources"))
+        conn.execute(_INST_AFFILIATION_EDGES_SQL)
+        created_objects.append(("TABLE", "_populus_inst_affiliation_edges"))
+        conn.execute(
+            "CREATE INDEX temp._populus_inst_affiliation_edges_lookup"
+            " ON _populus_inst_affiliation_edges"
+            " (period_of_report, manager_file_number, source_filing_id)"
+        )
+        created_objects.append(("INDEX", "_populus_inst_affiliation_edges_lookup"))
+        conn.execute(_MATERIALIZED_INST_RECONCILED_FILINGS_SQL)
+        created_objects.append(("TABLE", "v_inst_reconciled_filings"))
+        conn.execute(_MATERIALIZED_FILER_REPORTED_FILINGS_SQL)
+        created_objects.append(("TABLE", "v_filer_reported_filings"))
+        conn.execute(
+            "CREATE INDEX temp.v_filer_reported_filings_by_filing"
+            " ON v_filer_reported_filings(filing_id)"
+        )
+        created_objects.append(("INDEX", "v_filer_reported_filings_by_filing"))
+        conn.execute(_MATERIALIZED_DEFAULT_INST_FILINGS_SQL)
+        created_objects.append(("TABLE", "v_default_inst_filings"))
+        conn.execute(
+            "CREATE INDEX temp.v_default_inst_filings_by_filing"
+            " ON v_default_inst_filings(filing_id)"
+        )
+        created_objects.append(("INDEX", "v_default_inst_filings_by_filing"))
+        conn.execute(_MATERIALIZED_INST_COVERAGE_TOTALS_SQL)
+        created_objects.append(("TABLE", _INST_COVERAGE_TOTALS_NAME))
+        conn.execute(
+            f"CREATE UNIQUE INDEX temp.{_INST_COVERAGE_TOTALS_INDEX_NAME}"
+            f" ON {_INST_COVERAGE_TOTALS_NAME}(filing_id)"  # nosec B608
+        )
+        created_objects.append(("INDEX", _INST_COVERAGE_TOTALS_INDEX_NAME))
+        conn.execute(_MATERIALIZED_INST_AGG_INPUT_SQL)
+        created_objects.append(("TABLE", _INST_AGG_INPUT_NAME))
+
+        # All consumer tables are frozen.  Drop implementation-only state before the
+        # consumer scope so no downstream query can accidentally depend on it.
+        conn.execute("DROP INDEX temp._populus_inst_affiliation_edges_lookup")
+        created_objects.remove(("INDEX", "_populus_inst_affiliation_edges_lookup"))
+        conn.execute("DROP TABLE temp._populus_inst_affiliation_edges")
+        created_objects.remove(("TABLE", "_populus_inst_affiliation_edges"))
+        conn.execute("DROP TABLE temp._populus_inst_affiliation_sources")
+        created_objects.remove(("TABLE", "_populus_inst_affiliation_sources"))
+
+        for view_name in ("v_filer_reported_holdings", "v_default_holdings"):
+            holdings_ddl = _packaged_views()[view_name]
+            temp_holdings_ddl = holdings_ddl.replace(
+                "CREATE VIEW ", "CREATE TEMP VIEW ", 1
+            )
+            conn.execute(temp_holdings_ddl)
+            created_objects.append(("VIEW", view_name))
+        yield
+    finally:
+        primary_error_active = sys.exc_info()[0] is not None
+        failed_drops: list[tuple[str, str]] = []
+        for object_type, name in reversed(created_objects):
+            # Both fields come only from the fixed tuples above, never callers.
+            try:
+                conn.execute(
+                    f"DROP {object_type} IF EXISTS temp.{name}"  # nosec B608
+                )
+            except sqlite3.Error:
+                # Finish the dependent-first sweep, then retry a transient
+                # cleanup failure once so one bad DROP cannot strand its peers.
+                failed_drops.append((object_type, name))
+        cleanup_error: sqlite3.Error | None = None
+        for object_type, name in failed_drops:
+            try:
+                conn.execute(
+                    f"DROP {object_type} IF EXISTS temp.{name}"  # nosec B608
+                )
+            except sqlite3.Error as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        if cleanup_error is not None and not primary_error_active:
+            raise cleanup_error
 
 
 def _packaged_views() -> dict[str, str]:

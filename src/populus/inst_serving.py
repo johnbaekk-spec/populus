@@ -3,9 +3,10 @@
 `inst_holdings` is the canonical AUDIT store: ~950 B/row payload, mostly per-row
 §5.1 provenance plus a `raw_row` duplicate. That is correct for an audit trail and
 wrong for a serving format, so this module derives three **directional** projections
-from it. Nothing here is a second source of truth — every value is read from the
-composed views (`v_filer_reported_holdings`, `v_default_holdings`) and the
-producer-owned aggregate (`agg_qoq_deltas`).
+from it. Nothing here is a second source of truth — every holding value is read in
+one pass from `v_filer_reported_holdings`, default membership is joined from
+`v_default_inst_filings`, and activity classification comes from the producer-owned
+aggregate (`agg_qoq_deltas`).
 
 Three grains, kept separate (plan §B; external review r2 F8/F9, r3 F6/F7):
 
@@ -36,10 +37,14 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from populus.inst_agg import (
+    InstAggError,
+    _QOQ_SCHEMA_SENTINELS,
     _issuer_key,
     _position_key,
     _put_call_bucket,
+    _quote_sqlite_identifier,
     _unit_key,
+    compact_qoq_rows,
     refuse_if_dest_aliases_source,
 )
 
@@ -383,10 +388,15 @@ def build_serving_projection(
 
     placeholders = ",".join("?" for _ in periods)
 
-    # --- filer projection: REPORTED-HOLDING grain -----------------------------
-    # Read from v_filer_reported_holdings so a filer covered by an affiliate keeps
-    # its own book (review r2 F13). Change fields are NOT joined here; the row
-    # carries position_key as a reference instead (r2 F9).
+    # One canonical reported-holdings pass supplies all holding-derived serving
+    # structures. A filer covered by an affiliate keeps its own book; the join to
+    # v_default_inst_filings marks only rows that contribute to the deduplicated
+    # issuer total, without scanning v_default_holdings again.
+    groups_by_period = {p: affiliate_groups(conn, p) for p in periods}
+    reported: dict[tuple, dict] = {}
+    dedup_total: dict[tuple[str, str], int] = defaultdict(int)
+    dedup_undisclosed: set[tuple[str, str]] = set()
+    display: dict[tuple[str, str, str], tuple[str, str]] = {}
     for (
         cik,
         period,
@@ -400,15 +410,23 @@ def build_serving_projection(
         ssh_prnamt_type,
         put_call,
         flags,
+        entity_id,
+        entity_link_state,
+        is_default,
     ) in conn.execute(
-        "SELECT h.cik, h.period_of_report, h.filing_id, h.security_id, h.cusip,"
-        "       h.issuer_name_raw, h.title_of_class, h.value_usd, h.ssh_prnamt,"
-        "       h.ssh_prnamt_type, h.put_call, h.flags"
-        f" FROM v_filer_reported_holdings h WHERE h.period_of_report IN ({placeholders})"
-        " ORDER BY h.cik, h.period_of_report, h.holding_id",
+        "SELECT h.cik,h.period_of_report,h.filing_id,h.security_id,h.cusip,"
+        " h.issuer_name_raw,h.title_of_class,h.value_usd,h.ssh_prnamt,"
+        " h.ssh_prnamt_type,h.put_call,h.flags,s.entity_id,s.entity_link_state,"
+        " CASE WHEN d.filing_id IS NULL THEN 0 ELSE 1 END"
+        " FROM v_filer_reported_holdings h"
+        " LEFT JOIN securities s ON s.security_id=h.security_id"
+        " LEFT JOIN v_default_inst_filings d ON d.filing_id=h.filing_id"
+        f" WHERE h.period_of_report IN ({placeholders})"  # nosec B608
+        " ORDER BY h.cik,h.period_of_report,h.holding_id",
         periods,
     ):
         ref = out.filings.get(filing_id)
+        position_key = _position_key(security_id, cusip)
         out.filer_rows.append(
             {
                 "cik": cik,
@@ -423,39 +441,13 @@ def build_serving_projection(
                 "ssh_type": ssh_prnamt_type,
                 "put_call": put_call,
                 # the REFERENCE to agg_qoq_deltas, not a copy of its fields
-                "position_key": _position_key(security_id, cusip),
+                "position_key": position_key,
                 "put_call_bucket": _put_call_bucket(put_call),
                 "unit_key": _unit_key(ssh_prnamt_type),
                 "flags": flags,
             }
         )
 
-    # --- issuer-holder projection: (issuer, period, FILER) grain --------------
-    # membership + value from the NON-suppressed view so every reporter renders;
-    # the deduplicated issuer total comes from v_default_holdings and is stored in
-    # a DISTINCT field that is never summed into the per-filer value (r4 F4).
-    groups_by_period = {p: affiliate_groups(conn, p) for p in periods}
-
-    reported: dict[tuple, dict] = {}
-    for (
-        cik,
-        period,
-        security_id,
-        cusip,
-        issuer_name,
-        value_usd,
-        entity_id,
-        entity_link_state,
-        filing_id,
-    ) in conn.execute(
-        "SELECT h.cik, h.period_of_report, h.security_id, h.cusip, h.issuer_name_raw,"
-        "       h.value_usd, s.entity_id, s.entity_link_state, h.filing_id"
-        " FROM v_filer_reported_holdings h"
-        " LEFT JOIN securities s ON s.security_id = h.security_id"
-        f" WHERE h.period_of_report IN ({placeholders})"
-        " ORDER BY h.cik, h.period_of_report, h.holding_id",
-        periods,
-    ):
         issuer_key, source = _issuer_key(entity_id, entity_link_state, cusip, issuer_name)
         key = (issuer_key, period, cik)
         bucket = reported.setdefault(
@@ -481,7 +473,6 @@ def build_serving_projection(
             bucket["value_usd"] += value_usd
         if security_id is not None or cusip is not None:
             bucket["security_count"].add(security_id or f"cusip:{cusip}")
-        ref = out.filings.get(filing_id)
         if ref is not None:
             bucket["filing_keys"].add(ref.filing_key)
         # `<` on a NULL would raise TypeError and fail the WHOLE build rather
@@ -493,25 +484,23 @@ def build_serving_projection(
         ):
             bucket["issuer_name"] = issuer_name
 
-    # deduplicated issuer totals, computed SEPARATELY over the suppressed view
-    dedup_total: dict[tuple[str, str], int] = defaultdict(int)
-    dedup_undisclosed: set[tuple[str, str]] = set()
-    for period, entity_id, entity_link_state, cusip, issuer_name, value_usd in conn.execute(
-        "SELECT h.period_of_report, s.entity_id, s.entity_link_state, h.cusip,"
-        "       h.issuer_name_raw, h.value_usd"
-        " FROM v_default_holdings h"
-        " LEFT JOIN securities s ON s.security_id = h.security_id"
-        f" WHERE h.period_of_report IN ({placeholders})"
-        " ORDER BY h.holding_id",
-        periods,
-    ):
-        issuer_key, _source = _issuer_key(entity_id, entity_link_state, cusip, issuer_name)
-        if value_usd is None:
-            dedup_undisclosed.add((issuer_key, period))
-        else:
-            dedup_total[(issuer_key, period)] += value_usd
+        total_key = (issuer_key, period)
+        if is_default:
+            if value_usd is None:
+                dedup_undisclosed.add(total_key)
+            else:
+                dedup_total[total_key] += value_usd
 
-    _build_activity_rows(conn, out, periods)
+        if position_key is not None:
+            display_key = (cik, period, position_key)
+            previous = display.get(display_key)
+            if previous is None or (
+                issuer_name is not None
+                and (previous[1] is None or issuer_name < previous[1])
+            ):
+                display[display_key] = (issuer_key, issuer_name)
+
+    _build_activity_rows(conn, out, periods, display)
 
     for key in sorted(reported):
         bucket = reported[key]
@@ -748,7 +737,10 @@ def write_serving_db(
 
 
 def _build_activity_rows(
-    conn: sqlite3.Connection, out: ServingProjection, periods: tuple[str, ...]
+    conn: sqlite3.Connection,
+    out: ServingProjection,
+    periods: tuple[str, ...],
+    display: dict[tuple[str, str, str], tuple[str, str]],
 ) -> None:
     """The ACTIVITY grain (plan §B, R13): one row per QoQ position change.
 
@@ -765,8 +757,8 @@ def _build_activity_rows(
     """
     import json as _json
 
-    qoq_table = _qoq_deltas_table(conn)
-    if qoq_table is None:
+    qoq_schema = _qoq_deltas_schema(conn)
+    if qoq_schema is None:
         return  # no aggregate reachable here — the grain is legitimately absent
 
     placeholders = ",".join("?" for _ in periods)
@@ -776,21 +768,29 @@ def _build_activity_rows(
     for ref in sorted(out.filings.values(), key=lambda r: (r.filed_date, r.accession)):
         composition[(ref.cik, ref.period_of_report)].append(ref.filing_key)
 
-    display = _activity_display_fields(conn, periods)
     authoritative = authoritative_full_periods(conn)
+
+    compact_rows = compact_qoq_rows(conn, schema=qoq_schema, periods=periods)
+    if compact_rows is None:
+        qoq_table = _qoq_deltas_table(conn, schema=qoq_schema)
+        if qoq_table is None:  # unreachable after the unique-schema preflight
+            raise InstAggError("aggregate schema disappeared during projection")
+        activity_rows = conn.execute(
+            "SELECT cik, position_key, put_call, curr_period, prev_period, change_kind,"
+            "       prev_value_usd, curr_value_usd, delta_value_usd, prev_shares,"
+            "       curr_shares, delta_shares, ssh_prnamt_type, flags"
+            f" FROM {qoq_table} WHERE curr_period IN ({placeholders})"  # nosec B608
+            " ORDER BY cik, curr_period, position_key, put_call, ssh_prnamt_type",
+            periods,
+        )
+    else:
+        activity_rows = compact_rows
 
     for (
         cik, position_key, put_call, curr_period, prev_period, change_kind,
         prev_value, curr_value, delta_value, prev_shares, curr_shares,
         delta_shares, ssh_prnamt_type, flags,
-    ) in conn.execute(
-        "SELECT cik, position_key, put_call, curr_period, prev_period, change_kind,"
-        "       prev_value_usd, curr_value_usd, delta_value_usd, prev_shares,"
-        "       curr_shares, delta_shares, ssh_prnamt_type, flags"
-        f" FROM {qoq_table} WHERE curr_period IN ({placeholders})"  # nosec B608
-        " ORDER BY cik, curr_period, position_key, put_call, ssh_prnamt_type",
-        periods,
-    ):
+    ) in activity_rows:
         # An EXIT has no current-period holding row by definition, so the current
         # lookup always misses for exactly the rows that most need a name. Falling
         # back to the prior period is what lets the feed say WHAT was exited; the
@@ -836,66 +836,42 @@ def _build_activity_rows(
         )
 
 
-def _qoq_deltas_table(conn: sqlite3.Connection) -> str | None:
-    """The qualified name of `agg_qoq_deltas`, or None when it is not reachable.
+def _qoq_deltas_schema(conn: sqlite3.Connection) -> str | None:
+    """Return the unique reachable aggregate schema, or None when wholly absent.
 
-    The aggregate lives in `inst_agg.db` while the composed views live in the
-    snapshot, so the publish path ATTACHes one to the other and the table is
-    reachable under a schema prefix rather than in `main`. Every test fixture
-    seeds both into one database, where it is in `main`. Searching every attached
-    schema serves both without a second code path — and returning None (rather
-    than raising) keeps "this corpus has no aggregate" a legitimate answer.
+    A public/private split or two reachable aggregate schemas is corruption, not
+    a reason to choose whichever database happens to appear first.
     """
+    placeholders = ",".join("?" for _ in _QOQ_SCHEMA_SENTINELS)
+    candidates: list[tuple[str, set[str]]] = []
     for _seq, schema, _file in conn.execute("PRAGMA database_list").fetchall():
-        found = conn.execute(
-            f'SELECT name FROM "{schema}".sqlite_master'  # nosec B608
-            " WHERE type='table' AND name='agg_qoq_deltas'"
-        ).fetchone()
-        if found:
-            return f'"{schema}".agg_qoq_deltas'
-    return None
+        quoted_schema = _quote_sqlite_identifier(str(schema))
+        names = {
+            str(row[0])
+            for row in conn.execute(
+                f"SELECT name FROM {quoted_schema}.sqlite_master"
+                f" WHERE name IN ({placeholders})",
+                _QOQ_SCHEMA_SENTINELS,
+            )
+        }
+        if names:
+            candidates.append((str(schema), names))
+    if not candidates:
+        return None
+    if len(candidates) != 1:
+        raise InstAggError("multiple reachable aggregate schemas are ambiguous")
+    schema, names = candidates[0]
+    if "agg_qoq_deltas" not in names:
+        raise InstAggError("aggregate private state is reachable without its public relation")
+    return schema
 
 
-def _activity_display_fields(
-    conn: sqlite3.Connection, periods: tuple[str, ...]
-) -> dict[tuple[str, str, str], tuple[str, str]]:
-    """`(cik, period, position_key) -> (issuer_key, issuer_name)` for the feed.
-
-    The activity grain reads `agg_qoq_deltas`, which carries no issuer display
-    fields — R13 requires the projection to supply them. `issuer_key` MUST come
-    from `inst_agg._issuer_key`, the same function the issuer-holder grain and
-    the published aggregate use. An earlier version minted `f"cusip:{cusip}"`
-    here: a different namespace (`cusip:` not `cusip6:`) at a different
-    granularity (the 9-character security, not the 6-character issuer block)
-    with no entity resolution, so the intersection with every other grain's
-    issuer keys was empty — every activity→issuer link resolved zero rows, and
-    two share classes of one issuer read as two issuers in the feed alone.
-
-    Ties (a position composed from several reported rows) resolve to the
-    lexicographically smallest issuer name, matching the issuer-holder bucket.
-    """
-    if not periods:
-        return {}
-    placeholders = ",".join("?" for _ in periods)
-    out: dict[tuple[str, str, str], tuple[str, str]] = {}
-    for cik, period, security_id, cusip, issuer_name, entity_id, link_state in conn.execute(
-        "SELECT h.cik, h.period_of_report, h.security_id, h.cusip, h.issuer_name_raw,"
-        "       s.entity_id, s.entity_link_state"
-        " FROM v_filer_reported_holdings h"
-        " LEFT JOIN securities s ON s.security_id = h.security_id"
-        f" WHERE h.period_of_report IN ({placeholders})"  # nosec B608
-        " ORDER BY h.cik, h.period_of_report, h.holding_id",
-        periods,
-    ):
-        position_key = _position_key(security_id, cusip)
-        if position_key is None:
-            continue
-        issuer_key, _source = _issuer_key(entity_id, link_state, cusip, issuer_name)
-        key = (cik, period, position_key)
-        previous = out.get(key)
-        if previous is None or (
-            issuer_name is not None
-            and (previous[1] is None or issuer_name < previous[1])
-        ):
-            out[key] = (issuer_key, issuer_name)
-    return out
+def _qoq_deltas_table(
+    conn: sqlite3.Connection, *, schema: str | None = None
+) -> str | None:
+    """Compatibility seam returning the uniquely qualified public relation."""
+    if schema is None:
+        schema = _qoq_deltas_schema(conn)
+    if schema is None:
+        return None
+    return f"{_quote_sqlite_identifier(schema)}.agg_qoq_deltas"

@@ -4,6 +4,19 @@
 **Transport: interactive-disk** · **Date: 2026-08-08** · **Base: `origin/main` @
 `a80812f`**.
 
+**Execution record (2026-08-11):** implementation and the append-only T0-v11
+binding run are complete. T0-v11 exited zero at SHA-256
+`7078a42934484c9c5ba7f975654476e0788c385dbaf8108c0d429a58ba91a453`
+(63,400 bytes / 171 lines); full aggregate/serving times were 156.725 s and
+123.690 s, and the final tail projection was 14,553/18,000 files. The
+tail-pagination delta is controlled by
+`RUN-M2-11-T0-tail-pagination-delta-plan.md` at SHA-256
+`068e7fc04edf61e0e3d25e40ff504b003faa0d0ab6d26fa65982a4899e119fad`.
+Independent QA approved the exact candidate on round 3 with token
+`sha256:7747af94f5100803543d822c06fd989033c7525a43f2da1e459e3f285ebcb8cb`.
+Documentation review, PR/merge, and supervised deployment remain pending and
+must not be inferred from this execution record.
+
 **Naming note:** M2-9 and M2-10 are taken; this run is M2-11; withdrawn refresh scope
 lives at `docs/build/RUN-M2-12-inst-refresh-stub.md` (T13), which now also carries the
 snapshot-retention obligation (round-3 reviewer note).

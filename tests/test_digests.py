@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -444,11 +445,144 @@ def test_inst_logical_digest_excludes_ingested_at_and_build_meta(inst_agg_conn):
     before = logical_digest(agg, LOGICAL_PROJECTIONS["inst"])
     # Volatile provenance and the excluded meta table must not move the digest.
     agg.execute("UPDATE agg_filer_registry SET ingested_at = '2099-01-01T00:00:00Z'")
-    agg.execute("UPDATE agg_qoq_deltas SET ingested_at = '2099-01-01T00:00:00Z'")
+    agg.execute(
+        "UPDATE agg_build_meta SET value = '2099-01-01T00:00:00Z'"
+        " WHERE key = 'ingested_at'"
+    )
     agg.execute(
         "INSERT INTO agg_build_meta (key, value) VALUES ('extra', 'whatever')"
     )
     assert logical_digest(agg, LOGICAL_PROJECTIONS["inst"]) == before
+
+
+def test_compact_qoq_view_matches_legacy_values_types_and_digest():
+    from populus.inst_agg import _load_ddl
+
+    compact = sqlite3.connect(":memory:")
+    legacy = sqlite3.connect(":memory:")
+    compact.executescript(_load_ddl())
+    compact.execute(
+        "INSERT INTO agg_build_meta(key,value) VALUES('ingested_at',?)",
+        ("2026-08-10T00:00:00Z",),
+    )
+    compact.executemany(
+        "INSERT INTO _agg_qoq_filers(filer_id,cik) VALUES(?,?)",
+        [(1, "0000000001"), (2, "0000000002")],
+    )
+    compact.executemany(
+        "INSERT INTO _agg_qoq_periods(period_id,period) VALUES(?,?)",
+        [
+            (1, "2025-12-31"),
+            (2, "2026-03-31"),
+            (3, "2026-06-30"),
+        ],
+    )
+    rows = []
+    for mask in range(32):
+        rows.append(
+            (
+                1 + mask % 2,
+                f"sid:code-{mask:02d}",
+                mask % 3,
+                2 + mask % 2,
+                1,
+                mask % 5,
+                -(2**63) if mask == 0 else (None if mask % 4 == 0 else mask),
+                2**63 - 1 if mask == 31 else (None if mask % 5 == 0 else mask + 1),
+                None if mask % 3 == 0 else 1,
+                None if mask % 4 == 0 else mask,
+                None if mask % 5 == 0 else mask + 1,
+                None if mask % 6 == 0 else 1,
+                mask % 3,
+                mask,
+            )
+        )
+    compact.executemany(
+        "INSERT INTO _agg_qoq_deltas VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows
+    )
+
+    legacy.executescript(
+        """
+        CREATE TABLE agg_qoq_deltas (
+          cik TEXT NOT NULL, position_key TEXT NOT NULL, put_call TEXT NOT NULL,
+          curr_period TEXT NOT NULL, prev_period TEXT NOT NULL,
+          change_kind TEXT NOT NULL, prev_value_usd INTEGER,
+          curr_value_usd INTEGER, delta_value_usd INTEGER, prev_shares INTEGER,
+          curr_shares INTEGER, delta_shares INTEGER, ssh_prnamt_type TEXT NOT NULL,
+          flags TEXT NOT NULL, ingested_at TEXT NOT NULL,
+          PRIMARY KEY(cik,position_key,put_call,ssh_prnamt_type,curr_period)
+        );
+        """
+    )
+    public_rows = compact.execute("SELECT * FROM agg_qoq_deltas").fetchall()
+    legacy.executemany(
+        "INSERT INTO agg_qoq_deltas VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        public_rows,
+    )
+
+    columns = [row[1] for row in compact.execute("PRAGMA table_info(agg_qoq_deltas)")]
+    order = "cik,position_key,put_call,ssh_prnamt_type,curr_period"
+    typed = ",".join(f"typeof({column})" for column in columns)
+    assert compact.execute(
+        f"SELECT *,{typed} FROM agg_qoq_deltas ORDER BY {order}"  # nosec B608
+    ).fetchall() == legacy.execute(
+        f"SELECT *,{typed} FROM agg_qoq_deltas ORDER BY {order}"  # nosec B608
+    ).fetchall()
+    projection = {"agg_qoq_deltas": frozenset({"ingested_at"})}
+    with pytest.raises(DigestError, match="safe integer domain"):
+        logical_digest(compact, projection)
+    with pytest.raises(DigestError, match="safe integer domain"):
+        logical_digest(legacy, projection)
+    compact.execute(
+        "UPDATE _agg_qoq_deltas SET prev_value_usd=?"
+        " WHERE position_key='sid:code-00'",
+        (-(2**53 - 1),),
+    )
+    compact.execute(
+        "UPDATE _agg_qoq_deltas SET curr_value_usd=?"
+        " WHERE position_key='sid:code-31'",
+        (2**53 - 1,),
+    )
+    legacy.execute(
+        "UPDATE agg_qoq_deltas SET prev_value_usd=?"
+        " WHERE position_key='sid:code-00'",
+        (-(2**53 - 1),),
+    )
+    legacy.execute(
+        "UPDATE agg_qoq_deltas SET curr_value_usd=?"
+        " WHERE position_key='sid:code-31'",
+        (2**53 - 1,),
+    )
+    assert logical_digest(compact, projection) == logical_digest(legacy, projection)
+
+    assert compact.execute(
+        "SELECT type FROM sqlite_master WHERE name='agg_qoq_deltas'"
+    ).fetchone() == ("view",)
+    backing_sql = compact.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table'"
+        " AND name='_agg_qoq_deltas'"
+    ).fetchone()[0]
+    assert "WITHOUT ROWID" in backing_sql.upper()
+    assert compact.execute(
+        "SELECT filer_id,cik FROM _agg_qoq_filers ORDER BY filer_id"
+    ).fetchall() == [(1, "0000000001"), (2, "0000000002")]
+    assert {row[0] for row in compact.execute(
+        "SELECT DISTINCT change_kind FROM agg_qoq_deltas"
+    )} == {"new", "add", "trim", "exit", "unclassified"}
+    with pytest.raises(sqlite3.OperationalError, match="view"):
+        compact.execute("UPDATE agg_qoq_deltas SET change_kind='new'")
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        compact.execute(
+            "INSERT INTO _agg_qoq_deltas VALUES(1,'sid:bad-code',3,2,1,0,"
+            "NULL,NULL,NULL,NULL,NULL,NULL,0,0)"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        compact.execute(
+            "INSERT INTO _agg_qoq_deltas VALUES(1,'sid:bad-mask',0,2,1,0,"
+            "NULL,NULL,NULL,NULL,NULL,NULL,0,32)"
+        )
+    compact.close()
+    legacy.close()
 
 
 def test_inst_logical_digest_null_concentration_distinct_from_zero(inst_agg_conn):

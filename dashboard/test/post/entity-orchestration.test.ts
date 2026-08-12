@@ -14,6 +14,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { totalmem } from "node:os";
 import path from "node:path";
 
 import {
@@ -24,7 +25,13 @@ import {
   type StorageLike,
 } from "../../src/scripts/entity-client.ts";
 import { tickerDataKey } from "../../src/lib/derive.ts";
-import { FILER_INDEX_PATH } from "../../src/lib/filer-payload.ts";
+import {
+  FILER_INDEX_PATH,
+  filerShardPath,
+  fragmentFilerPayload,
+  type FilerFragmentV2,
+  type FilerPayloadV1,
+} from "../../src/lib/filer-payload.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..", "..");
 const DIST_CUT = path.join(DASH, "dist-cut");
@@ -32,11 +39,18 @@ const BUDGET = "10";
 const CUT_TICKER = "AAPL"; // every ticker is cut under budget 10 (members first)
 
 before(() => {
+  assert.ok(totalmem() >= 34_359_738_368, "forced-cut build requires at least 32 GiB RAM");
   execFileSync("npx", ["astro", "build", "--outDir", "dist-cut"], {
     cwd: DASH,
-    env: { ...process.env, POPULUS_TEST_PAGE_BUDGET: BUDGET },
+    env: {
+      ...process.env,
+      NODE_OPTIONS: "--max-old-space-size=24576",
+      POPULUS_TEST_PAGE_BUDGET: BUDGET,
+    },
     stdio: "ignore",
-    timeout: 240_000,
+    // The full institutional corpus needs roughly 4.5 minutes on the owner
+    // runner. Keep the timeout bounded, but above the observed honest build.
+    timeout: 900_000,
   });
 });
 
@@ -200,7 +214,7 @@ test("filer key absent from a real routing index → S2, no shard fetched", asyn
   const h = harness("?k=f:1999999", async (url) => {
     urls.push(url);
     // a valid index that simply does not carry this CIK
-    return { kind: "http", status: 200, body: { v: 1, kind: "filer-index", absent: null, shards: {} } };
+    return { kind: "http", status: 200, body: { v: 2, kind: "filer-index", absent: null, routes: {} } };
   });
   const handle = runEntityDriver(h.deps);
   await handle.done;
@@ -213,7 +227,7 @@ test("STRICT (F6): a routing index with an undeclared key → bad_payload naming
   const h = harness("?k=f:1999999", async () => ({
     kind: "http",
     status: 200,
-    body: { v: 1, kind: "filer-index", absent: null, shards: {}, injected: true },
+    body: { v: 2, kind: "filer-index", absent: null, routes: {}, injected: true },
   }));
   const handle = runEntityDriver(h.deps);
   await handle.done;
@@ -223,63 +237,102 @@ test("STRICT (F6): a routing index with an undeclared key → bad_payload naming
   assert.ok(h.renders.at(-1)!.includes("injected"));
 });
 
-test("STRICT (F6): a shard envelope with an undeclared key → bad_payload naming it", async () => {
-  const h = harness("?k=f:1999999", async (url) => {
-    if (url === FILER_INDEX_PATH)
-      return {
-        kind: "http",
-        status: 200,
-        body: { v: 1, kind: "filer-index", absent: null, shards: { "0001999999": "0" } },
-      };
-    return {
-      kind: "http",
-      status: 200,
-      body: { v: 1, kind: "filer-shard", shard: 0, shard_count: 1, entries: {}, smuggled: 1 },
-    };
-  });
-  const handle = runEntityDriver(h.deps);
-  await handle.done;
-  assert.equal(handle.state(), "bad_payload");
-  assert.ok(h.renders.at(-1)!.includes("undeclared key"));
-  assert.ok(h.renders.at(-1)!.includes("smuggled"));
-});
+interface FilerFamilyFixture {
+  cik: string;
+  payload: FilerPayloadV1;
+  fragments: FilerFragmentV2[];
+  index: Record<string, unknown>;
+  shards: Map<number, Record<string, unknown>>;
+}
 
-/* Codex F5: envelope validation must require PRESENCE + type of every
-   discriminator and geometry field, not merely reject unknown keys — an index
-   missing `kind`, or a shard missing `shard_count`, was accepted before. */
+function parityFilerPayload(): FilerPayloadV1 {
+  const parity = JSON.parse(
+    readFileSync(path.join(DASH, "..", "tests", "fixtures", "filer_payload_parity.v1.json"), "utf8"),
+  ) as { cases: { expected?: string }[] };
+  const expected = parity.cases.find((c) => c.expected !== undefined)?.expected;
+  assert.ok(expected, "the shared parity fixture carries a literal logical payload");
+  return JSON.parse(expected) as FilerPayloadV1;
+}
 
-const validIndexBody = () => ({
-  v: 1,
-  kind: "filer-index",
-  absent: null,
-  shards: { "0001999999": "0" } as Record<string, unknown>,
-});
-const validShardBody = () => ({
-  v: 1,
-  kind: "filer-shard",
-  shard: 0,
-  shard_count: 1,
-  entries: {} as Record<string, unknown>,
-});
+function validFilerFamily(): FilerFamilyFixture {
+  const payload = parityFilerPayload();
+  const fragments = fragmentFilerPayload(payload);
+  assert.ok(fragments.length > 1, "the orchestration fixture must cross shard boundaries");
+  const shardCount = fragments.length;
+  const shards = new Map<number, Record<string, unknown>>();
+  for (const fragment of fragments) {
+    shards.set(fragment.part, {
+      v: 2,
+      kind: "filer-fragment-shard",
+      shard: fragment.part,
+      shard_count: shardCount,
+      entries: { [`${fragment.cik}:${fragment.part}`]: fragment },
+    });
+  }
+  return {
+    cik: payload.cik,
+    payload,
+    fragments,
+    index: {
+      v: 2,
+      kind: "filer-index",
+      absent: null,
+      routes: { [payload.cik]: [0, shardCount - 1, fragments.length] },
+    },
+    shards,
+  };
+}
 
 async function runFilerWith(
   indexBody: unknown,
-  shardBody: unknown,
-): Promise<{ state: string; lastRender: string }> {
-  const h = harness("?k=f:1999999", async (url) => {
+  shardBodies: Map<number, unknown>,
+  cik = validFilerFamily().cik,
+): Promise<{ state: string; lastRender: string; urls: string[] }> {
+  const urls: string[] = [];
+  const h = harness(`?k=f:${Number(cik)}`, async (url) => {
+    urls.push(url);
     if (url === FILER_INDEX_PATH) return { kind: "http", status: 200, body: indexBody };
-    return { kind: "http", status: 200, body: shardBody };
+    const match = /\/(\d+)\.v2\.json$/.exec(url);
+    const body = match ? shardBodies.get(Number(match[1])) : undefined;
+    return body === undefined
+      ? { kind: "http", status: 404, body: null }
+      : { kind: "http", status: 200, body };
   });
   const handle = runEntityDriver(h.deps);
   await handle.done;
-  return { state: handle.state(), lastRender: h.renders.at(-1)! };
+  return { state: handle.state(), lastRender: h.renders.at(-1)!, urls };
 }
 
+test("v2 multi-shard happy path fetches the exact contiguous range and renders", async () => {
+  const family = validFilerFamily();
+  const r = await runFilerWith(family.index, family.shards, family.cik);
+  assert.equal(r.state, "body");
+  assert.ok(r.lastRender.includes(family.payload.filerName));
+  assert.deepEqual(r.urls, [
+    FILER_INDEX_PATH,
+    ...family.fragments.map((fragment) => filerShardPath(fragment.part)),
+  ]);
+});
+
+test("STRICT (F6): a shard envelope with an undeclared key → bad_payload naming it", async () => {
+  const family = validFilerFamily();
+  const shards = new Map(family.shards);
+  shards.set(0, { ...shards.get(0)!, smuggled: 1 });
+  const r = await runFilerWith(family.index, shards, family.cik);
+  assert.equal(r.state, "bad_payload");
+  assert.ok(r.lastRender.includes("undeclared key"));
+  assert.ok(r.lastRender.includes("smuggled"));
+});
+
+/* Envelope validation requires presence + type of every discriminator and
+   geometry field; deleting any one must fail closed before rendering. */
+
 test("F5: each required routing-index field, DELETED → bad_payload naming it", async () => {
-  for (const field of ["v", "kind", "absent", "shards"] as const) {
-    const body = validIndexBody() as Record<string, unknown>;
+  const family = validFilerFamily();
+  for (const field of ["v", "kind", "absent", "routes"] as const) {
+    const body = structuredClone(family.index);
     delete body[field];
-    const r = await runFilerWith(body, validShardBody());
+    const r = await runFilerWith(body, family.shards, family.cik);
     assert.equal(r.state, "bad_payload", `index without ${field} must be bad_payload`);
     assert.ok(
       r.lastRender.includes(field === "v" ? "version" : field),
@@ -289,10 +342,13 @@ test("F5: each required routing-index field, DELETED → bad_payload naming it",
 });
 
 test("F5: each required shard-envelope field, DELETED → bad_payload naming it", async () => {
+  const family = validFilerFamily();
   for (const field of ["v", "kind", "shard", "shard_count", "entries"] as const) {
-    const body = validShardBody() as Record<string, unknown>;
+    const body = structuredClone(family.shards.get(0)!);
     delete body[field];
-    const r = await runFilerWith(validIndexBody(), body);
+    const shards = new Map(family.shards);
+    shards.set(0, body);
+    const r = await runFilerWith(family.index, shards, family.cik);
     assert.equal(r.state, "bad_payload", `shard without ${field} must be bad_payload`);
     assert.ok(
       r.lastRender.includes(field === "v" ? "version" : field),
@@ -301,26 +357,45 @@ test("F5: each required shard-envelope field, DELETED → bad_payload naming it"
   }
 });
 
-test("F5: a non-string shards-map value → bad_payload, never a silent S2", async () => {
-  const body = validIndexBody();
-  body.shards = { "0001999999": 7 };
-  const r = await runFilerWith(body, validShardBody());
+test("F5: a malformed route tuple → bad_payload, never a silent S2", async () => {
+  const family = validFilerFamily();
+  const body = structuredClone(family.index) as { routes: Record<string, unknown> };
+  body.routes[family.cik] = 7;
+  const r = await runFilerWith(body, family.shards, family.cik);
   assert.equal(r.state, "bad_payload");
-  assert.ok(r.lastRender.includes("non-string shard name"));
-  assert.ok(r.lastRender.includes("0001999999"));
+  assert.ok(r.lastRender.includes("not three integers"));
+  assert.ok(r.lastRender.includes(family.cik));
 });
 
 test("F5: wrong kind discriminators → bad_payload naming the kind", async () => {
-  const idx = validIndexBody() as Record<string, unknown>;
-  idx.kind = "filer-shard";
-  const r1 = await runFilerWith(idx, validShardBody());
+  const family = validFilerFamily();
+  const idx = structuredClone(family.index);
+  idx.kind = "filer-fragment-shard";
+  const r1 = await runFilerWith(idx, family.shards, family.cik);
   assert.equal(r1.state, "bad_payload");
   assert.ok(r1.lastRender.includes("filer-index"));
-  const shard = validShardBody() as Record<string, unknown>;
+  const shards = new Map(family.shards);
+  const shard = structuredClone(shards.get(0)!);
   shard.kind = "filer-index";
-  const r2 = await runFilerWith(validIndexBody(), shard);
+  shards.set(0, shard);
+  const r2 = await runFilerWith(family.index, shards, family.cik);
   assert.equal(r2.state, "bad_payload");
-  assert.ok(r2.lastRender.includes("filer-shard"));
+  assert.ok(r2.lastRender.includes("fragment shard kind"));
+});
+
+test("route geometry and a missing shard fail closed", async () => {
+  const family = validFilerFamily();
+  const tooWide = structuredClone(family.index) as { routes: Record<string, unknown> };
+  tooWide.routes[family.cik] = [0, 64, 65];
+  const range = await runFilerWith(tooWide, family.shards, family.cik);
+  assert.equal(range.state, "bad_payload");
+  assert.ok(range.lastRender.includes("outside its bounds"));
+
+  const missing = new Map(family.shards);
+  missing.delete(family.fragments.at(-1)!.part);
+  const shard = await runFilerWith(family.index, missing, family.cik);
+  assert.equal(shard.state, "server_error");
+  assert.ok(shard.lastRender.includes("HTTP 404"));
 });
 
 test("HTTP 5xx → honest server_error with retry; retry succeeds", async () => {
@@ -436,29 +511,31 @@ test("member happy path over real dist-cut bytes (cut member)", async () => {
 });
 
 
-/* F3: routing/payload identity binding. The payload is a REAL one — the
-   cross-runtime parity fixture's canonical serialization — so the test proves
-   the mismatch is caught on data that would otherwise render perfectly. */
-test("F3: a shard entry declaring a different cik than its routing is bad_payload, never rendered", async () => {
-  const parity = JSON.parse(
-    readFileSync(path.join(DASH, "..", "tests", "fixtures", "filer_payload_parity.v1.json"), "utf8"),
-  ) as { cases: { name: string; expected: string | null }[] };
-  const valid = parity.cases.find((c) => c.expected !== null)!;
-  const other = JSON.parse(valid.expected!) as { cik: string };
+/* F3: routing/payload identity binding over the real parity payload. Mutating
+   every transport envelope to the routed CIK leaves the logical metadata at
+   the original CIK; reassembly must detect that contradiction before render. */
+test("F3: fragment metadata declaring a different cik than its routing is bad_payload", async () => {
+  const family = validFilerFamily();
   const routedCik = "0009999990";
-  assert.notEqual(other.cik, routedCik, "fixture is vacuous unless the ciks differ");
-
-  const index = { v: 1, kind: "filer-index", absent: null, shards: { [routedCik]: "s0" } };
-  const shard = {
-    v: 1, kind: "filer-shard", shard: 0, shard_count: 1,
-    entries: { [routedCik]: other },
+  assert.notEqual(family.cik, routedCik, "fixture is vacuous unless the CIKs differ");
+  const fragments = family.fragments.map((fragment) => ({ ...fragment, cik: routedCik }));
+  const shards = new Map<number, Record<string, unknown>>();
+  for (const fragment of fragments) {
+    shards.set(fragment.part, {
+      v: 2,
+      kind: "filer-fragment-shard",
+      shard: fragment.part,
+      shard_count: fragments.length,
+      entries: { [`${routedCik}:${fragment.part}`]: fragment },
+    });
+  }
+  const index = {
+    v: 2,
+    kind: "filer-index",
+    absent: null,
+    routes: { [routedCik]: [0, fragments.length - 1, fragments.length] },
   };
-  const h = harness(`?k=f:${Number(routedCik)}`, async (url) =>
-    url.includes("index.v1.json")
-      ? { kind: "http", status: 200, body: index }
-      : { kind: "http", status: 200, body: shard });
-  const handle = runEntityDriver(h.deps);
-  await handle.done;
-  assert.equal(handle.state(), "bad_payload", "a foreign-cik payload must fail closed");
-  assert.ok(/cik mismatch/i.test(h.renders.at(-1)!), "the defect is named");
+  const r = await runFilerWith(index, shards, routedCik);
+  assert.equal(r.state, "bad_payload", "a foreign-CIK payload must fail closed");
+  assert.ok(/metadata CIK.*contradicts envelope CIK/i.test(r.lastRender), "the defect is named");
 });

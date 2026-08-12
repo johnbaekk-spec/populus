@@ -12,12 +12,14 @@ carryover, the process-restart semantics.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
 import stat
 import subprocess  # nosec B404 — real interpreter restart for R24/F11, argv only
 import sys
+import tarfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,6 +36,7 @@ from test_publish import (
     mutate_db,
     pin,
     publish_build,
+    seed_inst,
     seed_db,
 )
 
@@ -605,6 +608,73 @@ def test_client_compat_refusal_keeps_serving_r22(tmp_path):
     # The prior verified build is untouched and keeps serving.
     assert incompatible.current_build() == serving
     assert make_client(cache, repo, moment=moment).current_build() == serving
+
+
+def test_inst_schema_1_1_previous_client(tmp_path):
+    """The exact released client installs and reads the schema-1.1 relations."""
+    expected_sha = "7391d947f72cf408a173f1e7938102608b2269d4"
+    previous_sha = os.environ.get("POPULUS_PREVIOUS_CLIENT_SHA")
+    if previous_sha is None:
+        pytest.skip("set POPULUS_PREVIOUS_CLIENT_SHA for the release compatibility gate")
+    assert previous_sha == expected_sha
+
+    db = seed_db(tmp_path / "populus.db")
+    seed_inst(db, covered=True)
+    repo = make_repo(tmp_path)
+    report = publish_build(db, repo)
+    manifest = json.loads(
+        (repo / "builds" / report.build_id / "manifest.json").read_text()
+    )
+    assert manifest["modules"]["inst"]["schema_version"] == "1.1"
+
+    archived = subprocess.run(  # nosec B603 — fixed git argv and reviewed SHA
+        ["git", "archive", previous_sha, "src/populus"],
+        cwd=REPO_ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    previous_root = tmp_path / "previous-client"
+    previous_root.mkdir()
+    with tarfile.open(fileobj=io.BytesIO(archived), mode="r:") as bundle:
+        bundle.extractall(previous_root, filter="data")
+
+    cache = tmp_path / "previous-cache"
+    script = (
+        "import json, sqlite3\n"
+        "from datetime import datetime, timezone\n"
+        "from pathlib import Path\n"
+        "from populus.client.snapshot import LocalRepoFetcher, SnapshotClient\n"
+        f"repo=Path({str(repo)!r}); cache=Path({str(cache)!r})\n"
+        "client=SnapshotClient(cache, LocalRepoFetcher(repo), module='inst', "
+        "now=lambda: datetime(2026,7,23,12,tzinfo=timezone.utc))\n"
+        "result=client.refresh(); assert result.status == 'installed', result\n"
+        "db=sqlite3.connect(client.db_path())\n"
+        "relations=['agg_filer_registry','agg_qoq_deltas',"
+        "'agg_issuer_top_holders','agg_filer_concentration']\n"
+        "counts={name: db.execute(f'SELECT COUNT(*) FROM {name}').fetchone()[0] "
+        "for name in relations}\n"
+        "kind=db.execute(\"SELECT type FROM sqlite_master WHERE name='agg_qoq_deltas'\").fetchone()[0]\n"
+        "db.close(); print(json.dumps({'status':result.status,'counts':counts,'kind':kind},sort_keys=True))\n"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(previous_root / "src")
+    completed = subprocess.run(  # nosec B603 — current interpreter, fixed script
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["status"] == "installed"
+    assert result["kind"] == "view"
+    assert set(result["counts"]) == {
+        "agg_filer_registry",
+        "agg_qoq_deltas",
+        "agg_issuer_top_holders",
+        "agg_filer_concentration",
+    }
 
 
 def test_client_attestation_sites_pointer_and_manifest(served):

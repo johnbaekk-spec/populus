@@ -11,13 +11,26 @@ Hermetic and always-run: crafted corpora, no network, no fixture rewrite.
 
 from __future__ import annotations
 
-from populus.amendments import ensure_views
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from populus.amendments import (
+    ViewVerificationError,
+    ensure_views,
+    materialized_inst_derivation_views,
+)
 from populus.db import connect, init_db
 from populus.identity.registry import ensure_registry
 from populus.ingest.inst13f import (
     COVER_CONFLICT,
     COVER_EXACT,
     COVER_ROUNDING,
+    _COVERAGE_DENOMINATOR_SQL,
+    _PER_FILING_COVER_SQL,
+    _production_coverage_queries,
     classify_cover,
     compute_coverage,
     compute_period_coverage,
@@ -652,6 +665,703 @@ def test_sql_and_python_agree_beyond_the_integer_promotion_boundary(tmp_path):
             reference_kept = 1000 * (resolved - declared) <= max(1_000_000, declared)
             assert sql_kept == python_kept == reference_kept, (declared, resolved)
             assert delta_type == tol_type == "integer", (declared, resolved)
+    conn.close()
+
+
+# --- RUN M2-11 T0 delta: connection-local materialization --------------------
+
+
+_MATERIALIZED_TEMP_NAMES = (
+    "_populus_inst_affiliation_sources",
+    "_populus_inst_affiliation_edges",
+    "_populus_inst_affiliation_edges_lookup",
+    "v_inst_reconciled_filings",
+    "_populus_inst_coverage_totals",
+    "_populus_inst_coverage_totals_by_filing",
+    "v_filer_reported_filings",
+    "v_filer_reported_filings_by_filing",
+    "v_filer_reported_holdings",
+    "v_default_inst_filings",
+    "v_default_inst_filings_by_filing",
+    "v_default_holdings",
+    "_populus_inst_agg_input",
+)
+
+
+def _temp_objects(conn):
+    placeholders = ", ".join("?" for _ in _MATERIALIZED_TEMP_NAMES)
+    return conn.execute(
+        "SELECT type, name FROM sqlite_temp_schema"
+        f" WHERE name IN ({placeholders}) ORDER BY name",  # nosec B608
+        _MATERIALIZED_TEMP_NAMES,
+    ).fetchall()
+
+
+def _set_filing_semantics(
+    conn,
+    fid,
+    *,
+    filed=None,
+    amendment_type=None,
+    amendment_no=None,
+    file_number_norm="028-00001",
+    other_managers=(),
+    lifecycle="active",
+):
+    """Shape one `_file` row for amendment/affiliation materialization tests."""
+    conn.execute(
+        "UPDATE inst_filings SET"
+        " filed_date = COALESCE(?, filed_date),"
+        " submission_type = ?, is_amendment = ?, amendment_type = ?,"
+        " amendment_no = ?, file_number_norm = ?, other_managers = ?,"
+        " lifecycle = ? WHERE filing_id = ?",
+        (
+            filed,
+            "13F-HR/A" if amendment_type is not None else "13F-HR",
+            amendment_type is not None,
+            amendment_type,
+            amendment_no,
+            file_number_norm,
+            json.dumps(list(other_managers), separators=(",", ":")),
+            lifecycle,
+            fid,
+        ),
+    )
+
+
+def _manager(file_number_norm):
+    return {"file_number_norm": file_number_norm}
+
+
+def test_materialized_coverage_and_periods_have_complete_semantic_parity(tmp_path):
+    """D4/D7/D9: complete dataclasses stay equal across every semantic case."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:EXACT", cik="0000000001", period="2026-03-31",
+          declared=1_000_000, resolved=1_000_000)
+    _file(conn, fid="inst:UNDER", cik="0000000002", period="2026-03-31",
+          declared=1_000_000, resolved=900_000, cusip=MSFT)
+    _file(conn, fid="inst:ROUND", cik="0000000003", period="2026-06-30",
+          declared=1_000_000, resolved=1_000_999)
+    _file(conn, fid="inst:CONFLICT", cik="0000000004", period="2026-06-30",
+          declared=10_000_000, resolved=10_010_001, cusip=MSFT)
+    _filer(conn, "0000000005")
+    sid = _security(conn, "sec:failed")
+    _load(
+        conn,
+        fid="inst:FAILED",
+        cik="0000000005",
+        period="2026-06-30",
+        filed="2026-07-15",
+        total=None,
+        parse_status="failed",
+        failure_kind="cover_malformed",
+        flags=["cover_failed"],
+        holds=[_hold(ordinal=1, issuer="FAILED", cusip=APPLE, value=500,
+                     security_id=sid)],
+    )
+    _file(conn, fid="inst:ZERO", cik="0000000006", period="2026-06-30",
+          declared=10_000, resolved=0)
+    conn.execute("DELETE FROM inst_holdings WHERE filing_id = 'inst:ZERO'")
+    conn.execute(
+        "INSERT INTO security_list_intervals"
+        " (security_id, id_type, value, valid_from, valid_to, quarter,"
+        "  is_option, status_flag, provenance, confidence, review_state,"
+        "  license_id, source_url, list_sha256, parser_version,"
+        "  normalization_version)"
+        " VALUES (?, 'cusip', ?, '2026-01-01', '2026-04-01', '2026q1',"
+        " 0, '', 'sec-13f-list', 'high', 'auto', 'sec-13f-list', 'u',"
+        " 'sha', 'p', 'n')",
+        (sid, APPLE),
+    )
+
+    expected_coverage = compute_coverage(conn)
+    expected_periods = compute_period_coverage(conn)
+    assert [p.covered_by_list for p in expected_periods] == [True, False]
+    assert expected_coverage.cover_failed_count == 1
+    assert expected_coverage.cover_conflict_filing_ids == ("inst:CONFLICT",)
+    assert expected_coverage.cover_rounding_count == 1
+
+    with materialized_inst_derivation_views(conn):
+        assert conn.execute(
+            "SELECT 1 FROM _populus_inst_coverage_totals"
+            " WHERE filing_id = 'inst:ZERO'"
+        ).fetchone() is None
+        assert compute_coverage(conn) == expected_coverage
+        assert compute_period_coverage(conn) == expected_periods
+    conn.close()
+
+
+def test_coverage_sql_uses_owned_totals_only_inside_materializer(tmp_path):
+    """R3/R7 removal-fails: TEMP entry switches every expensive read once."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:ONE", cik="0000000001",
+          declared=1_000, resolved=1_000)
+
+    baseline = _production_coverage_queries(conn)
+    assert baseline["coverage_denominator"] == _COVERAGE_DENOMINATOR_SQL
+    assert baseline["cover_dispositions_reconciled"] == (
+        _PER_FILING_COVER_SQL.format(view="v_inst_reconciled_filings")
+    )
+    with materialized_inst_derivation_views(conn):
+        selected = _production_coverage_queries(conn)
+        for name in (
+            "coverage_denominator",
+            "coverage_numerator",
+            "period_coverage_denominator",
+            "period_coverage_numerator",
+            "cover_dispositions_reconciled",
+            "cover_dispositions_default",
+        ):
+            assert "_populus_inst_coverage_totals" in selected[name]
+            assert "inst_holdings" not in selected[name]
+        assert "json_each(v_default_inst_filings.flags)" in selected[
+            "coverage_cover_failed"
+        ]
+    assert _production_coverage_queries(conn) == baseline
+    conn.close()
+
+
+def test_materialized_filing_rows_match_every_survivor_and_affiliation_edge_case(
+    tmp_path,
+):
+    """A2–A6: complete TEMP/main rows agree across the rule's decision tree."""
+    conn = _fresh(tmp_path)
+
+    # All three ordering tie-breakers plus additive NEW_HOLDINGS.  Only TIE-D
+    # (largest accession at the winning date/number) and later additive TIE-E
+    # survive the RESTATEMENT stage.
+    for fid in ("inst:TIE-A", "inst:TIE-B", "inst:TIE-C", "inst:TIE-D", "inst:TIE-E"):
+        _file(conn, fid=fid, cik="0000000001", declared=1_000, resolved=1_000)
+    _set_filing_semantics(conn, "inst:TIE-A", filed="2026-04-10")
+    _set_filing_semantics(
+        conn, "inst:TIE-B", filed="2026-04-11",
+        amendment_type="RESTATEMENT", amendment_no=1,
+    )
+    _set_filing_semantics(
+        conn, "inst:TIE-C", filed="2026-04-11",
+        amendment_type="RESTATEMENT", amendment_no=2,
+    )
+    _set_filing_semantics(
+        conn, "inst:TIE-D", filed="2026-04-11",
+        amendment_type="RESTATEMENT", amendment_no=2,
+    )
+    _set_filing_semantics(
+        conn, "inst:TIE-E", filed="2026-04-12",
+        amendment_type="NEW_HOLDINGS", amendment_no=3,
+    )
+
+    # The covering source fails cover reconciliation, but affiliation is defined
+    # over PRE-cover survivors, so COVERED must still be suppressed. Duplicate
+    # manager entries are semantically harmless.
+    _file(
+        conn, fid="inst:COVERER", cik="0000000002",
+        declared=1_000, resolved=1_000_000,
+    )
+    _set_filing_semantics(
+        conn, "inst:COVERER", file_number_norm="028-COVERER",
+        other_managers=(_manager("028-COVERED"), _manager("028-COVERED")),
+    )
+    _file(conn, fid="inst:COVERED", cik="0000000003", declared=2_000, resolved=2_000)
+    _set_filing_semantics(conn, "inst:COVERED", file_number_norm="028-COVERED")
+
+    # A superseded original's stale manager list cannot suppress VICTIM; the
+    # surviving restatement intentionally drops that list.
+    _file(conn, fid="inst:STALE-ORIG", cik="0000000004", declared=3_000, resolved=3_000)
+    _set_filing_semantics(
+        conn, "inst:STALE-ORIG", filed="2026-04-10",
+        file_number_norm="028-STALE", other_managers=(_manager("028-VICTIM"),),
+    )
+    _file(conn, fid="inst:STALE-REST", cik="0000000004", declared=4_000, resolved=4_000)
+    _set_filing_semantics(
+        conn, "inst:STALE-REST", filed="2026-04-11",
+        amendment_type="RESTATEMENT", amendment_no=1,
+        file_number_norm="028-STALE",
+    )
+    _file(conn, fid="inst:VICTIM", cik="0000000005", declared=5_000, resolved=5_000)
+    _set_filing_semantics(conn, "inst:VICTIM", file_number_norm="028-VICTIM")
+
+    # A filing cannot suppress itself; affiliation is period-local; NULL never
+    # matches; and an inactive source contributes no manager edge.
+    _file(conn, fid="inst:SELF", cik="0000000006", declared=6_000, resolved=6_000)
+    _set_filing_semantics(
+        conn, "inst:SELF", file_number_norm="028-SELF",
+        other_managers=(_manager("028-SELF"),),
+    )
+    _file(conn, fid="inst:CROSS-SOURCE", cik="0000000007", declared=7_000, resolved=7_000)
+    _set_filing_semantics(
+        conn, "inst:CROSS-SOURCE", file_number_norm="028-SOURCE",
+        other_managers=(_manager("028-CROSS"),),
+    )
+    _file(
+        conn, fid="inst:CROSS-TARGET", cik="0000000008", period="2026-06-30",
+        declared=8_000, resolved=8_000,
+    )
+    _set_filing_semantics(conn, "inst:CROSS-TARGET", file_number_norm="028-CROSS")
+    _file(conn, fid="inst:NULL", cik="0000000009", declared=9_000, resolved=9_000)
+    _set_filing_semantics(conn, "inst:NULL", file_number_norm=None)
+    _file(conn, fid="inst:INACTIVE", cik="0000000010", declared=10_000, resolved=10_000)
+    _set_filing_semantics(
+        conn, "inst:INACTIVE", lifecycle="retired",
+        file_number_norm="028-INACTIVE",
+        other_managers=(_manager("028-INACTIVE-VICTIM"),),
+    )
+    _file(
+        conn, fid="inst:INACTIVE-VICTIM", cik="0000000011",
+        declared=11_000, resolved=11_000,
+    )
+    _set_filing_semantics(
+        conn, "inst:INACTIVE-VICTIM", file_number_norm="028-INACTIVE-VICTIM"
+    )
+
+    main_reconciled_cursor = conn.execute(
+        "SELECT * FROM main.v_inst_reconciled_filings ORDER BY filing_id"
+    )
+    main_reconciled_columns = tuple(
+        column[0] for column in main_reconciled_cursor.description
+    )
+    main_reconciled_rows = main_reconciled_cursor.fetchall()
+    assert {row[0] for row in main_reconciled_rows} == {
+        "inst:COVERER",
+        "inst:CROSS-SOURCE",
+        "inst:CROSS-TARGET",
+        "inst:INACTIVE-VICTIM",
+        "inst:NULL",
+        "inst:SELF",
+        "inst:STALE-REST",
+        "inst:TIE-D",
+        "inst:TIE-E",
+        "inst:VICTIM",
+    }
+
+    main_reported_cursor = conn.execute(
+        "SELECT * FROM main.v_filer_reported_filings ORDER BY filing_id"
+    )
+    main_reported_columns = tuple(
+        column[0] for column in main_reported_cursor.description
+    )
+    main_reported_rows = main_reported_cursor.fetchall()
+    assert {row[0] for row in main_reported_rows} == {
+        "inst:COVERED",
+        "inst:CROSS-SOURCE",
+        "inst:CROSS-TARGET",
+        "inst:INACTIVE-VICTIM",
+        "inst:NULL",
+        "inst:SELF",
+        "inst:STALE-REST",
+        "inst:TIE-D",
+        "inst:TIE-E",
+        "inst:VICTIM",
+    }
+    main_reported_holdings = conn.execute(
+        "SELECT * FROM main.v_filer_reported_holdings ORDER BY holding_id"
+    ).fetchall()
+
+    main_default_cursor = conn.execute(
+        "SELECT * FROM main.v_default_inst_filings ORDER BY filing_id"
+    )
+    main_default_columns = tuple(
+        column[0] for column in main_default_cursor.description
+    )
+    main_default_rows = main_default_cursor.fetchall()
+    assert {row[0] for row in main_default_rows} == {
+        "inst:CROSS-SOURCE",
+        "inst:CROSS-TARGET",
+        "inst:INACTIVE-VICTIM",
+        "inst:NULL",
+        "inst:SELF",
+        "inst:STALE-REST",
+        "inst:TIE-D",
+        "inst:TIE-E",
+        "inst:VICTIM",
+    }
+    main_default_holdings = conn.execute(
+        "SELECT * FROM main.v_default_holdings ORDER BY holding_id"
+    ).fetchall()
+    expected_totals = conn.execute(
+        "SELECT filing_id, COALESCE(SUM(value_usd), 0) AS resolved_usd"
+        " FROM main.inst_holdings WHERE security_id IS NOT NULL"
+        " GROUP BY filing_id ORDER BY filing_id"
+    ).fetchall()
+
+    with materialized_inst_derivation_views(conn):
+        temp_reconciled_cursor = conn.execute(
+            "SELECT * FROM temp.v_inst_reconciled_filings ORDER BY filing_id"
+        )
+        assert tuple(
+            column[0] for column in temp_reconciled_cursor.description
+        ) == main_reconciled_columns
+        assert temp_reconciled_cursor.fetchall() == main_reconciled_rows
+        assert conn.execute(
+            "SELECT filing_id, resolved_usd"
+            " FROM temp._populus_inst_coverage_totals ORDER BY filing_id"
+        ).fetchall() == expected_totals
+        temp_reported_cursor = conn.execute(
+            "SELECT * FROM temp.v_filer_reported_filings ORDER BY filing_id"
+        )
+        assert tuple(
+            column[0] for column in temp_reported_cursor.description
+        ) == main_reported_columns
+        assert temp_reported_cursor.fetchall() == main_reported_rows
+        assert conn.execute(
+            "SELECT * FROM temp.v_filer_reported_holdings ORDER BY holding_id"
+        ).fetchall() == main_reported_holdings
+        aggregate_input = conn.execute(
+            "SELECT cik, period_of_report, security_id, cusip, issuer_name_raw,"
+            " value_usd, ssh_prnamt, ssh_prnamt_type, put_call, entity_id,"
+            " entity_link_state, unkeyed_token, is_default"
+            " FROM temp._populus_inst_agg_input"
+            " ORDER BY cik, period_of_report, unkeyed_token, cusip, security_id"
+        ).fetchall()
+        expected_aggregate_input = conn.execute(
+            "SELECT h.cik, h.period_of_report, h.security_id, h.cusip,"
+            " h.issuer_name_raw, h.value_usd, h.ssh_prnamt, h.ssh_prnamt_type,"
+            " h.put_call, s.entity_id, s.entity_link_state,"
+            " CASE WHEN h.security_id IS NULL AND h.cusip IS NULL"
+            "      THEN h.holding_id ELSE NULL END,"
+            " CASE WHEN d.filing_id IS NULL THEN 0 ELSE 1 END"
+            " FROM main.inst_holdings h"
+            " JOIN temp.v_filer_reported_filings r ON r.filing_id = h.filing_id"
+            " LEFT JOIN main.securities s ON s.security_id = h.security_id"
+            " LEFT JOIN temp.v_default_inst_filings d ON d.filing_id = h.filing_id"
+            " ORDER BY h.cik, h.period_of_report,"
+            " CASE WHEN h.security_id IS NULL AND h.cusip IS NULL"
+            "      THEN h.holding_id ELSE NULL END, h.cusip, h.security_id"
+        ).fetchall()
+        assert aggregate_input == expected_aggregate_input
+
+        temp_default_cursor = conn.execute(
+            "SELECT * FROM temp.v_default_inst_filings ORDER BY filing_id"
+        )
+        assert tuple(
+            column[0] for column in temp_default_cursor.description
+        ) == main_default_columns
+        assert temp_default_cursor.fetchall() == main_default_rows
+        assert conn.execute(
+            "SELECT * FROM temp.v_default_holdings ORDER BY holding_id"
+        ).fetchall() == main_default_holdings
+    conn.close()
+
+
+def test_materialized_stale_view_refuses_before_temp_data_creation(tmp_path):
+    """A9: direct F8 stays fail-closed; materialization rejects drift earlier."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:BAD", cik="0000000001",
+          declared=10_000_000, resolved=10_010_001)
+    conn.execute("DROP VIEW v_default_holdings")
+    conn.execute("DROP VIEW v_default_inst_filings")
+    conn.execute(
+        "CREATE VIEW v_default_inst_filings AS"
+        " SELECT r.* FROM v_inst_reconciled_filings r"
+    )
+    conn.execute(
+        "CREATE VIEW v_default_holdings AS SELECT h.* FROM inst_holdings h"
+        " JOIN v_default_inst_filings f ON f.filing_id = h.filing_id"
+    )
+    expected = compute_coverage(conn)
+    assert expected.inflated_filing_count == 1
+    assert expected.certifiable is False
+    assert expected.meets_threshold is False
+    with pytest.raises(ViewVerificationError, match="v_default_inst_filings"):
+        with materialized_inst_derivation_views(conn):
+            pass
+    assert _temp_objects(conn) == []
+    conn.close()
+
+
+def test_temp_holdings_shadow_freezes_the_complete_namespace(tmp_path):
+    """Removal-fails: without the TEMP holdings view, NEW leaks into holdings."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:OLD", cik="0000000001",
+          declared=1_000_000, resolved=1_000_000)
+    expected_coverage = compute_coverage(conn)
+    with materialized_inst_derivation_views(conn):
+        assert _temp_objects(conn) == [
+            ("table", "_populus_inst_agg_input"),
+            ("table", "_populus_inst_coverage_totals"),
+            ("index", "_populus_inst_coverage_totals_by_filing"),
+            ("view", "v_default_holdings"),
+            ("table", "v_default_inst_filings"),
+            ("index", "v_default_inst_filings_by_filing"),
+            ("table", "v_filer_reported_filings"),
+            ("index", "v_filer_reported_filings_by_filing"),
+            ("view", "v_filer_reported_holdings"),
+            ("table", "v_inst_reconciled_filings"),
+        ]
+        _file(conn, fid="inst:NEW", cik="0000000002", period="2026-06-30",
+              declared=2_000_000, resolved=2_000_000, cusip=MSFT)
+        assert conn.execute(
+            "SELECT filing_id FROM v_default_inst_filings ORDER BY filing_id"
+        ).fetchall() == [("inst:OLD",)]
+        assert conn.execute(
+            "SELECT DISTINCT filing_id FROM v_default_holdings ORDER BY filing_id"
+        ).fetchall() == [("inst:OLD",)]
+        assert conn.execute(
+            "SELECT filing_id FROM v_filer_reported_filings ORDER BY filing_id"
+        ).fetchall() == [("inst:OLD",)]
+        assert conn.execute(
+            "SELECT filing_id FROM v_inst_reconciled_filings ORDER BY filing_id"
+        ).fetchall() == [("inst:OLD",)]
+        assert conn.execute(
+            "SELECT filing_id FROM _populus_inst_coverage_totals"
+            " ORDER BY filing_id"
+        ).fetchall() == [("inst:OLD",)]
+        assert conn.execute(
+            "SELECT DISTINCT filing_id FROM v_filer_reported_holdings"
+            " ORDER BY filing_id"
+        ).fetchall() == [("inst:OLD",)]
+        assert conn.execute(
+            "SELECT DISTINCT filing_id FROM main.v_default_holdings"
+            " ORDER BY filing_id"
+        ).fetchall() == [("inst:NEW",), ("inst:OLD",)]
+        assert conn.execute(
+            "SELECT DISTINCT filing_id FROM main.v_filer_reported_holdings"
+            " ORDER BY filing_id"
+        ).fetchall() == [("inst:NEW",), ("inst:OLD",)]
+        assert compute_coverage(conn) == expected_coverage
+    assert _temp_objects(conn) == []
+    conn.close()
+
+
+@pytest.mark.parametrize("collision", [
+    "_populus_inst_affiliation_sources",
+    "_populus_inst_affiliation_edges",
+    "_populus_inst_affiliation_edges_lookup",
+    "v_inst_reconciled_filings",
+    "_populus_inst_coverage_totals",
+    "_populus_inst_coverage_totals_by_filing",
+    "_populus_inst_agg_input",
+    "v_filer_reported_filings",
+    "v_filer_reported_filings_by_filing",
+    "v_filer_reported_holdings",
+    "v_default_inst_filings",
+    "v_default_inst_filings_by_filing",
+    "v_default_holdings",
+])
+def test_materialization_refuses_every_owned_temp_name(tmp_path, collision):
+    conn = _fresh(tmp_path)
+    if collision in {
+        "_populus_inst_affiliation_edges_lookup",
+        "_populus_inst_coverage_totals_by_filing",
+        "v_filer_reported_filings_by_filing",
+        "v_default_inst_filings_by_filing",
+    }:
+        conn.execute(
+            "CREATE TEMP TABLE caller_state"
+            " (filing_id TEXT, period_of_report TEXT, manager_file_number TEXT)"
+        )
+        conn.execute(
+            f"CREATE INDEX temp.{collision}"  # nosec B608 — fixed parameter cases
+            " ON caller_state(filing_id)"
+        )
+    elif collision in {"v_filer_reported_holdings", "v_default_holdings"}:
+        conn.execute(
+            f"CREATE TEMP VIEW {collision} AS SELECT 1 AS x"  # nosec B608
+        )
+    else:
+        conn.execute(
+            f"CREATE TEMP TABLE {collision} (filing_id TEXT)"  # nosec B608
+        )
+    with pytest.raises(RuntimeError, match=collision):
+        with materialized_inst_derivation_views(conn):
+            pass
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_temp_schema WHERE name = ?", (collision,)
+    ).fetchone() == (1,)
+    conn.close()
+
+
+def test_materialization_cleans_normal_and_body_exception(tmp_path):
+    conn = _fresh(tmp_path)
+    main_schema = conn.execute(
+        "SELECT type, name, tbl_name, COALESCE(sql, '') FROM main.sqlite_schema"
+        " ORDER BY type, name, tbl_name, sql"
+    ).fetchall()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+    before = db_path.read_bytes()
+    with materialized_inst_derivation_views(conn):
+        assert len(_temp_objects(conn)) == 10
+    assert _temp_objects(conn) == []
+    with pytest.raises(ValueError, match="body failed"):
+        with materialized_inst_derivation_views(conn):
+            raise ValueError("body failed")
+    assert _temp_objects(conn) == []
+
+    assert conn.execute(
+        "SELECT type, name, tbl_name, COALESCE(sql, '') FROM main.sqlite_schema"
+        " ORDER BY type, name, tbl_name, sql"
+    ).fetchall() == main_schema
+    assert db_path.read_bytes() == before
+    conn.close()
+
+
+@pytest.mark.parametrize("failure_prefix", [
+    "CREATE TEMP TABLE _populus_inst_affiliation_sources",
+    "CREATE TEMP TABLE _populus_inst_affiliation_edges",
+    "CREATE INDEX temp._populus_inst_affiliation_edges_lookup",
+    "CREATE TEMP TABLE v_inst_reconciled_filings",
+    "CREATE TEMP TABLE v_filer_reported_filings",
+    "CREATE INDEX temp.v_filer_reported_filings_by_filing",
+    "CREATE TEMP TABLE v_default_inst_filings",
+    "CREATE INDEX temp.v_default_inst_filings_by_filing",
+    "CREATE TEMP TABLE _populus_inst_coverage_totals",
+    "CREATE UNIQUE INDEX temp._populus_inst_coverage_totals_by_filing",
+    "CREATE TEMP TABLE _populus_inst_agg_input",
+    "DROP INDEX temp._populus_inst_affiliation_edges_lookup",
+    "DROP TABLE temp._populus_inst_affiliation_edges",
+    "DROP TABLE temp._populus_inst_affiliation_sources",
+    "CREATE TEMP VIEW v_filer_reported_holdings",
+    "CREATE TEMP VIEW v_default_holdings",
+])
+def test_materialization_cleans_every_partial_setup_path(tmp_path, failure_prefix):
+    conn = _fresh(tmp_path)
+    main_schema = conn.execute(
+        "SELECT type, name, tbl_name, COALESCE(sql, '') FROM main.sqlite_schema"
+        " ORDER BY type, name, tbl_name, sql"
+    ).fetchall()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+    before = db_path.read_bytes()
+
+    class _FailOnceConnection:
+        failed = False
+
+        def execute(self, sql, *args):
+            if (
+                not self.failed
+                and isinstance(sql, str)
+                and sql.lstrip().startswith(failure_prefix)
+            ):
+                self.failed = True
+                raise sqlite3.OperationalError("forced partial setup")
+            return conn.execute(sql, *args)
+
+    with pytest.raises(sqlite3.OperationalError, match="partial setup"):
+        with materialized_inst_derivation_views(_FailOnceConnection()):
+            pass
+    assert _temp_objects(conn) == []
+    assert conn.execute(
+        "SELECT type, name, tbl_name, COALESCE(sql, '') FROM main.sqlite_schema"
+        " ORDER BY type, name, tbl_name, sql"
+    ).fetchall() == main_schema
+    assert db_path.read_bytes() == before
+    conn.close()
+
+
+@pytest.mark.parametrize("drop_prefix", [
+    "DROP VIEW IF EXISTS temp.v_default_holdings",
+    "DROP VIEW IF EXISTS temp.v_filer_reported_holdings",
+    "DROP TABLE IF EXISTS temp._populus_inst_agg_input",
+    "DROP INDEX IF EXISTS temp.v_default_inst_filings_by_filing",
+    "DROP TABLE IF EXISTS temp.v_default_inst_filings",
+    "DROP INDEX IF EXISTS temp.v_filer_reported_filings_by_filing",
+    "DROP TABLE IF EXISTS temp.v_filer_reported_filings",
+    "DROP INDEX IF EXISTS temp._populus_inst_coverage_totals_by_filing",
+    "DROP TABLE IF EXISTS temp._populus_inst_coverage_totals",
+    "DROP TABLE IF EXISTS temp.v_inst_reconciled_filings",
+])
+def test_materialization_retries_every_consumer_cleanup_drop(tmp_path, drop_prefix):
+    """R8: one transient cleanup error cannot strand owned TEMP peers."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:ONE", cik="0000000001", declared=1_000, resolved=1_000)
+
+    class _FailDropOnceConnection:
+        failed = False
+
+        def execute(self, sql, *args):
+            if (
+                not self.failed
+                and isinstance(sql, str)
+                and sql.startswith(drop_prefix)
+            ):
+                self.failed = True
+                raise sqlite3.OperationalError("forced cleanup drop")
+            return conn.execute(sql, *args)
+
+    with materialized_inst_derivation_views(_FailDropOnceConnection()):
+        pass
+    assert _temp_objects(conn) == []
+    conn.close()
+
+
+def test_materialization_final_query_requires_the_affiliation_index(tmp_path):
+    """A4 removal-fails: `INDEXED BY` forbids a silent edge-table scan."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:ONE", cik="0000000001", declared=1_000, resolved=1_000)
+
+    class _MissingEdgeIndexConnection:
+        def execute(self, sql, *args):
+            if isinstance(sql, str) and sql.startswith(
+                "CREATE INDEX temp._populus_inst_affiliation_edges_lookup"
+            ):
+                return conn.execute("SELECT 1")
+            return conn.execute(sql, *args)
+
+    with pytest.raises(sqlite3.OperationalError, match="no such index"):
+        with materialized_inst_derivation_views(_MissingEdgeIndexConnection()):
+            pass
+    assert _temp_objects(conn) == []
+    conn.close()
+
+
+def test_materialized_coverage_requires_the_owned_totals_index(tmp_path):
+    """R3 removal-fails: optimized reads cannot degrade to a totals scan."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:ONE", cik="0000000001", declared=1_000, resolved=1_000)
+
+    class _MissingTotalsIndexConnection:
+        def execute(self, sql, *args):
+            if isinstance(sql, str) and sql.startswith(
+                "CREATE UNIQUE INDEX temp._populus_inst_coverage_totals_by_filing"
+            ):
+                return conn.execute("SELECT 1")
+            return conn.execute(sql, *args)
+
+    with materialized_inst_derivation_views(_MissingTotalsIndexConnection()):
+        with pytest.raises(sqlite3.OperationalError, match="no such index"):
+            compute_coverage(conn)
+    assert _temp_objects(conn) == []
+    conn.close()
+
+
+def test_materialization_reads_the_persistent_reported_view_once(tmp_path):
+    """B3 removal-fails: one canonical CTAS feeds both TEMP view families."""
+    conn = _fresh(tmp_path)
+    _file(conn, fid="inst:ONE", cik="0000000001", declared=1_000, resolved=1_000)
+    statements = []
+
+    class _RecordingConnection:
+        def execute(self, sql, *args):
+            statements.append(sql)
+            return conn.execute(sql, *args)
+
+    with materialized_inst_derivation_views(_RecordingConnection()):
+        pass
+    reported_ctas = [
+        sql
+        for sql in statements
+        if isinstance(sql, str)
+        and sql.lstrip().startswith("CREATE TEMP TABLE v_filer_reported_filings")
+        and "main.v_filer_reported_filings" in sql
+    ]
+    assert len(reported_ctas) == 1
+    totals_ctas = [
+        sql
+        for sql in statements
+        if isinstance(sql, str)
+        and sql.lstrip().startswith(
+            "CREATE TEMP TABLE _populus_inst_coverage_totals"
+        )
+        and "FROM main.inst_holdings" in sql
+    ]
+    assert len(totals_ctas) == 1
+    aggregate_ctas = [
+        sql
+        for sql in statements
+        if isinstance(sql, str)
+        and sql.lstrip().startswith("CREATE TEMP TABLE _populus_inst_agg_input")
+        and "FROM main.inst_holdings" in sql
+    ]
+    assert len(aggregate_ctas) == 1
+    assert _temp_objects(conn) == []
     conn.close()
 
 

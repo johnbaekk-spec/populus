@@ -27,7 +27,7 @@
 # fallback when `CI` is set) and, for the institutional preview paths,
 # `POPULUS_TICKER_MAP`.
 
-.PHONY: sync test test-python dashboard-gates security check accept-m2-5 accept-m2-6 accept-m2-8 accept-m1-b
+.PHONY: sync test test-python dashboard-gates security check accept-m2-5 accept-m2-6 accept-m2-8 accept-m2-11 accept-m1-b
 
 sync:
 	uv sync --frozen
@@ -113,5 +113,26 @@ accept-m2-8: sync
 # the same frozen-lockfile environment as `make test`.
 accept-m1-b: sync
 	uv run python scripts/accept_m1_b.py
+
+# RUN M2-11 acceptance (R21): the mandatory synchronous DEV gate for the
+# accepted-snapshot publish path. Fully hermetic — it CUTS its own fixture
+# snapshot with the real scripts/inst_snapshot.py protocol, so the canonical
+# 21 GB audit store is never opened, and no network is touched — and it NEVER
+# skips: a missing committed input is a hard error naming the path and its
+# remediation.
+#
+# It drives snapshot cut -> stage-build --inst-db (read-only + immutable open,
+# ONE read transaction, identity, coverage, aggregate, serving, manifest module
+# injection, inst_source.json) -> the four refusal paths (writable store,
+# drifted view, missing view, and the UNSET path that must still be today's
+# congress-only build with its honest 'not built' line) -> congress
+# byte-identity against a baseline build -> the repo-wide runner-governance
+# sweep -> the file-budget arithmetic -> manifest compatibility and the generic
+# installer.
+#
+# Depends on `sync` for the same reason accept-m2-6 does: the gate must run in
+# the same frozen-lockfile environment as `make test`.
+accept-m2-11: sync
+	uv run python scripts/accept_m2_11.py
 
 check: test security
