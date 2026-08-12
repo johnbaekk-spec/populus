@@ -115,32 +115,34 @@ affirmed owner-accepted — the only way to do so is to commit the DB-inlining
 journal to git, which regresses DR-5/§13.4; their current behavior (safe-refuse
 + rebuild, nothing stranded) is correct by design.*
 
-## Multi-module recovery boundary — the inst asset (TD-M2-3-1, RUN M2-3)
+## Multi-module recovery boundary — the inst assets (TD-M2-3-1, RUN M2-3/M2-8)
 
-A build that clears the M2 ≥95% gate carries a SECOND Release asset,
-`inst_agg.db` (the cross-filer aggregate), alongside `congress.db`. The recovery
-journal stays **congress-scoped by design** — it inlines only `congress.db`
-(committing a second DB-inlining envelope would regress DR-5/§13.4 exactly as
-above) — so the inst asset is recovered as a **present draft Release asset** or
+A build that clears the M2 ≥95% gate carries two institutional Release assets
+alongside `congress.db`: `inst_agg.db` (the cross-filer aggregate) and
+`inst_serving.db` (the per-filer serving projection). The recovery journal stays
+**congress-scoped by design** — it inlines only `congress.db` (committing a
+multi-DB inlining envelope would regress DR-5/§13.4 exactly as above) — so both
+inst databases are recovered as **present draft Release assets** or
 **regenerated from source**, never carried in the journal. `_complete_build`
-uploads `inst_agg.db` from the staged `assets/` directory AFTER the journal +
-`congress.db` (the P1 journal-first / publish-release / pointer-last order is
-unchanged) and before `publish_release`.
+uploads them from the staged `assets/` directory in the exact order
+`inst_agg.db`, then `inst_serving.db`, AFTER the journal + `congress.db` (the P1
+journal-first / publish-release / pointer-last order is unchanged) and before
+`publish_release`.
 
 Crash boundaries for an inst-bearing build:
 
 - **Before the journal** — same as the pre-draft boundary above: nothing durable
   exists, a fresh runner rebuilds from source (steps 1–4 regenerate the ingested
-  tables, and `populus build` regenerates `inst_agg.db` deterministically).
-- **After the journal + `congress.db`, before the inst upload, staging lost** —
-  the narrow fresh-runner window. `reconcile_inflight` / `populus publish` finds
-  the inst module in the journal's manifest but `inst_agg.db` is **neither a
-  verified draft asset nor present in staging**, and the congress-scoped journal
-  cannot regenerate it. Recovery **refuses loudly**: the release is left a draft,
-  the pointer is unmoved, and nothing consumer-visible is stranded. Resolve it
-  with the **drafts-only cleanup** below (shown for an example interrupted id
-  `20260724.1`), then rebuild under a new `build_id` (which regenerates
-  `inst_agg.db` from source):
+  tables, and `populus build` regenerates both inst databases deterministically).
+- **After the journal + `congress.db`, before both inst uploads, staging lost** —
+  the narrow fresh-runner window. `reconcile_inflight` / `populus publish` checks
+  every database enumerated for the inst module. If either `inst_agg.db` or
+  `inst_serving.db` is **neither a verified draft asset nor present in staging**,
+  the congress-scoped journal cannot regenerate it. Recovery **refuses loudly**:
+  the release is left a draft, the pointer is unmoved, and nothing
+  consumer-visible is stranded. Resolve it with the **drafts-only cleanup** below
+  (shown for an example interrupted id `20260724.1`), then rebuild under a new
+  `build_id` (which regenerates both inst databases from source):
 
   ```bash
   # 1. Delete the abandoned draft (drafts-only; published releases are immutable)
@@ -155,16 +157,16 @@ Crash boundaries for an inst-bearing build:
   This is the same executable, owner-accepted drafts-only cleanup as
   `rollback.md` Appendix A — one documented operator command, applied to a
   regenerable derived asset.
-- **After the inst upload** — `verify_asset` finds `inst_agg.db` present and
-  completion proceeds normally. On the SAME runner (staging intact) the upload is
-  simply retried from staging and completion is fully automatic; no operator
-  step is needed.
+- **After both inst uploads** — `verify_asset` finds `inst_agg.db` and
+  `inst_serving.db` present and completion proceeds normally. On the SAME runner
+  (staging intact), either missing upload is retried from staging and completion
+  is fully automatic; no operator step is needed.
 
 *Removal condition:* widen the journal to a multi-DB envelope (accepting the
-DR-5 git-size cost) or upload the inst asset ahead of the journal — either would
-make the narrow window fully automatic. Neither is worth its cost today, so the
-one-command operator step stands (drilled in
-`tests/test_publish.py` fresh-runner inst crash-boundary tests).
+DR-5 git-size cost) or upload both inst assets ahead of the journal — either
+would make the narrow window fully automatic. Neither is worth its cost today,
+so the one-command operator step stands (drilled in `tests/test_publish.py`
+fresh-runner inst crash-boundary tests, including missing-serving refusal).
 
 ## Filesystem trust boundary (§14, owner-accepted — bounded)
 

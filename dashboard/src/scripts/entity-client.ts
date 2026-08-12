@@ -46,11 +46,15 @@ import {
   type SurfaceState,
 } from "../lib/holdings.ts";
 import {
+  FILER_FRAGMENT_PARTS_MAX,
   FILER_INDEX_PATH,
+  FILER_TAIL_SHARDS_MAX,
   FilerPayloadError,
   filerShardPath,
-  parseFilerPayload,
+  parseFilerFragmentV2,
+  reassembleFilerFragments,
   type FilerPayloadV1,
+  type FilerRouteV2,
 } from "../lib/filer-payload.ts";
 import { edgarFilerUrl } from "../lib/derive.ts";
 import type { TickerInstSection } from "../lib/data.ts";
@@ -520,7 +524,6 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       return;
     }
     if (idx.status === 404) {
-      // No index in this deploy: nothing is in-extract through this path.
       settled = true;
       cancelWatchdog();
       state = "s2";
@@ -533,110 +536,63 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       fail("server_error", FILER_INDEX_PATH, `The endpoint answered HTTP ${idx.status}.`, true);
       return;
     }
-    const idxBody = idx.body as Record<string, unknown> | null;
-    if (typeof idxBody !== "object" || idxBody === null) {
-      settled = true;
-      cancelWatchdog();
-      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is not a JSON object.", true);
-      return;
-    }
-    if (typeof idxBody.v !== "number") {
-      settled = true;
-      cancelWatchdog();
-      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index has no version field.", true);
-      return;
-    }
-    if (idxBody.v !== 1) {
-      settled = true;
-      cancelWatchdog();
-      fail(
-        "version_mismatch",
-        FILER_INDEX_PATH,
-        `The routing index is version ${String(idxBody.v)}; this page's code speaks a different version. Reloading may pick up matching code.`,
-        false,
-      );
-      return;
-    }
-    // STRICT (R22): the index envelope carries exactly {v, kind, absent,
-    // shards} — an unknown key means this is not the contract the code speaks,
-    // and stripping it silently would mask producer drift.
-    for (const key of Object.keys(idxBody)) {
-      if (key !== "v" && key !== "kind" && key !== "absent" && key !== "shards") {
-        settled = true;
-        cancelWatchdog();
-        fail(
-          "bad_payload",
-          FILER_INDEX_PATH,
-          `Defect: the routing index carries the undeclared key ${JSON.stringify(key)}.`,
-          true,
-        );
-        return;
+
+    const reject = (detail: string): never => {
+      throw new FilerPayloadError("bad_payload", detail);
+    };
+    let selectedRoute: FilerRouteV2 | undefined;
+    try {
+      const body = idx.body;
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        reject("routing index is not a JSON object");
       }
-    }
-    // Codex F5: required discriminators must be PRESENT and typed — an
-    // envelope missing `kind` or `absent` is not this contract, and accepting
-    // it would let a producer drift ship as a "valid" index.
-    if (idxBody.kind === undefined) {
-      settled = true;
-      cancelWatchdog();
-      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is missing its kind discriminator.", true);
-      return;
-    }
-    if (idxBody.kind !== "filer-index") {
-      settled = true;
-      cancelWatchdog();
-      fail(
-        "bad_payload",
-        FILER_INDEX_PATH,
-        `Defect: the routing index kind is ${JSON.stringify(idxBody.kind)}, not "filer-index".`,
-        true,
-      );
-      return;
-    }
-    if (!("absent" in idxBody)) {
-      settled = true;
-      cancelWatchdog();
-      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is missing its absent field.", true);
-      return;
-    }
-    if (idxBody.absent !== null && typeof idxBody.absent !== "string") {
-      settled = true;
-      cancelWatchdog();
-      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index absent field is neither a string nor null.", true);
-      return;
-    }
-    const shardsMap = idxBody.shards;
-    if (shardsMap === undefined) {
-      settled = true;
-      cancelWatchdog();
-      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index is missing its shards map.", true);
-      return;
-    }
-    if (typeof shardsMap !== "object" || shardsMap === null || Array.isArray(shardsMap)) {
-      settled = true;
-      cancelWatchdog();
-      fail("bad_payload", FILER_INDEX_PATH, "Defect: the routing index carries no shard map.", true);
-      return;
-    }
-    // Codex F5: every shards-map VALUE must be a string shard name. A non-string
-    // value is a defective index, not an absence — absence is a MISSING key.
-    for (const [mapCik, mapValue] of Object.entries(shardsMap as Record<string, unknown>)) {
-      if (typeof mapValue !== "string") {
-        settled = true;
-        cancelWatchdog();
-        fail(
-          "bad_payload",
-          FILER_INDEX_PATH,
-          `Defect: the routing index maps CIK ${mapCik} to a non-string shard name.`,
-          true,
-        );
-        return;
+      const index = body as Record<string, unknown>;
+      if (typeof index.v !== "number") reject("routing index has no version field");
+      if (index.v !== 2) {
+        throw new FilerPayloadError("version", `routing index is version ${String(index.v)}`, index.v);
       }
+      for (const key of Object.keys(index)) {
+        if (!["v", "kind", "absent", "routes"].includes(key)) {
+          reject(`routing index carries undeclared key ${JSON.stringify(key)}`);
+        }
+      }
+      if (index.kind !== "filer-index") reject("routing index kind is not \"filer-index\"");
+      if (index.absent !== null && index.absent !== "module-absent") {
+        reject("routing index absent field is not null or \"module-absent\"");
+      }
+      if (typeof index.routes !== "object" || index.routes === null || Array.isArray(index.routes)) {
+        reject("routing index carries no routes object");
+      }
+      const routes = index.routes as Record<string, unknown>;
+      if (index.absent === "module-absent" && Object.keys(routes).length !== 0) {
+        reject("absent routing index carries routes");
+      }
+      for (const [mapCik, rawRoute] of Object.entries(routes)) {
+        if (!/^\d{10}$/.test(mapCik)) reject(`routing index key ${JSON.stringify(mapCik)} is not a CIK`);
+        if (!Array.isArray(rawRoute) || rawRoute.length !== 3
+            || rawRoute.some((value) => !Number.isInteger(value))) {
+          reject(`routing index route for ${mapCik} is not three integers`);
+        }
+        const [first, last, parts] = rawRoute as number[];
+        if (first! < 0 || last! < first! || last! >= FILER_TAIL_SHARDS_MAX
+            || parts! < 1 || parts! > FILER_FRAGMENT_PARTS_MAX
+            || last! - first! + 1 > parts!) {
+          reject(`routing index route for ${mapCik} is outside its bounds`);
+        }
+      }
+      selectedRoute = routes[cik10] as FilerRouteV2 | undefined;
+    } catch (err) {
+      settled = true;
+      cancelWatchdog();
+      if (err instanceof FilerPayloadError && err.code === "version") {
+        fail("version_mismatch", FILER_INDEX_PATH,
+          `The routing index is version ${String(err.got)}; this page's code speaks a different version. Reloading may pick up matching code.`, false);
+      } else {
+        fail("bad_payload", FILER_INDEX_PATH, `Defect: ${(err as Error).message}.`, true);
+      }
+      return;
     }
-    const shardName = (shardsMap as Record<string, unknown>)[cik10];
-    if (typeof shardName !== "string") {
-      // Not published in the tail family (module absent, or genuinely outside
-      // the extract): today's S2, with its primary-source CTA.
+    if (selectedRoute === undefined) {
       settled = true;
       cancelWatchdog();
       state = "s2";
@@ -644,127 +600,103 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       return;
     }
 
-    const shardEndpoint = filerShardPath(shardName);
-    const shard = await deps.fetchJson(shardEndpoint);
-    if (settled) return;
-    settled = true;
-    cancelWatchdog();
-    if (shard.kind === "network") {
-      fail("network_error", shardEndpoint, "The request did not complete — no response arrived.", true);
-      return;
-    }
-    if (shard.status < 200 || shard.status >= 300) {
-      // The index PROMISED this shard, so even a 404 here is a defect of the
-      // published family, not an out-of-extract state.
-      fail("server_error", shardEndpoint, `The endpoint answered HTTP ${shard.status}.`, true);
-      return;
-    }
-    const shardBody = shard.body as Record<string, unknown> | null;
-    if (typeof shardBody !== "object" || shardBody === null) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard is not a JSON object.", true);
-      return;
-    }
-    if (typeof shardBody.v !== "number") {
-      fail("bad_payload", shardEndpoint, "Defect: the shard has no version field.", true);
-      return;
-    }
-    if (shardBody.v !== 1) {
-      fail(
-        "version_mismatch",
-        shardEndpoint,
-        `The shard is version ${String(shardBody.v)}; this page's code speaks a different version. Reloading may pick up matching code.`,
-        false,
-      );
-      return;
-    }
-    // STRICT (R22): the shard envelope carries exactly {v, kind, shard,
-    // shard_count, entries}; each entry is then strict-validated by
-    // parseFilerPayload, so the whole delivery path rejects unknown keys.
-    for (const key of Object.keys(shardBody)) {
-      if (!["v", "kind", "shard", "shard_count", "entries"].includes(key)) {
-        fail(
-          "bad_payload",
-          shardEndpoint,
-          `Defect: the shard carries the undeclared key ${JSON.stringify(key)}.`,
-          true,
-        );
-        return;
-      }
-    }
-    // Codex F5: the shard envelope's discriminator and geometry fields must be
-    // PRESENT and typed, not merely "no unknown keys".
-    if (shardBody.kind === undefined) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its kind discriminator.", true);
-      return;
-    }
-    if (shardBody.kind !== "filer-shard") {
-      fail(
-        "bad_payload",
-        shardEndpoint,
-        `Defect: the shard kind is ${JSON.stringify(shardBody.kind)}, not "filer-shard".`,
-        true,
-      );
-      return;
-    }
-    if (shardBody.shard === undefined) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its shard number.", true);
-      return;
-    }
-    if (typeof shardBody.shard !== "number" || !Number.isFinite(shardBody.shard)) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard number is not a finite number.", true);
-      return;
-    }
-    if (shardBody.shard_count === undefined) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its shard_count.", true);
-      return;
-    }
-    if (typeof shardBody.shard_count !== "number" || !Number.isFinite(shardBody.shard_count)) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard_count is not a finite number.", true);
-      return;
-    }
-    const entries = shardBody.entries;
-    if (entries === undefined) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard is missing its entries object.", true);
-      return;
-    }
-    if (typeof entries !== "object" || entries === null || Array.isArray(entries)) {
-      fail("bad_payload", shardEndpoint, "Defect: the shard carries no entries object.", true);
-      return;
-    }
-    const entry = (entries as Record<string, unknown>)[cik10];
-    if (entry === undefined) {
-      fail(
-        "bad_payload",
-        shardEndpoint,
-        `Defect: the routing index names this shard for CIK ${cik10}, but the shard does not carry it.`,
-        true,
-      );
-      return;
-    }
-    let payload: FilerPayloadV1;
+    const [firstShard, lastShard, routeParts] = selectedRoute;
+    const shardNumbers = Array.from(
+      { length: lastShard - firstShard + 1 },
+      (_, index) => firstShard + index,
+    );
+    let fetched: { shard: number; endpoint: string; result: FetchResult }[];
     try {
-      payload = parseFilerPayload(entry);
-      // F3: the entry was routed under cik10; a payload declaring another CIK
-      // would render a DIFFERENT manager's portfolio at this URL. Fail closed.
-      if (payload.cik !== cik10) {
-        throw new FilerPayloadError(
-          "bad_payload",
-          `shard entry cik mismatch: routed as ${cik10}, payload declares ${payload.cik}`,
-        );
-      }
+      fetched = await Promise.all(shardNumbers.map(async (shard) => ({
+        shard,
+        endpoint: filerShardPath(shard),
+        result: await deps.fetchJson(filerShardPath(shard)),
+      })));
     } catch (err) {
+      if (settled) return;
+      settled = true;
+      cancelWatchdog();
+      fail("network_error", FILER_INDEX_PATH, `A shard request threw: ${(err as Error).message}.`, true);
+      return;
+    }
+    if (settled) return;
+
+    const selectedFragments: unknown[] = [];
+    let declaredShardCount: number | null = null;
+    let defectEndpoint = FILER_INDEX_PATH;
+    try {
+      for (const { shard, endpoint, result } of fetched) {
+        defectEndpoint = endpoint;
+        if (result.kind === "network") {
+          settled = true;
+          cancelWatchdog();
+          fail("network_error", endpoint, "The request did not complete — no response arrived.", true);
+          return;
+        }
+        if (result.status < 200 || result.status >= 300) {
+          settled = true;
+          cancelWatchdog();
+          fail("server_error", endpoint, `The endpoint answered HTTP ${result.status}.`, true);
+          return;
+        }
+        if (typeof result.body !== "object" || result.body === null || Array.isArray(result.body)) {
+          reject("fragment shard is not a JSON object");
+        }
+        const body = result.body as Record<string, unknown>;
+        if (typeof body.v !== "number") reject("fragment shard has no version field");
+        if (body.v !== 2) {
+          throw new FilerPayloadError("version", `fragment shard is version ${String(body.v)}`, body.v);
+        }
+        for (const key of Object.keys(body)) {
+          if (!["v", "kind", "shard", "shard_count", "entries"].includes(key)) {
+            reject(`fragment shard carries undeclared key ${JSON.stringify(key)}`);
+          }
+        }
+        if (body.kind !== "filer-fragment-shard") reject("fragment shard kind is invalid");
+        if (!Number.isInteger(body.shard) || body.shard !== shard) {
+          reject(`fragment shard number does not equal requested shard ${shard}`);
+        }
+        if (!Number.isInteger(body.shard_count)
+            || (body.shard_count as number) < 1
+            || (body.shard_count as number) > FILER_TAIL_SHARDS_MAX
+            || lastShard >= (body.shard_count as number)) {
+          reject("fragment shard_count is outside its bounds");
+        }
+        if (declaredShardCount === null) declaredShardCount = body.shard_count as number;
+        else if (declaredShardCount !== body.shard_count) reject("fragment shards disagree on shard_count");
+        if (typeof body.entries !== "object" || body.entries === null || Array.isArray(body.entries)
+            || Object.keys(body.entries as object).length === 0) {
+          reject("fragment shard carries no entries");
+        }
+        for (const [key, rawFragment] of Object.entries(body.entries as Record<string, unknown>)) {
+          const match = /^(\d{10}):(\d+)$/.exec(key);
+          if (!match) reject(`fragment entry key ${JSON.stringify(key)} is invalid`);
+          const fragment = parseFilerFragmentV2(rawFragment);
+          if (fragment.cik !== match![1] || fragment.part !== Number(match![2])) {
+            reject(`fragment entry key ${key} contradicts its envelope`);
+          }
+          if (fragment.cik === cik10) selectedFragments.push(fragment);
+        }
+      }
+      if (selectedFragments.length !== routeParts) {
+        reject(`route declares ${routeParts} parts but fetched ${selectedFragments.length}`);
+      }
+      const payload = reassembleFilerFragments(selectedFragments, cik10);
+      settled = true;
+      cancelWatchdog();
+      loadedFiler = payload;
+    } catch (err) {
+      settled = true;
+      cancelWatchdog();
       if (err instanceof FilerPayloadError && err.code === "version") {
-        fail(
-          "version_mismatch",
-          shardEndpoint,
-          `The payload is version ${String(err.got)}; this page's code speaks a different version. Reloading may pick up matching code.`,
-          false,
-        );
+        fail("version_mismatch", defectEndpoint,
+          `A fragment response is version ${String(err.got)}; this page's code speaks a different version. Reloading may pick up matching code.`, false);
       } else {
-        fail("bad_payload", shardEndpoint, `Defect: ${(err as Error).message}.`, true);
+        fail("bad_payload", defectEndpoint, `Defect: ${(err as Error).message}.`, true);
       }
       return;
     }
+    const payload = loadedFiler!;
     loadedFiler = payload;
     filerState = { view: "current", page: 0, period: payload.current };
     filerAggPeriod = "";

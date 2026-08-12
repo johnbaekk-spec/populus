@@ -21,6 +21,11 @@ import { existsSync, readFileSync, readdirSync, statSync, lstatSync } from "node
 import path from "node:path";
 
 import { getBuildData, topFilerCiks } from "../../src/lib/data.ts";
+import {
+  parseFilerFragmentV2,
+  reassembleFilerFragments,
+  type FilerRouteV2,
+} from "../../src/lib/filer-payload.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..", "..");
 const REPO_ROOT = path.resolve(DASH, "..");
@@ -142,60 +147,115 @@ test("R19 GATE: no single deployed file exceeds the 25 MiB provider limit", () =
 });
 
 test("R22 GATE (measured): the filer shard family in the built tree", () => {
-  /* RUN M2-11 (plan R22, LD-9, LD-10) — assertions over the MEASURED tree
-     only; the projection terms live in tests/test_inst_shard_budget.py and are
-     asserted nowhere here (round-4 F6).
-
-     Module presence is read off the tree itself: pre-rendered filer pages
-     exist iff the inst module shipped. When it did, the routing index must
-     exist beside the shards, and every shard must sit under the LD-10 1 MiB
-     client-response ceiling (mirrored from inst_budget.py, one source). */
+  /* RUN M2-11 tail-pagination delta: assertions over the MEASURED tree only.
+     The v1 data family is gone; its one retained file is an exact tiny
+     transition tombstone. The active v2 index routes every tail CIK to a
+     bounded contiguous range of fragment shards. Every route is reconstructed
+     here, so byte/geometry checks cannot pass over an unreadable publication. */
   const FILER_SHARD_CEILING = pyInt(BUDGET, "FILER_SHARD_BYTE_CEILING");
   const FILER_SHARDS_MAX = pyInt(BUDGET, "FILER_TAIL_SHARDS_RESERVED");
+  const FILER_PARTS_MAX = pyInt(BUDGET, "FILER_FRAGMENT_PARTS_MAX");
+  assert.equal(pyInt(BUDGET, "FILER_V1_TRANSITION_FILES"), 1);
   const pagesDir = path.join(DIST, "institutional", "filers");
   const dataDir = path.join(DIST, "institutional", "data", "filers");
   const modulePresent =
     existsSync(pagesDir) && readdirSync(pagesDir).length > 0;
-  const indexFile = path.join(dataDir, "index.v1.json");
+  const tombstoneFile = path.join(dataDir, "index.v1.json");
   assert.ok(
-    existsSync(indexFile),
-    "the routing index must be emitted in every build — with the module absent " +
-      "its body names the absence; a 404 could not (LD-9)",
+    existsSync(tombstoneFile),
+    "cached v1 clients need the version-mismatch tombstone during rollout",
   );
-  if (!modulePresent) return;
+  assert.equal(
+    readFileSync(tombstoneFile, "utf-8"),
+    '{"v":2,"kind":"filer-index-upgrade-required"}',
+  );
+  assert.deepEqual(
+    readdirSync(dataDir).filter((f) => /^\d+\.v1\.json$/.test(f)),
+    [],
+    "the unbounded v1 shard route must not be emitted",
+  );
+
+  const indexFile = path.join(dataDir, "index.v2.json");
+  assert.ok(existsSync(indexFile), "the active routing index must be emitted in every build");
   const index = JSON.parse(readFileSync(indexFile, "utf-8")) as {
     v: number;
-    shards: Record<string, string>;
+    kind: string;
+    absent: string | null;
+    routes: Record<string, FilerRouteV2>;
   };
-  assert.equal(index.v, 1);
-  const shardFiles = readdirSync(dataDir).filter(
-    (f) => f !== "index.v1.json" && f.endsWith(".v1.json"),
-  );
+  assert.deepEqual(Object.keys(index), ["v", "kind", "absent", "routes"]);
+  assert.equal(index.v, 2);
+  assert.equal(index.kind, "filer-index");
+  const shardFiles = readdirSync(dataDir)
+    .filter((f) => /^\d+\.v2\.json$/.test(f))
+    .sort((a, b) => Number.parseInt(a) - Number.parseInt(b));
   assert.ok(
     shardFiles.length <= FILER_SHARDS_MAX,
     `${shardFiles.length} filer shards exceed the ${FILER_SHARDS_MAX} reservation`,
   );
-  for (const f of shardFiles) {
+  if (!modulePresent) {
+    assert.equal(index.absent, "module-absent");
+    assert.deepEqual(index.routes, {});
+    assert.deepEqual(shardFiles, []);
+    return;
+  }
+  assert.equal(index.absent, null);
+  assert.ok(shardFiles.length > 0, "a present module with a tail emits active shards");
+
+  const allFragmentKeys = new Set<string>();
+  const shardBodies = new Map<number, Record<string, unknown>>();
+  for (const [expectedShard, f] of shardFiles.entries()) {
+    assert.equal(f, `${expectedShard}.v2.json`, "active shard names are contiguous from zero");
     const size = statSync(path.join(dataDir, f)).size;
     assert.ok(
       size <= FILER_SHARD_CEILING,
       `${f} is ${size} B, over the ${FILER_SHARD_CEILING} B LD-10 client-response ceiling`,
     );
+    const body = JSON.parse(readFileSync(path.join(dataDir, f), "utf-8")) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(body), ["v", "kind", "shard", "shard_count", "entries"]);
+    assert.equal(body.v, 2);
+    assert.equal(body.kind, "filer-fragment-shard");
+    assert.equal(body.shard, expectedShard);
+    assert.equal(body.shard_count, shardFiles.length);
+    assert.equal(typeof body.entries, "object");
+    assert.ok(body.entries !== null && !Array.isArray(body.entries));
+    const entries = body.entries as Record<string, unknown>;
+    assert.ok(Object.keys(entries).length > 0, `${f} is not an empty shard`);
+    for (const [key, raw] of Object.entries(entries)) {
+      assert.ok(!allFragmentKeys.has(key), `fragment ${key} is duplicated in the tree`);
+      const fragment = parseFilerFragmentV2(raw);
+      assert.equal(key, `${fragment.cik}:${fragment.part}`);
+      allFragmentKeys.add(key);
+    }
+    shardBodies.set(expectedShard, body);
   }
-  // Every shard the index routes to must exist on disk, and vice versa.
-  const named = new Set(Object.values(index.shards));
-  for (const shard of named) {
-    assert.ok(
-      shardFiles.includes(`${shard}.v1.json`),
-      `the index routes to shard ${shard}, which is not in the tree`,
-    );
+
+  const routedFragmentKeys = new Set<string>();
+  const routedShards = new Set<number>();
+  for (const [cik, route] of Object.entries(index.routes)) {
+    assert.match(cik, /^\d{10}$/);
+    assert.ok(Array.isArray(route) && route.length === 3 && route.every(Number.isInteger));
+    const [first, last, parts] = route;
+    assert.ok(first >= 0 && last >= first && last < shardFiles.length);
+    assert.ok(parts >= 1 && parts <= FILER_PARTS_MAX);
+    assert.ok(last - first + 1 <= parts);
+    const fragments: unknown[] = [];
+    for (let shard = first; shard <= last; shard++) {
+      routedShards.add(shard);
+      const entries = shardBodies.get(shard)!.entries as Record<string, unknown>;
+      for (const [key, raw] of Object.entries(entries)) {
+        if (key.startsWith(`${cik}:`)) {
+          assert.ok(!routedFragmentKeys.has(key), `route reaches duplicate fragment ${key}`);
+          routedFragmentKeys.add(key);
+          fragments.push(raw);
+        }
+      }
+    }
+    assert.equal(fragments.length, parts, `${cik}: route fragment count`);
+    assert.equal(reassembleFilerFragments(fragments, cik).cik, cik);
   }
-  for (const f of shardFiles) {
-    assert.ok(
-      named.has(f.replace(/\.v1\.json$/, "")) || Object.keys(index.shards).length === 0,
-      `shard file ${f} is routed to by no index entry`,
-    );
-  }
+  assert.deepEqual(routedFragmentKeys, allFragmentKeys, "every fragment is reached by exactly one route");
+  assert.equal(routedShards.size, shardFiles.length, "every active shard is reached by a route");
 });
 
 test("R22 GATE (F7): routing-index cardinality == publishedFilers − prerenderedFilers", () => {
@@ -213,10 +273,10 @@ test("R22 GATE (F7): routing-index cardinality == publishedFilers − prerendere
   const publishedFilers = build.inst.present ? build.inst.filers.length : 0;
   const prerenderedFilers = topFilerCiks(build).size;
   const index = JSON.parse(
-    readFileSync(path.join(DIST, "institutional", "data", "filers", "index.v1.json"), "utf-8"),
-  ) as { shards: Record<string, string> };
+    readFileSync(path.join(DIST, "institutional", "data", "filers", "index.v2.json"), "utf-8"),
+  ) as { routes: Record<string, FilerRouteV2> };
   assert.equal(
-    Object.keys(index.shards).length,
+    Object.keys(index.routes).length,
     publishedFilers - prerenderedFilers,
     `the routing index must address the FULL tail: ${publishedFilers} published − ` +
       `${prerenderedFilers} pre-rendered filers`,

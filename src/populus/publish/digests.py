@@ -34,7 +34,7 @@ LOGICAL_PROJECTIONS: dict[str, dict[str, frozenset[str]]] = {
         "members": frozenset(),
         "transactions": frozenset(),
     },
-    # The four cross-filer aggregate tables (populus.inst_agg), each minus its
+    # The four public cross-filer aggregate relations (populus.inst_agg), each minus its
     # volatile `ingested_at`; `agg_build_meta` is excluded entirely.
     "inst": {
         "agg_filer_registry": frozenset({"ingested_at"}),
@@ -43,6 +43,36 @@ LOGICAL_PROJECTIONS: dict[str, dict[str, frozenset[str]]] = {
         "agg_filer_concentration": frozenset({"ingested_at"}),
     },
 }
+
+# Schema 1.1 exposes QoQ through a read-only compatibility view.  Views have no
+# PRAGMA-declared primary key, so the existing public logical key is stated
+# explicitly and accepted only when the complete public column contract matches.
+_PROJECTED_VIEW_KEYS: dict[str, tuple[str, ...]] = {
+    "agg_qoq_deltas": (
+        "cik",
+        "position_key",
+        "put_call",
+        "ssh_prnamt_type",
+        "curr_period",
+    ),
+}
+_AGG_QOQ_PUBLIC_COLUMNS = (
+    "cik",
+    "position_key",
+    "put_call",
+    "curr_period",
+    "prev_period",
+    "change_kind",
+    "prev_value_usd",
+    "curr_value_usd",
+    "delta_value_usd",
+    "prev_shares",
+    "curr_shares",
+    "delta_shares",
+    "ssh_prnamt_type",
+    "flags",
+    "ingested_at",
+)
 
 # --- RUN M2-8 T8: projections are per ARTIFACT, not per module ----------------
 # The inst module now publishes TWO databases with DIFFERENT schemas
@@ -180,7 +210,19 @@ def _table_columns(
     included = [col["name"] for col in by_name if col["name"] not in excluded]
     pk = [col["name"] for col in sorted(by_name, key=lambda c: c["pk"]) if col["pk"] > 0]
     if not pk:
-        raise DigestError(f"projection table has no primary key: {table}")
+        projected_key = _PROJECTED_VIEW_KEYS.get(table)
+        relation = conn.execute(
+            "SELECT type FROM sqlite_master WHERE name = ?", (table,)
+        ).fetchall()
+        if (
+            projected_key is None
+            or relation != [("view",)]
+            or tuple(col["name"] for col in by_name) != _AGG_QOQ_PUBLIC_COLUMNS
+        ):
+            raise DigestError(f"projection table has no primary key: {table}")
+        if any(name not in included for name in projected_key):
+            raise DigestError(f"projected view key is not digest-visible: {table}")
+        pk = list(projected_key)
     return included, pk
 
 

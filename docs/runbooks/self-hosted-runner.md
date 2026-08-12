@@ -170,7 +170,7 @@ scope (this single repository, no org-level grants), placement (root-owned
 0600 controller-domain file the runner account cannot read; the PAT never
 reaches the runner environment, the root, or curl's argv), and rotation:
 set a short expiry (90 days or less), calendar the rotation, and revoke
-immediately on any compromise signal (step 8).
+immediately on any compromise signal (step 9).
 
 Place it by pasting into a root-owned file — it must never transit the runner
 account, the repo checkout, or a shell history line with the value inline:
@@ -188,11 +188,18 @@ root. Build it once, from the official runner release, in a scratch directory:
 
 ```bash
 cd "$(mktemp -d)"
-# Pick the current macOS arm64 release from github.com/actions/runner/releases
-# and verify its published SHA-256 before packing:
-curl -fLO https://github.com/actions/runner/releases/download/v2.321.0/actions-runner-osx-arm64-2.321.0.tar.gz
-shasum -a 256 actions-runner-osx-arm64-2.321.0.tar.gz   # compare against the release page
-mkdir image && tar -xzf actions-runner-osx-arm64-*.tar.gz -C image
+# Recheck the official latest release immediately before provisioning. GitHub
+# stops assigning jobs to runners that fall outside its update window, so a
+# stale bootstrap is a hard stop rather than a warning.
+RUNNER_VERSION=2.336.0
+RUNNER_ARCHIVE=actions-runner-osx-arm64-2.336.0.tar.gz
+RUNNER_SHA256=8e8839c49b7060b6b2154f4931f815df330c27f167d53ef2239ee3dfce28b079
+test "$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest |
+  jq -r .tag_name)" = "v${RUNNER_VERSION}"
+curl -fLO "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_ARCHIVE}"
+printf '%s  %s\n' "$RUNNER_SHA256" "$RUNNER_ARCHIVE" | shasum -a 256 -c -
+mkdir image && tar -xzf "$RUNNER_ARCHIVE" -C image
+test "$(image/bin/Runner.Listener --version)" = "$RUNNER_VERSION"
 tar -czf runner-image.tar.gz -C image .
 sudo mv runner-image.tar.gz /usr/local/populus-runner/controller/runner-image.tar.gz
 sudo chown root:wheel /usr/local/populus-runner/controller/runner-image.tar.gz
@@ -244,6 +251,21 @@ root has been restored yet), or `cleanup-not-verified` after one.
 
 (Adjust the listed paths to wherever the toolchain actually lives; list every
 binary a job invokes.)
+
+**The `uv` you install here must be the version `publish.yml` pins — `0.7.13`
+today.** The workflow no longer installs uv on this machine: macOS Pythons are
+PEP 668 externally-managed, so `python3 -m pip install` there fails rather than
+installing, and reinstalling over the gated copy would defeat the checksum in
+any case. The publish job therefore USES the uv this manifest gates, and
+asserts `uv --version` against its pin — a drifted toolchain fails the job on
+its first step with a message pointing back at this section. The fix is to
+re-provision the binary and regenerate the manifest, never to edit the pin down
+to whatever the machine has:
+
+```bash
+/usr/local/populus-toolchain/bin/uv --version   # must equal publish.yml's UV_PIN
+grep -n 'UV_PIN' "$(git rev-parse --show-toplevel)/.github/workflows/publish.yml"
+```
 
 ### The runner PATH is derived from the manifest, not hardcoded
 
@@ -300,7 +322,49 @@ sudo pmset -a autorestart 1     # power-loss recovery
 pmset -g                        # verify: sleep 0, autorestart 1
 ```
 
-## 7. Per-job lifecycle (what the controller does — reference, not steps)
+## 7. Arm the repository variables (owner-only)
+
+Two repository **variables** (not secrets — `vars.`, and the workflow reads
+them that way for the reason recorded in `.github/workflows/publish.yml`: a
+variable read through `secrets.` resolves to the empty string with no error at
+all). Neither is set by any script here; both are owner actions, and their
+ORDER is the R25 supervision rule.
+
+```bash
+# 1. The accepted snapshot the publish job derives the institutional module
+#    from. It is the FINALIZED file cut by scripts/inst_snapshot.py in step 2's
+#    snapshots directory — never the canonical store, never a -wal sibling.
+#    UNSET is a supported state: with no value the publish job omits the flag
+#    entirely and builds congress-only, byte-identical to a pre-M2-11 build.
+#    That is also the rollback: unset it, and the next run publishes congress.
+gh variable set POPULUS_INST_DB --repo johnbaekk-spec/populus \
+  --body "/Users/johnbaek/projects/Populus-ops/snapshots/inst-source-v1.db"
+
+# Verify what is actually armed (POPULUS_PUBLISH_ARMED is the pre-existing
+# publish switch and is independent of both of these):
+gh variable list --repo johnbaekk-spec/populus
+```
+
+The second variable is deliberately in a **separate block below**, not in the
+one above: pasted together, "set this one later" is one keystroke from being
+untrue. Do not run it until the supervised dispatch has been watched end to
+end (plan T11): runner-root reconstruction observed, toolchain gate passed,
+attestation verified, snapshot identity corroborated against the canonical
+store's hash. Scheduled runs require it; `workflow_dispatch` is EXEMPT, which
+is exactly what makes that supervised run possible. Setting it early arms an
+unattended 06:17 UTC nightly against a runner nobody has ever watched.
+
+```bash
+# ONLY after the supervised dispatch above has succeeded and been inspected:
+gh variable set POPULUS_SELFHOSTED_VALIDATED --repo johnbaekk-spec/populus --body true
+```
+
+The publish job's `if:` is the enforcement, not this document: it requires the
+default branch, `POPULUS_PUBLISH_ARMED`, and — for `schedule` runs only —
+`POPULUS_SELFHOSTED_VALIDATED`. `tests/test_publish.py` pins that condition, so
+a rewrite that quietly drops the schedule clause fails the suite.
+
+## 8. Per-job lifecycle (what the controller does — reference, not steps)
 
 Each launchd invocation is ONE cycle of
 `runner-controller.sh run-cycle`, whose subcommands are the contract
@@ -326,7 +390,7 @@ Each launchd invocation is ONE cycle of
 Nothing in this section is a step the owner runs by hand; to exercise a phase
 manually, invoke the installed controller with the same subcommands.
 
-## 8. Suspicion event — same-UID persistence sweep (owner-only)
+## 9. Suspicion event — same-UID persistence sweep (owner-only)
 
 Whole-root reconstruction does NOT close every same-UID surface (plan TD-4,
 accepted). On any suspicion, sweep the surfaces reconstruction cannot reach:
@@ -368,13 +432,18 @@ gh secret set DATA_REPO_PAT --repo johnbaekk-spec/populus
 sudo launchctl kickstart -k system/com.populus.runner-controller
 ```
 
-## 9. Complete teardown (owner-only)
+## 10. Complete teardown (owner-only)
 
 Order matters: disarm the schedule first, then the machine.
 
 ```bash
 # 1. Disarm scheduled self-hosted runs (repo variable; dispatch stays exempt):
 gh variable delete POPULUS_SELFHOSTED_VALIDATED --repo johnbaekk-spec/populus
+#    ...and unset the snapshot path, or a run that falls back to a hosted
+#    runner would pass --inst-db pointing at a file only this Mac ever had.
+#    Unset means congress-only, which is the correct state once the machine is
+#    gone (step 7).
+gh variable delete POPULUS_INST_DB --repo johnbaekk-spec/populus
 
 # 2. Stop and unload the controller:
 sudo launchctl unload -w /Library/LaunchDaemons/com.populus.runner-controller.plist
@@ -386,7 +455,7 @@ sudo rm /Library/LaunchDaemons/com.populus.runner-controller.plist
 sudo cp -R /usr/local/populus-runner/controller/exported-logs ~/populus-runner-final-logs
 sudo rm -rf /usr/local/populus-runner
 
-# 4. Run the persistence sweep (step 8) BEFORE deleting the account, then:
+# 4. Run the persistence sweep (step 9) BEFORE deleting the account, then:
 sudo sysadminctl -deleteUser populusrunner
 
 # 5. Remove the ACL grants (repeat per file/dir that received one; the ACL
@@ -394,5 +463,5 @@ sudo sysadminctl -deleteUser populusrunner
 chmod -a# 0 ~/projects/Populus-ops/populus-m28.db   # inspect ls -le first; -a# removes by index
 ls -le ~/projects/Populus-ops/populus-m28.db          # verify: no populusrunner entries
 
-# 6. Rotate DATA_REPO_PAT (step 8) — teardown assumes nothing about why.
+# 6. Rotate DATA_REPO_PAT (step 9) — teardown assumes nothing about why.
 ```

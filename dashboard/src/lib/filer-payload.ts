@@ -29,6 +29,7 @@ import {
 } from "./holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow } from "./inst.ts";
 import type { FilingWindow } from "./derive.ts";
+import { SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
 
 /** Version discriminator — strict-checked by `parseFilerPayload`. */
 const FILER_PAYLOAD_VERSION = 1;
@@ -36,11 +37,41 @@ const FILER_PAYLOAD_VERSION = 1;
 /** The routing index the `/e/` driver resolves tail CIKs through (LD-9).
     Defined here — the browser-safe module — because the driver ships these to
     the client while the shard planner (`data.ts`, server-only) emits them. */
-export const FILER_INDEX_PATH = "/institutional/data/filers/index.v1.json";
+export const FILER_INDEX_PATH = "/institutional/data/filers/index.v2.json";
 
-export function filerShardPath(shard: string): string {
-  return `/institutional/data/filers/${encodeURIComponent(shard)}.v1.json`;
+export function filerShardPath(shard: number): string {
+  return `/institutional/data/filers/${encodeURIComponent(String(shard))}.v2.json`;
 }
+
+/** Cross-runtime transport budget mirrors. Python `inst_budget.py` remains the
+    repository source of truth; dashboard tests pin every value against it. */
+export const FILER_FRAGMENT_TARGET_BYTES = 768 * 1024;
+export const FILER_FRAGMENT_PARTS_MAX = 64;
+export const FILER_FRAGMENT_SIZING_SENTINEL = 99_999;
+export const FILER_TAIL_SHARDS_MAX = 4_096;
+
+export type FilerFragmentSectionV2 = "meta" | "filings" | "rows" | "deltas";
+
+export interface FilerFragmentV2 {
+  v: 2;
+  kind: "filer-fragment";
+  cik: string;
+  part: number;
+  parts: number;
+  section: FilerFragmentSectionV2;
+  period: string | null;
+  start: number;
+  data: unknown;
+}
+
+export type FilerRouteV2 = [firstShard: number, lastShard: number, parts: number];
+
+/** Worst active shard envelope. A fragment is admissible only if its complete
+    keyed entry fits inside this one-entry body under the 1 MiB reader ceiling. */
+export const FILER_FRAGMENT_SHARD_ENVELOPE_BYTES = new TextEncoder().encode(
+  `{"v":2,"kind":"filer-fragment-shard","shard":${FILER_TAIL_SHARDS_MAX - 1},` +
+    `"shard_count":${FILER_TAIL_SHARDS_MAX},"entries":{}}`,
+).byteLength;
 
 /** The R22 contract, literally (plan revision 6). */
 export interface FilerPayloadV1 {
@@ -585,4 +616,310 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     // `undefined` (field missing) fails inside windowOf; null is a valid state.
     window: windowOf("window" in raw ? raw.window : bad("window is missing — pass null explicitly")),
   };
+}
+
+/* ===================================================== v2 transport layer */
+
+const FRAGMENT_KEYS = [
+  "v", "kind", "cik", "part", "parts", "section", "period", "start", "data",
+] as const;
+
+const FRAGMENT_META_KEYS = [
+  "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
+  "filingKeys", "rowPeriods", "deltaPeriods", "totalsByPeriod", "concByPeriod",
+  "latestFiled", "topn", "window",
+] as const;
+
+interface FragmentDescriptor {
+  section: FilerFragmentSectionV2;
+  period: string | null;
+  start: number;
+  data: unknown;
+}
+
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+function fragmentValue(
+  cik: string,
+  part: number,
+  parts: number,
+  descriptor: FragmentDescriptor,
+): FilerFragmentV2 {
+  return {
+    v: 2,
+    kind: "filer-fragment",
+    cik,
+    part,
+    parts,
+    section: descriptor.section,
+    period: descriptor.period,
+    start: descriptor.start,
+    data: descriptor.data,
+  };
+}
+
+/** Exact serialized member contributed to a fragment-shard entries object. */
+export function serializeFilerFragmentEntry(fragment: FilerFragmentV2): string {
+  const key = `${fragment.cik}:${fragment.part}`;
+  return `${JSON.stringify(key)}:${JSON.stringify(fragment)}`;
+}
+
+function chunkFragmentRecords(
+  cik: string,
+  section: Exclude<FilerFragmentSectionV2, "meta">,
+  period: string | null,
+  records: readonly unknown[],
+): FragmentDescriptor[] {
+  const out: FragmentDescriptor[] = [];
+  let current: unknown[] = [];
+  let start = 0;
+
+  const emptyBytes = (at: number): number =>
+    utf8Bytes(
+      serializeFilerFragmentEntry(
+        fragmentValue(cik, FILER_FRAGMENT_SIZING_SENTINEL,
+          FILER_FRAGMENT_SIZING_SENTINEL, { section, period, start: at, data: [] }),
+      ),
+    );
+
+  let currentBytes = emptyBytes(start);
+  for (const record of records) {
+    const recordBytes = utf8Bytes(JSON.stringify(record));
+    const cost = recordBytes + (current.length > 0 ? 1 : 0);
+    if (current.length > 0 && currentBytes + cost > FILER_FRAGMENT_TARGET_BYTES) {
+      out.push({ section, period, start, data: current });
+      start += current.length;
+      current = [];
+      currentBytes = emptyBytes(start);
+    }
+    current.push(record);
+    currentBytes += recordBytes + (current.length > 1 ? 1 : 0);
+  }
+  if (current.length > 0) out.push({ section, period, start, data: current });
+  return out;
+}
+
+/**
+ * Deterministically fragment one already-assembled logical payload. Candidate
+ * sizing is linear: the fixed empty envelope is measured once per chunk and
+ * each canonical record's JSON bytes are charged once. The conservative 99999
+ * sentinel is intentional and mirrored by T0.
+ */
+export function fragmentFilerPayload(payload: FilerPayloadV1): FilerFragmentV2[] {
+  const cik = payload.cik;
+  const meta = {
+    v: payload.v,
+    kind: payload.kind,
+    cik,
+    filerName: payload.filerName,
+    latestPeriod: payload.latestPeriod,
+    periods: payload.periods,
+    current: payload.current,
+    prior: payload.prior,
+    filingKeys: Object.keys(payload.filings),
+    rowPeriods: Object.keys(payload.rowsByPeriod),
+    deltaPeriods: Object.keys(payload.deltasByPeriod),
+    totalsByPeriod: payload.totalsByPeriod,
+    concByPeriod: payload.concByPeriod,
+    latestFiled: payload.latestFiled,
+    topn: payload.topn,
+    window: payload.window,
+  };
+  const descriptors: FragmentDescriptor[] = [
+    { section: "meta", period: null, start: 0, data: meta },
+  ];
+  descriptors.push(
+    ...chunkFragmentRecords(cik, "filings", null, Object.entries(payload.filings)),
+  );
+  for (const [period, rows] of Object.entries(payload.rowsByPeriod)) {
+    descriptors.push(...chunkFragmentRecords(cik, "rows", period, rows));
+  }
+  for (const [period, deltas] of Object.entries(payload.deltasByPeriod)) {
+    descriptors.push(...chunkFragmentRecords(cik, "deltas", period, deltas));
+  }
+  if (descriptors.length > FILER_FRAGMENT_PARTS_MAX) {
+    throw new Error(
+      `filer ${cik} requires ${descriptors.length} fragments, over the ` +
+        `${FILER_FRAGMENT_PARTS_MAX}-part transport bound`,
+    );
+  }
+  const fragments = descriptors.map((descriptor, part) =>
+    fragmentValue(cik, part, descriptors.length, descriptor));
+  for (const fragment of fragments) {
+    const bodyBytes = FILER_FRAGMENT_SHARD_ENVELOPE_BYTES
+      + utf8Bytes(serializeFilerFragmentEntry(fragment));
+    if (bodyBytes > SHARD_RESPONSE_CEILING_BYTES) {
+      throw new Error(
+        `filer fragment ${cik}:${fragment.part} needs ${bodyBytes} bytes in a ` +
+          `one-entry shard, over the ${SHARD_RESPONSE_CEILING_BYTES}-byte ceiling`,
+      );
+    }
+  }
+  return fragments;
+}
+
+function reqInteger(v: unknown, field: string, min: number, max: number): number {
+  if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) {
+    bad(`${field} is not an integer in ${min}..${max}`);
+  }
+  return v as number;
+}
+
+/** Strictly validate one fragment independently of its shard/key context. */
+export function parseFilerFragmentV2(raw: unknown): FilerFragmentV2 {
+  if (!isRecord(raw)) bad("fragment is not a JSON object");
+  if (typeof raw.v !== "number") bad("fragment has no version field");
+  if (raw.v !== 2) {
+    throw new FilerPayloadError("version", `fragment is version ${String(raw.v)}`, raw.v);
+  }
+  if (raw.kind !== "filer-fragment") bad("fragment kind is not \"filer-fragment\"");
+  onlyKeys(raw, FRAGMENT_KEYS, "fragment");
+  const cik = reqString(raw.cik, "fragment.cik");
+  if (!/^\d{10}$/.test(cik)) bad("fragment.cik is not a zero-padded ten-digit CIK");
+  const parts = reqInteger(raw.parts, "fragment.parts", 1, FILER_FRAGMENT_PARTS_MAX);
+  const part = reqInteger(raw.part, "fragment.part", 0, parts - 1);
+  const section = reqString(raw.section, "fragment.section");
+  if (!["meta", "filings", "rows", "deltas"].includes(section)) {
+    bad(`fragment.section ${JSON.stringify(section)} is unknown`);
+  }
+  const period = stringOrNull(raw.period, "fragment.period");
+  const start = reqInteger(raw.start, "fragment.start", 0, Number.MAX_SAFE_INTEGER);
+  if (raw.data === undefined) missing("fragment.data");
+  if (section === "meta") {
+    if (!isRecord(raw.data)) bad("metadata fragment data is not an object");
+  } else if (!Array.isArray(raw.data)) {
+    bad(`${section} fragment data is not an array`);
+  }
+  return {
+    v: 2,
+    kind: "filer-fragment",
+    cik,
+    part,
+    parts,
+    section: section as FilerFragmentSectionV2,
+    period,
+    start,
+    data: raw.data,
+  };
+}
+
+function uniqueStrings(raw: unknown, field: string): string[] {
+  const values = stringArray(raw, field);
+  if (new Set(values).size !== values.length) bad(`${field} contains a duplicate key`);
+  return values;
+}
+
+function requireExactObjectKeys(raw: unknown, keys: readonly string[], field: string): void {
+  if (!isRecord(raw)) bad(`${field} is not an object`);
+  const got = Object.keys(raw);
+  if (got.length !== keys.length || got.some((key, i) => key !== keys[i])) {
+    bad(`${field} keys ${JSON.stringify(got)} do not equal ${JSON.stringify(keys)}`);
+  }
+}
+
+/**
+ * Strictly reassemble ordered fragments, then pass the reconstructed value
+ * through the unchanged logical payload parser. No sorting or repair occurs:
+ * reordered, missing, duplicated, cross-CIK, or contradictory fragments fail.
+ */
+export function reassembleFilerFragments(
+  rawFragments: readonly unknown[],
+  expectedCik?: string,
+): FilerPayloadV1 {
+  if (rawFragments.length === 0) bad("fragment sequence is empty");
+  const fragments = rawFragments.map(parseFilerFragmentV2);
+  const parts = fragments[0]!.parts;
+  if (rawFragments.length !== parts) {
+    bad(`fragment sequence has ${rawFragments.length} entries but declares ${parts}`);
+  }
+  const cik = fragments[0]!.cik;
+  if (expectedCik !== undefined && cik !== expectedCik) {
+    bad(`fragment sequence CIK ${cik} does not equal routed CIK ${expectedCik}`);
+  }
+  fragments.forEach((fragment, index) => {
+    if (fragment.part !== index) bad(`fragment sequence expected part ${index}, got ${fragment.part}`);
+    if (fragment.parts !== parts) bad(`fragment ${index} declares a contradictory total`);
+    if (fragment.cik !== cik) bad(`fragment ${index} carries cross-CIK data for ${fragment.cik}`);
+  });
+
+  const first = fragments[0]!;
+  if (first.section !== "meta" || first.period !== null || first.start !== 0) {
+    bad("part zero is not the unique metadata fragment");
+  }
+  const meta = first.data as Record<string, unknown>;
+  onlyKeys(meta, FRAGMENT_META_KEYS, "fragment.data");
+  if (meta.v !== 1 || meta.kind !== "filer") bad("fragment metadata is not logical payload v1");
+  const metaCik = reqString(meta.cik, "fragment.data.cik");
+  if (metaCik !== cik) bad(`fragment metadata CIK ${metaCik} contradicts envelope CIK ${cik}`);
+  const filingKeys = uniqueStrings(meta.filingKeys, "fragment.data.filingKeys");
+  const rowPeriods = uniqueStrings(meta.rowPeriods, "fragment.data.rowPeriods");
+  const deltaPeriods = uniqueStrings(meta.deltaPeriods, "fragment.data.deltaPeriods");
+  requireExactObjectKeys(meta.totalsByPeriod, rowPeriods, "fragment.data.totalsByPeriod");
+  requireExactObjectKeys(meta.concByPeriod, deltaPeriods, "fragment.data.concByPeriod");
+
+  const filings: Record<string, unknown> = {};
+  const rowsByPeriod: Record<string, unknown[]> = Object.fromEntries(
+    rowPeriods.map((period) => [period, []]),
+  );
+  const deltasByPeriod: Record<string, unknown[]> = Object.fromEntries(
+    deltaPeriods.map((period) => [period, []]),
+  );
+  let lastGroup = 0;
+  for (const fragment of fragments.slice(1)) {
+    if ((fragment.data as unknown[]).length === 0) bad(`fragment ${fragment.part} has empty data`);
+    let group: number;
+    if (fragment.section === "filings") group = 1;
+    else if (fragment.section === "rows") group = 2 + rowPeriods.indexOf(fragment.period ?? "");
+    else if (fragment.section === "deltas") {
+      group = 2 + rowPeriods.length + deltaPeriods.indexOf(fragment.period ?? "");
+    } else bad("metadata appears more than once");
+    if (group < 1 || group < lastGroup) bad(`fragment ${fragment.part} is out of section order`);
+    lastGroup = group;
+
+    if (fragment.section === "filings") {
+      if (fragment.period !== null || fragment.start !== Object.keys(filings).length) {
+        bad(`filings fragment ${fragment.part} has a contradictory period/start`);
+      }
+      for (const [i, pair] of (fragment.data as unknown[]).entries()) {
+        if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string") {
+          bad(`filings fragment ${fragment.part} entry ${i} is not [string,value]`);
+        }
+        if (Object.hasOwn(filings, pair[0])) bad(`duplicate filing key ${JSON.stringify(pair[0])}`);
+        filings[pair[0]] = pair[1];
+      }
+    } else {
+      if (fragment.period === null) bad(`${fragment.section} fragment has a null period`);
+      const target = fragment.section === "rows" ? rowsByPeriod : deltasByPeriod;
+      const list = target[fragment.period];
+      if (list === undefined || fragment.start !== list.length) {
+        bad(`${fragment.section} fragment ${fragment.part} has a contradictory period/start`);
+      }
+      list.push(...(fragment.data as unknown[]));
+    }
+  }
+  if (Object.keys(filings).length !== filingKeys.length
+      || Object.keys(filings).some((key, i) => key !== filingKeys[i])) {
+    bad("reassembled filing keys disagree with metadata order");
+  }
+
+  return parseFilerPayload({
+    v: meta.v,
+    kind: meta.kind,
+    cik: meta.cik,
+    filerName: meta.filerName,
+    latestPeriod: meta.latestPeriod,
+    periods: meta.periods,
+    current: meta.current,
+    prior: meta.prior,
+    filings,
+    rowsByPeriod,
+    totalsByPeriod: meta.totalsByPeriod,
+    concByPeriod: meta.concByPeriod,
+    deltasByPeriod,
+    latestFiled: meta.latestFiled,
+    topn: meta.topn,
+    window: meta.window,
+  });
 }

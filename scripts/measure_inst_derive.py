@@ -38,7 +38,10 @@ import sqlite3
 import subprocess  # nosec B404 — sysctl/vm_stat probes, argv lists only
 import sys
 import tempfile
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,18 +50,28 @@ sys.path.insert(0, str(ROOT / "src"))
 from populus.amendments import (  # noqa: E402
     ViewVerificationError,
     ensure_views,
+    materialized_inst_derivation_views,
     verify_views,
 )
 from populus.ingest.inst13f import (  # noqa: E402
-    _DENOMINATOR_TERM,
+    _production_coverage_queries,
     compute_coverage,
     compute_period_coverage,
 )
-from populus.inst_agg import build_inst_agg  # noqa: E402
+from populus.inst_agg import (  # noqa: E402
+    _PreparedAggregate,
+    _production_aggregate_queries,
+    build_inst_agg,
+    prepared_materialized_inst_aggregate,
+)
 from populus.inst_budget import (  # noqa: E402
+    FILER_FRAGMENT_PARTS_MAX,
+    FILER_FRAGMENT_SIZING_SENTINEL,
+    FILER_FRAGMENT_TARGET_BYTES,
     FILER_ROUTING_INDEX_FILES,
     FILER_SHARD_BYTE_CEILING,
     FILER_TAIL_SHARDS_RESERVED,
+    FILER_V1_TRANSITION_FILES,
     GLOBAL_FILE_CAP,
     M2_FILER_PAGES,
     worst_case_file_count,
@@ -68,6 +81,7 @@ from populus.inst_serving import (  # noqa: E402
     publication_periods,
 )
 from populus.load import ensure_inst_schema  # noqa: E402
+from populus.publish.digests import sha256_file  # noqa: E402
 
 GIB = 1 << 30
 MIB = 1 << 20
@@ -80,6 +94,9 @@ TOP_FILER_CUT = M2_FILER_PAGES
 #: The file-headroom bound the derived shard count must fit inside: the tail
 #: family's reservation in `inst_budget` (its terms in the R27 projection).
 TAIL_SHARD_LIMIT = FILER_TAIL_SHARDS_RESERVED
+SQLITE_PHASE_TIMEOUT_SECONDS = 180
+SQLITE_PROGRESS_OPCODES = 10_000
+R12_AGGREGATE_LIMIT_BYTES = 3 * (1 << 29)  # exactly 1.5 * 2^30
 
 #: PARITY with the dashboard embed cap (`dashboard/src/lib/holdings.ts::
 #: HOLDINGS_EMBED_ROW_CAP` / `HOLDINGS_EMBED_BYTE_CAP`), used verbatim by the
@@ -132,21 +149,9 @@ MIN_FREE_RAM_BYTES = 8 * GIB
 MIN_FREE_DISK_BYTES = 30 * GIB
 PILOT_FILER_LIMIT = 500
 
-#: Representative aggregation reads (the two large passes in build_inst_agg
-#: plus the serving-projection filer read), for the EXPLAIN QUERY PLAN rung.
+#: The serving-projection read is static; aggregate reads are selected from the
+#: live production oracle/bulk path by ``_production_aggregate_queries``.
 AGGREGATION_QUERIES = {
-    "agg_default_holdings_pass": (
-        "SELECT h.cik, h.period_of_report, h.security_id, h.cusip,"
-        " h.issuer_name_raw, h.value_usd, h.ssh_prnamt, h.ssh_prnamt_type,"
-        " h.put_call, s.entity_id, s.entity_link_state, h.holding_id"
-        " FROM v_default_holdings h"
-        " LEFT JOIN securities s ON s.security_id = h.security_id"
-        " ORDER BY h.cik, h.period_of_report, h.holding_id"
-    ),
-    "agg_filer_reported_periods": (
-        "SELECT DISTINCT cik, period_of_report FROM v_filer_reported_filings"
-        " ORDER BY cik, period_of_report"
-    ),
     "serving_filer_registry": (
         "SELECT fil.cik, fr.name_raw, MAX(fil.period_of_report)"
         " FROM v_filer_reported_filings fil"
@@ -155,9 +160,191 @@ AGGREGATION_QUERIES = {
     ),
 }
 
+class _SQLitePhaseTimeout(RuntimeError):
+    def __init__(self, phase: str) -> None:
+        super().__init__(phase)
+        self.phase = phase
+
+
+class _SQLiteExecutionGuard:
+    """One monotonic deadline shared by every SQLite handle in a T0 phase."""
+
+    def __init__(self, phase: str) -> None:
+        self.phase = phase
+        self.deadline = time.monotonic() + SQLITE_PHASE_TIMEOUT_SECONDS
+        self.interrupted = False
+        self._connections: dict[int, sqlite3.Connection] = {}
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(
+            max(0.0, self.deadline - time.monotonic()), self._expire
+        )
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _expired(self) -> bool:
+        return self.interrupted or time.monotonic() >= self.deadline
+
+    def _progress(self) -> int:
+        if self._expired():
+            self.interrupted = True
+            return 1
+        return 0
+
+    def _expire(self) -> None:
+        with self._lock:
+            self.interrupted = True
+            connections = tuple(self._connections.values())
+        for connection in connections:
+            try:
+                connection.interrupt()
+            except sqlite3.Error:
+                pass
+
+    def register(self, conn: sqlite3.Connection) -> None:
+        with self._lock:
+            self._connections[id(conn)] = conn
+        conn.set_progress_handler(self._progress, SQLITE_PROGRESS_OPCODES)
+        if self._expired():
+            conn.interrupt()
+
+    def unregister(self, conn: sqlite3.Connection) -> None:
+        with self._lock:
+            self._connections.pop(id(conn), None)
+        conn.set_progress_handler(None, 0)
+
+    def checkpoint(self) -> None:
+        if self._expired():
+            self._expire()
+            raise _SQLitePhaseTimeout(self.phase)
+
+    def close(self) -> None:
+        self._timer.cancel()
+        was_interrupted = self.interrupted
+        with self._lock:
+            connections = tuple(self._connections.values())
+            self._connections.clear()
+        for connection in connections:
+            try:
+                connection.set_progress_handler(None, 0)
+            except sqlite3.Error:
+                pass
+            if was_interrupted:
+                # ``sqlite3_interrupt`` may have landed between statements and
+                # mark the next VM operation. Consume that pending interrupt on
+                # a harmless read so enclosing TEMP-owner cleanup is not masked.
+                for _attempt in range(2):
+                    try:
+                        connection.execute("SELECT 1").fetchone()
+                        break
+                    except sqlite3.OperationalError:
+                        continue
+
+
+@contextmanager
+def _sqlite_execution_bound(
+    conn: sqlite3.Connection, phase: str
+) -> Iterator[_SQLiteExecutionGuard]:
+    """Bound all registered SQLite work for one phase; always clear handlers."""
+    guard = _SQLiteExecutionGuard(phase)
+    guard.register(conn)
+    try:
+        yield guard
+        guard.checkpoint()
+    except sqlite3.OperationalError as exc:
+        if (
+            guard.interrupted
+            or getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_INTERRUPT
+            or "interrupted" in str(exc).lower()
+        ):
+            raise _SQLitePhaseTimeout(phase) from exc
+        raise
+    finally:
+        guard.close()
+
+
+def _snapshot_state(snapshot: Path) -> dict:
+    """Complete D1 identity, main-schema, and sidecar state for *snapshot*."""
+    conn = sqlite3.connect(
+        f"file:{snapshot}?mode=ro&immutable=1",
+        uri=True,
+        isolation_level=None,
+    )
+    try:
+        schema_rows = conn.execute(
+            "SELECT type, name, tbl_name, COALESCE(sql, '')"
+            " FROM main.sqlite_schema ORDER BY type, name, tbl_name, sql"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "sha256": sha256_file(snapshot),
+        "main_sqlite_schema": [list(row) for row in schema_rows],
+        "sidecars": {
+            suffix: Path(f"{snapshot}{suffix}").exists()
+            for suffix in ("-journal", "-wal", "-shm")
+        },
+    }
+
+
+def _snapshot_state_has_sidecar(state: dict) -> bool:
+    return any(state["sidecars"].values())
+
 
 def _ro_connect(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    return sqlite3.connect(
+        f"file:{path}?mode=ro&immutable=1", uri=True, isolation_level=None
+    )
+
+
+@contextmanager
+def _owned_derivation_connection(
+    db_path: Path, *, label: str
+) -> Iterator[sqlite3.Connection]:
+    """Own one pilot/full source connection and its complete finalizer.
+
+    The aggregate destination is attached only for the serving phase.  On a
+    failure the retained materializer unwinds before this owner, then this
+    finalizer rolls back, detaches that derived database, and closes without
+    replacing the primary error with cleanup noise.
+    """
+    conn = (
+        _ro_connect(db_path)
+        if label == "full"
+        else sqlite3.connect(str(db_path), isolation_level=None)
+    )
+    try:
+        yield conn
+    finally:
+        primary_error_active = sys.exc_info()[0] is not None
+        cleanup_error: sqlite3.Error | None = None
+        if conn.in_transaction:
+            rollback_error: sqlite3.OperationalError | None = None
+            for _attempt in range(2):
+                try:
+                    conn.execute("ROLLBACK")
+                    rollback_error = None
+                    break
+                except sqlite3.OperationalError as exc:
+                    rollback_error = exc
+                    if "interrupted" not in str(exc).lower():
+                        break
+            cleanup_error = rollback_error
+        try:
+            attached = any(
+                row[1] == "inst_agg" for row in conn.execute("PRAGMA database_list")
+            )
+            if attached:
+                conn.execute("DETACH DATABASE inst_agg")
+        except sqlite3.Error as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        try:
+            conn.close()
+        except sqlite3.Error as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if cleanup_error is not None and not primary_error_active:
+            raise cleanup_error
 
 
 def _peak_rss_bytes() -> int:
@@ -220,14 +407,8 @@ def cardinality(conn: sqlite3.Connection) -> dict:
 def explain_plans(conn: sqlite3.Connection) -> dict[str, list[str]]:
     plans: dict[str, list[str]] = {}
     queries = dict(AGGREGATION_QUERIES)
-    queries["coverage_denominator"] = (
-        f"SELECT COALESCE(SUM({_DENOMINATOR_TERM}), 0)"
-        " FROM v_default_inst_filings f"
-    )
-    queries["coverage_numerator"] = (
-        "SELECT COALESCE(SUM(value_usd), 0) FROM v_default_holdings"
-        " WHERE security_id IS NOT NULL"
-    )
+    queries.update(_production_aggregate_queries(conn))
+    queries.update(_production_coverage_queries(conn))
     for name, sql in queries.items():
         plans[name] = [
             row[-1]
@@ -245,12 +426,13 @@ def build_pilot_subset(
     The snapshot is ATTACHed read-only; the pilot database is the only thing
     written. Returns the number of filers copied.
     """
-    conn = sqlite3.connect(str(pilot_db), isolation_level=None)
+    conn = sqlite3.connect(str(pilot_db), isolation_level=None, uri=True)
     try:
         ensure_inst_schema(conn)
-        # A plain-path ATTACH of a 0444 snapshot falls back to a read-only
-        # open inside SQLite; only SELECTs run against it either way.
-        conn.execute("ATTACH DATABASE ? AS src", (str(snapshot),))
+        conn.execute(
+            "ATTACH DATABASE ? AS src",
+            (f"file:{snapshot}?mode=ro&immutable=1",),
+        )
         for table in ("entities", "securities", "security_list_intervals"):
             exists_in_src = conn.execute(
                 "SELECT 1 FROM src.sqlite_master WHERE type='table' AND name=?",
@@ -292,45 +474,159 @@ def build_pilot_subset(
         conn.close()
 
 
-def derive_once(db_path: Path, scratch: Path, *, label: str, window: dict | None = None) -> dict:
-    """One full derivation (coverage -> aggregate -> serving projection) with
-    per-phase wall clock and peak RSS; every write lands under *scratch*."""
-    record: dict = {"label": label}
-    agg_path = scratch / f"{label}-inst_agg.db"
-    conn = _ro_connect(db_path) if label == "full" else sqlite3.connect(str(db_path))
+def _derive_from_materialized(
+    conn: sqlite3.Connection,
+    scratch: Path,
+    *,
+    label: str,
+    window: dict | None,
+    materialization_s: float,
+    prepared: _PreparedAggregate | None = None,
+) -> dict:
+    """Run post-materialization phases with transaction/attachment containment."""
     try:
-        t0 = time.monotonic()
+        return _derive_from_materialized_inner(
+            conn,
+            scratch,
+            label=label,
+            window=window,
+            materialization_s=materialization_s,
+            prepared=prepared,
+        )
+    except BaseException as primary_error:
+        cleanup_errors: list[BaseException] = []
+        if conn.in_transaction:
+            try:
+                conn.execute("ROLLBACK")
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        attached = False
+        if not conn.in_transaction:
+            try:
+                attached = any(
+                    row[1] == "inst_agg"
+                    for row in conn.execute("PRAGMA database_list")
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        if attached:
+            try:
+                conn.execute("DETACH DATABASE inst_agg")
+            except BaseException:
+                try:
+                    conn.execute("DETACH DATABASE inst_agg")
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+        for error in cleanup_errors:
+            primary_error.add_note(
+                f"T0 derive cleanup also failed: {type(error).__name__}: {error}"
+            )
+        raise
+
+
+def _derive_from_materialized_inner(
+    conn: sqlite3.Connection,
+    scratch: Path,
+    *,
+    label: str,
+    window: dict | None,
+    materialization_s: float,
+    prepared: _PreparedAggregate | None,
+) -> dict:
+    """Run the exact post-materialization phases in an active source transaction."""
+    if not conn.in_transaction:
+        raise RuntimeError(
+            "refusing derivation outside an active materialized source transaction"
+        )
+    if set(_production_aggregate_queries(conn)) != {
+        "agg_input_sign_preflight",
+        "agg_materialized_positions",
+    }:
+        raise RuntimeError(
+            "refusing derivation without the complete owned materialized namespace"
+        )
+    if prepared is None:
+        raise RuntimeError(
+            "refusing derivation without the active prepared aggregate namespace"
+        )
+
+    record: dict = {"label": label}
+    record["materialization_s"] = round(materialization_s, 3)
+    record["prepared_bulk_eligible"] = prepared.bulk_eligible
+    record["prepared_fallback_reason"] = prepared.fallback_reason
+    agg_path = scratch / f"{label}-inst_agg.db"
+    t0 = time.monotonic()
+    with _sqlite_execution_bound(conn, "coverage"):
         coverage = compute_coverage(conn)
-        record["coverage_s"] = round(time.monotonic() - t0, 3)
-        record["coverage"] = coverage.coverage
-        record["meets_threshold"] = coverage.meets_threshold
-        record["period_coverage_rows"] = len(compute_period_coverage(conn))
+    record["coverage_s"] = round(time.monotonic() - t0, 3)
+    record["coverage"] = coverage.coverage
+    record["meets_threshold"] = coverage.meets_threshold
 
-        t0 = time.monotonic()
-        build_inst_agg(conn, agg_path, ingested_at="2026-01-01T00:00:00Z")
-        record["aggregate_s"] = round(time.monotonic() - t0, 3)
-        record["aggregate_bytes"] = agg_path.stat().st_size
+    t0 = time.monotonic()
+    with _sqlite_execution_bound(conn, "period coverage"):
+        period_coverage = compute_period_coverage(conn)
+    record["period_coverage_s"] = round(time.monotonic() - t0, 3)
+    record["period_coverage_rows"] = len(period_coverage)
 
-        t0 = time.monotonic()
+    t0 = time.monotonic()
+    with _sqlite_execution_bound(conn, "aggregate") as aggregate_guard:
+        build_inst_agg(
+            conn,
+            agg_path,
+            ingested_at="2026-01-01T00:00:00Z",
+            _execution_guard=aggregate_guard,
+            _prepared=prepared,
+        )
+    record["aggregate_s"] = round(time.monotonic() - t0, 3)
+    record["aggregate_bytes"] = agg_path.stat().st_size
+
+    t0 = time.monotonic()
+    with _sqlite_execution_bound(conn, "serving"):
         periods = publication_periods(conn)
         conn.execute("ATTACH DATABASE ? AS inst_agg", (str(agg_path),))
-        try:
-            projection = build_serving_projection(conn, periods=periods)
-        finally:
-            conn.execute("DETACH DATABASE inst_agg")
-        record["serving_projection_s"] = round(time.monotonic() - t0, 3)
-        record["filer_rows"] = len(projection.filer_rows)
-        record["peak_rss_bytes"] = _peak_rss_bytes()
+        projection = build_serving_projection(conn, periods=periods)
         latest_filed = conn.execute(
             "SELECT MAX(filed_date) FROM v_default_inst_filings"
         ).fetchone()[0]
-        record["tail_payloads"] = tail_payload_distribution(
-            projection, agg_path=agg_path, latest_filed=latest_filed,
-            window=window,
-        )
-        return record
-    finally:
-        conn.close()
+    record["serving_projection_s"] = round(time.monotonic() - t0, 3)
+    record["filer_rows"] = len(projection.filer_rows)
+    conn.execute("COMMIT")
+    conn.execute("DETACH DATABASE inst_agg")
+    record["peak_rss_bytes"] = _peak_rss_bytes()
+    record["tail_payloads"] = tail_payload_distribution(
+        projection,
+        agg_path=agg_path,
+        latest_filed=latest_filed,
+        window=window,
+    )
+    return record
+
+
+def derive_once(
+    db_path: Path, scratch: Path, *, label: str, window: dict | None = None
+) -> dict:
+    """One full derivation (coverage -> aggregate -> serving projection) with
+    per-phase wall clock and peak RSS; every write lands under *scratch*."""
+    with _owned_derivation_connection(db_path, label=label) as conn:
+        conn.execute("BEGIN")
+        with ExitStack() as stack:
+            t0 = time.monotonic()
+            with _sqlite_execution_bound(conn, "materialization") as guard:
+                stack.enter_context(materialized_inst_derivation_views(conn))
+                prepared = stack.enter_context(
+                    prepared_materialized_inst_aggregate(
+                        conn, _execution_guard=guard
+                    )
+                )
+            materialization_s = time.monotonic() - t0
+            return _derive_from_materialized(
+                conn,
+                scratch,
+                label=label,
+                window=window,
+                materialization_s=materialization_s,
+                prepared=prepared,
+            )
 
 
 def _dumps(obj) -> str:
@@ -741,12 +1037,183 @@ def build_filer_payload(
     }
 
 
+def _fragment_value(
+    *, cik: str, part: int, parts: int, section: str,
+    period: str | None, start: int, data,
+) -> dict:
+    return {
+        "v": 2,
+        "kind": "filer-fragment",
+        "cik": cik,
+        "part": part,
+        "parts": parts,
+        "section": section,
+        "period": period,
+        "start": start,
+        "data": data,
+    }
+
+
+def _fragment_entry_json(fragment: dict) -> str:
+    key = f"{fragment['cik']}:{fragment['part']}"
+    return f"{_dumps(key)}:{_dumps(fragment)}"
+
+
+def _chunk_fragment_records(
+    cik: str, section: str, period: str | None, records: list,
+) -> list[tuple]:
+    """Linear parity with TypeScript ``chunkFragmentRecords``.
+
+    The five-digit sentinel is deliberately conservative and is part of the
+    reviewed cut contract, not an allowed actual part count.
+    """
+    chunks: list[tuple] = []
+    current: list = []
+    start = 0
+
+    def empty_bytes(at: int) -> int:
+        return _byte_len(_fragment_entry_json(_fragment_value(
+            cik=cik,
+            part=FILER_FRAGMENT_SIZING_SENTINEL,
+            parts=FILER_FRAGMENT_SIZING_SENTINEL,
+            section=section,
+            period=period,
+            start=at,
+            data=[],
+        )))
+
+    current_bytes = empty_bytes(start)
+    for record in records:
+        record_bytes = _byte_len(_dumps(record))
+        cost = record_bytes + (1 if current else 0)
+        if current and current_bytes + cost > FILER_FRAGMENT_TARGET_BYTES:
+            chunks.append((section, period, start, current))
+            start += len(current)
+            current = []
+            current_bytes = empty_bytes(start)
+        current.append(record)
+        current_bytes += record_bytes + (1 if len(current) > 1 else 0)
+    if current:
+        chunks.append((section, period, start, current))
+    return chunks
+
+
+def fragment_filer_payload(payload: dict) -> list[dict]:
+    """Record-boundary v2 transport for one unchanged FilerPayloadV1."""
+    cik = payload["cik"]
+    meta = {
+        "v": payload["v"],
+        "kind": payload["kind"],
+        "cik": cik,
+        "filerName": payload["filerName"],
+        "latestPeriod": payload["latestPeriod"],
+        "periods": payload["periods"],
+        "current": payload["current"],
+        "prior": payload["prior"],
+        "filingKeys": list(payload["filings"]),
+        "rowPeriods": list(payload["rowsByPeriod"]),
+        "deltaPeriods": list(payload["deltasByPeriod"]),
+        "totalsByPeriod": payload["totalsByPeriod"],
+        "concByPeriod": payload["concByPeriod"],
+        "latestFiled": payload["latestFiled"],
+        "topn": payload["topn"],
+        "window": payload["window"],
+    }
+    descriptors: list[tuple] = [("meta", None, 0, meta)]
+    descriptors.extend(_chunk_fragment_records(
+        cik, "filings", None, list(payload["filings"].items())
+    ))
+    for period, rows in payload["rowsByPeriod"].items():
+        descriptors.extend(_chunk_fragment_records(cik, "rows", period, rows))
+    for period, rows in payload["deltasByPeriod"].items():
+        descriptors.extend(_chunk_fragment_records(cik, "deltas", period, rows))
+    parts = len(descriptors)
+    return [
+        _fragment_value(
+            cik=cik,
+            part=part,
+            parts=parts,
+            section=section,
+            period=period,
+            start=start,
+            data=data,
+        )
+        for part, (section, period, start, data) in enumerate(descriptors)
+    ]
+
+
+def reassemble_filer_fragments(fragments: list[dict]) -> dict:
+    """Strict-enough T0 mirror of the browser reassembler; never sorts/repairs."""
+    if not fragments:
+        raise ValueError("fragment sequence is empty")
+    parts = fragments[0]["parts"]
+    if len(fragments) != parts:
+        raise ValueError("fragment sequence length contradicts total")
+    cik = fragments[0]["cik"]
+    for index, fragment in enumerate(fragments):
+        if fragment["part"] != index:
+            raise ValueError("fragment sequence is reordered or incomplete")
+        if fragment["parts"] != parts or fragment["cik"] != cik:
+            raise ValueError("fragment total or CIK contradicts sequence")
+    first = fragments[0]
+    if (first["section"], first["period"], first["start"]) != ("meta", None, 0):
+        raise ValueError("part zero is not metadata")
+    meta = first["data"]
+    filings: dict = {}
+    rows = {period: [] for period in meta["rowPeriods"]}
+    deltas = {period: [] for period in meta["deltaPeriods"]}
+    group_order = {("filings", None): 1}
+    group_order.update({("rows", p): 2 + i for i, p in enumerate(meta["rowPeriods"])})
+    group_order.update({
+        ("deltas", p): 2 + len(meta["rowPeriods"]) + i
+        for i, p in enumerate(meta["deltaPeriods"])
+    })
+    prior_group = 0
+    for fragment in fragments[1:]:
+        group = group_order.get((fragment["section"], fragment["period"]), -1)
+        if group < 1 or group < prior_group or not fragment["data"]:
+            raise ValueError("fragment section order is invalid")
+        prior_group = group
+        if fragment["section"] == "filings":
+            if fragment["start"] != len(filings):
+                raise ValueError("filing start is not contiguous")
+            for key, value in fragment["data"]:
+                if key in filings:
+                    raise ValueError("duplicate filing key")
+                filings[key] = value
+        else:
+            target = rows if fragment["section"] == "rows" else deltas
+            period = fragment["period"]
+            if period not in target or fragment["start"] != len(target[period]):
+                raise ValueError("fragment period/start is not contiguous")
+            target[period].extend(fragment["data"])
+    if list(filings) != meta["filingKeys"]:
+        raise ValueError("filing key sequence disagrees with metadata")
+    return {
+        "v": meta["v"],
+        "kind": meta["kind"],
+        "cik": meta["cik"],
+        "filerName": meta["filerName"],
+        "latestPeriod": meta["latestPeriod"],
+        "periods": meta["periods"],
+        "current": meta["current"],
+        "prior": meta["prior"],
+        "filings": filings,
+        "rowsByPeriod": rows,
+        "totalsByPeriod": meta["totalsByPeriod"],
+        "concByPeriod": meta["concByPeriod"],
+        "deltasByPeriod": deltas,
+        "latestFiled": meta["latestFiled"],
+        "topn": meta["topn"],
+        "window": meta["window"],
+    }
+
+
 def _shard_envelope_overhead(shard_limit: int) -> int:
-    """PARITY: the worst-case envelope reservation in
-    ``dashboard/src/lib/data.ts::filerTailShards``."""
+    """Worst v2 fragment-shard envelope, mirrored by the dashboard."""
     worst = max(shard_limit, 1)
     return _byte_len(
-        f'{{"v":1,"kind":"filer-shard","shard":{worst - 1},'
+        f'{{"v":2,"kind":"filer-fragment-shard","shard":{worst - 1},'
         f'"shard_count":{worst},"entries":{{}}}}'
     )
 
@@ -754,35 +1221,61 @@ def _shard_envelope_overhead(shard_limit: int) -> int:
 def fill_tail_shards(
     entries: list[dict], *, ceiling: int, shard_limit: int
 ) -> dict:
-    """PARITY: ``dashboard/src/lib/shards.ts::fillShardsByBytes`` under the
-    filer policy (fail, never truncate; an oversized single entry is a STOP,
-    never an own-shard grant — LD-10/round-6 N1). *entries* are
-    ``{"key": cik, "json": '"<cik>":<payload>'}`` in ascending-CIK order, the
-    order ``data.ts::filerTailShards`` feeds the walk."""
+    """Greedy fail/no-truncate parity over ordered fragment entries."""
     overhead = _shard_envelope_overhead(shard_limit)
     oversized: list[str] = []
-    shard_sizes: list[int] = []
-    shard_count = 0
-    current = None
+    shards: list[list[dict]] = []
+    current: list[dict] = []
+    current_bytes = overhead
     for entry in entries:
-        cost = _byte_len(entry["json"])
-        if overhead + cost > ceiling:
+        cost = _byte_len(entry["json"]) + (1 if current else 0)
+        if overhead + _byte_len(entry["json"]) > ceiling:
             oversized.append(entry["key"])
-            continue  # measured and reported; the STOP fires on the count
-        if current is None or current + cost + 1 > ceiling:
-            if current is not None:
-                shard_sizes.append(current)
-            shard_count += 1
-            current = overhead + cost
-        else:
-            current += cost + 1
-    if current is not None:
-        shard_sizes.append(current)
+            continue
+        if current and current_bytes + cost > ceiling:
+            shards.append(current)
+            current = []
+            current_bytes = overhead
+            cost = _byte_len(entry["json"])
+        current.append(entry)
+        current_bytes += cost
+    if current:
+        shards.append(current)
+    shard_count = len(shards)
+    shard_sizes = [
+        _byte_len(
+            f'{{"v":2,"kind":"filer-fragment-shard","shard":{index},'
+            f'"shard_count":{shard_count},"entries":{{'
+            + ",".join(entry["json"] for entry in shard)
+            + "}}"
+        )
+        for index, shard in enumerate(shards)
+    ]
+    routes: dict[str, list[int]] = {}
+    seen_parts: dict[str, list[int]] = {}
+    for index, shard in enumerate(shards):
+        for entry in shard:
+            route = routes.setdefault(
+                entry["cik"], [index, index, entry["parts"]]
+            )
+            if route[2] != entry["parts"]:
+                raise ValueError("fragment total drifted inside the family")
+            route[1] = index
+            seen_parts.setdefault(entry["cik"], []).append(entry["part"])
+    index_body = _dumps({
+        "v": 2,
+        "kind": "filer-index",
+        "absent": None,
+        "routes": routes,
+    })
     return {
         "shard_count": shard_count,
         "shard_bytes": shard_sizes,
-        "oversized_ciks": oversized,
+        "oversized_fragments": oversized,
         "overflow": shard_count > shard_limit,
+        "routes": routes,
+        "seen_parts": seen_parts,
+        "index_bytes": _byte_len(index_body),
     }
 
 
@@ -796,13 +1289,7 @@ def tail_payload_distribution(
     projection, *, agg_path: Path, latest_filed: str | None,
     window: dict | None = None,
 ) -> dict:
-    """LD-10, measured on the REAL payload: the full FilerPayloadV1 per tail
-    filer, serialized exactly as the shard planner will serialize it, bucketed
-    by the production byte rule, with the derived shard count checked against
-    the inst_budget file-headroom terms. `stop` is True when any payload
-    exceeds the 1 MiB client-response ceiling or the shard count exceeds the
-    reserved headroom — the R11/LD-10 stop conditions the caller exits
-    nonzero on."""
+    """Measure logical payloads, v2 fragments, reassembly, routes, and shards."""
     window = dict(WIDEST_FILING_WINDOW) if window is None else window
     agg = _load_aggregate_inputs(agg_path)
     by_filer: dict[str, list[dict]] = {}
@@ -841,6 +1328,9 @@ def tail_payload_distribution(
     }
     entries: list[dict] = []
     sizes: list[int] = []
+    part_counts: list[int] = []
+    reassembly_mismatches: list[str] = []
+    expected_parts: dict[str, int] = {}
     for cik in tail:
         payload = build_filer_payload(
             cik,
@@ -853,13 +1343,50 @@ def tail_payload_distribution(
             window=window,
         )
         entry_json = f"{_dumps(cik)}:{_dumps(payload)}"
-        entries.append({"key": cik, "json": entry_json})
         sizes.append(_byte_len(entry_json))
+        fragments = fragment_filer_payload(payload)
+        expected_parts[cik] = len(fragments)
+        part_counts.append(len(fragments))
+        if _dumps(reassemble_filer_fragments(fragments)) != _dumps(payload):
+            reassembly_mismatches.append(cik)
+        for fragment in fragments:
+            entries.append({
+                "key": f"{cik}:{fragment['part']}",
+                "cik": cik,
+                "part": fragment["part"],
+                "parts": fragment["parts"],
+                "json": _fragment_entry_json(fragment),
+            })
     ordered_sizes = sorted(sizes)
+    ordered_parts = sorted(part_counts)
     ceiling = CLIENT_RESPONSE_CEILING_BYTES
     fill = fill_tail_shards(entries, ceiling=ceiling, shard_limit=TAIL_SHARD_LIMIT)
-    over_ceiling = fill["oversized_ciks"]
-    headroom_ok = fill["shard_count"] <= TAIL_SHARD_LIMIT and not fill["overflow"]
+    over_ceiling = fill["oversized_fragments"]
+    route_mismatches: list[str] = []
+    for cik, parts in expected_parts.items():
+        route = fill["routes"].get(cik)
+        seen = fill["seen_parts"].get(cik, [])
+        if (
+            route is None
+            or route[2] != parts
+            or route[1] - route[0] + 1 > parts
+            or seen != list(range(parts))
+        ):
+            route_mismatches.append(cik)
+    max_parts = ordered_parts[-1] if ordered_parts else 0
+    headroom_ok = (
+        fill["shard_count"] <= TAIL_SHARD_LIMIT
+        and not fill["overflow"]
+        and max_parts <= FILER_FRAGMENT_PARTS_MAX
+    )
+    index_over = fill["index_bytes"] > ceiling
+    stop = bool(
+        over_ceiling
+        or reassembly_mismatches
+        or route_mismatches
+        or index_over
+        or not headroom_ok
+    )
     return {
         "tail_filers": len(tail),
         "total_bytes": sum(sizes),
@@ -870,12 +1397,36 @@ def tail_payload_distribution(
         "ceiling_bytes": ceiling,
         "over_ceiling_count": len(over_ceiling),
         "over_ceiling_ciks": over_ceiling,
+        "fragment_target_bytes": FILER_FRAGMENT_TARGET_BYTES,
+        "fragment_count": len(entries),
+        "fragment_parts_median": _percentile(ordered_parts, 0.5),
+        "fragment_parts_p90": _percentile(ordered_parts, 0.9),
+        "fragment_parts_max": max_parts,
+        "fragment_parts_limit": FILER_FRAGMENT_PARTS_MAX,
+        "fragment_sizing_sentinel": FILER_FRAGMENT_SIZING_SENTINEL,
+        "reassembly_mismatch_count": len(reassembly_mismatches),
+        "reassembly_mismatch_ciks": reassembly_mismatches,
+        "route_mismatch_count": len(route_mismatches),
+        "route_mismatch_ciks": route_mismatches,
+        "index_bytes": fill["index_bytes"],
+        "index_over_ceiling": index_over,
         "shard_count": fill["shard_count"],
         "shard_bytes_max": max(fill["shard_bytes"], default=0),
         "shard_limit": TAIL_SHARD_LIMIT,
         "routing_index_files": FILER_ROUTING_INDEX_FILES,
+        "v1_transition_files": FILER_V1_TRANSITION_FILES,
         "headroom_ok": headroom_ok,
-        "stop": bool(over_ceiling) or not headroom_ok,
+        "stop": stop,
+    }
+
+
+def _r12_decision(aggregate_bytes: int) -> dict:
+    no_compression = aggregate_bytes <= R12_AGGREGATE_LIMIT_BYTES
+    return {
+        "aggregate_bytes": aggregate_bytes,
+        "limit_bytes": R12_AGGREGATE_LIMIT_BYTES,
+        "branch": "no_compression" if no_compression else "new_delta_required",
+        "stop": not no_compression,
     }
 
 
@@ -947,9 +1498,53 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REFUSED: --snapshot {snapshot} is not a file", file=sys.stderr)
         return 1
 
-    # (i) view gate
-    conn = _ro_connect(snapshot)
+    pre_state = _snapshot_state(snapshot)
     try:
+        try:
+            return _run_ladder(args, snapshot, window)
+        except _SQLitePhaseTimeout as exc:
+            print(
+                f"STOP: SQLite execution bound ({SQLITE_PHASE_TIMEOUT_SECONDS}s)"
+                f" interrupted phase {exc.phase}; later phases suppressed",
+                file=sys.stderr,
+            )
+            return 4
+    finally:
+        try:
+            post_state = _snapshot_state(snapshot)
+        except Exception as exc:
+            print(f"D1 post-state: ERROR {type(exc).__name__}", file=sys.stderr)
+            print("STOP (D1): snapshot post-state could not be captured", file=sys.stderr)
+            return 5
+        print(f"D1 pre-state: {json.dumps(pre_state, sort_keys=True)}")
+        print(f"D1 post-state: {json.dumps(post_state, sort_keys=True)}")
+        if (
+            pre_state != post_state
+            or _snapshot_state_has_sidecar(pre_state)
+            or _snapshot_state_has_sidecar(post_state)
+        ):
+            print(
+                "STOP (D1): snapshot state changed or a SQLite sidecar exists",
+                file=sys.stderr,
+            )
+            return 5
+        print("snapshot_immutability: PASS")
+
+
+def _run_ladder(args: argparse.Namespace, snapshot: Path, window: dict) -> int:
+    if args.build_date is None:
+        print(
+            "serialization_mode: WIDEST valid FilingWindow"
+            " (--build-date intentionally omitted)"
+        )
+    else:
+        print(f"serialization_mode: build-date {args.build_date}")
+
+    # Rungs (i)-(iv) and (vi) share this one full-snapshot connection.  The
+    # independently owned materializer stays live across the pilot, but its
+    # phase deadline ends immediately after materialized EXPLAIN.
+    with _owned_derivation_connection(snapshot, label="full") as conn:
+        # (i) view gate
         try:
             verify_views(conn)
             print("(i) view gate: PASS")
@@ -982,59 +1577,100 @@ def main(argv: list[str] | None = None) -> int:
             f" free RAM {ram_text}"
         )
 
-        # (iv) EXPLAIN QUERY PLAN
+        # (iv) EXPLAIN QUERY PLAN — exact production SQL, before and after the
+        # connection-local namespace is installed.
         for name, plan in explain_plans(conn).items():
-            print(f"(iv) plan {name}:")
+            print(f"(iv) baseline plan {name}:")
             for line in plan:
                 print(f"      {line}")
-    finally:
-        conn.close()
-
-    with tempfile.TemporaryDirectory(prefix="inst-derive-t0-") as scratch_name:
-        scratch = Path(scratch_name)
-
-        # (v) pilot, bounded
-        pilot_db = scratch / "pilot.db"
-        copied = build_pilot_subset(
-            snapshot, pilot_db, filer_limit=min(args.pilot_filers, PILOT_FILER_LIMIT)
-        )
-        print(f"(v) pilot subset: {copied} filers")
-        pilot = derive_once(pilot_db, scratch, label="pilot", window=window)
-        print(f"(v) pilot: {json.dumps(pilot, sort_keys=True)}")
-        stop = _report_tail_stop(
-            pilot["tail_payloads"],
-            rung="(v) pilot",
-            measured_files=args.measured_files,
-        )
-
-        # (vi) full, optional and threshold-gated
-        if args.full:
-            free_disk = shutil.disk_usage(snapshot.parent).free
-            free_ram = free_ram_bytes()
-            if free_disk < MIN_FREE_DISK_BYTES:
-                print(
-                    f"(vi) ABORT: free disk {free_disk / GIB:.1f} GiB <"
-                    f" {MIN_FREE_DISK_BYTES / GIB:.0f} GiB threshold",
-                    file=sys.stderr,
+        conn.execute("BEGIN")
+        with ExitStack() as full_stack:
+            t0 = time.monotonic()
+            with _sqlite_execution_bound(conn, "materialization") as guard:
+                full_stack.enter_context(materialized_inst_derivation_views(conn))
+                full_prepared = full_stack.enter_context(
+                    prepared_materialized_inst_aggregate(
+                        conn, _execution_guard=guard
+                    )
                 )
-                return 2
-            if free_ram is not None and free_ram < MIN_FREE_RAM_BYTES:
-                print(
-                    f"(vi) ABORT: free RAM {free_ram / GIB:.1f} GiB <"
-                    f" {MIN_FREE_RAM_BYTES / GIB:.0f} GiB threshold",
-                    file=sys.stderr,
+                full_materialization_s = time.monotonic() - t0
+                materialized_plans = explain_plans(conn)
+            print(f"(iv) materialization_s: {full_materialization_s:.3f}")
+            for name, plan in materialized_plans.items():
+                print(f"(iv) materialized plan {name}:")
+                for line in plan:
+                    print(f"      {line}")
+
+            with tempfile.TemporaryDirectory(
+                prefix="inst-derive-t0-"
+            ) as scratch_name:
+                scratch = Path(scratch_name)
+
+                # (v) pilot, bounded and independently materialized.
+                pilot_db = scratch / "pilot.db"
+                copied = build_pilot_subset(
+                    snapshot,
+                    pilot_db,
+                    filer_limit=min(args.pilot_filers, PILOT_FILER_LIMIT),
                 )
-                return 2
-            full = derive_once(snapshot, scratch, label="full", window=window)
-            print(f"(vi) full: {json.dumps(full, sort_keys=True)}")
-            stop = (
-                _report_tail_stop(
-                    full["tail_payloads"],
-                    rung="(vi) full",
+                print(f"(v) pilot subset: {copied} filers")
+                pilot = derive_once(pilot_db, scratch, label="pilot", window=window)
+                print(f"(v) pilot: {json.dumps(pilot, sort_keys=True)}")
+                stop = _report_tail_stop(
+                    pilot["tail_payloads"],
+                    rung="(v) pilot",
                     measured_files=args.measured_files,
                 )
-                or stop
-            )
+
+                # (vi) full, optional and threshold-gated.  Reuse the exact
+                # rung-(iv) namespace; do not rebuild it or revive its deadline.
+                if args.full:
+                    free_disk = shutil.disk_usage(snapshot.parent).free
+                    free_ram = free_ram_bytes()
+                    if free_disk < MIN_FREE_DISK_BYTES:
+                        print(
+                            f"(vi) ABORT: free disk {free_disk / GIB:.1f} GiB <"
+                            f" {MIN_FREE_DISK_BYTES / GIB:.0f} GiB threshold",
+                            file=sys.stderr,
+                        )
+                        return 2
+                    if free_ram is not None and free_ram < MIN_FREE_RAM_BYTES:
+                        print(
+                            f"(vi) ABORT: free RAM {free_ram / GIB:.1f} GiB <"
+                            f" {MIN_FREE_RAM_BYTES / GIB:.0f} GiB threshold",
+                            file=sys.stderr,
+                        )
+                        return 2
+                    print(
+                        "(vi) materialization reuse: rung (iv)"
+                        f" {full_materialization_s:.3f}s; no rebuild"
+                    )
+                    full = _derive_from_materialized(
+                        conn,
+                        scratch,
+                        label="full",
+                        window=window,
+                        materialization_s=full_materialization_s,
+                        prepared=full_prepared,
+                    )
+                    print(f"(vi) full: {json.dumps(full, sort_keys=True)}")
+                    r12 = _r12_decision(full["aggregate_bytes"])
+                    print(f"(vi) R12: {json.dumps(r12, sort_keys=True)}")
+                    if r12["stop"]:
+                        print(
+                            "(vi) STOP (R12): aggregate exceeds exactly 1.5 * 2^30"
+                            " bytes; another owner-reviewed delta is required",
+                            file=sys.stderr,
+                        )
+                    stop = (
+                        _report_tail_stop(
+                            full["tail_payloads"],
+                            rung="(vi) full",
+                            measured_files=args.measured_files,
+                        )
+                        or r12["stop"]
+                        or stop
+                    )
     # F1 (delta review): the pilot is bounded at PILOT_FILER_LIMIT filers, which
     # is SMALLER than the TOP_FILER_CUT prerender boundary — so a pilot contains
     # no tail filer at all and its tail measurement is structurally vacuous. A
@@ -1069,9 +1705,33 @@ def _report_tail_stop(tail: dict, *, rung: str, measured_files: int | None) -> b
     stop = bool(tail["stop"])
     if tail["over_ceiling_count"] > 0:
         print(
-            f"{rung} STOP (LD-10): {tail['over_ceiling_count']} tail payload(s)"
+            f"{rung} STOP (LD-10): {tail['over_ceiling_count']} tail fragment(s)"
             f" exceed the {tail['ceiling_bytes']}-byte client-response ceiling:"
             f" {tail['over_ceiling_ciks']}",
+            file=sys.stderr,
+        )
+    if tail["reassembly_mismatch_count"] > 0:
+        print(
+            f"{rung} STOP: {tail['reassembly_mismatch_count']} logical payload(s)"
+            f" failed exact fragment reassembly: {tail['reassembly_mismatch_ciks']}",
+            file=sys.stderr,
+        )
+    if tail["route_mismatch_count"] > 0:
+        print(
+            f"{rung} STOP: {tail['route_mismatch_count']} filer route(s) are"
+            f" incomplete or contradictory: {tail['route_mismatch_ciks']}",
+            file=sys.stderr,
+        )
+    if tail["index_over_ceiling"]:
+        print(
+            f"{rung} STOP: routing index is {tail['index_bytes']} bytes, over"
+            f" the {tail['ceiling_bytes']}-byte client-response ceiling",
+            file=sys.stderr,
+        )
+    if tail["fragment_parts_max"] > tail["fragment_parts_limit"]:
+        print(
+            f"{rung} STOP: maximum filer fan-out {tail['fragment_parts_max']}"
+            f" exceeds {tail['fragment_parts_limit']} fragments",
             file=sys.stderr,
         )
     if not tail["headroom_ok"]:
@@ -1081,10 +1741,10 @@ def _report_tail_stop(tail: dict, *, rung: str, measured_files: int | None) -> b
             " shards (inst_budget.FILER_TAIL_SHARDS_RESERVED)",
             file=sys.stderr,
         )
-    # Codex F3: the fixed 256-shard reservation above is NOT a headroom
+    # The fixed shard reservation above is NOT a headroom
     # measurement. The binding check is against the MEASURED tree: global
     # headroom = the 18,000 cap minus (measured tree + chrome + filer pages +
-    # activity + M3 + routing index + the DERIVED shard count), every term from
+    # activity + M3 + both index/tombstone files + the DERIVED shard count), every term from
     # inst_budget's real constants via worst_case_file_count. Without a
     # measured tree count the tail-geometry step REFUSES rather than passing
     # on the reservation alone.
@@ -1106,7 +1766,8 @@ def _report_tail_stop(tail: dict, *, rung: str, measured_files: int | None) -> b
         f"{rung} measured global headroom: {GLOBAL_FILE_CAP} cap -"
         f" {projected} projected (measured tree {measured_files} + committed"
         f" terms + {tail['shard_count']} derived shard(s) +"
-        f" {tail['routing_index_files']} routing index) = {headroom}"
+        f" {tail['routing_index_files']} routing index +"
+        f" {tail['v1_transition_files']} v1 transition file) = {headroom}"
     )
     if headroom < 0:
         print(

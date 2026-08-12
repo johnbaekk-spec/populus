@@ -1571,8 +1571,8 @@ export function holdingsFootnotesHtml(): string {
 /* ======================================================== the whole surface */
 
 /** What the page embeds and what the client re-renders from. Both browsable
-    periods live in one payload because both live in one shard file (OD-5 costs
-    bytes, not files). */
+    periods remain one logical payload; long-tail delivery may reconstruct that
+    value from several bounded fragment shards. */
 export interface FilerSurfacePayload {
   kind: "filer";
   cik: string;

@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -220,6 +222,100 @@ def test_interruption_after_publication_leaves_an_immutable_file(
 
 def test_measure_ladder_runs_end_to_end_over_a_fixture(tmp_path, monkeypatch, capsys):
     snapshot = make_inst_snapshot(tmp_path)
+    real_materializer = measure_inst_derive.materialized_inst_derivation_views
+    real_bound = measure_inst_derive._sqlite_execution_bound
+    real_explain = measure_inst_derive.explain_plans
+    real_build_pilot = measure_inst_derive.build_pilot_subset
+    real_build_agg = measure_inst_derive.build_inst_agg
+    entries: list[str] = []
+    events: list[str] = []
+    cleanup_counts: dict[str, int] = {}
+    full_state: dict = {}
+
+    def main_name(conn):
+        path = next(row[2] for row in conn.execute("PRAGMA database_list")
+                    if row[1] == "main")
+        return Path(path).name
+
+    @contextmanager
+    def materializer_spy(conn):
+        name = main_name(conn)
+        label = "full" if name == snapshot.name else "pilot"
+        entries.append(name)
+        entered = False
+        try:
+            with real_materializer(conn):
+                entered = True
+                events.append(f"{label}-enter")
+                if label == "full":
+                    full_state["connection"] = conn
+                    full_state["materializer_connection_id"] = id(conn)
+                yield
+        finally:
+            cleanup_counts[label] = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_temp_schema"
+                " WHERE name LIKE '_populus_inst_%'"
+                " OR name LIKE 'v_filer_reported_%'"
+                " OR name LIKE 'v_default_%'"
+                " OR name = 'v_inst_reconciled_filings'"
+            ).fetchone()[0]
+            if entered:
+                events.append(f"{label}-exit")
+
+    @contextmanager
+    def bound_spy(conn, phase):
+        marker = phase == "materialization" and main_name(conn) == snapshot.name
+        try:
+            with real_bound(conn, phase) as guard:
+                if marker:
+                    events.append("full-guard-enter")
+                yield guard
+        finally:
+            if marker:
+                events.append("full-guard-exit")
+
+    def explain_spy(conn):
+        materialized = conn.execute(
+            "SELECT 1 FROM sqlite_temp_schema"
+            " WHERE type = 'table' AND name = '_populus_inst_agg_input'"
+        ).fetchone() is not None
+        if main_name(conn) == snapshot.name:
+            events.append("materialized-explain" if materialized else "baseline-explain")
+            if materialized:
+                full_state["explain_connection_id"] = id(conn)
+        return real_explain(conn)
+
+    def build_pilot_spy(*args, **kwargs):
+        full_conn = full_state["connection"]
+        full_state["retained_at_pilot"] = (
+            full_conn.in_transaction
+            and full_conn.execute(
+                "SELECT 1 FROM sqlite_temp_schema"
+                " WHERE type = 'table' AND name = '_populus_inst_agg_input'"
+            ).fetchone() is not None
+        )
+        events.append("pilot-copy")
+        return real_build_pilot(*args, **kwargs)
+
+    def build_agg_spy(conn, *args, **kwargs):
+        label = "full" if main_name(conn) == snapshot.name else "pilot"
+        events.append(f"{label}-aggregate")
+        if label == "full":
+            full_state["aggregate_connection_id"] = id(conn)
+            full_state["aggregate_in_transaction"] = conn.in_transaction
+            full_state["aggregate_has_input"] = conn.execute(
+                "SELECT 1 FROM sqlite_temp_schema"
+                " WHERE type = 'table' AND name = '_populus_inst_agg_input'"
+            ).fetchone() is not None
+        return real_build_agg(conn, *args, **kwargs)
+
+    monkeypatch.setattr(
+        measure_inst_derive, "materialized_inst_derivation_views", materializer_spy
+    )
+    monkeypatch.setattr(measure_inst_derive, "_sqlite_execution_bound", bound_spy)
+    monkeypatch.setattr(measure_inst_derive, "explain_plans", explain_spy)
+    monkeypatch.setattr(measure_inst_derive, "build_pilot_subset", build_pilot_spy)
+    monkeypatch.setattr(measure_inst_derive, "build_inst_agg", build_agg_spy)
     # The fixture has 2 filers; with the production 1,500 cut BOTH are top filers
     # and the tail is empty — which the F1 vacuity guard correctly refuses to
     # certify. Cut at 1 so exactly one tail filer exists and the ladder is
@@ -234,16 +330,62 @@ def test_measure_ladder_runs_end_to_end_over_a_fixture(tmp_path, monkeypatch, ca
     assert "(ii) cardinality" in out
     assert "worst_case_file_count(measured_files=12000)" in out
     assert "(iii) resources" in out
-    assert "(iv) plan coverage_denominator" in out
+    assert "(iv) baseline plan coverage_denominator" in out
+    assert "(iv) materialized plan period_coverage_numerator" in out
+    assert "(iv) baseline plan cover_dispositions_reconciled" in out
+    assert "(iv) materialized plan cover_dispositions_default" in out
+    assert "(iv) materialized plan coverage_cover_failed" in out
     assert "(v) pilot" in out
-    # The pilot record carries peak RSS and per-phase wall clock.
+    assert entries == [snapshot.name, "pilot.db"]
+    assert [event for event in events if event in {
+        "full-enter", "pilot-enter", "pilot-exit", "full-exit",
+    }] == ["full-enter", "pilot-enter", "pilot-exit", "full-exit"]
+    assert events.index("baseline-explain") < events.index("full-guard-enter")
+    assert events.index("full-guard-enter") < events.index("full-enter")
+    assert events.index("full-enter") < events.index("materialized-explain")
+    assert events.index("materialized-explain") < events.index("full-guard-exit")
+    assert events.index("full-guard-exit") < events.index("pilot-copy")
+    assert events.index("pilot-exit") < events.index("full-aggregate")
+    assert events.index("full-aggregate") < events.index("full-exit")
+    assert cleanup_counts == {"pilot": 0, "full": 0}
+    assert full_state["retained_at_pilot"] is True
+    assert full_state["materializer_connection_id"] == full_state[
+        "explain_connection_id"
+    ] == full_state["aggregate_connection_id"]
+    assert full_state["aggregate_in_transaction"] is True
+    assert full_state["aggregate_has_input"] is True
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        full_state["connection"].execute("SELECT 1")
+
     pilot_line = next(
         line for line in out.splitlines() if line.startswith("(v) pilot: ")
     )
     pilot = json.loads(pilot_line[len("(v) pilot: "):])
     assert pilot["peak_rss_bytes"] > 0
-    assert "coverage_s" in pilot and "aggregate_s" in pilot
+    assert set(pilot) >= {
+        "materialization_s",
+        "coverage_s",
+        "period_coverage_s",
+        "aggregate_s",
+        "aggregate_bytes",
+        "serving_projection_s",
+    }
     assert pilot["tail_payloads"]["ceiling_bytes"] == 1 << 20
+    full_line = next(
+        line for line in out.splitlines() if line.startswith("(vi) full: ")
+    )
+    full = json.loads(full_line[len("(vi) full: "):])
+    rung_time = float(next(
+        line.removeprefix("(iv) materialization_s: ")
+        for line in out.splitlines()
+        if line.startswith("(iv) materialization_s: ")
+    ))
+    assert full["materialization_s"] == rung_time
+    assert full["label"] == "full" and pilot["label"] == "pilot"
+    assert (
+        f"(vi) materialization reuse: rung (iv) {rung_time:.3f}s; no rebuild"
+        in out
+    )
 
 
 def test_measure_projection_rung_is_honest_when_unmeasured(tmp_path, capsys):
@@ -409,8 +551,16 @@ def test_tail_payload_is_the_full_filer_payload_v1(tmp_path, monkeypatch):
     assert dist["max_bytes"] > 0
     assert dist["over_ceiling_count"] == 0
     assert dist["shard_count"] == 1
-    assert dist["shard_limit"] == 256  # inst_budget.FILER_TAIL_SHARDS_RESERVED
+    assert dist["shard_limit"] == 4_096
     assert dist["routing_index_files"] == 1
+    assert dist["v1_transition_files"] == 1
+    assert dist["fragment_target_bytes"] == 768 * 1024
+    assert dist["fragment_parts_limit"] == 64
+    assert dist["fragment_sizing_sentinel"] == 99_999
+    assert dist["fragment_count"] >= dist["tail_filers"]
+    assert dist["reassembly_mismatch_count"] == 0
+    assert dist["route_mismatch_count"] == 0
+    assert dist["index_over_ceiling"] is False
     assert dist["headroom_ok"] is True
     assert dist["stop"] is False
     # The serialized entry is the FULL R22 field set, byte-for-byte the
@@ -505,6 +655,33 @@ def test_filer_payload_byte_parity_with_the_dashboard_assembler():
         )
         serialized = measure_inst_derive._dumps(payload)
         encoded = serialized.encode("utf-8")
+        fragments = measure_inst_derive.fragment_filer_payload(payload)
+        fragment_summary = {
+            "parts": len(fragments),
+            "fragments": [
+                {
+                    "part": fragment["part"],
+                    "section": fragment["section"],
+                    "period": fragment["period"],
+                    "start": fragment["start"],
+                    "records": (
+                        len(fragment["data"])
+                        if isinstance(fragment["data"], list)
+                        else None
+                    ),
+                    "entry_utf8_bytes": len(
+                        measure_inst_derive._fragment_entry_json(fragment).encode(
+                            "utf-8"
+                        )
+                    ),
+                }
+                for fragment in fragments
+            ],
+        }
+        assert fragment_summary == case["fragment_summary_v2"], case["name"]
+        assert (
+            measure_inst_derive.reassemble_filer_fragments(fragments) == payload
+        ), case["name"]
         if "expected" in case:
             assert serialized == case["expected"], case["name"]
         assert len(encoded) == case["expected_utf8_bytes"], case["name"]
@@ -532,6 +709,28 @@ def test_filer_payload_byte_parity_with_the_dashboard_assembler():
     period = cap_case["generateRows"]["period"]
     assert payload["totalsByPeriod"][period] == cap_case["generateRows"]["count"]
     assert len(payload["rowsByPeriod"][period]) < payload["totalsByPeriod"][period]
+
+
+def test_fragment_cut_uses_the_literal_five_digit_sizing_sentinel(monkeypatch):
+    """The 99999 values are load-bearing sizing inputs, not decorative
+    constants. Spy at the helper seam so replacing them with current part
+    numbers (or dropping conservative sizing) fails this test directly."""
+    calls = []
+    real = measure_inst_derive._fragment_value
+
+    def spy(**kwargs):
+        calls.append((kwargs["part"], kwargs["parts"]))
+        return real(**kwargs)
+
+    monkeypatch.setattr(measure_inst_derive, "_fragment_value", spy)
+    measure_inst_derive._chunk_fragment_records(
+        "0000000001", "rows", "2026-03-31", [{"row": 1}]
+    )
+    assert calls
+    assert calls[0] == (
+        measure_inst_derive.FILER_FRAGMENT_SIZING_SENTINEL,
+        measure_inst_derive.FILER_FRAGMENT_SIZING_SENTINEL,
+    ) == (99_999, 99_999)
 
 
 def test_measure_headroom_gate_refuses_an_over_cap_measured_tree(
@@ -637,3 +836,645 @@ def test_widest_window_is_the_conservative_serialization(tmp_path):
     assert real["open"] is True, "2026-08-08 is inside the 45-day window"
     closed = measure_inst_derive.filing_window_for("2026-09-01")
     assert closed["open"] is False
+
+
+def test_explain_uses_every_exact_production_coverage_statement(tmp_path):
+    from populus.amendments import materialized_inst_derivation_views
+    from populus.ingest.inst13f import (
+        _COVERAGE_DENOMINATOR_SQL,
+        _COVERAGE_NUMERATOR_SQL,
+        _PERIOD_COVERAGE_DENOMINATOR_SQL,
+        _PERIOD_COVERAGE_NUMERATOR_SQL,
+        _production_coverage_queries,
+    )
+    from populus.inst_serving import publication_periods
+    from populus.inst_agg import _production_aggregate_queries
+
+    persistent_queries = {
+        "coverage_denominator": _COVERAGE_DENOMINATOR_SQL,
+        "coverage_numerator": _COVERAGE_NUMERATOR_SQL,
+        "period_coverage_denominator": _PERIOD_COVERAGE_DENOMINATOR_SQL,
+        "period_coverage_numerator": _PERIOD_COVERAGE_NUMERATOR_SQL,
+    }
+    snapshot = make_inst_snapshot(tmp_path)
+    conn = measure_inst_derive._ro_connect(snapshot)
+    try:
+        selected_baseline = _production_coverage_queries(conn)
+        aggregate_baseline = _production_aggregate_queries(conn)
+        assert {
+            key: selected_baseline[key] for key in persistent_queries
+        } == persistent_queries
+        baseline = measure_inst_derive.explain_plans(conn)
+        with materialized_inst_derivation_views(conn):
+            selected_materialized = _production_coverage_queries(conn)
+            aggregate_materialized = _production_aggregate_queries(conn)
+            materialized = measure_inst_derive.explain_plans(conn)
+            periods = publication_periods(conn)
+            placeholders = ",".join("?" for _ in periods)
+            serving_sql = (
+                "SELECT h.cik, h.period_of_report, h.filing_id, h.security_id,"
+                " h.cusip, h.issuer_name_raw, h.title_of_class, h.value_usd,"
+                " h.ssh_prnamt, h.ssh_prnamt_type, h.put_call, h.flags"
+                " FROM v_filer_reported_holdings h"
+                f" WHERE h.period_of_report IN ({placeholders})"
+                " ORDER BY h.cik, h.period_of_report, h.holding_id"
+            )
+            serving_plan = [
+                row[3]
+                for row in conn.execute(
+                    "EXPLAIN QUERY PLAN " + serving_sql, periods
+                ).fetchall()
+            ]
+    finally:
+        conn.close()
+    exact_coverage_names = {
+        "coverage_denominator",
+        "coverage_numerator",
+        "period_coverage_denominator",
+        "period_coverage_numerator",
+        "cover_dispositions_reconciled",
+        "cover_dispositions_default",
+        "coverage_cover_failed",
+    }
+    assert exact_coverage_names <= set(baseline)
+    assert exact_coverage_names <= set(materialized)
+    assert set(aggregate_baseline) == {
+        "agg_default_holdings_pass",
+        "agg_filer_reported_periods",
+    }
+    assert set(aggregate_materialized) == {
+        "agg_input_sign_preflight",
+        "agg_materialized_positions",
+    }
+    assert "_populus_inst_agg_input" in aggregate_materialized[
+        "agg_input_sign_preflight"
+    ]
+    assert "value_usd < 0 OR ssh_prnamt < 0" in aggregate_materialized[
+        "agg_input_sign_preflight"
+    ]
+    assert "_populus_inst_agg_input" in aggregate_materialized[
+        "agg_materialized_positions"
+    ]
+    assert "v_default_holdings" not in aggregate_materialized[
+        "agg_materialized_positions"
+    ]
+    for name in aggregate_materialized:
+        plan = "\n".join(materialized[name])
+        assert "_populus_inst_agg_input" in plan
+    for name in exact_coverage_names - {"coverage_cover_failed"}:
+        assert "_populus_inst_coverage_totals" in selected_materialized[name]
+        plan = "\n".join(materialized[name])
+        assert "_populus_inst_coverage_totals_by_filing" in plan
+        assert "inst_holdings" not in plan
+        assert "CORRELATED" not in plan
+        assert "json_each" not in plan
+    cover_failed_sql = selected_materialized["coverage_cover_failed"]
+    cover_failed_plan = "\n".join(materialized["coverage_cover_failed"])
+    assert "json_each(v_default_inst_filings.flags)" in cover_failed_sql
+    assert "json_each" in cover_failed_plan
+    grouped = "\n".join(materialized["period_coverage_numerator"])
+    assert "_populus_inst_coverage_totals_by_filing" in grouped
+    serving = "\n".join(serving_plan)
+    assert "v_filer_reported_filings_by_filing" in serving
+    assert "CORRELATED" not in serving
+    assert "json_each" not in serving
+
+
+def test_materialized_derivation_refuses_without_an_active_transaction(tmp_path):
+    snapshot = make_inst_snapshot(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    conn = measure_inst_derive._ro_connect(snapshot)
+    try:
+        with pytest.raises(RuntimeError, match="active materialized source transaction"):
+            measure_inst_derive._derive_from_materialized(
+                conn,
+                scratch,
+                label="full",
+                window=measure_inst_derive.WIDEST_FILING_WINDOW,
+                materialization_s=1.0,
+            )
+    finally:
+        conn.close()
+    assert not (scratch / "full-inst_agg.db").exists()
+
+
+def test_materialized_derivation_refuses_an_incomplete_namespace(tmp_path):
+    snapshot = make_inst_snapshot(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    conn = measure_inst_derive._ro_connect(snapshot)
+    try:
+        conn.execute("BEGIN")
+        conn.execute("CREATE TEMP TABLE _populus_inst_agg_input(incomplete INTEGER)")
+        with pytest.raises(RuntimeError, match="complete owned materialized namespace"):
+            measure_inst_derive._derive_from_materialized(
+                conn,
+                scratch,
+                label="full",
+                window=measure_inst_derive.WIDEST_FILING_WINDOW,
+                materialization_s=1.0,
+            )
+        assert not conn.in_transaction
+    finally:
+        conn.close()
+    assert not (scratch / "full-inst_agg.db").exists()
+
+
+def test_materialized_explain_timeout_cleans_once_and_suppresses_later_rungs(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    real_materializer = measure_inst_derive.materialized_inst_derivation_views
+    real_bound = measure_inst_derive._sqlite_execution_bound
+    real_explain = measure_inst_derive.explain_plans
+    active_guards: dict[int, measure_inst_derive._SQLiteExecutionGuard] = {}
+    events: list[str] = []
+    residue: list[int] = []
+
+    @contextmanager
+    def bound_spy(conn, phase):
+        with real_bound(conn, phase) as guard:
+            active_guards[id(conn)] = guard
+            try:
+                yield guard
+            finally:
+                active_guards.pop(id(conn), None)
+
+    @contextmanager
+    def materializer_spy(conn):
+        events.append("call")
+        entered = False
+        try:
+            with real_materializer(conn):
+                entered = True
+                events.append("enter")
+                yield
+        finally:
+            residue.append(conn.execute(
+                "SELECT COUNT(*) FROM sqlite_temp_schema"
+                " WHERE name LIKE '_populus_inst_%'"
+                " OR name LIKE 'v_filer_reported_%'"
+                " OR name LIKE 'v_default_%'"
+                " OR name = 'v_inst_reconciled_filings'"
+            ).fetchone()[0])
+            if entered:
+                events.append("exit")
+
+    def explain_timeout(conn):
+        materialized = conn.execute(
+            "SELECT 1 FROM sqlite_temp_schema"
+            " WHERE type = 'table' AND name = '_populus_inst_agg_input'"
+        ).fetchone() is not None
+        if materialized:
+            guard = active_guards[id(conn)]
+            guard.deadline = time.monotonic() - 1
+            guard._expire()
+            conn.execute(
+                "WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL"
+                " SELECT x+1 FROM n WHERE x<100000000) SELECT SUM(x) FROM n"
+            ).fetchone()
+        return real_explain(conn)
+
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PHASE_TIMEOUT_SECONDS", 60)
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PROGRESS_OPCODES", 1)
+    monkeypatch.setattr(measure_inst_derive, "_sqlite_execution_bound", bound_spy)
+    monkeypatch.setattr(
+        measure_inst_derive, "materialized_inst_derivation_views", materializer_spy
+    )
+    monkeypatch.setattr(measure_inst_derive, "explain_plans", explain_timeout)
+    code = measure_inst_derive.main([
+        "--snapshot", str(snapshot), "--measured-files", "12000", "--full",
+    ])
+    captured = capsys.readouterr()
+    assert code == 4
+    assert events == ["call", "enter", "exit"]
+    assert residue == [0]
+    assert "phase materialization" in captured.err
+    assert "later phases suppressed" in captured.err
+    assert "(v) pilot" not in captured.out
+    assert "(vi) full" not in captured.out
+    assert "snapshot_immutability: PASS" in captured.out
+
+
+def test_forced_sqlite_timeout_is_exit_4_and_suppresses_later_phases(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PHASE_TIMEOUT_SECONDS", -1)
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PROGRESS_OPCODES", 1)
+    code = measure_inst_derive.main([
+        "--snapshot", str(snapshot), "--measured-files", "12000", "--full",
+    ])
+    captured = capsys.readouterr()
+    assert code == 4
+    assert "phase materialization" in captured.err
+    assert "later phases suppressed" in captured.err
+    assert "(v) pilot" not in captured.out
+    assert "snapshot_immutability: PASS" in captured.out
+
+
+def test_pilot_copy_failure_unwinds_the_retained_full_namespace(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    real_materializer = measure_inst_derive.materialized_inst_derivation_views
+    events: list[str] = []
+    residue: list[int] = []
+
+    @contextmanager
+    def materializer_spy(conn):
+        entered = False
+        try:
+            with real_materializer(conn):
+                entered = True
+                events.append("full-enter")
+                yield
+        finally:
+            residue.append(conn.execute(
+                "SELECT COUNT(*) FROM sqlite_temp_schema"
+                " WHERE name LIKE '_populus_inst_%'"
+                " OR name LIKE 'v_filer_reported_%'"
+                " OR name LIKE 'v_default_%'"
+                " OR name = 'v_inst_reconciled_filings'"
+            ).fetchone()[0])
+            if entered:
+                events.append("full-exit")
+
+    def fail_pilot_copy(*_args, **_kwargs):
+        raise RuntimeError("forced pilot copy failure")
+
+    monkeypatch.setattr(
+        measure_inst_derive, "materialized_inst_derivation_views", materializer_spy
+    )
+    monkeypatch.setattr(measure_inst_derive, "build_pilot_subset", fail_pilot_copy)
+    with pytest.raises(RuntimeError, match="forced pilot copy failure"):
+        measure_inst_derive.main([
+            "--snapshot", str(snapshot), "--measured-files", "12000", "--full",
+        ])
+    captured = capsys.readouterr()
+    assert events == ["full-enter", "full-exit"]
+    assert residue == [0]
+    assert "(v) pilot" not in captured.out
+    assert "(vi) full" not in captured.out
+    assert "snapshot_immutability: PASS" in captured.out
+
+
+def test_resource_abort_unwinds_the_retained_full_namespace(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    real_materializer = measure_inst_derive.materialized_inst_derivation_views
+    entries: list[str] = []
+    exits: list[str] = []
+    residue: dict[str, int] = {}
+    ram_values = iter([16 * measure_inst_derive.GIB, 1])
+
+    def main_name(conn):
+        path = next(row[2] for row in conn.execute("PRAGMA database_list")
+                    if row[1] == "main")
+        return Path(path).name
+
+    @contextmanager
+    def materializer_spy(conn):
+        name = main_name(conn)
+        label = "full" if name == snapshot.name else "pilot"
+        entries.append(label)
+        try:
+            with real_materializer(conn):
+                yield
+        finally:
+            residue[label] = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_temp_schema"
+                " WHERE name LIKE '_populus_inst_%'"
+                " OR name LIKE 'v_filer_reported_%'"
+                " OR name LIKE 'v_default_%'"
+                " OR name = 'v_inst_reconciled_filings'"
+            ).fetchone()[0]
+            exits.append(label)
+
+    monkeypatch.setattr(measure_inst_derive, "TOP_FILER_CUT", 1)
+    monkeypatch.setattr(measure_inst_derive, "free_ram_bytes", lambda: next(ram_values))
+    monkeypatch.setattr(
+        measure_inst_derive, "materialized_inst_derivation_views", materializer_spy
+    )
+    code = measure_inst_derive.main([
+        "--snapshot", str(snapshot), "--measured-files", "12000", "--full",
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert entries == ["full", "pilot"]
+    assert exits == ["pilot", "full"]
+    assert residue == {"pilot": 0, "full": 0}
+    assert "(vi) ABORT: free RAM" in captured.err
+    assert "(v) pilot:" in captured.out
+    assert "(vi) full:" not in captured.out
+    assert "snapshot_immutability: PASS" in captured.out
+
+
+def test_sqlite_timeout_handler_is_always_cleared(tmp_path, monkeypatch):
+    snapshot = make_inst_snapshot(tmp_path)
+    conn = measure_inst_derive._ro_connect(snapshot)
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PHASE_TIMEOUT_SECONDS", -1)
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PROGRESS_OPCODES", 1)
+    try:
+        with pytest.raises(measure_inst_derive._SQLitePhaseTimeout):
+            with measure_inst_derive._sqlite_execution_bound(conn, "coverage"):
+                conn.execute("SELECT COUNT(*) FROM inst_holdings").fetchone()
+        assert conn.execute("SELECT COUNT(*) FROM inst_holdings").fetchone()[0] > 0
+    finally:
+        conn.close()
+
+
+def test_sqlite_timeout_guard_interrupts_registered_destination(monkeypatch):
+    source = sqlite3.connect(":memory:")
+    destination = sqlite3.connect(":memory:")
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PHASE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PROGRESS_OPCODES", 1)
+    try:
+        with pytest.raises(measure_inst_derive._SQLitePhaseTimeout) as caught:
+            with measure_inst_derive._sqlite_execution_bound(
+                source, "aggregate"
+            ) as guard:
+                guard.register(destination)
+                destination.execute(
+                    "WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL"
+                    " SELECT x+1 FROM n WHERE x<100000000) SELECT SUM(x) FROM n"
+                ).fetchone()
+        assert caught.value.phase == "aggregate"
+        assert source.execute("SELECT 1").fetchone() == (1,)
+        assert destination.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        source.close()
+        destination.close()
+
+
+def test_sqlite_timeout_guard_checks_the_commit_boundary(monkeypatch):
+    source = sqlite3.connect(":memory:")
+    destination = sqlite3.connect(":memory:")
+    monkeypatch.setattr(measure_inst_derive, "SQLITE_PHASE_TIMEOUT_SECONDS", 60)
+    try:
+        with pytest.raises(measure_inst_derive._SQLitePhaseTimeout):
+            with measure_inst_derive._sqlite_execution_bound(
+                source, "aggregate"
+            ) as guard:
+                guard.register(destination)
+                destination.execute("CREATE TABLE result(x INTEGER)")
+                destination.execute("INSERT INTO result VALUES (1)")
+                guard.checkpoint()
+                destination.commit()
+                guard.deadline = time.monotonic() - 1
+                guard.checkpoint()
+        assert source.execute("SELECT 1").fetchone() == (1,)
+        assert destination.execute("SELECT COUNT(*) FROM result").fetchone() == (1,)
+    finally:
+        source.close()
+        destination.close()
+
+
+def test_forced_pilot_destination_timeout_unwinds_the_retained_full_namespace(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    original_register = measure_inst_derive._SQLiteExecutionGuard.register
+    real_materializer = measure_inst_derive.materialized_inst_derivation_views
+    events: list[str] = []
+    residue: dict[str, int] = {}
+    connections: dict[str, sqlite3.Connection] = {}
+
+    def main_name(conn):
+        path = next(row[2] for row in conn.execute("PRAGMA database_list")
+                    if row[1] == "main")
+        return Path(path).name
+
+    @contextmanager
+    def materializer_spy(conn):
+        label = "full" if main_name(conn) == snapshot.name else "pilot"
+        connections[label] = conn
+        try:
+            with real_materializer(conn):
+                events.append(f"{label}-enter")
+                yield
+        finally:
+            try:
+                residue[label] = conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_temp_schema"
+                    " WHERE name LIKE '_populus_inst_%'"
+                    " OR name LIKE 'v_filer_reported_%'"
+                    " OR name LIKE 'v_default_%'"
+                    " OR name = 'v_inst_reconciled_filings'"
+                ).fetchone()[0]
+            except sqlite3.OperationalError as exc:
+                if "interrupted" not in str(exc).lower():
+                    raise
+            events.append(f"{label}-exit")
+
+    def expire_when_destination_registers(self, conn):
+        with self._lock:
+            already_registered = bool(self._connections)
+        original_register(self, conn)
+        if (
+            already_registered
+            and self.phase == "aggregate"
+            and getattr(self, "source_name", "pilot.db") == "pilot.db"
+        ):
+            self.deadline = time.monotonic() - 1
+            self._expire()
+
+    def remember_pilot_source(self, conn):
+        with self._lock:
+            already_registered = bool(self._connections)
+        if not already_registered:
+            self.source_name = main_name(conn)
+        expire_when_destination_registers(self, conn)
+
+    monkeypatch.setattr(
+        measure_inst_derive._SQLiteExecutionGuard,
+        "register",
+        remember_pilot_source,
+    )
+    monkeypatch.setattr(
+        measure_inst_derive, "materialized_inst_derivation_views", materializer_spy
+    )
+    code = measure_inst_derive.main([
+        "--snapshot", str(snapshot), "--measured-files", "12000", "--full",
+    ])
+    captured = capsys.readouterr()
+    assert code == 4
+    assert "phase aggregate" in captured.err
+    assert "later phases suppressed" in captured.err
+    assert events == ["full-enter", "pilot-enter", "pilot-exit", "full-exit"]
+    assert residue["full"] == 0
+    assert all(count == 0 for count in residue.values())
+    for conn in connections.values():
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            conn.execute("SELECT 1")
+    assert "(v) pilot:" not in captured.out
+    assert "(vi) full:" not in captured.out
+    assert "snapshot_immutability: PASS" in captured.out
+
+
+@pytest.mark.parametrize(
+    ("target", "reported_phase"),
+    [
+        ("coverage", "coverage"),
+        ("aggregate", "aggregate"),
+        ("destination", "aggregate"),
+        ("serving", "serving"),
+    ],
+)
+def test_forced_full_phase_timeouts_unwind_the_retained_namespace(
+    tmp_path, monkeypatch, capsys, target, reported_phase
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    original_register = measure_inst_derive._SQLiteExecutionGuard.register
+    real_materializer = measure_inst_derive.materialized_inst_derivation_views
+    events: list[str] = []
+    residue: dict[str, int] = {}
+    connections: dict[str, sqlite3.Connection] = {}
+
+    def main_name(conn):
+        path = next(row[2] for row in conn.execute("PRAGMA database_list")
+                    if row[1] == "main")
+        return Path(path).name
+
+    @contextmanager
+    def materializer_spy(conn):
+        label = "full" if main_name(conn) == snapshot.name else "pilot"
+        connections[label] = conn
+        try:
+            with real_materializer(conn):
+                events.append(f"{label}-enter")
+                yield
+        finally:
+            try:
+                residue[label] = conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_temp_schema"
+                    " WHERE name LIKE '_populus_inst_%'"
+                    " OR name LIKE 'v_filer_reported_%'"
+                    " OR name LIKE 'v_default_%'"
+                    " OR name = 'v_inst_reconciled_filings'"
+                ).fetchone()[0]
+            except sqlite3.OperationalError as exc:
+                if "interrupted" not in str(exc).lower():
+                    raise
+            events.append(f"{label}-exit")
+
+    def expire_selected_full_guard(self, conn):
+        with self._lock:
+            already_registered = bool(self._connections)
+        if not already_registered:
+            self.source_name = main_name(conn)
+        original_register(self, conn)
+        is_full = self.source_name == snapshot.name
+        expire_source = (
+            not already_registered
+            and target != "destination"
+            and self.phase == target
+        )
+        expire_destination = (
+            already_registered
+            and target == "destination"
+            and self.phase == "aggregate"
+        )
+        if is_full and (expire_source or expire_destination):
+            self.deadline = time.monotonic() - 1
+            self._expire()
+
+    monkeypatch.setattr(measure_inst_derive, "TOP_FILER_CUT", 1)
+    monkeypatch.setattr(
+        measure_inst_derive._SQLiteExecutionGuard,
+        "register",
+        expire_selected_full_guard,
+    )
+    monkeypatch.setattr(
+        measure_inst_derive, "materialized_inst_derivation_views", materializer_spy
+    )
+    code = measure_inst_derive.main([
+        "--snapshot", str(snapshot), "--measured-files", "12000", "--full",
+    ])
+    captured = capsys.readouterr()
+    assert code == 4
+    assert f"phase {reported_phase}" in captured.err
+    assert "later phases suppressed" in captured.err
+    assert events == ["full-enter", "pilot-enter", "pilot-exit", "full-exit"]
+    assert residue["pilot"] == 0
+    assert all(count == 0 for count in residue.values())
+    for conn in connections.values():
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            conn.execute("SELECT 1")
+    assert "(v) pilot:" in captured.out
+    assert "(vi) materialization reuse:" in captured.out
+    assert "(vi) full:" not in captured.out
+    assert "snapshot_immutability: PASS" in captured.out
+
+
+@pytest.mark.parametrize("difference", ["hash", "schema", "sidecar"])
+def test_d1_forced_state_differences_are_exit_5(
+    tmp_path, monkeypatch, capsys, difference
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    state = measure_inst_derive._snapshot_state(snapshot)
+    changed = json.loads(json.dumps(state))
+    if difference == "hash":
+        changed["sha256"] = "0" * 64
+    elif difference == "schema":
+        changed["main_sqlite_schema"].append(["table", "mutant", "mutant", ""])
+    else:
+        changed["sidecars"]["-wal"] = True
+    states = iter([state, changed])
+    monkeypatch.setattr(measure_inst_derive, "_snapshot_state", lambda _p: next(states))
+    monkeypatch.setattr(measure_inst_derive, "_run_ladder", lambda *_args: 0)
+    code = measure_inst_derive.main(["--snapshot", str(snapshot)])
+    assert code == 5
+    assert "STOP (D1)" in capsys.readouterr().err
+
+
+def test_d1_exit_5_precedes_another_nonzero_status(tmp_path, monkeypatch):
+    snapshot = make_inst_snapshot(tmp_path)
+    state = measure_inst_derive._snapshot_state(snapshot)
+    changed = json.loads(json.dumps(state))
+    changed["sha256"] = "f" * 64
+    states = iter([state, changed])
+    monkeypatch.setattr(measure_inst_derive, "_snapshot_state", lambda _p: next(states))
+    monkeypatch.setattr(measure_inst_derive, "_run_ladder", lambda *_args: 3)
+    assert measure_inst_derive.main(["--snapshot", str(snapshot)]) == 5
+
+
+def test_d1_matching_state_preserves_another_nonzero_status(tmp_path, monkeypatch):
+    snapshot = make_inst_snapshot(tmp_path)
+    state = measure_inst_derive._snapshot_state(snapshot)
+    monkeypatch.setattr(measure_inst_derive, "_snapshot_state", lambda _p: state)
+    monkeypatch.setattr(measure_inst_derive, "_run_ladder", lambda *_args: 3)
+    assert measure_inst_derive.main(["--snapshot", str(snapshot)]) == 3
+
+
+def test_r12_boundary_is_inclusive_at_exactly_one_point_five_gib():
+    limit = int(1.5 * (2**30))
+    assert limit == measure_inst_derive.R12_AGGREGATE_LIMIT_BYTES
+    assert measure_inst_derive._r12_decision(limit) == {
+        "aggregate_bytes": limit,
+        "limit_bytes": limit,
+        "branch": "no_compression",
+        "stop": False,
+    }
+    assert measure_inst_derive._r12_decision(limit + 1) == {
+        "aggregate_bytes": limit + 1,
+        "limit_bytes": limit,
+        "branch": "new_delta_required",
+        "stop": True,
+    }
+
+
+def test_binding_output_names_widest_window_and_r12_branch(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = make_inst_snapshot(tmp_path)
+    monkeypatch.setattr(measure_inst_derive, "TOP_FILER_CUT", 1)
+    code = measure_inst_derive.main([
+        "--snapshot", str(snapshot), "--measured-files", "12000", "--full",
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "WIDEST valid FilingWindow (--build-date intentionally omitted)" in out
+    assert '"branch": "no_compression"' in out

@@ -32,11 +32,20 @@ from pathlib import Path
 from typing import Protocol
 
 from populus import licenses
-from populus.amendments import ViewVerificationError, ensure_views, verify_views
+from populus.amendments import (
+    ViewVerificationError,
+    ensure_views,
+    materialized_inst_derivation_views,
+    verify_views,
+)
 from populus.db import connect
 from populus.ingest import UnsafeArchivePathError
 from populus.ingest.inst13f import compute_coverage, compute_period_coverage
-from populus.inst_agg import build_inst_agg
+from populus.inst_agg import (
+    _PreparedAggregate,
+    build_inst_agg,
+    prepared_materialized_inst_aggregate,
+)
 from populus.inst_serving import (
     build_serving_projection,
     publication_periods,
@@ -1174,6 +1183,59 @@ def _derive_inst_module(
     created_at: str,
     end_read_txn: Callable[[], None] | None = None,
 ) -> dict:
+    """Materialize the reviewed default population once for a complete derive."""
+    with materialized_inst_derivation_views(source):
+        with prepared_materialized_inst_aggregate(source) as prepared:
+            try:
+                return _derive_inst_module_in_materialized_scope(
+                    source,
+                    inst_agg_path=inst_agg_path,
+                    inst_serving_path=inst_serving_path,
+                    created_at=created_at,
+                    end_read_txn=end_read_txn,
+                    _prepared=prepared,
+                )
+            except BaseException as primary_error:
+                cleanup_errors: list[BaseException] = []
+                if end_read_txn is not None and source.in_transaction:
+                    try:
+                        source.execute("ROLLBACK")
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
+                attached = False
+                if not source.in_transaction:
+                    try:
+                        attached = any(
+                            row[1] == "inst_agg"
+                            for row in source.execute("PRAGMA database_list")
+                        )
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
+                if attached:
+                    try:
+                        source.execute("DETACH DATABASE inst_agg")
+                    except BaseException:
+                        try:
+                            source.execute("DETACH DATABASE inst_agg")
+                        except BaseException as exc:
+                            cleanup_errors.append(exc)
+                for error in cleanup_errors:
+                    primary_error.add_note(
+                        f"inst derive cleanup also failed:"
+                        f" {type(error).__name__}: {error}"
+                    )
+                raise
+
+
+def _derive_inst_module_in_materialized_scope(
+    source: sqlite3.Connection,
+    *,
+    inst_agg_path: Path,
+    inst_serving_path: Path,
+    created_at: str,
+    end_read_txn: Callable[[], None] | None = None,
+    _prepared: _PreparedAggregate | None = None,
+) -> dict:
     """The full inst gate + derivation against *source*, for both input shapes.
 
     *source* is either the congress build snapshot (the pre-M2-11 path) or the
@@ -1188,7 +1250,12 @@ def _derive_inst_module(
     in its commit and it runs after the projection is fully read, before the
     DETACH. ``None`` (the congress path) preserves today's behaviour exactly.
     """
-    build_inst_agg(source, inst_agg_path, ingested_at=created_at)
+    build_inst_agg(
+        source,
+        inst_agg_path,
+        ingested_at=created_at,
+        _prepared=_prepared,
+    )
     # Fail-closed gate (OWNER DECISION 2026-07-24): consume the reused
     # compute_coverage's `meets_threshold` at exactly COVERAGE_THRESHOLD,
     # keyed on the cover_failed flag — never re-derived here, never
@@ -1254,6 +1321,8 @@ def _derive_inst_module(
             "cover_rounding_max_delta_usd": coverage.cover_rounding_max_delta_usd,
             "cover_conflict_filing_ids": list(coverage.cover_conflict_filing_ids),
         }
+        if end_read_txn is not None:
+            end_read_txn()
         return derived
     agg_conn = connect(str(inst_agg_path))
     try:
@@ -1286,7 +1355,11 @@ def _derive_inst_module(
         serving_projection = build_serving_projection(
             source, periods=inst_serving_periods
         )
-    finally:
+    except BaseException:
+        # The owner catches this outside the prepared context, rolls back its
+        # read transaction, then DETACHes before prepared TEMP/settings cleanup.
+        raise
+    else:
         # SQLite refuses DETACH inside an open transaction, so the external
         # snapshot's single read transaction ends here — AFTER every read the
         # projection performs, which is exactly the span R16 requires.

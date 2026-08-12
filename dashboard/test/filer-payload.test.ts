@@ -24,12 +24,21 @@ import {
   type FilerSelectionInput,
 } from "../src/lib/holdings.ts";
 import {
+  FILER_FRAGMENT_PARTS_MAX,
+  FILER_FRAGMENT_SHARD_ENVELOPE_BYTES,
+  FILER_FRAGMENT_SIZING_SENTINEL,
+  FILER_FRAGMENT_TARGET_BYTES,
   FILER_INDEX_PATH,
   FilerPayloadError,
   assembleFilerPayload,
   filerShardPath,
+  fragmentFilerPayload,
+  parseFilerFragmentV2,
   parseFilerPayload,
   readServingFilings,
+  reassembleFilerFragments,
+  serializeFilerFragmentEntry,
+  type FilerFragmentV2,
   type FilerPayloadV1,
 } from "../src/lib/filer-payload.ts";
 import {
@@ -238,6 +247,77 @@ test("round trip: assembleFilerPayload -> JSON -> parseFilerPayload, exact struc
     const payload = assemble(db);
     const parsed = parseFilerPayload(JSON.parse(JSON.stringify(payload)));
     assert.deepStrictEqual(parsed, payload);
+  } finally {
+    db.close();
+  }
+});
+
+test("v2 fragments reconstruct the identical logical payload bytes", () => {
+  const db = fixtureDb();
+  try {
+    const payload = assemble(db);
+    const fragments = fragmentFilerPayload(payload);
+    assert.ok(fragments.length > 1);
+    assert.ok(fragments.length <= FILER_FRAGMENT_PARTS_MAX);
+    fragments.forEach((fragment, part) => {
+      assert.equal(fragment.part, part);
+      assert.equal(fragment.parts, fragments.length);
+      assert.ok(
+        FILER_FRAGMENT_SHARD_ENVELOPE_BYTES
+          + Buffer.byteLength(serializeFilerFragmentEntry(fragment))
+          <= SHARD_RESPONSE_CEILING_BYTES,
+      );
+    });
+    const rebuilt = reassembleFilerFragments(JSON.parse(JSON.stringify(fragments)), payload.cik);
+    assert.equal(JSON.stringify(rebuilt), JSON.stringify(payload));
+  } finally {
+    db.close();
+  }
+});
+
+test("v2 fragment transport rejects missing, reordered, duplicate, cross-CIK, offset, and unknown data", () => {
+  const db = fixtureDb();
+  try {
+    const fragments = fragmentFilerPayload(assemble(db));
+    const clone = (): FilerFragmentV2[] => structuredClone(fragments);
+    assert.throws(() => reassembleFilerFragments(clone().slice(0, -1)), /declares|sequence/);
+    const reordered = clone();
+    [reordered[1], reordered[2]] = [reordered[2]!, reordered[1]!];
+    assert.throws(() => reassembleFilerFragments(reordered), /expected part|order/);
+    const duplicate = clone();
+    duplicate[2] = structuredClone(duplicate[1]!);
+    assert.throws(() => reassembleFilerFragments(duplicate), /expected part|duplicate/);
+    const cross = clone();
+    cross[1]!.cik = "0000000042";
+    assert.throws(() => reassembleFilerFragments(cross), /cross-CIK/);
+    const offset = clone();
+    offset[1]!.start += 1;
+    assert.throws(() => reassembleFilerFragments(offset), /period\/start/);
+    const unknown = structuredClone(fragments[0]) as FilerFragmentV2 & { smuggled?: boolean };
+    unknown.smuggled = true;
+    assert.throws(() => parseFilerFragmentV2(unknown), /unknown key/);
+  } finally {
+    db.close();
+  }
+});
+
+test("fragmenter refuses a one-entry response over 1 MiB and a 65-part filer", () => {
+  const db = fixtureDb();
+  try {
+    const oversized = structuredClone(assemble(db));
+    oversized.rowsByPeriod[oversized.current]![0]!.issuer_name = "X".repeat(1_100_000);
+    assert.throws(() => fragmentFilerPayload(oversized), /one-entry shard/);
+
+    const fanout = structuredClone(assemble(db));
+    const template = fanout.rowsByPeriod[fanout.current]![0]!;
+    fanout.filings = {};
+    fanout.rowsByPeriod = Object.fromEntries(
+      Array.from({ length: 64 }, (_, i) => [`P${String(i).padStart(2, "0")}`, [template]]),
+    );
+    fanout.totalsByPeriod = Object.fromEntries(Object.keys(fanout.rowsByPeriod).map((p) => [p, 1]));
+    fanout.concByPeriod = {};
+    fanout.deltasByPeriod = {};
+    assert.throws(() => fragmentFilerPayload(fanout), /65 fragments|64-part/);
   } finally {
     db.close();
   }
@@ -517,13 +597,22 @@ test("the shard constants MIRROR src/populus/inst_budget.py — no second source
   assert.equal(SHARD_RESPONSE_CEILING_BYTES, pyInt(py, "FILER_SHARD_BYTE_CEILING"));
   assert.equal(SHARD_RESPONSE_CEILING_BYTES, 1_048_576, "LD-10: 1 MiB, the reader's bound");
   assert.equal(FILER_TAIL_SHARDS_MAX, pyInt(py, "FILER_TAIL_SHARDS_RESERVED"));
+  assert.equal(FILER_FRAGMENT_TARGET_BYTES, pyInt(py, "FILER_FRAGMENT_TARGET_BYTES"));
+  assert.equal(FILER_FRAGMENT_PARTS_MAX, pyInt(py, "FILER_FRAGMENT_PARTS_MAX"));
+  assert.equal(FILER_FRAGMENT_SIZING_SENTINEL, pyInt(py, "FILER_FRAGMENT_SIZING_SENTINEL"));
   const m2FilerPages = pyInt(py, "M2_FILER_PAGES");
   assert.equal(FILER_PAGE_BUDGET, m2FilerPages, "LD-7 cut == the budget's M2 term");
+  const source = readFileSync(path.join(DASH, "src", "lib", "filer-payload.ts"), "utf-8");
+  assert.match(
+    source,
+    /fragmentValue\(cik, FILER_FRAGMENT_SIZING_SENTINEL,\s*FILER_FRAGMENT_SIZING_SENTINEL/,
+    "the conservative five-digit sentinel must remain load-bearing in the cut",
+  );
 });
 
 test("the routing-index and shard paths agree between producer and driver", () => {
-  assert.equal(FILER_INDEX_PATH, "/institutional/data/filers/index.v1.json");
-  assert.equal(filerShardPath("0"), "/institutional/data/filers/0.v1.json");
+  assert.equal(FILER_INDEX_PATH, "/institutional/data/filers/index.v2.json");
+  assert.equal(filerShardPath(0), "/institutional/data/filers/0.v2.json");
 });
 
 /* ---------- STRICT: unknown fields reject at every level (Codex F6) ---------- */
@@ -658,8 +747,9 @@ test("F7: the absent family is reserved for a genuinely absent module", () => {
     const family = filerTailShards(fakeBuild("f7-absent", false));
     assert.equal(family.present, false);
     assert.equal(family.reason, "module-absent");
-    assert.deepEqual(family.index, {});
+    assert.deepEqual(family.routes, {});
     assert.ok(family.indexBody.includes('"absent":"module-absent"'));
+    assert.ok(family.indexBody.includes('"v":2'));
   });
 });
 
@@ -705,6 +795,17 @@ interface ParityCase {
   expected?: string;
   expected_sha256: string;
   expected_utf8_bytes: number;
+  fragment_summary_v2: {
+    parts: number;
+    fragments: {
+      part: number;
+      section: string;
+      period: string | null;
+      start: number;
+      records: number | null;
+      entry_utf8_bytes: number;
+    }[];
+  };
 }
 
 function expandParityRows(c: ParityCase): unknown[][] {
@@ -763,6 +864,29 @@ test("F2 byte parity: assembleFilerPayload reproduces the shared fixture's canon
         agg: c.agg,
       });
       const serialized = JSON.stringify(payload);
+      const fragments = fragmentFilerPayload(payload);
+      const fragmentSummary = {
+        parts: fragments.length,
+        fragments: fragments.map((fragment) => ({
+          part: fragment.part,
+          section: fragment.section,
+          period: fragment.period,
+          start: fragment.start,
+          records: Array.isArray(fragment.data) ? fragment.data.length : null,
+          entry_utf8_bytes: Buffer.byteLength(serializeFilerFragmentEntry(fragment)),
+        })),
+      };
+      assert.deepEqual(
+        fragmentSummary,
+        c.fragment_summary_v2,
+        `${c.name}: exact shared v2 fragment summary`,
+      );
+      assert.equal(
+        JSON.stringify(reassembleFilerFragments(fragments, payload.cik)),
+        serialized,
+        `${c.name}: v2 fragment reassembly bytes`,
+      );
+      assert.ok(fragments.length <= FILER_FRAGMENT_PARTS_MAX, `${c.name}: bounded fan-out`);
       if (c.expected !== undefined) {
         assert.equal(serialized, c.expected, `${c.name}: canonical bytes diverge`);
       }
@@ -777,6 +901,7 @@ test("F2 byte parity: assembleFilerPayload reproduces the shared fixture's canon
         const period = c.generateRows.period;
         assert.equal(payload.totalsByPeriod[period], c.generateRows.count);
         assert.ok(payload.rowsByPeriod[period]!.length < c.generateRows.count);
+        assert.ok(fragments.length > 1, "multi-megabyte cap case must exercise fragmentation");
       }
     } finally {
       db.close();

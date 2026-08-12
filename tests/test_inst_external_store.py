@@ -14,6 +14,7 @@ The canonical audit store is never opened; every test input is built here.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -25,7 +26,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from populus.amendments import ViewVerificationError, verify_views
+from populus.amendments import (
+    ViewVerificationError,
+    materialized_inst_derivation_views,
+    verify_views,
+)
 from populus.cli import main as cli_main
 from populus.db import connect, init_db
 from populus.ingest.inst13f import compute_period_coverage
@@ -37,7 +42,12 @@ from populus.publish.build import (
     run_publish,
     stage_build,
 )
-from populus.publish.digests import sha256_file
+from populus.publish.digests import (
+    LOGICAL_PROJECTIONS,
+    logical_digest,
+    projection_for,
+    sha256_file,
+)
 from populus.publish.manifest import (
     INST_SOURCE_ARTIFACT,
     INST_SOURCE_SCHEMA,
@@ -390,8 +400,44 @@ def test_c_exactly_one_read_transaction_spans_the_derivation(
     commits = [i for i, s in enumerate(statements) if s.strip() == "COMMIT"]
     assert len(begins) == 1, statements
     assert len(commits) == 1, statements
+    materializations = [
+        i
+        for i, s in enumerate(statements)
+        if s.strip().startswith("CREATE TEMP TABLE v_default_inst_filings")
+    ]
+    assert len(materializations) == 1, statements
+    reported_materializations = [
+        i
+        for i, s in enumerate(statements)
+        if s.strip().startswith("CREATE TEMP TABLE v_filer_reported_filings")
+        and "main.v_filer_reported_filings" in s
+    ]
+    assert len(reported_materializations) == 1, statements
+    coverage_totals = [
+        i
+        for i, s in enumerate(statements)
+        if s.strip().startswith(
+            "CREATE TEMP TABLE _populus_inst_coverage_totals"
+        )
+        and "FROM main.inst_holdings" in s
+    ]
+    assert len(coverage_totals) == 1, statements
+    aggregate_inputs = [
+        i
+        for i, s in enumerate(statements)
+        if s.strip().startswith("CREATE TEMP TABLE _populus_inst_agg_input")
+        and "FROM main.inst_holdings" in s
+    ]
+    assert len(aggregate_inputs) == 1, statements
+    assert begins[0] < min(
+        materializations[0], reported_materializations[0], coverage_totals[0],
+        aggregate_inputs[0],
+    ), "TEMP setup ran before BEGIN"
     reads = [
-        i for i, s in enumerate(statements) if "v_filer_reported_holdings" in s
+        i
+        for i, s in enumerate(statements)
+        if s.strip().upper().startswith(("SELECT", "WITH", "EXPLAIN"))
+        and "v_filer_reported_holdings" in s
     ]
     assert reads, "the serving projection never read the snapshot"
     assert begins[0] < min(
@@ -415,6 +461,138 @@ def test_c_exactly_one_read_transaction_spans_the_derivation(
     assert offending == [], (
         f"snapshot reads executed AFTER the single COMMIT: {offending}"
     )
+
+
+def test_materialization_changes_neither_snapshot_bytes_nor_main_schema(tmp_path):
+    snapshot = make_inst_snapshot(tmp_path)
+    before_hash = sha256_file(snapshot)
+    ro = sqlite3.connect(
+        f"file:{snapshot}?mode=ro&immutable=1", uri=True, isolation_level=None
+    )
+    try:
+        schema = ro.execute(
+            "SELECT type, name, tbl_name, COALESCE(sql, '')"
+            " FROM main.sqlite_schema ORDER BY type, name, tbl_name, sql"
+        ).fetchall()
+        with materialized_inst_derivation_views(ro):
+            assert ro.execute(
+                "SELECT COUNT(*) FROM temp.v_default_inst_filings"
+            ).fetchone()[0] > 0
+            assert ro.execute(
+                "SELECT type, name FROM sqlite_temp_schema"
+                " WHERE name LIKE 'v_default_%'"
+                " OR name LIKE 'v_filer_reported_%'"
+                " OR name = 'v_inst_reconciled_filings'"
+                " OR name LIKE '_populus_inst_%'"
+                " ORDER BY name"
+            ).fetchall() == [
+                ("table", "_populus_inst_agg_input"),
+                ("table", "_populus_inst_coverage_totals"),
+                ("index", "_populus_inst_coverage_totals_by_filing"),
+                ("view", "v_default_holdings"),
+                ("table", "v_default_inst_filings"),
+                ("index", "v_default_inst_filings_by_filing"),
+                ("table", "v_filer_reported_filings"),
+                ("index", "v_filer_reported_filings_by_filing"),
+                ("view", "v_filer_reported_holdings"),
+                ("table", "v_inst_reconciled_filings"),
+            ]
+            assert ro.execute(
+                "SELECT type, name, tbl_name, COALESCE(sql, '')"
+                " FROM main.sqlite_schema ORDER BY type, name, tbl_name, sql"
+            ).fetchall() == schema
+        assert ro.execute(
+            "SELECT name FROM sqlite_temp_schema"
+            " WHERE name LIKE 'v_default_%'"
+            " OR name LIKE 'v_filer_reported_%'"
+            " OR name = 'v_inst_reconciled_filings'"
+            " OR name LIKE '_populus_inst_%'"
+        ).fetchall() == []
+    finally:
+        ro.close()
+    assert sha256_file(snapshot) == before_hash
+    assert all(
+        not Path(f"{snapshot}{suffix}").exists()
+        for suffix in ("-journal", "-wal", "-shm")
+    )
+
+
+def test_materialized_aggregate_and_complete_serving_projection_parity(tmp_path):
+    """D6/D9: both artifact meanings and every serving field are identical."""
+    from populus.inst_agg import build_inst_agg
+    from populus.inst_serving import (
+        build_serving_projection,
+        publication_periods,
+        write_serving_db,
+    )
+    from populus.publish.manifest import INST_MODULE, INST_SERVING_ARTIFACT
+
+    snapshot = make_inst_snapshot(tmp_path)
+
+    def derive(label, materialized):
+        conn = sqlite3.connect(
+            f"file:{snapshot}?mode=ro&immutable=1", uri=True, isolation_level=None
+        )
+        agg_path = tmp_path / f"{label}-agg.db"
+        serving_path = tmp_path / f"{label}-serving.db"
+        try:
+            scope = (
+                materialized_inst_derivation_views(conn)
+                if materialized
+                else contextlib.nullcontext()
+            )
+            with scope:
+                build_inst_agg(conn, agg_path, ingested_at="2026-01-01T00:00:00Z")
+                periods = publication_periods(conn)
+                conn.execute("ATTACH DATABASE ? AS inst_agg", (str(agg_path),))
+                try:
+                    projection = build_serving_projection(conn, periods=periods)
+                finally:
+                    conn.execute("DETACH DATABASE inst_agg")
+                write_serving_db(projection, serving_path, source_conn=conn)
+        finally:
+            conn.close()
+        agg = sqlite3.connect(str(agg_path))
+        serving = sqlite3.connect(str(serving_path))
+        try:
+            return (
+                logical_digest(agg, LOGICAL_PROJECTIONS[INST_MODULE]),
+                logical_digest(
+                    serving,
+                    projection_for(INST_SERVING_ARTIFACT, INST_MODULE),
+                ),
+                projection,
+            )
+        finally:
+            agg.close()
+            serving.close()
+
+    baseline = derive("baseline", False)
+    materialized = derive("materialized", True)
+    assert materialized == baseline
+
+
+def test_withholding_path_cleans_the_materialized_namespace(tmp_path):
+    snapshot = make_inst_snapshot(tmp_path)
+    source = writable_copy(snapshot, tmp_path / "withheld.db")
+    conn = sqlite3.connect(str(source), isolation_level=None)
+    try:
+        conn.execute("UPDATE inst_holdings SET security_id = NULL")
+        result = build_module._derive_inst_module(
+            conn,
+            inst_agg_path=tmp_path / "withheld-agg.db",
+            inst_serving_path=tmp_path / "withheld-serving.db",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        assert result["inst_withheld"] is not None
+        assert conn.execute(
+            "SELECT name FROM sqlite_temp_schema"
+            " WHERE name LIKE 'v_default_%'"
+            " OR name LIKE 'v_filer_reported_%'"
+            " OR name LIKE '_populus_inst_%'"
+        ).fetchall() == []
+    finally:
+        conn.close()
 
 
 # --- (d) identity mutations (R16) ---------------------------------------------

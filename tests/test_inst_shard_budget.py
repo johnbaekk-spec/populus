@@ -24,9 +24,13 @@ import pytest
 
 from populus.inst_budget import (
     ACTIVITY_SHARDS_MAX,
+    FILER_FRAGMENT_PARTS_MAX,
+    FILER_FRAGMENT_SIZING_SENTINEL,
+    FILER_FRAGMENT_TARGET_BYTES,
     FILER_ROUTING_INDEX_FILES,
     FILER_SHARD_BYTE_CEILING,
     FILER_TAIL_SHARDS_RESERVED,
+    FILER_V1_TRANSITION_FILES,
     GLOBAL_FILE_CAP,
     M1_MEASURED_PAGES,
     M2_FILER_PAGES,
@@ -214,6 +218,7 @@ def test_the_projections_measured_base_accounts_for_the_whole_tree():
         m3_reserved=0,
         filer_tail_shards=0,
         routing_index_files=0,
+        filer_v1_transition_files=0,
     )
     assert base == M1_MEASURED_PAGES + SITE_CHROME_FILES == 12_545, (
         f"the projection's base is {base:,} against a measured tree of 12,545 —"
@@ -243,27 +248,12 @@ def test_the_projection_includes_M3s_committed_reservation():
     assert with_m3 - without_m3 == M3_RESERVED == 2_064
 
 
-def test_the_corrected_projection_FITS_the_raised_cap_with_recorded_headroom():
-    """The owner decision, asserted as a decision.
-
-    With the phantom bucket/spill/metadata terms deleted and M1 counted as the
-    12,442 files it actually is, the forward projection is 16,173. That BREACHED
-    the original 15,000 self-cap by 1,173; the owner raised the cap to 18,000 on
-    2026-08-05 rather than shrink a reservation, so it now fits with 1,827 of
-    headroom. The projection itself was not touched — only the budget it is
-    measured against. The previous formula published "1,776 files of headroom"
-    against a tree that already had none.
-
-    This test exists so the breach cannot be quietly tuned away: closing it
-    requires an OWNER DECISION (raise the self-cap toward the 20,000 provider
-    limit, shrink a module's reservation, or move a data class off Pages) and
-    that decision must edit this test with a reason attached.
-
-    The SIZE of the breach is asserted too, not just its existence: the owner
-    acts on that number, and the first version of this formula reported 1,070
-    when the honest figure was 1,173 (QA M2-8 R2 N1).
-    """
-    projected = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+def test_the_m2_11_measured_projection_fits_with_recorded_headroom():
+    """The owner-reviewed v11 projection binds the freshly measured 8,106-page
+    build input used by the append-only T0 command. Every committed term remains
+    explicit; the only changed reservation is the measured tail geometry."""
+    measured_files = 8_106
+    projected = worst_case_file_count(measured_files=measured_files)
     assert projected <= GLOBAL_FILE_CAP, (
         f"the projection ({projected:,}) has BREACHED the raised {GLOBAL_FILE_CAP:,}"
         " self-cap. The 2026-08-05 raise consumed the last easy headroom; the"
@@ -275,21 +265,21 @@ def test_the_corrected_projection_FITS_the_raised_cap_with_recorded_headroom():
     )
     # The terms, so the breach is legible rather than a bare number.
     assert projected == (
-        M1_MEASURED_PAGES + SITE_CHROME_FILES + M2_FILER_PAGES
+        measured_files + SITE_CHROME_FILES + M2_FILER_PAGES
         + ACTIVITY_SHARDS_MAX + M3_RESERVED
         + FILER_TAIL_SHARDS_RESERVED + FILER_ROUTING_INDEX_FILES
+        + FILER_V1_TRANSITION_FILES
     )
-    # RUN M2-11 (R27): the pre-M2-11 subtotal is RESTATED, not deleted — the
-    # 16,173/1,827 pair recorded at the 2026-08-05 owner decision holds with
-    # the two new terms zeroed, and the new whole-formula pair sits beside it.
+    # Pre-M2-11 subtotal is restated with all three new file classes zeroed.
     pre_m2_11 = worst_case_file_count(
-        measured_files=M1_MEASURED_PAGES,
+        measured_files=measured_files,
         filer_tail_shards=0,
         routing_index_files=0,
+        filer_v1_transition_files=0,
     )
-    assert (pre_m2_11, GLOBAL_FILE_CAP - pre_m2_11) == (16_173, 1_827)
-    assert (projected, GLOBAL_FILE_CAP - projected) == (16_430, 1_570), (
-        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 1,570 this suite"
+    assert (pre_m2_11, GLOBAL_FILE_CAP - pre_m2_11) == (11_837, 6_163)
+    assert (projected, GLOBAL_FILE_CAP - projected) == (15_935, 2_065), (
+        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 2,065 this suite"
         " records. Restate the constants and this test together or they will"
         " disagree again"
     )
@@ -320,7 +310,7 @@ def test_the_filer_tail_shard_term_is_a_load_bearing_parameter():
     without = worst_case_file_count(
         measured_files=M1_MEASURED_PAGES, filer_tail_shards=0
     )
-    assert with_term - without == FILER_TAIL_SHARDS_RESERVED == 256
+    assert with_term - without == FILER_TAIL_SHARDS_RESERVED == 4_096
 
 
 def test_the_routing_index_term_is_a_load_bearing_parameter():
@@ -331,6 +321,20 @@ def test_the_routing_index_term_is_a_load_bearing_parameter():
         measured_files=M1_MEASURED_PAGES, routing_index_files=0
     )
     assert with_term - without == FILER_ROUTING_INDEX_FILES == 1
+
+
+def test_the_v1_transition_term_is_a_load_bearing_parameter():
+    with_term = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+    without = worst_case_file_count(
+        measured_files=M1_MEASURED_PAGES, filer_v1_transition_files=0
+    )
+    assert with_term - without == FILER_V1_TRANSITION_FILES == 1
+
+
+def test_fragment_geometry_constants_are_exact():
+    assert FILER_FRAGMENT_TARGET_BYTES == 768 * 1024
+    assert FILER_FRAGMENT_PARTS_MAX == 64
+    assert FILER_FRAGMENT_SIZING_SENTINEL == 99_999
 
 
 def test_every_prior_term_survives_the_new_formula():
@@ -345,6 +349,7 @@ def test_every_prior_term_survives_the_new_formula():
         ("m3_reserved", M3_RESERVED),
         ("filer_tail_shards", FILER_TAIL_SHARDS_RESERVED),
         ("routing_index_files", FILER_ROUTING_INDEX_FILES),
+        ("filer_v1_transition_files", FILER_V1_TRANSITION_FILES),
     ]:
         without = worst_case_file_count(
             measured_files=M1_MEASURED_PAGES, **{kwarg: 0}

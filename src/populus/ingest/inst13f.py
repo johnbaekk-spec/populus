@@ -30,6 +30,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+from populus.amendments import (
+    _INST_COVERAGE_TOTALS_INDEX_NAME,
+    _INST_COVERAGE_TOTALS_NAME,
+    _INST_RESTATEMENT_SURVIVORS_SQL,
+)
 from populus.identity.registry import normalize_cik, resolve_cusip
 from populus.ingest import UnsafeArchivePathError, archive_path
 from populus.ingest.checkpoint import (
@@ -877,30 +882,6 @@ def _to_parsed_row(holding) -> InstParsedRow:
 
 # --- amendment lineage + affiliated coverage (post-load passes) --------------
 
-# The restatement-survivor candidate set: of the active filings for a
-# (cik, period), the one no active RESTATEMENT for that period supersedes (the
-# view's first stage). mark_affiliated_coverage and v_default_inst_filings both
-# read it, so a stale superseded original can neither suppress an affiliate nor
-# be suppressed (F6).
-_RESTATEMENT_SURVIVORS = """
-SELECT f.filing_id, f.cik, f.period_of_report, f.file_number_norm, f.other_managers
-FROM inst_filings f
-WHERE f.lifecycle = 'active'
-  AND NOT EXISTS (
-    SELECT 1 FROM inst_filings r
-    WHERE r.lifecycle = 'active' AND r.amendment_type = 'RESTATEMENT'
-      AND r.cik = f.cik AND r.period_of_report = f.period_of_report
-      AND r.filing_id <> f.filing_id
-      AND ( r.filed_date > f.filed_date
-         OR (r.filed_date = f.filed_date
-             AND COALESCE(r.amendment_no,0) > COALESCE(f.amendment_no,0))
-         OR (r.filed_date = f.filed_date
-             AND COALESCE(r.amendment_no,0) = COALESCE(f.amendment_no,0)
-             AND r.accession > f.accession) )
-  )
-"""
-
-
 #: Flags DERIVED from the current restatement-survivor set. They are recomputed
 #: from scratch on every reconciliation, so they must be cleared first — a filing
 #: that no longer has a surviving coverer would otherwise keep a stale
@@ -1029,8 +1010,8 @@ def mark_affiliated_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
                 if m.get("file_number_norm")
             },
         }
-        for filing_id, cik, period, fnn, other_managers in conn.execute(
-            _RESTATEMENT_SURVIVORS
+        for filing_id, period, fnn, other_managers in conn.execute(
+            _INST_RESTATEMENT_SURVIVORS_SQL
         )
     ]
     covered = 0
@@ -1173,6 +1154,38 @@ WHERE f.table_value_total_usd IS NOT NULL
 ORDER BY f.filing_id
 """
 
+_MATERIALIZED_TOTALS_JOIN = (
+    f" LEFT JOIN temp.{_INST_COVERAGE_TOTALS_NAME} AS t"
+    f" INDEXED BY {_INST_COVERAGE_TOTALS_INDEX_NAME}"
+    " ON t.filing_id = f.filing_id"
+)
+
+_MATERIALIZED_PER_FILING_COVER_SQL = (
+    "SELECT f.filing_id, f.table_value_total_usd AS declared,"
+    " COALESCE(t.resolved_usd, 0) AS resolved"
+    " FROM {view} f"
+    + _MATERIALIZED_TOTALS_JOIN
+    + " WHERE f.table_value_total_usd IS NOT NULL ORDER BY f.filing_id"
+)
+
+
+def _has_materialized_coverage_totals(conn: sqlite3.Connection) -> bool:
+    """Whether the owned per-filing coverage totals are active on *conn*."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_temp_schema"
+            " WHERE type = 'table' AND name = ?",
+            (_INST_COVERAGE_TOTALS_NAME,),
+        ).fetchone()
+        is not None
+    )
+
+
+def _per_filing_cover_sql(conn: sqlite3.Connection, *, view: str) -> str:
+    if _has_materialized_coverage_totals(conn):
+        return _MATERIALIZED_PER_FILING_COVER_SQL.format(view=view)
+    return _PER_FILING_COVER_SQL.format(view=view)
+
 
 def cover_dispositions(
     conn: sqlite3.Connection, *, view: str = "v_inst_reconciled_filings"
@@ -1187,7 +1200,7 @@ def cover_dispositions(
     """
     if view not in _COVER_SCOPE_VIEWS:
         raise ValueError(f"unknown cover-reconciliation scope: {view!r}")
-    rows = conn.execute(_PER_FILING_COVER_SQL.format(view=view)).fetchall()  # nosec B608
+    rows = conn.execute(_per_filing_cover_sql(conn, view=view)).fetchall()  # nosec B608
     return tuple(
         CoverDisposition(
             filing_id=filing_id,
@@ -1253,6 +1266,94 @@ _DENOMINATOR_TERM = """
                            WHERE h.filing_id = f.filing_id
                              AND h.security_id IS NOT NULL))
             END"""
+
+_COVERAGE_DENOMINATOR_SQL = (
+    f"SELECT COALESCE(SUM({_DENOMINATOR_TERM}), 0) FROM v_default_inst_filings f"
+)
+_COVERAGE_NUMERATOR_SQL = (
+    "SELECT COALESCE(SUM(value_usd), 0) FROM v_default_holdings"
+    " WHERE security_id IS NOT NULL"
+)
+_PERIOD_COVERAGE_DENOMINATOR_SQL = (
+    f"SELECT f.period_of_report, COALESCE(SUM({_DENOMINATOR_TERM}), 0)"
+    " FROM v_default_inst_filings f GROUP BY f.period_of_report"
+)
+_PERIOD_COVERAGE_NUMERATOR_SQL = (
+    "SELECT period_of_report, COALESCE(SUM(value_usd), 0)"
+    " FROM v_default_holdings WHERE security_id IS NOT NULL"
+    " GROUP BY period_of_report"
+)
+
+_MATERIALIZED_DENOMINATOR_TERM = """
+            CASE WHEN f.table_value_total_usd IS NULL THEN 0
+                 ELSE MAX(f.table_value_total_usd,
+                          COALESCE(t.resolved_usd, 0))
+            END"""
+
+_MATERIALIZED_COVERAGE_DENOMINATOR_SQL = (
+    f"SELECT COALESCE(SUM({_MATERIALIZED_DENOMINATOR_TERM}), 0)"
+    " FROM v_default_inst_filings f"
+    + _MATERIALIZED_TOTALS_JOIN
+)
+_MATERIALIZED_COVERAGE_NUMERATOR_SQL = (
+    "SELECT COALESCE(SUM(COALESCE(t.resolved_usd, 0)), 0)"
+    " FROM v_default_inst_filings f"
+    + _MATERIALIZED_TOTALS_JOIN
+)
+_MATERIALIZED_PERIOD_COVERAGE_DENOMINATOR_SQL = (
+    f"SELECT f.period_of_report, COALESCE(SUM({_MATERIALIZED_DENOMINATOR_TERM}), 0)"
+    " FROM v_default_inst_filings f"
+    + _MATERIALIZED_TOTALS_JOIN
+    + " GROUP BY f.period_of_report"
+)
+_MATERIALIZED_PERIOD_COVERAGE_NUMERATOR_SQL = (
+    "SELECT f.period_of_report,"
+    " COALESCE(SUM(COALESCE(t.resolved_usd, 0)), 0)"
+    " FROM v_default_inst_filings f"
+    + _MATERIALIZED_TOTALS_JOIN
+    + " GROUP BY f.period_of_report"
+)
+
+_COVER_FAILED_SQL = (
+    "SELECT COUNT(*) FROM v_default_inst_filings"
+    " WHERE table_value_total_usd IS NULL"
+    "   AND EXISTS (SELECT 1 FROM json_each(v_default_inst_filings.flags)"
+    "               WHERE json_each.value = 'cover_failed')"
+)
+
+
+def _production_coverage_queries(conn: sqlite3.Connection) -> dict[str, str]:
+    """Exact SQL selected by coverage/disposition production on *conn*."""
+    materialized = _has_materialized_coverage_totals(conn)
+    return {
+        "coverage_denominator": (
+            _MATERIALIZED_COVERAGE_DENOMINATOR_SQL
+            if materialized
+            else _COVERAGE_DENOMINATOR_SQL
+        ),
+        "coverage_numerator": (
+            _MATERIALIZED_COVERAGE_NUMERATOR_SQL
+            if materialized
+            else _COVERAGE_NUMERATOR_SQL
+        ),
+        "period_coverage_denominator": (
+            _MATERIALIZED_PERIOD_COVERAGE_DENOMINATOR_SQL
+            if materialized
+            else _PERIOD_COVERAGE_DENOMINATOR_SQL
+        ),
+        "period_coverage_numerator": (
+            _MATERIALIZED_PERIOD_COVERAGE_NUMERATOR_SQL
+            if materialized
+            else _PERIOD_COVERAGE_NUMERATOR_SQL
+        ),
+        "cover_dispositions_reconciled": _per_filing_cover_sql(
+            conn, view="v_inst_reconciled_filings"
+        ),
+        "cover_dispositions_default": _per_filing_cover_sql(
+            conn, view="v_default_inst_filings"
+        ),
+        "coverage_cover_failed": _COVER_FAILED_SQL,
+    }
 
 
 @dataclass(frozen=True)
@@ -1343,23 +1444,14 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
     the numerator than into the denominator. Conflicts beyond tolerance are not
     here at all — ``v_default_inst_filings`` has already excluded them (§I4).
     """
-    denominator = conn.execute(
-        f"SELECT COALESCE(SUM({_DENOMINATOR_TERM}), 0) FROM v_default_inst_filings f"
-    ).fetchone()[0]
-    numerator = conn.execute(
-        "SELECT COALESCE(SUM(value_usd), 0) FROM v_default_holdings"
-        " WHERE security_id IS NOT NULL"
-    ).fetchone()[0]
+    queries = _production_coverage_queries(conn)
+    denominator = conn.execute(queries["coverage_denominator"]).fetchone()[0]
+    numerator = conn.execute(queries["coverage_numerator"]).fetchone()[0]
     # Count ONLY filings whose cover actually failed (value UNKNOWN). A valid
     # `13F-NT` notice legitimately reports no holdings and no totals: its NULL
     # total is a genuine ZERO contribution, not an unknown one, so it must not
     # make coverage non-certifiable and must not block M2-3's publish. (QA-F3)
-    cover_failed = conn.execute(
-        "SELECT COUNT(*) FROM v_default_inst_filings"
-        " WHERE table_value_total_usd IS NULL"
-        "   AND EXISTS (SELECT 1 FROM json_each(v_default_inst_filings.flags)"
-        "               WHERE json_each.value = 'cover_failed')"
-    ).fetchone()[0]
+    cover_failed = conn.execute(queries["coverage_cover_failed"]).fetchone()[0]
     # The per-filing NON-INFLATION invariant (F8), with M2-7's tolerance: no
     # default filing's resolved numerator (Σ value_usd over its holdings with a
     # security_id) may exceed its own DECLARED total by more than tol(T). Without
@@ -1448,18 +1540,12 @@ def compute_period_coverage(
     definitional list interval spans the period, so a caller can name the
     quarters that have no list (R11). Read-only; never mutates, never gates.
     """
+    queries = _production_coverage_queries(conn)
     denominators = dict(
-        conn.execute(
-            f"SELECT f.period_of_report, COALESCE(SUM({_DENOMINATOR_TERM}), 0)"
-            " FROM v_default_inst_filings f GROUP BY f.period_of_report"
-        ).fetchall()
+        conn.execute(queries["period_coverage_denominator"]).fetchall()
     )
     numerators = dict(
-        conn.execute(
-            "SELECT period_of_report, COALESCE(SUM(value_usd), 0)"
-            " FROM v_default_holdings WHERE security_id IS NOT NULL"
-            " GROUP BY period_of_report"
-        ).fetchall()
+        conn.execute(queries["period_coverage_numerator"]).fetchall()
     )
     has_list = _has_list_intervals(conn)
     result: list[PeriodCoverage] = []

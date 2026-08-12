@@ -17,9 +17,9 @@
    Server-only usage in practice (build-time shard planning), but the module
    itself is pure — no `node:` imports beyond the ambient Buffer. */
 
-/** LD-10 (owner-approved 2026-08-08): the client-response ceiling. A tail
-    lookup never downloads more than 1 MiB of serialized shard to render one
-    filer — the binding bound is the READER's, not the provider's 25 MiB. */
+/** LD-10 client-response ceiling. Every individual tail response is at most
+    1 MiB; a large filer may require a separately bounded multi-response range.
+    This is the reader's per-response bound, not the provider's 25 MiB limit. */
 export const SHARD_RESPONSE_CEILING_BYTES = 1_048_576;
 
 /** One serialized member of a shard. `json` is the exact bytes the item

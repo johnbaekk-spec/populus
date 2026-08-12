@@ -2035,6 +2035,149 @@ def test_publish_workflow_gh_token_step_scoped(tmp_path):
         assert "GH_TOKEN" not in run
 
 
+# --- RUN M2-11 T7: the self-hosted publish host and its gates (R4/R5/R6/R25) --
+#
+# Every assertion below is ADDITIVE. The three tests above keep their wording
+# and their bite unchanged — the point of R6 is that moving this job onto the
+# owner's Mac did not cost a single pre-existing guarantee.
+
+#: LD-1, exact and ordered. `self-hosted` on its own would match any runner
+#: ever registered on this account; the two extra labels are what bind the job
+#: to the one machine that holds the institutional store.
+SELF_HOSTED_LABELS = ["self-hosted", "macOS", "populus-ops"]
+
+
+def test_publish_job_runs_on_the_exact_self_hosted_label_set():
+    job = _load_workflow("publish.yml")["jobs"]["publish"]
+    assert job["runs-on"] == SELF_HOSTED_LABELS, (
+        "the publish job's runner labels are LD-1 and are pinned here: it is "
+        "the only job allowed on the self-hosted machine, and it must be "
+        "targeted by all three labels, in this order"
+    )
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job_id"),
+    [
+        ("publish.yml", "deploy"),
+        ("publish.yml", "assert-signed"),
+        ("record-sign.yml", "record"),
+    ],
+)
+def test_the_other_three_jobs_stay_github_hosted(workflow, job_id):
+    """R5: deploy, sign, and assert-signed stay on ubuntu-latest.
+
+    Not an aesthetic preference — these are the jobs holding Cloudflare write
+    authority and the attestation identity, and §14's isolation analysis is
+    written against EPHEMERAL hosted runners. Moving any of them onto the Mac
+    would silently invalidate that analysis, so it is pinned.
+
+    `sign` is asserted through `record-sign.yml`'s `record` job: the caller-side
+    `sign` job is a reusable-workflow call and carries no `runs-on` of its own,
+    so pinning the caller would assert nothing about where the signer runs.
+    """
+    assert _load_workflow(workflow)["jobs"][job_id]["runs-on"] == "ubuntu-latest"
+
+
+def test_sign_job_is_a_reusable_call_with_no_runner_of_its_own():
+    # Guards the test above from going vacuous: if `sign` ever grew its own
+    # `runs-on`, the record-job assertion would no longer cover it.
+    sign = _load_workflow("publish.yml")["jobs"]["sign"]
+    assert "runs-on" not in sign
+    assert sign["uses"] == "./.github/workflows/record-sign.yml"
+
+
+def _stage_step(job: dict) -> dict:
+    return next(
+        step for step in job["steps"] if "populus stage-build" in step.get("run", "")
+    )
+
+
+def test_inst_db_path_comes_from_a_repository_variable_only():
+    """R4/LD-2: `vars.POPULUS_INST_DB`, step-scoped, and nowhere else.
+
+    Read through `secrets.` a repository variable resolves to the empty string
+    SILENTLY — the P3-3b lesson the deploy step's own comment records. That
+    mutation is killed here.
+    """
+    workflow = _load_workflow("publish.yml")
+    job = workflow["jobs"]["publish"]
+    stage = _stage_step(job)
+    env = stage.get("env") or {}
+    assert env.get("INST_SOURCE_DB") == "${{ vars.POPULUS_INST_DB }}", (
+        "the accepted-snapshot path must be read from the repository VARIABLE; "
+        "`secrets.POPULUS_INST_DB` resolves to '' with no error at all"
+    )
+    # The raw text, so a `secrets.` read cannot hide behind YAML shape.
+    text = (WORKFLOWS / "publish.yml").read_text(encoding="utf-8")
+    assert "secrets.POPULUS_INST_DB" not in text
+    # Interpolated into a `run:` body it would be neither maskable nor
+    # quotable; every step reads it as an env var or not at all.
+    for step in job["steps"]:
+        assert "POPULUS_INST_DB" not in step.get("run", ""), (
+            f"step {step.get('name')!r} names POPULUS_INST_DB in its run body"
+        )
+    # Unset must OMIT the flag rather than pass it empty (R1: byte-identical
+    # congress-only build), and the guard must be the shell's, not a template's.
+    run = stage["run"]
+    assert 'if [ -n "${INST_SOURCE_DB:-}" ]' in run
+    assert '--inst-db "$INST_SOURCE_DB"' in run
+    assert "--inst-db ''" not in run
+
+
+def test_no_machine_path_literal_is_committed_in_the_workflow():
+    """R4: the snapshot lives on the owner's machine; its path is provisioned,
+    never committed. A literal would also survive a variable being unset."""
+    text = (WORKFLOWS / "publish.yml").read_text(encoding="utf-8")
+    for literal in ("/Users/", "Populus-ops", "inst-source-v"):
+        assert literal not in text, f"machine path literal {literal!r} committed"
+
+
+def test_scheduled_runs_additionally_require_the_supervised_validation_flag():
+    """R25: a NIGHTLY needs `POPULUS_SELFHOSTED_VALIDATED == 'true'`; a
+    `workflow_dispatch` is exempt, because a supervised dispatch is the only
+    way the owner can validate the machine in the first place.
+
+    Removing the schedule condition is a mutation this kills: it would arm an
+    unattended nightly against a runner nobody has ever watched run.
+    """
+    job = _load_workflow("publish.yml")["jobs"]["publish"]
+    condition = " ".join(job["if"].split())
+    # Every pre-existing guard survives.
+    assert "github.ref == 'refs/heads/main'" in condition
+    assert "vars.POPULUS_PUBLISH_ARMED == 'true'" in condition
+    # The gate itself, and its dispatch exemption.
+    assert "vars.POPULUS_SELFHOSTED_VALIDATED == 'true'" in condition
+    assert "github.event_name != 'schedule'" in condition
+    assert (
+        "(github.event_name != 'schedule' || "
+        "vars.POPULUS_SELFHOSTED_VALIDATED == 'true')" in condition
+    ), (
+        "the validation flag must be OR'd with the dispatch exemption inside "
+        "its own parenthesised clause — AND'd flat it would block dispatch too, "
+        "and there would be no way to validate the machine"
+    )
+
+
+def test_uv_step_is_os_tolerant_and_asserts_the_pin():
+    """R10: the pin is still a pin, and obtaining uv no longer depends on
+    `python3 -m pip install` succeeding — which on an externally-managed
+    macOS Python it does not."""
+    job = _load_workflow("publish.yml")["jobs"]["publish"]
+    step = next(
+        s for s in job["steps"] if s.get("name") == "Install uv (version-pinned)"
+    )
+    pin_value = (step.get("env") or {}).get("UV_PIN")
+    assert pin_value == "0.7.13", "the uv pin moved out of the workflow or drifted"
+    run = step["run"]
+    assert "command -v uv" in run, (
+        "an already-present (checksum-gated) uv must be used, not overwritten"
+    )
+    assert "uv --version" in run, "the pin must be asserted against the machine"
+    assert "exit 1" in run, "a drifted toolchain must fail closed"
+    assert "self-hosted-runner.md" in run, "fail closed WITH a remediation line"
+
+
 def test_record_sign_workflow_shape():
     workflow = _load_workflow("record-sign.yml")
     assert set(_triggers(workflow)) == {"workflow_call"}

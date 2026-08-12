@@ -55,8 +55,14 @@ import { selectTopFilers, type FilerBudgetState } from "./holdings.ts";
 import { resolveServingDbPath } from "./activity.ts";
 import {
   assembleFilerPayload,
+  FILER_FRAGMENT_PARTS_MAX,
+  FILER_FRAGMENT_SHARD_ENVELOPE_BYTES,
+  FILER_TAIL_SHARDS_MAX,
+  fragmentFilerPayload,
   readServingFilings,
+  serializeFilerFragmentEntry,
   type FilerAggregateInputs,
+  type FilerRouteV2,
 } from "./filer-payload.ts";
 import { paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
 
@@ -708,7 +714,7 @@ export function tickerInstSection(build: BuildData, ticker: string): TickerInstS
     hard shard budget the tail family must fit inside (the walk FAILS past it,
     never truncates — LD-9/LD-10). Pinned against the Python constant by test. */
 /* internal: exported for tests (F1) — the mirror test reads it; no other module does. */
-export const FILER_TAIL_SHARDS_MAX = 256;
+export { FILER_TAIL_SHARDS_MAX };
 
 /** LD-7 selection over the loaded aggregate — the ONE call site of
     `holdings.selectTopFilers` inputs: latest-period reported total value comes
@@ -777,10 +783,8 @@ interface FilerShardFamily {
       serving artifact THROWS (build failure) rather than publishing an empty
       index whose every tail link is dead (Codex F7). */
   reason: "module-absent" | null;
-  /** cik10 → shard name, for EVERY published tail filer (LD-9 completeness:
-      the index is generated from the same projection that selected the top
-      1,500, so a missing entry is impossible by construction — and asserted). */
-  index: Record<string, string>;
+  /** cik10 → inclusive shard range and exact fragment count. */
+  routes: Record<string, FilerRouteV2>;
   indexBody: string;
   shards: FilerShardFile[];
 }
@@ -789,8 +793,8 @@ function absentFamily(reason: Exclude<FilerShardFamily["reason"], null>): FilerS
   return {
     present: false,
     reason,
-    index: {},
-    indexBody: `{"v":1,"kind":"filer-index","absent":${JSON.stringify(reason)},"shards":{}}`,
+    routes: {},
+    indexBody: `{"v":2,"kind":"filer-index","absent":${JSON.stringify(reason)},"routes":{}}`,
     shards: [],
   };
 }
@@ -801,10 +805,9 @@ let filerFamilyCache: { key: string; family: FilerShardFamily } | null = null;
 
 /**
  * The tail shard family (R22, LD-9, LD-10): every published filer OUTSIDE the
- * LD-7 top 1,500, assembled by the ONE assembler into byte-bounded shards of
- * ≤ 1 MiB serialized, addressed by a routing index. The walk FAILS the build —
- * never truncates, never grants an oversized payload a dedicated shard — so a
- * published tail filer is in exactly one shard or there is no build.
+ * LD-7 top 1,500, assembled once, split at record boundaries, and fed into the
+ * ONE byte-bounded filler. The walk FAILS the build — never truncates or widens
+ * — so every logical filer reconstructs from a bounded contiguous shard range.
  */
 export function filerTailShards(build: BuildData): FilerShardFamily {
   const inst = build.inst;
@@ -849,7 +852,10 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
           .filter((f) => !tops.has(f.cik))
           .sort((a, b) => (a.cik < b.cik ? -1 : a.cik > b.cik ? 1 : 0));
         const servingDb = db;
-        const items = tail.map((f) => {
+        const items: { key: string; json: string }[] = [];
+        const fragmentMeta = new Map<string, { cik: string; part: number; parts: number }>();
+        const expectedParts = new Map<string, number>();
+        for (const f of tail) {
           const payload = assembleFilerPayload(servingDb, {
             cik: f.cik,
             filerName: f.filer_name,
@@ -858,25 +864,29 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
             filings,
             agg: filerAggregateInputs(build, f.cik),
           });
-          // The entry's exact serialized bytes inside the shard's object body.
-          return { key: f.cik, json: `${JSON.stringify(f.cik)}:${JSON.stringify(payload)}` };
-        });
-        // Envelope reservation at its worst case (largest shard number/count
-        // the walk could emit), so the measured body only comes in under it.
-        const overheadBytes = Buffer.byteLength(
-          `{"v":1,"kind":"filer-shard","shard":${FILER_TAIL_SHARDS_MAX - 1},` +
-            `"shard_count":${FILER_TAIL_SHARDS_MAX},"entries":{}}`,
-        );
+          const fragments = fragmentFilerPayload(payload);
+          expectedParts.set(f.cik, fragments.length);
+          for (const fragment of fragments) {
+            const key = `${fragment.cik}:${fragment.part}`;
+            items.push({ key, json: serializeFilerFragmentEntry(fragment) });
+            fragmentMeta.set(key, {
+              cik: fragment.cik,
+              part: fragment.part,
+              parts: fragment.parts,
+            });
+          }
+        }
         const plan = paginateByBytes(items, {
-          overheadBytes,
+          overheadBytes: FILER_FRAGMENT_SHARD_ENVELOPE_BYTES,
           shardLimit: FILER_TAIL_SHARDS_MAX,
-          itemNoun: "filer",
+          itemNoun: "filer fragment",
         });
-        const index: Record<string, string> = {};
+        const routes: Record<string, FilerRouteV2> = {};
+        const seenParts = new Map<string, number[]>();
         const shards: FilerShardFile[] = plan.shards.map((s) => {
           const name = String(s.index);
           const body =
-            `{"v":1,"kind":"filer-shard","shard":${s.index},` +
+            `{"v":2,"kind":"filer-fragment-shard","shard":${s.index},` +
             `"shard_count":${plan.shards.length},` +
             `"entries":{${s.entries.map((e) => e.json).join(",")}}}`;
           const bytes = Buffer.byteLength(body);
@@ -884,28 +894,61 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
             // Unreachable by construction (the reservation is an upper bound).
             // Fail closed rather than publish a shard over the LD-10 ceiling.
             throw new Error(
-              `filer shard ${name} measured ${bytes} bytes, over the ` +
+              `filer fragment shard ${name} measured ${bytes} bytes, over the ` +
                 `${SHARD_RESPONSE_CEILING_BYTES}-byte LD-10 ceiling`,
             );
           }
-          for (const e of s.entries) index[e.key] = name;
-          return { name, body, bytes, ciks: s.entries.map((e) => e.key) };
+          const ciks = new Set<string>();
+          for (const entry of s.entries) {
+            const meta = fragmentMeta.get(entry.key);
+            if (!meta) throw new Error(`missing fragment metadata for ${entry.key}`);
+            ciks.add(meta.cik);
+            const route = routes[meta.cik];
+            if (route === undefined) routes[meta.cik] = [s.index, s.index, meta.parts];
+            else {
+              if (route[2] !== meta.parts) {
+                throw new Error(`filer ${meta.cik} fragment total drifted inside the family`);
+              }
+              route[1] = s.index;
+            }
+            const observed = seenParts.get(meta.cik) ?? [];
+            observed.push(meta.part);
+            seenParts.set(meta.cik, observed);
+          }
+          return { name, body, bytes, ciks: [...ciks] };
         });
-        // LD-9 completeness, asserted rather than trusted: every tail filer in
-        // exactly one shard, and the index maps all of them.
+        // LD-9 completeness, asserted rather than trusted.
         for (const f of tail) {
-          if (index[f.cik] === undefined) {
+          const parts = expectedParts.get(f.cik);
+          const route = routes[f.cik];
+          const observed = seenParts.get(f.cik) ?? [];
+          if (parts === undefined || route === undefined) {
             throw new Error(
               `published tail filer ${f.cik} is missing from the routing index — ` +
                 `the shard family is incomplete, which is a build failure (R22)`,
             );
           }
+          if (parts < 1 || parts > FILER_FRAGMENT_PARTS_MAX
+              || route[2] !== parts || route[1] - route[0] + 1 > parts
+              || observed.length !== parts
+              || observed.some((part, index) => part !== index)) {
+            throw new Error(
+              `published tail filer ${f.cik} has contradictory route/fragment geometry`,
+            );
+          }
         }
         const indexBody =
-          `{"v":1,"kind":"filer-index","absent":null,"shards":{` +
-          tail.map((f) => `${JSON.stringify(f.cik)}:${JSON.stringify(index[f.cik])}`).join(",") +
+          `{"v":2,"kind":"filer-index","absent":null,"routes":{` +
+          tail.map((f) => `${JSON.stringify(f.cik)}:${JSON.stringify(routes[f.cik])}`).join(",") +
           `}}`;
-        family = { present: true, reason: null, index, indexBody, shards };
+        const indexBytes = Buffer.byteLength(indexBody);
+        if (indexBytes > SHARD_RESPONSE_CEILING_BYTES) {
+          throw new Error(
+            `filer routing index measured ${indexBytes} bytes, over the ` +
+              `${SHARD_RESPONSE_CEILING_BYTES}-byte client-response ceiling`,
+          );
+        }
+        family = { present: true, reason: null, routes, indexBody, shards };
       } finally {
         db.close();
       }
