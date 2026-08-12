@@ -18,6 +18,7 @@ import path from "node:path";
 
 import {
   FILER_PAGE_BUDGET,
+  boundQoqDeltas,
   compareHoldingRows,
   filerHref,
   selectTopFilers,
@@ -234,6 +235,7 @@ function assemble(db: DatabaseSync, cik = "0001067983"): FilerPayloadV1 {
     agg: {
       concByPeriod: { "2026-03-31": fixtureConc("2026-03-31"), "2025-12-31": null },
       deltasByPeriod: { "2026-03-31": [fixtureDelta("2026-03-31")], "2025-12-31": [] },
+      deltaTotalsByPeriod: { "2026-03-31": 1, "2025-12-31": 0 },
       latestFiled: "2026-05-15",
       topn: 25,
       window: { open: false, quarterEnd: "2026-06-30", deadline: "2026-08-14" },
@@ -317,6 +319,7 @@ test("fragmenter refuses a one-entry response over 1 MiB and a 65-part filer", (
     fanout.totalsByPeriod = Object.fromEntries(Object.keys(fanout.rowsByPeriod).map((p) => [p, 1]));
     fanout.concByPeriod = {};
     fanout.deltasByPeriod = {};
+    fanout.deltaTotalsByPeriod = {};
     assert.throws(() => fragmentFilerPayload(fanout), /65 fragments|64-part/);
   } finally {
     db.close();
@@ -368,7 +371,14 @@ test("a filer with no serving rows still assembles (empty periods, honest absenc
       latestPeriod: "2026-03-31",
       requestedPeriod: "2026-03-31",
       filings: readServingFilings(db),
-      agg: { concByPeriod: {}, deltasByPeriod: {}, latestFiled: null, topn: 25, window: null },
+      agg: {
+        concByPeriod: {},
+        deltasByPeriod: {},
+        deltaTotalsByPeriod: {},
+        latestFiled: null,
+        topn: 25,
+        window: null,
+      },
     });
     assert.deepEqual(p.periods, []);
     assert.deepEqual(p.rowsByPeriod, {});
@@ -417,6 +427,7 @@ test("parseFilerPayload rejects, never defaults — every required field", () =>
       "totalsByPeriod",
       "concByPeriod",
       "deltasByPeriod",
+      "deltaTotalsByPeriod",
       "latestFiled",
       "topn",
       "window",
@@ -779,6 +790,21 @@ test("LD-7 parity: selectTopFilers matches the shared Python interchange fixture
 
 /* ---------- F2 byte parity: ONE serialized payload, two runtimes ---------- */
 
+/** Mirror of `data.ts::filerAggregateInputs`' bound for the shared fixture,
+    whose `deltasByPeriod` is the raw accessor output both runtimes start from. */
+function boundParityAgg(agg: ParityCase["agg"]): ParityCase["agg"] & {
+  deltaTotalsByPeriod: Record<string, number>;
+} {
+  const bounded = Object.entries(agg.deltasByPeriod).map(
+    ([period, deltas]) => [period, boundQoqDeltas(deltas)] as const,
+  );
+  return {
+    ...agg,
+    deltasByPeriod: Object.fromEntries(bounded.map(([p, b]) => [p, b.rows])),
+    deltaTotalsByPeriod: Object.fromEntries(bounded.map(([p, b]) => [p, b.total])),
+  };
+}
+
 interface ParityCase {
   name: string;
   args: { cik: string; filerName: string; latestPeriod: string; requestedPeriod: string };
@@ -861,7 +887,13 @@ test("F2 byte parity: assembleFilerPayload reproduces the shared fixture's canon
         latestPeriod: c.args.latestPeriod,
         requestedPeriod: c.args.requestedPeriod,
         filings: c.filings as Parameters<typeof assembleFilerPayload>[1]["filings"],
-        agg: c.agg,
+        /* M2-12: the fixture's `agg.deltasByPeriod` is the RAW accessor output —
+           the Python reference bounds it inside `build_filer_payload`. In this
+           runtime the bound lives one layer up, in `data.ts::filerAggregateInputs`,
+           so the harness applies it here for the same reason production does.
+           Feeding the raw list straight in would test an assembly path that no
+           page uses, and the byte-parity assertion would be meaningless. */
+        agg: boundParityAgg(c.agg),
       });
       const serialized = JSON.stringify(payload);
       const fragments = fragmentFilerPayload(payload);

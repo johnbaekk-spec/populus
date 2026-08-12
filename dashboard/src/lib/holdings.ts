@@ -1742,3 +1742,48 @@ export function projectionAbsentHtml(kind: "filer" | "holders", edgarUrl: string
       : "")
   );
 }
+
+/* ---------- quarter-over-quarter changes: one ordering, one bound ----------
+
+   RUN M2-12. The changes surface had neither of the two bounds its sibling
+   above has had since QA M2-8 M8, and the arithmetic is the same: at a measured
+   ~373 B/row, the 15,885-row filer embeds 5.9 MiB for ONE period and 20.9 MiB
+   across five — 29.1 MiB of page against a 25 MiB provider limit. The only
+   tree that ever fitted was hand-edited after the build, with the quarter
+   selector removed from exactly those pages; nothing in source produced it.
+
+   The ordering lives here rather than inside `changesTableHtml` because the cap
+   must be applied to the SAME order the table renders: capping first and
+   sorting after would drop rows the reader most needs to see. One function
+   orders, one bounds, and `changesTableHtml` renders what it is handed. */
+
+/** The changes table's canonical ordering: largest current value first, falling
+    back to the previous value for an exited position, ties by `position_key` so
+    the order is total and a build is reproducible. */
+export function sortQoqDeltas<T extends QoqDeltaLike>(deltas: readonly T[]): T[] {
+  return [...deltas].sort((a, b) => {
+    const av = a.curr_value_usd ?? a.prev_value_usd ?? -1;
+    const bv = b.curr_value_usd ?? b.prev_value_usd ?? -1;
+    return bv - av || (a.position_key < b.position_key ? -1 : 1);
+  });
+}
+
+/** Structural minimum of `inst.QoqDeltaRow` this module needs. Declared rather
+    than imported so `holdings.ts` stays browser-safe — `inst.ts` reaches for
+    `node:sqlite`, and a value import of it could never reach the bundle. */
+export interface QoqDeltaLike {
+  position_key: string;
+  curr_value_usd: number | null;
+  prev_value_usd: number | null;
+}
+
+/** Order, then cap by the SAME published byte budget the holdings embed uses.
+    `total` is the true count before the cap — every caller that prints a count
+    must print this one, never `rows.length`, or the page understates the
+    filer's activity while looking complete. */
+export function boundQoqDeltas<T extends QoqDeltaLike>(
+  deltas: readonly T[],
+): { rows: T[]; total: number } {
+  const capped = capRows(sortQoqDeltas(deltas));
+  return { rows: capped.rows, total: capped.total };
+}

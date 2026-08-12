@@ -88,7 +88,8 @@ export interface FilerPayloadV1 {
   totalsByPeriod: Record<string, number>;            // pre-cap true totals
   // aggregate body inputs (ui.ts filerBody signature — verified):
   concByPeriod: Record<string, ConcentrationRow | null>;  // topn_share_bps: number|null
-  deltasByPeriod: Record<string, QoqDeltaRow[]>;          // nullable prev/curr/delta fields
+  deltasByPeriod: Record<string, QoqDeltaRow[]>;          // display-ordered, embed-capped
+  deltaTotalsByPeriod: Record<string, number>;            // pre-cap true totals (M2-12)
   latestFiled: string | null;
   topn: number;                           // the N of top-N — SEPARATE from topn_share_bps
   window: FilingWindow | null;            // { open, quarterEnd, deadline }
@@ -101,7 +102,13 @@ export interface FilerPayloadV1 {
     inputs the pre-rendered page uses. */
 export interface FilerAggregateInputs {
   concByPeriod: Record<string, ConcentrationRow | null>;
+  /** RUN M2-12: ORDERED and BOUNDED by `holdings.boundQoqDeltas` — not the raw
+      accessor output. The unbounded list is what put a 29.1 MiB page against a
+      25 MiB provider limit. */
   deltasByPeriod: Record<string, QoqDeltaRow[]>;
+  /** True per-period count BEFORE the bound. Every printed count reads this,
+      never `deltasByPeriod[p].length`. */
+  deltaTotalsByPeriod: Record<string, number>;
   latestFiled: string | null;
   topn: number;
   window: FilingWindow | null;
@@ -219,6 +226,7 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
     totalsByPeriod,
     concByPeriod: args.agg.concByPeriod,
     deltasByPeriod: args.agg.deltasByPeriod,
+    deltaTotalsByPeriod: args.agg.deltaTotalsByPeriod,
     latestFiled: args.agg.latestFiled,
     topn: args.agg.topn,
     window: args.agg.window,
@@ -259,6 +267,7 @@ function onlyKeys(v: Record<string, unknown>, allowed: readonly string[], path: 
 const PAYLOAD_KEYS = [
   "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
   "filings", "rowsByPeriod", "totalsByPeriod", "concByPeriod", "deltasByPeriod",
+  "deltaTotalsByPeriod",
   "latestFiled", "topn", "window",
 ] as const;
 
@@ -535,6 +544,12 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     );
   }
 
+  if (!isRecord(raw.deltaTotalsByPeriod)) bad("deltaTotalsByPeriod is not an object");
+  const deltaTotalsByPeriod: Record<string, number> = {};
+  for (const [period, value] of Object.entries(raw.deltaTotalsByPeriod)) {
+    deltaTotalsByPeriod[period] = reqNumber(value, `deltaTotalsByPeriod[${JSON.stringify(period)}]`);
+  }
+
   // F3: every nested cik must agree with the payload's own — a shard whose row,
   // concentration, or delta rows carry another filer's CIK is corrupt, and
   // rendering it would attribute one manager's positions to another.
@@ -611,6 +626,7 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     totalsByPeriod,
     concByPeriod,
     deltasByPeriod,
+    deltaTotalsByPeriod,
     latestFiled: stringOrNull(raw.latestFiled, "latestFiled"),
     topn: reqNumber(raw.topn, "topn"),
     // `undefined` (field missing) fails inside windowOf; null is a valid state.
@@ -627,7 +643,7 @@ const FRAGMENT_KEYS = [
 const FRAGMENT_META_KEYS = [
   "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
   "filingKeys", "rowPeriods", "deltaPeriods", "totalsByPeriod", "concByPeriod",
-  "latestFiled", "topn", "window",
+  "deltaTotalsByPeriod", "latestFiled", "topn", "window",
 ] as const;
 
 interface FragmentDescriptor {
@@ -723,6 +739,7 @@ export function fragmentFilerPayload(payload: FilerPayloadV1): FilerFragmentV2[]
     deltaPeriods: Object.keys(payload.deltasByPeriod),
     totalsByPeriod: payload.totalsByPeriod,
     concByPeriod: payload.concByPeriod,
+    deltaTotalsByPeriod: payload.deltaTotalsByPeriod,
     latestFiled: payload.latestFiled,
     topn: payload.topn,
     window: payload.window,
@@ -858,6 +875,11 @@ export function reassembleFilerFragments(
   const deltaPeriods = uniqueStrings(meta.deltaPeriods, "fragment.data.deltaPeriods");
   requireExactObjectKeys(meta.totalsByPeriod, rowPeriods, "fragment.data.totalsByPeriod");
   requireExactObjectKeys(meta.concByPeriod, deltaPeriods, "fragment.data.concByPeriod");
+  requireExactObjectKeys(
+    meta.deltaTotalsByPeriod,
+    deltaPeriods,
+    "fragment.data.deltaTotalsByPeriod",
+  );
 
   const filings: Record<string, unknown> = {};
   const rowsByPeriod: Record<string, unknown[]> = Object.fromEntries(
@@ -918,6 +940,7 @@ export function reassembleFilerFragments(
     totalsByPeriod: meta.totalsByPeriod,
     concByPeriod: meta.concByPeriod,
     deltasByPeriod,
+    deltaTotalsByPeriod: meta.deltaTotalsByPeriod,
     latestFiled: meta.latestFiled,
     topn: meta.topn,
     window: meta.window,
