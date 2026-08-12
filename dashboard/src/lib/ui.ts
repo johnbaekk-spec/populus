@@ -58,7 +58,14 @@ import {
   edgarTickerUrl,
   bioguideProfileUrl,
 } from "./derive.ts";
-import { filerHref, type FilerBudgetState } from "./holdings.ts";
+import {
+  filerHref,
+  holdingsPageCount,
+  holdingsPageSlice,
+  holdingsRangeText,
+  sortQoqDeltas,
+  type FilerBudgetState,
+} from "./holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "./inst.ts";
 import type { TickerInstSection } from "./data.ts";
 
@@ -941,13 +948,24 @@ export function qoqChipHtml(row: QoqDeltaRow): string {
   return `<span class="qoq-chip ${p.chipCls}">${esc(p.chipText)}</span>${markers}`;
 }
 
-export function changesTableHtml(deltas: QoqDeltaRow[], period: string, latestFiled: string | null): string {
-  const ordered = [...deltas].sort((a, b) => {
-    const av = a.curr_value_usd ?? a.prev_value_usd ?? -1;
-    const bv = b.curr_value_usd ?? b.prev_value_usd ?? -1;
-    return bv - av || (a.position_key < b.position_key ? -1 : 1);
-  });
-  const rows = ordered
+export function changesTableHtml(
+  deltas: QoqDeltaRow[],
+  period: string,
+  latestFiled: string | null,
+  opts: { total?: number; page?: number } = {},
+): string {
+  /* `deltas` arrives already ordered and bounded by `holdings.boundQoqDeltas`;
+     re-ordering here is idempotent and keeps this function correct for a caller
+     that hands it a raw list. `total` is the count BEFORE the bound — it is
+     what every printed count uses, so a capped page never understates the
+     filer's activity while looking complete. */
+  const ordered = sortQoqDeltas(deltas);
+  const total = opts.total ?? ordered.length;
+  const page = opts.page ?? 0;
+  const embedded = ordered.length;
+  const pageRows = holdingsPageSlice(ordered, page);
+  const pageCount = holdingsPageCount(embedded);
+  const rows = pageRows
     .map((d) => {
       const p = qoqPresentation(d);
       const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
@@ -980,9 +998,49 @@ export function changesTableHtml(deltas: QoqDeltaRow[], period: string, latestFi
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
     `<thead><tr><th scope="col">Position · grain</th><th scope="col">Prev value</th><th scope="col">Curr value</th><th scope="col">Δ value</th><th scope="col">Prev shares</th><th scope="col">Curr shares</th><th scope="col">Δ shares</th><th scope="col">Change</th><th scope="col">Flags</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
+    changesPagerHtml(page, pageRows.length, embedded, pageCount) +
+    /* The bound names itself, with the TRUE total — the grammar the holdings
+       surface below already uses (G3). An uncapped period must render nothing
+       here: a terminus on a complete list would claim a withholding that never
+       happened, which is the same lie in the other direction. */
+    (total > embedded
+      ? terminusRow({
+          author: "populus",
+          html:
+            `${fmtInt(total - embedded)} of this filer's ${fmtInt(total)} quarter-over-quarter ` +
+            `changes for ${esc(period)} are not embedded in this page — the page byte budget ` +
+            `caps the embed, and the largest changes are kept. The rest are in the published ` +
+            `aggregate (agg_qoq_deltas) and derivable from the filings themselves. ` +
+            `<a href="/methodology/#m2">methodology §13F ↗</a>`,
+        })
+      : "") +
     `<div class="panel-note table-stamp">${instStamp(period, latestFiled)} · <span class="caveat-inline">${esc(
       INST_STAMP_CAVEAT,
     )}</span></div>`
+  );
+}
+
+/** The changes pager. Mirrors the holdings pager's markup and its range line so
+    the two tables on one page behave identically; `data-changes-page` is the
+    only new hook. A single page renders no pager at all. */
+function changesPagerHtml(
+  page: number,
+  rowsOnPage: number,
+  matched: number,
+  pageCount: number,
+): string {
+  if (pageCount <= 1) return "";
+  const range = holdingsRangeText({ page, rowsOnPage, matched, noun: "changes" });
+  const btn = (dir: "prev" | "next", label: string, disabled: boolean): string =>
+    `<button class="pager-btn" data-changes-page="${dir}" aria-disabled="${disabled}"${
+      disabled ? " disabled" : ""
+    }>${label}</button>`;
+  return (
+    `<div class="pager" data-changes-pager>` +
+    btn("prev", "← previous", page <= 0) +
+    `<span class="pager-range" tabindex="-1">${esc(range)}</span>` +
+    btn("next", "next →", page >= pageCount - 1) +
+    `</div>`
   );
 }
 
@@ -992,15 +1050,20 @@ export function filerPeriodSectionHtml(
   period: string,
   latestFiled: string | null,
   topn: number,
+  opts: { total?: number; page?: number } = {},
 ): string {
+  /* `total` is the count before the embed bound. The tile MUST report it: a
+     capped page that tiled `deltas.length` would state a smaller number of
+     moves than the filer actually made, with nothing on the page saying so. */
+  const total = opts.total ?? deltas.length;
   const changes =
-    deltas.length === 0
+    total === 0
       ? `<p class="section-note">No quarter-over-quarter rows land in ${esc(
           period,
         )} — either the first period on record for this filer, or nothing keyable on either side.</p>`
-      : changesTableHtml(deltas, period, latestFiled);
+      : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page });
   return (
-    statTiles(filerTiles(conc, deltas.length), { label: `Period statistics for ${period}`, compact: true }) +
+    statTiles(filerTiles(conc, total), { label: `Period statistics for ${period}`, compact: true }) +
     `<section class="panel panel-wide" aria-label="Position changes">` +
     `<div class="panel-head"><h2 class="section-h">Position changes — into ${esc(period)}</h2>` +
     `<span class="panel-note">producer-classified (change_kind) · grain: position × put/call × unit</span></div>` +
@@ -1034,6 +1097,7 @@ export function filerBody(
   latestFiled: string | null,
   topn: number,
   window: FilingWindow | null,
+  opts: { total?: number; page?: number } = {},
 ): string {
   const chips = periods
     .map(
@@ -1072,7 +1136,7 @@ export function filerBody(
     `<div class="period-row"><span class="period-label">Period</span><div class="chips" data-period-chips>${chips}</div>` +
     `<noscript><span class="period-note">period switching needs JavaScript; showing ${esc(period)}</span></noscript></div>` +
     `<div data-filer-root>` +
-    filerPeriodSectionHtml(conc, deltas, period, latestFiled, topn) +
+    filerPeriodSectionHtml(conc, deltas, period, latestFiled, topn, opts) +
     `</div>` +
     filerEdgarBlock(filer.cik, filer.name) +
     footnoteBlock(QOQ_FOOTNOTES, { id: "filer-footnotes" })

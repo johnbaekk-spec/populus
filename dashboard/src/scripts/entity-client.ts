@@ -457,6 +457,9 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
         p.latestFiled,
         p.topn,
         p.window,
+        // M2-12: pre-bound total, so a tail filer states its cap exactly as the
+        // pre-rendered page does.
+        { total: p.deltaTotalsByPeriod[aggPeriod] ?? (p.deltasByPeriod[aggPeriod] ?? []).length },
       ) +
       `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
       `<div data-holdings-body>` +
@@ -869,25 +872,56 @@ export function initFilerPeriods(): void {
   let data: {
     latestFiled: string | null;
     topn: number;
-    periods: Record<string, { conc: ConcentrationRow | null; deltas: QoqDeltaRow[] }>;
+    periods: Record<
+      string,
+      { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number }
+    >;
   };
   try {
     data = JSON.parse(dataEl.textContent ?? "");
   } catch {
     return; // malformed embed: the SSR period stays — no partial re-render
   }
+  /* RUN M2-12: the changes table paginates, so the period section carries page
+     state. Switching period resets it to 0 — a page index from another quarter
+     addresses nothing in this one. */
+  let period = "";
+  let page = 0;
+  const draw = (): void => {
+    const slice = data.periods[period];
+    if (!slice) return;
+    root.innerHTML = filerPeriodSectionHtml(
+      slice.conc,
+      slice.deltas,
+      period,
+      data.latestFiled,
+      data.topn,
+      // `total` is the pre-bound count the SSR printed. Falling back to the
+      // embedded length would make a capped period silently claim completeness
+      // on the client that the server never claimed.
+      { total: slice.total ?? slice.deltas.length, page },
+    );
+  };
   chips.addEventListener("click", (ev) => {
     const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-period]");
     if (!btn) return;
-    const period = btn.dataset.period!;
-    const slice = data.periods[period];
-    if (!slice) return;
-    root.innerHTML = filerPeriodSectionHtml(slice.conc, slice.deltas, period, data.latestFiled, data.topn);
+    if (!data.periods[btn.dataset.period!]) return;
+    period = btn.dataset.period!;
+    page = 0;
+    draw();
     chips.querySelectorAll<HTMLButtonElement>("[data-period]").forEach((c) => {
       const active = c === btn;
       c.classList.toggle("chip-active", active);
       c.setAttribute("aria-pressed", String(active));
     });
+  });
+  // Delegated on the root because `draw()` replaces the pager's own subtree.
+  root.addEventListener("click", (ev) => {
+    const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-changes-page]");
+    if (!btn || btn.getAttribute("aria-disabled") === "true" || !period) return;
+    page = Math.max(0, page + (btn.dataset.changesPage === "next" ? 1 : -1));
+    draw();
+    root.querySelector<HTMLElement>(".pager-range")?.focus();
   });
 }
 

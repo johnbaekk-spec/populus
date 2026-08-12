@@ -51,7 +51,7 @@ import {
   type InstData,
 } from "./inst.ts";
 import { filingWindow } from "./derive.ts";
-import { selectTopFilers, type FilerBudgetState } from "./holdings.ts";
+import { boundQoqDeltas, selectTopFilers, type FilerBudgetState } from "./holdings.ts";
 import { resolveServingDbPath } from "./activity.ts";
 import {
   assembleFilerPayload,
@@ -755,12 +755,26 @@ export function filerTier(build: BuildData, cik: string): FilerBudgetState {
 export function filerAggregateInputs(build: BuildData, cik: string): FilerAggregateInputs {
   const inst = build.inst;
   if (!inst.present) {
-    return { concByPeriod: {}, deltasByPeriod: {}, latestFiled: null, topn: 25, window: null };
+    return {
+      concByPeriod: {},
+      deltasByPeriod: {},
+      deltaTotalsByPeriod: {},
+      latestFiled: null,
+      topn: 25,
+      window: null,
+    };
   }
   const periods = filerPeriods(inst, cik);
+  /* RUN M2-12: the bound is applied HERE, at the one assembly point, because
+     both filer renderers read this function — the pre-rendered top-1,500 page
+     and the tail filer served through the shard family. Bounding in either
+     renderer instead would leave the other unbounded and let the two drift,
+     which is exactly the shape of the defect this replaces. */
+  const bounded = periods.map((p) => [p, boundQoqDeltas(deltasFor(inst, cik, p))] as const);
   return {
     concByPeriod: Object.fromEntries(periods.map((p) => [p, concentrationFor(inst, cik, p)])),
-    deltasByPeriod: Object.fromEntries(periods.map((p) => [p, deltasFor(inst, cik, p)])),
+    deltasByPeriod: Object.fromEntries(bounded.map(([p, b]) => [p, b.rows])),
+    deltaTotalsByPeriod: Object.fromEntries(bounded.map(([p, b]) => [p, b.total])),
     latestFiled: inst.watermarks.latest_filed_date,
     topn: inst.topn,
     window: filingWindow(build.generatedAtDate),

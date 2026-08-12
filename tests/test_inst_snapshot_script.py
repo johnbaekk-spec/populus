@@ -586,7 +586,7 @@ def test_tail_payload_is_the_full_filer_payload_v1(tmp_path, monkeypatch):
     assert set(payload) == {
         "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current",
         "prior", "filings", "rowsByPeriod", "totalsByPeriod", "concByPeriod",
-        "deltasByPeriod", "latestFiled", "topn", "window",
+        "deltasByPeriod", "deltaTotalsByPeriod", "latestFiled", "topn", "window",
     }
     assert payload["v"] == 1 and payload["kind"] == "filer"
     assert payload["topn"] == 25

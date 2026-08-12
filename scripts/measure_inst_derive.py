@@ -962,6 +962,33 @@ def _cap_rows(rows: list[dict]) -> tuple[list[dict], int]:
     return out, len(rows)
 
 
+def _sort_qoq_deltas(deltas: list[dict]) -> list[dict]:
+    """PARITY: ``dashboard/src/lib/holdings.ts::sortQoqDeltas`` — largest
+    current value first, falling back to the previous value for an exited
+    position, ties by ``position_key`` so the order is total."""
+
+    def _cmp(a: dict, b: dict) -> int:
+        av = a.get("curr_value_usd")
+        av = a.get("prev_value_usd") if av is None else av
+        av = -1 if av is None else av
+        bv = b.get("curr_value_usd")
+        bv = b.get("prev_value_usd") if bv is None else bv
+        bv = -1 if bv is None else bv
+        if bv != av:
+            return -1 if bv < av else 1
+        return -1 if a["position_key"] < b["position_key"] else 1
+
+    return sorted(deltas, key=functools.cmp_to_key(_cmp))
+
+
+def _bound_qoq_deltas(deltas: list[dict]) -> tuple[list[dict], int]:
+    """PARITY: ``dashboard/src/lib/holdings.ts::boundQoqDeltas`` (RUN M2-12) —
+    order first, then cap through the SAME ``_cap_rows`` fill the holdings
+    embed uses. Unbounded, this list put a 29.1 MiB page against a 25 MiB
+    provider limit."""
+    return _cap_rows(_sort_qoq_deltas(deltas))
+
+
 def build_filer_payload(
     cik: str,
     *,
@@ -1012,6 +1039,10 @@ def build_filer_payload(
     # serializes in that order, and filing keys are numeric strings.
     filings = {k: filings[k] for k in _js_key_order(filings)}
     filer_periods = sorted(agg["conc_by_filer"].get(cik, {}))
+    bounded_deltas = {
+        p: _bound_qoq_deltas(agg["deltas_by_filer"].get(cik, {}).get(p, []))
+        for p in filer_periods
+    }
     return {
         "v": 1,
         "kind": "filer",
@@ -1027,10 +1058,8 @@ def build_filer_payload(
         "concByPeriod": {
             p: agg["conc_by_filer"].get(cik, {}).get(p) for p in filer_periods
         },
-        "deltasByPeriod": {
-            p: agg["deltas_by_filer"].get(cik, {}).get(p, [])
-            for p in filer_periods
-        },
+        "deltasByPeriod": {p: bounded_deltas[p][0] for p in filer_periods},
+        "deltaTotalsByPeriod": {p: bounded_deltas[p][1] for p in filer_periods},
         "latestFiled": latest_filed,
         "topn": agg["topn"],
         "window": window,
@@ -1115,6 +1144,7 @@ def fragment_filer_payload(payload: dict) -> list[dict]:
         "deltaPeriods": list(payload["deltasByPeriod"]),
         "totalsByPeriod": payload["totalsByPeriod"],
         "concByPeriod": payload["concByPeriod"],
+        "deltaTotalsByPeriod": payload["deltaTotalsByPeriod"],
         "latestFiled": payload["latestFiled"],
         "topn": payload["topn"],
         "window": payload["window"],
@@ -1203,6 +1233,7 @@ def reassemble_filer_fragments(fragments: list[dict]) -> dict:
         "totalsByPeriod": meta["totalsByPeriod"],
         "concByPeriod": meta["concByPeriod"],
         "deltasByPeriod": deltas,
+        "deltaTotalsByPeriod": meta["deltaTotalsByPeriod"],
         "latestFiled": meta["latestFiled"],
         "topn": meta["topn"],
         "window": meta["window"],
