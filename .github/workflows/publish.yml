@@ -7,11 +7,88 @@ permissions:
   contents: read
 
 jobs:
+  resume:
+    runs-on: [self-hosted, macOS, populus-ops]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      build_id: ${{ steps.identity.outputs.build_id }}
+    steps:
+      - name: Verify frozen completed build
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo=/Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus
+          cd "$repo"
+          test "$(git rev-parse HEAD)" = d823597b69d4244b4d78c1bbf6601de4c2390e51
+          test -f populus-data/latest.json
+          test -f populus-data/builds/20260812.1/manifest.json
+          test -f site-artifact-cloudflare-r10/inventory.json
+          test "$(find dashboard/dist -type f | wc -l | tr -d ' ')" = 9671
+          test "$(find site-artifact-cloudflare-r10/site -type f | wc -l | tr -d ' ')" = 9671
+          test -z "$(find site-artifact-cloudflare-r10/site -type f -size +25M -print -quit)"
+          test "$(jq -r .build_id populus-data/latest.json)" = 20260812.1
+          test "$(jq -r .build_id populus-data/builds/20260812.1/manifest.json)" = 20260812.1
+          echo "build_id=20260812.1" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the frozen site artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: site-20260812.1
+          path: /Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus/site-artifact-cloudflare-r10
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Attest published artifacts
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            /Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus/populus-data/latest.json
+            /Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus/populus-data/builds/*/manifest.json
+
+      - name: Verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus
+          uv run populus verify --data-repo populus-data --attestation=sigstore
+
+      - name: Commit manifest and pointer
+        env:
+          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus/populus-data
+          gh auth setup-git
+          git config user.name "populus-publish[bot]"
+          git config user.email "populus-publish@users.noreply.github.com"
+          git add builds latest.json
+          if git diff --cached --quiet; then
+            git fetch origin main
+            test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+            echo "published manifest and pointer are already committed"
+            exit 0
+          fi
+          git commit -m "data: publish build"
+          for attempt in 1 2 3; do
+            if git pull --rebase && git push; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+
   deploy:
+    needs: resume
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
     outputs:
       deployment_id: ${{ steps.deploy.outputs.deployment_id }}
     steps:
@@ -20,91 +97,38 @@ jobs:
         with:
           ref: d823597b69d4244b4d78c1bbf6601de4c2390e51
 
-      - name: Download the verified Cloudflare-compatible site
+      - name: Download the built site
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: site-20260812.1
+          name: site-${{ needs.resume.outputs.build_id }}
           path: site-artifact
-          github-token: ${{ github.token }}
-          repository: johnbaekk-spec/populus
-          run-id: 31570367015
-
-      - name: Re-seal artifact for deployment signing
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: site-20260812.1
-          path: site-artifact
-          retention-days: 7
-          if-no-files-found: error
 
       - name: Set up Node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version-file: dashboard/.node-version
 
-      - name: Deploy production and verify functional Institutional surfaces
+      - name: Install uv
+        run: python3 -m pip install --quiet 'uv==0.7.13'
+
+      - name: Sync
+        run: uv sync --frozen
+
+      - name: Deploy to preview, verify, then production
         id: deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_EDIT_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CLOUDFLARE_PAGES_PROJECT}/deployments"
-          auth="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
-          before=$(curl -fsS -H "$auth" "$base?env=production" | jq -er '.result[0].id')
-
-          test -f site-artifact/inventory.json
-          test "$(find site-artifact/site -type f | wc -l | tr -d ' ')" = 9671
-          test -z "$(find site-artifact/site -type f -size +25M -print -quit)"
-
-          npx --yes wrangler@4.42.0 pages deploy site-artifact/site \
-            --project-name="$CLOUDFLARE_PAGES_PROJECT" --branch=main \
-            --commit-dirty=true
-
-          deployment_id=""
-          for attempt in $(seq 1 60); do
-            current=$(curl -fsS -H "$auth" "$base?env=production")
-            candidate=$(printf '%s' "$current" | jq -er '.result[0].id')
-            environment=$(printf '%s' "$current" | jq -er '.result[0].environment')
-            if [ "$candidate" != "$before" ] && [ "$environment" = production ]; then
-              deployment_id="$candidate"
-              break
-            fi
-            sleep 2
-          done
-          test -n "$deployment_id"
-
-          expected=d823597b69d4244b4d78c1bbf6601de4c2390e51
-          for attempt in $(seq 1 60); do
-            home=$(curl -fsS https://publicfilings.org/ || true)
-            if printf '%s' "$home" | grep -Fq "populus:code_sha\" content=\"$expected"; then
-              break
-            fi
-            test "$attempt" -lt 60
-            sleep 2
-          done
-
-          curl -fsS https://publicfilings.org/institutional/ | grep -Fq Institutional
-          curl -fsS https://publicfilings.org/institutional/filers/1423053/ \
-            | grep -Fq 'CITADEL ADVISORS LLC'
-          index=$(mktemp)
-          curl -fsS https://publicfilings.org/institutional/data/filers/index.v2.json > "$index"
-          jq -e '.v == 2 and .kind == "filer-index" and .absent == null and (.routes | length > 0)' "$index"
-          route=$(jq -er 'first(.routes | to_entries[]) | @base64' "$index")
-          cik=$(printf '%s' "$route" | base64 -d | jq -r .key)
-          shard=$(printf '%s' "$route" | base64 -d | jq -r '.value[0]')
-          curl -fsS "https://publicfilings.org/institutional/data/filers/${shard}.v2.json" \
-            | jq -e --arg cik "$cik" \
-              '.v == 2 and .kind == "filer-fragment-shard" and (.entries | keys | any(startswith($cik + ":")))'
-          rm -f "$index"
-
-          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
-          echo "deployed and functionally verified $deployment_id"
+        run: >-
+          uv run python -m populus.deploy.orchestrator
+          --source site-artifact/site
+          --inventory site-artifact/inventory.json
+          --custom-domain publicfilings.org
+          --production-branch main
 
   sign:
-    needs: deploy
+    needs: [resume, deploy]
     permissions:
       contents: write
       id-token: write
@@ -114,7 +138,7 @@ jobs:
       DATA_REPO_PAT: ${{ secrets.DATA_REPO_PAT }}
       CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
     with:
-      artifact-name: site-20260812.1
+      artifact-name: site-${{ needs.resume.outputs.build_id }}
       cf-production-deployment-id: ${{ needs.deploy.outputs.deployment_id }}
 
   assert-signed:
