@@ -19,7 +19,7 @@
         "5 U.S.C. §13107(c)(1): It shall be unlawful for any person to obtain or use a report— (A) for any unlawful purpose; (B) for any commercial purpose, other than by news and communications media for dissemination to the general public; (C) for determining or establishing the credit rating of any individual; or (D) for use, directly or indirectly, in the solicitation of money for any political, charitable, or other purpose."
       ],
       "attribution": "Source: U.S. House of Representatives Office of the Clerk; U.S. Senate Office of Public Records (eFD).",
-      "determination_basis": "Public records regime under the Ethics in Government Act / STOCK Act. Populus's posture — free public dissemination, open source, data never sold — is designed to sit inside the §13107(c)(1)(B) media-dissemination exception and matches incumbent practice; 'free product' is not itself a legal determination — counsel review is the P2-entry gate and precedes the first public data artifact.",
+      "determination_basis": "Public records regime under the Ethics in Government Act / STOCK Act. Public Filings' posture — free public dissemination, open source, data never sold — is designed to sit inside the §13107(c)(1)(B) media-dissemination exception and matches incumbent practice; 'free product' is not itself a legal determination — counsel review is the P2-entry gate and precedes the first public data artifact.",
       "determination_date": "2026-07-23",
       "review_by": "2026-10-23",
       "ingestible": true,
@@ -63,7 +63,7 @@
       ],
       "required_notices": [],
       "attribution": "Source: U.S. Securities and Exchange Commission (EDGAR / data.sec.gov), retrieved per-record with the source URL retained.",
-      "determination_basis": "Works of the US Government are not subject to domestic copyright (17 U.S.C. §105), and facts and figures in filings are not copyrightable. SEC publishes fair-access conditions (rate ceiling, identifying User-Agent) as access conditions, not redistribution restrictions; Populus encodes them in the client. Endpoints verified live end-to-end on 2026-07-24 (M2-CONTRACT §1), including the User-Agent correction recorded above.",
+      "determination_basis": "Works of the US Government are not subject to domestic copyright (17 U.S.C. §105), and facts and figures in filings are not copyrightable. SEC publishes fair-access conditions (rate ceiling, identifying User-Agent) as access conditions, not redistribution restrictions; Public Filings encodes them in the client. Endpoints verified live end-to-end on 2026-07-24 (M2-CONTRACT §1), including the User-Agent correction recorded above.",
       "determination_date": "2026-07-24",
       "review_by": "2026-10-24",
       "ingestible": true,
@@ -86,7 +86,7 @@
       ],
       "required_notices": [],
       "attribution": "Source: U.S. Securities and Exchange Commission, fails-to-deliver data.",
-      "determination_basis": "Works of the US Government (17 U.S.C. §105); the archive is an SEC compilation of reported settlement facts, and CUSIP values appear here only as they are published by the SEC in that compilation. Populus uses them solely as an identifier seed with recorded provenance, not as a redistributed identifier database. Source page and archive verified live on 2026-07-24 (M2-CONTRACT §1).",
+      "determination_basis": "Works of the US Government (17 U.S.C. §105); the archive is an SEC compilation of reported settlement facts, and CUSIP values appear here only as they are published by the SEC in that compilation. Public Filings uses them solely as an identifier seed with recorded provenance, not as a redistributed identifier database. Source page and archive verified live on 2026-07-24 (M2-CONTRACT §1).",
       "determination_date": "2026-07-24",
       "review_by": "2026-10-24",
       "ingestible": true,
@@ -102,7 +102,7 @@
         "Research and analysis"
       ],
       "restrictions": [
-        "COUNSEL GATE — CUSIP redistribution: CGS/ABA assert IP in the CUSIP identifiers the SEC publishes here. Populus already redistributes CUSIPs from 13F filings and FTD, so admitting this source adds no NEW exposure class, but the counsel-gate flag records it explicitly and the P2-entry counsel gate must name it (see counsel_flags).",
+        "COUNSEL GATE — CUSIP redistribution: CGS/ABA assert IP in the CUSIP identifiers the SEC publishes here. Public Filings already redistributes CUSIPs from 13F filings and FTD, so admitting this source adds no NEW exposure class, but the counsel-gate flag records it explicitly and the P2-entry counsel gate must name it (see counsel_flags).",
         "The verbatim CGS/ABA notice (see required notices) is non-removable and travels with any redistributed excerpt or derived identity",
         "Identity seeding only: the list is used as a definitional CUSIP-validity and canonical-name source, not republished as a CUSIP identifier database",
         "Quarter identity comes from the source filename/URL cross-checked against the document's Year/Qtr header; the legend 'current as of' date is not authoritative (it is stale boilerplate on some quarters)",
@@ -113,7 +113,7 @@
         "Copyright (c) American Bankers Association (ABA). All rights reserved. CUSIP Numbers and descriptions are used with permission by CUSIP Global Services (CGS), which is operated by FactSet Research Systems Inc., on behalf of the ABA. No redistribution without permission of CGS. CGS does not guarantee the accuracy or completeness of the CUSIP Numbers and standard descriptions included herein and none of CGS, ABA or FactSet shall be responsible for any errors, omissions or damages arising out of the use of such information."
       ],
       "attribution": "Source: U.S. Securities and Exchange Commission, Official List of Section 13(f) Securities. CUSIP identifiers and descriptions © American Bankers Association, used with permission by CUSIP Global Services.",
-      "determination_basis": "Works of the US Government (17 U.S.C. §105): the list is an SEC compilation and the definitional answer to the very question the M2 coverage gate asks ('is this CUSIP a registered 13(f) security this quarter?'). CGS/ABA assert IP in the embedded CUSIP identifiers; the SEC publishes them with the redistribution notice recorded above, which Populus carries verbatim. Populus uses the list as a dated identity/name seed with recorded provenance, not as a redistributed CUSIP database — the same posture as sec-ftd. The counsel gate (CUSIP redistribution) is flagged for the P2-entry counsel review; it adds no exposure class beyond the CUSIPs Populus already redistributes from 13F filings and FTD. Source index, quarterly files and the dual-format 2026Q2 verified live 2026-07-25 and cached 2026-07-30.",
+      "determination_basis": "Works of the US Government (17 U.S.C. §105): the list is an SEC compilation and the definitional answer to the very question the M2 coverage gate asks ('is this CUSIP a registered 13(f) security this quarter?'). CGS/ABA assert IP in the embedded CUSIP identifiers; the SEC publishes them with the redistribution notice recorded above, which Public Filings carries verbatim. Public Filings uses the list as a dated identity/name seed with recorded provenance, not as a redistributed CUSIP database — the same posture as sec-ftd. The counsel gate (CUSIP redistribution) is flagged for the P2-entry counsel review; it adds no exposure class beyond the CUSIPs Public Filings already redistributes from 13F filings and FTD. Source index, quarterly files and the dual-format 2026Q2 verified live 2026-07-25 and cached 2026-07-30.",
       "determination_date": "2026-07-30",
       "review_by": "2026-10-30",
       "ingestible": true,
