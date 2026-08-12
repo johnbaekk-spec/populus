@@ -69,12 +69,6 @@ jobs:
           git config user.name "populus-publish[bot]"
           git config user.email "populus-publish@users.noreply.github.com"
           git add builds latest.json
-          if git diff --cached --quiet; then
-            git fetch origin main
-            test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-            echo "published manifest and pointer are already committed"
-            exit 0
-          fi
           git commit -m "data: publish build"
           for attempt in 1 2 3; do
             if git pull --rebase && git push; then
