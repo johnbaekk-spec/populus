@@ -140,7 +140,7 @@ test("happy path: real payload bytes → decode → body render → DOM apply �
   assert.ok(body.includes("<caption"), "the client body is the same real-table renderer");
   assert.ok(body.includes("Congressional disclosures"));
   assert.ok(body.includes("cell-src"), "SRC receipts survive the client render");
-  assert.equal(h.titles[0], `${CUT_TICKER} — disclosures — Populus`);
+  assert.equal(h.titles[0], `${CUT_TICKER} — disclosures — Public Filings`);
   assert.ok(h.watchdogs[0]!.cancelled, "the watchdog is cancelled on settle");
 });
 

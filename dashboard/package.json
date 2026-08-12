@@ -2,7 +2,7 @@
   "name": "populus-dashboard",
   "version": "0.0.1",
   "private": true,
-  "description": "Populus public dashboard — Astro static site built from the published data build (ARCHITECTURE §12).",
+  "description": "Public Filings public dashboard — Astro static site built from the published data build (ARCHITECTURE §12).",
   "type": "module",
   "engines": {
     "node": ">=24"

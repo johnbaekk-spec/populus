@@ -19,7 +19,7 @@ const description =
   "and the structural caveats no engineering removes — regenerated from stats.json on every build.";
 ---
 
-<Base title="Methodology — Populus" description={description} active="methodology">
+<Base title="Methodology — Public Filings" description={description} active="methodology">
   <main class="shell page methodology">
     <div class="kicker">/methodology</div>
     <h1 class="metho-title">
@@ -27,7 +27,7 @@ const description =
       page is the ledger of those imperfections.
     </h1>
     <p class="metho-lede">
-      Populus republishes primary government records — nothing else. Below, per
+      Public Filings republishes primary government records — nothing else. Below, per
       module: sources and their license conditions, coverage measured against
       the full corpus, known gaps, and the structural caveats that no amount of
       engineering removes. Everything here is regenerated from
@@ -126,7 +126,7 @@ const description =
           <div class="mtile">
             <div class="tile-value">{fmtInt(inst.topn)}</div>
             <div class="tile-label">top-N ranking depth</div>
-            <div class="mtile-sub">a Populus build parameter</div>
+            <div class="mtile-sub">a Public Filings build parameter</div>
           </div>
           {window?.open && (
             <div class="mtile">
@@ -151,7 +151,7 @@ const description =
         <div>· Amendments are typed: a restatement supersedes; new-holdings merges. Originals are tombstoned, never deleted.</div>
         <div>· A change with an undisclosed side is <strong>n/c</strong> — never coerced into add or trim.</div>
         <div>· "Exit" is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
-        <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Populus build parameter.</div>
+        <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Public Filings build parameter.</div>
         <div>· Concentration is computed only when the denominator is disclosed; otherwise the stat prints "n/a" with its reason <span class="mono-id">concentration_unavailable</span>.</div>
         <div>· Ticker→issuer joins use the SEC's present-day ticker file against entity-keyed issuers only — never a name match, never a guessed identity.</div>
       </div>
@@ -209,7 +209,7 @@ const description =
             search never leaves your device — searches resolve to page paths
             client-side against an index that ships with the build. Watchlists
             live in your browser's localStorage and are never transmitted. If
-            Populus ever offers paid conveniences (notifications,
+            Public Filings ever offers paid conveniences (notifications,
             integrations), the records themselves stay free and ungated — a
             transparency site that paywalled the public record would contradict
             this page.
@@ -221,7 +221,7 @@ const description =
             <strong>Prohibited uses.</strong> Use of congressional
             financial-disclosure reports for commercial purposes, for
             determining credit, or for solicitation is restricted by 5 U.S.C.
-            § 13107(c). <strong>Not financial advice.</strong> Populus reports
+            § 13107(c). <strong>Not financial advice.</strong> Public Filings reports
             disclosures; it recommends nothing. <strong>Attribution.</strong>
             Data remain U.S. government records; per-source conditions are
             recorded in the machine-readable conditions register and rendered in

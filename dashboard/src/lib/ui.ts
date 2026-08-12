@@ -359,7 +359,7 @@ export function memberPaperBlock(m: MemberEntity): string {
   return (
     `<section class="paper-block" aria-labelledby="paper-h">` +
     `<h2 id="paper-h" class="section-h">Paper filings — not machine-readable</h2>` +
-    `<p class="section-note">These filings were submitted on paper. They are <strong>retained and counted</strong> — they appear in filing totals with zero transaction rows — but their contents are not yet machine-readable, and Populus does not hand-transcribe. The archived document is already the record.</p>` +
+    `<p class="section-note">These filings were submitted on paper. They are <strong>retained and counted</strong> — they appear in filing totals with zero transaction rows — but their contents are not yet machine-readable, and Public Filings does not hand-transcribe. The archived document is already the record.</p>` +
     `<div class="table-scroll"><table class="etable"><caption class="visually-hidden">Paper filings needing OCR for this member</caption>` +
     `<thead><tr><th scope="col">Filed ▾</th><th scope="col">Status</th><th scope="col">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div></section>`
@@ -431,7 +431,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       [
         {
           mark: "§",
-          html: `flow range = sum of statutory bucket bounds — an interval, not an estimate of value; derived by Populus from the disclosed ranges`,
+          html: `flow range = sum of statutory bucket bounds — an interval, not an estimate of value; derived by Public Filings from the disclosed ranges`,
         },
       ],
       { id: "member-footnotes" },
@@ -473,7 +473,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
   if (inst.state === "no-map" || inst.state === "unmapped" || inst.state === "ambiguous") {
     const reason =
       inst.state === "ambiguous"
-        ? `This ticker names more than one issuer in the SEC's present-day ticker file, so Populus refuses to pick one.`
+        ? `This ticker names more than one issuer in the SEC's present-day ticker file, so Public Filings refuses to pick one.`
         : inst.state === "no-map"
           ? `This build carries no ticker→issuer mapping input, so the join is not attempted.`
           : `This ticker is not in the SEC's present-day ticker file.`;
@@ -482,7 +482,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
       head("") +
       `<div class="absent-block">` +
       `<h3 class="absent-h">Not resolved to an issuer — deliberately.</h3>` +
-      `<p>${reason} Issuer rankings are keyed by registry identity, and Populus does not guess identity from names. Filer pages list holdings by issuer name as filed, or check the primary source: <a href="${esc(
+      `<p>${reason} Issuer rankings are keyed by registry identity, and Public Filings does not guess identity from names. Filer pages list holdings by issuer name as filed, or check the primary source: <a href="${esc(
         edgarTickerUrl(ticker),
       )}" rel="noopener" target="_blank">${esc(ticker)} on SEC EDGAR ↗</a></p>` +
       `</div></section>`
@@ -529,13 +529,13 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
     `<tbody>${rows}</tbody></table></div>` +
     terminusRow({
       author: "populus",
-      html: `The published aggregate ranks the top ${fmtInt(inst.topn ?? 25)} holders per issuer — a build parameter of the Populus aggregation, not a census. Rows beyond it exist in individual filings on EDGAR. <a href="/methodology/#m2">methodology §13F ↗</a>`,
+      html: `The published aggregate ranks the top ${fmtInt(inst.topn ?? 25)} holders per issuer — a build parameter of the Public Filings aggregation, not a census. Rows beyond it exist in individual filings on EDGAR. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
     footnoteBlock(
       [
         {
           mark: "§",
-          html: `derived by Populus from the published aggregate (agg_issuer_top_holders); per-filer filed dates, share counts and document links are not in the published aggregate — the EDGAR link opens the filer's 13F list`,
+          html: `derived by Public Filings from the published aggregate (agg_issuer_top_holders); per-filer filed dates, share counts and document links are not in the published aggregate — the EDGAR link opens the filer's 13F list`,
         },
         { mark: "n/c", html: `${esc(INST_STAMP_CAVEAT)}` },
       ],
@@ -787,7 +787,7 @@ export function holdersBody(
       period,
     )}</strong>. Long positions only; managers under $100M in 13(f) securities do not file. The ranking below is a top-${fmtInt(
       topn,
-    )} slice of the Populus aggregate — not a census.</p>` +
+    )} slice of the Public Filings aggregate — not a census.</p>` +
     `</div>` +
     statTiles(tiles, { label: "Holder statistics", compact: true }) +
     `</header>` +
@@ -808,7 +808,7 @@ export function holdersBody(
         },
         {
           mark: "§",
-          html: `derived by Populus from the published aggregate (agg_issuer_top_holders); the mockup's per-holder filed dates, lags, share counts and document links are not in the published aggregate and are not shown — the EDGAR link opens the filer's 13F filings`,
+          html: `derived by Public Filings from the published aggregate (agg_issuer_top_holders); the mockup's per-holder filed dates, lags, share counts and document links are not in the published aggregate and are not shown — the EDGAR link opens the filer's 13F filings`,
         },
       ],
       { id: "holders-footnotes" },
@@ -846,7 +846,7 @@ export function holdersTableHtml(
     `<tbody>${body}</tbody></table></div>` +
     terminusRow({
       author: "populus",
-      html: `The aggregate publishes the top ${fmtInt(topn)} holders per issuer — a build parameter of the Populus aggregation. Rows beyond it exist in individual filings on EDGAR but are not ranked here. <a href="/methodology/#m2">methodology §13F ↗</a>`,
+      html: `The aggregate publishes the top ${fmtInt(topn)} holders per issuer — a build parameter of the Public Filings aggregation. Rows beyond it exist in individual filings on EDGAR but are not ranked here. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
     `<div class="caveat-line">${esc(INST_STAMP_CAVEAT)}</div>` +
     `</div>`
@@ -929,7 +929,7 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
   {
     mark: "§",
-    html: `derived by Populus from the published aggregate; NULL means the source did not disclose a usable value — never zero`,
+    html: `derived by Public Filings from the published aggregate; NULL means the source did not disclose a usable value — never zero`,
   },
 ];
 
@@ -1017,7 +1017,7 @@ export function filerEdgarBlock(cik: string, filerName: string): string {
   return (
     `<section class="edgar-block" aria-label="Full holdings on EDGAR">` +
     `<h2 class="section-h">The complete filing on EDGAR.</h2>` +
-    `<p>The position list above is served from the published Populus build — every position this filer reported for the selected quarter, as it reported it. This block is <strong>provenance, not a substitute</strong>: the filing itself is the record, and it is one click away. Serving this list is <a href="/methodology/">M2-CONTRACT §3</a>, amended 2026-08-02; §3.1 keeps live EDGAR for filings newer than this build.</p>`+
+    `<p>The position list above is served from the published Public Filings build — every position this filer reported for the selected quarter, as it reported it. This block is <strong>provenance, not a substitute</strong>: the filing itself is the record, and it is one click away. Serving this list is <a href="/methodology/">M2-CONTRACT §3</a>, amended 2026-08-02; §3.1 keeps live EDGAR for filings newer than this build.</p>`+
     `<a class="cta" href="${esc(edgarFilerUrl(cik))}" rel="noopener" target="_blank">Open ${esc(
       filerName,
     )}'s 13F filings on SEC EDGAR ↗</a>` +

@@ -402,7 +402,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
               paper: payload.p.map(paperFromArray),
             },
           };
-          deps.setTitle(`${loaded.member!.name} — congressional disclosures — Populus`);
+          deps.setTitle(`${loaded.member!.name} — congressional disclosures — Public Filings`);
         } else {
           loaded = {
             kind: "t",
@@ -410,7 +410,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
             ticker: { ticker: String(meta.ticker ?? parsed.key), txns: payload.t.map(txnFromArray) },
             inst: (meta.inst ?? { state: "module-absent" }) as TickerInstSection,
           };
-          deps.setTitle(`${loaded.ticker!.ticker} — disclosures — Populus`);
+          deps.setTitle(`${loaded.ticker!.ticker} — disclosures — Public Filings`);
         }
         page = 0;
         renderLoaded();
@@ -700,7 +700,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
     loadedFiler = payload;
     filerState = { view: "current", page: 0, period: payload.current };
     filerAggPeriod = "";
-    deps.setTitle(`${payload.filerName} — 13F filer — Populus`);
+    deps.setTitle(`${payload.filerName} — 13F filer — Public Filings`);
     renderFiler();
   }
 

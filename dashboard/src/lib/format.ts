@@ -651,13 +651,13 @@ export function feedItemHtml(item: FeedItem, ctx: RenderCtx): string {
 /* ---------- TerminusRow (G3) ---------- */
 
 /** A truncated list ends in a dashed terminus row that NAMES the truncation's
-    author — the source, or Populus itself for our own cuts. Never a bare
+    author — the source, or Public Filings itself for our own cuts. Never a bare
     "show more" implying completeness. `html` is pre-escaped by the caller. */
 export function terminusRow(opts: {
   author: "source" | "populus";
   html: string;
 }): string {
-  const label = opts.author === "source" ? "Truncated by the source." : "Truncated by Populus.";
+  const label = opts.author === "source" ? "Truncated by the source." : "Truncated by Public Filings.";
   return (
     `<div class="terminus" data-terminus-author="${opts.author}">` +
     `<span class="terminus-author">${label}</span> ${opts.html}</div>`

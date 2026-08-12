@@ -1,4 +1,4 @@
-# Populus
+# Public Filings
 
 **The open financial-data commons** — finance data that is free to pull from primary
 sources and redistributable under recorded conditions, served as an MCP server and a

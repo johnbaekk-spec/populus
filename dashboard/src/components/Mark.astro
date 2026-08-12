@@ -1,0 +1,17 @@
+---
+// The Public Filings mark: an open-cornered square frame with the blue
+// square in the notch. Single source of truth for the logo geometry —
+// public/favicon.svg carries the same paths with a fixed frame color;
+// change both together. The frame fills with currentColor so it follows
+// the theme ink; the blue is the brand blue, deliberately brighter than
+// the site --accent.
+interface Props {
+  class?: string;
+}
+const { class: cls } = Astro.props;
+---
+
+<svg class={cls} aria-hidden="true" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+  <path d="M23 0H48V48H0V23H7V41H41V7H23Z" fill="currentColor" />
+  <rect x="0" y="0" width="18" height="18" fill="#2b6fd8" />
+</svg>

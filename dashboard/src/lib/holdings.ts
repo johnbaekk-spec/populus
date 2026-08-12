@@ -1519,7 +1519,7 @@ export function coveragePanelHtml(
     `<div class="panel-head"><h2 class="section-h">What this list leaves out</h2>` +
     `<span class="panel-note">stated beside the table, not behind it</span></div>` +
     statTiles(tiles, { label: `Identity coverage for ${coverage.period}`, compact: true }) +
-    `<p class="section-note">This is every holder of ${esc(opts.issuerName)} that Populus could ` +
+    `<p class="section-note">This is every holder of ${esc(opts.issuerName)} that Public Filings could ` +
     `resolve to an issuer identity as of ${esc(coverage.period)} — not a census. ` +
     `${fmtInt(coverage.unresolvedRows)} holder ${
       coverage.unresolvedRows === 1 ? "row" : "rows"
@@ -1555,7 +1555,7 @@ export function coveragePanelHtml(
     the unqualified-"all" ban is enforced over the same string the reader sees. */
 export function holdersIntroHtml(issuerName: string, period: string): string {
   return (
-    `<p class="section-note">Every institution Populus could resolve as a holder of ${esc(
+    `<p class="section-note">Every institution Public Filings could resolve as a holder of ${esc(
       issuerName,
     )} for the quarter ended <strong>${esc(period)}</strong>, from 13F filings — ` +
     `as-of-resolved holders only, with the unresolved remainder counted beside the table. ` +

@@ -3,6 +3,7 @@
 // (Locked #14), module grid with live stats — an absent module renders honest
 // absence, never a sample number — and the commitments strip.
 import Base from "../layouts/Base.astro";
+import Mark from "../components/Mark.astro";
 import { getBuildData, moduleAvailability, coverageSummary } from "../lib/data";
 import { fmtInt, type RenderCtx } from "../lib/format";
 import { pickSpecimen, specimenCard, moduleCard } from "../lib/ui";
@@ -63,13 +64,13 @@ const description =
   "primary government sources, republished with their receipts — free, verifiable, honest about its gaps.";
 ---
 
-<Base title="Populus — the people's financial data" description={description} active="home">
+<Base title="Public Filings — the people's financial data" description={description} active="home">
   <main>
     <div class="hero-band">
       <div class="shell hero">
         <div class="hero-copy">
           <div class="hero-kicker">
-            <span class="hero-mark" aria-hidden="true"></span>
+            <Mark class="hero-mark" />
             <span class="hero-kicker-text">The open financial-data commons</span>
           </div>
           <h1 class="hero-title">The people's financial data, returned to the people.</h1>

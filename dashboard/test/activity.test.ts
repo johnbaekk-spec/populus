@@ -337,7 +337,7 @@ test("truncation is STATED on the page — never a silent cut", () => {
   const records = series(70);
   const p = paginateActivity(records, FILINGS, { byteLimit: 10 });
   const html = activityFeedHtml({ present: true, reason: null, filings: FILINGS, pagination: p });
-  assert.match(html, /Truncated by Populus\./);
+  assert.match(html, /Truncated by Public Filings\./);
   assert.match(html, /6<\/strong> further records are not published here/);
   assert.match(html, /The cut falls at/);
   assert.match(html, /64-shard budget/);
@@ -568,7 +568,7 @@ test("the ban does not fire on the honest copy the surfaces actually ship", () =
   for (const honest of [
     "QoQ moves",
     "Rankings and QoQ moves that touch this quarter are provisional by construction",
-    "quarter-over-quarter moves from the published Populus aggregate",
+    "quarter-over-quarter moves from the published Public Filings aggregate",
     "What a number looks like here",
     "the feed holds back rather than inventing one",
   ]) {
@@ -694,7 +694,7 @@ test("the feed states how much of the ordered set it shows, and where the rest i
   assert.match(html, /Showing the 50 largest of 300 ordered change records/);
   assert.match(html, /institutional\/data\/activity\/&lt;page&gt;\.v1\.json/);
   assert.match(html, /2,000 records or 2,097,152 bytes of serialized JSON/);
-  assert.match(html, /Truncated by Populus\./, "the terminus names the author of the cut");
+  assert.match(html, /Truncated by Public Filings\./, "the terminus names the author of the cut");
 });
 
 test("each absence state renders as itself — the reader learns WHICH one", () => {

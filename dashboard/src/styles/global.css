@@ -1,4 +1,4 @@
-/* Populus design tokens + global styles.
+/* Public Filings design tokens + global styles.
    Source of truth: the Claude Design project "UI Mockups for Project"
    (Congress Feed.dc.html / Mobile.dc.html / States.dc.html). Values are
    copied verbatim from the design; do not tune them here without a
@@ -189,20 +189,13 @@ button {
   flex-shrink: 0;
 }
 .brand-mark {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--ink);
-  position: relative;
-  display: inline-block;
-}
-.brand-mark::after {
-  content: "";
-  position: absolute;
-  left: 22%;
-  right: 34%;
-  top: 38%;
-  bottom: 38%;
-  background: var(--accent);
+  /* the Mark component (components/Mark.astro) — sizing only; the geometry
+     lives in the component and /favicon.svg */
+  width: 22px;
+  height: 22px;
+  display: block;
+  color: var(--ink);
+  flex-shrink: 0;
 }
 .brand-name {
   font: 700 21px var(--serif);
@@ -1570,20 +1563,11 @@ button {
   margin-bottom: 22px;
 }
 .hero-mark {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--ink);
-  position: relative;
+  width: 44px;
+  height: 44px;
   display: block;
-}
-.hero-mark::after {
-  content: "";
-  position: absolute;
-  left: 22%;
-  right: 34%;
-  top: 38%;
-  bottom: 38%;
-  background: var(--accent);
+  color: var(--ink);
+  flex-shrink: 0;
 }
 .hero-kicker-text {
   font: 600 11px var(--sans);
