@@ -136,9 +136,9 @@ def render_data_license(register: Mapping) -> str:
     lines = [
         _GENERATED_HEADER,
         "",
-        "# Populus data conditions register (DATA-LICENSE)",
+        "# Public Filings data conditions register (DATA-LICENSE)",
         "",
-        "Populus **code** is MIT-licensed (see [LICENSE](LICENSE)). Populus"
+        "Public Filings **code** is MIT-licensed (see [LICENSE](LICENSE)). Public Filings"
         " **data** is not one license: every source enters through this"
         " conditions register (ARCHITECTURE.md §15), which records what each"
         " source permits, what it restricts, and which notices must travel"
@@ -192,7 +192,7 @@ def render_data_license(register: Mapping) -> str:
 def render_notice(register: Mapping) -> str:
     """The NOTICE file: required attributions and verbatim notices."""
     lines = [
-        "Populus NOTICE — required attributions and notices",
+        "Public Filings NOTICE — required attributions and notices",
         "GENERATED FILE — do not edit by hand. Source of truth:",
         "src/populus/licenses.json; regenerate with",
         "`python scripts/render_licenses.py`.",
