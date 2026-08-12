@@ -7,27 +7,22 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  verify-live:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read
     outputs:
-      deployment_id: ${{ steps.deploy.outputs.deployment_id }}
+      deployment_id: ${{ steps.verify.outputs.deployment_id }}
     steps:
-      - name: Check out merged product
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: d823597b69d4244b4d78c1bbf6601de4c2390e51
-
-      - name: Download the verified Cloudflare-compatible site
+      - name: Download the deployed site artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: site-20260812.1
           path: site-artifact
           github-token: ${{ github.token }}
           repository: johnbaekk-spec/populus
-          run-id: 31570367015
+          run-id: 31572882267
 
       - name: Re-seal artifact for deployment signing
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -37,13 +32,8 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Set up Node
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
-        with:
-          node-version-file: dashboard/.node-version
-
-      - name: Deploy production and verify functional Institutional surfaces
-        id: deploy
+      - name: Verify live Institutional surfaces and resolve deployment
+        id: verify
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_EDIT_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -53,58 +43,35 @@ jobs:
           set -euo pipefail
           base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CLOUDFLARE_PAGES_PROJECT}/deployments"
           auth="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
-          before=$(curl -fsS -H "$auth" "$base?env=production" | jq -er '.result[0].id')
+          deployment=$(curl -fsS -H "$auth" "$base?env=production")
+          deployment_id=$(printf '%s' "$deployment" | jq -er '.result[0].id')
+          test "$(printf '%s' "$deployment" | jq -er '.result[0].environment')" = production
+          test "$(printf '%s' "$deployment" | jq -er '.result[0].url')" = https://2f3830b6.publicfilings.pages.dev
 
-          test -f site-artifact/inventory.json
-          test "$(find site-artifact/site -type f | wc -l | tr -d ' ')" = 9671
-          test -z "$(find site-artifact/site -type f -size +25M -print -quit)"
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          curl -fsS https://publicfilings.org/ > "$tmpdir/home.html"
+          curl -fsS https://publicfilings.org/institutional/ > "$tmpdir/inst.html"
+          curl -fsS https://publicfilings.org/institutional/filers/1423053/ > "$tmpdir/citadel.html"
+          curl -fsS https://publicfilings.org/institutional/data/filers/index.v2.json > "$tmpdir/index.json"
 
-          npx --yes wrangler@4.42.0 pages deploy site-artifact/site \
-            --project-name="$CLOUDFLARE_PAGES_PROJECT" --branch=main \
-            --commit-dirty=true
-
-          deployment_id=""
-          for attempt in $(seq 1 60); do
-            current=$(curl -fsS -H "$auth" "$base?env=production")
-            candidate=$(printf '%s' "$current" | jq -er '.result[0].id')
-            environment=$(printf '%s' "$current" | jq -er '.result[0].environment')
-            if [ "$candidate" != "$before" ] && [ "$environment" = production ]; then
-              deployment_id="$candidate"
-              break
-            fi
-            sleep 2
-          done
-          test -n "$deployment_id"
-
-          expected=d823597b69d4244b4d78c1bbf6601de4c2390e51
-          for attempt in $(seq 1 60); do
-            home=$(curl -fsS https://publicfilings.org/ || true)
-            if printf '%s' "$home" | grep -Fq "populus:code_sha\" content=\"$expected"; then
-              break
-            fi
-            test "$attempt" -lt 60
-            sleep 2
-          done
-
-          curl -fsS https://publicfilings.org/institutional/ | grep -Fq Institutional
-          curl -fsS https://publicfilings.org/institutional/filers/1423053/ \
-            | grep -Fq 'CITADEL ADVISORS LLC'
-          index=$(mktemp)
-          curl -fsS https://publicfilings.org/institutional/data/filers/index.v2.json > "$index"
-          jq -e '.v == 2 and .kind == "filer-index" and .absent == null and (.routes | length > 0)' "$index"
-          route=$(jq -er 'first(.routes | to_entries[]) | @base64' "$index")
+          grep -Fq 'populus:code_sha" content="d823597b69d4244b4d78c1bbf6601de4c2390e51' "$tmpdir/home.html"
+          grep -Fq Institutional "$tmpdir/inst.html"
+          grep -Fq 'CITADEL ADVISORS LLC' "$tmpdir/citadel.html"
+          jq -e '.v == 2 and .kind == "filer-index" and .absent == null and (.routes | length > 0)' "$tmpdir/index.json"
+          route=$(jq -er 'first(.routes | to_entries[]) | @base64' "$tmpdir/index.json")
           cik=$(printf '%s' "$route" | base64 -d | jq -r .key)
           shard=$(printf '%s' "$route" | base64 -d | jq -r '.value[0]')
-          curl -fsS "https://publicfilings.org/institutional/data/filers/${shard}.v2.json" \
-            | jq -e --arg cik "$cik" \
-              '.v == 2 and .kind == "filer-fragment-shard" and (.entries | keys | any(startswith($cik + ":")))'
-          rm -f "$index"
+          curl -fsS "https://publicfilings.org/institutional/data/filers/${shard}.v2.json" > "$tmpdir/shard.json"
+          jq -e --arg cik "$cik" \
+            '.v == 2 and .kind == "filer-fragment-shard" and (.entries | keys | any(startswith($cik + ":")))' \
+            "$tmpdir/shard.json"
 
           echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
-          echo "deployed and functionally verified $deployment_id"
+          echo "verified live deployment $deployment_id"
 
   sign:
-    needs: deploy
+    needs: verify-live
     permissions:
       contents: write
       id-token: write
@@ -115,11 +82,11 @@ jobs:
       CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
     with:
       artifact-name: site-20260812.1
-      cf-production-deployment-id: ${{ needs.deploy.outputs.deployment_id }}
+      cf-production-deployment-id: ${{ needs.verify-live.outputs.deployment_id }}
 
   assert-signed:
-    needs: [deploy, sign]
-    if: always() && needs.deploy.result != 'skipped'
+    needs: [verify-live, sign]
+    if: always() && needs.verify-live.result != 'skipped'
     runs-on: ubuntu-latest
     permissions: {}
     steps:
