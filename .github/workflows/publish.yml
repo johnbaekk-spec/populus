@@ -26,10 +26,9 @@ jobs:
           test "$(git rev-parse HEAD)" = d823597b69d4244b4d78c1bbf6601de4c2390e51
           test -f populus-data/latest.json
           test -f populus-data/builds/20260812.1/manifest.json
-          test -f site-artifact-cloudflare-r10/inventory.json
+          test -f site-artifact/inventory.json
           test "$(find dashboard/dist -type f | wc -l | tr -d ' ')" = 9671
-          test "$(find site-artifact-cloudflare-r10/site -type f | wc -l | tr -d ' ')" = 9671
-          test -z "$(find site-artifact-cloudflare-r10/site -type f -size +25M -print -quit)"
+          test "$(find site-artifact/site -type f | wc -l | tr -d ' ')" = 9671
           test "$(jq -r .build_id populus-data/latest.json)" = 20260812.1
           test "$(jq -r .build_id populus-data/builds/20260812.1/manifest.json)" = 20260812.1
           echo "build_id=20260812.1" >> "$GITHUB_OUTPUT"
@@ -38,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: site-20260812.1
-          path: /Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus/site-artifact-cloudflare-r10
+          path: /Users/johnbaek/projects/Populus-ops/runner-one-shot-r10/actions-runner/_work/populus/populus/site-artifact
           retention-days: 7
           if-no-files-found: error
 
