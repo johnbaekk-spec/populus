@@ -66,13 +66,17 @@ jobs:
             --deselect tests/test_m2_11_qa_bundle.py::test_round_three_accepts_exact_failed_gate_predecessor_before_output \
             --deselect tests/test_m2_11_qa_bundle.py::test_finalization_closeout_private_tree_passes_exact_76_path_scope
 
-      # Codex F1: checking the COMBINED exit code only notices when ALL THREE
-      # pass. If one gets fixed and two still fail, rc stays nonzero and the
-      # allowlist silently keeps excluding a passing test — the precise way an
-      # allowlist rots into a disabled gate. Each node is therefore run and
-      # judged on its own, and an unexpected outcome (collection error, missing
-      # node) is a failure too, not a pass.
-      - name: The known-failing allowlist is still accurate (per node)
+      # The allowlist must reject a PASSING test AND any outcome that is not a
+      # clean test failure. Round 1 checked only "nonzero", which silently
+      # accepts an internal error (3), a usage error (4), "no tests collected"
+      # (5), or a crash — so a recorded-failing test that never actually RAN
+      # would still report the allowlist as accurate.
+      #
+      # pytest exit codes: 0 all passed · 1 tests failed · 2 interrupted ·
+      # 3 internal error · 4 usage error · 5 no tests collected. Only 1 is the
+      # expected state here, and the failure signature is pinned too, so the
+      # entry has to be revisited if these start failing for a NEW reason.
+      - name: The known-failing allowlist is still accurate (per node, exact rc)
         run: |
           set -uo pipefail
           nodes=(
@@ -80,19 +84,35 @@ jobs:
             "tests/test_m2_11_qa_bundle.py::test_round_three_accepts_exact_failed_gate_predecessor_before_output"
             "tests/test_m2_11_qa_bundle.py::test_finalization_closeout_private_tree_passes_exact_76_path_scope"
           )
+          expected_signature="private-index changed-path inventory mismatch"
           stale=0
           for node in "${nodes[@]}"; do
-            out="$(uv run pytest -q --no-header "$node" 2>&1)"; rc=$?
-            if [ "$rc" = "0" ]; then
-              echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from the"
-              echo "::error::deselect list in this file and from BACKLOG.md (B19)."
-              stale=1
-            elif echo "$out" | grep -qE "^ERROR|no tests ran|not found"; then
-              echo "::error::$node did not run as expected (renamed or removed?):"
-              echo "$out" | tail -3
-              stale=1
-            else
-              echo "still failing as recorded: $node"
-            fi
+            out="$(uv run pytest -q --no-header "$node" 2>&1)"
+            rc=$?
+            case "$rc" in
+              0)
+                echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from"
+                echo "::error::the deselect list in this file and from BACKLOG.md (B19)."
+                stale=1
+                ;;
+              1)
+                # A clean test failure — the recorded state. Pin the reason too:
+                # a DIFFERENT failure is new information, not the known one.
+                if printf '%s' "$out" | grep -qF "$expected_signature"; then
+                  echo "still failing as recorded: $node"
+                else
+                  echo "::error::$node fails for a DIFFERENT reason than recorded."
+                  echo "::error::Expected signature: $expected_signature"
+                  printf '%s\n' "$out" | tail -5
+                  stale=1
+                fi
+                ;;
+              *)
+                echo "::error::$node did not run as a test at all (pytest rc=$rc:"
+                echo "::error::2 interrupted, 3 internal, 4 usage, 5 not collected)."
+                printf '%s\n' "$out" | tail -5
+                stale=1
+                ;;
+            esac
           done
           exit "$stale"

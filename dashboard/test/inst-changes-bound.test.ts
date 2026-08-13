@@ -21,6 +21,7 @@ import {
   compareQoqDeltas,
   sortQoqDeltas,
   utf8ByteLength,
+  type QoqDeltaLike,
 } from "../src/lib/holdings.ts";
 import { changesTableHtml, filerPeriodSectionHtml } from "../src/lib/ui.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
@@ -225,4 +226,62 @@ test("M2-12/F5: the embed cap counts UTF-8 BYTES, not UTF-16 code units", () => 
   );
   assert.ok(bound.rows.length < wide.length, "the byte cap bound this list");
   assert.equal(bound.total, wide.length, "the true total survives the cap");
+});
+
+/* ---- Cross-runtime parity, from the SHARED fixture (Codex closeout F2/F4) ----
+
+   `tests/fixtures/qoq_parity.v1.json` is read here AND by tests/test_qoq_parity.py.
+   Both repairs Codex flagged — the equal-key comparator and the lone-surrogate
+   serialization — previously existed in both runtimes with nothing invoking the
+   Python side, so reverting either left the suite green while they diverged. */
+
+interface ParityFixture {
+  comparator: { name: string; a: QoqDeltaLike; b: QoqDeltaLike; sign: number; why: string }[];
+  sort_order: { rows: QoqDeltaLike[]; expected_keys: string[] };
+  serialization: { name: string; value: string; json: string; utf8_bytes: number }[];
+  lone_surrogates: { name: string; code_points: number[]; json: string; utf8_bytes: number }[];
+}
+
+const PARITY: ParityFixture = JSON.parse(
+  readFileSync(
+    path.join(import.meta.dirname, "..", "..", "tests", "fixtures", "qoq_parity.v1.json"),
+    "utf-8",
+  ),
+);
+
+const sign = (n: number): number => (n > 0 ? 1 : n < 0 ? -1 : 0);
+
+test("PARITY: every shared comparator case, including reflexivity and antisymmetry", () => {
+  for (const c of PARITY.comparator) {
+    assert.equal(sign(compareQoqDeltas(c.a, c.b)), c.sign, `${c.name}: ${c.why}`);
+    // `-0 !== 0` under assert.strict's Object.is semantics, so normalise the
+    // expectation rather than letting a signed zero fail a correct comparator.
+    assert.equal(
+      sign(compareQoqDeltas(c.b, c.a)),
+      c.sign === 0 ? 0 : -c.sign,
+      `${c.name}: the comparator must be antisymmetric`,
+    );
+    assert.equal(compareQoqDeltas(c.a, c.a), 0, `${c.name}: cmp(x,x) must be 0`);
+    assert.equal(compareQoqDeltas(c.b, c.b), 0, `${c.name}: cmp(y,y) must be 0`);
+  }
+});
+
+test("PARITY: the shared sort order matches the sequence Python produces", () => {
+  const got = sortQoqDeltas(PARITY.sort_order.rows).map((r) => r.position_key);
+  assert.deepEqual(got, PARITY.sort_order.expected_keys);
+});
+
+test("PARITY: serialized bytes match the Python reference exactly", () => {
+  for (const c of PARITY.serialization) {
+    assert.equal(JSON.stringify(c.value), c.json, c.name);
+    assert.equal(utf8ByteLength(JSON.stringify(c.value)), c.utf8_bytes, c.name);
+  }
+});
+
+test("PARITY: lone surrogates serialize identically in both runtimes", () => {
+  for (const c of PARITY.lone_surrogates) {
+    const value = String.fromCharCode(...c.code_points);
+    assert.equal(JSON.stringify(value), c.json, c.name);
+    assert.equal(utf8ByteLength(JSON.stringify(value)), c.utf8_bytes, c.name);
+  }
 });

@@ -1021,3 +1021,93 @@ test("F3: prev_period is deliberately NOT cross-checked — it names the compari
   assert.equal(parsed.deltasByPeriod["2026-03-31"]![0]!.prev_period, "2025-12-31");
   assert.notEqual(parsed.deltasByPeriod["2026-03-31"]![0]!.prev_period, "2026-03-31");
 });
+
+/* ---- M2-12 close-out (Codex F3): the deltaTotalsByPeriod key-set contract ----
+
+   `requireSameKeySet` was added because the ordered `requireExactObjectKeys`
+   rejected semantically identical JSON whose object keys happened to be
+   reordered. Codex then pointed out that none of its three required outcomes had
+   a committed test, so reverting it — or swapping it back to sequence equality —
+   would not have failed CI. Each outcome is asserted below. */
+
+test("M2-12/F3: reordering deltaTotalsByPeriod keys changes nothing semantically", () => {
+  const db = fixtureDb();
+  try {
+    const good = assemble(db);
+    const reordered = JSON.parse(JSON.stringify(good)) as Record<string, unknown>;
+    const totals = reordered.deltaTotalsByPeriod as Record<string, number>;
+    const keys = Object.keys(totals);
+    assert.ok(keys.length > 1, "the fixture must carry >1 period for this to mean anything");
+    // Same entries, opposite insertion order — identical meaning.
+    reordered.deltaTotalsByPeriod = Object.fromEntries(
+      keys.reverse().map((k) => [k, totals[k]!]),
+    );
+    const parsed = parseFilerPayload(reordered);
+    assert.deepEqual(
+      parsed.deltaTotalsByPeriod,
+      good.deltaTotalsByPeriod,
+      "a reordered map must parse to the same totals, not be rejected",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("M2-12/F3: a MISSING period total is rejected, naming it", () => {
+  const db = fixtureDb();
+  try {
+    const good = assemble(db);
+    const mutant = JSON.parse(JSON.stringify(good)) as Record<string, unknown>;
+    const totals = mutant.deltaTotalsByPeriod as Record<string, number>;
+    const dropped = Object.keys(totals)[0]!;
+    delete totals[dropped];
+    assert.throws(
+      () => parseFilerPayload(mutant),
+      (err: unknown) =>
+        err instanceof FilerPayloadError &&
+        /deltaTotalsByPeriod/.test(err.message) &&
+        err.message.includes(dropped),
+      "a period with rows but no total would fall back to a length — reject it",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("M2-12/F3: an ORPHAN total with no matching period is rejected, naming it", () => {
+  const db = fixtureDb();
+  try {
+    const good = assemble(db);
+    const mutant = JSON.parse(JSON.stringify(good)) as Record<string, unknown>;
+    (mutant.deltaTotalsByPeriod as Record<string, number>)["1999-12-31"] = 7;
+    assert.throws(
+      () => parseFilerPayload(mutant),
+      (err: unknown) =>
+        err instanceof FilerPayloadError &&
+        /deltaTotalsByPeriod/.test(err.message) &&
+        err.message.includes("1999-12-31"),
+      "a total claiming a period that ships no rows is an orphan claim",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("M2-12/F2: a total BELOW the rows it ships with is a contradiction, rejected", () => {
+  const db = fixtureDb();
+  try {
+    const good = assemble(db);
+    const mutant = JSON.parse(JSON.stringify(good)) as Record<string, unknown>;
+    const deltas = mutant.deltasByPeriod as Record<string, unknown[]>;
+    const period = Object.keys(deltas).find((p) => (deltas[p] ?? []).length > 0)!;
+    (mutant.deltaTotalsByPeriod as Record<string, number>)[period] = 0;
+    assert.throws(
+      () => parseFilerPayload(mutant),
+      (err: unknown) =>
+        err instanceof FilerPayloadError && /below the .* embedded delta rows/.test(err.message),
+      "total 0 beside a real row renders 'no changes' OVER rows that exist",
+    );
+  } finally {
+    db.close();
+  }
+});

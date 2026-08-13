@@ -984,28 +984,36 @@ def _cap_rows(rows: list[dict]) -> tuple[list[dict], int]:
     return out, len(rows)
 
 
+def _compare_qoq_deltas(a: dict, b: dict) -> int:
+    """PARITY: ``dashboard/src/lib/holdings.ts::compareQoqDeltas``.
+
+    Exported (module-level, not a closure) for the same reason the TS mirror is:
+    reflexivity cannot be observed from a sorted list, because a stable sort
+    keeps the input order whether the tie-break returns 0 or 1. Codex proved that
+    hole by passing the first regression test against the very defect it claimed
+    to pin, so the property is asserted on the comparator itself in
+    tests/test_qoq_parity.py."""
+    av = a.get("curr_value_usd")
+    av = a.get("prev_value_usd") if av is None else av
+    av = -1 if av is None else av
+    bv = b.get("curr_value_usd")
+    bv = b.get("prev_value_usd") if bv is None else bv
+    bv = -1 if bv is None else bv
+    if bv != av:
+        return -1 if bv < av else 1
+    # Codex F2: this returned 1 for EQUAL keys, so the comparator was not
+    # reflexive and therefore not a total order — and it diverged from the
+    # corrected TS mirror on exact ties.
+    if a["position_key"] == b["position_key"]:
+        return 0
+    return -1 if a["position_key"] < b["position_key"] else 1
+
+
 def _sort_qoq_deltas(deltas: list[dict]) -> list[dict]:
     """PARITY: ``dashboard/src/lib/holdings.ts::sortQoqDeltas`` — largest
     current value first, falling back to the previous value for an exited
     position, ties by ``position_key`` so the order is total."""
-
-    def _cmp(a: dict, b: dict) -> int:
-        av = a.get("curr_value_usd")
-        av = a.get("prev_value_usd") if av is None else av
-        av = -1 if av is None else av
-        bv = b.get("curr_value_usd")
-        bv = b.get("prev_value_usd") if bv is None else bv
-        bv = -1 if bv is None else bv
-        if bv != av:
-            return -1 if bv < av else 1
-        # Codex F2: this returned 1 for EQUAL keys, so the comparator was not
-        # reflexive and therefore not a total order — and it diverged from the
-        # corrected TS mirror on exact ties.
-        if a["position_key"] == b["position_key"]:
-            return 0
-        return -1 if a["position_key"] < b["position_key"] else 1
-
-    return sorted(deltas, key=functools.cmp_to_key(_cmp))
+    return sorted(deltas, key=functools.cmp_to_key(_compare_qoq_deltas))
 
 
 def _bound_qoq_deltas(deltas: list[dict]) -> tuple[list[dict], int]:

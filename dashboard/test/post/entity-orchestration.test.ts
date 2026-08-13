@@ -19,10 +19,12 @@ import path from "node:path";
 
 import {
   runEntityDriver,
+  dispatchEntityClick,
   loadWatchStore,
   type DriverDeps,
   type FetchResult,
   type StorageLike,
+  type DriverHandle,
 } from "../../src/scripts/entity-client.ts";
 import { tickerDataKey } from "../../src/lib/derive.ts";
 import {
@@ -287,7 +289,13 @@ async function runFilerWith(
   indexBody: unknown,
   shardBodies: Map<number, unknown>,
   cik = validFilerFamily().cik,
-): Promise<{ state: string; lastRender: string; urls: string[] }> {
+): Promise<{
+  state: string;
+  lastRender: string;
+  urls: string[];
+  handle: DriverHandle;
+  renders: string[];
+}> {
   const urls: string[] = [];
   const h = harness(`?k=f:${Number(cik)}`, async (url) => {
     urls.push(url);
@@ -320,24 +328,111 @@ test("M2-12/F7: a cached v2 client meets the tombstone as version_mismatch, not 
   assert.ok(!/data-retry/.test(r.lastRender), "version_mismatch is terminal, never retryable");
 });
 
-test("M2-12/F6: the tail-filer route pages changes BEFORE any period chip is used", async () => {
-  /* The shipped F1 defect was a pager that did nothing until a chip was clicked,
-     and the first regression test for it only grepped source strings — a no-op
-     `changesPage` would have passed. This drives the real driver: load, then page
-     without touching a chip, and require the rendered rows to actually move. */
-  const family = validFilerFamily();
+/** A DOM-free stand-in for the clicked element: `dispatchEntityClick` only ever
+    asks for `closest()`, so a stub answering that is the whole surface. */
+function clickTarget(attrs: Record<string, string>, dataset: Record<string, string>): Element {
+  const node = {
+    getAttribute: (name: string) => attrs[name] ?? null,
+    dataset,
+    closest: (sel: string) => (sel in attrs || matchesDataSelector(sel, dataset) ? node : null),
+  };
+  return node as unknown as Element;
+}
+
+function matchesDataSelector(sel: string, dataset: Record<string, string>): boolean {
+  const m = /^\[data-([a-z-]+)\]$/.exec(sel);
+  if (!m) return false;
+  const key = m[1]!.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+  return key in dataset;
+}
+
+/** A filer payload carrying more than one PAGE of deltas, so paging is
+    observable: the shared parity fixture has a single delta, which made the
+    previous version of this test compare page 1 against an empty page 2. */
+function multiPageFilerFamily(deltaCount = 250): FilerFamilyFixture {
+  const base = validFilerFamily();
+  const payload = JSON.parse(JSON.stringify(base.payload)) as FilerPayloadV1;
+  const period = payload.current;
+  const template = (payload.deltasByPeriod[period] ?? [])[0];
+  assert.ok(template, "the base fixture must carry at least one delta to clone");
+  payload.deltasByPeriod[period] = Array.from({ length: deltaCount }, (_, i) => ({
+    ...(template as Record<string, unknown>),
+    position_key: `PK${String(deltaCount - i).padStart(6, "0")}`,
+    curr_value_usd: deltaCount - i,
+  })) as typeof payload.deltasByPeriod[string];
+  payload.deltaTotalsByPeriod[period] = deltaCount;
+
+  const fragments = fragmentFilerPayload(payload);
+  const shards = new Map<number, Record<string, unknown>>();
+  for (const fragment of fragments) {
+    shards.set(fragment.part, {
+      v: 2,
+      kind: "filer-fragment-shard",
+      shard: fragment.part,
+      shard_count: fragments.length,
+      entries: { [`${fragment.cik}:${fragment.part}`]: fragment },
+    });
+  }
+  return {
+    ...base,
+    payload,
+    fragments,
+    index: {
+      ...(base.index as Record<string, unknown>),
+      routes: { [payload.cik]: [0, fragments.length - 1, fragments.length] },
+    } as FilerFamilyFixture["index"],
+    shards,
+  };
+}
+
+test("M2-12/F6: the tail route pages changes through the DELEGATED click, before any chip", async () => {
+  /* Twice-corrected test. v1 grepped source strings; v2 called `handle.changesPage`
+     directly, so deleting `[data-changes-page]` delegation entirely would still
+     have passed, and its one-delta fixture made page 2 empty. This dispatches
+     through `dispatchEntityClick` — the exact path a real click takes — over a
+     fixture with 250 deltas, and compares the ROW IDENTITIES on each page. */
+  const family = multiPageFilerFamily(250);
   const r = await runFilerWith(family.index, family.shards, family.cik);
   assert.equal(r.state, "body");
 
-  const before = r.renders.length;
-  r.handle.changesPage("next");
-  assert.ok(r.renders.length > before, "paging must re-render without a prior chip click");
-  const paged = r.renders.at(-1)!;
-  assert.notEqual(paged, r.lastRender, "page 2 must not be page 1 redrawn");
+  const keysOf = (html: string): string[] =>
+    [...html.matchAll(/PK(\d{6})/g)].map((m) => m[0]!).slice(0, 5);
+  const page1 = keysOf(r.lastRender);
+  assert.ok(page1.length > 0, "the first page must render delta rows");
 
-  // And it must come back, rather than being a one-way ratchet.
-  r.handle.changesPage("prev");
-  assert.equal(r.renders.at(-1)!, r.lastRender, "paging back returns the first page exactly");
+  const next = clickTarget({ "aria-disabled": "false" }, { changesPage: "next" });
+  dispatchEntityClick(next, r.handle);
+  const page2 = keysOf(r.renders.at(-1)!);
+  assert.notDeepEqual(page2, page1, "a delegated next click must show DIFFERENT rows");
+
+  const prev = clickTarget({ "aria-disabled": "false" }, { changesPage: "prev" });
+  dispatchEntityClick(prev, r.handle);
+  assert.deepEqual(keysOf(r.renders.at(-1)!), page1, "paging back restores page 1 exactly");
+
+  // A disabled control must be inert, not merely styled.
+  const disabled = clickTarget({ "aria-disabled": "true" }, { changesPage: "prev" });
+  const before = r.renders.length;
+  dispatchEntityClick(disabled, r.handle);
+  assert.equal(r.renders.length, before, "an aria-disabled pager button must not act");
+});
+
+test("M2-12/F6: switching period resets the tail route's changes page to the first", async () => {
+  const family = multiPageFilerFamily(250);
+  const r = await runFilerWith(family.index, family.shards, family.cik);
+  const keysOf = (html: string): string[] =>
+    [...html.matchAll(/PK(\d{6})/g)].map((m) => m[0]!).slice(0, 5);
+  const page1 = keysOf(r.lastRender);
+
+  dispatchEntityClick(clickTarget({}, { changesPage: "next" }), r.handle);
+  assert.notDeepEqual(keysOf(r.renders.at(-1)!), page1);
+
+  // A page index from another quarter addresses nothing in this one.
+  r.handle.holdingsPeriod(r.handle === undefined ? "" : family.payload.current);
+  assert.deepEqual(
+    keysOf(r.renders.at(-1)!),
+    page1,
+    "selecting a period must reset the changes page, not keep the old index",
+  );
 });
 
 test("v2 multi-shard happy path fetches the exact contiguous range and renders", async () => {
