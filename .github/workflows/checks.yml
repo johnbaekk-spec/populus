@@ -138,3 +138,29 @@ jobs:
             esac
           done
           exit "$stale"
+
+  dashboard:
+    name: dashboard (typecheck + unit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: dashboard/.node-version
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install (frozen)
+        run: npm ci
+
+      # Both run with NO data environment — verified 2026-08-12: 287/287 unit
+      # tests and a clean typecheck with every POPULUS_* var unset.
+      - name: Typecheck
+        run: npx astro check
+
+      - name: Unit suite
+        run: npm test
