@@ -408,7 +408,7 @@ def test_the_flag_pass_clears_a_disposition_whose_cause_has_gone(tmp_path):
     ).fetchone()[0]
 
     conn.execute(
-        "UPDATE inst_holdings SET value_usd = 9_000_000"
+        "UPDATE inst_holdings SET value_usd = 9000000"  # no _ separator: SQLite < 3.46 rejects it
         " WHERE filing_id = 'inst:BAD'"
     )
     assert mark_cover_dispositions(conn) == (0, 0)

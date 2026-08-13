@@ -11,6 +11,20 @@
 # (`npm run test:post`) are deliberately NOT here: they require a real
 # `POPULUS_BUILD_DIR` + release DBs, which live in the private data repo, so
 # they stay with the publisher-side workflow that has them.
+#
+# HOST-BOUND SUITES SKIP THEMSELVES, they are not excluded here. The first run of
+# this workflow surfaced 163 failures that were entirely environmental, and the
+# fix belongs in the tests rather than in a CI ignore-list:
+#   * tests/test_runner_controller.py — executes a macOS-only script (BSD
+#     `stat -f`); skips on non-Darwin.
+#   * tests/test_m2_11_qa_bundle.py — drives a builder pinned to absolute
+#     owner-machine paths; skips when they are absent.
+# It also caught one REAL portability defect: SQL using the digit separator
+# `9_000_000`, which SQLite rejects before 3.46.
+#
+# The consequence is honest and worth stating: on a GitHub runner this job proves
+# LESS than `make test` does on the owner's machine, because those suites can only
+# be authoritative where their subject lives.
 name: checks
 
 # NOT `pull_request`: R7e/OD-4 bans PR-like triggers repo-wide because they route
@@ -91,9 +105,17 @@ jobs:
             rc=$?
             case "$rc" in
               0)
-                echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from"
-                echo "::error::the deselect list in this file and from BACKLOG.md (B19)."
-                stale=1
+                # rc=0 covers PASSED *and* SKIPPED — and this suite skips off the
+                # owner's machine, where its absolute evidence paths do not exist.
+                # Treating a skip as "now passes" would fire a false alarm on
+                # every CI run, so the two are separated explicitly.
+                if printf '%s' "$out" | grep -qE '[0-9]+ skipped'; then
+                  echo "not applicable here (suite skipped by its own precondition): $node"
+                else
+                  echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from"
+                  echo "::error::the deselect list in this file and from BACKLOG.md (B19)."
+                  stale=1
+                fi
                 ;;
               1)
                 # A clean test failure — the recorded state. Pin the reason too:

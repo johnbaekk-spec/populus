@@ -54,6 +54,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -61,6 +62,27 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "ops" / "runner" / "runner-controller.sh"
+
+# This suite EXECUTES the real controller, and the controller is macOS-only: its
+# ownership and mode probes use BSD `stat -f %u` / `stat -f %Lp`
+# (runner-controller.sh:210,223), which GNU coreutils reads as "filesystem
+# status" and fails. On Linux every test therefore dies identically at
+# `state-dir-stat-failed` — 163 failures that say nothing about the script.
+#
+# Skipped rather than made portable ON PURPOSE: this script runs as root on the
+# owner's Mac mini, and loosening its probes to satisfy a runner it will never
+# execute on would edit a privileged wipe path for no operational benefit. The
+# authoritative run is on the machine it manages.
+#
+# (Note for whoever revisits: line 321 DOES carry a `|| stat -c %u` fallback,
+# so the file is inconsistent about portability. Harmless while macOS-only.)
+pytestmark = pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason=(
+        "runner-controller.sh is macOS-only (BSD `stat -f`); executing it on "
+        "Linux fails at state-dir-stat-failed before reaching any assertion"
+    ),
+)
 
 # The credential file now holds a long-lived fine-grained PAT (F10); the
 # controller mints short-lived registration tokens from it per cycle.
