@@ -111,9 +111,13 @@ test("the unified AAPL page's institutional section binds the same data", () => 
 
 test("/institutional landing lists the fixture filers when the module is present", () => {
   const html = readFileSync(path.join(DIST_FIXTURE, "institutional", "index.html"), "utf-8");
-  assert.ok(html.includes("Filers on record"));
+  // A-2 (ALPHA-UX): the landing is now the ranked index — value sourced
+  // period-correctly from agg_filer_concentration, never the registry's
+  // cross-period accumulator, and never called AUM/fund size.
+  assert.ok(html.includes("Filers — ranked by reported 13(f) long value"));
   assert.ok(html.includes("BERKSHIRE HATHAWAY INC"));
-  assert.ok(html.includes("all periods on record") || html.includes("§"), "cumulative labeling");
+  assert.ok(html.includes("agg_filer_concentration"), "period-correct sourcing is named");
+  assert.ok(!/\bAUM\b|fund size/i.test(html), "constraint 3: never AUM / fund size");
 });
 
 test("production leakage: the NORMAL dist/ carries no fixture-derived paths", () => {

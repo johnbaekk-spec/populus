@@ -4,8 +4,8 @@
 // construction. Static paths: every member in the extract minus budget cuts
 // (Locked #13); cut members stay reachable at /e/?k=m:… with their endpoint.
 import Base from "../../../layouts/Base.astro";
-import { getBuildData } from "../../../lib/data";
-import { memberBody, type BuildStamps } from "../../../lib/ui";
+import { getBuildData, getSignalArtifact, sectorResolver } from "../../../lib/data";
+import { memberBody, memberSignalsPanel, memberV2Sections, type BuildStamps, type MemberV2Deps } from "../../../lib/ui";
 import type { RenderCtx } from "../../../lib/format";
 
 export function getStaticPaths() {
@@ -28,7 +28,29 @@ const ssrCtx: RenderCtx = {
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };
-const bodyHtml = memberBody(member, stamps, ssrCtx);
+// C-3 (ALPHA-UX): the v2 sections — net flow by ticker, sector mix, largest
+// recent, committee jurisdiction overlap — with honest absence for the B-5/
+// B-6 context until a build carries those tables.
+const v2Deps: MemberV2Deps = {
+  resolveSector: sectorResolver(build),
+  sectorMeta: build.sectorData
+    ? { taxonomyVersion: build.sectorData.taxonomyVersion, asOf: build.sectorData.asOf }
+    : null,
+  committees: build.committeeData
+    ? {
+        memberships: build.committeeData.byMember.get(member.bioguide) ?? [],
+        windowFrom: build.committeeData.windowFrom,
+        windowTo: build.committeeData.windowTo,
+        jurisdictionByCommittee: build.committeeData.jurisdictionByCommittee,
+        mappingVersion: build.committeeData.mappingVersion,
+        snapshotDate: build.committeeData.snapshotDate,
+      }
+    : null,
+};
+const bodyHtml =
+  memberBody(member, stamps, ssrCtx) +
+  memberV2Sections(member, stamps, ssrCtx, v2Deps) +
+  memberSignalsPanel(getSignalArtifact(), member.bioguide, ssrCtx);
 const description =
   `Congressional financial disclosures for ${member.name}: every transaction as filed, ` +
   `statutory amount ranges, dual dates, provenance links — from primary government sources.`;

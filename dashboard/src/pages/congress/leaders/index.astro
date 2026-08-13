@@ -1,0 +1,45 @@
+---
+import Base from "../../../layouts/Base.astro";
+import { getBuildData } from "../../../lib/data";
+import { leadersRollup } from "../../../lib/derive";
+import { congressRankingBody, congressTabs, type BuildStamps } from "../../../lib/ui";
+import type { RenderCtx } from "../../../lib/format";
+
+const build = getBuildData();
+const stamps: BuildStamps = {
+  buildId: build.buildId,
+  generatedAt: build.generatedAt,
+  generatedAtDate: build.generatedAtDate,
+};
+const ctx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+const rollup = leadersRollup(build.txns, build.generatedAtDate, 12);
+const body = congressRankingBody("leaders", rollup, stamps, ctx);
+
+const description =
+  "Members of Congress ranked by net disclosed flow — interval arithmetic over statutory " +
+  "ranges, with undisclosed amounts bucketed rather than zeroed. Public Filings.";
+---
+
+<Base title="Congress leaders — net disclosed flow — Public Filings" description={description} active="congress">
+  <main class="shell page">
+    <div class="page-head">
+      <div class="page-head-copy">
+        <div class="kicker">/congress/leaders</div>
+        <h1 class="page-title">Leaders — net disclosed flow</h1>
+        <p class="page-lede">
+          Whose disclosures are largest right now, with receipts. Every number
+          here is derived from statutory ranges, so every ranking value is an
+          interval — the order is a stable display key, never a claim that one
+          member outranks another when their intervals overlap.
+          <a href="/methodology/">How this data is made ↗</a>
+        </p>
+      </div>
+    </div>
+    <Fragment set:html={congressTabs("leaders")} />
+    <Fragment set:html={body} />
+  </main>
+</Base>

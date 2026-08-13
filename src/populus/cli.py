@@ -414,6 +414,74 @@ def ingest(
         click.echo(members.format_join_summary(run_report.join))
 
 
+@main.command("sectors")
+@click.option("--db", "db_path", required=True, help="Populus database.")
+@click.option(
+    "--snapshot",
+    "snapshot_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Cached EDGAR-derived JSON object mapping CIK -> SIC.",
+)
+@click.option("--as-of", "as_of", required=True, help="Snapshot date, YYYY-MM-DD.")
+@click.option("--source", default="edgar-submissions", show_default=True)
+def sectors_cmd(db_path: str, snapshot_path: str, as_of: str, source: str) -> None:
+    """B-5: full-replace issuer_sic from a cached EDGAR SIC snapshot."""
+    from populus import sectors
+
+    conn = connect(db_path)
+    try:
+        report = sectors.run_sectors_ingest(
+            conn, snapshot_path=snapshot_path, as_of=as_of, source=source
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    finally:
+        conn.close()
+    click.echo(
+        f"sectors: {report.loaded} issuer SIC rows loaded of {report.read} read"
+        f" ({report.malformed} malformed, counted) | taxonomy v{report.taxonomy_version}"
+    )
+
+
+@main.command("committees")
+@click.option("--db", "db_path", required=True, help="Populus database.")
+@click.option(
+    "--from-cache",
+    "from_cache",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="cc0-legislators cache DIR (committees-current.yaml + committee-membership-current.yaml).",
+)
+@click.option("--snapshot-date", required=True, help="When the snapshot was taken, YYYY-MM-DD.")
+@click.option(
+    "--valid-from",
+    required=True,
+    help="Membership validity window start (current congress start), YYYY-MM-DD.",
+)
+def committees_cmd(db_path: str, from_cache: str, snapshot_date: str, valid_from: str) -> None:
+    """B-6: full-replace dated committee membership + the jurisdiction mapping."""
+    from populus import committees
+
+    conn = connect(db_path)
+    try:
+        report = committees.run_committees_ingest(
+            conn,
+            legislators_dir=from_cache,
+            snapshot_date=snapshot_date,
+            valid_from=valid_from,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    finally:
+        conn.close()
+    click.echo(
+        f"committees: {report.committees} committees, {report.memberships} memberships"
+        f" ({report.skipped} skipped/unattached, counted)"
+        f" | jurisdiction v{report.mapping_version}: {report.jurisdiction_rows} rows"
+    )
+
+
 @main.group("identity")
 def identity_group() -> None:
     """§5.4 identity registries: entities, securities, dated identifiers."""
@@ -922,6 +990,19 @@ def _refuse_bad_inst_db(inst_db: str) -> None:
     " When given, the inst module derives from it; when absent, the build is"
     " byte-identical to a congress-only build.",
 )
+@click.option(
+    "--expect-module",
+    "expect_modules",
+    multiple=True,
+    default=("congress", "inst"),
+    show_default=True,
+    help="F-26: a module this release is EXPECTED to carry (repeatable)."
+    " Every expected module needs a typed disposition — present (served) or a"
+    " source-owned quality-gate withholding — or the stage FAILS. Shrinking"
+    " this set is the explicit authorization a product removal requires; a"
+    " module silently missing is publication-fatal, which is exactly the"
+    " outage this gate exists to catch.",
+)
 def stage_build_cmd(
     db_path: str,
     data_repo: str,
@@ -930,6 +1011,7 @@ def stage_build_cmd(
     raw_root: str | None,
     attestation_choice: str,
     inst_db: str | None,
+    expect_modules: tuple[str, ...],
 ) -> None:
     """Phase 1 of 2: assemble artifacts and a PROVISIONAL manifest.
 
@@ -964,6 +1046,7 @@ def stage_build_cmd(
             backend=make_backend(data_repo),
             attestation=_make_attestation(attestation_choice),
             inst_db_path=inst_db,
+            expected_modules=frozenset(expect_modules),
         )
         write_stage_state(staged)
     except (PublishError, BackendError, DigestError, OSError) as exc:

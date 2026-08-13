@@ -21,6 +21,15 @@ export interface TxnRow {
   late: 0 | 1 | null;
   flags: string[];
   doc: string; // government source document URL
+  /** asset name as printed on the filing (producer-parsed); null when absent */
+  asset: string | null;
+  /** producer asset-type value VERBATIM (source vocabulary, e.g. "Stock",
+      "ST", "Municipal Security"); null = the source did not state one. The
+      client never classifies asset names — that would be an unsourced
+      invention (plan F-6). */
+  assetType: string | null;
+  /** producer txn_id — the stable row identity signals and sorts key on */
+  txnId: string;
 }
 
 export interface PaperRow {
@@ -50,12 +59,17 @@ export interface StatTile {
 
 /* ---------- columnar wire format (client dataset) ---------- */
 
-export const DATASET_VERSION = 1;
+/* v2 (B-7): `asset` + `assetType` join the wire format. The producer feed
+   already carried both (`build.py` `_FEED_COLUMNS`); this is the CLIENT
+   contract catching up — every consumer round-trips through
+   txnToArray/txnFromArray, and every payload embeds this version, so a
+   stale cached dataset is refused (classifyResponse), never half-read. */
+export const DATASET_VERSION = 2;
 
 export const TXN_COLS = [
   "filed", "traded", "name", "bioguide", "party", "state", "district",
   "chamber", "ticker", "side", "owner", "low", "high", "lag", "late",
-  "flags", "doc",
+  "flags", "doc", "asset", "assetType", "txnId",
 ] as const;
 
 export const PAPER_COLS = [
@@ -79,7 +93,69 @@ export function paperFromArray(a: unknown[]): PaperRow {
   return r;
 }
 
+/* ---------- full-feed dataset classifier (B-7, review F3) ----------
+   The entity endpoints already refuse a version-mismatched payload
+   (classifyResponse); the FULL feed dataset needs the same discipline or a
+   cached v1 body is decoded with v2 column offsets — asset fields and txnId
+   silently undefined. One classifier, used by every full-dataset consumer
+   (feed client, watchlist client). */
+
+export type DatasetClassification =
+  | { outcome: "ok"; txns: unknown[][]; paper: unknown[][] }
+  | { outcome: "version_mismatch"; got: unknown }
+  | { outcome: "bad_payload"; detail: string };
+
+function colsMatch(got: unknown, want: readonly string[]): boolean {
+  return (
+    Array.isArray(got) && got.length === want.length && got.every((c, i) => c === want[i])
+  );
+}
+
+export function classifyDataset(body: unknown): DatasetClassification {
+  if (typeof body !== "object" || body === null) {
+    return { outcome: "bad_payload", detail: "dataset is not a JSON object" };
+  }
+  const d = body as Record<string, unknown>;
+  if (typeof d.dataset_version !== "number") {
+    return { outcome: "bad_payload", detail: "dataset has no dataset_version" };
+  }
+  if (d.dataset_version !== DATASET_VERSION) {
+    return { outcome: "version_mismatch", got: d.dataset_version };
+  }
+  if (!colsMatch(d.txn_cols, TXN_COLS) || !colsMatch(d.paper_cols, PAPER_COLS)) {
+    return { outcome: "bad_payload", detail: "dataset column lists do not match this build's contract" };
+  }
+  if (!Array.isArray(d.txns) || !Array.isArray(d.paper)) {
+    return { outcome: "bad_payload", detail: "dataset is missing its row arrays" };
+  }
+  const badTxn = (d.txns as unknown[]).findIndex(
+    (r) => !Array.isArray(r) || r.length !== TXN_COLS.length,
+  );
+  if (badTxn !== -1) {
+    return { outcome: "bad_payload", detail: `txn row ${badTxn} has the wrong width` };
+  }
+  const badPaper = (d.paper as unknown[]).findIndex(
+    (r) => !Array.isArray(r) || r.length !== PAPER_COLS.length,
+  );
+  if (badPaper !== -1) {
+    return { outcome: "bad_payload", detail: `paper row ${badPaper} has the wrong width` };
+  }
+  return { outcome: "ok", txns: d.txns as unknown[][], paper: d.paper as unknown[][] };
+}
+
 /* ---------- text helpers ---------- */
+
+/** Parser-side ticker hygiene (B-7, F-5): NFC + outer-whitespace trim, empty
+    → null. The Senate corpus delivered tickers with leading newlines/spaces
+    that produced `/tickers/--%0A%20…AMCR/` URLs. Trim-only, deliberately: a
+    ticker with INTERIOR whitespace is not repaired into a listed symbol (that
+    would invent identity) — it stays as-is and `pathSafeTicker` routes it to
+    the /e/ fallback at render time, the defensive half of the same gate. */
+export function normalizeTicker(raw: string | null): string | null {
+  if (raw == null) return null;
+  const t = raw.normalize("NFC").trim();
+  return t === "" ? null : t;
+}
 
 export function esc(s: string): string {
   return s
@@ -164,6 +240,24 @@ export function bandGeometry(r: Pick<TxnRow, "low" | "high">): BandGeom {
 }
 
 /* ---------- row field presentation ---------- */
+
+/** No-ticker cell (B-7/F-6): the 16.1% of rows without a ticker used to show a
+    bare "—" — but the filing names the asset. Render the asset name AS FILED
+    (with its verbatim source asset-type value, when stated) instead of
+    pretending the row is empty. No classification happens here: the type
+    string is the producer's, shown verbatim or not at all. */
+export function assetNameCell(r: Pick<TxnRow, "asset" | "assetType">): string {
+  if (r.asset == null || r.asset.trim() === "") {
+    return `<span class="none">—<span class="visually-hidden"> no ticker disclosed</span></span>`;
+  }
+  const name = r.asset.trim();
+  const short = name.length > 40 ? name.slice(0, 37) + "…" : name;
+  const type = r.assetType != null && r.assetType.trim() !== "" ? r.assetType.trim() : null;
+  return (
+    `<span class="asset-name" title="${esc(name)}${type ? ` · asset type as filed: ${esc(type)}` : ""}">` +
+    `${esc(short)}<span class="visually-hidden"> — asset as filed, no ticker disclosed</span></span>`
+  );
+}
 
 /** Party tint class. An unmappable party is NOT painted as Independent — it
     gets its own neutral class, because "we could not read the party" and
@@ -607,7 +701,7 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
     : "";
   const tickerHtml = r.ticker
     ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
-    : `<span class="none">—<span class="visually-hidden"> no ticker disclosed</span></span>`;
+    : assetNameCell(r);
   const amountSpoken = amountUnknown ? "not disclosed in a parseable range" : amount;
 
   return `<div class="feed-row feed-grid-cols" role="listitem">
@@ -756,6 +850,18 @@ export function utcDayNumber(iso: string | null | undefined): number | null {
   if (!m) return null;
   const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isFinite(t) ? Math.round(t / 86_400_000) : null;
+}
+
+/** A real, canonical `YYYY-MM-DD` calendar date — not merely the SHAPE of one.
+    `utcDayNumber` accepts `2026-02-30` and `0000-00-00` because `Date.UTC`
+    silently rolls them over; a date that decides whether a question is
+    ANSWERABLE (the committee validity window) must round-trip exactly, or
+    corrupt bounds can turn unsupported dates into known-none answers
+    (review c2r2-F2). */
+export function isCanonicalDate(iso: unknown): iso is string {
+  if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const t = Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === iso;
 }
 
 /** Elapsed reporting lag in days: `filed_date − period_of_report`. NULL when

@@ -2207,7 +2207,9 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     text-align: left;
     white-space: nowrap;
   }
-  .mobile-dates {
+  /* F-21: scoped to .feed-row — the etable dual-date cell keeps its single
+     traded-date; the unscoped form rendered the trade date twice. */
+  .feed-row .mobile-dates {
     display: inline;
     font: 400 10px var(--sans);
     font-variant-numeric: tabular-nums;
@@ -2384,3 +2386,147 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .table-scroll { overflow: visible; mask-image: none; -webkit-mask-image: none; }
   a { color: inherit; }
 }
+
+/* ================= ALPHA-UX additions ================= */
+
+/* A-5: sticky column headers inside every scrolling table container. */
+.table-scroll { max-height: 78vh; overflow-y: auto; }
+.etable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--paper2, var(--paper));
+}
+
+/* A-5: filter chips / controls wrap on mobile instead of clipping. */
+@media (max-width: 720px) {
+  .filter-controls { flex-wrap: wrap; row-gap: 8px; }
+  .chips { flex-wrap: wrap; row-gap: 6px; }
+}
+
+/* C-4 tabs on /congress */
+.ctabs {
+  display: flex;
+  gap: 4px;
+  margin: 10px 0 14px;
+  border-bottom: 1px solid var(--rule, currentColor);
+}
+.ctab {
+  font: 600 12px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 14px 6px;
+  text-decoration: none;
+  color: var(--ink2);
+  border: 1px solid transparent;
+  border-bottom: none;
+}
+.ctab:hover { color: var(--accent); }
+.ctab-active {
+  color: var(--ink);
+  border-color: var(--rule, currentColor);
+  border-bottom: 2px solid var(--paper);
+  margin-bottom: -1px;
+  background: var(--paper);
+}
+
+/* C-4 ranking table pieces */
+.net-dir {
+  font: 600 10px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.net-acc { color: var(--buy, #2e7d32); background: color-mix(in oklab, currentColor 12%, transparent); }
+.net-dis { color: var(--sell, #c62828); background: color-mix(in oklab, currentColor 12%, transparent); }
+.unrankable-block { margin-top: 18px; }
+.c-net { white-space: nowrap; }
+
+/* B-7/F-6: asset-as-filed cell for no-ticker rows */
+.asset-name {
+  font: 500 11.5px var(--sans);
+  color: var(--ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 26ch;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* A-1: the unrankable-bucket separator inside the sorted feed */
+.feed-separator {
+  font: 600 11px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-top: 1px dashed var(--rule, currentColor);
+  border-bottom: 1px dashed var(--rule, currentColor);
+  padding: 8px 12px;
+  margin: 6px 0;
+}
+.filter-text { min-width: 150px; }
+
+/* A-2: sortable headers + unranked separator on /institutional */
+.th-sort {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+th[data-inst-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
+th[data-inst-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
+.unranked-sep td {
+  font: 600 11px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-top: 1px dashed var(--rule, currentColor);
+  padding: 8px 12px;
+}
+
+/* A-4: homepage largest-recent-disclosures rail */
+.rail { margin: 26px 0 8px; }
+.rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.rail-rows { border-top: 1px solid var(--rule, currentColor); }
+.rail-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in oklab, currentColor 12%, transparent);
+  font: 500 13px var(--sans);
+  flex-wrap: wrap;
+}
+.rail-who { min-width: 220px; }
+.rail-what { min-width: 90px; }
+.rail-amount { font-variant-numeric: tabular-nums; font-weight: 600; margin-left: auto; }
+.rail-filed { font: 400 11.5px var(--mono); color: var(--ink3); }
+.rail-caption { font: 400 11px var(--mono); color: var(--ink3); margin-top: 8px; }
+
+/* A-3: /watchlist */
+.watch-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 14px 0; }
+.watch-chip { display: inline-flex; align-items: baseline; gap: 6px; }
+.chip-x { background: none; border: none; cursor: pointer; color: var(--ink3); font-size: 13px; }
+.chip-x:hover { color: var(--sell, #c62828); }
+.watch-note { font: 500 12.5px var(--sans); color: var(--ink2); margin: 10px 0; }
+.watch-gap {
+  font: 500 13px var(--sans);
+  border: 1px dashed var(--amber, #b8860b);
+  color: var(--ink);
+  padding: 10px 14px;
+  margin: 10px 0;
+}
+.watch-new { border-left: 3px solid var(--amber, #b8860b); }
+
+/* C-3: member v2 panels */
+.mix-bucket td { color: var(--ink3); font-style: italic; }
+.non-allegation { font-weight: 600; }
+
+/* D-2 review F10: the exact rule inside per-entity signal rows */
+.signal-rule-inline { font: 400 10.5px var(--mono); color: var(--ink3); max-width: 46ch; }

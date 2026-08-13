@@ -1,0 +1,41 @@
+---
+// D-2 (ALPHA-UX): /signals — every signal renders its exact rule, magnitude
+// interval, receipts, and the lag caveat; withheld kinds render as withheld
+// with their typed reason.
+import Base from "../../layouts/Base.astro";
+import { getBuildData, getSignalArtifact } from "../../lib/data";
+import { signalsBody } from "../../lib/ui";
+import type { RenderCtx } from "../../lib/format";
+
+const build = getBuildData();
+const artifact = getSignalArtifact();
+const ctx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+const body = signalsBody(artifact, ctx);
+const description =
+  "Congressional disclosure signals with their exact rules, interval magnitudes, and receipts — " +
+  "calibrated thresholds only; uncalibrated or out-of-envelope kinds are withheld and say so.";
+---
+
+<Base title="Signals — Public Filings" description={description} active="congress">
+  <main class="shell page">
+    <div class="page-head">
+      <div class="page-head-copy">
+        <div class="kicker">/signals</div>
+        <h1 class="page-title">Signals</h1>
+        <p class="page-lede">
+          Rule-generated observations over the congressional disclosure corpus.
+          Every signal states its own formula and links to the filings it came
+          from; magnitudes are statutory-range intervals, never point
+          estimates. Institutional signals wait on closed 13F periods and are
+          not simulated. The raw artifact:
+          <a href="/signals/data/signals.v1.json">signals.v1.json</a>
+        </p>
+      </div>
+    </div>
+    <Fragment set:html={body} />
+  </main>
+</Base>

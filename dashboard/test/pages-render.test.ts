@@ -37,6 +37,9 @@ const STAMPS: BuildStamps = {
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
     kind: "txn",
+    txnId: "t-test",
+    asset: null,
+    assetType: null,
     filed: "2026-07-21",
     traded: "2026-06-24",
     name: "Fixture Member",

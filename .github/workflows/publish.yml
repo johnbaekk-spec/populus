@@ -25,6 +25,15 @@ on:
         description: "TD-4 override: the exact populus:code_sha the live domain serves"
         required: false
         default: ""
+      # D-1c one-time bootstrap (ALPHA-UX r3-F1): declare that this publish
+      # STARTS the signal-lifecycle chain because the previous build predates
+      # the artifact. Absent from `schedule:` on purpose — a nightly can never
+      # carry one, so an unattended run cannot cold-start lifecycle history.
+      signals_bootstrap:
+        description: "D-1c: start the signal lifecycle chain (one-time; previous build has no artifact)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -257,12 +266,60 @@ jobs:
       # state rather than serving fixture-derived tickers as production data
       # (RUN P3-3b TD-7). SITE_CODE_SHA is the FULL sha; the verifier compares
       # the populus:code_sha marker exactly, never by prefix.
+      # D-1c signal-lifecycle chaining (ALPHA-UX reviews F1 → r3-F1).
+      #
+      # The prior artifact is DURABLE, not fetched from the live site: each
+      # published build carries its own `signals.v1.json` in populus-data, so
+      # this reads the PREVIOUS build's copy out of the checkout already on
+      # disk. A site outage, a DNS blip or a CDN 5xx can therefore never reset
+      # lifecycle history — which is exactly what the live-fetch version did.
+      #
+      # Bootstrap is an EXPLICIT one-time state, in two shapes:
+      #   * no `latest.json` at all — the genuine first publish; there IS no
+      #     previous build, and that is structural, not a guess;
+      #   * a pointer exists but its build predates this feature — the operator
+      #     dispatches once with `signals_bootstrap: true`.
+      # Anything else (pointer present, artifact missing/unreadable) FAILS the
+      # build rather than publishing a silent cold start.
+      - name: Resolve prior signal artifact (durable, from populus-data)
+        id: prior
+        if: steps.stage.outputs.fresh == 'true'
+        env:
+          BOOTSTRAP_INPUT: ${{ github.event.inputs.signals_bootstrap }}
+        run: |
+          set -euo pipefail
+          pointer="populus-data/latest.json"
+          if [ ! -f "$pointer" ]; then
+            echo "no latest.json — genuine first publish; lifecycle starts here"
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prev="$(python3 -c 'import json;print(json.load(open("populus-data/latest.json"))["build_id"])')"
+          candidate="populus-data/builds/${prev}/signals.v1.json"
+          if [ -f "$candidate" ]; then
+            echo "chaining lifecycle from build ${prev}"
+            echo "path=${GITHUB_WORKSPACE}/${candidate}" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=" >> "$GITHUB_OUTPUT"
+          elif [ "${BOOTSTRAP_INPUT:-}" = "true" ]; then
+            echo "::warning::build ${prev} carries no signal artifact — DECLARED bootstrap, lifecycle starts here"
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::build ${prev} carries no signals.v1.json and no bootstrap was declared."
+            echo "::error::An ordinary publish must chain lifecycle state (D-1c). Dispatch once with"
+            echo "::error::signals_bootstrap=true to start the chain deliberately."
+            exit 1
+          fi
+
       - name: Build site
         id: site
         if: steps.stage.outputs.fresh == 'true'
         working-directory: dashboard
         env:
           CI: "true"
+          POPULUS_PRIOR_SIGNALS: ${{ steps.prior.outputs.path }}
+          POPULUS_SIGNALS_BOOTSTRAP: ${{ steps.prior.outputs.bootstrap }}
           POPULUS_BUILD_DIR: ${{ github.workspace }}/${{ steps.stage.outputs.build_dir }}
           POPULUS_DB: ${{ github.workspace }}/populus.db
           POPULUS_TICKER_MAP: ${{ github.workspace }}/no-ticker-registry.json
@@ -278,6 +335,18 @@ jobs:
           count=$(find dist -type f | wc -l | tr -d ' ')
           [ "$count" -gt 0 ] || { echo "site build produced no files"; exit 1; }
           echo "file_count=$count" >> "$GITHUB_OUTPUT"
+
+      # D-1c: the artifact this build produced becomes a PUBLISHED build asset,
+      # so the next run chains from populus-data rather than from the network.
+      # Copied into build_dir BEFORE finalize-build, whose final manifest walk
+      # hashes it like every other artifact.
+      - name: Publish the signal artifact into the build
+        if: steps.stage.outputs.fresh == 'true'
+        run: |
+          set -euo pipefail
+          src="dashboard/dist/signals/data/signals.v1.json"
+          [ -f "$src" ] || { echo "::error::the site build produced no signal artifact at $src"; exit 1; }
+          cp "$src" "${{ steps.stage.outputs.build_dir }}/signals.v1.json"
 
       # The artifact BOTH the deploy job and the signer download. Nothing
       # created it before this step, so `download-artifact` in two separate jobs

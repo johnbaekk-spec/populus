@@ -84,6 +84,7 @@ from populus.publish.manifest import (
     render_manifest,
     resolve_within,
     safe_artifact_name,
+    check_module_dispositions,
     validate_manifest,
 )
 from populus.publish.pointer import (
@@ -2003,6 +2004,7 @@ def write_stage_state(staged: StagedBuild) -> Path:
             "skipped_tickers": list(state["skipped_tickers"]),
             "adopted": state["adopted"],
             "reconciled": list(state["reconciled"]),
+            "expected_modules": state.get("expected_modules"),
         }
     atomic_write_bytes(path, _render_json(payload).encode("utf-8"))
     return path
@@ -2023,6 +2025,29 @@ def _recompute_db_logical(snapshot_path: Path) -> str:
         return logical_digest(snapshot)
     finally:
         snapshot.close()
+
+
+def _validated_expected_modules(payload: dict) -> list[str] | None:
+    """The staged expected-module set, or None for a genuinely legacy sidecar.
+
+    Present-but-unusable is a hard error at LOAD time as well as at seal time
+    (review c2r2-F1): an emptied list is not a legacy shape, it is corruption,
+    and the difference decides whether the F-26 gate runs at all.
+    """
+    if "expected_modules" not in payload:
+        return None
+    value = payload["expected_modules"]
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(name, str) and name for name in value)
+    ):
+        raise PublishError(
+            "staged build state carries an unusable expected-module set"
+            f" ({value!r}) — a missing field is a legacy stage-state, but an empty"
+            " or malformed one is corruption and must not finalize"
+        )
+    return list(value)
 
 
 def read_stage_state(
@@ -2096,12 +2121,21 @@ def read_stage_state(
         "inst_logical": payload["inst_logical"],
         "inst_watermarks": payload["inst_watermarks"],
         "inst_withheld": payload["inst_withheld"],
+        # NOTE: `expected_modules` is deliberately NOT set here — see the
+        # conditional merge below. Presence/absence of the key is load-bearing.
         "inst_period_coverage": payload["inst_period_coverage"],
         "inst_cover_dispositions": payload["inst_cover_dispositions"],
         "skipped_tickers": payload["skipped_tickers"],
         "adopted": payload["adopted"],
         "reconciled": payload["reconciled"],
     }
+    # Review c2r3-F1: for a genuinely legacy sidecar the key is OMITTED, never
+    # set to None — `_seal_build` bypasses the gate on ABSENCE alone, so a
+    # present None must stay distinguishable from "this state predates the
+    # gate" and remains fatal.
+    validated_expected = _validated_expected_modules(payload)
+    if validated_expected is not None:
+        state["expected_modules"] = validated_expected
     return StagedBuild(
         build_id=build_id,
         staging_dir=str(staging_dir),
@@ -2236,6 +2270,46 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
         raise PublishError(
             "assembled manifest failed validation: " + "; ".join(manifest_errors)
         )
+    # F-26 (ALPHA-UX): the module-presence gate. Every module in the DECLARED
+    # expected set must carry a typed disposition with an explicit exit rule —
+    # served → publish; withheld → only with a source-owned reason from the
+    # closed list (the inst coverage gate's own typed reasons); anything else
+    # → publication-fatal. Runs on BOTH seal passes, so an accidentally
+    # missing module fails at stage time, before any deploy leg runs.
+    # Review c2r2-F1 → c2r3-F1: the ABSENCE OF THE KEY is the only bypass (a
+    # legacy sidecar staged before this gate existed; `read_stage_state` omits
+    # the key entirely for those). A key that is PRESENT and empty, malformed,
+    # or None is a corrupted stage-state — skipping the gate for it would
+    # republish the exact silent-module outage F-26 exists to prevent.
+    if "expected_modules" in state:
+        expected_modules = state["expected_modules"]
+        if (
+            not isinstance(expected_modules, (list, tuple))
+            or not expected_modules
+            or not all(isinstance(name, str) and name for name in expected_modules)
+        ):
+            raise PublishError(
+                "module disposition gate (F-26): the staged expected-module set is"
+                f" present but unusable ({expected_modules!r}) — an emptied or corrupted"
+                " stage-state must not publish; re-stage with an explicit set"
+            )
+        dispositions: dict[str, dict] = {}
+        for module_name in sorted(set(expected_modules) | set(manifest["modules"])):
+            if module_name in manifest["modules"]:
+                dispositions[module_name] = {"state": "served", "reason": None}
+            elif module_name == INST_MODULE and state["inst_withheld"] is not None:
+                dispositions[module_name] = {
+                    "state": "withheld",
+                    "reason": state["inst_withheld"].get("reason"),
+                }
+            # otherwise: NO disposition — exactly the case the checker makes fatal
+        disposition_errors = check_module_dispositions(
+            dispositions, expected_modules=frozenset(expected_modules)
+        )
+        if disposition_errors:
+            raise PublishError(
+                "module disposition gate (F-26): " + "; ".join(disposition_errors)
+            )
     _write_staged(build_dir, "manifest.json", render_manifest(manifest))
     if provisional:
         return None
@@ -2372,8 +2446,19 @@ def stage_build(
     backend: ReleaseBackend,
     attestation: AttestationProvider | None = None,
     inst_db_path: Path | str | None = None,
+    expected_modules: frozenset[str] = frozenset({MODULE}),
 ) -> StagedBuild:
     """Assemble one staged build under ``.staging/<build_id>/`` (§5.5).
+
+    ``expected_modules`` (F-26, ALPHA-UX): the DECLARED module set this release
+    must account for — every named module needs a typed disposition (present →
+    served; absent → a source-owned withholding or publication failure). The
+    library default {congress} preserves congress-only test builds; the
+    production CLI declares {congress, inst}, which is what catches a build
+    that silently lost a module. A fresh stage REQUIRES a non-empty declared
+    set — there is no bypass (review F8): a caller wanting fewer modules
+    declares fewer, visibly. (A LEGACY staged sidecar predating this gate has
+    no persisted expectation; only that recovery-reseal path skips it.)
 
     ``inst_db_path`` (RUN M2-11, R1): the accepted external inst snapshot.
     When given, institutional presence, coverage, watermarks and both derived
@@ -2393,6 +2478,12 @@ def stage_build(
     feed + slices → licensing set → manifest → recovery journal (durably
     staged LAST, after which the build is completable from the data repo alone).
     """
+    if not expected_modules:
+        raise PublishError(
+            "expected_modules must name at least one module (F-26) — a fresh stage"
+            " with no declared expectation is the silent-outage shape; declare the"
+            " set explicitly, including a deliberately reduced one"
+        )
     data_repo = Path(data_repo)
     if not data_repo.is_dir():
         raise PublishError(f"data repo {data_repo} does not exist")
@@ -2681,6 +2772,7 @@ def stage_build(
         "snapshot_path": snapshot_path,
         "inst_agg_path": inst_agg_path,
         "build_id": build_id,
+        "expected_modules": sorted(expected_modules),
         "created_at": created_at,
         "previous_build_id": previous_build_id,
         "watermarks": watermarks,

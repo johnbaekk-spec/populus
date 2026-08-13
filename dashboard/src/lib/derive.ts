@@ -160,6 +160,318 @@ export function undisclosedPctText(s: SumRanges): string | null {
   return null;
 }
 
+/* ---------- date-anomaly exclusion (B-7, plan constraint 9) ---------- */
+
+/** Rows flagged `date_anomaly` carry impossible trade dates (the corpus holds
+    3031-04-30, 2220-04-07, 2202-09-19 and a future 2026-12-26) — any
+    date-windowed aggregate that admits them inherits the corruption. Every
+    windowed aggregate filters through here; the excluded count is returned so
+    a surface can disclose the exclusion instead of silently shrinking. */
+export function excludeDateAnomalies<T extends Pick<TxnRow, "flags">>(
+  rows: readonly T[],
+): { rows: T[]; excluded: number } {
+  const kept = rows.filter((r) => !r.flags.includes("date_anomaly"));
+  return { rows: kept, excluded: rows.length - kept.length };
+}
+
+/* ---------- C-4 net-interval algebra (ALPHA-UX plan §4 C-4) ----------
+
+   EXTENDS the typed sumRanges — it does not replace it. Six states:
+   `empty (Ø)` · `undisclosed (D)` · `finite [l,u]` · `lower-open (−∞,u]` ·
+   `upper-open [l,+∞)` · `unbounded (−∞,+∞)`. The sixth is not optional:
+   L−L and U−U both produce it, and a five-state set cannot represent its
+   own results.
+
+   NAMING (plan F-16.3): a source "Under $X" row is CAPPED, never
+   "lower-open" — the live contract has no lower-open source state
+   (`sumRanges` adds 0 for a null low, yielding `closed [0,X]`, which is
+   exactly what the filing describes: a disclosed amount is non-negative).
+   `lower-open (−∞,u]` denotes signed NET RESULTS only. */
+
+export type NetInterval =
+  | { kind: "empty" } // additive identity [0,0] — summed zero is a fact, not an absence
+  | { kind: "undisclosed" } // any undisclosed operand poisons the result — never coerced to 0
+  | { kind: "finite"; low: number; high: number }
+  | { kind: "lower-open"; high: number } // (−∞, u] — net results only
+  | { kind: "upper-open"; low: number } // [l, +∞)
+  | { kind: "unbounded" }; // (−∞, +∞)
+
+/** Source normalization happens BEFORE any arithmetic (constraint 7): the
+    live SumRanges maps onto the algebra with no lower-open case, because no
+    source state produces one. */
+export function toNetInterval(s: SumRanges): NetInterval {
+  switch (s.kind) {
+    case "empty":
+      return { kind: "empty" };
+    case "undisclosed":
+      return { kind: "undisclosed" };
+    case "closed":
+      return { kind: "finite", low: s.low, high: s.high };
+    case "open":
+      return { kind: "upper-open", low: s.low };
+  }
+}
+
+/** Endpoints over signed infinities. `empty` is the identity [0,0]. The
+    `undisclosed` state has NO endpoints — callers must branch on it first;
+    this function throws rather than fabricate a bound for it. */
+function netBounds(n: NetInterval): [number, number] {
+  switch (n.kind) {
+    case "empty":
+      return [0, 0];
+    case "finite":
+      return [n.low, n.high];
+    case "lower-open":
+      return [Number.NEGATIVE_INFINITY, n.high];
+    case "upper-open":
+      return [n.low, Number.POSITIVE_INFINITY];
+    case "unbounded":
+      return [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY];
+    case "undisclosed":
+      throw new Error("undisclosed has no endpoints — branch before netBounds");
+  }
+}
+
+function classifyBounds(low: number, high: number): NetInterval {
+  const lOpen = low === Number.NEGATIVE_INFINITY;
+  const uOpen = high === Number.POSITIVE_INFINITY;
+  if (lOpen && uOpen) return { kind: "unbounded" };
+  if (lOpen) return { kind: "lower-open", high };
+  if (uOpen) return { kind: "upper-open", low };
+  return { kind: "finite", low, high };
+}
+
+/** Interval subtraction `net = [pL − sU, pU − sL]` over signed infinities
+    (p = gross purchases, s = gross sales). Any `undisclosed` operand yields
+    `undisclosed` — undisclosed never silently becomes zero. */
+export function subNet(p: NetInterval, s: NetInterval): NetInterval {
+  if (p.kind === "undisclosed" || s.kind === "undisclosed") return { kind: "undisclosed" };
+  const [pL, pU] = netBounds(p);
+  const [sL, sU] = netBounds(s);
+  return classifyBounds(pL - sU, pU - sL);
+}
+
+/** Net disclosed flow from two source-side sums — normalization first, then
+    subtraction. This is C-4's one entry point from row data. */
+export function netFlow(purchases: SumRanges, sales: SumRanges): NetInterval {
+  return subNet(toNetInterval(purchases), toNetInterval(sales));
+}
+
+/** Directional copy requires a STRICT sign (constraint 8): accumulation only
+    when l > 0, disposal only when u < 0. An interval touching or spanning
+    zero — including [0,u] and [l,0] — is directionally indeterminate: null. */
+export function netDirection(n: NetInterval): "accumulation" | "disposal" | null {
+  if (n.kind === "undisclosed" || n.kind === "unbounded" || n.kind === "empty") return null;
+  const [low, high] = netBounds(n);
+  if (low > 0) return "accumulation";
+  if (high < 0) return "disposal";
+  return null;
+}
+
+/** Signed compact text for a net interval. Bounds that do not exist are said
+    to not exist — never printed as a number. */
+export function netIntervalText(n: NetInterval): string {
+  switch (n.kind) {
+    case "empty":
+      return "$0";
+    case "undisclosed":
+      return "not disclosed";
+    case "finite":
+      return n.low === n.high ? fmtUsd(n.low) : `${fmtUsd(n.low)} to ${fmtUsd(n.high)}`;
+    case "lower-open":
+      return `at most ${fmtUsd(n.high)}`;
+    case "upper-open":
+      return `at least ${fmtUsd(n.low)}`;
+    case "unbounded":
+      return "unbounded — open bounds on both sides";
+  }
+}
+
+/** Whether two net intervals overlap. Overlap is NOT a tie — it is
+    non-transitive and cannot define equivalence classes; overlapping rows are
+    incomparable. Returns null when either side is `undisclosed` (no
+    endpoints, so the question does not type-check). */
+export function netOverlaps(a: NetInterval, b: NetInterval): boolean | null {
+  if (a.kind === "undisclosed" || b.kind === "undisclosed") return null;
+  const [aL, aU] = netBounds(a);
+  const [bL, bU] = netBounds(b);
+  return aL <= bU && bL <= aU;
+}
+
+/** The display rank key, total over every orderable kind (constraint 8):
+    lower bound desc → upper bound desc → canonical identity asc. The identity
+    is the row's OWN key (`bioguide` on Leaders, `ticker` on Tickers) — never
+    `txn_id`: an aggregate row has no single transaction. `undisclosed` is not
+    orderable and never receives a sentinel — callers route it to the labeled
+    structural bucket via `rankNetRows`. The key supplies ORDER, never
+    superiority: overlapping rows keep their stable position and are marked
+    incomparable by the caller. */
+export function compareNet(a: NetInterval, b: NetInterval, idA: string, idB: string): number {
+  const [aL, aU] = netBounds(a);
+  const [bL, bU] = netBounds(b);
+  // Sign comparisons, not subtraction: ∞ − ∞ is NaN, and a NaN comparator is
+  // nondeterministic. −∞ lowers sort last; +∞ uppers sort first.
+  if (aL !== bL) return aL > bL ? -1 : 1; // lower bound desc
+  if (aU !== bU) return aU > bU ? -1 : 1; // upper bound desc
+  return idA < idB ? -1 : idA > idB ? 1 : 0;
+}
+
+/** Partition + order: ranked rows by the display key, `undisclosed` rows to
+    an explicit labeled bucket rendered AFTER all ranked rows — never
+    interleaved, never given a sentinel value. */
+export function rankNetRows<T>(
+  rows: readonly T[],
+  net: (t: T) => NetInterval,
+  id: (t: T) => string,
+): { ranked: T[]; undisclosedBucket: T[] } {
+  const ranked: T[] = [];
+  const undisclosedBucket: T[] = [];
+  for (const row of rows) {
+    (net(row).kind === "undisclosed" ? undisclosedBucket : ranked).push(row);
+  }
+  ranked.sort((a, b) => compareNet(net(a), net(b), id(a), id(b)));
+  undisclosedBucket.sort((a, b) => (id(a) < id(b) ? -1 : id(a) > id(b) ? 1 : 0));
+  return { ranked, undisclosedBucket };
+}
+
+/* ---------- C-4 rollups: Leaders (per member) + Tickers (per ticker) ------ */
+
+export interface LeaderRow {
+  /** canonical identity for the rank key (bioguide, or `raw:<name>` for
+      unjoined filers — grouped, never dropped) */
+  id: string;
+  bioguide: string | null;
+  name: string;
+  party: string;
+  state: string | null;
+  district: string | null;
+  chamber: "house" | "senate";
+  txns: number; // ALL rows in window, incl. exchange/other — exact count
+  buys: number;
+  sells: number;
+  excludedSides: number; // exchange/unparsed-side rows in the count but not the sums
+  purchases: SumRanges;
+  sales: SumRanges;
+  net: NetInterval;
+  late: number; // rows filed past the 45-day window
+  lateDenom: number; // rows with a known late status — the rate's denominator
+}
+
+export interface CongressRollup {
+  rows: LeaderRow[];
+  dateAnomalies: number; // excluded before windowing (constraint 9), disclosed
+  windowMonths: number;
+}
+
+function rollupRows(
+  groups: Map<string, TxnRow[]>,
+  idOf: (key: string, first: TxnRow) => Pick<LeaderRow, "id" | "bioguide" | "name" | "party" | "state" | "district" | "chamber">,
+  windowMonths: number,
+  dateAnomalies: number,
+): CongressRollup {
+  const rows: LeaderRow[] = [];
+  for (const [key, list] of groups) {
+    const first = list[0]!;
+    const buysRows = list.filter((r) => r.side === "purchase");
+    const sellRows = list.filter((r) => r.side === "sale" || r.side === "sale_partial");
+    const purchases = sumRanges(buysRows);
+    const sales = sumRanges(sellRows);
+    rows.push({
+      ...idOf(key, first),
+      txns: list.length,
+      buys: buysRows.length,
+      sells: sellRows.length,
+      excludedSides: list.length - buysRows.length - sellRows.length,
+      purchases,
+      sales,
+      net: netFlow(purchases, sales),
+      late: lateCount(list),
+      lateDenom: list.filter((r) => r.late != null).length,
+    });
+  }
+  return { rows, dateAnomalies, windowMonths };
+}
+
+/** Per-member rollup over a trailing filed-date window. Unjoined filers group
+    by printed name (`raw:<name>`) — counted, never dropped. Every derived
+    number is either an interval (sums, net) or an exact count with its
+    denominator beside it — never an interval implied to be exact or vice
+    versa. */
+export function leadersRollup(
+  allTxns: readonly TxnRow[],
+  now: string,
+  months = 12,
+): CongressRollup {
+  const { rows: txns, excluded } = excludeDateAnomalies(allTxns);
+  const windowed = txns.filter((t) => inTrailingMonths(t, now, months));
+  const groups = new Map<string, TxnRow[]>();
+  for (const t of windowed) {
+    const key = t.bioguide ?? `raw:${t.name}`;
+    let list = groups.get(key);
+    if (!list) {
+      list = [];
+      groups.set(key, list);
+    }
+    list.push(t);
+  }
+  return rollupRows(
+    groups,
+    (key, first) => ({
+      id: key,
+      bioguide: first.bioguide,
+      name: first.name,
+      party: first.party,
+      state: first.state,
+      district: first.district,
+      chamber: first.chamber,
+    }),
+    months,
+    excluded,
+  );
+}
+
+/** Per-ticker rollup over the same window. Only rows that disclose a ticker
+    participate — the caller states how many rows have none (the largest
+    discloser by flow has zero distinct tickers; a ticker view that hid that
+    silently would misrank the whole surface). */
+export function congressTickersRollup(
+  allTxns: readonly TxnRow[],
+  now: string,
+  months = 12,
+): CongressRollup & { noTickerRows: number } {
+  const { rows: txns, excluded } = excludeDateAnomalies(allTxns);
+  const windowed = txns.filter((t) => inTrailingMonths(t, now, months));
+  const groups = new Map<string, TxnRow[]>();
+  let noTickerRows = 0;
+  for (const t of windowed) {
+    if (!t.ticker) {
+      noTickerRows++;
+      continue;
+    }
+    let list = groups.get(t.ticker);
+    if (!list) {
+      list = [];
+      groups.set(t.ticker, list);
+    }
+    list.push(t);
+  }
+  const rollup = rollupRows(
+    groups,
+    (key, first) => ({
+      id: key,
+      bioguide: null,
+      name: key,
+      party: first.party,
+      state: null,
+      district: null,
+      chamber: first.chamber,
+    }),
+    months,
+    excluded,
+  );
+  return { ...rollup, noTickerRows };
+}
+
 /* ---------- quarterly flow (C1–C7) ---------- */
 
 export interface QuarterFlow {
@@ -173,6 +485,7 @@ export interface QuarterlyFlowResult {
   quarters: QuarterFlow[]; // oldest → newest, gaps included as empty
   undated: number; // rows with no parseable trade date — excluded, disclosed
   excludedSides: number; // exchange/other rows — excluded, disclosed
+  dateAnomalies: number; // date_anomaly-flagged rows — excluded, disclosed (constraint 9)
 }
 
 function quarterOf(date: string): { label: string; end: string } {
@@ -199,10 +512,11 @@ function prevQuarterEnd(end: string): string {
     uses the TRADE date; rows without one cannot be placed and are excluded
     with their count disclosed in the caption (C4). */
 export function quarterlyFlow(
-  txns: readonly TxnRow[],
+  allTxns: readonly TxnRow[],
   endDate: string,
   count = 8,
 ): QuarterlyFlowResult {
+  const { rows: txns, excluded: dateAnomalies } = excludeDateAnomalies(allTxns);
   const ends: string[] = [];
   let cursor = quarterOf(endDate).end;
   for (let i = 0; i < count; i++) {
@@ -234,6 +548,7 @@ export function quarterlyFlow(
     })),
     undated,
     excludedSides,
+    dateAnomalies,
   };
 }
 
@@ -280,7 +595,7 @@ export function topTickers(
   limit = 6,
 ): TopTicker[] {
   const byTicker = new Map<string, TxnRow[]>();
-  for (const t of txns) {
+  for (const t of excludeDateAnomalies(txns).rows) {
     if (!t.ticker || !inTrailingMonths(t, now, months)) continue;
     let list = byTicker.get(t.ticker);
     if (!list) {
@@ -321,7 +636,7 @@ export function membersDisclosing(
   limit = 7,
 ): MemberDisclosing[] {
   const byMember = new Map<string, TxnRow[]>();
-  for (const t of txns) {
+  for (const t of excludeDateAnomalies(txns).rows) {
     if (!inTrailingMonths(t, now, months)) continue;
     const key = t.bioguide ?? `raw:${t.name}`;
     let list = byMember.get(key);
@@ -348,6 +663,233 @@ export function membersDisclosing(
     })
     .sort((a, b) => b.buys + b.sells - (a.buys + a.sells) || (a.name < b.name ? -1 : 1))
     .slice(0, limit);
+}
+
+/* ---------- C-3: member page v2 derivations ---------- */
+
+export interface TickerNetRow {
+  ticker: string;
+  buys: number;
+  sells: number;
+  purchases: SumRanges;
+  sales: SumRanges;
+  net: NetInterval;
+}
+
+/** Net disclosed flow by ticker for one member — interval subtraction with
+    open-bound propagation (F-10/F-13), over the member's whole disclosed
+    history. Rows without a ticker are counted out, stated by the caller. */
+export function memberNetByTicker(txns: readonly TxnRow[]): {
+  rows: TickerNetRow[];
+  noTickerRows: number;
+} {
+  const byTicker = new Map<string, TxnRow[]>();
+  let noTickerRows = 0;
+  for (const t of txns) {
+    if (!t.ticker) {
+      noTickerRows++;
+      continue;
+    }
+    let list = byTicker.get(t.ticker);
+    if (!list) {
+      list = [];
+      byTicker.set(t.ticker, list);
+    }
+    list.push(t);
+  }
+  const rows = [...byTicker.entries()].map(([ticker, list]) => {
+    const buysRows = list.filter((r) => r.side === "purchase");
+    const sellRows = list.filter((r) => r.side === "sale" || r.side === "sale_partial");
+    const purchases = sumRanges(buysRows);
+    const sales = sumRanges(sellRows);
+    return { ticker, buys: buysRows.length, sells: sellRows.length, purchases, sales, net: netFlow(purchases, sales) };
+  });
+  return { rows, noTickerRows };
+}
+
+/** How a ticker resolves toward a sector. Every failure mode is its own
+    labeled bucket — a mix that collapsed them would overstate coverage. */
+export type SectorResolution =
+  | { state: "sector"; sector: string }
+  | { state: "unresolved-ticker" } // ticker→issuer mapping has no (unique) answer
+  | { state: "no-sic" }; // issuer resolved, but no SIC on record
+
+export interface SectorMixRow {
+  key: string; // sector name, or the bucket label
+  bucket: boolean; // true → a coverage bucket, not a sector claim
+  txns: number;
+  flow: SumRanges;
+}
+
+export function sectorMix(
+  txns: readonly TxnRow[],
+  resolve: (ticker: string) => SectorResolution,
+): SectorMixRow[] {
+  const groups = new Map<string, { bucket: boolean; rows: TxnRow[] }>();
+  const put = (key: string, bucket: boolean, row: TxnRow): void => {
+    let g = groups.get(key);
+    if (!g) {
+      g = { bucket, rows: [] };
+      groups.set(key, g);
+    }
+    g.rows.push(row);
+  };
+  for (const t of txns) {
+    if (!t.ticker) {
+      put("no ticker disclosed", true, t);
+      continue;
+    }
+    const res = resolve(t.ticker);
+    if (res.state === "sector") put(res.sector, false, t);
+    else if (res.state === "unresolved-ticker") put("ticker not resolved to an issuer", true, t);
+    else put("issuer has no SIC on record", true, t);
+  }
+  return [...groups.entries()]
+    .map(([key, g]) => ({ key, bucket: g.bucket, txns: g.rows.length, flow: sumRanges(g.rows) }))
+    .sort((a, b) =>
+      a.bucket !== b.bucket ? (a.bucket ? 1 : -1) : b.txns - a.txns || (a.key < b.key ? -1 : 1),
+    );
+}
+
+/* --- committee membership as of the trade date (B-6 consumer) --- */
+
+export interface CommitteeMembership {
+  committeeId: string;
+  name: string;
+  role: string | null;
+  validFrom: string;
+  validTo: string;
+}
+
+/** One member's memberships PLUS the snapshot-wide validity window. The
+    window is a property of the SNAPSHOT (all members), not of one member's
+    rows — review F7: a member with zero rows inside a valid snapshot is
+    KNOWN to sit on no committee, which is [] and not null. */
+export interface MembershipSnapshot {
+  memberships: readonly CommitteeMembership[];
+  windowFrom: string;
+  windowTo: string;
+}
+
+/** TS twin of the producer's dating rule: committees as of `tradeDate`; []
+    means known-none (date inside the snapshot window, no rows); NULL means
+    unknown (no snapshot, undated trade, or date outside the snapshot's
+    validity) — the two are never collapsed. */
+export function membershipAsOf(
+  snapshot: MembershipSnapshot | null,
+  tradeDate: string | null,
+): CommitteeMembership[] | null {
+  if (snapshot === null) return null;
+  if (tradeDate == null || !/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) return null;
+  if (tradeDate < snapshot.windowFrom || tradeDate > snapshot.windowTo) return null;
+  return snapshot.memberships.filter((r) => r.validFrom <= tradeDate && r.validTo >= tradeDate);
+}
+
+export interface JurisdictionOverlapRow {
+  txn: TxnRow;
+  sector: string;
+  committees: { committeeId: string; name: string }[];
+}
+
+export interface JurisdictionOverlapResult {
+  rows: JurisdictionOverlapRow[];
+  undatable: number;
+  /** trades where the member sat on ≥1 committee ABSENT from the (deliberately
+      partial) jurisdiction mapping and no mapped committee matched — the
+      question is UNANSWERABLE for them, never a confirmed non-overlap
+      (review F8) */
+  coverageUnknown: number;
+  /** the unmapped committee ids encountered, for the coverage statement */
+  unmappedCommittees: string[];
+}
+
+/** S-5 context rows: disclosed trades whose issuer's sector falls inside a
+    committee the member sat on AS OF THE TRADE DATE. A trade whose date the
+    membership snapshots cannot answer is skipped and counted — never joined
+    against current membership as if dated. Renders only WITH the
+    non-allegation caveat (the renderer owns that; this function computes the
+    join and nothing more). */
+export function jurisdictionOverlap(
+  txns: readonly TxnRow[],
+  snapshot: MembershipSnapshot,
+  jurisdictionByCommittee: ReadonlyMap<string, readonly string[]>,
+  resolve: (ticker: string) => SectorResolution,
+): JurisdictionOverlapResult {
+  const rows: JurisdictionOverlapRow[] = [];
+  let undatable = 0;
+  let coverageUnknown = 0;
+  const unmapped = new Set<string>();
+  for (const t of excludeDateAnomalies(txns).rows) {
+    if (!t.ticker) continue;
+    const res = resolve(t.ticker);
+    if (res.state !== "sector") continue;
+    const asOf = membershipAsOf(snapshot, t.traded);
+    if (asOf === null) {
+      undatable++;
+      continue;
+    }
+    const hits = asOf.filter((m) =>
+      (jurisdictionByCommittee.get(m.committeeId) ?? []).includes(res.sector),
+    );
+    if (hits.length > 0) {
+      rows.push({
+        txn: t,
+        sector: res.sector,
+        committees: hits.map((h) => ({ committeeId: h.committeeId, name: h.name })),
+      });
+      continue;
+    }
+    // No mapped hit. If any committee the member sat on that day is absent
+    // from the mapping, the answer is UNKNOWN for this trade, not "no".
+    const unmappedHere = asOf.filter((m) => !jurisdictionByCommittee.has(m.committeeId));
+    if (unmappedHere.length > 0) {
+      coverageUnknown++;
+      for (const m of unmappedHere) unmapped.add(m.committeeId);
+    }
+  }
+  return { rows, undatable, coverageUnknown, unmappedCommittees: [...unmapped].sort() };
+}
+
+/* ---------- A-4: largest recent disclosures (homepage rail) ---------- */
+
+export interface NotableRecentResult {
+  rows: TxnRow[]; // largest first, by disclosed LOWER bound (F-16 — never the upper)
+  windowFrom: string; // inclusive filed-date window start
+  /** in-window rows whose amount has no lower bound at all — they cannot rank
+      in a "largest" list and their count is disclosed instead */
+  unrankable: number;
+  dateAnomalies: number; // constraint 9, disclosed
+}
+
+/** The homepage "notable this week" rail: filings from the trailing `days`
+    by FILED date, ranked by the disclosed lower bound (a capped "Under $X"
+    row has lower bound 0 and legitimately ranks last). Ties break filed desc
+    then load order, so the rail is reproducible per build. */
+export function notableRecent(
+  allTxns: readonly TxnRow[],
+  now: string,
+  days = 7,
+  limit = 5,
+): NotableRecentResult {
+  const { rows: txns, excluded: dateAnomalies } = excludeDateAnomalies(allTxns);
+  const from = addDays(now, -days);
+  const inWindow = txns.filter((t) => t.filed >= from && t.filed <= now);
+  const lowOf = (t: TxnRow): number | null => (t.low != null ? t.low : t.high != null ? 0 : null);
+  const rankable = inWindow.filter((t) => lowOf(t) !== null);
+  const order = new Map(allTxns.map((t, i) => [t, i]));
+  rankable.sort((a, b) => {
+    const ka = lowOf(a)!;
+    const kb = lowOf(b)!;
+    if (ka !== kb) return kb - ka;
+    if (a.filed !== b.filed) return a.filed < b.filed ? 1 : -1;
+    return (order.get(a) ?? 0) - (order.get(b) ?? 0);
+  });
+  return {
+    rows: rankable.slice(0, limit),
+    windowFrom: from,
+    unrankable: inWindow.length - rankable.length,
+    dateAnomalies,
+  };
 }
 
 /* ---------- QoQ presentation mapping (Locked #8, spec §1) ---------- */
@@ -513,8 +1055,9 @@ export function tickerDataKey(ticker: string): string {
 }
 
 /** FNV-1a 64-bit, hex — sync and dependency-free so the /e/ client computes
-    the identical key with the identical code. */
-function fnv1a64(s: string): string {
+    the identical key with the identical code. ONE implementation, shared with
+    the signal-id derivation (reuse map). */
+export function fnv1a64(s: string): string {
   let h = 0xcbf29ce484222325n;
   for (const byte of new TextEncoder().encode(s)) {
     h ^= BigInt(byte);

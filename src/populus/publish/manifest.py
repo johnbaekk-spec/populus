@@ -176,6 +176,90 @@ _DB_ARTIFACTS = frozenset(
 )
 
 
+# --- F-26 (ALPHA-UX): the module-presence gate -------------------------------
+#
+# A logo-only deploy once shipped a build with the entire institutional module
+# missing; the site failed QUIETLY into a legitimate-looking "withheld" page.
+# Fail-safe without an alarm is indistinguishable from working. The gate is a
+# DECLARED EXPECTATION, never a previous-build comparison (a first build has
+# nothing to compare to; a second consecutive broken build would pass; a
+# deliberate withdrawal would be indistinguishable from breakage).
+
+#: The expected module set for a standard release. Shrinking it — publishing
+#: without a module it names and without a source-owned withholding — requires
+#: the publisher to pass an explicitly smaller expected set: that is the
+#: authorization for a product removal, and it is visible in the invocation.
+DEFAULT_EXPECTED_MODULES: frozenset[str] = frozenset({MODULE, INST_MODULE})
+
+#: The CLOSED list of source-owned quality-gate withholding reasons — exactly
+#: the typed reasons the inst coverage gate emits. Free text does not satisfy
+#: the `withheld` exit rule; an unlisted reason is a validation defect.
+WITHHOLDING_REASONS: frozenset[str] = frozenset(
+    {"below_threshold", "cover_failed", "not_measurable"}
+)
+
+#: Typed disposition states. Every expected module must carry exactly one.
+_DISPOSITION_STATES = frozenset({"served", "withheld", "unexpected-error"})
+
+
+def check_module_dispositions(
+    dispositions: dict[str, dict],
+    *,
+    expected_modules: frozenset[str] = DEFAULT_EXPECTED_MODULES,
+) -> list[str]:
+    """The F-26 gate: every expected module carries a typed disposition, and
+    every disposition's exit behavior is explicit. Returns every defect; a
+    non-empty return is publication-fatal at the call site.
+
+    Exit rules (a type without an exit rule is not a gate):
+
+    * ``served`` → publish.
+    * ``withheld`` → publish ONLY with an enumerated source-owned reason from
+      :data:`WITHHOLDING_REASONS`. Free text does not satisfy it.
+    * ``unexpected-error`` → publication-fatal, always — this is the case that
+      motivated the gate; typing it and letting it through would reproduce the
+      exact outage with better labelling.
+    * no disposition on an expected module → publication-fatal.
+    """
+    errors: list[str] = []
+    for module in sorted(expected_modules):
+        if module not in dispositions:
+            errors.append(
+                f"expected module {module!r} has NO disposition — an expected module"
+                " that simply vanishes is exactly the silent-outage case; declare"
+                " `served`, a source-owned withholding, or shrink the expected set"
+                " explicitly (a product removal requires that authorization)"
+            )
+    for module, disposition in sorted(dispositions.items()):
+        if module not in _MODULE_POLICY:
+            errors.append(f"disposition names unknown module {module!r}")
+            continue
+        state = disposition.get("state") if isinstance(disposition, dict) else None
+        if state not in _DISPOSITION_STATES:
+            errors.append(
+                f"module {module}: disposition state must be one of"
+                f" {sorted(_DISPOSITION_STATES)} (got {state!r})"
+            )
+            continue
+        if state == "served":
+            continue
+        if state == "unexpected-error":
+            errors.append(
+                f"module {module}: disposition is `unexpected-error` —"
+                " publication-fatal, always"
+            )
+            continue
+        # withheld
+        reason = disposition.get("reason")
+        if reason not in WITHHOLDING_REASONS:
+            errors.append(
+                f"module {module}: `withheld` requires an enumerated source-owned"
+                f" quality-gate reason from {sorted(WITHHOLDING_REASONS)}"
+                f" (got {reason!r}) — free text does not satisfy the exit rule"
+            )
+    return errors
+
+
 def module_db_artifact(module: str = MODULE) -> str:
     """The PRIMARY database artifact for *module* (e.g. ``inst`` → ``inst_agg.db``).
 

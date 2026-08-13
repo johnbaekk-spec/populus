@@ -15,6 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isCanonicalDate,
   amountText,
   amountVerdict,
   bandGeometry,
@@ -51,6 +52,9 @@ const CTX: RenderCtx = { watched: new Set() };
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
     kind: "txn",
+    txnId: "t-test",
+    asset: null,
+    assetType: null,
     filed: "2026-07-21",
     traded: "2026-06-24",
     name: "Test Member",
@@ -753,4 +757,16 @@ test("latestFiling: max filed_date, ties to the LARGER accession", () => {
   assert.equal(latestFiling([]), null);
   // a ref with no usable filed_date cannot be "latest"
   assert.equal(latestFiling([{ filed_date: "", accession: "Z-9" }]), null);
+});
+
+test("isCanonicalDate: shape is not enough — the date must exist and round-trip", () => {
+  for (const good of ["2026-08-12", "2024-02-29", "2000-01-01"]) {
+    assert.equal(isCanonicalDate(good), true, good);
+  }
+  for (const bad of [
+    "", "2026-8-12", "2026-02-30", "0000-00-00", "9999-99-99", "2023-02-29",
+    "2026-13-01", "2026-00-10", "not-a-date", null, undefined, 20260812,
+  ]) {
+    assert.equal(isCanonicalDate(bad as unknown), false, String(bad));
+  }
 });

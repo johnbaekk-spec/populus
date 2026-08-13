@@ -12,7 +12,10 @@ import {
   type RenderCtx,
 } from "../../lib/format";
 
+import { congressTabs } from "../../lib/ui";
+
 const build = getBuildData();
+const congressTabsHtml = congressTabs("feed");
 
 // SSR page 1 through the same renderer the client island uses.
 const ssrCtx: RenderCtx = {
@@ -78,6 +81,8 @@ const description =
       <Fragment set:html={tilesHtml} />
     </div>
 
+    <Fragment set:html={congressTabsHtml} />
+
     <!-- filter bar. The controls live in their own wrapper so they can become a
          horizontal scroll strip on mobile WITHOUT taking the count line — which
          carries the indeterminate-amount disclosure, the privacy statement and
@@ -141,6 +146,38 @@ const description =
         <input type="checkbox" id="filter-late" aria-label="late filings only" />
         late only
       </label>
+      <label class="filter-check" for="filter-watched">
+        <input type="checkbox" id="filter-watched" aria-label="watched members and tickers only — stored in this browser" />
+        watched only · <a href="/watchlist/">watchlist ↗</a>
+      </label>
+      <div class="filter-group">
+        <label class="filter-label" for="filter-q">Filter</label>
+        <input
+          class="filter-select filter-text"
+          type="search"
+          id="filter-q"
+          placeholder="ticker or member"
+          aria-label="filter by ticker prefix or member name — on this device"
+        />
+      </div>
+      <div class="filter-group">
+        <label class="filter-label" for="filter-date-basis">Dates</label>
+        <select class="filter-select" id="filter-date-basis" aria-label="date basis for the range filter">
+          <option value="filed" selected>filed</option>
+          <option value="traded">traded</option>
+        </select>
+        <input class="filter-select" type="date" id="filter-date-from" aria-label="from date" />
+        <span aria-hidden="true">–</span>
+        <input class="filter-select" type="date" id="filter-date-to" aria-label="to date" />
+      </div>
+      <div class="filter-group">
+        <label class="filter-label" for="filter-sort">Sort</label>
+        <select class="filter-select" id="filter-sort">
+          <option value="filed" selected>newest filed</option>
+          <option value="amount-desc">amount — largest lower bound</option>
+          <option value="amount-asc">amount — smallest lower bound</option>
+        </select>
+      </div>
       </div>
       <div class="filter-count">
         <span id="filter-count-line">{rangeText}</span>{" · filtered on this device"}<span

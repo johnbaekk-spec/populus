@@ -6,7 +6,8 @@ import Base from "../layouts/Base.astro";
 import Mark from "../components/Mark.astro";
 import { getBuildData, moduleAvailability, coverageSummary } from "../lib/data";
 import { fmtInt, type RenderCtx } from "../lib/format";
-import { pickSpecimen, specimenCard, moduleCard } from "../lib/ui";
+import { pickSpecimen, specimenCard, moduleCard, notableRailHtml } from "../lib/ui";
+import { notableRecent } from "../lib/derive";
 
 const build = getBuildData();
 const avail = moduleAvailability(build);
@@ -15,6 +16,9 @@ const ssrCtx: RenderCtx = { watched: new Set(), cutMembers: build.cutMembers, cu
 
 const specimen = pickSpecimen(build.txns);
 const specimenHtml = specimen ? specimenCard(specimen, ssrCtx) : "";
+
+// A-4: largest recent disclosures by lower bound, last 7 days, with receipts.
+const railHtml = notableRailHtml(notableRecent(build.txns, build.generatedAtDate, 7, 5), ssrCtx);
 
 const congressCard = moduleCard(
   "Congress",
@@ -96,6 +100,8 @@ const description =
     </div>
 
     <div class="shell page">
+      <Fragment set:html={railHtml} />
+
       <div class="modules-head">
         <h2 class="section-h2">Modules</h2>
         <div class="mono-note">freshness and coverage regenerate from stats.json on every build</div>

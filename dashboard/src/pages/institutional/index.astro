@@ -7,9 +7,17 @@ import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
 import { s1ModuleAbsent, s7Banner, breadcrumb } from "../../lib/ui";
 import { filingWindow } from "../../lib/derive";
+import { concentrationFor } from "../../lib/inst";
 import { footnoteBlock, fmtInt, esc } from "../../lib/format";
 import { filerHref } from "../../lib/holdings";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
+import {
+  buildInstIndexRow,
+  sortInstIndexRows,
+  instIndexRowHtml,
+  INST_INDEX_HEADS,
+  type InstIndexRow,
+} from "../../lib/inst-index";
 
 const build = getBuildData();
 const inst = build.inst;
@@ -23,18 +31,27 @@ let bodyHtml: string;
 if (!inst.present) {
   bodyHtml = s1ModuleAbsent(inst.reason);
 } else {
-  const rows = inst.filers
-    .map(
-      // ONE href primitive (R22): a tail filer routes to /e/, a top filer to
-      // its pre-rendered page — an unconditional page link here was a 404 for
-      // every filer past the LD-7 cut.
-      (f) =>
-        `<tr><td class="c-filer"><a href="${esc(filerHref(f.cik, filerTier(build, f.cik)))}">${esc(f.filer_name)}</a></td>` +
-        `<td class="c-num">${esc(f.latest_period)}</td>` +
-        `<td class="c-num">${fmtInt(f.position_count)}<a class="fn-ref" href="#inst-index-footnotes" aria-label="footnote §">§</a></td>` +
-        `<td class="c-num c-muted mono-id">CIK ${esc(f.cik)}</td></tr>`,
-    )
-    .join("\n");
+  // A-2: period-correct index rows (constraint 4 — every number from
+  // agg_filer_concentration for the filer's latest period, never the
+  // registry's cross-period accumulators), ranked by reported 13(f) long
+  // value with the no-sentinel rule for missing values.
+  const indexRows: InstIndexRow[] = inst.filers.map((f) =>
+    buildInstIndexRow(f, concentrationFor(inst, f.cik, f.latest_period), filerTier(build, f.cik)),
+  );
+  const { ranked, unranked } = sortInstIndexRows(indexRows, "value", "desc");
+  const hrefOf = (r: InstIndexRow): string => filerHref(r.cik, r.tier);
+  const rows =
+    ranked.map((r) => instIndexRowHtml(r, hrefOf)).join("\n") +
+    (unranked.length > 0
+      ? `<tr class="unranked-sep"><td colspan="6">${fmtInt(unranked.length)} filers have no ` +
+        `period-correct value on record — listed below in CIK order, never treated as zero</td></tr>` +
+        unranked.map((r) => instIndexRowHtml(r, hrefOf)).join("\n")
+      : "");
+  const heads = INST_INDEX_HEADS.map((h) =>
+    h.key == null
+      ? `<th scope="col">${esc(h.label)}</th>`
+      : `<th scope="col" data-inst-sort="${h.key}" aria-sort="${h.key === "value" ? "descending" : "none"}"><button class="th-sort">${esc(h.label)}</button></th>`,
+  ).join("");
   bodyHtml =
     breadcrumb([{ text: "/institutional" }]) +
     `<header class="entity-head"><div class="entity-head-copy">` +
@@ -44,21 +61,35 @@ if (!inst.present) {
     )} filers; latest period on record ${esc(inst.watermarks.latest_period_of_report ?? "—")}.</p>` +
     `</div></header>` +
     (window?.open ? s7Banner(window) : "") +
-    `<section class="panel panel-wide" aria-label="Filers on record">` +
-    `<div class="panel-head"><h2 class="section-h">Filers on record</h2></div>` +
+    `<section class="panel panel-wide" aria-label="Filers ranked by reported value">` +
+    `<div class="panel-head"><h2 class="section-h">Filers — ranked by reported 13(f) long value</h2>` +
+    `<span class="panel-note"><input class="filter-select filter-text" type="search" id="inst-index-q" ` +
+    `placeholder="filer name or CIK" aria-label="search filers by name or CIK — on this device" /></span></div>` +
+    `<p class="section-note"><span id="inst-index-count">${fmtInt(indexRows.length)} filers · sorted by reported 13(f) long value, largest first</span> · ` +
+    `each value is the filer's latest period, shown beside it · click a header to re-sort` +
+    `<noscript> · sorting and search need JavaScript; the default order below is by value, largest first</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
-    `<caption class="visually-hidden">13F filers in this build's aggregate</caption>` +
-    `<thead><tr><th scope="col">Filer</th><th scope="col">Latest period</th><th scope="col">Positions ·§</th><th scope="col">CIK</th></tr></thead>` +
-    `<tbody>${rows}</tbody></table></div>` +
+    `<caption class="visually-hidden">13F filers ranked by reported 13(f) long value for each filer's latest period</caption>` +
+    `<thead><tr>${heads}</tr></thead>` +
+    `<tbody id="inst-index-body">${rows}</tbody></table></div>` +
     footnoteBlock(
       [
         {
           mark: "§",
-          html: `position counts in the filer registry accumulate over ALL periods on record for that filer — they are not a single quarter's number; per-quarter figures live on the filer page`,
+          html:
+            `"reported 13(f) long value" is the sum of disclosed long-position values for the stated ` +
+            `quarter — it excludes cash, shorts, and non-13(f) assets, so it is NOT assets under ` +
+            `management or fund size, and a large multi-asset manager can appear small. Sourced ` +
+            `period-correctly from <code>agg_filer_concentration</code>; NULL means the source ` +
+            `disclosed no usable value — never zero. HHI renders only over a complete disclosed-value ` +
+            `book: with any NULL-valued position the denominator is partial, so the number is withheld ` +
+            `from display and ordering rather than shown as false precision`,
         },
       ],
       { id: "inst-index-footnotes" },
     ) +
+    `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
+    `<script type="application/json" id="inst-index-data">${JSON.stringify(indexRows).replaceAll("</", "<\\/")}</script>` +
     `</section>` +
     activitySectionHtml(feed, { tierOf: (cik) => filerTier(build, cik) });
 }
@@ -76,4 +107,9 @@ const description = build.inst.present
   <main class="shell page">
     <Fragment set:html={bodyHtml} />
   </main>
+
+  <script>
+    import { initInstIndex } from "../../scripts/inst-index-client";
+    initInstIndex();
+  </script>
 </Base>
