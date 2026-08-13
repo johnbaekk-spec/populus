@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import re
 import math
 import resource
 import shutil
@@ -629,10 +630,28 @@ def derive_once(
             )
 
 
+#: Lone surrogates, which JS `JSON.stringify` escapes as `\udXXX` and Python's
+#: `json.dumps(ensure_ascii=False)` emits raw — after which `.encode("utf-8")`
+#: raises instead of producing bytes (Codex F5).
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
+
 def _dumps(obj) -> str:
     """Serialize exactly as the shard planner does: `JSON.stringify` emits no
-    whitespace and leaves non-ASCII unescaped."""
-    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    whitespace and leaves non-ASCII unescaped.
+
+    PARITY (Codex F5): the one place the two serializers disagreed was a LONE
+    surrogate. JS emits `\ud800` — six ASCII characters — while Python emits the
+    raw code point and then cannot encode it at all, so the reference
+    implementation raised `UnicodeEncodeError` where the production runtime
+    produced 14 well-formed bytes. Escaping here keeps the SERIALIZED BYTES
+    identical, not merely their length, which is what the byte-parity fixture
+    actually compares. Unreachable from SQLite TEXT (always well-formed UTF-8),
+    so this is a robustness floor rather than a live data path."""
+    out = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    if _LONE_SURROGATE_RE.search(out):
+        out = _LONE_SURROGATE_RE.sub(lambda m: f"\\u{ord(m.group(0)):04x}", out)
+    return out
 
 
 def _byte_len(text: str) -> int:
@@ -979,6 +998,11 @@ def _sort_qoq_deltas(deltas: list[dict]) -> list[dict]:
         bv = -1 if bv is None else bv
         if bv != av:
             return -1 if bv < av else 1
+        # Codex F2: this returned 1 for EQUAL keys, so the comparator was not
+        # reflexive and therefore not a total order — and it diverged from the
+        # corrected TS mirror on exact ties.
+        if a["position_key"] == b["position_key"]:
+            return 0
         return -1 if a["position_key"] < b["position_key"] else 1
 
     return sorted(deltas, key=functools.cmp_to_key(_cmp))

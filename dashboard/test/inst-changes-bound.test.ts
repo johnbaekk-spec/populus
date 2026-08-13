@@ -18,6 +18,7 @@ import {
   HOLDINGS_EMBED_BYTE_CAP,
   HOLDINGS_PAGE_SIZE,
   boundQoqDeltas,
+  compareQoqDeltas,
   sortQoqDeltas,
   utf8ByteLength,
 } from "../src/lib/holdings.ts";
@@ -171,17 +172,31 @@ test("M2-12/F1: the tail-filer route delegates changes-pager clicks", () => {
   );
 });
 
-test("M2-12/F4: the delta comparator is reflexive, so the order is total", () => {
+test("M2-12/F4: the comparator is a TOTAL ORDER — reflexive and antisymmetric", () => {
+  /* Codex F3: the first version of this test only checked that a sorted list
+     came out in the expected order, and Codex proved it passed against the
+     non-reflexive comparator it claimed to pin. Assert the PROPERTY on the
+     comparator itself. [[mutation-tests-pin-properties]] */
   const a = { position_key: "POS1", curr_value_usd: 5, prev_value_usd: null };
-  // A comparator returning nonzero for an element against ITSELF is not a valid
-  // total order; it was returning 1, which also diverged from the Python sort.
-  const sorted = sortQoqDeltas([a, { ...a }]);
-  assert.equal(sorted.length, 2);
-  assert.equal(sorted[0]!.position_key, "POS1");
-  assert.deepEqual(
-    sortQoqDeltas([a]).map((r) => r.position_key),
-    ["POS1"],
+  const same = { position_key: "POS1", curr_value_usd: 5, prev_value_usd: null };
+  const other = { position_key: "POS2", curr_value_usd: 5, prev_value_usd: null };
+
+  // Reflexive: an element against itself, and against an equal element.
+  assert.equal(compareQoqDeltas(a, a), 0, "cmp(x, x) must be 0");
+  assert.equal(compareQoqDeltas(a, same), 0, "equal value AND equal key must compare 0");
+
+  // Antisymmetric: swapping the arguments must flip the sign, never repeat it.
+  assert.equal(
+    Math.sign(compareQoqDeltas(a, other)),
+    -Math.sign(compareQoqDeltas(other, a)),
+    "cmp(x,y) and cmp(y,x) must have opposite signs",
   );
+
+  // The NULL fallbacks participate in the same order.
+  const exited = { position_key: "POS3", curr_value_usd: null, prev_value_usd: 9 };
+  const nothing = { position_key: "POS4", curr_value_usd: null, prev_value_usd: null };
+  assert.ok(compareQoqDeltas(exited, nothing) < 0, "a disclosed prev value outranks none");
+  assert.equal(compareQoqDeltas(nothing, nothing), 0);
 });
 
 test("M2-12/F5: the embed cap counts UTF-8 BYTES, not UTF-16 code units", () => {

@@ -300,8 +300,45 @@ async function runFilerWith(
   });
   const handle = runEntityDriver(h.deps);
   await handle.done;
-  return { state: handle.state(), lastRender: h.renders.at(-1)!, urls };
+  return { state: handle.state(), lastRender: h.renders.at(-1)!, urls, handle, renders: h.renders };
 }
+
+/* ---- RUN M2-12 close-out: the two gaps Codex F6/F7 found in the first pass ---- */
+
+test("M2-12/F7: a cached v2 client meets the tombstone as version_mismatch, not a retry", async () => {
+  /* F3 moved the filer transport to .v3.json and left `index.v2.json` serving a
+     tombstone, so rollout skew reports itself instead of failing as a RETRYABLE
+     bad_payload and retrying into the same wall. Nothing exercised that through
+     the driver's classifier, so reordering its `v`/`kind` checks could silently
+     turn the honest state back into a retry loop. This serves the EXACT
+     tombstone bytes the build emits. */
+  const family = validFilerFamily();
+  const tombstone = JSON.parse('{"v":3,"kind":"filer-index-upgrade-required"}');
+  const r = await runFilerWith(tombstone, family.shards, family.cik);
+  assert.equal(r.state, "version_mismatch", "a version discriminator mismatch is not bad_payload");
+  assert.deepEqual(r.urls, [FILER_INDEX_PATH], "a mismatched version must not go on to fetch shards");
+  assert.ok(!/data-retry/.test(r.lastRender), "version_mismatch is terminal, never retryable");
+});
+
+test("M2-12/F6: the tail-filer route pages changes BEFORE any period chip is used", async () => {
+  /* The shipped F1 defect was a pager that did nothing until a chip was clicked,
+     and the first regression test for it only grepped source strings — a no-op
+     `changesPage` would have passed. This drives the real driver: load, then page
+     without touching a chip, and require the rendered rows to actually move. */
+  const family = validFilerFamily();
+  const r = await runFilerWith(family.index, family.shards, family.cik);
+  assert.equal(r.state, "body");
+
+  const before = r.renders.length;
+  r.handle.changesPage("next");
+  assert.ok(r.renders.length > before, "paging must re-render without a prior chip click");
+  const paged = r.renders.at(-1)!;
+  assert.notEqual(paged, r.lastRender, "page 2 must not be page 1 redrawn");
+
+  // And it must come back, rather than being a one-way ratchet.
+  r.handle.changesPage("prev");
+  assert.equal(r.renders.at(-1)!, r.lastRender, "paging back returns the first page exactly");
+});
 
 test("v2 multi-shard happy path fetches the exact contiguous range and renders", async () => {
   const family = validFilerFamily();

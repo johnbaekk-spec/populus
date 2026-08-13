@@ -21,6 +21,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
   capRows,
+  utf8ByteLength as utf8Bytes,
   parseFilerShard,
   sortHoldingRows,
   type FilerHoldingRow,
@@ -565,11 +566,7 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
   }
   /* The key sets must agree exactly: a period with rows but no total would fall
      back to a length, and a total with no rows is an orphan claim. */
-  requireExactObjectKeys(
-    raw.deltaTotalsByPeriod,
-    Object.keys(deltasByPeriod),
-    "deltaTotalsByPeriod",
-  );
+  requireSameKeySet(raw.deltaTotalsByPeriod, Object.keys(deltasByPeriod), "deltaTotalsByPeriod");
 
   // F3: every nested cik must agree with the payload's own — a shard whose row,
   // concentration, or delta rows carry another filer's CIK is corrupt, and
@@ -672,10 +669,6 @@ interface FragmentDescriptor {
   period: string | null;
   start: number;
   data: unknown;
-}
-
-function utf8Bytes(text: string): number {
-  return new TextEncoder().encode(text).byteLength;
 }
 
 function fragmentValue(
@@ -847,6 +840,27 @@ function uniqueStrings(raw: unknown, field: string): string[] {
   const values = stringArray(raw, field);
   if (new Set(values).size !== values.length) bad(`${field} contains a duplicate key`);
   return values;
+}
+
+/** Set equality over object keys — ORDER-INSENSITIVE (Codex F4).
+
+    `requireExactObjectKeys` below compares key SEQUENCE, which is right for the
+    fragment paths whose ordering is part of the transport contract, and wrong
+    for a period map: `{"a":1,"b":2}` and `{"b":2,"a":1}` carry identical
+    meaning, and rejecting one of them fails a payload in which no period, total,
+    or row changed. */
+function requireSameKeySet(raw: unknown, keys: readonly string[], field: string): void {
+  if (!isRecord(raw)) bad(`${field} is not an object`);
+  const got = Object.keys(raw);
+  const want = new Set(keys);
+  const missing = keys.filter((k) => !(k in (raw as Record<string, unknown>)));
+  const orphan = got.filter((k) => !want.has(k));
+  if (missing.length > 0 || orphan.length > 0) {
+    bad(
+      `${field} key set mismatch — missing ${JSON.stringify(missing)}, ` +
+        `unexpected ${JSON.stringify(orphan)}`,
+    );
+  }
 }
 
 function requireExactObjectKeys(raw: unknown, keys: readonly string[], field: string): void {

@@ -1778,17 +1778,27 @@ export function projectionAbsentHtml(kind: "filer" | "holders", edgarUrl: string
 /** The changes table's canonical ordering: largest current value first, falling
     back to the previous value for an exited position, ties by `position_key` so
     the order is total and a build is reproducible. */
+/** The comparator itself, EXPORTED (Codex F3).
+
+    It was inline, so the only way to test it was through `sortQoqDeltas`'s
+    output — and a sorted list looks identical whether the tie-break returns 0 or
+    1. Codex demonstrated exactly that: the first version of the F4 regression
+    test passed against the non-reflexive comparator it claimed to pin. A
+    property this subtle has to be asserted on the comparator, not inferred from
+    what it sorted. */
+export function compareQoqDeltas(a: QoqDeltaLike, b: QoqDeltaLike): number {
+  const av = a.curr_value_usd ?? a.prev_value_usd ?? -1;
+  const bv = b.curr_value_usd ?? b.prev_value_usd ?? -1;
+  if (bv !== av) return bv - av;
+  /* Codex F4: this returned 1 for EQUAL keys, so the comparator was not
+     reflexive and therefore not a total order — the tie-break must return 0
+     so the sort is stable and matches the Python reference exactly. */
+  if (a.position_key === b.position_key) return 0;
+  return a.position_key < b.position_key ? -1 : 1;
+}
+
 export function sortQoqDeltas<T extends QoqDeltaLike>(deltas: readonly T[]): T[] {
-  return [...deltas].sort((a, b) => {
-    const av = a.curr_value_usd ?? a.prev_value_usd ?? -1;
-    const bv = b.curr_value_usd ?? b.prev_value_usd ?? -1;
-    if (bv !== av) return bv - av;
-    /* Codex F4: this returned 1 for EQUAL keys, so the comparator was not
-       reflexive and therefore not a total order — the tie-break must return 0
-       so the sort is stable and matches the Python reference exactly. */
-    if (a.position_key === b.position_key) return 0;
-    return a.position_key < b.position_key ? -1 : 1;
-  });
+  return [...deltas].sort(compareQoqDeltas);
 }
 
 /** Structural minimum of `inst.QoqDeltaRow` this module needs. Declared rather

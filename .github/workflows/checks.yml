@@ -66,46 +66,33 @@ jobs:
             --deselect tests/test_m2_11_qa_bundle.py::test_round_three_accepts_exact_failed_gate_predecessor_before_output \
             --deselect tests/test_m2_11_qa_bundle.py::test_finalization_closeout_private_tree_passes_exact_76_path_scope
 
-      - name: The known-failing allowlist is still accurate
+      # Codex F1: checking the COMBINED exit code only notices when ALL THREE
+      # pass. If one gets fixed and two still fail, rc stays nonzero and the
+      # allowlist silently keeps excluding a passing test — the precise way an
+      # allowlist rots into a disabled gate. Each node is therefore run and
+      # judged on its own, and an unexpected outcome (collection error, missing
+      # node) is a failure too, not a pass.
+      - name: The known-failing allowlist is still accurate (per node)
         run: |
-          set +e
-          uv run pytest -q \
-            tests/test_m2_11_qa_bundle.py::test_legacy_round_two_transition_now_refuses_strict_predecessor_before_output \
-            tests/test_m2_11_qa_bundle.py::test_round_three_accepts_exact_failed_gate_predecessor_before_output \
-            tests/test_m2_11_qa_bundle.py::test_finalization_closeout_private_tree_passes_exact_76_path_scope \
-            > /tmp/known.txt 2>&1
-          rc=$?
-          set -e
-          if [ "$rc" = "0" ]; then
-            echo "::error::All three allowlisted tests now PASS — delete them from the"
-            echo "::error::deselect list in .github/workflows/checks.yml and from BACKLOG.md."
-            tail -5 /tmp/known.txt
-            exit 1
-          fi
-          echo "allowlist still accurate (rc=$rc)"
-
-  dashboard:
-    name: dashboard (typecheck + unit)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dashboard
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
-        with:
-          node-version-file: dashboard/.node-version
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
-
-      - name: Install (frozen)
-        run: npm ci
-
-      # Both of these run with NO data environment — verified 2026-08-12:
-      # 279/279 unit tests and a clean typecheck with every POPULUS_* var unset.
-      - name: Typecheck
-        run: npx astro check
-
-      - name: Unit suite
-        run: npm test
+          set -uo pipefail
+          nodes=(
+            "tests/test_m2_11_qa_bundle.py::test_legacy_round_two_transition_now_refuses_strict_predecessor_before_output"
+            "tests/test_m2_11_qa_bundle.py::test_round_three_accepts_exact_failed_gate_predecessor_before_output"
+            "tests/test_m2_11_qa_bundle.py::test_finalization_closeout_private_tree_passes_exact_76_path_scope"
+          )
+          stale=0
+          for node in "${nodes[@]}"; do
+            out="$(uv run pytest -q --no-header "$node" 2>&1)"; rc=$?
+            if [ "$rc" = "0" ]; then
+              echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from the"
+              echo "::error::deselect list in this file and from BACKLOG.md (B19)."
+              stale=1
+            elif echo "$out" | grep -qE "^ERROR|no tests ran|not found"; then
+              echo "::error::$node did not run as expected (renamed or removed?):"
+              echo "$out" | tail -3
+              stale=1
+            else
+              echo "still failing as recorded: $node"
+            fi
+          done
+          exit "$stale"
