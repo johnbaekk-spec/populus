@@ -1997,6 +1997,12 @@ def write_stage_state(staged: StagedBuild) -> Path:
             "watermarks": state["watermarks"],
             "db_logical": state["db_logical"],
             "inst_logical": state["inst_logical"],
+            # RUN M2-8's serving substrate crosses the stage/finalize process
+            # boundary too. `_seal_build` reads it unconditionally whenever
+            # `inst_logical` is set, so omitting it here made every build with a
+            # populated inst module KeyError at the FINAL seal while the
+            # provisional seal — same function, in-memory state — passed.
+            "inst_serving_logical": state["inst_serving_logical"],
             "inst_watermarks": state["inst_watermarks"],
             "inst_withheld": state["inst_withheld"],
             "inst_period_coverage": state["inst_period_coverage"],
@@ -2104,6 +2110,10 @@ def read_stage_state(
         "data_repo": Path(data_repo),
         "snapshot_path": staging_dir / "assets" / DB_ARTIFACT,
         "inst_agg_path": staging_dir / "assets" / INST_DB_ARTIFACT,
+        # Reconstructed from the staging tree exactly as `inst_agg_path` is —
+        # `stage_build` derives it the same way (`assets_dir / ...`), so a
+        # persisted copy would be a second authority that can disagree.
+        "inst_serving_path": staging_dir / "assets" / INST_SERVING_ARTIFACT,
         "register": licenses.load_register(),
         "backend": backend,
         "stats_document": json.loads(stats_path.read_text(encoding="utf-8")),
@@ -2119,6 +2129,7 @@ def read_stage_state(
         # Release immutable.
         "db_logical": _recompute_db_logical(staging_dir / "assets" / DB_ARTIFACT),
         "inst_logical": payload["inst_logical"],
+        "inst_serving_logical": payload["inst_serving_logical"],
         "inst_watermarks": payload["inst_watermarks"],
         "inst_withheld": payload["inst_withheld"],
         # NOTE: `expected_modules` is deliberately NOT set here — see the
