@@ -37,10 +37,10 @@ const FILER_PAYLOAD_VERSION = 1;
 /** The routing index the `/e/` driver resolves tail CIKs through (LD-9).
     Defined here — the browser-safe module — because the driver ships these to
     the client while the shard planner (`data.ts`, server-only) emits them. */
-export const FILER_INDEX_PATH = "/institutional/data/filers/index.v2.json";
+export const FILER_INDEX_PATH = "/institutional/data/filers/index.v3.json";
 
 export function filerShardPath(shard: number): string {
-  return `/institutional/data/filers/${encodeURIComponent(String(shard))}.v2.json`;
+  return `/institutional/data/filers/${encodeURIComponent(String(shard))}.v3.json`;
 }
 
 /** Cross-runtime transport budget mirrors. Python `inst_budget.py` remains the

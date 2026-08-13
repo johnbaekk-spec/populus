@@ -622,8 +622,8 @@ test("the shard constants MIRROR src/populus/inst_budget.py — no second source
 });
 
 test("the routing-index and shard paths agree between producer and driver", () => {
-  assert.equal(FILER_INDEX_PATH, "/institutional/data/filers/index.v2.json");
-  assert.equal(filerShardPath(0), "/institutional/data/filers/0.v2.json");
+  assert.equal(FILER_INDEX_PATH, "/institutional/data/filers/index.v3.json");
+  assert.equal(filerShardPath(0), "/institutional/data/filers/0.v3.json");
 });
 
 /* ---------- STRICT: unknown fields reject at every level (Codex F6) ---------- */

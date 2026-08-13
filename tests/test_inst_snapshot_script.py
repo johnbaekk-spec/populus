@@ -553,7 +553,7 @@ def test_tail_payload_is_the_full_filer_payload_v1(tmp_path, monkeypatch):
     assert dist["shard_count"] == 1
     assert dist["shard_limit"] == 4_096
     assert dist["routing_index_files"] == 1
-    assert dist["v1_transition_files"] == 1
+    assert dist["v1_transition_files"] == 2  # v1 + v2 tombstones (M2-12, Codex F3)
     assert dist["fragment_target_bytes"] == 768 * 1024
     assert dist["fragment_parts_limit"] == 64
     assert dist["fragment_sizing_sentinel"] == 99_999

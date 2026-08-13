@@ -292,7 +292,7 @@ async function runFilerWith(
   const h = harness(`?k=f:${Number(cik)}`, async (url) => {
     urls.push(url);
     if (url === FILER_INDEX_PATH) return { kind: "http", status: 200, body: indexBody };
-    const match = /\/(\d+)\.v2\.json$/.exec(url);
+    const match = /\/(\d+)\.v3\.json$/.exec(url);
     const body = match ? shardBodies.get(Number(match[1])) : undefined;
     return body === undefined
       ? { kind: "http", status: 404, body: null }

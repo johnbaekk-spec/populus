@@ -151,6 +151,63 @@ mutation-pinned. These two are what P3-3b knowingly did **not** close.
 
 ---
 
+## 6. Carried open from 2026-08-12 (rebrand + M2-12 + Codex review)
+
+The rebrand, the licenses-generator fix, and the M2-12 "Position changes" bound
+all shipped and are live. These are what an external Codex code review and the
+gate runs left behind, recorded so nothing here is discovered later as a surprise.
+
+- **B17 — `/legal/*` still reads "Populus". ONE owner-run publish fixes it.**
+  `DATA-LICENSE.md` and `NOTICE` are served from the PUBLISHED DATA BUILD, not
+  the repo, and build `20260812.1` predates the generator fix. **Verified
+  2026-08-12:** `licenses.render_notice()` now emits "Public Filings NOTICE …"
+  while the live build carries "Populus NOTICE …", and `publish/build.py` renders
+  both files through exactly that generator — so the next data publish carries
+  the rebrand with no further code change. No dashboard work remains.
+
+- **B18 — the three genuinely-failing pre-existing gates** (the rest of the 18
+  `test:post` failures are worktree artifacts: `dist-cut`/`dist-fixture`
+  subprocesses resolve `../populus-data`, which only exists relative to the main
+  checkout).
+  1. `inst_budget.M1_MEASURED_PAGES` = 12,442 vs 5,288 measured. **Root cause
+     found:** the constant was measured WITH a ticker map; production builds
+     deliberately run WITHOUT one (TD-7), so the whole `tickers/` tree is absent.
+     The two configurations cannot both satisfy an equality assertion — decide
+     which one the projection is for, and say so in the constant's docstring.
+     Do NOT just re-measure into the smaller number: that would UNDER-project
+     capacity for the day TD-7 resolves and the ticker pages come back.
+  2. The projection base misses whole file classes (9,664 measured vs a 12,545
+     base) — same family as (1), same decision.
+  3. **The search index is 451,932 B against its declared 128 KiB budget** — a
+     3.4× overrun that ships to every visitor on every page. This one is a real
+     user-facing weight problem, not a bookkeeping drift.
+
+- **B19 — the M2-11 QA-bundle trio** (`tests/test_m2_11_qa_bundle.py`: legacy
+  round-two transition, round-three predecessor, the exact-76-path-scope
+  closeout). All three fail with `RuntimeError: private-index changed-path
+  inventory mismatch` at `scripts/build_m2_11_qa_bundle.py:2434`, **identically
+  at `7ce271d`** — before the rebrand and before M2-12. They are deselected in
+  `.github/workflows/checks.yml`, which also asserts they still fail: when they
+  are fixed, that job goes red until the deselect entries are deleted. The
+  allowlist must shrink.
+
+- **B20 — Codex F5 fixed the byte cap; the same class may live elsewhere.**
+  `capRows` measured UTF-16 code units while its constant is declared in BYTES,
+  so the fixture's cap-boundary case sat at 4,090,715 B against a 2,097,152 B
+  budget. Fixed in both runtimes. Worth a sweep for any other size gate that
+  measures `.length` on a string and calls the result bytes.
+
+- **B21 — `holders-period-data` (TD-M2-12-2)** carries the same unbounded embed
+  shape M2-12 fixed for filers. Bounded in practice by `topn = 25` holders per
+  issuer, so it is not currently a breach — but it is not gated, so nothing would
+  catch it becoming one.
+
+- **B22 — the changes cap is per-period (TD-M2-12-3)**, so the embed grows ~2 MiB
+  per new quarter: roughly six quarters of headroom from the 12,979,794 B measured
+  on 2026-08-12. The R19 margin gate (60% of the provider cap) now fails the
+  BUILD, not the deploy, when that headroom is spent. Removal condition is
+  TD-M2-12-1's byte-bounded shard family for changes.
+
 ## Notes for whoever picks this up
 
 - **G-guardrails govern**: G1 no paid/vendor data · G3 never silently drop ·
