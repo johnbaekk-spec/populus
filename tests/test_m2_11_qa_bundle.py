@@ -15,6 +15,24 @@ import pytest
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "build_m2_11_qa_bundle.py"
+
+# `scripts/build_m2_11_qa_bundle.py` pins ABSOLUTE paths on the owner's machine —
+# the orchestrate-tool checkout and the Populus-ops evidence snapshots (see its
+# EXPECTED_ROOT / ORCHESTRATE / EVIDENCE_ROOT). Off that machine the suite fails
+# 121 times on missing files, which says nothing about the bundle builder.
+#
+# Declared as a precondition rather than deleted: on the owner's machine every
+# one of these still runs and still guards the M2-11 evidence bundle. Same shape
+# as test_accept_m2_5's gitignored-cache skip.
+_ORCHESTRATE = Path("/Users/johnbaek/projects/orchestrate-tool/orchestrate.sh")
+_EVIDENCE_ROOT = Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11")
+pytestmark = pytest.mark.skipif(
+    not (_ORCHESTRATE.exists() and _EVIDENCE_ROOT.is_dir()),
+    reason=(
+        "the M2-11 QA-bundle builder is pinned to absolute owner-machine paths "
+        "(orchestrate-tool + Populus-ops evidence snapshots); unavailable here"
+    ),
+)
 SPEC = importlib.util.spec_from_file_location("m2_11_qa_bundle", SCRIPT)
 assert SPEC and SPEC.loader
 BUNDLE = importlib.util.module_from_spec(SPEC)

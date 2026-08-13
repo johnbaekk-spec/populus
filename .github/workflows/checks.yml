@@ -11,6 +11,20 @@
 # (`npm run test:post`) are deliberately NOT here: they require a real
 # `POPULUS_BUILD_DIR` + release DBs, which live in the private data repo, so
 # they stay with the publisher-side workflow that has them.
+#
+# HOST-BOUND SUITES SKIP THEMSELVES, they are not excluded here. The first run of
+# this workflow surfaced 163 failures that were entirely environmental, and the
+# fix belongs in the tests rather than in a CI ignore-list:
+#   * tests/test_runner_controller.py — executes a macOS-only script (BSD
+#     `stat -f`); skips on non-Darwin.
+#   * tests/test_m2_11_qa_bundle.py — drives a builder pinned to absolute
+#     owner-machine paths; skips when they are absent.
+# It also caught one REAL portability defect: SQL using the digit separator
+# `9_000_000`, which SQLite rejects before 3.46.
+#
+# The consequence is honest and worth stating: on a GitHub runner this job proves
+# LESS than `make test` does on the owner's machine, because those suites can only
+# be authoritative where their subject lives.
 name: checks
 
 # NOT `pull_request`: R7e/OD-4 bans PR-like triggers repo-wide because they route
@@ -91,9 +105,17 @@ jobs:
             rc=$?
             case "$rc" in
               0)
-                echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from"
-                echo "::error::the deselect list in this file and from BACKLOG.md (B19)."
-                stale=1
+                # rc=0 covers PASSED *and* SKIPPED — and this suite skips off the
+                # owner's machine, where its absolute evidence paths do not exist.
+                # Treating a skip as "now passes" would fire a false alarm on
+                # every CI run, so the two are separated explicitly.
+                if printf '%s' "$out" | grep -qE '[0-9]+ skipped'; then
+                  echo "not applicable here (suite skipped by its own precondition): $node"
+                else
+                  echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from"
+                  echo "::error::the deselect list in this file and from BACKLOG.md (B19)."
+                  stale=1
+                fi
                 ;;
               1)
                 # A clean test failure — the recorded state. Pin the reason too:
@@ -116,3 +138,48 @@ jobs:
             esac
           done
           exit "$stale"
+
+  dashboard:
+    name: dashboard (typecheck + unit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: dashboard/.node-version
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # The dashboard suite is NOT pure JS: `test/inst.test.ts` spawns
+      # `uv run python dashboard/test/fixtures/make-inst-preview.py` to build its
+      # institutional fixture from the REAL producer rather than reimplementing
+      # it (`test/post/fixture-preview.test.ts` does the same). Without uv the
+      # job dies at `spawnSync uv ENOENT`.
+      #
+      # My "verified with no data environment" check was run on a machine that
+      # already had uv, so it proved less than I claimed. Same pin as the python
+      # job and publish.yml.
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install uv (pinned)
+        run: python3 -m pip install --quiet "uv==0.7.13"
+
+      - name: Sync (frozen lockfile)
+        working-directory: .
+        run: uv sync --frozen
+
+      - name: Install (frozen)
+        run: npm ci
+
+      # Neither needs a published data build — no POPULUS_BUILD_DIR / POPULUS_DB.
+      - name: Typecheck
+        run: npx astro check
+
+      - name: Unit suite
+        run: npm test
