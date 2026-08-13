@@ -154,11 +154,30 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
+      # The dashboard suite is NOT pure JS: `test/inst.test.ts` spawns
+      # `uv run python dashboard/test/fixtures/make-inst-preview.py` to build its
+      # institutional fixture from the REAL producer rather than reimplementing
+      # it (`test/post/fixture-preview.test.ts` does the same). Without uv the
+      # job dies at `spawnSync uv ENOENT`.
+      #
+      # My "verified with no data environment" check was run on a machine that
+      # already had uv, so it proved less than I claimed. Same pin as the python
+      # job and publish.yml.
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install uv (pinned)
+        run: python3 -m pip install --quiet "uv==0.7.13"
+
+      - name: Sync (frozen lockfile)
+        working-directory: .
+        run: uv sync --frozen
+
       - name: Install (frozen)
         run: npm ci
 
-      # Both run with NO data environment — verified 2026-08-12: 287/287 unit
-      # tests and a clean typecheck with every POPULUS_* var unset.
+      # Neither needs a published data build — no POPULUS_BUILD_DIR / POPULUS_DB.
       - name: Typecheck
         run: npx astro check
 
