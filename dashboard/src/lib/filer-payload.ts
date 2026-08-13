@@ -547,8 +547,29 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
   if (!isRecord(raw.deltaTotalsByPeriod)) bad("deltaTotalsByPeriod is not an object");
   const deltaTotalsByPeriod: Record<string, number> = {};
   for (const [period, value] of Object.entries(raw.deltaTotalsByPeriod)) {
-    deltaTotalsByPeriod[period] = reqNumber(value, `deltaTotalsByPeriod[${JSON.stringify(period)}]`);
+    const path = `deltaTotalsByPeriod[${JSON.stringify(period)}]`;
+    const total = reqNumber(value, path);
+    /* Codex F2: a bare number check accepted a total SMALLER than the embedded
+       list — and a total of 0 beside a real row renders the "no changes" state
+       over rows that exist. The total is a PRE-cap count, so it can never be
+       below the rows shipped with it, and it is a count, so it is a
+       non-negative safe integer. Fail closed rather than render a contradiction. */
+    if (!Number.isSafeInteger(total) || total < 0) {
+      bad(`${path} is not a non-negative integer count`);
+    }
+    const embedded = deltasByPeriod[period]?.length ?? 0;
+    if (total < embedded) {
+      bad(`${path} (${total}) is below the ${embedded} embedded delta rows it accompanies`);
+    }
+    deltaTotalsByPeriod[period] = total;
   }
+  /* The key sets must agree exactly: a period with rows but no total would fall
+     back to a length, and a total with no rows is an orphan claim. */
+  requireExactObjectKeys(
+    raw.deltaTotalsByPeriod,
+    Object.keys(deltasByPeriod),
+    "deltaTotalsByPeriod",
+  );
 
   // F3: every nested cik must agree with the payload's own — a shard whose row,
   // concentration, or delta rows carry another filer's CIK is corrupt, and

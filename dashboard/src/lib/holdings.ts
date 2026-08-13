@@ -527,7 +527,7 @@ export function holdingsRangeText(opts: {
     and where the rest live (G3). */
 export const HOLDINGS_EMBED_ROW_CAP = 20_000;
 
-/** The embedded payload's byte ceiling, MEASURED on the serialized JSON.
+/** The embedded payload's byte ceiling, MEASURED in UTF-8 BYTES on the serialized JSON.
 
     QA M2-8 M8: the row cap alone was byte-unaware while its own comment
     justified it as "the page byte budget caps the embed". At a measured
@@ -551,6 +551,23 @@ export const HOLDINGS_EMBED_BYTE_CAP = 2 * 1024 * 1024;
     Bytes are measured by filling: rows are added until the next one would not
     fit, exactly as `activity.paginateActivity` does. Measuring the whole list
     and slicing proportionally would be an estimate again. */
+/** UTF-8 byte length of an already-serialized row.
+
+    Codex F5: the fill below measured `encoded.length` — UTF-16 CODE UNITS —
+    while `HOLDINGS_EMBED_BYTE_CAP` is declared and documented as a BYTE
+    ceiling. Every non-ASCII character in an issuer name (13F filers hold
+    plenty of foreign issuers) costs 2–3 UTF-8 bytes but counts as one unit,
+    so the embed could exceed its own declared budget while the cap reported
+    itself satisfied. The ASCII fast path keeps the common case allocation-free;
+    only a row that actually contains non-ASCII pays for the encode. */
+const UTF8 = new TextEncoder();
+export function utf8ByteLength(text: string): number {
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) > 0x7f) return UTF8.encode(text).byteLength;
+  }
+  return text.length;
+}
+
 export function capRows<T>(
   rows: readonly T[],
   cap = HOLDINGS_EMBED_ROW_CAP,
@@ -563,7 +580,8 @@ export function capRows<T>(
   let boundBy: "rows" | "bytes" | null = null;
   for (let i = 0; i < limit; i++) {
     const encoded = JSON.stringify(rows[i]);
-    const next = bytes + (encoded === undefined ? 4 : encoded.length) + (out.length ? 1 : 0);
+    const next =
+      bytes + (encoded === undefined ? 4 : utf8ByteLength(encoded)) + (out.length ? 1 : 0);
     if (next > byteCap && out.length > 0) {
       boundBy = "bytes";
       break;
@@ -1764,7 +1782,12 @@ export function sortQoqDeltas<T extends QoqDeltaLike>(deltas: readonly T[]): T[]
   return [...deltas].sort((a, b) => {
     const av = a.curr_value_usd ?? a.prev_value_usd ?? -1;
     const bv = b.curr_value_usd ?? b.prev_value_usd ?? -1;
-    return bv - av || (a.position_key < b.position_key ? -1 : 1);
+    if (bv !== av) return bv - av;
+    /* Codex F4: this returned 1 for EQUAL keys, so the comparator was not
+       reflexive and therefore not a total order — the tie-break must return 0
+       so the sort is stable and matches the Python reference exactly. */
+    if (a.position_key === b.position_key) return 0;
+    return a.position_key < b.position_key ? -1 : 1;
   });
 }
 

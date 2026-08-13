@@ -338,7 +338,7 @@
         }
       },
       "fragment_summary_v2": {
-        "parts": 7,
+        "parts": 4,
         "fragments": [
           {
             "part": 0,
@@ -369,37 +369,13 @@
             "section": "rows",
             "period": "2026-03-31",
             "start": 12,
-            "records": 6,
-            "entry_utf8_bytes": 721919
-          },
-          {
-            "part": 4,
-            "section": "rows",
-            "period": "2026-03-31",
-            "start": 18,
-            "records": 6,
-            "entry_utf8_bytes": 721919
-          },
-          {
-            "part": 5,
-            "section": "rows",
-            "period": "2026-03-31",
-            "start": 24,
-            "records": 6,
-            "entry_utf8_bytes": 721919
-          },
-          {
-            "part": 6,
-            "section": "rows",
-            "period": "2026-03-31",
-            "start": 30,
-            "records": 4,
-            "entry_utf8_bytes": 481327
+            "records": 5,
+            "entry_utf8_bytes": 601623
           }
         ]
       },
-      "expected_sha256": "4580ad3ebd398b6ffc989a6433edb6f89ec3a21d4fd9d91eb9cf3584dcb389fa",
-      "expected_utf8_bytes": 4090715
+      "expected_sha256": "676ed7d2f9e7393238643d82cb5db5e6d1835d4f1f7a657c29c5b375b6aef590",
+      "expected_utf8_bytes": 2045683
     }
   ]
 }

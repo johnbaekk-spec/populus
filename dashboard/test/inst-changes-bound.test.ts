@@ -11,12 +11,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   HOLDINGS_EMBED_BYTE_CAP,
   HOLDINGS_PAGE_SIZE,
   boundQoqDeltas,
   sortQoqDeltas,
+  utf8ByteLength,
 } from "../src/lib/holdings.ts";
 import { changesTableHtml, filerPeriodSectionHtml } from "../src/lib/ui.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
@@ -130,4 +133,81 @@ test("M2-12: an empty period stays the honest first-period state, not an empty t
   // The section's standing methodology terminus is expected here; what must NOT
   // appear is a TRUNCATION claim over a period that withheld nothing.
   assert.ok(!html.includes("are not embedded in this page"));
+});
+
+/* ---- Codex round-3 blockers, pinned so they cannot silently return ---- */
+
+test("M2-12/F1: the changes pager works on FIRST LOAD, before any chip is clicked", () => {
+  /* The shipped bug: `initFilerPeriods` seeded its period as "" and the pager
+     handler bailed on a falsy period, so every click was swallowed until a chip
+     was clicked — and the browser check that "verified" the pager had clicked a
+     chip first, so it never saw this. The regression guard is the SOURCE
+     invariant: the period must be seeded from the active chip, never from "". */
+  const src = readFileSync(
+    path.join(import.meta.dirname, "..", "src", "scripts", "entity-client.ts"),
+    "utf-8",
+  );
+  const seeded = /let period =\s*\n?\s*chips\.querySelector<HTMLElement>\("\[data-period\]\.chip-active"\)/.test(
+    src,
+  );
+  assert.ok(seeded, "the pre-rendered period must be seeded from the SSR-active chip");
+  assert.ok(
+    !/let period = "";\s*\n\s*let page = 0;/.test(src),
+    "seeding period to the empty string is exactly the defect this pins",
+  );
+});
+
+test("M2-12/F1: the tail-filer route delegates changes-pager clicks", () => {
+  const src = readFileSync(
+    path.join(import.meta.dirname, "..", "src", "scripts", "entity-client.ts"),
+    "utf-8",
+  );
+  assert.match(src, /changesPage: \(dir: "prev" \| "next"\) => void;/, "handle exposes changesPage");
+  assert.match(src, /data-changes-page/, "the generic route delegates the pager control");
+  assert.match(
+    src,
+    /filerChangesPage = 0;/,
+    "a period switch resets the changes page — an index from another quarter addresses nothing",
+  );
+});
+
+test("M2-12/F4: the delta comparator is reflexive, so the order is total", () => {
+  const a = { position_key: "POS1", curr_value_usd: 5, prev_value_usd: null };
+  // A comparator returning nonzero for an element against ITSELF is not a valid
+  // total order; it was returning 1, which also diverged from the Python sort.
+  const sorted = sortQoqDeltas([a, { ...a }]);
+  assert.equal(sorted.length, 2);
+  assert.equal(sorted[0]!.position_key, "POS1");
+  assert.deepEqual(
+    sortQoqDeltas([a]).map((r) => r.position_key),
+    ["POS1"],
+  );
+});
+
+test("M2-12/F5: the embed cap counts UTF-8 BYTES, not UTF-16 code units", () => {
+  /* The shipped cap measured `JSON.stringify(row).length`. Every non-ASCII
+     character in an issuer name costs 2-3 UTF-8 bytes but ONE code unit, so the
+     embed could sit at ~2x its declared budget while reporting itself satisfied.
+     Regenerating the cross-runtime fixture after this fix moved its
+     cap-boundary case from 4,090,715 B to 2,045,683 B against a 2,097,152 B
+     cap — the defect, measured. */
+  assert.equal(utf8ByteLength("abc"), 3, "ASCII: bytes == code units");
+  assert.equal(utf8ByteLength("é"), 2, "Latin-1 supplement is 2 bytes, 1 code unit");
+  assert.equal(utf8ByteLength("日"), 3, "CJK is 3 bytes, 1 code unit");
+  assert.equal(utf8ByteLength("😀"), 4, "astral is 4 bytes, 2 code units");
+
+  // A row set whose serialization is ASCII-cheap but byte-expensive must be
+  // bound by BYTES: measured against the declared cap, not a proxy for it.
+  const wide = Array.from({ length: 4_000 }, (_, i) => ({
+    ...delta(i, 1_000_000 - i),
+    issuer_name: "日".repeat(300),
+  })) as unknown as QoqDeltaRow[];
+  const bound = boundQoqDeltas(wide);
+  const bytes = utf8ByteLength(JSON.stringify(bound.rows));
+  assert.ok(
+    bytes <= HOLDINGS_EMBED_BYTE_CAP,
+    `embed is ${bytes} UTF-8 B, over the declared ${HOLDINGS_EMBED_BYTE_CAP} B cap`,
+  );
+  assert.ok(bound.rows.length < wide.length, "the byte cap bound this list");
+  assert.equal(bound.total, wide.length, "the true total survives the cap");
 });

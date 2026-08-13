@@ -218,6 +218,8 @@ export interface DriverHandle {
   toggleWatch: (kind: "member" | "ticker", key: string) => void;
   /** R22 filer surface controls — no-ops unless an in-extract filer is loaded */
   holdingsPage: (dir: "prev" | "next") => void;
+  /** M2-12 changes-table pagination (Codex F1: the tail route had none). */
+  changesPage: (dir: "prev" | "next") => void;
   holdingsView: (view: "current" | "prior" | "diff") => void;
   holdingsPeriod: (period: string) => void;
   done: Promise<void>;
@@ -423,6 +425,9 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
   let filerState: SurfaceState = { view: "current", page: 0, period: "" };
   /** The aggregate period the chips select — drives filerBody's tiles/changes. */
   let filerAggPeriod = "";
+  /** Changes-table page index, reset whenever the selected period changes: a page
+      index from another quarter addresses nothing in this one. */
+  let filerChangesPage = 0;
 
   function filerSurfaceOf(p: FilerPayloadV1): FilerSurfacePayload {
     return {
@@ -457,9 +462,14 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
         p.latestFiled,
         p.topn,
         p.window,
-        // M2-12: pre-bound total, so a tail filer states its cap exactly as the
-        // pre-rendered page does.
-        { total: p.deltaTotalsByPeriod[aggPeriod] ?? (p.deltasByPeriod[aggPeriod] ?? []).length },
+        /* M2-12: pre-bound total, so a tail filer states its cap exactly as the
+           pre-rendered page does. Codex F2: NO length fallback — the validator
+           requires this key, and defaulting to the embedded length would make a
+           capped period silently claim completeness. */
+        {
+          total: p.deltaTotalsByPeriod[aggPeriod]!,
+          page: filerChangesPage,
+        },
       ) +
       `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
       `<div data-holdings-body>` +
@@ -736,6 +746,11 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       filerState.page = Math.max(0, filerState.page + (dir === "next" ? 1 : -1));
       renderFiler();
     },
+    changesPage: (dir) => {
+      if (!loadedFiler) return;
+      filerChangesPage = Math.max(0, filerChangesPage + (dir === "next" ? 1 : -1));
+      renderFiler();
+    },
     holdingsView: (view) => {
       if (!loadedFiler) return;
       filerState.view = view;
@@ -749,6 +764,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       filerAggPeriod = period;
       filerState.period = period;
       filerState.page = 0;
+      filerChangesPage = 0;
       filerState.view = "current";
       renderFiler();
     },
@@ -882,10 +898,31 @@ export function initFilerPeriods(): void {
   } catch {
     return; // malformed embed: the SSR period stays — no partial re-render
   }
+  /* Codex F2: a total that is absent, non-integral, negative, or SMALLER than the
+     rows it ships alongside is a contradictory embed. Rendering from it would hide
+     real rows behind "no changes" or suppress the truncation terminus, so the whole
+     switch stands down and the server-rendered period remains. */
+  for (const slice of Object.values(data.periods ?? {})) {
+    const n = slice?.total;
+    if (
+      !Number.isSafeInteger(n) ||
+      (n as number) < 0 ||
+      (n as number) < (slice?.deltas?.length ?? 0)
+    ) {
+      return;
+    }
+  }
   /* RUN M2-12: the changes table paginates, so the period section carries page
      state. Switching period resets it to 0 — a page index from another quarter
      addresses nothing in this one. */
-  let period = "";
+  /* Codex F1: this started as "" and the pager handler bails on a falsy period,
+     so on FIRST LOAD every pager click was swallowed and rows past the first page
+     were unreachable until a chip was clicked. Seed from the chip the SSR marked
+     active — that is the period the server rendered. */
+  let period =
+    chips.querySelector<HTMLElement>("[data-period].chip-active")?.dataset.period ??
+    chips.querySelector<HTMLElement>("[data-period]")?.dataset.period ??
+    "";
   let page = 0;
   const draw = (): void => {
     const slice = data.periods[period];
@@ -896,10 +933,11 @@ export function initFilerPeriods(): void {
       period,
       data.latestFiled,
       data.topn,
-      // `total` is the pre-bound count the SSR printed. Falling back to the
-      // embedded length would make a capped period silently claim completeness
-      // on the client that the server never claimed.
-      { total: slice.total ?? slice.deltas.length, page },
+      // Codex F2: `total` is REQUIRED in the embed. A missing or contradictory
+      // total is a corrupt embed, handled above by leaving the SSR section alone
+      // — never papered over with the embedded length, which would claim a
+      // completeness the server never claimed.
+      { total: slice.total!, page },
     );
   };
   chips.addEventListener("click", (ev) => {
@@ -996,6 +1034,13 @@ export function runGenericRoute(): void {
     if (pageBtn) {
       if (pageBtn.getAttribute("aria-disabled") !== "true") {
         handle.holdingsPage(pageBtn.dataset.holdingsPage === "next" ? "next" : "prev");
+      }
+      return;
+    }
+    const changesBtn = el.closest<HTMLButtonElement>("[data-changes-page]");
+    if (changesBtn) {
+      if (changesBtn.getAttribute("aria-disabled") !== "true") {
+        handle.changesPage(changesBtn.dataset.changesPage === "next" ? "next" : "prev");
       }
       return;
     }
