@@ -84,6 +84,17 @@ naming decision.
 - [ ] **B10 · Pick the domain (ARCHITECTURE OQ-1).** `populusfinance.com`
       collides with Populus Financial Group; candidates are in ARCHITECTURE.
 
+- **Publish a data build to fix `/legal`** (B17). `licenses.render_notice()` now
+  emits "Public Filings" while the live build `20260812.1` still carries
+  "Populus", and `publish/build.py` renders both files through that generator —
+  verified 2026-08-13. One publish, no code. It moves the signed pointer and cuts
+  a public release, which is why it is here and not done.
+- **Tear down the session's worktrees** (owner-only per the worktree rule):
+  `.claude/worktrees/{rebrand, inst-changes-bound, licenses-rebrand,
+  baseline-7ce271d}` plus the gitignored `.claude/worktrees/populus-data`
+  symlink, which exists so `../populus-data` resolves for gates run from inside a
+  worktree. Run the D6 proof before removing any of them.
+
 ## 4. Roadmap — deferred by design
 
 One module at a time (G12).
@@ -187,9 +198,14 @@ gate runs left behind, recorded so nothing here is discovered later as a surpris
   closeout). All three fail with `RuntimeError: private-index changed-path
   inventory mismatch` at `scripts/build_m2_11_qa_bundle.py:2434`, **identically
   at `7ce271d`** — before the rebrand and before M2-12. They are deselected in
-  `.github/workflows/checks.yml`, which also asserts they still fail: when they
+  `.github/workflows/checks.yml`, which also asserts they still fail **per node,
+  on an exact pytest exit code, with the failure signature pinned**: when they
   are fixed, that job goes red until the deselect entries are deleted. The
   allowlist must shrink.
+
+  Note the whole FILE now skips off the owner's machine (see B23), so on CI these
+  three report "not applicable here" rather than pass or fail. The authoritative
+  run is local.
 
 - **B20 — Codex F5 fixed the byte cap; the same class may live elsewhere.**
   `capRows` measured UTF-16 code units while its constant is declared in BYTES,
@@ -208,6 +224,45 @@ gate runs left behind, recorded so nothing here is discovered later as a surpris
   BUILD, not the deploy, when that headroom is spent. Removal condition is
   TD-M2-12-1's byte-bounded shard family for changes.
 
+## 7. Carried open from the 2026-08-13 deploy (CI's first run)
+
+`.github/workflows/checks.yml` landed with the close-out and its FIRST run found
+163 failures — 162 environmental, 1 a real bug. All are fixed; what follows is
+what that exercise left behind.
+
+- **B23 — CI proves LESS than `make test`, by design, and the gap should shrink.**
+  On a GitHub runner: **2,490 passed, 941 skipped** of 3,423. The skips are two
+  host-bound suites that now declare their own preconditions rather than being
+  hidden in a CI ignore-list:
+  * `tests/test_runner_controller.py` (41) executes a **macOS-only** script — BSD
+    `stat -f %u` / `%Lp`, which GNU coreutils reads as "filesystem status", so
+    every test died at `state-dir-stat-failed` before an assertion.
+  * `tests/test_m2_11_qa_bundle.py` (121) drives a builder pinned to **absolute
+    owner-machine paths** (orchestrate-tool checkout, Populus-ops snapshots).
+
+  Neither can be authoritative where its subject does not exist, so the local
+  `make test` remains the real gate. Worth revisiting if the QA-bundle builder
+  ever takes its roots as parameters instead of constants.
+
+- **B24 — `npm run test:post` is not in CI at all.** It needs a real
+  `POPULUS_BUILD_DIR` plus the release DBs, which live in the private data repo.
+  That means the R19 file-size/margin gates and R22 shard-family gates — the ones
+  that would have caught the 25 MiB breach — run ONLY when someone runs them by
+  hand. **RUN P3-3 should wire them publisher-side**, where the data already is.
+  Until then, a build can breach the provider cap and no automation will say so.
+
+- **B25 — `ops/runner/runner-controller.sh` is inconsistent about `stat`
+  portability.** Line 321 carries a `|| stat -c %u` fallback; lines 210 and 223
+  do not. Harmless while the script only ever runs on the Mac mini, and
+  deliberately NOT "fixed": it runs as root and executes a wipe, so loosening its
+  probes to satisfy a runner it will never touch is risk without benefit. Recorded
+  so the asymmetry is not mistaken for an oversight later.
+
+- **B26 — the two host-bound skips are load-bearing and unguarded.** If someone
+  deletes a `pytestmark` skipif, CI goes green on a suite that never ran. A cheap
+  guard would be a test asserting both suites are collected on Darwin and skipped
+  elsewhere; nothing enforces it today.
+
 ## Notes for whoever picks this up
 
 - **G-guardrails govern**: G1 no paid/vendor data · G3 never silently drop ·
@@ -221,6 +276,22 @@ gate runs left behind, recorded so nothing here is discovered later as a surpris
   and treat a mismatch as invalidating the run. A traceback whose displayed
   source line doesn't match the code (a comment, a wrong signature) is a
   source/bytecode mismatch — you are chasing a ghost, not a bug.
+- **A partial sweep passes every check you run.** 2026-08-13, four times in one
+  session: the brand rename fixed one of two CSS-drawn marks; a comparator was
+  repaired in TypeScript but not its Python mirror; a route rename updated a
+  filename comparison but not the filter regex two lines above; and a workflow
+  edit truncated the file, silently deleting a whole CI job while the run stayed
+  GREEN. Grep the complete sibling set, then MUTATE the fix and watch the test go
+  red — a test that passes against the defect it names is not a test.
+- **Verify in the environment you are claiming for, not the one you have.** Three
+  false "verified" claims from one root cause: a pager "worked" because the check
+  clicked a period chip first; suites "needed no environment" because the machine
+  already had `uv`; a workflow was "correct" because one job of two was inspected.
+  Each was caught by something external — Codex, then CI. Neither is optional.
+- **Never read a `node --test` or pytest log before its summary line is written.**
+  Twice a mid-run partial log was reported as a result, and twice it was wrong.
+  Wait for `ℹ fail` / `N passed`, and when polling CI, pin the run to the commit
+  SHA rather than asking for "the latest".
 - **When three-plus review rounds land blockers in one mechanism, stop patching
   and write the spec.** Proven on the M2-4 serving lifecycle, M2-4 amendment
   composition, the P3 feed pagination, and again on the M2-5 parse substrate
