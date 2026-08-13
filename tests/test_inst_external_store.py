@@ -39,8 +39,10 @@ from populus.publish.build import (
     LocalDirBackend,
     PublishError,
     finalize_build,
+    read_stage_state,
     run_publish,
     stage_build,
+    write_stage_state,
 )
 from populus.publish.digests import (
     LOGICAL_PROJECTIONS,
@@ -49,6 +51,8 @@ from populus.publish.digests import (
     sha256_file,
 )
 from populus.publish.manifest import (
+    INST_MODULE,
+    INST_SERVING_ARTIFACT,
     INST_SOURCE_ARTIFACT,
     INST_SOURCE_SCHEMA,
     find_artifact,
@@ -977,3 +981,61 @@ def test_cli_accepts_a_finalized_snapshot(tmp_path):
     assert result.exit_code == 0, result.output
     assert "build_id=" in result.output  # the machine-readable contract lines
     assert "staging_dir=" in result.output
+
+
+def test_finalize_through_the_stage_state_sidecar_with_inst_present(tmp_path):
+    """The stage -> finalize PROCESS boundary, with the inst module populated.
+
+    Every other inst finalize test in this file hands `finalize_build` the
+    in-memory `StagedBuild` that `stage_build` just returned. The publish
+    workflow does not: `stage-build` and `finalize-build` are separate CLI
+    invocations in separate processes, so the state travels through
+    `write_stage_state` -> `read_stage_state`. RUN M2-8 added
+    `inst_serving_logical` / `inst_serving_path` to the in-memory state and read
+    them in `_seal_build`, but not to that round trip — so the PROVISIONAL seal
+    (same function, in-memory state) passed while the FINAL seal raised
+    `KeyError: 'inst_serving_logical'`. Observed in production on run
+    31737348790 after a 2h13m ingest.
+
+    Dropping either key from `write_stage_state`/`read_stage_state` must redden
+    this test rather than a nightly.
+    """
+    snapshot = make_inst_snapshot(tmp_path)
+    db = seed_db(tmp_path / "populus-data-populus.db")
+    repo = make_repo(tmp_path, "populus-data")
+    backend = LocalDirBackend(repo)
+    staged = stage_build(
+        db, repo, now=pin(), backend=backend, inst_db_path=snapshot
+    )
+    # The inst module must actually be present, or the seal never reaches the
+    # branch under test and this test would pass vacuously.
+    assert staged._state["inst_logical"] is not None
+    assert staged._state["inst_serving_logical"] is not None
+
+    write_stage_state(staged)
+    reloaded = read_stage_state(
+        staged.staging_dir, data_repo=repo, backend=backend
+    )
+    assert reloaded._state["inst_serving_logical"] == (
+        staged._state["inst_serving_logical"]
+    )
+    assert reloaded._state["inst_serving_path"] == (
+        staged._state["inst_serving_path"]
+    )
+
+    report = finalize_build(reloaded)
+
+    # The serving artifact is enumerated in the manifest the FINAL seal wrote —
+    # a round trip that merely stopped raising, without carrying the value
+    # through to the manifest, would still break the published module.
+    manifest = json.loads(
+        (Path(staged.staging_dir) / "build" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    names = {
+        entry["name"]
+        for entry in manifest["modules"][INST_MODULE]["artifacts"]
+    }
+    assert INST_SERVING_ARTIFACT in names
+    assert report is not None
