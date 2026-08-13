@@ -937,24 +937,27 @@ def _js_key_order(keys) -> list[str]:
     return indexed + rest
 
 
-def _js_len(text: str) -> int:
-    """PARITY: JS ``String.prototype.length`` — UTF-16 code units, which is
-    what ``capRows`` measures (`encoded.length`), NOT UTF-8 bytes."""
-    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in text)
+def _utf8_len(text: str) -> int:
+    """PARITY: ``dashboard/src/lib/holdings.ts::utf8ByteLength`` — UTF-8 BYTES.
+
+    Codex F5: both runtimes previously measured UTF-16 code units, so they
+    agreed with each other while disagreeing with the byte ceiling they
+    claimed to enforce. They now measure the unit the cap is declared in."""
+    return len(text.encode("utf-8"))
 
 
 def _cap_rows(rows: list[dict]) -> tuple[list[dict], int]:
     """PARITY: ``dashboard/src/lib/holdings.ts::capRows`` — cap by row count
     AND serialized SIZE, whichever binds first; `total` is the PRE-cap true
-    row count. The TS fill measures ``JSON.stringify(row).length`` (UTF-16
-    code units), starts at 2 for `[]`, and each later element adds one
-    separator — mirrored exactly, including the unit."""
+    row count. The TS fill measures ``utf8ByteLength(JSON.stringify(row))``,
+    starts at 2 for `[]`, and each later element adds one separator —
+    mirrored exactly, including the unit (UTF-8 bytes, Codex F5)."""
     limit = min(HOLDINGS_EMBED_ROW_CAP, len(rows))
     out: list[dict] = []
     size = 2
     for i in range(limit):
         encoded = _dumps(rows[i])
-        nxt = size + _js_len(encoded) + (1 if out else 0)
+        nxt = size + _utf8_len(encoded) + (1 if out else 0)
         if nxt > HOLDINGS_EMBED_BYTE_CAP and out:
             break
         out.append(rows[i])

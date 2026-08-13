@@ -146,6 +146,32 @@ test("R19 GATE: no single deployed file exceeds the 25 MiB provider limit", () =
   );
 });
 
+/** RUN M2-12 (plan Planned Files; Codex F6 — the plan promised this and the first
+    implementation shipped without it).
+
+    Non-violation is not headroom. The largest page grows by roughly one period's
+    embed each quarter, so a tree that merely fits today reaches the provider's
+    rejection boundary with no warning in between. This asserts a MARGIN, so the
+    build goes red while there is still room to act.
+
+    The threshold is deliberately loose (60% of the cap): it is a smoke alarm for
+    unbounded growth, not a target to optimise against. Measured at the time of
+    writing: 12,979,794 B = 49.5% of the cap. */
+export const R19_MARGIN_FRACTION = 0.6;
+
+test("R19 GATE (margin): the largest deployed file keeps headroom under the cap", () => {
+  const measured = measure(DIST);
+  const ceiling = Math.floor(MAX_SHARD_BYTES * R19_MARGIN_FRACTION);
+  const pct = ((measured.maxBytes / MAX_SHARD_BYTES) * 100).toFixed(1);
+  assert.ok(
+    measured.maxBytes <= ceiling,
+    `${measured.largest} is ${measured.maxBytes} B — ${pct}% of the ${MAX_SHARD_BYTES} B ` +
+      `provider cap, past the ${R19_MARGIN_FRACTION * 100}% margin this gate holds. ` +
+      `The page is still deployable, which is the point: bound it now rather than ` +
+      `discovering the ceiling on a deploy that Cloudflare rejects.`,
+  );
+});
+
 test("R22 GATE (measured): the filer shard family in the built tree", () => {
   /* RUN M2-11 tail-pagination delta: assertions over the MEASURED tree only.
      The v1 data family is gone; its one retained file is an exact tiny
