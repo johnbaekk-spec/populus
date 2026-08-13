@@ -175,10 +175,16 @@ FILER_FRAGMENT_SIZING_SENTINEL = 99_999
 #: The routing index (LD-9): one versioned file mapping every published tail
 #: CIK to its shard. Counted because "1" omitted is still an omitted class.
 FILER_ROUTING_INDEX_FILES = 1
-#: One payload-free v1 index tombstone. Cached v1 clients receive a version-2
-#: discriminator and enter their shipped version-mismatch path instead of
-#: misreporting a rollout 404 as honest out-of-extract.
-FILER_V1_TRANSITION_FILES = 1
+#: Payload-free index tombstones, one per superseded transport version: v1 (from
+#: the M2-11 transition) and v2 (from M2-12, which made `deltaTotalsByPeriod` a
+#: REQUIRED key and so could not keep serving the old route). A cached client of
+#: either version receives a higher version discriminator and enters its shipped
+#: version-mismatch path, instead of misreporting a rollout 404 as honest
+#: out-of-extract OR retrying forever against a payload it cannot parse.
+#:
+#: This grows by one per breaking transport change. It is not a reservation: the
+#: post-build gate counts the tombstones actually emitted.
+FILER_V1_TRANSITION_FILES = 2
 #: LD-10 (owner-approved 2026-08-08): the per-shard CLIENT-RESPONSE ceiling —
 #: the reader's bound, distinct from the provider's 25 MiB hard limit above.
 #: Mirrored by ``dashboard/src/lib/shards.ts::SHARD_RESPONSE_CEILING_BYTES``

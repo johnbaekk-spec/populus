@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import re
 import math
 import resource
 import shutil
@@ -629,10 +630,28 @@ def derive_once(
             )
 
 
+#: Lone surrogates, which JS `JSON.stringify` escapes as `\udXXX` and Python's
+#: `json.dumps(ensure_ascii=False)` emits raw — after which `.encode("utf-8")`
+#: raises instead of producing bytes (Codex F5).
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
+
 def _dumps(obj) -> str:
     """Serialize exactly as the shard planner does: `JSON.stringify` emits no
-    whitespace and leaves non-ASCII unescaped."""
-    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    whitespace and leaves non-ASCII unescaped.
+
+    PARITY (Codex F5): the one place the two serializers disagreed was a LONE
+    surrogate. JS emits `\ud800` — six ASCII characters — while Python emits the
+    raw code point and then cannot encode it at all, so the reference
+    implementation raised `UnicodeEncodeError` where the production runtime
+    produced 14 well-formed bytes. Escaping here keeps the SERIALIZED BYTES
+    identical, not merely their length, which is what the byte-parity fixture
+    actually compares. Unreachable from SQLite TEXT (always well-formed UTF-8),
+    so this is a robustness floor rather than a live data path."""
+    out = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    if _LONE_SURROGATE_RE.search(out):
+        out = _LONE_SURROGATE_RE.sub(lambda m: f"\\u{ord(m.group(0)):04x}", out)
+    return out
 
 
 def _byte_len(text: str) -> int:
@@ -965,23 +984,36 @@ def _cap_rows(rows: list[dict]) -> tuple[list[dict], int]:
     return out, len(rows)
 
 
+def _compare_qoq_deltas(a: dict, b: dict) -> int:
+    """PARITY: ``dashboard/src/lib/holdings.ts::compareQoqDeltas``.
+
+    Exported (module-level, not a closure) for the same reason the TS mirror is:
+    reflexivity cannot be observed from a sorted list, because a stable sort
+    keeps the input order whether the tie-break returns 0 or 1. Codex proved that
+    hole by passing the first regression test against the very defect it claimed
+    to pin, so the property is asserted on the comparator itself in
+    tests/test_qoq_parity.py."""
+    av = a.get("curr_value_usd")
+    av = a.get("prev_value_usd") if av is None else av
+    av = -1 if av is None else av
+    bv = b.get("curr_value_usd")
+    bv = b.get("prev_value_usd") if bv is None else bv
+    bv = -1 if bv is None else bv
+    if bv != av:
+        return -1 if bv < av else 1
+    # Codex F2: this returned 1 for EQUAL keys, so the comparator was not
+    # reflexive and therefore not a total order — and it diverged from the
+    # corrected TS mirror on exact ties.
+    if a["position_key"] == b["position_key"]:
+        return 0
+    return -1 if a["position_key"] < b["position_key"] else 1
+
+
 def _sort_qoq_deltas(deltas: list[dict]) -> list[dict]:
     """PARITY: ``dashboard/src/lib/holdings.ts::sortQoqDeltas`` — largest
     current value first, falling back to the previous value for an exited
     position, ties by ``position_key`` so the order is total."""
-
-    def _cmp(a: dict, b: dict) -> int:
-        av = a.get("curr_value_usd")
-        av = a.get("prev_value_usd") if av is None else av
-        av = -1 if av is None else av
-        bv = b.get("curr_value_usd")
-        bv = b.get("prev_value_usd") if bv is None else bv
-        bv = -1 if bv is None else bv
-        if bv != av:
-            return -1 if bv < av else 1
-        return -1 if a["position_key"] < b["position_key"] else 1
-
-    return sorted(deltas, key=functools.cmp_to_key(_cmp))
+    return sorted(deltas, key=functools.cmp_to_key(_compare_qoq_deltas))
 
 
 def _bound_qoq_deltas(deltas: list[dict]) -> tuple[list[dict], int]:

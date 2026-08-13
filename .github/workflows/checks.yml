@@ -1,0 +1,118 @@
+# PR gates. Nothing here touches the data repo, Cloudflare, or any secret.
+#
+# WHY THIS EXISTS: on 2026-08-12 three PRs merged with ZERO checks. One of them
+# edited two GENERATED files without their generator, which turned
+# tests/test_licenses.py red on `main` — and that red gate then survived a merge
+# AND a production deploy, because nothing ran it. `make test` had caught it
+# locally in 80 seconds; nothing asked.
+#
+# SCOPE: the suites that need no published data build — the full Python tree,
+# the dashboard typecheck, and the dashboard unit suite. The post-build gates
+# (`npm run test:post`) are deliberately NOT here: they require a real
+# `POPULUS_BUILD_DIR` + release DBs, which live in the private data repo, so
+# they stay with the publisher-side workflow that has them.
+name: checks
+
+# NOT `pull_request`: R7e/OD-4 bans PR-like triggers repo-wide because they route
+# untrusted content toward runners, and tests/test_workflow_governance.py enforces
+# it. A push trigger on every branch gets the same protection — the checks attach
+# to the head commit, so the PR displays them and branch protection can require
+# them — without ever letting fork content select a workflow.
+on:
+  push:
+  workflow_dispatch:
+
+# Least privilege (§14): read-only, no secrets referenced anywhere in this file.
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version-file: pyproject.toml
+
+      # `uv` from PyPI at the version publish.yml pins, so both workflows
+      # resolve dependencies the same way. No third-party action.
+      - name: Install uv (pinned)
+        run: python3 -m pip install --quiet "uv==0.7.13"
+
+      - name: Sync (frozen lockfile)
+        run: uv sync --frozen
+
+      # KNOWN-FAILING ALLOWLIST — must SHRINK, never grow.
+      #
+      # These three fail identically at 7ce271d, before the rebrand and before
+      # M2-12: same error ("private-index changed-path inventory mismatch") at
+      # the same line of scripts/build_m2_11_qa_bundle.py. They belong to the
+      # in-flight M2-11 QA-bundle workstream, tracked in BACKLOG.md.
+      #
+      # The step below deselects them AND then asserts they still fail: if one
+      # starts passing, this job goes red telling you to delete the entry. An
+      # allowlist nobody prunes is just a disabled gate.
+      - name: pytest (full tree, minus the tracked known-failing three)
+        run: |
+          uv run pytest -q \
+            --deselect tests/test_m2_11_qa_bundle.py::test_legacy_round_two_transition_now_refuses_strict_predecessor_before_output \
+            --deselect tests/test_m2_11_qa_bundle.py::test_round_three_accepts_exact_failed_gate_predecessor_before_output \
+            --deselect tests/test_m2_11_qa_bundle.py::test_finalization_closeout_private_tree_passes_exact_76_path_scope
+
+      # The allowlist must reject a PASSING test AND any outcome that is not a
+      # clean test failure. Round 1 checked only "nonzero", which silently
+      # accepts an internal error (3), a usage error (4), "no tests collected"
+      # (5), or a crash — so a recorded-failing test that never actually RAN
+      # would still report the allowlist as accurate.
+      #
+      # pytest exit codes: 0 all passed · 1 tests failed · 2 interrupted ·
+      # 3 internal error · 4 usage error · 5 no tests collected. Only 1 is the
+      # expected state here, and the failure signature is pinned too, so the
+      # entry has to be revisited if these start failing for a NEW reason.
+      - name: The known-failing allowlist is still accurate (per node, exact rc)
+        run: |
+          set -uo pipefail
+          nodes=(
+            "tests/test_m2_11_qa_bundle.py::test_legacy_round_two_transition_now_refuses_strict_predecessor_before_output"
+            "tests/test_m2_11_qa_bundle.py::test_round_three_accepts_exact_failed_gate_predecessor_before_output"
+            "tests/test_m2_11_qa_bundle.py::test_finalization_closeout_private_tree_passes_exact_76_path_scope"
+          )
+          expected_signature="private-index changed-path inventory mismatch"
+          stale=0
+          for node in "${nodes[@]}"; do
+            out="$(uv run pytest -q --no-header "$node" 2>&1)"
+            rc=$?
+            case "$rc" in
+              0)
+                echo "::error::STALE ALLOWLIST — $node now PASSES. Delete it from"
+                echo "::error::the deselect list in this file and from BACKLOG.md (B19)."
+                stale=1
+                ;;
+              1)
+                # A clean test failure — the recorded state. Pin the reason too:
+                # a DIFFERENT failure is new information, not the known one.
+                if printf '%s' "$out" | grep -qF "$expected_signature"; then
+                  echo "still failing as recorded: $node"
+                else
+                  echo "::error::$node fails for a DIFFERENT reason than recorded."
+                  echo "::error::Expected signature: $expected_signature"
+                  printf '%s\n' "$out" | tail -5
+                  stale=1
+                fi
+                ;;
+              *)
+                echo "::error::$node did not run as a test at all (pytest rc=$rc:"
+                echo "::error::2 interrupted, 3 internal, 4 usage, 5 not collected)."
+                printf '%s\n' "$out" | tail -5
+                stale=1
+                ;;
+            esac
+          done
+          exit "$stale"

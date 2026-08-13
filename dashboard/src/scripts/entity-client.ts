@@ -991,40 +991,14 @@ export function initHoldersPeriods(): void {
 }
 
 /** /e/ browser entry: the real DOM/fetch/timer seams around the pure driver. */
-export function runGenericRoute(): void {
-  const root = document.getElementById("entity-root");
-  if (!root) return;
-  const watch = browserWatch();
-  const handle = runEntityDriver({
-    search: window.location.search,
-    fetchJson: async (url) => {
-      try {
-        const r = await fetch(url);
-        let body: unknown = null;
-        try {
-          body = await r.json();
-        } catch {
-          body = null; // classifyResponse names this bad_payload on a 2xx
-        }
-        return { kind: "http", status: r.status, body };
-      } catch {
-        return { kind: "network" };
-      }
-    },
-    render: (html) => {
-      root.innerHTML = html;
-    },
-    setTitle: (t) => {
-      document.title = t;
-    },
-    watch,
-    schedule: (fn, ms) => {
-      const id = window.setTimeout(fn, ms);
-      return () => window.clearTimeout(id);
-    },
-  });
-  root.addEventListener("click", (ev) => {
-    const el = ev.target as Element;
+/** The generic route's click delegation, EXTRACTED and exported (Codex F5).
+
+    It was an inline listener body, so the only way to test the controls was to
+    call `handle.*` directly — which is exactly what my first tail-route pager
+    test did, and it would have stayed green with `[data-changes-page]`
+    delegation deleted entirely. Taking an `Element` and a `DriverHandle` makes
+    the real path testable with a element stub, no DOM required. */
+export function dispatchEntityClick(el: Element, handle: DriverHandle): void {
     if (el.closest("[data-retry]")) {
       void handle.retry();
       return;
@@ -1068,5 +1042,41 @@ export function runGenericRoute(): void {
     if (star) {
       handle.toggleWatch(star.dataset.watchKind as "member" | "ticker", star.dataset.watchKey!);
     }
+}
+
+export function runGenericRoute(): void {
+  const root = document.getElementById("entity-root");
+  if (!root) return;
+  const watch = browserWatch();
+  const handle = runEntityDriver({
+    search: window.location.search,
+    fetchJson: async (url) => {
+      try {
+        const r = await fetch(url);
+        let body: unknown = null;
+        try {
+          body = await r.json();
+        } catch {
+          body = null; // classifyResponse names this bad_payload on a 2xx
+        }
+        return { kind: "http", status: r.status, body };
+      } catch {
+        return { kind: "network" };
+      }
+    },
+    render: (html) => {
+      root.innerHTML = html;
+    },
+    setTitle: (t) => {
+      document.title = t;
+    },
+    watch,
+    schedule: (fn, ms) => {
+      const id = window.setTimeout(fn, ms);
+      return () => window.clearTimeout(id);
+    },
+  });
+  root.addEventListener("click", (ev) => {
+    dispatchEntityClick(ev.target as Element, handle);
   });
 }

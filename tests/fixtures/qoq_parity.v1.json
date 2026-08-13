@@ -1,0 +1,81 @@
+{
+  "note": "M2-12 cross-runtime parity fixture, read by BOTH runtimes: dashboard/test/inst-changes-bound.test.ts (holdings.ts::compareQoqDeltas / sortQoqDeltas / boundQoqDeltas / utf8ByteLength) and tests/test_qoq_parity.py (scripts/measure_inst_derive.py::_sort_qoq_deltas / _bound_qoq_deltas / _dumps / _utf8_len). Codex closeout F2/F4: the equal-key comparator repair and the lone-surrogate serialization repair each existed in both runtimes with NO committed test invoking the Python side, so reverting either would have left the suite green while the runtimes diverged. Every case here is asserted by both.",
+  "comparator": [
+    {
+      "name": "reflexive_identical_rows",
+      "a": { "position_key": "POS1", "curr_value_usd": 5, "prev_value_usd": null },
+      "b": { "position_key": "POS1", "curr_value_usd": 5, "prev_value_usd": null },
+      "sign": 0,
+      "why": "equal value AND equal key must compare 0 — the exact defect (returned 1) that made the order non-total"
+    },
+    {
+      "name": "value_desc_beats_key",
+      "a": { "position_key": "ZZZ", "curr_value_usd": 100, "prev_value_usd": null },
+      "b": { "position_key": "AAA", "curr_value_usd": 5, "prev_value_usd": null },
+      "sign": -1,
+      "why": "larger current value sorts first regardless of key"
+    },
+    {
+      "name": "equal_value_tie_breaks_on_key_ascending",
+      "a": { "position_key": "AAA", "curr_value_usd": 7, "prev_value_usd": null },
+      "b": { "position_key": "BBB", "curr_value_usd": 7, "prev_value_usd": null },
+      "sign": -1,
+      "why": "ties resolve by ascending position_key"
+    },
+    {
+      "name": "null_curr_falls_back_to_prev",
+      "a": { "position_key": "AAA", "curr_value_usd": null, "prev_value_usd": 9 },
+      "b": { "position_key": "BBB", "curr_value_usd": null, "prev_value_usd": null },
+      "sign": -1,
+      "why": "an exited position with a disclosed prev value outranks one with nothing disclosed"
+    },
+    {
+      "name": "both_undisclosed_tie_breaks_on_key",
+      "a": { "position_key": "AAA", "curr_value_usd": null, "prev_value_usd": null },
+      "b": { "position_key": "BBB", "curr_value_usd": null, "prev_value_usd": null },
+      "sign": -1,
+      "why": "both fall back to the -1 sentinel, so the key decides"
+    },
+    {
+      "name": "reflexive_both_undisclosed_same_key",
+      "a": { "position_key": "AAA", "curr_value_usd": null, "prev_value_usd": null },
+      "b": { "position_key": "AAA", "curr_value_usd": null, "prev_value_usd": null },
+      "sign": 0,
+      "why": "the sentinel path must be reflexive too"
+    },
+    {
+      "name": "zero_is_a_disclosed_value_not_absence",
+      "a": { "position_key": "AAA", "curr_value_usd": 0, "prev_value_usd": null },
+      "b": { "position_key": "BBB", "curr_value_usd": null, "prev_value_usd": null },
+      "sign": -1,
+      "why": "0 is disclosed and outranks the -1 absence sentinel — G3: absence is not zero"
+    }
+  ],
+  "sort_order": {
+    "note": "one list, sorted by both runtimes, compared as an exact key sequence",
+    "rows": [
+      { "position_key": "D", "curr_value_usd": null, "prev_value_usd": null },
+      { "position_key": "B", "curr_value_usd": 50, "prev_value_usd": 1 },
+      { "position_key": "A", "curr_value_usd": 50, "prev_value_usd": 2 },
+      { "position_key": "C", "curr_value_usd": null, "prev_value_usd": 75 },
+      { "position_key": "E", "curr_value_usd": 0, "prev_value_usd": null }
+    ],
+    "expected_keys": ["C", "A", "B", "E", "D"]
+  },
+  "serialization": [
+    { "name": "ascii", "value": "a", "json": "\"a\"", "utf8_bytes": 3 },
+    { "name": "ascii_boundary_0x7f", "value": "\u007f", "json": "\"\u007f\"", "utf8_bytes": 3 },
+    { "name": "first_two_byte_0x80", "value": "\u0080", "json": "\"\u0080\"", "utf8_bytes": 4 },
+    { "name": "latin1_supplement", "value": "é", "json": "\"é\"", "utf8_bytes": 4 },
+    { "name": "cjk_three_byte", "value": "日", "json": "\"日\"", "utf8_bytes": 5 },
+    { "name": "astral_pair_not_escaped", "value": "😀", "json": "\"😀\"", "utf8_bytes": 6 },
+    { "name": "astral_pair_adjacent", "value": "😀😀", "json": "\"😀😀\"", "utf8_bytes": 10 },
+    { "name": "already_escaped_literal_backslash_u", "value": "\\u0041", "json": "\"\\\\u0041\"", "utf8_bytes": 9 }
+  ],
+  "lone_surrogates": [
+    { "name": "lone_high", "code_points": [55296], "json": "\"\\ud800\"", "utf8_bytes": 8 },
+    { "name": "lone_low", "code_points": [57343], "json": "\"\\udfff\"", "utf8_bytes": 8 },
+    { "name": "adjacent_lone_high_high", "code_points": [55296, 55296], "json": "\"\\ud800\\ud800\"", "utf8_bytes": 14 },
+    { "name": "lone_high_then_ascii", "code_points": [55296, 65], "json": "\"\\ud800A\"", "utf8_bytes": 9 }
+  ]
+}

@@ -159,6 +159,12 @@ cap, with headroom that survives future quarters (R1).
   largest position changes, which is the worst possible slice to lose.
 - **LD-4** — No new output files (R9). Per-`(filer, period)` endpoints would add ~7,500
   files against a 9,671-file tree and an 18,000 cap.
+- **LD-6** — OD-1 is CLOSED (owner, 2026-08-12): cap + paginate, named honestly. The embed is
+bounded at the shared 2 MiB budget and the changes table paginates at the shared page size.
+`1423053` shows roughly its largest 5,600 of 15,885 changes for a quarter, with a terminus
+naming the true total and pointing at the published aggregate and the filing itself. The
+completeness alternative (a byte-bounded shard family for changes) was considered and
+declined for now; TD-M2-12-1 records it as the removal condition for this cap.
 - **LD-5** — `[cik].astro` stops building its own payload; `filerAggregateInputs` is the
   one producer. This is required for R7 and removes a real duplication.
 
@@ -344,16 +350,31 @@ if it is ever approached. Removal condition is TD-M2-12-1's shard family. **TD-M
 - **DoD-4** (R7, R8) — top and tail filers assemble through one function; the client switch
   renders the capped state.
 - **DoD-5** (R10) — rebrand untouched.
-- **DoD-6** — `npm run check`, `npm test`, `npm run build:bounded`, `npm run test:post` all
-  green, each new test verified to fail when its bound is removed.
+- **DoD-6** — `npm run check`, `npm test`, `npm run build:bounded`, and `npm run test:post`
+  green **against the recorded baseline exception below**, each new test verified to fail
+  when its bound is removed.
+
+### DoD-6 baseline exception (owner-approved 2026-08-12, Codex F7)
+
+Codex F7 was correct that "no new failures" does not satisfy a DoD that says every gate is
+green. It is not, and pretending otherwise by attribution alone would be the same
+dishonesty this plan exists to remove from the rendered pages. The exception is therefore
+explicit, enumerated, and bounded:
+
+**Exempted, because they fail identically on `7ce271d` — the commit before any of this
+work:** the three `tests/test_m2_11_qa_bundle.py` failures (B19), and the `test:post`
+failures carried on `main` (B18). Attribution was established by MEASUREMENT, not
+assertion: the full `test:post` suite run against the pre-change tree fails 19 and against
+the post-change tree fails 18, with the set difference being exactly one entry — the R19
+cap gate — moving from fail to pass.
+
+**Not exempted, and now enforced:** every gate this change touches. `astro check` 0 errors,
+279/279 dashboard unit tests, `uv run pytest` 3,412 passed, the three R19 gates (including
+the new margin gate), and R22.
+
+**The exception must shrink.** B18 and B19 carry the underlying defects, and
+`.github/workflows/checks.yml` deselects the B19 trio *and asserts they still fail*, so the
+allowlist cannot quietly become permanent cover: when they are fixed, CI goes red until the
+entries are deleted.
 - **DoD-7** — no manual post-build editing anywhere in the path; the tree is reproducible
   from source.
-
-## Resolved Decision
-
-**OD-1 — RESOLVED by the owner, 2026-08-12: cap + paginate, named honestly.** The embed is
-bounded at the shared 2 MiB budget and the changes table paginates at the shared page size.
-`1423053` shows roughly its largest 5,600 of 15,885 changes for a quarter, with a terminus
-naming the true total and pointing at the published aggregate and the filing itself. The
-completeness alternative (a byte-bounded shard family for changes) was considered and
-declined for now; TD-M2-12-1 records it as the removal condition for this cap.
