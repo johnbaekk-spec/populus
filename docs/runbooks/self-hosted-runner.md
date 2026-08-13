@@ -37,6 +37,68 @@ Data stores (already existing, owner home):
 
 ---
 
+## 0. Which machine, and is it provisioned? (read before anything else)
+
+The runner host is **the machine that holds the canonical audit store and the
+accepted snapshots** (the paths above). That is what pins the publish job to
+this Mac — the snapshot is far too large to ship to a hosted runner — so the
+install below happens *there*, not on whichever machine you happen to be
+reading this from.
+
+Three facts, learned operationally on 2026-08-13, that this section exists to
+make cheap to re-discover:
+
+* **A dispatch against an unregistered label queues silently for up to 24
+  hours.** GitHub accepts `workflow_dispatch`, creates the run, and parks the
+  `publish` job as `queued` with no immediate error; only after ~24 hours
+  does it fail the job for never starting. A run that seems to hang has
+  usually not started — check the job's own status, not the run's.
+* **A green run is not proof anything published — under any graph.** A
+  skipped job reports status "Success" (GitHub's documented job-condition
+  behavior), so when `publish`'s `if:` guard evaluates false (wrong branch,
+  `POPULUS_PUBLISH_ARMED` unset, unvalidated nightly) the whole chain —
+  `publish`, `deploy`, `sign`, `assert-signed` — skips and the RUN concludes
+  green. What the current graph does forbid is downstream jobs *running*
+  without a successful publish; it cannot make a no-op run look red. Older
+  runs additionally obey whatever graph they ran under: the dispatch of
+  2026-08-12 07:16 (workflow at `76565a5`) concluded `success` while its job
+  list contains no `publish` and no `deploy` job at all — only
+  verification/signing jobs on hosted runners. So: read a run's **job list**,
+  never its conclusion — a publish that published has a succeeded `publish`
+  job on `self-hosted,macOS,populus-ops` in it.
+* **Committed code ≠ provisioned machine.** The controller, its plist, and
+  this runbook shipping in the repo says nothing about any machine having run
+  steps 1–7.
+
+Preflight — run on the intended host. The `ls`/`dscl` checks report absence
+through their ordinary error output; the `gh` check prints what to look for:
+
+```bash
+# Is THIS the machine that holds the stores? (both must exist)
+ls ~/projects/Populus-ops/populus-m28.db ~/projects/Populus-ops/snapshots/
+
+# Is a runner with the REQUIRED LABELS registered, and is it online? A bare
+# total_count cannot answer this: it counts every runner regardless of labels
+# or connectivity. Expect one line, ending "online". No output = not
+# registered (install below); "offline" = registered but the controller is
+# not cycling (step 5).
+gh api repos/johnbaekk-spec/populus/actions/runners   --jq '.runners[] | select(([.labels[].name] | contains(["self-hosted","macOS","populus-ops"])) ) | "\(.name)\t\(.status)"'
+
+# Steps 1/3/5 present on this machine?
+dscl . -read /Users/populusrunner UniqueID 2>/dev/null || echo "step 1 NOT done (no runner account)"
+ls -d /usr/local/populus-runner/controller 2>/dev/null || echo "steps 3-4 NOT done (no controller install)"
+ls /Library/LaunchDaemons/com.populus.runner-controller.plist 2>/dev/null || echo "step 5 NOT done (no launchd daemon)"
+ls /usr/local/populus-toolchain/bin 2>/dev/null || echo "toolchain NOT provisioned (step 4 prerequisite)"
+```
+
+If every check reports NOT done, this is a fresh install: proceed with
+steps 1–7 in order. If the labeled-runner check prints nothing (or
+"offline") but the machine-side pieces exist, the ephemeral registration has
+lapsed and the controller is not cycling — start at step 5's "confirm it is
+running" tail, not at step 1.
+
+---
+
 ## 1. Create the dedicated non-admin runner account (owner-only)
 
 ```bash
