@@ -1,0 +1,45 @@
+---
+import Base from "../../../layouts/Base.astro";
+import { getBuildData } from "../../../lib/data";
+import { congressTickersRollup } from "../../../lib/derive";
+import { congressRankingBody, congressTabs, type BuildStamps } from "../../../lib/ui";
+import type { RenderCtx } from "../../../lib/format";
+
+const build = getBuildData();
+const stamps: BuildStamps = {
+  buildId: build.buildId,
+  generatedAt: build.generatedAt,
+  generatedAtDate: build.generatedAtDate,
+};
+const ctx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+const rollup = congressTickersRollup(build.txns, build.generatedAtDate, 12);
+// Render bound (not a data bound): the terminus row names the cut and its author.
+const body = congressRankingBody("tickers", rollup, stamps, ctx, { limit: 200 });
+
+const description =
+  "Tickers ranked by net disclosed congressional flow — interval arithmetic over statutory " +
+  "ranges; rows without a ticker are counted and stated, never silently dropped.";
+---
+
+<Base title="Congress tickers — net disclosed flow — Public Filings" description={description} active="congress">
+  <main class="shell page">
+    <div class="page-head">
+      <div class="page-head-copy">
+        <div class="kicker">/congress/tickers</div>
+        <h1 class="page-title">Tickers — net disclosed flow</h1>
+        <p class="page-lede">
+          Which tickers Congress disclosed most, as intervals over statutory
+          ranges. Rows that disclose no ticker cannot appear here — their count
+          is stated below the table, because the largest disclosers by flow can
+          be entirely non-equity. <a href="/methodology/">How this data is made ↗</a>
+        </p>
+      </div>
+    </div>
+    <Fragment set:html={congressTabs("tickers")} />
+    <Fragment set:html={body} />
+  </main>
+</Base>

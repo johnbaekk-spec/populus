@@ -220,6 +220,9 @@ function renderCorpus(): string {
   const stamps = { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" };
   const t: TxnRow = {
     kind: "txn",
+    txnId: "t-test",
+    asset: null,
+    assetType: null,
     filed: "2026-07-21",
     traded: "2026-06-24",
     name: "N",

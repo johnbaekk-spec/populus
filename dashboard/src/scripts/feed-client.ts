@@ -4,11 +4,13 @@
    Rows render through the same feedItemHtml the build used for page 1. */
 
 import {
+  classifyDataset,
   txnFromArray,
   paperFromArray,
   mergeFeed,
   pageSlice,
   pageCountFor,
+  PAGE_SIZE,
   feedCountText,
   feedItemHtml,
   fmtInt,
@@ -17,8 +19,8 @@ import {
   type TxnRow,
   type PaperRow,
   type RenderCtx,
-} from "../lib/format";
-import { loadWatchStore } from "./entity-client";
+} from "../lib/format.ts";
+import { loadWatchStore } from "./entity-client.ts";
 
 interface State {
   chamber: "all" | "house" | "senate";
@@ -29,6 +31,18 @@ interface State {
   late: boolean;
   q: string;
   page: number;
+  /* A-1: sort + date range. `amount-*` sorts follow F-16's four-state rule:
+     closed and upper-open rows rank on their LOWER bound (the disclosed,
+     conservative key); a capped "Under $X" row ranks at its true lower bound
+     0; a wholly-unknown row has no key at all and goes to a labeled
+     unrankable bucket AFTER the ranked rows. An upper-bound sort is not
+     offered — it is not definable over all four states. */
+  sort: "filed" | "amount-desc" | "amount-asc";
+  dateFrom: string; // "" = unbounded
+  dateTo: string; // "" = unbounded
+  dateBasis: "filed" | "traded";
+  /** A-3: restrict to rows whose member or ticker is watched on this device */
+  watchedOnly: boolean;
 }
 
 const DEFAULTS: State = {
@@ -40,7 +54,41 @@ const DEFAULTS: State = {
   late: false,
   q: "",
   page: 0,
+  sort: "filed",
+  dateFrom: "",
+  dateTo: "",
+  dateBasis: "filed",
+  watchedOnly: false,
 };
+
+/** F-16 sort key: the disclosed lower bound, or null when the row has no
+    rankable key (wholly unknown). Exported for tests. */
+export function amountSortKey(r: Pick<TxnRow, "low" | "high">): number | null {
+  if (r.low != null) return r.low; // closed and upper-open: lower bound, normally
+  if (r.high != null) return 0; // capped "Under $X" = closed [0,X]: true lower bound 0
+  return null; // wholly unknown: no key — unrankable bucket, never coerced
+}
+
+/** F-16 amount ordering, pure: ranked rows on the lower-bound key with a
+    stable tie-break (filed desc, then load order = txn_id asc within a date);
+    wholly-unknown rows in a separate bucket, never interleaved. */
+export function amountOrder(
+  fTxns: readonly TxnRow[],
+  sort: "amount-desc" | "amount-asc",
+  orderIndex: ReadonlyMap<TxnRow, number>,
+): { ranked: TxnRow[]; unranked: TxnRow[] } {
+  const dir = sort === "amount-desc" ? -1 : 1;
+  const ranked = fTxns
+    .filter((r) => amountSortKey(r) !== null)
+    .sort((a, b) => {
+      const ka = amountSortKey(a)!;
+      const kb = amountSortKey(b)!;
+      if (ka !== kb) return dir * (ka - kb);
+      if (a.filed !== b.filed) return a.filed < b.filed ? 1 : -1;
+      return (orderIndex.get(a) ?? 0) - (orderIndex.get(b) ?? 0);
+    });
+  return { ranked, unranked: fTxns.filter((r) => amountSortKey(r) === null) };
+}
 
 export function initFeed(): void {
   const rootEl = document.getElementById("congress-feed");
@@ -60,9 +108,13 @@ export function initFeed(): void {
   const amountSel = document.getElementById("filter-amount") as HTMLSelectElement | null;
   const ownerSel = document.getElementById("filter-owner") as HTMLSelectElement | null;
   const lateChk = document.getElementById("filter-late") as HTMLInputElement | null;
-  // #site-search belongs to the global search client now (R11); the feed no
-  // longer filters on it — search is site navigation, not a feed filter.
-  const searchInput = null as HTMLInputElement | null;
+  // A-1: the feed's OWN text filter (ticker prefix + member substring) —
+  // distinct from #site-search, which is site navigation (R11).
+  const searchInput = document.getElementById("filter-q") as HTMLInputElement | null;
+  const sortSel = document.getElementById("filter-sort") as HTMLSelectElement | null;
+  const dateFromInp = document.getElementById("filter-date-from") as HTMLInputElement | null;
+  const dateToInp = document.getElementById("filter-date-to") as HTMLInputElement | null;
+  const dateBasisSel = document.getElementById("filter-date-basis") as HTMLSelectElement | null;
   if (!rootEl || !bodyEl || !feedEl || !countEl || !rangeEl) return;
 
   const totalAll = Number(rootEl.dataset.txnCount ?? 0);
@@ -93,6 +145,7 @@ export function initFeed(): void {
 
   let txns: TxnRow[] | null = null;
   let paper: PaperRow[] | null = null;
+  const orderIndex = new Map<TxnRow, number>();
   let loadPromise: Promise<void> | null = null;
   let pendingApply = false;
 
@@ -103,8 +156,21 @@ export function initFeed(): void {
         return r.json();
       })
       .then((d) => {
-        txns = (d.txns as unknown[][]).map(txnFromArray);
-        paper = (d.paper as unknown[][]).map(paperFromArray);
+        // Review F3: a cached v1 body decoded with v2 offsets leaves asset
+        // fields and txnId undefined — classify before decoding, refuse stale.
+        const cls = classifyDataset(d);
+        if (cls.outcome !== "ok") {
+          throw new Error(
+            cls.outcome === "version_mismatch"
+              ? `dataset version mismatch: got ${String(cls.got)}`
+              : `dataset rejected: ${cls.detail}`,
+          );
+        }
+        txns = cls.txns.map(txnFromArray);
+        paper = cls.paper.map(paperFromArray);
+        // A-1: the load order (filed desc, txn_id asc within a date) is the
+        // stable tie-break for every other sort — reproducible by build.
+        txns.forEach((t, i) => orderIndex.set(t, i));
         if (pendingApply) {
           pendingApply = false;
           apply();
@@ -114,7 +180,9 @@ export function initFeed(): void {
         loadPromise = null;
         loadingEl?.setAttribute("hidden", "");
         console.error("populus: feed dataset failed to load", err);
-        if (pendingApply) renderLoadFailure();
+        // Review F5: a refused or failed dataset states itself on the page
+        // unconditionally — not only when an interaction was already pending.
+        renderLoadFailure();
       });
     return loadPromise;
   }
@@ -160,7 +228,33 @@ export function initFeed(): void {
 
   /** Everything except the amount threshold — so the indeterminate-amount
       population can be counted against the same other filters. */
+  /** A-1 date-range predicate. Basis "filed" is always well-defined. Basis
+      "traded" is a date-windowed aggregate over trade dates: rows flagged
+      `date_anomaly` (impossible trade dates) are EXCLUDED (constraint 9) and
+      counted, and rows with no trade date cannot be placed in the window. */
+  function matchDate(r: TxnRow, s: State): "in" | "out" | "anomaly" {
+    if (!s.dateFrom && !s.dateTo) return "in";
+    let d: string | null;
+    if (s.dateBasis === "filed") {
+      d = r.filed;
+    } else {
+      if (r.flags.includes("date_anomaly")) return "anomaly";
+      d = r.traded;
+      if (d == null) return "out"; // undated: cannot be placed in a trade window
+    }
+    if (s.dateFrom && d < s.dateFrom) return "out";
+    if (s.dateTo && d > s.dateTo) return "out";
+    return "in";
+  }
+
   function matchTxnExceptAmount(r: TxnRow, s: State): boolean {
+    if (matchDate(r, s) !== "in") return false;
+    if (
+      s.watchedOnly &&
+      !(r.bioguide !== null && watched.has(r.bioguide)) &&
+      !(r.ticker !== null && watchStore.tickers.has(r.ticker))
+    )
+      return false;
     if (s.chamber !== "all" && r.chamber !== s.chamber) return false;
     if (s.party !== "all" && r.party !== s.party) return false;
     if (s.side === "buy" && r.side !== "purchase") return false;
@@ -195,12 +289,18 @@ export function initFeed(): void {
   // A paper filing has no side/amount/owner/late/ticker — it can only honestly
   // match filters on dimensions it possesses; any other active filter hides it.
   function paperVisible(s: State): boolean {
+    // A trade-date window cannot place a paper filing (no trade dates parsed).
+    if (s.dateBasis === "traded" && (s.dateFrom || s.dateTo)) return false;
     return s.side === "all" && s.amountMin === 0 && s.owner === "all" && !s.late;
   }
   function matchPaper(p: PaperRow, s: State): boolean {
     if (s.chamber !== "all" && p.chamber !== s.chamber) return false;
     if (s.party !== "all" && p.party !== s.party) return false;
     if (s.q && !p.name.toLowerCase().includes(s.q.toLowerCase())) return false;
+    if (s.dateFrom && p.filed < s.dateFrom) return false;
+    if (s.dateTo && p.filed > s.dateTo) return false;
+    // A paper filing has no ticker, so watched-only matches on the member.
+    if (s.watchedOnly && !(p.bioguide !== null && watched.has(p.bioguide))) return false;
     return true;
   }
 
@@ -320,15 +420,38 @@ export function initFeed(): void {
 
     const fTxns = txns.filter((r) => matchTxn(r, state));
     const fPaper = paperVisible(state) ? paper.filter((p) => matchPaper(p, state)) : [];
+    // Constraint 9 disclosure: rows a trade-date window had to exclude because
+    // their trade date is flagged impossible.
+    const anomalyExcluded =
+      state.dateBasis === "traded" && (state.dateFrom || state.dateTo)
+        ? txns.filter((r) => matchDate(r, state) === "anomaly").length
+        : 0;
 
-    // Page count is derived from the merged feed, so a trailing paper row is
-    // always reachable (a counts-only formula cannot see where paper rows sit).
-    const merged = mergeFeed(fTxns, fPaper);
-    const maxPage = Math.max(0, pageCountFor(merged) - 1);
-    if (state.page > maxPage) state.page = maxPage;
-
-    const items = pageSlice(merged, state.page);
     const ctx: RenderCtx = { watched };
+    let items: (TxnRow | PaperRow)[];
+    let maxPage: number;
+    let unrankedStart = -1; // index into the FULL combined list, amount sorts only
+
+    if (state.sort === "filed") {
+      // Page count is derived from the merged feed, so a trailing paper row is
+      // always reachable (a counts-only formula cannot see where paper rows sit).
+      const merged = mergeFeed(fTxns, fPaper);
+      maxPage = Math.max(0, pageCountFor(merged) - 1);
+      if (state.page > maxPage) state.page = maxPage;
+      items = pageSlice(merged, state.page);
+    } else {
+      // F-16 amount ordering: ranked rows on the lower-bound key; wholly
+      // unknown rows (and paper filings, which disclose no amount) go to a
+      // LABELED unrankable bucket after every ranked row — never interleaved,
+      // never coerced to zero. Stable tie-break: filed desc, then load order
+      // (txn_id asc within a date), so the order is reproducible.
+      const { ranked, unranked } = amountOrder(fTxns, state.sort, orderIndex);
+      const all = [...ranked, ...unranked, ...fPaper];
+      unrankedStart = ranked.length;
+      maxPage = Math.max(0, Math.ceil(all.length / PAGE_SIZE) - 1);
+      if (state.page > maxPage) state.page = maxPage;
+      items = all.slice(state.page * PAGE_SIZE, (state.page + 1) * PAGE_SIZE);
+    }
 
     // Keyed on what actually renders — a paper-only result set renders rows,
     // and an empty page must always say so rather than showing a blank frame.
@@ -337,7 +460,20 @@ export function initFeed(): void {
       renderEmpty(fTxns.length);
     } else {
       emptyEl?.setAttribute("hidden", "");
-      bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
+      const pageStart = state.page * PAGE_SIZE;
+      const parts: string[] = [];
+      items.forEach((it, i) => {
+        if (state.sort !== "filed" && pageStart + i === unrankedStart) {
+          const nUnrankable = fTxns.filter((r) => amountSortKey(r) === null).length + fPaper.length;
+          parts.push(
+            `<div class="feed-separator" role="presentation">Not rankable by amount — ` +
+              `wholly undisclosed or paper (${fmtInt(nUnrankable)} ` +
+              `${nUnrankable === 1 ? "row" : "rows"}) · listed after every ranked row, never coerced to $0</div>`,
+          );
+        }
+        parts.push(feedItemHtml(it, ctx));
+      });
+      bodyEl!.innerHTML = parts.join("\n");
     }
 
     // One assembled string, every sink — no fragment can reach some readers
@@ -352,7 +488,14 @@ export function initFeed(): void {
       txnTotal: totalAll,
       indeterminate: indeterminateCount(state),
     });
-    setCounts(range);
+    setCounts(
+      range +
+        (anomalyExcluded > 0
+          ? ` · ${fmtInt(anomalyExcluded)} date-anomaly ${
+              anomalyExcluded === 1 ? "row" : "rows"
+            } excluded from the trade-date window`
+          : ""),
+    );
 
     // Keep both pager controls focusable at the boundaries — removing the
     // control that was just activated dumps keyboard focus to <body>.
@@ -383,6 +526,12 @@ export function initFeed(): void {
     if (ownerSel) ownerSel.value = "all";
     if (lateChk) lateChk.checked = false;
     if (searchInput) searchInput.value = "";
+    if (sortSel) sortSel.value = "filed";
+    if (dateFromInp) dateFromInp.value = "";
+    if (dateToInp) dateToInp.value = "";
+    if (dateBasisSel) dateBasisSel.value = "filed";
+    const watchedReset = document.getElementById("filter-watched") as HTMLInputElement | null;
+    if (watchedReset) watchedReset.checked = false;
     apply();
   }
 
@@ -417,6 +566,39 @@ export function initFeed(): void {
   });
   lateChk?.addEventListener("change", () => {
     state.late = lateChk.checked;
+    state.page = 0;
+    apply();
+  });
+
+  const watchedChk = document.getElementById("filter-watched") as HTMLInputElement | null;
+  watchedChk?.addEventListener("change", () => {
+    state.watchedOnly = watchedChk.checked;
+    state.page = 0;
+    apply();
+  });
+
+  searchInput?.addEventListener("input", () => {
+    state.q = searchInput.value.trim();
+    state.page = 0;
+    apply();
+  });
+  sortSel?.addEventListener("change", () => {
+    state.sort = sortSel.value as State["sort"];
+    state.page = 0;
+    apply();
+  });
+  dateFromInp?.addEventListener("change", () => {
+    state.dateFrom = dateFromInp.value;
+    state.page = 0;
+    apply();
+  });
+  dateToInp?.addEventListener("change", () => {
+    state.dateTo = dateToInp.value;
+    state.page = 0;
+    apply();
+  });
+  dateBasisSel?.addEventListener("change", () => {
+    state.dateBasis = dateBasisSel.value as State["dateBasis"];
     state.page = 0;
     apply();
   });

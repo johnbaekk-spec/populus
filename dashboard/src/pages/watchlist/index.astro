@@ -1,0 +1,78 @@
+---
+// A-3 (ALPHA-UX): /watchlist — the read surface for the watch-v2 store. The
+// store is device-local, so the page is a client island over the published
+// dataset; the server ships only the shell and the build's coverage facts
+// the D-1c cursor rule needs (earliest retained filed date).
+import Base from "../../layouts/Base.astro";
+import { getBuildData } from "../../lib/data";
+import { earliestRetainedFiled } from "../../lib/watchlist";
+
+const build = getBuildData();
+// The exact earliest retained FILED date across BOTH families (txns AND paper
+// — review F6) — the D-1c coverage-gap boundary. Year-granular `filedFrom`
+// would misclassify a cursor inside the earliest year.
+const earliestFiled = earliestRetainedFiled(build.txns, build.paper, build.generatedAtDate);
+const description =
+  "Your watched members and tickers, their latest filings, and what is new since you last " +
+  "looked — stored in this browser only; no account, no tracking.";
+---
+
+<Base title="Watchlist — Public Filings" description={description} active="congress">
+  <main
+    class="shell page"
+    id="watchlist-root"
+    data-build-id={build.buildId}
+    data-filed-from={earliestFiled}
+  >
+    <div class="page-head">
+      <div class="page-head-copy">
+        <div class="kicker">/watchlist</div>
+        <h1 class="page-title">Watchlist</h1>
+        <p class="page-lede">
+          Watched members and tickers, with their filings from this build. The
+          watchlist and the last-seen marker live in this browser only — no
+          account, nothing leaves your device. Star a member on
+          <a href="/congress/">the feed</a> or a ticker on its page to add it here.
+        </p>
+      </div>
+    </div>
+
+    <div id="watch-banner"></div>
+
+    <div class="watch-controls">
+      <div class="chips" id="watch-chips"></div>
+      <label class="filter-check" for="watch-new-only">
+        <input type="checkbox" id="watch-new-only" />
+        only new since last look
+      </label>
+      <button class="pager-btn" id="watch-mark-seen">mark all seen</button>
+    </div>
+
+    <div class="feed-empty" id="watch-empty" hidden>
+      <h2>Nothing watched yet — and that's a state, not an error.</h2>
+      <p>
+        Watch stars save to this browser. Star a member on
+        <a href="/congress/">the congressional feed</a> or a ticker on its page,
+        then return here.
+      </p>
+    </div>
+
+    <div class="feed">
+      <div id="watch-body" role="list" aria-label="Watched filings"></div>
+      <div class="filter-count"><span id="watch-count"></span></div>
+    </div>
+
+    <noscript>
+      <p class="section-note">
+        The watchlist is stored in your browser and needs JavaScript to read
+        back. The full published dataset is at
+        <a href="/congress/data/feed.v1.json">feed.v1.json</a>.
+      </p>
+    </noscript>
+  </main>
+
+  <script>
+    import { initWatchlist } from "../../scripts/watchlist-client";
+    initWatchlist();
+  </script>
+</Base>

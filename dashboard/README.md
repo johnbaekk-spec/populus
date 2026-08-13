@@ -204,11 +204,11 @@ measurement or contract citation.
     this pipeline: the cut is `DEFAULT_TOPN` in `src/populus/inst_agg.py:44`,
     a Public Filings build parameter, and G3 requires naming the truncation's real
     author.
-12. **The member/deep-ticker Asset column is dropped.** The view exposes
-    `asset_name`, but the deployed columnar contract (`TXN_COLS`,
-    `DATASET_VERSION` 1) does not carry it, and extending the wire format
-    mid-P3-1-QA would change `feed.v1.json` for the branch under review.
-    Follow-up: add it at `DATASET_VERSION` 2.
+12. **[RESOLVED — ALPHA-UX B-7] The Asset column now ships.** `TXN_COLS`
+    carries `asset`, `assetType` and `txnId` at `DATASET_VERSION` 2; no-ticker
+    rows render the asset name as filed (with the source's asset-type value
+    verbatim — the client never classifies), and every payload embeds the
+    version so a stale cached dataset is refused rather than half-read.
 13. **Home's "Run the MCP server" CTA is dropped** — no public destination
     exists this run (the repo is not yet published); the commitments copy
     retains the MCP mention.

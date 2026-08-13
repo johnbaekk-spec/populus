@@ -21,7 +21,9 @@ import {
   type PaperRow,
   type FeedItem,
   type StatTile,
+  isCanonicalDate,
   mergeFeed,
+  normalizeTicker,
   txnToArray,
   paperToArray,
   TXN_COLS,
@@ -65,6 +67,7 @@ import {
   type FilerRouteV2,
 } from "./filer-payload.ts";
 import { paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
+import { buildSignalArtifact, validateSignalArtifact } from "./signals.ts";
 
 export type { StatTile, MemberEntity, TickerEntity };
 
@@ -108,6 +111,363 @@ export interface BuildData {
   inst: InstData;
   tickerMap: TickerMap | null;
   searchIndexJson: string;
+  /* --- ALPHA-UX C-3 context (B-5/B-6 tables; null until a build carries them) --- */
+  sectorData: SectorData | null;
+  committeeData: CommitteeData | null;
+}
+
+export interface SectorData {
+  /** issuer CIK (10-digit) → sector, resolved by the producer's taxonomy at ingest */
+  sectorByCik: Map<string, string>;
+  taxonomyVersion: string;
+  asOf: string;
+}
+
+export interface CommitteeData {
+  /** bioguide → memberships (with validity windows — the dating contract) */
+  byMember: Map<
+    string,
+    { committeeId: string; name: string; role: string | null; validFrom: string; validTo: string }[]
+  >;
+  jurisdictionByCommittee: Map<string, string[]>;
+  mappingVersion: string;
+  snapshotDate: string;
+  /** snapshot-WIDE validity bounds across all members (review F7): a member
+      with zero rows inside this window is known-none, not unknown */
+  windowFrom: string;
+  windowTo: string;
+}
+
+/** Optional B-5/B-6 tables. Absence (older builds) is an explicit null the
+    pages render as honest absence — never a guessed empty mix. */
+/* internal: exported for tests (review F9) — the corruption/absence distinction is load-bearing. */
+export function loadContext(dbPath: string): { sectorData: SectorData | null; committeeData: CommitteeData | null } {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  let sectorData: SectorData | null = null;
+  let committeeData: CommitteeData | null = null;
+  // Review F9: absence is detected EXPLICITLY (sqlite_master), never inferred
+  // from a swallowed exception — schema drift, corruption, or a locked file
+  // must fail the build loudly, not impersonate the legitimate "not in this
+  // build" state.
+  const hasTable = (name: string): boolean =>
+    db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
+      .get(name) !== undefined;
+  // Review F7: a table FAMILY is wholly absent (→ honest null), complete
+  // (→ load), or PARTIAL (→ build failure) — a half-migrated or damaged build
+  // must never masquerade as "not in this build".
+  const familyState = (tables: string[]): "absent" | "complete" | "partial" => {
+    const present = tables.filter(hasTable);
+    return present.length === 0 ? "absent" : present.length === tables.length ? "complete" : "partial";
+  };
+  try {
+    const sectorFamily = familyState(["issuer_sic", "sic_taxonomy_meta"]);
+    if (sectorFamily === "partial") {
+      throw new Error(
+        "the B-5 sector table family is PARTIALLY present in this build's database — " +
+          "a half-migrated or damaged build cannot pass as honest absence",
+      );
+    }
+    if (sectorFamily === "complete") {
+      const meta = new Map(
+        (db.prepare(`SELECT key, value FROM sic_taxonomy_meta`).all() as Record<string, unknown>[]).map(
+          (r) => [String(r.key), String(r.value)],
+        ),
+      );
+      const sectorByCik = new Map<string, string>();
+      for (const r of db.prepare(`SELECT cik, sector FROM issuer_sic`).all() as Record<string, unknown>[]) {
+        sectorByCik.set(String(r.cik), String(r.sector));
+      }
+      // Review r3-F7: the family is COMPLETE here, so "empty" is a failed or
+      // never-run ingest — a producer defect. Converting it to null would let
+      // it wear the legitimate "not in this build" page.
+      // The sector snapshot's own as-of date is displayed beside every sector
+      // claim — same strictness (F0 full-set sweep).
+      if (meta.has("snapshot_as_of") && !isCanonicalDate(meta.get("snapshot_as_of"))) {
+        throw new Error(
+          `sic_taxonomy_meta.snapshot_as_of is not a real YYYY-MM-DD date ` +
+            `(${JSON.stringify(meta.get("snapshot_as_of"))}) — sector claims must carry a real as-of date`,
+        );
+      }
+      if (sectorByCik.size === 0) {
+        throw new Error(
+          "the B-5 sector tables exist but hold no issuer rows — an empty or failed " +
+            "ingest cannot pass as honest absence; run `populus sectors`, or drop the " +
+            "tables if this build is deliberately without sector data",
+        );
+      }
+      if (!meta.has("taxonomy_version") || !meta.has("snapshot_as_of")) {
+        throw new Error(
+          "issuer_sic is populated but sic_taxonomy_meta is missing its required keys — " +
+            "refusing to render sector claims without their taxonomy provenance",
+        );
+      }
+      sectorData = {
+        sectorByCik,
+        taxonomyVersion: meta.get("taxonomy_version")!,
+        asOf: meta.get("snapshot_as_of")!,
+      };
+    }
+    const committeeFamily = familyState(["committees", "committee_memberships", "committee_jurisdiction"]);
+    if (committeeFamily === "partial") {
+      throw new Error(
+        "the B-6 committee table family is PARTIALLY present in this build's database — " +
+          "a half-migrated or damaged build cannot pass as honest absence",
+      );
+    }
+    if (committeeFamily === "complete") {
+      /* Review c2r3-F2: the read below INNER-JOINs memberships to committees,
+         so a row naming a committee the committees table does not carry would
+         vanish silently — and one surviving membership keeps the family
+         non-empty, so the affected member is then answered KNOWN-NONE instead
+         of unknown. Count first and refuse the discrepancy: a partial or
+         corrupted substrate must fail, never quietly erase a membership. */
+      const sourceRows = Number(
+        (db.prepare(`SELECT COUNT(*) AS n FROM committee_memberships`).get() as { n: number }).n,
+      );
+      const orphans = Number(
+        (
+          db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM committee_memberships m
+               WHERE NOT EXISTS (SELECT 1 FROM committees c WHERE c.committee_id = m.committee_id)`,
+            )
+            .get() as { n: number }
+        ).n,
+      );
+      if (orphans > 0) {
+        throw new Error(
+          `${orphans} of ${sourceRows} committee_memberships rows name a committee absent from ` +
+            `the committees table — the join would drop them silently and answer those members ` +
+            `"known to have no committee"; refusing a partial committee substrate`,
+        );
+      }
+      const byMember: CommitteeData["byMember"] = new Map();
+      let snapshotDate = "";
+      const snapshotDates = new Set<string>();
+      const validFroms = new Set<string>();
+      const validTos = new Set<string>();
+      for (const r of db
+        .prepare(
+          `SELECT m.bioguide_id, m.committee_id, c.name, m.role, m.valid_from, m.valid_to, m.snapshot_date
+           FROM committee_memberships m JOIN committees c ON c.committee_id = m.committee_id
+           ORDER BY m.bioguide_id, m.committee_id`,
+        )
+        .all() as Record<string, unknown>[]) {
+        const key = String(r.bioguide_id);
+        let list = byMember.get(key);
+        if (!list) {
+          list = [];
+          byMember.set(key, list);
+        }
+        list.push({
+          committeeId: String(r.committee_id),
+          name: String(r.name),
+          role: r.role == null ? null : String(r.role),
+          validFrom: String(r.valid_from),
+          validTo: String(r.valid_to),
+        });
+        snapshotDates.add(String(r.snapshot_date));
+        if (String(r.snapshot_date) > snapshotDate) snapshotDate = String(r.snapshot_date);
+        validFroms.add(String(r.valid_from));
+        validTos.add(String(r.valid_to));
+      }
+      const jurisdictionByCommittee = new Map<string, string[]>();
+      const mappingVersions = new Set<string>();
+      for (const r of db
+        .prepare(`SELECT committee_id, sector, mapping_version FROM committee_jurisdiction`)
+        .all() as Record<string, unknown>[]) {
+        const cid = String(r.committee_id);
+        let list = jurisdictionByCommittee.get(cid);
+        if (!list) {
+          list = [];
+          jurisdictionByCommittee.set(cid, list);
+        }
+        list.push(String(r.sector));
+        mappingVersions.add(String(r.mapping_version));
+      }
+      // Review r3-F8: overlap claims attribute to ONE mapping revision — rows
+      // from mixed revisions (a half-applied re-ingest) cannot share a page
+      // under a single arbitrary version label.
+      if (mappingVersions.size > 1) {
+        throw new Error(
+          `committee_jurisdiction carries ${mappingVersions.size} mapping versions ` +
+            `(${[...mappingVersions].sort().join(", ")}) — a half-applied re-ingest; ` +
+            `every row must carry one version or the attribution is a lie`,
+        );
+      }
+      if (snapshotDates.size > 1) {
+        throw new Error(
+          `committee_memberships carries ${snapshotDates.size} snapshot dates ` +
+            `(${[...snapshotDates].sort().join(", ")}) — memberships are a full-replace ` +
+            `snapshot; mixed dates mean a partial ingest`,
+        );
+      }
+      /* Review c2-F2: the validity window is a property of the SNAPSHOT, and
+         the ingest writes one `valid_from`/`valid_to` pair for every row. Mixed
+         bounds therefore mean a partial ingest — and widening them to the outer
+         hull would let a member whose rows begin later be reported as
+         KNOWN to have no committee on dates their own rows never covered.
+         Reject rather than widen. */
+      if (validFroms.size > 1 || validTos.size > 1) {
+        throw new Error(
+          `committee_memberships carries ${validFroms.size} valid_from and ${validTos.size} ` +
+            `valid_to values (${[...validFroms].sort().join(", ")} / ${[...validTos].sort().join(", ")}) — ` +
+            `one full-replace snapshot has exactly one validity window; mixed bounds mean a ` +
+            `partial ingest, and widening them would manufacture known-none answers`,
+        );
+      }
+      let joinedRows = 0;
+      for (const list of byMember.values()) joinedRows += list.length;
+      if (joinedRows !== sourceRows) {
+        throw new Error(
+          `the committee membership join returned ${joinedRows} of ${sourceRows} source rows — ` +
+            `rows were dropped by the read, which would silently erase memberships`,
+        );
+      }
+      const mappingVersion = [...mappingVersions][0] ?? "";
+      // Review r3-F7: complete-but-empty is a defect here too.
+      if (byMember.size === 0) {
+        throw new Error(
+          "the B-6 committee tables exist but hold no memberships — an empty or failed " +
+            "ingest cannot pass as honest absence; run `populus committees`, or drop the " +
+            "tables if this build is deliberately without committee data",
+        );
+      }
+      if (mappingVersion === "") {
+        throw new Error(
+          "committee memberships are present but committee_jurisdiction is empty — " +
+            "the jurisdiction mapping must load with its family or overlap claims have no version",
+        );
+      }
+      const windowFrom = [...validFroms][0] ?? "";
+      const windowTo = [...validTos][0] ?? "";
+      /* Review c2r2-F2: the window decides what is ANSWERABLE, so its bounds
+         are validated as real calendar dates and ordered — a blank, malformed,
+         impossible (`0000-00-00`, `2026-02-30`) or inverted pair would turn
+         unsupported dates into known-none or membership answers. */
+      for (const [field, value] of [
+        ["valid_from", windowFrom],
+        ["valid_to", windowTo],
+        ["snapshot_date", snapshotDate],
+      ] as const) {
+        if (!isCanonicalDate(value)) {
+          throw new Error(
+            `committee_memberships.${field} is not a real YYYY-MM-DD date (${JSON.stringify(value)}) — ` +
+              `refusing to answer membership questions against an unparseable window`,
+          );
+        }
+      }
+      if (windowFrom > windowTo) {
+        throw new Error(
+          `committee_memberships validity window is inverted (${windowFrom} → ${windowTo}) — ` +
+            `an impossible window would make every date both inside and outside it`,
+        );
+      }
+      {
+        committeeData = {
+          byMember,
+          jurisdictionByCommittee,
+          mappingVersion,
+          snapshotDate,
+          windowFrom,
+          windowTo,
+        };
+      }
+    }
+  } finally {
+    db.close();
+  }
+  return { sectorData, committeeData };
+}
+
+/* ---------- D-1: the per-build signal artifact (memoized like the build) --- */
+
+let signalCache: import("./signals.ts").SignalArtifact | null = null;
+
+/* D-1c lifecycle chaining (reviews F1 → r3-F1, r3-F2).
+
+   The prior artifact is DURABLE: the publisher points POPULUS_PRIOR_SIGNALS
+   at the previous published build's own copy in the data repo — not at a
+   live-site fetch, so a transient outage cannot silently reset lifecycle
+   history. Rules:
+
+     * CI + prior path set   → the file MUST exist and pass the full schema
+                               validator, else the build FAILS.
+     * CI + no prior path    → allowed ONLY with the explicit one-time
+                               bootstrap flag; otherwise fatal.
+     * not CI (local dev)    → absent prior is a declared cold start, the
+                               same dev-convenience seam `resolveSources`
+                               uses for the build directory. */
+export function resolvePriorSignalArtifact(): import("./signals.ts").SignalArtifact | null {
+  let priorArtifact: import("./signals.ts").SignalArtifact | null = null;
+  const priorPath = process.env.POPULUS_PRIOR_SIGNALS;
+  const bootstrap = process.env.POPULUS_SIGNALS_BOOTSTRAP === "1";
+  if (priorPath) {
+  if (!existsSync(priorPath)) {
+    throw new Error(
+      `POPULUS_PRIOR_SIGNALS points at ${priorPath}, which does not exist — ` +
+        `refusing to publish a silent cold start; restore the previous build's ` +
+        `signals.v1.json or declare POPULUS_SIGNALS_BOOTSTRAP=1 deliberately`,
+    );
+  }
+  const parsed: unknown = JSON.parse(readFileSync(priorPath, "utf-8"));
+  const defects = validateSignalArtifact(parsed);
+  if (defects.length > 0) {
+    throw new Error(
+      `POPULUS_PRIOR_SIGNALS (${priorPath}) is not a valid v1 signal artifact — ` +
+        `chaining to it would erase lifecycle continuity while claiming to preserve it. ` +
+        `Defects: ${defects.slice(0, 5).join("; ")}${defects.length > 5 ? ` (+${defects.length - 5} more)` : ""}`,
+    );
+  }
+  priorArtifact = parsed as import("./signals.ts").SignalArtifact;
+} else if (process.env.CI && !bootstrap) {
+  throw new Error(
+    "no prior signal artifact was supplied (POPULUS_PRIOR_SIGNALS unset) and this is not " +
+      "a declared bootstrap — an ordinary published build must chain lifecycle state. " +
+      "Set POPULUS_SIGNALS_BOOTSTRAP=1 for the ONE build that starts the chain.",
+  );
+}
+  return priorArtifact;
+}
+
+export function getSignalArtifact(): import("./signals.ts").SignalArtifact {
+  if (signalCache) return signalCache;
+  const build = getBuildData();
+  const resolve = sectorResolver(build);
+  const priorArtifact = resolvePriorSignalArtifact();
+  signalCache = buildSignalArtifact({
+    priorArtifact,
+    txns: build.txns,
+    buildId: build.buildId,
+    generatedAtDate: build.generatedAtDate,
+    generatedAt: build.generatedAt,
+    s5:
+      build.committeeData !== null && resolve !== null
+        ? {
+            membershipsByMember: build.committeeData.byMember,
+            windowFrom: build.committeeData.windowFrom,
+            windowTo: build.committeeData.windowTo,
+            jurisdictionByCommittee: build.committeeData.jurisdictionByCommittee,
+            resolveSector: resolve,
+          }
+        : null,
+  });
+  return signalCache;
+}
+
+/** One sector-resolution rule for every consumer: ticker → unique issuer CIK
+    (Locked #18 mapping, ambiguity refused) → producer-resolved sector. */
+export function sectorResolver(build: BuildData): ((ticker: string) => import("./derive.ts").SectorResolution) | null {
+  if (build.sectorData === null || build.tickerMap === null) return null;
+  const { sectorByCik } = build.sectorData;
+  const map = build.tickerMap;
+  return (ticker: string) => {
+    const res = resolveTicker(map, ticker);
+    if (res.state !== "resolved") return { state: "unresolved-ticker" };
+    const sector = sectorByCik.get(res.cik);
+    return sector === undefined ? { state: "no-sic" } : { state: "sector", sector };
+  };
 }
 
 /** Modules present in this build's manifest — drives S1 surfaces and the S7
@@ -220,8 +580,9 @@ function loadRows(dbPath: string): {
   try {
     const txnRows = db
       .prepare(
-        `SELECT t.filed_date, t.transaction_date, t.bioguide_id, t.chamber,
-                t.ticker, t.side, t.owner, t.amount_low, t.amount_high,
+        `SELECT t.txn_id, t.filed_date, t.transaction_date, t.bioguide_id, t.chamber,
+                t.ticker, t.asset_name, t.asset_type, t.side, t.owner,
+                t.amount_low, t.amount_high,
                 t.days_to_file, t.is_late, t.flags,
                 f.doc_url, f.filer_name_raw,
                 m.full_name, m.party, m.state, m.district
@@ -234,6 +595,7 @@ function loadRows(dbPath: string): {
 
     const txns: TxnRow[] = txnRows.map((r) => ({
       kind: "txn",
+      txnId: String(r.txn_id),
       filed: String(r.filed_date),
       traded: r.transaction_date == null ? null : String(r.transaction_date),
       name: String(r.full_name ?? r.filer_name_raw),
@@ -242,7 +604,12 @@ function loadRows(dbPath: string): {
       state: r.state == null ? null : String(r.state),
       district: r.district == null ? null : String(r.district),
       chamber: r.chamber === "senate" ? "senate" : "house",
-      ticker: r.ticker == null ? null : String(r.ticker),
+      // B-7/F-5 parser gate: outer whitespace is stripped at the load boundary
+      // so a "\n   AMCR"-style source value can never mint a second entity or
+      // a whitespace URL slug.
+      ticker: normalizeTicker(r.ticker == null ? null : String(r.ticker)),
+      asset: r.asset_name == null ? null : String(r.asset_name),
+      assetType: r.asset_type == null ? null : String(r.asset_type),
       side: String(r.side) as TxnRow["side"],
       owner: r.owner == null ? null : (String(r.owner) as TxnRow["owner"]),
       low: r.amount_low == null ? null : Number(r.amount_low),
@@ -640,6 +1007,7 @@ export function getBuildData(): BuildData {
     inst,
     tickerMap,
     searchIndexJson,
+    ...loadContext(dbPath),
   };
   return cache;
 }

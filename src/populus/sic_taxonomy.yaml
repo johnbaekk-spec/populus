@@ -1,0 +1,39 @@
+# B-5 (ALPHA-UX): the owned, versioned SIC→sector taxonomy.
+#
+# Source: the SIC division structure as published by the U.S. Department of
+# Labor / OMB (Standard Industrial Classification Manual, 1987) and used by
+# SEC EDGAR company records. SIC codes and their division structure are a
+# work of the United States federal government — public domain (17 U.S.C.
+# §105); no license flag is raised for the mapping itself.
+#
+# Ownership + update rule: this file is version-controlled and owner-reviewed.
+# Every change bumps `taxonomy_version` and records `updated`/`updated_by` —
+# the version travels into `committee_jurisdiction` rows and any published
+# sector aggregate, so a sector number is always traceable to the mapping
+# revision that produced it.
+#
+# The `unknown` bucket is DECLARED, not implicit: a SIC outside every range,
+# a malformed SIC, or an issuer with no SIC on record all land in `unknown`
+# and are counted there — never dropped, never guessed into a sector.
+
+taxonomy_version: 1
+source: "SIC division structure, Standard Industrial Classification Manual (1987), OMB / U.S. DOL; as used by SEC EDGAR"
+license_note: "U.S. federal government work — public domain (17 U.S.C. §105)"
+updated: 2026-08-12
+updated_by: John Baek (reviewed 2026-08-13)
+unknown_bucket: unknown
+
+# Inclusive 4-digit SIC ranges → sector key. Keys are the vocabulary the
+# committee-jurisdiction mapping and every dashboard sector surface use.
+ranges:
+  - { from: 100,  to: 999,  sector: agriculture }
+  - { from: 1000, to: 1499, sector: mining }
+  - { from: 1500, to: 1799, sector: construction }
+  - { from: 2000, to: 3999, sector: manufacturing }
+  - { from: 4000, to: 4999, sector: transport-utilities }
+  - { from: 5000, to: 5199, sector: wholesale }
+  - { from: 5200, to: 5999, sector: retail }
+  - { from: 6000, to: 6799, sector: finance-insurance-realestate }
+  - { from: 7000, to: 8999, sector: services }
+  - { from: 9100, to: 9799, sector: public-administration }
+  - { from: 9900, to: 9999, sector: nonclassifiable }

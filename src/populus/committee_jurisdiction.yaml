@@ -1,0 +1,36 @@
+# B-6/S-5 (ALPHA-UX): committee → sector jurisdiction mapping. Versioned and
+# sourced — every S-5 overlap claim renders this file's version so the claim
+# is traceable to the mapping revision that produced it.
+#
+# Source: each committee's own published jurisdiction statement (House Rule X
+# and the Senate's standing rules, as summarized on the committees' official
+# pages). Sector keys are the B-5 `sic_taxonomy.yaml` vocabulary — one shared
+# vocabulary, so an overlap claim is a join, not a judgment call.
+#
+# NON-ALLEGATION RULE (non-removable, S-5): a jurisdiction overlap is a
+# CONTEXT fact — "this issuer's sector falls inside a committee this member
+# sat on as of the trade date" — and NOTHING more. It establishes and implies
+# no legal, ethical, or causal conflict. Every consumer of this mapping must
+# carry that caveat; the dashboard renders it beside every overlap row.
+#
+# Coverage is deliberately partial and grows only by owner review: a
+# committee absent here yields NO overlap claims (absence of mapping, stated),
+# never a guessed one.
+
+mapping_version: 1
+source: "official committee jurisdiction statements (House Rule X; Senate standing rules), read 2026-08-12"
+updated: 2026-08-12
+updated_by: John Baek (reviewed 2026-08-13)
+
+committees:
+  HSAG: { name: "House Agriculture", sectors: [agriculture] }
+  SSAF: { name: "Senate Agriculture, Nutrition, and Forestry", sectors: [agriculture] }
+  HSBA: { name: "House Financial Services", sectors: [finance-insurance-realestate] }
+  SSBK: { name: "Senate Banking, Housing, and Urban Affairs", sectors: [finance-insurance-realestate, construction] }
+  HSIF: { name: "House Energy and Commerce", sectors: [transport-utilities, manufacturing] }
+  SSEG: { name: "Senate Energy and Natural Resources", sectors: [mining, transport-utilities] }
+  SSEV: { name: "Senate Environment and Public Works", sectors: [construction, transport-utilities] }
+  HSPW: { name: "House Transportation and Infrastructure", sectors: [transport-utilities, construction] }
+  SSCM: { name: "Senate Commerce, Science, and Transportation", sectors: [transport-utilities, services, retail, wholesale] }
+  HSAS: { name: "House Armed Services", sectors: [manufacturing] }
+  SSAS: { name: "Senate Armed Services", sectors: [manufacturing] }

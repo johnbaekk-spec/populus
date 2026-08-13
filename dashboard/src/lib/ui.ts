@@ -11,6 +11,7 @@ import {
   type RenderCtx,
   type StatTile,
   type FootnoteEntry,
+  assetNameCell,
   esc,
   fmtInt,
   fmtUsd,
@@ -42,6 +43,7 @@ import {
   type SumRanges,
   type QuarterlyFlowResult,
   type FilingWindow,
+  excludeDateAnomalies,
   sumRanges,
   sumRangesText,
   undisclosedPctText,
@@ -187,6 +189,8 @@ export function flowRibbon(
   const exclusions: string[] = [];
   if (flow.undated > 0) exclusions.push(`${fmtInt(flow.undated)} rows with no parseable trade date excluded`);
   if (flow.excludedSides > 0) exclusions.push(`${fmtInt(flow.excludedSides)} exchange/unparsed-side rows excluded`);
+  if (flow.dateAnomalies > 0)
+    exclusions.push(`${fmtInt(flow.dateAnomalies)} date-anomaly rows excluded (impossible trade dates)`);
   const caption = [
     hatched,
     "gaps are gaps — no interpolation",
@@ -234,7 +238,7 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx): string {
   const amountUnknown = r.low == null && r.high == null;
   const tickerCell = r.ticker
     ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
-    : `<span class="none">—<span class="visually-hidden"> no ticker disclosed</span></span>`;
+    : assetNameCell(r);
   return (
     `<td class="c-filed">${esc(r.filed)}</td>` +
     `<td class="c-ticker">${tickerCell}</td>` +
@@ -321,7 +325,10 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
 /* ---------- member page body ---------- */
 
 export function memberStatTiles(m: MemberEntity, stamps: BuildStamps): StatTile[] {
-  const flow12 = sumRanges(m.txns.filter((t) => inTrailingMonths(t, stamps.generatedAtDate, 12)));
+  // constraint 9: trailing-window tiles are date-windowed aggregates too.
+  const flow12 = sumRanges(
+    excludeDateAnomalies(m.txns).rows.filter((t) => inTrailingMonths(t, stamps.generatedAtDate, 12)),
+  );
   const lag = medianLag(m.txns);
   const late = lateCount(m.txns);
   return [
@@ -679,7 +686,9 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
   const flow = quarterlyFlow(t.txns, stamps.generatedAtDate, 8);
   const disclosing = membersDisclosing(t.txns, stamps.generatedAtDate, 12, 7);
   const everMembers = new Set(t.txns.map((r) => r.bioguide ?? `raw:${r.name}`)).size;
-  const flow12 = sumRanges(t.txns.filter((r) => inTrailingMonths(r, stamps.generatedAtDate, 12)));
+  const flow12 = sumRanges(
+    excludeDateAnomalies(t.txns).rows.filter((r) => inTrailingMonths(r, stamps.generatedAtDate, 12)),
+  );
   const latestFiled = t.txns[0]?.filed ?? null;
   const tiles: StatTile[] = [
     { value: fmtInt(everMembers), label: "members · ever" },
@@ -1296,4 +1305,697 @@ export function moduleCard(
     return `<a class="mod-card" href="${esc(href)}">${inner}</a>`;
   }
   return `<div class="mod-card mod-card-planned">${inner}</div>`;
+}
+
+/* ================================================================================
+   C-4 — Congress rankings (ALPHA-UX): /congress gains Feed · Leaders · Tickers.
+   Metric definitions are the C-4 contract in derive.ts (six-state net algebra,
+   total display key, structural undisclosed bucket, strict-sign direction).
+   ============================================================================ */
+
+/** The /congress surface tabs. Feed is the existing index; Leaders and
+    Tickers are build-time ranking tables. */
+export function congressTabs(active: "feed" | "leaders" | "tickers"): string {
+  const tab = (key: string, href: string, label: string): string =>
+    key === active
+      ? `<span class="ctab ctab-active" aria-current="page">${label}</span>`
+      : `<a class="ctab" href="${href}">${label}</a>`;
+  return (
+    `<nav class="ctabs" aria-label="Congress views">` +
+    tab("feed", "/congress/", "Feed") +
+    tab("leaders", "/congress/leaders/", "Leaders") +
+    tab("tickers", "/congress/tickers/", "Tickers") +
+    `</nav>`
+  );
+}
+
+import {
+  type CongressRollup,
+  type LeaderRow,
+  type NetInterval,
+  netDirection,
+  netIntervalText,
+  netOverlaps,
+  rankNetRows,
+} from "./derive.ts";
+
+function netCellHtml(net: NetInterval, overlapsPrev: boolean): string {
+  const dir = netDirection(net);
+  const dirHtml =
+    dir === "accumulation"
+      ? ` <span class="net-dir net-acc">net accumulation</span>`
+      : dir === "disposal"
+        ? ` <span class="net-dir net-dis">net disposal</span>`
+        : "";
+  const overlap = overlapsPrev
+    ? `<a class="fn-ref" href="#ranking-footnotes" aria-label="footnote: overlapping intervals are incomparable">≈</a>`
+    : "";
+  return `${esc(netIntervalText(net))}${dirHtml}${overlap}`;
+}
+
+function rankingRowHtml(
+  r: LeaderRow,
+  pos: number | null,
+  overlapsPrev: boolean,
+  kind: "leaders" | "tickers",
+  ctx: RenderCtx,
+): string {
+  const who =
+    kind === "tickers"
+      ? `<a href="${tickerHrefFor(r.id, ctx)}">${esc(r.id)}</a>`
+      : r.bioguide
+        ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
+            affTextOf(r),
+          )}</span>`
+        : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;
+  const lateCell =
+    r.lateDenom === 0
+      ? `<span class="none">—</span>`
+      : `${fmtInt(r.late)} of ${fmtInt(r.lateDenom)}`;
+  return (
+    `<tr><td class="c-num c-muted">${pos == null ? "" : fmtInt(pos)}</td>` +
+    `<td class="c-member">${who}</td>` +
+    `<td class="c-num">${fmtInt(r.txns)}</td>` +
+    `<td class="c-num c-buy">${fmtInt(r.buys)}</td>` +
+    `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
+    `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
+    `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
+    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td>` +
+    `<td class="c-num">${lateCell}</td></tr>`
+  );
+}
+
+export const RANKING_FOOTNOTES: FootnoteEntry[] = [
+  {
+    mark: "§",
+    html:
+      `net disclosed flow = sum of purchase bucket bounds minus sum of sale bucket bounds, ` +
+      `as interval subtraction <code>net = [pL−sU, pU−sL]</code>. A side with no rows has summed ` +
+      `<strong>zero</strong> — a fact, not an absence. A row with any wholly-undisclosed amount on ` +
+      `either side is <strong>not rankable</strong> and sits in the labeled bucket below the ranked rows, ` +
+      `never coerced to zero`,
+  },
+  {
+    mark: "≈",
+    html:
+      `this row's net interval overlaps the row above it — the two are <strong>incomparable</strong>, ` +
+      `not tied: the order is a stable display key (lower bound, then upper bound, then the row's own ` +
+      `key), never a claim that one outranks the other`,
+  },
+  {
+    mark: "†",
+    html: `counts and late rates are exact values with their denominators — only the flow columns are intervals`,
+  },
+];
+
+/** One ranking body serves Leaders and Tickers — same contract, same
+    footnotes, one code path (SSR only; the tables are build-derived). */
+export function congressRankingBody(
+  kind: "leaders" | "tickers",
+  rollup: CongressRollup & { noTickerRows?: number },
+  stamps: BuildStamps,
+  ctx: RenderCtx,
+  opts: { limit?: number } = {},
+): string {
+  const { ranked, undisclosedBucket } = rankNetRows(
+    rollup.rows,
+    (r) => r.net,
+    (r) => r.id,
+  );
+  const limit = opts.limit ?? ranked.length;
+  const shown = ranked.slice(0, limit);
+  const rows = shown
+    .map((r, i) =>
+      rankingRowHtml(
+        r,
+        i + 1,
+        i > 0 ? netOverlaps(r.net, shown[i - 1]!.net) === true : false,
+        kind,
+        ctx,
+      ),
+    )
+    .join("\n");
+  const bucketRows = undisclosedBucket
+    .map((r) => rankingRowHtml(r, null, false, kind, ctx))
+    .join("\n");
+  const heads = [
+    "#",
+    kind === "leaders" ? "Member" : "Ticker",
+    "Txns †",
+    "Purch. †",
+    "Sales †",
+    "Gross purchases ·§",
+    "Gross sales ·§",
+    "Net disclosed flow ·§",
+    "Late †",
+  ];
+  const exclusions: string[] = [];
+  if (rollup.dateAnomalies > 0)
+    exclusions.push(
+      `${fmtInt(rollup.dateAnomalies)} date-anomaly rows excluded before windowing (impossible trade dates)`,
+    );
+  if (kind === "tickers" && (rollup.noTickerRows ?? 0) > 0)
+    exclusions.push(
+      `${fmtInt(rollup.noTickerRows!)} in-window rows disclose no ticker and cannot appear in a ticker ranking — ` +
+        `the largest disclosers by flow can be entirely non-equity; see the Leaders view for the member-keyed ranking`,
+    );
+  const caption =
+    kind === "leaders"
+      ? `Members ranked by net disclosed flow, trailing ${rollup.windowMonths} months by trade date (filed date when undated)`
+      : `Tickers ranked by net disclosed flow, trailing ${rollup.windowMonths} months by trade date (filed date when undated)`;
+  return (
+    `<section class="panel panel-wide" aria-label="${esc(caption)}">` +
+    `<div class="panel-head"><h2 class="section-h">${
+      kind === "leaders" ? "Leaders — net disclosed flow" : "Tickers — net disclosed flow"
+    }</h2>` +
+    `<span class="panel-note">trailing ${rollup.windowMonths}m by trade date (filed when undated) · ${esc(
+      stamps.generatedAtDate,
+    )} · build ${esc(stamps.buildId)}</span></div>` +
+    `<p class="section-note">Every flow number is an <strong>interval</strong> over statutory bucket bounds — ` +
+    `no midpoints, no point estimates. Direction words appear only on a strict sign: an interval that ` +
+    `touches or spans zero carries none. The order below is a deterministic display key, ` +
+    `<strong>not</strong> a superiority claim — overlapping intervals are incomparable (≈).</p>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<caption class="visually-hidden">${esc(caption)}</caption>` +
+    `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rows}</tbody></table></div>` +
+    (ranked.length > limit
+      ? terminusRow({
+          author: "populus",
+          html: `${fmtInt(ranked.length - limit)} further ranked ${
+            kind === "leaders" ? "members" : "tickers"
+          } are not rendered on this page — a Public Filings render bound, not a data bound. Every row remains in the published dataset.`,
+        })
+      : "") +
+    (undisclosedBucket.length > 0
+      ? `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>` +
+        `<p class="section-note">These rows include at least one side whose every amount failed to parse. ` +
+        `They have no endpoints, so they hold no position in the ranking — listed after it, never sorted ` +
+        `to the bottom as if small.</p>` +
+        `<div class="table-scroll"><table class="etable">` +
+        `<caption class="visually-hidden">Unrankable rows — amounts wholly undisclosed</caption>` +
+        `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
+        `<tbody>${bucketRows}</tbody></table></div></div>`
+      : "") +
+    (exclusions.length > 0
+      ? `<div class="caveat-line">${exclusions.map((e) => esc(e)).join(" · ")}</div>`
+      : "") +
+    footnoteBlock(RANKING_FOOTNOTES, { id: "ranking-footnotes" }) +
+    `</section>`
+  );
+}
+
+/* ---------- A-4: homepage "notable this week" rail ---------- */
+
+import { type NotableRecentResult } from "./derive.ts";
+
+export function notableRailHtml(res: NotableRecentResult, ctx: RenderCtx): string {
+  if (res.rows.length === 0 && res.unrankable === 0) return "";
+  const rows = res.rows
+    .map((r) => {
+      const side = sideLabel(r.side, r.flags);
+      const owner = ownerNote(r);
+      const who = r.bioguide
+        ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>`
+        : esc(r.name);
+      const what = r.ticker
+        ? `<a class="mono-ticker" href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
+        : assetNameCell(r);
+      return (
+        `<div class="rail-row" role="listitem">` +
+        `<span class="rail-who">${who} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span></span>` +
+        `<span class="rail-what">${what}</span>` +
+        `<span class="rail-side ${side.cls}">${esc(side.text)}${owner ? ` <span class="owner-note">${esc(owner)}</span>` : ""}</span>` +
+        `<span class="rail-amount">${esc(amountText(r))}</span>` +
+        `<span class="rail-filed">filed ${esc(r.filed)}</span>` +
+        srcLink(r.doc, "rail-src") +
+        `</div>`
+      );
+    })
+    .join("\n");
+  const notes: string[] = [
+    `ranked by the disclosed LOWER bound — never a midpoint, never the upper bound`,
+    `filings from ${esc(res.windowFrom)} onward`,
+  ];
+  if (res.unrankable > 0)
+    notes.push(
+      `${fmtInt(res.unrankable)} in-window ${res.unrankable === 1 ? "row" : "rows"} disclose no lower bound and cannot rank in a largest-first list`,
+    );
+  if (res.dateAnomalies > 0) notes.push(`${fmtInt(res.dateAnomalies)} date-anomaly rows excluded`);
+  return (
+    `<section class="rail" aria-label="Largest recent disclosures">` +
+    `<div class="rail-head"><h2 class="section-h2">Largest recent disclosures — last 7 days</h2>` +
+    `<span><a class="section-link" href="/signals/">signals ↗</a> · <a class="section-link" href="/congress/leaders/">full rankings ↗</a></span></div>` +
+    `<div class="rail-rows" role="list">${rows}</div>` +
+    `<div class="rail-caption">${notes.join(" · ")}</div>` +
+    `</section>`
+  );
+}
+
+/* ================================================================================
+   C-3 — Member page v2 (ALPHA-UX): net disclosed flow by ticker (interval
+   subtraction), sector mix, largest recent disclosures, and committee
+   jurisdiction-overlap context. Build-time sections appended by the member
+   PAGE; the /e/ budget-cut fallback keeps the v1 body (its data endpoint does
+   not carry the B-5/B-6 context).
+   ============================================================================ */
+
+import {
+  memberNetByTicker,
+  sectorMix,
+  jurisdictionOverlap,
+  notableRecent,
+  membershipAsOf,
+  type CommitteeMembership,
+  type MembershipSnapshot,
+  type SectorResolution,
+  type MemberEntity as MemberEntityT,
+} from "./derive.ts";
+
+export interface MemberV2Deps {
+  /** null → sector data not in this build (honest absence) */
+  resolveSector: ((ticker: string) => SectorResolution) | null;
+  sectorMeta: { taxonomyVersion: string; asOf: string } | null;
+  /** null → committee data not in this build */
+  committees: {
+    memberships: CommitteeMembership[];
+    /** snapshot-WIDE validity bounds (review F7) */
+    windowFrom: string;
+    windowTo: string;
+    jurisdictionByCommittee: ReadonlyMap<string, readonly string[]>;
+    mappingVersion: string;
+    snapshotDate: string;
+  } | null;
+}
+
+/** The S-5 caveat. NON-REMOVABLE: rendered beside every overlap row set, and
+    pinned by test. It asserts the absence of any allegation. */
+export const NON_ALLEGATION_CAVEAT =
+  "A jurisdiction overlap is context, not an accusation: it establishes and implies no legal, " +
+  "ethical, or causal conflict. It states only that the issuer's sector falls within a committee " +
+  "this member sat on as of the trade date, per the sources and mapping versions shown.";
+
+function absentPanel(title: string, detail: string): string {
+  return (
+    `<section class="panel" aria-label="${esc(title)}">` +
+    `<div class="panel-head"><h2 class="section-h">${esc(title)}</h2></div>` +
+    `<p class="section-note">${esc(detail)}</p></section>`
+  );
+}
+
+export function memberV2Sections(
+  m: MemberEntityT,
+  stamps: BuildStamps,
+  ctx: RenderCtx,
+  deps: MemberV2Deps,
+): string {
+  /* --- net disclosed flow by ticker (F-10: flows, never holdings) --- */
+  const { rows: netRows, noTickerRows } = memberNetByTicker(m.txns);
+  const { ranked, undisclosedBucket } = rankNetRows(netRows, (r) => r.net, (r) => r.ticker);
+  const netRowHtml = (r: (typeof netRows)[number], overlapsPrev: boolean): string =>
+    `<tr><td class="c-ticker"><a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a></td>` +
+    `<td class="c-num c-buy">${fmtInt(r.buys)}</td>` +
+    `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
+    `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
+    `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
+    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td></tr>`;
+  const netTable =
+    netRows.length === 0
+      ? `<p class="section-note">No ticker-keyed disclosures on record.</p>`
+      : `<div class="table-scroll"><table class="etable etable-compact">` +
+        `<caption class="visually-hidden">Net disclosed flow by ticker for ${esc(m.name)}</caption>` +
+        `<thead><tr><th scope="col">Ticker</th><th scope="col">Purch.</th><th scope="col">Sales</th>` +
+        `<th scope="col">Gross purchases ·§</th><th scope="col">Gross sales ·§</th><th scope="col">Net disclosed flow ·§</th></tr></thead>` +
+        `<tbody>${ranked
+          .map((r, i) => netRowHtml(r, i > 0 ? netOverlaps(r.net, ranked[i - 1]!.net) === true : false))
+          .join("\n")}${
+          undisclosedBucket.length > 0
+            ? `<tr class="unranked-sep"><td colspan="6">${fmtInt(undisclosedBucket.length)} tickers carry a wholly-undisclosed side — no endpoints, listed last, never zero</td></tr>` +
+              undisclosedBucket.map((r) => netRowHtml(r, false)).join("\n")
+            : ""
+        }</tbody></table></div>` +
+        `<div class="card-foot">PTRs are flows, not holdings — this table nets disclosed flow intervals; it is NOT a portfolio and cannot become one without the member's annual FD report${
+          noTickerRows > 0 ? ` · ${fmtInt(noTickerRows)} rows disclose no ticker and are outside this table` : ""
+        }</div>`;
+
+  /* --- largest recent disclosures (F-12: rank by lower bound) --- */
+  const recent = notableRecent(m.txns, stamps.generatedAtDate, 90, 5);
+  const recentRows = recent.rows
+    .map(
+      (r) =>
+        `<tr><td class="c-filed">${esc(r.filed)}</td>` +
+        `<td class="c-ticker">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : assetNameCell(r)}</td>` +
+        `<td class="c-side ${sideLabel(r.side, r.flags).cls}">${esc(sideLabel(r.side, r.flags).text)}</td>` +
+        `<td class="c-num">${esc(amountText(r))}</td>` +
+        `<td class="c-src">${srcLink(r.doc)}</td></tr>`,
+    )
+    .join("\n");
+  const recentPanel =
+    recent.rows.length === 0
+      ? `<p class="section-note">No rankable disclosures in the trailing 90 days${
+          recent.unrankable > 0 ? ` (${fmtInt(recent.unrankable)} rows disclose no lower bound)` : ""
+        }.</p>`
+      : `<div class="table-scroll"><table class="etable etable-compact">` +
+        `<caption class="visually-hidden">Largest recent disclosures for ${esc(m.name)}</caption>` +
+        `<thead><tr><th scope="col">Filed ▾</th><th scope="col">Asset</th><th scope="col">Side</th><th scope="col">Amount</th><th scope="col">Src</th></tr></thead>` +
+        `<tbody>${recentRows}</tbody></table></div>` +
+        `<div class="card-foot">ranked by disclosed LOWER bound, trailing 90 days by filed date${
+          recent.unrankable > 0 ? ` · ${fmtInt(recent.unrankable)} rows with no lower bound cannot rank` : ""
+        }</div>`;
+
+  /* --- sector mix (B-5) --- */
+  let sectorPanel: string;
+  if (deps.resolveSector === null || deps.sectorMeta === null) {
+    sectorPanel = absentPanel(
+      "Sector mix",
+      "Sector data is not in this build. It lands with the first build after the issuer-SIC ingest (B-5) — absence is stated, never estimated.",
+    );
+  } else {
+    const mix = sectorMix(m.txns, deps.resolveSector);
+    const mixRows = mix
+      .map(
+        (r) =>
+          `<tr class="${r.bucket ? "mix-bucket" : ""}"><td>${esc(r.key)}${r.bucket ? ` <span class="mono-note">coverage bucket</span>` : ""}</td>` +
+          `<td class="c-num">${fmtInt(r.txns)}</td>` +
+          `<td class="c-num">${flowCellHtml(r.flow)}</td></tr>`,
+      )
+      .join("\n");
+    sectorPanel =
+      `<section class="panel" aria-label="Sector mix">` +
+      `<div class="panel-head"><h2 class="section-h">Sector mix</h2>` +
+      `<span class="panel-note">taxonomy v${esc(deps.sectorMeta.taxonomyVersion)} · SIC as of ${esc(deps.sectorMeta.asOf)}</span></div>` +
+      `<div class="table-scroll"><table class="etable etable-compact">` +
+      `<caption class="visually-hidden">Disclosed transactions by issuer sector</caption>` +
+      `<thead><tr><th scope="col">Sector</th><th scope="col">Txns</th><th scope="col">Flow range</th></tr></thead>` +
+      `<tbody>${mixRows}</tbody></table></div>` +
+      `<div class="card-foot">sector via SEC EDGAR SIC through the owned taxonomy — coverage buckets are stated, never folded into a sector</div>` +
+      `</section>`;
+  }
+
+  /* --- committee jurisdiction overlap (B-6 / S-5) --- */
+  let committeePanel: string;
+  if (deps.committees === null) {
+    committeePanel = absentPanel(
+      "Committees",
+      "Committee membership data is not in this build. It lands with the first build after the cc0-legislators committee ingest (B-6) — absence is stated, never guessed from current rosters.",
+    );
+  } else {
+    const { memberships, windowFrom, windowTo, jurisdictionByCommittee, mappingVersion, snapshotDate } =
+      deps.committees;
+    const snapshot: MembershipSnapshot = { memberships, windowFrom, windowTo };
+    const current = membershipAsOf(snapshot, snapshotDate) ?? [];
+    const overlap =
+      deps.resolveSector === null
+        ? null // overlap needs BOTH datasets; with sectors absent the join is unanswerable
+        : jurisdictionOverlap(m.txns, snapshot, jurisdictionByCommittee, deps.resolveSector);
+    // Review F8: an unmapped committee makes "no overlap" unanswerable — the
+    // definitive-absence copy is only usable when mapping coverage is complete
+    // for everything this member sat on.
+    const coverageNote =
+      overlap !== null && overlap.unmappedCommittees.length > 0
+        ? ` · ${fmtInt(overlap.coverageUnknown)} trades touch committees outside the jurisdiction mapping (${overlap.unmappedCommittees
+            .map((c) => esc(c))
+            .join(", ")}) — unanswerable there, not cleared`
+        : "";
+    const overlapHtml =
+      overlap === null
+        ? `<p class="section-note">Jurisdiction overlap needs the sector join too — sector data is not in this build, so the question is stated as unanswerable rather than answered from half the inputs.</p>`
+        : overlap.rows.length === 0
+          ? `<p class="section-note">${
+              overlap.unmappedCommittees.length > 0
+                ? `No overlaps found within the MAPPED committee jurisdictions`
+                : `No disclosed trades fall inside this member's committee jurisdictions as of their trade dates`
+            }${
+              overlap.undatable > 0
+                ? ` · ${fmtInt(overlap.undatable)} trades predate the membership snapshot's validity window and are unanswerable, not cleared`
+                : ""
+            }${coverageNote}.</p>`
+          : `<div class="table-scroll"><table class="etable etable-compact">` +
+            `<caption class="visually-hidden">Trades within committee jurisdiction as of the trade date</caption>` +
+            `<thead><tr><th scope="col">Traded</th><th scope="col">Ticker</th><th scope="col">Sector</th><th scope="col">Committee</th><th scope="col">Src</th></tr></thead>` +
+            `<tbody>${overlap.rows
+              .slice(0, 12)
+              .map(
+                (r) =>
+                  `<tr><td class="c-filed">${esc(r.txn.traded ?? "—")}</td>` +
+                  `<td class="c-ticker">${esc(r.txn.ticker ?? "—")}</td>` +
+                  `<td>${esc(r.sector)}</td>` +
+                  `<td>${r.committees.map((c) => esc(c.name)).join(", ")}</td>` +
+                  `<td class="c-src">${srcLink(r.txn.doc)}</td></tr>`,
+              )
+              .join("\n")}</tbody></table></div>` +
+            (overlap.undatable > 0 || overlap.unmappedCommittees.length > 0
+              ? `<div class="caveat-line">${
+                  overlap.undatable > 0
+                    ? `${fmtInt(overlap.undatable)} trades predate the membership snapshot's validity window — unanswerable, not cleared`
+                    : ""
+                }${overlap.undatable > 0 && coverageNote ? " · " : ""}${coverageNote.replace(/^ · /, "")}</div>`
+              : "");
+    committeePanel =
+      `<section class="panel" aria-label="Committees and jurisdiction overlap">` +
+      `<div class="panel-head"><h2 class="section-h">Committees · jurisdiction overlap</h2>` +
+      `<span class="panel-note">membership snapshot ${esc(snapshotDate)} · jurisdiction mapping v${esc(mappingVersion)}</span></div>` +
+      (current.length > 0
+        ? `<p class="section-note">Serves on: ${current.map((c) => esc(c.name) + (c.role ? ` (${esc(c.role)})` : "")).join(" · ")}</p>`
+        : `<p class="section-note">No committee memberships on record in the snapshot.</p>`) +
+      overlapHtml +
+      `<div class="caveat-line non-allegation">${esc(NON_ALLEGATION_CAVEAT)}</div>` +
+      `</section>`;
+  }
+
+  return (
+    `<div class="entity-grid">` +
+    `<section class="panel" aria-label="Net disclosed flow by ticker">` +
+    `<div class="panel-head"><h2 class="section-h">Net disclosed flow by ticker</h2>` +
+    `<span class="panel-note">interval subtraction · open bounds propagate</span></div>` +
+    netTable +
+    `</section>` +
+    `<section class="panel" aria-label="Largest recent disclosures">` +
+    `<div class="panel-head"><h2 class="section-h">Largest recent disclosures</h2>` +
+    `<span class="panel-note">trailing 90d · lower bound</span></div>` +
+    recentPanel +
+    `</section>` +
+    `</div>` +
+    `<div class="entity-grid">` +
+    sectorPanel +
+    committeePanel +
+    `</div>` +
+    footnoteBlock(RANKING_FOOTNOTES, { id: "ranking-footnotes" })
+  );
+}
+
+/* ================================================================================
+   D-2 — /signals surfaces. Every signal renders its EXACT rule, its magnitude
+   as an interval, its receipts, and the lag caveat; withheld kinds render as
+   withheld with their typed reason — never silently empty (the F-26 lesson at
+   the signal layer).
+   ============================================================================ */
+
+import type { Signal, SignalArtifact, WithheldKind } from "./signals.ts";
+
+const SIGNAL_KIND_LABELS: Record<Signal["kind"], string> = {
+  "s1-large": "S-1 · Large disclosure",
+  "s2-first": "S-2 · First disclosure of a ticker by a member",
+  "s3-cooccurrence": "S-3 · Co-occurrence",
+  "s4-infrequent": "S-4 · Infrequent discloser, large purchase",
+  "s5-jurisdiction": "S-5 · Committee-jurisdiction overlap",
+  "s6-late-large": "S-6 · Late and large",
+};
+
+function magnitudeText(m: Signal["magnitude"]): string {
+  if (m.low == null && m.high == null) return "not disclosed";
+  if (m.low != null && m.high == null) return `Over ${fmtUsd(m.low)}`;
+  if (m.low == null) return `Under ${fmtUsd(m.high!)}`;
+  return `${fmtUsd(m.low)}–${fmtUsd(m.high!)}`;
+}
+
+export function signalRowHtml(s: Signal, ctx: RenderCtx): string {
+  const who = s.entities.bioguide
+    ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>`
+    : esc(s.entities.memberName);
+  const what = s.entities.ticker
+    ? `<a class="mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>`
+    : `<span class="none">—</span>`;
+  const receipts = s.receipts
+    .slice(0, 5)
+    .map((doc) => srcLink(doc))
+    .join(" ");
+  const more = s.receipts.length > 5 ? ` <span class="mono-note">+${fmtInt(s.receipts.length - 5)} more filings</span>` : "";
+  return (
+    `<tr data-signal-id="${esc(s.id)}">` +
+    `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
+    `<td>${who}</td>` +
+    `<td>${what}</td>` +
+    `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
+    `<td class="c-filed">${esc(s.occurrence.tradeDate ?? "—")}</td>` +
+    `<td class="c-src">${receipts}${more}</td></tr>`
+  );
+}
+
+function withheldHtml(w: WithheldKind, carried: number): string {
+  return (
+    `<section class="panel" aria-label="${esc(SIGNAL_KIND_LABELS[w.kind])} — withheld">` +
+    `<div class="panel-head"><h2 class="section-h">${esc(SIGNAL_KIND_LABELS[w.kind])}</h2>` +
+    `<span class="badge-planned">WITHHELD · ${esc(w.reason)}</span></div>` +
+    `<p class="section-note">${esc(w.detail)}</p>` +
+    (carried > 0
+      ? `<p class="section-note">${fmtInt(carried)} earlier ${carried === 1 ? "signal" : "signals"} of this kind ` +
+        `${carried === 1 ? "is" : "are"} carried forward <strong>unevaluated</strong> — this build asked nothing of ` +
+        `${carried === 1 ? "it" : "them"}, so ${carried === 1 ? "its" : "their"} absence from the active tables is ` +
+        `not a retraction and not an amendment.</p>`
+      : "") +
+    `</section>`
+  );
+}
+
+export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx): string {
+  // Review F3: tombstones are lifecycle HISTORY — they never sit in the
+  // active tables or counts wearing an active face.
+  const active = artifact.signals.filter((s) => s.status === "active");
+  const superseded = artifact.signals.filter((s) => s.status === "superseded");
+  // Review r3-F3: rows whose kind was WITHHELD this build were not evaluated —
+  // they are neither active nor retracted, and are reported with the
+  // withholding that caused it.
+  const unevaluated = artifact.signals.filter((s) => s.status === "unevaluated");
+  const byKind = new Map<Signal["kind"], Signal[]>();
+  for (const s of active) {
+    let list = byKind.get(s.kind);
+    if (!list) {
+      list = [];
+      byKind.set(s.kind, list);
+    }
+    list.push(s);
+  }
+  const sections = [...byKind.entries()]
+    .map(([kind, list]) => {
+      const rule = list[0]!.rule;
+      const rows = list.slice(0, 50).map((s) => signalRowHtml(s, ctx)).join("\n");
+      return (
+        `<section class="panel panel-wide" aria-label="${esc(SIGNAL_KIND_LABELS[kind])}">` +
+        `<div class="panel-head"><h2 class="section-h">${esc(SIGNAL_KIND_LABELS[kind])}</h2>` +
+        `<span class="panel-note">${fmtInt(list.length)} in window · threshold v${esc(artifact.thresholdVersion)}</span></div>` +
+        `<p class="section-note signal-rule"><strong>Rule:</strong> ${esc(rule)}</p>` +
+        `<div class="table-scroll"><table class="etable etable-compact">` +
+        `<caption class="visually-hidden">${esc(SIGNAL_KIND_LABELS[kind])} signals</caption>` +
+        `<thead><tr><th scope="col">Filed ▾</th><th scope="col">Member</th><th scope="col">Ticker</th>` +
+        `<th scope="col">Magnitude</th><th scope="col">Traded</th><th scope="col">Receipts</th></tr></thead>` +
+        `<tbody>${rows}</tbody></table></div>` +
+        (list.length > 50
+          ? terminusRow({
+              author: "populus",
+              html: `${fmtInt(list.length - 50)} further signals of this kind are in the artifact but not rendered here — a render bound; the artifact at <a href="/signals/data/signals.v1.json">signals.v1.json</a> is complete for the window.`,
+            })
+          : "") +
+        `</section>`
+      );
+    })
+    .join("\n");
+  const withheld = artifact.withheld
+    .map((w) => withheldHtml(w, unevaluated.filter((s) => s.kind === w.kind).length))
+    .join("\n");
+  const supersededSection =
+    superseded.length === 0
+      ? ""
+      : `<section class="panel panel-wide" aria-label="Superseded signals">` +
+        `<div class="panel-head"><h2 class="section-h">Superseded — no longer in the current view</h2>` +
+        `<span class="panel-note">${fmtInt(superseded.length)} tombstones in window</span></div>` +
+        `<p class="section-note">These signals appeared in an earlier build's artifact and left the ` +
+        `retained view — their underlying filing was amended or superseded, or the rule no longer ` +
+        `matches. The tombstone preserves when: each names the build that dropped it.</p>` +
+        `<div class="table-scroll"><table class="etable etable-compact">` +
+        `<caption class="visually-hidden">Superseded signals</caption>` +
+        `<thead><tr><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Member</th>` +
+        `<th scope="col">Superseded in build</th><th scope="col">Src</th></tr></thead>` +
+        `<tbody>${superseded
+          .slice(0, 50)
+          .map(
+            (s) =>
+              `<tr class="signal-superseded"><td>${esc(SIGNAL_KIND_LABELS[s.kind])}</td>` +
+              `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
+              `<td>${esc(s.entities.memberName)}</td>` +
+              `<td class="mono-id">${esc(s.supersededInBuild ?? "—")}</td>` +
+              `<td class="c-src">${srcLink(s.receipts[0] ?? "")}</td></tr>`,
+          )
+          .join("\n")}</tbody></table></div></section>`;
+  return (
+    `<div class="signals-meta caveat-line">` +
+    esc(
+      `coverage window ${artifact.coverageFrom} → ${artifact.coverageTo} (${artifact.retentionDays} days by filed date) · ` +
+        `signals outside it are compacted out — a last-seen marker older than the window start is a coverage gap, stated, never a complete-looking list · ` +
+        (artifact.dateAnomaliesExcluded > 0
+          ? `${artifact.dateAnomaliesExcluded} date-anomaly rows excluded before any rule ran · `
+          : "") +
+        artifact.lagCaveat,
+    ) +
+    `</div>` +
+    sections +
+    supersededSection +
+    withheld
+  );
+}
+
+/** Per-entity signal section (D-2): the member page filters the build's
+    artifact by bioguide. */
+export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, ctx: RenderCtx): string {
+  // Review F3: only ACTIVE signals in the member table; tombstones are noted
+  // by count, never listed as if current.
+  const all = artifact.signals.filter((s) => s.entities.bioguide === bioguide);
+  const mine = all.filter((s) => s.status === "active");
+  const tombs = all.filter((s) => s.status === "superseded").length;
+  const unevaluated = all.filter((s) => s.status === "unevaluated").length;
+  const lifecycleNote =
+    (tombs > 0 ? ` · ${tombs} superseded in the window` : "") +
+    (unevaluated > 0
+      ? ` · ${unevaluated} carried forward unevaluated (their rule was withheld this build)`
+      : "");
+  // Review r3-F4: branch on ALL lifecycle rows — a member whose last active
+  // signal became a tombstone still has history, and "no signals" would erase
+  // exactly the supersession the lifecycle exists to preserve.
+  if (all.length === 0) {
+    return (
+      `<section class="panel" aria-label="Signals">` +
+      `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
+      `<span class="panel-note">window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)}</span></div>` +
+      `<p class="section-note">No signals for this member in the retained window — a computed answer over the rules on <a href="/signals/">/signals</a>, not an absence of coverage.</p></section>`
+    );
+  }
+  if (mine.length === 0) {
+    return (
+      `<section class="panel" aria-label="Signals">` +
+      `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
+      `<span class="panel-note">window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)}</span></div>` +
+      `<p class="section-note">No ACTIVE signals for this member in the retained window` +
+      (tombs > 0
+        ? ` — ${fmtInt(tombs)} earlier ${tombs === 1 ? "signal was" : "signals were"} superseded inside it ` +
+          `(amended away or no longer matching)`
+        : "") +
+      (unevaluated > 0
+        ? `${tombs > 0 ? ";" : " —"} ${fmtInt(unevaluated)} ${unevaluated === 1 ? "is" : "are"} carried forward ` +
+          `unevaluated because their rule was withheld this build`
+        : "") +
+      `. See <a href="/signals/">/signals</a>.</p></section>`
+    );
+  }
+  // Review F10 / D-2: EVERY surface renders the exact rule — the per-entity
+  // section included, in the accessibility tree, not tooltip-only.
+  const rows = mine
+    .slice(0, 10)
+    .map(
+      (s) =>
+        `<tr><td>${esc(SIGNAL_KIND_LABELS[s.kind])}<div class="signal-rule-inline">${esc(s.rule)}</div></td>` +
+        `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
+        `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
+        `<td class="c-src">${srcLink(s.receipts[0] ?? "")}</td></tr>`,
+    )
+    .join("\n");
+  return (
+    `<section class="panel" aria-label="Signals">` +
+    `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
+    `<span class="panel-note"><a href="/signals/">all signals ↗</a></span></div>` +
+    `<div class="table-scroll"><table class="etable etable-compact">` +
+    `<caption class="visually-hidden">Signals for this member</caption>` +
+    `<thead><tr><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Magnitude</th><th scope="col">Src</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table></div>` +
+    `<div class="card-foot">${esc(artifact.lagCaveat)}${esc(lifecycleNote)}</div></section>`
+  );
 }
