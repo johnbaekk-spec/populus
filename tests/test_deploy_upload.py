@@ -73,6 +73,9 @@ TOKEN = "tok-1"
 DOMAIN = "publicfilings.org"
 DOMAIN_URL = "https://publicfilings.org"
 BRANCH = "main"
+
+#: R11c: the agreeing code_sha the default rig probe reports.
+ANCHOR_SHA = "a" * 40
 PREVIEW_BRANCH = "populus-preview"
 PRIOR = "dep-prior"
 PRIOR_URL = "https://dep-prior.populus-site.pages.dev"
@@ -298,6 +301,12 @@ class Rig:
             custom_domain=DOMAIN,
             upload=self.upload,
             verify=self.verify,
+            # R11c default: an agreeing probe, so tests that are not ABOUT the
+            # anchor keep exercising what they were written to exercise. The
+            # disagreement and unreadable cases get explicit overrides.
+            serving_probe=lambda url: ANCHOR_SHA,
+            # R11b default: never really sleep in the suite.
+            settle=lambda seconds: None,
         )
         kwargs.update(overrides)
         return run_deployment(**kwargs)

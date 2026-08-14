@@ -16,11 +16,15 @@ The eight steps, and what each one is load-bearing for:
    Activation is a provisioning precondition (Rollout prerequisite 4), not
    something this run polls for. Read from the ``…/domains`` subresource, which
    is the only endpoint carrying per-domain status.
-3. **Capture the current production deployment id.** This is the rollback
-   target, and it must be read *before* the production upload — afterwards the
-   newest production deployment is the one that just failed verification, and
-   "rolling back" to it would be a no-op dressed as a compensation. ``None`` is
-   a real answer (R14), not an error.
+3. **Capture the current production deployment id, and prove it is the one
+   serving.** This is the rollback target, and it must be read *before* the
+   production upload — afterwards the newest production deployment is the one
+   that just failed verification, and "rolling back" to it would be a no-op
+   dressed as a compensation. ``None`` is a real answer (R14), not an error.
+   **R11c:** "newest production deployment by creation" is not "the deployment
+   the domain serves", and the two diverge after any dashboard rollback, so the
+   anchor's own ``populus:code_sha`` is compared against the live domain's and a
+   disagreement refuses here — before the freeze, production untouched.
 4. **Freeze the built tree** (R4): from here on the uploader is handed a sealed
    private copy, so hashed bytes and uploaded bytes are one thing.
 5. **Upload to a preview and verify it INVENTORY-WIDE (R9).** §12.1 step 4 is
@@ -33,7 +37,11 @@ The eight steps, and what each one is load-bearing for:
    production upload must be that tree and not a successor of it.
 7. **Verify the live custom domain (R11)** — always, no exemption, no polling.
    The preview origin and the custom domain differ only in base URL, so both go
-   through one verifier. **R11a:** when the ONLY findings are inventoried paths
+   through one verifier. **R11b:** the domain is given one bounded settle after
+   the promotion and BEFORE the first sweep, because ``_await`` returns when the
+   origin answers while individual objects may still be materialising, and a
+   partially written body reads as a hash mismatch. **R11a:** when the ONLY
+   findings are inventoried paths
    answering 404, the domain is given one bounded settle and the FULL inventory
    is verified again — a promotion's last objects can still be resolving on the
    edge seconds after the origin itself answers. Every other finding shape, and
@@ -78,15 +86,19 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
+from uuid import uuid4
 
 from populus.deploy.cloudflare import Deployment, PagesClient, PagesError
 from populus.deploy.snapshot import UploadSnapshot, freeze_tree
 from populus.deploy.verify import (
+    _REQUEST_HEADERS,
+    CACHE_BUST_PARAM,
     DEFAULT_MARKER_PATH,
     DEFAULT_STATS_PATH,
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
     read_markers,
+    served_path,
 )
 from populus.publish.attestation import REJECTED, UNAVAILABLE
 from populus.publish.digests import dist_digest
@@ -126,6 +138,18 @@ PROJECT_ENV = "CLOUDFLARE_PAGES_PROJECT"
 #: none of them are tolerated here for a moment.
 PROPAGATION_REASON = "HTTP 404, expected 200"
 
+#: How long to let the custom domain settle AFTER a production promotion and
+#: BEFORE the first verification sweep. R11b, added 2026-08-14: run 31774209281
+#: promoted a good build and, seconds later, three `congress/data/tickers/*.json`
+#: shards served TRUNCATED bodies — `AAXJ.v1.json` came back 571 bytes when both
+#: the new build (835) and the previous deployment (835) disagree with that
+#: length, so it was a partial object rather than a stale one. R11a cannot help
+#: there and must not: a body-hash mismatch is indistinguishable from tampering
+#: and is never waited out. Delaying the QUESTION is safe; softening the ANSWER
+#: is not. So the settle moved to before the first sweep, where it costs one
+#: bounded wait on every deploy and weakens no verdict.
+POST_PROMOTION_SETTLE_SECONDS = 45.0
+
 #: How long to let the custom domain settle before ONE re-verification, and how
 #: many times that is allowed. One retry, not a loop: the point is to absorb the
 #: seconds between a promotion and the last object resolving on the edge, not to
@@ -153,6 +177,27 @@ OUTCOME_UNCOMPENSATED = "uncompensated"
 
 class DeployError(RuntimeError):
     """Base for every failure the ordered sequence raises."""
+
+
+class RollbackAnchorUnverified(DeployError):
+    """The captured rollback target is not what the custom domain serves.
+
+    `latest_production_deployment()` answers "newest production deployment by
+    creation", which is NOT "the deployment currently serving". The two diverge
+    the moment anyone rolls back in the Cloudflare dashboard — and that is
+    precisely the state a previous failed deploy leaves behind.
+
+    Measured 2026-08-14, run 31774209281: production had been rolled back by
+    hand to `2f3830b6` (verified live, code_sha d823597 — which is what let the
+    R18 record gate pass at all). The job still captured `e679ab11`, the prior
+    run's failed promotion, as its anchor, and on failure "rolled back" to it.
+    The site moved from the attested build to an unattested one, re-opening the
+    R18 deadlock the manual rollback had just cleared.
+
+    A compensating rollback is only compensating if it restores the state that
+    existed before the upload, so this refuses BEFORE anything is uploaded —
+    production untouched, and the operator told exactly which two ids disagree.
+    """
 
 
 class DeployAborted(DeployError):
@@ -314,6 +359,18 @@ class DeployOutcome:
     rollback_target: str | None
 
 
+class ServingProbe(Protocol):
+    """Reads the ``populus:code_sha`` a base URL is serving right now.
+
+    Returns the marker value, or ``None`` when it could not be determined —
+    transport failure, a non-200, a missing or duplicated marker. ``None`` is
+    "could not ask", never "no deployment": the caller refuses on it rather
+    than guessing, because this runs before any upload where refusing is free.
+    """
+
+    def __call__(self, base_url: str) -> str | None: ...
+
+
 class OriginReadiness(Protocol):
     """Polls a freshly-uploaded origin until it answers, or gives up."""
 
@@ -379,6 +436,41 @@ def _propagation_lag_only(result: VerificationOutcome) -> bool:
     return all(d.reason == PROPAGATION_REASON for d in divergences)
 
 
+def _assert_anchor_is_serving(
+    probe: ServingProbe, *, prior: Any, domain_url: str
+) -> None:
+    """Refuse unless the captured anchor is the deployment the domain serves.
+
+    Both halves are read through the same probe so the comparison is like for
+    like. An unreadable answer on either side is a refusal too: an anchor we
+    cannot confirm is an anchor we cannot rely on, and this runs before the
+    freeze, so nothing has been uploaded and nothing needs undoing.
+    """
+    served = probe(domain_url)
+    anchored = probe(prior.url)
+    if served is None or anchored is None:
+        raise RollbackAnchorUnverified(
+            f"cannot confirm the rollback anchor: {domain_url} reported "
+            f"{served!r} and the captured deployment {prior.id} "
+            f"({prior.url}) reported {anchored!r} for "
+            f"{MARKER_CODE_SHA!r}. Nothing was uploaded; production is "
+            "untouched. Re-run once both answer, or fix the deployment that "
+            "does not serve a marker"
+        )
+    if served != anchored:
+        raise RollbackAnchorUnverified(
+            f"the rollback anchor is not what {domain_url} serves: the domain "
+            f"serves populus:code_sha {served!r} but the captured deployment "
+            f"{prior.id} ({prior.url}) serves {anchored!r} (compared exactly, "
+            "never by prefix). `latest_production_deployment()` answers "
+            "'newest by creation', which diverges from 'currently serving' "
+            "after any dashboard rollback — and rolling back to it would move "
+            "the site to a build nobody asked for. Nothing was uploaded; "
+            "production is untouched. Roll production forward or back until "
+            "the two agree, then re-run (see docs/runbooks/rollback.md)"
+        )
+
+
 def run_deployment(
     *,
     client: PagesSurface,
@@ -391,6 +483,7 @@ def run_deployment(
     runbook: str = RUNBOOK,
     await_origin: OriginReadiness | None = None,
     settle: Callable[[float], None] = time.sleep,
+    serving_probe: ServingProbe,
 ) -> DeployOutcome:
     """Run the §12.1 deploy sequence in order, or raise saying where it stopped.
 
@@ -419,6 +512,15 @@ def run_deployment(
     # --- (3) the rollback target, captured BEFORE the production upload ------
     prior = client.latest_production_deployment()
     rollback_target = prior.id if prior is not None else None
+    # R11c: and PROVED to be the deployment the domain actually serves. `prior`
+    # is the newest production deployment by creation, which is a different
+    # question. Checked here, before any upload, because an anchor that does not
+    # match the live site cannot compensate anything — and a refusal at this
+    # point costs nothing: production is untouched.
+    if prior is not None:
+        _assert_anchor_is_serving(
+            serving_probe, prior=prior, domain_url=_domain_url(custom_domain)
+        )
 
     # --- (4) freeze: from here the uploader only ever sees sealed bytes ------
     snapshot = freeze_tree(source)
@@ -448,6 +550,12 @@ def run_deployment(
         # --- (7) R11: verify the live custom domain --------------------------
         domain_url = _domain_url(custom_domain)
         _await(await_origin, f"https://{custom_domain}", stage=PRODUCTION)
+        # R11b: `_await` returns as soon as the origin ANSWERS; individual
+        # objects can still be materialising behind it, and a partially written
+        # body reads as a hash mismatch — which R11a rightly refuses to wait
+        # out. So the wait happens here, before the question is asked, where it
+        # cannot soften any answer.
+        settle(POST_PROMOTION_SETTLE_SECONDS)
         production_result = verify(
             domain_url,
             stage=PRODUCTION,
@@ -790,6 +898,58 @@ def _default_http_client():
     return httpx.Client(follow_redirects=False, timeout=30.0)
 
 
+def serving_probe(client: Any, *, marker_path: str = DEFAULT_MARKER_PATH) -> ServingProbe:
+    """The real :class:`ServingProbe`: fetch the marker page, read its code_sha.
+
+    Cache-busted like every other served-tree read in this codebase — a cached
+    answer would defeat the whole point of asking what is live NOW. Anything
+    other than a clean 200 carrying exactly one `populus:code_sha` marker is
+    reported as ``None`` ("could not ask"), never guessed at, because the caller
+    treats a confident wrong answer as licence to roll back to the wrong build.
+    """
+
+    def _probe(base_url: str) -> str | None:
+        # Review F1: request the path the PROVIDER answers 200 on, not the
+        # inventory path. `served_path("index.html")` is "" — Pages redirects
+        # /index.html to / with a 307 (the status a live origin returns, and
+        # what the `_Origin` fixture reproduces), and with redirects refused
+        # (correctly) the literal path never reaches 200 — so the probe
+        # answered None for every deployment and R11c became a blanket
+        # pre-upload refusal.
+        path = served_path(marker_path)
+        # Review F2: a FRESH bust per request. A fixed key is not a cache bust;
+        # a cached domain marker matching a cached anchor marker is exactly the
+        # agreement R11c must not be fooled by. Same param and same uuid4().hex
+        # pattern the verifier's own fetches use.
+        separator = "&" if "?" in path else "?"
+        url = (
+            f"{base_url.rstrip('/')}/{path}{separator}"
+            f"{CACHE_BUST_PARAM}={uuid4().hex}"
+        )
+        try:
+            response = client.get(
+                url, headers=_REQUEST_HEADERS, follow_redirects=False
+            )
+        except AssertionError:
+            # The suite's no-network guard. Laundering it into None would let an
+            # accidental real fetch read as "could not ask" — the same shape as
+            # `_fetch`'s carve-out, and for the same reason.
+            raise
+        except Exception:
+            return None
+        if getattr(response, "status_code", None) != 200:
+            return None
+        values = read_markers(response.content).get(MARKER_CODE_SHA, [])
+        if len(values) != 1:
+            return None
+        # Review F3: an EMPTY marker is not a value. Two empty strings compare
+        # equal, which would have read as "the anchor is serving" — the exact
+        # bypass this check exists to prevent. Matches `_one_marker`'s contract.
+        return values[0] if values[0].strip() else None
+
+    return _probe
+
+
 def _emit_outputs(
     *,
     outcome: str,
@@ -830,6 +990,7 @@ def main(
     verifier_factory=None,
     readiness_factory=None,
     settle_factory=None,
+    probe_factory=None,
 ) -> int:
     """Run the §12.1 deploy sequence as a process. The factories keep it testable.
 
@@ -923,6 +1084,14 @@ def main(
             # Same reason as await_origin: a test that drives main() through a
             # propagation-shaped rejection must not pay the real settle.
             settle=(settle_factory() if settle_factory is not None else time.sleep),
+            # R11c: always a real probe here. `run_deployment` takes this as a
+            # REQUIRED keyword precisely so no caller can quietly opt out of the
+            # anchor cross-check by omitting it.
+            serving_probe=(
+                probe_factory()
+                if probe_factory is not None
+                else serving_probe(readiness_client)
+            ),
         )
     except FirstRunUncompensated as exc:
         # TD-4: the bytes are live and unverified. This is its own exit code
