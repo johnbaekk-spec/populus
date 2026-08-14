@@ -46,6 +46,7 @@ from populus.deploy.orchestrator import (
     EXIT_UNAVAILABLE,
     EXIT_UNCOMPENSATED,
     OUTCOME_DEPLOYED,
+    POST_PROMOTION_SETTLE_SECONDS,
     PREVIEW,
     PRODUCTION,
     PROJECT_ENV,
@@ -56,6 +57,7 @@ from populus.deploy.orchestrator import (
     FirstRunUncompensated,
     PreviewVerificationFailed,
     ProductionVerificationFailed,
+    RollbackAnchorUnverified,
     UploadedDeployment,
     artifact_expectations,
     main,
@@ -77,6 +79,10 @@ DOMAIN_URL = "https://publicfilings.org"
 BRANCH = "main"
 PREVIEW_URL = "https://preview.publicfilings.pages.dev"
 PRIOR = "dep-prior"
+
+#: R11c: the code_sha the default harness probe reports for BOTH the live
+#: domain and the captured anchor, i.e. "they agree".
+ANCHOR_SHA = "a" * 40
 
 SITE = {
     "index.html": (
@@ -346,6 +352,12 @@ class Harness:
             custom_domain=DOMAIN,
             upload=self.upload,
             verify=self.verify,
+            # R11c default: an agreeing probe, so tests that are not ABOUT the
+            # anchor keep exercising what they were written to exercise. The
+            # disagreement and unreadable cases get explicit overrides.
+            serving_probe=lambda url: ANCHOR_SHA,
+            # R11b default: never really sleep in the suite.
+            settle=lambda seconds: None,
         )
         kwargs.update(overrides)
         return run_deployment(**kwargs)
@@ -1030,6 +1042,10 @@ class Cli:
             # un-injected here it made this file take 19 minutes, and a slow
             # suite is a suite people stop running.
             "readiness_factory": lambda: (lambda url, *, stage: None),
+            # R11c: an agreeing probe, and R11b: no real sleeps. Tests that are
+            # ABOUT either seam override these.
+            "probe_factory": lambda: (lambda url: ANCHOR_SHA),
+            "settle_factory": lambda: (lambda seconds: None),
         }
         if pages:
             factories["pages_factory"] = lambda: self.client
@@ -1354,6 +1370,8 @@ def test_the_default_uploader_is_the_wrangler_uploader(cli: Cli, monkeypatch) ->
             pages_factory=lambda: cli.client,
             readiness_factory=lambda: (lambda url, *, stage: None),
             verifier_factory=lambda: cli.verify,
+            probe_factory=lambda: (lambda url: ANCHOR_SHA),
+            settle_factory=lambda: (lambda seconds: None),
         )
         == EXIT_DEPLOYED
     )
@@ -1384,6 +1402,8 @@ def test_the_default_verifier_is_bound_to_the_artifact(cli: Cli, monkeypatch) ->
             readiness_factory=lambda: (lambda url, *, stage: None),
             upload_factory=lambda: cli.upload,
             http_factory=lambda: sentinel,
+            probe_factory=lambda: (lambda url: ANCHOR_SHA),
+            settle_factory=lambda: (lambda seconds: None),
         )
         == EXIT_DEPLOYED
     )
@@ -1465,7 +1485,8 @@ def test_a_propagation_404_settles_and_the_full_inventory_is_reverified(
 
     outcome = harness.run(settle=settle)
 
-    assert settle.waits == [PROPAGATION_SETTLE_SECONDS]
+    # R11b's pre-sweep settle, then R11a's retry settle — in that order.
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, PROPAGATION_SETTLE_SECONDS]
     assert harness.client.rollbacks == [], "a good deployment must not be rolled back"
     # Three verifications: preview, the lagging production pass, the re-verify.
     assert harness.verify.stages == [PREVIEW, PRODUCTION, PRODUCTION]
@@ -1484,7 +1505,8 @@ def test_the_propagation_retry_is_bounded_and_then_rolls_back(
     with pytest.raises(ProductionVerificationFailed) as raised:
         harness.run(settle=settle)
 
-    assert len(settle.waits) == PROPAGATION_RETRIES
+    # One pre-sweep settle plus exactly PROPAGATION_RETRIES retry settles.
+    assert len(settle.waits) == 1 + PROPAGATION_RETRIES
     assert harness.client.rollbacks == [PRIOR]
     assert raised.value.rolled_back_to == PRIOR
 
@@ -1530,7 +1552,7 @@ def test_only_a_pure_404_rejection_is_ever_settled(
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
 
-    assert settle.waits == [], why
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], why
     assert harness.client.rollbacks == [PRIOR]
     # Preview, the rejected production pass, and the post-rollback re-verify —
     # no retry of the production check itself.
@@ -1547,7 +1569,7 @@ def test_an_unavailable_production_verification_is_never_settled(
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
 
-    assert settle.waits == []
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS]
 
 
 def test_the_predicate_refuses_a_rejection_carrying_no_divergences() -> None:
@@ -1592,7 +1614,9 @@ def test_an_unavailable_outcome_carrying_404_divergences_still_fails_closed(
     settle = RecordingSettle()
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
-    assert settle.waits == [], "an unavailable verdict must never be waited out"
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], (
+        "an unavailable verdict must never trigger the RETRY settle"
+    )
     assert harness.client.rollbacks == [PRIOR]
 
 
@@ -1630,6 +1654,145 @@ def test_main_injects_the_settle_seam_and_never_really_sleeps(cli: Cli) -> None:
     code = cli.run(verifier_factory=lambda: cli.verify, settle_factory=lambda: settle)
 
     assert code == EXIT_DEPLOYED
-    assert settle.waits == [PROPAGATION_SETTLE_SECONDS]
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, PROPAGATION_SETTLE_SECONDS]
     assert cli.emitted.get("outcome") == OUTCOME_DEPLOYED
     assert cli.client.rollbacks == []
+
+
+# --- R11b: settle BEFORE the first production sweep --------------------------
+#
+# Run 31774209281 promoted a good build; seconds later three
+# `congress/data/tickers/*.v1.json` shards served TRUNCATED bodies —
+# `AAXJ.v1.json` came back 571 bytes against an expected 835, a length the
+# previous deployment does not have either, so it was a partial object rather
+# than a stale one. R11a cannot absorb that and must not: a body-hash mismatch
+# is indistinguishable from tampering. The wait therefore has to happen BEFORE
+# the question is asked.
+
+
+def test_the_domain_settles_before_the_first_production_sweep(
+    harness: Harness,
+) -> None:
+    """The settle precedes the first production verify, on a run that PASSES.
+
+    Ordering is the whole point: a wait that happens after the sweep, or only on
+    failure, leaves the truncated-body window wide open.
+    """
+    order: list[str] = []
+    harness.with_verifier(plan=[True, True])
+
+    def recording_verify(base_url, *, stage, inventory, deployment):
+        order.append(f"verify:{stage}")
+        return harness.verify(
+            base_url, stage=stage, inventory=inventory, deployment=deployment
+        )
+
+    def recording_settle(seconds: float) -> None:
+        order.append(f"settle:{seconds:g}")
+
+    harness.run(verify=recording_verify, settle=recording_settle)
+
+    assert order == [
+        f"verify:{PREVIEW}",
+        f"settle:{POST_PROMOTION_SETTLE_SECONDS:g}",
+        f"verify:{PRODUCTION}",
+    ]
+
+
+def test_the_pre_sweep_settle_happens_even_when_everything_passes(
+    harness: Harness,
+) -> None:
+    """Unconditional: it is not a failure handler, so a green run pays it too."""
+    settle = RecordingSettle()
+    harness.run(settle=settle)
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS]
+
+
+def test_a_truncated_body_is_never_waited_out(harness: Harness) -> None:
+    """The exact production finding: served 571 bytes against an expected 835.
+
+    It must roll back on the first look — one pre-sweep settle, no retry settle.
+    Widening R11a to cover this shape is the tempting wrong fix, and this is the
+    test that refuses it.
+    """
+    truncated = _rejected(
+        Divergence(
+            "congress/data/tickers/AAXJ.v1.json",
+            "sha256 9a25d7ff00756232 != aa06ca30e2f0f191; length 571 != 835",
+        )
+    )
+    harness.with_verifier(plan=[True, truncated])
+    settle = RecordingSettle()
+
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run(settle=settle)
+
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], "no RETRY settle"
+    assert harness.client.rollbacks == [PRIOR]
+
+
+# --- R11c: the rollback anchor must be the deployment actually serving -------
+
+
+def test_an_anchor_that_is_not_serving_aborts_before_any_upload(
+    harness: Harness,
+) -> None:
+    """Run 31774209281's second defect, replayed.
+
+    Production had been rolled back by hand to one deployment while a newer one
+    existed; the job anchored on the newer and later 'rolled back' to it. The
+    refusal must land BEFORE the freeze so production is untouched.
+    """
+    def disagreeing(url: str) -> str:
+        return "d823597b" if "publicfilings.org" in url else "7967b560"
+
+    with pytest.raises(RollbackAnchorUnverified) as raised:
+        harness.run(serving_probe=disagreeing)
+
+    assert "d823597b" in str(raised.value) and "7967b560" in str(raised.value)
+    assert harness.upload.calls == [], "nothing may be uploaded"
+    assert harness.client.rollbacks == [], "nothing may be rolled back"
+    assert harness.sealed_dirs == [], "the tree must not even be frozen"
+
+
+@pytest.mark.parametrize(
+    "probe, why",
+    [
+        (lambda url: None, "neither side readable"),
+        (
+            lambda url: None if "publicfilings.org" in url else "7967b560",
+            "the live domain unreadable",
+        ),
+        (
+            lambda url: "d823597b" if "publicfilings.org" in url else None,
+            "the anchor unreadable",
+        ),
+    ],
+)
+def test_an_unreadable_anchor_also_aborts(harness: Harness, probe, why: str) -> None:
+    """'Could not ask' is not 'they agree'. Refusing here is free."""
+    with pytest.raises(RollbackAnchorUnverified):
+        harness.run(serving_probe=probe)
+    assert harness.upload.calls == [], why
+
+
+def test_an_agreeing_anchor_proceeds_normally(harness: Harness) -> None:
+    """The check must not become a blanket refusal."""
+    outcome = harness.run(serving_probe=lambda url: "d823597b")
+    assert outcome.rollback_target == PRIOR
+    assert harness.upload.environments == [PREVIEW, PRODUCTION]
+
+
+def test_the_first_run_never_probes_because_there_is_no_anchor(
+    harness: Harness,
+) -> None:
+    """TD-4: no prior deployment means nothing to cross-check, not a refusal."""
+    harness.client.latest_id = None
+    probed: list[str] = []
+
+    def counting(url: str) -> str:
+        probed.append(url)
+        return "d823597b"
+
+    harness.run(serving_probe=counting)
+    assert probed == [], "with no anchor there is no question to ask"

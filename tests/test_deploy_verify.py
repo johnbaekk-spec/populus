@@ -43,6 +43,7 @@ import pytest
 
 from populus.deploy import verify as verify_module
 from populus.deploy.verify import (
+    CACHE_BUST_PARAM,
     ALLOWED_RESPONSE_HEADERS,
     CONTROL_PATHS,
     MARKER_BUILD_ID,
@@ -1110,3 +1111,101 @@ def test_a_rejection_names_the_findings_not_just_the_count(tmp_path):
     assert "assets/app.js" in result.detail, (
         f"the diverged path is not named in the detail: {result.detail!r}"
     )
+
+
+# --- R11c: the REAL serving probe, against the real provider fixture ---------
+#
+# Review round F4: every orchestration test injects a synthetic probe, so the
+# production factory's URL mapping, cache behaviour, status handling and marker
+# validation were untested — and F1, F2 and F3 all lived in exactly that gap.
+# F1 was the severe one: requesting the literal `index.html` gets Pages' 307,
+# which with redirects refused made the probe answer None for every deployment
+# and turned R11c into a blanket pre-upload refusal. These tests use the same
+# `_Origin` fixture as the rest of this file, which reproduces that 307.
+
+MARKED_PAGE = (
+    b'<!doctype html><meta name="populus:build_id" content="20260814.2">'
+    b'<meta name="populus:code_sha" content="4fd2987857b24045dc9c82ae368343df35ea9a22">'
+)
+
+
+def _probe_against(origin: _Origin):
+    from populus.deploy.orchestrator import serving_probe
+
+    client = origin.client()
+    return serving_probe(client), client
+
+
+def test_the_probe_reads_the_marker_through_the_provider_rewrite() -> None:
+    """F1: `index.html` is requested at the path Pages answers 200 on."""
+    origin = _Origin({"index.html": MARKED_PAGE})
+    probe, client = _probe_against(origin)
+
+    assert probe("https://publicfilings.org") == (
+        "4fd2987857b24045dc9c82ae368343df35ea9a22"
+    )
+    # The literal path would have been a 307; the request must not have used it.
+    assert not any(url.endswith("index.html") for url, _ in client.calls), client.calls
+    assert all(follow is False for _, follow in client.calls), "redirects stay refused"
+
+
+def test_every_probe_request_carries_a_fresh_cache_bust() -> None:
+    """F2: a fixed key is not a cache bust — two calls must differ."""
+    origin = _Origin({"index.html": MARKED_PAGE})
+    probe, client = _probe_against(origin)
+
+    probe("https://publicfilings.org")
+    probe("https://publicfilings.org")
+
+    busts = [url.split(f"{CACHE_BUST_PARAM}=")[1] for url, _ in client.calls]
+    assert len(busts) == 2 and busts[0] != busts[1], busts
+
+
+@pytest.mark.parametrize(
+    "page, why",
+    [
+        (
+            b'<!doctype html><meta name="populus:code_sha" content="">',
+            "F3: an empty marker is not a value",
+        ),
+        (
+            b'<!doctype html><meta name="populus:code_sha" content="   ">',
+            "F3: whitespace is not a value either",
+        ),
+        (
+            b'<!doctype html><meta name="populus:code_sha" content="a">'
+            b'<meta name="populus:code_sha" content="b">',
+            "a duplicated marker is not one answer",
+        ),
+        (b"<!doctype html><title>no markers here</title>", "a missing marker"),
+    ],
+)
+def test_the_probe_refuses_anything_but_one_real_marker(page: bytes, why: str) -> None:
+    origin = _Origin({"index.html": page})
+    probe, _ = _probe_against(origin)
+    assert probe("https://publicfilings.org") is None, why
+
+
+def test_the_probe_reports_none_on_a_non_200() -> None:
+    """A 404 for the marker page is 'could not ask', not an answer."""
+    origin = _Origin({})
+    probe, _ = _probe_against(origin)
+    assert probe("https://publicfilings.org") is None
+
+
+def test_the_probe_reports_none_on_a_transport_failure() -> None:
+    origin = _Origin({"index.html": MARKED_PAGE}, raiser=httpx.ConnectError("down"))
+    probe, _ = _probe_against(origin)
+    assert probe("https://publicfilings.org") is None
+
+
+def test_the_probe_reraises_the_suite_no_network_guard() -> None:
+    """An accidental real fetch must fail loudly, not launder into None.
+
+    Same carve-out `_fetch` makes, for the same reason: `except Exception`
+    swallowing the guard would hide a test that reached the network.
+    """
+    origin = _Origin({"index.html": MARKED_PAGE}, raiser=AssertionError("no network"))
+    probe, _ = _probe_against(origin)
+    with pytest.raises(AssertionError):
+        probe("https://publicfilings.org")
