@@ -45,6 +45,7 @@ from populus.deploy.orchestrator import (
     EXIT_REJECTED,
     EXIT_UNAVAILABLE,
     EXIT_UNCOMPENSATED,
+    OUTCOME_DEPLOYED,
     PREVIEW,
     PRODUCTION,
     PROJECT_ENV,
@@ -60,7 +61,13 @@ from populus.deploy.orchestrator import (
     main,
     run_deployment,
 )
-from populus.deploy.verify import VerificationResult, check_no_functions
+from populus.deploy.orchestrator import (
+    PROPAGATION_REASON,
+    PROPAGATION_RETRIES,
+    PROPAGATION_SETTLE_SECONDS,
+    _propagation_lag_only,
+)
+from populus.deploy.verify import Divergence, VerificationResult, check_no_functions
 from populus.publish.attestation import REJECTED, UNAVAILABLE, VERIFIED
 from populus.publish.digests import dist_digest
 from populus.publish.inventory import build_inventory, render_inventory
@@ -306,6 +313,8 @@ class FakeVerifier:
                 detail="verification unavailable: HTTP 429",
                 files_total=4,
             )
+        if isinstance(verdict, VerificationResult):
+            return verdict
         return VerificationResult(
             ok=False,
             outcome=REJECTED,
@@ -1409,3 +1418,218 @@ def test_the_readiness_poller_never_sleeps_for_real_in_the_suite() -> None:
     # Exhausts its attempts, sleeps BETWEEN them only, and never raises: a dead
     # origin is the sweep's verdict to render, not this helper's.
     assert slept == [5.0, 5.0]
+
+
+# --- (7a) R11a: custom-domain propagation lag, and NOTHING else --------------
+#
+# Run 31752834344 promoted a good deployment, saw three `_astro/*.js` bundles
+# answer 404 on the custom domain seconds later, and rolled it back. Probed
+# afterwards those same three paths served 200 from that same deployment: the
+# bytes were never missing, the edge had not finished resolving them. The cost
+# was a 2h13m ingest thrown away. These tests pin the narrow tolerance that
+# absorbs it — and, more importantly, every shape it must NOT absorb.
+
+
+def _rejected(*divergences: Divergence, extra_findings: tuple[str, ...] = ()) -> VerificationResult:
+    """A rejection carrying real divergences, the way the real verifier builds one."""
+    findings = tuple(str(d) for d in divergences) + extra_findings
+    return VerificationResult(
+        ok=False,
+        outcome=REJECTED,
+        detail=f"expected_paths: {len(findings)} finding(s)",
+        files_verified=4 - len(divergences),
+        files_total=4,
+        divergences=divergences,
+        findings=findings,
+    )
+
+
+def _lag(*paths: str) -> VerificationResult:
+    return _rejected(*(Divergence(p, PROPAGATION_REASON) for p in paths))
+
+
+class RecordingSettle:
+    def __init__(self) -> None:
+        self.waits: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+
+
+def test_a_propagation_404_settles_and_the_full_inventory_is_reverified(
+    harness: Harness,
+) -> None:
+    """The production leg of run 31752834344, replayed with the fix in place."""
+    harness.with_verifier(plan=[True, _lag("_astro/a.js", "_astro/b.js"), True])
+    settle = RecordingSettle()
+
+    outcome = harness.run(settle=settle)
+
+    assert settle.waits == [PROPAGATION_SETTLE_SECONDS]
+    assert harness.client.rollbacks == [], "a good deployment must not be rolled back"
+    # Three verifications: preview, the lagging production pass, the re-verify.
+    assert harness.verify.stages == [PREVIEW, PRODUCTION, PRODUCTION]
+    # The retry is the SAME inventory-wide check, not a spot-check of the 404s.
+    assert harness.verify.calls[2].inventory == harness.verify.calls[1].inventory
+    assert outcome.production_verification.ok
+
+
+def test_the_propagation_retry_is_bounded_and_then_rolls_back(
+    harness: Harness,
+) -> None:
+    """A deployment that is genuinely missing files still fails — one wait, no loop."""
+    harness.with_verifier(plan=[True, _lag("_astro/a.js"), _lag("_astro/a.js")])
+    settle = RecordingSettle()
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(settle=settle)
+
+    assert len(settle.waits) == PROPAGATION_RETRIES
+    assert harness.client.rollbacks == [PRIOR]
+    assert raised.value.rolled_back_to == PRIOR
+
+
+@pytest.mark.parametrize(
+    "result, why",
+    [
+        (
+            _rejected(Divergence("index.html", "sha256 aaa != bbb")),
+            "a digest divergence is tampering, not latency",
+        ),
+        (
+            _rejected(Divergence("_astro/a.js", "HTTP 403, expected 200")),
+            "403 does not become 200 by waiting",
+        ),
+        (
+            _rejected(Divergence("_astro/a.js", "HTTP 500, expected 200")),
+            "a 5xx is not a propagation lag",
+        ),
+        (
+            _rejected(
+                Divergence("_astro/a.js", PROPAGATION_REASON),
+                extra_findings=("marker 'populus:code_sha' mismatch: served 'x' != expected 'y'",),
+            ),
+            "a marker mismatch alongside a 404 is the WRONG DEPLOYMENT serving",
+        ),
+        (
+            _rejected(
+                Divergence("_astro/a.js", PROPAGATION_REASON),
+                extra_findings=("stats.json is not byte-equal to the built copy",),
+            ),
+            "a stats.json difference is a finding with no divergence behind it",
+        ),
+    ],
+)
+def test_only_a_pure_404_rejection_is_ever_settled(
+    harness: Harness, result: VerificationResult, why: str
+) -> None:
+    """Everything else rolls back immediately, with no wait at all."""
+    harness.with_verifier(plan=[True, result])
+    settle = RecordingSettle()
+
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run(settle=settle)
+
+    assert settle.waits == [], why
+    assert harness.client.rollbacks == [PRIOR]
+    # Preview, the rejected production pass, and the post-rollback re-verify —
+    # no retry of the production check itself.
+    assert harness.verify.stages == [PREVIEW, PRODUCTION, PRODUCTION]
+
+
+def test_an_unavailable_production_verification_is_never_settled(
+    harness: Harness,
+) -> None:
+    """R17: 'could not ask' is not a rejection, and must not enter the retry."""
+    harness.with_verifier(plan=[True, "unavailable"])
+    settle = RecordingSettle()
+
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run(settle=settle)
+
+    assert settle.waits == []
+
+
+def test_the_predicate_refuses_a_rejection_carrying_no_divergences() -> None:
+    """A findings-only rejection (markers, stats, headers) has nothing to wait for.
+
+    Guards the default `VerificationResult` shape the rest of this suite uses:
+    if an empty `divergences` tuple ever counted as 'all reasons are 404', every
+    existing rejection test would silently start settling.
+    """
+    assert not _propagation_lag_only(
+        VerificationResult(ok=False, outcome=REJECTED, detail="x", findings=("m",))
+    )
+    assert not _propagation_lag_only(
+        VerificationResult(ok=False, outcome=REJECTED, detail="x")
+    )
+
+
+# --- R11a remediation: review round 3 blockers F1, F2, F3 --------------------
+
+
+def test_an_unavailable_outcome_carrying_404_divergences_still_fails_closed(
+    harness: Harness,
+) -> None:
+    """Review F1: the outcome is CHECKED, not reasoned about.
+
+    `verify_deployment` returns UNAVAILABLE early with no divergences, so today
+    this state cannot arise — which is precisely why the predicate must not
+    depend on that remaining true in another module. A contradictory result
+    (R17 'no verdict reached' carrying propagation-shaped divergences) is the
+    fail-closed case.
+    """
+    contradictory = VerificationResult(
+        ok=False,
+        outcome=UNAVAILABLE,
+        detail="verification unavailable: HTTP 429",
+        divergences=(Divergence("_astro/a.js", PROPAGATION_REASON),),
+        findings=(f"_astro/a.js: {PROPAGATION_REASON}",),
+    )
+    assert not _propagation_lag_only(contradictory)
+
+    harness.with_verifier(plan=[True, contradictory])
+    settle = RecordingSettle()
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run(settle=settle)
+    assert settle.waits == [], "an unavailable verdict must never be waited out"
+    assert harness.client.rollbacks == [PRIOR]
+
+
+def test_the_retry_announces_each_attempt_with_its_lagging_paths(
+    harness: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Review F3: the operator signal is a requirement, so it is asserted.
+
+    Without this, deleting the message — or dropping the paths, the settle
+    duration or the attempt counter from it — leaves the suite green while an
+    operator loses the only explanation for why a rollback was delayed.
+    """
+    harness.with_verifier(plan=[True, _lag("_astro/a.js", "_astro/b.js"), True])
+    harness.run(settle=RecordingSettle())
+
+    err = capsys.readouterr().err
+    assert "_astro/a.js" in err and "_astro/b.js" in err
+    assert "2 path(s)" in err
+    assert f"settling {PROPAGATION_SETTLE_SECONDS:g}s" in err
+    assert "re-verifying the full inventory" in err
+    assert f"attempt 1/{PROPAGATION_RETRIES}" in err
+
+
+def test_main_injects_the_settle_seam_and_never_really_sleeps(cli: Cli) -> None:
+    """Review F2: the CLI wiring itself, not only `run_deployment`.
+
+    `publish.yml` runs this module as a process, so `main`'s `settle_factory`
+    hop is the seam that actually executes in production. Removing it would
+    leave every other R11a test green while the deploy either lost the wait or
+    slept for real inside the suite.
+    """
+    cli.verify = FakeVerifier(cli.log, plan=[True, _lag("_astro/a.js"), True])
+    settle = RecordingSettle()
+
+    code = cli.run(verifier_factory=lambda: cli.verify, settle_factory=lambda: settle)
+
+    assert code == EXIT_DEPLOYED
+    assert settle.waits == [PROPAGATION_SETTLE_SECONDS]
+    assert cli.emitted.get("outcome") == OUTCOME_DEPLOYED
+    assert cli.client.rollbacks == []

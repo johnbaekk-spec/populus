@@ -33,7 +33,11 @@ The eight steps, and what each one is load-bearing for:
    production upload must be that tree and not a successor of it.
 7. **Verify the live custom domain (R11)** — always, no exemption, no polling.
    The preview origin and the custom domain differ only in base URL, so both go
-   through one verifier.
+   through one verifier. **R11a:** when the ONLY findings are inventoried paths
+   answering 404, the domain is given one bounded settle and the FULL inventory
+   is verified again — a promotion's last objects can still be resolving on the
+   edge seconds after the origin itself answers. Every other finding shape, and
+   a second failure of the same shape, rolls back at once.
 8. **On failure at 7: roll back to the captured deployment and re-verify.**
 
 **TD-4 / R14 — the first run.** When step 3 captured nothing there is no rollback
@@ -69,7 +73,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
@@ -83,7 +88,7 @@ from populus.deploy.verify import (
     MARKER_CODE_SHA,
     read_markers,
 )
-from populus.publish.attestation import UNAVAILABLE
+from populus.publish.attestation import REJECTED, UNAVAILABLE
 from populus.publish.digests import dist_digest
 from populus.publish.inventory import build_inventory, render_inventory
 
@@ -113,6 +118,20 @@ DEFAULT_PRODUCTION_BRANCH = "main"
 API_TOKEN_ENV = "CLOUDFLARE_API_TOKEN"
 ACCOUNT_ID_ENV = "CLOUDFLARE_ACCOUNT_ID"
 PROJECT_ENV = "CLOUDFLARE_PAGES_PROJECT"
+
+#: The one production divergence reason that may be a propagation lag rather
+#: than a wrong deployment, matched EXACTLY against `Divergence.reason`. A 403,
+#: a 5xx, a 3xx hijack, a digest or length mismatch, a marker mismatch, a
+#: header or control-path finding — none of those become true by waiting, and
+#: none of them are tolerated here for a moment.
+PROPAGATION_REASON = "HTTP 404, expected 200"
+
+#: How long to let the custom domain settle before ONE re-verification, and how
+#: many times that is allowed. One retry, not a loop: the point is to absorb the
+#: seconds between a promotion and the last object resolving on the edge, not to
+#: keep asking a broken deployment until it agrees.
+PROPAGATION_SETTLE_SECONDS = 45.0
+PROPAGATION_RETRIES = 1
 
 #: Exit codes, deliberately distinguishable — these are four different pages at
 #: 3am. ``EXIT_UNCOMPENSATED`` is TD-4 and nothing else: unverified bytes are
@@ -321,6 +340,45 @@ def _await(ready: OriginReadiness | None, url: str, *, stage: str) -> None:
         ready(url, stage=stage)
 
 
+def _propagation_lag_only(result: VerificationOutcome) -> bool:
+    """True when EVERY finding is an inventoried path answering 404.
+
+    Run 31752834344 promoted a deployment whose three `_astro/*.js` bundles were
+    still resolving on the custom domain, rejected on their 404s, and rolled a
+    good build back. Probed minutes later, all three served 200 from that very
+    deployment — the bytes were always there.
+
+    `_await` does not cover this: it waits for the ORIGIN to answer at all (the
+    522 race), and here the origin was answering 200 for 9,668 of 9,671 paths.
+
+    The predicate is deliberately narrow and structural rather than a substring
+    test on `detail`:
+
+    * every finding must correspond to a divergence — a marker mismatch, a
+      `stats.json` byte difference, a header finding or a control-path finding
+      is a finding with NO divergence, so the counts diverge and this returns
+      False;
+    * every divergence reason must be exactly `PROPAGATION_REASON`;
+    * the outcome must be REJECTED. Review F1: this was previously left to a
+      claim in this docstring — "an UNAVAILABLE result carries no divergences,
+      so it cannot get here" — which is true of `verify_deployment` today and
+      is exactly the kind of invariant that holds until someone edits the other
+      file. A partial, malformed, or future result that is UNAVAILABLE *and*
+      carries 404 divergences must fail closed, so the outcome is now checked
+      rather than reasoned about.
+
+    Anything this predicate does not recognise keeps the old behaviour: roll
+    back immediately.
+    """
+    if getattr(result, "outcome", None) != REJECTED:
+        return False
+    divergences = getattr(result, "divergences", ())
+    findings = getattr(result, "findings", ())
+    if not divergences or len(findings) != len(divergences):
+        return False
+    return all(d.reason == PROPAGATION_REASON for d in divergences)
+
+
 def run_deployment(
     *,
     client: PagesSurface,
@@ -332,6 +390,7 @@ def run_deployment(
     preview_branch: str = DEFAULT_PREVIEW_BRANCH,
     runbook: str = RUNBOOK,
     await_origin: OriginReadiness | None = None,
+    settle: Callable[[float], None] = time.sleep,
 ) -> DeployOutcome:
     """Run the §12.1 deploy sequence in order, or raise saying where it stopped.
 
@@ -395,6 +454,39 @@ def run_deployment(
             inventory=snapshot.inventory,
             deployment=dict(production.payload),
         )
+        # R11a: absorb custom-domain propagation lag, and NOTHING else. The
+        # re-verification is the SAME inventory-wide check, not a spot-check of
+        # the paths that 404'd — so the verdict that lets a deploy stand is
+        # always a full verification, never a composite of one full pass plus a
+        # patch. Bounded by PROPAGATION_RETRIES, and every attempt says so out
+        # loud: a silent retry would turn a genuinely broken deploy into a slow
+        # one.
+        attempts = 0
+        while (
+            not production_result.ok
+            and attempts < PROPAGATION_RETRIES
+            and _propagation_lag_only(production_result)
+        ):
+            attempts += 1
+            # Derived from `divergences`, which `_propagation_lag_only` just
+            # proved non-empty — not from `diverged_paths`, which the
+            # VerificationOutcome Protocol does not require of a test double.
+            lagging = sorted({d.path for d in production_result.divergences})
+            print(
+                f"deploy: production verification found only propagation-shaped "
+                f"404s on {len(lagging)} path(s) ({', '.join(lagging[:5])}"
+                f"{', …' if len(lagging) > 5 else ''}); settling "
+                f"{PROPAGATION_SETTLE_SECONDS:g}s and re-verifying the full "
+                f"inventory once (attempt {attempts}/{PROPAGATION_RETRIES})",
+                file=sys.stderr,
+            )
+            settle(PROPAGATION_SETTLE_SECONDS)
+            production_result = verify(
+                domain_url,
+                stage=PRODUCTION,
+                inventory=snapshot.inventory,
+                deployment=dict(production.payload),
+            )
         if not production_result.ok:
             # --- (8) compensate, or say plainly that we cannot ---------------
             _fail_production(
@@ -737,6 +829,7 @@ def main(
     http_factory=None,
     verifier_factory=None,
     readiness_factory=None,
+    settle_factory=None,
 ) -> int:
     """Run the §12.1 deploy sequence as a process. The factories keep it testable.
 
@@ -827,6 +920,9 @@ def main(
                 if readiness_factory is not None
                 else await_origin(readiness_client)
             ),
+            # Same reason as await_origin: a test that drives main() through a
+            # propagation-shaped rejection must not pay the real settle.
+            settle=(settle_factory() if settle_factory is not None else time.sleep),
         )
     except FirstRunUncompensated as exc:
         # TD-4: the bytes are live and unverified. This is its own exit code
