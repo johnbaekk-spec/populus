@@ -170,6 +170,10 @@ class PagesDeploySurface:
         "assert_production_branch",
         "assert_custom_domain_active",
         "latest_production_deployment",
+        # Grown deliberately (R11d): resolving the rollback anchor needs the
+        # candidate LIST, because "newest by creation" and "currently serving"
+        # are different questions and any provider-side rollback separates them.
+        "production_deployments",
         "raw_deployments",
         "rollback_payload",
     )
@@ -191,6 +195,20 @@ class PagesDeploySurface:
         about what that deployment runs.
         """
         return self._client.latest_production_deployment()
+
+    def production_deployments(self) -> list[Deployment]:
+        """Production deployments, newest first — the anchor CANDIDATES.
+
+        Typed for the same reason `latest_production_deployment` is: the caller
+        reads `id`, `environment` and `url` to probe each one, and never
+        `uses_functions`, so the laundering hazard that forces `raw_deployments`
+        to stay raw does not apply.
+        """
+        return [
+            d
+            for d in self._client.production_deployments()
+            if d.environment == "production"
+        ]
 
     def raw_deployments(
         self, environment: str | None = None
