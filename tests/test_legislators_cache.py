@@ -75,6 +75,39 @@ def test_the_user_agent_identifies_the_application_and_a_contact():
     assert FETCH.user_agent("ops@example.org") == "Populus ops@example.org"
 
 
+@pytest.mark.parametrize("blank", ["", "   ", "\t"])
+def test_a_blank_contact_is_refused_instead_of_building_an_illegal_header(blank):
+    """Run 31861037053 died here after two hours of ingest.
+
+    `POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}` with no repository variable
+    set arrives as the EMPTY STRING, so the User-Agent became "Populus " and
+    httpx refused it: `Illegal header value b'Populus '`. Refuse it ourselves,
+    naming the remedy.
+    """
+    with pytest.raises(FETCH.FetchError, match="no contact address"):
+        FETCH.user_agent(blank)
+
+
+def test_an_empty_contact_env_var_falls_back_to_the_default(monkeypatch):
+    """`os.environ.get(key, default)` returns the default only when the key is
+    MISSING. An unset CI variable is present-and-empty, so the fallback has to
+    be `or`, not a get() default — that difference is the whole outage."""
+    seen: dict[str, str] = {}
+
+    def _capture(dest, ref, contact):
+        seen["contact"] = contact
+        return {"ref": ref, "files": []}
+
+    monkeypatch.setattr(FETCH, "fetch", _capture)
+    monkeypatch.setenv(FETCH.CONTACT_ENV, "")
+    assert FETCH.main([]) == 0
+    assert seen["contact"] == FETCH.DEFAULT_CONTACT
+
+    monkeypatch.setenv(FETCH.CONTACT_ENV, "ops@example.org")
+    assert FETCH.main([]) == 0
+    assert seen["contact"] == "ops@example.org"
+
+
 def test_an_unsafe_ref_is_refused_before_any_request_is_built(tmp_path):
     for bad in ("../main", "a/b", ".hidden", ""):
         with pytest.raises(FETCH.FetchError, match="unsafe ref"):

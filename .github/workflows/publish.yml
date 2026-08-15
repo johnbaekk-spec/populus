@@ -166,6 +166,18 @@ jobs:
           --domain publicfilings.org
           --acknowledge-unrecorded-code-sha '${{ inputs.acknowledge_unrecorded_code_sha }}'
 
+      # Fetched BEFORE the ingests on purpose. Run 31861037053 spent 2h11m on
+      # the ingests and then died in this fetch on a one-line error (an unset
+      # `vars.POPULUS_CONTACT` arrives as the EMPTY STRING, so the User-Agent
+      # was "Populus " and httpx refused it). The roster download depends on
+      # nothing the ingests produce, so anything that can fail in it — network,
+      # a bad contact, a truncated body — should fail in the first minute.
+      # The JOIN still runs after the ingests, because it joins their filings.
+      - name: Fetch the legislators cache (fail fast, before the long ingests)
+        env:
+          POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
+        run: uv run python scripts/fetch_legislators_cache.py --dest data-cache/legislators
+
       - name: Ingest (live, raw-archived)
         run: |
           uv run populus ingest congress-house --db populus.db --raw-root raw
@@ -188,11 +200,7 @@ jobs:
       # split the SIC snapshot producer uses. Source is CC0 and registered as
       # `cc0-legislators` in the §15 conditions register.
       - name: Ingest members (identity join)
-        env:
-          POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
         run: |
-          uv run python scripts/fetch_legislators_cache.py \
-            --dest data-cache/legislators
           uv run populus ingest members --db populus.db \
             --from-cache data-cache/legislators
 

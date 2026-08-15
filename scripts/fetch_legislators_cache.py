@@ -75,6 +75,24 @@ def _now_iso() -> str:
 
 
 def user_agent(contact: str) -> str:
+    """The identifying User-Agent, refusing a contact that is not one.
+
+    An UNSET repository variable arrives as the EMPTY STRING, not as an absent
+    key — the same trap `publish.yml` documents for `vars.` read through
+    `secrets.`. `os.environ.get(key, default)` returns the default only when the
+    key is MISSING, so `POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}` with no
+    variable set produced `"Populus "` and httpx refused it as an illegal header
+    value — after the run had already spent two hours on the ingests. Fail here,
+    with a sentence naming the fix, rather than building a header that cannot be
+    sent.
+    """
+    contact = contact.strip()
+    if not contact:
+        raise FetchError(
+            f"no contact address: set ${CONTACT_ENV} (or pass --contact). An"
+            " unset repository variable arrives as the empty string, which is"
+            " why the default did not apply."
+        )
     return f"{APP_NAME} {contact}"
 
 
@@ -179,7 +197,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--contact",
-        default=os.environ.get(CONTACT_ENV, DEFAULT_CONTACT),
+        # `or`, not a get() default: an unset repo variable is present-and-empty,
+        # and an empty contact must fall back rather than build "Populus ".
+        default=os.environ.get(CONTACT_ENV, "").strip() or DEFAULT_CONTACT,
         help=f"contact address for the User-Agent (default: ${CONTACT_ENV})",
     )
     args = parser.parse_args(argv)
