@@ -117,12 +117,20 @@ class FakePages:
         latest_id: str | None = PRIOR,
         rollback_uses_functions: Any = False,
         fail_with: Exception | None = None,
+        production_ids: tuple[str, ...] | None = None,
     ) -> None:
         self.__dict__["unexpected_attributes"] = []
         self._log = log
         self.configured_branch = production_branch
         self.active_domains = set(active_domains)
         self.latest_id = latest_id
+        # Newest-first, as the provider answers. Defaults to just the latest, so
+        # every existing test keeps the behaviour it was written against.
+        self.production_ids = (
+            production_ids
+            if production_ids is not None
+            else ((latest_id,) if latest_id is not None else ())
+        )
         self.rollback_uses_functions = rollback_uses_functions
         self.fail_with = fail_with
         self.rollbacks: list[str] = []
@@ -152,6 +160,10 @@ class FakePages:
         if self.latest_id is None:
             return None
         return _deployment(self.latest_id)
+
+    def production_deployments(self) -> list[Deployment]:
+        self._log.append(("list-production", tuple(self.production_ids)))
+        return [_deployment(i) for i in self.production_ids]
 
     def rollback_payload(self, deployment_id: str) -> dict:
         """The provider's RAW object, exactly as ``PagesDeploySurface`` returns one.
@@ -549,6 +561,7 @@ def test_the_full_sequence_runs_in_order(harness: Harness) -> None:
         ("assert-branch", BRANCH),
         ("assert-domain", DOMAIN),
         ("capture", PRIOR),
+        ("list-production", (PRIOR,)),
         ("upload", PREVIEW),
         ("verify", PREVIEW, PREVIEW_URL),
         ("upload", PRODUCTION),
@@ -1740,8 +1753,9 @@ def test_an_anchor_that_is_not_serving_aborts_before_any_upload(
     """Run 31774209281's second defect, replayed.
 
     Production had been rolled back by hand to one deployment while a newer one
-    existed; the job anchored on the newer and later 'rolled back' to it. The
-    refusal must land BEFORE the freeze so production is untouched.
+    existed; the job anchored on the newer and later 'rolled back' to it. With
+    NO candidate serving what the domain serves, there is no anchor to resolve
+    and the refusal must land BEFORE the freeze so production is untouched.
     """
     def disagreeing(url: str) -> str:
         return "d823597b" if "publicfilings.org" in url else "7967b560"
@@ -1749,10 +1763,69 @@ def test_an_anchor_that_is_not_serving_aborts_before_any_upload(
     with pytest.raises(RollbackAnchorUnverified) as raised:
         harness.run(serving_probe=disagreeing)
 
-    assert "d823597b" in str(raised.value) and "7967b560" in str(raised.value)
+    assert "d823597b" in str(raised.value)
     assert harness.upload.calls == [], "nothing may be uploaded"
     assert harness.client.rollbacks == [], "nothing may be rolled back"
     assert harness.sealed_dirs == [], "the tree must not even be frozen"
+
+
+def test_the_anchor_resolves_to_the_serving_deployment_not_the_newest(
+    harness: Harness,
+) -> None:
+    """R11d — run 31866841710, the deadlock R11c's refusal left behind.
+
+    A provider-side rollback is the documented escape hatch, and it makes
+    'newest by creation' and 'currently serving' different deployments *by
+    design*. Refusing on that divergence (R11c) protected production but left
+    every subsequent deploy blocked until someone deleted deployment history.
+
+    Here `dep-newest` is newest and `dep-serving` is what the domain answers
+    with. The anchor must be `dep-serving`, and a later verification failure
+    must compensate onto THAT — restoring the site people are actually looking
+    at, not the newest build nobody promoted.
+    """
+    harness.client.production_ids = ("dep-newest", "dep-serving", "dep-older")
+
+    def probe(url: str) -> str:
+        if "publicfilings.org" in url:
+            return "d823597b"          # the domain, after a dashboard rollback
+        if "dep-serving" in url:
+            return "d823597b"          # the deployment that actually serves it
+        return "4fd29878"              # newest-by-creation, never promoted
+
+    outcome = harness.run(serving_probe=probe)
+
+    assert outcome.rollback_target == "dep-serving", (
+        "the anchor must be the deployment the domain serves, not the newest"
+    )
+    assert harness.upload.calls != [], "the deploy must now proceed, not deadlock"
+
+
+def test_the_anchor_search_stops_at_the_first_match(harness: Harness) -> None:
+    """The common case — nothing rolled back — never walks past the newest.
+
+    Without this, a project with a long deployment history would pay a request
+    per deployment on every deploy, and the bound would be the only thing
+    keeping that finite.
+
+    The winner is probed TWICE by design: once to resolve it, once by
+    `_assert_anchor_is_serving`, which re-reads rather than trusting the value
+    the resolver already has. That is what makes the proof independent of the
+    thing it is proving, so it is asserted here rather than optimised away.
+    """
+    harness.client.production_ids = (PRIOR, "dep-older", "dep-oldest")
+    probed: list[str] = []
+
+    def probe(url: str) -> str:
+        probed.append(url)
+        return "d823597b"
+
+    harness.run(serving_probe=probe)
+    candidates = [u for u in probed if "publicfilings.org" not in u]
+    assert all(PRIOR in u for u in candidates), (
+        f"the search walked past the first match: {candidates}"
+    )
+    assert len(candidates) == 2, "resolve once, then prove once, independently"
 
 
 @pytest.mark.parametrize(

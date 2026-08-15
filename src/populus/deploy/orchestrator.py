@@ -82,7 +82,7 @@ import argparse
 import os
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
@@ -288,6 +288,13 @@ class PagesSurface(Protocol):
 
     def latest_production_deployment(self) -> Deployment | None: ...
 
+    #: Newest-first, so the anchor resolver can stop at the first deployment
+    #: that serves what the domain serves. R11c PROVED the anchor rather than
+    #: resolving it, which refuses correctly but leaves the deploy blocked for
+    #: as long as the divergence stands — and a provider-side rollback creates
+    #: exactly that divergence by design.
+    def production_deployments(self) -> Iterable[Deployment]: ...
+
     def rollback_payload(self, deployment_id: str) -> Mapping[str, Any]: ...
 
 
@@ -471,6 +478,56 @@ def _assert_anchor_is_serving(
         )
 
 
+#: How many production deployments to probe when resolving the anchor. The
+#: common case matches on the first (nothing rolled back); the bound exists so a
+#: project with a long history cannot turn one deploy into hundreds of probes.
+ANCHOR_SEARCH_LIMIT = 20
+
+
+def _resolve_serving_anchor(
+    client: PagesSurface, probe: ServingProbe, *, domain_url: str
+) -> Any:
+    """The production deployment that serves what the domain serves.
+
+    R11c proved the anchor and refused on divergence, which is right — rolling
+    back to "newest by creation" would move the site to a build nobody asked
+    for. But refusing is only half an answer: a provider-side rollback creates
+    that divergence *by design*, and the runbook offers it as the operational
+    escape hatch, so the deploy path stayed blocked until someone deleted
+    deployment history. Run 31866841710 died here with the domain on the
+    attested `d823597b…` and the newest-by-creation deployment on `4fd29878…`
+    — a divergence the previous run's own compensating rollback had created.
+
+    So resolve it instead: walk production deployments newest-first and take the
+    first one that answers with the marker the domain answers with. That IS the
+    anchor by definition — the deployment currently serving. The caller still
+    runs `_assert_anchor_is_serving` afterwards, so a wrong answer here fails
+    closed rather than compensating onto the wrong build.
+    """
+    served = probe(domain_url)
+    if served is None:
+        raise RollbackAnchorUnverified(
+            f"cannot resolve the rollback anchor: {domain_url} did not answer "
+            f"with {MARKER_CODE_SHA!r}. Nothing was uploaded; production is "
+            "untouched. Re-run once the domain answers"
+        )
+    examined: list[str] = []
+    for deployment in list(client.production_deployments())[:ANCHOR_SEARCH_LIMIT]:
+        if deployment.environment != "production":
+            continue
+        examined.append(deployment.id)
+        if probe(deployment.url) == served:
+            return deployment
+    raise RollbackAnchorUnverified(
+        f"no production deployment serves what {domain_url} serves "
+        f"({served!r}); examined {len(examined)} of the newest "
+        f"{ANCHOR_SEARCH_LIMIT} ({', '.join(examined[:5])}"
+        f"{', …' if len(examined) > 5 else ''}). Nothing was uploaded; "
+        "production is untouched. The domain is serving something this project "
+        "did not deploy, or the deployment that served it was deleted"
+    )
+
+
 def run_deployment(
     *,
     client: PagesSurface,
@@ -510,13 +567,21 @@ def run_deployment(
     client.assert_custom_domain_active(custom_domain)
 
     # --- (3) the rollback target, captured BEFORE the production upload ------
+    # R11d: RESOLVED as the deployment the domain actually serves, not assumed
+    # to be the newest by creation — those are different questions, and any
+    # provider-side rollback makes them different answers. `latest_production_
+    # deployment()` still decides whether there is a prior deployment at all
+    # (the first-run None), so the R14 first-run path is unchanged.
     prior = client.latest_production_deployment()
+    if prior is not None:
+        prior = _resolve_serving_anchor(
+            client, serving_probe, domain_url=_domain_url(custom_domain)
+        )
     rollback_target = prior.id if prior is not None else None
-    # R11c: and PROVED to be the deployment the domain actually serves. `prior`
-    # is the newest production deployment by creation, which is a different
-    # question. Checked here, before any upload, because an anchor that does not
-    # match the live site cannot compensate anything — and a refusal at this
-    # point costs nothing: production is untouched.
+    # R11c: and still PROVED, after resolution. Kept deliberately: the resolver
+    # above is now the thing that could be wrong, and this is what makes a wrong
+    # answer fail closed. Before any upload, so a refusal costs nothing —
+    # production is untouched.
     if prior is not None:
         _assert_anchor_is_serving(
             serving_probe, prior=prior, domain_url=_domain_url(custom_domain)
