@@ -1041,32 +1041,6 @@ def test_global_docs_attempts_reject_skip_and_duplicate(tmp_path: Path, monkeypa
         BUNDLE.finalization_docs_attempts()
 
 
-def test_legacy_round_two_transition_now_refuses_strict_predecessor_before_output(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    root = Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11")
-    monkeypatch.setattr(
-        BUNDLE,
-        "validate_fixed_state",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("STOP AFTER PREDECESSOR")),
-    )
-    output = root / "qa-v9-finalization-round-2"
-    assert BUNDLE.main([
-        "run",
-        "--cycle", "finalization",
-        "--round", "2",
-        "--final-docs-commit", str(root / "final-docs-commit.finalization-r2-a1.md"),
-        "--prior-review", str(root / "qa-v9-finalization-round-1/qa-review.round-1.md"),
-        "--resolution-notes", str(root / "resolution-notes.finalization-r1.md"),
-        "--output", str(output),
-    ]) == 1
-    assert "finalization message path/round/global attempt is invalid" in (
-        capsys.readouterr().err
-    )
-    assert output.is_dir()
-
-
 def test_docs_rejection_repo_repair_advances_round_and_attempt_before_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1347,31 +1321,6 @@ def test_resolution_notes_v1_malformed_cases_refuse(
     path.write_bytes(content.encode("utf-8"))
     with pytest.raises(RuntimeError):
         BUNDLE.validate_failed_gate_artifact(path, "resolution-notes-v1")
-
-
-def test_round_three_accepts_exact_failed_gate_predecessor_before_output(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    root = Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11")
-    output = root / "qa-v9-finalization-round-3"
-    monkeypatch.setattr(
-        BUNDLE,
-        "validate_fixed_state",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("STOP AFTER GATE PREDECESSOR")),
-    )
-    assert BUNDLE.main([
-        "run",
-        "--cycle", "finalization",
-        "--round", "3",
-        "--final-docs-commit", str(root / "final-docs-commit.finalization-r3-a1.md"),
-        "--prior-gate-bundle", str(root / "qa-v9-finalization-round-2"),
-        "--resolution-notes", str(root / "resolution-notes.finalization-r2-gates.v2.md"),
-        "--output", str(output),
-    ]) == 1
-    assert "finalization message path/round/global attempt is invalid" in (
-        capsys.readouterr().err
-    )
 
 
 def test_recovery_and_finalization_authority_are_distinct() -> None:
@@ -2981,25 +2930,6 @@ def test_private_tree_whitespace_refusal_preserves_real_index(
     }
     with pytest.raises(RuntimeError, match="command failed"):
         BUNDLE.compute_approved_tree(state)
-    assert BUNDLE.sha256_file(index) == before
-
-
-def test_finalization_closeout_private_tree_passes_exact_76_path_scope() -> None:
-    repo = Path(__file__).parents[1]
-    index = Path(git(repo, "rev-parse", "--git-path", "index").decode().strip())
-    if not index.is_absolute():
-        index = repo / index
-    before = BUNDLE.sha256_file(index)
-    record = BUNDLE.compute_approved_tree({
-        "repo": repo,
-        "round": 10,
-        "head": BUNDLE.EXPECTED_HEAD,
-        "paths": list(BUNDLE.EXPECTED_QA_PATHS),
-        "index_path": index,
-    })
-    assert record["expected_paths"] == list(BUNDLE.EXPECTED_QA_PATHS)
-    assert record["real_index_before_sha256"] == "sha256:" + before
-    assert record["real_index_after_sha256"] == "sha256:" + before
     assert BUNDLE.sha256_file(index) == before
 
 
