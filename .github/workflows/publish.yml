@@ -171,6 +171,31 @@ jobs:
           uv run populus ingest congress-house --db populus.db --raw-root raw
           uv run populus ingest congress-senate --db populus.db --raw-root raw
 
+      # THE MEMBER JOIN. Without this step the two ingests above leave
+      # `transactions.bioguide_id` entirely NULL, because `members.apply_member_join`
+      # — the only writer of that column — runs solely inside `ingest members`.
+      # This job builds a FRESH populus.db every run, so nothing carries a roster
+      # over from a previous one; the owner's local builds only ever worked
+      # because their store already held members from a manual run.
+      #
+      # Missing since the workflow was written: builds 20260807.1 through
+      # 20260812.1 all published a site with ZERO member pages, and live 404s
+      # every `/congress/members/<bioguide>` today. `build.py` now REFUSES a
+      # build in that state rather than emitting an identity-less site.
+      #
+      # `ingest members` is offline-only by design (library code performs no
+      # network access), so the cache is fetched first by a script — the same
+      # split the SIC snapshot producer uses. Source is CC0 and registered as
+      # `cc0-legislators` in the §15 conditions register.
+      - name: Ingest members (identity join)
+        env:
+          POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
+        run: |
+          uv run python scripts/fetch_legislators_cache.py \
+            --dest data-cache/legislators
+          uv run populus ingest members --db populus.db \
+            --from-cache data-cache/legislators
+
       # --- the two-phase build seam (RUN P3-3b R2) --------------------------
       # The site is built BETWEEN these two steps: it reads manifest.json to
       # decide which surfaces exist, and its file count is what finalize-build

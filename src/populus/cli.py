@@ -916,6 +916,10 @@ def build(
             raw_root=raw_root,
             backend=make_backend(data_repo),
             attestation=_make_attestation(attestation_choice),
+            # Same declaration as `stage-build` below: a CLI-driven build is a
+            # real publication, so a store with no member join is refused rather
+            # than silently emitting a site without member pages.
+            expect_member_join=True,
         )
     except (PublishError, BackendError, DigestError, OSError) as exc:
         raise click.ClickException(str(exc))
@@ -1047,6 +1051,10 @@ def stage_build_cmd(
             attestation=_make_attestation(attestation_choice),
             inst_db_path=inst_db,
             expected_modules=frozenset(expect_modules),
+            # The publishing path DECLARES that member identity must be present
+            # (see `stage_build`). This is the call `publish.yml` makes, and the
+            # one that shipped 20260807.1 → 20260812.1 with no member pages.
+            expect_member_join=True,
         )
         write_stage_state(staged)
     except (PublishError, BackendError, DigestError, OSError) as exc:

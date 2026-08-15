@@ -390,6 +390,121 @@ def test_run_build_skips_and_counts_nonconforming_tickers(tmp_path):
     assert any(row["ticker"] == "BAD TICKER" for row in feed["rows"])
 
 
+def test_run_build_refuses_a_store_whose_member_join_never_ran(tmp_path):
+    """The production outage of 2026-08-07 → 2026-08-14, pinned.
+
+    `publish.yml` ingested house and senate but never `members`, and
+    `apply_member_join` is the ONLY writer of `transactions.bioguide_id`. Seven
+    builds (20260807.1 … 20260812.1) therefore published a site with no member
+    pages, and live 404s every `/congress/members/<bioguide>` today. Nothing
+    failed, because the slice loop simply iterated zero times.
+
+    Rows present + zero joined must be a refusal. Delete the guard in
+    `build.py` and this test fails: the build would succeed and emit no member
+    artifact, which is precisely what shipped.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    conn = connect(str(db))
+    try:
+        # Exactly the shipped state: the roster was never loaded, so the join
+        # resolved nothing. NULL, not '' — the released store held real NULLs.
+        conn.execute("UPDATE transactions SET bioguide_id = NULL")
+        conn.execute("UPDATE filings SET bioguide_id = NULL")
+        conn.execute("DELETE FROM members")
+        conn.commit()
+    finally:
+        conn.close()
+    repo = make_repo(tmp_path)
+    with pytest.raises(PublishError, match="member join is absent"):
+        run_build(
+            db,
+            repo,
+            now=pin(),
+            backend=LocalDirBackend(repo),
+            expect_member_join=True,
+        )
+
+
+def test_an_undeclared_build_still_permits_an_identity_less_store(tmp_path):
+    """The declaration is what arms the guard — mirroring `expected_modules`.
+
+    Synthetic library builds legitimately hold filings with no roster, so the
+    library default stays permissive and only the production CLI declares. This
+    pins that boundary: change the default and the suite's identity-less
+    fixtures would start failing for a reason none of them is about.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    conn = connect(str(db))
+    try:
+        conn.execute("UPDATE transactions SET bioguide_id = NULL")
+        conn.execute("UPDATE filings SET bioguide_id = NULL")
+        conn.execute("DELETE FROM members")
+        conn.commit()
+    finally:
+        conn.close()
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    assert report.build_id
+
+
+def test_run_build_emits_member_slices_when_the_join_ran(tmp_path):
+    """The positive control for the refusal above.
+
+    Without this, a guard that refused EVERY declared build would still pass the
+    refusal test. This proves the joined path is unaffected and actually writes
+    the member artifact whose absence was the outage.
+    """
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    report = run_build(
+        db, repo, now=pin(), backend=LocalDirBackend(repo), expect_member_join=True
+    )
+    members_dir = repo / STAGING_DIR / report.build_id / "build" / "congress" / "members"
+    assert sorted(p.name for p in members_dir.glob("*.json")) == ["D000001.json"]
+
+
+def test_every_production_build_call_site_declares_the_member_join():
+    """A default-permissive guard is only as good as its production callers.
+
+    `expect_member_join` defaults to False so synthetic builds keep working, so
+    a new publishing call site that forgets to declare it would silently
+    reopen the outage. Same reasoning — and same AST approach — as
+    `tests/test_attestation_structure.py`: a signature-level default cannot see
+    an omission at the call site, so the call sites are pinned here.
+    """
+    import ast
+
+    cli_path = Path(__file__).parents[1] / "src" / "populus" / "cli.py"
+    tree = ast.parse(cli_path.read_text(encoding="utf-8"))
+    offenders = []
+    found = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = getattr(func, "id", None) or getattr(func, "attr", None)
+        if name not in {"run_build", "stage_build"}:
+            continue
+        found += 1
+        declared = [
+            kw
+            for kw in node.keywords
+            if kw.arg == "expect_member_join"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+        ]
+        if not declared:
+            offenders.append(f"cli.py:{node.lineno} {name}(...)")
+    # Guard against a vacuous pass: if the call sites move or are renamed, an
+    # empty sweep would report success while checking nothing.
+    assert found == 2, f"expected 2 CLI build call sites, found {found}"
+    assert offenders == [], (
+        "production build call sites do not declare `expect_member_join=True`"
+        " and would publish a site with no member pages:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
 def test_run_build_refuses_missing_inputs(tmp_path):
     repo = make_repo(tmp_path)
     # No DB, nothing staged, nothing to reconcile → a new build cannot be

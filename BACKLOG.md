@@ -12,6 +12,88 @@ independently-verifiable deployment record.**
 
 ---
 
+## 0. LIVE OUTAGE — the member identity layer (found 2026-08-14)
+
+- [x] **B24 — every `/congress/members/<bioguide>` route 404s in production, and
+      has since build `20260807.1`.** Found while running the UX-overhaul
+      preconditions; live (`20260814.1`) serves 17,065 congressional rows with
+      **zero** member pages, so no disclosure on the site can be attributed to
+      a person and every member search hit is a dead link.
+
+      **Root cause.** `apply_member_join` (`members.py:645`) is the ONLY writer
+      of `transactions.bioguide_id`, and it runs solely inside
+      `populus ingest members`. `publish.yml` ingested house and senate and
+      never members — it never has. Local builds worked only because the
+      owner's store already held a roster from a manual run; the runner builds a
+      FRESH `populus.db` every time, so the first fully CI-built release
+      (`20260807.1`) shipped an empty `members` table and NULL bioguide ids.
+      `ingest members` is offline-only by design and reads
+      `data-cache/legislators/`, which is in `.git/info/exclude` — so CI had no
+      possible source for the roster either.
+
+      **Why nothing caught it.** The slice loop at `build.py:2649` iterates
+      `WHERE bioguide_id IS NOT NULL`; with zero joined rows it runs zero times,
+      writes no artifact and raises nothing. `stats.json` even published the
+      evidence — 210 `unresolved_names` — and no gate read it. The dashboard
+      post-build suite DOES fail on the missing tree, but `npm run test:post`
+      never runs in CI (it is behind `build:bounded`'s 32 GiB floor), so the
+      only red was invisible.
+
+      **Fixed here (2026-08-14), pending an owner publish:**
+      `scripts/fetch_legislators_cache.py` fetches the CC0 roster
+      (`cc0-legislators`, already in the §15 register) with validation that
+      refuses a truncated or non-roster body; `publish.yml` gains an
+      "Ingest members (identity join)" step between the ingest and stage-build;
+      and `stage_build` takes a DECLARED `expect_member_join` — permissive by
+      library default so synthetic test builds keep working, declared `True` by
+      both production CLI call sites — which REFUSES a build carrying rows with
+      zero joins. Measured on a copy of the shipped `20260812.1` store:
+      **0% → 95.2% of rows joined** (house 100%, senate 94.31%), 156 members,
+      and the production `populus build` emits 156 member artifacts where it
+      previously emitted none and exited 0. The same command against the
+      unrepaired store now exits 1.
+
+      **Still open:** the residual senate 5.7% is name-variant filings
+      (`Hagerty, IV, William F`, `Manchin, III, Joseph`, …) that the packaged
+      `aliases.yaml` does not cover. They are counted and published in
+      `unresolved_names`, never dropped — a data-quality follow-up, not a
+      blocker. **The live site stays broken until the owner runs a publish
+      cycle**; no code change can deploy itself.
+
+- [ ] **B25 — the same root cause, bigger: CI builds lost the historical House
+      corpus.** Found alongside B24 and NOT fixed here, because the remedy is a
+      decision rather than a missing step.
+
+      The runner builds a fresh `populus.db` every run and the House ingest
+      fetches its settled window, so a CI build holds only what that window
+      returns. The owner's local store had accumulated 14 House ingest runs plus
+      the RUN M1-B backfill. Measured:
+
+      | | House rows | Senate rows |
+      |---|---|---|
+      | `20260802.2` (last local build) | 57,068 (2014→2026) | 991 |
+      | `20260812.1` (CI) | 2,857 (2026 only) | 14,198 |
+
+      So the move to CI dropped ~54,000 historical House disclosures from the
+      published site (live currently reports 17,065 rows) while gaining Senate
+      history the local store never had. Nothing warned: a smaller corpus is
+      indistinguishable from a quiet week to every gate we have.
+
+      **Decide:** seed the runner from the published corpus before ingest (the
+      accumulated store becomes an input, not a by-product), or re-run the
+      backfill under CI. Until then the site is missing a decade of House
+      filings.
+
+      **Consequence for B18 — do not re-measure the file-budget constants yet.**
+      `M1_MEASURED_PAGES = 12_442` was measured on the full local corpus; the
+      current tree measures 5,634 M1 files / 5,746 total *because* of this
+      outage. Re-measuring now would encode the outage as the baseline, which is
+      the exact error B18 already warns against. Both constants stay stale, and
+      the three post-build file-budget tests stay red, until the corpus question
+      is settled — then measure once, on a restored tree.
+
+---
+
 ## 1. Correctness — carried open from M2
 
 Full detail, reproductions and file:line: [`docs/build/M2-KNOWN-ISSUES.md`](docs/build/M2-KNOWN-ISSUES.md).
@@ -193,19 +275,20 @@ gate runs left behind, recorded so nothing here is discovered later as a surpris
      3.4× overrun that ships to every visitor on every page. This one is a real
      user-facing weight problem, not a bookkeeping drift.
 
-- **B19 — the M2-11 QA-bundle trio** (`tests/test_m2_11_qa_bundle.py`: legacy
-  round-two transition, round-three predecessor, the exact-76-path-scope
-  closeout). All three fail with `RuntimeError: private-index changed-path
-  inventory mismatch` at `scripts/build_m2_11_qa_bundle.py:2434`, **identically
-  at `7ce271d`** — before the rebrand and before M2-12. They are deselected in
-  `.github/workflows/checks.yml`, which also asserts they still fail **per node,
-  on an exact pytest exit code, with the failure signature pinned**: when they
-  are fixed, that job goes red until the deselect entries are deleted. The
-  allowlist must shrink.
-
-  Note the whole FILE now skips off the owner's machine (see B23), so on CI these
-  three report "not applicable here" rather than pass or fail. The authoritative
-  run is local.
+- **B19 — RESOLVED 2026-08-14 (UX-overhaul R29): the M2-11 QA-bundle trio
+  removed.** The three tests (legacy round-two transition, round-three
+  predecessor, the exact-76-path-scope closeout) certified mid-flight states of
+  the now-completed M2-11 finalization against live owner-machine evidence, and
+  that state cannot be rewound: the two `main`-driven tests now die on
+  `finalization docs attempt cap is exhausted` (the recorded
+  `private-index changed-path inventory mismatch` signature had itself gone
+  stale — the evidence root kept evolving under them), and the closeout test
+  required the live repo's dirty state to equal the historical 76-path scope at
+  `EXPECTED_HEAD`, true only inside the original QA worktree at that moment.
+  Removed rather than repaired, because repair would mean rewinding owner
+  evidence history, not fixing a test. The CI deselect list and the
+  allowlist-accuracy step in `.github/workflows/checks.yml` were deleted in the
+  same change; `make test` and CI now run the identical unfiltered set.
 
 - **B20 — Codex F5 fixed the byte cap; the same class may live elsewhere.**
   `capRows` measured UTF-16 code units while its constant is declared in BYTES,

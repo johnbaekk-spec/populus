@@ -2423,6 +2423,7 @@ def run_build(
     raw_root: Path | str | None = None,
     backend: ReleaseBackend,
     attestation: AttestationProvider | None = None,
+    expect_member_join: bool = False,
 ) -> BuildReport:
     """Assemble and finalize one staged build in a single call.
 
@@ -2444,6 +2445,10 @@ def run_build(
         raw_root=raw_root,
         backend=backend,
         attestation=attestation,
+        # Explicit keyword, never **kwargs — same rule the attestation
+        # parameter documents above: a forwarded parameter cannot be seen by
+        # the signature-level guard that pins production call sites.
+        expect_member_join=expect_member_join,
     )
     return finalize_build(staged)
 
@@ -2458,8 +2463,18 @@ def stage_build(
     attestation: AttestationProvider | None = None,
     inst_db_path: Path | str | None = None,
     expected_modules: frozenset[str] = frozenset({MODULE}),
+    expect_member_join: bool = False,
 ) -> StagedBuild:
     """Assemble one staged build under ``.staging/<build_id>/`` (§5.5).
+
+    ``expect_member_join``: DECLARE that this build's congressional rows carry
+    member identity. Same shape as ``expected_modules`` below and for the same
+    reason — the library default preserves synthetic test builds, whose stores
+    have filings but deliberately no roster, while the production CLI declares
+    it and so refuses a build whose ``members`` ingest never ran. That refusal
+    is not hypothetical: builds 20260807.1 → 20260812.1 shipped with every
+    ``/congress/members/<bioguide>`` route absent, and live 404s them today,
+    because the slice loop below simply iterated zero times.
 
     ``expected_modules`` (F-26, ALPHA-UX): the DECLARED module set this release
     must account for — every named module needs a typed disposition (present →
@@ -2620,6 +2635,34 @@ def stage_build(
             "rows": _feed_rows(snapshot, limit=FEED_LIMIT),
         }
         _write_staged(build_dir, "congress/feed.json", _render_json(feed))
+
+        # A build that carries congressional rows but joined NONE of them to a
+        # member is not a small build — it is the identity layer missing, and
+        # every `/congress/members/<bioguide>` route 404s. The loop below is the
+        # exact shape that let that ship silently: with zero joined rows it
+        # iterates zero times, writes no artifact, and raises nothing, so seven
+        # consecutive builds (20260807.1 through 20260812.1) published a site
+        # whose member pages did not exist. `stats.json` even carried the
+        # evidence — 210 `unresolved_names` and no member slices — and nothing
+        # read it. Under a declared expectation an empty result set is a refusal
+        # here, never a quiet success.
+        #
+        # The predicate is deliberately "rows exist AND none joined", not a
+        # coverage percentage: a partial join is a data-quality question the §15
+        # join-coverage report already measures per era, while a total absence is
+        # always a broken pipeline (the `members` ingest never ran).
+        if expect_member_join:
+            (row_total, joined_total) = snapshot.execute(
+                "SELECT COUNT(*), COUNT(bioguide_id) FROM v_default_transactions"
+            ).fetchone()
+            if row_total and not joined_total:
+                raise PublishError(
+                    f"member join is absent: {row_total} congressional rows and 0"
+                    " joined to a member, so no member page would be built."
+                    " `populus ingest members --from-cache <legislators dir>` did"
+                    " not run against this store"
+                    " (see scripts/fetch_legislators_cache.py)."
+                )
 
         for (bioguide_id,) in snapshot.execute(
             "SELECT DISTINCT bioguide_id FROM v_default_transactions"
