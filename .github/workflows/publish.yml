@@ -34,6 +34,26 @@ on:
         required: false
         type: boolean
         default: false
+      # R43 one-time corpus bootstrap. The seed carries House 2014-> but its
+      # Senate floor is 2026-03-24, and the watermark rule (MAX(filed)-90d)
+      # means 2012->2026-03 would never be fetched again. This adds ONE bounded
+      # era ingest to fill it. Absent from `schedule:` on purpose — a nightly
+      # can never re-fetch fourteen years by accident.
+      senate_era_backfill:
+        description: "R43: one-time bounded Senate era ingest (01/01/2012 - 04/30/2026)"
+        required: false
+        type: boolean
+        default: false
+      # R44's authorization path. `load_filing` DELETEs and replaces a filing's
+      # whole parsed set, so a corrective reparse legitimately lowers its raw
+      # transaction count. Naming the filing here makes that a REVIEWED event
+      # visible in the dispatch log; leaving it blank makes any decrease a
+      # build refusal. Absent from `schedule:` — an unattended run can never
+      # authorize a corpus shrink.
+      corpus_floor_allow_reparse:
+        description: "R44: filing_ids whose corrective reparse is expected (space/comma separated)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -178,10 +198,48 @@ jobs:
           POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
         run: uv run python scripts/fetch_legislators_cache.py --dest data-cache/legislators
 
+      # R42 — SEED FORWARD. Before this step the runner built populus.db from
+      # nothing every run, and House `default_years` fetches the current year
+      # only, so a decade of House history could never come back (B25). The
+      # seed is authenticated through the same pointer -> manifest -> asset
+      # chain the rest of the pipeline uses and verified byte-exactly.
+      #
+      # It REFUSES when there is neither a fetchable release nor the bootstrap
+      # override. There is deliberately no fresh-database fallback: that path
+      # is the cause of B24 and B25, not a rollback from them.
+      #
+      # POPULUS_CONGRESS_SEED_DB is a MACHINE-LOCAL PATH on the self-hosted
+      # runner, the same posture as POPULUS_INST_DB, and is set only for the
+      # one R43 bootstrap dispatch. Both variables are unset afterwards; unset
+      # arrives as the EMPTY STRING and is treated as absent.
+      - name: Seed the corpus from the previous release (R42)
+        env:
+          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
+          GH_REPO: johnbaekk-spec/populus-data
+          POPULUS_CONGRESS_SEED_DB: ${{ vars.POPULUS_CONGRESS_SEED_DB }}
+          POPULUS_CONGRESS_SEED_SHA256: ${{ vars.POPULUS_CONGRESS_SEED_SHA256 }}
+        run: >-
+          uv run populus seed-corpus
+          --db populus.db
+          --counts seed-counts.json
+          --data-repo populus-data
+          --backend gh-release
+          --repo johnbaekk-spec/populus-data
+
       - name: Ingest (live, raw-archived)
         run: |
           uv run populus ingest congress-house --db populus.db --raw-root raw
           uv run populus ingest congress-senate --db populus.db --raw-root raw
+
+      # R43 — the one-time era fill, bounded on BOTH ends. The upper bound is
+      # what makes it an era request rather than "start -> forever"; the
+      # overlap with the seed's 2026-03-24 Senate floor is harmless because
+      # ingest upserts.
+      - name: Senate era backfill (R43, one-time bootstrap only)
+        if: ${{ inputs.senate_era_backfill }}
+        run: >-
+          uv run populus ingest congress-senate --db populus.db --raw-root raw
+          --submitted-start 01/01/2012 --submitted-end 04/30/2026
 
       # THE MEMBER JOIN. Without this step the two ingests above leave
       # `transactions.bioguide_id` entirely NULL, because `members.apply_member_join`
@@ -203,6 +261,21 @@ jobs:
         run: |
           uv run populus ingest members --db populus.db \
             --from-cache data-cache/legislators
+
+      # R44 — the corpus floor, AFTER the join and BEFORE the build, because it
+      # checks join identities as well as filing identities.
+      #
+      # It also proves THIS run's member join executed. `stage_build`'s
+      # total-absence guard cannot: a seeded store arrives with historical
+      # joins already nonzero, so that guard is permanently satisfied whether
+      # or not the members step above ran at all — which is exactly how B24
+      # stayed invisible for seven releases.
+      - name: Corpus floor (R44)
+        run: >-
+          uv run populus corpus-floor
+          --db populus.db
+          --counts seed-counts.json
+          --allow-reparse '${{ inputs.corpus_floor_allow_reparse }}'
 
       # --- the two-phase build seam (RUN P3-3b R2) --------------------------
       # The site is built BETWEEN these two steps: it reads manifest.json to
