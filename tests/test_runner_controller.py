@@ -430,6 +430,109 @@ def test_lock_released_after_successful_run(fake):
 
 
 # ---------------------------------------------------------------------------
+# R2 — the lock is reboot-safe: it records its owner, and an owner that cannot
+# still be alive does not hold it.
+#
+# Before R2 the lock was a bare mkdir released only by the EXIT trap, so a
+# reboot (or a SIGKILL) mid-cycle left the directory behind and EVERY later
+# cycle refused `lock-held` forever — the runner bricked until a human cleared
+# it. These tests pin both halves: a dead owner is reclaimed, a live one is
+# still honoured.
+# ---------------------------------------------------------------------------
+
+
+def boot_epoch() -> int:
+    """The current boot's epoch seconds, the way the controller reads it."""
+    raw = subprocess.run(
+        ["sysctl", "-n", "kern.boottime"], capture_output=True, text=True, check=True
+    ).stdout
+    m = re.search(r"sec = (\d+)", raw)
+    assert m, f"unparseable kern.boottime: {raw!r}"
+    return int(m.group(1))
+
+
+def plant_lock(fake: dict, owner_line: str | None, *, mtime: int | None = None) -> Path:
+    """Occupy the lock the way a crashed or running invocation would."""
+    lock = fake["state"] / ".controller.lock"
+    lock.mkdir()
+    if owner_line is not None:
+        (lock / "owner").write_text(owner_line)
+    if mtime is not None:
+        os.utime(lock, (mtime, mtime))
+    return lock
+
+
+def dead_pid() -> int:
+    """A pid that is certainly not running: spawn one and reap it."""
+    p = subprocess.Popen([sys.executable, "-c", ""])
+    p.wait()
+    return p.pid
+
+
+def test_lock_with_dead_pid_is_reclaimed(fake):
+    # The reboot/crash case R2 exists for: same boot, owner no longer running.
+    plant_lock(fake, f"{boot_epoch()} {dead_pid()}\n")
+    r = run_ctl(fake, "destroy-root")
+    assert r.returncode == 0, f"a dead owner must not brick the cycle: {r.stderr}"
+    assert "reclaim-stale-lock" in ops_logged(fake), "reclaim must be recorded"
+
+
+def test_lock_with_live_pid_still_refuses(fake):
+    # The guard must not have been traded away for the fix: a genuinely live
+    # holder (this very test process) is still honoured.
+    lock = plant_lock(fake, f"{boot_epoch()} {os.getpid()}\n")
+    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
+    assert lock.is_dir(), "the refusing invocation released another's lock"
+    assert (lock / "owner").exists(), "it also destroyed the owner record"
+
+
+def test_lock_from_a_previous_boot_is_reclaimed_even_if_the_pid_is_alive(fake):
+    # Pid reuse is why a bare pid is not enough. Record OUR OWN pid — alive
+    # beyond any doubt — against the PREVIOUS boot. A pid-only implementation
+    # honours this lock forever; a boot-scoped one knows the recorder is gone.
+    plant_lock(fake, f"{boot_epoch() - 1} {os.getpid()}\n")
+    r = run_ctl(fake, "destroy-root")
+    assert r.returncode == 0, f"a previous boot's lock must be stale: {r.stderr}"
+
+
+def test_unowned_lock_predating_this_boot_is_reclaimed(fake):
+    # A lock left by the PRE-R2 controller carries no owner file at all. Dated
+    # before this boot, no process from this boot can own it.
+    plant_lock(fake, None, mtime=boot_epoch() - 3600)
+    r = run_ctl(fake, "destroy-root")
+    assert r.returncode == 0, f"a pre-boot unowned lock must be stale: {r.stderr}"
+
+
+def test_unowned_lock_from_this_boot_is_honoured(fake):
+    # Fail closed on the one genuinely ambiguous case: a holder that has
+    # returned from mkdir but not yet written its owner file. Same boot, no
+    # owner — assume live. (This is also the existing planted-lock case above.)
+    plant_lock(fake, None)
+    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
+
+
+def test_reclaim_is_serialized_by_the_steal_token(fake):
+    # Two invocations observing the same stale lock must not BOTH reclaim it —
+    # that is two live holders, precisely what the lock prevents. The steal
+    # token is the serializer; while it is held, a second invocation refuses
+    # rather than taking the stale lock for itself.
+    plant_lock(fake, f"{boot_epoch()} {dead_pid()}\n")
+    steal = fake["state"] / ".controller.lock.steal"
+    steal.mkdir()
+    os.utime(steal, (boot_epoch() + 1, boot_epoch() + 1))  # this boot ⇒ live
+    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
+
+
+def test_successful_run_leaves_no_lock_behind(fake):
+    # The owner record lives INSIDE the lock directory, so releasing it is no
+    # longer a bare rmdir. If cleanup forgets the file, rmdir fails silently
+    # and the lock leaks on every clean exit.
+    assert run_ctl(fake, "destroy-root").returncode == 0
+    assert not (fake["state"] / ".controller.lock").exists(), "lock leaked"
+    assert not (fake["state"] / ".controller.lock.steal").exists(), "steal token leaked"
+
+
+# ---------------------------------------------------------------------------
 # marker protocol — register only after a VERIFIED cleanup, exactly once
 # ---------------------------------------------------------------------------
 
@@ -896,6 +999,94 @@ def test_real_register_mints_fresh_token_per_cycle(fake):
             assert CREDENTIAL not in text, p
     assert MINTED_TOKEN not in r.stdout + r.stderr
     assert CREDENTIAL not in r.stdout + r.stderr
+
+
+# ---------------------------------------------------------------------------
+# R3 — registration is idempotent against a runner name that is already
+# claimed. The runner name is fixed, and an ephemeral runner that died without
+# deregistering (crash, reboot, cancelled job) leaves it claimed on the GitHub
+# side. Without --replace, config.sh then refuses and EVERY later cycle fails
+# until someone deletes the runner in the web UI.
+# ---------------------------------------------------------------------------
+
+
+def test_registration_passes_replace(fake):
+    assert run_ctl(fake, "destroy-root").returncode == 0
+    r = run_ctl(fake, "register", **make_curl_shim(fake, "201"))
+    assert r.returncode == 0, r.stderr
+    (invocation,) = sudo_logged(fake)
+    assert "--replace" in invocation, (
+        "config.sh must be invoked with --replace or a stale runner name "
+        f"bricks every cycle: {invocation}"
+    )
+
+
+def test_registration_succeeds_against_a_pre_existing_runner(fake):
+    # Behavioral, not argv-shaped: a config.sh stub that reproduces GitHub's
+    # actual behaviour — the name is taken, so it FAILS unless --replace is
+    # given — must be driven to success by the controller as it really runs.
+    assert run_ctl(fake, "destroy-root").returncode == 0
+    config_log = fake["owner"] / "configsh.log"
+    config = fake["root"] / "config.sh"
+    config.write_text(
+        "#!/bin/bash\n"
+        "# Stands in for a config.sh whose runner name is already registered.\n"
+        "for a in \"$@\"; do\n"
+        '  if [ "$a" = "--replace" ]; then\n'
+        f'    printf \'replaced\\n\' >> "{config_log}"\n'
+        "    exit 0\n"
+        "  fi\n"
+        "done\n"
+        f'printf \'name-taken\\n\' >> "{config_log}"\n'
+        "exit 1\n"
+    )
+    config.chmod(0o755)
+
+    # A sudo shim that actually EXECUTES, so config.sh runs for real. The
+    # non-executing shim used elsewhere could never catch this defect.
+    exec_shims = fake["tmp"] / "execshims"
+    exec_shims.mkdir()
+    exec_sudo = exec_shims / "sudo"
+    exec_sudo.write_text(
+        "#!/bin/bash\n"
+        'printf \'%s\\n\' "$*" >> "${SUDO_LOG}"\n'
+        '[ "${1:-}" = "-u" ] && shift 2\n'   # drop the privilege transition
+        'exec "$@"\n'
+    )
+    exec_sudo.chmod(0o755)
+
+    overrides = make_curl_shim(fake, "201")
+    overrides["PATH"] = f"{exec_shims}:{overrides['PATH']}"
+    r = run_ctl(fake, "register", **overrides)
+
+    assert config_log.read_text().splitlines() == ["replaced"], (
+        "config.sh either never ran or ran without --replace"
+    )
+    assert r.returncode == 0, f"registration must survive a claimed name: {r.stderr}"
+
+
+def test_the_pre_existing_runner_stub_actually_discriminates(fake):
+    # Control for the test above: prove the stub FAILS without --replace, so
+    # its success there is evidence about the controller and not about a stub
+    # that exits 0 regardless.
+    config_log = fake["owner"] / "control.log"
+    config = fake["tmp"] / "config-control.sh"
+    config.write_text(
+        "#!/bin/bash\n"
+        "for a in \"$@\"; do\n"
+        '  if [ "$a" = "--replace" ]; then\n'
+        f'    printf \'replaced\\n\' >> "{config_log}"\n'
+        "    exit 0\n"
+        "  fi\n"
+        "done\n"
+        f'printf \'name-taken\\n\' >> "{config_log}"\n'
+        "exit 1\n"
+    )
+    config.chmod(0o755)
+    without = subprocess.run([str(config), "--unattended", "--ephemeral"])
+    assert without.returncode == 1, "the stub must refuse a claimed name"
+    with_replace = subprocess.run([str(config), "--unattended", "--replace"])
+    assert with_replace.returncode == 0
 
 
 def test_real_register_retries_once_on_401_then_succeeds(fake):

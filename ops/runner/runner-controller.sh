@@ -66,7 +66,10 @@
 #                                is the unforgeable registration proof, so it
 #                                lives where the runner account cannot write)
 #   CONTROLLER_LOCK_DIR          mkdir-style concurrency lock (default:
-#                                CONTROLLER_STATE_DIR/.controller.lock)
+#                                CONTROLLER_STATE_DIR/.controller.lock). It
+#                                records its owning "<boot-epoch> <pid>" in an
+#                                `owner` file; a lock whose owner is provably
+#                                dead is reclaimed rather than honoured (R2).
 #   CONTROLLER_OP_LOG            optional: append one operation name per line
 #                                (the behavioral tests' ordering instrument)
 #   CONTROLLER_ENV_DUMP          optional (DRY_RUN only): write the constructed
@@ -234,6 +237,9 @@ verify_controller_state_dir() {
 
 LOCK_DIR=""
 _LOCK_HELD=0
+# R2: the reclaim token serializing stale-lock takeover (see acquire_lock).
+STEAL_DIR=""
+_STEAL_HELD=0
 
 # Controller-domain temp files the mint uses (F8): registered globally so the
 # single EXIT trap removes them on EVERY exit path, refusals included.
@@ -242,12 +248,78 @@ MINT_BODY_FILE=""
 
 controller_cleanup() {
   if [ "${_LOCK_HELD}" = "1" ] && [ -n "${LOCK_DIR}" ]; then
+    # R2: the owner record lives INSIDE the lock, so it goes first — a bare
+    # rmdir against a non-empty directory fails and would leak the lock on
+    # every clean exit.
+    rm -f "${LOCK_DIR}/owner" 2>/dev/null || true
     rmdir "${LOCK_DIR}" 2>/dev/null || true
+  fi
+  if [ "${_STEAL_HELD}" = "1" ] && [ -n "${STEAL_DIR}" ]; then
+    rmdir "${STEAL_DIR}" 2>/dev/null || true
   fi
   [ -z "${MINT_CFG_FILE}" ] || rm -f "${MINT_CFG_FILE}" 2>/dev/null || true
   [ -z "${MINT_BODY_FILE}" ] || rm -f "${MINT_BODY_FILE}" 2>/dev/null || true
 }
 trap controller_cleanup EXIT
+
+# R2 — the boot epoch, the identity that makes a recorded pid meaningful.
+# A bare pid is NOT reboot-safe: pids are recycled, so a lock left behind by a
+# reboot can name a pid that is alive again as something unrelated, and the
+# controller would honour it forever. Scoping every recorded pid to the boot it
+# ran in removes that class entirely — a lock from a previous boot is dead by
+# definition, whatever its pid now points at.
+#
+# Fail CLOSED: an unreadable or unparseable boot epoch means we cannot prove
+# anything is stale, so callers keep honouring the lock (a stuck cycle that
+# launchd retries) rather than stealing one that may be live.
+boot_epoch() {
+  local raw sec
+  raw="$(sysctl -n kern.boottime 2>/dev/null)" || return 1
+  # "{ sec = 1786721781, usec = 698883 } Fri Aug 14 08:36:21 2026"
+  #
+  # Take the FIRST number in the string, anchored. A `.*sec = ` pattern is
+  # greedy and matches "uSEC = " instead, silently yielding the microseconds —
+  # which makes every lock look like it came from another boot and turns this
+  # guard into an unconditional steal. Cost a real debugging round; do not
+  # "simplify" it back.
+  sec="$(printf '%s' "${raw}" | sed -n 's/^[^0-9]*\([0-9][0-9]*\).*/\1/p')"
+  case "${sec}" in ''|*[!0-9]*) return 1 ;; esac
+  # Sanity floor: a real boot epoch is seconds since 1970, always past 2001.
+  # Anything smaller means the format changed under us — refuse to conclude
+  # anything rather than mistake a parse failure for a stale lock.
+  [ "${sec}" -gt 1000000000 ] || return 1
+  printf '%s' "${sec}"
+}
+
+# Is the lock at $1 provably abandoned? Exit 0 = provably dead (safe to
+# reclaim); non-zero = live, or not provable. Never guesses.
+lock_is_stale() {
+  local dir="$1" boot owner recorded_boot recorded_pid dir_mtime
+  boot="$(boot_epoch)" || return 1        # cannot prove ⇒ honour the lock
+  owner="${dir}/owner"
+
+  if [ -r "${owner}" ]; then
+    read -r recorded_boot recorded_pid < "${owner}" 2>/dev/null || return 1
+    case "${recorded_boot}${recorded_pid}" in
+      ''|*[!0-9]*) return 1 ;;            # unparseable ⇒ honour the lock
+    esac
+    # A different boot: the recording process cannot possibly still exist.
+    [ "${recorded_boot}" = "${boot}" ] || return 0
+    # Same boot: the pid is directly decidable. kill -0 tests existence only.
+    kill -0 "${recorded_pid}" 2>/dev/null && return 1
+    return 0
+  fi
+
+  # No owner file. Either a holder microseconds into acquire (mkdir has
+  # returned, the write has not), or a lock predating R2 / killed in that
+  # window. The directory's own mtime decides it WITHOUT a timing heuristic:
+  # created before this boot ⇒ no process from this boot owns it ⇒ dead.
+  dir_mtime="$(stat -f %m "${dir}" 2>/dev/null)" || return 1
+  case "${dir_mtime}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${dir_mtime}" -lt "${boot}" ] && return 0
+  # Same boot, no owner recorded: assume a live holder mid-acquire. Fail closed.
+  return 1
+}
 
 acquire_lock() {
   verify_controller_state_dir
@@ -260,9 +332,47 @@ acquire_lock() {
   fi
   LOCK_DIR="${CONTROLLER_LOCK_DIR:-${CONTROLLER_STATE_DIR}/.controller.lock}"
   if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
-    refuse lock-held "another controller invocation holds ${LOCK_DIR}"
+    # R2: a held lock is only honoured while its owner can still be alive.
+    # Before R2 a reboot mid-cycle left this directory behind and EVERY later
+    # cycle refused forever — the runner bricked until someone cleared it by
+    # hand.
+    if ! lock_is_stale "${LOCK_DIR}"; then
+      refuse lock-held "another controller invocation holds ${LOCK_DIR}"
+    fi
+    # Reclaiming is itself serialized, by a second atomic mkdir. Without it two
+    # invocations that both observe the same stale lock can each remove it and
+    # each re-create it — two live holders, the exact condition the lock
+    # exists to prevent. Only the process that takes the steal token reclaims;
+    # any other refuses and lets launchd retry.
+    STEAL_DIR="${LOCK_DIR}.steal"
+    if ! mkdir "${STEAL_DIR}" 2>/dev/null; then
+      # A steal token from a previous boot is itself abandoned; clear it and
+      # let the next cycle proceed rather than trading one brick for another.
+      if lock_is_stale "${STEAL_DIR}"; then
+        rmdir "${STEAL_DIR}" 2>/dev/null || true
+      fi
+      refuse lock-held "another controller invocation is reclaiming ${LOCK_DIR}"
+    fi
+    _STEAL_HELD=1
+    log_op reclaim-stale-lock
+    rm -f "${LOCK_DIR}/owner" 2>/dev/null || true
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+    if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+      refuse lock-held "another controller invocation holds ${LOCK_DIR}"
+    fi
+  fi
+  # Record the owner BEFORE declaring the lock held, so a crash after this
+  # point always leaves a decidable lock rather than an ambiguous one.
+  if ! printf '%s %s\n' "$(boot_epoch || echo 0)" "$$" > "${LOCK_DIR}/owner"; then
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+    refuse lock-owner-unwritable "cannot record the lock owner in ${LOCK_DIR}"
   fi
   _LOCK_HELD=1
+  # Release the steal token only once we own the lock outright.
+  if [ "${_STEAL_HELD}" = "1" ]; then
+    rmdir "${STEAL_DIR}" 2>/dev/null || true
+    _STEAL_HELD=0
+  fi
 }
 
 # The cleanup-verified marker lives BESIDE the root (in the base dir), never
@@ -722,9 +832,16 @@ cmd_register() {
   # minted token on its argv inside an env -i environment; neither the PAT nor
   # the minted token is exported or written under the root.
   mint_registration_token
+  # R3: --replace makes registration IDEMPOTENT. The runner name is fixed, and
+  # an ephemeral runner that died without deregistering (a crash, a reboot, a
+  # cancelled job) leaves its name claimed on the GitHub side; without
+  # --replace config.sh then refuses "a runner exists with the same name" and
+  # every subsequent cycle fails until someone deletes it in the web UI. The
+  # name is ours by construction, so replacing it is the intended semantic.
   run_as_runner env -i "${runner_env[@]}" "${RUNNER_ROOT}/config.sh" \
     --unattended \
     --ephemeral \
+    --replace \
     --url "${RUNNER_REPO_URL:?RUNNER_REPO_URL must be set}" \
     --token "${MINTED_TOKEN}" \
     --labels "self-hosted,macOS,populus-ops" \
