@@ -194,3 +194,99 @@ def test_refresh_stub_exists_and_carries_retention_obligation():
     text = stub.read_text()
     # LD-8/TD-7: the retention obligation must be recorded before snapshot v2.
     assert "retention" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# R42/R44 — the corpus loop's shape is part of the governance contract.
+#
+# Every one of these is a step-ORDER or step-PRESENCE property. They exist
+# because the corpus loop is only sound in one arrangement: seed before the
+# ingests (nothing to preserve otherwise), floor after the member join (it
+# checks join identities) and before the build (a refusal must stop the
+# publish, not annotate it).
+# ---------------------------------------------------------------------------
+
+
+def _publish_steps() -> list[dict]:
+    document = yaml.safe_load((WORKFLOWS_DIR / "publish.yml").read_text())
+    return document["jobs"]["publish"]["steps"]
+
+
+def _step_index(name_fragment: str) -> int:
+    for index, step in enumerate(_publish_steps()):
+        if name_fragment in (step.get("name") or ""):
+            return index
+    raise AssertionError(
+        f"no publish step named like {name_fragment!r}: "
+        f"{[s.get('name') for s in _publish_steps()]}"
+    )
+
+
+def test_the_corpus_is_seeded_before_the_ingests():
+    assert _step_index("Seed the corpus") < _step_index("Ingest (live")
+
+
+def test_the_corpus_floor_runs_after_the_member_join_and_before_the_build():
+    # After the join: the floor checks join identities, which do not exist
+    # until it has run. Before the build: a refusal must STOP the publish.
+    assert _step_index("Ingest members") < _step_index("Corpus floor")
+    assert _step_index("Corpus floor") < _step_index("Stage build")
+
+
+def test_the_senate_era_backfill_is_bounded_on_both_ends():
+    # An unbounded "start -> forever" request is not an era fill; the upper
+    # bound is what makes it one.
+    step = _publish_steps()[_step_index("Senate era backfill")]
+    assert "--submitted-start" in step["run"] and "--submitted-end" in step["run"]
+    assert step["if"], "the era backfill must be gated on its dispatch input"
+
+
+def test_no_fresh_database_fallback_survives_in_the_workflow():
+    # The regression this whole milestone exists to prevent: any step that
+    # initializes populus.db from nothing puts B25 straight back.
+    for step in _publish_steps():
+        run = step.get("run") or ""
+        assert "populus db init" not in run, (
+            f"step {step.get('name')!r} initializes a fresh store — the"
+            " fresh-database path is the cause of B24 and B25, never a fallback"
+        )
+
+
+def test_the_corpus_bootstrap_inputs_cannot_reach_a_scheduled_run():
+    # `schedule:` carries no inputs at all, so an unattended nightly can
+    # neither re-fetch fourteen years of Senate history nor authorize a corpus
+    # shrink. Pinned because both would be silent if it ever changed.
+    document = yaml.safe_load((WORKFLOWS_DIR / "publish.yml").read_text())
+    triggers = document[True]
+    assert "inputs" not in (triggers["schedule"] or [{}])[0]
+    dispatch_inputs = triggers["workflow_dispatch"]["inputs"]
+    assert "senate_era_backfill" in dispatch_inputs
+    assert "corpus_floor_allow_reparse" in dispatch_inputs
+
+
+def test_no_dispatch_input_is_interpolated_into_a_shell_script_body():
+    """Round-1 F2: `${{ }}` substitution happens BEFORE the shell parses.
+
+    A free-text dispatch input pasted into a `run:` body lets a single quote
+    close the quoting and run the rest as commands — as the runner account, on
+    the owner's Mac, which is a persistent self-hosted machine. Inputs must
+    reach commands through the ENVIRONMENT, where they are values and never
+    script text. `if:` expressions are a different context and are exempt.
+    """
+    offenders = []
+    for step in _publish_steps():
+        run = step.get("run") or ""
+        if "inputs." in run:
+            offenders.append(step.get("name"))
+    assert offenders == [], (
+        "dispatch inputs interpolated directly into run: bodies "
+        f"(pass them via env: instead): {offenders}"
+    )
+
+
+def test_the_reparse_authorization_reaches_the_command_through_the_environment():
+    step = _publish_steps()[_step_index("Corpus floor")]
+    assert "CORPUS_FLOOR_ALLOW_REPARSE" in (step.get("env") or {})
+    assert '"$CORPUS_FLOOR_ALLOW_REPARSE"' in step["run"], (
+        "the env value must be expanded as ONE quoted argument"
+    )

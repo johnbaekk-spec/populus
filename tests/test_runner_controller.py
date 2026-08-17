@@ -48,6 +48,7 @@ Organised by the defect each test exists to catch:
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import hashlib
 import os
@@ -56,6 +57,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -414,19 +416,171 @@ def test_restore_image_populates_fresh_root(fake):
 # ---------------------------------------------------------------------------
 
 
-def test_second_invocation_refuses_while_lock_held(fake):
-    # Occupy the lock the way a concurrent invocation would (mkdir is the
-    # atomic primitive the script itself uses), then invoke: refusal.
-    lock = fake["state"] / ".controller.lock"
-    lock.mkdir()
-    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
-    # The refusing invocation must NOT have released the other holder's lock.
-    assert lock.is_dir()
+# ---------------------------------------------------------------------------
+# R2 — the lock is an OS flock, so "the owner is dead" needs no predicate.
+#
+# These tests hold the lock the way a REAL competing controller does — a kernel
+# flock on the same file — rather than planting a directory that merely looks
+# like a lock. The earlier directory-based designs were rewritten twice after
+# external review found a race in each; the property under test is unchanged
+# (mutual exclusion, and a dead owner frees the lock), the mechanism is now the
+# kernel's.
+# ---------------------------------------------------------------------------
+
+LOCK_HOLDER = """
+import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    sys.exit(1)
+sys.stdout.write("held\\n"); sys.stdout.flush()
+time.sleep(float(sys.argv[2]))
+"""
 
 
-def test_lock_released_after_successful_run(fake):
+def lock_file(fake: dict) -> Path:
+    return fake["state"] / ".controller.lock"
+
+
+def hold_the_lock(fake: dict, seconds: float = 30.0) -> subprocess.Popen:
+    """Take the real kernel lock from another process, and wait until it is
+    definitely held before returning — no sleep-and-hope."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", LOCK_HOLDER, str(lock_file(fake)), str(seconds)],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert proc.stdout.readline().strip() == "held", "the holder never took the lock"
+    return proc
+
+
+def test_a_live_holder_refuses_the_controller(fake):
+    holder = hold_the_lock(fake)
+    try:
+        assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_dead_holder_frees_the_lock_with_no_recovery_step(fake):
+    """R2's requirement, now structural.
+
+    The holder is SIGKILLed — the most abrupt death available, standing in for
+    a panic or a power loss. No cleanup runs, nothing is unlinked, and the next
+    cycle simply proceeds, because the kernel released the lock when the
+    process died. This is the failure that bricked the runner before R2.
+    """
+    holder = hold_the_lock(fake)
+    holder.kill()
+    holder.wait()
+    r = run_ctl(fake, "destroy-root")
+    assert r.returncode == 0, f"a dead holder must not block the next cycle: {r.stderr}"
+
+
+def test_the_lock_file_surviving_on_disk_blocks_nothing(fake):
+    # The old directory lock bricked precisely because its on-disk remains were
+    # read as ownership. The file may sit there forever; only a live flock
+    # means anything.
+    lock_file(fake).write_text("held by pid 999999\n")
     assert run_ctl(fake, "destroy-root").returncode == 0
-    assert run_ctl(fake, "restore-image").returncode == 0, "lock leaked across invocations"
+    assert run_ctl(fake, "restore-image").returncode == 0
+
+
+def test_the_controller_releases_the_lock_when_it_exits(fake):
+    assert run_ctl(fake, "destroy-root").returncode == 0
+    holder = hold_the_lock(fake, seconds=0.1)  # would fail if still held
+    holder.wait()
+
+
+def test_a_refusing_invocation_still_releases_the_lock(fake):
+    # A refusal is an exit, and the kernel does not care which kind. Before
+    # this design a guard that refused mid-cycle could strand the lock.
+    assert_refused(run_ctl(fake, "destroy-root", RUNNER_ROOT="/"), "target-is-root")
+    holder = hold_the_lock(fake, seconds=0.1)
+    holder.wait()
+
+
+def test_the_controller_refuses_rather_than_running_unlocked(fake):
+    """Fail closed when no locking primitive exists.
+
+    Running unlocked would silently drop mutual exclusion on a machine that
+    wipes a runner root — strictly worse than not running.
+    """
+    shims = fake["tmp"] / "nolockshims"
+    shims.mkdir()
+    for name in ("python3", "perl"):
+        blocker = shims / name
+        blocker.write_text("#!/bin/bash\nexit 127\n")
+        blocker.chmod(0o755)
+    r = run_ctl(fake, "destroy-root", PATH=f"{shims}:{fake['env']['PATH']}")
+    assert_refused(r, "lock-primitive-missing")
+
+
+def test_a_surviving_child_cannot_pin_the_lock_after_the_controller_dies(fake):
+    """The defect a fourth review round proved by execution.
+
+    flock lives on the open file description, so ANY child inheriting it keeps
+    the lock alive after the controller is gone. Holding the descriptor in the
+    controller shell meant an ordinary controller-domain child — the token-mint
+    `curl`, which has no timeout — could strand the lock indefinitely.
+
+    Reproduced faithfully: kill the controller while a long-lived child it
+    spawned is still running, then prove another cycle can acquire WHILE that
+    child is still alive. Closing the descriptor in one call site could not fix
+    this; the controller now never opens the lock file at all.
+    """
+    slow = fake["tmp"] / "slowshim"
+    slow.mkdir()
+    # `tar` stands in for any controller-domain child: restore-image runs it
+    # DIRECTLY, without the sudo gateway, so it is exactly the class of process
+    # that used to inherit the lock descriptor.
+    child_marker = fake["owner"] / "child.pid"
+    blocker = slow / "tar"
+    blocker.write_text(
+        "#!/bin/bash\n"
+        f'printf "%s" "$$" > "{child_marker}"\n'
+        "sleep 60\n"
+    )
+    blocker.chmod(0o755)
+
+    env = {**fake["env"], "PATH": f"{slow}:{fake['env']['PATH']}"}
+    controller = subprocess.Popen(
+        ["bash", str(SCRIPT), "restore-image"], env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.time() + 20
+        while time.time() < deadline and not child_marker.exists():
+            time.sleep(0.1)
+        if not child_marker.exists():
+            controller.kill(); controller.wait()
+            pytest.skip("the controller never spawned the stand-in child")
+        child_pid = int(child_marker.read_text())
+
+        controller.kill()
+        controller.wait()
+        # The child MUST still be alive, or this proves nothing.
+        os.kill(child_pid, 0)
+
+        # The holder needs a moment to notice its parent is gone.
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            probe = run_ctl(fake, "destroy-root")
+            if probe.returncode == 0:
+                break
+            time.sleep(0.3)
+        os.kill(child_pid, 0)  # still alive at the moment we acquired
+        assert probe.returncode == 0, (
+            "a surviving child pinned the lock after the controller died: "
+            f"{probe.stderr}"
+        )
+    finally:
+        for pid in (child_pid if "child_pid" in dir() else None,):
+            if pid:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, 9)
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +1052,94 @@ def test_real_register_mints_fresh_token_per_cycle(fake):
     assert CREDENTIAL not in r.stdout + r.stderr
 
 
+# ---------------------------------------------------------------------------
+# R3 — registration is idempotent against a runner name that is already
+# claimed. The runner name is fixed, and an ephemeral runner that died without
+# deregistering (crash, reboot, cancelled job) leaves it claimed on the GitHub
+# side. Without --replace, config.sh then refuses and EVERY later cycle fails
+# until someone deletes the runner in the web UI.
+# ---------------------------------------------------------------------------
+
+
+def test_registration_passes_replace(fake):
+    assert run_ctl(fake, "destroy-root").returncode == 0
+    r = run_ctl(fake, "register", **make_curl_shim(fake, "201"))
+    assert r.returncode == 0, r.stderr
+    (invocation,) = sudo_logged(fake)
+    assert "--replace" in invocation, (
+        "config.sh must be invoked with --replace or a stale runner name "
+        f"bricks every cycle: {invocation}"
+    )
+
+
+def test_registration_succeeds_against_a_pre_existing_runner(fake):
+    # Behavioral, not argv-shaped: a config.sh stub that reproduces GitHub's
+    # actual behaviour — the name is taken, so it FAILS unless --replace is
+    # given — must be driven to success by the controller as it really runs.
+    assert run_ctl(fake, "destroy-root").returncode == 0
+    config_log = fake["owner"] / "configsh.log"
+    config = fake["root"] / "config.sh"
+    config.write_text(
+        "#!/bin/bash\n"
+        "# Stands in for a config.sh whose runner name is already registered.\n"
+        "for a in \"$@\"; do\n"
+        '  if [ "$a" = "--replace" ]; then\n'
+        f'    printf \'replaced\\n\' >> "{config_log}"\n'
+        "    exit 0\n"
+        "  fi\n"
+        "done\n"
+        f'printf \'name-taken\\n\' >> "{config_log}"\n'
+        "exit 1\n"
+    )
+    config.chmod(0o755)
+
+    # A sudo shim that actually EXECUTES, so config.sh runs for real. The
+    # non-executing shim used elsewhere could never catch this defect.
+    exec_shims = fake["tmp"] / "execshims"
+    exec_shims.mkdir()
+    exec_sudo = exec_shims / "sudo"
+    exec_sudo.write_text(
+        "#!/bin/bash\n"
+        'printf \'%s\\n\' "$*" >> "${SUDO_LOG}"\n'
+        '[ "${1:-}" = "-u" ] && shift 2\n'   # drop the privilege transition
+        'exec "$@"\n'
+    )
+    exec_sudo.chmod(0o755)
+
+    overrides = make_curl_shim(fake, "201")
+    overrides["PATH"] = f"{exec_shims}:{overrides['PATH']}"
+    r = run_ctl(fake, "register", **overrides)
+
+    assert config_log.read_text().splitlines() == ["replaced"], (
+        "config.sh either never ran or ran without --replace"
+    )
+    assert r.returncode == 0, f"registration must survive a claimed name: {r.stderr}"
+
+
+def test_the_pre_existing_runner_stub_actually_discriminates(fake):
+    # Control for the test above: prove the stub FAILS without --replace, so
+    # its success there is evidence about the controller and not about a stub
+    # that exits 0 regardless.
+    config_log = fake["owner"] / "control.log"
+    config = fake["tmp"] / "config-control.sh"
+    config.write_text(
+        "#!/bin/bash\n"
+        "for a in \"$@\"; do\n"
+        '  if [ "$a" = "--replace" ]; then\n'
+        f'    printf \'replaced\\n\' >> "{config_log}"\n'
+        "    exit 0\n"
+        "  fi\n"
+        "done\n"
+        f'printf \'name-taken\\n\' >> "{config_log}"\n'
+        "exit 1\n"
+    )
+    config.chmod(0o755)
+    without = subprocess.run([str(config), "--unattended", "--ephemeral"])
+    assert without.returncode == 1, "the stub must refuse a claimed name"
+    with_replace = subprocess.run([str(config), "--unattended", "--replace"])
+    assert with_replace.returncode == 0
+
+
 def test_real_register_retries_once_on_401_then_succeeds(fake):
     # Expired/rejected-once recovery: the first mint 401s, the retry 201s,
     # and registration proceeds with the retried token.
@@ -1109,3 +1351,35 @@ def test_state_dir_group_writable_refuses(fake):
     r = run_ctl(fake, "destroy-root")
     assert r.returncode != 0
     assert "state-dir-writable" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# Round-1 remediation — lock-safety defects external review found.
+# ---------------------------------------------------------------------------
+
+
+def test_a_dead_holder_mid_cycle_refuses_rather_than_running_unserialized(fake):
+    """The residual the fourth review round named, made fail-closed.
+
+    The holder is a separate process, so it can in principle die while the
+    controller keeps working — and then the lock is free while we are still
+    inside the runner root. bash 3.2 cannot close that bind (holding the
+    descriptor in the shell makes every child pin it instead, and there is no
+    FD_CLOEXEC control), so the destructive entry points re-assert the holder
+    is alive and REFUSE if it is not.
+
+    Simulated by pointing the holder at an interpreter that exits immediately
+    after reporting success: acquisition believes it holds the lock, and the
+    very next destructive step catches that it does not.
+    """
+    shims = fake["tmp"] / "diehold"
+    shims.mkdir()
+    liar = shims / "python3"
+    liar.write_text("#!/bin/bash\nprintf 'held\\n'\nexit 0\n")
+    liar.chmod(0o755)
+    r = run_ctl(fake, "destroy-root", PATH=f"{shims}:{fake['env']['PATH']}")
+    assert_refused(r, "lock-holder-died")
+    # And the wipe must NOT have run: the refusal precedes the destruction.
+    assert (fake["root"] / "_work" / "leftover.txt").exists(), (
+        "the runner root was wiped despite the lock refusal"
+    )

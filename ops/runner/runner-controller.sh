@@ -65,8 +65,12 @@
 #                                and must not be runner-writable — the marker
 #                                is the unforgeable registration proof, so it
 #                                lives where the runner account cannot write)
-#   CONTROLLER_LOCK_DIR          mkdir-style concurrency lock (default:
-#                                CONTROLLER_STATE_DIR/.controller.lock)
+#   CONTROLLER_LOCK_FILE         kernel flock target (default:
+#                                CONTROLLER_STATE_DIR/.controller.lock). A
+#                                dedicated holder process owns the descriptor,
+#                                so nothing the controller spawns can inherit
+#                                the lock, and it is released when the
+#                                controller dies by any means (R2).
 #   CONTROLLER_OP_LOG            optional: append one operation name per line
 #                                (the behavioral tests' ordering instrument)
 #   CONTROLLER_ENV_DUMP          optional (DRY_RUN only): write the constructed
@@ -229,10 +233,10 @@ verify_controller_state_dir() {
 }
 
 # ---------------------------------------------------------------------------
-# concurrency lock — mkdir is atomic; a second invocation refuses
+# concurrency lock — a kernel flock held by a dedicated holder process
 # ---------------------------------------------------------------------------
 
-LOCK_DIR=""
+LOCK_FILE=""
 _LOCK_HELD=0
 
 # Controller-domain temp files the mint uses (F8): registered globally so the
@@ -241,27 +245,134 @@ MINT_CFG_FILE=""
 MINT_BODY_FILE=""
 
 controller_cleanup() {
-  if [ "${_LOCK_HELD}" = "1" ] && [ -n "${LOCK_DIR}" ]; then
-    rmdir "${LOCK_DIR}" 2>/dev/null || true
+  # Releasing the lock = ending the holder. If we are SIGKILLed and never get
+  # here, the holder notices its parent is gone and exits on its own, so the
+  # lock is never stranded.
+  if [ -n "${_LOCK_HOLDER_PID}" ]; then
+    kill "${_LOCK_HOLDER_PID}" 2>/dev/null || true
+    _LOCK_HOLDER_PID=""
   fi
+  [ -z "${LOCK_STATUS_FILE}" ] || rm -f "${LOCK_STATUS_FILE}" 2>/dev/null || true
   [ -z "${MINT_CFG_FILE}" ] || rm -f "${MINT_CFG_FILE}" 2>/dev/null || true
   [ -z "${MINT_BODY_FILE}" ] || rm -f "${MINT_BODY_FILE}" 2>/dev/null || true
 }
 trap controller_cleanup EXIT
 
+# R2 — the lock is a kernel flock held by a DEDICATED HOLDER PROCESS.
+#
+# History, because it is the whole justification for this shape. The lock began
+# as a bare `mkdir` released only by the EXIT trap, so a reboot or SIGKILL left
+# the directory behind and every later cycle refused forever — the runner
+# bricked until a human cleared it. Three review rounds then found a defect in
+# each successive user-space recovery scheme: the lock needed an owner record,
+# the record needed a reclaimer, the reclaimer needed its own lock. All of them
+# share one root — state that outlives the process that created it. flock(2)
+# has none: the kernel releases it when the holder dies, for any reason.
+#
+# But a flock lives on the OPEN FILE DESCRIPTION, so it is inherited by every
+# child. Holding it on a descriptor in THIS shell meant an ordinary
+# controller-domain child — the token-mint `curl`, which has no timeout — kept
+# the lock alive after the controller itself was killed, and the next cycle
+# refused until that orphan exited. Measured, not theorised: a fourth review
+# round demonstrated exactly that.
+#
+# So the controller NEVER OPENS THE LOCK FILE. A dedicated holder process opens
+# it, locks it, and does nothing else; nothing the controller spawns can
+# inherit a descriptor the controller does not have. The holder exits when its
+# parent goes away, so the lock is released promptly when the controller dies
+# by any means, and immediately when it exits normally (cleanup kills it).
+_LOCK_HOLDER_PID=""
+LOCK_STATUS_FILE=""
+
+_PY_LOCK_HOLDER='
+import fcntl, os, sys, time
+path, parent = sys.argv[1], int(sys.argv[2])
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    sys.stdout.write("busy\n"); sys.stdout.flush(); sys.exit(1)
+sys.stdout.write("held\n"); sys.stdout.flush()
+while os.getppid() == parent:
+    time.sleep(0.2)
+'
+
+_PL_LOCK_HOLDER='
+use Fcntl qw(:flock O_WRONLY O_CREAT O_APPEND);
+my ($path, $parent) = @ARGV;
+sysopen(my $fh, $path, O_WRONLY | O_CREAT | O_APPEND, 0600) or exit 2;
+$| = 1;
+unless (flock($fh, LOCK_EX | LOCK_NB)) { print "busy\n"; exit 1 }
+print "held\n";
+while (getppid() == $parent) { select(undef, undef, undef, 0.2) }
+'
+
+_start_lock_holder() {
+  # Spawns the holder and echoes its first status line. 2 = no primitive.
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "${_PY_LOCK_HOLDER}" "${LOCK_FILE}" "$$" > "${LOCK_STATUS_FILE}" 2>/dev/null &
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e "${_PL_LOCK_HOLDER}" "${LOCK_FILE}" "$$" > "${LOCK_STATUS_FILE}" 2>/dev/null &
+  else
+    return 2
+  fi
+  _LOCK_HOLDER_PID=$!
+  # Wait for the holder to report. Bounded so a broken interpreter cannot hang
+  # the controller; a holder that never reports is treated as no primitive.
+  local waited=0 status=""
+  while [ "${waited}" -lt 100 ]; do
+    status="$(head -n 1 "${LOCK_STATUS_FILE}" 2>/dev/null || true)"
+    [ -n "${status}" ] && break
+    kill -0 "${_LOCK_HOLDER_PID}" 2>/dev/null || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  status="$(head -n 1 "${LOCK_STATUS_FILE}" 2>/dev/null || true)"
+  case "${status}" in
+    held) return 0 ;;
+    busy) return 1 ;;
+    *)    return 2 ;;
+  esac
+}
+
+# The holder is a separate process, so in principle it can die while this
+# controller keeps running — and then the lock is free while we are still
+# inside the runner root. bash 3.2 offers no way out of that bind: holding the
+# descriptor in THIS shell instead makes every spawned child inherit and pin
+# the lock (the defect the holder design fixed), and there is no FD_CLOEXEC
+# control to have both. So the residual is CHECKED rather than ignored: every
+# destructive entry point re-asserts that the holder is alive immediately
+# before acting, which turns "silently proceed unlocked" into a named refusal —
+# the same fail-closed posture as every other guard in this file.
+#
+# This narrows the window to holder-death between the check and the operation;
+# it does not eliminate it. Recorded as accepted debt in the plan's Tech Debt,
+# NOT claimed as mutual exclusion under arbitrary holder death.
+require_lock_still_held() {
+  [ "${_LOCK_HELD}" = "1" ] || refuse lock-not-held "internal: a destructive step ran without acquiring the lock"
+  if [ -z "${_LOCK_HOLDER_PID}" ] || ! kill -0 "${_LOCK_HOLDER_PID}" 2>/dev/null; then
+    refuse lock-holder-died "the lock holder exited mid-cycle; refusing to continue unserialized"
+  fi
+}
+
 acquire_lock() {
   verify_controller_state_dir
-  # run-cycle calls three phases in this same shell; the first acquire wins
-  # and the nested ones pass — the lock spans the whole cycle, released by the
-  # EXIT trap. A SECOND PROCESS still refuses: mkdir on the existing lock
-  # directory fails atomically.
+  # run-cycle calls three phases in this same shell; the first acquire wins and
+  # the nested ones pass — the holder lives for the whole cycle.
   if [ "${_LOCK_HELD}" = "1" ]; then
     return 0
   fi
-  LOCK_DIR="${CONTROLLER_LOCK_DIR:-${CONTROLLER_STATE_DIR}/.controller.lock}"
-  if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
-    refuse lock-held "another controller invocation holds ${LOCK_DIR}"
-  fi
+  LOCK_FILE="${CONTROLLER_LOCK_FILE:-${CONTROLLER_STATE_DIR}/.controller.lock}"
+  LOCK_STATUS_FILE="$(mktemp "${TMPDIR:-/tmp}/controller-lock.XXXXXX")" || \
+    refuse lock-unopenable "cannot create the lock status file"
+  local rc=0
+  _start_lock_holder || rc=$?
+  case "${rc}" in
+    0) ;;
+    1) refuse lock-held "another controller invocation holds ${LOCK_FILE}" ;;
+    *) refuse lock-primitive-missing \
+         "neither python3 nor perl could hold the kernel lock on ${LOCK_FILE}; refusing rather than running unlocked" ;;
+  esac
   _LOCK_HELD=1
 }
 
@@ -498,6 +609,7 @@ cmd_destroy_root() {
   # must be proven coherent BEFORE any termination or wipe.
   verify_runner_identity
   acquire_lock
+  require_lock_still_held
 
   # A stale marker from a previous cycle certifies nothing about THIS wipe;
   # drop it before touching anything so a mid-destroy crash cannot leave a
@@ -582,6 +694,7 @@ cmd_destroy_root() {
 cmd_restore_image() {
   validate_target
   acquire_lock
+  require_lock_still_held
 
   log_op restore-image
   local tarball="${RUNNER_IMAGE_TARBALL:?RUNNER_IMAGE_TARBALL must be set}"
@@ -671,6 +784,7 @@ cmd_register() {
   # consumed: a refusal here must not burn the verified-cleanup proof.
   verify_runner_identity
   acquire_lock
+  require_lock_still_held
   verify_toolchain
   # F2: derive the runner PATH from what the gate just validated, then PROVE
   # each required tool resolves to its manifest path under it.
@@ -722,9 +836,16 @@ cmd_register() {
   # minted token on its argv inside an env -i environment; neither the PAT nor
   # the minted token is exported or written under the root.
   mint_registration_token
+  # R3: --replace makes registration IDEMPOTENT. The runner name is fixed, and
+  # an ephemeral runner that died without deregistering (a crash, a reboot, a
+  # cancelled job) leaves its name claimed on the GitHub side; without
+  # --replace config.sh then refuses "a runner exists with the same name" and
+  # every subsequent cycle fails until someone deletes it in the web UI. The
+  # name is ours by construction, so replacing it is the intended semantic.
   run_as_runner env -i "${runner_env[@]}" "${RUNNER_ROOT}/config.sh" \
     --unattended \
     --ephemeral \
+    --replace \
     --url "${RUNNER_REPO_URL:?RUNNER_REPO_URL must be set}" \
     --token "${MINTED_TOKEN}" \
     --labels "self-hosted,macOS,populus-ops" \

@@ -826,6 +826,177 @@ def _with_backend_options(command):
     return command
 
 
+# --- R42/R44: the corpus loop ------------------------------------------------
+
+
+def _split_filing_ids(values: tuple[str, ...]) -> frozenset[str]:
+    """Accept repeated flags AND one delimited string.
+
+    The workflow feeds this from a ``workflow_dispatch`` input, which is a
+    single free-text field; a human passes the flag repeatedly. Both reach the
+    same set.
+    """
+    out: set[str] = set()
+    for value in values:
+        for token in value.replace(",", " ").split():
+            token = token.strip()
+            if token:
+                out.add(token)
+    return frozenset(out)
+
+
+@main.command("seed-corpus")
+@_with_backend_options
+@click.option("--db", "db_path", required=True, help="The working store to seed.")
+@click.option(
+    "--counts",
+    "counts_path",
+    required=True,
+    help="Where to write the identity baseline the corpus floor reads back.",
+)
+@click.option(
+    "--seed-db",
+    "seed_db",
+    default=None,
+    envvar="POPULUS_CONGRESS_SEED_DB",
+    help=(
+        "BOOTSTRAP ONLY: a machine-local congress.db to seed from, for the one"
+        " run where no published release carries the full corpus. Requires"
+        " --seed-sha256. Mutually exclusive with the pointer path."
+    ),
+)
+@click.option(
+    "--seed-sha256",
+    "seed_sha256",
+    default=None,
+    envvar="POPULUS_CONGRESS_SEED_SHA256",
+    help="The expected digest of --seed-db, verified byte-exactly before use.",
+)
+def seed_corpus(
+    data_repo: str,
+    backend: str,
+    repo_slug: str | None,
+    db_path: str,
+    counts_path: str,
+    seed_db: str | None,
+    seed_sha256: str | None,
+) -> None:
+    """Seed the working store from the previous release, then baseline it (R42).
+
+    Refuses rather than falling back to an empty database: building fresh is
+    what produced B24 and B25.
+    """
+    from populus.publish import seed as seedmod
+
+    # An unset repository variable arrives as the EMPTY STRING, not an absent
+    # key, so click's envvar hand-off yields "" and every truthiness test on it
+    # silently takes the wrong branch.
+    seed_db = seedmod.blank_as_unset(seed_db)
+    seed_sha256 = seedmod.blank_as_unset(seed_sha256)
+    run_started_at = _utc_now()
+
+    try:
+        if seed_db is not None:
+            if seed_sha256 is None:
+                raise seedmod.SeedError(
+                    "--seed-db requires --seed-sha256: an unverified local file"
+                    " is not a seed, it is a guess"
+                )
+            result = seedmod.verify_and_place(
+                db_path, source=seed_db, expected_sha256=seed_sha256
+            )
+            origin = f"bootstrap override {seed_db}"
+        else:
+            if seed_sha256 is not None:
+                raise seedmod.SeedError(
+                    "--seed-sha256 was given without --seed-db; the pointer path"
+                    " takes its digest from the validated manifest"
+                )
+            resolved, payload = seedmod.resolve_seed(
+                data_repo, _make_backend(backend, repo_slug)
+            )
+            placed = seedmod.verify_and_place(
+                db_path, payload=payload, expected_sha256=resolved.sha256
+            )
+            result = seedmod.SeedResult(
+                build_id=resolved.build_id,
+                sha256=placed.sha256,
+                bytes_=placed.bytes_,
+                origin="release",
+            )
+            origin = f"release {resolved.build_id}"
+
+        conn = connect(db_path)
+        try:
+            ensure_views(conn)
+            ensure_subline_columns(conn)
+            cleared = seedmod.clear_inline_inst_data(conn)
+            document = seedmod.write_seed_counts(
+                conn,
+                counts_path,
+                seed_build_id=result.build_id,
+                seed_sha256=result.sha256,
+                run_started_at=run_started_at,
+            )
+        finally:
+            conn.close()
+    except seedmod.SeedError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(
+        f"seeded {db_path} from {origin}"
+        f" ({result.bytes_} bytes, sha256 {result.sha256[:12]}…)"
+    )
+    if cleared:
+        click.echo(
+            "  emptied inline institutional tables on the working copy: "
+            + ", ".join(sorted(cleared))
+            + " (the accepted external snapshot stays the only inst source)"
+        )
+    for pair in document["pairs"]:
+        click.echo(
+            f"  baseline {pair['source']}/{pair['chamber']}:"
+            f" {len(pair['filing_ids'])} filings, {len(pair['joined'])} joined"
+        )
+
+
+@main.command("corpus-floor")
+@click.option("--db", "db_path", required=True)
+@click.option(
+    "--counts",
+    "counts_path",
+    required=True,
+    help="The identity baseline `seed-corpus` wrote at the start of this run.",
+)
+@click.option(
+    "--allow-reparse",
+    "allow_reparse",
+    multiple=True,
+    help=(
+        "Filing ids whose corrective replacement is EXPECTED this run"
+        " (repeatable, or one space/comma-separated string). A reparse"
+        " legitimately lowers a filing's raw transaction count; naming it here"
+        " makes that a reviewed event rather than a silent one."
+    ),
+)
+def corpus_floor(db_path: str, counts_path: str, allow_reparse: tuple[str, ...]) -> None:
+    """Refuse the build if the seed's corpus identities did not survive (R44)."""
+    from populus.publish import seed as seedmod
+
+    authorized = _split_filing_ids(allow_reparse)
+    conn = connect(db_path)
+    try:
+        seedmod.assert_corpus_floor(conn, counts_path, allow_reparse=authorized)
+    except seedmod.SeedError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    message = "corpus floor held: every seeded filing, join, and transaction set survived"
+    if authorized:
+        message += f" (authorized reparse: {', '.join(sorted(authorized))})"
+    click.echo(message)
+
+
 def _echo_inst_gate_outcome(report) -> None:
     """Print the M2 gate outcome. Shared so the honesty surface does not
     depend on which command assembled the build (QA-F5).

@@ -2122,12 +2122,30 @@ def test_publish_workflow_gh_token_step_scoped(tmp_path):
     # PROPERTY is unchanged — the long-lived PAT appears only on the steps that
     # write to populus-data, and nowhere else — and the allowed set is still
     # enumerated exactly rather than loosened to a prefix match.
+    # UX-OVERHAUL R42 AMENDMENT, recorded not silent: the property widens from
+    # "steps that WRITE to populus-data" to "steps that TRANSACT with
+    # populus-data", because `seed-corpus` READS the previous release's
+    # congress.db asset. It needs the PAT for the same reason the writers do —
+    # populus-data is private and release assets are not in the git checkout
+    # (`releases/.gitignore` is `*`), so neither the workflow's own token
+    # (scoped to this repo) nor the checked-out tree can reach the asset.
+    #
+    # What is NOT widened: §14's job boundary. The seed step runs in the
+    # publish job on the self-hosted runner, exactly where the PAT already
+    # lives on three other steps — no credential reaches the hosted
+    # deploy / sign / assert-signed jobs. The allowed set stays ENUMERATED
+    # rather than loosened to a prefix match, and the count moves 3 -> 4.
     pat = "${{ secrets.DATA_REPO_PAT }}"
-    pat_bearing = {"populus stage-build", "populus finalize-build", "populus publish"}
+    pat_bearing = {
+        "populus stage-build",
+        "populus finalize-build",
+        "populus publish",
+        "populus seed-corpus",
+    }
     pat_steps = [
         step for step in job["steps"] if (step.get("env") or {}).get("GH_TOKEN") == pat
     ]
-    assert len(pat_steps) == 3
+    assert len(pat_steps) == 4
     for step in pat_steps:
         run = step.get("run", "")
         assert any(command in run for command in pat_bearing), (
