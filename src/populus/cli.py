@@ -886,6 +886,8 @@ def seed_corpus(
     Refuses rather than falling back to an empty database: building fresh is
     what produced B24 and B25.
     """
+    from populus.amendments import ensure_views
+    from populus.load import ensure_subline_columns
     from populus.publish import seed as seedmod
 
     # An unset repository variable arrives as the EMPTY STRING, not an absent
