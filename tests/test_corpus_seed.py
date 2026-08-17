@@ -850,3 +850,57 @@ def test_a_seeded_store_with_an_EXTERNAL_snapshot_uses_that_snapshot(tmp_path):
     )
     # R24: the source identity is recorded, and it is the SNAPSHOT's.
     assert (Path(staged.staging_dir) / "build" / INST_SOURCE_ARTIFACT).is_file()
+
+
+# ---------------------------------------------------------------------------
+# CLI-level smoke. The module functions were well covered, but nothing invoked
+# the actual `seed-corpus` command — so a NameError in the command body sailed
+# through every test and only surfaced on the production runner, after it had
+# already copied 865 MB. Exercise the real click callback.
+# ---------------------------------------------------------------------------
+
+
+def test_seed_corpus_command_runs_end_to_end(tmp_path):
+    from click.testing import CliRunner
+
+    from populus.cli import main as cli_main
+
+    source = seed_db(tmp_path / "source.db")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    out_db = tmp_path / "populus.db"
+    counts = tmp_path / "seed-counts.json"
+
+    result = CliRunner().invoke(
+        cli_main,
+        [
+            "seed-corpus",
+            "--db", str(out_db),
+            "--counts", str(counts),
+            "--data-repo", str(make_repo(tmp_path)),
+            "--seed-db", str(source),
+            "--seed-sha256", digest,
+        ],
+    )
+    assert result.exit_code == 0, result.output + str(result.exception)
+    assert out_db.is_file()
+    document = json.loads(counts.read_text(encoding="utf-8"))
+    assert document["pairs"], "the baseline must record at least one pair"
+    assert "seeded" in result.output
+
+
+def test_corpus_floor_command_runs_end_to_end(tmp_path, store, baseline):
+    # Same gap on the other command: prove the CLI wiring works, not just
+    # assert_corpus_floor itself.
+    from click.testing import CliRunner
+
+    from populus.cli import main as cli_main
+
+    conn, path = store
+    _members_run(conn, AFTER_RUN)
+    conn.commit()
+    result = CliRunner().invoke(
+        cli_main,
+        ["corpus-floor", "--db", str(path), "--counts", str(baseline)],
+    )
+    assert result.exit_code == 0, result.output + str(result.exception)
+    assert "corpus floor held" in result.output
