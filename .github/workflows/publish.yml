@@ -180,11 +180,14 @@ jobs:
       - name: Gate on prior deployment generation
         env:
           GH_TOKEN: ${{ github.token }}
+          # Same injection class as the corpus-floor input below: a free-text
+          # dispatch value must never be substituted into the script body.
+          ACKNOWLEDGE_UNRECORDED_CODE_SHA: ${{ inputs.acknowledge_unrecorded_code_sha }}
         run: >-
           uv run python -m populus.deploy.record gate
           --data-repo populus-data
           --domain publicfilings.org
-          --acknowledge-unrecorded-code-sha '${{ inputs.acknowledge_unrecorded_code_sha }}'
+          --acknowledge-unrecorded-code-sha "$ACKNOWLEDGE_UNRECORDED_CODE_SHA"
 
       # Fetched BEFORE the ingests on purpose. Run 31861037053 spent 2h11m on
       # the ingests and then died in this fetch on a one-line error (an unset
@@ -244,9 +247,11 @@ jobs:
       # THE MEMBER JOIN. Without this step the two ingests above leave
       # `transactions.bioguide_id` entirely NULL, because `members.apply_member_join`
       # — the only writer of that column — runs solely inside `ingest members`.
-      # This job builds a FRESH populus.db every run, so nothing carries a roster
-      # over from a previous one; the owner's local builds only ever worked
-      # because their store already held members from a manual run.
+      # The store is SEEDED from the previous release (R42), not built fresh, so
+      # it arrives carrying the previous run's roster and joins. That is exactly
+      # why the corpus floor below proves THIS run's join executed rather than
+      # trusting a nonzero join count: historical joins keep stage_build's
+      # total-absence guard satisfied whether or not this step ran at all.
       #
       # Missing since the workflow was written: builds 20260807.1 through
       # 20260812.1 all published a site with ZERO member pages, and live 404s
@@ -270,12 +275,20 @@ jobs:
       # joins already nonzero, so that guard is permanently satisfied whether
       # or not the members step above ran at all — which is exactly how B24
       # stayed invisible for seven releases.
+      # The authorization list reaches the command through the ENVIRONMENT,
+      # never interpolated into the script body. `${{ }}` substitution happens
+      # BEFORE the shell parses the line, so a single quote in this free-text
+      # dispatch input would close the quoting and run the remainder as
+      # commands — as the runner account, on the owner's Mac. Env values are
+      # not script text, so quoting is all that is required here.
       - name: Corpus floor (R44)
+        env:
+          CORPUS_FLOOR_ALLOW_REPARSE: ${{ inputs.corpus_floor_allow_reparse }}
         run: >-
           uv run populus corpus-floor
           --db populus.db
           --counts seed-counts.json
-          --allow-reparse '${{ inputs.corpus_floor_allow_reparse }}'
+          --allow-reparse "$CORPUS_FLOOR_ALLOW_REPARSE"
 
       # --- the two-phase build seam (RUN P3-3b R2) --------------------------
       # The site is built BETWEEN these two steps: it reads manifest.json to

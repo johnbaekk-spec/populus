@@ -262,3 +262,31 @@ def test_the_corpus_bootstrap_inputs_cannot_reach_a_scheduled_run():
     dispatch_inputs = triggers["workflow_dispatch"]["inputs"]
     assert "senate_era_backfill" in dispatch_inputs
     assert "corpus_floor_allow_reparse" in dispatch_inputs
+
+
+def test_no_dispatch_input_is_interpolated_into_a_shell_script_body():
+    """Round-1 F2: `${{ }}` substitution happens BEFORE the shell parses.
+
+    A free-text dispatch input pasted into a `run:` body lets a single quote
+    close the quoting and run the rest as commands — as the runner account, on
+    the owner's Mac, which is a persistent self-hosted machine. Inputs must
+    reach commands through the ENVIRONMENT, where they are values and never
+    script text. `if:` expressions are a different context and are exempt.
+    """
+    offenders = []
+    for step in _publish_steps():
+        run = step.get("run") or ""
+        if "inputs." in run:
+            offenders.append(step.get("name"))
+    assert offenders == [], (
+        "dispatch inputs interpolated directly into run: bodies "
+        f"(pass them via env: instead): {offenders}"
+    )
+
+
+def test_the_reparse_authorization_reaches_the_command_through_the_environment():
+    step = _publish_steps()[_step_index("Corpus floor")]
+    assert "CORPUS_FLOOR_ALLOW_REPARSE" in (step.get("env") or {})
+    assert '"$CORPUS_FLOOR_ALLOW_REPARSE"' in step["run"], (
+        "the env value must be expanded as ONE quoted argument"
+    )

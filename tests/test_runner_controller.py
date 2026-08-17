@@ -48,6 +48,7 @@ Organised by the defect each test exists to catch:
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import hashlib
 import os
@@ -56,6 +57,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -414,122 +416,171 @@ def test_restore_image_populates_fresh_root(fake):
 # ---------------------------------------------------------------------------
 
 
-def test_second_invocation_refuses_while_lock_held(fake):
-    # Occupy the lock the way a concurrent invocation would (mkdir is the
-    # atomic primitive the script itself uses), then invoke: refusal.
-    lock = fake["state"] / ".controller.lock"
-    lock.mkdir()
-    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
-    # The refusing invocation must NOT have released the other holder's lock.
-    assert lock.is_dir()
-
-
-def test_lock_released_after_successful_run(fake):
-    assert run_ctl(fake, "destroy-root").returncode == 0
-    assert run_ctl(fake, "restore-image").returncode == 0, "lock leaked across invocations"
-
-
 # ---------------------------------------------------------------------------
-# R2 — the lock is reboot-safe: it records its owner, and an owner that cannot
-# still be alive does not hold it.
+# R2 — the lock is an OS flock, so "the owner is dead" needs no predicate.
 #
-# Before R2 the lock was a bare mkdir released only by the EXIT trap, so a
-# reboot (or a SIGKILL) mid-cycle left the directory behind and EVERY later
-# cycle refused `lock-held` forever — the runner bricked until a human cleared
-# it. These tests pin both halves: a dead owner is reclaimed, a live one is
-# still honoured.
+# These tests hold the lock the way a REAL competing controller does — a kernel
+# flock on the same file — rather than planting a directory that merely looks
+# like a lock. The earlier directory-based designs were rewritten twice after
+# external review found a race in each; the property under test is unchanged
+# (mutual exclusion, and a dead owner frees the lock), the mechanism is now the
+# kernel's.
 # ---------------------------------------------------------------------------
 
-
-def boot_epoch() -> int:
-    """The current boot's epoch seconds, the way the controller reads it."""
-    raw = subprocess.run(
-        ["sysctl", "-n", "kern.boottime"], capture_output=True, text=True, check=True
-    ).stdout
-    m = re.search(r"sec = (\d+)", raw)
-    assert m, f"unparseable kern.boottime: {raw!r}"
-    return int(m.group(1))
-
-
-def plant_lock(fake: dict, owner_line: str | None, *, mtime: int | None = None) -> Path:
-    """Occupy the lock the way a crashed or running invocation would."""
-    lock = fake["state"] / ".controller.lock"
-    lock.mkdir()
-    if owner_line is not None:
-        (lock / "owner").write_text(owner_line)
-    if mtime is not None:
-        os.utime(lock, (mtime, mtime))
-    return lock
+LOCK_HOLDER = """
+import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    sys.exit(1)
+sys.stdout.write("held\\n"); sys.stdout.flush()
+time.sleep(float(sys.argv[2]))
+"""
 
 
-def dead_pid() -> int:
-    """A pid that is certainly not running: spawn one and reap it."""
-    p = subprocess.Popen([sys.executable, "-c", ""])
-    p.wait()
-    return p.pid
+def lock_file(fake: dict) -> Path:
+    return fake["state"] / ".controller.lock"
 
 
-def test_lock_with_dead_pid_is_reclaimed(fake):
-    # The reboot/crash case R2 exists for: same boot, owner no longer running.
-    plant_lock(fake, f"{boot_epoch()} {dead_pid()}\n")
+def hold_the_lock(fake: dict, seconds: float = 30.0) -> subprocess.Popen:
+    """Take the real kernel lock from another process, and wait until it is
+    definitely held before returning — no sleep-and-hope."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", LOCK_HOLDER, str(lock_file(fake)), str(seconds)],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert proc.stdout.readline().strip() == "held", "the holder never took the lock"
+    return proc
+
+
+def test_a_live_holder_refuses_the_controller(fake):
+    holder = hold_the_lock(fake)
+    try:
+        assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_dead_holder_frees_the_lock_with_no_recovery_step(fake):
+    """R2's requirement, now structural.
+
+    The holder is SIGKILLed — the most abrupt death available, standing in for
+    a panic or a power loss. No cleanup runs, nothing is unlinked, and the next
+    cycle simply proceeds, because the kernel released the lock when the
+    process died. This is the failure that bricked the runner before R2.
+    """
+    holder = hold_the_lock(fake)
+    holder.kill()
+    holder.wait()
     r = run_ctl(fake, "destroy-root")
-    assert r.returncode == 0, f"a dead owner must not brick the cycle: {r.stderr}"
-    assert "reclaim-stale-lock" in ops_logged(fake), "reclaim must be recorded"
+    assert r.returncode == 0, f"a dead holder must not block the next cycle: {r.stderr}"
 
 
-def test_lock_with_live_pid_still_refuses(fake):
-    # The guard must not have been traded away for the fix: a genuinely live
-    # holder (this very test process) is still honoured.
-    lock = plant_lock(fake, f"{boot_epoch()} {os.getpid()}\n")
-    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
-    assert lock.is_dir(), "the refusing invocation released another's lock"
-    assert (lock / "owner").exists(), "it also destroyed the owner record"
-
-
-def test_lock_from_a_previous_boot_is_reclaimed_even_if_the_pid_is_alive(fake):
-    # Pid reuse is why a bare pid is not enough. Record OUR OWN pid — alive
-    # beyond any doubt — against the PREVIOUS boot. A pid-only implementation
-    # honours this lock forever; a boot-scoped one knows the recorder is gone.
-    plant_lock(fake, f"{boot_epoch() - 1} {os.getpid()}\n")
-    r = run_ctl(fake, "destroy-root")
-    assert r.returncode == 0, f"a previous boot's lock must be stale: {r.stderr}"
-
-
-def test_unowned_lock_predating_this_boot_is_reclaimed(fake):
-    # A lock left by the PRE-R2 controller carries no owner file at all. Dated
-    # before this boot, no process from this boot can own it.
-    plant_lock(fake, None, mtime=boot_epoch() - 3600)
-    r = run_ctl(fake, "destroy-root")
-    assert r.returncode == 0, f"a pre-boot unowned lock must be stale: {r.stderr}"
-
-
-def test_unowned_lock_from_this_boot_is_honoured(fake):
-    # Fail closed on the one genuinely ambiguous case: a holder that has
-    # returned from mkdir but not yet written its owner file. Same boot, no
-    # owner — assume live. (This is also the existing planted-lock case above.)
-    plant_lock(fake, None)
-    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
-
-
-def test_reclaim_is_serialized_by_the_steal_token(fake):
-    # Two invocations observing the same stale lock must not BOTH reclaim it —
-    # that is two live holders, precisely what the lock prevents. The steal
-    # token is the serializer; while it is held, a second invocation refuses
-    # rather than taking the stale lock for itself.
-    plant_lock(fake, f"{boot_epoch()} {dead_pid()}\n")
-    steal = fake["state"] / ".controller.lock.steal"
-    steal.mkdir()
-    os.utime(steal, (boot_epoch() + 1, boot_epoch() + 1))  # this boot ⇒ live
-    assert_refused(run_ctl(fake, "destroy-root"), "lock-held")
-
-
-def test_successful_run_leaves_no_lock_behind(fake):
-    # The owner record lives INSIDE the lock directory, so releasing it is no
-    # longer a bare rmdir. If cleanup forgets the file, rmdir fails silently
-    # and the lock leaks on every clean exit.
+def test_the_lock_file_surviving_on_disk_blocks_nothing(fake):
+    # The old directory lock bricked precisely because its on-disk remains were
+    # read as ownership. The file may sit there forever; only a live flock
+    # means anything.
+    lock_file(fake).write_text("held by pid 999999\n")
     assert run_ctl(fake, "destroy-root").returncode == 0
-    assert not (fake["state"] / ".controller.lock").exists(), "lock leaked"
-    assert not (fake["state"] / ".controller.lock.steal").exists(), "steal token leaked"
+    assert run_ctl(fake, "restore-image").returncode == 0
+
+
+def test_the_controller_releases_the_lock_when_it_exits(fake):
+    assert run_ctl(fake, "destroy-root").returncode == 0
+    holder = hold_the_lock(fake, seconds=0.1)  # would fail if still held
+    holder.wait()
+
+
+def test_a_refusing_invocation_still_releases_the_lock(fake):
+    # A refusal is an exit, and the kernel does not care which kind. Before
+    # this design a guard that refused mid-cycle could strand the lock.
+    assert_refused(run_ctl(fake, "destroy-root", RUNNER_ROOT="/"), "target-is-root")
+    holder = hold_the_lock(fake, seconds=0.1)
+    holder.wait()
+
+
+def test_the_controller_refuses_rather_than_running_unlocked(fake):
+    """Fail closed when no locking primitive exists.
+
+    Running unlocked would silently drop mutual exclusion on a machine that
+    wipes a runner root — strictly worse than not running.
+    """
+    shims = fake["tmp"] / "nolockshims"
+    shims.mkdir()
+    for name in ("python3", "perl"):
+        blocker = shims / name
+        blocker.write_text("#!/bin/bash\nexit 127\n")
+        blocker.chmod(0o755)
+    r = run_ctl(fake, "destroy-root", PATH=f"{shims}:{fake['env']['PATH']}")
+    assert_refused(r, "lock-primitive-missing")
+
+
+def test_a_surviving_child_cannot_pin_the_lock_after_the_controller_dies(fake):
+    """The defect a fourth review round proved by execution.
+
+    flock lives on the open file description, so ANY child inheriting it keeps
+    the lock alive after the controller is gone. Holding the descriptor in the
+    controller shell meant an ordinary controller-domain child — the token-mint
+    `curl`, which has no timeout — could strand the lock indefinitely.
+
+    Reproduced faithfully: kill the controller while a long-lived child it
+    spawned is still running, then prove another cycle can acquire WHILE that
+    child is still alive. Closing the descriptor in one call site could not fix
+    this; the controller now never opens the lock file at all.
+    """
+    slow = fake["tmp"] / "slowshim"
+    slow.mkdir()
+    # `tar` stands in for any controller-domain child: restore-image runs it
+    # DIRECTLY, without the sudo gateway, so it is exactly the class of process
+    # that used to inherit the lock descriptor.
+    child_marker = fake["owner"] / "child.pid"
+    blocker = slow / "tar"
+    blocker.write_text(
+        "#!/bin/bash\n"
+        f'printf "%s" "$$" > "{child_marker}"\n'
+        "sleep 60\n"
+    )
+    blocker.chmod(0o755)
+
+    env = {**fake["env"], "PATH": f"{slow}:{fake['env']['PATH']}"}
+    controller = subprocess.Popen(
+        ["bash", str(SCRIPT), "restore-image"], env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.time() + 20
+        while time.time() < deadline and not child_marker.exists():
+            time.sleep(0.1)
+        if not child_marker.exists():
+            controller.kill(); controller.wait()
+            pytest.skip("the controller never spawned the stand-in child")
+        child_pid = int(child_marker.read_text())
+
+        controller.kill()
+        controller.wait()
+        # The child MUST still be alive, or this proves nothing.
+        os.kill(child_pid, 0)
+
+        # The holder needs a moment to notice its parent is gone.
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            probe = run_ctl(fake, "destroy-root")
+            if probe.returncode == 0:
+                break
+            time.sleep(0.3)
+        os.kill(child_pid, 0)  # still alive at the moment we acquired
+        assert probe.returncode == 0, (
+            "a surviving child pinned the lock after the controller died: "
+            f"{probe.stderr}"
+        )
+    finally:
+        for pid in (child_pid if "child_pid" in dir() else None,):
+            if pid:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, 9)
 
 
 # ---------------------------------------------------------------------------
@@ -1300,3 +1351,35 @@ def test_state_dir_group_writable_refuses(fake):
     r = run_ctl(fake, "destroy-root")
     assert r.returncode != 0
     assert "state-dir-writable" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# Round-1 remediation — lock-safety defects external review found.
+# ---------------------------------------------------------------------------
+
+
+def test_a_dead_holder_mid_cycle_refuses_rather_than_running_unserialized(fake):
+    """The residual the fourth review round named, made fail-closed.
+
+    The holder is a separate process, so it can in principle die while the
+    controller keeps working — and then the lock is free while we are still
+    inside the runner root. bash 3.2 cannot close that bind (holding the
+    descriptor in the shell makes every child pin it instead, and there is no
+    FD_CLOEXEC control), so the destructive entry points re-assert the holder
+    is alive and REFUSE if it is not.
+
+    Simulated by pointing the holder at an interpreter that exits immediately
+    after reporting success: acquisition believes it holds the lock, and the
+    very next destructive step catches that it does not.
+    """
+    shims = fake["tmp"] / "diehold"
+    shims.mkdir()
+    liar = shims / "python3"
+    liar.write_text("#!/bin/bash\nprintf 'held\\n'\nexit 0\n")
+    liar.chmod(0o755)
+    r = run_ctl(fake, "destroy-root", PATH=f"{shims}:{fake['env']['PATH']}")
+    assert_refused(r, "lock-holder-died")
+    # And the wipe must NOT have run: the refusal precedes the destruction.
+    assert (fake["root"] / "_work" / "leftover.txt").exists(), (
+        "the runner root was wiped despite the lock refusal"
+    )

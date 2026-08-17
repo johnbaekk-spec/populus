@@ -483,7 +483,7 @@ def test_floor_refuses_a_vanished_seed_filing(store, baseline):
     conn.execute("DELETE FROM transactions WHERE filing_id = 'house:2'")
     conn.execute("DELETE FROM filings WHERE filing_id = 'house:2'")
     _members_run(conn, AFTER_RUN)
-    with pytest.raises(SeedError, match="absent from the store"):
+    with pytest.raises(SeedError, match="absent from this"):
         assert_corpus_floor(conn, baseline)
 
 
@@ -662,3 +662,191 @@ def test_floor_covers_every_source_chamber_pair_not_just_house(tmp_path):
     with pytest.raises(SeedError, match="senate-efd/senate"):
         assert_corpus_floor(conn, counts)
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Round-1 remediation — the defects external review found.
+# ---------------------------------------------------------------------------
+
+
+def test_floor_refuses_a_filing_REASSIGNED_to_another_source_chamber(store, baseline):
+    """F1: identity is the PAIR plus the id, not the id alone.
+
+    Nothing is deleted here — the filing is still in `filings`. A global
+    filing_id set answers "does this id exist anywhere?", which is the wrong
+    question: a chamber could be emptied into its sibling and every check would
+    pass. The seeded pair lost an identity, so the floor must refuse.
+    """
+    conn, _path = store
+    conn.execute(
+        "UPDATE filings SET source = 'senate-efd', chamber = 'senate'"
+        " WHERE filing_id = 'house:2'"
+    )
+    conn.commit()
+    (still_present,) = conn.execute(
+        "SELECT COUNT(*) FROM filings WHERE filing_id = 'house:2'"
+    ).fetchone()
+    assert still_present == 1, "the fixture must MOVE the filing, not delete it"
+    _members_run(conn, AFTER_RUN)
+    with pytest.raises(SeedError, match="house-clerk/house"):
+        assert_corpus_floor(conn, baseline)
+
+
+def test_floor_refuses_transactions_moved_out_of_their_seeded_pair(store, baseline):
+    # The same reassignment, seen through the per-filing transaction counts:
+    # they must be counted within the pair, not globally.
+    conn, _path = store
+    conn.execute("UPDATE filings SET source = 'kadoa' WHERE filing_id = 'house:1'")
+    conn.commit()
+    _members_run(conn, AFTER_RUN)
+    with pytest.raises(SeedError, match="house-clerk/house"):
+        assert_corpus_floor(conn, baseline)
+
+
+# ---------------------------------------------------------------------------
+# F6 — the plan requires SEEDED-STORE BUILD tests, not predicate tests.
+#
+# `_inst_data_present` flipping is necessary but not sufficient: it proves the
+# probe, not the branch stage_build actually takes, nor that an external
+# snapshot still wins when one is supplied. These run the real build.
+# ---------------------------------------------------------------------------
+
+
+def _seeded_congress_store_with_stale_inst(tmp_path, name="seeded.db") -> Path:
+    """A store shaped like a real seed: congressional corpus + a STALE
+    institutional snapshot inline, exactly what a published congress.db
+    carries."""
+    path = seed_db(tmp_path / name)
+    conn = connect(str(path))
+    conn.execute(
+        "INSERT INTO inst_filers (cik, name_raw, source, source_url,"
+        " source_record_id, parser_version, normalization_version, ingested_at)"
+        " VALUES ('0000000001', 'Stale Capital', 'sec-edgar',"
+        " 'https://example.invalid/cik', '0000000001', 't-1', 't-1',"
+        " '2026-07-16T00:00:00Z')"
+    )
+    conn.execute(
+        "INSERT INTO inst_filings (filing_id, cik, accession, submission_type,"
+        " period_of_report, filed_date, unit_basis, is_amendment,"
+        " filing_manager_raw, parse_status, doc_url, source, source_url,"
+        " source_record_id, parser_version, normalization_version, ingested_at)"
+        " VALUES ('inst:0001-26-000001', '0000000001', '0001-26-000001',"
+        " '13F-HR', '2026-06-30', '2026-07-15', 'thousands', 0,"
+        " 'Stale Capital', 'parsed', 'https://example.invalid/doc.xml',"
+        " 'sec-edgar', 'https://example.invalid/doc.xml', '0001-26-000001',"
+        " 't-1', 't-1', '2026-07-16T00:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _staged_manifest(staged) -> dict:
+    return json.loads(
+        (Path(staged.staging_dir) / "build" / "manifest.json").read_text(encoding="utf-8")
+    )
+
+
+def _inst_branch_state(staged) -> dict:
+    """The four fields stage_build sets from its institutional branch.
+
+    Asserted instead of "is there an inst module in the manifest?" because a
+    derived module can still be WITHHELD by the M2 coverage gate — so an absent
+    module conflates "the derive branch never ran" with "it ran and withheld",
+    and the whole point here is which BRANCH was taken.
+    """
+    return {
+        key: staged._state.get(key)
+        for key in (
+            "inst_logical",
+            "inst_serving_logical",
+            "inst_withheld",
+            "inst_period_coverage",
+        )
+    }
+
+
+def test_a_seeded_store_with_BLANK_inst_db_builds_congress_only(tmp_path):
+    """The unset-variable path, which is the DEFAULT production shape whenever
+    the inst snapshot is not provisioned — an unset repository variable arrives
+    blank, not absent."""
+    from test_publish import pin
+
+    from populus.publish.build import LocalDirBackend as Backend
+    from populus.publish.build import stage_build
+
+    path = _seeded_congress_store_with_stale_inst(tmp_path)
+    conn = connect(str(path))
+    ensure_views(conn)
+    clear_inline_inst_data(conn)
+    conn.close()
+
+    repo = make_repo(tmp_path)
+    staged = stage_build(path, repo, now=pin(), backend=Backend(repo), inst_db_path=None)
+    assert _inst_branch_state(staged) == {
+        "inst_logical": None,
+        "inst_serving_logical": None,
+        "inst_withheld": None,
+        "inst_period_coverage": None,
+    }, "a cleared seeded store must take the institutionally-ABSENT branch"
+    assert "congress" in _staged_manifest(staged)["modules"]
+
+
+def test_the_UNCLEARED_seed_would_have_derived_from_the_stale_snapshot(tmp_path):
+    """The control that gives the test above its meaning.
+
+    Without it, "absent branch" could equally mean stage_build never derives
+    from inline tables at all, and the clear would be proven to guard nothing.
+    It does derive: the uncleared seed produces a withheld institutional notice
+    computed from the SEED's filings, naming the seed's stale quarter. With a
+    seed whose coverage clears the M2 gate this is stale DATA, not just a stale
+    notice.
+    """
+    from test_publish import pin
+
+    from populus.publish.build import LocalDirBackend as Backend
+    from populus.publish.build import stage_build
+
+    path = _seeded_congress_store_with_stale_inst(tmp_path)
+    conn = connect(str(path))
+    ensure_views(conn)
+    conn.close()  # deliberately NOT cleared
+
+    repo = make_repo(tmp_path)
+    staged = stage_build(path, repo, now=pin(), backend=Backend(repo), inst_db_path=None)
+    withheld = _inst_branch_state(staged)["inst_withheld"]
+    assert withheld is not None, (
+        "the uncleared seed was expected to reach the derive branch — if it"
+        " does not, clear_inline_inst_data is guarding nothing"
+    )
+    assert "2026-06-30" in (withheld.get("uncovered_quarters") or []), (
+        f"the notice must come from the SEED's own stale quarter: {withheld}"
+    )
+
+
+def test_a_seeded_store_with_an_EXTERNAL_snapshot_uses_that_snapshot(tmp_path):
+    """The set-variable path: the accepted external snapshot stays
+    authoritative, and clearing the inline tables does not disturb it."""
+    from test_inst_external_store import make_inst_snapshot
+    from test_publish import pin
+
+    from populus.publish.build import INST_SOURCE_ARTIFACT, LocalDirBackend as Backend
+    from populus.publish.build import stage_build
+
+    path = _seeded_congress_store_with_stale_inst(tmp_path)
+    conn = connect(str(path))
+    ensure_views(conn)
+    clear_inline_inst_data(conn)
+    conn.close()
+
+    snapshot = make_inst_snapshot(tmp_path)
+    repo = make_repo(tmp_path)
+    staged = stage_build(
+        path, repo, now=pin(), backend=Backend(repo), inst_db_path=snapshot
+    )
+    manifest = _staged_manifest(staged)
+    assert manifest["modules"].get("inst", {}).get("artifacts"), (
+        "the external snapshot must still produce an institutional module"
+    )
+    # R24: the source identity is recorded, and it is the SNAPSHOT's.
+    assert (Path(staged.staging_dir) / "build" / INST_SOURCE_ARTIFACT).is_file()

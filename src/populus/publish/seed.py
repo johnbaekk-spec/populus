@@ -305,7 +305,9 @@ def clear_inline_inst_data(conn: sqlite3.Connection) -> list[str]:
     pending = set(names)
     referenced_by: dict[str, set[str]] = {name: set() for name in names}
     for name in names:
-        for row in conn.execute(f'PRAGMA foreign_key_list("{name}")'):
+        for row in conn.execute(
+            f'PRAGMA foreign_key_list("{name}")'  # nosec B608
+        ):
             parent = row[2]
             if parent in pending and parent != name:
                 referenced_by[parent].add(name)
@@ -324,10 +326,17 @@ def clear_inline_inst_data(conn: sqlite3.Connection) -> list[str]:
     cleared = []
     with conn:
         for name in order:
-            (rows,) = conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()
+            # The identifier is not user input: it comes from sqlite_master,
+            # filtered to the literal `inst_` prefix, and is double-quoted. It
+            # cannot be parameterized — SQLite binds values, never identifiers
+            # — so the repository's `# nosec B608` annotation applies, same as
+            # the guarded DROPs in amendments.py.
+            (rows,) = conn.execute(
+                f'SELECT COUNT(*) FROM "{name}"'  # nosec B608
+            ).fetchone()
             if rows:
                 cleared.append(name)
-            conn.execute(f'DELETE FROM "{name}"')
+            conn.execute(f'DELETE FROM "{name}"')  # nosec B608
     return sorted(cleared)
 
 
@@ -451,31 +460,45 @@ def assert_corpus_floor(
             " passing vacuously"
         )
 
-    present_filings = {row[0] for row in conn.execute("SELECT filing_id FROM filings")}
-    present_joined = {
-        (filing_id, bioguide_id)
-        for filing_id, bioguide_id in conn.execute(
-            "SELECT filing_id, bioguide_id FROM filings WHERE bioguide_id IS NOT NULL"
-        )
-    }
-    present_txns = {
-        filing_id: count
-        for filing_id, count in conn.execute(
-            "SELECT filing_id, COUNT(*) FROM transactions GROUP BY filing_id"
-        )
-    }
+    # Keyed by (source, chamber), never globally. R44's contract is per-pair,
+    # and a global set answers the wrong question: a filing REASSIGNED from one
+    # (source, chamber) to another is still "present" globally, so a chamber
+    # could be emptied into its sibling and every check would pass. Identity
+    # here means the pair as well as the id.
+    present_filings: dict[tuple[str, str], set[str]] = {}
+    present_joined: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for source, chamber, filing_id, bioguide_id in conn.execute(
+        "SELECT source, chamber, filing_id, bioguide_id FROM filings"
+    ):
+        key = (source, chamber)
+        present_filings.setdefault(key, set()).add(filing_id)
+        if bioguide_id is not None:
+            present_joined.setdefault(key, set()).add((filing_id, bioguide_id))
+    present_txns: dict[tuple[str, str], dict[str, int]] = {}
+    for source, chamber, filing_id, count in conn.execute(
+        "SELECT f.source, f.chamber, t.filing_id, COUNT(*) FROM transactions t"
+        " JOIN filings f ON f.filing_id = t.filing_id"
+        " GROUP BY f.source, f.chamber, t.filing_id"
+    ):
+        present_txns.setdefault((source, chamber), {})[filing_id] = count
 
     violations: list[str] = []
     for pair in pairs:
-        label = f"{pair.get('source')}/{pair.get('chamber')}"
+        key = (pair.get("source"), pair.get("chamber"))
+        label = f"{key[0]}/{key[1]}"
+        pair_filings = present_filings.get(key, set())
+        pair_joined = present_joined.get(key, set())
+        pair_txns = present_txns.get(key, {})
 
         # Filings are never deleted — no supported path removes one — so an
         # absent seed filing_id is always a broken pipeline, never a healing.
-        missing = sorted(set(pair.get("filing_ids", [])) - present_filings)
+        # "Absent" includes "still in the store but under a different
+        # (source, chamber)": that is an identity swap, not a preservation.
+        missing = sorted(set(pair.get("filing_ids", [])) - pair_filings)
         if missing:
             violations.append(
-                f"{label}: {len(missing)} seed filing(s) absent from the store,"
-                f" e.g. {missing[:5]}"
+                f"{label}: {len(missing)} seed filing(s) absent from this"
+                f" (source, chamber), e.g. {missing[:5]}"
             )
 
         unjoined = sorted(
@@ -483,7 +506,7 @@ def assert_corpus_floor(
             for filing_id, bioguide_id in (
                 tuple(entry) for entry in pair.get("joined", [])
             )
-            if (filing_id, bioguide_id) not in present_joined
+            if (filing_id, bioguide_id) not in pair_joined
             and filing_id not in allow_reparse
         )
         if unjoined:
@@ -496,8 +519,8 @@ def assert_corpus_floor(
         for filing_id, seed_count in (pair.get("transactions_by_filing") or {}).items():
             if filing_id in allow_reparse:
                 continue
-            if present_txns.get(filing_id, 0) < seed_count:
-                shrunk.append((filing_id, seed_count, present_txns.get(filing_id, 0)))
+            if pair_txns.get(filing_id, 0) < seed_count:
+                shrunk.append((filing_id, seed_count, pair_txns.get(filing_id, 0)))
         if shrunk:
             violations.append(
                 f"{label}: {len(shrunk)} filing(s) lost transactions without"
