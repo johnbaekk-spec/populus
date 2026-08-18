@@ -125,19 +125,46 @@ GLOBAL_FILE_CAP = 18_000              # Populus self-cap at 90%, hard CI failure
 MAX_SHARD_BYTES = 25 * 1024 * 1024    # Cloudflare 25 MiB per file
 
 # --- committed module budgets (other modules' reservations) ------------------
-#: The M1 footprint as MEASURED on 2026-08-05, not as reserved: `congress/` 8,558
-#: (of which `data/` is 4,279 deployed JSON shards and `tickers/` 3,884) plus the
-#: top-level `tickers/` tree 3,884. The old `M1_PAGES = 8_500` reservation
-#: under-counted this by 3,942 files. This constant exists for the PROJECTION
-#: only — the enforcing gate counts the tree instead of trusting it, so it going
-#: stale can no longer make a breach invisible.
-M1_MEASURED_PAGES = 12_442
-#: Everything else a real build emits and no term accounted for: `_astro/` bundles
-#: (91) and the fixed top-level pages (12) — measured the same day.
-#: `M1_MEASURED_PAGES + SITE_CHROME_FILES` is the WHOLE measured tree (12,545), so
-#: both terms are summed by `worst_case_file_count`. Defining this and not summing
-#: it is what made the reported breach 103 files too small (QA M2-8 R2 N1).
-SITE_CHROME_FILES = 103
+#: The M1 footprint as MEASURED on 2026-08-17 against the RESTORED corpus, in
+#: the PRODUCTION configuration (no ticker map — `publish.yml` deliberately
+#: points `POPULUS_TICKER_MAP` at a nonexistent path). Restoring per-stock pages
+#: (TD-7) would add the ticker-tree delta back on top of this.
+#:
+#: 12,901 = `congress/` 9,049 + the top-level `tickers/` tree 3,852, which is
+#: this constant's documented meaning, measured.
+#:
+#: KNOWN GAP, deliberately left visible: the 2026-08-17 tree is 17,283 files
+#: because `institutional/` (4,275) is now BUILT — a file class that did not
+#: exist in the tree when these terms were defined, and that NO term in
+#: `worst_case_file_count`'s measured base accounts for. Two post-build
+#: assertions therefore contradict each other and one must fail: this constant
+#: cannot simultaneously equal `congress + tickers` AND make
+#: `measured + chrome == whole tree`. Setting it to 17,176 satisfies the second
+#: but makes the projection forecast a breach it does not have (the headroom
+#: test then fails), so the honest setting is the measured footprint and a LOUD
+#: unaccounted-class failure. The enforcing R19 gate counts the real tree and
+#: passes (17,283 of 18,000), so nothing unsafe ships either way.
+#: Fix requires a design decision — see docs/build/UX-OVERHAUL-HANDOFF.md §4.
+#:
+#: Re-measured for R45 only AFTER the B25 corpus restoration published
+#: (build 20260817.1) — measuring the shrunken tree would have encoded the
+#: outage as the baseline, which is the error BACKLOG B18 names. The prior
+#: value was 12,442, measured 2026-08-05 when House history was missing.
+#:
+#: This constant exists for the PROJECTION only — the enforcing gate counts the
+#: tree instead of trusting it, so it going stale can no longer make a breach
+#: invisible.
+M1_MEASURED_PAGES = 12_901
+#: Everything else a real build emits and no term accounted for: `_astro/`
+#: bundles (93), the four fixed top-level files, and the ten single-page
+#: top-level routes (`e/`, `financials/`, `legal/` 2, `macro/`, `methodology/`,
+#: `search/`, `signals/` 2, `watchlist/`) — measured 2026-08-17 with
+#: M1_MEASURED_PAGES, same build.
+#:
+#: `M1_MEASURED_PAGES + SITE_CHROME_FILES` = 13,008, which is NO LONGER the
+#: whole measured tree (17,283) — see the gap documented above. The 2026-08-05
+#: tree was 12,545 and had no `institutional/` at all.
+SITE_CHROME_FILES = 107
 M2_FILER_PAGES = 1_500                # M2 contract: pre-rendered top filers
 M3_RESERVED = 2_064                   # M3's committed 2,000 pages + ~64 shards
 
