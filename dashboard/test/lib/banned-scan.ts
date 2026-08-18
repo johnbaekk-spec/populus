@@ -39,6 +39,39 @@ export const BANNED_PATTERNS: { name: string; re: RegExp }[] = [
   { name: "move (verb)", re: /\bmove\b/i },
 ];
 
+/** Field values that arrive VERBATIM from a filing, and the marker the render
+    sites put around the same strings in HTML.
+
+    The ban exists to stop the SITE adopting a market-narrative voice — "X is
+    bullish on Y". It was never meant to police what a security is lawfully
+    called, and several real ones trip it: "Bullish" is a listed company,
+    Invesco publishes a "BULLISH FD" / "BEARISH FD" share class, and there is a
+    sports-betting ETF. Measured 2026-08-18 on build 20260817.1: 175 hits across
+    164 files, every one of them in `institutional/`, and every one a filed
+    name. Renaming filed data to satisfy a style rule would falsify the record.
+
+    So these values are redacted BEFORE matching — and nothing else is. The rest
+    of every institutional page is still scanned, so editorial copy that sits
+    beside a filed name is caught exactly as before. */
+export const FILED_NAME_JSON_FIELDS = ["issuer_name", "title_of_class"] as const;
+export const FILED_NAME_MARKER = "filed-name";
+
+/** Blank out filed names, leaving everything else byte-identical. */
+export function redactFiledNames(text: string): string {
+  let out = text;
+  for (const field of FILED_NAME_JSON_FIELDS) {
+    out = out.replace(
+      new RegExp(`("${field}"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, "g"),
+      `$1"<filed>"`,
+    );
+  }
+  out = out.replace(
+    new RegExp(`<span class="${FILED_NAME_MARKER}">[\\s\\S]*?</span>`, "g"),
+    `<span class="${FILED_NAME_MARKER}"><filed></span>`,
+  );
+  return out;
+}
+
 export interface ScanHit {
   file: string;
   pattern: string;
@@ -67,7 +100,7 @@ export function scanTree(root: string, include: (name: string) => boolean): Scan
       if (!include(entry)) continue;
       // Raw bytes → UTF-8. A NUL byte is just a character here; nothing is
       // classified as "binary" and skipped.
-      const text = readFileSync(full).toString("utf-8");
+      const text = redactFiledNames(readFileSync(full).toString("utf-8"));
       covered.push(path.relative(root, full));
       for (const { name, re } of BANNED_PATTERNS) {
         const m = re.exec(text);

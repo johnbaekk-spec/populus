@@ -197,6 +197,50 @@ reaches these tests when `POPULUS_BUILD_DIR`/`POPULUS_DB` are set — without th
 the run dies early at `getBuildData`. A partial `test:post` is not evidence
 about the parts it never reached.
 
+### feed.v1.json — measured, and the fix decided (owner, 2026-08-18)
+
+**Measured on build `20260817.1`:** 22,288,548 B total — `txns` 21,854,530 B over
+**71,714 rows** (~305 B/row), `paper` 433,083 B over 3,047 rows. Rows are spread
+almost evenly across 13 years (~5,000/year); the last two years are 13,295 rows
+(~3.9 MB), the last five 26,646 (~7.8 MB).
+
+Growth is ~2 MB/year against 3.9 MB of headroom to Cloudflare's 25 MiB per-file
+limit — **roughly 18 months**, and an election year compresses that.
+
+**The constraint is PER-FILE, not total download.** Cloudflare rejects a single
+file over 25 MiB; it does not care that the client pulls 22 MB in total. That
+matters because the feed page filters, searches and pages CLIENT-SIDE over the
+whole corpus — `feed-client.ts` says so in its own failure copy — so on a static
+site no sharding scheme can reduce what a filtering visitor downloads.
+
+**Decision: shard by year, client fetches all shards.** ~13 shards of ~1.5 MB,
+each of which stays far under the cap forever. Nothing a visitor sees changes,
+filtering and search still cover the whole corpus, and the ceiling is removed
+permanently rather than deferred. A recent-window default (3.9 MB first paint)
+was considered and deliberately NOT taken now: it narrows the default view, which
+this site may only do out loud, so it is a separate decision once sharding works.
+
+**Implementation notes for whoever picks this up:**
+
+- The producer route (`pages/congress/data/feed.v1.json.ts`) is a 10-line
+  passthrough of `getBuildData().dataset`; the real assembly is in `lib/data.ts`.
+- Keep `/congress/data/feed.v1.json` as an INDEX — metadata, `txn_cols`,
+  `paper_cols`, `paper`, and a `shards: [{year, path, rows}]` list. It must stay
+  honest: `congress/index.astro:186` and `watchlist/index.astro` advertise it as
+  "the full published data", and the load-failure copy calls it "the raw
+  dataset". Those three strings change with the shape, or the page claims a
+  completeness the file no longer has.
+- **Concatenate shards newest-year-first.** The load order (filed desc, txn_id
+  asc within a date) is the stable tie-break every other sort depends on and is
+  reproducible by build; years do not overlap, so year-desc concatenation
+  preserves the global order exactly. Getting this wrong silently changes sort
+  results rather than failing.
+- Both `feed-client.ts` and `watchlist-client.ts` fetch the file today; both
+  change. `classifyDataset` must learn the index shape and keep refusing a stale
+  cached body (the F3 version-mismatch path).
+- A partial shard set must FAIL VISIBLY, not render a short feed — a feed missing
+  a year looks exactly like a quiet week, which is the B25 failure mode again.
+
 ## 5. Standing constraints — each cost real time
 
 1. **Never pipe a gate.** `cmd | tail` gives you the pipe's exit code. Under zsh

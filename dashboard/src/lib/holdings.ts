@@ -1189,12 +1189,23 @@ function positionCell(row: {
   position_key: string | null;
 }): string {
   const grain = row.put_call && row.put_call !== "LONG" ? ` · ${esc(row.put_call)}` : "";
-  const cls = row.title_of_class ? ` · ${esc(row.title_of_class)}` : "";
+  /* `filed-name` marks a string that came VERBATIM off a filing. It is not
+     styling — the §0 banned-wording scan redacts these before matching, because
+     the ban exists to stop THIS SITE adopting a market-narrative voice and a
+     security lawfully named "Bullish" is not this site's voice. Marking it at
+     the render site keeps the exemption auditable: the scanner never has to
+     guess which strings are ours. */
+  const cls = row.title_of_class
+    ? ` · <span class="filed-name">${esc(row.title_of_class)}</span>`
+    : "";
   const cusip = row.cusip
     ? `<span class="mono-note">CUSIP ${esc(row.cusip)}</span>`
     : `<span class="mono-note" title="no CUSIP on the reported row">CUSIP —</span>`;
   return (
-    `<span>${esc(row.issuer_name || "(issuer name not on the filing)")}</span>` +
+    (row.issuer_name
+      ? `<span class="filed-name">${esc(row.issuer_name)}</span>`
+      /* our own fallback copy is NOT filed text and stays scannable */
+      : `<span>(issuer name not on the filing)</span>`) +
     `<span class="mono-note">${cls}${grain}</span> ${cusip}`
   );
 }
