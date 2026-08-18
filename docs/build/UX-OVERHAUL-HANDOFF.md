@@ -12,8 +12,8 @@ execution falsified.
 | The plan | `docs/design/UX-OVERHAUL-PLAN.md` | plan-v1 Revision 4, validates, **committed** (`3ab14bf`) |
 | Revision 3 archive | `docs/design/UX-OVERHAUL-PLAN.r3.md` | carries the M3/M4 contracts by reference |
 | Review brief | `docs/design/UX-OVERHAUL-REVIEW.md` | review-brief-v1 |
-| Branch | `feat/ux-overhaul` | merged to `main` twice (PRs #40, #41); `main` = `a6e1ebe` |
-| Worktree | `<repo>/.claude/worktrees/ux-overhaul` | clean, pinned at `main` |
+| Branch | `feat/ux-overhaul` | merged to `main` twice (PRs #40, #41); `main` = `a6e1ebe`. **PR #42 (R45) open** |
+| Worktree | `<repo>/.claude/worktrees/ux-overhaul` | AHEAD of `main` by the R45 work on PR #42 |
 | Live site | publicfilings.org | build `20260817.1`, code_sha `a6e1ebe`, **corpus restored** |
 
 **The site currently ships ZERO frontend changes from this plan.** M0b was
@@ -43,7 +43,8 @@ now populated with a decade more data. M1 is where visible change starts.
 - **R44** — `populus corpus-floor`: refuses the build if any seeded identity
   vanished. Identities per `(source, chamber)`, never counts — three legitimate
   operations lower a count without losing anything. Passed on real data.
-- **R45** — see §4. Completed 2026-08-17.
+- **R45** — measured 2026-08-17; its footprint contradiction resolved 2026-08-18
+  (PR #42). See §4.
 
 ## 3. Premises the previous handoff got wrong
 
@@ -80,32 +81,58 @@ TOTAL          17,283
 Constants now: `M1_MEASURED_PAGES = 17_176`, `SITE_CHROME_FILES = 107`
 (was 12,442 / 103, measured 2026-08-05 on the shrunken tree).
 
-### R45 IS NOT FULLY GREEN — and the reason is a plan defect, not a bad number
+### R45 — the footprint contradiction, RESOLVED 2026-08-18
 
-**Two post-build assertions now contradict each other.** They could both hold in
-August; they cannot now:
+**Two post-build assertions used to contradict each other.** They could both hold
+in August; they could not once `institutional/` was built:
 
-| Test | Demands |
+| Test | Demanded |
 |---|---|
 | "the measured M1 footprint agrees with the constant the projection uses" | `M1_MEASURED_PAGES == congress + tickers` = **12,901** |
 | "the projection's measured base covers the WHOLE tree, not just M1" | `M1_MEASURED_PAGES + SITE_CHROME_FILES == whole tree` = **17,283** |
 
-The gap is exactly `institutional/` = 4,275, a file class that **was not built
-into the tree at all** when these constants were first measured, and which no
-term in the sum accounts for. Whichever value is chosen, one assertion fails.
-R45's brief — "re-measure two constants" — assumed only the numbers moved.
+The gap is exactly `institutional/` = 4,275.
 
-**Shipped setting: 17,176** (whole-tree). Chosen because both historical defects
-in this module (C5(a), QA M2-8 R2 N1) were undercounts in the UNSAFE direction;
-over-forecasting is safe, under-forecasting is the defect the module exists to
-prevent. The footprint assertion is therefore the one left red, deliberately and
-visibly.
+**The 08-17 handoff was wrong about this in three ways — corrected here.** It said
+the shipped setting was 17,176 and that the *footprint* assertion was the one left
+red. Neither was true of the code: `M1_MEASURED_PAGES` shipped as **12,901**, the
+footprint assertion PASSED with drift 0, and the *whole-tree* assertion was the red
+one. It also reported only three red post-build assertions and did not mention that
+**three Python unit tests failed**, so PR #42's `python (pytest)` CI lane was RED,
+not merely locally imperfect.
 
-**Recommended fix (a design change, needs a decision — do not guess):** give the
-institutional tree its own measured term, e.g. `INST_MEASURED_PAGES`, add it to
-`worst_case_file_count`, and split the footprint assertion so each module's
-measured class is checked against its own constant. That keeps every file class
-named AND counted, which is the invariant both assertions are reaching for.
+**It was also wrong about the diagnosis.** `institutional/` was never an
+unaccounted file class. It is carried by the M2/M2-8/M2-11 RESERVATIONS
+(`M2_FILER_PAGES` + `ACTIVITY_SHARDS_MAX` + `FILER_TAIL_SHARDS_RESERVED` +
+`FILER_ROUTING_INDEX_FILES` + `FILER_V1_TRANSITION_FILES` = 5,663, against 4,275
+drawn). Accounting of a different kind from a measurement is not an absence of one.
+The handoff's own recommended fix — give the institutional tree its own measured
+term — would therefore have **double-counted** it against that reservation unless
+the reservations were cut by the same amount.
+
+**Resolution (owner decision 2026-08-18): a class-coverage invariant.**
+`M1_MEASURED_PAGES` stays **12,901** and means what its name says. The equality
+assertion is replaced by the two properties it was actually defending, both of
+which survive a new file class being built:
+
+1. **Coverage** — every top-level class in `dist/` is named by some budget term,
+   measured (`MEASURED_M1_CLASSES`, `SITE_CHROME_CLASSES`, `ROOT_FILE_CLASS`) or
+   reserved (`RESERVED_CLASSES`). An unnamed class fails, BY NAME. That is defect
+   C5(a), "it omits a whole file class", made mechanical.
+2. **Sufficiency** — the projection never forecasts FEWER files than really exist
+   (20,735 ≥ 17,283). That is defect QA M2-8 R2 N1, an undercount in the unsafe
+   direction, made mechanical.
+
+Both constants keep an independent drift guard, so neither can go stale silently.
+The inventory lives in `inst_budget.py` and the post-build gate READS it from there
+(`pyStrSet`, same one-source-of-truth contract as the existing `pyInt`), so a
+Python-side edit cannot diverge from the gate enforcing it.
+
+Verified: all five budget assertions pass against the real 17,283-file tree;
+`tests/test_inst_shard_budget.py` 31 passed; full unfiltered `uv run pytest -q`
+**3589 passed, 11 skipped** (was 3580 passed / 3 failed). Mutation-checked —
+removing `"institutional"` from `RESERVED_CLASSES` fails the coverage test, with
+the mutation confirmed present in the file before the run.
 
 ### Two REAL problems the restoration surfaced (neither is in R45's scope)
 
@@ -123,15 +150,21 @@ named AND counted, which is the invariant both assertions are reaching for.
 ### Gate status, stated honestly
 
 - `M1_MEASURED_PAGES`/`SITE_CHROME_FILES` are measured, sourced, and documented.
+- The footprint contradiction is **resolved** (above); all five budget assertions
+  pass against the real tree.
 - `R19 GATE: the built tree fits under the 18,000-file self-cap` — **PASSES**,
   17,283 of 18,000, but only **717 files of headroom**. Worth knowing before M1
   adds routes.
 - `R19 GATE: no single file exceeds 25 MiB` — passes.
-- Three post-build assertions remain red: the footprint contradiction above, the
-  feed margin, and the routing-index cardinality.
-- A full local `make check` will therefore NOT be green until those are resolved.
-  Do not report M0b as fully closed on the strength of the corpus restoration
-  alone.
+- **Two post-build assertions remain red, and neither is R45:**
+  - `R19 GATE (margin)` — `feed.v1.json` at 85% of the cap. A REAL problem, the
+    highest-priority follow-up in this document. It does NOT block deploy: the
+    hard gates pass, the file ships today, and `test:post` never runs in CI.
+  - `R22 GATE (F7)` — **diagnosed 2026-08-18: an ENVIRONMENT artifact, not a
+    defect.** It fails with `congress.db not found` when `POPULUS_BUILD_DIR` /
+    `POPULUS_DB` are unset, because `resolveSources()` then falls back to a stale
+    default release path. Stage the build per §8 and set both, and it reads the
+    real database. The 08-17 handoff left this undiagnosed; it is not a code bug.
 
 ## 5. Standing constraints — each cost real time
 

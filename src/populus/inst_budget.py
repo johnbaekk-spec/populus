@@ -73,8 +73,9 @@ class the module itself had named — again in the unsafe direction, and again b
 omitting a whole file class (defect (a) above). An owner sizing a remedy against
 "1,070 over" would have shrunk a reservation by 1,070 and left the tree still
 over its cap. The term is a PARAMETER of the projection now, the projection's
-measured base is asserted equal to the module's own measured tree
-(`test_the_projections_measured_base_accounts_for_the_whole_tree`), and the
+measured base is checked for COVERAGE and SUFFICIENCY against the module's own
+measured tree (`test_every_built_file_class_is_named_by_some_budget_term`,
+`test_the_projection_never_forecasts_fewer_files_than_exist`), and the
 post-build gate reads BOTH constants out of this file and drifts them against a
 real `dist/` — so a term that stops being summed fails a test rather than
 quietly shrinking a number.
@@ -83,6 +84,7 @@ quietly shrinking a number.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,6 +106,13 @@ __all__ = [
     "PAGE_RECORD_LIMIT",
     "PROVIDER_FILE_LIMIT",
     "SITE_CHROME_FILES",
+    "MEASURED_M1_CLASSES",
+    "SITE_CHROME_CLASSES",
+    "RESERVED_CLASSES",
+    "ROOT_FILE_CLASS",
+    "accounted_classes",
+    "reserved_file_total",
+    "unaccounted_classes",
     "BudgetBreach",
     "MeasuredGeometry",
     "MeasuredTree",
@@ -133,18 +142,15 @@ MAX_SHARD_BYTES = 25 * 1024 * 1024    # Cloudflare 25 MiB per file
 #: 12,901 = `congress/` 9,049 + the top-level `tickers/` tree 3,852, which is
 #: this constant's documented meaning, measured.
 #:
-#: KNOWN GAP, deliberately left visible: the 2026-08-17 tree is 17,283 files
-#: because `institutional/` (4,275) is now BUILT — a file class that did not
-#: exist in the tree when these terms were defined, and that NO term in
-#: `worst_case_file_count`'s measured base accounts for. Two post-build
-#: assertions therefore contradict each other and one must fail: this constant
-#: cannot simultaneously equal `congress + tickers` AND make
-#: `measured + chrome == whole tree`. Setting it to 17,176 satisfies the second
-#: but makes the projection forecast a breach it does not have (the headroom
-#: test then fails), so the honest setting is the measured footprint and a LOUD
-#: unaccounted-class failure. The enforcing R19 gate counts the real tree and
-#: passes (17,283 of 18,000), so nothing unsafe ships either way.
-#: Fix requires a design decision — see docs/build/UX-OVERHAUL-HANDOFF.md §4.
+#: This constant means `congress/` + `tickers/` and NOTHING else, which is why
+#: it is 12,901 and not the 17,283 the whole 2026-08-17 tree holds. The
+#: difference is `institutional/` (4,275), which is BUILT and is accounted for
+#: by the M2/M2-8/M2-11 reservations rather than by a measured term — see
+#: `RESERVED_CLASSES`. An earlier reading of that difference as an
+#: "unaccounted class" produced two assertions that could not both hold; R45
+#: resolved it by asserting COVERAGE and SUFFICIENCY instead of a balancing
+#: sum. Do not "fix" the difference by folding the institutional tree into this
+#: constant: that double-counts it against its own reservation.
 #:
 #: Re-measured for R45 only AFTER the B25 corpus restoration published
 #: (build 20260817.1) — measuring the shrunken tree would have encoded the
@@ -161,8 +167,10 @@ M1_MEASURED_PAGES = 12_901
 #: `search/`, `signals/` 2, `watchlist/`) — measured 2026-08-17 with
 #: M1_MEASURED_PAGES, same build.
 #:
-#: `M1_MEASURED_PAGES + SITE_CHROME_FILES` = 13,008, which is NO LONGER the
-#: whole measured tree (17,283) — see the gap documented above. The 2026-08-05
+#: `M1_MEASURED_PAGES + SITE_CHROME_FILES` = 13,008 is the MEASURED base — the
+#: classes counted rather than reserved. It is deliberately not the whole tree
+#: (17,283): the remaining 4,275 are `institutional/`, drawn against
+#: reservations. The 2026-08-05
 #: tree was 12,545 and had no `institutional/` at all.
 SITE_CHROME_FILES = 107
 M2_FILER_PAGES = 1_500                # M2 contract: pre-rendered top filers
@@ -224,6 +232,97 @@ FILER_SHARD_BYTE_CEILING = 1024 * 1024
 # contradictory alternative and is deleted.
 PAGE_RECORD_LIMIT = 2_000
 PAGE_BYTE_LIMIT = 2 * 1024 * 1024     # 2 MiB of SERIALIZED bytes, measured
+
+
+# --- file-class accounting (R45) ---------------------------------------------
+#: Every top-level class a real `dist/` emits, mapped to the budget term that
+#: accounts for it.
+#:
+#: R45 replaced an EQUALITY assertion here, and the reason matters.
+#: `M1_MEASURED_PAGES + SITE_CHROME_FILES == the whole tree` held only while
+#: `institutional/` was not built. Once it was (4,275 files, measured
+#: 2026-08-17 on the restored corpus), that equality and
+#: `M1_MEASURED_PAGES == congress + tickers` could no longer both be true, and
+#: one of the two assertions had to fail whichever value was chosen. That is a
+#: contradiction in the ASSERTIONS, not a wrong measurement.
+#:
+#: `institutional/` was never missing from the budget. It is carried by the
+#: M2/M2-8/M2-11 RESERVATIONS below — accounting of a different kind from a
+#: measurement, not an absence of one. Giving it its own measured term without
+#: cutting those reservations would double-count it.
+#:
+#: The invariant both assertions were reaching for is therefore not a sum that
+#: balances. It is two things:
+#:   (1) COVERAGE — no top-level class goes unnamed. That is defect C5(a),
+#:       "it omits a whole file class", made mechanical.
+#:   (2) SUFFICIENCY — the projection never forecasts FEWER files than really
+#:       exist. That is defect QA M2-8 R2 N1, an undercount in the unsafe
+#:       direction, made mechanical.
+#: Both survive `institutional/` being built; the equality did not.
+MEASURED_M1_CLASSES: frozenset[str] = frozenset({"congress", "tickers"})
+#: `_astro/` bundles plus the ten single-page top-level routes. Together with
+#: the root files below these are `SITE_CHROME_FILES`.
+SITE_CHROME_CLASSES: frozenset[str] = frozenset(
+    {
+        "_astro",
+        "e",
+        "financials",
+        "legal",
+        "macro",
+        "methodology",
+        "search",
+        "signals",
+        "watchlist",
+    }
+)
+#: Regular files sitting at the dist ROOT collapse to one class: a root file's
+#: top-level path segment is its own filename, so enumerating them by name
+#: would make this inventory fail every time a favicon is added. Counted under
+#: `SITE_CHROME_FILES` with the routes above.
+ROOT_FILE_CLASS = "<root>"
+#: BUILT, and accounted for by reservations rather than by a measured constant:
+#: `M2_FILER_PAGES` + `ACTIVITY_SHARDS_MAX` + `FILER_TAIL_SHARDS_RESERVED` +
+#: `FILER_ROUTING_INDEX_FILES` + `FILER_V1_TRANSITION_FILES`. The reservation
+#: is the forward commitment; what is on disk today is a draw against it.
+RESERVED_CLASSES: frozenset[str] = frozenset({"institutional"})
+
+
+def accounted_classes() -> frozenset[str]:
+    """Every top-level class some budget term names."""
+    return (
+        MEASURED_M1_CLASSES
+        | SITE_CHROME_CLASSES
+        | RESERVED_CLASSES
+        | frozenset({ROOT_FILE_CLASS})
+    )
+
+
+def unaccounted_classes(observed: Iterable[str]) -> list[str]:
+    """Observed top-level classes that NO budget term names, sorted.
+
+    A non-empty result is defect C5(a) — a whole file class the projection does
+    not know about — and it is the caller's job to fail on it. Returning the
+    names rather than a bool is deliberate: "the tree grew a class" is only
+    actionable if the class is named.
+    """
+    known = accounted_classes()
+    return sorted({c for c in observed if c not in known})
+
+
+def reserved_file_total() -> int:
+    """The reservation terms, summed — what `RESERVED_CLASSES` draws against.
+
+    Kept as a function over the constants rather than a literal so that cutting
+    a reservation moves this too; a literal here would be exactly the stale
+    second copy this module exists to prevent.
+    """
+    return (
+        M2_FILER_PAGES
+        + ACTIVITY_SHARDS_MAX
+        + FILER_TAIL_SHARDS_RESERVED
+        + FILER_ROUTING_INDEX_FILES
+        + FILER_V1_TRANSITION_FILES
+    )
 
 
 class BudgetBreach(Exception):
