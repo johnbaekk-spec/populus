@@ -343,6 +343,17 @@ button {
   background: var(--rule2);
   border: 1px solid var(--rule2);
   flex-shrink: 0;
+  /* R9, diagnosed against rendered geometry (R35) rather than guessed at: this
+     was a non-wrapping flex row of `min-width: 118px` tiles, so the strip took
+     whatever width its tile COUNT demanded — measured at 1164px — and pushed
+     the whole document sideways. At 964px the page scrolled by 200px, at 1080px
+     by 84px, and at 360px a single tile reached x=714. The strip, not the
+     tables, was the horizontal-overflow source on every page that renders it.
+
+     Wrapping is the fix rather than `overflow-x` because these tiles are
+     headline figures: a reader must not have to discover that a number exists
+     by scrolling a strip that gives no cue it scrolls. */
+  flex-wrap: wrap;
 }
 .tile {
   background: var(--raised);
