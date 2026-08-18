@@ -303,6 +303,13 @@ button {
   padding-bottom: 72px;
 }
 .page-head {
+  /* R9, third attempt and the first one that measured the right box. The stat
+     strip was never too wide on its own — 849px inside an 884px parent. It
+     starts at x=315 because it is a flex ITEM of this nowrap row, pushed across
+     by the title beside it, and `flex-shrink: 0` stops it compressing. So the
+     strip overflowed the DOCUMENT while fitting its own max-width.
+     Verified in the browser before landing: 964px 200px -> 0, 1080px 84px -> 0. */
+  flex-wrap: wrap;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;

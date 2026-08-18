@@ -134,7 +134,11 @@ for (const width of WIDTHS) {
     });
 
     test("R9: the stat strip leaves no unoccupied trailing area", async ({ page }) => {
-      await page.goto("/");
+      /* `/congress/`, NOT `/` — there is no `.tiles` on the home page, so this
+         test skipped on every run while appearing to cover R9. A skipped test
+         proves nothing, and this one hid the strip's real defect for two whole
+         fix attempts. */
+      await page.goto("/congress/");
       const strip = page.locator(".tiles").first();
       if ((await strip.count()) === 0 || !(await strip.isVisible())) test.skip();
       const stripBox = (await strip.boundingBox())!;
