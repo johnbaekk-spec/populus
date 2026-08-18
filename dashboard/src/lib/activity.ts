@@ -732,7 +732,8 @@ function lagCell(r: ActivityFeedRecord): string {
 
 function issuerCell(r: ActivityFeedRecord): string {
   if (r.issuer_name && r.issuer_name.trim() !== "") {
-    return `${esc(r.issuer_name)}<span class="mono-note"> ${esc(r.position_key)}</span>`;
+    /* filed verbatim off the 13F — see `filed-name` in holdings.ts */
+    return `<span class="filed-name">${esc(r.issuer_name)}</span><span class="mono-note"> ${esc(r.position_key)}</span>`;
   }
   return (
     `<span class="none">issuer not identified in this build</span>` +
