@@ -45,6 +45,35 @@ function pyInt(source: string, name: string): number {
     .reduce((a, b) => a + b, 0);
 }
 
+/** Read a `frozenset({"a", "b"})` literal out of inst_budget.py. Same contract
+    as `pyInt`: one source of truth on the Python side, and a reader that
+    REFUSES anything it does not understand rather than guessing a value. */
+function pyStrSet(source: string, name: string): Set<string> {
+  const m = new RegExp(
+    `^${name}\\s*:[^=]*=\\s*frozenset\\(\\s*\\{([^}]*)\\}\\s*\\)`,
+    "m",
+  ).exec(source);
+  assert.ok(m, `${name} is defined in inst_budget.py as a frozenset literal`);
+  const body = m![1]!;
+  if (!body.trim()) return new Set();
+  const out = new Set<string>();
+  for (const raw of body.split(",")) {
+    const t = raw.trim();
+    if (!t) continue;
+    const q = /^"([^"]+)"$/.exec(t);
+    assert.ok(q, `${name} holds only plain double-quoted names, got ${t}`);
+    out.add(q![1]!);
+  }
+  return out;
+}
+
+/** Read a bare `NAME = "value"` string constant. */
+function pyStr(source: string, name: string): string {
+  const m = new RegExp(`^${name}\\s*=\\s*"([^"]+)"`, "m").exec(source);
+  assert.ok(m, `${name} is defined in inst_budget.py`);
+  return m![1]!;
+}
+
 const BUDGET = readFileSync(
   path.join(REPO_ROOT, "src", "populus", "inst_budget.py"),
   "utf-8",
@@ -52,6 +81,10 @@ const BUDGET = readFileSync(
 const GLOBAL_FILE_CAP = pyInt(BUDGET, "GLOBAL_FILE_CAP");
 const PROVIDER_FILE_LIMIT = pyInt(BUDGET, "PROVIDER_FILE_LIMIT");
 const MAX_SHARD_BYTES = pyInt(BUDGET, "MAX_SHARD_BYTES");
+const MEASURED_M1_CLASSES = pyStrSet(BUDGET, "MEASURED_M1_CLASSES");
+const SITE_CHROME_CLASSES = pyStrSet(BUDGET, "SITE_CHROME_CLASSES");
+const RESERVED_CLASSES = pyStrSet(BUDGET, "RESERVED_CLASSES");
+const ROOT_FILE_CLASS = pyStr(BUDGET, "ROOT_FILE_CLASS");
 
 interface Measured {
   count: number;
@@ -77,7 +110,11 @@ function measure(root: string): Measured {
       if (!st.isFile()) continue;
       out.count++;
       const rel = path.relative(root, p);
-      const top = rel.split(path.sep)[0]!;
+      /* A root file's first path segment is its own filename, so keying on it
+         would make the class inventory fail every time a favicon is added.
+         Collapse them exactly as `inst_budget.ROOT_FILE_CLASS` does. */
+      const segments = rel.split(path.sep);
+      const top = segments.length === 1 ? ROOT_FILE_CLASS : segments[0]!;
       out.byTopLevel.set(top, (out.byTopLevel.get(top) ?? 0) + 1);
       if (st.size > out.maxBytes) {
         out.maxBytes = st.size;
@@ -343,8 +380,8 @@ test("the measured M1 footprint agrees with the constant the projection uses", (
      disappearing moves it far more than this. */
   const declared = pyInt(BUDGET, "M1_MEASURED_PAGES");
   const measured = measure(DIST);
-  const m1 =
-    (measured.byTopLevel.get("congress") ?? 0) + (measured.byTopLevel.get("tickers") ?? 0);
+  let m1 = 0;
+  for (const [k, v] of measured.byTopLevel) if (MEASURED_M1_CLASSES.has(k)) m1 += v;
   const drift = Math.abs(m1 - declared);
   assert.ok(
     drift <= 1_000,
@@ -354,31 +391,101 @@ test("the measured M1 footprint agrees with the constant the projection uses", (
   );
 });
 
-test("the projection's measured base covers the WHOLE tree, not just M1", () => {
-  /* QA M2-8 R2 N1. `M1_MEASURED_PAGES` counts `congress/ + tickers/` only. The
-     rest of a real build — `_astro/` bundles and the fixed top-level pages — is
-     `SITE_CHROME_FILES`, and the forward projection summed the first and not the
-     second, so the breach it reported was 103 files too small in the UNSAFE
-     direction. That is the C5(a) defect ("it omits a whole file class")
-     reproduced inside the fix for C5(a).
+test("every built file class is named by some budget term", () => {
+  /* Defect C5(a) — "it omits a whole file class" — made mechanical, and the
+     assertion that REPLACED an equality here.
 
-     `pyInt` asserts the constant is DEFINED, so deleting it fails here rather
-     than silently reverting the projection to the four-term formula. The drift
-     bound is the same generous-but-bounded 1,000 the M1 term uses: a whole file
-     class appearing or disappearing moves it far more than that. */
-  const base =
-    pyInt(BUDGET, "M1_MEASURED_PAGES") + pyInt(BUDGET, "SITE_CHROME_FILES");
+     The old test asserted `M1_MEASURED_PAGES + SITE_CHROME_FILES` equalled the
+     whole tree. That held only while `institutional/` was not built. Once it
+     was (4,275 files, 2026-08-17), that equality and "M1_MEASURED_PAGES counts
+     congress + tickers" could not both be true, and one had to fail whichever
+     value the constant took. Coverage is what the equality was defending, and
+     unlike the equality it survives a new class being built: `institutional/`
+     is accounted for by RESERVATIONS, which is different accounting, not
+     absent accounting.
+
+     A class nothing names is reported BY NAME — a bare failure would leave the
+     reader to diff two numbers and guess which tree grew. */
   const measured = measure(DIST);
-  const drift = Math.abs(measured.count - base);
+  const known = new Set([
+    ...MEASURED_M1_CLASSES,
+    ...SITE_CHROME_CLASSES,
+    ...RESERVED_CLASSES,
+    ROOT_FILE_CLASS,
+  ]);
+  const unaccounted = [...measured.byTopLevel.entries()]
+    .filter(([k]) => !known.has(k))
+    .sort((a, b) => b[1] - a[1]);
+  assert.deepEqual(
+    unaccounted,
+    [],
+    `the built tree holds file classes no budget term names: ` +
+      unaccounted.map(([k, v]) => `${k}=${v}`).join(" ") +
+      `. Every class must be declared in inst_budget.py as measured ` +
+      `(MEASURED_M1_CLASSES / SITE_CHROME_CLASSES) or reserved ` +
+      `(RESERVED_CLASSES). An unnamed class is the C5 defect.`,
+  );
+});
+
+test("the inventory is not vacuous: it names classes that really exist", () => {
+  /* The positive control. A coverage check whose inventory drifted into naming
+     nothing real would pass over any tree at all — and a version of this very
+     module shipped a gate whose every comparison was `value > value`. So the
+     declared classes must actually be present in the built tree. */
+  const measured = measure(DIST);
+  for (const cls of [...MEASURED_M1_CLASSES, ...RESERVED_CLASSES]) {
+    assert.ok(
+      (measured.byTopLevel.get(cls) ?? 0) > 0,
+      `inst_budget declares "${cls}" as a file class but the built tree has ` +
+        `none — the inventory describes a tree that is not this one`,
+    );
+  }
+});
+
+test("the projection never forecasts fewer files than the tree really holds", () => {
+  /* Defect QA M2-8 R2 N1 — an undercount in the UNSAFE direction — made
+     mechanical, and the second half of what the old equality defended.
+
+     Both historical defects here were forecasts that came out SMALL against a
+     tree already bigger, so an owner sizing a remedy against them would have
+     under-corrected. Over-forecasting is safe. Under-forecasting is the whole
+     failure this module exists to prevent, so that is what is asserted. */
+  const measured = measure(DIST);
+  const projected =
+    pyInt(BUDGET, "M1_MEASURED_PAGES") +
+    pyInt(BUDGET, "SITE_CHROME_FILES") +
+    pyInt(BUDGET, "M2_FILER_PAGES") +
+    pyInt(BUDGET, "ACTIVITY_SHARDS_MAX") +
+    pyInt(BUDGET, "M3_RESERVED") +
+    pyInt(BUDGET, "FILER_TAIL_SHARDS_RESERVED") +
+    pyInt(BUDGET, "FILER_ROUTING_INDEX_FILES") +
+    pyInt(BUDGET, "FILER_V1_TRANSITION_FILES");
   const breakdown = [...measured.byTopLevel.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([k, v]) => `${k}=${v}`)
     .join(" ");
   assert.ok(
-    drift <= 1_000,
-    `the projection's base (M1_MEASURED_PAGES + SITE_CHROME_FILES = ${base}) ` +
-      `does not account for the built tree's ${measured.count} files ` +
-      `(drift ${drift}). Breakdown: ${breakdown}. A file class the projection ` +
-      `does not count is the C5 defect — re-measure both constants together.`,
+    projected >= measured.count,
+    `the projection forecasts ${projected} files against a tree that already ` +
+      `holds ${measured.count} (breakdown: ${breakdown}). A forecast smaller ` +
+      `than reality is defect QA M2-8 R2 N1 — re-measure the constants.`,
+  );
+});
+
+test("the site-chrome constant still matches the classes it measures", () => {
+  /* `SITE_CHROME_FILES` is `_astro/` + the ten single-page routes + the root
+     files. The old whole-tree assertion was the only thing drifting this
+     constant against reality; with that gone it needs its own drift guard, or
+     it becomes the referenced-by-nothing constant QA M2-8 R2 N1 warned about. */
+  const measured = measure(DIST);
+  let chrome = 0;
+  for (const [k, v] of measured.byTopLevel) {
+    if (SITE_CHROME_CLASSES.has(k) || k === ROOT_FILE_CLASS) chrome += v;
+  }
+  const declared = pyInt(BUDGET, "SITE_CHROME_FILES");
+  assert.ok(
+    Math.abs(chrome - declared) <= 1_000,
+    `inst_budget.SITE_CHROME_FILES says ${declared} but the built tree holds ` +
+      `${chrome} chrome files. Re-measure and update the constant.`,
   );
 });

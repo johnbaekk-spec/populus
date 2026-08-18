@@ -36,7 +36,11 @@ from populus.inst_budget import (
     M2_FILER_PAGES,
     M3_RESERVED,
     MAX_SHARD_BYTES,
+    MEASURED_M1_CLASSES,
     PROVIDER_FILE_LIMIT,
+    RESERVED_CLASSES,
+    ROOT_FILE_CLASS,
+    SITE_CHROME_CLASSES,
     SITE_CHROME_FILES,
     BudgetBreach,
     MeasuredGeometry,
@@ -44,6 +48,8 @@ from populus.inst_budget import (
     check_geometry,
     check_measured_tree,
     measure_tree,
+    reserved_file_total,
+    unaccounted_classes,
     worst_case_file_count,
 )
 
@@ -196,33 +202,114 @@ def test_the_projection_requires_a_measured_input(tmp_path):
         worst_case_file_count()          # type: ignore[call-arg]
 
 
-def test_the_projections_measured_base_accounts_for_the_whole_tree():
-    """QA M2-8 R2 N1, pinned as arithmetic.
+#: The whole tree as MEASURED on 2026-08-17 (build `20260817.1`, production
+#: configuration, restored corpus), broken down the way the post-build gate
+#: breaks it down: by top-level class, with root files collapsed under
+#: `ROOT_FILE_CLASS`. 17,283 files.
+#:
+#: Recorded here so the accounting invariants below are testable without a
+#: built `dist/` — `test:post` asserts the same two properties against the real
+#: tree, and this fixture is what makes a Python-side edit that breaks them
+#: fail in CI, where `test:post` cannot run at all.
+TREE_20260817: dict[str, int] = {
+    "congress": 9_049,
+    "tickers": 3_852,
+    "institutional": 4_275,
+    "_astro": 93,
+    ROOT_FILE_CLASS: 4,
+    # the ten single-page top-level routes
+    "e": 1,
+    "financials": 1,
+    "legal": 2,
+    "macro": 1,
+    "methodology": 1,
+    "search": 1,
+    "signals": 2,
+    "watchlist": 1,
+}
 
-    The projection's non-reservation base — everything a build emits TODAY — must
-    equal the tree this module measured (12,545 files on 2026-08-05, the same
-    number `test_todays_real_tree_still_fits_under_the_cap` and the post-build
-    gate count). The remediation for C5 measured the 103-file `_astro/` + fixed
-    top-level page class, named it `SITE_CHROME_FILES`, and then summed four
-    terms instead of five: the reported breach came out 103 files SMALL, in the
-    unsafe direction, by omitting a whole file class — which is defect (a) of
-    C5 reproduced inside the fix for C5.
 
-    Mutation guard: dropping `site_chrome_files` from `worst_case_file_count`
-    leaves this at 12,442 against a tree of 12,545 and FAILS.
+def test_the_recorded_tree_is_the_tree_that_was_measured():
+    """The fixture is a MEASUREMENT; if it does not sum to what was measured it
+    is a story. 17,283 files, build 20260817.1."""
+    assert sum(TREE_20260817.values()) == 17_283
+
+
+def test_every_built_file_class_is_named_by_some_budget_term():
+    """Defect C5(a) — "it omits a whole file class" — made mechanical.
+
+    This REPLACED an equality assertion (`M1 + chrome == whole tree`) that was
+    true only while `institutional/` was not built. Once it was, that equality
+    and `M1_MEASURED_PAGES == congress + tickers` could not both hold, and one
+    had to fail whichever value the constant took. Coverage is what the
+    equality was actually defending, and it survives a new file class being
+    built.
+
+    Mutation guard: dropping "institutional" from `RESERVED_CLASSES` leaves it
+    unnamed and FAILS here.
     """
-    base = worst_case_file_count(
-        measured_files=M1_MEASURED_PAGES,
-        m2_filer_pages=0,
-        activity_shards=0,
-        m3_reserved=0,
-        filer_tail_shards=0,
-        routing_index_files=0,
-        filer_v1_transition_files=0,
+    assert unaccounted_classes(TREE_20260817) == []
+
+
+def test_an_unaccounted_class_is_reported_by_name():
+    """The positive control on the check above.
+
+    A coverage test that cannot fail proves nothing — and a version of this
+    module once shipped a gate whose every comparison was `value > value`.
+    A class nothing names must come back NAMED, not as a bare False.
+    """
+    assert unaccounted_classes([*TREE_20260817, "briefings"]) == ["briefings"]
+
+
+def test_the_measured_base_counts_exactly_the_classes_declared_measured():
+    """The two measured constants must equal the classes they claim to measure.
+
+    This is the drift guard the post-build gate also runs, pinned to the
+    recorded breakdown: `M1_MEASURED_PAGES` is `congress/` + `tickers/` and
+    nothing else, and `SITE_CHROME_FILES` is `_astro/` + the ten single-page
+    routes + the root files. If either constant is edited without the tree
+    being re-measured, these stop agreeing.
+    """
+    measured = sum(v for k, v in TREE_20260817.items() if k in MEASURED_M1_CLASSES)
+    chrome = sum(
+        v
+        for k, v in TREE_20260817.items()
+        if k in SITE_CHROME_CLASSES or k == ROOT_FILE_CLASS
     )
-    assert base == M1_MEASURED_PAGES + SITE_CHROME_FILES == 12_545, (
-        f"the projection's base is {base:,} against a measured tree of 12,545 —"
-        " a file class the module itself measured is missing from the formula"
+    assert measured == M1_MEASURED_PAGES == 12_901
+    assert chrome == SITE_CHROME_FILES == 107
+
+
+def test_the_projection_never_forecasts_fewer_files_than_exist():
+    """Defect QA M2-8 R2 N1 — an undercount in the UNSAFE direction — made
+    mechanical.
+
+    Both historical defects in this module were forecasts that came out SMALL
+    against a tree that was already bigger, so an owner sizing a remedy against
+    them would have under-corrected. Over-forecasting is safe; under-forecasting
+    is the failure this module exists to prevent. The projection must therefore
+    dominate the real tree at all times.
+    """
+    projected = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+    real = sum(TREE_20260817.values())
+    assert projected >= real, (
+        f"the projection forecasts {projected:,} files against a tree that"
+        f" already holds {real:,} — an undercount in the unsafe direction, which"
+        " is defect QA M2-8 R2 N1 exactly"
+    )
+
+
+def test_the_reserved_class_draws_against_a_real_reservation():
+    """`institutional/` is accounted for by reservations, so the reservation has
+    to be big enough to carry what is already on disk.
+
+    If the built tree ever exceeds the reservation, the class has outgrown its
+    budget and the reservation is the thing to restate — not this test.
+    """
+    drawn = sum(v for k, v in TREE_20260817.items() if k in RESERVED_CLASSES)
+    assert drawn <= reserved_file_total(), (
+        f"`institutional/` has drawn {drawn:,} files against a reservation of"
+        f" {reserved_file_total():,} — the reservation is now the wrong size"
     )
 
 
@@ -237,7 +324,7 @@ def test_the_site_chrome_term_is_load_bearing_not_decoration():
     without = worst_case_file_count(
         measured_files=M1_MEASURED_PAGES, site_chrome_files=0
     )
-    assert with_chrome - without == SITE_CHROME_FILES == 103
+    assert with_chrome - without == SITE_CHROME_FILES == 107
 
 
 def test_the_projection_includes_M3s_committed_reservation():
@@ -277,26 +364,47 @@ def test_the_m2_11_measured_projection_fits_with_recorded_headroom():
         routing_index_files=0,
         filer_v1_transition_files=0,
     )
-    assert (pre_m2_11, GLOBAL_FILE_CAP - pre_m2_11) == (11_837, 6_163)
+    assert (pre_m2_11, GLOBAL_FILE_CAP - pre_m2_11) == (11_841, 6_159)
     # M2-12 (Codex F3) added the v2 index tombstone: one more file, so the
     # projection moves 15,935 -> 15,936 and headroom 2,065 -> 2,064. Restated
     # together with FILER_V1_TRANSITION_FILES, exactly as this message demands.
-    assert (projected, GLOBAL_FILE_CAP - projected) == (15_936, 2_064), (
-        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 2,064 this suite"
+    assert (projected, GLOBAL_FILE_CAP - projected) == (15_940, 2_060), (
+        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 2,060 this suite"
         " records. Restate the constants and this test together or they will"
         " disagree again"
     )
 
 
 def test_todays_real_tree_still_fits_under_the_cap():
-    """The measured tree is what is ENFORCED, and it passes with real headroom —
-    the breach above is a forecast about modules that are not built yet.
+    """The measured tree is what is ENFORCED, and it passes — the projection's
+    breach above is a forecast about reservations that are not fully drawn yet.
     Conflating the two is what produced a green gate over a red tree.
+
+    Re-measured 2026-08-17 for R45 on the RESTORED corpus (build `20260817.1`).
+    It previously pinned the 2026-08-05 tree — 12,545 files, largest 11,962,205
+    B — which passed while describing a tree that no longer existed: the corpus
+    restoration took it to 17,283 files and `congress/data/feed.v1.json` to
+    22,289,120 B. A fixture that outlives what it measured reads as green and
+    asserts nothing. [[test-fixture-can-encode-the-bug]]
     """
-    today = MeasuredTree(file_count=12_545, max_file_bytes=11_962_205,
+    today = MeasuredTree(file_count=17_283, max_file_bytes=22_289_120,
                          largest_file="congress/data/feed.v1.json")
-    check_measured_tree(today)          # measured 2026-08-05, must not raise
+    check_measured_tree(today)          # measured 2026-08-17, must not raise
     assert today.file_count < GLOBAL_FILE_CAP
+    assert today.file_count == sum(TREE_20260817.values())
+
+
+def test_the_largest_file_is_inside_the_provider_limit_but_not_comfortably():
+    """`congress/data/feed.v1.json` is 85% of the 25 MiB per-file provider cap
+    and grows with the corpus, which just grew by a decade.
+
+    It passes, and it is recorded here because the margin — not the pass — is
+    the finding: this file needs bounding (pagination or a shard) before the
+    corpus grows much further, or a future deploy is rejected outright.
+    """
+    feed_bytes = 22_289_120
+    assert feed_bytes < MAX_SHARD_BYTES
+    assert feed_bytes / MAX_SHARD_BYTES > 0.80
 
 
 # --- RUN M2-11 (R27): the filer tail family's terms are REAL parameters ------
