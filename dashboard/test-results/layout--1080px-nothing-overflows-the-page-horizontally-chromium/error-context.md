@@ -1852,7 +1852,7 @@ Received:    84
         - text: ·
         - link "NOTICE ↗" [ref=e1551] [cursor=pointer]:
           - /url: /legal/NOTICE.txt
-      - generic [ref=e1552]: build 20260817.1 · code cd82461c63082242a05425f4c1388c59f797c64bno cookies · no account required · no tracking
+      - generic [ref=e1552]: build 20260817.1 · code 318dea5f8e23952fd6ed8e23de5c13aef85dc7ddno cookies · no account required · no tracking
 ```
 
 # Test source
@@ -2002,37 +2002,45 @@ Received:    84
   141 |       const tiles = strip.locator(".tile");
   142 |       const count = await tiles.count();
   143 |       expect(count, "a rendered strip must hold tiles").toBeGreaterThan(0);
-  144 |       const last = (await tiles.nth(count - 1).boundingBox())!;
-  145 |       const trailing = stripBox.x + stripBox.width - (last.x + last.width);
-  146 |       /* The strip is a bordered flex box; leftover space inside it reads as an
-  147 |          empty tile the data does not support. A couple of px is the border. */
-  148 |       expect(
-  149 |         trailing,
-  150 |         `${Math.round(trailing)}px of empty strip trails the last tile at ${width}px — ` +
-  151 |           `the strip is claiming room for data it does not have`,
-  152 |       ).toBeLessThanOrEqual(4);
-  153 |     });
-  154 |   });
-  155 | }
-  156 | 
-  157 | test("R6: a scrollable table announces itself and pins its identity column", async ({ page }) => {
-  158 |   await page.setViewportSize({ width: 964, height: 900 });
-  159 |   await page.goto("/institutional/filers/1067983/");
-  160 |   const scroller = page.locator(".table-scroll").first();
-  161 |   if ((await scroller.count()) === 0) test.skip();
-  162 |   const state = await scroller.evaluate((el) => ({
-  163 |     scrollable: el.scrollWidth > el.clientWidth,
-  164 |     background: getComputedStyle(el).backgroundImage,
-  165 |   }));
-  166 |   if (!state.scrollable) test.skip();
-  167 |   expect(
-  168 |     state.background,
-  169 |     "a table that scrolls sideways with no cue hides its columns as surely as deleting them",
-  170 |   ).toContain("gradient");
-  171 |   const firstCell = page.locator(".etable[data-sticky-first] td:first-child").first();
-  172 |   if ((await firstCell.count()) > 0) {
-  173 |     expect(await firstCell.evaluate((el) => getComputedStyle(el).position)).toBe("sticky");
-  174 |   }
-  175 | });
-  176 | 
+  144 |       /* Trailing space is only meaningful on a SINGLE row. Once the strip
+  145 |          wraps (R9), space after the last tile is the normal ragged end of a
+  146 |          wrapped line, not the strip reserving room for data it does not have —
+  147 |          asserting on it would fail a correct layout. */
+  148 |       const boxes = [];
+  149 |       for (let i = 0; i < count; i++) boxes.push((await tiles.nth(i).boundingBox())!);
+  150 |       const rows = new Set(boxes.map((b) => Math.round(b.y)));
+  151 |       if (rows.size > 1) test.skip();
+  152 |       const last = boxes[count - 1]!;
+  153 |       const trailing = stripBox.x + stripBox.width - (last.x + last.width);
+  154 |       /* The strip is a bordered flex box; leftover space inside it reads as an
+  155 |          empty tile the data does not support. A couple of px is the border. */
+  156 |       expect(
+  157 |         trailing,
+  158 |         `${Math.round(trailing)}px of empty strip trails the last tile at ${width}px — ` +
+  159 |           `the strip is claiming room for data it does not have`,
+  160 |       ).toBeLessThanOrEqual(4);
+  161 |     });
+  162 |   });
+  163 | }
+  164 | 
+  165 | test("R6: a scrollable table announces itself and pins its identity column", async ({ page }) => {
+  166 |   await page.setViewportSize({ width: 964, height: 900 });
+  167 |   await page.goto("/institutional/filers/1067983/");
+  168 |   const scroller = page.locator(".table-scroll").first();
+  169 |   if ((await scroller.count()) === 0) test.skip();
+  170 |   const state = await scroller.evaluate((el) => ({
+  171 |     scrollable: el.scrollWidth > el.clientWidth,
+  172 |     background: getComputedStyle(el).backgroundImage,
+  173 |   }));
+  174 |   if (!state.scrollable) test.skip();
+  175 |   expect(
+  176 |     state.background,
+  177 |     "a table that scrolls sideways with no cue hides its columns as surely as deleting them",
+  178 |   ).toContain("gradient");
+  179 |   const firstCell = page.locator(".etable[data-sticky-first] td:first-child").first();
+  180 |   if ((await firstCell.count()) > 0) {
+  181 |     expect(await firstCell.evaluate((el) => getComputedStyle(el).position)).toBe("sticky");
+  182 |   }
+  183 | });
+  184 | 
 ```

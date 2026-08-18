@@ -352,8 +352,16 @@ button {
 
      Wrapping is the fix rather than `overflow-x` because these tiles are
      headline figures: a reader must not have to discover that a number exists
-     by scrolling a strip that gives no cue it scrolls. */
+     by scrolling a strip that gives no cue it scrolls.
+
+     `flex-wrap` ALONE did nothing, which is the instructive part: as a flex
+     ITEM of its parent this box carries `flex-shrink: 0`, so it kept its
+     max-content width and never had a constraint to wrap against. Measured
+     after the first fix: still 1164px at a 964px viewport. The wrap only
+     engages once the box is allowed to be narrower than its contents. */
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 .tile {
   background: var(--raised);
