@@ -990,14 +990,21 @@ export function changesTableHtml(
       const cell = (v: number | null): string => (v == null ? "—" : esc(fmtUsd(v)));
       const shareCell = (v: number | null): string => (v == null ? "—" : fmtInt(v));
       return (
+        /* R6. Column order is the answer to "added or trimmed?" arriving before
+           the reader has to scroll for it. The change chip used to be the
+           EIGHTH of nine columns, behind six numeric ones, so on any viewport
+           under ~1024px the one column the table exists to communicate was the
+           one off-screen. Identity, then the verdict, then the two deltas that
+           justify it; the four raw prev/curr levels are the supporting detail
+           and follow. Nothing is removed — the order changed. */
         `<tr><td class="c-pos"><span class="mono-note${posMarkers ? " reconciled" : ""}">${esc(d.position_key)}</span>${posMarkers}${grain}</td>` +
+        `<td class="c-chip">${qoqChipHtml(d)}</td>` +
+        `<td class="c-num">${valueDelta}</td>` +
+        `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
         `<td class="c-num">${cell(d.prev_value_usd)}</td>` +
         `<td class="c-num">${cell(d.curr_value_usd)}</td>` +
-        `<td class="c-num">${valueDelta}</td>` +
         `<td class="c-num">${shareCell(d.prev_shares)}</td>` +
         `<td class="c-num">${shareCell(d.curr_shares)}</td>` +
-        `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
-        `<td class="c-chip">${qoqChipHtml(d)}</td>` +
         `<td class="c-flags">${flagTags(d.flags)}</td></tr>`
       );
     })
@@ -1005,7 +1012,7 @@ export function changesTableHtml(
   return (
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
-    `<thead><tr><th scope="col">Position · grain</th><th scope="col">Prev value</th><th scope="col">Curr value</th><th scope="col">Δ value</th><th scope="col">Prev shares</th><th scope="col">Curr shares</th><th scope="col">Δ shares</th><th scope="col">Change</th><th scope="col">Flags</th></tr></thead>` +
+    `<thead><tr><th scope="col">Position · grain</th><th scope="col">Change</th><th scope="col">Δ value</th><th scope="col">Δ shares</th><th scope="col">Prev value</th><th scope="col">Curr value</th><th scope="col">Prev shares</th><th scope="col">Curr shares</th><th scope="col">Flags</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     changesPagerHtml(page, pageRows.length, embedded, pageCount) +
     /* The bound names itself, with the TRUE total — the grammar the holdings

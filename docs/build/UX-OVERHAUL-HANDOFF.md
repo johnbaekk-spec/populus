@@ -166,6 +166,37 @@ the mutation confirmed present in the file before the run.
     default release path. Stage the build per §8 and set both, and it reads the
     real database. The 08-17 handoff left this undiagnosed; it is not a code bug.
 
+### A THIRD red post-build gate, found 2026-08-18 and not previously reported
+
+`test:post` §0 — "no banned wording on any built surface" — **FAILS** against the
+real `20260817.1` tree. It is PRE-EXISTING (nothing in M1 touches these bytes)
+and it is a FALSE POSITIVE, which is why it matters more than a simple red.
+
+The scan runs word-boundary patterns over the whole `dist`, and that includes the
+embedded holdings JSON on `institutional/filers/*`. Real securities are lawfully
+named things the editorial ban forbids:
+
+| Hit | Where it comes from |
+|---|---|
+| `"issuer_name":"BULLISH"` | Bullish, an actual listed company |
+| `"title_of_class":"BULLISH FD"` | Invesco DB US Dollar Index Bullish Fund |
+| `"issuer_name":"ROUNDHILL SPORTS BET & IGAM"` | a sports-betting ETF |
+| `"title_of_class":"BET USD HIG ETF"` | a J.P. Morgan ETF share class |
+
+The ban exists to stop the site ADOPTING a market-narrative voice — "X is bullish
+on Y". It was never meant to censor an issuer's legal name, and renaming vendor
+data to satisfy it would be a straightforward falsification of the record.
+
+**Owner decision needed:** scope the scan to editorial surfaces (exclude
+data-derived fields such as `issuer_name` / `title_of_class` in embedded JSON),
+or allowlist the specific names. Do NOT "fix" it by altering the filed names.
+
+Note also HOW this went unseen: the previous session reported three red
+post-build assertions and this was not among them, because `test:post` only
+reaches these tests when `POPULUS_BUILD_DIR`/`POPULUS_DB` are set — without them
+the run dies early at `getBuildData`. A partial `test:post` is not evidence
+about the parts it never reached.
+
 ## 5. Standing constraints — each cost real time
 
 1. **Never pipe a gate.** `cmd | tail` gives you the pipe's exit code. Under zsh
@@ -268,8 +299,22 @@ gh release download data-<BUILD_ID> --repo johnbaekk-spec/populus-data \
 cd dashboard && CI=true \
   POPULUS_BUILD_DIR="$W/builddir" POPULUS_DB="$W/congress.db" \
   POPULUS_INST_DB="$W/inst_agg.db" POPULUS_TICKER_MAP="$W/no-ticker-registry.json" \
+  POPULUS_PRIOR_SIGNALS="$W/builddir/signals.v1.json" \
   SITE_CODE_SHA=<sha> npm run build:bounded
 ```
+
+**`POPULUS_PRIOR_SIGNALS` was missing from this recipe** (added 2026-08-18, after
+it cost a full build). Without it every member page dies with *"no prior signal
+artifact was supplied … an ordinary published build must chain lifecycle state"*,
+and the build exits 1 having emitted about 4,900 of 17,283 files — enough of a
+tree to look plausible if you only glance at `dist/`. The staged build dir
+carries its own `signals.v1.json`, which is the correct prior for a local
+re-build. Do NOT reach for `POPULUS_SIGNALS_BOOTSTRAP=1` to make the error go
+away: that declares this build the start of the lifecycle chain, which is a
+different and false claim.
+
+Check the exit code, not the tree: the failing build still leaves thousands of
+files behind, so `ls dist | wc -l` is not evidence.
 
 Takes ~11 minutes and needs ≥32 GiB RAM.
 
