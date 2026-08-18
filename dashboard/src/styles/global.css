@@ -171,7 +171,13 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 60px;
+  /* R4: `height` was fixed, so any cluster wider than the shell overflowed and
+     painted over its neighbour instead of reflowing. A MIN height keeps the
+     60px bar identical when everything fits and lets it grow when it does
+     not. Overlap is now structurally impossible rather than merely unobserved
+     at the widths someone happened to try. */
+  min-height: 60px;
+  flex-wrap: wrap;
   gap: 16px;
 }
 .masthead-left {
@@ -179,6 +185,9 @@ button {
   align-items: center;
   gap: 36px;
   min-width: 0;
+  /* Same reason: brand and nav reflow rather than intersect. */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 .brand {
   display: flex;
@@ -205,6 +214,8 @@ button {
   display: flex;
   gap: 26px;
   align-items: baseline;
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 .site-nav a,
 .site-nav .nav-soon {
@@ -269,12 +280,6 @@ button {
 .site-search:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-.masthead-meta {
-  font: 400 10.5px/1.5 var(--mono);
-  color: var(--ink3);
-  text-align: right;
-  white-space: nowrap;
 }
 .theme-toggle {
   font: 500 10.5px var(--mono);
@@ -577,6 +582,23 @@ button {
 .aff.unknown { color: var(--ink3); }
 .cell-ticker {
   font: 600 12.5px var(--mono);
+  /* R5: this is a 66px grid column and it renders the full asset name whenever
+     no ticker was disclosed. Without containment the text simply painted over
+     `.cell-side` and everything after it — `.cell-member` had exactly this
+     treatment already and did not overflow, which is what made the omission
+     easy to miss. The complete name stays in the accessibility tree as real
+     text (see `assetNameCell`), so clipping the PIXELS removes nothing. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 8px;
+}
+.cell-ticker .asset-name {
+  /* the inner span must clip with its cell rather than establish its own
+     unbounded inline box */
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cell-ticker a {
   text-decoration: none;
@@ -1074,6 +1096,34 @@ button {
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  /* R6 — the scroll cue at EVERY width, not only inside the 720px fold.
+     A container that scrolls without saying so hides the columns past its
+     right edge just as completely as removing them would; the fold already
+     understood this and the wider viewports did not, which is where the
+     decisive column actually went missing.
+
+     These are "scrolling shadows": the two `local` layers travel WITH the
+     content and sit over the shadows when the table is at rest against an
+     edge, so a shadow is visible only while there is more table in that
+     direction. A plain always-on fade would announce overflow that is not
+     there, which is a different lie. */
+  background:
+    linear-gradient(to right, var(--raised) 30%, rgba(0, 0, 0, 0)) left center local,
+    linear-gradient(to left, var(--raised) 30%, rgba(0, 0, 0, 0)) right center local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) left center scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) right center scroll;
+  background-repeat: no-repeat;
+  background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
+}
+/* R6: the identity column stays put while the numbers scroll, at every width.
+   This was fold-only; above 720px a scrolled table lost the row's identity. */
+.etable[data-sticky-first] th:first-child,
+.etable[data-sticky-first] td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--raised);
+  border-right: 1px solid var(--rule2);
+  z-index: 2;
 }
 .etable {
   width: 100%;
@@ -1122,9 +1172,15 @@ button {
   text-decoration: none;
   color: var(--ink);
 }
+/* R5: `.c-ticker` joins this group. It renders the same `assetNameCell` as the
+   feed, so an undisclosed ticker puts a full asset name in a column that had no
+   bound at all — in an auto-layout table that widens the column and pushes the
+   decisive columns out of view, which is the R6 defect arriving by another
+   route. */
 .etable .c-member,
 .etable .c-filer,
-.etable .c-pos {
+.etable .c-pos,
+.etable .c-ticker {
   max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1456,6 +1512,15 @@ button {
 /* ---------- search overlay ---------- */
 
 .masthead-search-first .site-search { width: 340px; border: 1.5px solid var(--ink); }
+/* R4: 340px is 110px more than the standard box and pushes the cluster to
+   ~1138px, which does not fit until ~1220px of viewport. Below that the
+   emphasis is not worth a collision. */
+@media (max-width: 1220px) {
+  .masthead-search-first .site-search { width: 230px; }
+}
+@media (min-width: 721px) and (max-width: 1080px) {
+  .masthead-search-first .site-search { width: 170px; }
+}
 .site-search { position: relative; }
 .search-kbd {
   font: 400 10px var(--mono);
@@ -1915,6 +1980,49 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
 
 /* ---------- mobile fold (≤720px, per Mobile.dc.html) ---------- */
 
+/* R4 — the MISSING INTERMEDIATE BREAKPOINT.
+   The masthead had exactly two states: the full desktop bar and the 720px
+   burger fold. Between them it had neither. The shell is 1360px wide with
+   40px of padding, so a 1080px viewport offers 1000px of usable width against
+   a masthead cluster that needs roughly 1028px (brand + five nav items +
+   a 230px search + the theme toggle) — and 1138px when a page asks for the
+   emphasised search. Nav, search and brand therefore collided across the whole
+   721-1080px band, which is most laptops in a split window.
+
+   This band keeps every element VISIBLE — none of it is hidden, per the
+   plan's constraint that nothing honesty-bearing is media-query-hidden — and
+   buys the room by tightening spacing and letting the clusters wrap. */
+@media (min-width: 721px) and (max-width: 1080px) {
+  .masthead-inner {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    gap: 12px;
+  }
+  .masthead-left {
+    gap: 6px 20px;
+  }
+  .brand-name {
+    font-size: 18px;
+  }
+  .site-nav {
+    gap: 6px 18px;
+  }
+  .masthead-right {
+    gap: 12px;
+  }
+  .site-search {
+    width: 170px;
+  }
+  /* The desktop underline reaches the bar's bottom edge with a 19px pad and a
+     -21px pull. That geometry assumes a single 60px row; once the cluster can
+     wrap it would strike through the row below, so it becomes a compact
+     underline here. */
+  .site-nav a[aria-current="page"] {
+    padding-bottom: 3px;
+    margin-bottom: -5px;
+  }
+}
+
 @media (max-width: 720px) {
   .shell {
     padding-left: 16px;
@@ -1967,9 +2075,6 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   }
   .masthead-right {
     gap: 12px;
-  }
-  .masthead-meta {
-    display: none;
   }
   .site-search {
     display: none;

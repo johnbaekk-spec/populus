@@ -253,9 +253,18 @@ export function assetNameCell(r: Pick<TxnRow, "asset" | "assetType">): string {
   const name = r.asset.trim();
   const short = name.length > 40 ? name.slice(0, 37) + "…" : name;
   const type = r.assetType != null && r.assetType.trim() !== "" ? r.assetType.trim() : null;
+  /* R5. The visible string is truncated at 40 characters and then clipped
+     again by the cell (`.cell-ticker`/`.c-ticker` are 66px columns; 40
+     characters of 12.5px mono is ~300px, which used to paint straight over the
+     side cell). The FULL name therefore has to live somewhere that is real
+     text, not a tooltip: `title` alone would make the identity of the asset
+     tooltip-only, which the plan forbids for anything honesty-bearing, and
+     what was traded is exactly that. So the visible span is aria-hidden and
+     the accessible name carries the whole string. */
   return (
     `<span class="asset-name" title="${esc(name)}${type ? ` · asset type as filed: ${esc(type)}` : ""}">` +
-    `${esc(short)}<span class="visually-hidden"> — asset as filed, no ticker disclosed</span></span>`
+    `<span aria-hidden="true">${esc(short)}</span>` +
+    `<span class="visually-hidden">${esc(name)}${type ? ` — asset type as filed: ${esc(type)}` : ""} — asset as filed, no ticker disclosed</span></span>`
   );
 }
 

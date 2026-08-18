@@ -268,8 +268,22 @@ gh release download data-<BUILD_ID> --repo johnbaekk-spec/populus-data \
 cd dashboard && CI=true \
   POPULUS_BUILD_DIR="$W/builddir" POPULUS_DB="$W/congress.db" \
   POPULUS_INST_DB="$W/inst_agg.db" POPULUS_TICKER_MAP="$W/no-ticker-registry.json" \
+  POPULUS_PRIOR_SIGNALS="$W/builddir/signals.v1.json" \
   SITE_CODE_SHA=<sha> npm run build:bounded
 ```
+
+**`POPULUS_PRIOR_SIGNALS` was missing from this recipe** (added 2026-08-18, after
+it cost a full build). Without it every member page dies with *"no prior signal
+artifact was supplied … an ordinary published build must chain lifecycle state"*,
+and the build exits 1 having emitted about 4,900 of 17,283 files — enough of a
+tree to look plausible if you only glance at `dist/`. The staged build dir
+carries its own `signals.v1.json`, which is the correct prior for a local
+re-build. Do NOT reach for `POPULUS_SIGNALS_BOOTSTRAP=1` to make the error go
+away: that declares this build the start of the lifecycle chain, which is a
+different and false claim.
+
+Check the exit code, not the tree: the failing build still leaves thousands of
+files behind, so `ls dist | wc -l` is not evidence.
 
 Takes ~11 minutes and needs ≥32 GiB RAM.
 
