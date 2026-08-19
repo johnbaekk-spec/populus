@@ -9,14 +9,13 @@ real time in the session that produced them.
 | Thing | Where | State |
 |---|---|---|
 | The plan | `docs/design/UX-OVERHAUL-PLAN.md` | plan-v1 Revision 4, **amended 2026-08-19** (R10: "near-universal" → "universal") |
-| `main` | `c32f784` | PRs #45 (R35+R9) and #46 (R7+R10) merged |
-| Approved, unmerged | `feat/m1-r10-completion` | B34+B35. **Codex APPROVED** at cycle 4 round 3. Owner merges. |
+| `main` | `c62db75` | PRs #45 (R35+R9), #46 (R7+R10) and #47 (B34+B35) all merged |
 | Worktree | `<repo>/.claude/worktrees/ux-overhaul` | branch as needed |
 | Remaining M1 | **R36 + R28 (one commit), then R8** | not started |
 
-**Branch from `origin/main` once `feat/m1-r10-completion` is merged.** If it is
-still open, branch from it instead — R36 touches `global.css` and `format.ts`,
-both of which it also touches.
+**Branch from `origin/main`.** Everything M1 has shipped so far is on it —
+R4/R5/R6/R7/R9/R10/R35 plus the B34/B35 completion — so there is no open branch
+to inherit from and nothing in flight to collide with.
 
 ## 2. What is already done, so you do not redo it
 
