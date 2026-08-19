@@ -533,23 +533,19 @@ every row states itself once. External review ran to its 3-round cap on this
 branch. Four of round 3's six blockers were defects and are fixed; these two are
 decisions, escalated rather than self-signed.
 
-- [ ] **B32 — "near-universal" vs "universal": the hoist threshold needs an
-      owner ruling.** The plan says *near-universal caveats state once at table
-      level*. The implementation hoists at **100%** and says so in the constant's
-      docstring. Review holds this a requirement deviation needing an explicit
-      amendment, which is fair.
+- [x] **B32 — RESOLVED 2026-08-19 (owner): the plan now says "universal".**
+      R10's requirement text and its Verification Matrix row were amended from
+      "near-universal caveats" to "UNIVERSAL caveats — a flag carried by EVERY
+      row of a table, not merely by most of them", with the measurement and the
+      reason recorded inline in the plan.
 
-      The engineering reason is the thing to rule on. At exactly 100% the hoist
-      is information-preserving: "every row below carries X" is literally true
-      and dropping the badge deletes nothing. Below 100% the rows that LACK the
-      flag are the informative ones, so suppressing the badge on the majority
-      erases the only thing distinguishing them, and the note becomes false.
-
-      Measured: **23 member tables at 100%** (hoisted today), **6 more in the
-      90–99% band** (keeping per-row badges). A truthful sub-100% form needs
-      either different wording ("50 of the 51 rows below carry…") or a visible
-      marker on the exceptions. Both are editorial choices, not implementation
-      details. Decide the wording, or amend the plan to say "universal".
+      The reason, kept here because it is the thing a future reader will
+      question: at exactly 100% the hoist is information-preserving, and below
+      100% the rows that LACK the flag are the informative ones, so a note
+      reading "every row below carries X" over a 90–99% table is false. 23
+      member tables hoist today; 6 in the 90–99% band keep their per-row badges
+      deliberately. The implementation already matched this; the amendment makes
+      the requirement match the implementation rather than the reverse.
 
 - [ ] **B33 — where the raw flag token lives.** R10 puts it in a
       `visually-hidden` span: exactly once, real text, never a tooltip. Review

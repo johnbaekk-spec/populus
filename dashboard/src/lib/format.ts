@@ -440,7 +440,9 @@ export const UNKNOWN_FLAG_LABEL = "unrecognised source condition";
 /** A flag on at least this share of the table's rows states itself once, at
     table level, rather than on every row.
 
-    **1.0, not 0.9, and the difference is the whole design.** At exactly 100% the
+    **1.0, and the plan says so.** R10 originally read "near-universal"; the owner
+    amended it to "universal" on 2026-08-19 precisely because the original could
+    not be implemented truthfully. At exactly 100% the
     hoist is information-preserving: "every row below carries X" is literally
     true and removing the badge deletes nothing. Below 100% it is not — the rows
     that LACK the flag are the informative ones, and suppressing the badge on the
