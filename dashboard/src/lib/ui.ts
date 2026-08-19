@@ -1004,7 +1004,10 @@ export function changesTableHtml(
   const embedded = ordered.length;
   const pageRows = holdingsPageSlice(ordered, page);
   const pageCount = holdingsPageCount(embedded);
-  const statedDeltas = universalFlags(pageRows.map((d) => d.flags));
+  /* Over `ordered` — every row this table can page through — not `pageRows`.
+     See the note in `holdings.ts`: a per-page set makes the caveat flicker
+     between pages of one table. */
+  const statedDeltas = universalFlags(ordered.map((d) => d.flags));
   const rows = pageRows
     .map((d) => {
       const p = qoqPresentation(d);

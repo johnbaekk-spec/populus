@@ -929,3 +929,34 @@ test("isCanonicalDate: shape is not enough — the date must exist and round-tri
     assert.equal(isCanonicalDate(bad as unknown), false, String(bad));
   }
 });
+
+test("R10 #12: universality is judged over the WHOLE table, not the visible page", async () => {
+  const { universalFlags } = await import("../src/lib/format.ts");
+  /* Cycle 3 F2, a real defect I introduced. Holdings and changes computed the
+     stated set from `pageRows`, so a 101-row table whose first page happened to
+     be uniform showed the caveat on page 0 and not on page 1 — the same table
+     contradicting itself between pages. The entity table always computed over
+     the full set; wiring the other renderers later, I did not.
+
+     This asserts the PROPERTY the renderers must satisfy: the set is a function
+     of the whole collection, so it cannot differ between two slices of it. */
+  const PAGE = 100;
+  const all = [
+    ...Array.from({ length: PAGE }, () => ["missing_ticker"]),
+    ["amount_spouse_cap"], // the 101st row breaks universality
+  ];
+  assert.deepEqual(universalFlags(all), [], "101 rows, one differing → nothing is universal");
+
+  const page0 = all.slice(0, PAGE);
+  const page1 = all.slice(PAGE);
+  assert.deepEqual(
+    universalFlags(page0),
+    ["missing_ticker"],
+    "page 0 alone LOOKS universal — which is exactly the trap",
+  );
+  assert.notDeepEqual(
+    universalFlags(page0),
+    universalFlags(all),
+    "so a per-page set disagrees with the whole-table set, and the caveat flickers",
+  );
+});
