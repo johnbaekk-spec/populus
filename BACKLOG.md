@@ -526,6 +526,47 @@ and both would otherwise be discovered the expensive way.
       the emitted set equals the locked pair EXACTLY (set equality, not
       superset), which is what R36's Verification Matrix row demands.
 
+## 11. Carried open from R10 (external review round 3, 2026-08-19)
+
+R10 shipped both halves — no raw slug reaches a default view, and a flag on
+every row states itself once. External review ran to its 3-round cap on this
+branch. Four of round 3's six blockers were defects and are fixed; these two are
+decisions, escalated rather than self-signed.
+
+- [ ] **B32 — "near-universal" vs "universal": the hoist threshold needs an
+      owner ruling.** The plan says *near-universal caveats state once at table
+      level*. The implementation hoists at **100%** and says so in the constant's
+      docstring. Review holds this a requirement deviation needing an explicit
+      amendment, which is fair.
+
+      The engineering reason is the thing to rule on. At exactly 100% the hoist
+      is information-preserving: "every row below carries X" is literally true
+      and dropping the badge deletes nothing. Below 100% the rows that LACK the
+      flag are the informative ones, so suppressing the badge on the majority
+      erases the only thing distinguishing them, and the note becomes false.
+
+      Measured: **23 member tables at 100%** (hoisted today), **6 more in the
+      90–99% band** (keeping per-row badges). A truthful sub-100% form needs
+      either different wording ("50 of the 51 rows below carry…") or a visible
+      marker on the exceptions. Both are editorial choices, not implementation
+      details. Decide the wording, or amend the plan to say "universal".
+
+- [ ] **B33 — where the raw flag token lives.** R10 puts it in a
+      `visually-hidden` span: exactly once, real text, never a tooltip. Review
+      wants provenance that is **one interaction away for sighted readers and
+      present in print**, and is right that the current form is available to
+      assistive technology while being unreachable for everyone else.
+
+      The fix is a UI surface this branch had no mandate to invent — a
+      `<details>` disclosure or an anchored provenance block, plus a print
+      override for `.flag-raw`. It also overlaps R11 (M2), which brings one typed
+      slug-to-microcopy map exhaustive over every flag; doing both at once is
+      probably cheaper than doing this now and again then.
+
+      Note the constraint it must respect: §8 forbids honesty-bearing content
+      being tooltip-only, so the WARNING must stay visible whatever happens to
+      the token beside it.
+
 ## Notes for whoever picks this up
 
 - **G-guardrails govern**: G1 no paid/vendor data · G3 never silently drop ·

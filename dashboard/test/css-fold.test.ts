@@ -136,15 +136,27 @@ function splitAtRules(source: string): { blocks: AtRuleBlock[]; topLevel: string
     width. Neither constrains the viewport, so neither is a fold breakpoint. */
 function narrowMediaBlocks(source: string): { condition: string; body: string }[] {
   return splitAtRules(source)
-    .blocks.filter((b) => {
-      if (b.name !== "media") return false;
-      const maxMatch = b.condition.match(/max-width:\s*(\d+(?:\.\d+)?)px/);
-      const minMatch = b.condition.match(/min-width:\s*(\d+(?:\.\d+)?)px/);
-      if (maxMatch == null && minMatch == null) return false; // not a width query
-      const lo = minMatch == null ? 0 : Number(minMatch[1]);
-      return lo <= FOLD_PX; // hi is >= lo, so the interval reaches the fold iff lo does
-    })
+    .blocks.filter((b) => b.name === "media" && queryReachesFold(b.condition))
     .map((b) => ({ condition: b.condition, body: b.body }));
+}
+
+/** Does any arm of a media query govern a viewport at or below the fold?
+
+    Round 3's F1, and the FOURTH wrong version of this predicate. A media query
+    is a comma-separated LIST and the arms are independent — `@media
+    (min-width: 900px), (max-width: 600px)` applies above 900px OR below 600px,
+    and the second arm is squarely inside the fold. Matching `min-width:` once
+    across the whole condition string read `900` and excluded the block, so an
+    honesty selector could be hidden through an entirely ordinary query. Each
+    arm is evaluated on its own now. */
+function queryReachesFold(condition: string): boolean {
+  return condition.split(",").some((arm) => {
+    const maxMatch = arm.match(/max-width:\s*(\d+(?:\.\d+)?)px/);
+    const minMatch = arm.match(/min-width:\s*(\d+(?:\.\d+)?)px/);
+    if (maxMatch == null && minMatch == null) return false; // not a width query
+    const lo = minMatch == null ? 0 : Number(minMatch[1]);
+    return lo <= FOLD_PX; // hi >= lo, so the interval reaches the fold iff lo does
+  });
 }
 
 /** The fold's own width. Named so the tests below cannot drift from the sweep. */
@@ -173,6 +185,17 @@ test("the fold sweep's SCOPE covers every breakpoint that governs the fold", () 
   const openTop = narrowMediaBlocks("@media (min-width: 600px) { .a { color: red; } }");
   assert.equal(openTop.length, 1, "a min-width-only block INSIDE the fold must be swept");
 
+  /* Round 3's F1: a comma-separated LIST is independent arms, and one of them
+     reaching the fold is enough. */
+  const mixed = narrowMediaBlocks(
+    "@media (min-width: 900px), (max-width: 600px) { .a { color: red; } }",
+  );
+  assert.equal(mixed.length, 1, "a query LIST whose second arm is below the fold must be swept");
+  const bothAbove = narrowMediaBlocks(
+    "@media (min-width: 900px), (min-width: 1200px) { .a { color: red; } }",
+  );
+  assert.equal(bothAbove.length, 0, "a list with every arm above the fold does not govern it");
+
   /* Not width queries at all, and excluded deliberately: print legitimately
      hides interactive chrome. */
   assert.equal(narrowMediaBlocks("@media print { .a { display: none; } }").length, 0);
@@ -189,6 +212,10 @@ test("the fold sweep CATCHES a prohibited rule at a narrower breakpoint", () => 
   for (const [label, planted] of [
     ["a narrower max-width", "@media (max-width: 600px) { .cell-src { display: none; } }"],
     ["a min-width-only query inside the fold", "@media (min-width: 600px) { .cell-src { display: none; } }"],
+    [
+      "a comma-separated list whose second arm is below the fold",
+      "@media (min-width: 900px), (max-width: 600px) { .cell-src { display: none; } }",
+    ],
   ] as const) {
     const rules = narrowMediaBlocks(planted).flatMap((b) => rulesOf(b.body));
     const offending = rules.filter(

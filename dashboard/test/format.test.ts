@@ -583,6 +583,25 @@ test("flagTags: registry chips + FAIL-VISIBLE unknown flags, never a raw slug", 
   const inst = flagTags(["shares_unit_mismatch", "value_undisclosed_one_side"]);
   assert.ok(inst.includes("unit mismatch"));
   assert.ok(inst.includes("value undisclosed one side"));
+
+  /* Round 3's F3, found by measuring the BUILT tree: four producer flags ship
+     and were missing from the registry, so the generic path swallowed them —
+     87,099 occurrences of `missing_security` alone. A vague warning over a fact
+     the producer states precisely is worse than the raw slug this requirement
+     removed, so every shipped flag must take the KNOWN path. */
+  for (const [slug, copy] of [
+    ["missing_security", "security not in mapping"],
+    ["other_manager_unparsed", "other-manager unparsed"],
+    ["owner_unparsed", "owner unparsed"],
+    ["exit_not_assertable", "exit not assertable"],
+  ] as const) {
+    const out = flagTags([slug]);
+    assert.ok(out.includes(copy), `${slug} renders its own words`);
+    assert.ok(
+      !out.includes(UNKNOWN_FLAG_LABEL),
+      `${slug} ships in the corpus and must NOT take the unknown path`,
+    );
+  }
 });
 
 test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row", async () => {
@@ -613,6 +632,21 @@ test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row
   });
   assert.ok(!row.includes("no ticker"), "the hoisted flag is not repeated on the row");
   assert.ok(row.includes("spouse cap"), "un-hoisted flags are untouched");
+
+  /* Round 3's F6. `amount unparsed` is DERIVED from the row's own bounds, not
+     read from the flag list, so filtering the flag left the derivation free to
+     grow the badge straight back — a table claiming "stated once here" above a
+     table that repeated it on every row. */
+  const boundless = { low: null, high: null };
+  const derived = flagTags(["amount_unparsed"], boundless, { stated: ["amount_unparsed"] });
+  assert.ok(
+    !derived.includes("amount unparsed"),
+    "a hoisted amount_unparsed must not be re-derived onto the row",
+  );
+  assert.ok(
+    flagTags(["amount_unparsed"], boundless).includes("amount unparsed"),
+    "and it still appears when it was NOT hoisted",
+  );
 });
 
 test("terminusRow: names its author — the source or Public Filings, never a bare more", async () => {

@@ -368,21 +368,48 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   issuer_from_cusip6: { label: "issuer from CUSIP-6", cls: "dashed" },
   issuer_from_name: { label: "issuer from name", cls: "dashed" },
   concentration_unavailable: { label: "concentration unavailable", cls: "dashed" },
+  /* R10, found by measuring the built tree rather than by reading the registry:
+     these four SHIP and were absent here, so the generic-warning path swallowed
+     them — 87,099 occurrences of `missing_security` alone. Rendering "a
+     condition we do not recognise" over a fact the producer states precisely is
+     a worse failure than the raw slug this requirement set out to remove.
+     Wording follows each producer's own definition, cited. */
+  // normalize_inst.py:76 — valid CUSIP, no mapping covers period_of_report (R9)
+  missing_security: { label: "security not in mapping", cls: "dashed" },
+  // normalize_inst.py:70 — non-numeric otherManager component (QA-F3)
+  other_manager_unparsed: { label: "other-manager unparsed", cls: "dashed" },
+  // normalize.py:32 — the owner field did not parse
+  owner_unparsed: { label: "owner unparsed", cls: "dashed" },
+  // inst_serving.py:312 — absence is not assertable, so no exit is claimed
+  exit_not_assertable: { label: "exit not assertable", cls: "dashed" },
 };
 
 export function flagChips(
   flags: string[],
   r?: Pick<TxnRow, "low" | "high">,
+  stated: ReadonlySet<string> = new Set(),
 ): { label: string; cls: string }[] {
   // missing_ticker already renders as "—" in the ticker column; the chip
   // restates it per the design row "no ticker".
   const chips = flags
     .filter((f) => FLAG_PRESENTATION[f])
     .map((f) => FLAG_PRESENTATION[f]!);
-  // An amount with no bounds must always SAY it is unknown, even when the
-  // upstream flag set explains the row some other way (row_incomplete etc.) —
-  // presentation is derived from the value, not from the flag vocabulary.
-  if (r && r.low == null && r.high == null && !flags.includes("amount_unparsed")) {
+  /* An amount with no bounds must always SAY it is unknown, even when the
+     upstream flag set explains the row some other way (row_incomplete etc.) —
+     presentation is derived from the value, not from the flag vocabulary.
+
+     `stated` has to reach THIS derivation, not just the filter above it. The
+     chip is re-derived from `r.low`/`r.high`, so a table that hoisted
+     `amount_unparsed` to its caveat line would strip the flag and then grow the
+     badge straight back on every row — claiming "stated once here" above a
+     table that repeats it. */
+  if (
+    r &&
+    r.low == null &&
+    r.high == null &&
+    !flags.includes("amount_unparsed") &&
+    !stated.has("amount_unparsed")
+  ) {
     chips.push({ label: "amount unparsed", cls: "dashed" });
   }
   return chips;
@@ -481,7 +508,7 @@ export function flagTags(
      none can forget it. */
   const stated = new Set(opts.stated ?? []);
   const shown = flags.filter((f) => !stated.has(f));
-  const known = flagChips(shown, r)
+  const known = flagChips(shown, r, stated)
     .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
     .join("");
   const unknown = shown.filter((f) => !FLAG_PRESENTATION[f]);
