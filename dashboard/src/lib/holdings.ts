@@ -1310,7 +1310,15 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     )} undisclosed-value ${totals.undisclosedRows === 1 ? "row" : "rows"}</span></div>` +
     emptyNote +
     universalFlagNote(statedHoldings) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first data-paged="1" data-stated-flags="${esc(statedHoldings.join(","))}">` +
+    /* B35 (cycle 4 F1): `data-paged` means "this HTML shows only PART of the
+       collection", not "this renderer supports paging". Set unconditionally it
+       exempted single-page tables — including the exact B34 regressions — so the
+       gate passed the failures it exists to catch. When the whole collection is
+       on the page, the visible rows ARE the collection and there is nothing HTML
+       cannot settle. */
+    `<div class="table-scroll"><table class="etable" data-sticky-first${
+      pageCount > 1 ? ' data-paged="1"' : ""
+    } data-stated-flags="${esc(statedHoldings.join(","))}">` +
     `<caption class="visually-hidden">Positions ${esc(opts.filerName)} reported for the quarter ended ${esc(
       opts.period,
     )}, as that filer reported them</caption>` +
@@ -1406,9 +1414,9 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
       ? `<p class="section-note">No positions to compare: this build's projection carries rows ` +
         `for at most one of the two quarters.</p>`
       : universalBadgeNote(statedNotes) +
-        `<div class="table-scroll"><table class="etable" data-sticky-first data-paged="1" data-stated-flags="${esc(
-          statedNotes.join(","),
-        )}">` +
+        `<div class="table-scroll"><table class="etable" data-sticky-first${
+          pageCount > 1 ? ' data-paged="1"' : ""
+        } data-stated-flags="${esc(statedNotes.join(","))}">` +
         `<caption class="visually-hidden">Positions compared between the quarters ended ${esc(
           diff.prior,
         )} and ${esc(diff.current)}</caption>` +
