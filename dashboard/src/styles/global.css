@@ -374,6 +374,14 @@ button {
   background: var(--raised);
   padding: 14px 20px;
   min-width: 118px;
+  /* R9. The strip is a WRAPPING flex row, so content-sized tiles leave a ragged
+     right edge on every row but the last — and because `.tiles` paints
+     `var(--rule2)` behind a 1px gap grid, that ragged space renders as a
+     visible rule-coloured slab INSIDE the bordered strip. Measured on the real
+     tree: 191px of it on row 0 at 720px, 6.5px at 360px. That slab is exactly
+     the "unoccupied trailing area" R9 forbids; it is not a cosmetic tolerance,
+     so the tiles grow to consume it rather than the gate learning to accept it. */
+  flex: 1 1 auto;
 }
 .tile-value {
   font: 600 22px var(--sans);
@@ -411,6 +419,12 @@ button {
 /* On desktop the wrapper is transparent: its children are direct flex items of
    .filterbar, exactly as the design lays them out. */
 .filter-controls {
+  /* F1 (codex round 1). This box computed to the full 360px viewport width
+     inside a 328px parent and started at x=29, so it pushed the document
+     sideways by 29px at the narrow width even though it already carries
+     `overflow-x: auto` — the scroller was scrolling, the BOX was still too
+     wide. Verified in the browser: 29px -> 0. */
+  max-width: 100%;
   display: contents;
 }
 .filter-group {
@@ -2160,19 +2174,25 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     display: block;
   }
   /* Coverage tiles FOLD, they do not vanish — §5.2 puts coverage and known
-     gaps in the response, not in a tooltip a touch device can never open.
-     The right-edge mask signals that the strip scrolls. */
+     gaps in the response, not in a tooltip a touch device can never open. They
+     now fold by WRAPPING onto further rows rather than by scrolling sideways,
+     which is the stronger form of the same commitment: nothing is off-screen to
+     begin with.
+
+     The scroll affordance is GONE, and its absence is the honest state: since
+     R9 made the strip wrap, `scrollWidth === clientWidth` at both fold widths
+     (measured 326/326 at 360px, 686/686 at 720px), so the mask faded the right
+     24px of a strip that cannot scroll. With tiles now filling their row those
+     24px carry a headline figure's own padding and digits, which would put a
+     number behind a permanent fade with no gesture that reveals it — §8's
+     media-query-hidden prohibition. `flex: 0 0 auto` goes with it: it was the
+     scrolling design's rule, and it is what pinned the tiles at content width. */
   .tiles {
     margin-top: 12px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
   .tile {
     padding: 10px 14px;
     min-width: 104px;
-    flex: 0 0 auto;
   }
   .tile-value {
     font-size: 16px;
@@ -2428,13 +2448,8 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .entity-title { font-size: 24px; }
   .entity-lede { font-size: 12.5px; }
   .watch-btn { min-height: 44px; }
-  .tiles-entity {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-  }
-  .tiles-entity .tile { flex: 0 0 auto; }
+  /* `.tiles-entity` is the same strip in compact dress (`format.ts:808` emits
+     both from one function), so it loses the same dead scroll affordance. */
   .entity-grid { grid-template-columns: 1fr; }
   .metho-grid { grid-template-columns: 1fr; }
   .gaps-block.cols-2 { columns: 1; }

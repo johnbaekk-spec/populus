@@ -19,7 +19,11 @@ export default defineConfig({
   webServer: {
     command: "npx astro preview --port 4321",
     url: "http://localhost:4321/",
-    reuseExistingServer: true,
+    /* F7 (codex round 1): NEVER reuse. A preview server left running from an
+       earlier build serves that build's bytes, so the gate would measure a tree
+       that is not the one under review and report green for it. Freshness is
+       the whole point of a post-build gate. */
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

@@ -12,13 +12,7 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { WIDTHS } from "../../playwright.config.ts";
 
-interface Box { x: number; y: number; width: number; height: number }
-
-const overlap = (a: Box, b: Box): number => {
-  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-  return w > 0 && h > 0 ? w * h : 0;
-};
+import { overlap, stripRowTrailing, PACKED_TRAILING_PX, type Box } from "./geometry.ts";
 
 /** Visible boxes only — a `display:none` burger has no geometry to protect. */
 async function boxesOf(page: Page, selectors: string[]): Promise<{ sel: string; box: Box }[]> {
@@ -105,6 +99,19 @@ for (const width of WIDTHS) {
       const rows = page.locator(".feed-row");
       const n = Math.min(await rows.count(), 12);
       expect(n, "the feed rendered rows to measure").toBeGreaterThan(0);
+      /* F9 (codex round 1). R5's matrix row names a 40-CHARACTER identity, and
+         sampling whatever twelve rows today's corpus happens to put first does
+         not exercise it — the worst case is only present by luck. Plant it. */
+      const planted = await rows.first().evaluate((row) => {
+        const cell = row.querySelector(".cell-ticker");
+        if (!cell) return false;
+        cell.innerHTML =
+          '<span class="asset-name"><span aria-hidden="true">' +
+          "BLACKROCK LIQUIDITY TREASURY TRUST FD" +
+          '</span></span>';
+        return true;
+      });
+      expect(planted, "row 0 must carry a ticker cell to plant the worst case in").toBe(true);
       for (let r = 0; r < n; r++) {
         const cells = rows.nth(r).locator(".cell");
         const boxes: { i: number; box: Box }[] = [];
@@ -133,55 +140,87 @@ for (const width of WIDTHS) {
       }
     });
 
-    test("R9: the stat strip leaves no unoccupied trailing area", async ({ page }) => {
-      /* `/congress/`, NOT `/` — there is no `.tiles` on the home page, so this
-         test skipped on every run while appearing to cover R9. A skipped test
-         proves nothing, and this one hid the strip's real defect for two whole
-         fix attempts. */
+    test("R9: the stat strip fits, packs its rows, and shows only tiles it has data for", async ({ page }) => {
       await page.goto("/congress/");
       const strip = page.locator(".tiles").first();
-      if ((await strip.count()) === 0 || !(await strip.isVisible())) test.skip();
+      expect(await strip.count(), "the congress page renders a stat strip").toBeGreaterThan(0);
       const stripBox = (await strip.boundingBox())!;
       const tiles = strip.locator(".tile");
       const count = await tiles.count();
       expect(count, "a rendered strip must hold tiles").toBeGreaterThan(0);
-      /* Trailing space is only meaningful on a SINGLE row. Once the strip
-         wraps (R9), space after the last tile is the normal ragged end of a
-         wrapped line, not the strip reserving room for data it does not have —
-         asserting on it would fail a correct layout. */
-      const boxes = [];
-      for (let i = 0; i < count; i++) boxes.push((await tiles.nth(i).boundingBox())!);
-      const rows = new Set(boxes.map((b) => Math.round(b.y)));
-      if (rows.size > 1) test.skip();
-      const last = boxes[count - 1]!;
-      const trailing = stripBox.x + stripBox.width - (last.x + last.width);
-      /* The strip is a bordered flex box; leftover space inside it reads as an
-         empty tile the data does not support. A couple of px is the border. */
+
+      /* F4 (codex round 1). The old assertion skipped whenever the strip
+         wrapped — which, after the R9 fix, is exactly the widths that used to
+         overflow. It therefore ran only where nothing was ever broken. The
+         invariant that holds at EVERY width: the strip stays inside its parent,
+         and every row except the last is packed. Trailing space on the final
+         row is a ragged line end; trailing space on an earlier row means the
+         strip reserved width it did not use.
+
+         This first ran RED at 360px (6.5px) and 720px (191px), and the CSS is
+         what changed, not the number: `.tiles` paints `var(--rule2)` behind a
+         1px gap grid, so an unpacked row renders that unused width as a visible
+         rule-coloured slab inside the bordered strip — R9's "unoccupied trailing
+         area", literally. `.tile` grows to consume it now. See
+         `PACKED_TRAILING_PX` for why 6 is not a tuned threshold. */
+      const parentBox = (await strip.evaluate((el) => {
+        const r = el.parentElement!.getBoundingClientRect();
+        return { x: r.x, width: r.width };
+      }))!;
       expect(
-        trailing,
-        `${Math.round(trailing)}px of empty strip trails the last tile at ${width}px — ` +
-          `the strip is claiming room for data it does not have`,
-      ).toBeLessThanOrEqual(4);
+        Math.round(stripBox.x + stripBox.width),
+        `the strip overflows its parent at ${width}px`,
+      ).toBeLessThanOrEqual(Math.round(parentBox.x + parentBox.width) + 1);
+
+      const trailing = await strip.evaluate(stripRowTrailing);
+      for (let r = 0; r < trailing.length - 1; r++) {
+        expect(
+          trailing[r]!,
+          `row ${r} of the strip leaves ${Math.round(trailing[r]!)}px unused at ${width}px ` +
+            `while a later row exists — the strip is reserving width it does not use`,
+        ).toBeLessThanOrEqual(PACKED_TRAILING_PX);
+      }
+
+      /* F5 (codex round 1): the other half of R9's matrix row, previously
+         unasserted — the strip renders exactly the tiles it HAS DATA for, so a
+         tile with no value is a tile that should not have been emitted. */
+      const empties = await strip.evaluate((el) =>
+        [...el.querySelectorAll(".tile")].filter((t) => {
+          const v = t.querySelector(".tile-value");
+          return !v || v.textContent!.trim() === "";
+        }).length,
+      );
+      expect(empties, `${empties} tile(s) render with no value at ${width}px`).toBe(0);
+    });
+
+    test("R6: a scrollable table announces itself and pins its identity column", async ({ page }) => {
+      /* F6 (codex round 1): this was pinned at 964px and so tested one width of
+         the five it is specified against. It lives in the width loop now. */
+      await page.goto("/institutional/filers/1067983/");
+      const scroller = page.locator(".table-scroll").first();
+      /* No early `return`s here, deliberately. Three of them used to guard this
+         test — missing scroller, not-scrollable, missing sticky cell — and each
+         was a silent PASS that would read as coverage. Measured on the real
+         page: the scroller exists at all five widths (2 of them), the cue is a
+         base-rule scrolling shadow so it is present whether or not the table
+         currently overflows (932/326 at 360px down to 1278/1278 at 1440px), and
+         135 sticky first cells resolve to `position: sticky` at every width.
+         Nothing here is conditional in reality, so nothing is conditional in
+         the assertions. */
+      expect(await scroller.count(), "the filer page renders a scroll container").toBeGreaterThan(0);
+      const background = await scroller.evaluate((el) => getComputedStyle(el).backgroundImage);
+      expect(
+        background,
+        `at ${width}px a table can scroll sideways with no cue — it hides its columns ` +
+          `as surely as deleting them`,
+      ).toContain("gradient");
+      const firstCell = page.locator(".etable[data-sticky-first] td:first-child").first();
+      expect(await firstCell.count(), "the changes table pins an identity column").toBeGreaterThan(0);
+      expect(
+        await firstCell.evaluate((el) => getComputedStyle(el).position),
+        `at ${width}px the identity column scrolls away with the data it identifies`,
+      ).toBe("sticky");
     });
   });
 }
 
-test("R6: a scrollable table announces itself and pins its identity column", async ({ page }) => {
-  await page.setViewportSize({ width: 964, height: 900 });
-  await page.goto("/institutional/filers/1067983/");
-  const scroller = page.locator(".table-scroll").first();
-  if ((await scroller.count()) === 0) test.skip();
-  const state = await scroller.evaluate((el) => ({
-    scrollable: el.scrollWidth > el.clientWidth,
-    background: getComputedStyle(el).backgroundImage,
-  }));
-  if (!state.scrollable) test.skip();
-  expect(
-    state.background,
-    "a table that scrolls sideways with no cue hides its columns as surely as deleting them",
-  ).toContain("gradient");
-  const firstCell = page.locator(".etable[data-sticky-first] td:first-child").first();
-  if ((await firstCell.count()) > 0) {
-    expect(await firstCell.evaluate((el) => getComputedStyle(el).position)).toBe("sticky");
-  }
-});
