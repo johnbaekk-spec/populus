@@ -577,6 +577,56 @@ decisions, escalated rather than self-signed.
       a real unknown flag — which would mean the first run is the first time it
       is needed.
 
+## 12. R10's universal-caveat clause — OPEN after three review cycles (2026-08-19)
+
+R10's first clause (no raw slug; unknown still warned; token once in provenance,
+one interaction away and in print) is **complete**. The universal-caveat clause
+is **not**, and the shape of how it failed is the useful part: three external
+review cycles each fixed real defects and each then found more of its surface.
+
+    cycle 2 r3  the hoist was wired into 1 renderer of 6 → 1,004 pages affected
+    cycle 3 r1  a 6th renderer (activity); universality judged per PAGE not per table
+    cycle 3 r2  the gate counted the <thead> row → INERT on every real table
+    cycle 3 r3  two badge sources outside `flags`; the gate trusts a marker's presence
+
+Fixed and verified: 1,004 offending pages → 0, caveated pages 15 → 1,155, six
+renderers hoisting over their full bounded collection, the derived
+`amount_unparsed` chip included, and a detector proven against production-shaped
+markup. What remains:
+
+- [ ] **B34 — two badge sources render OUTSIDE the flag list, so they never reach
+      `universalFlags`.** `holdings.ts:473` emits
+      `<span class="flag dashed">filing not in dictionary</span>` for a
+      provenance miss, and `holdings.ts:1359` renders `r.notes` as flag badges.
+      Neither is in `row.flags`, so a table where EVERY row misses the filing
+      dictionary — or every compared position carries the same note — repeats
+      that badge on every row with no caveat. Reviewer's reproduction: two-row
+      probes gave `{"rowBadges":2,"tableCaveat":false}` for both.
+
+      The fix is not another patch. Define each renderer's **effective
+      presentation keys** — everything it can put in a flag cell, not just
+      `flags` — and compute universality over that. `effectiveFlagKeys` already
+      does this for the one derived chip; these two are the same problem and
+      should join it rather than get their own special case.
+
+- [ ] **B35 — the whole-dist gate validates a marker's PRESENCE, not its
+      meaning.** Wired renderers emit `data-stated-flags`, and the detector
+      exempts any table carrying it. So an empty marker on a table that visibly
+      repeats a badge passes — which is exactly the B34 case, and why the gate
+      stayed green through it.
+
+      The marker was introduced to replace a proximity guess about pagers, and it
+      does that correctly for the one case it must: a PAGED table whose visible
+      page is uniform while its full collection is not. Narrow the exemption to
+      that case — the table must be paged AND marked — and treat an unpaged
+      marked table with uniform badges as the violation it is.
+
+      Note the recurring shape before touching it: this gate has been wrong three
+      times, and every time it looked green. A check that cannot fail is
+      indistinguishable from a check that passes, so any change here needs a
+      removal-failing proof against production-shaped markup, not a fixture that
+      happens to omit whatever the real pages contain.
+
 ## Notes for whoever picks this up
 
 - **G-guardrails govern**: G1 no paid/vendor data · G3 never silently drop ·
