@@ -654,3 +654,64 @@ markup. What remains:
   and write the spec.** Proven on the M2-4 serving lifecycle, M2-4 amendment
   composition, the P3 feed pagination, and again on the M2-5 parse substrate
   (B2).
+
+---
+
+## 9. R8 descoped from M1 (owner, 2026-08-19)
+
+- [ ] **B36 — R8 is code-complete and CANNOT be verified from any artifact on
+      disk.** The work is committed on `feat/m1-r8-security-directory`
+      (unit-verified only, explicitly not for merge). It is descoped from M1;
+      M1 ships R36+R28 alone via PR #49.
+
+      **The defect it fixes is live.** Measured 2026-08-19 on the current build:
+      **112,976 raw position keys render as visible text across 1,312 of 1,500
+      filer pages** — e.g. `sid:sec:prov:629d8827d09a94eb37ae25403f4edcf6` in a
+      `c-pos` cell. That is plan success criterion #2 ("no default view renders
+      an internal identifier") violated on 87% of filer pages.
+
+      **Why it cannot be verified.** The projection needs raw holdings; the
+      changes table needs multi-period QoQ deltas. **No artifact has both:**
+
+      | Artifact | `inst_holdings` | periods | `agg_qoq_deltas` |
+      |---|---|---|---|
+      | `data-20260731.1` … `data-20260802.2` (5 releases) | 602,496 | **1** | n/a |
+      | `data-20260812.1/congress.db` | **0** | — | n/a |
+      | `data-20260812.1/inst_agg.db` | n/a | 6 | **9,482,028** |
+      | staged `populus-build-20260817.1` | **0** | — | (v2, no directory) |
+
+      Regenerating from the 08-02 source yields a correct directory (12,537 rows,
+      every `class_title` populated, zero empty names) but **0 QoQ deltas**, so
+      the changes table renders nothing and a `grep -a` key-prefix negative over
+      `dist` passes VACUOUSLY — clean because there are no rows, not because the
+      fix works. Worse: that corpus produces only `cusip:`-shaped position keys
+      while the measured defect is `sid:`-shaped, so if production's QoQ rows are
+      `sid:`-keyed the join would miss entirely and every row would render the
+      unknown label — **worse than the raw key, and invisible on this corpus.**
+
+      **To resume, one thing is needed:** a corpus carrying BOTH multi-period
+      holdings AND `sid:`-shaped position keys — the corpus behind the 112,976
+      measurement. Everything else is written and green: projection in both
+      builders, `title_of_class` through `_AGG_INPUT_COLUMNS` (+ the matching
+      `amendments.py` change the PRAGMA shape check forces), the period-keyed
+      join, the render, the `filer-payload.ts` decoder, and 9 fixture tests with
+      the period-keying mutation-checked.
+
+- [ ] **B37 — the geometry lane may be red on `main`, with two DEAD NEGATIVE
+      CONTROLS.** Unresolved contradiction between two sessions, recorded so it
+      is not lost. A peer measured 41 pass / 3 fail on an untouched `b95b1bf`
+      baseline, the failures being `reintroducing content-width tiles is
+      DETECTED…`, `a ragged FINAL row is DETECTED too`, and `R6 @360px` on
+      `/institutional/filers/1067983/`. This session measured **44 pass / 0 fail,
+      exit 0**, with `geometry:install` returning 0 first (so Playwright was
+      present). Same 44 total, so the harness ran fully both times.
+
+      Failing canaries are the serious half: they mean the harness would no
+      longer detect the defect it was written to catch, and anything downstream
+      trusting that lane is trusting a detector that is not detecting.
+
+      **Cheapest discriminator: the baseline `dist` file count.** A complete
+      build is **17,283 files**; without `POPULUS_PRIOR_SIGNALS` the build exits
+      1 after ~4,900, which "looks plausible if you only glance at `dist/`" and
+      would produce exactly that `R6 @360px` failure on a missing filer page.
+      Check that before concluding `main` is red.
