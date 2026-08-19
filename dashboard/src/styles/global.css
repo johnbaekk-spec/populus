@@ -1361,6 +1361,18 @@ button {
   border-top: 1px solid var(--rule);
 }
 .caveat-inline { color: var(--ink3); }
+/* R10 defect #12: a flag carried by EVERY row states itself here instead of on
+   each row. It sits ABOVE the table it describes and reads as a caveat, not as
+   chrome — the border-bottom pairs it with the table rather than the block
+   above, which `.caveat-line` alone (border-top) would not do. */
+.table-caveat {
+  border-top: none;
+  border-bottom: 1px solid var(--rule);
+}
+.table-caveat strong {
+  color: var(--ink2);
+  font-weight: 600;
+}
 .src-derived {
   font: 500 10.5px var(--mono);
   text-decoration: none;

@@ -388,22 +388,110 @@ export function flagChips(
   return chips;
 }
 
+/* ---------- R10: flags a reader can read ----------
+
+   Two defects, one renderer.
+
+   #11 "Flag slugs as UI text". An unknown flag used to paint its machine name
+   verbatim — `a_flag_from_the_future` — straight into the page. Fail-visible was
+   right; spelling the identifier at the reader was not. The warning is now
+   plain English and GENERIC, and the raw token moves to the provenance layer:
+   real text in the accessibility tree, exactly once, never a tooltip (§8 forbids
+   anything honesty-bearing being tooltip-only, and the WARNING is the
+   honesty-bearing half — the slug is provenance for whoever files the bug).
+
+   #12 "Universal badge carries no information". A badge on nearly every row is
+   noise: measured on the real tree, `no ticker` sits on 50 of 51 rows (98%) on
+   six member pages. It is stated ONCE above the table instead, and suppressed
+   from the rows it would otherwise decorate. */
+
+/** What an unrecognised upstream flag says to a reader. Generic on purpose: the
+    site cannot describe a condition it has never seen, and guessing would be
+    worse than admitting the gap. */
+export const UNKNOWN_FLAG_LABEL = "unrecognised source condition";
+
+/** A flag on at least this share of the table's rows states itself once, at
+    table level, rather than on every row.
+
+    **1.0, not 0.9, and the difference is the whole design.** At exactly 100% the
+    hoist is information-preserving: "every row below carries X" is literally
+    true and removing the badge deletes nothing. Below 100% it is not — the rows
+    that LACK the flag are the informative ones, and suppressing the badge on the
+    majority erases the only thing distinguishing them. A note reading "every
+    row" over a table where one row differs is simply false.
+
+    Measured on the real tree: 23 member tables carry `no ticker` on 50 of 50
+    rows, so this fires on today's corpus rather than being a mechanism waiting
+    for data that never arrives. Six more sit in the 90–99% band and keep their
+    per-row badges deliberately. */
+export const UNIVERSAL_FLAG_SHARE = 1.0;
+
+/** Below this many rows there is no "universal" worth hoisting — a reader can
+    see the whole table at a glance, and a caveat line above three rows is more
+    chrome than the badges it replaces. */
+export const UNIVERSAL_FLAG_MIN_ROWS = 8;
+
+/** Flags carried by ≥ `UNIVERSAL_FLAG_SHARE` of `rows`, in stable order.
+
+    Pass EVERY row the table can page through, not the current page. The table
+    re-renders its rows client-side when paging (`entity-client.ts`), so a
+    per-page set would let page 2's badges contradict the note left above them
+    by page 1. Computed over the whole table, the statement holds on every
+    page and the client needs no recomputation to stay honest. */
+export function universalFlags(rows: readonly (readonly string[])[]): string[] {
+  if (rows.length < UNIVERSAL_FLAG_MIN_ROWS) return [];
+  const counts = new Map<string, number>();
+  for (const flags of rows) {
+    for (const f of new Set(flags)) counts.set(f, (counts.get(f) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n / rows.length >= UNIVERSAL_FLAG_SHARE)
+    .map(([f]) => f)
+    .sort();
+}
+
+/** The table-level statement for hoisted flags, or "" when there are none. */
+export function universalFlagNote(flags: readonly string[]): string {
+  if (flags.length === 0) return "";
+  const known = flags.filter((f) => FLAG_PRESENTATION[f]).map((f) => FLAG_PRESENTATION[f]!.label);
+  const unknown = flags.filter((f) => !FLAG_PRESENTATION[f]);
+  const labels = [...known, ...(unknown.length > 0 ? [UNKNOWN_FLAG_LABEL] : [])];
+  const provenance =
+    unknown.length > 0
+      ? `<span class="visually-hidden flag-raw"> (verbatim: ${esc(unknown.join(", "))})</span>`
+      : "";
+  return (
+    `<p class="caveat-line table-caveat">` +
+    `Every row below carries <strong>${esc(labels.join(", "))}</strong>${provenance}` +
+    ` — stated once here rather than repeated on every row.</p>`
+  );
+}
+
 /* ---------- FlagTag (G6): one canonical markup renderer ----------
-   Known flags render via the registry; an UNKNOWN flag renders fail-visible as
-   a raw dashed tag with its machine name verbatim (docs/qoq-presentation.md §1)
-   — a new upstream flag must never silently disappear from the page. */
+   Known flags render via the registry; an UNKNOWN flag stays fail-visible — a
+   new upstream flag must never silently disappear from the page — but as a
+   generic warning, with its machine name in the provenance layer. */
 export function flagTags(
   flags: string[],
   r?: Pick<TxnRow, "low" | "high">,
+  opts: { stated?: readonly string[] } = {},
 ): string {
-  const known = flagChips(flags, r)
+  /* Flags already stated at table level are suppressed HERE rather than
+     filtered by the caller, so every render site inherits the behaviour and
+     none can forget it. */
+  const stated = new Set(opts.stated ?? []);
+  const shown = flags.filter((f) => !stated.has(f));
+  const known = flagChips(shown, r)
     .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
     .join("");
-  const unknown = flags
-    .filter((f) => !FLAG_PRESENTATION[f])
-    .map((f) => `<span class="flag dashed flag-raw">${esc(f)}</span>`)
-    .join("");
-  return known + unknown;
+  const unknown = shown.filter((f) => !FLAG_PRESENTATION[f]);
+  const unknownHtml =
+    unknown.length === 0
+      ? ""
+      : `<span class="flag dashed">${esc(UNKNOWN_FLAG_LABEL)}</span>` +
+        `<span class="visually-hidden flag-raw"> — reported by the source as` +
+        ` ${esc(unknown.join(", "))}</span>`;
+  return known + unknownHtml;
 }
 
 /* ---------- amount filtering ----------

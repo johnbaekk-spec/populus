@@ -551,17 +551,68 @@ test("rangeBand + dualDate: the feed row is COMPOSED of the canonical components
   assert.ok(open.includes("open"), "open cap hatches");
 });
 
-test("flagTags: registry chips + FAIL-VISIBLE unknown flags as raw dashed tags", async () => {
-  const { flagTags } = await import("../src/lib/format.ts");
+test("flagTags: registry chips + FAIL-VISIBLE unknown flags, never a raw slug", async () => {
+  const { flagTags, UNKNOWN_FLAG_LABEL } = await import("../src/lib/format.ts");
   const known = flagTags(["amount_spouse_cap"]);
   assert.ok(known.includes("spouse cap"));
+
+  /* R10 defect #11. Fail-visible SURVIVES — an unknown flag still warns — but
+     the warning is plain English and the machine name is provenance, not UI
+     text. Both halves are asserted: a version that dropped the warning and a
+     version that printed the slug would each be wrong. */
   const unknown = flagTags(["a_flag_from_the_future"]);
-  assert.ok(unknown.includes("a_flag_from_the_future"), "unknown flags never silently vanish");
-  assert.ok(unknown.includes("flag-raw"));
-  assert.ok(unknown.includes("dashed"));
+  assert.ok(unknown.includes(UNKNOWN_FLAG_LABEL), "an unknown flag still warns, visibly");
+  assert.ok(unknown.includes("dashed"), "and still carries the unparsed/unknown styling");
+  assert.ok(unknown.includes("a_flag_from_the_future"), "the raw token survives, for provenance");
+  assert.ok(unknown.includes("flag-raw"), "and is in the provenance span");
+  const visible = unknown.replace(/<span class="visually-hidden[^"]*">.*?<\/span>/g, "");
+  assert.ok(
+    !visible.includes("a_flag_from_the_future"),
+    "no raw flag slug reaches the default view — R10's whole point",
+  );
+
+  /* one warning per row, not one per unknown slug */
+  const two = flagTags(["one_from_the_future", "another_from_the_future"]);
+  assert.equal(
+    two.split(UNKNOWN_FLAG_LABEL).length - 1,
+    1,
+    "two unknown flags produce ONE generic warning, not two identical ones",
+  );
+  assert.ok(two.includes("one_from_the_future") && two.includes("another_from_the_future"));
+
   const inst = flagTags(["shares_unit_mismatch", "value_undisclosed_one_side"]);
   assert.ok(inst.includes("unit mismatch"));
   assert.ok(inst.includes("value undisclosed one side"));
+});
+
+test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row", async () => {
+  const { universalFlags, universalFlagNote, flagTags, UNIVERSAL_FLAG_MIN_ROWS } = await import(
+    "../src/lib/format.ts"
+  );
+  const every = Array.from({ length: 12 }, () => ["missing_ticker"]);
+  assert.deepEqual(universalFlags(every), ["missing_ticker"], "100% hoists");
+
+  /* 11 of 12 is NOT hoisted, and that is deliberate: the row that DIFFERS is
+     the informative one, and a note reading "every row" would be false. */
+  const allButOne = [...Array.from({ length: 11 }, () => ["missing_ticker"]), []];
+  assert.deepEqual(universalFlags(allButOne), [], "92% keeps its per-row badges");
+
+  /* a table too small to have a "universal" worth hoisting */
+  const tiny = Array.from({ length: UNIVERSAL_FLAG_MIN_ROWS - 1 }, () => ["missing_ticker"]);
+  assert.deepEqual(universalFlags(tiny), [], "a short table states its flags per row");
+
+  const note = universalFlagNote(["missing_ticker"]);
+  assert.ok(note.includes("Every row below carries"), "the note says what it means");
+  assert.ok(note.includes("no ticker"), "in the registry's words, not the slug");
+  assert.ok(!note.includes("missing_ticker"), "and never the raw slug");
+  assert.equal(universalFlagNote([]), "", "no hoisted flags, no note");
+
+  /* the suppression half: the hoisted flag leaves the row, others stay */
+  const row = flagTags(["missing_ticker", "amount_spouse_cap"], undefined, {
+    stated: ["missing_ticker"],
+  });
+  assert.ok(!row.includes("no ticker"), "the hoisted flag is not repeated on the row");
+  assert.ok(row.includes("spouse cap"), "un-hoisted flags are untouched");
 });
 
 test("terminusRow: names its author — the source or Public Filings, never a bare more", async () => {

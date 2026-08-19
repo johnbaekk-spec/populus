@@ -22,6 +22,8 @@ import {
   rangeBand,
   dualDate,
   flagTags,
+  universalFlags,
+  universalFlagNote,
   srcLink,
   srcLinkDerived,
   terminusRow,
@@ -231,7 +233,7 @@ export interface EntityTableOpts {
   ctx: RenderCtx;
 }
 
-function txnCellsMember(r: TxnRow, ctx: RenderCtx): string {
+function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = []): string {
   const side = sideLabel(r.side, r.flags);
   const owner = ownerNote(r);
   const ownerLong = ownerNoteLong(r);
@@ -249,12 +251,12 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx): string {
     }</td>` +
     `<td class="c-traded">${dualDate(r)}</td>` +
     `<td class="c-amount${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
-    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r)}</td>` +
+    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
     `<td class="c-src">${srcLink(r.doc)}</td>`
   );
 }
 
-function txnCellsTicker(r: TxnRow, ctx: RenderCtx): string {
+function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = []): string {
   const side = sideLabel(r.side, r.flags);
   const owner = ownerNote(r);
   const ownerLong = ownerNoteLong(r);
@@ -274,14 +276,19 @@ function txnCellsTicker(r: TxnRow, ctx: RenderCtx): string {
     }</td>` +
     `<td class="c-traded">${dualDate(r)}</td>` +
     `<td class="c-amount${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
-    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r)}</td>` +
+    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
     `<td class="c-src">${srcLink(r.doc)}</td>`
   );
 }
 
-export function entityTxnRowsHtml(rows: TxnRow[], kind: "member" | "ticker", ctx: RenderCtx): string {
+export function entityTxnRowsHtml(
+  rows: TxnRow[],
+  kind: "member" | "ticker",
+  ctx: RenderCtx,
+  stated: readonly string[] = [],
+): string {
   const cells = kind === "member" ? txnCellsMember : txnCellsTicker;
-  return rows.map((r) => `<tr>${cells(r, ctx)}</tr>`).join("\n");
+  return rows.map((r) => `<tr>${cells(r, ctx, stated)}</tr>`).join("\n");
 }
 
 export function entityTableCountText(page: number, shown: number, total: number): string {
@@ -300,16 +307,23 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
   const merged = mergeFeed(txns, []);
   const pageRows = pageSlice(merged, opts.page).filter((i): i is TxnRow => i.kind === "txn");
   const pages = pageCountFor(merged);
+  /* R10 defect #12. Over EVERY row the table can page through, not this page —
+     the client re-renders rows on paging, and a per-page set would let page 2
+     contradict the note page 1 left above it. The set travels to the client in
+     `data-stated-flags` so both sides suppress identically. */
+  const stated = universalFlags(txns.map((t) => t.flags));
   const heads =
     opts.kind === "member"
       ? ["Filed ▾", "Ticker", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"]
       : ["Filed ▾", "Member", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"];
   const count = entityTableCountText(opts.page, pageRows.length, txns.length);
   return (
-    `<div class="table-scroll"><table class="etable" data-entity-table data-kind="${opts.kind}">` +
+    universalFlagNote(stated) +
+    `<div class="table-scroll"><table class="etable" data-entity-table data-kind="${opts.kind}"` +
+    ` data-stated-flags="${esc(stated.join(","))}">` +
     `<caption class="visually-hidden">${esc(opts.caption)}</caption>` +
     `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
-    `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx)}</tbody>` +
+    `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx, stated)}</tbody>` +
     `</table></div>` +
     `<div class="table-foot">` +
     `<div class="view-note">v_default_transactions — active filings minus superseded amendment originals · <a href="/methodology/#defaults">what's excluded ↗</a></div>` +

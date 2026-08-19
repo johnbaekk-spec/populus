@@ -123,16 +123,26 @@ function splitAtRules(source: string): { blocks: AtRuleBlock[]; topLevel: string
                             is squarely inside the fold and was excluded.
 
     The property that was always meant: a block constrains `[min, max]`, and it
-    belongs in this sweep if that interval overlaps `[0, 720]` at all — i.e. it
-    has a max-width, and any min-width floor is not above the fold. */
+    belongs in this sweep if that interval overlaps `[0, 720]` at all.
+
+    Round 2's F1 killed a THIRD wrong version — requiring a max-width at all.
+    `@media (min-width: 600px)` has no ceiling, so it governs 600–720px and is
+    squarely inside the fold, yet it was excluded for lacking a max. An absent
+    maximum is positive infinity, not zero.
+
+    A block with NO width condition is excluded on purpose rather than by
+    accident: `@media print` legitimately hides interactive chrome with
+    `display: none !important`, and `prefers-color-scheme` says nothing about
+    width. Neither constrains the viewport, so neither is a fold breakpoint. */
 function narrowMediaBlocks(source: string): { condition: string; body: string }[] {
   return splitAtRules(source)
     .blocks.filter((b) => {
       if (b.name !== "media") return false;
-      const widthMatch = b.condition.match(/max-width:\s*(\d+(?:\.\d+)?)px/);
-      if (widthMatch == null) return false;
+      const maxMatch = b.condition.match(/max-width:\s*(\d+(?:\.\d+)?)px/);
       const minMatch = b.condition.match(/min-width:\s*(\d+(?:\.\d+)?)px/);
-      return minMatch == null || Number(minMatch[1]) <= FOLD_PX;
+      if (maxMatch == null && minMatch == null) return false; // not a width query
+      const lo = minMatch == null ? 0 : Number(minMatch[1]);
+      return lo <= FOLD_PX; // hi is >= lo, so the interval reaches the fold iff lo does
     })
     .map((b) => ({ condition: b.condition, body: b.body }));
 }
@@ -156,23 +166,36 @@ test("the fold sweep's SCOPE covers every breakpoint that governs the fold", () 
   assert.equal(above.length, 0, "a block floored above the fold does not govern it");
 
   const unbounded = narrowMediaBlocks("@media (min-width: 900px) { .a { color: red; } }");
-  assert.equal(unbounded.length, 0, "a min-width-only block never applies at the fold");
+  assert.equal(unbounded.length, 0, "a min-width-only block ABOVE the fold does not govern it");
+
+  /* Round 2's F1: an absent maximum is infinity, not zero. `min-width: 600px`
+     has no ceiling and therefore governs 600–720px, inside the fold. */
+  const openTop = narrowMediaBlocks("@media (min-width: 600px) { .a { color: red; } }");
+  assert.equal(openTop.length, 1, "a min-width-only block INSIDE the fold must be swept");
+
+  /* Not width queries at all, and excluded deliberately: print legitimately
+     hides interactive chrome. */
+  assert.equal(narrowMediaBlocks("@media print { .a { display: none; } }").length, 0);
+  assert.equal(
+    narrowMediaBlocks("@media (prefers-color-scheme: dark) { .a { color: red; } }").length,
+    0,
+  );
 });
 
 test("the fold sweep CATCHES a prohibited rule at a narrower breakpoint", () => {
   /* The mutation codex round 1 asked for: the prohibition must fire below 720px,
      not merely at it. Run against synthetic CSS so it proves the sweep's reach
      without planting a defect in the shipped stylesheet. */
-  const planted = "@media (max-width: 600px) { .cell-src { display: none; } }";
-  const rules = narrowMediaBlocks(planted).flatMap((b) => rulesOf(b.body));
-  const offending = rules.filter((r) =>
-    PROHIBITED.some((bad) => bad.test(r.decls)) && /cell-src/.test(r.selector),
-  );
-  assert.equal(
-    offending.length,
-    1,
-    "a display:none on an honesty selector at 600px must be caught by the sweep",
-  );
+  for (const [label, planted] of [
+    ["a narrower max-width", "@media (max-width: 600px) { .cell-src { display: none; } }"],
+    ["a min-width-only query inside the fold", "@media (min-width: 600px) { .cell-src { display: none; } }"],
+  ] as const) {
+    const rules = narrowMediaBlocks(planted).flatMap((b) => rulesOf(b.body));
+    const offending = rules.filter(
+      (r) => PROHIBITED.some((bad) => bad.test(r.decls)) && /cell-src/.test(r.selector),
+    );
+    assert.equal(offending.length, 1, `display:none on an honesty selector via ${label}`);
+  }
 });
 
 function rulesOf(body: string): { selector: string; decls: string }[] {
