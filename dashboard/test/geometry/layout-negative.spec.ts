@@ -19,6 +19,7 @@ import {
   FORCE_TABLE_OVERFLOW,
   WORST_CASE_MEMBER,
   intrinsicWidth,
+  plantMemberName,
   type Box,
 } from "./geometry.ts";
 
@@ -205,10 +206,11 @@ test("reintroducing the single-line feed grid is DETECTED as a truncated member 
   await page.goto("/congress/");
   const cell = page.locator(".feed-row .cell-member").first();
 
-  await cell.evaluate((el, name) => {
-    const nameEl = el.querySelector(".member-name") ?? el.firstElementChild ?? el;
-    nameEl.textContent = name;
-  }, WORST_CASE_MEMBER);
+  /* the SAME planting helper the suite uses, asserted to have landed — a
+     control that plants differently is not protecting the assertion it claims */
+  await cell.evaluate(plantMemberName, WORST_CASE_MEMBER);
+  const visible = (await cell.locator("a").first().textContent())?.trim();
+  expect(visible, "the fixture must reach the VISIBLE member link").toBe(WORST_CASE_MEMBER);
 
   const need = await cell.evaluate(intrinsicWidth);
   const baseline = await cell.evaluate((el) => el.clientWidth);

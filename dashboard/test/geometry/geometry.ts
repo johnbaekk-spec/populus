@@ -119,3 +119,29 @@ export function intrinsicWidth(el: Element): number {
   document.body.removeChild(host);
   return w;
 }
+
+/** Plant a member name into a `.cell-member` and report what the cell now shows.
+
+    The visible identity is the `<a>` (`format.ts:661`); the cell ALSO opens with
+    a `visually-hidden` "Member " label. Round 1's F1: planting into
+    `firstElementChild` hit that hidden label, so the promised 20-character
+    fixture was never rendered and the assertion silently measured whatever name
+    the corpus happened to sort first.
+
+    Returning the planted element's own text is NOT enough to prove that was
+    fixed — verified by mutation: restoring `firstElementChild` still returns the
+    fixture, so such a check passes while planting into the wrong element. The
+    caller must re-read the VISIBLE anchor independently of this helper. The
+    hidden label is returned too, so the caller can assert it survived. */
+export function plantMemberName(
+  cell: Element,
+  name: string,
+): { linkText: string; hiddenLabel: string } {
+  const link = cell.querySelector("a");
+  if (link) link.textContent = name;
+  const hidden = cell.querySelector(".visually-hidden");
+  return {
+    linkText: (link?.textContent ?? "").trim(),
+    hiddenLabel: (hidden?.textContent ?? "").trim(),
+  };
+}

@@ -20,6 +20,7 @@ import {
   FORCE_TABLE_OVERFLOW,
   WORST_CASE_MEMBER,
   intrinsicWidth,
+  plantMemberName,
   type Box,
 } from "./geometry.ts";
 
@@ -264,11 +265,29 @@ for (const width of WIDTHS) {
       /* Serialized the same way `stripRowTrailing` is — Playwright ships the
          function itself into the page. No `new Function`: R36 locks a CSP that
          forbids exactly that, and a gate that needs `unsafe-eval` to run would
-         have to be unpicked the moment the policy lands. */
-      await cell.evaluate((el, name) => {
-        const nameEl = el.querySelector(".member-name") ?? el.firstElementChild ?? el;
-        nameEl.textContent = name;
-      }, WORST_CASE_MEMBER);
+         have to be unpicked the moment the policy lands.
+
+         F1 (codex round 1): the plant is ASSERTED to have landed. It previously
+         targeted `firstElementChild`, which is the `visually-hidden` "Member "
+         label, so the fixture never reached the page and this measured whatever
+         name today's corpus sorted first. A planting helper that is not checked
+         is indistinguishable from no planting at all. */
+      await cell.evaluate(plantMemberName, WORST_CASE_MEMBER);
+      /* Re-read the VISIBLE anchor, independently of the helper's own return
+         value. Asserting on what the planter reports is circular: mutating the
+         planter back to `firstElementChild` still reports the fixture, so that
+         check stayed green while planting into the hidden label. Verified by
+         mutation — this form goes red there, because the anchor still holds the
+         corpus name. */
+      const visible = (await cell.locator("a").first().textContent())?.trim();
+      expect(
+        visible,
+        "the 20-character fixture must reach the VISIBLE member link, not the hidden label",
+      ).toBe(WORST_CASE_MEMBER);
+      expect(
+        (await cell.evaluate(plantMemberName, WORST_CASE_MEMBER)).hiddenLabel,
+        "planting must not clobber the visually-hidden 'Member' label",
+      ).toBe("Member");
       const fit = {
         need: await cell.evaluate(intrinsicWidth),
         have: await cell.evaluate((el) => el.clientWidth),
