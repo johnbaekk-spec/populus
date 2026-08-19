@@ -17,6 +17,8 @@ import {
   PACKED_TRAILING_PX,
   CONGRESS_TILE_LABELS,
   FORCE_TABLE_OVERFLOW,
+  WORST_CASE_MEMBER,
+  intrinsicWidth,
   type Box,
 } from "./geometry.ts";
 
@@ -189,4 +191,44 @@ test("a stat tile hidden by CSS is DETECTED as a missing tile", async ({ page })
     "the geometry gate did NOT notice a stat tile hidden by CSS — a strip can now drop a " +
       "coverage figure and still report full data parity",
   ).toBe(CONGRESS_TILE_LABELS.length - 1);
+});
+
+test("reintroducing the single-line feed grid is DETECTED as a truncated member name", async ({
+  page,
+}) => {
+  /* R7's control. The fix is a LAYOUT change — the row folds to two lines from
+     1080px down — so the thing that must fail on reintroduction is the
+     single-line grid it replaced, not a width constant. Measured before the
+     fix: nine columns needing 1,033px in 854px of space, with the member track
+     (`1fr`, whatever the 786px of fixed columns left over) collapsing to 68px. */
+  await page.setViewportSize({ width: 964, height: 900 });
+  await page.goto("/congress/");
+  const cell = page.locator(".feed-row .cell-member").first();
+
+  await cell.evaluate((el, name) => {
+    const nameEl = el.querySelector(".member-name") ?? el.firstElementChild ?? el;
+    nameEl.textContent = name;
+  }, WORST_CASE_MEMBER);
+
+  const need = await cell.evaluate(intrinsicWidth);
+  const baseline = await cell.evaluate((el) => el.clientWidth);
+  expect(
+    baseline,
+    `baseline must already fit a 20-character name (needs ${need}px), or this control proves nothing`,
+  ).toBeGreaterThanOrEqual(need);
+
+  /* exactly the pre-fix layout: the two line wrappers dissolve and the row
+     becomes the nine-track single-line grid again */
+  await page.addStyleTag({
+    content:
+      ".row-line1,.row-line2{display:contents}" +
+      ".feed-row{display:grid;grid-template-columns:26px 92px 1fr 66px 118px 118px 100px 210px 56px}",
+  });
+
+  const broken = await cell.evaluate((el) => el.clientWidth);
+  expect(
+    broken,
+    `the geometry gate did NOT notice the member column collapsing back to ${broken}px ` +
+      `against a ${need}px name — R7's defect could return unseen`,
+  ).toBeLessThan(need);
 });

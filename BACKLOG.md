@@ -464,6 +464,34 @@ work, and the live site ships with all 13 today.
       dev build. It is a configuration conflict, not a leak — verified 2026-08-18
       that the pages present are the real institutional tree, not fixtures.
 
+## 9. Carried open from `feat/m1-legibility` (R7, 2026-08-18)
+
+- [ ] **B30 — at 360px the member name is squeezed to 8px by the ticker cell.**
+      Found while measuring R7, PRE-EXISTING (measured before the R7 change and
+      unaffected by it), and deliberately NOT folded into R7 — it is a different
+      mechanism from the defect R7 names.
+
+      R7's defect was a starved `1fr` GRID TRACK: the nine-column single-line
+      grid spent 786px on fixed tracks and left the member column whatever
+      remained (68px at 964px). That is fixed — the row folds to two lines from
+      1080px down, and the member cell now measures 352px at 720px, 549px at
+      964px and 665px at 1080px against the ~137px a 20-character name needs.
+
+      B30 is COMPETITION BETWEEN TWO FLEX CELLS inside the folded line 1. At
+      360px `.row-line1` is 294px wide; `.cell-ticker` is `flex-shrink: 0` and
+      takes **194px** for a long fund name, `.cell-side` takes 53px, and
+      `.cell-member` (`flex: 1 1 auto`) is left **8px**. With `overflow: hidden`
+      a name reduced to 8px is deleted in practice — the reader cannot see WHO
+      filed, which is the identity the whole row hangs on.
+
+      Not fixed here because the fix is a judgement call this branch has no
+      mandate for: letting the ticker shrink truncates 40-character fund names
+      (R5's boundary case), and moving the ticker to line 2 changes an approved
+      mobile grammar. R7's Verification Matrix row specifies the member name **at
+      964px**, which is met; the geometry suite asserts it from 964px up and
+      states this entry as the reason it stops there, rather than skipping
+      quietly.
+
 ## Notes for whoever picks this up
 
 - **G-guardrails govern**: G1 no paid/vendor data · G3 never silently drop ·

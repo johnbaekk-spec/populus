@@ -18,6 +18,8 @@ import {
   PACKED_TRAILING_PX,
   CONGRESS_TILE_LABELS,
   FORCE_TABLE_OVERFLOW,
+  WORST_CASE_MEMBER,
+  intrinsicWidth,
   type Box,
 } from "./geometry.ts";
 
@@ -245,6 +247,80 @@ for (const width of WIDTHS) {
           `tile ${i} ("${rendered[i]!.label}") renders no value at ${width}px`,
         ).not.toBe("");
       }
+    });
+
+    test("R7: an ordinary member name renders in full, and no stat tile is clipped", async ({ page }) => {
+      await page.goto("/congress/");
+
+      /* R7's matrix row names a 20-CHARACTER member name at 964px. Planted, not
+         sampled for: whether today's corpus happens to contain a 20-character
+         name is not something the gate should depend on, and round 2's F5 was
+         exactly this mistake made with a "40-character" string that was 37. */
+      expect(WORST_CASE_MEMBER, "R7's matrix row names a 20-character name").toHaveLength(20);
+
+      const cell = page.locator(".feed-row .cell-member").first();
+      expect(await cell.count(), "the feed renders a member cell").toBeGreaterThan(0);
+
+      /* Serialized the same way `stripRowTrailing` is — Playwright ships the
+         function itself into the page. No `new Function`: R36 locks a CSP that
+         forbids exactly that, and a gate that needs `unsafe-eval` to run would
+         have to be unpicked the moment the policy lands. */
+      await cell.evaluate((el, name) => {
+        const nameEl = el.querySelector(".member-name") ?? el.firstElementChild ?? el;
+        nameEl.textContent = name;
+      }, WORST_CASE_MEMBER);
+      const fit = {
+        need: await cell.evaluate(intrinsicWidth),
+        have: await cell.evaluate((el) => el.clientWidth),
+      };
+
+      /* `scrollWidth > clientWidth` cannot answer this: the cell clips with
+         `text-overflow: ellipsis`, so it reports scrollWidth === clientWidth
+         whether it has room to spare or is cutting a name in half. The clone is
+         measured at `width: max-content` instead. */
+      /* The matrix row's own boundary: "20-char member name not truncated **at
+         964px**; no clipped stat tile **from 360px**". Two different widths,
+         deliberately, so the name half is asserted from 964px up and the tile
+         half at every width — that is the spec, not a convenience.
+
+         It is NOT a quiet skip, and here is the thing it would otherwise hide:
+         at 360px the member cell measures **8px**, because `.cell-ticker` is
+         `flex-shrink: 0` and a 194px fund name eats the line, leaving the
+         member's `flex: 1 1 auto` nothing to take. A name reduced to 8px is
+         deleted in practice. That is REAL, it is PRE-EXISTING (measured before
+         this change and unaffected by it — the fold's flex rules are carried
+         over unaltered), and it is competition between two cells rather than
+         the starved `1fr` track R7 names. Filed as B30 rather than folded into
+         R7 silently or "fixed" by loosening this assertion. */
+      if (width >= 964) {
+        expect(
+          fit.need,
+          `a 20-character member name needs ${fit.need}px and the cell gives it ` +
+            `${fit.have}px at ${width}px — the name is truncated, which is the ` +
+            `defect R7 exists for`,
+        ).toBeLessThanOrEqual(fit.have);
+      } else {
+        /* Below the matrix row's width this still must not silently pass as
+           coverage: assert the measurement HAPPENED and record it. */
+        expect(fit.have, `the member cell has no measurable box at ${width}px`).toBeGreaterThan(0);
+      }
+
+      /* The other half of the row: no stat tile is clipped from 360px up. The
+         value and the label are checked separately — a tile whose LABEL clips
+         still loses the thing that says what the number means. */
+      const clipped = await page.locator(".tiles").first().evaluate((strip) =>
+        [...strip.querySelectorAll(".tile")]
+          .flatMap((t) => [
+            { part: "value", el: t.querySelector(".tile-value") },
+            { part: "label", el: t.querySelector(".tile-label") },
+          ])
+          .filter((x) => x.el && x.el.scrollWidth > x.el.clientWidth + 1)
+          .map((x) => `${x.part}:"${(x.el!.textContent ?? "").trim().slice(0, 24)}"`),
+      );
+      expect(
+        clipped,
+        `${clipped.length} stat tile part(s) are clipped at ${width}px: ${clipped.join(", ")}`,
+      ).toEqual([]);
     });
 
     test("R6: a scrollable table announces itself and pins its identity column", async ({ page }) => {

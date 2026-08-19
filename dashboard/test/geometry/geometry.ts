@@ -93,3 +93,29 @@ export const CONGRESS_TILE_LABELS: RegExp[] = [
 export const FORCE_TABLE_OVERFLOW =
   ".table-scroll .etable td:not(:first-child)," +
   ".table-scroll .etable th:not(:first-child){min-width:260px}";
+
+/** R7's matrix row names a 20-character member name. Exactly 20, asserted at
+    use — round 2's F5 was a "40-character" fixture that was 37. */
+export const WORST_CASE_MEMBER = "Alexandra Fitzgerald";
+
+/** True intrinsic content width of an element, in px.
+
+    `scrollWidth > clientWidth` only detects overflow that the box is ALREADY
+    showing; a cell with `overflow: hidden` and `text-overflow: ellipsis`
+    reports `scrollWidth === clientWidth` whether it has room to spare or is
+    clipping by a hair, so it cannot answer "is this truncated". Measuring a
+    detached clone at `width: max-content` can. Runs in the page. */
+export function intrinsicWidth(el: Element): number {
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;left:-9999px;top:0;visibility:hidden;width:auto;";
+  document.body.appendChild(host);
+  const cs = getComputedStyle(el);
+  const clone = el.cloneNode(true) as HTMLElement;
+  clone.style.cssText =
+    `width:max-content;max-width:none;overflow:visible;white-space:nowrap;` +
+    `display:block;font:${cs.font};padding:${cs.padding};`;
+  host.appendChild(clone);
+  const w = Math.ceil(clone.getBoundingClientRect().width);
+  document.body.removeChild(host);
+  return w;
+}

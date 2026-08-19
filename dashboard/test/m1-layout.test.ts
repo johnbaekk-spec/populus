@@ -123,7 +123,17 @@ test("R5: a row renders its traded date exactly once", () => {
     /\.mobile-dates \{\s*display:\s*none;\s*\}/,
     ".mobile-dates must be hidden outside the fold or the date renders twice",
   );
-  const fold = css.slice(css.indexOf("@media (max-width: 720px)"));
+  /* R7 moved the row-fold STRUCTURE (including this date collapse) to the
+     ≤1080px block, because the single-line grid could not fit its own columns
+     at laptop widths. The rules still apply at 720px — 1080 ≥ 720 — but they no
+     longer sit after the ≤720px marker, so slicing from that marker silently
+     stopped seeing them. Slice from the FIRST breakpoint that governs the fold
+     instead of assuming which one it is. */
+  const foldStarts = ["@media (max-width: 1080px)", "@media (max-width: 720px)"]
+    .map((marker) => css.indexOf(marker))
+    .filter((i) => i >= 0);
+  assert.ok(foldStarts.length > 0, "the stylesheet defines a fold breakpoint");
+  const fold = css.slice(Math.min(...foldStarts));
   assert.match(
     fold,
     /\.feed-row \.cell-traded \.traded-date/,

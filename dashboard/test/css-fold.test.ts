@@ -109,13 +109,25 @@ function splitAtRules(source: string): { blocks: AtRuleBlock[]; topLevel: string
   return { blocks, topLevel };
 }
 
-/** Every `@media` block whose condition includes a max-width ≤ 720px. */
+/** Every `@media` block that APPLIES at fold widths (720px and below).
+
+    This used to select blocks with `max-width <= 720`, which is a different and
+    weaker thing: a `max-width: 1080px` block also applies at 720px, so once R7
+    moved the row-fold structure there, rules governing the fold sat outside
+    everything this file checks. The prohibition below would have stopped seeing
+    a `display: none` on honesty-bearing content at exactly the breakpoint the
+    fold rule exists to police.
+
+    A block `max-width: N` applies at 720px iff `N >= 720`. */
 function narrowMediaBlocks(source: string): { condition: string; body: string }[] {
   return splitAtRules(source)
     .blocks.filter((b) => {
       if (b.name !== "media") return false;
       const widthMatch = b.condition.match(/max-width:\s*(\d+(?:\.\d+)?)px/);
-      return widthMatch != null && Number(widthMatch[1]) <= 720;
+      if (widthMatch == null || Number(widthMatch[1]) < 720) return false;
+      /* A min-width floor above the fold means it does NOT apply at 720px. */
+      const minMatch = b.condition.match(/min-width:\s*(\d+(?:\.\d+)?)px/);
+      return minMatch == null || Number(minMatch[1]) <= 720;
     })
     .map((b) => ({ condition: b.condition, body: b.body }));
 }

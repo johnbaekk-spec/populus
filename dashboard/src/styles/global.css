@@ -2063,6 +2063,124 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   }
 }
 
+/* ---------- R7: the feed row folds to two lines from 1080px down ----------
+
+   MEASURED, not guessed. At a 964px viewport the feed has 854px of usable width
+   and its nine columns need 1,033px of content:
+
+     member 193 · ticker 194 · traded 148 · range 179 · side 91 · amount 94
+     · filed 80 · src 32 · star 22
+
+   The single-line grid gives the member column `1fr`, which is whatever the
+   786px of fixed tracks leave over — 68px at 964px and 184px at 1080px. So an
+   ordinary member name was truncated by 125px, which is defect #4, and the
+   ticker column was truncated by 128px at the same time. Total slack across
+   every roomy column is 104px against a 179px shortfall: the row is
+   over-subscribed, so NO reallocation of widths can fix it. That is why this is
+   a layout change and not a wider `1fr`.
+
+   The fix reuses the two-line layout the ≤720px fold already defines rather
+   than inventing a second one, so there is ONE structural definition of a
+   folded row. Only the STRUCTURE lives here; the ≤720px block below keeps what
+   is genuinely about touch and small screens — 44px targets, the smaller type
+   ramp, the 16px gutters — because shrinking type on a laptop would trade one
+   legibility defect for another (defect #6 is imbalance, not density).
+
+   Nothing is removed at this breakpoint. Both dates stay in the accessibility
+   tree, flags, the owner/partial qualifier and the provenance link all stay on
+   screen; the column headers go, exactly as they already do on mobile. */
+@media (max-width: 1080px) {
+  .feed-head {
+    display: none;
+  }
+  .feed-row {
+    display: block;
+    height: auto;
+    position: relative;
+  }
+  /* Both dates stay in the accessibility tree — visually-hidden, never
+     `display: none`, which would delete them for screen readers. The visible
+     pair is recomposed by `.mobile-dates` below. */
+  .feed-row .cell-filed,
+  .feed-row .cell-traded .traded-date {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .feed-row .cell-star {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+  }
+  .row-line1 {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    padding-right: 40px; /* clear of the star */
+  }
+  .feed-row .cell-member {
+    flex: 1 1 auto;
+  }
+  .feed-row .cell-member .aff {
+    white-space: nowrap;
+  }
+  .feed-row .cell-ticker,
+  .feed-row .cell-side {
+    flex-shrink: 0;
+  }
+  .row-line2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 7px;
+    flex-wrap: wrap;
+  }
+  /* grammar order: band · amount · dates · late chip, then flags and
+     provenance wrap onto a further line rather than disappearing */
+  .row-line2 .cell-range { order: 1; flex: 0 0 auto; }
+  .row-line2 .cell-amount { order: 2; }
+  .row-line2 .cell-traded { order: 3; margin-left: auto; white-space: nowrap; }
+  .feed-row .cell-src { order: 4; flex: 0 0 auto; }
+  .feed-row .cell-range {
+    padding-left: 0;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .cell-amount {
+    text-align: left;
+    white-space: nowrap;
+  }
+  .feed-row .mobile-dates {
+    display: inline;
+    font: 400 10px var(--sans);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink3);
+  }
+  .feed-row .flag {
+    max-width: 100%;
+  }
+  .feed-row.paper {
+    display: block;
+  }
+  .feed-row.paper .cell-src {
+    float: right;
+  }
+  .paper-main {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .paper-note {
+    white-space: normal;
+  }
+}
+
 @media (max-width: 720px) {
   .shell {
     padding-left: 16px;
@@ -2263,46 +2381,12 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .feed-grid-cols {
     padding: 0 16px;
   }
-  .feed-head {
-    display: none;
-  }
+  /* structure (display:block, the two lines, the star, the date collapse) is
+     owned by the ≤1080px block above — only touch sizing and the small-screen
+     type ramp remain here. */
   .feed-row {
-    display: block;
-    height: auto;
     padding: 12px 16px;
     min-height: 44px;
-  }
-  /* THE FOLD RULE: nothing in the honesty layer may be removed here, only
-     re-laid-out. The dual dates collapse into one visual "traded → filed"
-     string, but both dates stay in the accessibility tree (visually-hidden,
-     NOT display:none, which would delete them for screen readers). Flags,
-     the owner/partial qualifier and the provenance link all stay on screen. */
-  .feed-row .cell-filed,
-  .feed-row .cell-traded .traded-date {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-    border: 0;
-  }
-  /* the watchlist star moves out of the grid gutter to the row's top-right */
-  .feed-row {
-    position: relative;
-  }
-  .feed-row .cell-star {
-    position: absolute;
-    top: 4px;
-    right: 8px;
-  }
-  .row-line1 {
-    padding-right: 40px; /* clear of the star */
-  }
-  .feed-row .cell-member .aff {
-    white-space: nowrap;
   }
   .feed-row .cell-star .star-btn {
     min-width: 44px;
@@ -2310,40 +2394,12 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     font-size: 16px;
     text-align: center;
   }
-  .row-line1 {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 8px;
-  }
   .feed-row .cell-member {
     font-size: 13.5px;
-    flex: 1 1 auto;
   }
-  .feed-row .cell-ticker {
-    font-size: 12px;
-    flex-shrink: 0;
-  }
+  .feed-row .cell-ticker,
   .feed-row .cell-side {
     font-size: 12px;
-    flex-shrink: 0;
-  }
-  .row-line2 {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 7px;
-    flex-wrap: wrap;
-  }
-  /* grammar order per Mobile.dc.html: band · amount · dates · late chip,
-     then flags + provenance wrap onto a third line rather than disappearing */
-  .row-line2 .cell-range { order: 1; flex: 0 0 auto; }
-  .row-line2 .cell-amount { order: 2; }
-  .row-line2 .cell-traded { order: 3; margin-left: auto; white-space: nowrap; }
-  .feed-row .cell-range {
-    padding-left: 0;
-    flex-wrap: wrap;
-    overflow: visible;
   }
   /* Line-2 width budget at 375px: band 64 + amount ~80 + dates ~92 +
      provenance 44 + gaps ≈ 300 + 32 padding — so the provenance link and the
@@ -2355,16 +2411,6 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   }
   .cell-amount {
     font-size: 11.5px;
-    text-align: left;
-    white-space: nowrap;
-  }
-  /* F-21: scoped to .feed-row — the etable dual-date cell keeps its single
-     traded-date; the unscoped form rendered the trade date twice. */
-  .feed-row .mobile-dates {
-    display: inline;
-    font: 400 10px var(--sans);
-    font-variant-numeric: tabular-nums;
-    color: var(--ink3);
   }
   .feed-row .lag,
   .feed-row .lag-late {
@@ -2375,13 +2421,8 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   }
   .feed-row .flag {
     font-size: 9px;
-    max-width: 100%;
   }
   /* provenance stays reachable: the glyph alone, with its own 44px target */
-  .feed-row .cell-src {
-    order: 4;
-    flex: 0 0 auto;
-  }
   .feed-row .cell-src a {
     display: inline-flex;
     align-items: center;
@@ -2391,20 +2432,6 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     margin: -14px 0; /* 44px target without inflating the row */
     border-bottom: none;
     font-size: 10.5px;
-  }
-
-  .feed-row.paper {
-    display: block;
-  }
-  .feed-row.paper .cell-src {
-    float: right;
-  }
-  .paper-main {
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-  .paper-note {
-    white-space: normal;
   }
 
   .feed-empty {
