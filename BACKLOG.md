@@ -272,7 +272,9 @@ gate runs left behind, recorded so nothing here is discovered later as a surpris
   2. The projection base misses whole file classes (9,664 measured vs a 12,545
      base) — same family as (1), same decision.
   3. **The search index is 451,932 B against its declared 128 KiB budget** — a
-     3.4× overrun that ships to every visitor on every page. This one is a real
+     3.4× overrun that ships to every visitor on every page. **Re-measured
+     2026-08-18: 506,945 B, now a 3.9× overrun** — the corpus restoration and 444
+     members made it worse, not better. This one is a real
      user-facing weight problem, not a bookkeeping drift.
 
 - **B19 — RESOLVED 2026-08-14 (UX-overhaul R29): the M2-11 QA-bundle trio
@@ -345,6 +347,113 @@ what that exercise left behind.
   deletes a `pytestmark` skipif, CI goes green on a suite that never ran. A cheap
   guard would be a test asserting both suites are collected on Darwin and skipped
   elsewhere; nothing enforces it today.
+
+## 8. Carried open from `feat/m1-geometry` (R35 harness + R9 stat strip, 2026-08-18)
+
+PR #45 ships the browser-geometry harness and the R9 stat-strip fix. External
+review ran to its 3-round cap (9 + 5 + 2 findings; 14 of 16 closed). These are
+the two it could not close plus the bookkeeping the rounds produced, recorded
+here because `.codex-review/` is git-ignored and would not survive the machine.
+
+**`test:post` now reaches 60 assertions, not 49.** It had been running on Node's
+~4 GB default heap and OOM'd inside `node:sqlite` at 193s, so
+`file-budget.test.ts` reported one opaque failure while asserting **nothing**. It
+now carries `--max-old-space-size=24576` (matching `build:bounded`) and passes 11
+of its 12 — including `R22 GATE (F7)`, which the 08-17 handoff had recorded as
+environment-broken. That gate is fine; it needs the build staged per handoff §8.
+Consequence: the post-build lane's machine floor is now the same 32 GiB the build
+already required.
+
+**The 13 remaining `test:post` failures, attributed.** Owner decision 2026-08-18:
+merge PR #45 and track these separately — none is new, none is caused by that
+work, and the live site ships with all 13 today.
+
+- 10 × `fixture-preview.test.ts` — **already covered by B18's preamble.**
+  Re-confirmed 2026-08-18: `make-inst-preview.py` resolves a dev build at
+  `…/.claude/worktrees/populus-data/releases/data-20260815.2/`, which does not
+  exist. Worktree artifact, not a defect.
+- 1 × search index — **B18.3.** Re-measured **506,945 B** against the 128 KiB
+  budget (was 451,932 B; the corpus restoration and 444 members made it worse).
+- 1 × `R19 GATE (margin)` — **B27**, below.
+- 1 × `Locked #19` leakage check — **B29**, below.
+
+- [ ] **B27 — `congress/data/feed.v1.json` is at 85% of the 25 MiB per-file cap,
+      and the cap is the hosting provider's, not ours.** Measured on build
+      `20260817.1`: 22,288,548 B — `txns` 21,854,530 B over 71,714 rows (~305
+      B/row), `paper` 433,083 B over 3,047 rows. Growth is ~2 MB/year against
+      3.9 MB of headroom: **roughly 18 months**, and an election year compresses
+      that. It is deployable and IS deployed today, which is why nothing looks
+      broken — Cloudflare will simply reject a future deploy outright.
+
+      **The design is settled and measured (owner, 2026-08-18): shard by year,
+      client fetches all shards.** ~13 shards of ~1.5 MB. The constraint is
+      PER-FILE, not total download, and the feed filters/searches/pages
+      CLIENT-SIDE over the whole corpus, so no scheme reduces what a filtering
+      visitor downloads. Three things this must get right, each of which fails
+      silently if missed:
+      1. **Concatenate NEWEST-YEAR-FIRST.** The load order (filed desc, txn_id
+         asc within a date) is the stable tie-break every other sort depends on.
+         Years do not overlap, so year-desc concatenation preserves the global
+         order exactly — and getting it wrong changes sort results rather than
+         raising anything.
+      2. **A partial shard set must FAIL VISIBLY**, never render a short feed. A
+         feed missing a year looks exactly like a quiet week — the B25 failure
+         mode again.
+      3. `/congress/data/feed.v1.json` stays an INDEX (metadata, `txn_cols`,
+         `paper_cols`, `paper`, `shards: [{year, path, rows}]`). Three strings
+         advertise it as "the full published data" / "the raw dataset"
+         (`congress/index.astro:186`, `watchlist/index.astro`, the load-failure
+         copy) and must change with the shape, or the page claims a completeness
+         the file no longer has. `feed-client.ts` and `watchlist-client.ts` both
+         fetch it; `classifyDataset` must learn the index shape and keep refusing
+         a stale cached body (the F3 version-mismatch path).
+
+      Owner decision 2026-08-18: **schedule after M1**, not before. A recent-window
+      default (3.9 MB first paint) was considered and deliberately NOT taken — it
+      narrows the default view, which this site may only do out loud.
+
+- [ ] **B28 — R6's scroll cue may be unreliable above the 720px fold, and the
+      geometry gate cannot currently prove otherwise.** Raised by external review
+      (round 3 F2) and left OPEN when the cap was reached.
+
+      R6's cue is a Lea-Verou "scrolling shadow" painted on `.table-scroll`'s
+      background, *behind* the table. Its visibility therefore depends on what
+      the table's own cells cover. Above 720px there is no `mask-image`
+      fallback — inside the fold there is, and that is what actually paints
+      at 360/720px.
+
+      Measured 2026-08-18 on `/institutional/filers/1067983/`, sampling a
+      right-edge strip below the 29px sticky `thead`, scrolled to mid-range:
+
+      | condition | 964px | 1440px |
+      |---|---|---|
+      | real corpus | scrollable, cue paints | **not scrollable** (1278/1278), cue paints |
+      | `.etable{min-width:4000px}` | scrollable, **cue paints NOTHING** | scrollable, cue paints |
+      | `.table-scroll{max-width:240px}` | scrollable, **cue paints NOTHING** | scrollable, **cue paints NOTHING** |
+
+      Two readings, and the measurements do not separate them: either the cue is
+      genuinely unreliable above the fold under heavy overflow — a defect in
+      merged code that predates `feat/m1-geometry` — or all three forcing
+      instruments are invalid because they change what covers the background.
+
+      **The gate today asserts** (all five widths): the container exists, the cue
+      is declared, the cue PAINTS (right-edge strip differs with and without it),
+      and the identity column is `position: sticky`. **It does not assert** that
+      the container is scrollable at 1440px, because with today's corpus it is
+      not. Deciding this means changing R6's cue mechanism or its contract.
+      Owner decision 2026-08-18: **investigate before further M1 work.** Do not
+      write a fourth forcing instrument unreviewed — "tuned until green" is the
+      failure this branch has already paid for twice.
+
+- [ ] **B29 — `production dist has NO institutional fixture routes (Locked #19)`
+      cannot pass in the configuration R35/R9 require.** The test asserts the DEV
+      build withholds the institutional module. Browser-geometry work must build
+      the PRODUCTION configuration (`POPULUS_INST_DB` set), where
+      `dist/institutional/filers` legitimately holds 1,500 pages. One tree cannot
+      satisfy both premises. Either the test learns the build mode it is looking
+      at and skips loudly in the other, or the geometry lane gets its own staged
+      dev build. It is a configuration conflict, not a leak — verified 2026-08-18
+      that the pages present are the real institutional tree, not fixtures.
 
 ## Notes for whoever picks this up
 
