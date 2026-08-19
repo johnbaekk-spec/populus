@@ -57,10 +57,16 @@ export function offendingTables(html: string): { rows: number; common: string[] 
     const common = perRow.reduce((a, b) => new Set([...a].filter((x) => b.has(x))));
     if (common.size === 0) continue;
 
-    /* Wired renderers say so. This replaces guessing from nearby pagers: a
-       paged table whose visible page happens to be uniform carries
-       `data-stated-flags` proving its renderer judged the WHOLE collection. */
-    if (/\bdata-stated-flags=/.test(attrs)) continue;
+    /* B35: the ONLY exemption is `data-paged`, and it is narrow on purpose.
+       Treating `data-stated-flags` as proof validated the marker's PRESENCE
+       rather than its meaning — an empty marker on a table visibly repeating a
+       badge passed, which is exactly how B34's provenance and diff-note badges
+       slipped through while this gate stayed green.
+
+       A PAGED table is the one case HTML cannot settle: its visible page may be
+       uniform while the full collection it judged is not. Everything else must
+       either carry a caveat or not be uniform, whatever it claims about itself. */
+    if (/\bdata-paged=/.test(attrs)) continue;
     if (/table-caveat/.test(region)) continue;
 
     out.push({ rows: rows.length, common: [...common] });
@@ -79,10 +85,19 @@ test("the detector FIRES on production-shaped markup, not just headerless fixtur
   assert.deepEqual(offendingTables(uniform(2)), [{ rows: 2, common: ["no ticker"] }], "with a <thead>");
   assert.deepEqual(offendingTables(uniform(1)), [{ rows: 1, common: ["no ticker"] }], "one-row table");
 
+  /* B35, and this is the assertion the previous version had backwards: an
+     empty marker on a table that visibly repeats a badge is a VIOLATION, not a
+     pass. Claiming to have evaluated is not evidence of having evaluated
+     correctly. */
   assert.deepEqual(
     offendingTables(uniform(2, ' data-stated-flags=""')),
+    [{ rows: 2, common: ["no ticker"] }],
+    "an empty marker does not excuse a visibly uniform table",
+  );
+  assert.deepEqual(
+    offendingTables(uniform(2, ' data-paged="1" data-stated-flags=""')),
     [],
-    "a renderer that EVALUATED universality and found none is not an offender",
+    "only a PAGED table is exempt — its full collection is not in this HTML",
   );
   assert.deepEqual(
     offendingTables(`<div class="table-caveat">stated once</div>${uniform(2)}`),
@@ -97,7 +112,7 @@ test("the detector FIRES on production-shaped markup, not just headerless fixtur
   assert.deepEqual(
     offendingTables(`${uniform(2)}<button data-entity-older>older →</button>`),
     [{ rows: 2, common: ["no ticker"] }],
-    "an unrelated trailing pager no longer exempts an unwired table",
+    "a trailing pager in the MARKUP no longer exempts anything — only the attribute does",
   );
 
   /* unknown conditions render as a disclosure, not a chip */
