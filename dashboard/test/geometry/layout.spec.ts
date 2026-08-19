@@ -12,7 +12,17 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { WIDTHS } from "../../playwright.config.ts";
 
-import { overlap, stripRowTrailing, PACKED_TRAILING_PX, type Box } from "./geometry.ts";
+import {
+  overlap,
+  stripRowTrailing,
+  PACKED_TRAILING_PX,
+  CONGRESS_TILE_LABELS,
+  type Box,
+} from "./geometry.ts";
+
+/** Exactly 40 characters — R5's Verification Matrix boundary case. The length
+    is asserted at use, not trusted to this comment. */
+const WORST_CASE_IDENTITY = "BLACKROCK LIQUIDITY TREASURY TRUST FD II";
 
 /** Visible boxes only — a `display:none` burger has no geometry to protect. */
 async function boxesOf(page: Page, selectors: string[]): Promise<{ sel: string; box: Box }[]> {
@@ -101,16 +111,20 @@ for (const width of WIDTHS) {
       expect(n, "the feed rendered rows to measure").toBeGreaterThan(0);
       /* F9 (codex round 1). R5's matrix row names a 40-CHARACTER identity, and
          sampling whatever twelve rows today's corpus happens to put first does
-         not exercise it — the worst case is only present by luck. Plant it. */
-      const planted = await rows.first().evaluate((row) => {
+         not exercise it — the worst case is only present by luck. Plant it.
+
+         F5 (codex round 2): the previously planted string was 37 characters, so
+         the 38–40 boundary the matrix row names was still untested. The length
+         is asserted here rather than trusted to a hand count — that is exactly
+         how it drifted the first time. */
+      expect(WORST_CASE_IDENTITY, "R5's matrix row names a 40-character identity").toHaveLength(40);
+      const planted = await rows.first().evaluate((row, identity) => {
         const cell = row.querySelector(".cell-ticker");
         if (!cell) return false;
         cell.innerHTML =
-          '<span class="asset-name"><span aria-hidden="true">' +
-          "BLACKROCK LIQUIDITY TREASURY TRUST FD" +
-          '</span></span>';
+          '<span class="asset-name"><span aria-hidden="true">' + identity + "</span></span>";
         return true;
-      });
+      }, WORST_CASE_IDENTITY);
       expect(planted, "row 0 must carry a ticker cell to plant the worst case in").toBe(true);
       for (let r = 0; r < n; r++) {
         const cells = rows.nth(r).locator(".cell");
@@ -173,24 +187,63 @@ for (const width of WIDTHS) {
       ).toBeLessThanOrEqual(Math.round(parentBox.x + parentBox.width) + 1);
 
       const trailing = await strip.evaluate(stripRowTrailing);
-      for (let r = 0; r < trailing.length - 1; r++) {
+      /* F2 (codex round 2): EVERY row, the last one included. Excluding the
+         final row was inherited from the pre-fix layout, where a ragged last
+         line was unavoidable. It is not unavoidable any more — `flex: 1 1 auto`
+         fills the final row too, measured at 1.0px like every other — so the
+         exclusion only carved out a hole a regression could sit in: a
+         rule-coloured slab after the last row would have passed. */
+      for (let r = 0; r < trailing.length; r++) {
         expect(
           trailing[r]!,
-          `row ${r} of the strip leaves ${Math.round(trailing[r]!)}px unused at ${width}px ` +
-            `while a later row exists — the strip is reserving width it does not use`,
+          `row ${r} of ${trailing.length} in the strip leaves ${Math.round(trailing[r]!)}px ` +
+            `unused at ${width}px — the strip is reserving width it does not use`,
         ).toBeLessThanOrEqual(PACKED_TRAILING_PX);
       }
 
-      /* F5 (codex round 1): the other half of R9's matrix row, previously
-         unasserted — the strip renders exactly the tiles it HAS DATA for, so a
-         tile with no value is a tile that should not have been emitted. */
-      const empties = await strip.evaluate((el) =>
-        [...el.querySelectorAll(".tile")].filter((t) => {
-          const v = t.querySelector(".tile-value");
-          return !v || v.textContent!.trim() === "";
-        }).length,
+      /* F5 (codex round 1) / F3 (codex round 2): the other half of R9's matrix
+         row. "Tile count equals data" is not "no tile is blank" — a strip that
+         DROPPED a tile would also have no blank one, and the plan's defect #5 is
+         a tile appearing that the data does not support. So the count and the
+         identities are both pinned.
+
+         `buildTiles` (`lib/data.ts:783`) returns exactly four tiles with no
+         branch that adds or removes one, so four is structural, not a snapshot
+         of today's corpus. The labels are matched as PATTERNS: their shape is
+         the contract, the numbers inside them are the corpus and may move. */
+      const rendered = await strip.evaluate((el) =>
+        [...el.querySelectorAll(".tile")]
+          /* VISIBLE tiles only, and that is the point rather than a detail. A
+             tile hidden by a media query still answers `querySelectorAll`, so
+             counting the DOM would let the fold delete a coverage figure and
+             still read as "tile count equals data" — §8 forbids honesty-bearing
+             content being media-query-hidden, so the count has to mean what a
+             reader can actually see. */
+          .filter((t) => {
+            const r = t.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          })
+          .map((t) => ({
+            label: (t.querySelector(".tile-label")?.textContent ?? "").trim(),
+            value: (t.querySelector(".tile-value")?.textContent ?? "").trim(),
+          })),
       );
-      expect(empties, `${empties} tile(s) render with no value at ${width}px`).toBe(0);
+      expect(
+        rendered.length,
+        `the strip renders ${rendered.length} VISIBLE tiles at ${width}px; buildTiles emits ` +
+          `${CONGRESS_TILE_LABELS.length} and has no branch that adds or drops one`,
+      ).toBe(CONGRESS_TILE_LABELS.length);
+      for (let i = 0; i < CONGRESS_TILE_LABELS.length; i++) {
+        expect(
+          rendered[i]!.label,
+          `tile ${i} at ${width}px is labelled "${rendered[i]!.label}", which is not the ` +
+            `data-backed tile expected in that position`,
+        ).toMatch(CONGRESS_TILE_LABELS[i]!);
+        expect(
+          rendered[i]!.value,
+          `tile ${i} ("${rendered[i]!.label}") renders no value at ${width}px`,
+        ).not.toBe("");
+      }
     });
 
     test("R6: a scrollable table announces itself and pins its identity column", async ({ page }) => {
@@ -200,20 +253,55 @@ for (const width of WIDTHS) {
       const scroller = page.locator(".table-scroll").first();
       /* No early `return`s here, deliberately. Three of them used to guard this
          test — missing scroller, not-scrollable, missing sticky cell — and each
-         was a silent PASS that would read as coverage. Measured on the real
-         page: the scroller exists at all five widths (2 of them), the cue is a
-         base-rule scrolling shadow so it is present whether or not the table
-         currently overflows (932/326 at 360px down to 1278/1278 at 1440px), and
-         135 sticky first cells resolve to `position: sticky` at every width.
-         Nothing here is conditional in reality, so nothing is conditional in
-         the assertions. */
+         was a silent PASS that would read as coverage.
+
+         F4 (codex round 2): removing the guards was not enough. At 1440px the
+         real table measured 1278/1278 — it does not overflow — so the widest
+         width was asserting a background DECLARATION on a container that could
+         not scroll. That proves nothing about an affordance. The antecedent is
+         forced instead: the table is widened past every viewport, so
+         "scrollable" is true by construction at all five widths and the cue is
+         measured where it actually has a job. */
       expect(await scroller.count(), "the filer page renders a scroll container").toBeGreaterThan(0);
-      const background = await scroller.evaluate((el) => getComputedStyle(el).backgroundImage);
+
+      /* The cue is asserted as PAINT, not as a declaration. `background-image`
+         naming a gradient does not prove anything reaches the screen: these are
+         scrolling shadows painted on the container BEHIND the table, so an
+         opaque cell that covers the container edge would hide them while the
+         computed style still read "gradient".
+
+         Two frames from this same run — the container's right edge strip with
+         the cue and with `background-image: none` — must differ. Same run, so
+         there is no stored baseline to approve and no copy change can turn it
+         red.
+
+         Measured before writing it, and the measurement is why the first
+         attempt at this was thrown away: forcing overflow artificially (a
+         4000px table, or a 240px container) CHANGES what covers the background
+         and reported "paints nothing" at three widths where the real page paints
+         fine. The instrument was wrong, not the CSS. Nothing is forced here. */
+      const box = (await scroller.boundingBox())!;
+      const state = await scroller.evaluate((el) => {
+        el.scrollLeft = Math.round((el.scrollWidth - el.clientWidth) / 2);
+        return { scrollable: el.scrollWidth > el.clientWidth, sw: el.scrollWidth, cw: el.clientWidth,
+                 background: getComputedStyle(el).backgroundImage };
+      });
       expect(
-        background,
+        state.background,
         `at ${width}px a table can scroll sideways with no cue — it hides its columns ` +
           `as surely as deleting them`,
       ).toContain("gradient");
+
+      const clip = { x: box.x + box.width - 20, y: box.y + 40, width: 20, height: 120 };
+      const withCue = await page.screenshot({ clip });
+      await page.addStyleTag({ content: ".table-scroll{background-image:none}" });
+      const withoutCue = await page.screenshot({ clip });
+      expect(
+        withCue.equals(withoutCue),
+        `at ${width}px (${state.sw}/${state.cw}) the scroll cue is declared but paints ` +
+          `nothing at the container's right edge — it renders identically with and without it`,
+      ).toBe(false);
+
       const firstCell = page.locator(".etable[data-sticky-first] td:first-child").first();
       expect(await firstCell.count(), "the changes table pins an identity column").toBeGreaterThan(0);
       expect(
@@ -223,4 +311,3 @@ for (const width of WIDTHS) {
     });
   });
 }
-

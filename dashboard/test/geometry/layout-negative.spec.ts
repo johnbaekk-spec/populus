@@ -15,6 +15,7 @@ import {
   horizontalOverflow,
   stripRowTrailing,
   PACKED_TRAILING_PX,
+  CONGRESS_TILE_LABELS,
   type Box,
 } from "./geometry.ts";
 
@@ -83,10 +84,10 @@ test("reintroducing content-width tiles is DETECTED as unused trailing area", as
     clean.length,
     "the strip must wrap into more than one row at 720px, or a packing control proves nothing",
   ).toBeGreaterThan(1);
-  const worstClean = Math.max(...clean.slice(0, -1));
-  expect(worstClean, "baseline rows must be packed, or this control proves nothing").toBeLessThanOrEqual(
-    PACKED_TRAILING_PX,
-  );
+  expect(
+    Math.max(...clean),
+    "baseline rows must ALL be packed, or this control proves nothing",
+  ).toBeLessThanOrEqual(PACKED_TRAILING_PX);
 
   /* exactly the pre-fix rule: tiles pinned at content width, so a row stops
      where its last tile happens to end and the strip paints rule colour across
@@ -94,8 +95,34 @@ test("reintroducing content-width tiles is DETECTED as unused trailing area", as
   await page.addStyleTag({ content: ".tile{flex:0 0 auto}" });
   const broken = await strip.evaluate(stripRowTrailing);
   expect(
-    Math.max(...broken.slice(0, -1)),
+    Math.max(...broken),
     "the geometry gate did NOT notice a row reserving width it does not use — it has stopped working",
+  ).toBeGreaterThan(PACKED_TRAILING_PX);
+});
+
+test("a ragged FINAL row is DETECTED too", async ({ page }) => {
+  /* F2 (codex round 2). The packing assertion used to exclude the last row, so
+     this is the control for the hole that exclusion left: a mutation that leaves
+     every earlier row perfectly packed and ONLY the final row short. Under the
+     old rule it passed while painting a rule-coloured slab across the bottom of
+     the strip; it must now fail. */
+  await page.setViewportSize({ width: 720, height: 900 });
+  await page.goto("/congress/");
+  const strip = page.locator(".tiles").first();
+
+  const clean = await strip.evaluate(stripRowTrailing);
+  expect(clean.length, "the strip must wrap, or this control proves nothing").toBeGreaterThan(1);
+  expect(Math.max(...clean), "baseline must be fully packed").toBeLessThanOrEqual(PACKED_TRAILING_PX);
+
+  await page.addStyleTag({ content: ".tiles .tile:last-child{flex:0 0 auto}" });
+  const broken = await strip.evaluate(stripRowTrailing);
+  expect(
+    broken.slice(0, -1).length && Math.max(...broken.slice(0, -1)),
+    "the mutation must leave the EARLIER rows packed, or it is not testing the final-row hole",
+  ).toBeLessThanOrEqual(PACKED_TRAILING_PX);
+  expect(
+    broken[broken.length - 1]!,
+    "the geometry gate did NOT notice a ragged FINAL row — the old rule's blind spot is back",
   ).toBeGreaterThan(PACKED_TRAILING_PX);
 });
 
@@ -109,10 +136,53 @@ test("removing the R6 scroll cue is DETECTED", async ({ page }) => {
   const clean = await scroller.evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(clean, "baseline must carry the cue, or this control proves nothing").toContain("gradient");
 
+  /* The control asserts what the SUITE asserts — paint, not declaration.
+     A control that checks a weaker property than the test it protects would
+     stay green through exactly the regression the test exists to catch. */
+  const box = (await scroller.boundingBox())!;
+  const clip = { x: box.x + box.width - 20, y: box.y + 40, width: 20, height: 120 };
+  const withCue = await page.screenshot({ clip });
+
   await page.addStyleTag({ content: ".table-scroll{background-image:none}" });
   const stripped = await scroller.evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(
     stripped,
     "the geometry gate did NOT notice the scroll cue being removed — it has stopped working",
   ).not.toContain("gradient");
+  const withoutCue = await page.screenshot({ clip });
+  expect(
+    withCue.equals(withoutCue),
+    "removing the cue changed NO pixels — the suite's paint assertion cannot be detecting it",
+  ).toBe(false);
+});
+
+test("a stat tile hidden by CSS is DETECTED as a missing tile", async ({ page }) => {
+  /* F3 (codex round 2) asked for count-and-identity parity with the data. The
+     hazard that answer creates is a tile that still EXISTS in the DOM while the
+     reader cannot see it: `querySelectorAll` would happily count it and the
+     strip would report full coverage while the fold quietly dropped a figure.
+     That is §8's media-query-hidden prohibition, so it gets a control. */
+  await page.setViewportSize({ width: 360, height: 900 });
+  await page.goto("/congress/");
+  const strip = page.locator(".tiles").first();
+
+  const countVisible = () =>
+    strip.evaluate(
+      (el) =>
+        [...el.querySelectorAll(".tile")].filter((t) => {
+          const r = t.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }).length,
+    );
+
+  expect(await countVisible(), "baseline must render every data-backed tile").toBe(
+    CONGRESS_TILE_LABELS.length,
+  );
+
+  await page.addStyleTag({ content: ".tiles .tile:nth-child(2){display:none}" });
+  expect(
+    await countVisible(),
+    "the geometry gate did NOT notice a stat tile hidden by CSS — a strip can now drop a " +
+      "coverage figure and still report full data parity",
+  ).toBe(CONGRESS_TILE_LABELS.length - 1);
 });
