@@ -610,8 +610,8 @@ markup. What remains:
       meaning — an empty marker on a visibly uniform table passed, and that is
       exactly how B34 stayed hidden behind a green gate.
 
-      The only exemption is now `data-paged`, set by the three renderers that
-      page, because a paged table's visible page can be uniform while the full
+      The only exemption is now `data-paged`, set by the five renderers that
+      page — and only when the page is genuinely PARTIAL (`pageCount > 1`), because a paged table's visible page can be uniform while the full
       collection it judged is not — the one case HTML cannot settle.
       `data-stated-flags` keeps its real job (the client reads it to suppress
       identically when paging) and stops being an alibi.
