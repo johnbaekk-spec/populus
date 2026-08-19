@@ -484,21 +484,52 @@ export function universalFlags(rows: readonly (readonly string[])[]): string[] {
     .sort();
 }
 
-/** The table-level statement for hoisted flags, or "" when there are none. */
+/** The table-level statement for hoisted flags, or "" when there are none.
+
+    Hoisting REMOVES the row-level disclosure, so if an unknown flag is the one
+    being hoisted its provenance has to come with it — otherwise the token is
+    reachable on a table where the flag appears on some rows and unreachable on
+    the table where it appears on all of them, which is backwards. The note
+    therefore carries the same `<details>` the rows use, with the same print
+    behaviour, rather than the `visually-hidden` span this started as. */
 export function universalFlagNote(flags: readonly string[]): string {
   if (flags.length === 0) return "";
   const known = flags.filter((f) => FLAG_PRESENTATION[f]).map((f) => FLAG_PRESENTATION[f]!.label);
   const unknown = flags.filter((f) => !FLAG_PRESENTATION[f]);
   const labels = [...known, ...(unknown.length > 0 ? [UNKNOWN_FLAG_LABEL] : [])];
-  const provenance =
-    unknown.length > 0
-      ? `<span class="visually-hidden flag-raw"> (verbatim: ${esc(unknown.join(", "))})</span>`
-      : "";
+  const provenance = unknown.length === 0 ? "" : ` ${rawFlagDisclosure(unknown)}`;
   return (
     `<p class="caveat-line table-caveat">` +
     `Every row below carries <strong>${esc(labels.join(", "))}</strong>${provenance}` +
     ` — stated once here rather than repeated on every row.</p>`
   );
+}
+
+/** ONE disclosure renderer, so the row-level and table-level provenance cannot
+    drift apart — they did, and only the row half got B33's treatment. */
+function rawFlagDisclosure(unknown: readonly string[]): string {
+  return (
+    `<details class="flag dashed flag-provenance">` +
+    `<summary>${esc(UNKNOWN_FLAG_LABEL)}</summary>` +
+    `<span class="flag-raw">reported by the source as ${esc(unknown.join(", "))}</span>` +
+    `</details>`
+  );
+}
+
+/** The flag keys a row PRESENTS, including chips derived from its values.
+
+    `universalFlags` used to read `r.flags` alone, which misses the one chip that
+    is not in the list: `amount unparsed` is derived from null bounds. A table
+    where every row is boundless — and carries no explicit `amount_unparsed` —
+    therefore repeated that caveat on every row and never hoisted it, which is
+    the same derived-chip blind spot that let a hoisted flag come BACK on the
+    rows. Both directions now go through this one function. */
+export function effectiveFlagKeys(r: Pick<TxnRow, "flags" | "low" | "high">): string[] {
+  const keys = [...r.flags];
+  if (r.low == null && r.high == null && !keys.includes("amount_unparsed")) {
+    keys.push("amount_unparsed");
+  }
+  return keys;
 }
 
 /* ---------- FlagTag (G6): one canonical markup renderer ----------
@@ -534,10 +565,7 @@ export function flagTags(
   const unknownHtml =
     unknown.length === 0
       ? ""
-      : `<details class="flag dashed flag-provenance">` +
-        `<summary>${esc(UNKNOWN_FLAG_LABEL)}</summary>` +
-        `<span class="flag-raw">reported by the source as ${esc(unknown.join(", "))}</span>` +
-        `</details>`;
+      : rawFlagDisclosure(unknown);
   return known + unknownHtml;
 }
 

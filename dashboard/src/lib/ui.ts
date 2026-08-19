@@ -23,6 +23,7 @@ import {
   dualDate,
   flagTags,
   universalFlags,
+  effectiveFlagKeys,
   universalFlagNote,
   srcLink,
   srcLinkDerived,
@@ -311,7 +312,7 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
      the client re-renders rows on paging, and a per-page set would let page 2
      contradict the note page 1 left above it. The set travels to the client in
      `data-stated-flags` so both sides suppress identically. */
-  const stated = universalFlags(txns.map((t) => t.flags));
+  const stated = universalFlags(txns.map(effectiveFlagKeys));
   const heads =
     opts.kind === "member"
       ? ["Filed ▾", "Ticker", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"]

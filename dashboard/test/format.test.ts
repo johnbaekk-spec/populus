@@ -621,9 +621,8 @@ test("flagTags: registry chips + FAIL-VISIBLE unknown flags, never a raw slug", 
 });
 
 test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row", async () => {
-  const { universalFlags, universalFlagNote, flagTags, UNIVERSAL_FLAG_MIN_ROWS } = await import(
-    "../src/lib/format.ts"
-  );
+  const { universalFlags, universalFlagNote, flagTags, UNIVERSAL_FLAG_MIN_ROWS, UNKNOWN_FLAG_LABEL } =
+    await import("../src/lib/format.ts");
   const every = Array.from({ length: 12 }, () => ["missing_ticker"]);
   assert.deepEqual(universalFlags(every), ["missing_ticker"], "100% hoists");
 
@@ -641,6 +640,23 @@ test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row
   assert.ok(note.includes("no ticker"), "in the registry's words, not the slug");
   assert.ok(!note.includes("missing_ticker"), "and never the raw slug");
   assert.equal(universalFlagNote([]), "", "no hoisted flags, no note");
+
+  /* Cycle 2 F1: hoisting REMOVES the row disclosure, so an UNKNOWN flag hoisted
+     to table level must carry the same disclosure up with it. Otherwise the
+     token is reachable on a table where the flag appears on some rows, and
+     unreachable on the table where it appears on all of them. */
+  const unknownNote = universalFlagNote(["a_flag_from_the_future"]);
+  assert.ok(unknownNote.includes("<details"), "table-level provenance is a disclosure too");
+  assert.ok(
+    unknownNote.includes(`<summary>${UNKNOWN_FLAG_LABEL}</summary>`),
+    "with the warning visible in the summary",
+  );
+  assert.ok(!unknownNote.includes("visually-hidden"), "not assistive-technology-only");
+  assert.equal(
+    unknownNote.split("a_flag_from_the_future").length - 1,
+    1,
+    "the raw token appears exactly once in the note",
+  );
 
   /* the suppression half: the hoisted flag leaves the row, others stay */
   const row = flagTags(["missing_ticker", "amount_spouse_cap"], undefined, {
@@ -663,6 +679,32 @@ test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row
     flagTags(["amount_unparsed"], boundless).includes("amount unparsed"),
     "and it still appears when it was NOT hoisted",
   );
+});
+
+test("R10 #12: a DERIVED caveat on every row is hoisted too", async () => {
+  const { universalFlags, universalFlagNote, flagTags, effectiveFlagKeys } = await import(
+    "../src/lib/format.ts"
+  );
+  /* Cycle 2 F2, the mirror of round 3's F6. `amount unparsed` is derived from
+     null bounds, not read from the flag list, so a table of boundless rows
+     carrying NO explicit `amount_unparsed` flag repeated the caveat on every row
+     and never hoisted it. Detection now runs over what a row PRESENTS. */
+  const boundlessRows = Array.from({ length: 10 }, () => ({ flags: [] as string[], low: null, high: null }));
+  assert.deepEqual(universalFlags(boundlessRows.map(effectiveFlagKeys)), ["amount_unparsed"]);
+
+  const stated = universalFlags(boundlessRows.map(effectiveFlagKeys));
+  assert.ok(universalFlagNote(stated).includes("amount unparsed"), "the note names it");
+  assert.ok(
+    !flagTags([], boundlessRows[0]!, { stated }).includes("amount unparsed"),
+    "and the derived chip does NOT come back on the row",
+  );
+
+  /* a table where only some rows are boundless keeps the per-row chip */
+  const mixed = [
+    ...Array.from({ length: 9 }, () => ({ flags: [] as string[], low: null, high: null })),
+    { flags: [] as string[], low: 1, high: 2 },
+  ];
+  assert.deepEqual(universalFlags(mixed.map(effectiveFlagKeys)), [], "9 of 10 is not universal");
 });
 
 test("terminusRow: names its author — the source or Public Filings, never a bare more", async () => {
