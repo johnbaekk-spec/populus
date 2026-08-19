@@ -133,7 +133,7 @@ const build = getBuildData();
             from it. The <meta> markers above are the machine-readable copy. */}
         <div class="footer-build">
           build {build.buildId} · code {build.codeSha}<br />
-          no cookies · no account required · no tracking
+          no cookies · no account required · no cross-site tracking
         </div>
       </div>
     </footer>
@@ -184,5 +184,29 @@ const build = getBuildData();
       import { initSearch } from "../scripts/search-client";
       initSearch();
     </script>
+
+    {/* R36/R28 — Cloudflare Web Analytics. `is:inline` is load-bearing: without
+        it Astro would take this into its own bundling, and the whole point is
+        that it stays a plain EXTERNAL script with no inline body, so it adds
+        nothing to the locked inline-script hash set the CSP pins. `script-src`
+        admits static.cloudflareinsights.com and `connect-src` admits
+        cloudflareinsights.com; both are in the locked policy in
+        `public/_headers`.
+
+        The token is a public value — it ships in the HTML of every page — so it
+        is committed rather than injected, and the dashboard has no env-var
+        config mechanism to inject it through anyway.
+
+        DEPLOY PRECONDITION: Cloudflare Web Analytics must be set to "Enable
+        with JS Snippet installation". Under automatic injection Cloudflare adds
+        this same tag at the edge, and shipping it here as well double-counts
+        every pageview. Measured 2026-08-19: no beacon was reaching the served
+        pages, so nothing is double-counted as of this commit. */}
+    <script
+      is:inline
+      defer
+      src="https://static.cloudflareinsights.com/beacon.min.js"
+      data-cf-beacon='{"token": "5facfb16c7c54d449c7fdd0f0fcc2047"}'
+    ></script>
   </body>
 </html>

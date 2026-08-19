@@ -49,8 +49,11 @@ export function renderResults(hits: SearchHit[], active: number): string {
 
 /** Pre-query state: watchlist quick links when anything is starred, else the
     S6 empty-watchlist block with build-derived starters. The starter caption
-    is "most-active in this build" — this site has no view analytics to rank
-    by (Locked #5 rewording, register entry). */
+    is "most-active in this build" — ranking comes from the build's own
+    records, never from traffic. The site does measure page traffic
+    (Cloudflare Web Analytics, see the methodology page), but that data is
+    aggregate, lives outside the build, and yields no per-page view count
+    this code could rank by (Locked #5 rewording, register entry). */
 export function renderPreQuery(watch: WatchStore, index: SearchIndex | null): string {
   const watchedMembers = [...watch.members];
   const watchedTickers = [...watch.tickers];

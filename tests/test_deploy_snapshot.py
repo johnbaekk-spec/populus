@@ -260,3 +260,91 @@ def test_empty_tree_is_a_snapshot_not_an_error(tmp_path: Path) -> None:
         assert snapshot.inventory["files"] == []
     finally:
         snapshot.cleanup()
+
+
+# --- R36: the provider-control envelope --------------------------------------
+#
+# `_headers` is consumed by Cloudflare as configuration, never served as an
+# asset, so it is inventoried apart from the served tree. The risk the split
+# creates is that a file could fall out of BOTH lists and stop being hash-bound
+# — these tests exist to prove it does not.
+
+
+def test_headers_is_inventoried_as_a_control_file_not_a_served_one(
+    tmp_path: Path,
+) -> None:
+    """`_headers` leaves `files` and appears in `control_files`, with a digest."""
+    tree = _tree(tmp_path / "dist", {"index.html": b"<!doctype html>\n", "_headers": b"/*\n"})
+    snapshot = freeze_tree(tree)
+    try:
+        served = {entry["path"] for entry in snapshot.inventory["files"]}
+        control = {entry["path"]: entry for entry in snapshot.inventory["control_files"]}
+        assert "_headers" not in served, "a control file must not be swept as a served URL"
+        assert "_headers" in control
+        assert control["_headers"]["sha256"] == _sha256(b"/*\n")
+        assert control["_headers"]["bytes"] == 3
+        # site_file_count counts served files only.
+        assert snapshot.file_count == 1
+    finally:
+        snapshot.cleanup()
+
+
+def test_the_union_of_files_and_control_files_is_the_whole_tree(tmp_path: Path) -> None:
+    """No file falls out of both lists — the split partitions, it does not drop."""
+    payloads = {
+        "index.html": b"<!doctype html>\n",
+        "assets/app.js": b"console.log(1)\n",
+        "_headers": b"/*\n  Content-Security-Policy: default-src 'self'\n",
+    }
+    snapshot = freeze_tree(_tree(tmp_path / "dist", payloads))
+    try:
+        listed = [
+            entry["path"]
+            for key in ("files", "control_files")
+            for entry in snapshot.inventory[key]
+        ]
+        assert sorted(listed) == sorted(payloads)
+        # A partition, not an overlap: nothing is counted twice.
+        assert len(listed) == len(set(listed))
+    finally:
+        snapshot.cleanup()
+
+
+def test_a_control_file_is_hash_bound_like_any_other(tmp_path: Path, monkeypatch) -> None:
+    """POSITIVE CONTROL for the split: corrupting `_headers` mid-copy still fails.
+
+    Without this, `_require_copy_faithful` reading `files` alone would let a
+    control file be copied unchecked — the split would have opened exactly the
+    hole it was supposed to leave closed. The mutation is applied to the
+    control file and to nothing else, so a pass here cannot come from some
+    other file's binding.
+    """
+    from populus.deploy import snapshot as snapshot_module
+
+    tree = _tree(tmp_path / "dist", {"index.html": b"<!doctype html>\n", "_headers": b"/*\n"})
+    real_copy = snapshot_module._copy_one
+    corrupted: list[str] = []
+
+    def corrupt_the_control_file(source: Path, dest: Path):
+        result = real_copy(source, dest)
+        if dest.name == "_headers":
+            dest.chmod(0o644)
+            dest.write_bytes(b"/*\n  Content-Security-Policy: default-src *\n")
+            corrupted.append(dest.name)
+        return result
+
+    monkeypatch.setattr(snapshot_module, "_copy_one", corrupt_the_control_file)
+    with pytest.raises(SnapshotError) as excinfo:
+        freeze_tree(tree)
+    # Assert the mutation actually applied — a "raised" that came from an
+    # unrelated failure would read as a pass for the wrong reason.
+    assert corrupted == ["_headers"], "the mutation never ran; the result proves nothing"
+    # Assert the DIVERGENT-HASH branch specifically, not merely "raised with
+    # `_headers` in the message". Reading `files` alone also raises, via the
+    # key-set branch ("sealed tree does not contain exactly the copied files"),
+    # and also names `_headers` — so a substring check on the path passes under
+    # both the correct and the broken implementation and proves nothing.
+    assert "copied bytes do not match the sealed tree" in str(excinfo.value), (
+        f"wrong failure branch: {excinfo.value}"
+    )
+    assert "_headers" in str(excinfo.value)
