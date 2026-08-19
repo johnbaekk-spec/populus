@@ -1459,9 +1459,21 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
   const total = opts.totalRows ?? matched;
   const pageRows = holdingsPageSlice(opts.rows, opts.page);
   const pageCount = holdingsPageCount(matched);
+  /* B34: the THIRD consumer of `provenanceCellHtml`, and the one cycle 4 round 2
+     found still repeating the badge. Over the full bounded set, resolved once
+     per row and reused below — the same shape as the positions table. */
+  const provOf = new Map(
+    opts.rows.map((r) => [r, provenanceOf(r.filing_keys, opts.filings, r.period)] as const),
+  );
+  /* An `IssuerHolderRow` carries no `flags` of its own, so the provenance miss
+     is its ONLY badge source — which is exactly why a key-only hoist never
+     covered this table. */
+  const statedHolders = universalFlags(
+    opts.rows.map((r) => (provOf.get(r)!.known ? [] : ["filing_not_in_dictionary"])),
+  );
   const body = pageRows
     .map((row) => {
-      const prov = provenanceOf(row.filing_keys, opts.filings, row.period);
+      const prov = provOf.get(row) ?? provenanceOf(row.filing_keys, opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
         : srcLinkDerived("#holdings-footnotes", edgarFilerUrl(row.filer_key));
@@ -1485,7 +1497,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
             ? `<span class="mono-note" title="the shard carries no security count for this row">—</span>`
             : fmtInt(row.security_count)
         }</td>` +
-        `<td class="c-dates">${provenanceCellHtml(prov)}</td>` +
+        `<td class="c-dates">${provenanceCellHtml(prov, statedHolders)}</td>` +
         `<td class="c-src">${src}</td>` +
         `</tr>`
       );
@@ -1514,7 +1526,10 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
     (matched === 0
       ? `<p class="section-note">This build's projection carries no resolved holder rows for ` +
         `${esc(opts.ticker)} in ${esc(opts.period)}.</p>`
-      : `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+      : universalFlagNote(statedHolders) +
+        `<div class="table-scroll"><table class="etable" data-sticky-first${
+          pageCount > 1 ? ' data-paged="1"' : ""
+        } data-stated-flags="${esc(statedHolders.join(","))}">` +
         `<caption class="visually-hidden">Institutions whose reported 13F holdings resolved to ${esc(
           opts.issuerName,
         )} for the quarter ended ${esc(opts.period)}</caption>` +

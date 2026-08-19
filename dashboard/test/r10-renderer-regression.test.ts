@@ -16,8 +16,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { holdingsTableHtml, positionDiffHtml } from "../src/lib/holdings.ts";
-import type { FilerHoldingRow, FoldedPosition, PositionDiff } from "../src/lib/holdings.ts";
+import {
+  holdersFullTableHtml,
+  holdingsTableHtml,
+  positionDiffHtml,
+} from "../src/lib/holdings.ts";
+import type {
+  FilerHoldingRow,
+  FoldedPosition,
+  IssuerHolderRow,
+  PositionDiff,
+} from "../src/lib/holdings.ts";
 
 const holding = (i: number): FilerHoldingRow => ({
   cik: "0001",
@@ -127,4 +136,51 @@ test("B34: a note on only SOME rows still renders per row", () => {
   const html = positionDiffHtml(diff, 0);
   assert.ok(!html.includes("table-caveat"), "not universal, so no table caveat");
   assert.equal(badgeCount(html, "only this row"), 1, "the distinguishing badge stays on its row");
+});
+
+const holder = (i: number): IssuerHolderRow => ({
+  issuer_key: "ik",
+  issuer_key_source: "cusip",
+  issuer_name: "Issuer",
+  period: "2026-06-30",
+  filer_key: `f${i}`,
+  filer_name: `Filer ${i}`,
+  affiliate_group_key: null,
+  value_usd: 1000 + i,
+  value_undisclosed_component: false,
+  security_count: 1,
+  filing_keys: [`k${i}`],
+  issuer_dedup_total_usd: null,
+});
+
+test("B34: holdersFullTableHtml — the THIRD provenanceCellHtml consumer", () => {
+  /* Cycle 4 round 2: this table was still repeating the badge. It is the reason
+     the fix had to be "every consumer of the badge source", not "the two the
+     finding named" — and an IssuerHolderRow has no `flags`, so the provenance
+     miss is its ONLY badge source. */
+  const single = holdersFullTableHtml({
+    issuerName: "Apple Inc",
+    ticker: "AAPL",
+    period: "2026-06-30",
+    rows: [holder(1), holder(2)],
+    filings: {} as never,
+    page: 0,
+  });
+  assert.ok(single.includes("table-caveat"), "stated once");
+  assert.ok(single.includes("filing not in dictionary"), "and named");
+  assert.equal(badgeCount(single, "filing not in dictionary"), 0, "no row repeats it");
+  assert.ok(!/\bdata-paged=/.test(single), "one page ⇒ not exempt from the gate");
+
+  /* the partial-page case the finding also asked for */
+  const many = holdersFullTableHtml({
+    issuerName: "Apple Inc",
+    ticker: "AAPL",
+    period: "2026-06-30",
+    rows: Array.from({ length: 101 }, (_, i) => holder(i)),
+    filings: {} as never,
+    page: 0,
+  });
+  assert.ok(many.includes("table-caveat"), "stated once across a paged table too");
+  assert.equal(badgeCount(many, "filing not in dictionary"), 0, "and no row repeats it");
+  assert.ok(/\bdata-paged="1"/.test(many), "a genuinely partial page IS marked");
 });
