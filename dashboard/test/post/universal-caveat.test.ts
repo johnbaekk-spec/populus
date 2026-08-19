@@ -1,15 +1,24 @@
 /* R10 #12, enforced across EVERY built consumer rather than per renderer.
 
-   Cycle 2 round 3 found the hoist wired into one table renderer while five
-   others repeated the same flag on every row: 1,004 pages carried a table whose
-   every row read "security not in mapping" with no caveat above it. Unit tests
-   could not see that — they exercise the helpers, not the set of callers.
+   The history matters, because this gate has been wrong three times and each
+   wrongness was invisible:
 
-   Cycle 3 round 1 then found this GATE was the reason a sixth renderer
-   (institutional activity) stayed hidden: it skipped the whole PAGE as soon as
-   any table on it carried a caveat, so one correctly wired table masked its
-   unwired sibling. Scope is per TABLE now — a caveat must precede the table it
-   describes, and a pager must belong to that table's own container. */
+   1. Cycle 2 round 3 — the hoist was wired into ONE renderer while five others
+      repeated a flag on every row. 1,004 pages. Unit tests could not see it:
+      they exercise the helpers, not the set of callers.
+   2. Cycle 3 round 1 — the gate exempted a whole PAGE once any table on it had
+      a caveat, so a correctly wired table masked its unwired sibling.
+   3. Cycle 3 round 2 — the gate counted the `<thead>` row as a data row. A
+      header row carries no flags, so "some row has no flag → not universal"
+      skipped EVERY production table. It was inert, and its own synthetic test
+      passed because the fixture had no `<thead>`.
+
+   So: data rows come from `<tbody>` only; a single-row table counts; a flag is
+   either a `<span class="flag">` chip or a `<details class="flag">` disclosure;
+   and a wired renderer PROVES it evaluated universality by emitting
+   `data-stated-flags` on the table, which replaces the proximity guess about
+   pagers entirely. "Evaluated and found nothing universal" and "never wired"
+   are different claims and the markup now distinguishes them. */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -18,93 +27,104 @@ import path from "node:path";
 
 const DIST = path.resolve(import.meta.dirname, "../../dist");
 
-/** Tables in `html` that repeat one flag on EVERY row without a caveat of their
-    own. Exported shape so the detector can be proven against synthetic markup —
-    a whole-dist sweep that happens to find nothing is indistinguishable from one
-    that cannot look, and this engagement has shipped that mistake twice. */
+/** Flags a row shows: registry chips AND unknown-condition disclosures. */
+function flagsOf(row: string): Set<string> {
+  const chips = [...row.matchAll(/<span class="flag [a-z ]*?">([^<]*)<\/span>/g)].map((m) => m[1]!);
+  const disclosures = [...row.matchAll(/<details class="flag[^"]*"[^>]*><summary>([^<]*)<\/summary>/g)].map(
+    (m) => m[1]!,
+  );
+  return new Set([...chips, ...disclosures]);
+}
+
+/** Tables repeating one flag on EVERY data row without their renderer having
+    evaluated universality. Exported so the detector is proven, not assumed. */
 export function offendingTables(html: string): { rows: number; common: string[] }[] {
   const out: { rows: number; common: string[] }[] = [];
   let prevEnd = 0;
-  for (const t of html.matchAll(/<table[^>]*>[\s\S]*?<\/table>/g)) {
-    const table = t[0]!;
-    /* A caveat or a pager ANYWHERE ELSE on the page says nothing about THIS
-       table — the page-wide exemption is what let a sixth renderer hide behind
-       a correctly wired sibling (cycle 3, F3). */
-    const region = html.slice(prevEnd, t.index!);
-    prevEnd = t.index! + table.length;
+  for (const t of html.matchAll(/<table([^>]*)>([\s\S]*?)<\/table>/g)) {
+    const [whole, attrs, inner] = [t[0]!, t[1]!, t[2]!];
+    const region = html.slice(prevEnd, t.index!); // this table's own preceding markup
+    prevEnd = t.index! + whole.length;
 
-    const rows = [...table.matchAll(/<tr>[\s\S]*?<\/tr>/g)].map((r) => r[0]);
-    if (rows.length < 2) continue;
-    const perRow = rows.map(
-      (r) => new Set([...r.matchAll(/<span class="flag [a-z ]*?">([^<]*)<\/span>/g)].map((x) => x[1]!)),
-    );
-    if (perRow.some((s) => s.size === 0)) continue; // some row carries no flag → not universal
+    /* DATA rows only. Counting the header row is what made this gate inert. */
+    const tbody = inner.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/);
+    const scope = tbody ? tbody[1]! : inner.replace(/<thead[\s\S]*?<\/thead>/g, "");
+    const rows = [...scope.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].map((r) => r[0]);
+    if (rows.length === 0) continue;
+
+    const perRow = rows.map(flagsOf);
+    if (perRow.some((s) => s.size === 0)) continue; // a row with no flag → not universal
     const common = perRow.reduce((a, b) => new Set([...a].filter((x) => b.has(x))));
     if (common.size === 0) continue;
+
+    /* Wired renderers say so. This replaces guessing from nearby pagers: a
+       paged table whose visible page happens to be uniform carries
+       `data-stated-flags` proving its renderer judged the WHOLE collection. */
+    if (/\bdata-stated-flags=/.test(attrs)) continue;
     if (/table-caveat/.test(region)) continue;
-    const trailing = html.slice(prevEnd, prevEnd + 1200);
-    if (/data-entity-older|data-changes-older|older →/.test(trailing)) continue;
+
     out.push({ rows: rows.length, common: [...common] });
   }
   return out;
 }
 
-const UNIFORM_TABLE =
-  `<table><tr><td><span class="flag solid">no ticker</span></td></tr>` +
-  `<tr><td><span class="flag solid">no ticker</span></td></tr></table>`;
+/* production-shaped: a <thead> whose header row carries no flags */
+const HEAD = `<thead><tr><th scope="col">Position</th><th scope="col">Flags</th></tr></thead>`;
+const row = (f: string) => `<tr><td>x</td><td class="c-flags"><span class="flag solid">${f}</span></td></tr>`;
+const uniform = (n: number, attrs = "") =>
+  `<table class="etable"${attrs}>${HEAD}<tbody>${row("no ticker").repeat(n)}</tbody></table>`;
 
-test("the detector FIRES on a table that repeats one flag on every row", () => {
-  /* Proof the sweep below can fail. Once the hoist works no real table is
-     uniform, so "found nothing" stops being evidence — the detector has to be
-     shown catching a known violation. */
-  assert.deepEqual(offendingTables(UNIFORM_TABLE), [{ rows: 2, common: ["no ticker"] }]);
+test("the detector FIRES on production-shaped markup, not just headerless fixtures", () => {
+  /* Every assertion here is one the previous version got wrong. */
+  assert.deepEqual(offendingTables(uniform(2)), [{ rows: 2, common: ["no ticker"] }], "with a <thead>");
+  assert.deepEqual(offendingTables(uniform(1)), [{ rows: 1, common: ["no ticker"] }], "one-row table");
 
   assert.deepEqual(
-    offendingTables(`<div class="table-caveat">stated once</div>${UNIFORM_TABLE}`),
+    offendingTables(uniform(2, ' data-stated-flags=""')),
+    [],
+    "a renderer that EVALUATED universality and found none is not an offender",
+  );
+  assert.deepEqual(
+    offendingTables(`<div class="table-caveat">stated once</div>${uniform(2)}`),
     [],
     "a caveat immediately before the table clears it",
   );
-  assert.deepEqual(
-    offendingTables(`${UNIFORM_TABLE}<button data-entity-older>older →</button>`),
-    [],
-    "a pager on that table's own container exempts it",
+  assert.equal(
+    offendingTables(`<div class="table-caveat">for the FIRST</div>${uniform(2)}${uniform(2)}`).length,
+    1,
+    "a caveat on one table does NOT clear its unwired sibling",
   );
   assert.deepEqual(
-    offendingTables(
-      `<div class="table-caveat">for the FIRST table</div>${UNIFORM_TABLE}${UNIFORM_TABLE}`,
-    ).length,
+    offendingTables(`${uniform(2)}<button data-entity-older>older →</button>`),
+    [{ rows: 2, common: ["no ticker"] }],
+    "an unrelated trailing pager no longer exempts an unwired table",
+  );
+
+  /* unknown conditions render as a disclosure, not a chip */
+  const disc = `<tr><td>x</td><td class="c-flags"><details class="flag dashed flag-provenance"><summary>unrecognised source condition</summary><span class="flag-raw">t</span></details></td></tr>`;
+  assert.equal(
+    offendingTables(`<table>${HEAD}<tbody>${disc}${disc}</tbody></table>`).length,
     1,
-    "a caveat on one table does NOT clear its unwired sibling — cycle 3 F3",
+    "an unknown-condition disclosure counts as a flag",
   );
 });
 
-test("R10: no built table repeats one flag on EVERY row without its own caveat", () => {
+test("R10: no built table repeats one flag on EVERY row without its renderer evaluating it", () => {
   const pages = globSync("**/*.html", { cwd: DIST });
   assert.ok(pages.length > 1000, `dist looks unbuilt: ${pages.length} pages`);
 
   const offenders: string[] = [];
-  let multiRowTables = 0; // parser liveness, NOT a count of violations
-  let uniformTables = 0;
-
+  let dataTables = 0;
   for (const rel of pages) {
     const html = readFileSync(path.join(DIST, rel), "utf-8");
-    multiRowTables += [...html.matchAll(/<table[^>]*>[\s\S]*?<\/table>/g)].filter(
-      (t) => [...t[0]!.matchAll(/<tr>/g)].length >= 2,
-    ).length;
+    dataTables += [...html.matchAll(/<tbody[^>]*>/g)].length;
     for (const bad of offendingTables(html)) {
-      uniformTables++;
       offenders.push(`${rel}: every one of ${bad.rows} rows repeats ${bad.common.join(", ")}`);
     }
   }
-
-  assert.ok(
-    multiRowTables > 100,
-    `the sweep parsed only ${multiRowTables} multi-row tables — it is not looking`,
-  );
-  assert.deepEqual(
-    offenders.slice(0, 10),
-    [],
-    `${offenders.length} of ${uniformTables} uniform-flag table(s) repeat it with no caveat ` +
-      `of their own — R10 #12 is unwired for that renderer`,
-  );
+  /* Liveness proves the sweep can PARSE. An earlier version asserted that some
+     UNIFORM table exists — but once the hoist works none does, so "found none"
+     stopped being distinguishable from "the regex is broken". */
+  assert.ok(dataTables > 100, `the sweep parsed only ${dataTables} tbody elements — it is not looking`);
+  assert.deepEqual(offenders.slice(0, 10), [], `${offenders.length} table(s) violate R10 #12`);
 });

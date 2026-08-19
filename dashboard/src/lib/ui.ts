@@ -557,7 +557,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
     )} · longs only</span></h2>` +
     `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">full holders view ↗</a></div>` +
     universalFlagNote(statedHolders) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHolders.join(","))}">` +
     `<caption class="visually-hidden">Top institutional holders of ${esc(ticker)} for quarter ${esc(inst.period!)}</caption>` +
     `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col">Value ▾</th><th scope="col">Securities</th><th scope="col">Flags</th><th scope="col">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
@@ -630,7 +630,7 @@ export function tickerUnifiedBody(
      caveat on every row; the whole-dist assertion in
      `test/post/universal-caveat.test.ts` is what named it. */
   const previewRows = t.txns.slice(0, 5);
-  const statedPreview = universalFlags(previewRows.map((r) => r.flags));
+  const statedPreview = universalFlags(previewRows.map(effectiveFlagKeys));
   const recent = opts.fullTable
     ? entityTxnTable(t.txns, {
         kind: "ticker",
@@ -639,7 +639,7 @@ export function tickerUnifiedBody(
         ctx,
       })
     : universalFlagNote(statedPreview) +
-      `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Latest congressional filings mentioning ${esc(
+      `<div class="table-scroll"><table class="etable etable-compact" data-stated-flags="${esc(statedPreview.join(","))}"><caption class="visually-hidden">Latest congressional filings mentioning ${esc(
         t.ticker,
       )}</caption>` +
       `<thead><tr><th scope="col">Filed ▾</th><th scope="col">Member</th><th scope="col">Side · Owner</th><th scope="col">Traded · Lag</th><th scope="col">Amount</th><th scope="col">Range · Flags</th><th scope="col">Src</th></tr></thead>` +
@@ -886,7 +886,7 @@ export function holdersTableHtml(
     `<div class="panel-head"><h2 class="section-h">Ranked holders — ${esc(period)}</h2>` +
     `<span class="panel-note">${instStamp(period, latestFiled)}</span></div>` +
     universalFlagNote(statedRanked) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedRanked.join(","))}">` +
     `<caption class="visually-hidden">Top institutional holders for quarter ${esc(period)}</caption>` +
     `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col">Value ▾</th><th scope="col">Securities</th><th scope="col">Issuer key</th><th scope="col">Flags</th><th scope="col">Src</th></tr></thead>` +
     `<tbody>${body}</tbody></table></div>` +
@@ -1045,7 +1045,7 @@ export function changesTableHtml(
     .join("\n");
   return (
     universalFlagNote(statedDeltas) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedDeltas.join(","))}">` +
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
     `<thead><tr><th scope="col">Position · grain</th><th scope="col">Change</th><th scope="col">Δ value</th><th scope="col">Δ shares</th><th scope="col">Prev value</th><th scope="col">Curr value</th><th scope="col">Prev shares</th><th scope="col">Curr shares</th><th scope="col">Flags</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +

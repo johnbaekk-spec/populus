@@ -908,7 +908,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     `<div class="panel-head"><h2 class="section-h">Largest reported quarter-over-quarter changes</h2>` +
     `<span class="panel-note">ordered by absolute reported change · undisclosed deltas last</span></div>` +
     universalFlagNote(statedActivity) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
     `<caption class="visually-hidden">Cross-filer quarter-over-quarter position changes, ordered by absolute reported change</caption>` +
     `<thead><tr><th scope="col">Filer</th><th scope="col">Issuer · position</th>` +
     `<th scope="col">Change ·§</th><th scope="col">Δ value ·‡</th><th scope="col">Quarter ended</th>` +

@@ -1289,7 +1289,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     )} undisclosed-value ${totals.undisclosedRows === 1 ? "row" : "rows"}</span></div>` +
     emptyNote +
     universalFlagNote(statedHoldings) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHoldings.join(","))}">` +
     `<caption class="visually-hidden">Positions ${esc(opts.filerName)} reported for the quarter ended ${esc(
       opts.period,
     )}, as that filer reported them</caption>` +
