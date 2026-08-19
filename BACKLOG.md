@@ -697,21 +697,40 @@ markup. What remains:
       join, the render, the `filer-payload.ts` decoder, and 9 fixture tests with
       the period-keying mutation-checked.
 
-- [ ] **B37 — the geometry lane may be red on `main`, with two DEAD NEGATIVE
-      CONTROLS.** Unresolved contradiction between two sessions, recorded so it
-      is not lost. A peer measured 41 pass / 3 fail on an untouched `b95b1bf`
-      baseline, the failures being `reintroducing content-width tiles is
-      DETECTED…`, `a ragged FINAL row is DETECTED too`, and `R6 @360px` on
-      `/institutional/filers/1067983/`. This session measured **44 pass / 0 fail,
-      exit 0**, with `geometry:install` returning 0 first (so Playwright was
-      present). Same 44 total, so the harness ran fully both times.
+- [x] **B37 — RESOLVED 2026-08-19, not a defect. `main`'s geometry lane is
+      green on a complete build.** Recorded because the resolution is the useful
+      part, not the alarm.
 
-      Failing canaries are the serious half: they mean the harness would no
-      longer detect the defect it was written to catch, and anything downstream
-      trusting that lane is trusting a detector that is not detecting.
+      Two sessions measured the same lane and disagreed: 41 pass / 3 fail on a
+      `b95b1bf` baseline, versus 44 pass / 0 fail (exit 0) on a complete tree.
+      Both runs had Playwright present and executed all 44, so the harness was
+      not the variable. The **dist** was: the red tree held **9,672 files /
+      4,996 HTML** against **17,283** for a complete build — about 56% — with
+      `dist/congress/members/` empty and `/congress/` carrying zero member links.
 
-      **Cheapest discriminator: the baseline `dist` file count.** A complete
-      build is **17,283 files**; without `POPULUS_PRIOR_SIGNALS` the build exits
-      1 after ~4,900, which "looks plausible if you only glance at `dist/`" and
-      would produce exactly that `R6 @360px` failure on a missing filer page.
-      Check that before concluding `main` is red.
+      **The mechanism, which is sharper than "truncated build".** Both failing
+      canaries `goto("/congress/")` and assert the stat strip wraps into MORE
+      THAN ONE row at 720px. A thin corpus renders four sparse tiles, so there
+      is nothing to wrap: `toBeGreaterThan(1)` received `1`. The canaries did
+      not stop detecting — they were never given the precondition they detect
+      against. The third failure, `R6 @360px`, is the harness's own forcing
+      instrument self-reporting distortion on a likewise-thin filer page.
+
+- [ ] **B38 — the geometry harness cannot distinguish "thin corpus" from "real
+      regression", and reports both as the same red.** The surviving finding
+      from B37, and the reason that investigation cost two sessions.
+
+      A canary that silently loses its precondition is indistinguishable from a
+      detector that has broken — which is the §8 lesson ("a check that cannot
+      fail is indistinguishable from a check that passes") arriving from the
+      other direction: a check that cannot pass looks exactly like a check
+      catching a defect. The wrong reading is the alarming one, so it costs real
+      time and invites escalation of a non-defect.
+
+      **Fix: assert the precondition before the property.** A canary that needs
+      a wrappable stat strip should fail with "corpus too thin: 4 tiles, need
+      enough to wrap" rather than "expected > 1, received 1". Cheapest useful
+      version is a single guard at the top of the geometry lane asserting the
+      built tree is complete — `dist` file count at/near 17,283, and
+      `/congress/` carrying member links — so a thin tree is refused up front
+      instead of being misreported as five separate layout regressions.
