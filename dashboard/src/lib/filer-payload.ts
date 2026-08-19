@@ -285,6 +285,10 @@ const DELTA_KEYS = [
   "cik", "position_key", "put_call", "curr_period", "prev_period", "change_kind",
   "prev_value_usd", "curr_value_usd", "delta_value_usd", "prev_shares", "curr_shares",
   "delta_shares", "ssh_prnamt_type", "flags",
+  // R8. The assembler passes QoqDeltaRow through whole, so these two are on the
+  // wire the moment the reader resolves them. `onlyKeys` is strict, so omitting
+  // them here would REJECT every payload rather than merely ignore the fields.
+  "issuer_name", "class_title",
 ] as const;
 
 const WINDOW_KEYS = ["open", "quarterEnd", "deadline"] as const;
@@ -402,6 +406,13 @@ function deltaOf(v: unknown, field: string): QoqDeltaRow {
     curr_shares: numberOrNull(v.curr_shares, `${field}.curr_shares`),
     delta_shares: numberOrNull(v.delta_shares, `${field}.delta_shares`),
     ssh_prnamt_type: unit as QoqDeltaRow["ssh_prnamt_type"],
+    /* R8. Nullable on the wire because an unresolvable key is a real, expected
+       state — it renders a plain-English unknown. Decoded rather than defaulted
+       so the client re-render shows exactly what the server rendered (R19
+       parity): silently defaulting to null here would print "unidentified"
+       client-side over a name the server had. */
+    issuer_name: stringOrNull(v.issuer_name, `${field}.issuer_name`),
+    class_title: stringOrNull(v.class_title, `${field}.class_title`),
     flags: stringArray(v.flags, `${field}.flags`),
   };
 }

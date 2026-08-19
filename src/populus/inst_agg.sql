@@ -121,6 +121,39 @@ JOIN _agg_qoq_filers f ON f.filer_id = q.filer_id
 JOIN _agg_qoq_periods cp ON cp.period_id = q.curr_period_id
 JOIN _agg_qoq_periods pp ON pp.period_id = q.prev_period_id;
 
+-- R8 — the security directory. One row per (period, position_key): the name a
+-- reader sees where the raw key would otherwise be printed.
+--
+-- PERIOD-KEYED, and that is the whole point. A single row per position_key
+-- would stamp one present-day identity onto every historical row — a G14
+-- identity time-travel violation — because an issuer's reported name and class
+-- can differ between quarters. Deltas join on their reporting period; EXIT rows
+-- have no current-period holding and join on the PRIOR period instead.
+--
+-- Not a new resolution path: issuer_name is already denormalized onto the rows
+-- this is grouped from, so the directory is a projection over landed data, and
+-- `resolution_source` carries how the issuer was keyed rather than implying a
+-- lookup that did not happen.
+--
+-- Representative choice where one key has several name or class variants in one
+-- period: highest reported value, then lexicographic identity as the tiebreak,
+-- so the result is deterministic across rebuilds rather than
+-- insertion-ordered. `ticker` is non-null only for entity-keyed identities;
+-- everything weaker leaves it NULL rather than guessing.
+CREATE TABLE IF NOT EXISTS agg_security_directory (
+  period_of_report  TEXT NOT NULL,
+  position_key      TEXT NOT NULL,              -- 'sid:<security_id>' | 'cusip:<cusip>'
+  issuer_key        TEXT NOT NULL,              -- 'entity:<id>' | 'cusip6:<6>' | 'name:<norm>'
+  issuer_name       TEXT NOT NULL,              -- representative reported name; NEVER empty
+  class_title       TEXT,                       -- NULL = every report was silent
+  ticker            TEXT,                       -- non-null ONLY for entity-keyed identities
+  cusip             TEXT,                       -- NULL when the key is security-id-only
+  resolution_source TEXT NOT NULL
+      CHECK (resolution_source IN ('entity','cusip6','name')),
+  ingested_at       TEXT NOT NULL,              -- volatile; excluded from the projection
+  PRIMARY KEY (period_of_report, position_key)
+);
+
 -- Top holders per ISSUER: for each issuer x period, the top-N filers ranked by
 -- the value they hold in that issuer, after summing a filer's value across ALL
 -- its securities sharing the issuer_key (so share classes never split a holder).

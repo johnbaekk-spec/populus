@@ -141,6 +141,7 @@ SELECT
   h.security_id,
   h.cusip,
   h.issuer_name_raw,
+  h.title_of_class,
   h.value_usd,
   h.ssh_prnamt,
   h.ssh_prnamt_type,

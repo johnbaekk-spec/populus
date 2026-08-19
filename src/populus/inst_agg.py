@@ -493,6 +493,7 @@ _MATERIALIZED_AGG_NAMESPACE = {
 
 _AGG_INPUT_COLUMNS = (
     "cik", "period_of_report", "security_id", "cusip", "issuer_name_raw",
+    "title_of_class",
     "value_usd", "ssh_prnamt", "ssh_prnamt_type", "put_call", "entity_id",
     "entity_link_state", "unkeyed_token", "is_default",
 )
@@ -636,6 +637,135 @@ SELECT cik, period_of_report, position_key, put_call, grain_unit,
        single_cusip, shares_overflow
 FROM checked
 """
+
+
+_SECURITY_DIRECTORY_INSERT = (
+    "INSERT INTO agg_security_directory (period_of_report, position_key,"
+    " issuer_key, issuer_name, class_title, ticker, cusip, resolution_source,"
+    " ingested_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+#: The Python builder's source relation for the R8 directory.
+#:
+#: It cannot reuse `_populus_inst_agg_input`: that table, and the
+#: `temp.v_filer_reported_filings` / `temp.v_default_inst_filings` scaffolding
+#: its definition joins, exist ONLY in the materialized namespace the bulk
+#: builder prepares. The Python path reads `v_default_holdings` — a real view in
+#: `views.sql`, present in every database — which already *is* the default
+#: filing population, so `is_default` is 1 by construction rather than a filter.
+#:
+#: Same shape and same join as the `agg_default_holdings_pass` read recorded in
+#: `_production_aggregate_queries`, plus `title_of_class`.
+_PYTHON_AGG_INPUT_SELECT = (
+    "SELECT h.cik, h.period_of_report, h.security_id, h.cusip,"
+    " h.issuer_name_raw, h.title_of_class, h.value_usd,"
+    " s.entity_id, s.entity_link_state, 1 AS is_default"
+    " FROM v_default_holdings h"
+    " LEFT JOIN securities s ON s.security_id = h.security_id"
+)
+
+
+def _security_directory_pick_sql(source_relation: str) -> str:
+    """One representative variant per (period, position_key).
+
+    The GROUP BY is over the identity fields, so a key that reported two names
+    or two class titles in one quarter yields one candidate row each, and
+    ROW_NUMBER picks between them by REPORTED VALUE first, then lexicographically
+    — deterministic across rebuilds rather than whatever order the scan
+    happened to produce.
+
+    Partitioned by (period_of_report, position_key) and never by position_key
+    alone: collapsing the period is the G14 identity time-travel violation this
+    table exists to avoid.
+    """
+    return f"""
+WITH variants AS (
+ SELECT period_of_report,
+        CASE WHEN security_id IS NOT NULL THEN 'sid:' || security_id
+             ELSE 'cusip:' || cusip END AS position_key,
+        issuer_name_raw,
+        title_of_class,
+        CASE WHEN COUNT(DISTINCT cusip) = 1 THEN MIN(cusip) ELSE NULL END AS cusip,
+        entity_id,
+        entity_link_state,
+        -- REAL, not INTEGER: this sum is a RANKING key only — it is never
+        -- written to the table and never shown. Summing as INTEGER lets one
+        -- outsized reported value abort the whole build with "integer
+        -- overflow" — correct for a published figure, absurd for a tiebreak.
+        -- Float imprecision cannot change an identity here; at worst it
+        -- reorders two variants of equal magnitude, and the lexicographic
+        -- tiebreak below still makes that deterministic.
+        COALESCE(SUM(CAST(value_usd AS REAL)), 0.0) AS value_usd
+ FROM {source_relation}
+ WHERE is_default = 1 AND (security_id IS NOT NULL OR cusip IS NOT NULL)
+ GROUP BY period_of_report, position_key, issuer_name_raw, title_of_class,
+          entity_id, entity_link_state
+), ranked AS (
+ SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY period_of_report, position_key
+            ORDER BY value_usd DESC, issuer_name_raw ASC, title_of_class ASC
+          ) AS n
+ FROM variants
+)
+SELECT period_of_report, position_key, issuer_name_raw, title_of_class, cusip,
+       entity_id, entity_link_state
+FROM ranked
+WHERE n = 1
+ORDER BY period_of_report, position_key
+"""
+
+
+def _write_security_directory(
+    source: sqlite3.Connection,
+    dest: sqlite3.Connection,
+    *,
+    ingested_at: str,
+    guard: Any | None = None,
+    source_relation: str = f"temp.{_INST_AGG_INPUT_NAME}",
+) -> int:
+    """Project `agg_security_directory` (R8). Returns the row count written.
+
+    `ticker` is written NULL unconditionally. The production configuration ships
+    NO ticker registry (deliberately), so there is nothing to resolve one from;
+    R8 admits a ticker only "where admitted", and inventing one from a CUSIP
+    prefix would be a fabricated identity. The column exists so a registry can
+    populate it later without a schema change.
+    """
+    written = 0
+    cursor = source.execute(_security_directory_pick_sql(source_relation))
+    while True:
+        _deadline_checkpoint(guard)
+        batch = cursor.fetchmany(_BULK_BATCH_SIZE)
+        if not batch:
+            break
+        rows = []
+        for period, position_key, name_raw, class_title, cusip, ent, link in batch:
+            # "An empty resolved name is a build error" — a blank here would
+            # render as a blank cell, which is the failure R8 exists to remove
+            # dressed up as a success.
+            if name_raw is None or not str(name_raw).strip():
+                raise InstAggError(
+                    f"security directory: {position_key!r} in {period} resolved "
+                    "to an empty issuer name; refusing to publish a blank identity"
+                )
+            issuer_key, source_kind = _issuer_key(ent, link, cusip, name_raw)
+            rows.append(
+                (
+                    period,
+                    position_key,
+                    issuer_key,
+                    name_raw,
+                    class_title,
+                    None,  # ticker — see the docstring
+                    cusip,
+                    source_kind,
+                    ingested_at,
+                )
+            )
+        dest.executemany(_SECURITY_DIRECTORY_INSERT, rows)
+        written += len(rows)
+    return written
 
 
 def _production_aggregate_queries(
@@ -1179,6 +1309,16 @@ def _build_inst_agg_python(
             " flags, ingested_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             concentration_rows,
+        )
+        # R8. Written in BOTH builders — see `_build_inst_agg_bulk` for the
+        # twin. A projection that landed in only one path would leave the
+        # directory empty on whichever path production happened to take, and
+        # every delta row would silently fall back to its raw key.
+        _write_security_directory(
+            source_conn,
+            dest,
+            ingested_at=ingested_at,
+            source_relation=f"({_PYTHON_AGG_INPUT_SELECT})",
         )
         dest.executemany(
             "INSERT INTO agg_build_meta (key, value) VALUES (?, ?)",
@@ -2214,6 +2354,11 @@ def _build_inst_agg_bulk_eligible(
             topn=topn,
             ingested_at=ingested_at,
             guard=guard,
+        )
+        # R8. The twin of the call in `_build_inst_agg_python`; both paths write
+        # this table or neither is trustworthy.
+        _write_security_directory(
+            source_conn, dest, ingested_at=ingested_at, guard=guard
         )
         dest.executemany(
             "INSERT INTO agg_build_meta (key, value) VALUES (?, ?)",

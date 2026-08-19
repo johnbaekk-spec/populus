@@ -46,6 +46,11 @@ export interface QoqDeltaRow {
   delta_shares: number | null;
   ssh_prnamt_type: "SH" | "PRN" | "UNKNOWN";
   flags: string[];
+  /** R8. Resolved from `agg_security_directory` for THIS row's reporting
+      period. `null` means the key did not resolve — the renderer prints a
+      plain-English unknown, never the key and never a blank. */
+  issuer_name: string | null;
+  class_title: string | null;
 }
 
 export interface TopHolderRow {
@@ -146,6 +151,41 @@ export function loadInstitutional(
       unkeyed_positions: Number(r.unkeyed_positions),
     }));
 
+    /* R8 — the security directory, keyed by (period, position_key).
+
+       The compound key is the requirement, not an implementation detail: an
+       issuer's reported name can differ between quarters, so resolving a key
+       without its period would stamp one identity across history (G14 identity
+       time-travel). NUL joins the parts because neither a period nor a
+       position_key can contain one, so no two distinct pairs can collide on a
+       concatenation. */
+    const directory = new Map<string, { name: string; classTitle: string | null }>();
+    for (const r of db
+      .prepare(
+        `SELECT period_of_report, position_key, issuer_name, class_title
+         FROM agg_security_directory`,
+      )
+      .all() as Record<string, unknown>[]) {
+      directory.set(`${String(r.period_of_report)}\u0000${String(r.position_key)}`, {
+        name: String(r.issuer_name),
+        classTitle: r.class_title == null ? null : String(r.class_title),
+      });
+    }
+
+    /* An EXIT row describes a position the filer no longer holds, so it has no
+       current-period identity to resolve against — it joins on the PRIOR
+       period, where the security was actually reported. Every other kind joins
+       on its own reporting period. */
+    const identityOf = (row: {
+      change_kind: string;
+      curr_period: string;
+      prev_period: string;
+      position_key: string;
+    }) =>
+      directory.get(
+        `${row.change_kind === "exit" ? row.prev_period : row.curr_period}\u0000${row.position_key}`,
+      ) ?? null;
+
     const deltasByCik = new Map<string, QoqDeltaRow[]>();
     for (const r of db
       .prepare(
@@ -171,7 +211,12 @@ export function loadInstitutional(
         delta_shares: intOrNull(r.delta_shares),
         ssh_prnamt_type: String(r.ssh_prnamt_type) as QoqDeltaRow["ssh_prnamt_type"],
         flags: parseFlags(r.flags),
+        issuer_name: null,
+        class_title: null,
       };
+      const identity = identityOf(row);
+      row.issuer_name = identity?.name ?? null;
+      row.class_title = identity?.classTitle ?? null;
       let list = deltasByCik.get(row.cik);
       if (!list) {
         list = [];

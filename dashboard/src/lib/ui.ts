@@ -1035,7 +1035,21 @@ export function changesTableHtml(
            one off-screen. Identity, then the verdict, then the two deltas that
            justify it; the four raw prev/curr levels are the supporting detail
            and follow. Nothing is removed — the order changed. */
-        `<tr><td class="c-pos"><span class="mono-note${posMarkers ? " reconciled" : ""}">${esc(d.position_key)}</span>${posMarkers}${grain}</td>` +
+        /* R8. The identity cell prints the issuer NAME, never the raw
+           `position_key`. Measured on the 2026-08-19 build, the key form put
+           112,976 raw identifiers in front of readers across 1,312 of 1,500
+           filer pages — plan success criterion #2 violated on 87% of them.
+           An unresolved key renders a plain-English unknown: never the key
+           (which is the defect) and never a blank (which is a different
+           defect wearing the same clothes). `mono-note` follows the name
+           only when there IS one, since it exists to mark machine text. */
+        `<tr><td class="c-pos">${
+          d.issuer_name == null
+            ? `<span class="unresolved-identity">security not identified in this filing</span>`
+            : `<span>${esc(d.issuer_name)}</span>${
+                d.class_title ? `<span class="class-title">${esc(d.class_title)}</span>` : ""
+              }`
+        }${posMarkers}${grain}</td>` +
         `<td class="c-chip">${qoqChipHtml(d)}</td>` +
         `<td class="c-num">${valueDelta}</td>` +
         `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
