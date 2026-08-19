@@ -547,21 +547,35 @@ decisions, escalated rather than self-signed.
       deliberately. The implementation already matched this; the amendment makes
       the requirement match the implementation rather than the reverse.
 
-- [ ] **B33 — where the raw flag token lives.** R10 puts it in a
-      `visually-hidden` span: exactly once, real text, never a tooltip. Review
-      wants provenance that is **one interaction away for sighted readers and
-      present in print**, and is right that the current form is available to
-      assistive technology while being unreachable for everyone else.
+- [x] **B33 — RESOLVED 2026-08-19 (owner): the raw token is a disclosure that
+      also prints.** The plain-English warning is the `<summary>` and stays
+      visible with it shut; the machine name is one click or Enter away, and it
+      prints without the reader having opened it.
 
-      The fix is a UI surface this branch had no mandate to invent — a
-      `<details>` disclosure or an anchored provenance block, plus a print
-      override for `.flag-raw`. It also overlaps R11 (M2), which brings one typed
-      slug-to-microcopy map exhaustive over every flag; doing both at once is
-      probably cheaper than doing this now and again then.
+      `<details>` rather than script, because R36's locked CSP admits exactly two
+      inline script hashes and a gate needing a third would have to be unpicked
+      to land that policy. `<summary>` is focusable and keyboard-operable
+      natively.
 
-      Note the constraint it must respect: §8 forbids honesty-bearing content
-      being tooltip-only, so the WARNING must stay visible whatever happens to
-      the token beside it.
+      **The print half is the part worth remembering.** A closed `<details>`
+      hides its content through `::details-content`'s `content-visibility`, NOT
+      through anything `display` on the child can reach — measured, print height
+      stayed at 18px with `display: block !important` alone and became 36px once
+      the pseudo-element was addressed. The `display` line is kept beside it for
+      engines that hide content the older way. A browser too old for
+      `::details-content` prints the WARNING but not the token; acceptable,
+      because the honesty-bearing half is the summary and summaries always print.
+
+      Two measurement traps, both of which produced a wrong conclusion first and
+      cost a wasted "fix": `getBoundingClientRect` on a child inside a closed
+      `<details>` reports a stale box, so it read as visible when it was not;
+      and `checkVisibility()` reported false even when open. Measure the
+      `<details>` element's own height — that is what the tests do.
+
+      Note the path fires on ZERO pages today (every flag the corpus ships is
+      registered), so it is tested against planted markup rather than waiting for
+      a real unknown flag — which would mean the first run is the first time it
+      is needed.
 
 ## Notes for whoever picks this up
 
