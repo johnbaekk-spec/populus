@@ -594,38 +594,32 @@ renderers hoisting over their full bounded collection, the derived
 `amount_unparsed` chip included, and a detector proven against production-shaped
 markup. What remains:
 
-- [ ] **B34 — two badge sources render OUTSIDE the flag list, so they never reach
-      `universalFlags`.** `holdings.ts:473` emits
-      `<span class="flag dashed">filing not in dictionary</span>` for a
-      provenance miss, and `holdings.ts:1359` renders `r.notes` as flag badges.
-      Neither is in `row.flags`, so a table where EVERY row misses the filing
-      dictionary — or every compared position carries the same note — repeats
-      that badge on every row with no caveat. Reviewer's reproduction: two-row
-      probes gave `{"rowBadges":2,"tableCaveat":false}` for both.
+- [x] **B34 — RESOLVED 2026-08-19.** The hoist now runs over what each renderer
+      PRESENTS, not what the producer flagged. `holdings.ts`'s provenance miss
+      gets a registry entry and joins the key-shaped path; the position-diff
+      table's free-text `notes` hoist by the label a reader sees, via
+      `universalBadgeNote` — the label-shaped sibling of `universalFlagNote`.
+      Labels are escaped, because a note is producer text.
 
-      The fix is not another patch. Define each renderer's **effective
-      presentation keys** — everything it can put in a flag cell, not just
-      `flags` — and compute universality over that. `effectiveFlagKeys` already
-      does this for the one derived chip; these two are the same problem and
-      should join it rather than get their own special case.
+      Note for whoever meets it next: the provenance-miss badge renders **0
+      times** in today's corpus, so its hoist is proven by renderer tests rather
+      than by any built page. A green whole-dist sweep says nothing about it.
 
-- [ ] **B35 — the whole-dist gate validates a marker's PRESENCE, not its
-      meaning.** Wired renderers emit `data-stated-flags`, and the detector
-      exempts any table carrying it. So an empty marker on a table that visibly
-      repeats a badge passes — which is exactly the B34 case, and why the gate
-      stayed green through it.
+- [x] **B35 — RESOLVED 2026-08-19.** The gate exempted any table carrying
+      `data-stated-flags`, which validated the marker's PRESENCE rather than its
+      meaning — an empty marker on a visibly uniform table passed, and that is
+      exactly how B34 stayed hidden behind a green gate.
 
-      The marker was introduced to replace a proximity guess about pagers, and it
-      does that correctly for the one case it must: a PAGED table whose visible
-      page is uniform while its full collection is not. Narrow the exemption to
-      that case — the table must be paged AND marked — and treat an unpaged
-      marked table with uniform badges as the violation it is.
+      The only exemption is now `data-paged`, set by the three renderers that
+      page, because a paged table's visible page can be uniform while the full
+      collection it judged is not — the one case HTML cannot settle.
+      `data-stated-flags` keeps its real job (the client reads it to suppress
+      identically when paging) and stops being an alibi.
 
-      Note the recurring shape before touching it: this gate has been wrong three
-      times, and every time it looked green. A check that cannot fail is
-      indistinguishable from a check that passes, so any change here needs a
-      removal-failing proof against production-shaped markup, not a fixture that
-      happens to omit whatever the real pages contain.
+      **Left open, deliberately:** nothing asserts that a renderer which pages
+      also sets `data-paged`. A future paging table that forgets it becomes a
+      false positive — noisy rather than silent, which is the safer direction,
+      but the gate cannot close that gap from HTML alone.
 
 ## Notes for whoever picks this up
 
