@@ -492,6 +492,40 @@ work, and the live site ships with all 13 today.
       states this entry as the reason it stops there, rather than skipping
       quietly.
 
+## 10. R36 preconditions, MEASURED 2026-08-18 (not yet implemented)
+
+R36 is not started. These two facts were measured against the current tree
+(build EXIT 0, 17,283 files, 9,660 pages) because both gate its hardest test,
+and both would otherwise be discovered the expensive way.
+
+- [x] **The locked CSP script hashes STILL HOLD. Do not re-measure them.**
+      Exactly two distinct EXECUTABLE inline scripts exist, both on all 9,660
+      pages, and both match the pair locked in the plan:
+      `sha256-l7z5mLHE3mvA5XUH9QJEiNRmReuFTfsBcWHAxRGvW3k=` (389 B, the pre-paint
+      theme script) and `sha256-MqA3PKuITCptalBQPnAhrxVICEdcFhUVx47/2VNIkDU=`
+      (937 B, the theme-toggle module). Nothing in M1 disturbed them. The plan
+      records the second as 933 B; it is 937 B, and the HASH is what matters and
+      matches.
+
+- [ ] **B31 — R36's whole-dist sweep must exclude non-executable script types,
+      or it will fail on its first run and invite a catastrophic "fix".**
+      The plan's census — *"exactly TWO distinct inline script modules"* — was
+      taken over **3,668** pages. The tree is now **9,660** pages, and the
+      institutional embeds brought **2,953 `<script type="application/json">`
+      data islands** with them (up to 2.4 MB each, one per filer page).
+
+      A sweep that matches `<script>` without inspecting `type` therefore counts
+      **2,955** distinct bodies, not 2. The obvious reaction — add the missing
+      hashes — would put thousands of data hashes into `script-src` and is
+      exactly backwards: `type="application/json"` never executes, CSP's
+      `script-src` does not govern it, and hashing it would pin the CSP to the
+      corpus so every data refresh breaks the deploy.
+
+      The sweep must count only bodies whose `type` is absent, `module`,
+      `text/javascript` or `application/javascript`. Verified: filtered that way
+      the emitted set equals the locked pair EXACTLY (set equality, not
+      superset), which is what R36's Verification Matrix row demands.
+
 ## Notes for whoever picks this up
 
 - **G-guardrails govern**: G1 no paid/vendor data · G3 never silently drop ·
