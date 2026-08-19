@@ -40,6 +40,8 @@ import {
   flagTags,
   universalFlags,
   universalFlagNote,
+  universalBadgeNote,
+  universalBadges,
   intOrNull,
   jsonArrayOf,
   latestFiling,
@@ -451,7 +453,7 @@ export function provenanceOf(
     three in the accessibility tree at every breakpoint. No `.mobile-dates`
     swap here — that pattern hides one date per viewport, and a table that
     scrolls in-container does not need it. */
-export function provenanceCellHtml(p: Provenance): string {
+export function provenanceCellHtml(p: Provenance, stated: readonly string[] = []): string {
   const period = p.periodOfReport ?? "—";
   const filed = p.filedDate ?? "not in this build's filing dictionary";
   const lag =
@@ -468,9 +470,12 @@ export function provenanceCellHtml(p: Provenance): string {
           `composed from ${p.filingCount} filings: ${p.accessions.join(", ")}`,
         )}">composed · ${esc(String(p.filingCount))} filings</span>`
       : "";
-  const unknown = p.known
-    ? ""
-    : `<span class="flag dashed">filing not in dictionary</span>`;
+  /* B34: hoistable. When every row of a table misses the filing dictionary the
+     badge says nothing per row, so the table states it once and this yields. */
+  const unknown =
+    p.known || stated.includes("filing_not_in_dictionary")
+      ? ""
+      : `<span class="flag dashed">filing not in dictionary</span>`;
   return (
     `<span class="mono-note"><span class="visually-hidden">quarter ended </span>${esc(period)}</span> ` +
     `<span class="mono-note"><span class="visually-hidden">filed </span>filed ${esc(filed)}</span> ` +
@@ -1235,10 +1240,26 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
      visible page lets the caveat appear on page 0 and vanish on page 1 for the
      same table, which is precisely the contradiction the entity table's version
      was written to avoid; wiring these later, I reintroduced it. */
-  const statedHoldings = universalFlags(opts.rows.map((r) => r.flags));
+  /* B34: over what each row PRESENTS, not just what the producer flagged. The
+     provenance miss is a `.flag` badge rendered from `Provenance.known`, so a
+     table whose every row misses the dictionary repeated it on every row while
+     `universalFlags` never saw it. Provenance is resolved once per row here and
+     reused by the render below rather than recomputed. */
+  const provOf = new Map(
+    opts.rows.map((r) => [r, provenanceOf([r.filing_key], opts.filings, r.period)] as const),
+  );
+  const statedHoldings = universalFlags(
+    /* `effectiveFlagKeys` is TxnRow-shaped (it derives `amount_unparsed` from
+       low/high bounds); a `FilerHoldingRow` has no bounds, so its presented set
+       is its flags plus the provenance badge. */
+    opts.rows.map((r) => [
+      ...r.flags,
+      ...(provOf.get(r)!.known ? [] : ["filing_not_in_dictionary"]),
+    ]),
+  );
   const body = pageRows
     .map((row) => {
-      const prov = provenanceOf([row.filing_key], opts.filings, row.period);
+      const prov = provOf.get(row) ?? provenanceOf([row.filing_key], opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
         : srcLinkDerived("#holdings-footnotes", edgarFilerUrl(opts.cik));
@@ -1247,7 +1268,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         `<td class="c-pos">${positionCell(row)}</td>` +
         `<td class="c-num c-strong">${valueCell(row.value_usd)}</td>` +
         `<td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td>` +
-        `<td class="c-dates">${provenanceCellHtml(prov)}</td>` +
+        `<td class="c-dates">${provenanceCellHtml(prov, statedHoldings)}</td>` +
         `<td class="c-flags">${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
         `<td class="c-src">${src}</td>` +
         `</tr>`
@@ -1289,7 +1310,15 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     )} undisclosed-value ${totals.undisclosedRows === 1 ? "row" : "rows"}</span></div>` +
     emptyNote +
     universalFlagNote(statedHoldings) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHoldings.join(","))}">` +
+    /* B35 (cycle 4 F1): `data-paged` means "this HTML shows only PART of the
+       collection", not "this renderer supports paging". Set unconditionally it
+       exempted single-page tables — including the exact B34 regressions — so the
+       gate passed the failures it exists to catch. When the whole collection is
+       on the page, the visible rows ARE the collection and there is nothing HTML
+       cannot settle. */
+    `<div class="table-scroll"><table class="etable" data-sticky-first${
+      pageCount > 1 ? ' data-paged="1"' : ""
+    } data-stated-flags="${esc(statedHoldings.join(","))}">` +
     `<caption class="visually-hidden">Positions ${esc(opts.filerName)} reported for the quarter ended ${esc(
       opts.period,
     )}, as that filer reported them</caption>` +
@@ -1339,6 +1368,10 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
     }
     return esc(`${v > 0 ? "+" : ""}${fmtUsd(v)}`);
   };
+  /* B34: diff notes are free TEXT, not registry keys, so they hoist by the label
+     a reader sees — which is why `universalBadgeNote` exists beside the
+     key-shaped `universalFlagNote`. Over `diff.rows`, the full bounded set. */
+  const statedNotes = universalBadges(diff.rows.map((r) => r.notes));
   const body = pageRows
     .map((r) => {
       const shown = r.current ?? r.prior!;
@@ -1353,11 +1386,10 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
         `<td class="c-num">${shares(r.prior)}</td>` +
         `<td class="c-num">${shares(r.current)}</td>` +
         `<td class="c-chip">${diffChip(r.kind)}</td>` +
-        `<td class="c-flags">${
-          r.notes.length === 0
-            ? ""
-            : r.notes.map((n) => `<span class="flag dashed">${esc(n)}</span>`).join("")
-        }</td>` +
+        `<td class="c-flags">${r.notes
+          .filter((n) => !statedNotes.includes(n))
+          .map((n) => `<span class="flag dashed">${esc(n)}</span>`)
+          .join("")}</td>` +
         `</tr>`
       );
     })
@@ -1381,7 +1413,10 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
     (matched === 0
       ? `<p class="section-note">No positions to compare: this build's projection carries rows ` +
         `for at most one of the two quarters.</p>`
-      : `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+      : universalBadgeNote(statedNotes) +
+        `<div class="table-scroll"><table class="etable" data-sticky-first${
+          pageCount > 1 ? ' data-paged="1"' : ""
+        } data-stated-flags="${esc(statedNotes.join(","))}">` +
         `<caption class="visually-hidden">Positions compared between the quarters ended ${esc(
           diff.prior,
         )} and ${esc(diff.current)}</caption>` +
@@ -1424,9 +1459,21 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
   const total = opts.totalRows ?? matched;
   const pageRows = holdingsPageSlice(opts.rows, opts.page);
   const pageCount = holdingsPageCount(matched);
+  /* B34: the THIRD consumer of `provenanceCellHtml`, and the one cycle 4 round 2
+     found still repeating the badge. Over the full bounded set, resolved once
+     per row and reused below — the same shape as the positions table. */
+  const provOf = new Map(
+    opts.rows.map((r) => [r, provenanceOf(r.filing_keys, opts.filings, r.period)] as const),
+  );
+  /* An `IssuerHolderRow` carries no `flags` of its own, so the provenance miss
+     is its ONLY badge source — which is exactly why a key-only hoist never
+     covered this table. */
+  const statedHolders = universalFlags(
+    opts.rows.map((r) => (provOf.get(r)!.known ? [] : ["filing_not_in_dictionary"])),
+  );
   const body = pageRows
     .map((row) => {
-      const prov = provenanceOf(row.filing_keys, opts.filings, row.period);
+      const prov = provOf.get(row) ?? provenanceOf(row.filing_keys, opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
         : srcLinkDerived("#holdings-footnotes", edgarFilerUrl(row.filer_key));
@@ -1450,7 +1497,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
             ? `<span class="mono-note" title="the shard carries no security count for this row">—</span>`
             : fmtInt(row.security_count)
         }</td>` +
-        `<td class="c-dates">${provenanceCellHtml(prov)}</td>` +
+        `<td class="c-dates">${provenanceCellHtml(prov, statedHolders)}</td>` +
         `<td class="c-src">${src}</td>` +
         `</tr>`
       );
@@ -1479,7 +1526,10 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
     (matched === 0
       ? `<p class="section-note">This build's projection carries no resolved holder rows for ` +
         `${esc(opts.ticker)} in ${esc(opts.period)}.</p>`
-      : `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+      : universalFlagNote(statedHolders) +
+        `<div class="table-scroll"><table class="etable" data-sticky-first${
+          pageCount > 1 ? ' data-paged="1"' : ""
+        } data-stated-flags="${esc(statedHolders.join(","))}">` +
         `<caption class="visually-hidden">Institutions whose reported 13F holdings resolved to ${esc(
           opts.issuerName,
         )} for the quarter ended ${esc(opts.period)}</caption>` +

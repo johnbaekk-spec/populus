@@ -382,6 +382,11 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   owner_unparsed: { label: "owner unparsed", cls: "dashed" },
   // inst_serving.py:312 — absence is not assertable, so no exit is claimed
   exit_not_assertable: { label: "exit not assertable", cls: "dashed" },
+  /* B34: rendered by `provenanceCellHtml` from `Provenance.known`, not from any
+     row's `flags`. It is a badge a reader sees, so it must be hoistable like
+     one — the point of B34 is that "what the row PRESENTS" is the unit, not
+     "what the producer flagged". */
+  filing_not_in_dictionary: { label: "filing not in dictionary", cls: "dashed" },
 };
 
 export function flagChips(
@@ -463,6 +468,14 @@ export const UNIVERSAL_FLAG_SHARE = 1.0;
     every other table. */
 export const UNIVERSAL_FLAG_MIN_ROWS = 1;
 
+/** Badge LABELS carried by every row, in stable order. B34: the label-shaped
+    sibling of `universalFlags`, for badge sources that are free text rather than
+    registry keys (the position-diff table's `notes`). Same threshold, same
+    whole-collection rule. */
+export function universalBadges(rows: readonly (readonly string[])[]): string[] {
+  return universalFlags(rows);
+}
+
 /** Flags carried by ≥ `UNIVERSAL_FLAG_SHARE` of `rows`, in stable order.
 
     Pass EVERY row the table can page through, not the current page. The table
@@ -480,6 +493,25 @@ export function universalFlags(rows: readonly (readonly string[])[]): string[] {
     .filter(([, n]) => n / rows.length >= UNIVERSAL_FLAG_SHARE)
     .map(([f]) => f)
     .sort();
+}
+
+/** The table-level statement for badges identified by the TEXT a reader sees.
+
+    B34: not every badge comes from a flag key. `holdings.ts` renders a
+    provenance miss from `Provenance.known`, and the position-diff table renders
+    free-text `notes` — both as `.flag` badges, neither in `row.flags`. A
+    key-only mechanism cannot state those once, so the unit here is the rendered
+    LABEL and `universalFlagNote` is the key-shaped caller of it.
+
+    Labels are escaped: a diff note is producer text, not a literal this file
+    controls. */
+export function universalBadgeNote(labels: readonly string[]): string {
+  if (labels.length === 0) return "";
+  return (
+    `<div class="caveat-line table-caveat">` +
+    `Every row below carries <strong>${esc(labels.join(", "))}</strong>` +
+    ` — stated once here rather than repeated on every row.</div>`
+  );
 }
 
 /** The table-level statement for hoisted flags, or "" when there are none.

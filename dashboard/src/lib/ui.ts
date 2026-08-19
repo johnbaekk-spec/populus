@@ -321,7 +321,11 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
   return (
     universalFlagNote(stated) +
     `<div class="table-scroll"><table class="etable" data-entity-table data-kind="${opts.kind}"` +
-    ` data-stated-flags="${esc(stated.join(","))}">` +
+    /* B35: `data-paged` is the ONLY thing that exempts a table from the R10
+       whole-dist gate, and only these two renderers page. A visible page of a
+       paged table can be uniform while its full collection is not, which is the
+       one case the gate cannot judge from HTML. */
+    `${pages > 1 ? ' data-paged="1"' : ""} data-stated-flags="${esc(stated.join(","))}">` +
     `<caption class="visually-hidden">${esc(opts.caption)}</caption>` +
     `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
     `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx, stated)}</tbody>` +
@@ -1045,7 +1049,9 @@ export function changesTableHtml(
     .join("\n");
   return (
     universalFlagNote(statedDeltas) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedDeltas.join(","))}">` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first${
+      pageCount > 1 ? ' data-paged="1"' : ""
+    } data-stated-flags="${esc(statedDeltas.join(","))}">` +
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
     `<thead><tr><th scope="col">Position · grain</th><th scope="col">Change</th><th scope="col">Δ value</th><th scope="col">Δ shares</th><th scope="col">Prev value</th><th scope="col">Curr value</th><th scope="col">Prev shares</th><th scope="col">Curr shares</th><th scope="col">Flags</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +

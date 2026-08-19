@@ -960,3 +960,35 @@ test("R10 #12: universality is judged over the WHOLE table, not the visible page
     "so a per-page set disagrees with the whole-table set, and the caveat flickers",
   );
 });
+
+test("B34: badges rendered OUTSIDE the flag list hoist too", async () => {
+  const { universalBadges, universalBadgeNote } = await import("../src/lib/format.ts");
+  const { provenanceCellHtml } = await import("../src/lib/holdings.ts");
+
+  /* Site 1 — the provenance miss. It is rendered from `Provenance.known`, not
+     from any row's `flags`, so a key-only mechanism never saw it and a table
+     whose every row missed the filing dictionary repeated the badge on all of
+     them. */
+  const miss = { known: false, filingCount: 1, accessions: [], docUrl: null, filed: "2026-01-01" };
+  const shown = provenanceCellHtml(miss as never);
+  assert.ok(shown.includes("filing not in dictionary"), "un-hoisted, the badge shows");
+  const hoisted = provenanceCellHtml(miss as never, ["filing_not_in_dictionary"]);
+  assert.ok(!hoisted.includes("filing not in dictionary"), "hoisted, it yields to the table caveat");
+
+  /* Site 2 — position-diff notes are free TEXT, not registry keys, which is why
+     the note is label-shaped. */
+  const everyRow = [["value undisclosed both sides"], ["value undisclosed both sides"]];
+  assert.deepEqual(universalBadges(everyRow), ["value undisclosed both sides"]);
+  const note = universalBadgeNote(universalBadges(everyRow));
+  assert.ok(note.includes("Every row below carries"), "stated once");
+  assert.ok(note.includes("value undisclosed both sides"), "in the producer's own words");
+
+  const mixed = [["value undisclosed both sides"], ["shares unit mismatch"]];
+  assert.deepEqual(universalBadges(mixed), [], "differing notes are not universal");
+
+  /* producer text is escaped — a note is not a literal this codebase controls */
+  assert.ok(
+    universalBadgeNote(["<script>x</script>"]).includes("&lt;script&gt;"),
+    "labels are escaped",
+  );
+});
