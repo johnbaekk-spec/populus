@@ -17,6 +17,7 @@ import {
   stripRowTrailing,
   PACKED_TRAILING_PX,
   CONGRESS_TILE_LABELS,
+  FORCE_TABLE_OVERFLOW,
   type Box,
 } from "./geometry.ts";
 
@@ -255,44 +256,59 @@ for (const width of WIDTHS) {
          test — missing scroller, not-scrollable, missing sticky cell — and each
          was a silent PASS that would read as coverage.
 
-         F4 (codex round 2): removing the guards was not enough. At 1440px the
-         real table measured 1278/1278 — it does not overflow — so the widest
-         width was asserting a background DECLARATION on a container that could
-         not scroll. That proves nothing about an affordance. The antecedent is
-         forced instead: the table is widened past every viewport, so
-         "scrollable" is true by construction at all five widths and the cue is
-         measured where it actually has a job. */
+         F4/F2 (codex rounds 2 and 3). Removing the guards was not enough: at
+         1440px the real table measures 1278/1278, so the widest width asserted a
+         cue on a container that CANNOT scroll. Worse, the only pixel difference
+         there was 10px in from the edge — the `local` cover layer, not the
+         shadow — so it was evidence about the wrong layer entirely.
+
+         The overflow is forced now, with an instrument that took three
+         contradictory measurements to get right (see `FORCE_TABLE_OVERFLOW`).
+         Scrollability is ASSERTED rather than computed and discarded, and the
+         cue is asserted as PAINT rather than as a computed declaration: a
+         gradient in `background-image` does not prove anything reaches the
+         screen, because these shadows are painted on the container BEHIND the
+         table. Both frames come from this same run, so no baseline is stored and
+         no copy change can turn this red. */
       expect(await scroller.count(), "the filer page renders a scroll container").toBeGreaterThan(0);
+      await page.addStyleTag({ content: FORCE_TABLE_OVERFLOW });
 
-      /* The cue is asserted as PAINT, not as a declaration. `background-image`
-         naming a gradient does not prove anything reaches the screen: these are
-         scrolling shadows painted on the container BEHIND the table, so an
-         opaque cell that covers the container edge would hide them while the
-         computed style still read "gradient".
-
-         Two frames from this same run — the container's right edge strip with
-         the cue and with `background-image: none` — must differ. Same run, so
-         there is no stored baseline to approve and no copy change can turn it
-         red.
-
-         Measured before writing it, and the measurement is why the first
-         attempt at this was thrown away: forcing overflow artificially (a
-         4000px table, or a 240px container) CHANGES what covers the background
-         and reported "paints nothing" at three widths where the real page paints
-         fine. The instrument was wrong, not the CSS. Nothing is forced here. */
       const box = (await scroller.boundingBox())!;
       const state = await scroller.evaluate((el) => {
         el.scrollLeft = Math.round((el.scrollWidth - el.clientWidth) / 2);
-        return { scrollable: el.scrollWidth > el.clientWidth, sw: el.scrollWidth, cw: el.clientWidth,
-                 background: getComputedStyle(el).backgroundImage };
+        const r = el.getBoundingClientRect();
+        const th = el.querySelector("thead");
+        const headH = th ? th.getBoundingClientRect().height : 0;
+        const at = document.elementFromPoint(r.right - 6, r.top + headH + 40);
+        return {
+          scrollable: el.scrollWidth > el.clientWidth,
+          sw: el.scrollWidth,
+          cw: el.clientWidth,
+          headH: Math.round(headH),
+          edgeBg: at ? getComputedStyle(at).backgroundColor : "none",
+          background: getComputedStyle(el).backgroundImage,
+        };
       });
+
+      expect(
+        state.scrollable,
+        `the table does not overflow at ${width}px (${state.sw}/${state.cw}) even when forced — ` +
+          `every cue assertion below would be vacuous`,
+      ).toBe(true);
+      /* Guard the instrument itself: if the edge cell is opaque, the cue is
+         occluded and a red result would be the harness's own doing. */
+      expect(
+        state.edgeBg,
+        `an OPAQUE cell (${state.edgeBg}) covers the container's right edge at ${width}px — ` +
+          `the forcing instrument has distorted the layout, so the cue check below is invalid`,
+      ).toBe("rgba(0, 0, 0, 0)");
       expect(
         state.background,
-        `at ${width}px a table can scroll sideways with no cue — it hides its columns ` +
+        `at ${width}px a table scrolls sideways with no cue — it hides its columns ` +
           `as surely as deleting them`,
       ).toContain("gradient");
 
-      const clip = { x: box.x + box.width - 20, y: box.y + 40, width: 20, height: 120 };
+      const clip = { x: box.x + box.width - 12, y: box.y + state.headH + 40, width: 10, height: 60 };
       const withCue = await page.screenshot({ clip });
       await page.addStyleTag({ content: ".table-scroll{background-image:none}" });
       const withoutCue = await page.screenshot({ clip });

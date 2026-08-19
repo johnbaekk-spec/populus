@@ -69,3 +69,27 @@ export const CONGRESS_TILE_LABELS: RegExp[] = [
   /^Senate parse · \d+ e-filed$/,
   /^paper · need OCR( · \d+ H · \d+ S)?$/,
 ];
+
+/** Force a `.table-scroll` to overflow at any viewport width, WITHOUT distorting
+    the layout in the one way that breaks the measurement.
+
+    The obvious instrument — `.etable { min-width: 4000px }` — is wrong, and it
+    took three contradictory measurements to see why. Auto table layout hands the
+    extra width to the FIRST column, and that column is
+    `.etable[data-sticky-first] td:first-child`: `position: sticky; left: 0`,
+    `background: var(--raised)`, `z-index: 2`. Once it grows wider than the
+    scroll container it spans the whole visible box and paints its opaque
+    background OVER the container's right-edge shadow. `elementFromPoint` at the
+    container's right edge then returns `td.c-pos` with
+    `background: rgb(255, 254, 251)` instead of a transparent cell, and the cue
+    genuinely is invisible — so the instrument manufactures the very defect it
+    claims to be testing for. Narrowing the container (`max-width: 240px`) does
+    the same thing for the same reason.
+
+    Widening only the NON-identity columns leaves the sticky column its natural
+    size, so the container overflows and the cue is measured where it is not
+    occluded. Verified at all five widths: scrollable, edge cell transparent,
+    cue paints. */
+export const FORCE_TABLE_OVERFLOW =
+  ".table-scroll .etable td:not(:first-child)," +
+  ".table-scroll .etable th:not(:first-child){min-width:260px}";

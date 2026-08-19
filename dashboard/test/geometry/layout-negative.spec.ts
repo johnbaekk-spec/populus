@@ -16,6 +16,7 @@ import {
   stripRowTrailing,
   PACKED_TRAILING_PX,
   CONGRESS_TILE_LABELS,
+  FORCE_TABLE_OVERFLOW,
   type Box,
 } from "./geometry.ts";
 
@@ -132,6 +133,9 @@ test("removing the R6 scroll cue is DETECTED", async ({ page }) => {
   await page.setViewportSize({ width: 964, height: 900 });
   await page.goto("/institutional/filers/1067983/");
   const scroller = page.locator(".table-scroll").first();
+  /* Same instrument as the suite, so the control cannot pass against an easier
+     condition than the assertion it protects. */
+  await page.addStyleTag({ content: FORCE_TABLE_OVERFLOW });
 
   const clean = await scroller.evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(clean, "baseline must carry the cue, or this control proves nothing").toContain("gradient");

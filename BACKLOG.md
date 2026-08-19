@@ -412,38 +412,47 @@ work, and the live site ships with all 13 today.
       default (3.9 MB first paint) was considered and deliberately NOT taken — it
       narrows the default view, which this site may only do out loud.
 
-- [ ] **B28 — R6's scroll cue may be unreliable above the 720px fold, and the
-      geometry gate cannot currently prove otherwise.** Raised by external review
-      (round 3 F2) and left OPEN when the cap was reached.
+- [x] **B28 — R6's scroll cue is NOT broken. The three instruments that said it
+      was were manufacturing the defect they claimed to find.** Raised by external
+      review (round 3 F2), investigated 2026-08-18 per owner decision, RESOLVED.
 
-      R6's cue is a Lea-Verou "scrolling shadow" painted on `.table-scroll`'s
-      background, *behind* the table. Its visibility therefore depends on what
-      the table's own cells cover. Above 720px there is no `mask-image`
-      fallback — inside the fold there is, and that is what actually paints
-      at 360/720px.
+      **Root cause of the confusion.** `.etable[data-sticky-first] td:first-child`
+      is `position: sticky; left: 0`, `background: var(--raised)`, `z-index: 2`.
+      Auto table layout hands surplus width to the FIRST column, so
+      `.etable{min-width:4000px}` grows the sticky identity column past the
+      container width — it then spans the whole visible box and paints its opaque
+      background OVER the container's right-edge shadow. `elementFromPoint` at the
+      right edge returns `td.c-pos` with `background: rgb(255, 254, 251)` instead
+      of a transparent cell. Narrowing the container (`max-width: 240px`) does the
+      same thing for the same reason. Proven with an OPAQUE RED test layer: at
+      964px forced, even a solid red 14px band at the right edge is invisible, so
+      the shadow was being covered, not failing to render. Ruled out first:
+      scrollbar gutter (0px, overlay scrollbars), sticky-`thead` occlusion
+      (sampled 40px below a 29px header), and paint timing (identical after
+      1,200ms).
 
-      Measured 2026-08-18 on `/institutional/filers/1067983/`, sampling a
-      right-edge strip below the 29px sticky `thead`, scrolled to mid-range:
+      **Correct instrument:** widen only the NON-identity columns
+      (`td:not(:first-child)`), leaving the sticky column its natural size.
+      Verified at all five widths — scrollable, edge cell transparent, cue paints:
+      360px 2280/326 · 720px 2280/686 · 964px 2394/882 · 1080px 2394/998 ·
+      1440px 2394/1278.
 
-      | condition | 964px | 1440px |
-      |---|---|---|
-      | real corpus | scrollable, cue paints | **not scrollable** (1278/1278), cue paints |
-      | `.etable{min-width:4000px}` | scrollable, **cue paints NOTHING** | scrollable, cue paints |
-      | `.table-scroll{max-width:240px}` | scrollable, **cue paints NOTHING** | scrollable, **cue paints NOTHING** |
+      **The reviewer's underlying point was still right, and is now fixed.** At
+      1440px the real table measures 1278/1278 — it does not overflow — and the
+      only pixel difference there was 10px in from the edge, which is the `local`
+      COVER layer, not the shadow. So the old assertion was evidence about the
+      wrong layer. The gate now forces overflow, ASSERTS `scrollWidth >
+      clientWidth` at all five widths, asserts the cue as PAINT rather than as a
+      computed declaration, and carries a guard that fails with *"an OPAQUE cell
+      covers the container's right edge — the forcing instrument has distorted the
+      layout"* if anyone reaches for the naive instrument again. Shipped in PR #45.
 
-      Two readings, and the measurements do not separate them: either the cue is
-      genuinely unreliable above the fold under heavy overflow — a defect in
-      merged code that predates `feat/m1-geometry` — or all three forcing
-      instruments are invalid because they change what covers the background.
-
-      **The gate today asserts** (all five widths): the container exists, the cue
-      is declared, the cue PAINTS (right-edge strip differs with and without it),
-      and the identity column is `position: sticky`. **It does not assert** that
-      the container is scrollable at 1440px, because with today's corpus it is
-      not. Deciding this means changing R6's cue mechanism or its contract.
-      Owner decision 2026-08-18: **investigate before further M1 work.** Do not
-      write a fourth forcing instrument unreviewed — "tuned until green" is the
-      failure this branch has already paid for twice.
+      **One genuine fragility, left open deliberately.** If a first column ever
+      does become wider than its scroll container with real data, the sticky
+      column WILL hide the right-edge cue for actual readers, not just for tests.
+      It cannot happen at today's column widths. Recorded so it is recognised
+      rather than re-diagnosed from scratch: if a scroll cue ever "disappears",
+      check the identity column's width first.
 
 - [ ] **B29 — `production dist has NO institutional fixture routes (Locked #19)`
       cannot pass in the configuration R35/R9 require.** The test asserts the DEV
