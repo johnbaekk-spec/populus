@@ -403,13 +403,7 @@ export function flagChips(
      `amount_unparsed` to its caveat line would strip the flag and then grow the
      badge straight back on every row — claiming "stated once here" above a
      table that repeats it. */
-  if (
-    r &&
-    r.low == null &&
-    r.high == null &&
-    !flags.includes("amount_unparsed") &&
-    !stated.has("amount_unparsed")
-  ) {
+  if (r && !stated.has("amount_unparsed") && derivesAmountUnparsed({ ...r, flags })) {
     chips.push({ label: "amount unparsed", cls: "dashed" });
   }
   return chips;
@@ -460,10 +454,14 @@ export const UNKNOWN_FLAG_LABEL = "unrecognised source condition";
     per-row badges deliberately. */
 export const UNIVERSAL_FLAG_SHARE = 1.0;
 
-/** Below this many rows there is no "universal" worth hoisting — a reader can
-    see the whole table at a glance, and a caveat line above three rows is more
-    chrome than the badges it replaces. */
-export const UNIVERSAL_FLAG_MIN_ROWS = 8;
+/** No minimum table size. There WAS one (8 rows), on the reasoning that a
+    caveat line above three rows is more chrome than the badges it replaces —
+    but the amended requirement says "a flag carried by EVERY row of a table"
+    with no size exception, and an implementer inventing one is the same
+    unapproved-deviation move the "near-universal" threshold already cost a
+    review round. A one-row table with a universal flag states it once, like
+    every other table. */
+export const UNIVERSAL_FLAG_MIN_ROWS = 1;
 
 /** Flags carried by ≥ `UNIVERSAL_FLAG_SHARE` of `rows`, in stable order.
 
@@ -498,10 +496,16 @@ export function universalFlagNote(flags: readonly string[]): string {
   const unknown = flags.filter((f) => !FLAG_PRESENTATION[f]);
   const labels = [...known, ...(unknown.length > 0 ? [UNKNOWN_FLAG_LABEL] : [])];
   const provenance = unknown.length === 0 ? "" : ` ${rawFlagDisclosure(unknown)}`;
+  /* A `<div>`, not a `<p>`. `<details>` is FLOW content and `<p>` accepts only
+     phrasing, so the parser closed the paragraph early and split this caveat
+     into three siblings — verified by parsing the emitted note:
+     `<p>…</p><details>…</details> — stated once…<p></p>`. The styling, the
+     trailing clause and the disclosure all came apart, and a string-matching
+     test could not see it. */
   return (
-    `<p class="caveat-line table-caveat">` +
+    `<div class="caveat-line table-caveat">` +
     `Every row below carries <strong>${esc(labels.join(", "))}</strong>${provenance}` +
-    ` — stated once here rather than repeated on every row.</p>`
+    ` — stated once here rather than repeated on every row.</div>`
   );
 }
 
@@ -526,10 +530,16 @@ function rawFlagDisclosure(unknown: readonly string[]): string {
     rows. Both directions now go through this one function. */
 export function effectiveFlagKeys(r: Pick<TxnRow, "flags" | "low" | "high">): string[] {
   const keys = [...r.flags];
-  if (r.low == null && r.high == null && !keys.includes("amount_unparsed")) {
-    keys.push("amount_unparsed");
-  }
+  if (derivesAmountUnparsed(r)) keys.push("amount_unparsed");
   return keys;
+}
+
+/** THE derivation, in one place. Rendering and universal detection both consume
+    it, so they cannot disagree about whether a row presents this chip — and
+    disagreeing in each direction is precisely what two separate blockers were:
+    a hoisted flag coming back onto the rows, and a derived one never leaving. */
+function derivesAmountUnparsed(r: Pick<TxnRow, "flags" | "low" | "high">): boolean {
+  return r.low == null && r.high == null && !r.flags.includes("amount_unparsed");
 }
 
 /* ---------- FlagTag (G6): one canonical markup renderer ----------

@@ -631,9 +631,17 @@ test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row
   const allButOne = [...Array.from({ length: 11 }, () => ["missing_ticker"]), []];
   assert.deepEqual(universalFlags(allButOne), [], "92% keeps its per-row badges");
 
-  /* a table too small to have a "universal" worth hoisting */
-  const tiny = Array.from({ length: UNIVERSAL_FLAG_MIN_ROWS - 1 }, () => ["missing_ticker"]);
-  assert.deepEqual(universalFlags(tiny), [], "a short table states its flags per row");
+  /* Cycle 2 F2: there is NO minimum table size. An 8-row floor was invented by
+     the implementation and the amended requirement has no size exception, so a
+     one-row and a seven-row table hoist like any other. */
+  assert.equal(UNIVERSAL_FLAG_MIN_ROWS, 1, "no unapproved minimum-size exception");
+  for (const n of [1, 7]) {
+    const rows = Array.from({ length: n }, () => ["missing_ticker"]);
+    assert.deepEqual(universalFlags(rows), ["missing_ticker"], `${n}-row table hoists`);
+  }
+  assert.deepEqual(universalFlags([]), [], "an empty table has nothing to hoist");
+  /* unknown and derived conditions hoist at small sizes too */
+  assert.deepEqual(universalFlags([["a_flag_from_the_future"]]), ["a_flag_from_the_future"]);
 
   const note = universalFlagNote(["missing_ticker"]);
   assert.ok(note.includes("Every row below carries"), "the note says what it means");
@@ -647,6 +655,14 @@ test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row
      unreachable on the table where it appears on all of them. */
   const unknownNote = universalFlagNote(["a_flag_from_the_future"]);
   assert.ok(unknownNote.includes("<details"), "table-level provenance is a disclosure too");
+  /* Cycle 2 F3: `<details>` is FLOW content, so a `<p>` wrapper is closed early
+     by the parser and the caveat comes apart into siblings. */
+  assert.ok(!unknownNote.startsWith("<p"), "the caveat wrapper accepts flow content");
+  assert.ok(unknownNote.startsWith("<div"), "so it is a div");
+  assert.ok(
+    unknownNote.trimEnd().endsWith("</div>"),
+    "and the trailing clause stays inside the same element as the disclosure",
+  );
   assert.ok(
     unknownNote.includes(`<summary>${UNKNOWN_FLAG_LABEL}</summary>`),
     "with the warning visible in the summary",
