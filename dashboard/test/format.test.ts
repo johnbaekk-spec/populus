@@ -551,17 +551,176 @@ test("rangeBand + dualDate: the feed row is COMPOSED of the canonical components
   assert.ok(open.includes("open"), "open cap hatches");
 });
 
-test("flagTags: registry chips + FAIL-VISIBLE unknown flags as raw dashed tags", async () => {
-  const { flagTags } = await import("../src/lib/format.ts");
+test("flagTags: registry chips + FAIL-VISIBLE unknown flags, never a raw slug", async () => {
+  const { flagTags, UNKNOWN_FLAG_LABEL } = await import("../src/lib/format.ts");
   const known = flagTags(["amount_spouse_cap"]);
   assert.ok(known.includes("spouse cap"));
+
+  /* R10 defect #11. Fail-visible SURVIVES — an unknown flag still warns — but
+     the warning is plain English and the machine name is provenance, not UI
+     text. Both halves are asserted: a version that dropped the warning and a
+     version that printed the slug would each be wrong. */
   const unknown = flagTags(["a_flag_from_the_future"]);
-  assert.ok(unknown.includes("a_flag_from_the_future"), "unknown flags never silently vanish");
-  assert.ok(unknown.includes("flag-raw"));
-  assert.ok(unknown.includes("dashed"));
+  assert.ok(unknown.includes(UNKNOWN_FLAG_LABEL), "an unknown flag still warns, visibly");
+  assert.ok(unknown.includes("dashed"), "and still carries the unparsed/unknown styling");
+  assert.ok(unknown.includes("a_flag_from_the_future"), "the raw token survives, for provenance");
+  assert.ok(unknown.includes("flag-raw"), "and is in the provenance span");
+  /* B33: the token is behind a disclosure, not in a screen-reader-only span.
+     The WARNING is in the <summary> and therefore visible with it shut — §8
+     forbids honesty-bearing content living behind an interaction, and the
+     warning is the honesty-bearing half. */
+  assert.ok(unknown.includes("<details"), "the token sits in a disclosure");
+  assert.ok(
+    unknown.includes(`<summary>${UNKNOWN_FLAG_LABEL}</summary>`),
+    "the warning is the summary, so it shows with the disclosure closed",
+  );
+  assert.ok(!unknown.includes("visually-hidden"), "no longer assistive-technology-only");
+  const summaryOnly = unknown.replace(/<span class="flag-raw">.*?<\/span>/g, "");
+  assert.ok(
+    !summaryOnly.includes("a_flag_from_the_future"),
+    "no raw flag slug reaches the default view — R10's whole point",
+  );
+  assert.equal(
+    unknown.split("a_flag_from_the_future").length - 1,
+    1,
+    "the raw token appears EXACTLY once",
+  );
+  assert.equal(unknown.split("<details").length - 1, 1, "one disclosure per row, not per slug");
+
+  /* one warning per row, not one per unknown slug */
+  const two = flagTags(["one_from_the_future", "another_from_the_future"]);
+  assert.equal(
+    two.split(UNKNOWN_FLAG_LABEL).length - 1,
+    1,
+    "two unknown flags produce ONE generic warning, not two identical ones",
+  );
+  assert.ok(two.includes("one_from_the_future") && two.includes("another_from_the_future"));
+
   const inst = flagTags(["shares_unit_mismatch", "value_undisclosed_one_side"]);
   assert.ok(inst.includes("unit mismatch"));
   assert.ok(inst.includes("value undisclosed one side"));
+
+  /* Round 3's F3, found by measuring the BUILT tree: four producer flags ship
+     and were missing from the registry, so the generic path swallowed them —
+     87,099 occurrences of `missing_security` alone. A vague warning over a fact
+     the producer states precisely is worse than the raw slug this requirement
+     removed, so every shipped flag must take the KNOWN path. */
+  for (const [slug, copy] of [
+    ["missing_security", "security not in mapping"],
+    ["other_manager_unparsed", "other-manager unparsed"],
+    ["owner_unparsed", "owner unparsed"],
+    ["exit_not_assertable", "exit not assertable"],
+  ] as const) {
+    const out = flagTags([slug]);
+    assert.ok(out.includes(copy), `${slug} renders its own words`);
+    assert.ok(
+      !out.includes(UNKNOWN_FLAG_LABEL),
+      `${slug} ships in the corpus and must NOT take the unknown path`,
+    );
+  }
+});
+
+test("R10 #12: a flag on EVERY row states itself once, and is suppressed per row", async () => {
+  const { universalFlags, universalFlagNote, flagTags, UNIVERSAL_FLAG_MIN_ROWS, UNKNOWN_FLAG_LABEL } =
+    await import("../src/lib/format.ts");
+  const every = Array.from({ length: 12 }, () => ["missing_ticker"]);
+  assert.deepEqual(universalFlags(every), ["missing_ticker"], "100% hoists");
+
+  /* 11 of 12 is NOT hoisted, and that is deliberate: the row that DIFFERS is
+     the informative one, and a note reading "every row" would be false. */
+  const allButOne = [...Array.from({ length: 11 }, () => ["missing_ticker"]), []];
+  assert.deepEqual(universalFlags(allButOne), [], "92% keeps its per-row badges");
+
+  /* Cycle 2 F2: there is NO minimum table size. An 8-row floor was invented by
+     the implementation and the amended requirement has no size exception, so a
+     one-row and a seven-row table hoist like any other. */
+  assert.equal(UNIVERSAL_FLAG_MIN_ROWS, 1, "no unapproved minimum-size exception");
+  for (const n of [1, 7]) {
+    const rows = Array.from({ length: n }, () => ["missing_ticker"]);
+    assert.deepEqual(universalFlags(rows), ["missing_ticker"], `${n}-row table hoists`);
+  }
+  assert.deepEqual(universalFlags([]), [], "an empty table has nothing to hoist");
+  /* unknown and derived conditions hoist at small sizes too */
+  assert.deepEqual(universalFlags([["a_flag_from_the_future"]]), ["a_flag_from_the_future"]);
+
+  const note = universalFlagNote(["missing_ticker"]);
+  assert.ok(note.includes("Every row below carries"), "the note says what it means");
+  assert.ok(note.includes("no ticker"), "in the registry's words, not the slug");
+  assert.ok(!note.includes("missing_ticker"), "and never the raw slug");
+  assert.equal(universalFlagNote([]), "", "no hoisted flags, no note");
+
+  /* Cycle 2 F1: hoisting REMOVES the row disclosure, so an UNKNOWN flag hoisted
+     to table level must carry the same disclosure up with it. Otherwise the
+     token is reachable on a table where the flag appears on some rows, and
+     unreachable on the table where it appears on all of them. */
+  const unknownNote = universalFlagNote(["a_flag_from_the_future"]);
+  assert.ok(unknownNote.includes("<details"), "table-level provenance is a disclosure too");
+  /* Cycle 2 F3: `<details>` is FLOW content, so a `<p>` wrapper is closed early
+     by the parser and the caveat comes apart into siblings. */
+  assert.ok(!unknownNote.startsWith("<p"), "the caveat wrapper accepts flow content");
+  assert.ok(unknownNote.startsWith("<div"), "so it is a div");
+  assert.ok(
+    unknownNote.trimEnd().endsWith("</div>"),
+    "and the trailing clause stays inside the same element as the disclosure",
+  );
+  assert.ok(
+    unknownNote.includes(`<summary>${UNKNOWN_FLAG_LABEL}</summary>`),
+    "with the warning visible in the summary",
+  );
+  assert.ok(!unknownNote.includes("visually-hidden"), "not assistive-technology-only");
+  assert.equal(
+    unknownNote.split("a_flag_from_the_future").length - 1,
+    1,
+    "the raw token appears exactly once in the note",
+  );
+
+  /* the suppression half: the hoisted flag leaves the row, others stay */
+  const row = flagTags(["missing_ticker", "amount_spouse_cap"], undefined, {
+    stated: ["missing_ticker"],
+  });
+  assert.ok(!row.includes("no ticker"), "the hoisted flag is not repeated on the row");
+  assert.ok(row.includes("spouse cap"), "un-hoisted flags are untouched");
+
+  /* Round 3's F6. `amount unparsed` is DERIVED from the row's own bounds, not
+     read from the flag list, so filtering the flag left the derivation free to
+     grow the badge straight back — a table claiming "stated once here" above a
+     table that repeated it on every row. */
+  const boundless = { low: null, high: null };
+  const derived = flagTags(["amount_unparsed"], boundless, { stated: ["amount_unparsed"] });
+  assert.ok(
+    !derived.includes("amount unparsed"),
+    "a hoisted amount_unparsed must not be re-derived onto the row",
+  );
+  assert.ok(
+    flagTags(["amount_unparsed"], boundless).includes("amount unparsed"),
+    "and it still appears when it was NOT hoisted",
+  );
+});
+
+test("R10 #12: a DERIVED caveat on every row is hoisted too", async () => {
+  const { universalFlags, universalFlagNote, flagTags, effectiveFlagKeys } = await import(
+    "../src/lib/format.ts"
+  );
+  /* Cycle 2 F2, the mirror of round 3's F6. `amount unparsed` is derived from
+     null bounds, not read from the flag list, so a table of boundless rows
+     carrying NO explicit `amount_unparsed` flag repeated the caveat on every row
+     and never hoisted it. Detection now runs over what a row PRESENTS. */
+  const boundlessRows = Array.from({ length: 10 }, () => ({ flags: [] as string[], low: null, high: null }));
+  assert.deepEqual(universalFlags(boundlessRows.map(effectiveFlagKeys)), ["amount_unparsed"]);
+
+  const stated = universalFlags(boundlessRows.map(effectiveFlagKeys));
+  assert.ok(universalFlagNote(stated).includes("amount unparsed"), "the note names it");
+  assert.ok(
+    !flagTags([], boundlessRows[0]!, { stated }).includes("amount unparsed"),
+    "and the derived chip does NOT come back on the row",
+  );
+
+  /* a table where only some rows are boundless keeps the per-row chip */
+  const mixed = [
+    ...Array.from({ length: 9 }, () => ({ flags: [] as string[], low: null, high: null })),
+    { flags: [] as string[], low: 1, high: 2 },
+  ];
+  assert.deepEqual(universalFlags(mixed.map(effectiveFlagKeys)), [], "9 of 10 is not universal");
 });
 
 test("terminusRow: names its author — the source or Public Filings, never a bare more", async () => {
@@ -769,4 +928,35 @@ test("isCanonicalDate: shape is not enough — the date must exist and round-tri
   ]) {
     assert.equal(isCanonicalDate(bad as unknown), false, String(bad));
   }
+});
+
+test("R10 #12: universality is judged over the WHOLE table, not the visible page", async () => {
+  const { universalFlags } = await import("../src/lib/format.ts");
+  /* Cycle 3 F2, a real defect I introduced. Holdings and changes computed the
+     stated set from `pageRows`, so a 101-row table whose first page happened to
+     be uniform showed the caveat on page 0 and not on page 1 — the same table
+     contradicting itself between pages. The entity table always computed over
+     the full set; wiring the other renderers later, I did not.
+
+     This asserts the PROPERTY the renderers must satisfy: the set is a function
+     of the whole collection, so it cannot differ between two slices of it. */
+  const PAGE = 100;
+  const all = [
+    ...Array.from({ length: PAGE }, () => ["missing_ticker"]),
+    ["amount_spouse_cap"], // the 101st row breaks universality
+  ];
+  assert.deepEqual(universalFlags(all), [], "101 rows, one differing → nothing is universal");
+
+  const page0 = all.slice(0, PAGE);
+  const page1 = all.slice(PAGE);
+  assert.deepEqual(
+    universalFlags(page0),
+    ["missing_ticker"],
+    "page 0 alone LOOKS universal — which is exactly the trap",
+  );
+  assert.notDeepEqual(
+    universalFlags(page0),
+    universalFlags(all),
+    "so a per-page set disagrees with the whole-table set, and the caveat flickers",
+  );
 });

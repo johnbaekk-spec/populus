@@ -22,6 +22,9 @@ import {
   rangeBand,
   dualDate,
   flagTags,
+  universalFlags,
+  effectiveFlagKeys,
+  universalFlagNote,
   srcLink,
   srcLinkDerived,
   terminusRow,
@@ -231,7 +234,7 @@ export interface EntityTableOpts {
   ctx: RenderCtx;
 }
 
-function txnCellsMember(r: TxnRow, ctx: RenderCtx): string {
+function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = []): string {
   const side = sideLabel(r.side, r.flags);
   const owner = ownerNote(r);
   const ownerLong = ownerNoteLong(r);
@@ -249,12 +252,12 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx): string {
     }</td>` +
     `<td class="c-traded">${dualDate(r)}</td>` +
     `<td class="c-amount${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
-    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r)}</td>` +
+    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
     `<td class="c-src">${srcLink(r.doc)}</td>`
   );
 }
 
-function txnCellsTicker(r: TxnRow, ctx: RenderCtx): string {
+function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = []): string {
   const side = sideLabel(r.side, r.flags);
   const owner = ownerNote(r);
   const ownerLong = ownerNoteLong(r);
@@ -274,14 +277,19 @@ function txnCellsTicker(r: TxnRow, ctx: RenderCtx): string {
     }</td>` +
     `<td class="c-traded">${dualDate(r)}</td>` +
     `<td class="c-amount${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
-    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r)}</td>` +
+    `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
     `<td class="c-src">${srcLink(r.doc)}</td>`
   );
 }
 
-export function entityTxnRowsHtml(rows: TxnRow[], kind: "member" | "ticker", ctx: RenderCtx): string {
+export function entityTxnRowsHtml(
+  rows: TxnRow[],
+  kind: "member" | "ticker",
+  ctx: RenderCtx,
+  stated: readonly string[] = [],
+): string {
   const cells = kind === "member" ? txnCellsMember : txnCellsTicker;
-  return rows.map((r) => `<tr>${cells(r, ctx)}</tr>`).join("\n");
+  return rows.map((r) => `<tr>${cells(r, ctx, stated)}</tr>`).join("\n");
 }
 
 export function entityTableCountText(page: number, shown: number, total: number): string {
@@ -300,16 +308,23 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
   const merged = mergeFeed(txns, []);
   const pageRows = pageSlice(merged, opts.page).filter((i): i is TxnRow => i.kind === "txn");
   const pages = pageCountFor(merged);
+  /* R10 defect #12. Over EVERY row the table can page through, not this page —
+     the client re-renders rows on paging, and a per-page set would let page 2
+     contradict the note page 1 left above it. The set travels to the client in
+     `data-stated-flags` so both sides suppress identically. */
+  const stated = universalFlags(txns.map(effectiveFlagKeys));
   const heads =
     opts.kind === "member"
       ? ["Filed ▾", "Ticker", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"]
       : ["Filed ▾", "Member", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"];
   const count = entityTableCountText(opts.page, pageRows.length, txns.length);
   return (
-    `<div class="table-scroll"><table class="etable" data-entity-table data-kind="${opts.kind}">` +
+    universalFlagNote(stated) +
+    `<div class="table-scroll"><table class="etable" data-entity-table data-kind="${opts.kind}"` +
+    ` data-stated-flags="${esc(stated.join(","))}">` +
     `<caption class="visually-hidden">${esc(opts.caption)}</caption>` +
     `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
-    `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx)}</tbody>` +
+    `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx, stated)}</tbody>` +
     `</table></div>` +
     `<div class="table-foot">` +
     `<div class="view-note">v_default_transactions — active filings minus superseded amendment originals · <a href="/methodology/#defaults">what's excluded ↗</a></div>` +
@@ -518,6 +533,10 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
   }
   // data
   const holders = inst.holders ?? [];
+  /* R10 #12 applies to EVERY flag-bearing table, not only the entity txn one.
+     Measured before wiring these: 1,004 pages carried a table whose every row
+     read `security not in mapping`, with no caveat line above it. */
+  const statedHolders = universalFlags(holders.map((h) => h.flags));
   const rows = holders
     .map(
       (h) =>
@@ -526,7 +545,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
         `<td class="c-filer"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
         `<td class="c-num c-strong">${esc(fmtUsd(h.value))}</td>` +
         `<td class="c-num">${fmtInt(h.securities)}</td>` +
-        `<td class="c-flags">${flagTags(h.flags)}</td>` +
+        `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedHolders })}</td>` +
         `<td class="c-src">${srcLinkDerived("#ticker-inst-footnotes", edgarFilerUrl(h.cik))}</td></tr>`,
     )
     .join("\n");
@@ -537,7 +556,8 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
       inst.latestFiled ?? null,
     )} · longs only</span></h2>` +
     `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">full holders view ↗</a></div>` +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    universalFlagNote(statedHolders) +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHolders.join(","))}">` +
     `<caption class="visually-hidden">Top institutional holders of ${esc(ticker)} for quarter ${esc(inst.period!)}</caption>` +
     `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col">Value ▾</th><th scope="col">Securities</th><th scope="col">Flags</th><th scope="col">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
@@ -604,6 +624,13 @@ export function tickerUnifiedBody(
         `<tbody>${memberRows}</tbody></table></div>` +
         `<div class="card-foot">buys · sales · flow range — ranges cannot be netted</div>`;
 
+  /* R10 #12: the compact preview is NOT paged, so its five rows ARE the whole
+     set it speaks for — a flag universal among them is universal, full stop.
+     This was the fifth flag-bearing renderer and the last one still repeating a
+     caveat on every row; the whole-dist assertion in
+     `test/post/universal-caveat.test.ts` is what named it. */
+  const previewRows = t.txns.slice(0, 5);
+  const statedPreview = universalFlags(previewRows.map(effectiveFlagKeys));
   const recent = opts.fullTable
     ? entityTxnTable(t.txns, {
         kind: "ticker",
@@ -611,11 +638,12 @@ export function tickerUnifiedBody(
         page: opts.page ?? 0,
         ctx,
       })
-    : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Latest congressional filings mentioning ${esc(
+    : universalFlagNote(statedPreview) +
+      `<div class="table-scroll"><table class="etable etable-compact" data-stated-flags="${esc(statedPreview.join(","))}"><caption class="visually-hidden">Latest congressional filings mentioning ${esc(
         t.ticker,
       )}</caption>` +
       `<thead><tr><th scope="col">Filed ▾</th><th scope="col">Member</th><th scope="col">Side · Owner</th><th scope="col">Traded · Lag</th><th scope="col">Amount</th><th scope="col">Range · Flags</th><th scope="col">Src</th></tr></thead>` +
-      `<tbody>${entityTxnRowsHtml(t.txns.slice(0, 5), "ticker", ctx)}</tbody></table></div>` +
+      `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview)}</tbody></table></div>` +
       `<div class="card-foot"><span>traded → filed dual dates on every row</span><a href="${congressTickerHref(
         t.ticker,
       )}">all ${fmtInt(t.txns.length)} ↗</a></div>`;
@@ -838,6 +866,7 @@ export function holdersTableHtml(
   latestFiled: string | null,
   topn: number,
 ): string {
+  const statedRanked = universalFlags(rows.map((h) => h.flags));
   const body = rows
     .map(
       (h) =>
@@ -848,7 +877,7 @@ export function holdersTableHtml(
         `<td class="c-num c-strong">${esc(fmtUsd(h.value_usd))}</td>` +
         `<td class="c-num">${fmtInt(h.security_count)}</td>` +
         `<td class="c-keysrc"><span class="mono-note">${esc(h.issuer_key_source)}</span></td>` +
-        `<td class="c-flags">${flagTags(h.flags)}</td>` +
+        `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedRanked })}</td>` +
         `<td class="c-src">${srcLinkDerived("#holders-footnotes", edgarFilerUrl(h.cik))}</td></tr>`,
     )
     .join("\n");
@@ -856,7 +885,8 @@ export function holdersTableHtml(
     `<div class="panel panel-wide">` +
     `<div class="panel-head"><h2 class="section-h">Ranked holders — ${esc(period)}</h2>` +
     `<span class="panel-note">${instStamp(period, latestFiled)}</span></div>` +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    universalFlagNote(statedRanked) +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedRanked.join(","))}">` +
     `<caption class="visually-hidden">Top institutional holders for quarter ${esc(period)}</caption>` +
     `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col">Value ▾</th><th scope="col">Securities</th><th scope="col">Issuer key</th><th scope="col">Flags</th><th scope="col">Src</th></tr></thead>` +
     `<tbody>${body}</tbody></table></div>` +
@@ -974,6 +1004,10 @@ export function changesTableHtml(
   const embedded = ordered.length;
   const pageRows = holdingsPageSlice(ordered, page);
   const pageCount = holdingsPageCount(embedded);
+  /* Over `ordered` — every row this table can page through — not `pageRows`.
+     See the note in `holdings.ts`: a per-page set makes the caveat flicker
+     between pages of one table. */
+  const statedDeltas = universalFlags(ordered.map((d) => d.flags));
   const rows = pageRows
     .map((d) => {
       const p = qoqPresentation(d);
@@ -1005,12 +1039,13 @@ export function changesTableHtml(
         `<td class="c-num">${cell(d.curr_value_usd)}</td>` +
         `<td class="c-num">${shareCell(d.prev_shares)}</td>` +
         `<td class="c-num">${shareCell(d.curr_shares)}</td>` +
-        `<td class="c-flags">${flagTags(d.flags)}</td></tr>`
+        `<td class="c-flags">${flagTags(d.flags, undefined, { stated: statedDeltas })}</td></tr>`
       );
     })
     .join("\n");
   return (
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    universalFlagNote(statedDeltas) +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedDeltas.join(","))}">` +
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
     `<thead><tr><th scope="col">Position · grain</th><th scope="col">Change</th><th scope="col">Δ value</th><th scope="col">Δ shares</th><th scope="col">Prev value</th><th scope="col">Curr value</th><th scope="col">Prev shares</th><th scope="col">Curr shares</th><th scope="col">Flags</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +

@@ -272,7 +272,9 @@ gate runs left behind, recorded so nothing here is discovered later as a surpris
   2. The projection base misses whole file classes (9,664 measured vs a 12,545
      base) — same family as (1), same decision.
   3. **The search index is 451,932 B against its declared 128 KiB budget** — a
-     3.4× overrun that ships to every visitor on every page. This one is a real
+     3.4× overrun that ships to every visitor on every page. **Re-measured
+     2026-08-18: 506,945 B, now a 3.9× overrun** — the corpus restoration and 444
+     members made it worse, not better. This one is a real
      user-facing weight problem, not a bookkeeping drift.
 
 - **B19 — RESOLVED 2026-08-14 (UX-overhaul R29): the M2-11 QA-bundle trio
@@ -345,6 +347,285 @@ what that exercise left behind.
   deletes a `pytestmark` skipif, CI goes green on a suite that never ran. A cheap
   guard would be a test asserting both suites are collected on Darwin and skipped
   elsewhere; nothing enforces it today.
+
+## 8. Carried open from `feat/m1-geometry` (R35 harness + R9 stat strip, 2026-08-18)
+
+PR #45 ships the browser-geometry harness and the R9 stat-strip fix. External
+review ran to its 3-round cap (9 + 5 + 2 findings; 14 of 16 closed). These are
+the two it could not close plus the bookkeeping the rounds produced, recorded
+here because `.codex-review/` is git-ignored and would not survive the machine.
+
+**`test:post` now reaches 60 assertions, not 49.** It had been running on Node's
+~4 GB default heap and OOM'd inside `node:sqlite` at 193s, so
+`file-budget.test.ts` reported one opaque failure while asserting **nothing**. It
+now carries `--max-old-space-size=24576` (matching `build:bounded`) and passes 11
+of its 12 — including `R22 GATE (F7)`, which the 08-17 handoff had recorded as
+environment-broken. That gate is fine; it needs the build staged per handoff §8.
+Consequence: the post-build lane's machine floor is now the same 32 GiB the build
+already required.
+
+**The 13 remaining `test:post` failures, attributed.** Owner decision 2026-08-18:
+merge PR #45 and track these separately — none is new, none is caused by that
+work, and the live site ships with all 13 today.
+
+- 10 × `fixture-preview.test.ts` — **already covered by B18's preamble.**
+  Re-confirmed 2026-08-18: `make-inst-preview.py` resolves a dev build at
+  `…/.claude/worktrees/populus-data/releases/data-20260815.2/`, which does not
+  exist. Worktree artifact, not a defect.
+- 1 × search index — **B18.3.** Re-measured **506,945 B** against the 128 KiB
+  budget (was 451,932 B; the corpus restoration and 444 members made it worse).
+- 1 × `R19 GATE (margin)` — **B27**, below.
+- 1 × `Locked #19` leakage check — **B29**, below.
+
+- [ ] **B27 — `congress/data/feed.v1.json` is at 85% of the 25 MiB per-file cap,
+      and the cap is the hosting provider's, not ours.** Measured on build
+      `20260817.1`: 22,288,548 B — `txns` 21,854,530 B over 71,714 rows (~305
+      B/row), `paper` 433,083 B over 3,047 rows. Growth is ~2 MB/year against
+      3.9 MB of headroom: **roughly 18 months**, and an election year compresses
+      that. It is deployable and IS deployed today, which is why nothing looks
+      broken — Cloudflare will simply reject a future deploy outright.
+
+      **The design is settled and measured (owner, 2026-08-18): shard by year,
+      client fetches all shards.** ~13 shards of ~1.5 MB. The constraint is
+      PER-FILE, not total download, and the feed filters/searches/pages
+      CLIENT-SIDE over the whole corpus, so no scheme reduces what a filtering
+      visitor downloads. Three things this must get right, each of which fails
+      silently if missed:
+      1. **Concatenate NEWEST-YEAR-FIRST.** The load order (filed desc, txn_id
+         asc within a date) is the stable tie-break every other sort depends on.
+         Years do not overlap, so year-desc concatenation preserves the global
+         order exactly — and getting it wrong changes sort results rather than
+         raising anything.
+      2. **A partial shard set must FAIL VISIBLY**, never render a short feed. A
+         feed missing a year looks exactly like a quiet week — the B25 failure
+         mode again.
+      3. `/congress/data/feed.v1.json` stays an INDEX (metadata, `txn_cols`,
+         `paper_cols`, `paper`, `shards: [{year, path, rows}]`). Three strings
+         advertise it as "the full published data" / "the raw dataset"
+         (`congress/index.astro:186`, `watchlist/index.astro`, the load-failure
+         copy) and must change with the shape, or the page claims a completeness
+         the file no longer has. `feed-client.ts` and `watchlist-client.ts` both
+         fetch it; `classifyDataset` must learn the index shape and keep refusing
+         a stale cached body (the F3 version-mismatch path).
+
+      Owner decision 2026-08-18: **schedule after M1**, not before. A recent-window
+      default (3.9 MB first paint) was considered and deliberately NOT taken — it
+      narrows the default view, which this site may only do out loud.
+
+- [x] **B28 — R6's scroll cue is NOT broken. The three instruments that said it
+      was were manufacturing the defect they claimed to find.** Raised by external
+      review (round 3 F2), investigated 2026-08-18 per owner decision, RESOLVED.
+
+      **Root cause of the confusion.** `.etable[data-sticky-first] td:first-child`
+      is `position: sticky; left: 0`, `background: var(--raised)`, `z-index: 2`.
+      Auto table layout hands surplus width to the FIRST column, so
+      `.etable{min-width:4000px}` grows the sticky identity column past the
+      container width — it then spans the whole visible box and paints its opaque
+      background OVER the container's right-edge shadow. `elementFromPoint` at the
+      right edge returns `td.c-pos` with `background: rgb(255, 254, 251)` instead
+      of a transparent cell. Narrowing the container (`max-width: 240px`) does the
+      same thing for the same reason. Proven with an OPAQUE RED test layer: at
+      964px forced, even a solid red 14px band at the right edge is invisible, so
+      the shadow was being covered, not failing to render. Ruled out first:
+      scrollbar gutter (0px, overlay scrollbars), sticky-`thead` occlusion
+      (sampled 40px below a 29px header), and paint timing (identical after
+      1,200ms).
+
+      **Correct instrument:** widen only the NON-identity columns
+      (`td:not(:first-child)`), leaving the sticky column its natural size.
+      Verified at all five widths — scrollable, edge cell transparent, cue paints:
+      360px 2280/326 · 720px 2280/686 · 964px 2394/882 · 1080px 2394/998 ·
+      1440px 2394/1278.
+
+      **The reviewer's underlying point was still right, and is now fixed.** At
+      1440px the real table measures 1278/1278 — it does not overflow — and the
+      only pixel difference there was 10px in from the edge, which is the `local`
+      COVER layer, not the shadow. So the old assertion was evidence about the
+      wrong layer. The gate now forces overflow, ASSERTS `scrollWidth >
+      clientWidth` at all five widths, asserts the cue as PAINT rather than as a
+      computed declaration, and carries a guard that fails with *"an OPAQUE cell
+      covers the container's right edge — the forcing instrument has distorted the
+      layout"* if anyone reaches for the naive instrument again. Shipped in PR #45.
+
+      **One genuine fragility, left open deliberately.** If a first column ever
+      does become wider than its scroll container with real data, the sticky
+      column WILL hide the right-edge cue for actual readers, not just for tests.
+      It cannot happen at today's column widths. Recorded so it is recognised
+      rather than re-diagnosed from scratch: if a scroll cue ever "disappears",
+      check the identity column's width first.
+
+- [ ] **B29 — `production dist has NO institutional fixture routes (Locked #19)`
+      cannot pass in the configuration R35/R9 require.** The test asserts the DEV
+      build withholds the institutional module. Browser-geometry work must build
+      the PRODUCTION configuration (`POPULUS_INST_DB` set), where
+      `dist/institutional/filers` legitimately holds 1,500 pages. One tree cannot
+      satisfy both premises. Either the test learns the build mode it is looking
+      at and skips loudly in the other, or the geometry lane gets its own staged
+      dev build. It is a configuration conflict, not a leak — verified 2026-08-18
+      that the pages present are the real institutional tree, not fixtures.
+
+## 9. Carried open from `feat/m1-legibility` (R7, 2026-08-18)
+
+- [ ] **B30 — at 360px the member name is squeezed to 8px by the ticker cell.**
+      Found while measuring R7, PRE-EXISTING (measured before the R7 change and
+      unaffected by it), and deliberately NOT folded into R7 — it is a different
+      mechanism from the defect R7 names.
+
+      R7's defect was a starved `1fr` GRID TRACK: the nine-column single-line
+      grid spent 786px on fixed tracks and left the member column whatever
+      remained (68px at 964px). That is fixed — the row folds to two lines from
+      1080px down, and the member cell now measures 352px at 720px, 549px at
+      964px and 665px at 1080px against the ~137px a 20-character name needs.
+
+      B30 is COMPETITION BETWEEN TWO FLEX CELLS inside the folded line 1. At
+      360px `.row-line1` is 294px wide; `.cell-ticker` is `flex-shrink: 0` and
+      takes **194px** for a long fund name, `.cell-side` takes 53px, and
+      `.cell-member` (`flex: 1 1 auto`) is left **8px**. With `overflow: hidden`
+      a name reduced to 8px is deleted in practice — the reader cannot see WHO
+      filed, which is the identity the whole row hangs on.
+
+      Not fixed here because the fix is a judgement call this branch has no
+      mandate for: letting the ticker shrink truncates 40-character fund names
+      (R5's boundary case), and moving the ticker to line 2 changes an approved
+      mobile grammar. R7's Verification Matrix row specifies the member name **at
+      964px**, which is met; the geometry suite asserts it from 964px up and
+      states this entry as the reason it stops there, rather than skipping
+      quietly.
+
+## 10. R36 preconditions, MEASURED 2026-08-18 (not yet implemented)
+
+R36 is not started. These two facts were measured against the current tree
+(build EXIT 0, 17,283 files, 9,660 pages) because both gate its hardest test,
+and both would otherwise be discovered the expensive way.
+
+- [x] **The locked CSP script hashes STILL HOLD. Do not re-measure them.**
+      Exactly two distinct EXECUTABLE inline scripts exist, both on all 9,660
+      pages, and both match the pair locked in the plan:
+      `sha256-l7z5mLHE3mvA5XUH9QJEiNRmReuFTfsBcWHAxRGvW3k=` (389 B, the pre-paint
+      theme script) and `sha256-MqA3PKuITCptalBQPnAhrxVICEdcFhUVx47/2VNIkDU=`
+      (937 B, the theme-toggle module). Nothing in M1 disturbed them. The plan
+      records the second as 933 B; it is 937 B, and the HASH is what matters and
+      matches.
+
+- [ ] **B31 — R36's whole-dist sweep must exclude non-executable script types,
+      or it will fail on its first run and invite a catastrophic "fix".**
+      The plan's census — *"exactly TWO distinct inline script modules"* — was
+      taken over **3,668** pages. The tree is now **9,660** pages, and the
+      institutional embeds brought **2,953 `<script type="application/json">`
+      data islands** with them (up to 2.4 MB each, one per filer page).
+
+      A sweep that matches `<script>` without inspecting `type` therefore counts
+      **2,955** distinct bodies, not 2. The obvious reaction — add the missing
+      hashes — would put thousands of data hashes into `script-src` and is
+      exactly backwards: `type="application/json"` never executes, CSP's
+      `script-src` does not govern it, and hashing it would pin the CSP to the
+      corpus so every data refresh breaks the deploy.
+
+      The sweep must count only bodies whose `type` is absent, `module`,
+      `text/javascript` or `application/javascript`. Verified: filtered that way
+      the emitted set equals the locked pair EXACTLY (set equality, not
+      superset), which is what R36's Verification Matrix row demands.
+
+## 11. Carried open from R10 (external review round 3, 2026-08-19)
+
+R10 shipped both halves — no raw slug reaches a default view, and a flag on
+every row states itself once. External review ran to its 3-round cap on this
+branch. Four of round 3's six blockers were defects and are fixed; these two are
+decisions, escalated rather than self-signed.
+
+- [x] **B32 — RESOLVED 2026-08-19 (owner): the plan now says "universal".**
+      R10's requirement text and its Verification Matrix row were amended from
+      "near-universal caveats" to "UNIVERSAL caveats — a flag carried by EVERY
+      row of a table, not merely by most of them", with the measurement and the
+      reason recorded inline in the plan.
+
+      The reason, kept here because it is the thing a future reader will
+      question: at exactly 100% the hoist is information-preserving, and below
+      100% the rows that LACK the flag are the informative ones, so a note
+      reading "every row below carries X" over a 90–99% table is false. 23
+      member tables hoist today; 6 in the 90–99% band keep their per-row badges
+      deliberately. The implementation already matched this; the amendment makes
+      the requirement match the implementation rather than the reverse.
+
+- [x] **B33 — RESOLVED 2026-08-19 (owner): the raw token is a disclosure that
+      also prints.** The plain-English warning is the `<summary>` and stays
+      visible with it shut; the machine name is one click or Enter away, and it
+      prints without the reader having opened it.
+
+      `<details>` rather than script, because R36's locked CSP admits exactly two
+      inline script hashes and a gate needing a third would have to be unpicked
+      to land that policy. `<summary>` is focusable and keyboard-operable
+      natively.
+
+      **The print half is the part worth remembering.** A closed `<details>`
+      hides its content through `::details-content`'s `content-visibility`, NOT
+      through anything `display` on the child can reach — measured, print height
+      stayed at 18px with `display: block !important` alone and became 36px once
+      the pseudo-element was addressed. The `display` line is kept beside it for
+      engines that hide content the older way. A browser too old for
+      `::details-content` prints the WARNING but not the token; acceptable,
+      because the honesty-bearing half is the summary and summaries always print.
+
+      Two measurement traps, both of which produced a wrong conclusion first and
+      cost a wasted "fix": `getBoundingClientRect` on a child inside a closed
+      `<details>` reports a stale box, so it read as visible when it was not;
+      and `checkVisibility()` reported false even when open. Measure the
+      `<details>` element's own height — that is what the tests do.
+
+      Note the path fires on ZERO pages today (every flag the corpus ships is
+      registered), so it is tested against planted markup rather than waiting for
+      a real unknown flag — which would mean the first run is the first time it
+      is needed.
+
+## 12. R10's universal-caveat clause — OPEN after three review cycles (2026-08-19)
+
+R10's first clause (no raw slug; unknown still warned; token once in provenance,
+one interaction away and in print) is **complete**. The universal-caveat clause
+is **not**, and the shape of how it failed is the useful part: three external
+review cycles each fixed real defects and each then found more of its surface.
+
+    cycle 2 r3  the hoist was wired into 1 renderer of 6 → 1,004 pages affected
+    cycle 3 r1  a 6th renderer (activity); universality judged per PAGE not per table
+    cycle 3 r2  the gate counted the <thead> row → INERT on every real table
+    cycle 3 r3  two badge sources outside `flags`; the gate trusts a marker's presence
+
+Fixed and verified: 1,004 offending pages → 0, caveated pages 15 → 1,155, six
+renderers hoisting over their full bounded collection, the derived
+`amount_unparsed` chip included, and a detector proven against production-shaped
+markup. What remains:
+
+- [ ] **B34 — two badge sources render OUTSIDE the flag list, so they never reach
+      `universalFlags`.** `holdings.ts:473` emits
+      `<span class="flag dashed">filing not in dictionary</span>` for a
+      provenance miss, and `holdings.ts:1359` renders `r.notes` as flag badges.
+      Neither is in `row.flags`, so a table where EVERY row misses the filing
+      dictionary — or every compared position carries the same note — repeats
+      that badge on every row with no caveat. Reviewer's reproduction: two-row
+      probes gave `{"rowBadges":2,"tableCaveat":false}` for both.
+
+      The fix is not another patch. Define each renderer's **effective
+      presentation keys** — everything it can put in a flag cell, not just
+      `flags` — and compute universality over that. `effectiveFlagKeys` already
+      does this for the one derived chip; these two are the same problem and
+      should join it rather than get their own special case.
+
+- [ ] **B35 — the whole-dist gate validates a marker's PRESENCE, not its
+      meaning.** Wired renderers emit `data-stated-flags`, and the detector
+      exempts any table carrying it. So an empty marker on a table that visibly
+      repeats a badge passes — which is exactly the B34 case, and why the gate
+      stayed green through it.
+
+      The marker was introduced to replace a proximity guess about pagers, and it
+      does that correctly for the one case it must: a PAGED table whose visible
+      page is uniform while its full collection is not. Narrow the exemption to
+      that case — the table must be paged AND marked — and treat an unpaged
+      marked table with uniform badges as the violation it is.
+
+      Note the recurring shape before touching it: this gate has been wrong three
+      times, and every time it looked green. A check that cannot fail is
+      indistinguishable from a check that passes, so any change here needs a
+      removal-failing proof against production-shaped markup, not a fixture that
+      happens to omit whatever the real pages contain.
 
 ## Notes for whoever picks this up
 

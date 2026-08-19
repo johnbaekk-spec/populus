@@ -368,42 +368,215 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   issuer_from_cusip6: { label: "issuer from CUSIP-6", cls: "dashed" },
   issuer_from_name: { label: "issuer from name", cls: "dashed" },
   concentration_unavailable: { label: "concentration unavailable", cls: "dashed" },
+  /* R10, found by measuring the built tree rather than by reading the registry:
+     these four SHIP and were absent here, so the generic-warning path swallowed
+     them — 87,099 occurrences of `missing_security` alone. Rendering "a
+     condition we do not recognise" over a fact the producer states precisely is
+     a worse failure than the raw slug this requirement set out to remove.
+     Wording follows each producer's own definition, cited. */
+  // normalize_inst.py:76 — valid CUSIP, no mapping covers period_of_report (R9)
+  missing_security: { label: "security not in mapping", cls: "dashed" },
+  // normalize_inst.py:70 — non-numeric otherManager component (QA-F3)
+  other_manager_unparsed: { label: "other-manager unparsed", cls: "dashed" },
+  // normalize.py:32 — the owner field did not parse
+  owner_unparsed: { label: "owner unparsed", cls: "dashed" },
+  // inst_serving.py:312 — absence is not assertable, so no exit is claimed
+  exit_not_assertable: { label: "exit not assertable", cls: "dashed" },
 };
 
 export function flagChips(
   flags: string[],
   r?: Pick<TxnRow, "low" | "high">,
+  stated: ReadonlySet<string> = new Set(),
 ): { label: string; cls: string }[] {
   // missing_ticker already renders as "—" in the ticker column; the chip
   // restates it per the design row "no ticker".
   const chips = flags
     .filter((f) => FLAG_PRESENTATION[f])
     .map((f) => FLAG_PRESENTATION[f]!);
-  // An amount with no bounds must always SAY it is unknown, even when the
-  // upstream flag set explains the row some other way (row_incomplete etc.) —
-  // presentation is derived from the value, not from the flag vocabulary.
-  if (r && r.low == null && r.high == null && !flags.includes("amount_unparsed")) {
+  /* An amount with no bounds must always SAY it is unknown, even when the
+     upstream flag set explains the row some other way (row_incomplete etc.) —
+     presentation is derived from the value, not from the flag vocabulary.
+
+     `stated` has to reach THIS derivation, not just the filter above it. The
+     chip is re-derived from `r.low`/`r.high`, so a table that hoisted
+     `amount_unparsed` to its caveat line would strip the flag and then grow the
+     badge straight back on every row — claiming "stated once here" above a
+     table that repeats it. */
+  if (r && !stated.has("amount_unparsed") && derivesAmountUnparsed({ ...r, flags })) {
     chips.push({ label: "amount unparsed", cls: "dashed" });
   }
   return chips;
 }
 
+/* ---------- R10: flags a reader can read ----------
+
+   Two defects, one renderer.
+
+   #11 "Flag slugs as UI text". An unknown flag used to paint its machine name
+   verbatim — `a_flag_from_the_future` — straight into the page. Fail-visible was
+   right; spelling the identifier at the reader was not. The warning is now
+   plain English and GENERIC, and the raw token sits in a disclosure one
+   interaction away that also prints (B33) — exactly once, never a tooltip. §8
+   forbids anything honesty-bearing being reachable only behind an interaction,
+   and the WARNING is the honesty-bearing half: it lives in the `<summary>` and
+   shows with the disclosure shut. The slug is provenance for whoever files the
+   bug.
+
+   #12 "Universal badge carries no information". A badge on EVERY row of a table
+   is noise, so it is stated ONCE above the table and suppressed from the rows.
+   The plan was amended 2026-08-19 from "near-universal" to "universal" for the
+   reason in `UNIVERSAL_FLAG_SHARE`: measured on the real tree, 23 member tables
+   carry `missing_ticker` on 50 of 50 rows and hoist, while 6 tables in the
+   90–99% band keep their per-row badges deliberately — hoisting those would
+   print a note that is false of the rows that differ. */
+
+/** What an unrecognised upstream flag says to a reader. Generic on purpose: the
+    site cannot describe a condition it has never seen, and guessing would be
+    worse than admitting the gap. */
+export const UNKNOWN_FLAG_LABEL = "unrecognised source condition";
+
+/** A flag on at least this share of the table's rows states itself once, at
+    table level, rather than on every row.
+
+    **1.0, and the plan says so.** R10 originally read "near-universal"; the owner
+    amended it to "universal" on 2026-08-19 precisely because the original could
+    not be implemented truthfully. At exactly 100% the
+    hoist is information-preserving: "every row below carries X" is literally
+    true and removing the badge deletes nothing. Below 100% it is not — the rows
+    that LACK the flag are the informative ones, and suppressing the badge on the
+    majority erases the only thing distinguishing them. A note reading "every
+    row" over a table where one row differs is simply false.
+
+    Measured on the real tree: 23 member tables carry `no ticker` on 50 of 50
+    rows, so this fires on today's corpus rather than being a mechanism waiting
+    for data that never arrives. Six more sit in the 90–99% band and keep their
+    per-row badges deliberately. */
+export const UNIVERSAL_FLAG_SHARE = 1.0;
+
+/** No minimum table size. There WAS one (8 rows), on the reasoning that a
+    caveat line above three rows is more chrome than the badges it replaces —
+    but the amended requirement says "a flag carried by EVERY row of a table"
+    with no size exception, and an implementer inventing one is the same
+    unapproved-deviation move the "near-universal" threshold already cost a
+    review round. A one-row table with a universal flag states it once, like
+    every other table. */
+export const UNIVERSAL_FLAG_MIN_ROWS = 1;
+
+/** Flags carried by ≥ `UNIVERSAL_FLAG_SHARE` of `rows`, in stable order.
+
+    Pass EVERY row the table can page through, not the current page. The table
+    re-renders its rows client-side when paging (`entity-client.ts`), so a
+    per-page set would let page 2's badges contradict the note left above them
+    by page 1. Computed over the whole table, the statement holds on every
+    page and the client needs no recomputation to stay honest. */
+export function universalFlags(rows: readonly (readonly string[])[]): string[] {
+  if (rows.length < UNIVERSAL_FLAG_MIN_ROWS) return [];
+  const counts = new Map<string, number>();
+  for (const flags of rows) {
+    for (const f of new Set(flags)) counts.set(f, (counts.get(f) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n / rows.length >= UNIVERSAL_FLAG_SHARE)
+    .map(([f]) => f)
+    .sort();
+}
+
+/** The table-level statement for hoisted flags, or "" when there are none.
+
+    Hoisting REMOVES the row-level disclosure, so if an unknown flag is the one
+    being hoisted its provenance has to come with it — otherwise the token is
+    reachable on a table where the flag appears on some rows and unreachable on
+    the table where it appears on all of them, which is backwards. The note
+    therefore carries the same `<details>` the rows use, with the same print
+    behaviour, rather than the `visually-hidden` span this started as. */
+export function universalFlagNote(flags: readonly string[]): string {
+  if (flags.length === 0) return "";
+  const known = flags.filter((f) => FLAG_PRESENTATION[f]).map((f) => FLAG_PRESENTATION[f]!.label);
+  const unknown = flags.filter((f) => !FLAG_PRESENTATION[f]);
+  const labels = [...known, ...(unknown.length > 0 ? [UNKNOWN_FLAG_LABEL] : [])];
+  const provenance = unknown.length === 0 ? "" : ` ${rawFlagDisclosure(unknown)}`;
+  /* A `<div>`, not a `<p>`. `<details>` is FLOW content and `<p>` accepts only
+     phrasing, so the parser closed the paragraph early and split this caveat
+     into three siblings — verified by parsing the emitted note:
+     `<p>…</p><details>…</details> — stated once…<p></p>`. The styling, the
+     trailing clause and the disclosure all came apart, and a string-matching
+     test could not see it. */
+  return (
+    `<div class="caveat-line table-caveat">` +
+    `Every row below carries <strong>${esc(labels.join(", "))}</strong>${provenance}` +
+    ` — stated once here rather than repeated on every row.</div>`
+  );
+}
+
+/** ONE disclosure renderer, so the row-level and table-level provenance cannot
+    drift apart — they did, and only the row half got B33's treatment. */
+function rawFlagDisclosure(unknown: readonly string[]): string {
+  return (
+    `<details class="flag dashed flag-provenance">` +
+    `<summary>${esc(UNKNOWN_FLAG_LABEL)}</summary>` +
+    `<span class="flag-raw">reported by the source as ${esc(unknown.join(", "))}</span>` +
+    `</details>`
+  );
+}
+
+/** The flag keys a row PRESENTS, including chips derived from its values.
+
+    `universalFlags` used to read `r.flags` alone, which misses the one chip that
+    is not in the list: `amount unparsed` is derived from null bounds. A table
+    where every row is boundless — and carries no explicit `amount_unparsed` —
+    therefore repeated that caveat on every row and never hoisted it, which is
+    the same derived-chip blind spot that let a hoisted flag come BACK on the
+    rows. Both directions now go through this one function. */
+export function effectiveFlagKeys(r: Pick<TxnRow, "flags" | "low" | "high">): string[] {
+  const keys = [...r.flags];
+  if (derivesAmountUnparsed(r)) keys.push("amount_unparsed");
+  return keys;
+}
+
+/** THE derivation, in one place. Rendering and universal detection both consume
+    it, so they cannot disagree about whether a row presents this chip — and
+    disagreeing in each direction is precisely what two separate blockers were:
+    a hoisted flag coming back onto the rows, and a derived one never leaving. */
+function derivesAmountUnparsed(r: Pick<TxnRow, "flags" | "low" | "high">): boolean {
+  return r.low == null && r.high == null && !r.flags.includes("amount_unparsed");
+}
+
 /* ---------- FlagTag (G6): one canonical markup renderer ----------
-   Known flags render via the registry; an UNKNOWN flag renders fail-visible as
-   a raw dashed tag with its machine name verbatim (docs/qoq-presentation.md §1)
-   — a new upstream flag must never silently disappear from the page. */
+   Known flags render via the registry; an UNKNOWN flag stays fail-visible — a
+   new upstream flag must never silently disappear from the page — but as a
+   generic warning, with its machine name in the provenance layer. */
 export function flagTags(
   flags: string[],
   r?: Pick<TxnRow, "low" | "high">,
+  opts: { stated?: readonly string[] } = {},
 ): string {
-  const known = flagChips(flags, r)
+  /* Flags already stated at table level are suppressed HERE rather than
+     filtered by the caller, so every render site inherits the behaviour and
+     none can forget it. */
+  const stated = new Set(opts.stated ?? []);
+  const shown = flags.filter((f) => !stated.has(f));
+  const known = flagChips(shown, r, stated)
     .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
     .join("");
-  const unknown = flags
-    .filter((f) => !FLAG_PRESENTATION[f])
-    .map((f) => `<span class="flag dashed flag-raw">${esc(f)}</span>`)
-    .join("");
-  return known + unknown;
+  const unknown = shown.filter((f) => !FLAG_PRESENTATION[f]);
+  /* R10 / B33. The raw token is ONE INTERACTION away and prints, rather than
+     living in a `visually-hidden` span that only assistive technology could
+     reach — which gave screen-reader users a fact sighted readers had no route
+     to at all, on screen or on paper.
+
+     `<details>` because it needs no script (the locked R36 CSP admits exactly
+     two inline script hashes, and a gate that required a third would have to be
+     unpicked to land the policy), and because `<summary>` is focusable and
+     keyboard-operable natively. The WARNING stays in the summary and therefore
+     stays visible with the disclosure shut — §8 forbids honesty-bearing content
+     being available only behind an interaction, and the warning is the
+     honesty-bearing half. The token appears exactly once. */
+  const unknownHtml =
+    unknown.length === 0
+      ? ""
+      : rawFlagDisclosure(unknown);
+  return known + unknownHtml;
 }
 
 /* ---------- amount filtering ----------

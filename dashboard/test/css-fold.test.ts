@@ -109,16 +109,121 @@ function splitAtRules(source: string): { blocks: AtRuleBlock[]; topLevel: string
   return { blocks, topLevel };
 }
 
-/** Every `@media` block whose condition includes a max-width ≤ 720px. */
+/** Every `@media` block whose width range INTERSECTS the fold (0–720px).
+
+    Two wrong versions preceded this one, in opposite directions, and both left a
+    hole in the sweep below rather than failing loudly:
+
+      `max-width <= 720`  — the original. A `max-width: 1080px` block also
+                            governs 720px, so when R7 moved the row-fold
+                            structure there, the rules governing the fold sat
+                            outside everything this file checks.
+      `max-width >= 720`  — the overcorrection (codex round 1, F2). It fixed that
+                            and broke the other end: a `max-width: 600px` block
+                            is squarely inside the fold and was excluded.
+
+    The property that was always meant: a block constrains `[min, max]`, and it
+    belongs in this sweep if that interval overlaps `[0, 720]` at all.
+
+    Round 2's F1 killed a THIRD wrong version — requiring a max-width at all.
+    `@media (min-width: 600px)` has no ceiling, so it governs 600–720px and is
+    squarely inside the fold, yet it was excluded for lacking a max. An absent
+    maximum is positive infinity, not zero.
+
+    A block with NO width condition is excluded on purpose rather than by
+    accident: `@media print` legitimately hides interactive chrome with
+    `display: none !important`, and `prefers-color-scheme` says nothing about
+    width. Neither constrains the viewport, so neither is a fold breakpoint. */
 function narrowMediaBlocks(source: string): { condition: string; body: string }[] {
   return splitAtRules(source)
-    .blocks.filter((b) => {
-      if (b.name !== "media") return false;
-      const widthMatch = b.condition.match(/max-width:\s*(\d+(?:\.\d+)?)px/);
-      return widthMatch != null && Number(widthMatch[1]) <= 720;
-    })
+    .blocks.filter((b) => b.name === "media" && queryReachesFold(b.condition))
     .map((b) => ({ condition: b.condition, body: b.body }));
 }
+
+/** Does any arm of a media query govern a viewport at or below the fold?
+
+    Round 3's F1, and the FOURTH wrong version of this predicate. A media query
+    is a comma-separated LIST and the arms are independent — `@media
+    (min-width: 900px), (max-width: 600px)` applies above 900px OR below 600px,
+    and the second arm is squarely inside the fold. Matching `min-width:` once
+    across the whole condition string read `900` and excluded the block, so an
+    honesty selector could be hidden through an entirely ordinary query. Each
+    arm is evaluated on its own now. */
+function queryReachesFold(condition: string): boolean {
+  return condition.split(",").some((arm) => {
+    const maxMatch = arm.match(/max-width:\s*(\d+(?:\.\d+)?)px/);
+    const minMatch = arm.match(/min-width:\s*(\d+(?:\.\d+)?)px/);
+    if (maxMatch == null && minMatch == null) return false; // not a width query
+    const lo = minMatch == null ? 0 : Number(minMatch[1]);
+    return lo <= FOLD_PX; // hi >= lo, so the interval reaches the fold iff lo does
+  });
+}
+
+/** The fold's own width. Named so the tests below cannot drift from the sweep. */
+const FOLD_PX = 720;
+
+test("the fold sweep's SCOPE covers every breakpoint that governs the fold", () => {
+  /* A test of the test. Both previous scopes were green while blind to a whole
+     class of blocks, so the selection itself is asserted against synthetic CSS
+     rather than trusted to read correctly. */
+  const narrower = narrowMediaBlocks("@media (max-width: 600px) { .a { color: red; } }");
+  assert.equal(narrower.length, 1, "a ≤600px block is INSIDE the fold and must be swept");
+
+  const wider = narrowMediaBlocks("@media (max-width: 1080px) { .a { color: red; } }");
+  assert.equal(wider.length, 1, "a ≤1080px block also governs 720px and must be swept");
+
+  const above = narrowMediaBlocks(
+    "@media (min-width: 721px) and (max-width: 1080px) { .a { color: red; } }",
+  );
+  assert.equal(above.length, 0, "a block floored above the fold does not govern it");
+
+  const unbounded = narrowMediaBlocks("@media (min-width: 900px) { .a { color: red; } }");
+  assert.equal(unbounded.length, 0, "a min-width-only block ABOVE the fold does not govern it");
+
+  /* Round 2's F1: an absent maximum is infinity, not zero. `min-width: 600px`
+     has no ceiling and therefore governs 600–720px, inside the fold. */
+  const openTop = narrowMediaBlocks("@media (min-width: 600px) { .a { color: red; } }");
+  assert.equal(openTop.length, 1, "a min-width-only block INSIDE the fold must be swept");
+
+  /* Round 3's F1: a comma-separated LIST is independent arms, and one of them
+     reaching the fold is enough. */
+  const mixed = narrowMediaBlocks(
+    "@media (min-width: 900px), (max-width: 600px) { .a { color: red; } }",
+  );
+  assert.equal(mixed.length, 1, "a query LIST whose second arm is below the fold must be swept");
+  const bothAbove = narrowMediaBlocks(
+    "@media (min-width: 900px), (min-width: 1200px) { .a { color: red; } }",
+  );
+  assert.equal(bothAbove.length, 0, "a list with every arm above the fold does not govern it");
+
+  /* Not width queries at all, and excluded deliberately: print legitimately
+     hides interactive chrome. */
+  assert.equal(narrowMediaBlocks("@media print { .a { display: none; } }").length, 0);
+  assert.equal(
+    narrowMediaBlocks("@media (prefers-color-scheme: dark) { .a { color: red; } }").length,
+    0,
+  );
+});
+
+test("the fold sweep CATCHES a prohibited rule at a narrower breakpoint", () => {
+  /* The mutation codex round 1 asked for: the prohibition must fire below 720px,
+     not merely at it. Run against synthetic CSS so it proves the sweep's reach
+     without planting a defect in the shipped stylesheet. */
+  for (const [label, planted] of [
+    ["a narrower max-width", "@media (max-width: 600px) { .cell-src { display: none; } }"],
+    ["a min-width-only query inside the fold", "@media (min-width: 600px) { .cell-src { display: none; } }"],
+    [
+      "a comma-separated list whose second arm is below the fold",
+      "@media (min-width: 900px), (max-width: 600px) { .cell-src { display: none; } }",
+    ],
+  ] as const) {
+    const rules = narrowMediaBlocks(planted).flatMap((b) => rulesOf(b.body));
+    const offending = rules.filter(
+      (r) => PROHIBITED.some((bad) => bad.test(r.decls)) && /cell-src/.test(r.selector),
+    );
+    assert.equal(offending.length, 1, `display:none on an honesty selector via ${label}`);
+  }
+});
 
 function rulesOf(body: string): { selector: string; decls: string }[] {
   const rules: { selector: string; decls: string }[] = [];

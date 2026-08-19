@@ -1,7 +1,8 @@
 # plan-v1: UX Overhaul — publicfilings.org (corpus restoration, then translation, curation, and insight layers)
 
 **Transport mode:** `interactive-disk`. **Scope class: L.**
-**Revision 4 — 2026-08-15.** Re-pinned onto `origin/main` at
+**Revision 4 — 2026-08-15**, amended 2026-08-19 (R10: "near-universal" → "universal";
+see R10 for the measurement and the reason). Re-pinned onto `origin/main` at
 `b61188a` (merge of PR #39), which is **deployed and attested**: live serves build
 `20260815.2` with `populus:code_sha b61188ac757812220e44b239f3e91d16477cf8ad`, and
 `builds/20260815.2/deployments/1.json` records generation 1 for exactly that pair.
@@ -172,7 +173,21 @@ marks `src/populus/`; `[FRONTEND]` marks `dashboard/`; `[OPS]` marks workflow/ru
   (`global.css:335` is `display: flex`; re-diagnose against rendered geometry).
 - **R10** `[FRONTEND]` No raw flag slug reaches a default view, and fail-visible
   survives: an unknown flag still renders a visible generic warning, raw token in the
-  provenance layer. Near-universal caveats state once at table level.
+  provenance layer. **UNIVERSAL caveats state once at table level** — a flag carried by
+  EVERY row of a table, not merely by most of them.
+
+  **Amended 2026-08-19 (owner), from "near-universal" to "universal".** The original
+  wording could not be implemented truthfully. At exactly 100% the hoist is
+  information-preserving: "every row below carries X" is literally true, and dropping
+  the per-row badge deletes nothing. Below 100% the rows that LACK the flag are the
+  informative ones — suppressing the badge on the majority erases the only thing
+  distinguishing them, and a note reading "every row" over a table where one row
+  differs is simply false. Measured on the restored corpus at implementation time:
+  **23 member tables carry `missing_ticker` on 50 of 50 rows** and hoist; **6 more sit
+  in the 90–99% band** and keep their per-row badges deliberately. A truthful sub-100%
+  form would need either different wording ("50 of the 51 rows below…") or a visible
+  marker on the exceptions; both are editorial choices, and neither is required to
+  remove the noise this requirement exists to remove.
 - **R35** `[FRONTEND]` Layout defects verified by real browser geometry at five widths;
   `@playwright/test` (Chromium only) as a devDependency, provisioned in CI.
 - **R36** `[FRONTEND]` Analytics fully specified, **and the published privacy promise
@@ -985,7 +1000,7 @@ semantics.
 | R7 | Geometry: 20-char member name not truncated at 964px; no clipped tile from 360px |
 | R8 | Period-correct join on a historical row; deterministic representative; grep-negative for key prefixes; unresolvable renders plain English |
 | R9 | Rendered geometry shows zero unoccupied trailing area; tile count equals data |
-| R10 | Known slug never raw; unknown still visibly warned; raw token exactly once, in provenance |
+| R10 | Known slug never raw; unknown still visibly warned; raw token exactly once, in provenance; a flag on EVERY row of a table stated once above it and suppressed from the rows, including a chip DERIVED from row values rather than read from the flag list |
 | R35 | Harness fails on a reintroduced overlap and a removed cue; Chromium installs from the committed lockfile |
 | R36 | No cookie or storage key; page functional with the beacon blocked; `_headers` carries the byte-exact locked policy from this plan (single `/*` block; real pre-paint hash, recomputable from dist); the inventory lists it under `control_files` with digest; `_require_copy_faithful` proves `files` ∪ `control_files` equals the copied tree; the serving sweep iterates `files` only; the verifier REQUIRES `content-security-policy` equal to the locked value with missing/altered negative tests, and the whole-dist inline-surface sweep asserts the emitted inline-script hash set equals the locked pair (fails on drift or any new inline surface); control-path probes unchanged; `site_file_count` counts `files` only; methodology copy states the locked retention (7-day unsampled, ~10% aggregate, six-month window), attributed and dated; both copy files changed in the beacon's commit; no absolute denial remains |
 | R28 | Beacon present on every page |
@@ -1175,7 +1190,8 @@ identifier in any default view:
 - R8 — no key in a default view; every changed position resolves period-correctly or to
   a plain-English unknown.
 - R9 — no unoccupied trailing area, proven by geometry.
-- R10 — no raw slug in a default view, and unknown conditions still visibly warned.
+- R10 — no raw slug in a default view, unknown conditions still visibly warned, and a
+  caveat true of every row stated once rather than repeated on each.
 - R35 — the harness fails on a reintroduced overlap and installs reproducibly.
 - R36 — the mechanism is named and asserted with the locked retention copy (7-day
   unsampled / ~10% aggregate / six-month window, attributed and dated) and the

@@ -14,7 +14,7 @@ and the generic client-rendered entity route `/e/`.
 ```bash
 cd dashboard
 npm ci
-npm run gates        # check + test + build + test:post (the declared gates, in order)
+npm run gates        # check + test + build + test:post && geometry:install && test:geometry (the declared gates, in order)
 npm run build        # emits dist/
 npm run preview      # serves dist/ on :4321
 ```

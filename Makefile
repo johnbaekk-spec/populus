@@ -44,11 +44,16 @@ test-python: sync
 	uv run pytest -q
 
 # The dashboard's own declared gate chain (dashboard/package.json `gates` =
-# check && test && build && test:post): astro check (tsc) + node --test unit
-# suites + static build + the post-build suite (served HTTP-status contract,
-# forced-cut orchestration harness over real dist bytes, institutional
-# fixture-preview). `npm ci` installs from the committed package-lock, mirroring
-# `uv sync --frozen` for the JS toolchain.
+# check && test && build && test:post && geometry:install && test:geometry):
+# astro check (tsc) + node --test unit suites + static build + the post-build
+# suite (served HTTP-status contract, forced-cut orchestration harness over real
+# dist bytes, institutional fixture-preview) + Chromium provisioning + the R35
+# browser-geometry lane at five widths. `npm ci` installs from the committed
+# package-lock, mirroring `uv sync --frozen` for the JS toolchain.
+#
+# The geometry lane needs a real browser and the build needs 32 GiB, so neither
+# runs on a hosted CI runner — a local unfiltered `make check` is the only
+# authoritative evidence for both.
 dashboard-gates:
 	cd dashboard && npm ci && npm run gates
 

@@ -46,6 +46,8 @@ import { fillShardsByBytes, type ShardableItem } from "./shards.ts";
 import {
   esc,
   flagTags,
+  universalFlags,
+  universalFlagNote,
   fmtInt,
   fmtUsd,
   footnoteBlock,
@@ -757,7 +759,11 @@ function filedCell(r: ActivityFeedRecord): string {
   );
 }
 
-export function activityRowHtml(r: ActivityFeedRecord, tier: FilerBudgetState = "tail"): string {
+export function activityRowHtml(
+  r: ActivityFeedRecord,
+  tier: FilerBudgetState = "tail",
+  stated: readonly string[] = [],
+): string {
   const label = CHANGE_LABEL[r.change_kind] ?? CHANGE_LABEL.unclassified;
   const filerName = r.filer_name && r.filer_name.trim() !== "" ? r.filer_name : `CIK ${r.cik}`;
   return (
@@ -774,7 +780,7 @@ export function activityRowHtml(r: ActivityFeedRecord, tier: FilerBudgetState = 
     `<td class="c-num mono-id">${esc(r.curr_period)}</td>` +
     `<td class="c-num">${filedCell(r)}</td>` +
     `<td class="c-num">${lagCell(r)}</td>` +
-    `<td class="c-flags">${flagTags(r.flags)}</td>` +
+    `<td class="c-flags">${flagTags(r.flags, undefined, { stated })}</td>` +
     `</tr>`
   );
 }
@@ -889,12 +895,20 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     );
   }
 
-  const body = rows.map((r) => activityRowHtml(r, opts.tierOf?.(r.cik) ?? "tail")).join("\n");
+  /* R10 #12: activity is the SIXTH flag-bearing renderer, and the one the
+     whole-dist gate failed to name because that gate exempted a whole PAGE once
+     any table on it carried a caveat. Over the rows this table actually shows —
+     it renders `first.records` sliced to `rowLimit` and does not page. */
+  const statedActivity = universalFlags(rows.map((r) => r.flags));
+  const body = rows
+    .map((r) => activityRowHtml(r, opts.tierOf?.(r.cik) ?? "tail", statedActivity))
+    .join("\n");
   return (
     `<section class="panel panel-wide" aria-label="Cross-filer activity">` +
     `<div class="panel-head"><h2 class="section-h">Largest reported quarter-over-quarter changes</h2>` +
     `<span class="panel-note">ordered by absolute reported change · undisclosed deltas last</span></div>` +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    universalFlagNote(statedActivity) +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
     `<caption class="visually-hidden">Cross-filer quarter-over-quarter position changes, ordered by absolute reported change</caption>` +
     `<thead><tr><th scope="col">Filer</th><th scope="col">Issuer · position</th>` +
     `<th scope="col">Change ·§</th><th scope="col">Δ value ·‡</th><th scope="col">Quarter ended</th>` +

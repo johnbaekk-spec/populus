@@ -849,7 +849,14 @@ export function initEntityPage(): void {
     if (page > max) page = max;
     const items = pageSlice(merged, page).filter((i): i is TxnRow => i.kind === "txn");
     const ctx: RenderCtx = { watched: watch.members, watchedTickers: watch.tickers };
-    rowsEl!.innerHTML = entityTxnRowsHtml(items, tableKind, ctx);
+    /* R10 defect #12: the SSR table hoisted any flag carried by every row to a
+       table-level note and suppressed it per row. The client must suppress the
+       identical set or paging would re-introduce badges the note above the
+       table says were stated once. The set is computed server-side over ALL
+       rows and travels in `data-stated-flags`, so it cannot drift per page. */
+    const statedAttr = table?.getAttribute("data-stated-flags") ?? "";
+    const stated = statedAttr === "" ? [] : statedAttr.split(",");
+    rowsEl!.innerHTML = entityTxnRowsHtml(items, tableKind, ctx, stated);
     const count = entityTableCountText(page, items.length, txns.length);
     countEl!.textContent = count;
     if (statusEl) statusEl.textContent = count;

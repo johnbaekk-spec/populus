@@ -38,6 +38,8 @@ import {
   fmtInt,
   fmtUsd,
   flagTags,
+  universalFlags,
+  universalFlagNote,
   intOrNull,
   jsonArrayOf,
   latestFiling,
@@ -1229,6 +1231,11 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
   const pageRows = holdingsPageSlice(opts.rows, opts.page);
   const pageCount = holdingsPageCount(matched);
   const totals = sumDisclosedValue(opts.rows);
+  /* Over `opts.rows` — the FULL bounded set — not `pageRows`. Computing from the
+     visible page lets the caveat appear on page 0 and vanish on page 1 for the
+     same table, which is precisely the contradiction the entity table's version
+     was written to avoid; wiring these later, I reintroduced it. */
+  const statedHoldings = universalFlags(opts.rows.map((r) => r.flags));
   const body = pageRows
     .map((row) => {
       const prov = provenanceOf([row.filing_key], opts.filings, row.period);
@@ -1241,7 +1248,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         `<td class="c-num c-strong">${valueCell(row.value_usd)}</td>` +
         `<td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td>` +
         `<td class="c-dates">${provenanceCellHtml(prov)}</td>` +
-        `<td class="c-flags">${flagTags(row.flags)}</td>` +
+        `<td class="c-flags">${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
         `<td class="c-src">${src}</td>` +
         `</tr>`
       );
@@ -1281,7 +1288,8 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
       totals.undisclosedRows,
     )} undisclosed-value ${totals.undisclosedRows === 1 ? "row" : "rows"}</span></div>` +
     emptyNote +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    universalFlagNote(statedHoldings) +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHoldings.join(","))}">` +
     `<caption class="visually-hidden">Positions ${esc(opts.filerName)} reported for the quarter ended ${esc(
       opts.period,
     )}, as that filer reported them</caption>` +

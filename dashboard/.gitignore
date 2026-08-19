@@ -3,3 +3,7 @@ dist/
 dist-cut/
 dist-fixture/
 .astro/
+
+# Playwright run artifacts (R35) — generated, never committed
+test-results/
+playwright-report/

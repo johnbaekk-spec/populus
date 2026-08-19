@@ -23,6 +23,32 @@ const base = readFileSync(path.join(DASH, "src", "layouts", "Base.astro"), "utf-
 
 /* ---------------- R4: the masthead ---------------- */
 
+/** The body of the `@media` block whose text matches `needle`, by brace
+    matching — NOT a slice to end-of-file.
+
+    A slice cannot express "these two rules live in the SAME breakpoint", which
+    is the only thing that makes the dual-date invariant hold: one block must
+    both hide the desktop date and reveal the combined one. Split them across
+    two blocks and the dates double up in the gap between them. */
+function mediaBlockContaining(source: string, needle: RegExp): string | null {
+  const re = /@media[^{]*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const start = i;
+    while (i < source.length && depth > 0) {
+      const ch = source[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      i++;
+    }
+    const body = source.slice(start, i - 1);
+    if (needle.test(body)) return body;
+  }
+  return null;
+}
+
 test("R4: the build watermark is rendered once, in the footer, not the masthead", () => {
   /* `Base.astro` printed the build id twice: once in `.masthead-meta` and once
      in `.footer-build`. The plan calls this a DELETION rather than a
@@ -123,7 +149,26 @@ test("R5: a row renders its traded date exactly once", () => {
     /\.mobile-dates \{\s*display:\s*none;\s*\}/,
     ".mobile-dates must be hidden outside the fold or the date renders twice",
   );
-  const fold = css.slice(css.indexOf("@media (max-width: 720px)"));
+  /* The invariant is that ONE breakpoint both hides the desktop traded-date and
+     reveals the combined string. Two earlier versions of this test could not see
+     that:
+
+       `css.slice(indexOf("@media (max-width: 720px)"))` — R7 moved the fold
+         structure to ≤1080px, which sits EARLIER in the file, so the slice
+         stopped containing the rules entirely.
+       `css.slice(min(...foldStarts))` — the fix for that, and codex round 1's F3
+         killed it: slicing to end-of-file lets the two regexes match in
+         DIFFERENT blocks. Moving only the hiding rule back to ≤720px would leave
+         both dates visible from 721–1080px with this test still green.
+
+     So the governing block is extracted by brace matching and both rules are
+     asserted INSIDE it. */
+  const foldBlock = mediaBlockContaining(css, /\.feed-row \.mobile-dates \{\s*display:\s*inline/);
+  assert.ok(
+    foldBlock,
+    "some @media block must reveal .feed-row .mobile-dates, or the fold is gone",
+  );
+  const fold = foldBlock!;
   assert.match(
     fold,
     /\.feed-row \.cell-traded \.traded-date/,

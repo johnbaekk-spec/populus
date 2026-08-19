@@ -303,6 +303,13 @@ button {
   padding-bottom: 72px;
 }
 .page-head {
+  /* R9, third attempt and the first one that measured the right box. The stat
+     strip was never too wide on its own — 849px inside an 884px parent. It
+     starts at x=315 because it is a flex ITEM of this nowrap row, pushed across
+     by the title beside it, and `flex-shrink: 0` stops it compressing. So the
+     strip overflowed the DOCUMENT while fitting its own max-width.
+     Verified in the browser before landing: 964px 200px -> 0, 1080px 84px -> 0. */
+  flex-wrap: wrap;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
@@ -343,11 +350,38 @@ button {
   background: var(--rule2);
   border: 1px solid var(--rule2);
   flex-shrink: 0;
+  /* R9, diagnosed against rendered geometry (R35) rather than guessed at: this
+     was a non-wrapping flex row of `min-width: 118px` tiles, so the strip took
+     whatever width its tile COUNT demanded — measured at 1164px — and pushed
+     the whole document sideways. At 964px the page scrolled by 200px, at 1080px
+     by 84px, and at 360px a single tile reached x=714. The strip, not the
+     tables, was the horizontal-overflow source on every page that renders it.
+
+     Wrapping is the fix rather than `overflow-x` because these tiles are
+     headline figures: a reader must not have to discover that a number exists
+     by scrolling a strip that gives no cue it scrolls.
+
+     `flex-wrap` ALONE did nothing, which is the instructive part: as a flex
+     ITEM of its parent this box carries `flex-shrink: 0`, so it kept its
+     max-content width and never had a constraint to wrap against. Measured
+     after the first fix: still 1164px at a 964px viewport. The wrap only
+     engages once the box is allowed to be narrower than its contents. */
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 .tile {
   background: var(--raised);
   padding: 14px 20px;
   min-width: 118px;
+  /* R9. The strip is a WRAPPING flex row, so content-sized tiles leave a ragged
+     right edge on every row but the last — and because `.tiles` paints
+     `var(--rule2)` behind a 1px gap grid, that ragged space renders as a
+     visible rule-coloured slab INSIDE the bordered strip. Measured on the real
+     tree: 191px of it on row 0 at 720px, 6.5px at 360px. That slab is exactly
+     the "unoccupied trailing area" R9 forbids; it is not a cosmetic tolerance,
+     so the tiles grow to consume it rather than the gate learning to accept it. */
+  flex: 1 1 auto;
 }
 .tile-value {
   font: 600 22px var(--sans);
@@ -385,6 +419,12 @@ button {
 /* On desktop the wrapper is transparent: its children are direct flex items of
    .filterbar, exactly as the design lays them out. */
 .filter-controls {
+  /* F1 (codex round 1). This box computed to the full 360px viewport width
+     inside a 328px parent and started at x=29, so it pushed the document
+     sideways by 29px at the narrow width even though it already carries
+     `overflow-x: auto` — the scroller was scrolling, the BOX was still too
+     wide. Verified in the browser: 29px -> 0. */
+  max-width: 100%;
   display: contents;
 }
 .filter-group {
@@ -919,8 +959,34 @@ button {
 .footnotes-stacked .footnote-line {
   padding: 1px 0;
 }
-.flag.flag-raw {
+.flag-raw {
   font-family: var(--mono);
+}
+/* R10 / B33: the unknown-flag disclosure. The warning lives in the summary and
+   is visible with this shut; only the machine name is behind the interaction. */
+.flag-provenance {
+  display: inline-block;
+  white-space: normal;
+  overflow: visible;
+}
+.flag-provenance > summary {
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+.flag-provenance > summary::-webkit-details-marker {
+  display: none;
+}
+.flag-provenance > summary::after {
+  content: " ⓘ";
+  color: var(--ink3);
+}
+.flag-provenance > .flag-raw {
+  display: block;
+  margin-top: 3px;
+  font-size: 9.5px;
+  color: var(--ink3);
+  white-space: normal;
 }
 
 /* TerminusRow (G3) */
@@ -1321,6 +1387,18 @@ button {
   border-top: 1px solid var(--rule);
 }
 .caveat-inline { color: var(--ink3); }
+/* R10 defect #12: a flag carried by EVERY row states itself here instead of on
+   each row. It sits ABOVE the table it describes and reads as a caveat, not as
+   chrome — the border-bottom pairs it with the table rather than the block
+   above, which `.caveat-line` alone (border-top) would not do. */
+.table-caveat {
+  border-top: none;
+  border-bottom: 1px solid var(--rule);
+}
+.table-caveat strong {
+  color: var(--ink2);
+  font-weight: 600;
+}
 .src-derived {
   font: 500 10.5px var(--mono);
   text-decoration: none;
@@ -2023,6 +2101,124 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   }
 }
 
+/* ---------- R7: the feed row folds to two lines from 1080px down ----------
+
+   MEASURED, not guessed. At a 964px viewport the feed has 854px of usable width
+   and its nine columns need 1,033px of content:
+
+     member 193 · ticker 194 · traded 148 · range 179 · side 91 · amount 94
+     · filed 80 · src 32 · star 22
+
+   The single-line grid gives the member column `1fr`, which is whatever the
+   786px of fixed tracks leave over — 68px at 964px and 184px at 1080px. So an
+   ordinary member name was truncated by 125px, which is defect #4, and the
+   ticker column was truncated by 128px at the same time. Total slack across
+   every roomy column is 104px against a 179px shortfall: the row is
+   over-subscribed, so NO reallocation of widths can fix it. That is why this is
+   a layout change and not a wider `1fr`.
+
+   The fix reuses the two-line layout the ≤720px fold already defines rather
+   than inventing a second one, so there is ONE structural definition of a
+   folded row. Only the STRUCTURE lives here; the ≤720px block below keeps what
+   is genuinely about touch and small screens — 44px targets, the smaller type
+   ramp, the 16px gutters — because shrinking type on a laptop would trade one
+   legibility defect for another (defect #6 is imbalance, not density).
+
+   Nothing is removed at this breakpoint. Both dates stay in the accessibility
+   tree, flags, the owner/partial qualifier and the provenance link all stay on
+   screen; the column headers go, exactly as they already do on mobile. */
+@media (max-width: 1080px) {
+  .feed-head {
+    display: none;
+  }
+  .feed-row {
+    display: block;
+    height: auto;
+    position: relative;
+  }
+  /* Both dates stay in the accessibility tree — visually-hidden, never
+     `display: none`, which would delete them for screen readers. The visible
+     pair is recomposed by `.mobile-dates` below. */
+  .feed-row .cell-filed,
+  .feed-row .cell-traded .traded-date {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .feed-row .cell-star {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+  }
+  .row-line1 {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    padding-right: 40px; /* clear of the star */
+  }
+  .feed-row .cell-member {
+    flex: 1 1 auto;
+  }
+  .feed-row .cell-member .aff {
+    white-space: nowrap;
+  }
+  .feed-row .cell-ticker,
+  .feed-row .cell-side {
+    flex-shrink: 0;
+  }
+  .row-line2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 7px;
+    flex-wrap: wrap;
+  }
+  /* grammar order: band · amount · dates · late chip, then flags and
+     provenance wrap onto a further line rather than disappearing */
+  .row-line2 .cell-range { order: 1; flex: 0 0 auto; }
+  .row-line2 .cell-amount { order: 2; }
+  .row-line2 .cell-traded { order: 3; margin-left: auto; white-space: nowrap; }
+  .feed-row .cell-src { order: 4; flex: 0 0 auto; }
+  .feed-row .cell-range {
+    padding-left: 0;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .cell-amount {
+    text-align: left;
+    white-space: nowrap;
+  }
+  .feed-row .mobile-dates {
+    display: inline;
+    font: 400 10px var(--sans);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink3);
+  }
+  .feed-row .flag {
+    max-width: 100%;
+  }
+  .feed-row.paper {
+    display: block;
+  }
+  .feed-row.paper .cell-src {
+    float: right;
+  }
+  .paper-main {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .paper-note {
+    white-space: normal;
+  }
+}
+
 @media (max-width: 720px) {
   .shell {
     padding-left: 16px;
@@ -2134,19 +2330,25 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     display: block;
   }
   /* Coverage tiles FOLD, they do not vanish — §5.2 puts coverage and known
-     gaps in the response, not in a tooltip a touch device can never open.
-     The right-edge mask signals that the strip scrolls. */
+     gaps in the response, not in a tooltip a touch device can never open. They
+     now fold by WRAPPING onto further rows rather than by scrolling sideways,
+     which is the stronger form of the same commitment: nothing is off-screen to
+     begin with.
+
+     The scroll affordance is GONE, and its absence is the honest state: since
+     R9 made the strip wrap, `scrollWidth === clientWidth` at both fold widths
+     (measured 326/326 at 360px, 686/686 at 720px), so the mask faded the right
+     24px of a strip that cannot scroll. With tiles now filling their row those
+     24px carry a headline figure's own padding and digits, which would put a
+     number behind a permanent fade with no gesture that reveals it — §8's
+     media-query-hidden prohibition. `flex: 0 0 auto` goes with it: it was the
+     scrolling design's rule, and it is what pinned the tiles at content width. */
   .tiles {
     margin-top: 12px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
   .tile {
     padding: 10px 14px;
     min-width: 104px;
-    flex: 0 0 auto;
   }
   .tile-value {
     font-size: 16px;
@@ -2217,46 +2419,12 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .feed-grid-cols {
     padding: 0 16px;
   }
-  .feed-head {
-    display: none;
-  }
+  /* structure (display:block, the two lines, the star, the date collapse) is
+     owned by the ≤1080px block above — only touch sizing and the small-screen
+     type ramp remain here. */
   .feed-row {
-    display: block;
-    height: auto;
     padding: 12px 16px;
     min-height: 44px;
-  }
-  /* THE FOLD RULE: nothing in the honesty layer may be removed here, only
-     re-laid-out. The dual dates collapse into one visual "traded → filed"
-     string, but both dates stay in the accessibility tree (visually-hidden,
-     NOT display:none, which would delete them for screen readers). Flags,
-     the owner/partial qualifier and the provenance link all stay on screen. */
-  .feed-row .cell-filed,
-  .feed-row .cell-traded .traded-date {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-    border: 0;
-  }
-  /* the watchlist star moves out of the grid gutter to the row's top-right */
-  .feed-row {
-    position: relative;
-  }
-  .feed-row .cell-star {
-    position: absolute;
-    top: 4px;
-    right: 8px;
-  }
-  .row-line1 {
-    padding-right: 40px; /* clear of the star */
-  }
-  .feed-row .cell-member .aff {
-    white-space: nowrap;
   }
   .feed-row .cell-star .star-btn {
     min-width: 44px;
@@ -2264,40 +2432,12 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     font-size: 16px;
     text-align: center;
   }
-  .row-line1 {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 8px;
-  }
   .feed-row .cell-member {
     font-size: 13.5px;
-    flex: 1 1 auto;
   }
-  .feed-row .cell-ticker {
-    font-size: 12px;
-    flex-shrink: 0;
-  }
+  .feed-row .cell-ticker,
   .feed-row .cell-side {
     font-size: 12px;
-    flex-shrink: 0;
-  }
-  .row-line2 {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 7px;
-    flex-wrap: wrap;
-  }
-  /* grammar order per Mobile.dc.html: band · amount · dates · late chip,
-     then flags + provenance wrap onto a third line rather than disappearing */
-  .row-line2 .cell-range { order: 1; flex: 0 0 auto; }
-  .row-line2 .cell-amount { order: 2; }
-  .row-line2 .cell-traded { order: 3; margin-left: auto; white-space: nowrap; }
-  .feed-row .cell-range {
-    padding-left: 0;
-    flex-wrap: wrap;
-    overflow: visible;
   }
   /* Line-2 width budget at 375px: band 64 + amount ~80 + dates ~92 +
      provenance 44 + gaps ≈ 300 + 32 padding — so the provenance link and the
@@ -2309,16 +2449,6 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   }
   .cell-amount {
     font-size: 11.5px;
-    text-align: left;
-    white-space: nowrap;
-  }
-  /* F-21: scoped to .feed-row — the etable dual-date cell keeps its single
-     traded-date; the unscoped form rendered the trade date twice. */
-  .feed-row .mobile-dates {
-    display: inline;
-    font: 400 10px var(--sans);
-    font-variant-numeric: tabular-nums;
-    color: var(--ink3);
   }
   .feed-row .lag,
   .feed-row .lag-late {
@@ -2329,13 +2459,8 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   }
   .feed-row .flag {
     font-size: 9px;
-    max-width: 100%;
   }
   /* provenance stays reachable: the glyph alone, with its own 44px target */
-  .feed-row .cell-src {
-    order: 4;
-    flex: 0 0 auto;
-  }
   .feed-row .cell-src a {
     display: inline-flex;
     align-items: center;
@@ -2345,20 +2470,6 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     margin: -14px 0; /* 44px target without inflating the row */
     border-bottom: none;
     font-size: 10.5px;
-  }
-
-  .feed-row.paper {
-    display: block;
-  }
-  .feed-row.paper .cell-src {
-    float: right;
-  }
-  .paper-main {
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-  .paper-note {
-    white-space: normal;
   }
 
   .feed-empty {
@@ -2402,13 +2513,8 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .entity-title { font-size: 24px; }
   .entity-lede { font-size: 12.5px; }
   .watch-btn { min-height: 44px; }
-  .tiles-entity {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-  }
-  .tiles-entity .tile { flex: 0 0 auto; }
+  /* `.tiles-entity` is the same strip in compact dress (`format.ts:808` emits
+     both from one function), so it loses the same dead scroll affordance. */
   .entity-grid { grid-template-columns: 1fr; }
   .metho-grid { grid-template-columns: 1fr; }
   .gaps-block.cols-2 { columns: 1; }
@@ -2489,6 +2595,26 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     display: block !important;
   }
   .table-scroll { overflow: visible; mask-image: none; -webkit-mask-image: none; }
+  /* B33: provenance PRINTS. A disclosure the reader must click is no use on
+     paper, so the machine name is forced visible whether or not they opened it
+     before printing.
+
+     `::details-content` is what actually does the work: a closed `<details>`
+     hides its content through that pseudo-element's `content-visibility`, and
+     `display` on the child does NOT defeat it — measured, closed stayed 18px in
+     print with the `display` rule alone and became 36px once the pseudo-element
+     was addressed. The `display` line is kept beside it for engines that hide
+     the content the older way instead; it is harmless where it does nothing.
+
+     A browser too old for `::details-content` prints the WARNING but not the
+     token. That is the acceptable degradation: the honesty-bearing half is in
+     the `<summary>`, which always prints. */
+  .flag-provenance::details-content {
+    content-visibility: visible !important;
+  }
+  .flag-provenance > .flag-raw {
+    display: block !important;
+  }
   a { color: inherit; }
 }
 

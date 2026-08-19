@@ -14,8 +14,10 @@
     "preview": "astro preview",
     "check": "astro check",
     "test": "node --test \"test/*.test.ts\"",
-    "test:post": "node --test --test-concurrency=1 \"test/post/*.test.ts\"",
-    "gates": "npm run check && npm test && npm run build:bounded && npm run test:post"
+    "test:post": "NODE_OPTIONS=--max-old-space-size=24576 node --test --test-concurrency=1 \"test/post/*.test.ts\"",
+    "geometry:install": "playwright install --with-deps chromium",
+    "test:geometry": "playwright test",
+    "gates": "npm run check && npm test && npm run build:bounded && npm run test:post && npm run geometry:install && npm run test:geometry"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.5",
@@ -25,6 +27,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.2",
     "typescript": "^6.0.3"
   }
