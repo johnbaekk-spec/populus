@@ -565,11 +565,27 @@ test("flagTags: registry chips + FAIL-VISIBLE unknown flags, never a raw slug", 
   assert.ok(unknown.includes("dashed"), "and still carries the unparsed/unknown styling");
   assert.ok(unknown.includes("a_flag_from_the_future"), "the raw token survives, for provenance");
   assert.ok(unknown.includes("flag-raw"), "and is in the provenance span");
-  const visible = unknown.replace(/<span class="visually-hidden[^"]*">.*?<\/span>/g, "");
+  /* B33: the token is behind a disclosure, not in a screen-reader-only span.
+     The WARNING is in the <summary> and therefore visible with it shut — §8
+     forbids honesty-bearing content living behind an interaction, and the
+     warning is the honesty-bearing half. */
+  assert.ok(unknown.includes("<details"), "the token sits in a disclosure");
   assert.ok(
-    !visible.includes("a_flag_from_the_future"),
+    unknown.includes(`<summary>${UNKNOWN_FLAG_LABEL}</summary>`),
+    "the warning is the summary, so it shows with the disclosure closed",
+  );
+  assert.ok(!unknown.includes("visually-hidden"), "no longer assistive-technology-only");
+  const summaryOnly = unknown.replace(/<span class="flag-raw">.*?<\/span>/g, "");
+  assert.ok(
+    !summaryOnly.includes("a_flag_from_the_future"),
     "no raw flag slug reaches the default view — R10's whole point",
   );
+  assert.equal(
+    unknown.split("a_flag_from_the_future").length - 1,
+    1,
+    "the raw token appears EXACTLY once",
+  );
+  assert.equal(unknown.split("<details").length - 1, 1, "one disclosure per row, not per slug");
 
   /* one warning per row, not one per unknown slug */
   const two = flagTags(["one_from_the_future", "another_from_the_future"]);

@@ -422,15 +422,20 @@ export function flagChips(
    #11 "Flag slugs as UI text". An unknown flag used to paint its machine name
    verbatim — `a_flag_from_the_future` — straight into the page. Fail-visible was
    right; spelling the identifier at the reader was not. The warning is now
-   plain English and GENERIC, and the raw token moves to the provenance layer:
-   real text in the accessibility tree, exactly once, never a tooltip (§8 forbids
-   anything honesty-bearing being tooltip-only, and the WARNING is the
-   honesty-bearing half — the slug is provenance for whoever files the bug).
+   plain English and GENERIC, and the raw token sits in a disclosure one
+   interaction away that also prints (B33) — exactly once, never a tooltip. §8
+   forbids anything honesty-bearing being reachable only behind an interaction,
+   and the WARNING is the honesty-bearing half: it lives in the `<summary>` and
+   shows with the disclosure shut. The slug is provenance for whoever files the
+   bug.
 
-   #12 "Universal badge carries no information". A badge on nearly every row is
-   noise: measured on the real tree, `no ticker` sits on 50 of 51 rows (98%) on
-   six member pages. It is stated ONCE above the table instead, and suppressed
-   from the rows it would otherwise decorate. */
+   #12 "Universal badge carries no information". A badge on EVERY row of a table
+   is noise, so it is stated ONCE above the table and suppressed from the rows.
+   The plan was amended 2026-08-19 from "near-universal" to "universal" for the
+   reason in `UNIVERSAL_FLAG_SHARE`: measured on the real tree, 23 member tables
+   carry `missing_ticker` on 50 of 50 rows and hoist, while 6 tables in the
+   90–99% band keep their per-row badges deliberately — hoisting those would
+   print a note that is false of the rows that differ. */
 
 /** What an unrecognised upstream flag says to a reader. Generic on purpose: the
     site cannot describe a condition it has never seen, and guessing would be
@@ -514,12 +519,25 @@ export function flagTags(
     .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
     .join("");
   const unknown = shown.filter((f) => !FLAG_PRESENTATION[f]);
+  /* R10 / B33. The raw token is ONE INTERACTION away and prints, rather than
+     living in a `visually-hidden` span that only assistive technology could
+     reach — which gave screen-reader users a fact sighted readers had no route
+     to at all, on screen or on paper.
+
+     `<details>` because it needs no script (the locked R36 CSP admits exactly
+     two inline script hashes, and a gate that required a third would have to be
+     unpicked to land the policy), and because `<summary>` is focusable and
+     keyboard-operable natively. The WARNING stays in the summary and therefore
+     stays visible with the disclosure shut — §8 forbids honesty-bearing content
+     being available only behind an interaction, and the warning is the
+     honesty-bearing half. The token appears exactly once. */
   const unknownHtml =
     unknown.length === 0
       ? ""
-      : `<span class="flag dashed">${esc(UNKNOWN_FLAG_LABEL)}</span>` +
-        `<span class="visually-hidden flag-raw"> — reported by the source as` +
-        ` ${esc(unknown.join(", "))}</span>`;
+      : `<details class="flag dashed flag-provenance">` +
+        `<summary>${esc(UNKNOWN_FLAG_LABEL)}</summary>` +
+        `<span class="flag-raw">reported by the source as ${esc(unknown.join(", "))}</span>` +
+        `</details>`;
   return known + unknownHtml;
 }
 

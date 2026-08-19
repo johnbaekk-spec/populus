@@ -959,8 +959,34 @@ button {
 .footnotes-stacked .footnote-line {
   padding: 1px 0;
 }
-.flag.flag-raw {
+.flag-raw {
   font-family: var(--mono);
+}
+/* R10 / B33: the unknown-flag disclosure. The warning lives in the summary and
+   is visible with this shut; only the machine name is behind the interaction. */
+.flag-provenance {
+  display: inline-block;
+  white-space: normal;
+  overflow: visible;
+}
+.flag-provenance > summary {
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+.flag-provenance > summary::-webkit-details-marker {
+  display: none;
+}
+.flag-provenance > summary::after {
+  content: " ⓘ";
+  color: var(--ink3);
+}
+.flag-provenance > .flag-raw {
+  display: block;
+  margin-top: 3px;
+  font-size: 9.5px;
+  color: var(--ink3);
+  white-space: normal;
 }
 
 /* TerminusRow (G3) */
@@ -2569,6 +2595,26 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     display: block !important;
   }
   .table-scroll { overflow: visible; mask-image: none; -webkit-mask-image: none; }
+  /* B33: provenance PRINTS. A disclosure the reader must click is no use on
+     paper, so the machine name is forced visible whether or not they opened it
+     before printing.
+
+     `::details-content` is what actually does the work: a closed `<details>`
+     hides its content through that pseudo-element's `content-visibility`, and
+     `display` on the child does NOT defeat it — measured, closed stayed 18px in
+     print with the `display` rule alone and became 36px once the pseudo-element
+     was addressed. The `display` line is kept beside it for engines that hide
+     the content the older way instead; it is harmless where it does nothing.
+
+     A browser too old for `::details-content` prints the WARNING but not the
+     token. That is the acceptable degradation: the honesty-bearing half is in
+     the `<summary>`, which always prints. */
+  .flag-provenance::details-content {
+    content-visibility: visible !important;
+  }
+  .flag-provenance > .flag-raw {
+    display: block !important;
+  }
   a { color: inherit; }
 }
 

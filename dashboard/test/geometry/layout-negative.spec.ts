@@ -234,3 +234,52 @@ test("reintroducing the single-line feed grid is DETECTED as a truncated member 
       `against a ${need}px name — R7's defect could return unseen`,
   ).toBeLessThan(need);
 });
+
+test("B33: the unknown-flag token is one interaction away, and it PRINTS", async ({ page }) => {
+  /* The unknown path fires on ZERO pages today — every flag the corpus ships is
+     registered — so the disclosure is exercised against planted markup. That is
+     the honest way to test a fallback: waiting for a real unknown flag means the
+     first time this runs is the first time it is needed.
+
+     Heights, not `checkVisibility`: a closed `<details>` hides its content via
+     `::details-content`'s `content-visibility`, and a child inside that subtree
+     still reports a stale `getBoundingClientRect`. Measuring the DETAILS box is
+     the reliable signal — verified while building this, after the child-box
+     reading claimed a working disclosure was broken. */
+  await page.setViewportSize({ width: 1080, height: 900 });
+  await page.goto("/congress/");
+  await page.evaluate(() => {
+    const host = document.querySelector(".cell-range");
+    host!.insertAdjacentHTML(
+      "beforeend",
+      '<details class="flag dashed flag-provenance" id="b33">' +
+        "<summary>unrecognised source condition</summary>" +
+        '<span class="flag-raw">reported by the source as a_flag_from_the_future</span>' +
+        "</details>",
+    );
+  });
+  const box = () => page.locator("#b33").evaluate((el) => Math.round(el.getBoundingClientRect().height));
+  const warningShown = () =>
+    page.locator("#b33 > summary").evaluate((el) => Math.round(el.getBoundingClientRect().height) > 0);
+
+  const closed = await box();
+  expect(await warningShown(), "the warning shows with the disclosure closed").toBe(true);
+
+  await page.click("#b33 > summary");
+  const opened = await box();
+  expect(
+    opened,
+    "clicking the warning must reveal the raw token — B33's whole point",
+  ).toBeGreaterThan(closed);
+
+  await page.click("#b33 > summary");
+  expect(await box(), "and it closes again").toBe(closed);
+
+  await page.emulateMedia({ media: "print" });
+  expect(
+    await box(),
+    "on paper the token must be present WITHOUT the reader having opened it — " +
+      "a disclosure nobody clicked is no provenance at all in print",
+  ).toBeGreaterThan(closed);
+  await page.emulateMedia({ media: "screen" });
+});
