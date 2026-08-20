@@ -1,3 +1,5 @@
+import { initSortableTable } from "./table-sort.ts";
+import { holderDefaultDir, holderSortNote, orderRankedHolders, type HolderSortKey } from "../lib/holders-sort.ts";
 /* Entity client: the watchlist v2 store (Locked #16), the generic-route
    driver (Locked #3 / qoq-presentation.md §3), and the small enhancements the
    prerendered entity pages mount (pager, watch stars, period selectors).
@@ -978,22 +980,117 @@ export function initHoldersPeriods(): void {
   if (!dataEl || !root || !chips) return;
   let data: { latestFiled: string | null; topn: number; periods: Record<string, TopHolderRow[]> };
   try {
-    data = JSON.parse(dataEl.textContent ?? "");
+    const parsed: unknown = JSON.parse(dataEl.textContent ?? "");
+    // Parsing is not validation (code review, cycle 5 F3). `{}` is valid JSON and
+    // would crash on `data.periods`, taking the island down instead of leaving
+    // the server-rendered table in place. The embed is build-generated, so a
+    // shape mismatch means the build changed shape — degrade, never throw.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as { periods?: unknown }).periods !== "object" ||
+      (parsed as { periods?: unknown }).periods === null ||
+      Array.isArray((parsed as { periods?: unknown }).periods)
+    ) {
+      return;
+    }
+    // Validating the container is not enough (code review, cycle 5 F3): a period
+    // whose value is not an array passes the check above and then crashes when
+    // sorting begins. Every value must be an array before anything is bound.
+    const periods = (parsed as { periods: Record<string, unknown> }).periods;
+    for (const key of Object.keys(periods)) {
+      const list = periods[key];
+      if (!Array.isArray(list)) return;
+      // And the rows themselves (code review, cycle 5 F3, third pass): the
+      // renderer reads `filer_name`, `value_usd` and `rank` off every row, so a
+      // row that is not an object with those fields crashes at render time.
+      // The embed is build-generated; a shape mismatch means the build changed,
+      // and the honest response is to leave the SSR table alone.
+      for (const row of list) {
+        if (typeof row !== "object" || row === null) return;
+        const r = row as Record<string, unknown>;
+        if (typeof r.filer_name !== "string" || typeof r.cik !== "string") return;
+        if (typeof r.value_usd !== "number" || typeof r.rank !== "number") return;
+        // Every field the renderer and sorter actually read (code review,
+        // cycle 5 F3, round 3): `holdersTableHtml` formats `security_count`,
+        // prints `issuer_key_source`, and maps `.flags` over EVERY row before
+        // any sort happens, so a row passing the four checks above still
+        // crashed at interaction time on a missing or mistyped one of these.
+        if (typeof r.security_count !== "number") return;
+        if (typeof r.issuer_key_source !== "string") return;
+        if (!Array.isArray(r.flags) || r.flags.some((f) => typeof f !== "string")) return;
+      }
+    }
+    // The used top-level scalars, same contract: the renderer interpolates
+    // `latestFiled` (string | null) and formats `topn` (number). A wrong type
+    // here renders garbage or throws inside a formatter, so the island stands
+    // down and the SSR table remains.
+    const top = parsed as { latestFiled?: unknown; topn?: unknown };
+    if (top.latestFiled !== null && typeof top.latestFiled !== "string") return;
+    if (typeof top.topn !== "number") return;
+    data = parsed as typeof data;
   } catch {
     return;
   }
+  // Bind to the SSR-ACTIVE period, never the first key of the payload object:
+  // that bug (code review F2) let the first sort serve one quarter's rows under
+  // another quarter's label. Refuse to bind rather than guess.
+  const activeChip = chips.querySelector<HTMLElement>('[data-period][aria-pressed="true"]')
+    ?? chips.querySelector<HTMLElement>("[data-period].chip-active");
+  let period = activeChip?.dataset.period ?? "";
+  const bindSort = (current: string): void => {
+    const rows = data.periods[current];
+    if (!rows) return;
+    const table = root.querySelector<HTMLElement>("[data-holders-table]");
+    const body = table?.querySelector<HTMLElement>("[data-holders-body]");
+    if (!table || !body) return;
+    const status = root.querySelector<HTMLElement>("[data-holders-status]");
+    initSortableTable({
+      root: body,
+      headers: Array.from(table.querySelectorAll<HTMLElement>("th[data-sort]")),
+      keyOf: (th) => (th as HTMLElement).dataset.sort,
+      initial: { key: "value", dir: "desc" },
+      defaultDir: holderDefaultDir,
+      // The caller owns ordering: it re-renders through the SAME renderer the
+      // server used and lifts out only the row markup, so a sorted body cannot
+      // diverge from a server-rendered one.
+      render: (state) => {
+        const html = holdersTableHtml(
+          rows,
+          current,
+          data.latestFiled,
+          data.topn,
+          state as { key: HolderSortKey; dir: "asc" | "desc" },
+        );
+        const open = html.indexOf("<tbody data-holders-body>");
+        const close = html.lastIndexOf("</tbody>");
+        return open === -1 || close === -1
+          ? body.innerHTML
+          : html.slice(open + "<tbody data-holders-body>".length, close);
+      },
+      announce: (state) => {
+        const { unranked } = orderRankedHolders(rows, state.key as HolderSortKey, state.dir);
+        return holderSortNote(state.key as HolderSortKey, state.dir, unranked.length);
+      },
+      statusEl: status,
+    });
+  };
+  if (period && data.periods[period]) bindSort(period);
+
   chips.addEventListener("click", (ev) => {
     const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-period]");
     if (!btn) return;
-    const period = btn.dataset.period!;
-    const rows = data.periods[period];
+    const next = btn.dataset.period!;
+    const rows = data.periods[next];
     if (!rows) return;
-    root.innerHTML = holdersTableHtml(rows, period, data.latestFiled, data.topn);
+    period = next;
+    root.innerHTML = holdersTableHtml(rows, next, data.latestFiled, data.topn);
     chips.querySelectorAll<HTMLButtonElement>("[data-period]").forEach((c) => {
       const active = c === btn;
       c.classList.toggle("chip-active", active);
       c.setAttribute("aria-pressed", String(active));
     });
+    bindSort(next);
   });
 }
 

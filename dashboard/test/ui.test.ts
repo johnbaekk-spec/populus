@@ -235,7 +235,42 @@ test("holdersTableHtml: exactly the published columns — no Shares/Filed/Lag/do
   // pre-rendered route, a tail row routes through /e/ (asserted below).
   const html = holdersTableHtml([{ ...holder(), tier: "top" as const }], "2026-03-31", "2026-05-15", 25);
   assert.ok(html.includes(">Filer<"));
-  assert.ok(html.includes(">Value ▾<"));
+  // D6 pin amendment (R48). The old assertion pinned a BAKED "Value ▾" glyph,
+  // implying a sort that could not be changed and could disagree with the
+  // announced state. The property that mattered — the default sort is visible
+  // and stated on first render — survives, pinned harder: the glyph now derives
+  // from aria-sort, so arrow and announcement cannot diverge.
+  assert.ok(html.includes(">Value<"));
+  assert.ok(!html.includes(">Value ▾<"), "the baked glyph is replaced by a live indicator");
+  assert.ok(
+    /<th[^>]*data-sort="value"[^>]*aria-sort="descending"/.test(html),
+    "default sort is declared on first render, before any script runs",
+  );
+  assert.equal(
+    (html.match(/aria-sort="(ascending|descending)"/g) ?? []).length,
+    1,
+    "exactly one column is marked as the active sort",
+  );
+  // Code review (cycle 5, F4): counting only active values says nothing about
+  // the inactive ones. Every sortable header must carry aria-sort — an absent
+  // attribute reads to assistive tech as "not sortable", not "not sorted".
+  const sortable = (html.match(/<th[^>]*data-sort="/g) ?? []).length;
+  const declared = (html.match(/aria-sort="(ascending|descending|none)"/g) ?? []).length;
+  assert.equal(declared, sortable, "every sortable header declares aria-sort");
+  assert.equal(
+    (html.match(/aria-sort="none"/g) ?? []).length,
+    sortable - 1,
+    "and all the inactive ones say none",
+  );
+  // F4 (code review): a plain <p> announces nothing when its text changes.
+  assert.ok(
+    /data-holders-status[^>]*role="status"/.test(html) &&
+      /data-holders-status[^>]*aria-live="polite"/.test(html),
+    "the sort status is an actual live region",
+  );
+  // F1 (code review): SUM omits undisclosed holdings, so any value may be a
+  // partial total. Disclosing only the $0 case was a half-disclosure.
+  assert.ok(html.includes("any value may be a partial"));
   assert.ok(html.includes(">Securities<"));
   assert.ok(html.includes(">Issuer key<"));
   assert.ok(!html.includes(">Shares<"), "per-holder shares are not in the published aggregate");

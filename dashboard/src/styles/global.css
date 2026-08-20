@@ -2712,6 +2712,21 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
 }
 th[data-inst-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
 th[data-inst-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
+/* R48: the same indicator for the generic sortable-table plumbing, driven by
+   aria-sort so the arrow and the announced state cannot disagree. */
+th[data-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
+th[data-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
+/* A real touch target. Originally scoped to [data-sort] alone to leave the
+   shipping [data-inst-sort] surface untouched — but that surface is now an
+   ADOPTER of the same helper, so the 44px requirement applies to it too and the
+   original scoping left it failing (code review, cycle 3 F2). Both selectors. */
+th[data-sort] .th-sort,
+th[data-inst-sort] .th-sort {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 4px;
+  text-align: inherit;
+}
 .unranked-sep td {
   font: 600 11px var(--mono);
   letter-spacing: 0.05em;
