@@ -2,7 +2,7 @@
   "name": "populus-dashboard",
   "version": "0.0.1",
   "private": true,
-  "description": "Public Filings public dashboard — Astro static site built from the published data build (ARCHITECTURE §12).",
+  "description": "Public Filings public dashboard \u2014 Astro static site built from the published data build (ARCHITECTURE \u00a712).",
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -17,7 +17,10 @@
     "test:post": "NODE_OPTIONS=--max-old-space-size=24576 node --test --test-concurrency=1 \"test/post/*.test.ts\"",
     "geometry:install": "playwright install --with-deps chromium",
     "test:geometry": "playwright test",
-    "gates": "npm run check && npm test && npm run build:bounded && npm run test:post && npm run geometry:install && npm run test:geometry"
+    "gates": "npm run check && npm test && npm run build:bounded && npm run test:post && npm run geometry:install && npm run test:geometry && npm run test:holders-browser",
+    "typecheck:slice-tests": "tsc --noEmit -p tsconfig.slice-tests.json",
+    "test:holders-browser": "playwright test -c playwright.holders.config.ts",
+    "fixture:holders-page": "bash test/fixtures/holders-preview.sh"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.5",

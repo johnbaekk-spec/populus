@@ -72,6 +72,7 @@ import {
   type FilerBudgetState,
 } from "./holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "./inst.ts";
+import { HOLDER_COLUMNS, HOLDER_ZERO_CAVEAT, holderSortNote, orderRankedHolders, type HolderSortKey } from "./holders-sort.ts";
 import type { TickerInstSection } from "./data.ts";
 
 export interface BuildStamps {
@@ -869,9 +870,16 @@ export function holdersTableHtml(
   period: string,
   latestFiled: string | null,
   topn: number,
+  sort: { key: HolderSortKey; dir: "asc" | "desc" } = { key: "value", dir: "desc" },
 ): string {
+  // Ordering is domain-owned (holders-sort.ts); this renderer only paints what
+  // it is handed, so the server render and the client re-render cannot drift.
+  // Flag hoisting is computed over ALL rows, never the sorted slice, so the
+  // universal-flag note stays a property of the table rather than of an order.
   const statedRanked = universalFlags(rows.map((h) => h.flags));
-  const body = rows
+  const { ranked, unranked } = orderRankedHolders(rows, sort.key, sort.dir);
+  const rowHtml = (list: (TopHolderRow & { tier?: FilerBudgetState })[]): string =>
+    list
     .map(
       (h) =>
         `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
@@ -885,20 +893,35 @@ export function holdersTableHtml(
         `<td class="c-src">${srcLinkDerived("#holders-footnotes", edgarFilerUrl(h.cik))}</td></tr>`,
     )
     .join("\n");
+  const body =
+    rowHtml(ranked as (TopHolderRow & { tier?: FilerBudgetState })[]) +
+    (unranked.length > 0
+      ? `\n<tr class="unranked-sep"><td colspan="${HOLDER_COLUMNS.length}">${fmtInt(unranked.length)} row${unranked.length === 1 ? "" : "s"} have no ` +
+        `value for the active sort key — listed below in rank order, never treated as zero</td></tr>\n` +
+        rowHtml(unranked as (TopHolderRow & { tier?: FilerBudgetState })[])
+      : "");
+  const heads = HOLDER_COLUMNS.map((c) =>
+    c.key === null
+      ? `<th scope="col">${esc(c.label)}</th>`
+      : `<th scope="col" data-sort="${c.key}" aria-sort="${c.key === sort.key ? (sort.dir === "desc" ? "descending" : "ascending") : "none"}">` +
+        `<button type="button" class="th-sort">${esc(c.label)}</button></th>`,
+  ).join("");
   return (
     `<div class="panel panel-wide">` +
     `<div class="panel-head"><h2 class="section-h">Ranked holders — ${esc(period)}</h2>` +
     `<span class="panel-note">${instStamp(period, latestFiled)}</span></div>` +
     universalFlagNote(statedRanked) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedRanked.join(","))}">` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first data-holders-table data-stated-flags="${esc(statedRanked.join(","))}">` +
     `<caption class="visually-hidden">Top institutional holders for quarter ${esc(period)}</caption>` +
-    `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col">Value ▾</th><th scope="col">Securities</th><th scope="col">Issuer key</th><th scope="col">Flags</th><th scope="col">Src</th></tr></thead>` +
-    `<tbody>${body}</tbody></table></div>` +
+    `<thead><tr>${heads}</tr></thead>` +
+    `<tbody data-holders-body>${body}</tbody></table></div>` +
+    `<p class="section-note" data-holders-status role="status" aria-live="polite">${esc(holderSortNote(sort.key, sort.dir, unranked.length))}</p>` +
     terminusRow({
       author: "populus",
       html: `The aggregate publishes the top ${fmtInt(topn)} holders per issuer — a build parameter of the Public Filings aggregation. Rows beyond it exist in individual filings on EDGAR but are not ranked here. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
     `<div class="caveat-line">${esc(INST_STAMP_CAVEAT)}</div>` +
+    `<div class="caveat-line">${esc(HOLDER_ZERO_CAVEAT)}</div>` +
     `</div>`
   );
 }

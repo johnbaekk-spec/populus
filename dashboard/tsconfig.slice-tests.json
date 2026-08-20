@@ -1,0 +1,13 @@
+{
+  "//": "Typechecks THIS SLICE'S test files, which the default tsconfig excludes (it includes src/**/* only, so no test file in this repo is typechecked). Scoped to the slice's own files on purpose: a repo-wide include currently surfaces 11 pre-existing errors in other test files, and fixing those is a separate change with its own blast radius. Run: npm run typecheck:slice-tests",
+  "extends": "./tsconfig.json",
+  "include": [
+    ".astro/types.d.ts",
+    "src/**/*",
+    "test/table-sort.test.ts",
+    "test/holders-sort.test.ts",
+    "test/inst-index-client.test.ts",
+    "test/holders-client.test.ts",
+    "test/inst-loader-coercion.test.ts"
+  ]
+}
