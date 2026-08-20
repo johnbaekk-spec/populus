@@ -55,6 +55,7 @@ from populus.deploy.record import (
     sign_deployment,
 )
 from populus.deploy.verify import (
+    LOCKED_CONTENT_SECURITY_POLICY,
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
     TD10_NOTE,
@@ -299,7 +300,15 @@ class _Origin:
         answers = {served_path(path): body for path, body in table.items()}
         path = request.url.path.lstrip("/")
         if path in answers:
-            return httpx.Response(200, content=answers[path])
+            # Faithful to a real Pages deployment, whose `_headers` `/*`
+            # rule puts the locked policy on every served asset.
+            return httpx.Response(
+                200,
+                content=answers[path],
+                headers={
+                    "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY
+                },
+            )
         if served_path(path) != path and served_path(path) in answers:
             return httpx.Response(307, headers={"location": f"/{served_path(path)}"})
         return httpx.Response(404, content=b"<!doctype html><title>404</title>")

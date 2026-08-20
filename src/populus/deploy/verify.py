@@ -104,6 +104,8 @@ __all__ = [
     "VerificationResult",
     "VerifyInputError",
     "VerifyUnavailable",
+    "LOCKED_CONTENT_SECURITY_POLICY",
+    "REQUIRED_RESPONSE_HEADERS",
     "check_headers",
     "check_markers",
     "check_no_functions",
@@ -138,6 +140,38 @@ TD10_NOTE = (
 #: behind another.
 CONTROL_PATHS = ("/_redirects", "/_headers", "/_worker.js")
 
+#: The byte-exact Content-Security-Policy locked in `UX-OVERHAUL-PLAN.md`
+#: §M1/R36 and shipped as `dashboard/public/_headers`. REQUIRED on every served
+#: asset and required to be EQUAL to this value — not merely present, because a
+#: policy that is present but weakened is precisely what a "has a CSP" check
+#: waves through. `style-src` carries `'unsafe-inline'` and deliberately NO
+#: style hash: CSP2+ ignores `'unsafe-inline'` in a directive that also lists
+#: hashes, so adding one would silently re-block every data-driven bar width on
+#: the site. `tests/test_deploy_verify.py` pins this constant against the
+#: shipped `_headers` bytes, so the two cannot drift apart unnoticed.
+LOCKED_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' 'sha256-l7z5mLHE3mvA5XUH9QJEiNRmReuFTfsBcWHAxRGvW3k=' 'sha256-MqA3PKuITCptalBQPnAhrxVICEdcFhUVx47/2VNIkDU=' https://static.cloudflareinsights.com; "
+    "connect-src 'self' https://cloudflareinsights.com; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+#: Response headers that must be present AND equal to the given value. Checked
+#: only on inventory-sampled assets that served 200 — the control-path probes
+#: in :func:`probe_control_paths` are untouched, because a 404 carries no
+#: `_headers` rule and asserting one there would fail the deploy for a
+#: correctly-absent control path.
+REQUIRED_RESPONSE_HEADERS = {
+    "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY,
+}
+
+
+
 #: Response headers a static Pages asset is expected to carry. Anything else is
 #: a finding, because an injected `_headers` is how a static deployment grows
 #: behaviour. Notably absent, and absent on purpose: ``set-cookie``,
@@ -158,6 +192,11 @@ ALLOWED_RESPONSE_HEADERS = frozenset(
         "cf-ray",
         "connection",
         "content-encoding",
+        # Required, not merely tolerated — see REQUIRED_RESPONSE_HEADERS. It is
+        # listed here as well because the allowlist and the required-set are
+        # independent checks: omitting it here would flag the very header R36
+        # exists to ship.
+        "content-security-policy",
         "content-language",
         "content-length",
         "content-type",
@@ -488,15 +527,39 @@ def check_headers(
     *,
     path: str,
     allowlist: frozenset[str] = ALLOWED_RESPONSE_HEADERS,
+    required: Mapping[str, str] = REQUIRED_RESPONSE_HEADERS,
 ) -> list[str]:
-    """Flag any response header outside the allowlist."""
+    """Flag headers outside the allowlist, and required headers missing or altered.
+
+    Two independent directions. The allowlist catches behaviour a static asset
+    GAINED; *required* catches a control the deployment LOST — a CSP that is
+    absent, or present but rewritten, is not detectable by an allowlist, which
+    by construction only ever objects to headers it does not recognise.
+    """
+    findings: list[str] = []
+
     unexpected = sorted(name.lower() for name in headers if name.lower() not in allowlist)
-    if not unexpected:
-        return []
-    return [
-        f"unexpected response header(s) on {path}: {unexpected} — a static "
-        "asset gained behaviour it was not built with"
-    ]
+    if unexpected:
+        findings.append(
+            f"unexpected response header(s) on {path}: {unexpected} — a static "
+            "asset gained behaviour it was not built with"
+        )
+
+    observed = {name.lower(): value for name, value in headers.items()}
+    for name, want in sorted(required.items()):
+        got = observed.get(name)
+        if got is None:
+            findings.append(
+                f"missing required response header on {path}: {name} — the "
+                "deployment is not carrying the policy it was built with"
+            )
+        elif got != want:
+            findings.append(
+                f"{name} on {path} does not equal the locked policy: "
+                f"observed {got!r}"
+            )
+
+    return findings
 
 
 # --- inventory path → served URL path ----------------------------------------

@@ -61,6 +61,7 @@ from populus.deploy.upload import (
     _run_argv,
 )
 from populus.deploy.verify import (
+    LOCKED_CONTENT_SECURITY_POLICY,
     ALLOWED_RESPONSE_HEADERS,
     served_path,
     verify_deployment,
@@ -147,7 +148,21 @@ class ServedTree:
                 relpath = target[len(prefix) :]
                 if relpath in files:
                     body = files[relpath]
-                    return _Response(200, body, {"content-type": "text/html", "etag": "e"})
+                    return _Response(
+                        200,
+                        body,
+                        {
+                            "content-type": "text/html",
+                            "etag": "e",
+                            # A real Pages deployment applies the `/*` rule in
+                            # `_headers` to every served asset. Importing the
+                            # constant rather than re-spelling it keeps this
+                            # fake from drifting off the policy the verifier
+                            # requires — the same discipline `publish` applies
+                            # to `served_path` above.
+                            "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY,
+                        },
+                    )
                 return _Response(404, b"not found", {"content-type": "text/plain"})
         return _Response(404, b"no such origin", {"content-type": "text/plain"})
 

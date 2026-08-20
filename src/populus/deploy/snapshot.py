@@ -255,8 +255,19 @@ def _require_stable(
 def _require_copy_faithful(
     copied: dict[str, tuple[int, str]], snapshot: UploadSnapshot
 ) -> None:
-    """The copy's own hashes must agree with the sealed tree's inventory."""
-    inventoried = {entry["path"]: entry["sha256"] for entry in snapshot.inventory["files"]}
+    """The copy's own hashes must agree with the sealed tree's inventory.
+
+    Compared against ``files`` ∪ ``control_files``, never ``files`` alone: the
+    inventory splits the two so that URL-assuming consumers skip provider
+    control artifacts, but packaging still refuses any unaccounted byte. Reading
+    ``files`` alone here would let a control file be copied without ever being
+    hash-checked — the exact hole the split could otherwise open.
+    """
+    inventoried = {
+        entry["path"]: entry["sha256"]
+        for key in ("files", "control_files")
+        for entry in snapshot.inventory.get(key, [])
+    }
     if inventoried.keys() != copied.keys():
         raise SnapshotError(
             "sealed tree does not contain exactly the copied files: "

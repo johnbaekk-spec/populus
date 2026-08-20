@@ -25,21 +25,47 @@ from populus.publish.digests import (
 )
 
 
+#: Provider-control artifacts: Cloudflare consumes these as *configuration*
+#: rather than serving them as assets, so no URL exists on which one could be
+#: fetched back. They are inventoried separately from the served tree for that
+#: reason alone — ``dist_digest`` still covers them, so full-tree byte binding
+#: is unchanged, and ``_require_copy_faithful`` proves ``files`` ∪
+#: ``control_files`` equals the copied tree. What iterates ``files`` ONLY is
+#: anything that assumes a servable URL: the domain-serving sweep and
+#: ``site_file_count``.
+#:
+#: Distinct from :data:`populus.deploy.verify.CONTROL_PATHS`, which is the
+#: *probe* list — URLs asserted to 404, and a superset, because `_redirects`
+#: and `_worker.js` are probed as must-be-absent though the build emits neither.
+CONTROL_FILE_PATHS = frozenset({"_headers"})
+
+
 def build_inventory(tree: Path | str) -> dict:
-    """The §12.1 inventory document for *tree* (regular files only)."""
+    """The §12.1 inventory document for *tree* (regular files only).
+
+    Served files land in ``files``; provider-control artifacts land in
+    ``control_files`` (see :data:`CONTROL_FILE_PATHS`). Both are enumerated
+    from the same walk, so a file is in exactly one of the two lists and the
+    union is the whole tree.
+    """
     tree = Path(tree)
-    files = [
-        {
+    files: list[dict] = []
+    control_files: list[dict] = []
+    for relpath, path in _walk_regular(tree):
+        entry = {
             "path": relpath,
             "bytes": path.stat().st_size,
             "sha256": sha256_file(path),
         }
-        for relpath, path in _walk_regular(tree)
-    ]
+        if relpath in CONTROL_FILE_PATHS:
+            control_files.append(entry)
+        else:
+            files.append(entry)
     return {
         "dist_digest_version": DIST_DIGEST_VERSION,
         "dist_digest": dist_digest(tree),
         "files": files,
+        "control_files": control_files,
     }
 
 

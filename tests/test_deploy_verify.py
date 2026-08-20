@@ -46,6 +46,7 @@ from populus.deploy.verify import (
     CACHE_BUST_PARAM,
     ALLOWED_RESPONSE_HEADERS,
     CONTROL_PATHS,
+    LOCKED_CONTENT_SECURITY_POLICY,
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
     VERIFICATION_SCOPE,
@@ -158,10 +159,16 @@ class _Origin:
         extra_headers: dict[str, dict[str, str]] | None = None,
         raiser: Exception | None = None,
         catch_all: bytes | None = None,
+        content_security_policy: str | None = LOCKED_CONTENT_SECURITY_POLICY,
     ) -> None:
         self.served = dict(served)
         self.overrides = dict(overrides or {})
         self.extra_headers = dict(extra_headers or {})
+        # A real Pages deployment applies the `/*` rule in `_headers` to every
+        # served asset, so the faithful default is "present on every 200".
+        # `None` models a deployment that lost the policy; a different string
+        # models one whose policy was altered.
+        self.content_security_policy = content_security_policy
         self.raiser = raiser
         self.catch_all = catch_all
         self.seen: list[str] = []
@@ -185,11 +192,12 @@ class _Origin:
             return overrides[path]
         served = self._by_served(self.served)
         if path in served:
-            return httpx.Response(
-                200,
-                content=served[path],
-                headers=self._by_served(self.extra_headers).get(path, {}),
-            )
+            headers = dict(self._by_served(self.extra_headers).get(path, {}))
+            if self.content_security_policy is not None:
+                headers.setdefault(
+                    "content-security-policy", self.content_security_policy
+                )
+            return httpx.Response(200, content=served[path], headers=headers)
         if served_path(path) != path:
             # The provider quirk, reproduced: an HTML path is never served at
             # its literal URL. Query string preserved, exactly as probing a
@@ -309,7 +317,15 @@ def test_body_is_hashed_after_content_decoding(tmp_path):
         site,
         overrides={
             "assets/app.js": httpx.Response(
-                200, content=compressed, headers={"content-encoding": "gzip"}
+                200,
+                content=compressed,
+                headers={
+                    "content-encoding": "gzip",
+                    # An `overrides` response is returned verbatim, so this
+                    # legitimately-served asset must carry the policy a real
+                    # `/*` rule would have put on it.
+                    "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY,
+                },
             )
         },
     )
@@ -1209,3 +1225,86 @@ def test_the_probe_reraises_the_suite_no_network_guard() -> None:
     probe, _ = _probe_against(origin)
     with pytest.raises(AssertionError):
         probe("https://publicfilings.org")
+
+
+# --- R36: the locked Content-Security-Policy ---------------------------------
+
+
+def test_the_locked_constant_equals_the_shipped_headers_file() -> None:
+    """The verifier's constant and `dashboard/public/_headers` are ONE value.
+
+    The verifier cannot read the repo at deploy time, so the policy is spelled
+    twice — here and in the shipped file. That is a drift surface, and this is
+    the only thing standing on it: edit one without the other and the deploy
+    would demand a policy the site does not serve.
+    """
+    shipped = (REPO_ROOT / "dashboard" / "public" / "_headers").read_text()
+    match = re.search(r"^\s+Content-Security-Policy:\s*(.+)$", shipped, re.M)
+    assert match is not None, "no Content-Security-Policy line in _headers"
+    assert match.group(1) == LOCKED_CONTENT_SECURITY_POLICY
+    # A single `/*` block, per the plan's lock.
+    assert shipped.splitlines()[0] == "/*"
+
+
+def test_the_policy_lists_script_hashes_and_no_style_hash() -> None:
+    """CSP2+ IGNORES `'unsafe-inline'` in a directive that also lists hashes.
+
+    So a style hash added here would not tighten anything — it would silently
+    re-block every data-driven bar width on the site. Asserted structurally
+    rather than by eyeballing a 364-character string.
+    """
+    directives = {
+        part.split(" ", 1)[0]: part
+        for part in (p.strip() for p in LOCKED_CONTENT_SECURITY_POLICY.split(";"))
+    }
+    assert len(re.findall(r"'sha256-", directives["script-src"])) == 2
+    assert "'sha256-" not in directives["style-src"]
+    assert "'unsafe-inline'" in directives["style-src"]
+    assert "https://static.cloudflareinsights.com" in directives["script-src"]
+    assert "https://cloudflareinsights.com" in directives["connect-src"]
+
+
+def test_a_deployment_serving_no_policy_is_rejected(tmp_path) -> None:
+    """NEGATIVE: the policy is REQUIRED, not merely allowed."""
+    site = _site()
+    origin = _Origin(site, content_security_policy=None)
+    result = _run(origin, _inventory(tmp_path, site))
+    assert result.ok is False
+    assert result.outcome == "rejected"
+    assert "missing required response header" in result.detail
+    assert "content-security-policy" in result.detail
+
+
+def test_a_deployment_serving_an_altered_policy_is_rejected(tmp_path) -> None:
+    """NEGATIVE: present-but-weakened is the case an allowlist cannot see.
+
+    `object-src 'none'` -> `object-src *` is a real weakening that leaves the
+    header present, correctly named, and structurally valid — exactly what a
+    "does it have a CSP?" check waves through.
+    """
+    site = _site()
+    weakened = LOCKED_CONTENT_SECURITY_POLICY.replace("object-src 'none'", "object-src *")
+    assert weakened != LOCKED_CONTENT_SECURITY_POLICY, "the mutation did not apply"
+    origin = _Origin(site, content_security_policy=weakened)
+    result = _run(origin, _inventory(tmp_path, site))
+    assert result.ok is False
+    assert result.outcome == "rejected"
+    assert "does not equal the locked policy" in result.detail
+
+
+def test_the_control_file_is_never_swept_as_a_served_url(tmp_path) -> None:
+    """`_headers` in the tree must not become a path the sweep demands a 200 on.
+
+    This is the contradiction the split exists to prevent: `probe_control_paths`
+    asserts `/_headers` 404s, so an inventory that listed it under `files` would
+    require a 200 and a 404 on one URL and could never pass.
+    """
+    site = dict(_site())
+    site["_headers"] = b"/*\n  Content-Security-Policy: default-src 'self'\n"
+    inventory = _inventory(tmp_path, site)
+    assert "_headers" not in {entry["path"] for entry in inventory["files"]}
+    assert "_headers" in {entry["path"] for entry in inventory["control_files"]}
+
+    origin = _Origin(_site())  # the ORIGIN does not serve `_headers` — it 404s
+    result = _run(origin, inventory)
+    assert result.ok is True, result.detail
