@@ -329,6 +329,21 @@ measurement or contract citation.
   `validate_manifest`; `test/post/fixture-preview.test.ts` builds
   `dist-fixture/` from it and pins both happy-path URLs plus the
   production-leakage check. Manual institutional QA runs against this preview.
+- **Holders-table sorting ships dormant on production data** (R48): the
+  per-filer holdings table sorts, announces state through `aria-sort`, and
+  carries the partial-sum caveat — but the **deployed** site renders no rows for
+  it, because the production aggregate is `cusip6`-keyed and the entity-keyed
+  route emits nothing from it. That is a property of the data, not an
+  unverified behaviour; the fixture in `test/fixtures/make-inst-preview.py`
+  supplies entity-keyed issuers precisely because production does not. Measured
+  against live at `20260820.2`: `data-sort=` x0 and `data-holders-body` x0.
+  **The table lights up with no code change** once the pipeline emits
+  entity-keyed issuer aggregates.
+  **Do not read the institutional index as proof this shipped** — it sorted on
+  four columns before R48 (`data-inst-sort` x4 on live at `318dea5`), so its
+  sorting is not evidence of this deploy. R48's only production-visible effect
+  is that the index's sort headers became 44x44 tap targets; the `▾`/`▴`
+  indicators are scoped to `th[data-sort]` and stay dormant with the table.
 - **Long-tail/out-of-extract entities ride `/e/` (HTTP 200)** per
   ARCHITECTURE §12.1; `404.astro` stays a plain 404; the served status
   contract is pinned by `test/post/http-status.test.ts`. The budget walk cuts
