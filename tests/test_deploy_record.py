@@ -956,6 +956,16 @@ def test_the_signer_refuses_a_subject_name_the_verifier_would_refuse(tmp_path):
 # --- §17(h) credential fixtures ----------------------------------------------
 
 
+def _no_sleep(_seconds: float) -> None:
+    """The settle between no-verdict retries, removed.
+
+    Passed explicitly rather than patched globally: a test that reaches the
+    retry path should say so in its own body, and the two callers below would
+    otherwise sleep 90 real seconds each — which is how this file went from
+    1.4s to 181s the first time the retry landed.
+    """
+
+
 def _argv(repo: Path, artifact: Path) -> list[str]:
     return [
         "--data-repo",
@@ -1083,6 +1093,7 @@ def test_the_entry_point_exit_codes_distinguish_refusal_from_outage(tmp_path, mo
             _argv(_data_repo(tmp_path / "second"), artifact),
             http_factory=_Origin(site).client,
             now=NOW,
+            sleep=_no_sleep,
         )
         == EXIT_UNAVAILABLE
     )
@@ -1248,10 +1259,119 @@ def test_an_escaped_outage_exits_unavailable_and_never_rejected(tmp_path, monkey
         _argv(_data_repo(tmp_path), _artifact(tmp_path, site)),
         http_factory=_Origin(site).client,
         now=NOW,
+        sleep=_no_sleep,
     )
 
     assert exit_code == EXIT_UNAVAILABLE
     assert exit_code != EXIT_REJECTED
+
+
+def _signing_pages(monkeypatch):
+    """The recorded Pages API, wired in as the signer's client."""
+    pages = _Pages()
+    monkeypatch.setattr(
+        record,
+        "PagesClient",
+        lambda *a, **kw: PagesClient(
+            ACCOUNT_ID, PROJECT, PAGES_READ_TOKEN, transport=httpx.MockTransport(pages.handler)
+        ),
+    )
+    return pages
+
+
+def test_a_no_verdict_signing_attempt_is_retried_and_can_then_succeed(tmp_path, monkeypatch):
+    """One 502 must not leave a correct deployment unattested.
+
+    Run 32342764618 (2026-08-20): a single 502 on one swept path failed the
+    signer, and a rerun of the identical command attested it seconds later. The
+    deployment was never in doubt — only reachable.
+    """
+    monkeypatch.setenv(ACCOUNT_ID_ENV, ACCOUNT_ID)
+    monkeypatch.setenv(PAGES_READ_TOKEN_ENV, PAGES_READ_TOKEN)
+    _signing_pages(monkeypatch)
+    site = _site()
+
+    real = record._confirm_domain
+    attempts: list[int] = []
+
+    def flaky(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise VerifyUnavailable(
+                "HTTP 502 fetching https://origin/congress/tickers/CNMD/: no "
+                "verdict was reached"
+            )
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(record, "_confirm_domain", flaky)
+    slept: list[float] = []
+
+    exit_code = record.main(
+        _argv(_data_repo(tmp_path), _artifact(tmp_path, site)),
+        http_factory=_Origin(site).client,
+        now=NOW,
+        sleep=slept.append,
+    )
+
+    assert exit_code == EXIT_VERIFIED
+    assert len(attempts) == 2, "the outage was not retried"
+    assert slept == [record.SIGN_SETTLE_SECONDS], "the served tree got no settle"
+
+
+def test_a_rejection_is_never_retried(tmp_path, monkeypatch):
+    """A divergence does not become true by waiting — and must not be re-asked.
+
+    This is the asymmetry the whole change rests on. If a REJECTED outcome ever
+    became retryable here, the signer would be re-asking a question it already
+    got a real answer to, which is how a tamper turns into a pass.
+    """
+    monkeypatch.setenv(ACCOUNT_ID_ENV, ACCOUNT_ID)
+    monkeypatch.setenv(PAGES_READ_TOKEN_ENV, PAGES_READ_TOKEN)
+    _signing_pages(monkeypatch)
+    site = _site()
+    served = dict(site)
+    served["assets/site.css"] = b":root{--populus-ink:#000}\n"
+    slept: list[float] = []
+
+    exit_code = record.main(
+        _argv(_data_repo(tmp_path), _artifact(tmp_path, site)),
+        http_factory=_Origin(served).client,
+        now=NOW,
+        sleep=slept.append,
+    )
+
+    assert exit_code == EXIT_REJECTED
+    assert slept == [], "a divergence was retried; it must be answered once"
+
+
+def test_a_persistent_outage_still_exits_unavailable_after_bounded_retries(
+    tmp_path, monkeypatch
+):
+    """Bounded, not a loop. A broken origin still pages, just not on the first 502."""
+    monkeypatch.setenv(ACCOUNT_ID_ENV, ACCOUNT_ID)
+    monkeypatch.setenv(PAGES_READ_TOKEN_ENV, PAGES_READ_TOKEN)
+    _signing_pages(monkeypatch)
+    site = _site()
+    attempts: list[int] = []
+
+    def always_out(*args, **kwargs):
+        attempts.append(1)
+        raise VerifyUnavailable("the edge did not answer")
+
+    monkeypatch.setattr(record, "_confirm_domain", always_out)
+    slept: list[float] = []
+
+    exit_code = record.main(
+        _argv(_data_repo(tmp_path), _artifact(tmp_path, site)),
+        http_factory=_Origin(site).client,
+        now=NOW,
+        sleep=slept.append,
+    )
+
+    assert exit_code == EXIT_UNAVAILABLE
+    assert exit_code != EXIT_REJECTED, "an outage must never page as a tamper"
+    assert len(attempts) == record.SIGN_UNAVAILABLE_RETRIES + 1
+    assert len(slept) == record.SIGN_UNAVAILABLE_RETRIES
 
 
 def test_a_pages_rejection_says_it_may_be_configuration(tmp_path):

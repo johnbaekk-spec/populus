@@ -105,7 +105,8 @@ import json
 import os
 import re
 import sys
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -201,6 +202,28 @@ EXIT_VERIFIED = 0
 EXIT_REJECTED = 1
 EXIT_UNAVAILABLE = 2
 EXIT_MISCONFIGURED = 3
+
+#: How many times a *no-verdict* signing attempt is retried, and how long the
+#: served tree is given to settle in between.
+#:
+#: Only ``UNAVAILABLE`` is retried, and that asymmetry is the whole point. The
+#: exit codes above exist because "a verification failure and an unreachable API
+#: are different problems and must page differently" — but the workflow failed
+#: the step identically for both, so the distinction died at the job boundary.
+#: On 2026-08-20 one 502 on a single swept path (run 32342764618) left a
+#: correct deployment unattested and would have blocked every later publish
+#: through R18, because the gate compares live ``code_sha`` against the attested
+#: generation. A rerun of the same command succeeded unchanged.
+#:
+#: ``REJECTED`` is never retried and must never become retryable here: a
+#: divergence does not become true by waiting, which is precisely why
+#: ``PROPAGATION_REASON`` in the orchestrator matches 404-vs-200 EXACTLY and
+#: excludes 5xx, digest and marker findings. This retries the *absence* of an
+#: answer, never an answer we dislike. Counts mirror the orchestrator's
+#: ``PROPAGATION_RETRIES``/``PROPAGATION_SETTLE_SECONDS`` so there is one cadence
+#: in the deploy path rather than two.
+SIGN_UNAVAILABLE_RETRIES = 2
+SIGN_SETTLE_SECONDS = 45.0
 
 #: A fourth outcome, alongside ``verified``/``rejected``/``unavailable``. It is
 #: declared here rather than in :mod:`populus.publish.attestation` because it is
@@ -1511,6 +1534,7 @@ def main(
     http_factory=None,
     attestation_factory=None,
     now: datetime | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     """Run ``sign`` or ``gate``. The factories exist so both are testable offline.
 
@@ -1537,6 +1561,7 @@ def main(
         http_factory=http_factory,
         attestation_factory=attestation_factory,
         now=now,
+        sleep=sleep,
     )
 
 
@@ -1583,6 +1608,7 @@ def _main_sign(
     http_factory=None,
     attestation_factory=None,
     now: datetime | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     if pages_factory is None:
         account_id = os.environ.get(ACCOUNT_ID_ENV, "").strip()
@@ -1611,20 +1637,34 @@ def _main_sign(
             if attestation_factory is not None
             else _build_attestation(args.attestation)
         )
-        result = sign_deployment(
-            data_repo=args.data_repo,
-            artifact_dir=args.artifact,
-            pages=pages,
-            http=http,
-            attestation=attestation,
-            domain=args.domain,
-            workflow_run_id=args.workflow_run_id,
-            now=now or datetime.now(timezone.utc),
-            dist_artifact_id=args.dist_artifact_id,
-            dist_artifact_expires_at=args.dist_artifact_expires_at,
-            claimed_deployment_id=args.claimed_deployment_id or None,
-            claimed_dist_digest=args.claimed_dist_digest or None,
-        )
+        for attempt in range(SIGN_UNAVAILABLE_RETRIES + 1):
+            result = sign_deployment(
+                data_repo=args.data_repo,
+                artifact_dir=args.artifact,
+                pages=pages,
+                http=http,
+                attestation=attestation,
+                domain=args.domain,
+                workflow_run_id=args.workflow_run_id,
+                now=now or datetime.now(timezone.utc),
+                dist_artifact_id=args.dist_artifact_id,
+                dist_artifact_expires_at=args.dist_artifact_expires_at,
+                claimed_deployment_id=args.claimed_deployment_id or None,
+                claimed_dist_digest=args.claimed_dist_digest or None,
+            )
+            if result.outcome != UNAVAILABLE:
+                break
+            if attempt == SIGN_UNAVAILABLE_RETRIES:
+                break
+            print(f"record-sign: {result.detail}", file=sys.stderr)
+            print(
+                f"record-sign: no verdict was reached, so nothing has been "
+                f"attested and nothing has been rejected; settling "
+                f"{SIGN_SETTLE_SECONDS:.0f}s and asking again "
+                f"(retry {attempt + 1} of {SIGN_UNAVAILABLE_RETRIES})",
+                file=sys.stderr,
+            )
+            sleep(SIGN_SETTLE_SECONDS)
     finally:
         if owned:
             http.close()
