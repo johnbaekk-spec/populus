@@ -8,6 +8,8 @@
     "test/holders-sort.test.ts",
     "test/inst-index-client.test.ts",
     "test/holders-client.test.ts",
-    "test/inst-loader-coercion.test.ts"
+    "test/inst-loader-coercion.test.ts",
+    "playwright.holders.config.ts",
+    "test/holders-browser/holders.spec.ts"
   ]
 }
