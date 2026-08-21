@@ -332,18 +332,36 @@ measurement or contract citation.
 - **Holders-table sorting ships dormant on production data** (R48): the
   per-filer holdings table sorts, announces state through `aria-sort`, and
   carries the partial-sum caveat — but the **deployed** site renders no rows for
-  it, because the production aggregate is `cusip6`-keyed and the entity-keyed
-  route emits nothing from it. That is a property of the data, not an
-  unverified behaviour; the fixture in `test/fixtures/make-inst-preview.py`
-  supplies entity-keyed issuers precisely because production does not. Measured
-  against live at `20260820.2`: `data-sort=` x0 and `data-holders-body` x0.
-  **The table lights up with no code change** once the pipeline emits
-  entity-keyed issuer aggregates.
+  it. Measured against live at `20260820.2`: `data-sort=` x0 and
+  `data-holders-body` x0. **The table needs no code change** to light up; it
+  needs entity-resolved issuers, and there are none.
   **Do not read the institutional index as proof this shipped** — it sorted on
   four columns before R48 (`data-inst-sort` x4 on live at `318dea5`), so its
   sorting is not evidence of this deploy. R48's only production-visible effect
   is that the index's sort headers became 44x44 tap targets; the `▾`/`▴`
   indicators are scoped to `th[data-sort]` and stay dormant with the table.
+- **Why no issuer is entity-keyed, measured rather than assumed.**
+  `_issuer_key` prefers `entity:<id>` and falls back to `cusip6:` only when
+  `entity_link_state != 'resolved'`. On the 21 GB institutional store
+  (16,922,879 `inst_holdings` rows, 24,929 distinct securities):
+
+  | measure | value |
+  | --- | --- |
+  | securities with `entity_link_state='resolved'` | **0 of 26,158** |
+  | securities with a non-empty `entity_candidates` | **0 of 26,158** |
+  | securities with `id_state='provisional'` | 26,158 of 26,158 |
+  | holdings rows with no `security_id` at all | 127,594 (0.75%) |
+
+  So the fallback is universal, and nothing has ever even been *proposed* as a
+  candidate. **This is not TD-7 alone.** Candidates are stamped by
+  `apply_entity_candidates`, fed from `ticker_index.get(observation.symbol)`,
+  and production sets `POPULUS_TICKER_MAP` to a deliberately absent path — but
+  supplying that registry would still not resolve these, because 13F securities
+  are provisional `sec:prov:<hash>` identities carrying no ticker observation
+  for the index to match. Closing this needs a CUSIP→issuer bridge, which is
+  gated by the `cusip-redistribution` counsel question, not a build input.
+  Treat the ticker registry (TD-7) and this as related but **not** the same
+  blocker: fixing TD-7 alone leaves this table empty.
 - **Long-tail/out-of-extract entities ride `/e/` (HTTP 200)** per
   ARCHITECTURE §12.1; `404.astro` stays a plain 404; the served status
   contract is pinned by `test/post/http-status.test.ts`. The budget walk cuts
