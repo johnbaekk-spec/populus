@@ -29,6 +29,8 @@ import {
   srcLinkDerived,
   terminusRow,
   footnoteBlock,
+  compactDisclosure,
+  COMPACT_ROWS,
   statTiles,
   watchStarHtml,
   memberHrefFor,
@@ -55,7 +57,8 @@ import {
   membersDisclosing,
   medianLag,
   lateCount,
-  inTrailingMonths,
+  legacyTrailingMonthsBounds,
+  windowMembership,
   affTextOf,
   partyLabel,
   qoqPresentation,
@@ -347,7 +350,14 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
 export function memberStatTiles(m: MemberEntity, stamps: BuildStamps): StatTile[] {
   // constraint 9: trailing-window tiles are date-windowed aggregates too.
   const flow12 = sumRanges(
-    excludeDateAnomalies(m.txns).rows.filter((t) => inTrailingMonths(t, stamps.generatedAtDate, 12)),
+    excludeDateAnomalies(m.txns).rows.filter(
+      (t) =>
+        windowMembership(
+          t,
+          legacyTrailingMonthsBounds(stamps.generatedAtDate, 12),
+          "traded_or_filed",
+        ) === "in",
+    ),
   );
   const lag = medianLag(m.txns);
   const late = lateCount(m.txns);
@@ -720,7 +730,14 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
   const disclosing = membersDisclosing(t.txns, stamps.generatedAtDate, 12, 7);
   const everMembers = new Set(t.txns.map((r) => r.bioguide ?? `raw:${r.name}`)).size;
   const flow12 = sumRanges(
-    excludeDateAnomalies(t.txns).rows.filter((r) => inTrailingMonths(r, stamps.generatedAtDate, 12)),
+    excludeDateAnomalies(t.txns).rows.filter(
+      (r) =>
+        windowMembership(
+          r,
+          legacyTrailingMonthsBounds(stamps.generatedAtDate, 12),
+          "traded_or_filed",
+        ) === "in",
+    ),
   );
   const latestFiled = t.txns[0]?.filed ?? null;
   const tiles: StatTile[] = [
@@ -1386,31 +1403,38 @@ export function moduleCard(
 
 /** The /congress surface tabs. Feed is the existing index; Leaders and
     Tickers are build-time ranking tables. */
-export function congressTabs(active: "feed" | "leaders" | "tickers"): string {
-  const tab = (key: string, href: string, label: string): string =>
-    key === active
-      ? `<span class="ctab ctab-active" aria-current="page">${label}</span>`
-      : `<a class="ctab" href="${href}">${label}</a>`;
-  return (
-    `<nav class="ctabs" aria-label="Congress views">` +
-    tab("feed", "/congress/", "Feed") +
-    tab("leaders", "/congress/leaders/", "Leaders") +
-    tab("tickers", "/congress/tickers/", "Tickers") +
-    `</nav>`
-  );
-}
+/* R1: `congressTabs` is DELETED. The sub-tab nav is the navigation the single
+   /congress/ page exists to remove — comparing the three views was the thing
+   that required leaving the page. Its two retired routes are static stubs
+   (R25), and its CSS is removed with it rather than left as a dead selector. */
 
 import {
+  type CongressBasis,
+  type CongressRange,
   type CongressRollup,
   type LeaderRow,
   type NetInterval,
+  congressRangeBounds,
+  windowStatement,
   netDirection,
   netIntervalText,
   netOverlaps,
   rankNetRows,
 } from "./derive.ts";
 
-function netCellHtml(net: NetInterval, overlapsPrev: boolean): string {
+import {
+  congressRankingColumns,
+  overlapFlags,
+  sortRankingRows,
+  type CongressColumn,
+  type CongressSortKey,
+} from "./congress-columns.ts";
+
+/** `footnotesId` is threaded rather than hard-coded: /congress/ renders TWO
+    ranking sections, each with its own footnote block, so a shared literal id
+    would make one block a duplicate id and every marker in the other section a
+    dangling anchor. */
+function netCellHtml(net: NetInterval, overlapsPrev: boolean, footnotesId: string): string {
   const dir = netDirection(net);
   const dirHtml =
     dir === "accumulation"
@@ -1419,7 +1443,7 @@ function netCellHtml(net: NetInterval, overlapsPrev: boolean): string {
         ? ` <span class="net-dir net-dis">net disposal</span>`
         : "";
   const overlap = overlapsPrev
-    ? `<a class="fn-ref" href="#ranking-footnotes" aria-label="footnote: overlapping intervals are incomparable">≈</a>`
+    ? `<a class="fn-ref" href="#${esc(footnotesId)}" aria-label="footnote: overlapping intervals are incomparable">≈</a>`
     : "";
   return `${esc(netIntervalText(net))}${dirHtml}${overlap}`;
 }
@@ -1430,6 +1454,7 @@ function rankingRowHtml(
   overlapsPrev: boolean,
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
+  footnotesId: string,
 ): string {
   const who =
     kind === "tickers"
@@ -1451,10 +1476,13 @@ function rankingRowHtml(
     `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
     `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
     `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
-    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td>` +
+    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev, footnotesId)}</td>` +
     `<td class="c-num">${lateCell}</td></tr>`
   );
 }
+
+/** The default footnote-block id, used when a section does not name its own. */
+export const RANKING_FOOTNOTES_ID = "ranking-footnotes";
 
 export const RANKING_FOOTNOTES: FootnoteEntry[] = [
   {
@@ -1479,99 +1507,493 @@ export const RANKING_FOOTNOTES: FootnoteEntry[] = [
   },
 ];
 
-/** One ranking body serves Leaders and Tickers — same contract, same
-    footnotes, one code path (SSR only; the tables are build-derived). */
-export function congressRankingBody(
+/* ---------- R2/R5/R6/R7/R18/R19: the congress ranking sections ------------
+
+   ONE renderer serves BOTH ranking sections: the ticker momentum section that
+   leads /congress/ and the member net-flow section that closes it. They order
+   the same `LeaderRow` shape through the same contract, so a second renderer
+   would be two copies of one set of honesty rules.
+
+   RENDER ROOTS ARE EXPLICIT AND SINGLY OWNED (R18). Each `tbody` carries an id,
+   one renderer writes it, and a header sort replaces ONLY that `tbody` — never
+   the enclosing table, thead, caption, or a sibling root. The member ranking's
+   wholly-undisclosed bucket is a SEPARATE table with a SEPARATE root precisely
+   so no sort of the ranked table can reach into it. */
+
+/** The ids every congress render root is addressed by. Declared once so the
+    server, the client island and the browser tests cannot drift apart — a sort
+    that writes an id nobody renders is a silent no-op. */
+export const CONGRESS_ROOTS = {
+  momentum: "momentum-tbody",
+  feed: "feed-tbody",
+  membersRanked: "members-ranked-tbody",
+  membersUndisclosed: "members-undisclosed-tbody",
+} as const;
+
+export interface RankingSectionOpts {
+  /** the tbody id this section's ranked rows render into */
+  rootId: string;
+  /** the tbody id for the wholly-undisclosed bucket, when the section has one */
+  undisclosedRootId?: string;
+  /** rendered above the table; the section's own heading */
+  heading: string;
+  /** id for the section element, so the retired sub-tab stubs can anchor to it */
+  sectionId: string;
+  /** render the range/basis control (momentum only) */
+  controls?: boolean;
+  /** rows rendered while collapsed */
+  compact?: number;
+}
+
+/** The sortable header row. A sortable column carries its key and a real
+    button; an unsortable one carries its stated reason as visible text, not a
+    title attribute — a tooltip is not a channel this site treats as published.
+    `aria-sort` starts on the column the server actually ordered by. */
+function rankingHeadHtml(cols: CongressColumn[], active: CongressSortKey, dir: "asc" | "desc"): string {
+  return cols
+    .map((c) => {
+      if (!c.sortable) {
+        return (
+          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${esc(c.label)}` +
+          `<span class="col-why">${esc(c.why)}</span></th>`
+        );
+      }
+      const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
+      return (
+        `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-congress-sort="${esc(c.key)}" ` +
+        `data-congress-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
+        `<button class="th-sort" type="button">${esc(c.label)}</button></th>`
+      );
+    })
+    .join("");
+}
+
+/** The ranked rows for one root, at a given sort. Exported because the client
+    island renders the SAME function over the SAME rows — that identity is what
+    the R3 parity test compares, and it is why no second row renderer exists. */
+export function rankingRowsHtml(
+  rows: readonly LeaderRow[],
+  kind: "leaders" | "tickers",
+  ctx: RenderCtx,
+  opts: { numbered?: boolean; startAt?: number; footnotesId?: string } = {},
+): string {
+  // R18: the incomparability marker is recomputed from THIS order. Carrying a
+  // marker over from a previous sort would claim an overlap against a row that
+  // is no longer above it.
+  const flags = overlapFlags(rows);
+  const numbered = opts.numbered ?? true;
+  const start = opts.startAt ?? 1;
+  const footnotesId = opts.footnotesId ?? RANKING_FOOTNOTES_ID;
+  return rows
+    .map((r, i) => rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx, footnotesId))
+    .join("\n");
+}
+
+/** The rows an interval sort could not rank, with their own stated separator.
+    They are NOT the undisclosed bucket — see `sortRankingRows`. */
+function unrankableSeparatorHtml(n: number, colspan: number, columnLabel: string): string {
+  return (
+    `<tr class="unranked-sep"><td colspan="${colspan}">${fmtInt(n)} ` +
+    `${n === 1 ? "row discloses" : "rows disclose"} no amount at all for “${esc(columnLabel)}”, ` +
+    `so ${n === 1 ? "it has" : "they have"} no endpoints to rank by — listed after every ranked ` +
+    `row, never coerced to $0</td></tr>`
+  );
+}
+
+/** The full body for one root at one sort: ranked rows, then the separator and
+    the rows this column cannot rank. One function so the server and the client
+    produce identical bytes. */
+export function rankingRootHtml(
+  rows: readonly LeaderRow[],
+  key: CongressSortKey,
+  dir: "asc" | "desc",
+  kind: "leaders" | "tickers",
+  ctx: RenderCtx,
+  opts: { compact?: number; footnotesId?: string } = {},
+): { html: string; total: number; shown: number } {
+  const cols = congressRankingColumns(kind);
+  const { ranked, unrankable } = sortRankingRows(rows, key, dir);
+  const total = ranked.length + unrankable.length;
+  const limit = opts.compact ?? total;
+  const rankedShown = ranked.slice(0, limit);
+  // The compact slice is a bound on the WHOLE table, so it consumes the ranked
+  // rows first and only then the unrankable tail — otherwise collapsing could
+  // drop every ranked row and show only the tail.
+  const unrankableShown = unrankable.slice(0, Math.max(0, limit - ranked.length));
+  const activeLabel =
+    cols.find((c) => c.sortable && c.key === key)?.label ?? key;
+  return {
+    html:
+      rankingRowsHtml(rankedShown, kind, ctx, { footnotesId: opts.footnotesId }) +
+      // F5: the separator states that rows exist which this column CANNOT
+      // rank. That is a stated absence, so it renders whenever the bucket is
+      // non-empty — NOT only when a bucket row happens to survive the compact
+      // slice. Ten ranked rows followed by unrankable ones used to hide the
+      // fact that the unrankable ones existed at all, which is exactly the
+      // omission R19 forbids.
+      (unrankable.length > 0
+        ? "\n" +
+          unrankableSeparatorHtml(unrankable.length, cols.length, activeLabel) +
+          (unrankableShown.length > 0
+            ? "\n" +
+              rankingRowsHtml(unrankableShown, kind, ctx, {
+                numbered: false,
+                footnotesId: opts.footnotesId,
+              })
+            : "")
+        : ""),
+    total,
+    shown: rankedShown.length + unrankableShown.length,
+  };
+}
+
+/** The range and basis control (R2). Both are segmented buttons, matching the
+    feed's existing `.seg` control, so there is one interaction idiom on the
+    page. With scripting off they are inert, which is why the section states
+    the window it actually rendered rather than relying on the control to. */
+function rangeControlHtml(range: CongressRange, basis: CongressBasis): string {
+  const seg = (
+    group: "range" | "basis",
+    label: string,
+    values: readonly (readonly [string, string])[],
+    active: string,
+  ): string =>
+    `<div class="filter-group" role="group" aria-label="${esc(label)}">` +
+    `<span class="filter-label" aria-hidden="true">${esc(label)}</span><div class="seg">` +
+    values
+      .map(
+        ([v, text]) =>
+          `<button type="button" data-${group}="${esc(v)}" aria-pressed="${v === active}">${esc(text)}</button>`,
+      )
+      .join("") +
+    `</div></div>`;
+  return (
+    `<div class="range-control" id="momentum-controls">` +
+    seg("range", "Range", [["7d", "7d"], ["30d", "30d"], ["90d", "90d"], ["12m", "12m"]], range) +
+    seg("basis", "Dates", [["traded", "traded"], ["filed", "filed"]], basis) +
+    `<noscript><span class="caveat-inline">the range and basis controls need JavaScript — ` +
+    `the window rendered below is stated in full beside the heading</span></noscript>` +
+    `</div>`
+  );
+}
+
+/** The exclusion clauses for a rollup. Every clause is a count of rows the
+    reader cannot see and why — never a silent shrink. */
+export function rankingExclusions(
+  rollup: CongressRollup & { noTickerRows?: number },
+  kind: "leaders" | "tickers",
+): string[] {
+  const out: string[] = [];
+  if (rollup.dateAnomalies > 0)
+    out.push(
+      `${fmtInt(rollup.dateAnomalies)} date-anomaly ${
+        rollup.dateAnomalies === 1 ? "row" : "rows"
+      } excluded from the trade-date window (impossible trade dates)`,
+    );
+  if (rollup.undated > 0)
+    out.push(
+      `${fmtInt(rollup.undated)} ${
+        rollup.undated === 1 ? "row discloses" : "rows disclose"
+      } no trade date and cannot be placed in a trade-date window — switch the basis to filing date to include them`,
+    );
+  if (kind === "tickers" && (rollup.noTickerRows ?? 0) > 0)
+    out.push(
+      `${fmtInt(rollup.noTickerRows!)} in-window rows disclose no ticker and cannot appear in a ticker ranking — ` +
+        `the largest disclosers by flow can be entirely non-equity; the member ranking below is keyed by member instead`,
+    );
+  return out;
+}
+
+/** The caveat line, exported so the client island rewrites exactly what the
+    server wrote when a range or basis change changes the exclusions. */
+export function rankingCaveatHtml(exclusions: readonly string[]): string {
+  return exclusions.length > 0 ? exclusions.map((e) => esc(e)).join(" · ") : "";
+}
+
+/** One ranking section — used for BOTH the ticker momentum section and the
+    member net-flow section. SSR renders the authoritative default view; the
+    client re-renders only the roots. */
+export function congressRankingSection(
   kind: "leaders" | "tickers",
   rollup: CongressRollup & { noTickerRows?: number },
   stamps: BuildStamps,
   ctx: RenderCtx,
-  opts: { limit?: number } = {},
+  opts: RankingSectionOpts,
 ): string {
+  const cols = congressRankingColumns(kind);
+  const compact = opts.compact ?? COMPACT_ROWS;
+  const bounds = congressRangeBounds(rollup.range, stamps.generatedAtDate);
+  const windowText = windowStatement(rollup.range, rollup.basis, bounds);
+
+  // R6/R18: the wholly-undisclosed bucket is fixed by the NET interval and
+  // computed ONCE here. It gets its own table and its own root, so it is not
+  // reachable by any sort of the ranked table.
   const { ranked, undisclosedBucket } = rankNetRows(
     rollup.rows,
     (r) => r.net,
     (r) => r.id,
   );
-  const limit = opts.limit ?? ranked.length;
-  const shown = ranked.slice(0, limit);
-  const rows = shown
-    .map((r, i) =>
-      rankingRowHtml(
-        r,
-        i + 1,
-        i > 0 ? netOverlaps(r.net, shown[i - 1]!.net) === true : false,
-        kind,
-        ctx,
-      ),
-    )
-    .join("\n");
-  const bucketRows = undisclosedBucket
-    .map((r) => rankingRowHtml(r, null, false, kind, ctx))
-    .join("\n");
-  const heads = [
-    "#",
-    kind === "leaders" ? "Member" : "Ticker",
-    "Txns †",
-    "Purch. †",
-    "Sales †",
-    "Gross purchases ·§",
-    "Gross sales ·§",
-    "Net disclosed flow ·§",
-    "Late †",
-  ];
-  const exclusions: string[] = [];
-  if (rollup.dateAnomalies > 0)
-    exclusions.push(
-      `${fmtInt(rollup.dateAnomalies)} date-anomaly rows excluded before windowing (impossible trade dates)`,
-    );
-  if (kind === "tickers" && (rollup.noTickerRows ?? 0) > 0)
-    exclusions.push(
-      `${fmtInt(rollup.noTickerRows!)} in-window rows disclose no ticker and cannot appear in a ticker ranking — ` +
-        `the largest disclosers by flow can be entirely non-equity; see the Leaders view for the member-keyed ranking`,
-    );
+
+  const footnotesId = `${opts.sectionId}-footnotes`;
+  const main = rankingRootHtml(ranked, "net", "desc", kind, ctx, { compact, footnotesId });
+  const bucket = rankingRootHtml(undisclosedBucket, "name", "asc", kind, ctx, {
+    compact,
+    footnotesId,
+  });
+
   const caption =
     kind === "leaders"
-      ? `Members ranked by net disclosed flow, trailing ${rollup.windowMonths} months by trade date (filed date when undated)`
-      : `Tickers ranked by net disclosed flow, trailing ${rollup.windowMonths} months by trade date (filed date when undated)`;
+      ? `Members ranked by net disclosed flow, ${windowText}`
+      : `Tickers ranked by net disclosed flow, ${windowText}`;
+  const noun = kind === "leaders" ? "members" : "tickers";
+  const exclusions = rankingExclusions(rollup, kind);
+
   return (
-    `<section class="panel panel-wide" aria-label="${esc(caption)}">` +
-    `<div class="panel-head"><h2 class="section-h">${
-      kind === "leaders" ? "Leaders — net disclosed flow" : "Tickers — net disclosed flow"
-    }</h2>` +
-    `<span class="panel-note">trailing ${rollup.windowMonths}m by trade date (filed when undated) · ${esc(
-      stamps.generatedAtDate,
-    )} · build ${esc(stamps.buildId)}</span></div>` +
+    `<section class="panel panel-wide" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
+    `<div class="panel-head"><h2 class="section-h">${esc(opts.heading)}</h2>` +
+    `<span class="panel-note" id="${esc(opts.sectionId)}-window">${esc(windowText)} · build ${esc(
+      stamps.buildId,
+    )}</span></div>` +
+    (opts.controls ? rangeControlHtml(rollup.range, rollup.basis) : "") +
     `<p class="section-note">Every flow number is an <strong>interval</strong> over statutory bucket bounds — ` +
     `no midpoints, no point estimates. Direction words appear only on a strict sign: an interval that ` +
     `touches or spans zero carries none. The order below is a deterministic display key, ` +
-    `<strong>not</strong> a superiority claim — overlapping intervals are incomparable (≈).</p>` +
+    `<strong>not</strong> a superiority claim — overlapping intervals are incomparable (≈).` +
+    `<noscript> Sorting by column header needs JavaScript; the order below is by net disclosed flow, largest first.</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
-    `<tbody>${rows}</tbody></table></div>` +
-    (ranked.length > limit
-      ? terminusRow({
-          author: "populus",
-          html: `${fmtInt(ranked.length - limit)} further ranked ${
-            kind === "leaders" ? "members" : "tickers"
-          } are not rendered on this page — a Public Filings render bound, not a data bound. Every row remains in the published dataset.`,
-        })
-      : "") +
-    (undisclosedBucket.length > 0
+    `<thead><tr>${rankingHeadHtml(cols, "net", "desc")}</tr></thead>` +
+    `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
+    // The terminus row states the bound in BOTH states — it is not a
+    // consequence of collapsing, it is the fact that the table is bounded.
+    // F16: the terminus renders in BOTH states — visible when rows are held
+    // back, hidden-but-present when they are not. A momentum range change can
+    // take this table from "everything fits" to "833 tickers, 10 shown", and
+    // the client can only reveal a notice that exists.
+    terminusRow({
+      author: "populus",
+      hidden: main.total <= main.shown,
+      html:
+        `${fmtInt(Math.max(0, main.total - main.shown))} further ranked ${esc(noun)} are not rendered above — ` +
+        `a Public Filings render bound, not a data bound. Every row remains in the ` +
+        `<a href="/congress/data/feed.v1.json">published dataset</a>.`,
+    }) +
+    compactDisclosure({ rootId: opts.rootId, total: main.total, shown: main.shown, noun }) +
+    (undisclosedBucket.length > 0 && opts.undisclosedRootId
       ? `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>` +
         `<p class="section-note">These rows include at least one side whose every amount failed to parse. ` +
         `They have no endpoints, so they hold no position in the ranking — listed after it, never sorted ` +
-        `to the bottom as if small.</p>` +
+        `to the bottom as if small, and never merged into it by any sort.</p>` +
         `<div class="table-scroll"><table class="etable">` +
-        `<caption class="visually-hidden">Unrankable rows — amounts wholly undisclosed</caption>` +
-        `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
-        `<tbody>${bucketRows}</tbody></table></div></div>`
+        `<caption class="visually-hidden">Unrankable ${esc(noun)} — amounts wholly undisclosed</caption>` +
+        `<thead><tr>${rankingHeadHtml(cols, "name", "asc")}</tr></thead>` +
+        `<tbody id="${esc(opts.undisclosedRootId)}">${bucket.html}</tbody></table></div>` +
+        (bucket.total > bucket.shown
+          ? terminusRow({
+              author: "populus",
+              html: `${fmtInt(bucket.total - bucket.shown)} further wholly-undisclosed ${esc(noun)} are not rendered above.`,
+            })
+          : "") +
+        compactDisclosure({
+          rootId: opts.undisclosedRootId,
+          total: bucket.total,
+          shown: bucket.shown,
+          noun,
+        }) +
+        `</div>`
       : "") +
-    (exclusions.length > 0
-      ? `<div class="caveat-line">${exclusions.map((e) => esc(e)).join(" · ")}</div>`
-      : "") +
-    footnoteBlock(RANKING_FOOTNOTES, { id: "ranking-footnotes" }) +
+    `<div class="caveat-line" id="${esc(opts.sectionId)}-caveat">${rankingCaveatHtml(exclusions)}</div>` +
+    footnoteBlock(RANKING_FOOTNOTES, { id: footnotesId }) +
+    `</section>`
+  );
+}
+
+/* ---------- R9/R20/R21: the recently-added-issuers leaderboard ---------- */
+
+import { addsRowHtml } from "./inst-adds-render.ts";
+import {
+  ADDS_MODES,
+  addsNoteHtml,
+  addsPayloadHref,
+  type AddsMode,
+  type AddsPayload,
+} from "./inst-adds.ts";
+
+export const ADDS_FOOTNOTES: FootnoteEntry[] = [
+  {
+    mark: "‡",
+    html:
+      `a <strong>partial</strong> sum omits at least one position whose value the source did not ` +
+      `disclose. It is a lower bound on what was added, never a total — and an issuer whose every ` +
+      `contributing delta was undisclosed renders an em dash, never <code>$0</code>`,
+  },
+  {
+    mark: "§",
+    html:
+      `"issuer" is an <strong>issuer key</strong>, not a ticker: its source may be a resolved entity ` +
+      `link, a CUSIP-6 issuer block, or a normalized reported name, and each is a weaker claim than ` +
+      `the one before it. The key and its source are printed so the strength of the identity is visible`,
+  },
+  {
+    mark: "†",
+    html:
+      `the top adder is the manager whose positions in this issuer <strong>sum</strong> to the largest ` +
+      `disclosed increase this quarter — summed across every security of the issuer first, then ranked, ` +
+      `so a manager holding several share classes is not split into pieces that each look small`,
+  },
+];
+
+/** F3: the leaderboard's column contract. Its orders are well-defined — every
+    column is a scalar, a name, or the same nullable-value ordering the payload
+    is already sorted by — so success criterion 2 requires them to be sortable,
+    and the one column that is not states why. Comparators stay caller-owned. */
+export type AddsSortKey = "issuer" | "managers" | "new" | "value" | "adder";
+
+export function addsColumns(): CongressColumn[] {
+  return [
+    {
+      sortable: false,
+      key: null,
+      label: "#",
+      numeric: true,
+      why:
+        "the rank number is produced by the active sort, not held by the row — ordering by it " +
+        "would be circular, so it renumbers with every sort instead",
+    },
+    { sortable: true, key: "issuer" as never, label: "Issuer ·§", defaultDir: "asc", numeric: false },
+    { sortable: true, key: "managers" as never, label: "Managers", defaultDir: "desc", numeric: true },
+    { sortable: true, key: "new" as never, label: "New positions", defaultDir: "desc", numeric: true },
+    { sortable: true, key: "value" as never, label: "Δ value added ·‡", defaultDir: "desc", numeric: true },
+    { sortable: true, key: "adder" as never, label: "Top adder ·†", defaultDir: "asc", numeric: false },
+  ];
+}
+
+function addsHeadHtml(cols: CongressColumn[], active: string, dir: "asc" | "desc"): string {
+  return cols
+    .map((c) => {
+      if (!c.sortable) {
+        return (
+          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${esc(c.label)}` +
+          `<span class="col-why">${esc(c.why)}</span></th>`
+        );
+      }
+      const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
+      return (
+        `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-adds-sort="${esc(String(c.key))}" ` +
+        `data-adds-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
+        `<button class="th-sort" type="button">${esc(c.label)}</button></th>`
+      );
+    })
+    .join("");
+}
+
+export interface AddsSectionOpts {
+  /** rows rendered while collapsed */
+  compact?: number;
+  period: string;
+  mode: AddsMode;
+  /** every period the selector may offer — closed periods only (R20) */
+  periods: readonly string[];
+  buildId: string;
+}
+
+/** The leaderboard section: closed-period selector, new-only toggle, the note
+    composed from BOTH independent omission states, and the bounded table. */
+export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): string {
+  // F10: the payload arrives ALREADY BOUNDED, from the endpoint or from the
+  // page's single `boundAdds` call. Re-bounding here reported `truncated:
+  // false` — the omitted rows were already gone, so there was nothing left to
+  // notice — which silently erased the truncation notice on the no-JS view.
+  const total = payload.rows.length;
+  const shown = Math.min(total, opts.compact ?? COMPACT_ROWS);
+  const rows = payload.rows.slice(0, shown).map((r, i) => addsRowHtml(r, i + 1)).join("\n");
+  const cols = addsColumns();
+
+  const periodBtns = opts.periods
+    .map(
+      (p) =>
+        `<button type="button" class="mgr-chip" data-adds-period="${esc(p)}" aria-pressed="${
+          p === opts.period
+        }">${esc(p)}</button>`,
+    )
+    .join("");
+  const modeBtns = ADDS_MODES.map(
+    (m) =>
+      `<button type="button" class="mgr-chip" data-adds-mode="${esc(m)}" aria-pressed="${
+        m === opts.mode
+      }">${m === "new" ? "new positions only" : "new + added"}</button>`,
+  ).join("");
+
+  return (
+    `<section class="panel panel-wide" id="inst-adds-section" aria-label="Recently added issuers">` +
+    `<div class="panel-head"><h2 class="section-h">Recently added issuers</h2>` +
+    `<span class="panel-note" id="inst-adds-window">quarter ended ${esc(payload.period)} · build ${esc(
+      opts.buildId,
+    )}</span></div>` +
+    `<p class="section-note">Which issuers 13F managers reported <strong>adding</strong> in a closed ` +
+    `reporting quarter. The window is a <strong>quarter</strong>, never a rolling day count — ` +
+    `quarterly filings cannot support one — and only quarters whose 45-day filing deadline has ` +
+    `passed are offered, because an open quarter counts only the managers who filed early.` +
+    /* F5: this sentence used to end "the quarter shown above is rendered in
+       full below", which the renderer directly contradicts — it slices to the
+       compact bound like every other table. A reader with scripting off was
+       told the table was complete while issuers were being omitted, which is
+       the precise failure the truncation machinery exists to prevent. It now
+       states the bound AND gives a no-JS route to the whole bounded payload. */
+    `<noscript> Changing the quarter or the mode needs JavaScript, and the table below is the ` +
+    `compact slice of this quarter — not the whole of it. The complete bounded payload for this ` +
+    `quarter is published as JSON at <a href="${esc(addsPayloadHref(opts.period, opts.mode))}">` +
+    `${esc(addsPayloadHref(opts.period, opts.mode))}</a>.</noscript></p>` +
+    `<div class="mgr-chips" id="inst-adds-controls" role="group" aria-label="Reporting quarter">` +
+    periodBtns +
+    `</div>` +
+    `<div class="mgr-chips" role="group" aria-label="Which changes to count">${modeBtns}</div>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<caption class="visually-hidden">Issuers ranked by disclosed value added in the quarter ended ${esc(
+      payload.period,
+    )}</caption>` +
+    `<thead><tr>${addsHeadHtml(cols, "value", "desc")}</tr></thead>` +
+    `<tbody id="inst-adds-tbody">${rows}</tbody></table></div>` +
+    /* R19/F6: the NAMED bound beside the compact table. The congress ranking
+       sections have carried this since R19 was written; the leaderboard and
+       the directory were rendering a disclosure control with no statement of
+       what it was holding back, so rows were withheld with no named author.
+
+       Rendered in BOTH states — visible when rows are held back, present but
+       hidden when they are not — so the client can reveal the sentence and the
+       button TOGETHER when a quarter with more issuers is selected. A notice
+       that was never rendered cannot be filled in later (F16). */
+    terminusRow({
+      author: "populus",
+      hidden: total <= shown,
+      html:
+        `${fmtInt(Math.max(0, total - shown))} further issuers are not rendered above — ` +
+        `a Public Filings render bound, not a data bound. Every issuer in this quarter's ` +
+        `bounded payload remains in ` +
+        `<a href="${esc(addsPayloadHref(opts.period, opts.mode))}">the published JSON</a>.`,
+    }) +
+    // R7: the leaderboard is compact-by-default like every other table, and the
+    // note below reports the ENDPOINT's truncation, which is a different fact
+    // from this render bound and is stated separately.
+    compactDisclosure({ rootId: "inst-adds-tbody", total, shown, noun: "issuers" }) +
+    // The note container ALWAYS renders, even when empty: the client cannot
+    // insert a container that was never there, so an initially-absent note
+    // meant a later period's omission could not be stated at all (F12).
+    (addsNoteHtml(payload) || `<div class="caveat-line" id="inst-adds-note"></div>`) +
+    footnoteBlock(ADDS_FOOTNOTES, { id: "inst-adds-footnotes" }) +
+    // F12: the live status node the period/mode control writes into. It was
+    // targeted by the failure handler but never rendered, so a failed fetch
+    // reached the console and nothing else — the reader saw the old quarter
+    // with no indication their request had failed. It is `role="status"` so a
+    // screen reader is told too, and it renders in EVERY state.
+    `<p class="caveat-line" id="inst-adds-status" role="status" aria-live="polite"></p>` +
+    // F2/F3: the bounded rows travel with the page so the island can sort and
+    // expand them WITHOUT a fetch. Without this the compact slice was a
+    // one-way door: rows past it were unreachable on the default view.
+    `<script type="application/json" id="inst-adds-data">${JSON.stringify(payload.rows).replaceAll(
+      "</",
+      "<\\/",
+    )}</script>` +
     `</section>`
   );
 }
@@ -1689,7 +2111,7 @@ export function memberV2Sections(
     `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
     `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
     `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
-    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td></tr>`;
+    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev, RANKING_FOOTNOTES_ID)}</td></tr>`;
   const netTable =
     netRows.length === 0
       ? `<p class="section-note">No ticker-keyed disclosures on record.</p>`

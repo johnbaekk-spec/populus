@@ -56,6 +56,8 @@ import {
   latestFiling,
   reportingLagDays,
   terminusRow,
+  COMPACT_ROWS,
+  compactDisclosure,
 } from "./format.ts";
 export { reportingLagDays };
 
@@ -771,8 +773,11 @@ export function activityRowHtml(
     // ONE filer-link rule (holdings.filerLinkHtml), which routes through the
     // ONE href primitive (R22): the caller supplies the top/tail budget state;
     // the default is tail — the reachable direction, never a dressed 404.
-    `<td class="c-filer">${filerLinkHtml(r.cik, filerName, tier)}</td>` +
-    `<td class="c-pos">${issuerCell(r)}</td>` +
+    // R10: ISSUER FIRST. The feed answers "what is being accumulated", so the
+    // issuer is the anchor and the manager is the qualifier. Ordering and the
+    // change-kind filters are untouched — only the reading order changed.
+    `<td class="c-issuer">${issuerCell(r)}</td>` +
+    `<td class="c-filer c-secondary">${filerLinkHtml(r.cik, filerName, tier)}</td>` +
     `<td><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span>` +
     `<span class="visually-hidden"> ${esc(label.spoken)}</span>` +
     `<a class="fn-ref" href="#activity-footnotes" aria-label="footnote: what the change labels mean">§</a></td>` +
@@ -900,24 +905,96 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
      any table on it carried a caveat. Over the rows this table actually shows —
      it renders `first.records` sliced to `rowLimit` and does not page. */
   const statedActivity = universalFlags(rows.map((r) => r.flags));
+  /* R7/F2: compact by default AND expandable in place.
+
+     Every row this section holds is rendered into the DOM; the rows past the
+     compact slice carry `data-compact-extra` and are hidden by the CSS the
+     disclosure toggles. That is the one case where hiding is right: these are
+     DATA ROWS, which R19 explicitly permits a collapsed table to omit — and
+     unlike the earlier server-side slice, the reader can actually get them
+     back. Slicing them away with no client owner made them unreachable, which
+     is the opposite of a disclosure. */
   const body = rows
-    .map((r) => activityRowHtml(r, opts.tierOf?.(r.cik) ?? "tail", statedActivity))
+    .map((r, i) => {
+      const html = activityRowHtml(r, opts.tierOf?.(r.cik) ?? "tail", statedActivity);
+      return i < COMPACT_ROWS ? html : html.replace("<tr", "<tr data-compact-extra");
+    })
     .join("\n");
+  /* F2: the COLLAPSED STATE IS SERVER-RENDERED.
+
+     `data-collapsed` used to be set by `initDomDisclosures`, so the emitted
+     page showed every shard row visibly and only became compact once
+     JavaScript ran. That is not "compact by default" — it is compact once
+     scripted, and the initial and no-JavaScript page was the one view of this
+     table that ignored the amended R7 entirely.
+
+     The attribute is now part of the SSR bytes, under the same condition the
+     island would have used, so the first paint and the scripted state agree.
+     The island still sets it, idempotently, because an island that depends on
+     the server having done it is an island with a second precondition.
+
+     The no-JavaScript reader keeps a route to the remainder: the terminus
+     below LINKS the first shard rather than only naming the path. */
+  const collapsed = rows.length > COMPACT_ROWS;
+  const firstShard = `${shardBase}/${feed.pagination.pages[0]?.page ?? 0}.v1.json`;
   return (
     `<section class="panel panel-wide" aria-label="Cross-filer activity">` +
-    `<div class="panel-head"><h2 class="section-h">Largest reported quarter-over-quarter changes</h2>` +
+    `<div class="panel-head"><h2 class="section-h">Largest reported quarter-over-quarter changes, by issuer</h2>` +
     `<span class="panel-note">ordered by absolute reported change · undisclosed deltas last</span></div>` +
     universalFlagNote(statedActivity) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
-    `<caption class="visually-hidden">Cross-filer quarter-over-quarter position changes, ordered by absolute reported change</caption>` +
-    `<thead><tr><th scope="col">Filer</th><th scope="col">Issuer · position</th>` +
-    `<th scope="col">Change ·§</th><th scope="col">Δ value ·‡</th><th scope="col">Quarter ended</th>` +
-    `<th scope="col">Filed ·†</th><th scope="col">Lag</th><th scope="col">Flags</th></tr></thead>` +
-    `<tbody>${body}</tbody></table></div>` +
+    `<caption class="visually-hidden">Quarter-over-quarter position changes by issuer, ordered by absolute reported change</caption>` +
+    /* F23: every column states WHY it is not sortable, in visible text.
+
+       This table is a BOUNDED SLICE of an ordered set — the largest reported
+       changes, cut at a shard limit. Re-sorting the slice client-side would
+       reorder the top-N-by-value BY SOME OTHER KEY and present the result as
+       the top N by that key, which it is not: the rows that would actually
+       lead a filed-date or lag ordering are in shards this page never loaded.
+       That is not a missing feature, it is an ordering the data on this page
+       cannot support, so the reason is printed rather than a control offered.
+
+       The two surfaces that DO sort — the congress rankings and the manager
+       directory — hold their complete row set, which is exactly what makes
+       sorting honest there. */
+    `<thead><tr>` +
+    [
+      ["Issuer · position", "this view is the largest reported changes, cut at a shard bound — re-ordering the slice by issuer would present a partial list as a complete one"],
+      ["Filer", "same bound: the managers leading a filer ordering may be in shards this page never loaded. The manager directory below sorts its complete set"],
+      ["Change ·§", "change kind is a category, not an order — the filters above select one"],
+      ["Δ value ·‡", "the rows are ALREADY ordered by absolute reported change; that is the ordering this slice was cut on"],
+      ["Quarter ended", "every row here shares the reporting period the feed was built for"],
+      ["Filed ·†", "a filed-date ordering over a value-cut slice would rank the wrong rows first"],
+      ["Lag", "as above — lag orders the slice, not the corpus"],
+      ["Flags", "flags are a set per row, with no order over them"],
+    ]
+      .map(
+        ([label, why]) =>
+          `<th scope="col">${esc(label!)}<span class="col-why">${esc(why!)}</span></th>`,
+      )
+      .join("") +
+    `</tr></thead>` +
+    // R18/F4: the LOCKED render root. It was an anonymous <tbody>, which meant
+    // no sort or expansion could be scoped to it and no root-integrity test
+    // could enforce single ownership.
+    `<tbody id="inst-activity-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
+
+    /* F2: this sentence now states BOTH bounds, because there are two and the
+       reader is inside the tighter one. The compact slice is a render bound
+       this page applies; the shard budget is a publication bound the build
+       applies. Naming only the second while silently applying the first is the
+       unstated omission R14 forbids. The shard is a LINK, not a path in a
+       code span: with scripting off the expand control cannot appear, so the
+       link is the only route to the rows below the slice. */
     terminusRow({
       author: "populus",
       html:
-        `Showing the ${fmtInt(rows.length)} largest of ${fmtInt(emitted)} ordered change records` +
+        (collapsed
+          ? `Showing the first ${fmtInt(COMPACT_ROWS)} of the ${fmtInt(rows.length)} rows` +
+            ` rendered here — a Public Filings render bound, lifted by the control below or by` +
+            ` reading <a href="${esc(firstShard)}">the published shard</a> directly. `
+          : `Showing the ${fmtInt(rows.length)} largest change records rendered here. `) +
+        `Those are the largest of ${fmtInt(emitted)} ordered change records` +
         ` published in this build${
           emitted === total ? "" : ` (of ${fmtInt(total)} in the ordered set)`
         }. The complete ordered set is served as ${fmtInt(feed.pagination.pages.length)} same-origin shard${
@@ -926,6 +1003,19 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
         ` each closed at whichever binds first — ${fmtInt(
           feed.pagination.limits.recordLimit,
         )} records or ${fmtInt(feed.pagination.limits.byteLimit)} bytes of serialized JSON.`,
+    }) +
+    /* F15: the terminus precedes its control, matching every other compact
+       table on the site — and matching what the sentence says. It used to be
+       emitted AFTER the control while telling the reader the control was
+       "below" it. The order is also what `syncTerminusFor` assumes
+       (`previousElementSibling`), so a later owner wiring this disclosure to the
+       shared updater finds the terminus where the other three tables keep it. */
+    compactDisclosure({
+      rootId: "inst-activity-tbody",
+      total: rows.length,
+      shown: Math.min(rows.length, COMPACT_ROWS),
+      noun: "changes",
+      domBacked: true,
     }) +
     truncationNoticeHtml(feed.pagination.truncation, feed.pagination.limits.shardLimit) +
     `<div class="caveat-line">Quarter-over-quarter comparisons are between two quarter-end` +

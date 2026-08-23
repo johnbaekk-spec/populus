@@ -13,7 +13,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { initInstIndex, instIndexBodyHtml, instDefaultDir } from "../src/scripts/inst-index-client.ts";
-import { sortInstIndexRows, filterInstIndexRows, type InstIndexRow } from "../src/lib/inst-index.ts";
+import {
+  sortInstIndexRows,
+  filterInstIndexRows,
+  INST_INDEX_HEADS,
+  type InstIndexRow,
+} from "../src/lib/inst-index.ts";
 
 function row(over: Partial<InstIndexRow> = {}): InstIndexRow {
   return {
@@ -64,7 +69,9 @@ test("the no-sentinel bucket and its exact wording survive", () => {
   const { html } = instIndexBodyHtml(rows, "", "value", "asc");
   assert.ok(html.includes("unranked-sep"));
   assert.ok(html.includes("never treated as zero"));
-  assert.ok(html.includes('colspan="6"'));
+  // F20: derived from INST_INDEX_HEADS, not a literal — the table grew to
+  // eight columns and a hard-coded 6 stopped spanning it.
+  assert.ok(html.includes(`colspan="${INST_INDEX_HEADS.length}"`));
   // The null-valued filer must NOT lead an ascending value sort — that is the
   // ordering where a zero substitute would surface first.
   const first = html.match(/\/institutional\/filers\/(\d+)\//)?.[1];
@@ -78,9 +85,9 @@ test("no bucket row is emitted when every row is rankable", () => {
 
 test("the status note keeps its exact composition", () => {
   const { note } = instIndexBodyHtml(rows, "", "value", "desc");
-  assert.equal(note, "4 of 4 filers · sorted by value desc · filtered on this device");
+  assert.equal(note, "4 of 4 managers · sorted by value desc · filtered on this device");
   const filtered = instIndexBodyHtml(rows, "bravo", "value", "desc");
-  assert.equal(filtered.note, "1 of 4 filers · sorted by value desc · filtered on this device");
+  assert.equal(filtered.note, "1 of 4 managers · sorted by value desc · filtered on this device");
 });
 
 test("search still delegates to filterInstIndexRows, case-insensitively", () => {
@@ -123,7 +130,7 @@ function fakeEl(props: Record<string, unknown> = {}) {
 function mountIndex(payload: InstIndexRow[]) {
   const els: Record<string, ReturnType<typeof fakeEl>> = {
     "inst-index-data": fakeEl({ textContent: JSON.stringify(payload) }),
-    "inst-index-body": fakeEl(),
+    "inst-managers-tbody": fakeEl(),
     "inst-index-q": fakeEl({ value: "" }),
     "inst-index-count": fakeEl(),
     "inst-index-status": fakeEl(),
@@ -141,6 +148,13 @@ function mountIndex(payload: InstIndexRow[]) {
   const asked: string[] = [];
   (globalThis as unknown as { document: unknown }).document = {
     getElementById: (id: string) => els[id] ?? null,
+    // The island now also looks up its compact-disclosure control. Returning
+    // null models the honest case where the table is under the compact size
+    // and therefore renders no control at all (R7's omission rule).
+    querySelector: (sel: string) => {
+      asked.push(sel);
+      return null;
+    },
     querySelectorAll: (sel: string) => {
       asked.push(sel);
       return sel === SELECTOR ? ths : [];
@@ -152,7 +166,7 @@ function mountIndex(payload: InstIndexRow[]) {
 test("ENTRY POINT: initInstIndex binds headers and syncs aria without repainting", () => {
   const { els, ths } = mountIndex(rows);
   initInstIndex();
-  assert.equal(els["inst-index-body"].innerHTML, "SSR", "the SSR body is trusted on load");
+  assert.equal(els["inst-managers-tbody"].innerHTML, "SSR", "the SSR body is trusted on load");
   assert.equal(ths[1].getAttribute("aria-sort"), "descending", "value column marked from initial state");
   assert.equal(ths[0].getAttribute("aria-sort"), "none");
 });
@@ -161,12 +175,12 @@ test("ENTRY POINT: a header click re-renders the body and moves aria-sort", () =
   const { els, ths } = mountIndex(rows);
   initInstIndex();
   ths[0].fire("click"); // Filer / name
-  assert.notEqual(els["inst-index-body"].innerHTML, "SSR", "body was re-rendered");
-  assert.ok(els["inst-index-body"].innerHTML.includes("/institutional/filers/"), "real rows rendered");
+  assert.notEqual(els["inst-managers-tbody"].innerHTML, "SSR", "body was re-rendered");
+  assert.ok(els["inst-managers-tbody"].innerHTML.includes("/institutional/filers/"), "real rows rendered");
   assert.equal(ths[0].getAttribute("aria-sort"), "ascending");
   assert.equal(ths[1].getAttribute("aria-sort"), "none", "only one column stays marked");
   assert.ok(String(els["inst-index-status"].textContent).includes("sorted by name asc"));
-  assert.ok(String(els["inst-index-count"].textContent).includes("of 4 filers"));
+  assert.ok(String(els["inst-index-count"].textContent).includes("of 4 managers"));
 });
 
 test("ENTRY POINT: clicking the active column toggles direction", () => {
@@ -184,7 +198,7 @@ test("ENTRY POINT: typing in search re-renders at the current sort", () => {
   ths[0].fire("click");
   els["inst-index-q"].value = "bravo";
   els["inst-index-q"].fire("input");
-  assert.ok(String(els["inst-index-count"].textContent).includes("1 of 4 filers"));
+  assert.ok(String(els["inst-index-count"].textContent).includes("1 of 4 managers"));
   assert.ok(String(els["inst-index-count"].textContent).includes("sorted by name asc"), "sort survives a search");
 });
 
@@ -192,15 +206,27 @@ test("ENTRY POINT: malformed embedded JSON leaves the SSR table alone", () => {
   const { els } = mountIndex(rows);
   els["inst-index-data"].textContent = "{not json";
   initInstIndex();
-  assert.equal(els["inst-index-body"].innerHTML, "SSR", "the island is a convenience, never load-bearing");
+  assert.equal(els["inst-managers-tbody"].innerHTML, "SSR", "the island is a convenience, never load-bearing");
 });
 
-test("the island queries EXACTLY the specified selector, not a near-miss", () => {
+test("the island queries EXACTLY the specified sort selector, not a near-miss", () => {
   const { asked } = mountIndex(rows);
   initInstIndex();
   assert.ok(asked.length > 0, "the island queried for headers at all");
+  // The island owns three controls now — sortable headers, the compact
+  // disclosure, and the manager chips — so the guard pins the EXACT selector
+  // set rather than a single one. A near-miss in any of them still fails.
+  const ALLOWED = new Set([
+    "[data-inst-sort]",
+    '.compact-disclosure[data-compact-for="inst-managers-tbody"]',
+    "#mgr-chips [data-mgr-type],#mgr-chips [data-mgr-notable]",
+  ]);
   assert.ok(
-    asked.every((s) => s === "[data-inst-sort]"),
-    `unexpected selector(s): ${asked.filter((s) => s !== "[data-inst-sort]").join(", ")}`,
+    asked.includes("[data-inst-sort]"),
+    "the sortable-header selector must still be exactly this",
+  );
+  assert.ok(
+    asked.every((s) => ALLOWED.has(s)),
+    `unexpected selector(s): ${asked.filter((s) => !ALLOWED.has(s)).join(", ")}`,
   );
 });

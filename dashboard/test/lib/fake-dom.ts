@@ -24,6 +24,11 @@ export interface FakeElement {
   appendChild(child: FakeElement): void;
   querySelector(sel: string): FakeElement | null;
   querySelectorAll(sel: string): FakeElement[];
+  /** R5/R18: the feed island walks up to its enclosing <table> to find the
+      sortable headers. The double has no ancestry, so this returns null and the
+      island must degrade to "no header sorting" instead of throwing — which is
+      exactly the resilience these wiring tests exist to prove. */
+  closest(sel: string): FakeElement | null;
   classList: { toggle(name: string, on?: boolean): void; add(n: string): void; remove(n: string): void };
   scrollIntoView(): void;
   focus(): void;
@@ -64,6 +69,9 @@ export function makeElement(id = ""): FakeElement {
     appendChild(child) {
       el.children.push(child);
     },
+    closest() {
+      return null;
+    },
     querySelector() {
       return null;
     },
@@ -92,6 +100,10 @@ export interface FakeDom {
   storage: { map: Map<string, string>; getItem(k: string): string | null; setItem(k: string, v: string): void };
   /** install globals; returns a restore function */
   install(fetchBody: unknown, opts?: { fetchOk?: boolean }): () => void;
+  /** R17: how many times the page fetched anything. A second fetch owner for
+      the congress dataset is invisible in review and expensive in the browser,
+      so it is COUNTED rather than assumed absent. */
+  fetchCalls: string[];
   flush(): Promise<void>;
 }
 
@@ -99,8 +111,10 @@ export function makeDom(ids: string[]): FakeDom {
   const elements = new Map(ids.map((id) => [id, makeElement(id)]));
   const docListeners = new Map<string, ((ev: unknown) => void)[]>();
   const storageMap = new Map<string, string>();
+  const fetchCalls: string[] = [];
   const dom: FakeDom = {
     elements,
+    fetchCalls,
     document: {
       getElementById: (id) => elements.get(id) ?? null,
       querySelector: () => null,
@@ -123,12 +137,14 @@ export function makeDom(ids: string[]): FakeDom {
       g.document = dom.document;
       g.localStorage = dom.storage;
       g.window = { requestIdleCallback: (fn: () => void) => fn() };
-      g.fetch = () =>
-        Promise.resolve({
+      g.fetch = (url?: unknown) => {
+        fetchCalls.push(String(url ?? ""));
+        return Promise.resolve({
           ok: opts.fetchOk ?? true,
           status: opts.fetchOk === false ? 500 : 200,
           json: () => Promise.resolve(fetchBody),
         });
+      };
       return () => {
         g.document = prior.document;
         g.localStorage = prior.localStorage;

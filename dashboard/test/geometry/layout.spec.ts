@@ -16,7 +16,6 @@ import {
   overlap,
   stripRowTrailing,
   PACKED_TRAILING_PX,
-  CONGRESS_TILE_LABELS,
   FORCE_TABLE_OVERFLOW,
   WORST_CASE_MEMBER,
   intrinsicWidth,
@@ -158,99 +157,16 @@ for (const width of WIDTHS) {
       }
     });
 
-    test("R9: the stat strip fits, packs its rows, and shows only tiles it has data for", async ({ page }) => {
-      await page.goto("/congress/");
-      const strip = page.locator(".tiles").first();
-      expect(await strip.count(), "the congress page renders a stat strip").toBeGreaterThan(0);
-      const stripBox = (await strip.boundingBox())!;
-      const tiles = strip.locator(".tile");
-      const count = await tiles.count();
-      expect(count, "a rendered strip must hold tiles").toBeGreaterThan(0);
+    /* R9's stat-strip geometry test is DELETED with the strip it measured.
+       RUN ALPHA-SURFACES-V2 R8/R26 removed the /congress/ tile strip and its
+       builder outright: the methodology page already publishes the same four
+       measures in full, through its own independently fail-loud coverage
+       derivation, which `test/post/*` and the methodology page still exercise.
+       A geometry test kept alive against a component that no longer renders
+       does not protect anything — it just fails, or worse, gets pointed at a
+       different page and quietly stops testing the thing it was written for. */
 
-      /* F4 (codex round 1). The old assertion skipped whenever the strip
-         wrapped — which, after the R9 fix, is exactly the widths that used to
-         overflow. It therefore ran only where nothing was ever broken. The
-         invariant that holds at EVERY width: the strip stays inside its parent,
-         and every row except the last is packed. Trailing space on the final
-         row is a ragged line end; trailing space on an earlier row means the
-         strip reserved width it did not use.
-
-         This first ran RED at 360px (6.5px) and 720px (191px), and the CSS is
-         what changed, not the number: `.tiles` paints `var(--rule2)` behind a
-         1px gap grid, so an unpacked row renders that unused width as a visible
-         rule-coloured slab inside the bordered strip — R9's "unoccupied trailing
-         area", literally. `.tile` grows to consume it now. See
-         `PACKED_TRAILING_PX` for why 6 is not a tuned threshold. */
-      const parentBox = (await strip.evaluate((el) => {
-        const r = el.parentElement!.getBoundingClientRect();
-        return { x: r.x, width: r.width };
-      }))!;
-      expect(
-        Math.round(stripBox.x + stripBox.width),
-        `the strip overflows its parent at ${width}px`,
-      ).toBeLessThanOrEqual(Math.round(parentBox.x + parentBox.width) + 1);
-
-      const trailing = await strip.evaluate(stripRowTrailing);
-      /* F2 (codex round 2): EVERY row, the last one included. Excluding the
-         final row was inherited from the pre-fix layout, where a ragged last
-         line was unavoidable. It is not unavoidable any more — `flex: 1 1 auto`
-         fills the final row too, measured at 1.0px like every other — so the
-         exclusion only carved out a hole a regression could sit in: a
-         rule-coloured slab after the last row would have passed. */
-      for (let r = 0; r < trailing.length; r++) {
-        expect(
-          trailing[r]!,
-          `row ${r} of ${trailing.length} in the strip leaves ${Math.round(trailing[r]!)}px ` +
-            `unused at ${width}px — the strip is reserving width it does not use`,
-        ).toBeLessThanOrEqual(PACKED_TRAILING_PX);
-      }
-
-      /* F5 (codex round 1) / F3 (codex round 2): the other half of R9's matrix
-         row. "Tile count equals data" is not "no tile is blank" — a strip that
-         DROPPED a tile would also have no blank one, and the plan's defect #5 is
-         a tile appearing that the data does not support. So the count and the
-         identities are both pinned.
-
-         `buildTiles` (`lib/data.ts:783`) returns exactly four tiles with no
-         branch that adds or removes one, so four is structural, not a snapshot
-         of today's corpus. The labels are matched as PATTERNS: their shape is
-         the contract, the numbers inside them are the corpus and may move. */
-      const rendered = await strip.evaluate((el) =>
-        [...el.querySelectorAll(".tile")]
-          /* VISIBLE tiles only, and that is the point rather than a detail. A
-             tile hidden by a media query still answers `querySelectorAll`, so
-             counting the DOM would let the fold delete a coverage figure and
-             still read as "tile count equals data" — §8 forbids honesty-bearing
-             content being media-query-hidden, so the count has to mean what a
-             reader can actually see. */
-          .filter((t) => {
-            const r = t.getBoundingClientRect();
-            return r.width > 0 && r.height > 0;
-          })
-          .map((t) => ({
-            label: (t.querySelector(".tile-label")?.textContent ?? "").trim(),
-            value: (t.querySelector(".tile-value")?.textContent ?? "").trim(),
-          })),
-      );
-      expect(
-        rendered.length,
-        `the strip renders ${rendered.length} VISIBLE tiles at ${width}px; buildTiles emits ` +
-          `${CONGRESS_TILE_LABELS.length} and has no branch that adds or drops one`,
-      ).toBe(CONGRESS_TILE_LABELS.length);
-      for (let i = 0; i < CONGRESS_TILE_LABELS.length; i++) {
-        expect(
-          rendered[i]!.label,
-          `tile ${i} at ${width}px is labelled "${rendered[i]!.label}", which is not the ` +
-            `data-backed tile expected in that position`,
-        ).toMatch(CONGRESS_TILE_LABELS[i]!);
-        expect(
-          rendered[i]!.value,
-          `tile ${i} ("${rendered[i]!.label}") renders no value at ${width}px`,
-        ).not.toBe("");
-      }
-    });
-
-    test("R7: an ordinary member name renders in full, and no stat tile is clipped", async ({ page }) => {
+    test("R7: an ordinary member name renders in full", async ({ page }) => {
       await page.goto("/congress/");
 
       /* R7's matrix row names a 20-CHARACTER member name at 964px. Planted, not
@@ -298,7 +214,7 @@ for (const width of WIDTHS) {
          whether it has room to spare or is cutting a name in half. The clone is
          measured at `width: max-content` instead. */
       /* The matrix row's own boundary: "20-char member name not truncated **at
-         964px**; no clipped stat tile **from 360px**". Two different widths,
+         964px**. (Its stat-tile clause is gone with the strip — R8/R26.) The
          deliberately, so the name half is asserted from 964px up and the tile
          half at every width — that is the spec, not a convenience.
 
@@ -324,22 +240,9 @@ for (const width of WIDTHS) {
         expect(fit.have, `the member cell has no measurable box at ${width}px`).toBeGreaterThan(0);
       }
 
-      /* The other half of the row: no stat tile is clipped from 360px up. The
-         value and the label are checked separately — a tile whose LABEL clips
-         still loses the thing that says what the number means. */
-      const clipped = await page.locator(".tiles").first().evaluate((strip) =>
-        [...strip.querySelectorAll(".tile")]
-          .flatMap((t) => [
-            { part: "value", el: t.querySelector(".tile-value") },
-            { part: "label", el: t.querySelector(".tile-label") },
-          ])
-          .filter((x) => x.el && x.el.scrollWidth > x.el.clientWidth + 1)
-          .map((x) => `${x.part}:"${(x.el!.textContent ?? "").trim().slice(0, 24)}"`),
-      );
-      expect(
-        clipped,
-        `${clipped.length} stat tile part(s) are clipped at ${width}px: ${clipped.join(", ")}`,
-      ).toEqual([]);
+      /* R7's other half — "no clipped stat tile from 360px" — is DELETED with
+         the strip (R8/R26). The member-name half above is the part that
+         survives, because the feed row it measures is still on the page. */
     });
 
     test("R6: a scrollable table announces itself and pins its identity column", async ({ page }) => {

@@ -129,7 +129,7 @@ test("watchlist wiring: paper-only watched member renders; mark-seen writes the 
 
 test("feed wiring: a stale v1 dataset surfaces the load-failure state, not v2-offset decoding", async () => {
   const FEED_IDS = [
-    "congress-feed", "feed-body", "feed", "feed-loading", "feed-empty",
+    "congress-feed", "feed-tbody", "feed", "feed-loading", "feed-empty",
     "feed-empty-detail", "feed-empty-suggestions", "filter-count-line",
     "pager-range", "feed-status", "filter-reset", "filter-reset-wrap",
     "pager-newer", "pager-older",

@@ -33,6 +33,7 @@ import { SIGNAL_THRESHOLDS } from "./signal-thresholds.ts";
 import type { TxnRow } from "./format.ts";
 import {
   excludeDateAnomalies,
+  windowMembership,
   fnv1a64,
   jurisdictionOverlap,
   type CommitteeMembership,
@@ -356,7 +357,10 @@ function computeS3(txns: readonly TxnRow[], ctx: EmitCtx): Signal[] {
       const start = list[i]!.traded!;
       if (start <= cooldownUntil) continue;
       const end = addDaysIso(start, p.window_days);
-      const window = list.filter((r) => r.traded! >= start && r.traded! <= end);
+      // R16: even a rolling detection window asks the one membership question.
+      // `list` is already anomaly-filtered and trade-dated, so the traded basis
+      // returns "in"/"out" here and never an exclusion verdict.
+      const window = list.filter((r) => windowMembership(r, { start, end }, "traded") === "in");
       const members = new Set(window.map((r) => r.bioguide ?? `raw:${r.name}`));
       if (members.size >= p.min_members) {
         const first = window[0]!;

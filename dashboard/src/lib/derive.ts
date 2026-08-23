@@ -359,15 +359,31 @@ export interface LeaderRow {
 
 export interface CongressRollup {
   rows: LeaderRow[];
-  dateAnomalies: number; // excluded before windowing (constraint 9), disclosed
-  windowMonths: number;
+  /** rows the TRADED basis excluded for an impossible trade date — always 0 on
+      the filed basis, where a filed date is well-defined (locked decision) */
+  dateAnomalies: number;
+  /** rows the TRADED basis could not place because they disclose no trade
+      date — always 0 on the filed basis, which includes them */
+  undated: number;
+  range: CongressRange;
+  basis: CongressBasis;
+}
+
+/** Range and basis for a congress rollup. Defaults are the locked section
+    defaults: a trailing twelve months on the TRADED basis, because the
+    sections answer what members traded in a window. */
+export interface CongressWindowOpts {
+  range?: CongressRange;
+  basis?: CongressBasis;
 }
 
 function rollupRows(
   groups: Map<string, TxnRow[]>,
   idOf: (key: string, first: TxnRow) => Pick<LeaderRow, "id" | "bioguide" | "name" | "party" | "state" | "district" | "chamber">,
-  windowMonths: number,
+  range: CongressRange,
+  basis: CongressBasis,
   dateAnomalies: number,
+  undated: number,
 ): CongressRollup {
   const rows: LeaderRow[] = [];
   for (const [key, list] of groups) {
@@ -389,7 +405,7 @@ function rollupRows(
       lateDenom: list.filter((r) => r.late != null).length,
     });
   }
-  return { rows, dateAnomalies, windowMonths };
+  return { rows, dateAnomalies, undated, range, basis };
 }
 
 /** Per-member rollup over a trailing filed-date window. Unjoined filers group
@@ -400,10 +416,14 @@ function rollupRows(
 export function leadersRollup(
   allTxns: readonly TxnRow[],
   now: string,
-  months = 12,
+  opts: CongressWindowOpts = {},
 ): CongressRollup {
-  const { rows: txns, excluded } = excludeDateAnomalies(allTxns);
-  const windowed = txns.filter((t) => inTrailingMonths(t, now, months));
+  const { range = "12m", basis = "traded" } = opts;
+  const {
+    rows: windowed,
+    dateAnomalies: excluded,
+    undated,
+  } = partitionByWindow(allTxns, congressRangeBounds(range, now), basis);
   const groups = new Map<string, TxnRow[]>();
   for (const t of windowed) {
     const key = t.bioguide ?? `raw:${t.name}`;
@@ -425,8 +445,10 @@ export function leadersRollup(
       district: first.district,
       chamber: first.chamber,
     }),
-    months,
+    range,
+    basis,
     excluded,
+    undated,
   );
 }
 
@@ -437,10 +459,14 @@ export function leadersRollup(
 export function congressTickersRollup(
   allTxns: readonly TxnRow[],
   now: string,
-  months = 12,
+  opts: CongressWindowOpts = {},
 ): CongressRollup & { noTickerRows: number } {
-  const { rows: txns, excluded } = excludeDateAnomalies(allTxns);
-  const windowed = txns.filter((t) => inTrailingMonths(t, now, months));
+  const { range = "12m", basis = "traded" } = opts;
+  const {
+    rows: windowed,
+    dateAnomalies: excluded,
+    undated,
+  } = partitionByWindow(allTxns, congressRangeBounds(range, now), basis);
   const groups = new Map<string, TxnRow[]>();
   let noTickerRows = 0;
   for (const t of windowed) {
@@ -466,8 +492,10 @@ export function congressTickersRollup(
       district: null,
       chamber: first.chamber,
     }),
-    months,
+    range,
+    basis,
     excluded,
+    undated,
   );
   return { ...rollup, noTickerRows };
 }
@@ -563,11 +591,147 @@ function monthsBefore(dateIso: string, months: number): string {
   return `${ny}-${String(nm).padStart(2, "0")}-${dateIso.slice(8, 10)}`;
 }
 
-/** Rows whose trade (falling back to filing, which never precedes the trade)
-    is within the trailing window ending at `now`. */
-export function inTrailingMonths(t: Pick<TxnRow, "traded" | "filed">, now: string, months: number): boolean {
-  const d = t.traded ?? t.filed;
-  return d >= monthsBefore(now, months) && d <= now;
+/* ---------- R16: the single congress window-membership authority ----------
+
+   ONE rule decides whether a disclosure falls in a date window. Before this,
+   two disagreed: the rollups matched on `traded ?? filed` (neither a traded
+   nor a filed basis) while the feed island matched on an explicit basis with
+   its own anomaly handling. Both now call `windowMembership`, and nothing else
+   in the tree computes window membership.
+
+   BASIS IS EXPLICIT AND ANOMALY POLICY FOLLOWS FROM IT (locked decision):
+   on `traded`, rows flagged `date_anomaly` carry impossible trade dates and are
+   EXCLUDED and counted, and rows with no trade date cannot be placed in a trade
+   window so they are EXCLUDED and counted separately. On `filed`, the filed
+   date is always well-defined and never anomalous, so NEITHER exclusion
+   applies — a single cross-basis exclusion rule was explicitly rejected because
+   it would silently change filed-basis feed results.
+
+   `traded_or_filed` is the WEAKER LEGACY basis the per-member and per-ticker
+   detail pages have always used: the trade date when present, else the filing
+   date, which never precedes the trade. It is named rather than hidden so a
+   reader can see it is a mixed claim, and it exists so those pages — explicit
+   non-goals of this change — keep their exact numbers while still routing
+   through this one predicate instead of a second rule. */
+
+export type CongressRange = "7d" | "30d" | "90d" | "12m";
+
+/** The two bases a reader can choose between on the congress surfaces. */
+export type CongressBasis = "traded" | "filed";
+
+/** Every basis the predicate accepts, including the legacy mixed one. */
+export type WindowBasis = CongressBasis | "traded_or_filed";
+
+/** An inclusive ISO calendar-date window `[start, end]`. Both ends are dates,
+    never timestamps — the corpus stores dates and a timestamp comparison would
+    silently drop the boundary day in a non-UTC reader's locale. */
+export interface DateWindow {
+  start: string; // YYYY-MM-DD, inclusive
+  end: string; // YYYY-MM-DD, inclusive
+}
+
+/** Subtract one calendar year, clamping Feb 29 to Feb 28 when the target year
+    is not a leap year (2024-02-29 → 2023-02-28, never an invalid 2023-02-29). */
+function yearBefore(dateIso: string): string {
+  const y = Number(dateIso.slice(0, 4)) - 1;
+  const md = dateIso.slice(5);
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  return `${y}-${md === "02-29" && !leap ? "02-28" : md}`;
+}
+
+/** The locked bounds for a named range ending at `end` (the build's
+    generated-at date). Day ranges span EXACTLY N calendar days INCLUDING
+    `end`, so `start = end - (N - 1)`; a 7d window is 7 days, not 8. The 12m
+    window starts one calendar year before `end` plus one day, so it likewise
+    contains `end` and does not double-count the anniversary date. */
+export function congressRangeBounds(range: CongressRange, end: string): DateWindow {
+  const days = range === "7d" ? 7 : range === "30d" ? 30 : range === "90d" ? 90 : null;
+  const start = days === null ? addDays(yearBefore(end), 1) : addDays(end, -(days - 1));
+  return { start, end };
+}
+
+/** Reader-facing labels for a range and a basis. They live beside the rule
+    rather than in a renderer because the SSR default view and the client
+    rollup must produce IDENTICAL strings — the R3 parity test compares them
+    byte for byte, and two copies of "12 months" would eventually disagree. */
+export function rangeLabelOf(range: CongressRange): string {
+  return range === "12m" ? "12 months" : `${range.slice(0, -1)} days`;
+}
+
+export function basisLabelOf(basis: CongressBasis): string {
+  return basis === "traded" ? "trade date" : "filing date";
+}
+
+/** The window a section is actually showing, stated with its exact dates. A
+    range name alone is not a measurement — the reader needs the bounds the
+    build used, and those move with every build. */
+export function windowStatement(range: CongressRange, basis: CongressBasis, w: DateWindow): string {
+  return `trailing ${rangeLabelOf(range)} by ${basisLabelOf(basis)} · ${w.start} to ${w.end} inclusive`;
+}
+
+/** Why a row is or is not in the window. `anomaly` and `undated` are distinct
+    from `out` because both are EXCLUSIONS a surface must state, not ordinary
+    non-matches: a row that simply falls outside a window is not evidence of
+    anything, while an excluded row is data the reader cannot see. */
+export type WindowVerdict = "in" | "out" | "anomaly" | "undated";
+
+/** THE window-membership rule. A null bound is unbounded on that side, which
+    is what the feed's optional from/to inputs mean. */
+export function windowMembership(
+  row: Pick<TxnRow, "traded" | "filed" | "flags">,
+  window: { start: string | null; end: string | null },
+  basis: WindowBasis,
+): WindowVerdict {
+  let d: string | null;
+  if (basis === "filed") {
+    d = row.filed;
+  } else if (basis === "traded_or_filed") {
+    d = row.traded ?? row.filed;
+  } else {
+    if (row.flags.includes("date_anomaly")) return "anomaly";
+    d = row.traded;
+    if (d == null) return "undated";
+  }
+  if (window.start != null && window.start !== "" && d < window.start) return "out";
+  if (window.end != null && window.end !== "" && d > window.end) return "out";
+  return "in";
+}
+
+/** Rows kept by the window, with every exclusion counted so the caller can
+    state it. Counts are of rows the basis EXCLUDED, never of rows that merely
+    fell outside the dates. */
+export interface WindowPartition<T> {
+  rows: T[];
+  dateAnomalies: number;
+  undated: number;
+}
+
+/** Bounds for the LEGACY trailing-N-months windows the per-member and
+    per-ticker detail pages use. Those pages are explicit non-goals of this
+    change, so their boundaries are preserved to the day: `[now - N months,
+    now]`, inclusive at both ends, with the day-of-month carried through. New
+    surfaces use `congressRangeBounds` and its exact day arithmetic instead;
+    this exists so the detail pages route through the ONE membership predicate
+    rather than keeping a second rule of their own. */
+export function legacyTrailingMonthsBounds(now: string, months: number): DateWindow {
+  return { start: monthsBefore(now, months), end: now };
+}
+
+export function partitionByWindow<T extends Pick<TxnRow, "traded" | "filed" | "flags">>(
+  rows: readonly T[],
+  window: { start: string | null; end: string | null },
+  basis: WindowBasis,
+): WindowPartition<T> {
+  const kept: T[] = [];
+  let dateAnomalies = 0;
+  let undated = 0;
+  for (const r of rows) {
+    const verdict = windowMembership(r, window, basis);
+    if (verdict === "in") kept.push(r);
+    else if (verdict === "anomaly") dateAnomalies++;
+    else if (verdict === "undated") undated++;
+  }
+  return { rows: kept, dateAnomalies, undated };
 }
 
 export function medianLag(txns: readonly Pick<TxnRow, "lag">[]): number | null {
@@ -595,8 +759,12 @@ export function topTickers(
   limit = 6,
 ): TopTicker[] {
   const byTicker = new Map<string, TxnRow[]>();
+  // Legacy detail-page window (non-goal surface): anomalies are dropped first,
+  // then membership is decided by the ONE predicate on the mixed basis these
+  // pages have always used. Identical rows in, identical rows out.
+  const bounds = legacyTrailingMonthsBounds(now, months);
   for (const t of excludeDateAnomalies(txns).rows) {
-    if (!t.ticker || !inTrailingMonths(t, now, months)) continue;
+    if (!t.ticker || windowMembership(t, bounds, "traded_or_filed") !== "in") continue;
     let list = byTicker.get(t.ticker);
     if (!list) {
       list = [];
@@ -636,8 +804,9 @@ export function membersDisclosing(
   limit = 7,
 ): MemberDisclosing[] {
   const byMember = new Map<string, TxnRow[]>();
+  const bounds = legacyTrailingMonthsBounds(now, months);
   for (const t of excludeDateAnomalies(txns).rows) {
-    if (!inTrailingMonths(t, now, months)) continue;
+    if (windowMembership(t, bounds, "traded_or_filed") !== "in") continue;
     const key = t.bioguide ?? `raw:${t.name}`;
     let list = byMember.get(key);
     if (!list) {
@@ -872,8 +1041,11 @@ export function notableRecent(
   limit = 5,
 ): NotableRecentResult {
   const { rows: txns, excluded: dateAnomalies } = excludeDateAnomalies(allTxns);
+  // The rail's existing bounds are preserved to the day — this is the homepage
+  // surface, not a section this change rebuilds. Only MEMBERSHIP moves to the
+  // shared predicate, on the filed basis the rail has always used.
   const from = addDays(now, -days);
-  const inWindow = txns.filter((t) => t.filed >= from && t.filed <= now);
+  const inWindow = txns.filter((t) => windowMembership(t, { start: from, end: now }, "filed") === "in");
   const lowOf = (t: TxnRow): number | null => (t.low != null ? t.low : t.high != null ? 0 : null);
   const rankable = inWindow.filter((t) => lowOf(t) !== null);
   const order = new Map(allTxns.map((t, i) => [t, i]));

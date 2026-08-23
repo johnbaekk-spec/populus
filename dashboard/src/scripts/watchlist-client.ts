@@ -148,7 +148,10 @@ export function initWatchlist(): void {
     bodyEl!.innerHTML = shown
       .map((r) => {
         const isNew = state.kind === "current" && isNewSince(r, state.cursor);
-        return `<div class="${isNew ? "watch-new" : ""}">${feedItemHtml(r, ctx)}</div>`;
+        // The new-since marker is a CLASS ON THE ROW now. It used to be a
+        // wrapping <div>, which a table would hoist straight out of the tbody,
+        // detaching the marker from every row it marked.
+        return feedItemHtml(r, ctx, isNew ? "watch-new" : "");
       })
       .join("\n");
     countEl!.textContent =

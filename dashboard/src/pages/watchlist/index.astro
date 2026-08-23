@@ -5,6 +5,7 @@
 // the D-1c cursor rule needs (earliest retained filed date).
 import Base from "../../layouts/Base.astro";
 import { getBuildData } from "../../lib/data";
+import { feedHeadHtml } from "../../lib/format";
 import { earliestRetainedFiled } from "../../lib/watchlist";
 
 const build = getBuildData();
@@ -58,7 +59,31 @@ const description =
     </div>
 
     <div class="feed">
-      <div id="watch-body" role="list" aria-label="Watched filings"></div>
+      <!-- The watched rows render through the SAME `feedItemHtml` the congress
+           feed uses, and that renderer emits real table rows now (R5/R18), so
+           this list is a table too. Two renderers would be two sets of honesty
+           rules to keep in step. -->
+      <table class="feed-table">
+        <caption class="visually-hidden">Filings for the members and tickers watched on this device</caption>
+        <!-- F7: this table had a body and no header row at all. It renders the
+             same nine cells as the congress feed, through the same
+             `feedItemHtml`, so every one of them was reaching a screen reader
+             with no column to belong to. It uses the feed's own column
+             contract, in its unsortable rendering: this view has no sort
+             control, so the two orderable columns state that rather than
+             carrying a dead button. The header folds by clipping at narrow
+             widths like the feed's, which keeps it in the accessibility tree at
+             every width. -->
+        <Fragment
+          set:html={feedHeadHtml({
+            sortable: false,
+            whyUnsorted:
+              "the watchlist is a device-local view listed newest filed first and offers no " +
+              "sort control — the congressional feed sorts the full published set by this column",
+          })}
+        />
+        <tbody id="watch-body"></tbody>
+      </table>
       <div class="filter-count"><span id="watch-count"></span></div>
     </div>
 

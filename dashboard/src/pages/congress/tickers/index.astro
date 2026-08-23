@@ -1,45 +1,49 @@
 ---
+/* R25 — retired sub-tab route, served as a STATIC HTML redirect artifact.
+   See the sibling stub at /congress/leaders/ for why this is a 200 with a real
+   document rather than an HTTP redirect: the published-path verification
+   contract fetches every inventoried path with redirects disabled and treats
+   an injected redirect response as a failure. */
 import Base from "../../../layouts/Base.astro";
-import { getBuildData } from "../../../lib/data";
-import { congressTickersRollup } from "../../../lib/derive";
-import { congressRankingBody, congressTabs, type BuildStamps } from "../../../lib/ui";
-import type { RenderCtx } from "../../../lib/format";
 
-const build = getBuildData();
-const stamps: BuildStamps = {
-  buildId: build.buildId,
-  generatedAt: build.generatedAt,
-  generatedAtDate: build.generatedAtDate,
-};
-const ctx: RenderCtx = {
-  watched: new Set(),
-  cutMembers: build.cutMembers,
-  cutTickers: build.cutTickers,
-};
-const rollup = congressTickersRollup(build.txns, build.generatedAtDate, 12);
-// Render bound (not a data bound): the terminus row names the cut and its author.
-const body = congressRankingBody("tickers", rollup, stamps, ctx, { limit: 200 });
-
+const target = "/congress/#momentum-section";
 const description =
-  "Tickers ranked by net disclosed congressional flow — interval arithmetic over statutory " +
-  "ranges; rows without a ticker are counted and stated, never silently dropped.";
+  "The Congress tickers view is now the ticker momentum section of the single /congress/ page — this page links to it.";
 ---
 
-<Base title="Congress tickers — net disclosed flow — Public Filings" description={description} active="congress">
+<Base
+  title="Congress tickers — moved to /congress/ — Public Filings"
+  description={description}
+  active="congress"
+  head={`<link rel="canonical" href="/congress/" /><meta http-equiv="refresh" content="0; url=${target}" />`}
+>
   <main class="shell page">
     <div class="page-head">
       <div class="page-head-copy">
         <div class="kicker">/congress/tickers</div>
-        <h1 class="page-title">Tickers — net disclosed flow</h1>
+        <h1 class="page-title">This view moved</h1>
         <p class="page-lede">
-          Which tickers Congress disclosed most, as intervals over statutory
-          ranges. Rows that disclose no ticker cannot appear here — their count
-          is stated below the table, because the largest disclosers by flow can
-          be entirely non-equity. <a href="/methodology/">How this data is made ↗</a>
+          Ticker net disclosed flow is now the ticker momentum section that
+          leads the single Congress page, where it can be read beside the
+          disclosure feed and the member ranking without navigating between
+          them. It also gained a 7d / 30d / 90d / 12m range control and a
+          traded / filed basis toggle it did not have here.
         </p>
+        <p class="page-lede">
+          <a class="stub-link" href={target}>Go to ticker momentum →</a>
+        </p>
+        <div class="caveat-line">
+          The target is <strong>not</strong> a like-for-like copy of this page, and
+          saying so matters more than a reassuring sentence. This page windowed by
+          trade date with a filing-date fallback; the section defaults to a
+          <strong>trade-date</strong> basis, which excludes rows disclosing no trade
+          date and states how many — switch the basis control to filing date to
+          include them. It also renders a compact slice by default and expands on
+          request. The interval arithmetic and the stated no-ticker count are
+          unchanged, and the full published data remains at
+          <a href="/congress/data/feed.v1.json">feed.v1.json</a>.
+        </div>
       </div>
     </div>
-    <Fragment set:html={congressTabs("tickers")} />
-    <Fragment set:html={body} />
   </main>
 </Base>

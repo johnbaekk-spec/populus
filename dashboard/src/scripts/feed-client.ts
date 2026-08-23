@@ -20,6 +20,8 @@ import {
   type PaperRow,
   type RenderCtx,
 } from "../lib/format.ts";
+import { windowMembership, type WindowVerdict } from "../lib/derive.ts";
+import { initSortableTable } from "./table-sort.ts";
 import { loadWatchStore } from "./entity-client.ts";
 
 interface State {
@@ -37,7 +39,7 @@ interface State {
      0; a wholly-unknown row has no key at all and goes to a labeled
      unrankable bucket AFTER the ranked rows. An upper-bound sort is not
      offered — it is not definable over all four states. */
-  sort: "filed" | "amount-desc" | "amount-asc";
+  sort: "filed" | "filed-asc" | "amount-desc" | "amount-asc";
   dateFrom: string; // "" = unbounded
   dateTo: string; // "" = unbounded
   dateBasis: "filed" | "traded";
@@ -90,10 +92,38 @@ export function amountOrder(
   return { ranked, unranked: fTxns.filter((r) => amountSortKey(r) === null) };
 }
 
-export function initFeed(): void {
+/* R17: THE FEED ISLAND IS THE SINGLE FETCH AND DECODE OWNER.
+
+   The congress dataset is large. Exactly one module downloads it and exactly
+   one module decodes it, and this is that module. Other sections of the page
+   consume the already-parsed rows through `onRows` rather than fetching their
+   own copy — a second owner would mean a second download, a second decode, and
+   a second failure mode, without removing the first of any of them.
+
+   A shared cached loader module was considered and rejected for the same
+   reason: it would be a second owner of the same bytes.
+
+   `onRows` fires EXACTLY ONCE, after a successful decode. It does not fire on
+   failure — that is what leaves the server-rendered views standing. */
+export interface FeedOptions {
+  /** Receives the one decoded row set. Called once, only on success. */
+  onRows?: (rows: readonly TxnRow[]) => void;
+}
+
+export function initFeed(options: FeedOptions = {}): void {
   const rootEl = document.getElementById("congress-feed");
-  const bodyEl = document.getElementById("feed-body");
-  const feedEl = document.getElementById("feed");
+  const bodyEl = document.getElementById("feed-tbody");
+  /* F1: this used to require `#feed`, an id the page LOST when the feed became
+     a section — so `initFeed` returned before fetching anything and the whole
+     island was dead on the real page: no filtering, no paging, no header
+     sorting, and no rows delivered to the momentum section (R17).
+
+     It survived every test because the fake DOM hands out every id it is asked
+     for, including one the page no longer had. The element is only used to
+     scroll after a page change, so it is now OPTIONAL and resolved against ids
+     that actually exist. */
+  const feedEl =
+    document.getElementById("feed-section") ?? document.getElementById("congress-feed");
   const loadingEl = document.getElementById("feed-loading");
   const emptyEl = document.getElementById("feed-empty");
   const emptyDetailEl = document.getElementById("feed-empty-detail");
@@ -111,11 +141,13 @@ export function initFeed(): void {
   // A-1: the feed's OWN text filter (ticker prefix + member substring) —
   // distinct from #site-search, which is site navigation (R11).
   const searchInput = document.getElementById("filter-q") as HTMLInputElement | null;
-  const sortSel = document.getElementById("filter-sort") as HTMLSelectElement | null;
+
   const dateFromInp = document.getElementById("filter-date-from") as HTMLInputElement | null;
   const dateToInp = document.getElementById("filter-date-to") as HTMLInputElement | null;
   const dateBasisSel = document.getElementById("filter-date-basis") as HTMLSelectElement | null;
-  if (!rootEl || !bodyEl || !feedEl || !countEl || !rangeEl) return;
+  // `feedEl` is deliberately NOT in this guard: it is a scroll target, not a
+  // prerequisite, and requiring it is what killed the island.
+  if (!rootEl || !bodyEl || !countEl || !rangeEl) return;
 
   const totalAll = Number(rootEl.dataset.txnCount ?? 0);
   const state: State = { ...DEFAULTS };
@@ -171,6 +203,14 @@ export function initFeed(): void {
         // A-1: the load order (filed desc, txn_id asc within a date) is the
         // stable tie-break for every other sort — reproducible by build.
         txns.forEach((t, i) => orderIndex.set(t, i));
+        // Hand the ONE decoded row set to the page's other consumers before
+        // this island renders itself, so a consumer's failure surfaces as its
+        // own error rather than as a feed that silently stopped rendering.
+        try {
+          options.onRows?.(txns);
+        } catch (err) {
+          console.error("populus: a feed-row consumer failed", err);
+        }
         if (pendingApply) {
           pendingApply = false;
           apply();
@@ -228,23 +268,19 @@ export function initFeed(): void {
 
   /** Everything except the amount threshold — so the indeterminate-amount
       population can be counted against the same other filters. */
-  /** A-1 date-range predicate. Basis "filed" is always well-defined. Basis
-      "traded" is a date-windowed aggregate over trade dates: rows flagged
-      `date_anomaly` (impossible trade dates) are EXCLUDED (constraint 9) and
-      counted, and rows with no trade date cannot be placed in the window. */
-  function matchDate(r: TxnRow, s: State): "in" | "out" | "anomaly" {
+  /* R16: the feed no longer owns a window rule. `windowMembership` is the one
+     authority in the tree, and it already encodes exactly what this filter
+     needed: an explicit basis, filed dates always well-defined, and on the
+     traded basis both the date-anomaly exclusion and the undated exclusion
+     reported separately so each can be stated rather than silently applied.
+
+     An unbounded window (no from AND no to) still admits every row on the
+     filed basis, and the traded basis still applies its exclusions only when a
+     range is actually set — the pre-existing behaviour, preserved: an
+     unfiltered feed does not drop undated or anomalous rows. */
+  function matchDate(r: TxnRow, s: State): WindowVerdict {
     if (!s.dateFrom && !s.dateTo) return "in";
-    let d: string | null;
-    if (s.dateBasis === "filed") {
-      d = r.filed;
-    } else {
-      if (r.flags.includes("date_anomaly")) return "anomaly";
-      d = r.traded;
-      if (d == null) return "out"; // undated: cannot be placed in a trade window
-    }
-    if (s.dateFrom && d < s.dateFrom) return "out";
-    if (s.dateTo && d > s.dateTo) return "out";
-    return "in";
+    return windowMembership(r, { start: s.dateFrom, end: s.dateTo }, s.dateBasis);
   }
 
   function matchTxnExceptAmount(r: TxnRow, s: State): boolean {
@@ -297,8 +333,16 @@ export function initFeed(): void {
     if (s.chamber !== "all" && p.chamber !== s.chamber) return false;
     if (s.party !== "all" && p.party !== s.party) return false;
     if (s.q && !p.name.toLowerCase().includes(s.q.toLowerCase())) return false;
-    if (s.dateFrom && p.filed < s.dateFrom) return false;
-    if (s.dateTo && p.filed > s.dateTo) return false;
+    // R16: a paper filing has no trade date and no flags, so it is placed by
+    // the ONE predicate on the filed basis — the only basis it can support.
+    if (
+      windowMembership(
+        { traded: null, filed: p.filed, flags: [] },
+        { start: s.dateFrom, end: s.dateTo },
+        "filed",
+      ) !== "in"
+    )
+      return false;
     // A paper filing has no ticker, so watched-only matches on the member.
     if (s.watchedOnly && !(p.bioguide !== null && watched.has(p.bioguide))) return false;
     return true;
@@ -432,10 +476,12 @@ export function initFeed(): void {
     let maxPage: number;
     let unrankedStart = -1; // index into the FULL combined list, amount sorts only
 
-    if (state.sort === "filed") {
+    if (state.sort === "filed" || state.sort === "filed-asc") {
       // Page count is derived from the merged feed, so a trailing paper row is
       // always reachable (a counts-only formula cannot see where paper rows sit).
       const merged = mergeFeed(fTxns, fPaper);
+      // Oldest-first is the SAME order reversed, never a second merge rule.
+      if (state.sort === "filed-asc") merged.reverse();
       maxPage = Math.max(0, pageCountFor(merged) - 1);
       if (state.page > maxPage) state.page = maxPage;
       items = pageSlice(merged, state.page);
@@ -445,7 +491,11 @@ export function initFeed(): void {
       // LABELED unrankable bucket after every ranked row — never interleaved,
       // never coerced to zero. Stable tie-break: filed desc, then load order
       // (txn_id asc within a date), so the order is reproducible.
-      const { ranked, unranked } = amountOrder(fTxns, state.sort, orderIndex);
+      const { ranked, unranked } = amountOrder(
+        fTxns,
+        state.sort as "amount-desc" | "amount-asc",
+        orderIndex,
+      );
       const all = [...ranked, ...unranked, ...fPaper];
       unrankedStart = ranked.length;
       maxPage = Math.max(0, Math.ceil(all.length / PAGE_SIZE) - 1);
@@ -463,12 +513,14 @@ export function initFeed(): void {
       const pageStart = state.page * PAGE_SIZE;
       const parts: string[] = [];
       items.forEach((it, i) => {
-        if (state.sort !== "filed" && pageStart + i === unrankedStart) {
+        if (unrankedStart >= 0 && pageStart + i === unrankedStart) {
           const nUnrankable = fTxns.filter((r) => amountSortKey(r) === null).length + fPaper.length;
+          // A separator INSIDE a tbody must be a row, or the browser hoists it
+          // out of the table and the label detaches from the rows it labels.
           parts.push(
-            `<div class="feed-separator" role="presentation">Not rankable by amount — ` +
+            `<tr class="unranked-sep"><td colspan="9">Not rankable by amount — ` +
               `wholly undisclosed or paper (${fmtInt(nUnrankable)} ` +
-              `${nUnrankable === 1 ? "row" : "rows"}) · listed after every ranked row, never coerced to $0</div>`,
+              `${nUnrankable === 1 ? "row" : "rows"}) · listed after every ranked row, never coerced to $0</td></tr>`,
           );
         }
         parts.push(feedItemHtml(it, ctx));
@@ -526,7 +578,6 @@ export function initFeed(): void {
     if (ownerSel) ownerSel.value = "all";
     if (lateChk) lateChk.checked = false;
     if (searchInput) searchInput.value = "";
-    if (sortSel) sortSel.value = "filed";
     if (dateFromInp) dateFromInp.value = "";
     if (dateToInp) dateToInp.value = "";
     if (dateBasisSel) dateBasisSel.value = "filed";
@@ -582,11 +633,6 @@ export function initFeed(): void {
     state.page = 0;
     apply();
   });
-  sortSel?.addEventListener("change", () => {
-    state.sort = sortSel.value as State["sort"];
-    state.page = 0;
-    apply();
-  });
   dateFromInp?.addEventListener("change", () => {
     state.dateFrom = dateFromInp.value;
     state.page = 0;
@@ -601,6 +647,50 @@ export function initFeed(): void {
     state.dateBasis = dateBasisSel.value as State["dateBasis"];
     state.page = 0;
     apply();
+  });
+
+  /* R5/R18/F6: sorting goes through the SHARED `initSortableTable` plumbing,
+     which R5 names explicitly. It briefly bound its own click handlers and
+     maintained its own `aria-sort`, which is a second sort state machine beside
+     the shared one — free to drift on keyboard behaviour, ARIA, announcements
+     and direction defaults, and invisible in review until it did.
+
+     The helper owns NO ordering. Comparison, the ranked/unrankable split and
+     the pager stay here: `render` returns the current body and `apply()` does
+     the real work, because a feed re-render must also update the pager, the
+     count line and the empty state — repainting only the tbody would leave a
+     page-2 pager above page-1 rows. */
+  const feedTable = bodyEl?.closest("table") ?? null;
+  const feedHeaders = feedTable
+    ? [...feedTable.querySelectorAll<HTMLElement>("thead th[data-feed-sort]")]
+    : [];
+  initSortableTable({
+    root: { set innerHTML(_v: string) { /* apply() owns the body */ } },
+    headers: feedHeaders,
+    keyOf: (th) => (th as unknown as HTMLElement).dataset.feedSort,
+    initial: { key: "filed", dir: "desc" },
+    defaultDir: (key) =>
+      ((feedHeaders.find((h) => h.dataset.feedSort === key)?.dataset.feedDir as
+        | "asc"
+        | "desc") ?? "desc"),
+    render: (st) => {
+      state.sort =
+        st.key === "filed"
+          ? st.dir === "desc"
+            ? "filed"
+            : "filed-asc"
+          : st.dir === "desc"
+            ? "amount-desc"
+            : "amount-asc";
+      state.page = 0;
+      apply();
+      return "";
+    },
+    announce: (st) =>
+      `Sorted by ${st.key === "filed" ? "filed date" : "amount"}, ${
+        st.dir === "desc" ? "descending" : "ascending"
+      }.`,
+    statusEl,
   });
 
   resetBtn?.addEventListener("click", resetAll);

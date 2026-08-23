@@ -1,0 +1,1083 @@
+# Curated manager registry — display names and manager typing for 13F filers.
+#
+# WHY THIS FILE EXISTS: 13F filings carry a filed manager name but no
+# human-readable display name and no manager classification. Nothing in the
+# pipeline derives either. This seed supplies both for a curated subset.
+#
+# COVERAGE IS A CURATED SUBSET, NOT THE POPULATION. Roughly 8,700 filers
+# exist; this file types 113 of them. Any surface built on it must state that.
+#
+# `notable` is an EDITORIAL FLAG, ORTHOGONAL TO `manager_type`. A notable
+# hedge fund is both notable AND a hedge fund, and must appear under both
+# filters. Never collapse these into one field.
+#
+# PROVENANCE: every row's cik and sec_name were confirmed against a primary
+# SEC source on the recorded date. Channels:
+#   A = EDGAR company browse (action=getcompany, type=13F-HR)
+#   B = data.sec.gov submissions API (CIK##########.json), 13F-HR present
+#   C = EDGAR full-text search (efts.sec.gov), forms=13F-HR, 2026 window
+# Channel A alone proves a CIK EVER filed a 13F-HR, not that it still does; every
+# row below was additionally confirmed to join the published agg_filer_registry.
+#
+# `status`: active = must join the filer registry or the build FAILS naming the CIK.
+#           retired = deliberately excluded from typed views without failing.
+# A candidate no channel could confirm is EXCLUDED below, never guessed.
+#
+# MAINTENANCE: see the registry maintenance contract in PLAN.md. Rows are
+# re-verified on the recorded cadence; `verified_date` is the expiry clock.
+
+version: 1
+
+# The filer-population scale this seed is written against. It is DECLARED here,
+# not inferred at build time, because "is this the population?" is a policy
+# question about the corpus and a build that guesses it can guess wrong in the
+# direction that hides a broken join.
+#
+# A publication build over an aggregate with at least this many filers runs the
+# curation gate UNCONDITIONALLY: every active row must join, and a zero-match
+# result is a catastrophic join defect rather than a small module. Below it, the
+# aggregate is a fixture or a partial extract and the coverage gate abstains.
+#
+# Measured 2026-08-22: the published aggregate carries 9,451 filers; a local
+# single-quarter extract carries 998; publish-test fixtures carry 3.
+population_floor: 5000
+
+managers:
+  - cik: 1067983
+    display_name: "Berkshire Hathaway"
+    person: "Warren Buffett"
+    sec_name: "BERKSHIRE HATHAWAY INC"
+    manager_type: insurer
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 949509
+    display_name: "Oaktree Capital Management"
+    person: "Howard Marks"
+    sec_name: "OAKTREE CAPITAL MANAGEMENT LP"
+    manager_type: alt_manager
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1649339
+    display_name: "Scion Asset Management"
+    person: "Michael Burry"
+    sec_name: "Scion Asset Management, LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1656456
+    display_name: "Appaloosa"
+    person: "David Tepper"
+    sec_name: "Appaloosa LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1336528
+    display_name: "Pershing Square Capital"
+    person: "Bill Ackman"
+    sec_name: "Pershing Square Capital Management, L.P."
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1061768
+    display_name: "Baupost Group"
+    person: "Seth Klarman"
+    sec_name: "BAUPOST GROUP LLC/MA"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 921669
+    display_name: "Icahn Capital"
+    person: "Carl Icahn"
+    sec_name: "ICAHN CARL C"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1040273
+    display_name: "Third Point"
+    person: "Dan Loeb"
+    sec_name: "Third Point LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1536411
+    display_name: "Duquesne Family Office"
+    person: "Stanley Druckenmiller"
+    sec_name: "Duquesne Family Office LLC"
+    manager_type: family_office
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1029160
+    display_name: "Soros Fund Management"
+    person: "George Soros"
+    sec_name: "SOROS FUND MANAGEMENT LLC"
+    manager_type: family_office
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1350694
+    display_name: "Bridgewater Associates"
+    person: "Ray Dalio (founder)"
+    sec_name: "Bridgewater Associates, LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1167483
+    display_name: "Tiger Global Management"
+    person: "Chase Coleman"
+    sec_name: "TIGER GLOBAL MANAGEMENT LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1061165
+    display_name: "Lone Pine Capital"
+    person: "Stephen Mandel"
+    sec_name: "LONE PINE CAPITAL LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1135730
+    display_name: "Coatue Management"
+    person: "Philippe Laffont"
+    sec_name: "COATUE MANAGEMENT LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1103804
+    display_name: "Viking Global Investors"
+    person: "Andreas Halvorsen"
+    sec_name: "VIKING GLOBAL INVESTORS LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1747057
+    display_name: "D1 Capital Partners"
+    person: "Dan Sundheim"
+    sec_name: "D1 Capital Partners L.P."
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1541617
+    display_name: "Altimeter Capital"
+    person: "Brad Gerstner"
+    sec_name: "Altimeter Capital Management, LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1418814
+    display_name: "ValueAct Holdings"
+    person: "activist"
+    sec_name: "ValueAct Holdings, L.P."
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1345471
+    display_name: "Trian Fund Management"
+    person: "Nelson Peltz"
+    sec_name: "TRIAN FUND MANAGEMENT, L.P."
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1791786
+    display_name: "Elliott Investment Management"
+    person: "Paul Singer"
+    sec_name: "Elliott Investment Management L.P."
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1517137
+    display_name: "Starboard Value"
+    person: "Jeff Smith"
+    sec_name: "Starboard Value LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1647251
+    display_name: "TCI Fund Management"
+    person: "Chris Hohn"
+    sec_name: "TCI Fund Management Ltd"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1569205
+    display_name: "Fundsmith"
+    person: "Terry Smith"
+    sec_name: "Fundsmith LLP"
+    manager_type: asset_manager
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1720792
+    display_name: "Ruane Cunniff & Goldfarb"
+    person: "Sequoia Fund adviser"
+    sec_name: "Ruane, Cunniff & Goldfarb L.P."
+    manager_type: asset_manager
+    notable: true
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 915191
+    display_name: "Fairfax Financial"
+    person: "Prem Watsa"
+    sec_name: "FAIRFAX FINANCIAL HOLDINGS LTD/ CAN"
+    manager_type: insurer
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1096343
+    display_name: "Markel Group"
+    person: "Tom Gayner"
+    sec_name: "MARKEL GROUP INC."
+    manager_type: insurer
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1709323
+    display_name: "Himalaya Capital"
+    person: "Li Lu"
+    sec_name: "Himalaya Capital Management LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1549575
+    display_name: "Dalal Street"
+    person: "Mohnish Pabrai"
+    sec_name: "Dalal Street, LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1166559
+    display_name: "Gates Foundation Trust"
+    person: "endowment/trust"
+    sec_name: "GATES FOUNDATION TRUST"
+    manager_type: foundation
+    notable: true
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 923093
+    display_name: "Tudor Investment Corp"
+    person: "Paul Tudor Jones"
+    sec_name: "TUDOR INVESTMENT CORP ET AL"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1448574
+    display_name: "Moore Capital Management"
+    person: "Louis Bacon"
+    sec_name: "MOORE CAPITAL MANAGEMENT, LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 2051323
+    display_name: "Caxton Associates"
+    person: "macro"
+    sec_name: "CAXTON ASSOCIATES LLP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 1138995
+    display_name: "Glenview Capital"
+    person: "Larry Robbins"
+    sec_name: "GLENVIEW CAPITAL MANAGEMENT, LLC"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1535472
+    display_name: "Corvex Management"
+    person: "Keith Meister"
+    sec_name: "Corvex Management LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1510387
+    display_name: "Gotham Asset Management"
+    person: "Joel Greenblatt"
+    sec_name: "Gotham Asset Management, LLC"
+    manager_type: asset_manager
+    notable: true
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1582090
+    display_name: "Sachem Head Capital"
+    person: "Scott Ferguson"
+    sec_name: "Sachem Head Capital Management LP"
+    manager_type: hedge_fund
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1135778
+    display_name: "Miller Value Partners"
+    person: "Bill Miller"
+    sec_name: "MILLER VALUE PARTNERS, LLC"
+    manager_type: asset_manager
+    notable: true
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1423053
+    display_name: "Citadel Advisors"
+    person: "Ken Griffin"
+    sec_name: "CITADEL ADVISORS LLC"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1273087
+    display_name: "Millennium Management"
+    person: "Izzy Englander"
+    sec_name: "MILLENNIUM MANAGEMENT LLC"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1603466
+    display_name: "Point72 Asset Management"
+    person: "Steve Cohen"
+    sec_name: "Point72 Asset Management, L.P."
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1009207
+    display_name: "D. E. Shaw & Co"
+    person: "quant"
+    sec_name: "D. E. Shaw & Co., Inc."
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1037389
+    display_name: "Renaissance Technologies"
+    person: "quant"
+    sec_name: "RENAISSANCE TECHNOLOGIES LLC"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1179392
+    display_name: "Two Sigma Investments"
+    person: "quant"
+    sec_name: "TWO SIGMA INVESTMENTS, LP"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1167557
+    display_name: "AQR Capital Management"
+    person: "Cliff Asness"
+    sec_name: "AQR CAPITAL MANAGEMENT LLC"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1218710
+    display_name: "Balyasny Asset Management"
+    person: "platform"
+    sec_name: "BALYASNY ASSET MANAGEMENT L.P."
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1736225
+    display_name: "ExodusPoint Capital"
+    person: "platform"
+    sec_name: "ExodusPoint Capital Management, LP"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1318757
+    display_name: "Marshall Wace"
+    person: "platform"
+    sec_name: "MARSHALL WACE, LLP"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1637460
+    display_name: "Man Group"
+    person: "quant"
+    sec_name: "Man Group plc"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 909661
+    display_name: "Farallon Capital"
+    person: "event-driven"
+    sec_name: "FARALLON CAPITAL MANAGEMENT, L.L.C."
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1595082
+    display_name: "Davidson Kempner"
+    person: "event-driven"
+    sec_name: "DAVIDSON KEMPNER CAPITAL MANAGEMENT LP"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 1425851
+    display_name: "Pentwater Capital"
+    person: "event-driven"
+    sec_name: "Pentwater Capital Management LP"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1218199
+    display_name: "King Street Capital"
+    person: "credit"
+    sec_name: "KING STREET CAPITAL MANAGEMENT, L.P."
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1074034
+    display_name: "Canyon Capital Advisors"
+    person: "credit"
+    sec_name: "CANYON CAPITAL ADVISORS LLC"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 1300714
+    display_name: "Anchorage Capital Group"
+    person: "credit"
+    sec_name: "Anchorage Capital Group, L.L.C."
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1352851
+    display_name: "Magnetar Financial"
+    person: "multi-strat"
+    sec_name: "Magnetar Financial LLC"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1165408
+    display_name: "Adage Capital"
+    person: "equity"
+    sec_name: "ADAGE CAPITAL PARTNERS GP, L.L.C."
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1387322
+    display_name: "Whale Rock Capital"
+    person: "tech"
+    sec_name: "Whale Rock Capital Management LLC"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 934639
+    display_name: "Maverick Capital"
+    person: "Lee Ainslie"
+    sec_name: "MAVERICK CAPITAL LTD"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1389507
+    display_name: "Discovery Capital Management"
+    person: "Rob Citrone"
+    sec_name: "DISCOVERY CAPITAL MANAGEMENT, LLC / CT"
+    manager_type: hedge_fund
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1393818
+    display_name: "Blackstone"
+    person: "PE"
+    sec_name: "Blackstone Inc."
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1399770
+    display_name: "KKR (Kohlberg Kravis Roberts)"
+    person: "PE"
+    sec_name: "Kohlberg Kravis Roberts & Co. L.P."
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 1449434
+    display_name: "Apollo Management Holdings"
+    person: "PE"
+    sec_name: "Apollo Management Holdings, L.P."
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 1527166
+    display_name: "Carlyle Group"
+    person: "PE"
+    sec_name: "Carlyle Group Inc."
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1001085
+    display_name: "Brookfield"
+    person: "PE / infrastructure"
+    sec_name: "BROOKFIELD Corp /ON/"
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1418226
+    display_name: "Silver Lake Group"
+    person: "technology PE"
+    sec_name: "Silver Lake Group, L.L.C."
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1569532
+    display_name: "Vista Equity Partners"
+    person: "technology PE"
+    sec_name: "VISTA EQUITY PARTNERS MANAGEMENT, LLC"
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1450701
+    display_name: "Thoma Bravo"
+    person: "technology PE"
+    sec_name: "THOMA BRAVO, L.P."
+    manager_type: alt_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 19617
+    display_name: "JPMorgan Chase"
+    person: "bank"
+    sec_name: "JPMORGAN CHASE & CO"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 886982
+    display_name: "Goldman Sachs Group"
+    person: "bank"
+    sec_name: "GOLDMAN SACHS GROUP INC"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 895421
+    display_name: "Morgan Stanley"
+    person: "bank"
+    sec_name: "MORGAN STANLEY"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 70858
+    display_name: "Bank of America"
+    person: "bank"
+    sec_name: "BANK OF AMERICA CORP /DE/"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 72971
+    display_name: "Wells Fargo"
+    person: "bank"
+    sec_name: "WELLS FARGO & COMPANY/MN"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 831001
+    display_name: "Citigroup"
+    person: "bank"
+    sec_name: "CITIGROUP INC"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1610520
+    display_name: "UBS Group"
+    person: "bank"
+    sec_name: "UBS Group AG"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 312069
+    display_name: "Barclays"
+    person: "bank"
+    sec_name: "BARCLAYS PLC"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 948046
+    display_name: "Deutsche Bank"
+    person: "bank"
+    sec_name: "DEUTSCHE BANK AG"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 1000275
+    display_name: "Royal Bank of Canada"
+    person: "bank"
+    sec_name: "ROYAL BANK OF CANADA"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1390777
+    display_name: "BNY Mellon"
+    person: "custody"
+    sec_name: "Bank of New York Mellon Corp"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 73124
+    display_name: "Northern Trust"
+    person: "custody"
+    sec_name: "NORTHERN TRUST CORP"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 884546
+    display_name: "Charles Schwab Investment Mgmt"
+    person: "broker asset mgmt"
+    sec_name: "CHARLES SCHWAB INVESTMENT MANAGEMENT INC"
+    manager_type: bank
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 2012383
+    display_name: "BlackRock"
+    person: "index / asset mgmt"
+    sec_name: "BlackRock, Inc."
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: C
+    verified_date: 2026-08-21
+  - cik: 102909
+    display_name: "Vanguard Group"
+    person: "index"
+    sec_name: "VANGUARD GROUP INC"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 93751
+    display_name: "State Street"
+    person: "index"
+    sec_name: "STATE STREET CORP"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 315066
+    display_name: "FMR (Fidelity)"
+    person: "mutual funds"
+    sec_name: "FMR LLC"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1214717
+    display_name: "Geode Capital Management"
+    person: "index sub-adviser"
+    sec_name: "GEODE CAPITAL MANAGEMENT, LLC"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 80255
+    display_name: "T. Rowe Price Associates"
+    person: "mutual funds"
+    sec_name: "PRICE T ROWE ASSOCIATES INC /MD/"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1422849
+    display_name: "Capital World Investors"
+    person: "Capital Group"
+    sec_name: "Capital World Investors"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1422848
+    display_name: "Capital Research Global Investors"
+    person: "Capital Group"
+    sec_name: "Capital Research Global Investors"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 914208
+    display_name: "Invesco"
+    person: "asset mgmt"
+    sec_name: "Invesco Ltd."
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 38777
+    display_name: "Franklin Resources"
+    person: "asset mgmt"
+    sec_name: "FRANKLIN RESOURCES INC"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1109448
+    display_name: "AllianceBernstein"
+    person: "asset mgmt"
+    sec_name: "ALLIANCEBERNSTEIN L.P."
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 902219
+    display_name: "Wellington Management Group"
+    person: "asset mgmt"
+    sec_name: "WELLINGTON MANAGEMENT GROUP LLP"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 354204
+    display_name: "Dimensional Fund Advisors"
+    person: "quant asset mgmt"
+    sec_name: "DIMENSIONAL FUND ADVISORS LP"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1465109
+    display_name: "Neuberger Berman Group"
+    person: "asset mgmt"
+    sec_name: "Neuberger Berman Group LLC"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 200217
+    display_name: "Dodge & Cox"
+    person: "value asset mgmt"
+    sec_name: "DODGE & COX"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1088875
+    display_name: "Baillie Gifford & Co"
+    person: "growth asset mgmt"
+    sec_name: "BAILLIE GIFFORD & CO"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1697748
+    display_name: "ARK Investment Management"
+    person: "Cathie Wood"
+    sec_name: "ARK Investment Management LLC"
+    manager_type: asset_manager
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1374170
+    display_name: "Norges Bank"
+    person: "Norway GPFG"
+    sec_name: "NORGES BANK"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1582202
+    display_name: "Swiss National Bank"
+    person: "central bank"
+    sec_name: "Swiss National Bank"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 919079
+    display_name: "CalPERS"
+    person: "California public employees"
+    sec_name: "CALIFORNIA PUBLIC EMPLOYEES RETIREMENT SYSTEM"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1081019
+    display_name: "CalSTRS"
+    person: "California teachers"
+    sec_name: "CALIFORNIA STATE TEACHERS RETIREMENT SYSTEM"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1283718
+    display_name: "CPP Investment Board"
+    person: "Canada"
+    sec_name: "CANADA PENSION PLAN INVESTMENT BOARD"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 937567
+    display_name: "Ontario Teachers' Pension Plan"
+    person: "Canada"
+    sec_name: "ONTARIO TEACHERS PENSION PLAN BOARD"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1396318
+    display_name: "PSP Investments"
+    person: "Canada"
+    sec_name: "PUBLIC SECTOR PENSION INVESTMENT BOARD"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1608046
+    display_name: "National Pension Service"
+    person: "Korea"
+    sec_name: "National Pension Service"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1441689
+    display_name: "Korea Investment Corp"
+    person: "Korea SWF"
+    sec_name: "Korea Investment CORP"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1021944
+    display_name: "Temasek Holdings"
+    person: "Singapore"
+    sec_name: "Temasek Holdings (Private) Ltd"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1704268
+    display_name: "Mubadala Investment"
+    person: "Abu Dhabi"
+    sec_name: "Mubadala Investment Co PJSC"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1767640
+    display_name: "Saudi Public Investment Fund"
+    person: "Saudi SWF"
+    sec_name: "PUBLIC INVESTMENT FUND"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 1434819
+    display_name: "APG Asset Management"
+    person: "Netherlands (ABP's manager)"
+    sec_name: "APG Asset Management N.V."
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: B
+    verified_date: 2026-08-21
+  - cik: 1484429
+    display_name: "Alecta Tjanstepension"
+    person: "Sweden"
+    sec_name: "Alecta Tjanstepension Omsesidigt"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 810265
+    display_name: "New York State Common Retirement Fund"
+    person: "New York pension"
+    sec_name: "NEW YORK STATE COMMON RETIREMENT FUND"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+  - cik: 796848
+    display_name: "Teacher Retirement System of Texas"
+    person: "Texas pension"
+    sec_name: "TEACHER RETIREMENT SYSTEM OF TEXAS"
+    manager_type: pension_swf
+    notable: false
+    status: active
+    verified_channel: A
+    verified_date: 2026-08-21
+
+# Checked against a primary source and deliberately NOT seeded.
+excluded:
+  - candidate: "GIC (Singapore)"
+    reason: "no 13F-HR hits in EDGAR full-text search for 2026; likely confidential treatment"
+  - candidate: "Qatar Investment Authority"
+    reason: "no 13F-HR filings found via any channel"
+  - candidate: "JANA Partners"
+    reason: "CIK 1159159 — last 13F-HR 2023-08-14; no longer an active filer"
+  - candidate: "Aquamarine Capital (Guy Spier)"
+    reason: "no 2026 13F-HR hits in EDGAR full-text search"
+  - candidate: "PIMCO"
+    reason: "equity 13F footprint immaterial relative to its bond book; low signal"
+  - candidate: "Greenlight Capital (David Einhorn), CIK 1079114"
+    reason: "last 13F-HR 2024-02-14; absent from the aggregate filer registry — no longer an active filer"
+  - candidate: "Stichting Pensioenfonds ABP, CIK 918509"
+    reason: "last 13F-HR 2008-01-30; ABP files through APG Asset Management N.V. (CIK 1434819), which is seeded instead"
+  - candidate: "Ruane, Cunniff & Goldfarb Inc, CIK 728014"
+    reason: "superseded entity; last 13F-HR 2018-05-15 — the live filer is CIK 1720792"
+  - candidate: "BlackRock Finance, Inc. (CIK 1364742)"
+    reason: "superseded predecessor filer; last 13F-HR 2024-08-13 — CIK 2012383 is the live filer"

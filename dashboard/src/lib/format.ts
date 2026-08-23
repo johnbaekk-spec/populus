@@ -817,16 +817,28 @@ export function tickerHrefFor(ticker: string, ctx: RenderCtx): string {
 /** SrcLink (G7): source-document anchor. Scheme-allowlisted: the URL
     ultimately traces to a scraped government page, so anything but https is
     stated as unlinkable rather than rendered as a live href. */
-export function srcLink(doc: string, extraClass = ""): string {
+/** The provenance link's CONTENT, without its container. Split out so the
+    `<div>` form (nested inside a `<td class="c-src">` on a dozen surfaces) and
+    the `<td>` form (a feed row IS a table row now) cannot drift: an unusable
+    source URL must degrade the same way in both. */
+function srcLinkInner(doc: string): string {
   const src = srcLabel(doc);
-  const cls = `cell cell-src${extraClass ? " " + extraClass : ""}`;
   if (!doc.startsWith("https://")) {
-    return `<div class="${cls}"><span class="src-missing" title="source URL not usable">${src}</span></div>`;
+    return `<span class="src-missing" title="source URL not usable">${src}</span>`;
   }
   return (
-    `<div class="${cls}"><a href="${esc(doc)}" rel="noopener" target="_blank"` +
-    ` aria-label="source document (${src}) — opens in a new tab">${src}&nbsp;↗</a></div>`
+    `<a href="${esc(doc)}" rel="noopener" target="_blank"` +
+    ` aria-label="source document (${src}) — opens in a new tab">${src}&nbsp;↗</a>`
   );
+}
+
+export function srcLink(doc: string, extraClass = ""): string {
+  return `<div class="cell cell-src${extraClass ? " " + extraClass : ""}">${srcLinkInner(doc)}</div>`;
+}
+
+/** The feed row's provenance CELL. Same content, table-row container. */
+export function srcLinkCell(doc: string): string {
+  return `<td class="cell cell-src">${srcLinkInner(doc)}</td>`;
 }
 
 /** SrcLink, aggregate form (G7): derived rows carry "derived ·§" resolving to
@@ -901,10 +913,36 @@ export function rangeBand(r: Pick<TxnRow, "low" | "high">): string {
     "traded → filed" string instead of removing either date. */
 export function dualDate(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">): string {
   const traded = tradedText(r);
-  return `<div class="cell cell-traded"><span class="visually-hidden">Traded </span><span class="traded-date">${esc(traded)}</span><span class="mobile-dates" aria-hidden="true">${esc(traded)} → ${esc(r.filed.slice(5))}</span> ${lagHtml(r)}</div>`;
+  return `<span class="visually-hidden">Traded </span><span class="traded-date">${esc(traded)}</span><span class="mobile-dates" aria-hidden="true">${esc(traded)} → ${esc(r.filed.slice(5))}</span> ${lagHtml(r)}`;
 }
 
-export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
+/** DualDate as a feed-row CELL.
+
+    F1: `dualDate` returns CONTENT, never a container. It briefly returned a
+    `<td>` of its own when the feed became a table, which produced
+    `<td class="c-traded"><td class="cell cell-traded">…</td></td>` on the
+    per-member and per-ticker detail pages — pages this change lists as explicit
+    NON-GOALS. A browser silently REPAIRS nested cells by splitting them, so the
+    defect moved a column instead of erroring. Content and container are
+    separated here for the same reason `srcLink` was split. */
+export function dualDateCell(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">): string {
+  return `<td class="cell cell-traded">${dualDate(r)}</td>`;
+}
+
+/* R5/R18: the feed rows are REAL TABLE ROWS.
+
+   They were `<div>`s in a CSS grid, which looked like a table and behaved like
+   one on screen but could not carry sortable column headers, a `<caption>`, or
+   a single named render root. `#feed-tbody` is that root now.
+
+   NO WRAPPER ELEMENTS. The old two-line mobile fold nested `.row-line1` and
+   `.row-line2` inside the row; a `<tr>` may contain only `<td>`/`<th>`, and a
+   browser HOISTS an illegal child out of the table, which would silently
+   destroy the fold rather than fail loudly. The fold is expressed with
+   `grid-template-areas` on the row itself instead, so the same two-line
+   grammar survives with no extra elements — and both dates, the lag, the
+   flags and the provenance link stay exactly as reachable as before. */
+export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
   const side = sideLabel(r.side, r.flags);
   const owner = ownerNote(r);
   const ownerLong = ownerNoteLong(r);
@@ -918,42 +956,149 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
     : assetNameCell(r);
   const amountSpoken = amountUnknown ? "not disclosed in a parseable range" : amount;
 
-  return `<div class="feed-row feed-grid-cols" role="listitem">
-<div class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</div>
-<div class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</div>
-<div class="row-line1">
-<div class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</div>
-<div class="cell cell-ticker"><span class="visually-hidden">Ticker </span>${tickerHtml}</div>
-<div class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${
+  return `<tr class="feed-row feed-grid-cols${rowClass ? " " + esc(rowClass) : ""}">
+<td class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</td>
+<td class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>
+<td class="cell cell-ticker"><span class="visually-hidden">Ticker </span>${tickerHtml}</td>
+<td class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>
+<td class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${
     owner
       ? ` <span class="owner-note" title="${esc(ownerLong)}">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
       : ""
-  }</div>
-</div>
-<div class="row-line2">
-${dualDate(r)}
-<div class="cell cell-amount${amountUnknown ? " unknown" : ""}"><span class="visually-hidden">Amount </span><span aria-hidden="true">${esc(amount)}</span><span class="visually-hidden">${esc(amountSpoken)}</span>${spouseCapDagger}</div>
-<div class="cell cell-range">${rangeBand(r)}${flagTags(r.flags, r)}</div>
-${srcLink(r.doc)}
-</div>
-</div>`;
+  }</td>
+${dualDateCell(r)}
+<td class="cell cell-amount${amountUnknown ? " unknown" : ""}"><span class="visually-hidden">Amount </span><span aria-hidden="true">${esc(amount)}</span><span class="visually-hidden">${esc(amountSpoken)}</span>${spouseCapDagger}</td>
+<td class="cell cell-range">${rangeBand(r)}${flagTags(r.flags, r)}</td>
+${srcLinkCell(r.doc)}
+</tr>`;
 }
 
-export function paperRowHtml(r: PaperRow, ctx: RenderCtx): string {
-  return `<div class="feed-row paper feed-grid-cols" role="listitem">
-<div class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</div>
-<div class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</div>
-<div class="cell paper-main">${
+export function paperRowHtml(r: PaperRow, ctx: RenderCtx, rowClass = ""): string {
+  // A paper filing discloses no ticker, side, amount, dates or flags, so its
+  // main cell SPANS those columns rather than rendering five empty cells that
+  // would read as five disclosed blanks.
+  return `<tr class="feed-row paper feed-grid-cols${rowClass ? " " + esc(rowClass) : ""}">
+<td class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</td>
+<td class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>
+<td class="cell paper-main" colspan="6">${
     r.bioguide
       ? `<a class="who" href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>`
       : `<span class="who">${esc(r.name)}</span>`
-  } <span class="aff ${partyClass(r.party)}">${esc(affText(r))}</span><span class="chip-ocr">paper filing — needs OCR</span><span class="paper-note">transactions filed on paper; retained and counted, not yet machine-readable</span></div>
-${srcLink(r.doc)}
-</div>`;
+  } <span class="aff ${partyClass(r.party)}">${esc(affText(r))}</span><span class="chip-ocr">paper filing — needs OCR</span><span class="paper-note">transactions filed on paper; retained and counted, not yet machine-readable</span></td>
+${srcLinkCell(r.doc)}
+</tr>`;
 }
 
-export function feedItemHtml(item: FeedItem, ctx: RenderCtx): string {
-  return item.kind === "txn" ? txnRowHtml(item, ctx) : paperRowHtml(item, ctx);
+/* ---------- R5/F7: the feed table's COLUMN CONTRACT, shared by both tables --
+
+   `feedItemHtml` emits NINE cells, and two pages render it: `/congress/` and
+   `/watchlist/`. The watchlist shipped those nine cells inside a `<tbody>` with
+   NO `<thead>` at all, so every cell on that page was unlabelled — a screen
+   reader was handed nine values with nothing to associate them to.
+
+   The fix is one contract, not a second copy of the markup: a copy is what let
+   the two tables disagree in the first place, and the header count has to track
+   the cell count exactly or the association is wrong rather than absent.
+
+   The two pages differ in ONE way and it is stated here: `/congress/` sorts by
+   Filed and by Amount through the feed island, `/watchlist/` does not sort at
+   all. So an unsortable rendering does not silently drop those headers — it
+   renders them with a stated reason, exactly like the seven columns that are
+   unsortable everywhere. */
+
+export interface FeedColumn {
+  /** printed header text; "" for the star column, which is labelled for screen
+      readers only because its glyph is the label */
+  label: string;
+  srLabel?: string;
+  /** the feed island's sort key, on the two columns that have a defined order */
+  sortKey?: "filed" | "amount";
+  /** why this column has no defined order — required on every column that
+      carries no `sortKey`, so a mute column cannot be added by omission */
+  why?: string;
+  /** extra class on the `<th>`, matching the grid track it heads */
+  cls?: string;
+}
+
+export const FEED_COLUMNS: readonly FeedColumn[] = [
+  { label: "", srLabel: "Watch" },
+  { label: "Filed", sortKey: "filed" },
+  {
+    label: "Ticker",
+    why:
+      "the feed lists one filing per row, so a ticker order would just group rows without " +
+      "ranking them — use the ticker momentum section above to rank tickers",
+  },
+  {
+    label: "Member",
+    why: "same reason as Ticker: use the member net-flow section below to rank members",
+  },
+  {
+    label: "Side · Owner",
+    why: "side and owner are categories, not an order — filter by them in the bar above",
+  },
+  {
+    label: "Traded · Lag",
+    why:
+      "a trade date is missing on some rows and impossible on others, so a trade-date order " +
+      "would silently rank rows it cannot place — the date range filter states both exclusions " +
+      "instead",
+  },
+  { label: "Amount", sortKey: "amount", cls: "num" },
+  {
+    label: "Range · Flags",
+    why: "the band renders the same statutory range the Amount column sorts on",
+    cls: "range",
+  },
+  {
+    label: "Src",
+    why: "every row links its own source document; there is no order over them",
+    cls: "src",
+  },
+];
+
+export interface FeedHeadOpts {
+  /** false on a surface with no sort control; the two orderable columns then
+      state `whyUnsorted` instead of carrying a dead header button */
+  sortable: boolean;
+  whyUnsorted?: string;
+  /** initial `aria-sort` for the default order — only meaningful when sortable */
+  activeKey?: "filed" | "amount";
+  activeDir?: "asc" | "desc";
+}
+
+export function feedHeadHtml(opts: FeedHeadOpts): string {
+  const cells = FEED_COLUMNS.map((c) => {
+    const cls = c.cls ? ` class="${c.cls}"` : "";
+    if (c.srLabel !== undefined) {
+      return `<th scope="col"${cls}><span class="visually-hidden">${esc(c.srLabel)}</span></th>`;
+    }
+    if (c.sortKey && opts.sortable) {
+      const dir =
+        c.sortKey === opts.activeKey
+          ? opts.activeDir === "asc"
+            ? "ascending"
+            : "descending"
+          : "none";
+      return (
+        `<th scope="col"${cls} data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
+        `aria-sort="${dir}"><button class="th-sort" type="button">${esc(c.label)}</button></th>`
+      );
+    }
+    // Either a column with no defined order anywhere, or an orderable column on
+    // a surface that offers no control. Both state a reason; neither is mute.
+    const why = c.sortKey ? (opts.whyUnsorted ?? "") : (c.why ?? "");
+    return (
+      `<th scope="col"${cls}>${esc(c.label)}` +
+      (why ? `<span class="col-why">${esc(why)}</span>` : "") +
+      `</th>`
+    );
+  }).join("");
+  return `<thead><tr class="feed-head feed-grid-cols">${cells}</tr></thead>`;
+}
+
+export function feedItemHtml(item: FeedItem, ctx: RenderCtx, rowClass = ""): string {
+  return item.kind === "txn" ? txnRowHtml(item, ctx, rowClass) : paperRowHtml(item, ctx, rowClass);
 }
 
 /* ---------- TerminusRow (G3) ---------- */
@@ -964,11 +1109,145 @@ export function feedItemHtml(item: FeedItem, ctx: RenderCtx): string {
 export function terminusRow(opts: {
   author: "source" | "populus";
   html: string;
+  /** F16: render the row present-but-hidden, so a client whose row set later
+      exceeds the compact bound can REVEAL the notice. A notice that was never
+      rendered cannot be filled in, and the transition then hides rows with no
+      statement of the bound — which is the omission the notice exists to
+      prevent. Paired with `compactDisclosure`'s shell: the button and the
+      sentence appear and disappear together, never one without the other. */
+  hidden?: boolean;
 }): string {
   const label = opts.author === "source" ? "Truncated by the source." : "Truncated by Public Filings.";
   return (
-    `<div class="terminus" data-terminus-author="${opts.author}">` +
-    `<span class="terminus-author">${label}</span> ${opts.html}</div>`
+    `<div class="terminus" data-terminus-author="${opts.author}"${opts.hidden ? " hidden" : ""}>` +
+    // The body is addressable so a client that changes the row set can restate
+    // the bound without rewriting the author label beside it (F16).
+    `<span class="terminus-author">${label}</span><span class="terminus-body"> ${opts.html}</span></div>`
+  );
+}
+
+/** The client-side counterpart of `terminusRow`, kept BESIDE it deliberately.
+
+    Every compact table has a client owner that changes its row set — a range
+    switch, a chip filter, a quarter selection — and each one has to restate the
+    bound in the same breath as the control. Three private copies of that update
+    is three chances for one of them to drift out of step with the renderer
+    above, which is exactly the class of defect R19 exists to catch. So the
+    renderer and its updater have ONE home.
+
+    `disclosure` is the `.compact-disclosure` wrapper; the terminus is its
+    immediately preceding sibling, which is the order `terminusRow` and
+    `compactDisclosure` are emitted in. `hidden <= 0` hides the sentence, which
+    is the same condition that hides the control — the two appear and disappear
+    together, never one without the other (F16). */
+export function syncTerminusFor(
+  disclosure: TerminusHost | null | undefined,
+  hidden: number,
+  body: TerminusBody,
+): void {
+  /* The host is typed as `unknown` and narrowed HERE rather than declared as an
+     element type. A real `HTMLElement.previousElementSibling` is `Element |
+     null`, which does not carry `hidden`; the alternative was an
+     `instanceof HTMLElement` guard, and that throws under `node --test` where
+     `HTMLElement` is not defined — which is precisely where the behavioural
+     tests for this contract run. */
+  const terminus = disclosure?.previousElementSibling as TerminusNode | null | undefined;
+  if (!terminus || typeof terminus.classList?.contains !== "function") return;
+  if (!terminus.classList.contains("terminus")) return;
+  terminus.hidden = hidden <= 0;
+  const el = terminus.querySelector(".terminus-body");
+  if (!el || hidden <= 0) return;
+  // `html` exists for the ONE case that needs it: a terminus whose sentence
+  // carries a link to the published payload. Writing that through `textContent`
+  // would print the markup, and dropping it would delete the no-JS route the
+  // sentence exists to offer. Callers with no markup use `text` and cannot
+  // inject anything.
+  if ("html" in body) el.innerHTML = ` ${body.html}`;
+  else el.textContent = ` ${body.text}`;
+}
+
+export type TerminusBody = { text: string } | { html: string };
+
+/** The narrow DOM surface `syncTerminusFor` touches, declared structurally so
+    it can be exercised without a browser — the same convention `table-sort.ts`
+    already uses for its own element interfaces. */
+export interface TerminusHost {
+  previousElementSibling: unknown;
+}
+
+export interface TerminusNode {
+  hidden: boolean;
+  classList: { contains(name: string): boolean };
+  querySelector(sel: string): { textContent: string | null; innerHTML: string } | null;
+}
+
+/* ---------- R7/R19: compact-by-default tables with an in-place expand ------
+
+   THE COMPACT SLICE IS A RENDER BOUND, AND IT SAYS SO. Collapsing a table hides
+   DATA ROWS and nothing else. Everything that carries meaning about what the
+   reader is not seeing — the caption, every column header, the caveat line, the
+   terminus row and its named author, footnote markers and their printed lines,
+   the filtered-count line, any stated absence — stays in the accessibility tree
+   in both states. That list is not advice; it is the enumerated allowlist R19
+   pins and `test/collapsed-honesty.test.ts` asserts against.
+
+   NO CSS SUPPRESSION. Rows beyond the slice are ABSENT from the collapsed DOM
+   and are rendered on expand. `display:none` on a honesty-bearing selector is
+   what the fold gate exists to reject, so this primitive never reaches for it.
+
+   THE CONTROL IS HIDDEN UNTIL SCRIPTED, exactly like the feed's reset control:
+   a button that cannot work without JavaScript must not be presented as though
+   it can. With scripting off the reader still gets the compact slice, the
+   terminus row stating the exact bound, and the link to the full dataset. */
+
+/** Rows rendered before a table asks the reader to expand it. */
+export const COMPACT_ROWS = 10;
+
+export interface CompactDisclosureOpts {
+  /** id of the tbody this control expands — its single render root */
+  rootId: string;
+  /** total rows the table holds, across both states */
+  total: number;
+  /** rows rendered while collapsed */
+  shown: number;
+  /** plural noun for the rows, e.g. "tickers", "members" */
+  noun: string;
+  /** the full body is already in the DOM and the control reveals it, rather
+      than the owner re-rendering rows from data */
+  domBacked?: boolean;
+}
+
+/** The expand control, or "" when there is nothing to expand.
+
+    OMISSION RULE (R7): a table whose row count does not EXCEED the compact
+    slice renders no control. A disclosure that expands to the same rows is a
+    lie about there being more, and an inert control is worse than none. */
+export function compactDisclosure(o: CompactDisclosureOpts): string {
+  const hidden = o.total - o.shown;
+  if (hidden <= 0) {
+    // F16: a SHELL, not nothing. R7's omission rule is about what the reader
+    // SEES — and this shell is `hidden`, so they see nothing, which satisfies
+    // it. But a section whose row set can change (a momentum range switch, a
+    // directory filter) must be able to gain a control later, and a client
+    // cannot reveal an element that was never rendered. Rows beyond ten used
+    // to become unreachable after exactly that transition.
+    return (
+      `<div class="compact-disclosure" data-compact-for="${esc(o.rootId)}" ` +
+      `data-compact-total="${o.total}" data-compact-shown="${o.shown}" ` +
+      `data-compact-noun="${esc(o.noun)}" hidden>` +
+      `<button class="linklike compact-toggle" type="button" aria-expanded="false" ` +
+      `aria-controls="${esc(o.rootId)}"></button></div>`
+    );
+  }
+  // The hidden count lives in the LABEL, not only in a title: the control has
+  // to say how much it is holding back before it is activated.
+  return (
+    `<div class="compact-disclosure"${o.domBacked ? " data-compact-dom" : ""} data-compact-for="${esc(o.rootId)}" ` +
+    `data-compact-total="${o.total}" data-compact-shown="${o.shown}" ` +
+    `data-compact-noun="${esc(o.noun)}" hidden>` +
+    `<button class="linklike compact-toggle" type="button" aria-expanded="false" ` +
+    `aria-controls="${esc(o.rootId)}">` +
+    `Show all ${fmtInt(o.total)} ${esc(o.noun)} (${fmtInt(hidden)} more)</button></div>`
   );
 }
 

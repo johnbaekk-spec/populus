@@ -36,6 +36,13 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+
+from populus.manager_registry import (
+    ManagerRegistryError,
+    enforce_manager_registry_join,
+    join_manager_registry,
+    load_manager_registry,
+)
 from pathlib import Path
 from typing import Any
 
@@ -998,6 +1005,12 @@ def _build_inst_agg_python(
         issuer_key, source = _issuer_key(
             entity_id, entity_link_state, cusip, issuer_name_raw
         )
+
+        # F22: the grain -> issuer map is NOT built here. `populate_issuer_adds`
+        # runs after BOTH build paths and derives it once from the same source
+        # holdings; building it here too meant the python path paid a
+        # high-cardinality traversal and its memory for a structure it then
+        # discarded, while the bulk path built the real one.
         bucket = issuers.setdefault(
             (cik, period, issuer_key),
             {
@@ -1202,6 +1215,163 @@ def _build_inst_agg_python(
         concentration_rows=len(concentration_rows),
         topn=topn,
     )
+
+
+# --- R21: the recently-added-issuers leaderboard -----------------------------
+
+#: Modes are a PATH DIMENSION, not a client filter. The site is static, so a
+#: combined payload cannot be re-aggregated at request time, and filtering
+#: combined rows by ``new_position_count`` would still display add-derived
+#: value, manager counts and top adder under a "new only" label.
+ADDS_MODES: tuple[str, ...] = ("all", "new")
+
+#: Change kinds each mode admits.
+ADDS_MODE_KINDS: dict[str, frozenset[str]] = {
+    "all": frozenset({"new", "add"}),
+    "new": frozenset({"new"}),
+}
+
+#: Bounds, matching the existing activity shard constants rather than inventing
+#: a second budget.
+ADDS_RECORD_LIMIT = 2_000
+ADDS_BYTE_LIMIT = 2 * 1024 * 1024
+
+
+def _adds_issuer_name(names: list[str | None]) -> str | None:
+    """The most frequent non-null issuer name, ties broken lexicographically.
+
+    Null ONLY when every contributor is null — an issuer that any holding named
+    is never rendered nameless.
+    """
+    counts: dict[str, int] = {}
+    for n in names:
+        if n is not None:
+            counts[n] = counts.get(n, 0) + 1
+    if not counts:
+        return None
+    return min(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+
+
+def _adds_sum(values: list[int | None]) -> tuple[int | None, bool]:
+    """``(sum, is_partial)`` over nullable component deltas.
+
+    Sums ONLY non-null components. Any null makes the result PARTIAL, and a
+    partial sum is never presented as a total. All-null sums to ``None``, which
+    the UI renders as an em dash — never ``0``, which would assert a measured
+    no-change that the source never disclosed.
+    """
+    present = [v for v in values if v is not None]
+    if not present:
+        return None, len(values) > 0
+    return sum(present), len(present) != len(values)
+
+
+def _issuer_adds_rows(
+    qoq_rows: list[tuple],
+    grain_issuers: dict[tuple[str, str, str, str, str], dict[str, tuple[str, str]]],
+    filers: dict[str, dict],
+    ingested_at: str,
+) -> tuple[list[tuple], dict[tuple[str, str], int]]:
+    """``(rows, ambiguous_counts)`` for the recently-added-issuers leaderboard.
+
+    Each delta row is associated with the issuer identity derived from its
+    CURRENT-period raw holdings, because the leaderboard describes what was
+    added in the selected period. A ``new`` delta has no prior period at all, so
+    a prior-period identity would be undefined for exactly the rows this
+    surface is about.
+
+    A grain whose current-period holdings carry MORE THAN ONE issuer key is
+    rejected, counted per (period, mode), and the count travels in the payload
+    so the section can state it. It is not split across issuers and not assigned
+    to one of them: an ambiguous identity is stated, never guessed.
+    """
+    # (period, mode, issuer_key) -> accumulator
+    acc: dict[tuple[str, str, str], dict] = {}
+    ambiguous: dict[tuple[str, str], int] = {}
+
+    for row in qoq_rows:
+        cik, position_key, put_call = row[0], row[1], row[2]
+        curr_period, change_kind = row[3], row[5]
+        delta_value, unit = row[8], row[12]
+
+        for mode in ADDS_MODES:
+            if change_kind not in ADDS_MODE_KINDS[mode]:
+                continue
+            keys = grain_issuers.get((cik, curr_period, position_key, put_call, unit))
+            if not keys:
+                # No current-period holding backs this grain (an exit cannot
+                # reach here, and a mode's kinds all have a current side), so
+                # there is no identity to state. Counted with the ambiguous
+                # bucket would be wrong — it is a different fact — and it
+                # cannot be ranked, so it is simply not a leaderboard row.
+                continue
+            if len(keys) > 1:
+                ambiguous[(curr_period, mode)] = ambiguous.get((curr_period, mode), 0) + 1
+                continue
+            issuer_key, (source, issuer_name) = next(iter(keys.items()))
+            bucket = acc.setdefault(
+                (curr_period, mode, issuer_key),
+                {
+                    "source": source,
+                    "names": [],
+                    "values": [],
+                    "new_position_count": 0,
+                    # manager subtotals: cik -> list of that manager's deltas
+                    "by_cik": {},
+                },
+            )
+            bucket["names"].append(issuer_name)
+            bucket["values"].append(delta_value)
+            if change_kind == "new":
+                bucket["new_position_count"] += 1
+            bucket["by_cik"].setdefault(cik, []).append(delta_value)
+
+    rows: list[tuple] = []
+    for (period, mode, issuer_key), bucket in acc.items():
+        total, is_partial = _adds_sum(bucket["values"])
+
+        # TOP ADDER IN TWO STEPS. Sum each manager's legs to a subtotal FIRST,
+        # then rank the subtotals — never rank a single position leg. The issuer
+        # relation already sums a filer across every security sharing an issuer
+        # key, and in the published aggregate 58,829 of 865,055 manager/issuer/
+        # period rows carry more than one security, so ranking a leg would name
+        # the wrong manager on tens of thousands of rows.
+        best_cik: str | None = None
+        best_value: int | None = None
+        for cik, values in bucket["by_cik"].items():
+            subtotal, _ = _adds_sum(values)
+            if subtotal is None:
+                continue  # a manager with no disclosed value cannot be ranked
+            # Partial subtotals ARE eligible — the row carries the partial
+            # marker — but a null one never falls back to an arbitrary manager.
+            if best_value is None or subtotal > best_value or (
+                subtotal == best_value and (best_cik is None or cik < best_cik)
+            ):
+                best_cik, best_value = cik, subtotal
+
+        rows.append(
+            (
+                period,
+                mode,
+                issuer_key,
+                bucket["source"],
+                _adds_issuer_name(bucket["names"]),
+                len(bucket["by_cik"]),
+                bucket["new_position_count"],
+                total,
+                1 if is_partial else 0,
+                int(best_cik) if best_cik is not None else None,
+                filers.get(best_cik, {}).get("filer_name") if best_cik is not None else None,
+                ingested_at,
+            )
+        )
+
+    # Total order: value DESC NULLS LAST, then manager_count DESC, then
+    # issuer_key ASC as the deterministic remainder. A null value sorts last
+    # rather than as zero, so an undisclosed issuer never outranks a disclosed
+    # one and never reads as the smallest.
+    rows.sort(key=lambda r: (r[0], r[1], r[7] is None, -(r[7] or 0), -r[5], r[2]))
+    return rows, ambiguous
 
 
 def _issuer_rows(
@@ -2252,7 +2422,13 @@ def build_inst_agg(
     _execution_guard: Any | None = None,
     _prepared: _PreparedAggregate | None = None,
 ) -> InstAggReport:
-    """Build the aggregate, using bounded SQL only in the owned materializer."""
+    """Build the aggregate, using bounded SQL only in the owned materializer.
+
+    R13/R23/R24: the registry join gate runs HERE, at the one point BOTH build
+    paths converge. Placing it inside either `_build_inst_agg_python` or
+    `_build_inst_agg_bulk` would gate one path and leave the other ungated —
+    the twin-code-path defect this repository has been bitten by before.
+    """
     dest = Path(dest_path)
     refuse_if_dest_aliases_source(source_conn, dest)
     if _prepared is not None:
@@ -2260,7 +2436,7 @@ def build_inst_agg(
             raise InstAggError(
                 "prepared aggregate token requires the materialized namespace"
             )
-        return _build_inst_agg_bulk(
+        bulk = _build_inst_agg_bulk(
             source_conn,
             dest,
             ingested_at=ingested_at,
@@ -2268,9 +2444,11 @@ def build_inst_agg(
             guard=_execution_guard,
             prepared=_prepared,
         )
+        populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
+        return bulk
     ensure_views(source_conn)
     if _materialized_agg_namespace_available(source_conn):
-        return _build_inst_agg_bulk(
+        bulk = _build_inst_agg_bulk(
             source_conn,
             dest,
             ingested_at=ingested_at,
@@ -2278,6 +2456,241 @@ def build_inst_agg(
             guard=_execution_guard,
             prepared=_prepared,
         )
-    return _build_inst_agg_python(
+        populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
+        return bulk
+    report = _build_inst_agg_python(
         source_conn, dest, ingested_at=ingested_at, topn=topn
     )
+    populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
+    return report
+
+
+def populate_issuer_adds(
+    source_conn: sqlite3.Connection, dest_path: Path | str, *, ingested_at: str
+) -> None:
+    """R21: derive the leaderboard from a FINISHED aggregate.
+
+    ONE implementation, both build paths. The python builder and the bulk SQL
+    builder produce the same `agg_qoq_deltas`, so the leaderboard is derived
+    once, afterwards, from that shared output plus the grain->issuer map read
+    from the SOURCE holdings — rather than implemented twice and trusted to
+    agree. `test_inst_agg._complete_aggregate_rows` compares the two paths over
+    these tables, and it caught exactly that divergence when only the python
+    path had them.
+
+    It reads the SOURCE and the aggregate's own deltas — never the downstream
+    serving artifact, which is built later and would make the pipeline circular.
+    """
+    grain_issuers: dict[tuple[str, str, str, str, str], dict[str, tuple[str, str]]] = {}
+    for (
+        cik, period, security_id, cusip, issuer_name_raw,
+        ssh_prnamt_type, put_call, entity_id, entity_link_state,
+    ) in source_conn.execute(
+        "SELECT h.cik, h.period_of_report, h.security_id, h.cusip,"
+        "       h.issuer_name_raw, h.ssh_prnamt_type, h.put_call,"
+        "       s.entity_id, s.entity_link_state"
+        " FROM v_default_holdings h"
+        " LEFT JOIN securities s ON s.security_id = h.security_id"
+    ):
+        pk = _position_key(security_id, cusip)
+        if pk is None:
+            continue
+        issuer_key, source = _issuer_key(
+            entity_id, entity_link_state, cusip, issuer_name_raw
+        )
+        grain_issuers.setdefault(
+            (cik, period, pk, _put_call_bucket(put_call), _unit_key(ssh_prnamt_type)), {}
+        )[issuer_key] = (source, issuer_name_raw)
+
+    dest = sqlite3.connect(str(dest_path))
+    try:
+        filers = {
+            cik: {"filer_name": name}
+            for cik, name in dest.execute("SELECT cik, filer_name FROM agg_filer_registry")
+        }
+        qoq_rows = [
+            (
+                cik, position_key, put_call, curr_period, prev_period, change_kind,
+                None, None, delta_value_usd, None, None, None, ssh_prnamt_type,
+                "[]", ingested_at,
+            )
+            for (
+                cik, position_key, put_call, curr_period, prev_period,
+                change_kind, delta_value_usd, ssh_prnamt_type,
+            ) in dest.execute(
+                "SELECT cik, position_key, put_call, curr_period, prev_period,"
+                "       change_kind, delta_value_usd, ssh_prnamt_type"
+                " FROM agg_qoq_deltas"
+            )
+        ]
+        adds_rows, ambiguous = _issuer_adds_rows(
+            qoq_rows, grain_issuers, filers, ingested_at
+        )
+        dest.execute("DELETE FROM agg_issuer_adds")
+        dest.execute("DELETE FROM agg_issuer_adds_exclusions")
+        dest.executemany(
+            "INSERT INTO agg_issuer_adds (period_of_report, mode, issuer_key,"
+            " issuer_key_source, issuer_name, manager_count, new_position_count,"
+            " delta_value_usd, delta_value_is_partial, top_adder_cik,"
+            " top_adder_name, ingested_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            adds_rows,
+        )
+        # Every emitted (period, mode) carries an exclusion row, INCLUDING a
+        # zero one: an absent row and a zero are different claims, and the
+        # section note's truth table branches on the count being known.
+        # F21: the cross-product over every period the CORPUS carries, not only
+        # the periods that happened to have adds or ambiguity. A quiet quarter
+        # is still offered by the selector, and a MISSING count is not zero —
+        # it is unknown, and an unknown omission cannot be honestly stated. So
+        # the producer writes an explicit 0 for quiet quarters, which is a
+        # measurement, and the loader can then treat any absence as a defect.
+        corpus_periods = {
+            p
+            for (p,) in dest.execute(
+                "SELECT DISTINCT period_of_report FROM agg_filer_concentration"
+            )
+        }
+        corpus_periods |= {r[0] for r in adds_rows} | {p for p, _ in ambiguous}
+        pairs = {(p, m) for p in corpus_periods for m in ADDS_MODES}
+        dest.executemany(
+            "INSERT INTO agg_issuer_adds_exclusions (period_of_report, mode,"
+            " ambiguous_identity_exclusion_count) VALUES (?, ?, ?)",
+            sorted((p, m, ambiguous.get((p, m), 0)) for p, m in pairs),
+        )
+        dest.commit()
+    finally:
+        dest.close()
+
+
+def _assert_join_mechanism_intact(conn: sqlite3.Connection) -> None:
+    """F9: prove the JOIN still works, independently of how much it matches.
+
+    The hole this closes: a CIK-format or join-target regression yields ZERO
+    matches, which looks exactly like a small extract and so used to pass. But
+    "few matches" and "the join is broken" are different failures with the same
+    symptom, and only one of them is about coverage.
+
+    So the MECHANISM is checked directly. `agg_filer_registry.cik` is
+    zero-padded ten-character text and the seed stores integers; the join
+    depends on both sides normalizing to the same integer. If the relation is
+    populated but its CIKs no longer parse as integers, the join cannot match
+    anything regardless of curation, and that is a defect at any scale.
+    """
+    rows = [r[0] for r in conn.execute("SELECT cik FROM agg_filer_registry LIMIT 500")]
+    if not rows:
+        # An EMPTY filer relation is a valid published state, not a defect: a
+        # corpus whose filings all conflict is WITHHELD, and the module then
+        # publishes its own absence. There is no join to verify, so there is
+        # nothing here to fail on.
+        return
+    unparseable = []
+    for raw in rows:
+        try:
+            if int(str(raw)) <= 0:
+                unparseable.append(raw)
+        except (TypeError, ValueError):
+            unparseable.append(raw)
+    if unparseable:
+        raise ManagerRegistryError(
+            f"manager registry: {len(unparseable)} of {len(rows)} sampled"
+            f" agg_filer_registry CIKs do not normalize to a positive integer"
+            f" (e.g. {unparseable[:3]!r}). The registry join compares integer CIKs on"
+            " both sides, so this breaks matching wholesale — a join-target or"
+            " CIK-format regression, not ordinary curation decay."
+        )
+
+
+def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> None:
+    """R13/R23/R24: fail the build when an `active` seed row stops joining.
+
+    `publication` is an EXPLICIT build input, not a guess about the data (F9).
+
+    A publication build additionally proves the join MECHANISM is intact before
+    any coverage reasoning, so a regression that matches nothing can no longer
+    hide behind looking like a small module.
+
+    COVERAGE reasoning still needs a population to reason about. The seed types
+    the largest 13F filers in existence, so an aggregate holding a minority of
+    them is not the population the seed describes — a three-filer fixture, a
+    single-quarter extract — and asserting "Vanguard is missing" against it
+    reports that module's scope as a curation defect. Measured: the published
+    aggregate carries 9,451 filers and matches 113/113; a local single-quarter
+    extract carries 998 and matches 2.
+
+    This does not weaken the decay rule: at 112 of 113 the gate still runs and
+    still names the one that vanished, because 112 is a majority.
+    """
+    registry = load_manager_registry()
+    conn = sqlite3.connect(str(dest))
+    try:
+        if publication:
+            _assert_join_mechanism_intact(conn)
+        (filer_count,) = conn.execute("SELECT COUNT(*) FROM agg_filer_registry").fetchone()
+        report = join_manager_registry(conn, registry)
+    finally:
+        conn.close()
+
+    # F9: abstention is decided by the seed's DECLARED population floor, never
+    # by how much happened to match. That is the whole fix: coverage cannot be
+    # both the thing being tested and the thing deciding whether to test it, or
+    # a wrong join target — which produces zero matches — excuses itself.
+    #
+    # An empty relation is a withheld corpus publishing its own absence, and
+    # `_assert_join_mechanism_intact` has already allowed it explicitly.
+    if not filer_count:
+        return  # withheld corpus: no filers to type and no join to enforce
+
+    # F26: ENFORCEMENT and MATERIALIZATION are separate decisions.
+    #
+    # Coverage enforcement asks "is every active row still there?", which only
+    # means something against the population. Materialization asks "which rows
+    # DID join?", which is answerable at any scale — and skipping it stripped
+    # every curated name and type from partial extracts, including the local
+    # data-wired build, defeating R11 on exactly the builds that can be tested.
+    if filer_count >= registry.population_floor:
+        # At or above the declared floor this IS the population: every active
+        # row must join, and zero matches is a catastrophic join defect.
+        enforce_manager_registry_join(report)
+    else:
+        print(
+            f"manager registry: this aggregate holds {filer_count} filers, below the seed's"
+            f" declared population floor of {registry.population_floor}, so it is a fixture or a"
+            " partial extract. The COVERAGE gate abstains; matched rows are still typed."
+        )
+
+    # Always materialize the rows that matched AND are active. `typed_ciks`
+    # already excludes retired and unmatched rows (F8).
+    _write_manager_typing(dest, registry, report)
+
+
+def _write_manager_typing(
+    dest: Path | str, registry, report
+) -> None:
+    """Materialize the typing for MATCHED rows only.
+
+    Writing an unmatched row would put a display name in the aggregate for a
+    filer the aggregate does not contain — a label with nothing to label.
+    """
+    conn = sqlite3.connect(str(dest))
+    try:
+        conn.execute("DELETE FROM agg_manager_registry")
+        conn.executemany(
+            "INSERT INTO agg_manager_registry (cik, display_name, person,"
+            " manager_type, notable, verified_date) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    r.cik_padded,
+                    r.display_name,
+                    r.person,
+                    r.manager_type,
+                    1 if r.notable else 0,
+                    r.verified_date,
+                )
+                for r in registry.rows
+                if r.cik in report.typed_ciks
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()

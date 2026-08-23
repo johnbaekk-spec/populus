@@ -452,7 +452,8 @@ test("row HTML: injection attempts in every string field are escaped", () => {
   // Structural invariant: stripping the tags this renderer is allowed to emit
   // must leave no "<" behind. A regex over attribute values cannot fail by
   // construction (`[^"]*` stops at the first quote), so it proves nothing.
-  const stripped = html.replace(/<\/?(?:div|span|a|button|sup)\b[^>]*>/g, "");
+  // `tr` and `td` join the set with R5/R18: the feed row is a real table row.
+  const stripped = html.replace(/<\/?(?:tr|td|div|span|a|button|sup)\b[^>]*>/g, "");
   assert.ok(!stripped.includes("<"), "no tag outside the allowed set may be emitted");
   assert.ok(!/<[a-zA-Z]/.test(stripped), "no element start may survive stripping");
 });

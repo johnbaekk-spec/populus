@@ -1,45 +1,53 @@
 ---
+/* R25 — retired sub-tab route, served as a STATIC HTML redirect artifact.
+
+   NOT an `_redirects` entry. The published-path verification contract fetches
+   every inventoried path with redirects disabled and compares the bytes it
+   gets against the bytes it expects; an injected redirect response is a
+   FAILURE there, so an HTTP redirect would break publication verification for
+   a path that must keep returning real content.
+
+   So this page returns 200 with a real document that does three things, in
+   descending order of reliability: a canonical link naming the merged page for
+   crawlers, a meta refresh for browsers, and a VISIBLE link that works with
+   scripting and refresh both disabled. The visible link is the one that is
+   never allowed to be missing — a redirect nobody can follow by hand is a dead
+   end, not a redirect. */
 import Base from "../../../layouts/Base.astro";
-import { getBuildData } from "../../../lib/data";
-import { leadersRollup } from "../../../lib/derive";
-import { congressRankingBody, congressTabs, type BuildStamps } from "../../../lib/ui";
-import type { RenderCtx } from "../../../lib/format";
 
-const build = getBuildData();
-const stamps: BuildStamps = {
-  buildId: build.buildId,
-  generatedAt: build.generatedAt,
-  generatedAtDate: build.generatedAtDate,
-};
-const ctx: RenderCtx = {
-  watched: new Set(),
-  cutMembers: build.cutMembers,
-  cutTickers: build.cutTickers,
-};
-const rollup = leadersRollup(build.txns, build.generatedAtDate, 12);
-const body = congressRankingBody("leaders", rollup, stamps, ctx);
-
+const target = "/congress/#members-section";
 const description =
-  "Members of Congress ranked by net disclosed flow — interval arithmetic over statutory " +
-  "ranges, with undisclosed amounts bucketed rather than zeroed. Public Filings.";
+  "The Congress leaders view is now a section of the single /congress/ page — this page links to it.";
 ---
 
-<Base title="Congress leaders — net disclosed flow — Public Filings" description={description} active="congress">
+<Base
+  title="Congress leaders — moved to /congress/ — Public Filings"
+  description={description}
+  active="congress"
+  head={`<link rel="canonical" href="/congress/" /><meta http-equiv="refresh" content="0; url=${target}" />`}
+>
   <main class="shell page">
     <div class="page-head">
       <div class="page-head-copy">
         <div class="kicker">/congress/leaders</div>
-        <h1 class="page-title">Leaders — net disclosed flow</h1>
+        <h1 class="page-title">This view moved</h1>
         <p class="page-lede">
-          Whose disclosures are largest right now, with receipts. Every number
-          here is derived from statutory ranges, so every ranking value is an
-          interval — the order is a stable display key, never a claim that one
-          member outranks another when their intervals overlap.
-          <a href="/methodology/">How this data is made ↗</a>
+          Member net disclosed flow is now a section of the single Congress
+          page, so it can be read beside the ticker momentum and the disclosure
+          feed without navigating between them.
         </p>
+        <p class="page-lede">
+          <a class="stub-link" href={target}>Go to member net disclosed flow →</a>
+        </p>
+        <div class="caveat-line">
+          The target windows by <strong>trade date</strong>, where this page used a
+          trade date with a filing-date fallback, so rows disclosing no trade date
+          are excluded there and their count is stated. It also renders a compact
+          slice by default and expands on request. The interval arithmetic and the
+          separate wholly-undisclosed bucket are unchanged, and the full published
+          data remains at <a href="/congress/data/feed.v1.json">feed.v1.json</a>.
+        </div>
       </div>
     </div>
-    <Fragment set:html={congressTabs("leaders")} />
-    <Fragment set:html={body} />
   </main>
 </Base>
