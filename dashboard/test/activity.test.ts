@@ -691,7 +691,12 @@ test("the feed states how much of the ordered set it shows, and where the rest i
     { present: true, reason: null, filings: FILINGS, pagination: p },
     { rowLimit: 50 },
   );
-  assert.match(html, /Showing the 50 largest of 300 ordered change records/);
+  // F2: BOTH bounds are stated — the compact render bound the reader is
+  // currently inside, and the shard budget the build published under.
+  assert.match(html, /Showing the first 10 of the 50 rows rendered here/);
+  assert.match(html, /the largest of 300 ordered change records/);
+  // and the no-JavaScript route out of the compact slice is a real link
+  assert.match(html, /<a href="\/institutional\/data\/activity\/0\.v1\.json">/);
   assert.match(html, /institutional\/data\/activity\/&lt;page&gt;\.v1\.json/);
   assert.match(html, /2,000 records or 2,097,152 bytes of serialized JSON/);
   assert.match(html, /Truncated by Public Filings\./, "the terminus names the author of the cut");

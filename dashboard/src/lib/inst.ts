@@ -88,6 +88,20 @@ export type InstData =
       deltasByCik: Map<string, QoqDeltaRow[]>;
       concentrationByCik: Map<string, ConcentrationRow[]>;
       holdersByIssuer: Map<string, TopHolderRow[]>;
+      /** R21: leaderboard rows keyed `${period}|${mode}` */
+      addsByPeriodMode: Map<string, AddsRow[]>;
+      /** R21: ambiguous-identity exclusion count keyed `${period}|${mode}` */
+      addsExclusions: Map<string, number>;
+      /** F15: every reporting period the CORPUS carries, ascending.
+          Derived from `agg_filer_concentration`, which has a row for every
+          filer-period on record — not from `agg_issuer_adds`, which only has
+          rows for periods that happened to contain a new or added position.
+          A genuinely closed quarter in which nothing was added is still a
+          selectable quarter; inferring the list from activity made period
+          CARDINALITY depend on activity, which R20 does not. */
+      addsPeriods: string[];
+      /** R11: curated typing for MATCHED filers only, keyed by padded CIK */
+      typingByCik: Map<string, ManagerTyping>;
     };
 
 function parseFlags(raw: unknown): string[] {
@@ -98,6 +112,13 @@ function parseFlags(raw: unknown): string[] {
     return [];
   }
 }
+
+import {
+  compareAddsRows,
+  type AddsMode,
+  type AddsRow,
+} from "./inst-adds.ts";
+import type { ManagerTyping } from "./manager-directory.ts";
 
 function intOrNull(v: unknown): number | null {
   return v == null ? null : Number(v);
@@ -253,10 +274,187 @@ export function loadInstitutional(
       deltasByCik,
       concentrationByCik,
       holdersByIssuer,
+      ...loadAdds(db),
+      typingByCik: loadTyping(db),
     };
   } finally {
     db.close();
   }
+}
+
+/** R21: read the leaderboard tables.
+
+    They are OPTIONAL at read time: an aggregate produced before this run has
+    no `agg_issuer_adds`, and a missing table must degrade to an honestly empty
+    leaderboard rather than take the whole institutional module down with it.
+    An empty map is the same honest-absence state the section already renders
+    for a module that is present but holds nothing for a period. */
+function corpusPeriods(db: DatabaseSync): string[] {
+  try {
+    return (
+      db.prepare(
+        "SELECT DISTINCT period_of_report FROM agg_filer_concentration ORDER BY period_of_report",
+      ).all() as Record<string, unknown>[]
+    ).map((r) => String(r.period_of_report));
+  } catch {
+    return [];
+  }
+}
+
+function loadAdds(db: DatabaseSync): {
+  addsByPeriodMode: Map<string, AddsRow[]>;
+  addsExclusions: Map<string, number>;
+  addsPeriods: string[];
+} {
+  const addsByPeriodMode = new Map<string, AddsRow[]>();
+  const addsExclusions = new Map<string, number>();
+  const periods = new Set<string>();
+
+  /* F21: a LEGACY SCHEMA and a PARTIAL one are different states.
+
+     Both queries used to sit under one `catch`, so an aggregate that HAD
+     `agg_issuer_adds` but whose exclusions relation was missing or unreadable
+     loaded its leaderboard rows and silently defaulted every exclusion count to
+     zero — publishing a bounded, filtered table while suppressing the omission
+     statement R14 requires. That is the precise failure the note exists to
+     prevent, arriving through the error path.
+
+     So legacy detection happens FIRST, by asking the schema. If the adds
+     relation exists, the exclusions relation is REQUIRED and a failure to read
+     it throws rather than degrading. */
+  const hasAdds = tableExists(db, "agg_issuer_adds");
+  if (!hasAdds) {
+    // A build with no leaderboard aggregate has NO selectable periods. Offering
+    // corpus periods here published paths for quarters the leaderboard cannot
+    // describe, and the endpoint then threw on their missing exclusion counts.
+    // The section renders its honest-absence branch instead, which is the true
+    // statement: this build has no leaderboard, not "this quarter had nothing".
+    return { addsByPeriodMode, addsExclusions, addsPeriods: [] };
+  }
+  if (!tableExists(db, "agg_issuer_adds_exclusions")) {
+    throw new Error(
+      "inst_agg.db has agg_issuer_adds but no agg_issuer_adds_exclusions —" +
+        " a leaderboard cannot be published without the ambiguous-identity counts" +
+        " it is required to state. Rebuild the aggregate.",
+    );
+  }
+
+  for (const r of db.prepare(
+    `SELECT period_of_report, mode, issuer_key, issuer_key_source, issuer_name,
+            manager_count, new_position_count, delta_value_usd,
+            delta_value_is_partial, top_adder_cik, top_adder_name
+       FROM agg_issuer_adds`,
+  ).all() as Record<string, unknown>[]) {
+    const key = `${String(r.period_of_report)}|${String(r.mode)}`;
+    periods.add(String(r.period_of_report));
+    const list = addsByPeriodMode.get(key) ?? [];
+    list.push({
+      issuer_key: String(r.issuer_key),
+      issuer_key_source: String(r.issuer_key_source) as AddsRow["issuer_key_source"],
+      issuer_name: r.issuer_name == null ? null : String(r.issuer_name),
+      manager_count: Number(r.manager_count),
+      new_position_count: Number(r.new_position_count),
+      delta_value_usd: intOrNull(r.delta_value_usd),
+      delta_value_is_partial: Number(r.delta_value_is_partial) === 1,
+      top_adder_cik: intOrNull(r.top_adder_cik),
+      top_adder_name: r.top_adder_name == null ? null : String(r.top_adder_name),
+    });
+    addsByPeriodMode.set(key, list);
+  }
+  for (const r of db.prepare(
+    `SELECT period_of_report, mode, ambiguous_identity_exclusion_count
+       FROM agg_issuer_adds_exclusions`,
+  ).all() as Record<string, unknown>[]) {
+    addsExclusions.set(
+      `${String(r.period_of_report)}|${String(r.mode)}`,
+      Number(r.ambiguous_identity_exclusion_count),
+    );
+    periods.add(String(r.period_of_report));
+  }
+
+  // Every (period, mode) that HAS rows must also have a count. A missing count
+  // is not zero — it is unknown, and an unknown omission cannot be stated.
+  for (const key of addsByPeriodMode.keys()) {
+    if (!addsExclusions.has(key)) {
+      throw new Error(
+        `inst_agg.db has leaderboard rows for ${key} but no exclusion count for it —` +
+          " the section cannot state an omission it was never given.",
+      );
+    }
+  }
+
+  for (const p of corpusPeriods(db)) periods.add(p);
+  return { addsByPeriodMode, addsExclusions, addsPeriods: [...periods].sort() };
+}
+
+/** Does a relation exist? Asking the schema is how legacy detection stops being
+    an exception handler that swallows real failures too. */
+function tableExists(db: DatabaseSync, name: string): boolean {
+  const rows = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+  ).all(name) as unknown[];
+  return rows.length > 0;
+}
+
+/** R11: the curated manager typing.
+
+    Optional at read time for the same reason the leaderboard tables are: an
+    aggregate built before this run has no `agg_manager_registry`, and the
+    directory must degrade to filed names rather than fail. An empty map means
+    "nothing is typed", which is the honest rendering of an untyped build. */
+function loadTyping(db: DatabaseSync): Map<string, ManagerTyping> {
+  const out = new Map<string, ManagerTyping>();
+  try {
+    for (const r of db.prepare(
+      `SELECT cik, display_name, person, manager_type, notable FROM agg_manager_registry`,
+    ).all() as Record<string, unknown>[]) {
+      out.set(String(r.cik), {
+        cik: String(r.cik),
+        display_name: String(r.display_name),
+        person: r.person == null ? null : String(r.person),
+        manager_type: String(r.manager_type) as ManagerTyping["manager_type"],
+        notable: Number(r.notable) === 1,
+      });
+    }
+  } catch {
+    // Pre-R11 aggregate: nothing is typed. The directory renders filed names.
+  }
+  return out;
+}
+
+/** The curated typing for a filer, or null when it is not in the registry. */
+export function typingFor(inst: InstData, cik: string): ManagerTyping | null {
+  if (!inst.present) return null;
+  return inst.typingByCik.get(cik) ?? null;
+}
+
+/** The leaderboard rows for one period and mode, already in the locked total
+    order. An absent (period, mode) yields an empty list, never a throw. */
+export function addsFor(inst: InstData, period: string, mode: AddsMode): AddsRow[] {
+  if (!inst.present) return [];
+  return [...(inst.addsByPeriodMode.get(`${period}|${mode}`) ?? [])].sort(compareAddsRows);
+}
+
+/** The ambiguous-identity exclusion count for one period and mode.
+
+    A MISSING row and a ZERO are the same rendered outcome (no exclusion
+    clause), but they are different facts, so the accessor reports 0 for a
+    missing row rather than pretending the count is unknown — the producer
+    writes a row for every (period, mode) it emitted. */
+export function addsExclusionCount(inst: InstData, period: string, mode: AddsMode): number {
+  if (!inst.present) return 0;
+  const n = inst.addsExclusions.get(`${period}|${mode}`);
+  if (n === undefined) {
+    // F21: a missing count is UNKNOWN, not zero. Defaulting it published a
+    // verified "nothing was excluded" for a period nobody had counted — an
+    // honesty claim with no measurement behind it. The producer writes an
+    // explicit 0 for quiet quarters, so an absence here is a real defect.
+    throw new Error(
+      `inst_agg.db has no ambiguous-identity exclusion count for ${period}/${mode}.` +
+        " A missing count cannot be rendered as zero. Rebuild the aggregate.",
+    );
+  }
+  return n;
 }
 
 /* ---------- period-correct accessors (Locked #6) ---------- */

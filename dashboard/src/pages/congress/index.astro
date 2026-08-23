@@ -5,17 +5,30 @@ import {
   pageSlice,
   pageCountFor,
   feedCountText,
+  feedHeadHtml,
   feedItemHtml,
   footnoteBlock,
-  statTiles,
   fmtInt,
   type RenderCtx,
 } from "../../lib/format";
-
-import { congressTabs } from "../../lib/ui";
+import { congressTickersRollup, leadersRollup } from "../../lib/derive";
+import { congressRankingSection, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui";
 
 const build = getBuildData();
-const congressTabsHtml = congressTabs("feed");
+
+/* R2/R3: the momentum section's SSR view is AUTHORITATIVE, not a placeholder.
+   It is rendered here at the locked defaults — a trailing 12 months on the
+   traded basis — through the same functions the client calls, so the two
+   cannot disagree. The client recomputes only when the reader changes the
+   range or the basis. */
+const MOMENTUM_RANGE = "12m" as const;
+const MOMENTUM_BASIS = "traded" as const;
+
+const stamps: BuildStamps = {
+  buildId: build.buildId,
+  generatedAt: build.generatedAt,
+  generatedAtDate: build.generatedAtDate,
+};
 
 // SSR page 1 through the same renderer the client island uses.
 const ssrCtx: RenderCtx = {
@@ -25,7 +38,40 @@ const ssrCtx: RenderCtx = {
 };
 const pageOne = pageSlice(build.merged, 0);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
-const tilesHtml = statTiles(build.tiles, { label: "Data coverage" });
+const sectionCtx: RenderCtx = {
+  watched: new Set(),
+  cutMembers: build.cutMembers,
+  cutTickers: build.cutTickers,
+};
+
+const momentumHtml = congressRankingSection(
+  "tickers",
+  congressTickersRollup(build.txns, build.generatedAtDate, {
+    range: MOMENTUM_RANGE,
+    basis: MOMENTUM_BASIS,
+  }),
+  stamps,
+  sectionCtx,
+  {
+    rootId: CONGRESS_ROOTS.momentum,
+    heading: "Ticker momentum — net disclosed flow",
+    sectionId: "momentum-section",
+    controls: true,
+  },
+);
+
+const membersHtml = congressRankingSection(
+  "leaders",
+  leadersRollup(build.txns, build.generatedAtDate, { range: "12m", basis: "traded" }),
+  stamps,
+  sectionCtx,
+  {
+    rootId: CONGRESS_ROOTS.membersRanked,
+    undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed,
+    heading: "Member net disclosed flow",
+    sectionId: "members-section",
+  },
+);
 const footnoteHtml = footnoteBlock(
   [
     {
@@ -61,7 +107,14 @@ const description =
 ---
 
 <Base title="Congressional trading — Public Filings" description={description} active="congress">
-  <main class="shell page" id="congress-feed" data-txn-count={build.txnCount}>
+  <main
+    class="shell page"
+    id="congress-page"
+    data-txn-count={build.txnCount}
+    data-generated-at-date={build.generatedAtDate}
+    data-range={MOMENTUM_RANGE}
+    data-basis={MOMENTUM_BASIS}
+  >
     <!-- page header -->
     <div class="page-head">
       <div class="page-head-copy">
@@ -73,15 +126,15 @@ const description =
           — what you read here is what was filed; nothing more current exists in the
           public record. <a href="/methodology/">How this data is made ↗</a>
         </p>
-        <div class="mobile-meta">
+        <div class="caveat-line" id="congress-caveat">
           {fmtInt(build.txnCount)} rows filed since {build.filedFrom} · as of {build.generatedAt} ·
-          statutory ranges, filed up to 45d after the trade
+          amounts are statutory ranges, not exact values, and are filed up to 45 days after the
+          trade · <a href="/methodology/#coverage">parse coverage, in full ↗</a>
         </div>
       </div>
-      <Fragment set:html={tilesHtml} />
     </div>
 
-    <Fragment set:html={congressTabsHtml} />
+    <Fragment set:html={momentumHtml} />
 
     <!-- filter bar. The controls live in their own wrapper so they can become a
          horizontal scroll strip on mobile WITHOUT taking the count line — which
@@ -170,14 +223,6 @@ const description =
         <span aria-hidden="true">–</span>
         <input class="filter-select" type="date" id="filter-date-to" aria-label="to date" />
       </div>
-      <div class="filter-group">
-        <label class="filter-label" for="filter-sort">Sort</label>
-        <select class="filter-select" id="filter-sort">
-          <option value="filed" selected>newest filed</option>
-          <option value="amount-desc">amount — largest lower bound</option>
-          <option value="amount-asc">amount — smallest lower bound</option>
-        </select>
-      </div>
       </div>
       <div class="filter-count">
         <span id="filter-count-line">{rangeText}</span>{" · filtered on this device"}<span
@@ -187,19 +232,13 @@ const description =
       </div>
     </div>
 
-    <!-- feed table -->
-    <div class="feed" id="feed">
-      <div class="feed-head feed-grid-cols" aria-hidden="true">
-        <div class="col"></div>
-        <div class="col">Filed ▾</div>
-        <div class="col">Member</div>
-        <div class="col">Ticker</div>
-        <div class="col">Side · Owner</div>
-        <div class="col">Traded · Lag</div>
-        <div class="col num">Amount</div>
-        <div class="col range">Range · Flags</div>
-        <div class="col src">Src</div>
-      </div>
+    <!-- Section two: the disclosure feed. R4 puts Ticker before Member and
+         gives it the primary emphasis; the default order remains newest filed
+         (owner decision) — the visual anchor changed, the ordering did not. -->
+    <section class="panel panel-wide" id="feed-section" aria-label="Disclosure feed">
+      <div class="panel-head"><h2 class="section-h">Disclosure feed</h2>
+        <span class="panel-note">newest filed first · {fmtInt(build.txnCount)} rows</span></div>
+    <div class="feed" id="congress-feed" data-txn-count={build.txnCount}>
 
       <div class="feed-loading" id="feed-loading" hidden aria-hidden="true">
         <div class="bar" style="width:88%"></div>
@@ -214,9 +253,27 @@ const description =
         <div class="suggestions" id="feed-empty-suggestions"></div>
       </div>
 
-      <div id="feed-body" role="list" aria-label="Disclosed transactions" set:html={rowsHtml} />
+      <table class="feed-table">
+        <caption class="visually-hidden">
+          Disclosed congressional transactions, newest filed first. Sort by clicking a column
+          header; amounts sort on their disclosed lower bound and wholly-undisclosed rows are
+          listed after every ranked row rather than treated as zero.
+        </caption>
+        <!-- R5/F7: ONE column contract, rendered here and on /watchlist/, which
+             shows the same nine cells through the same `feedItemHtml`. The
+             watchlist had no <thead> at all; a second hand-written copy here
+             would be the drift that caused it. -->
+        <Fragment set:html={feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc" })} />
+
+
+        <tbody id="feed-tbody" set:html={rowsHtml} />
+      </table>
 
       <Fragment set:html={footnoteHtml} />
+      <!-- R7/F2: the feed's compact bound is its PAGE, and the pager below is
+           the disclosure that lifts it. A second "show all" control over a
+           50-row page of ~46,000 rows would be a control that cannot honour
+           its own label; the pager states the bound and moves through it. -->
       <div class="feed-foot">
         <div class="view-note">
           v_default_transactions — active filings minus superseded amendment
@@ -236,11 +293,19 @@ const description =
            results are announced on every viewport. -->
       <p class="visually-hidden" id="feed-status" role="status" aria-live="polite"></p>
     </div>
+    </section>
+
+    <!-- Section three: member net-flow, two render roots (R18). -->
+    <Fragment set:html={membersHtml} />
   </main>
 
   <script>
+    /* R17: ONE fetch, ONE decode. The feed island owns both and hands the
+       parsed rows to the ranking sections — they never fetch. */
     import { initFeed } from "../../scripts/feed-client";
-    initFeed();
+    import { initCongressSections } from "../../scripts/congress-sections";
+    const sections = initCongressSections();
+    initFeed({ onRows: sections.receiveRows });
   </script>
 </Base>
 

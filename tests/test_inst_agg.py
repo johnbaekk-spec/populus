@@ -143,6 +143,12 @@ def _complete_aggregate_rows(path):
             ),
             "agg_issuer_top_holders": "issuer_key,period_of_report,rank",
             "agg_filer_concentration": "cik,period_of_report",
+            # R21: the leaderboard is part of the aggregate, so the TWO build
+            # paths must agree on it exactly as they do on every other relation.
+            # Without this key the bulk path could omit the table entirely and
+            # this comparison would still pass.
+            "agg_issuer_adds": "period_of_report,mode,issuer_key",
+            "agg_issuer_adds_exclusions": "period_of_report,mode",
             "agg_build_meta": "key",
         }
         return {

@@ -5,16 +5,23 @@
 // cumulative registry counts are labeled as all-period values — Locked #6).
 import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
-import { s1ModuleAbsent, s7Banner, breadcrumb } from "../../lib/ui";
+import { s1ModuleAbsent, s7Banner, breadcrumb, addsSectionHtml } from "../../lib/ui";
 import { filingWindow } from "../../lib/derive";
-import { concentrationFor } from "../../lib/inst";
-import { footnoteBlock, fmtInt, esc } from "../../lib/format";
-import { filerHref } from "../../lib/holdings";
+import { concentrationFor, deltasFor, typingFor, addsFor, addsExclusionCount } from "../../lib/inst";
+import { boundAdds, closedPeriods, type AddsMode } from "../../lib/inst-adds";
+import { biggestChange, MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/manager-directory";
+import {
+  footnoteBlock,
+  fmtInt,
+  esc,
+  compactDisclosure,
+  terminusRow,
+  COMPACT_ROWS,
+} from "../../lib/format";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
 import {
   buildInstIndexRow,
-  sortInstIndexRows,
-  instIndexRowHtml,
+  instIndexBodyHtml,
   INST_INDEX_HEADS,
   type InstIndexRow,
 } from "../../lib/inst-index";
@@ -36,22 +43,84 @@ if (!inst.present) {
   // registry's cross-period accumulators), ranked by reported 13(f) long
   // value with the no-sentinel rule for missing values.
   const indexRows: InstIndexRow[] = inst.filers.map((f) =>
-    buildInstIndexRow(f, concentrationFor(inst, f.cik, f.latest_period), filerTier(build, f.cik)),
+    buildInstIndexRow(
+      f,
+      concentrationFor(inst, f.cik, f.latest_period),
+      filerTier(build, f.cik),
+      // R11: curated typing where the registry has it, null otherwise — the
+      // directory types a curated SUBSET and says so rather than guessing.
+      typingFor(inst, f.cik),
+      // R11/R22: the manager's largest change in its own latest period.
+      biggestChange(deltasFor(inst, f.cik, f.latest_period), f.latest_period),
+    ),
   );
-  const { ranked, unranked } = sortInstIndexRows(indexRows, "value", "desc");
-  const hrefOf = (r: InstIndexRow): string => filerHref(r.cik, r.tier);
-  const rows =
-    ranked.map((r) => instIndexRowHtml(r, hrefOf)).join("\n") +
-    (unranked.length > 0
-      ? `<tr class="unranked-sep"><td colspan="6">${fmtInt(unranked.length)} filers have no ` +
-        `period-correct value on record — listed below in CIK order, never treated as zero</td></tr>` +
-        unranked.map((r) => instIndexRowHtml(r, hrefOf)).join("\n")
-      : "");
+  /* R7/F2/F3: compact by DEFAULT, server-side, through the SAME renderer the
+     client island uses.
+
+     This page used to render the body itself: it sliced the RANKED rows to the
+     compact budget and then appended EVERY unranked row after them, outside
+     that budget. A directory with 400 unrankable managers therefore rendered
+     410 rows while its own disclosure said 10 were shown — the bound was
+     announced and then not applied. `instIndexBodyHtml` applies ONE budget
+     across both buckets and still states the unranked bucket's size even when
+     none of its rows fit, and it is now the only renderer of this table. */
+  const directory = instIndexBodyHtml(indexRows, "", "value", "desc", undefined, COMPACT_ROWS);
+  const rows = directory.html;
+  // R5's rule applies here too: a column with no well-defined order STATES why,
+  // in visible text, rather than sitting mute.
   const heads = INST_INDEX_HEADS.map((h) =>
     h.key == null
-      ? `<th scope="col">${esc(h.label)}</th>`
+      ? `<th scope="col">${esc(h.label)}${
+          h.why ? `<span class="col-why">${esc(h.why)}</span>` : ""
+        }</th>`
       : `<th scope="col" data-inst-sort="${h.key}" aria-sort="${h.key === "value" ? "descending" : "none"}"><button class="th-sort">${esc(h.label)}</button></th>`,
   ).join("");
+
+  /* R9/R20: the leaderboard leads the page. Only CLOSED quarters are offered,
+     and the newest is the default view — an open quarter counts only the
+     managers who happened to file early, so it is not offered at all. */
+  const addsPeriods = closedPeriods(inst.addsPeriods, build.generatedAtDate);
+  const addsPeriod = addsPeriods[0] ?? null;
+  const addsMode: AddsMode = "all";
+  const addsHtml =
+    addsPeriod === null
+      ? `<section class="panel panel-wide" id="inst-adds-section" aria-label="Recently added issuers">` +
+        `<div class="panel-head"><h2 class="section-h">Recently added issuers</h2></div>` +
+        `<p class="section-note">No reporting quarter in this build has passed its 45-day filing ` +
+        `deadline yet, so there is no closed quarter to rank. That is a statement about the ` +
+        `calendar, not an absence of data.</p></section>`
+      : addsSectionHtml(
+          {
+            period: addsPeriod,
+            generated_at: build.generatedAtDate,
+            ...boundAdds(addsFor(inst, addsPeriod, addsMode)),
+            ambiguous_identity_exclusion_count: addsExclusionCount(inst, addsPeriod, addsMode),
+          },
+          { period: addsPeriod, mode: addsMode, periods: addsPeriods, buildId: build.buildId },
+        );
+
+  /* R11: the type chips. `Notable` is EDITORIAL and orthogonal — it renders
+     beside the type chips but is not one of them, so selecting a type never
+     hides a notable manager of that type. */
+  const typedCount = indexRows.filter((r) => r.typing !== null).length;
+  const chipsHtml =
+    `<div class="mgr-chips" id="mgr-chips" role="group" aria-label="Filter managers">` +
+    `<button type="button" class="mgr-chip mgr-chip-notable" data-mgr-notable="1" aria-pressed="false">notable</button>` +
+    (Object.keys(MANAGER_TYPE_LABELS) as ManagerType[])
+      .map(
+        (t) =>
+          `<button type="button" class="mgr-chip" data-mgr-type="${esc(t)}" aria-pressed="false">${esc(
+            MANAGER_TYPE_LABELS[t],
+          )}</button>`,
+      )
+      .join("") +
+    `</div>` +
+    `<p class="caveat-line">Manager type and display name come from a curated registry covering ` +
+    `<strong>${fmtInt(typedCount)} of ${fmtInt(indexRows.length)}</strong> filers in this build. ` +
+    `The rest render the name exactly as filed and carry no type — that is a gap in the curation, ` +
+    `not a statement that the manager is uncategorised. Automatic classification across the full ` +
+    `filer population is future work.` +
+    `<noscript> Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
   bodyHtml =
     breadcrumb([{ text: "/institutional" }]) +
     `<header class="entity-head"><div class="entity-head-copy">` +
@@ -61,8 +130,13 @@ if (!inst.present) {
     )} filers; latest period on record ${esc(inst.watermarks.latest_period_of_report ?? "—")}.</p>` +
     `</div></header>` +
     (window?.open ? s7Banner(window) : "") +
-    `<section class="panel panel-wide" aria-label="Filers ranked by reported value">` +
-    `<div class="panel-head"><h2 class="section-h">Filers — ranked by reported 13(f) long value</h2>` +
+    // R9 -> R10 -> R11: leaderboard, then the issuer-anchored feed, then the
+    // typed directory.
+    addsHtml +
+    activitySectionHtml(feed, { tierOf: (cik) => filerTier(build, cik) }) +
+    chipsHtml +
+    `<section class="panel panel-wide" id="inst-managers-section" aria-label="Manager directory">` +
+    `<div class="panel-head"><h2 class="section-h">Manager directory</h2>` +
     `<span class="panel-note"><input class="filter-select filter-text" type="search" id="inst-index-q" ` +
     `placeholder="filer name or CIK" aria-label="search filers by name or CIK — on this device" /></span></div>` +
     `<p class="section-note"><span id="inst-index-count">${fmtInt(indexRows.length)} filers · sorted by reported 13(f) long value, largest first</span> · ` +
@@ -71,7 +145,7 @@ if (!inst.present) {
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">13F filers ranked by reported 13(f) long value for each filer's latest period</caption>` +
     `<thead><tr>${heads}</tr></thead>` +
-    `<tbody id="inst-index-body">${rows}</tbody></table></div>` +
+    `<tbody id="inst-managers-tbody">${rows}</tbody></table></div>` +
     footnoteBlock(
       [
         {
@@ -88,10 +162,26 @@ if (!inst.present) {
       ],
       { id: "inst-index-footnotes" },
     ) +
+    /* R19/F6: the named bound beside the compact table. Rendered in both
+       states so the client can reveal the sentence and the button together
+       when a chip change pushes the row count back over the limit (F16). */
+    terminusRow({
+      author: "populus",
+      hidden: directory.total <= directory.shown,
+      html:
+        `${fmtInt(Math.max(0, directory.total - directory.shown))} further managers are not ` +
+        `rendered above — a Public Filings render bound, not a data bound. Every filer in this ` +
+        `build has its own page, reachable from this table once expanded.`,
+    }) +
+    compactDisclosure({
+      rootId: "inst-managers-tbody",
+      total: directory.total,
+      shown: directory.shown,
+      noun: "managers",
+    }) +
     `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
     `<script type="application/json" id="inst-index-data">${JSON.stringify(indexRows).replaceAll("</", "<\\/")}</script>` +
-    `</section>` +
-    activitySectionHtml(feed, { tierOf: (cik) => filerTier(build, cik) });
+    `</section>`;
 }
 const description = build.inst.present
   ? "Institutional 13F module: filers, holders, quarter-over-quarter moves from the published Public Filings aggregate."
@@ -109,7 +199,13 @@ const description = build.inst.present
   </main>
 
   <script>
-    import { initInstIndex } from "../../scripts/inst-index-client";
+    import {
+      initInstIndex,
+      initAddsControls,
+      initDomDisclosures,
+    } from "../../scripts/inst-index-client";
     initInstIndex();
+    initAddsControls();
+    initDomDisclosures();
   </script>
 </Base>

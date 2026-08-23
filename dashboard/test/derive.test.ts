@@ -17,7 +17,8 @@ import {
   quarterlyFlow,
   medianLag,
   lateCount,
-  inTrailingMonths,
+  legacyTrailingMonthsBounds,
+  windowMembership,
   topTickers,
   membersDisclosing,
   servingSince,
@@ -180,16 +181,22 @@ test("quarterlyFlow: window ends at the build's quarter, oldest first", () => {
 
 /* ---------- medians, windows, rollups ---------- */
 
-test("medianLag / lateCount / inTrailingMonths", () => {
+test("medianLag / lateCount / legacy trailing-months membership", () => {
   assert.equal(medianLag([]), null);
   assert.equal(medianLag([{ lag: 5 }, { lag: null }, { lag: 9 }]), 7);
   assert.equal(medianLag([{ lag: 5 }, { lag: 9 }, { lag: 30 }]), 9);
   assert.equal(lateCount([{ late: 1 }, { late: 0 }, { late: null }, { late: 1 }]), 2);
-  assert.ok(inTrailingMonths({ traded: "2026-01-15", filed: "2026-02-01" }, "2026-07-24", 12));
-  assert.ok(!inTrailingMonths({ traded: "2025-01-15", filed: "2025-02-01" }, "2026-07-24", 12));
+  // R16: the detail pages' legacy 12m mixed-basis window, now decided by the
+  // ONE predicate. These three assertions are the previous inTrailingMonths
+  // cases verbatim — the non-goal surfaces keep their exact membership.
+  const w = legacyTrailingMonthsBounds("2026-07-24", 12);
+  const inWin = (t: { traded: string | null; filed: string }): boolean =>
+    windowMembership({ ...t, flags: [] }, w, "traded_or_filed") === "in";
+  assert.ok(inWin({ traded: "2026-01-15", filed: "2026-02-01" }));
+  assert.ok(!inWin({ traded: "2025-01-15", filed: "2025-02-01" }));
   assert.ok(
-    inTrailingMonths({ traded: null, filed: "2026-07-01" }, "2026-07-24", 12),
-    "a dateless trade falls back to its filing date",
+    inWin({ traded: null, filed: "2026-07-01" }),
+    "a dateless trade falls back to its filing date on the legacy mixed basis",
   );
 });
 

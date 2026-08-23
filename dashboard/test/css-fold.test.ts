@@ -30,7 +30,10 @@ import {
   holdersBody,
   filerBody,
   breadcrumb,
+  congressRankingSection,
+  addsSectionHtml,
 } from "../src/lib/ui.ts";
+import { buildInstIndexRow, instIndexRowHtml } from "../src/lib/inst-index.ts";
 import { renderResults, renderPreQuery } from "../src/scripts/search-client.ts";
 import { loadWatchStore } from "../src/scripts/entity-client.ts";
 import {
@@ -42,7 +45,12 @@ import {
   type TxnRow,
   type RenderCtx,
 } from "../src/lib/format.ts";
-import { quarterlyFlow, buildSearchIndex } from "../src/lib/derive.ts";
+import {
+  quarterlyFlow,
+  buildSearchIndex,
+  congressTickersRollup,
+  leadersRollup,
+} from "../src/lib/derive.ts";
 import type { MemberEntity } from "../src/lib/derive.ts";
 import {
   activitySectionHtml,
@@ -276,6 +284,24 @@ const HONESTY_SELECTORS = [
   ".period-note",
   ".mtile-sub",
   ".view-note",
+  /* RUN ALPHA-SURFACES-V2. Each of these carries a fact about what the reader
+     is NOT seeing, so none may be suppressed at any swept width:
+     `.col-why`  — why a column cannot be sorted
+     `.compact-disclosure` — the count a collapsed table is holding back
+     `.unranked-sep` — the count of rows a column cannot rank, and why */
+  ".col-why",
+  ".compact-disclosure",
+  ".unranked-sep",
+  /* Institutional (R9/R11/R22): each states a fact about what is NOT shown or
+     what a number does not mean, so none may be suppressed at any width:
+     `.mgr-person`  — the person behind a curated display name
+     `.mgr-chip`    — the manager's curated type, and the notable flag
+     `.c-issuer`    — the issuer a change is attributed to
+     `.c-secondary` — the manager, still full-contrast, merely not the anchor */
+  ".mgr-person",
+  ".mgr-chip",
+  ".c-issuer",
+  ".c-secondary",
 ];
 
 const PROHIBITED = [/display\s*:\s*none/, /visibility\s*:\s*hidden/, /content-visibility\s*:\s*hidden/];
@@ -420,7 +446,72 @@ function renderCorpus(): string {
   );
   const store = loadWatchStore({ getItem: () => null, setItem: () => {} });
   const window = { open: true, quarterEnd: "2026-06-30", deadline: "2026-08-14" };
+  const rollup = leadersRollup([t, { ...t, bioguide: "B000002", name: "B", low: 1001, high: 15000 }], "2026-07-24", {
+    range: "12m",
+    basis: "traded",
+  });
+  const tickerRollup = congressTickersRollup([{ ...t, low: 1001, high: 15000 }], "2026-07-24", {
+    range: "7d",
+    basis: "traded",
+  });
   return [
+    // RUN ALPHA-SURFACES-V2: both congress ranking sections, with the range
+    // control, the compact disclosure, the unsortable-column reason and the
+    // wholly-undisclosed bucket all present, so every new class is swept.
+    congressRankingSection("leaders", rollup, stamps, CTX, {
+      rootId: "members-ranked-tbody",
+      undisclosedRootId: "members-undisclosed-tbody",
+      heading: "Member net disclosed flow",
+      sectionId: "members-section",
+      compact: 1,
+    }),
+    congressRankingSection("tickers", tickerRollup, stamps, CTX, {
+      rootId: "momentum-tbody",
+      heading: "Ticker momentum",
+      sectionId: "momentum-section",
+      controls: true,
+    }),
+    // RUN ALPHA-SURFACES-V2 institutional: the leaderboard section and a typed
+    // directory row, so every new class is swept for a matching rule.
+    addsSectionHtml(
+      {
+        period: "2026-03-31",
+        generated_at: "2026-07-24",
+        rows: [
+          {
+            issuer_key: "entity:1",
+            issuer_key_source: "entity",
+            issuer_name: "ACME CORP",
+            manager_count: 2,
+            new_position_count: 1,
+            delta_value_usd: 1_000,
+            delta_value_is_partial: true,
+            top_adder_cik: 1,
+            top_adder_name: "A Manager",
+          },
+        ],
+        truncated: true,
+        truncation_boundary: [500, 1, "entity:2"],
+        ambiguous_identity_exclusion_count: 2,
+      },
+      { period: "2026-03-31", mode: "all", periods: ["2026-03-31"], buildId: "b" },
+    ),
+    instIndexRowHtml(
+      buildInstIndexRow(
+        { cik: "0000000001", filer_name: "FILED NAME LLP", latest_period: "2026-03-31" },
+        null,
+        "top",
+        {
+          cik: "0000000001",
+          display_name: "A Manager",
+          person: "A Person",
+          manager_type: "hedge_fund",
+          notable: true,
+        },
+        { best: null, unrankable: 3 },
+      ),
+      () => "/institutional/filers/0000000001/",
+    ),
     memberBody(m, stamps, CTX),
     congressTickerBody({ ticker: "WMB", txns: [t] }, stamps, CTX),
     tickerUnifiedBody(

@@ -90,7 +90,6 @@ export interface BuildData {
       (`src/populus/stats.py`), which JS re-serialization cannot reproduce. So
       the bytes are carried through, never round-tripped. */
   statsJson: string;
-  tiles: StatTile[];
   txns: TxnRow[];
   paper: PaperRow[];
   merged: FeedItem[];
@@ -780,64 +779,6 @@ export function coverageSummary(stats: Record<string, any>): {
   };
 }
 
-function buildTiles(
-  stats: Record<string, any>,
-  rowCount: number,
-  filedFrom: string,
-): StatTile[] {
-  const cov = stats?.totals?.parse_coverage_primary_by_chamber_year_including_excluded;
-  if (cov == null || typeof cov !== "object") {
-    // Publishing "0 filings / —%" would be a false coverage claim; fail loudly.
-    throw new Error(
-      "stats.json is missing totals.parse_coverage_primary_by_chamber_year_including_excluded" +
-        " — refusing to publish coverage tiles derived from absent data",
-    );
-  }
-  const house = chamberParse(cov.house);
-  const senate = chamberParse(cov.senate);
-  const houseEfile = house.total - house.needsOcr;
-  const senateEfile = senate.total - senate.needsOcr;
-  const needsOcr: number =
-    stats?.totals?.needs_ocr_filing_count_including_excluded ?? house.needsOcr + senate.needsOcr;
-  return [
-    {
-      value: rowCount.toLocaleString("en-US"),
-      label: `rows filed since ${filedFrom}`,
-      title:
-        "transactions in the default view (active filings minus superseded amendment" +
-        " originals). Counts filings made in this window; disclosed trade dates can be earlier.",
-    },
-    {
-      // Label states the denominator the percentage actually divides — the
-      // paper filings excluded from it get their own tile, not a silent share.
-      value: pct(house.parsed, houseEfile),
-      unit: "%",
-      label: `House parse · ${houseEfile} e-filed`,
-      title: `fully parsed ${house.parsed} of ${houseEfile} e-filed House PTRs; ${house.partial} partial. A further ${house.needsOcr} of ${house.total} total House filings are paper and not machine-readable — excluded from this denominator and counted in the paper tile.`,
-    },
-    {
-      value: pct(senate.parsed, senateEfile),
-      unit: "%",
-      label: `Senate parse · ${senateEfile} e-filed`,
-      title: `fully parsed ${senate.parsed} of ${senateEfile} e-filed Senate PTRs; ${senate.partial} partial. A further ${senate.needsOcr} of ${senate.total} total Senate filings are paper and not machine-readable — excluded from this denominator and counted in the paper tile.`,
-    },
-    {
-      value: String(needsOcr),
-      // Split by chamber so the parse tiles above are composable: a reader can
-      // recover all-filings coverage per chamber without opening a tooltip.
-      label:
-        house.needsOcr + senate.needsOcr === needsOcr
-          ? `paper · need OCR · ${house.needsOcr} H · ${senate.needsOcr} S`
-          : "paper · need OCR",
-      title:
-        "filings submitted on paper — retained and counted in filing totals with zero" +
-        " transaction rows, not yet machine-readable. Excluded from the parse" +
-        " denominators above, which count e-filed filings only.",
-      muted: true,
-    },
-  ];
-}
-
 /* ---------- assembly (memoized once per build process) ---------- */
 
 let cache: BuildData | null = null;
@@ -890,7 +831,6 @@ export function getBuildData(): BuildData {
     }
   }
 
-  const rowCount: number = stats?.default?.row_count ?? txns.length;
 
   const dataset = JSON.stringify({
     dataset_version: DATASET_VERSION,
@@ -987,7 +927,6 @@ export function getBuildData(): BuildData {
     dataNote: String(stats.data_note ?? ""),
     stats,
     statsJson,
-    tiles: buildTiles(stats, rowCount, filedFrom),
     txns,
     paper,
     merged,

@@ -162,6 +162,57 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
 -- HHI, computed ONLY when total_value_usd > 0; when the total is 0 (or every
 -- value is NULL) both are stored NULL + concentration_unavailable — the digest
 -- keeps that NULL distinct from a real 0, and the build never divides by zero.
+-- R21: the recently-added-issuers leaderboard, one row per
+-- (period, mode, issuer). `mode` is a stored dimension rather than a filter
+-- applied later: a static site cannot re-aggregate at request time, and
+-- filtering `all` rows down by new_position_count would still show
+-- add-derived value, manager counts and top adder under a "new only" label.
+--
+-- Every metric is computed over its OWN mode. `delta_value_usd` is NULL when
+-- every contributing delta was undisclosed — never 0, which would assert a
+-- measured no-change. `delta_value_is_partial` says the sum omitted at least
+-- one undisclosed component, so a partial is never presented as a total.
+-- R11/R23: the curated manager typing, materialized into the aggregate so the
+-- dashboard reads ONE artifact rather than reaching into the Python package at
+-- render time. Only rows that JOIN agg_filer_registry are written: a retired or
+-- unmatched row is excluded from typed views, which is exactly what "excluded"
+-- has to mean once the data reaches a renderer.
+CREATE TABLE IF NOT EXISTS agg_manager_registry (
+  cik           TEXT    NOT NULL PRIMARY KEY,
+  display_name  TEXT    NOT NULL,
+  person        TEXT,
+  manager_type  TEXT    NOT NULL,
+  notable       INTEGER NOT NULL CHECK (notable IN (0, 1)),
+  verified_date TEXT    NOT NULL,
+  FOREIGN KEY (cik) REFERENCES agg_filer_registry (cik)
+);
+
+CREATE TABLE IF NOT EXISTS agg_issuer_adds (
+  period_of_report      TEXT    NOT NULL,
+  mode                  TEXT    NOT NULL CHECK (mode IN ('all', 'new')),
+  issuer_key            TEXT    NOT NULL,
+  issuer_key_source     TEXT    NOT NULL CHECK (issuer_key_source IN ('entity', 'cusip6', 'name')),
+  issuer_name           TEXT,
+  manager_count         INTEGER NOT NULL CHECK (manager_count >= 0),
+  new_position_count    INTEGER NOT NULL CHECK (new_position_count >= 0),
+  delta_value_usd       INTEGER,
+  delta_value_is_partial INTEGER NOT NULL CHECK (delta_value_is_partial IN (0, 1)),
+  top_adder_cik         INTEGER,
+  top_adder_name        TEXT,
+  ingested_at           TEXT    NOT NULL,
+  PRIMARY KEY (period_of_report, mode, issuer_key)
+);
+
+-- The ambiguous-identity exclusion count, per period AND per mode. It is
+-- STORED rather than recomputed because a static site cannot recount after a
+-- period or mode toggle, and R14 forbids an unstated omission.
+CREATE TABLE IF NOT EXISTS agg_issuer_adds_exclusions (
+  period_of_report TEXT    NOT NULL,
+  mode             TEXT    NOT NULL CHECK (mode IN ('all', 'new')),
+  ambiguous_identity_exclusion_count INTEGER NOT NULL CHECK (ambiguous_identity_exclusion_count >= 0),
+  PRIMARY KEY (period_of_report, mode)
+);
+
 CREATE TABLE IF NOT EXISTS agg_filer_concentration (
   cik                  TEXT NOT NULL,
   period_of_report     TEXT NOT NULL,

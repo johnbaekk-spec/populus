@@ -54,21 +54,11 @@ export function stripRowTrailing(strip: Element): number[] {
     uselessness without that control going red. */
 export const PACKED_TRAILING_PX = 6;
 
-/** The stat tiles `/congress/` is data-backed for, in emission order.
-
-    `buildTiles` (`src/lib/data.ts:783`) returns exactly these four with no
-    branch that adds or removes one, so the COUNT is a structural property of the
-    producer rather than a snapshot of today's corpus. The labels are patterns
-    because their shape is the contract and the numbers inside them are the data:
-    pinning the digits would make an ordinary corpus refresh look like a defect,
-    and pinning nothing would let a dropped tile pass. R9's matrix row asks for
-    tile count to equal data; this is that data. */
-export const CONGRESS_TILE_LABELS: RegExp[] = [
-  /^rows filed since \d{4}$/,
-  /^House parse · \d+ e-filed$/,
-  /^Senate parse · \d+ e-filed$/,
-  /^paper · need OCR( · \d+ H · \d+ S)?$/,
-];
+/* `CONGRESS_TILE_LABELS` is DELETED. It pinned the emission order of
+   `buildTiles`, and RUN ALPHA-SURFACES-V2 (R8/R26) deleted both the builder and
+   the strip: the methodology page publishes the same four measures in full,
+   from its own `coverageSummary` derivation, which still throws rather than
+   publish a coverage claim it cannot source. */
 
 /** Force a `.table-scroll` to overflow at any viewport width, WITHOUT distorting
     the layout in the one way that breaks the measurement.

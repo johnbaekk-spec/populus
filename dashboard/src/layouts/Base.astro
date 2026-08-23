@@ -23,9 +23,13 @@ interface Props {
   /** footer variant: the two 13F pages swap the §13107(c) block for the 13F
       caveat (they carry no congressional data); everywhere else is standard */
   footer?: "standard" | "inst13f";
+  /** extra <head> markup. Used only by the R25 redirect stubs, which need a
+      canonical link and a meta refresh in the document head — the one place a
+      page cannot express from its body. */
+  head?: string;
 }
 
-const { title, description, active, searchEmphasis = false, footer = "standard" } = Astro.props;
+const { title, description, active, searchEmphasis = false, footer = "standard", head = "" } = Astro.props;
 const build = getBuildData();
 ---
 
@@ -36,6 +40,7 @@ const build = getBuildData();
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {head && <Fragment set:html={head} />}
     {/* Machine-readable build markers (R19). Deploy verification PARSES these
         by name and compares the values exactly — never a substring search over
         the footer's free text, which a whole-footer replacement would still

@@ -111,13 +111,40 @@ test("the unified AAPL page's institutional section binds the same data", () => 
 
 test("/institutional landing lists the fixture filers when the module is present", () => {
   const html = readFileSync(path.join(DIST_FIXTURE, "institutional", "index.html"), "utf-8");
-  // A-2 (ALPHA-UX): the landing is now the ranked index — value sourced
-  // period-correctly from agg_filer_concentration, never the registry's
-  // cross-period accumulator, and never called AUM/fund size.
-  assert.ok(html.includes("Filers — ranked by reported 13(f) long value"));
-  assert.ok(html.includes("BERKSHIRE HATHAWAY INC"));
+  // RUN ALPHA-SURFACES-V2 (R11): the ranked index is now the MANAGER DIRECTORY,
+  // the third of three sections. Every honesty property this test pinned is
+  // still pinned — only the heading it hangs them off changed.
+  assert.ok(html.includes("Manager directory"), "the directory section renders");
+  assert.ok(
+    html.includes("BERKSHIRE HATHAWAY INC"),
+    "an untyped fixture filer renders its FILED name, never a guessed display name",
+  );
   assert.ok(html.includes("agg_filer_concentration"), "period-correct sourcing is named");
   assert.ok(!/\bAUM\b|fund size/i.test(html), "constraint 3: never AUM / fund size");
+
+  // R9/R10/R11: the sections render in the specified order.
+  //
+  // The activity feed is asserted CONDITIONALLY. This fixture carries no
+  // activity records, so that section legitimately does not render — requiring
+  // it here would fail the ordering contract for a data reason, which is the
+  // opposite of what this test is for. The two sections the fixture does carry
+  // still pin their relative order, and `pages-render` covers the feed itself.
+  const adds = html.indexOf("Recently added issuers");
+  const directory = html.indexOf("Manager directory");
+  assert.ok(adds > -1, "the leaderboard section renders");
+  assert.ok(directory > -1, "the directory section renders");
+  assert.ok(adds < directory, "the leaderboard leads the page; the directory closes it");
+  const activity = html.indexOf("quarter-over-quarter changes, by issuer");
+  if (activity > -1) {
+    assert.ok(adds < activity && activity < directory, "leaderboard, then feed, then directory");
+  }
+
+  // R11: the curated coverage is STATED — a curated subset is never presented
+  // as the population.
+  assert.ok(
+    html.includes("curated registry covering"),
+    "the directory states how much of the filer population it actually types",
+  );
 });
 
 test("production leakage: the NORMAL dist/ carries no fixture-derived paths", () => {

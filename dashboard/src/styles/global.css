@@ -336,12 +336,10 @@ button {
 .page-lede a {
   font-size: 13px;
 }
-.mobile-meta {
-  display: none;
-  font: 400 10px var(--mono);
-  color: var(--ink3);
-  margin-top: 3px;
-}
+/* R8: `.mobile-meta` is DELETED. It was the stat strip's mobile duplicate, and
+   the strip it duplicated is gone — the single `.caveat-line` under the lede
+   now carries the as-of date and the statutory qualifier at every width, so
+   nothing folds away and nothing is stated twice. */
 
 /* stat tiles */
 .tiles {
@@ -530,14 +528,37 @@ button {
   border: 1px solid var(--rule2);
   background: var(--raised);
 }
+/* R5/R18: the feed is a real <table> now. `table-layout` and the default
+   row/cell display are overridden so the SAME grid the div version used still
+   drives the columns — the layout did not change, only the elements did. */
+.feed-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+.feed-table thead,
+.feed-table tbody {
+  display: block;
+}
 .feed-grid-cols {
   display: grid;
-  grid-template-columns: 26px 92px 1fr 66px 118px 118px 100px 210px 56px;
+  /* R4: star · filed · TICKER · member · side · traded · amount · range · src.
+     Ticker moves AHEAD of member and takes the anchor's emphasis — but not the
+     flexible track. EMPHASIS IS TYPE, NOT WIDTH: the ticker is heavier, larger
+     and accent-coloured (see `.cell-ticker`), while `member` keeps `1fr`
+     because it is the column that holds unbounded text. Giving ticker `1fr` and
+     member a fixed 150px truncated a 20-character member name by ONE pixel at
+     1440px — R7's exact defect, caught by the geometry lane. The ticker's own
+     fixed track is generous enough for the full asset name it renders when no
+     ticker was disclosed. */
+  grid-template-columns: 26px 92px 150px 1fr 118px 118px 100px 210px 56px;
   padding: 0 14px;
 }
 .feed-head {
   border-bottom: 1.5px solid var(--rule2);
 }
+/* The header cells are <th> now; the `.col` rules below apply to them. */
+.feed-head th,
 .feed-head .col {
   font: 600 10px var(--sans);
   letter-spacing: 0.12em;
@@ -545,15 +566,29 @@ button {
   color: var(--ink3);
   padding: 9px 8px 7px 0;
 }
-.feed-head .col.num {
+.feed-head th {
+  text-align: left;
+  vertical-align: bottom;
+}
+.feed-head .num {
   text-align: right;
 }
-.feed-head .col.range {
+.feed-head .range {
   padding: 9px 0 7px 16px;
 }
-.feed-head .col.src {
+.feed-head .src {
   padding: 9px 0 7px;
   text-align: right;
+}
+/* The header's sort buttons inherit the header's own type; they are controls,
+   not links, and they keep the 44px target the shared rule gives every
+   `.th-sort`. */
+.feed-head .th-sort {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  text-align: inherit;
 }
 
 .feed-row {
@@ -561,12 +596,10 @@ button {
   height: 38px;
   border-bottom: 1px solid var(--rule);
 }
-/* the two-line wrappers exist for the mobile fold; on desktop their children
-   participate directly in the row grid */
-.row-line1,
-.row-line2 {
-  display: contents;
-}
+/* R5/R18: `.row-line1` / `.row-line2` are DELETED. They were wrapper divs
+   that existed only to group the mobile fold's two lines, and a table row
+   cannot legally contain them. The fold uses grid areas on the row instead, so
+   the wrappers have no remaining purpose and no rule may reference them. */
 .feed-row:hover {
   background: color-mix(in oklab, var(--accent) 4%, var(--raised));
 }
@@ -595,7 +628,11 @@ button {
   color: var(--ink2);
 }
 .cell-member {
-  font: 600 13px var(--sans);
+  /* R4: SECONDARY emphasis. Lighter weight and --ink2 against the ticker's
+     accent-coloured mono, so the eye lands on the ticker first. The member is
+     not de-emphasised out of legibility — it keeps full contrast text. */
+  font: 500 12.5px var(--sans);
+  color: var(--ink2);
   padding-right: 8px;
   white-space: nowrap;
   overflow: hidden;
@@ -603,7 +640,7 @@ button {
 }
 .cell-member a {
   text-decoration: none;
-  color: var(--ink);
+  color: var(--ink2);
 }
 .cell-member a.unjoined {
   border-bottom: 1.5px dotted var(--ink3);
@@ -621,7 +658,8 @@ button {
 /* party could not be resolved — deliberately NOT tinted as Independent */
 .aff.unknown { color: var(--ink3); }
 .cell-ticker {
-  font: 600 12.5px var(--mono);
+  /* R4: PRIMARY emphasis — the largest, heaviest type in the row. */
+  font: 700 14px var(--mono);
   /* R5: this is a 66px grid column and it renders the full asset name whenever
      no ticker was disclosed. Without containment the text simply painted over
      `.cell-side` and everything after it — `.cell-member` had exactly this
@@ -749,6 +787,9 @@ button {
 
 /* paper (needs-OCR) filing row */
 .feed-row.paper {
+  /* Desktop: star · filed · the spanning main cell · src. `colspan` does not
+     apply under `display: grid`, so the span is expressed as a track. */
+  grid-template-columns: 26px 92px 1fr 56px;
   grid-template-columns: 26px 92px 1fr 56px;
 }
 .paper-main {
@@ -2128,14 +2169,49 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
    tree, flags, the owner/partial qualifier and the provenance link all stay on
    screen; the column headers go, exactly as they already do on mobile. */
 @media (max-width: 1080px) {
+  /* F4: the header is the table's REAL <thead> now, and it carries every column
+     name plus every stated reason a column is unsortable. `display: none`
+     removed all of that from the accessibility tree at these widths — the exact
+     honesty deletion the fold gate exists to prevent. It folds through the
+     sanctioned clip pattern instead: gone from the layout, present to a screen
+     reader, exactly like the dual dates below it. */
   .feed-head {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
+  /* The fold's two-line grammar is expressed as grid AREAS on the row itself.
+     It used to nest `.row-line1` / `.row-line2` divs inside the row; a <tr>
+     may hold only cells, and a browser HOISTS an illegal child out of the
+     table rather than erroring, which would have destroyed this fold silently.
+     Same two lines, same order, no extra elements — and nothing is removed:
+     both dates stay in the accessibility tree via the clip below. */
   .feed-row {
-    display: block;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "ticker member side"
+      "range  amount traded"
+      "src    src    src";
+    row-gap: 7px;
+    column-gap: 8px;
     height: auto;
     position: relative;
+    padding-right: 40px; /* clear of the star */
   }
+  .feed-row .cell-ticker { grid-area: ticker; }
+  .feed-row .cell-member { grid-area: member; }
+  .feed-row .cell-side { grid-area: side; }
+  .feed-row .cell-range { grid-area: range; }
+  .feed-row .cell-amount { grid-area: amount; }
+  .feed-row .cell-traded { grid-area: traded; }
+  .feed-row .cell-src { grid-area: src; }
   /* Both dates stay in the accessibility tree — visually-hidden, never
      `display: none`, which would delete them for screen readers. The visible
      pair is recomposed by `.mobile-dates` below. */
@@ -2156,36 +2232,16 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     top: 4px;
     right: 8px;
   }
-  .row-line1 {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 8px;
-    padding-right: 40px; /* clear of the star */
-  }
-  .feed-row .cell-member {
-    flex: 1 1 auto;
-  }
   .feed-row .cell-member .aff {
     white-space: nowrap;
   }
-  .feed-row .cell-ticker,
-  .feed-row .cell-side {
-    flex-shrink: 0;
+  .feed-row .cell-traded {
+    text-align: right;
+    white-space: nowrap;
   }
-  .row-line2 {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 7px;
-    flex-wrap: wrap;
+  .feed-row .cell-src {
+    text-align: right;
   }
-  /* grammar order: band · amount · dates · late chip, then flags and
-     provenance wrap onto a further line rather than disappearing */
-  .row-line2 .cell-range { order: 1; flex: 0 0 auto; }
-  .row-line2 .cell-amount { order: 2; }
-  .row-line2 .cell-traded { order: 3; margin-left: auto; white-space: nowrap; }
-  .feed-row .cell-src { order: 4; flex: 0 0 auto; }
   .feed-row .cell-range {
     padding-left: 0;
     flex-wrap: wrap;
@@ -2204,12 +2260,16 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .feed-row .flag {
     max-width: 100%;
   }
+  /* A paper row has only three visible cells, so it keeps a simple two-line
+     shape of its own rather than inheriting the transaction row's areas. */
   .feed-row.paper {
-    display: block;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "main main"
+      "src  src";
   }
-  .feed-row.paper .cell-src {
-    float: right;
-  }
+  .feed-row.paper .paper-main { grid-area: main; }
+  .feed-row.paper .cell-src { grid-area: src; text-align: right; }
   .paper-main {
     flex-wrap: wrap;
     white-space: normal;
@@ -2325,9 +2385,6 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
     font-size: 12.5px;
     line-height: 1.55;
     margin-top: 6px;
-  }
-  .mobile-meta {
-    display: block;
   }
   /* Coverage tiles FOLD, they do not vanish — §5.2 puts coverage and known
      gaps in the response, not in a tooltip a touch device can never open. They
@@ -2635,31 +2692,8 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .chips { flex-wrap: wrap; row-gap: 6px; }
 }
 
-/* C-4 tabs on /congress */
-.ctabs {
-  display: flex;
-  gap: 4px;
-  margin: 10px 0 14px;
-  border-bottom: 1px solid var(--rule, currentColor);
-}
-.ctab {
-  font: 600 12px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 7px 14px 6px;
-  text-decoration: none;
-  color: var(--ink2);
-  border: 1px solid transparent;
-  border-bottom: none;
-}
-.ctab:hover { color: var(--accent); }
-.ctab-active {
-  color: var(--ink);
-  border-color: var(--rule, currentColor);
-  border-bottom: 2px solid var(--paper);
-  margin-bottom: -1px;
-  background: var(--paper);
-}
+/* R1: the /congress sub-tab nav (.ctabs/.ctab) is DELETED with its markup —
+   a dead selector left behind is how a removed component quietly comes back. */
 
 /* C-4 ranking table pieces */
 .net-dir {
@@ -2776,3 +2810,110 @@ th[data-inst-sort] .th-sort {
 
 /* D-2 review F10: the exact rule inside per-entity signal rows */
 .signal-rule-inline { font: 400 10.5px var(--mono); color: var(--ink3); max-width: 46ch; }
+
+
+/* ---------- RUN ALPHA-SURFACES-V2 ---------- */
+
+/* R2: the momentum range/basis control. It reuses `.filter-group` and `.seg`
+   from the feed's filter bar rather than introducing a second control idiom —
+   one page, one way to press a segmented button. */
+.range-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 10px 0 4px;
+}
+
+/* R5: the stated reason an unsortable column carries. VISIBLE text, never a
+   title attribute — a tooltip is not a channel a touch device can open, and
+   this site does not treat one as published. It is small and quiet, but it is
+   on the page at every width. */
+.col-why {
+  display: block;
+  font: 400 10px var(--sans);
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink3);
+  max-width: 22ch;
+  margin-top: 3px;
+  white-space: normal;
+}
+
+/* R7: the expand control. It sits directly under its table, after the terminus
+   row, so the reader meets the STATED bound before the offer to lift it. */
+.compact-disclosure {
+  margin: 8px 0 2px;
+}
+.compact-toggle {
+  font: 600 12px var(--sans);
+  min-height: 44px;
+  padding: 0 2px;
+}
+
+/* R25: the retired sub-tab stubs' visible link — the channel that works with
+   both scripting and meta-refresh disabled, so it is sized as a real target. */
+.stub-link {
+  display: inline-block;
+  font: 600 14px var(--sans);
+  min-height: 44px;
+  line-height: 44px;
+}
+
+/* R10: the activity feed's issuer anchor and its secondary filer column. The
+   emphasis is type, exactly as on the congress feed — the filer keeps full
+   contrast, it simply stops being the first thing the eye lands on. */
+.c-issuer {
+  font: 600 13px var(--sans);
+}
+.c-issuer .filed-name {
+  color: var(--ink);
+}
+.c-secondary {
+  font-weight: 500;
+  color: var(--ink2);
+}
+
+/* R11: manager-type filter chips. `Notable` is EDITORIAL and orthogonal to
+   type, so it renders in the same chip row but is visually separated — it is
+   not a ninth type and must not read as one. */
+.mgr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.mgr-chip {
+  font: 600 11px var(--sans);
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  color: var(--ink2);
+}
+.mgr-chip[aria-pressed="true"] {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+.mgr-chip-notable {
+  margin-right: 10px;
+  border-style: dashed;
+}
+.mgr-person {
+  font: 400 11px var(--sans);
+  color: var(--ink3);
+}
+
+
+/* R7/F2: rows beyond the compact slice on a table whose full body is already
+   in the DOM. This is the ONE sanctioned use of display:none in this codebase's
+   honesty model, and it is narrow by construction: `[data-compact-extra]`
+   matches DATA ROWS only — never a caveat, terminus, footnote or stated
+   absence, all of which live outside the tbody. R19 permits exactly this and
+   nothing else, and `css-fold.test.ts` keeps every honesty selector out of it.
+   The rows return the moment the disclosure is activated. */
+tbody[data-collapsed="true"] tr[data-compact-extra] {
+  display: none;
+}

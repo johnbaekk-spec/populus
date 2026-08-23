@@ -42,6 +42,7 @@ from populus.db import connect
 from populus.ingest import UnsafeArchivePathError
 from populus.ingest.inst13f import compute_coverage, compute_period_coverage
 from populus.inst_agg import (
+    gate_manager_registry,
     _PreparedAggregate,
     build_inst_agg,
     prepared_materialized_inst_aggregate,
@@ -1257,6 +1258,18 @@ def _derive_inst_module_in_materialized_scope(
         ingested_at=created_at,
         _prepared=_prepared,
     )
+    # R13/R23/R24: the curated manager registry must still describe the filers
+    # this aggregate actually contains. An `active` row that stopped joining
+    # fails the build NAMING its CIK, because the alternative — dropping it
+    # silently from typed views — makes a manager's disappearance invisible
+    # exactly when it is most worth knowing. A `retired` row is excluded
+    # without failing. This runs at the producer STAGE, over a real aggregate;
+    # `build_inst_agg` itself stays ungated so fixture builds are not forced to
+    # carry the production registry.
+    # `publication=True`: this stage produces a real publication, so the gate
+    # FAILS CLOSED rather than abstaining. A join that matches nothing here is a
+    # catastrophic regression, not a small extract.
+    gate_manager_registry(inst_agg_path, publication=True)
     # Fail-closed gate (OWNER DECISION 2026-07-24): consume the reused
     # compute_coverage's `meets_threshold` at exactly COVERAGE_THRESHOLD,
     # keyed on the cover_failed flag — never re-derived here, never
