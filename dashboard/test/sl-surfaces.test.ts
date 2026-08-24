@@ -9,6 +9,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import type { TxnRow } from "../src/lib/format.ts";
+
 const congressPage = readFileSync(
   new URL("../src/pages/congress/index.astro", import.meta.url),
   "utf8",
@@ -243,6 +245,133 @@ test("SL-R14: every range on both bases renders the block, and its counts come f
   }
 });
 
+
+/* ── CODE-REVIEW F2 ──────────────────────────────────────────────────────────
+   The sweep above proves the EMPTY corpus case, which `rankingAlternatives`
+   would satisfy no matter which length it counted: an empty rollup has
+   `rows.length === 0` AND `ranked.length === 0`, so reverting the fix leaves
+   it green. The fixture that can tell the two apart is a rollup that is
+   NON-EMPTY and entirely UNRANKABLE — rows whose amounts are wholly
+   undisclosed, which `rankNetRows` moves into the undisclosed bucket with its
+   own root, unreachable by any sort of the ranked table (Constraint 4).
+
+   Counting `rows.length` there makes the empty-window block offer a switch
+   that resolves to another empty ranked table: it spends the reader's trust as
+   well as their click, which R14 forbids. Both kinds are covered because the
+   two rollups group differently — tickers by `ticker`, leaders by
+   `bioguide` — so a fix applied to one derivation is not evidence about the
+   other. */
+
+/** A transaction whose amount is wholly undisclosed and whose two dates are
+    BOTH the window end, so it is inside every range on both bases. It is
+    therefore in every alternative rollup and rankable in none of them. */
+function undisclosedTxn(over: Partial<TxnRow> = {}): TxnRow {
+  return {
+    kind: "txn",
+    txnId: "u-1",
+    asset: null,
+    assetType: null,
+    filed: "2026-08-23",
+    traded: "2026-08-23",
+    name: "Undisclosed Member",
+    bioguide: "U000001",
+    party: "R",
+    state: "OK",
+    district: null,
+    chamber: "senate",
+    ticker: "UND",
+    side: "purchase",
+    owner: "self",
+    low: null,
+    high: null,
+    lag: 0,
+    late: 0,
+    flags: [],
+    doc: "https://example.invalid/doc",
+    ...over,
+  };
+}
+
+test("SL-R14 F2: an alternative that is NON-EMPTY but wholly unrankable counts 0, on BOTH kinds", async () => {
+  const { rankingAlternatives, CONGRESS_RANGES, emptyWindowHtml } = await import("../src/lib/ui.ts");
+  const { congressTickersRollup, leadersRollup } = await import("../src/lib/derive.ts");
+
+  // Two members, two tickers — so neither rollup is a single-group special
+  // case — and every row wholly undisclosed.
+  const rows: TxnRow[] = [
+    undisclosedTxn({ txnId: "u-1", ticker: "UND", bioguide: "U000001", name: "A" }),
+    undisclosedTxn({ txnId: "u-2", ticker: "DER", bioguide: "U000002", name: "B" }),
+  ];
+
+  // The fixture's own premise, asserted rather than assumed: the rollups DO
+  // hold rows. If this ever stops being true the test below degrades silently
+  // into the empty-corpus case it was written to replace.
+  for (const range of CONGRESS_RANGES) {
+    for (const basis of ["traded", "filed"] as const) {
+      assert.equal(
+        congressTickersRollup(rows, "2026-08-23", { range, basis }).rows.length,
+        2,
+        `tickers rollup is non-empty at ${range}/${basis}`,
+      );
+      assert.equal(
+        leadersRollup(rows, "2026-08-23", { range, basis }).rows.length,
+        2,
+        `leaders rollup is non-empty at ${range}/${basis}`,
+      );
+    }
+  }
+
+  for (const range of CONGRESS_RANGES) {
+    for (const basis of ["traded", "filed"] as const) {
+      for (const kind of ["tickers", "leaders"] as const) {
+        const alt = rankingAlternatives(rows, "2026-08-23", kind, range, basis);
+        assert.equal(
+          alt.otherBasis,
+          0,
+          `${kind} ${range}/${basis}: two rollup rows, ZERO of them able to enter the ranked table`,
+        );
+        if (alt.wider !== null) {
+          assert.equal(alt.wider.n, 0, `${kind} ${range}/${basis}: the wider range is unrankable too`);
+        }
+        // …and therefore no control is offered. This is the reader-visible
+        // consequence, and the assertion a `rows.length` revert fails.
+        const html = emptyWindowHtml(range, basis, alt, kind === "tickers" ? "tickers" : "members");
+        assert.doesNotMatch(
+          html,
+          /<button/,
+          `${kind} ${range}/${basis}: an offer that resolves to another empty table is never rendered`,
+        );
+        assert.match(html, /on either basis/, "the block states the doubly-empty fact instead");
+      }
+    }
+  }
+});
+
+test("SL-R14 F2: the same fixture WITH one rankable row does offer the switch — the fixture is not inert", async () => {
+  const { rankingAlternatives, emptyWindowHtml } = await import("../src/lib/ui.ts");
+  // A control: one disclosed row, filed inside the window but traded outside
+  // it, so the `filed` basis can rank it and the `traded` basis cannot. If the
+  // negative test above passed because the fixture reaches nothing at all,
+  // this one fails.
+  const rows: TxnRow[] = [
+    undisclosedTxn({ txnId: "u-1", ticker: "UND", bioguide: "U000001", name: "A" }),
+    undisclosedTxn({
+      txnId: "d-1",
+      ticker: "DIS",
+      bioguide: "D000001",
+      name: "C",
+      traded: "2020-01-01",
+      filed: "2026-08-23",
+      low: 1001,
+      high: 15000,
+    }),
+  ];
+  const alt = rankingAlternatives(rows, "2026-08-23", "tickers", "7d", "traded");
+  assert.equal(alt.otherBasis, 1, "exactly the ONE disclosed row is rankable on the filing basis");
+  const html = emptyWindowHtml("7d", "traded", alt, "tickers");
+  assert.match(html, /data-basis="filed"[^>]*>1 by filing date/, "and it IS offered");
+});
+
 /* ----------------------------------------- T9 / SL-R16 R17 R18 (LD8 in css-fold) */
 
 test("SL-R16: the adds control is ONE labelled row, and the island's hooks are unchanged", async () => {
@@ -349,20 +478,160 @@ test("SL-R28: every surface that passes a note scope calls initNotes(), and Base
   assert.ok(!base.includes("initNotes"), "Base.astro must not load it site-wide");
 });
 
-test("CODE-REVIEW F3: settlement re-arms per attempt — failure, retry, failure both settle", async () => {
-  // SL-R29's indicator clears on `onSettled`. The flag was initFeed-lifetime,
-  // so after ONE failure every later attempt was unsettleable and a reader who
-  // pressed a control, failed, retried and failed again sat on "Applying …"
-  // forever — the exact false statement R29 exists to remove, one layer down.
-  const src = readFileSync(new URL("../src/scripts/feed-client.ts", import.meta.url), "utf8");
-  const load = src.slice(src.indexOf("function loadData("), src.indexOf("function loadData(") + 400);
-  assert.match(load, /settled\s*=\s*false/, "loadData() must re-arm settlement before each attempt");
+/* ── CODE-REVIEW F3 ──────────────────────────────────────────────────────────
+   This was a `readFileSync` of `feed-client.ts` asserting that the string
+   `settled = false` appears inside `loadData()`. That is not the claim. The
+   claim is that a reader who presses a control, fails, retries and fails again
+   is told so BOTH times — and a source grep cannot distinguish a re-arm that
+   runs from one that is unreachable, mis-ordered, or shadowed.
 
-  // And the catch must clear the memoised promise, or a retry never refetches
-  // and the re-arm would be moot.
-  const cat = src.slice(src.indexOf(".catch("), src.indexOf(".catch(") + 200);
-  assert.match(cat, /loadPromise\s*=\s*null/, "a failed attempt releases the memoised promise");
+   So this drives the real `initFeed` over a stubbed FAILING fetch, presses the
+   real "Try again" button `renderLoadFailure` renders, fails again, and
+   asserts settlement happened on each attempt. The pending indicator is the
+   REAL one: `initCongressSections`'s `feedSettled`, reading the real
+   `#momentum-section-pending` element, driven by a real control click. */
 
-  // The latch itself must still exist: one settle per attempt, not per event.
-  assert.match(src, /if \(settled\) return;/, "settlement is still idempotent within an attempt");
+const FEED_IDS = [
+  "congress-feed", "feed-tbody", "feed", "feed-loading", "feed-empty",
+  "feed-empty-detail", "feed-empty-suggestions", "filter-count-line",
+  "pager-range", "feed-status", "filter-reset", "filter-reset-wrap",
+  "pager-newer", "pager-older",
+];
+
+/** The congress page's own root plus the momentum section's pending node, so
+    the consumer under test is the shipped one rather than a stand-in. */
+const SECTION_IDS = ["congress-page", "momentum-section-pending"];
+
+async function mountFeedAndSections() {
+  const { makeDom, makeElement } = await import("./lib/fake-dom.ts");
+  const rangeBtn = makeElement("btn-30d");
+  rangeBtn.dataset = { range: "30d" };
+  const basisBtn = makeElement("btn-filed");
+  basisBtn.dataset = { basis: "filed" };
+  const dom = makeDom([...FEED_IDS, ...SECTION_IDS], {
+    "#momentum-controls [data-range]": [rangeBtn],
+    "#momentum-controls [data-basis]": [basisBtn],
+  });
+  dom.elements.get("congress-feed")!.dataset = { txnCount: "1" };
+  dom.elements.get("congress-page")!.dataset = {
+    generatedAtDate: "2026-08-23",
+    range: "12m",
+    basis: "traded",
+  };
+  // The pending node ships hidden in the SSR bytes, exactly as `ui.ts` emits it.
+  dom.elements.get("momentum-section-pending")!.setAttribute("hidden", "");
+
+  const restore = dom.install(null, { fetchOk: false });
+  const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
+  const sections = initCongressSections();
+  const settlements: boolean[] = [];
+  const { initFeed } = await import("../src/scripts/feed-client.ts");
+  initFeed({
+    onRows: sections.receiveRows,
+    onSettled: (ok) => {
+      settlements.push(ok);
+      sections.feedSettled(ok);
+    },
+  });
+  const pending = dom.elements.get("momentum-section-pending")!;
+  return { dom, restore, settlements, pending, rangeBtn, basisBtn };
+}
+
+/** The retry control `renderLoadFailure` appends — found by its label, not by
+    its index, so a second child cannot make this test press the wrong thing. */
+function retryButton(dom: Awaited<ReturnType<typeof mountFeedAndSections>>["dom"]) {
+  const kids = dom.elements.get("feed-empty-suggestions")!.children;
+  const btn = kids.find((k) => k.textContent === "Try again");
+  assert.ok(btn, "a failed load must render a Try again control");
+  return btn!;
+}
+
+test("CODE-REVIEW F3: failure, retry, failure — BOTH attempts settle, and the indicator resolves each time", async () => {
+  const { dom, restore, settlements, pending, rangeBtn } = await mountFeedAndSections();
+  try {
+    // A control pressed before the dataset arrives: the real handler paints the
+    // button pressed and states that it is applying a window it has not shown.
+    rangeBtn.click();
+    assert.equal(pending.hidden, false, "the pending indicator is showing at click time");
+    assert.match(pending.textContent, /^Applying /, "…and it says the selection is being applied");
+
+    // ── attempt 1: the fetch fails ──────────────────────────────────────────
+    await dom.flush();
+    assert.deepEqual(settlements, [false], "the failure path settles, which `onRows` can never do");
+    assert.doesNotMatch(
+      pending.textContent,
+      /^Applying /,
+      "the false 'Applying …' claim is gone once the attempt has settled",
+    );
+    assert.match(
+      pending.textContent,
+      /could not be applied: the full dataset did not load/,
+      "and it is replaced by WHY, not merely blanked",
+    );
+
+    // ── attempt 2: the reader presses Try again, and it fails again ─────────
+    const fetchesBefore = dom.fetchCalls.length;
+    rangeBtn.click(); // the reader re-states the selection…
+    assert.match(pending.textContent, /^Applying /, "…which arms the indicator again");
+    retryButton(dom).click();
+    await dom.flush();
+
+    assert.ok(dom.fetchCalls.length > fetchesBefore, "the retry actually refetched — the memoised promise was released");
+    assert.deepEqual(
+      settlements,
+      [false, false],
+      "the SECOND failure settles too; an initFeed-lifetime latch stops at one",
+    );
+    assert.doesNotMatch(
+      pending.textContent,
+      /^Applying /,
+      "a reader who fails twice is not left sitting on 'Applying …' forever",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("CODE-REVIEW F3: on the SUCCESS path the indicator is cleared outright, not restated", async () => {
+  const { makeDom, makeElement } = await import("./lib/fake-dom.ts");
+  const { DATASET_VERSION, TXN_COLS, PAPER_COLS } = await import("../src/lib/format.ts");
+  const rangeBtn = makeElement("btn-30d");
+  rangeBtn.dataset = { range: "30d" };
+  const dom = makeDom([...FEED_IDS, ...SECTION_IDS], {
+    "#momentum-controls [data-range]": [rangeBtn],
+  });
+  dom.elements.get("congress-feed")!.dataset = { txnCount: "0" };
+  dom.elements.get("congress-page")!.dataset = {
+    generatedAtDate: "2026-08-23", range: "12m", basis: "traded",
+  };
+  dom.elements.get("momentum-section-pending")!.setAttribute("hidden", "");
+  const restore = dom.install({
+    dataset_version: DATASET_VERSION,
+    txn_cols: [...TXN_COLS],
+    paper_cols: [...PAPER_COLS],
+    txns: [],
+    paper: [],
+  });
+  try {
+    const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
+    const sections = initCongressSections();
+    const settlements: boolean[] = [];
+    const { initFeed } = await import("../src/scripts/feed-client.ts");
+    initFeed({
+      onRows: sections.receiveRows,
+      onSettled: (ok) => {
+        settlements.push(ok);
+        sections.feedSettled(ok);
+      },
+    });
+    const pending = dom.elements.get("momentum-section-pending")!;
+    rangeBtn.click();
+    assert.equal(pending.hidden, false);
+    await dom.flush();
+    assert.deepEqual(settlements, [true], "a decoded dataset settles once, with ok = true");
+    assert.equal(pending.hidden, true, "the rows are painted, so the indicator is HIDDEN, not restated");
+    assert.equal(pending.textContent, "", "and carries no stale sentence");
+  } finally {
+    restore();
+  }
 });

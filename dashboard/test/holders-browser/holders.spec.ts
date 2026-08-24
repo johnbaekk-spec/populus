@@ -73,3 +73,47 @@ test("sort buttons meet the 44px touch target in a real layout", async ({ page }
   expect(box!.width).toBeGreaterThanOrEqual(44);
   expect(box!.height).toBeGreaterThanOrEqual(44);
 });
+
+/* ── CODE-REVIEW F4 ──────────────────────────────────────────────────────────
+   SL-R28 requires the holders page to be tested BEFORE and AFTER a period
+   replacement, because `initHoldersPeriods` repaints the whole root and a note
+   created by that repaint must still open. The geometry lane cannot carry this
+   test: it previews `dist`, which builds no holders route under
+   `/institutional/tickers/` at all — this lane's producer-backed fixture envelope is the only
+   served build where the route exists. Recorded as a deviation from the plan's
+   placement, not as a silent move.
+
+   Delegation is the mechanism: `initNotes()` binds one listener set on
+   `document`, so a note in a root replaced afterwards is live with no rebind.
+   A per-element binder passes every unit test in the suite and dies here. */
+
+async function openFirstNote(page: Page) {
+  const btn = page.locator(".note-btn").first();
+  await expect(btn, "the holders page must render at least one note").toBeVisible();
+  const id = await btn.getAttribute("popovertarget");
+  expect(id, "a note button must address a panel").toBeTruthy();
+  await btn.click();
+  const pop = page.locator(`#${id}`);
+  await expect(pop).toBeVisible();
+  return pop;
+}
+
+test("SL-R28/F4: a note opens BEFORE the period swap, and again from the REPLACED root", async ({ page }) => {
+  await page.goto(ROUTE);
+
+  // Before: the server-rendered root's notes work.
+  const before = await openFirstNote(page);
+  await expect(before).toContainText(/\S/, "an empty panel is not a channel");
+  await page.keyboard.press("Escape");
+
+  // Swap the period. `initHoldersPeriods` replaces the root's innerHTML, so
+  // every note node the first assertion touched is now detached.
+  await page.locator('[data-period="2025-12-31"]').click();
+  await expect(page.locator('[data-period="2025-12-31"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(filerCells(page)).toHaveText([/BERKSHIRE HATHAWAY/]);
+
+  // After: a note from the NEW root must open. This is the assertion that
+  // fails if binding ever moves from `document` to the elements themselves.
+  const after = await openFirstNote(page);
+  await expect(after).toContainText(/\S/, "the replaced root's note carries its explanation too");
+});

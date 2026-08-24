@@ -9,6 +9,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import type { InstIndexRow } from "../src/lib/inst-index.ts";
+import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
+
 const css = readFileSync(new URL("../src/styles/global.css", import.meta.url), "utf8");
 
 test("SL-R2: markup shape — button carries popovertarget AND aria-describedby, panel is a real element", async () => {
@@ -338,44 +341,210 @@ test("SL-R2b: an unscripted panel has a defined resting place, and place() overr
    only, so a key regression in the transaction or institutional-index notes
    could ship with the backstop green. These close that. */
 
-test("SL-R26 F5: instIndexRowHtml — one row emits four chip notes, all distinct", async () => {
-  const { noteId } = await import("../src/lib/format.ts");
-  // One index row renders period / nullvalue / hhi / untyped chips. Keyed on
-  // cik alone they would all collide; the chip name is what separates them.
-  const cik = "0001067983";
-  const ids = ["period", "nullvalue", "hhi", "untyped"].map((chip) => noteId("inst-index", `${cik}-${chip}`));
-  assert.equal(new Set(ids).size, 4, "four chips on one row must yield four ids");
+/** Every panel id on a page of markup. `note()` is the only emitter, so this
+    sees exactly what a browser would have to keep distinct. */
+function panelIds(html: string): string[] {
+  return [...html.matchAll(/<span class="note-pop" popover id="([^"]+)"/g)].map((m) => m[1]!);
+}
+
+/** The panel text belonging to one id, so a test can assert WHICH explanation
+    landed where rather than only that some panel exists. */
+function panelText(html: string, id: string): string {
+  const re = new RegExp(`<span class="note-pop" popover id="${id}"[^>]*>([\\s\\S]*?)</span>`);
+  const m = re.exec(html);
+  assert.ok(m, `no panel rendered for #${id}`);
+  return m![1]!;
+}
+
+test("SL-R26 F5: instIndexRowHtml — a RENDERED duplicate-variant pair keeps every panel id distinct", async () => {
+  const { instIndexRowHtml } = await import("../src/lib/inst-index.ts");
+
+  /* The renderer, not `noteId`. Calling `noteId` directly asserts that the
+     hashing function is injective, which was never in doubt; the contract
+     LD10 rests on is that the RENDERER passes a key that is unique on the
+     branch where its note renders. A key read off the wrong field, or one that
+     is null exactly where the note appears, passes a `noteId` test and emits
+     duplicate ids on a real page — which is the defect five review rounds
+     found five times. */
+  const row = (over: Partial<InstIndexRow> = {}): InstIndexRow => ({
+    cik: "0001067983",
+    name: "Berkshire Hathaway Inc",
+    period: "2026-06-30",
+    value: null,               // → the `period` note
+    positions: 12,
+    nullValuePositions: 3,     // → the `nullvalue` note
+    hhi: null,                 // → the `hhi` note
+    hhiNote: "concentration_unavailable: the producer stores NULL, never a fabricated 0",
+    tier: "top",
+    typing: null,              // → the `untyped` note
+    changeHtml: "",
+    ...over,
+  });
+
+  // ONE row first: four notes on a single row, which a cik-only key collapses
+  // into one id four times over.
+  const single = instIndexRowHtml(row(), () => "/x/");
+  const singleIds = panelIds(single);
+  assert.equal(singleIds.length, 4, "all four tooltip-only explanations render as notes");
+  assert.equal(new Set(singleIds).size, 4, "four notes on one row must be four DISTINCT ids");
+
+  // …and each id carries the explanation it is supposed to carry, exactly.
+  const byChip = Object.fromEntries(singleIds.map((id) => [id.split("-").pop()!, id]));
+  assert.match(panelText(single, byChip.period!), /^no period-correct value for 2026-06-30 — never zero-filled$/);
+  assert.match(
+    panelText(single, byChip.nullvalue!),
+    /^positions whose value did not parse — excluded from the sum, surfaced beside it$/,
+  );
+  assert.equal(panelText(single, byChip.hhi!), "concentration_unavailable: the producer stores NULL, never a fabricated 0");
+  assert.match(
+    panelText(single, byChip.untyped!),
+    /^not in the curated registry — this build types a curated subset, not the population$/,
+  );
+
+  // The duplicate-variant pair: two rows identical in every rendered field
+  // EXCEPT the one component of the key. Page-wide uniqueness over both.
+  const page =
+    instIndexRowHtml(row({ cik: "0001067983" }), () => "/x/") +
+    instIndexRowHtml(row({ cik: "0001067984" }), () => "/x/");
+  const ids = panelIds(page);
+  assert.equal(ids.length, 8, "two rows, four notes each");
+  assert.equal(
+    new Set(ids).size,
+    8,
+    "two index rows differing only by CIK must not collide — a shared id breaks aria-describedby for both",
+  );
 });
 
-test("SL-R26 F5: two index rows differing only by cik do not collide", async () => {
-  const { noteId } = await import("../src/lib/format.ts");
-  assert.notEqual(noteId("inst-index", "0001067983-hhi"), noteId("inst-index", "0001067984-hhi"));
-});
+test("SL-R26 F5: txnRowHtml — two rows differing ONLY by txnId render distinct dagger panels", async () => {
+  const { txnRowHtml } = await import("../src/lib/format.ts");
+  const ctx: RenderCtx = { watched: new Set() };
 
-test("SL-R26 F5: txnRowHtml daggers on two rows differing only by txnId do not collide", async () => {
-  const { noteId } = await import("../src/lib/format.ts");
-  // The duplicate-variant case for transactions: same member, same ticker,
-  // same amount band — only the transaction id separates them.
-  assert.notEqual(noteId("txn", "T-90210-dagger"), noteId("txn", "T-90211-dagger"));
-});
-
-test("SL-R8d F5: the Class-C survivor inventory is exact — 17 title= sites, by file", () => {
-  // R8d's gate. Asserted as an EXACT per-file map, not a total: a total lets a
-  // conversion in one file hide a new tooltip in another. If this fails after a
-  // legitimate conversion, LOWER the number here in the same commit — never
-  // raise it, and never widen it to an inequality (LD6).
-  const files = {
-    "src/lib/format.ts": 4,
-    "src/lib/ui.ts": 1,
-    "src/lib/holdings.ts": 10,
-    "src/lib/manager-directory.ts": 2,
+  /* The transaction duplicate-variant case: same member, same ticker, same
+     amount band, same dates, same flags — only `txnId` separates them, which
+     is exactly the pair a key read off any other field would collapse. */
+  const base: TxnRow = {
+    kind: "txn",
+    txnId: "T-90210",
+    asset: null,
+    assetType: null,
+    filed: "2026-08-01",
+    traded: "2026-07-20",
+    name: "Same Member",
+    bioguide: "S000001",
+    party: "R",
+    state: "OK",
+    district: null,
+    chamber: "senate",
+    ticker: "WMB",
+    side: "purchase",
+    owner: "spouse",
+    low: 1001,
+    high: 15000,
+    lag: 12,
+    late: 0,
+    flags: ["amount_spouse_cap"], // the flag that renders the ‡ note at all
+    doc: "https://efdsearch.senate.gov/x",
   };
+
+  const page = txnRowHtml(base, ctx) + txnRowHtml({ ...base, txnId: "T-90211" }, ctx);
+  const ids = panelIds(page);
+  assert.equal(ids.length, 2, "each flagged row renders its own dagger note");
+  assert.equal(new Set(ids).size, 2, "…and the two ids differ, on rows that differ only by txnId");
+  for (const id of ids) {
+    assert.equal(
+      panelText(page, id),
+      "disclosed only as an open-ended cap",
+      "the exact explanation the `title=` carried, verbatim",
+    );
+  }
+
+  // The negative half of the contract: no flag, no note — and no orphan id.
+  const unflagged = txnRowHtml({ ...base, flags: [] }, ctx);
+  assert.equal(panelIds(unflagged).length, 0, "a row with no cap flag renders no note");
+});
+
+/* ── CODE-REVIEW F5 (second half) ────────────────────────────────────────────
+   The per-file COUNT gate this replaces could be satisfied by the wrong four
+   sites in `format.ts`: convert one Class-C tooltip, add a new one three
+   functions away, and the count still reads 4. R8d's claim is not "four
+   somewhere in this file" — it is that these SEVENTEEN NAMED sites survive
+   because their renderer holds no unique non-null identity to key on, and that
+   no eighteenth has appeared anywhere.
+
+   Location is the ENCLOSING FUNCTION, not a line number: a line number is
+   invalidated by any edit above it, so a gate written on line numbers is
+   retargeted constantly and stops being read. The function is the thing R8c
+   actually reasoned about. */
+
+/** Every `title=` in a file, tagged with the function that emits it. */
+function titleSites(rel: string): { fn: string; text: string }[] {
+  const src = readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
+  const out: { fn: string; text: string }[] = [];
+  let fn = "<module>";
+  for (const line of src.split("\n")) {
+    const decl =
+      /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)/.exec(line) ??
+      /^\s*(?:export\s+)?const\s+([A-Za-z0-9_]+)\s*=\s*(?:\(|function)/.exec(line);
+    if (decl) fn = decl[1]!;
+    if (line.includes('title="')) {
+      const t = /title="([^"]*)"/.exec(line);
+      out.push({ fn, text: t ? t[1]! : "<interpolated>" });
+    }
+  }
+  return out;
+}
+
+test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path and by emitting function", () => {
+  /* R8c's disqualifying test, applied per site: the renderer receives no
+     unique non-null identity, so R26 forbids it inventing one. If a
+     legitimate conversion lands, DELETE that entry in the same commit — never
+     relax an entry to a wildcard and never raise a count (LD6). */
+  const expected: Record<string, { fn: string; text: string }[]> = {
+    "src/lib/format.ts": [
+      { fn: "srcLinkInner", text: "source URL not usable" },
+      { fn: "memberCellHtml", text: "filer not yet joined to a member record — name as printed on the filing" },
+      { fn: "lagHtml", text: "filed before the stated trade date" },
+      { fn: "lagHtml", text: "days to file unknown" },
+    ],
+    "src/lib/ui.ts": [{ fn: "flowCellHtml", text: "every amount in this aggregate is unparsed" }],
+    "src/lib/holdings.ts": [
+      { fn: "provenanceCellHtml", text: "filed date unknown for this row, so the lag cannot be computed" },
+      { fn: "provenanceCellHtml", text: "filed before the quarter it reports" },
+      { fn: "provenanceCellHtml", text: "<interpolated>" },
+      { fn: "valueCell", text: "<interpolated>" },
+      { fn: "sharesCell", text: "share/principal amount not disclosed or not parseable" },
+      { fn: "filerLinkHtml", text: "this row's filer key is not a CIK, so it addresses no filer page" },
+      { fn: "positionCell", text: "no CUSIP on the reported row" },
+      // R8c called this one `positionDiffHtml`; measured, the attribute is
+      // emitted by the `delta` helper declared inside it. Recorded rather than
+      // rounded off — the plan's inventory has been wrong seven times.
+      { fn: "delta", text: "<interpolated>" },
+      { fn: "holdersFullTableHtml", text: "affiliated-manager group for this quarter; affiliates may report the same position" },
+      { fn: "holdersFullTableHtml", text: "the shard carries no security count for this row" },
+    ],
+    "src/lib/manager-directory.ts": [
+      { fn: "biggestChangeCellHtml", text: "no disclosed value on any change this period" },
+      { fn: "biggestChangeCellHtml", text: "share units were not comparable, so the producer classified this change from VALUE" },
+    ],
+  };
+
   let total = 0;
-  for (const [rel, want] of Object.entries(files)) {
-    const src = readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
-    const got = (src.match(/title="/g) ?? []).length;
-    assert.equal(got, want, `${rel}: expected ${want} surviving title= sites, found ${got}`);
-    total += got;
+  for (const [rel, want] of Object.entries(expected)) {
+    const got = titleSites(rel).map((sitesite) => ({
+      fn: sitesite.fn,
+      // Interpolated attributes have no literal text to pin; the function name
+      // is the identity there, and it is asserted.
+      text: sitesite.text.includes("${") ? "<interpolated>" : sitesite.text,
+    }));
+    assert.deepEqual(got, want, `${rel}: the surviving title= sites are not the ones R8c declared`);
+    total += got.length;
+  }
+
+  // …and no EIGHTEENTH anywhere else under src/lib. A per-file table cannot
+  // see a tooltip that appears in a file the table does not mention.
+  const others = ["src/lib/inst-index.ts", "src/lib/inst-adds-render.ts", "src/lib/activity.ts", "src/lib/congress-columns.ts"];
+  for (const rel of others) {
+    assert.deepEqual(titleSites(rel), [], `${rel}: converted in full — no title= may reappear here`);
   }
   assert.equal(total, 17, "the Class-C survivor count is exactly 17 (32 measured - 5 deleted - 10 converted)");
 });

@@ -21,6 +21,7 @@ export interface FakeElement {
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
   getAttribute(name: string): string | null;
+  hasAttribute(name: string): boolean;
   appendChild(child: FakeElement): void;
   querySelector(sel: string): FakeElement | null;
   querySelectorAll(sel: string): FakeElement[];
@@ -66,6 +67,9 @@ export function makeElement(id = ""): FakeElement {
     getAttribute(name) {
       return el.attrs.get(name) ?? null;
     },
+    hasAttribute(name) {
+      return el.attrs.has(name);
+    },
     appendChild(child) {
       el.children.push(child);
     },
@@ -107,7 +111,13 @@ export interface FakeDom {
   flush(): Promise<void>;
 }
 
-export function makeDom(ids: string[]): FakeDom {
+/* CODE-REVIEW F3: a selector -> elements map, so a test can drive the REAL
+   control listeners an island binds with `document.querySelectorAll`. Without
+   it every such binding is silently a no-op here and a test can only assert
+   that the source contains the handler, which is the class of test the review
+   rejected. Absent selectors still answer with an empty list, so every
+   existing caller is unchanged. */
+export function makeDom(ids: string[], selectors: Record<string, FakeElement[]> = {}): FakeDom {
   const elements = new Map(ids.map((id) => [id, makeElement(id)]));
   const docListeners = new Map<string, ((ev: unknown) => void)[]>();
   const storageMap = new Map<string, string>();
@@ -117,8 +127,8 @@ export function makeDom(ids: string[]): FakeDom {
     fetchCalls,
     document: {
       getElementById: (id) => elements.get(id) ?? null,
-      querySelector: () => null,
-      querySelectorAll: () => [],
+      querySelector: (sel) => selectors[sel]?.[0] ?? null,
+      querySelectorAll: (sel) => selectors[sel] ?? [],
       addEventListener(type, fn) {
         const list = docListeners.get(type) ?? [];
         list.push(fn);

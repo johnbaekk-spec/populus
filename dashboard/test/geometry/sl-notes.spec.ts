@@ -61,20 +61,42 @@ test.describe("SL-R2/R3: the panel opens, and opens WITHOUT JavaScript", () => {
   });
 });
 
-test("SL-R27: the forced fallback opens on hover and on focus, with no script", async ({ browser }) => {
-  const ctx = await browser.newContext({ javaScriptEnabled: false });
-  const page = await ctx.newPage();
-  await page.goto(CONGRESS);
-  // The seam stands in for an engine without `popover`; Chromium can never
-  // enter the real @supports block.
-  await page.evaluate(() => document.documentElement.classList.add("force-note-fallback"));
-  const note = page.locator(".note").first();
-  const pop = note.locator(".note-pop");
-  await expect(pop).toBeHidden();
-  await note.hover();
-  await expect(pop, "the CSS-only fallback opens on hover").toBeVisible();
-  await ctx.close();
-});
+/* CODE-REVIEW F4: the fallback's contract is `:hover` AND `:focus-within` —
+   R3 names both, and they are two different CSS selectors in the same block.
+   Testing hover alone leaves the keyboard channel unexercised on the very
+   engine class that has no `popover` at all, which is the one place a reader
+   cannot fall back to clicking. Both are asserted, in one no-script context,
+   and each from a genuinely closed start state. */
+for (const channel of ["hover", "focus"] as const) {
+  test(`SL-R27: the forced fallback opens on ${channel}, with no script`, async ({ browser }) => {
+    const ctx = await browser.newContext({ javaScriptEnabled: false });
+    const page = await ctx.newPage();
+    await page.goto(CONGRESS);
+    // The seam stands in for an engine without `popover`; Chromium can never
+    // enter the real @supports block. `evaluate` runs even with
+    // `javaScriptEnabled: false` — it is injected by the driver, not the page.
+    await page.evaluate(() => document.documentElement.classList.add("force-note-fallback"));
+    const note = page.locator(".note").first();
+    const pop = note.locator(".note-pop");
+    await expect(pop, "the panel starts closed").toBeHidden();
+
+    if (channel === "hover") {
+      await note.hover();
+    } else {
+      // Keyboard only: move the pointer well away first, so a stray hover
+      // cannot be what opens the panel and make this test a duplicate of the
+      // one above.
+      await page.mouse.move(0, 0);
+      await note.locator(".note-btn").focus();
+    }
+
+    await expect(pop, `the CSS-only fallback opens on ${channel}`).toBeVisible();
+    const box = await pop.boundingBox();
+    expect(box, "and it lays out — a visible panel with no box is not a channel").not.toBeNull();
+    expect(box!.height).toBeGreaterThan(0);
+    await ctx.close();
+  });
+}
 
 test("SL-R4: under PRINT media every panel lays out with a real box and the anchor is hidden", async ({ page }) => {
   await page.goto(CONGRESS);
