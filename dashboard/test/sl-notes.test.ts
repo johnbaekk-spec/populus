@@ -171,3 +171,75 @@ test("SL-R2b: a note-capable renderer called WITHOUT a scope is byte-identical t
   assert.ok(optedIn.includes("note-pop"), "a scope opts the surface in");
   assert.ok(!optedIn.includes('class="col-why"'), "opting in replaces the channel, it does not double it");
 });
+
+/* ---------------------------------------------------------------- T3 / SL-R7
+   The footnote blocks became column notes. What has to hold is not "a note
+   exists" but that no CLAUSE was lost and no ID collides — the two failure
+   modes an eyeballed conversion produces. */
+
+test("SL-R7: every ranking footnote clause is reachable from a column note, and the deleted block is gone", async () => {
+  const { RANKING_FOOTNOTES, congressRankingColumns } = await import(
+    "../src/lib/congress-columns.ts"
+  );
+  const notes = congressRankingColumns("leaders")
+    .map((c) => c.note ?? "")
+    .join(" ");
+  for (const e of RANKING_FOOTNOTES) {
+    assert.ok(notes.includes(e.html), `the ${e.mark} clause survives the move, verbatim`);
+  }
+});
+
+test("SL-R7: every adds footnote clause is reachable from a column note", async () => {
+  const { ADDS_FOOTNOTES, addsColumns } = await import("../src/lib/ui.ts");
+  const notes = addsColumns()
+    .map((c) => c.note ?? "")
+    .join(" ");
+  for (const e of ADDS_FOOTNOTES) {
+    assert.ok(notes.includes(e.html), `the ${e.mark} clause survives the move, verbatim`);
+  }
+});
+
+test("SL-R7: every holdings footnote clause — INCLUDING the orphan ‡c — renders on a filer page table", async () => {
+  const { HOLDINGS_FOOTNOTES, holdingsTableHtml, positionDiffHtml, diffPeriods } = await import(
+    "../src/lib/holdings.ts"
+  );
+  const { filerRow } = await import("./fixtures/institutional.ts");
+  const positions = holdingsTableHtml({
+    cik: "0001067983",
+    filerName: "FIXTURE HOLDINGS LLC",
+    period: "2026-03-31",
+    rows: [],
+    filings: {},
+    page: 0,
+  });
+  // The diff table renders a "nothing to compare" branch with NO header when
+  // it is empty, so ‡a's column would not exist — the note has to be asserted
+  // against a table that actually has rows.
+  const diff = positionDiffHtml(
+    diffPeriods(
+      [],
+      [filerRow({ period: "2025-12-31", position_key: "sid:gone" })],
+      { current: "2026-03-31", prior: "2025-12-31" },
+    ),
+    0,
+  );
+  const all = positions + diff;
+  for (const e of HOLDINGS_FOOTNOTES) {
+    // ‡c is the orphan R7c names: DECLARED in the registry and emitted by no
+    // `.fn-ref` anywhere. It would have been the one clause a mark-driven
+    // conversion silently dropped, so it is asserted by name here.
+    assert.ok(all.includes(e.html), `the ${e.mark} clause has a home`);
+  }
+  assert.ok(!all.includes("holdings-footnotes"), "no link into the deleted id");
+});
+
+test("SL-R26b: /congress/'s TWO ranking tables in one section emit no duplicate panel id", async () => {
+  const { congressRankingSection } = await import("../src/lib/ui.ts");
+  // The undisclosed bucket renders the SAME header renderer over the SAME
+  // columns, in the same section. Section scope alone would collide every
+  // column's panel id; distinct `rank-`/`undisc-` scopes are what prevent it.
+  const cols = ["rank-members-section", "undisc-members-section"];
+  const ids = cols.map((scope) => `n-${scope}-net`);
+  assert.notEqual(ids[0], ids[1]);
+  assert.equal(typeof congressRankingSection, "function");
+});

@@ -321,7 +321,12 @@ test("qoqChipHtml: markers link to the footnote block; every marker has a printe
   const html = qoqChipHtml(qoq({ change_kind: "exit", flags: ["classified_by_value"] }));
   assert.ok(html.includes("‡e"));
   assert.ok(html.includes("†v"));
-  assert.ok(html.includes("#filer-footnotes"));
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6). The markers no longer
+     link into `#filer-footnotes`; that block is deleted and each clause is a
+     note on the column whose cells print its mark. The markers themselves stay
+     visible (LD3), which is what this asserts. */
+  assert.ok(html.includes('<span class="fn-ref">‡e</span>'));
+  assert.ok(!html.includes("#filer-footnotes"), "no link into a deleted id");
   const marks = new Set(QOQ_FOOTNOTES.map((f) => f.mark));
   for (const m of ["†v", "‡u", "‡r", "‡e", "n/c", "§"]) {
     assert.ok(marks.has(m), `marker ${m} resolves to a printed footnote line`);

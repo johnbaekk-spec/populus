@@ -100,8 +100,6 @@ export function initCongressSections(): CongressSections {
       repaint: () => {},
     };
     const cols = congressRankingColumns(kind);
-    const section = el.closest("section");
-    const footnotesId = `${section?.id ?? ""}-footnotes`;
     const repaint = initSortableTable({
       root: el,
       headers,
@@ -117,11 +115,13 @@ export function initCongressSections(): CongressSections {
         // already there instead, so a click before the dataset lands is inert
         // rather than destructive.
         if (binding.rows.length === 0) return el.innerHTML;
+        /* SL-R7: `footnotesId` is gone. It existed so a re-sorted row's ≈
+           marker addressed THIS section's footnote block; R7 deletes both
+           blocks and moves their text onto the Net column's header note, so
+           the marker no longer carries an href at all and the server and the
+           client are identical again by having one fewer thing to agree on. */
         return rankingRootHtml(binding.rows, state.key as CongressSortKey, state.dir, kind, ctx, {
           compact: binding.expanded ? undefined : COMPACT_ROWS,
-          // The client must address the SAME footnote block the server did, or
-          // every re-sorted row's ≈ marker becomes a dangling anchor.
-          footnotesId,
         }).html;
       },
       announce: (state) => {

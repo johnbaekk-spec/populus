@@ -214,7 +214,14 @@ test("R6: the decisive column is asserted, and it comes before the raw levels", 
     "2026-06-30",
     "2026-08-14",
   );
-  const headers = [...html.matchAll(/<th scope="col">([^<]*)<\/th>/g)].map((m) => m[1]!);
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6).
+     The header cells now carry a note after the label, so `[^<]*` no longer
+     reaches the closing tag. The note markup is stripped before the ORIGINAL
+     assertion runs — the column contract this test pins is unchanged and is
+     still asserted exactly, rather than the pattern being widened to tolerate
+     whatever the header happens to contain. */
+  const bare = html.replace(/<span class="note">.*?<\/span><\/span>/gs, "");
+  const headers = [...bare.matchAll(/<th scope="col">([^<]*)<\/th>/g)].map((m) => m[1]!);
   assert.deepEqual(
     headers,
     [

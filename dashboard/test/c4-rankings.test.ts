@@ -120,7 +120,14 @@ test("ranking body: overlap marker when adjacent ranked intervals overlap", () =
     txn({ bioguide: "B000002", name: "Beta", low: 1001, high: 15000 }),
   ];
   const html = section("leaders", leadersRollup(rows, NOW, { range: "12m", basis: "traded" }));
-  assert.match(html, /aria-label="footnote: overlapping intervals are incomparable"/);
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6).
+     The ≈ marker used to be an <a> into `#<section>-footnotes`. R7 deletes that
+     block and moves its text onto the Net column's header note, so the marker
+     is now a plain span — a link into a removed id would be a broken internal
+     link. The PROPERTY is unchanged and is asserted in both halves: the marker
+     is still rendered on the overlapping row, and its text is still reachable
+     in the same body. Only the wrapper moved. */
+  assert.match(html, /<span class="fn-ref">≈<\/span>/);
   assert.match(html, /incomparable<\/strong>, not tied/);
 });
 

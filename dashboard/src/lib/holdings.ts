@@ -47,7 +47,8 @@ import {
   latestFiling,
   reportingLagDays,
   terminusRow,
-  footnoteBlock,
+  fnMark,
+  noteFromHtml,
   statTiles,
   srcLink,
   srcLinkDerived,
@@ -1086,11 +1087,65 @@ export const HOLDINGS_FOOTNOTES: FootnoteEntry[] = [
   },
 ];
 
+const HOLDINGS_FN = new Map(HOLDINGS_FOOTNOTES.map((e) => [e.mark, e.html]));
+
+/* SL-R7/R7b/R7c: `#holdings-footnotes` was appended UNCONDITIONALLY by
+   `HoldingsTable.astro`, so it served two pages — the filer page and the
+   holders page. Its four marks move onto the columns whose cells actually emit
+   them, read off the emitters rather than off the column names:
+
+     §   `srcLinkDerived`        -> Src            (both tables)
+     †u  `valueCell`             -> Value          (both tables)
+     ‡a  `diffChip`              -> Change         (position-diff only)
+     ‡c  DECLARED, NEVER EMITTED -> Issuer         (filer holdings)
+
+   ‡c is the orphan R7c names: it is a footnote with no marker anywhere in the
+   tree. Dropping it because nothing pointed at it would silently lose a
+   published explanation, so it lands on the column it is about. */
+const HOLDINGS_COLS: readonly (readonly [string, string])[] = [
+  ["issuer", "Issuer · class · CUSIP"],
+  ["value", "Value"],
+  ["shares-unit", "Shares · unit"],
+  ["quarter-filed-lag", "Quarter-end · filed · lag"],
+  ["flags", "Flags"],
+  ["src", "Src"],
+];
+const HOLDINGS_COL_NOTES: Record<string, string | undefined> = {
+  issuer: HOLDINGS_FN.get("‡c"),
+  value: HOLDINGS_FN.get("†u"),
+  src: HOLDINGS_FN.get("§"),
+};
+
+/* The position-diff table's own descriptors. Its two period-labelled columns
+   use FIXED slugs, never the interpolated period, so the ids survive a period
+   switch (R7b). */
+const DIFF_COLS: readonly string[] = [
+  "issuer",
+  "prior-value",
+  "curr-value",
+  "delta-value",
+  "prior-shares",
+  "curr-shares",
+  "change",
+  "why-not-quantified",
+];
+
+/* The holders table is a FIVE-column variant no revision of this plan
+   enumerated; R7b requires its descriptors to be read from the header at
+   implementation and recorded, which is what this is. */
+const HOLDERS_COLS: readonly (readonly [string, string])[] = [
+  ["filer", "Filer"],
+  ["value", "Reported value"],
+  ["securities", "Securities"],
+  ["quarter-filed-lag", "Quarter-end · filed · lag"],
+  ["src", "Src"],
+];
+
 function valueCell(value: number | null, undisclosedNote = "value not disclosed on the filing"): string {
   if (value == null) {
     return (
       `<span class="mono-note" title="${esc(undisclosedNote)}">undisclosed</span>` +
-      `<a class="fn-ref" href="#holdings-footnotes" aria-label="footnote †u">†u</a>`
+      fnMark("†u")
     );
   }
   return esc(fmtUsd(value));
@@ -1262,7 +1317,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
       const prov = provOf.get(row) ?? provenanceOf([row.filing_key], opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
-        : srcLinkDerived("#holdings-footnotes", edgarFilerUrl(opts.cik));
+        : srcLinkDerived(null, edgarFilerUrl(opts.cik));
       return (
         `<tr>` +
         `<td class="c-pos">${positionCell(row)}</td>` +
@@ -1322,9 +1377,16 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     `<caption class="visually-hidden">Positions ${esc(opts.filerName)} reported for the quarter ended ${esc(
       opts.period,
     )}, as that filer reported them</caption>` +
-    `<thead><tr><th scope="col">Issuer · class · CUSIP</th><th scope="col">Value</th>` +
-    `<th scope="col">Shares · unit</th><th scope="col">Quarter-end · filed · lag</th>` +
-    `<th scope="col">Flags</th><th scope="col">Src</th></tr></thead>` +
+    `<thead><tr>` +
+    HOLDINGS_COLS.map(([key, label]) => {
+      const body = HOLDINGS_COL_NOTES[key];
+      return (
+        `<th scope="col">${esc(label)}` +
+        (body ? noteFromHtml(body, { scope: "filer-holdings" }, key) : "") +
+        `</th>`
+      );
+    }).join("") +
+    `</tr></thead>` +
     `<tbody>${body}</tbody></table></div>` +
     truncation +
     pagerHtml({ page: opts.page, pageCount, rangeText, idPrefix: "holdings" }) +
@@ -1344,11 +1406,7 @@ function diffChip(kind: DiffKind): string {
     unclassified: { text: "n/c", cls: "qoq-nc" },
   };
   const m = map[kind];
-  const marker = m.marker
-    ? `<a class="fn-ref" href="#holdings-footnotes" aria-label="footnote ${esc(m.marker)}">${esc(
-        m.marker,
-      )}</a>`
-    : "";
+  const marker = m.marker ? fnMark(m.marker) : "";
   return `<span class="qoq-chip ${m.cls}">${esc(m.text)}</span>${marker}`;
 }
 
@@ -1420,11 +1478,31 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
         `<caption class="visually-hidden">Positions compared between the quarters ended ${esc(
           diff.prior,
         )} and ${esc(diff.current)}</caption>` +
-        `<thead><tr><th scope="col">Issuer · class · CUSIP</th>` +
-        `<th scope="col">${esc(diff.prior)} value</th><th scope="col">${esc(diff.current)} value</th>` +
-        `<th scope="col">Δ value</th><th scope="col">${esc(diff.prior)} shares</th>` +
-        `<th scope="col">${esc(diff.current)} shares</th><th scope="col">Change</th>` +
-        `<th scope="col">Why not quantified</th></tr></thead>` +
+        `<thead><tr>` +
+        [
+          "Issuer · class · CUSIP",
+          `${diff.prior} value`,
+          `${diff.current} value`,
+          "Δ value",
+          `${diff.prior} shares`,
+          `${diff.current} shares`,
+          "Change",
+          "Why not quantified",
+        ]
+          .map((label, i) => {
+            const key = DIFF_COLS[i]!;
+            /* Only ‡a lands here: `diffChip` is its sole emitter and it prints
+               in the Change column. †u does NOT — this table formats its value
+               cells with `num()`, not `valueCell`, so it emits no †u at all. */
+            const body = key === "change" ? HOLDINGS_FN.get("‡a") : undefined;
+            return (
+              `<th scope="col">${esc(label)}` +
+              (body ? noteFromHtml(body, { scope: "position-diff" }, key) : "") +
+              `</th>`
+            );
+          })
+          .join("") +
+        `</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`) +
     pagerHtml({ page, pageCount, rangeText, idPrefix: "holdings-diff" }) +
     (diff.unkeyableRows > 0
@@ -1476,7 +1554,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
       const prov = provOf.get(row) ?? provenanceOf(row.filing_keys, opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
-        : srcLinkDerived("#holdings-footnotes", edgarFilerUrl(row.filer_key));
+        : srcLinkDerived(null, edgarFilerUrl(row.filer_key));
       const affiliate =
         row.affiliate_group_key && row.affiliate_group_key !== row.filer_key
           ? `<span class="mono-note" title="affiliated-manager group for this quarter; affiliates may report the same position">group ${esc(
@@ -1533,9 +1611,16 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
         `<caption class="visually-hidden">Institutions whose reported 13F holdings resolved to ${esc(
           opts.issuerName,
         )} for the quarter ended ${esc(opts.period)}</caption>` +
-        `<thead><tr><th scope="col">Filer</th><th scope="col">Reported value</th>` +
-        `<th scope="col">Securities</th><th scope="col">Quarter-end · filed · lag</th>` +
-        `<th scope="col">Src</th></tr></thead>` +
+        `<thead><tr>` +
+        HOLDERS_COLS.map(([key, label]) => {
+          const body = key === "value" ? HOLDINGS_FN.get("†u") : key === "src" ? HOLDINGS_FN.get("§") : undefined;
+          return (
+            `<th scope="col">${esc(label)}` +
+            (body ? noteFromHtml(body, { scope: "holders" }, key) : "") +
+            `</th>`
+          );
+        }).join("") +
+        `</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`) +
     truncation +
     pagerHtml({ page: opts.page, pageCount, rangeText, idPrefix: "holders" }) +
@@ -1651,9 +1736,11 @@ export function holdersIntroHtml(issuerName: string, period: string): string {
   );
 }
 
-export function holdingsFootnotesHtml(): string {
-  return footnoteBlock(HOLDINGS_FOOTNOTES, { id: "holdings-footnotes" });
-}
+/* SL-R7: `holdingsFootnotesHtml()` is DELETED, with both of its call sites
+   (`HoldingsTable.astro`, `entity-client.ts`). Every clause `#holdings-footnotes`
+   published renders as a note on the column that emits its mark — see
+   HOLDINGS_COL_NOTES above. It is deleted rather than emptied because a block
+   that renders nothing is a container a later change would silently refill. */
 
 /* ======================================================== the whole surface */
 

@@ -124,7 +124,12 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
   assert.match(html, /class="terminus" data-terminus-author="populus"/);
   assert.match(html, /Truncated by Public Filings\./);
   // footnote markers AND their printed lines
-  assert.match(html, /id="members-section-footnotes"/);
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R6/R7 (LD6). The section's
+     footnote block is deleted; its three clauses are notes on the columns they
+     qualify. The honesty property — the text is present in this body — is
+     asserted by the two lines below, which are unchanged. This line now pins
+     the note that carries them, so the channel is asserted too. */
+  assert.match(html, /id="n-rank-members-section-net"/);
   assert.match(html, /net disclosed flow = sum of purchase bucket bounds/);
   assert.match(html, /overlapping intervals are incomparable/);
   // the stated absence: the wholly-undisclosed bucket and its explanation

@@ -50,7 +50,9 @@ import {
   universalFlagNote,
   fmtInt,
   fmtUsd,
-  footnoteBlock,
+  fnMark,
+  noteBody,
+  noteFromHtml,
   intOrNull,
   jsonArrayOf,
   latestFiling,
@@ -780,7 +782,7 @@ export function activityRowHtml(
     `<td class="c-filer c-secondary">${filerLinkHtml(r.cik, filerName, tier)}</td>` +
     `<td><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span>` +
     `<span class="visually-hidden"> ${esc(label.spoken)}</span>` +
-    `<a class="fn-ref" href="#activity-footnotes" aria-label="footnote: what the change labels mean">§</a></td>` +
+    `${fnMark("§")}</td>` +
     `<td class="c-num">${deltaCell(r)}</td>` +
     `<td class="c-num mono-id">${esc(r.curr_period)}</td>` +
     `<td class="c-num">${filedCell(r)}</td>` +
@@ -835,6 +837,28 @@ const ACTIVITY_FOOTNOTES = [
       ` a lag over 45 days is past the statutory deadline`,
   },
 ];
+
+const ACTIVITY_FN = new Map(ACTIVITY_FOOTNOTES.map((e) => [e.mark, e.html]));
+
+/** SL-R7b: the activity table's column descriptors — key, label, and the
+    stated non-sortability reason that used to render as visible `.col-why`. */
+const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
+  ["issuer-position", "Issuer · position", "this view is the largest reported changes, cut at a shard bound — re-ordering the slice by issuer would present a partial list as a complete one"],
+  ["filer", "Filer", "same bound: the managers leading a filer ordering may be in shards this page never loaded. The manager directory below sorts its complete set"],
+  ["change", "Change ·§", "change kind is a category, not an order — the filters above select one"],
+  ["delta-value", "Δ value ·‡", "the rows are ALREADY ordered by absolute reported change; that is the ordering this slice was cut on"],
+  ["quarter-ended", "Quarter ended", "every row here shares the reporting period the feed was built for"],
+  ["filed", "Filed ·†", "a filed-date ordering over a value-cut slice would rank the wrong rows first"],
+  ["lag", "Lag", "as above — lag orders the slice, not the corpus"],
+  ["flags", "Flags", "flags are a set per row, with no order over them"],
+];
+
+/** SL-R7c: mark → column, read off the emitter. */
+const ACTIVITY_COL_FN: Record<string, string | undefined> = {
+  change: ACTIVITY_FN.get("§"),
+  "delta-value": ACTIVITY_FN.get("‡"),
+  filed: ACTIVITY_FN.get("†"),
+};
 
 export interface ActivityFeedOptions {
   /** Rows rendered inline; the remainder is served from the shards. */
@@ -957,22 +981,21 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
        The two surfaces that DO sort — the congress rankings and the manager
        directory — hold their complete row set, which is exactly what makes
        sorting honest there. */
+    /* SL-R5/R7: this mapper is the fourth `.col-why` site — the plan's inventory
+       said three. Each column's stated reason becomes its note, and the three
+       marks `#activity-footnotes` published join the columns that emit them:
+       § on the change chip (`activityRowHtml`), ‡ on Δ value, † on Filed.
+       R7b's descriptor rule applies: the `<thead>` is a literal with no sort
+       key, so the keys are supplied here rather than invented at render time. */
     `<thead><tr>` +
-    [
-      ["Issuer · position", "this view is the largest reported changes, cut at a shard bound — re-ordering the slice by issuer would present a partial list as a complete one"],
-      ["Filer", "same bound: the managers leading a filer ordering may be in shards this page never loaded. The manager directory below sorts its complete set"],
-      ["Change ·§", "change kind is a category, not an order — the filters above select one"],
-      ["Δ value ·‡", "the rows are ALREADY ordered by absolute reported change; that is the ordering this slice was cut on"],
-      ["Quarter ended", "every row here shares the reporting period the feed was built for"],
-      ["Filed ·†", "a filed-date ordering over a value-cut slice would rank the wrong rows first"],
-      ["Lag", "as above — lag orders the slice, not the corpus"],
-      ["Flags", "flags are a set per row, with no order over them"],
-    ]
-      .map(
-        ([label, why]) =>
-          `<th scope="col">${esc(label!)}<span class="col-why">${esc(why!)}</span></th>`,
-      )
-      .join("") +
+    ACTIVITY_COLS.map(([key, label, why]) => {
+      const body = noteBody(why, ACTIVITY_COL_FN[key]);
+      return (
+        `<th scope="col">${esc(label)}` +
+        (body ? noteFromHtml(body, { scope: "inst-activity" }, key) : "") +
+        `</th>`
+      );
+    }).join("") +
     `</tr></thead>` +
     // R18/F4: the LOCKED render root. It was an anonymous <tbody>, which meant
     // no sort or expansion could be scoped to it and no root-integrity test
@@ -1021,7 +1044,6 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     `<div class="caveat-line">Quarter-over-quarter comparisons are between two quarter-end` +
     ` snapshots of what was reported — not a record of transactions, and not a claim about what` +
     ` any manager holds now.</div>` +
-    footnoteBlock(ACTIVITY_FOOTNOTES, { id: "activity-footnotes" }) +
     `</section>`
   );
 }

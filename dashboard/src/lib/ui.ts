@@ -14,6 +14,9 @@ import {
   type NoteCtx,
   assetNameCell,
   colWhyHtml,
+  fnMark,
+  noteBody,
+  noteFromHtml,
   esc,
   fmtInt,
   fmtUsd,
@@ -412,6 +415,14 @@ export function memberPaperBlock(m: MemberEntity): string {
   );
 }
 
+/* SL-R7: the single clause `#member-footnotes` published. It is referenced from
+   TWO places on the member page — the Flow range column and the quarterly-flow
+   panel's "derived ·§" marker — so it is declared once and both notes read it,
+   which is what stops the two channels drifting apart. */
+const MEMBER_FLOW_NOTE =
+  `flow range = sum of statutory bucket bounds — an interval, not an estimate of value; ` +
+  `derived by Public Filings from the disclosed ranges`;
+
 export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx, page = 0): string {
   const watched = ctx.watched.has(m.bioguide);
   const flow = quarterlyFlow(m.txns, stamps.generatedAtDate, 8);
@@ -424,7 +435,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       (t) =>
         `<tr><td class="c-ticker"><a href="${tickerHrefFor(t.ticker, ctx)}">${esc(t.ticker)}</a></td>` +
         `<td class="c-num">${fmtInt(t.n)}</td>` +
-        `<td class="c-num">${flowCellHtml(t.flow)}<a class="fn-ref" href="#member-footnotes" aria-label="footnote §">§</a></td>` +
+        `<td class="c-num">${flowCellHtml(t.flow)}${fnMark("§")}</td>` +
         `<td class="c-num c-muted">${esc(t.last)}</td></tr>`,
     )
     .join("\n");
@@ -432,7 +443,13 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     top.length === 0
       ? `<p class="section-note">No tickers disclosed in the trailing 24 months.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Most-disclosed tickers, trailing 24 months</caption>` +
-        `<thead><tr><th scope="col">Ticker</th><th scope="col">Txns</th><th scope="col">Flow range ·§</th><th scope="col">Last</th></tr></thead>` +
+        /* SL-R7: `member-footnotes` had ONE mark, §, and it qualifies this
+           column. R7b's descriptor rule applies — this `<thead>` is a literal
+           with no sort key, so the plan supplies the column key rather than the
+           renderer inventing one. */
+        `<thead><tr><th scope="col">Ticker</th><th scope="col">Txns</th>` +
+        `<th scope="col">Flow range ·§${noteFromHtml(MEMBER_FLOW_NOTE, { scope: "member-top" }, "flow-range")}</th>` +
+        `<th scope="col">Last</th></tr></thead>` +
         `<tbody>${topRows}</tbody></table></div>`;
 
   return (
@@ -456,7 +473,8 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     `<div class="entity-grid">` +
     `<section class="panel" aria-labelledby="flow-h">` +
     `<div class="panel-head"><h2 id="flow-h" class="section-h">Disclosed flow by quarter</h2>` +
-    `<span class="panel-note">bar = [min, max] of bucket sums · <a class="fn-ref" href="#member-footnotes">derived ·§</a></span></div>` +
+    `<span class="panel-note">bar = [min, max] of bucket sums · <span class="src-derived">derived&nbsp;·§</span>` +
+    noteFromHtml(MEMBER_FLOW_NOTE, { scope: "member-flow" }, "derived") + `</span></div>` +
     flowRibbon(flow, { twoSided: false, sourceLine: "source: House Clerk + Senate eFD" }) +
     `</section>` +
     `<section class="panel" aria-labelledby="top-h">` +
@@ -473,15 +491,6 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       page,
       ctx,
     }) +
-    footnoteBlock(
-      [
-        {
-          mark: "§",
-          html: `flow range = sum of statutory bucket bounds — an interval, not an estimate of value; derived by Public Filings from the disclosed ranges`,
-        },
-      ],
-      { id: "member-footnotes" },
-    ) +
     `</section>` +
     memberPaperBlock(m)
   );
@@ -815,6 +824,19 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
 
 /* ---------- 13F holders page body (build-time only) ---------- */
 
+/* SL-R7: the two clauses `#holders-footnotes` published, each moved to the
+   thing it qualifies — † to the issuer name in the lede (it is about the
+   ticker→issuer mapping, not about a column), § to the Src column, which is
+   where `srcLinkDerived` prints the marker. */
+const HOLDERS_MAPPING_NOTE =
+  `ticker→issuer via the SEC's present-day ticker file (company_tickers.json), matched only ` +
+  `against entity-keyed issuers in the aggregate — a present-day mapping, not the name as of ` +
+  `each filing`;
+const HOLDERS_DERIVED_NOTE =
+  `derived by Public Filings from the published aggregate (agg_issuer_top_holders); the ` +
+  `mockup's per-holder filed dates, lags, share counts and document links are not in the ` +
+  `published aggregate and are not shown — the EDGAR link opens the filer's 13F filings`;
+
 export function holdersBody(
   ticker: string,
   issuerName: string,
@@ -851,7 +873,9 @@ export function holdersBody(
     `<header class="entity-head">` +
     `<div class="entity-head-copy">` +
     `<h1 class="entity-title">Who holds <span class="mono-ticker">${esc(ticker)}</span></h1>` +
-    `<p class="entity-lede">Institutional holders of ${esc(issuerName)}<a class="fn-ref" href="#holders-footnotes" aria-label="footnote: present-day mapping">†</a> per 13F filings for the quarter ended <strong>${esc(
+    `<p class="entity-lede">Institutional holders of ${esc(issuerName)}${fnMark("†")}` +
+    noteFromHtml(HOLDERS_MAPPING_NOTE, { scope: "holders-lede" }, "issuer-mapping") +
+    ` per 13F filings for the quarter ended <strong>${esc(
       period,
     )}</strong>. Long positions only; managers under $100M in 13(f) securities do not file. The ranking below is a top-${fmtInt(
       topn,
@@ -867,20 +891,7 @@ export function holdersBody(
     `<noscript><span class="period-note">period switching needs JavaScript; showing ${esc(period)}</span></noscript></div>` +
     `<div data-holders-root>` +
     holdersTableHtml(active, period, latestFiled, topn) +
-    `</div>` +
-    footnoteBlock(
-      [
-        {
-          mark: "†",
-          html: `ticker→issuer via the SEC's present-day ticker file (company_tickers.json), matched only against entity-keyed issuers in the aggregate — a present-day mapping, not the name as of each filing`,
-        },
-        {
-          mark: "§",
-          html: `derived by Public Filings from the published aggregate (agg_issuer_top_holders); the mockup's per-holder filed dates, lags, share counts and document links are not in the published aggregate and are not shown — the EDGAR link opens the filer's 13F filings`,
-        },
-      ],
-      { id: "holders-footnotes" },
-    )
+    `</div>`
   );
 }
 
@@ -909,7 +920,7 @@ export function holdersTableHtml(
         `<td class="c-num">${fmtInt(h.security_count)}</td>` +
         `<td class="c-keysrc"><span class="mono-note">${esc(h.issuer_key_source)}</span></td>` +
         `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedRanked })}</td>` +
-        `<td class="c-src">${srcLinkDerived("#holders-footnotes", edgarFilerUrl(h.cik))}</td></tr>`,
+        `<td class="c-src">${srcLinkDerived(null, edgarFilerUrl(h.cik))}</td></tr>`,
     )
     .join("\n");
   const body =
@@ -919,11 +930,22 @@ export function holdersTableHtml(
         `value for the active sort key — listed below in rank order, never treated as zero</td></tr>\n` +
         rowHtml(unranked as (TopHolderRow & { tier?: FilerBudgetState })[])
       : "");
+  /* SL-R5/R7: `HOLDER_COLUMNS.why` was declared REQUIRED for every unsortable
+     column and then never rendered by this header — the reason a reader was
+     promised existed only in the source. It renders now, as a note, together
+     with the § clause that `#holders-footnotes` carried for the Src column.
+     This table renders on `/institutional/tickers/[t]/holders/` only, which is
+     in scope, so the scope is fixed here rather than threaded (SL-R2b applies
+     to renderers shared with routes this run does not own). */
+  const holderNote = (c: (typeof HOLDER_COLUMNS)[number]): string => {
+    const body = noteBody(c.why, c.label === "Src" ? HOLDERS_DERIVED_NOTE : null);
+    return body ? noteFromHtml(body, { scope: "holders-ranked" }, c.key ?? c.label) : "";
+  };
   const heads = HOLDER_COLUMNS.map((c) =>
     c.key === null
-      ? `<th scope="col">${esc(c.label)}</th>`
+      ? `<th scope="col">${esc(c.label)}${holderNote(c)}</th>`
       : `<th scope="col" data-sort="${c.key}" aria-sort="${c.key === sort.key ? (sort.dir === "desc" ? "descending" : "ascending") : "none"}">` +
-        `<button type="button" class="th-sort">${esc(c.label)}</button></th>`,
+        `<button type="button" class="th-sort">${esc(c.label)}</button>${holderNote(c)}</th>`,
   ).join("");
   return (
     `<div class="panel panel-wide">` +
@@ -1025,11 +1047,36 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
 ];
 
+const QOQ_FN = new Map(QOQ_FOOTNOTES.map((e) => [e.mark, e.html]));
+
+/* SL-R7b/R7c: the position-changes table's `<thead>` is a literal with no sort
+   key, so the plan supplies the column descriptors and the emitter-verified
+   mark→column mapping. Read off where each marker is actually RENDERED, not off
+   the column names: `qoqPresentation.chipMarkers` prints †v/‡e/n-c on the Change
+   chip, `positionMarkers` prints ‡r beside the position key, ‡u withholds the
+   share delta, and § is this variant's derivation clause — this table renders no
+   Src column, so it hangs on Δ value (R7c). */
+const QOQ_COL_NOTES: Record<string, string | undefined> = {
+  "position-grain": QOQ_FN.get("‡r"),
+  change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c")),
+  "delta-value": QOQ_FN.get("§"),
+  "delta-shares": QOQ_FN.get("‡u"),
+};
+const QOQ_COLS: readonly (readonly [string, string])[] = [
+  ["position-grain", "Position · grain"],
+  ["change", "Change"],
+  ["delta-value", "Δ value"],
+  ["delta-shares", "Δ shares"],
+  ["prev-value", "Prev value"],
+  ["curr-value", "Curr value"],
+  ["prev-shares", "Prev shares"],
+  ["curr-shares", "Curr shares"],
+  ["flags", "Flags"],
+];
+
 export function qoqChipHtml(row: QoqDeltaRow): string {
   const p = qoqPresentation(row);
-  const markers = p.chipMarkers
-    .map((m) => `<a class="fn-ref" href="#filer-footnotes" aria-label="footnote ${esc(m)}">${esc(m)}</a>`)
-    .join("");
+  const markers = p.chipMarkers.map((m) => fnMark(m)).join("");
   return `<span class="qoq-chip ${p.chipCls}">${esc(p.chipText)}</span>${markers}`;
 }
 
@@ -1058,9 +1105,7 @@ export function changesTableHtml(
     .map((d) => {
       const p = qoqPresentation(d);
       const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
-      const posMarkers = p.positionMarkers
-        .map((m) => `<a class="fn-ref" href="#filer-footnotes" aria-label="footnote ${esc(m)}">${esc(m)}</a>`)
-        .join("");
+      const posMarkers = p.positionMarkers.map((m) => fnMark(m)).join("");
       const valueDelta =
         p.valueDelta.kind === "num"
           ? esc(p.valueDelta.text)
@@ -1095,7 +1140,16 @@ export function changesTableHtml(
       pageCount > 1 ? ' data-paged="1"' : ""
     } data-stated-flags="${esc(statedDeltas.join(","))}">` +
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
-    `<thead><tr><th scope="col">Position · grain</th><th scope="col">Change</th><th scope="col">Δ value</th><th scope="col">Δ shares</th><th scope="col">Prev value</th><th scope="col">Curr value</th><th scope="col">Prev shares</th><th scope="col">Curr shares</th><th scope="col">Flags</th></tr></thead>` +
+    `<thead><tr>` +
+    QOQ_COLS.map(([key, label]) => {
+      const body = QOQ_COL_NOTES[key];
+      return (
+        `<th scope="col">${esc(label)}` +
+        (body ? noteFromHtml(body, { scope: "filer-changes" }, key) : "") +
+        `</th>`
+      );
+    }).join("") +
+    `</tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     changesPagerHtml(page, pageRows.length, embedded, pageCount) +
     /* The bound names itself, with the TRUE total — the grammar the holdings
@@ -1237,8 +1291,7 @@ export function filerBody(
     `<div data-filer-root>` +
     filerPeriodSectionHtml(conc, deltas, period, latestFiled, topn, opts) +
     `</div>` +
-    filerEdgarBlock(filer.cik, filer.name) +
-    footnoteBlock(QOQ_FOOTNOTES, { id: "filer-footnotes" })
+    filerEdgarBlock(filer.cik, filer.name)
   );
 }
 
@@ -1432,11 +1485,13 @@ import {
   type CongressSortKey,
 } from "./congress-columns.ts";
 
-/** `footnotesId` is threaded rather than hard-coded: /congress/ renders TWO
-    ranking sections, each with its own footnote block, so a shared literal id
-    would make one block a duplicate id and every marker in the other section a
-    dangling anchor. */
-function netCellHtml(net: NetInterval, overlapsPrev: boolean, footnotesId: string): string {
+/* SL-R6/R7: `footnotesId` is gone from this path. It existed ONLY so the ≈
+   marker could point at whichever of /congress/'s two ranking footnote blocks
+   belonged to its section. R7 deletes both blocks and moves their text onto the
+   Net column's header note, so there is no id left to thread — and threading a
+   dangling one would be the broken internal link R23's own check forbids. The
+   marker itself stays visible (LD3); only its href is gone. */
+function netCellHtml(net: NetInterval, overlapsPrev: boolean): string {
   const dir = netDirection(net);
   const dirHtml =
     dir === "accumulation"
@@ -1444,9 +1499,7 @@ function netCellHtml(net: NetInterval, overlapsPrev: boolean, footnotesId: strin
       : dir === "disposal"
         ? ` <span class="net-dir net-dis">net disposal</span>`
         : "";
-  const overlap = overlapsPrev
-    ? `<a class="fn-ref" href="#${esc(footnotesId)}" aria-label="footnote: overlapping intervals are incomparable">≈</a>`
-    : "";
+  const overlap = overlapsPrev ? fnMark("≈") : "";
   return `${esc(netIntervalText(net))}${dirHtml}${overlap}`;
 }
 
@@ -1456,7 +1509,6 @@ function rankingRowHtml(
   overlapsPrev: boolean,
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  footnotesId: string,
 ): string {
   const who =
     kind === "tickers"
@@ -1478,36 +1530,16 @@ function rankingRowHtml(
     `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
     `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
     `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
-    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev, footnotesId)}</td>` +
+    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td>` +
     `<td class="c-num">${lateCell}</td></tr>`
   );
 }
 
-/** The default footnote-block id, used when a section does not name its own. */
-export const RANKING_FOOTNOTES_ID = "ranking-footnotes";
-
-export const RANKING_FOOTNOTES: FootnoteEntry[] = [
-  {
-    mark: "§",
-    html:
-      `net disclosed flow = sum of purchase bucket bounds minus sum of sale bucket bounds, ` +
-      `as interval subtraction <code>net = [pL−sU, pU−sL]</code>. A side with no rows has summed ` +
-      `<strong>zero</strong> — a fact, not an absence. A row with any wholly-undisclosed amount on ` +
-      `either side is <strong>not rankable</strong> and sits in the labeled bucket below the ranked rows, ` +
-      `never coerced to zero`,
-  },
-  {
-    mark: "≈",
-    html:
-      `this row's net interval overlaps the row above it — the two are <strong>incomparable</strong>, ` +
-      `not tied: the order is a stable display key (lower bound, then upper bound, then the row's own ` +
-      `key), never a claim that one outranks the other`,
-  },
-  {
-    mark: "†",
-    html: `counts and late rates are exact values with their denominators — only the flow columns are intervals`,
-  },
-];
+/* SL-R6/R7: `RANKING_FOOTNOTES` moved to `congress-columns.ts`, which is where
+   the columns that now carry its text are declared, and is re-exported here so
+   no consumer's import path changed. `RANKING_FOOTNOTES_ID` is retired with the
+   block it named — the section no longer renders a footnote container. */
+export { RANKING_FOOTNOTES } from "./congress-columns.ts";
 
 /* ---------- R2/R5/R6/R7/R18/R19: the congress ranking sections ------------
 
@@ -1566,10 +1598,16 @@ function rankingHeadHtml(
         );
       }
       const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
+      /* SL-R6: a SORTABLE column can carry a note too — the ranking footnotes
+         qualified Txns, Late and the three flow columns, all of which sort. The
+         key is `c.key`, non-null on this branch by the type. R25 keeps the
+         button's click out of the sort handler. */
       return (
         `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-congress-sort="${esc(c.key)}" ` +
         `data-congress-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
-        `<button class="th-sort" type="button">${esc(c.label)}</button></th>`
+        `<button class="th-sort" type="button">${esc(c.label)}</button>` +
+        (c.note ? noteFromHtml(c.note, notes, c.key) : "") +
+        `</th>`
       );
     })
     .join("");
@@ -1582,7 +1620,7 @@ export function rankingRowsHtml(
   rows: readonly LeaderRow[],
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { numbered?: boolean; startAt?: number; footnotesId?: string } = {},
+  opts: { numbered?: boolean; startAt?: number } = {},
 ): string {
   // R18: the incomparability marker is recomputed from THIS order. Carrying a
   // marker over from a previous sort would claim an overlap against a row that
@@ -1590,9 +1628,8 @@ export function rankingRowsHtml(
   const flags = overlapFlags(rows);
   const numbered = opts.numbered ?? true;
   const start = opts.startAt ?? 1;
-  const footnotesId = opts.footnotesId ?? RANKING_FOOTNOTES_ID;
   return rows
-    .map((r, i) => rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx, footnotesId))
+    .map((r, i) => rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx))
     .join("\n");
 }
 
@@ -1616,7 +1653,7 @@ export function rankingRootHtml(
   dir: "asc" | "desc",
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { compact?: number; footnotesId?: string } = {},
+  opts: { compact?: number } = {},
 ): { html: string; total: number; shown: number } {
   const cols = congressRankingColumns(kind);
   const { ranked, unrankable } = sortRankingRows(rows, key, dir);
@@ -1631,7 +1668,7 @@ export function rankingRootHtml(
     cols.find((c) => c.sortable && c.key === key)?.label ?? key;
   return {
     html:
-      rankingRowsHtml(rankedShown, kind, ctx, { footnotesId: opts.footnotesId }) +
+      rankingRowsHtml(rankedShown, kind, ctx) +
       // F5: the separator states that rows exist which this column CANNOT
       // rank. That is a stated absence, so it renders whenever the bucket is
       // non-empty — NOT only when a bucket row happens to survive the compact
@@ -1643,10 +1680,7 @@ export function rankingRootHtml(
           unrankableSeparatorHtml(unrankable.length, cols.length, activeLabel) +
           (unrankableShown.length > 0
             ? "\n" +
-              rankingRowsHtml(unrankableShown, kind, ctx, {
-                numbered: false,
-                footnotesId: opts.footnotesId,
-              })
+              rankingRowsHtml(unrankableShown, kind, ctx, { numbered: false })
             : "")
         : ""),
     total,
@@ -1741,12 +1775,8 @@ export function congressRankingSection(
     (r) => r.id,
   );
 
-  const footnotesId = `${opts.sectionId}-footnotes`;
-  const main = rankingRootHtml(ranked, "net", "desc", kind, ctx, { compact, footnotesId });
-  const bucket = rankingRootHtml(undisclosedBucket, "name", "asc", kind, ctx, {
-    compact,
-    footnotesId,
-  });
+  const main = rankingRootHtml(ranked, "net", "desc", kind, ctx, { compact });
+  const bucket = rankingRootHtml(undisclosedBucket, "name", "asc", kind, ctx, { compact });
 
   const caption =
     kind === "leaders"
@@ -1762,11 +1792,13 @@ export function congressRankingSection(
       stamps.buildId,
     )}</span></div>` +
     (opts.controls ? rangeControlHtml(rollup.range, rollup.basis) : "") +
-    `<p class="section-note">Every flow number is an <strong>interval</strong> over statutory bucket bounds — ` +
-    `no midpoints, no point estimates. Direction words appear only on a strict sign: an interval that ` +
-    `touches or spans zero carries none. The order below is a deterministic display key, ` +
-    `<strong>not</strong> a superiority claim — overlapping intervals are incomparable (≈).` +
-    `<noscript> Sorting by column header needs JavaScript; the order below is by net disclosed flow, largest first.</noscript></p>` +
+    /* SL-R6: the three prose claims this paragraph carried are now notes on the
+       columns they are about — interval-ness and the § derivation on the three
+       flow columns, the direction rule and the ≈ incomparability rule on Net.
+       The paragraph itself is gone; its `<noscript>` is NOT, because that
+       sentence is about scripting rather than about a column, so no column note
+       is the right home for it and a no-JavaScript reader must still get it. */
+    `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by net disclosed flow, largest first.</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
     `<thead><tr>${rankingHeadHtml(cols, "net", "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
@@ -1810,7 +1842,6 @@ export function congressRankingSection(
         `</div>`
       : "") +
     `<div class="caveat-line" id="${esc(opts.sectionId)}-caveat">${rankingCaveatHtml(exclusions)}</div>` +
-    footnoteBlock(RANKING_FOOTNOTES, { id: footnotesId }) +
     `</section>`
   );
 }
@@ -1850,6 +1881,8 @@ export const ADDS_FOOTNOTES: FootnoteEntry[] = [
   },
 ];
 
+const ADDS_FN = new Map(ADDS_FOOTNOTES.map((e) => [e.mark, e.html]));
+
 /** F3: the leaderboard's column contract. Its orders are well-defined — every
     column is a scalar, a name, or the same nullable-value ordering the payload
     is already sorted by — so success criterion 2 requires them to be sortable,
@@ -1867,11 +1900,35 @@ export function addsColumns(): CongressColumn[] {
         "the rank number is produced by the active sort, not held by the row — ordering by it " +
         "would be circular, so it renumbers with every sort instead",
     },
-    { sortable: true, key: "issuer" as never, label: "Issuer ·§", defaultDir: "asc", numeric: false },
+    /* SL-R7: each mark's text moves onto the column it qualified —
+       § → Issuer, ‡ → Δ value added, † → Top adder — read off ADDS_FOOTNOTES
+       rather than retyped, so the two cannot drift. */
+    {
+      sortable: true,
+      key: "issuer" as never,
+      label: "Issuer ·§",
+      defaultDir: "asc",
+      numeric: false,
+      note: ADDS_FN.get("§"),
+    },
     { sortable: true, key: "managers" as never, label: "Managers", defaultDir: "desc", numeric: true },
     { sortable: true, key: "new" as never, label: "New positions", defaultDir: "desc", numeric: true },
-    { sortable: true, key: "value" as never, label: "Δ value added ·‡", defaultDir: "desc", numeric: true },
-    { sortable: true, key: "adder" as never, label: "Top adder ·†", defaultDir: "asc", numeric: false },
+    {
+      sortable: true,
+      key: "value" as never,
+      label: "Δ value added ·‡",
+      defaultDir: "desc",
+      numeric: true,
+      note: ADDS_FN.get("‡"),
+    },
+    {
+      sortable: true,
+      key: "adder" as never,
+      label: "Top adder ·†",
+      defaultDir: "asc",
+      numeric: false,
+      note: ADDS_FN.get("†"),
+    },
   ];
 }
 
@@ -1890,10 +1947,15 @@ function addsHeadHtml(
         );
       }
       const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
+      // SL-R7: same rule as the ranking head — Issuer, Δ value and Top adder
+      // are sortable AND carry a mark, so the note hangs off the sortable
+      // branch as well.
       return (
         `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-adds-sort="${esc(String(c.key))}" ` +
         `data-adds-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
-        `<button class="th-sort" type="button">${esc(c.label)}</button></th>`
+        `<button class="th-sort" type="button">${esc(c.label)}</button>` +
+        (c.note ? noteFromHtml(c.note, notes, String(c.key)) : "") +
+        `</th>`
       );
     })
     .join("");
@@ -1992,7 +2054,6 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     // insert a container that was never there, so an initially-absent note
     // meant a later period's omission could not be stated at all (F12).
     (addsNoteHtml(payload) || `<div class="caveat-line" id="inst-adds-note"></div>`) +
-    footnoteBlock(ADDS_FOOTNOTES, { id: "inst-adds-footnotes" }) +
     // F12: the live status node the period/mode control writes into. It was
     // targeted by the failure handler but never rendered, so a failed fetch
     // reached the console and nothing else — the reader saw the old quarter
@@ -2123,7 +2184,7 @@ export function memberV2Sections(
     `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
     `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
     `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
-    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev, RANKING_FOOTNOTES_ID)}</td></tr>`;
+    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td></tr>`;
   const netTable =
     netRows.length === 0
       ? `<p class="section-note">No ticker-keyed disclosures on record.</p>`
@@ -2284,8 +2345,7 @@ export function memberV2Sections(
     `<div class="entity-grid">` +
     sectorPanel +
     committeePanel +
-    `</div>` +
-    footnoteBlock(RANKING_FOOTNOTES, { id: "ranking-footnotes" })
+    `</div>`
   );
 }
 

@@ -225,15 +225,40 @@ export function noteId(scope: string, key: string): string {
  * `aria-describedby`, and the print stylesheet can lay it out in flow.
  */
 export function note(text: string, ctx: NoteCtx, key: string, opts: { label?: string } = {}): string {
+  return noteFromHtml(esc(text), ctx, key, opts);
+}
+
+/**
+ * SL-R7: the same primitive for text that is ALREADY escaped html.
+ *
+ * `FootnoteEntry.html` is pre-escaped body markup carrying `<strong>`, `<em>`
+ * and `<code>` — the emphasis the footnote block published. R7 moves that text
+ * into notes, and escaping it here would print the tags as literal characters,
+ * which is a silent downgrade of the very text §7 forbids softening. Callers
+ * pass html ONLY from the footnote registries and this module's own composed
+ * strings; every caller-supplied plain string still goes through `note()`.
+ */
+export function noteFromHtml(
+  html: string,
+  ctx: NoteCtx,
+  key: string,
+  opts: { label?: string } = {},
+): string {
   const id = noteId(ctx.scope, key);
   const label = opts.label ?? "explain";
   return (
     `<span class="note">` +
     `<button type="button" class="note-btn" popovertarget="${esc(id)}"` +
     ` aria-describedby="${esc(id)}" aria-label="${esc(label)}">i</button>` +
-    `<span class="note-pop" popover id="${esc(id)}" role="note">${esc(text)}</span>` +
+    `<span class="note-pop" popover id="${esc(id)}" role="note">${html}</span>` +
     `</span>`
   );
+}
+
+/** SL-R7: compose one note body from several source clauses, in source order.
+    Where two footnote marks land on one column its note carries both — R7c. */
+export function noteBody(...parts: (string | null | undefined)[]): string {
+  return parts.filter((p): p is string => !!p).join(" · ");
 }
 
 /**
@@ -930,8 +955,14 @@ export function srcLinkCell(doc: string): string {
     the printed derivation footnote, plus the primary-source link the row's
     identity supports (an EDGAR filer page — a real URL, never a fabricated
     per-document link the aggregate does not publish). */
-export function srcLinkDerived(footnoteHref: string, edgarUrl: string | null): string {
-  const marker = `<a class="src-derived" href="${esc(footnoteHref)}">derived&nbsp;·§</a>`;
+export function srcLinkDerived(footnoteHref: string | null, edgarUrl: string | null): string {
+  /* SL-R7: `null` means "this surface's footnote block became a column note".
+     The marker STAYS VISIBLE — LD3 keeps every honesty marker on the page as
+     the note's anchor — but it stops being a link into an id that no longer
+     exists, which would be a broken internal link. */
+  const marker = footnoteHref
+    ? `<a class="src-derived" href="${esc(footnoteHref)}">derived&nbsp;·§</a>`
+    : `<span class="src-derived">derived&nbsp;·§</span>`;
   if (!edgarUrl || !edgarUrl.startsWith("https://")) {
     return `<div class="cell cell-src">${marker}</div>`;
   }
@@ -1337,6 +1368,19 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
     `aria-controls="${esc(o.rootId)}">` +
     `Show all ${fmtInt(o.total)} ${esc(o.noun)} (${fmtInt(hidden)} more)</button></div>`
   );
+}
+
+/**
+ * SL-R7: a footnote marker whose block has become a column note.
+ *
+ * The marker is the reader's cue that the column carries an explanation, and
+ * LD3 keeps every one of them visible on the page — what changes is that it no
+ * longer points into a `#…-footnotes` id this run deleted. A link to a removed
+ * anchor is a broken internal link, so the anchor becomes a plain span with the
+ * same class, the same glyph and the same position.
+ */
+export function fnMark(mark: string): string {
+  return `<span class="fn-ref">${esc(mark)}</span>`;
 }
 
 /* ---------- FootnoteBlock (G5) ---------- */

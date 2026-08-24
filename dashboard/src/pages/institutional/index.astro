@@ -14,6 +14,7 @@ import {
   footnoteBlock,
   fmtInt,
   esc,
+  colWhyHtml,
   compactDisclosure,
   terminusRow,
   COMPACT_ROWS,
@@ -66,13 +67,17 @@ if (!inst.present) {
      none of its rows fit, and it is now the only renderer of this table. */
   const directory = instIndexBodyHtml(indexRows, "", "value", "desc", undefined, COMPACT_ROWS);
   const rows = directory.html;
-  // R5's rule applies here too: a column with no well-defined order STATES why,
-  // in visible text, rather than sitting mute.
+  /* SL-R5: a column with no well-defined order still STATES why — the channel
+     changed, not the text. It was a `.col-why` sub-label under every unsortable
+     header, which is the single largest contributor to this table's header
+     height; it is now a note anchored on that same header, reachable by hover,
+     tap, keyboard and print. R26b: the scope is supplied by this caller, and
+     the key is the column's own sort key where it has one and its label where
+     it does not — this mapper renders exactly once per page. */
+  const headNotes = { scope: "inst-index" };
   const heads = INST_INDEX_HEADS.map((h) =>
     h.key == null
-      ? `<th scope="col">${esc(h.label)}${
-          h.why ? `<span class="col-why">${esc(h.why)}</span>` : ""
-        }</th>`
+      ? `<th scope="col">${esc(h.label)}${colWhyHtml(h.why ?? "", headNotes, h.label)}</th>`
       : `<th scope="col" data-inst-sort="${h.key}" aria-sort="${h.key === "value" ? "descending" : "none"}"><button class="th-sort">${esc(h.label)}</button></th>`,
   ).join("");
 
