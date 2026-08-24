@@ -1,4 +1,4 @@
-# RUN SURFACES-LEGIBILITY — dev-notes-v1 (T0–T9)
+# RUN SURFACES-LEGIBILITY — dev-notes-v1 (T0–T15, plus code-review F1–F6)
 
 ## Detected Stack
 
@@ -10,16 +10,20 @@
 ## Requirement and Task Completion
 
 T0, T0.a, T1, T2 complete. T3–T5, T7–T9 complete. **T6 BLOCKED and not implemented** (see Plan Deviations).
-T10–T15 not started — this handoff stops at T9 by owner instruction.
+T10, T11, T12, T13, T14, T15 complete. **T6/R10 re-attempted under the owner's `<noscript>` direction and
+reverted a second time** — see Plan Deviations 10.
 
 Requirements delivered: `R1`, `R2`, `R2b`, `R3`, `R4`, `R5`, `R6`, `R7`, `R7b`, `R7c`, `R8`, `R8b`, `R8c`,
 `R8d`, `R8e`, `R9`, `R11`, `R12`, `R13`, `R14`, `R15`, `R16`, `R17`, `R18`, `R23`, `R25`, `R26`, `R26b`,
-`R28`, `R29`, and `LD4`, `LD6`, `LD8`, `LD10`. `R10` is blocked.
+`R28`, `R29`, and `LD4`, `LD6`, `LD8`, `LD10`. Added in the second half: `R19`, `R20`, `R22`, `R24`.
+`R10` is blocked. `R21`, `R30`, `R31`, `LD5`, `LD9` left the run by owner decision and are not reused.
 
 ## Changed Files
 
-33 files under `dashboard/src` and `dashboard/test`; 2,546 insertions, 297 deletions. New:
-`src/scripts/notes.ts`, `test/sl-notes.test.ts`, `test/sl-surfaces.test.ts`.
+48 files under `dashboard/`, `docs/` and the run's own artifacts; 7,812 insertions, 317 deletions across the
+whole branch. New: `src/scripts/notes.ts`, `test/sl-notes.test.ts`, `test/sl-surfaces.test.ts`,
+`test/sl-member.test.ts` (T10), `test/sl-filer.test.ts` (T11), `test/sl-propagation.test.ts` (T13),
+`test/sl-docs.test.ts` (T14).
 
 ## Reuse / Duplication Check
 
@@ -70,9 +74,34 @@ whole-file count audits. `fail-loud-exact-guards` drove asserting explanation TE
 
 ## Tests Run
 
-`npm run check` — 0 errors, 0 warnings, 1 pre-existing hint (`memberSignalsPanel`'s unused `ctx`, present on
-`origin/main`). `npm test` — **608 pass, 0 fail** (571 at baseline). Not run, deferred to T15:
-`build:bounded`, `test:post`, `test:geometry`, `test:holders-browser`.
+**T15 — the repository's own commands, on a frozen tree.** `dashboard/src` and `dashboard/test` were hashed
+immediately before the first command and immediately after the last; both hashes match, so the evidence is
+about the tree as committed.
+
+- `make security` → **PASS**. `dep_guard: OK — no denylisted vendor dependencies or imports`.
+- `make test` → **RED, at `test:post` only**, and every failure is pre-existing. Its stages:
+  - `uv sync --frozen` + `uv run pytest -q` → **3,667 passed, 11 skipped**. The Python side is untouched by
+    this run and is run to prove no collateral damage.
+  - `npm ci` + `npm run check` → **0 errors, 0 warnings, 1 hint** — `memberSignalsPanel`'s unused `ctx`,
+    present on `origin/main` and deliberately left.
+  - `npm test` → **639 pass, 0 fail** (571 at baseline, 608 at the T9 handoff, 614 before the code-review
+    round).
+  - `npm run build:bounded` → **3,496 pages built**.
+  - `npm run test:post` → **59 pass, 6 fail**, which is exactly the pristine baseline's result. `make` stops
+    here, so the two browser lanes below were run directly rather than through it.
+- `npx playwright test` (geometry) → **39 passed, 6 failed, 2 skipped**. The 6 are the R6 scroll-cue specs,
+  which fail identically on the pristine baseline worktree. The 2 skips are stated, not silent: `/institutional/`
+  renders `s1ModuleAbsent` in a checkout with no institutional aggregate, so it has no note to measure.
+- `npm run test:holders-browser` → **7 passed, 0 failed**.
+
+**The 6 `test:post` failures, each attributed.** None is caused by this run:
+`forced cut: canonical pages absent…` and `member happy path over real dist-cut bytes` read `dist-cut`
+fixtures; `the measurement is not vacuous` and `the measured M1 footprint agrees with the constant` are the
+file-budget gate reporting a stale constant (`M1_MEASURED_PAGES` says 12,901, the built tree holds 5,290);
+`status contract: /e/ 200 …` fails with `ENOENT … dist/congress/members` because this checkout's data build
+produces no member pages; and `no unqualified 'all' claim on the rendered holders surface` flags
+`"$0 means nothing disclosed at all"`, which is **byte-identical at `holders-sort.ts:133` on `origin/main`**
+in a file this run never touched — verified present in the pristine baseline's own built fixture.
 
 ## Plan Deviations
 
@@ -99,6 +128,63 @@ whole-file count audits. `fail-loud-exact-guards` drove asserting explanation TE
 8. **`HOLDER_COLUMNS.why` was required by the type and never rendered.** It renders now, as a note.
 9. **Behaviour changes worth naming:** `filerBody` with zero deltas no longer prints a six-clause footnote
    registry for a table that is not there; an untruncated activity feed now renders no terminus at all.
+10. **`R10` / T6 — RE-ATTEMPTED UNDER THE OWNER'S DIRECTION, AND REVERTED AGAIN.** The owner directed the
+    third option in the `R10` row: give each affected `compactDisclosure` a `<noscript>` statement of the same
+    bound first, then delete. It was implemented in full — a `noscriptBound` primitive, an opt-in note on the
+    control carrying each terminus's non-count remainder, `syncTerminusFor` and its three callers deleted, the
+    five `terminusRow` sites removed, and all ten reddened assertions retargeted to the moved text across
+    `c4-rankings`, `r19-collapsed-honesty`, `r-codex-regressions` and `r12-congress-behaviour`. `check` and
+    `test` were green on it. It was reverted because implementing it surfaced **two more** states in which the
+    adjacent control says nothing, and `<noscript>` closes only one of the three:
+    **(c)** the control is not revealed at page load even with scripting, on three of the five surfaces — the
+    two ranking controls wait for a 22 MB download (F25 deliberately does not sync at bind time) and the
+    manager directory's waits for a render (`initSortableTable` deliberately does not paint at init);
+    **(d)** `<noscript>` renders when scripting is *disabled*, which is not the same condition as a module
+    that failed to load, threw, or returned early — a state this repository has shipped (F1).
+    (b), (c) and (d) are now pinned as tests, two of them behavioural, plus a JavaScript-disabled Playwright
+    proof. Three concrete options are recorded in the plan's `R10` row for the owner.
+11. **`R20`'s "per-row asset expansion" is not converted.** `R8` Class A already settled `assetNameCell` — the
+    `title=` deleted, the `.visually-hidden` full name kept as its sibling — and that sibling is not visible
+    clutter, so nothing remains on the page surface to move. The later, more specific decision wins.
+12. **`R7b` named four key-less table variants; `entityTxnTable` is a FIFTH.** Its `<thead>` is a literal with
+    no sort or data key, so the `side-owner` descriptor is supplied by this run rather than invented at render
+    time. Only that one column gets a note: inventing explanations for six columns that never had one would be
+    new copy, not a relocation.
+13. **`R22`'s two already-true clauses.** The `.explainer` already carried its `/methodology/#m2` deep link on
+    `origin/main`, and the filer period chips already were one labelled control row (`.period-row`, with a
+    visible `Period` label). R16's defect — two stacked, *unlabelled* `.mgr-chips` groups — belongs to the
+    institutional adds section and this surface never had it; converting would change the chip grammar for no
+    reader-facing gain. Both are asserted rather than assumed.
+14. **The `R21` carve-out list was 2; measured, it is 9.** T13's sweep found nine test files whose only match
+    is `position_key`. All nine assert the deferred field's data shape, none asserts markup this run changed,
+    and a companion test fails if any carve-out file ever also matches a markup token — so the carve-out
+    cannot quietly become a blind spot.
+15. **Four test files were edited or created outside the manifest** — `sl-member`, `sl-filer`,
+    `sl-propagation`, `sl-docs`, plus `lib/fake-dom.ts` and `holders-browser/holders.spec.ts` from the
+    code-review round. All are now recorded in Planned Files with their reason. T13's audit caught the last of
+    them before it was registered, which is the first evidence the audit does what it claims.
+
+## Code review round (F1–F6) — the tests were rejected, and rewritten
+
+An external review accepted the production fixes and rejected four of their tests as source greps. The
+criticism was correct and it is measurable: the behavioural tests this run wrote found two real bugs, the
+source-grep ones found none. All four now exercise behaviour.
+
+- **F2** — `rankingAlternatives` counted raw rollup rows instead of rows that can enter the ranked table. The
+  test used an empty array, where both counts are zero, so a revert stayed green. Replaced with ticker AND
+  member fixtures whose alternative rollup is non-empty and entirely unrankable, plus a positive control.
+  Verified: restoring `.rows.length` reddens it.
+- **F3** — the settlement re-arm was asserted by grepping `feed-client.ts` for a string. Now drives the real
+  `initFeed` over a stubbed failing fetch, presses the real "Try again" control, fails again, and asserts
+  settlement on both attempts, with the REAL consumer (`initCongressSections`'s `feedSettled`) reading the real
+  pending node. Verified: deleting either the re-arm or the `loadPromise = null` release reddens it.
+- **F4** — the `@supports` fallback was exercised on hover only, though R3 names hover AND focus. Both now,
+  from a closed start state. The holders period-swap note test lives in the holders lane, because the geometry
+  lane's `dist` builds no holders route.
+- **F5** — the duplicate-variant tests called `noteId()` directly, asserting that a hash is injective rather
+  than that the RENDERER passes a unique key. `instIndexRowHtml` and `txnRowHtml` are now rendered with real
+  duplicate-variant rows. The Class-C survivor gate asserts 17 sites by path and emitting function rather than
+  by per-file count.
 
 ## Model Provenance
 
