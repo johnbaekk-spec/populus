@@ -96,57 +96,17 @@ section's own block — is **deleted**, since both blocks are gone and the marke
 | R8c | **Class C — unchanged, because the renderer cannot supply a unique non-null identity without a signature change.** R26 forbids a renderer inventing a key, so this is the disqualifying test, applied per site. **Seventeen** sites qualify. Identity-free helpers that receive no row: `format.ts:827` (`srcLinkInner(doc: string)`), `:893`, `:901` (`lagHtml(r: Pick<TxnRow, "lag" \| "late">)` — the `Pick` excludes `txnId`), `ui.ts:227` (`flowCellHtml(s: SumRanges)`), `manager-directory.ts:127`, `:137` (`biggestChangeCellHtml(result)`), and all ten `holdings.ts` sites (`provenanceCellHtml(p, stated)` ×3, `valueCell(value, undisclosedNote)`, `sharesCell(shares, unit)`, `filerLinkHtml()`, `positionCell(row)`, `positionDiffHtml(diff, page)`, `holdersFullTableHtml(opts)` ×2). Plus `format.ts:884` (`memberCellHtml`), added in review for a specific measured reason: the site sits in the branch reached **only when `r.bioguide` is falsy** (`:876` returns early when it is set), so the natural key is null exactly where it is needed and every unjoined row would collide. The two `activity.ts` sites were briefly deferred here and then moved back to Class B: `lagCell` already receives the whole declared composite, so it fails the disqualifying test and Class C would have been the wrong home for it. Since Class C sites are untouched, **no string is lost**: they keep exactly the channels they have today. |
 | R8e | **`activity.ts:722` is Class B, not Class A, and this was nearly a §7 violation.** Its `title=` reads *"filed date not resolvable from this build's filing dictionary"* — the **cause** — while its `.visually-hidden` sibling reads *"reporting lag not resolvable"* — only the **effect**. Deleting the attribute as a Class-A duplicate would have removed the filing-dictionary explanation with no replacement channel, violating success criterion 2 while the exact inventory gate passed green. It is therefore **converted**: the cause moves into its note (keyed per R26) and the effect sibling is **preserved byte-identical**, so both strings survive and neither channel is lost. This is why R8's Class-A containment is asserted per site rather than inferred from the presence of a sibling — the sibling's existence proved nothing here. |
 | R9 | `· build <id>` is removed from every `.panel-head` `.panel-note`. The window statement stays. The `" · build "` split in `applyRollup` is removed with it. |
-| R10 | **BLOCKED AT IMPLEMENTATION, 2026-08-24 (T6), AND RE-BLOCKED AFTER THE OWNER-DIRECTED `<noscript>` ATTEMPT. NOT IMPLEMENTED — escalated to the owner.** The requirement reads: of the **13** production `terminusRow` call sites, the five that sit beside a `compactDisclosure` stating the same count are deleted; the **eight** with no adjacent expand control are kept; `syncTerminusFor` loses all callers and is deleted; `terminusRow` itself stays. Two measurements taken before implementing it contradict its premise, and the second is disqualifying.
+| R10 | **IMPLEMENTED 2026-08-24 (T16), after two correct refusals and one root-cause fix.** Of the **13** production `terminusRow` call sites, the five that sat beside a `compactDisclosure` are deleted; the **eight** with no adjacent expand control are kept; `syncTerminusFor` lost all three callers and is deleted; `terminusRow` itself stays. **The deletion was not done as written — it was done after the premise was made true.**
 
-**(a) Only ONE of the five is a duplicate of a count.** Measured in the worktree: `ui.ts` ranking-main also carries "a Public Filings render bound, not a data bound" and a link to `/congress/data/feed.v1.json`; `ui.ts` adds also carries the link to that quarter-and-mode's published JSON; `institutional/index.astro` also states that every filer has its own page; `activity.ts` also carries the shard base path, the shard count, and the record/byte limits each shard is closed at — a **publication** bound, which is a different fact from the render bound and is stated nowhere else in a scripting-on view. Only the wholly-undisclosed bucket's terminus (`ui.ts`) is nothing but its count. Deleting the other four loses published text, which Constraint 1 (DESIGN-BRIEF §7, verbatim) and success criterion 2 forbid.
+**What blocked it twice.** (a) Only ONE of the five was a pure count duplicate: the other four also carried the `/congress/data/feed.v1.json` link, the adds quarter/mode payload link, "every filer has its own page", and the activity feed's *publication* bound (shard base path, shard count, per-shard record/byte limits) — a different fact from a render bound, stated nowhere else. (b) `compactDisclosure` emitted `hidden` in **both** return branches, so with scripting off the control stated nothing and the terminus was the reader's only notice. (c) The control was not revealed at page load even with scripting ON, on three of five surfaces — `syncDisclosure` deliberately waits for the 22 MB `feed.v1.json` (F25), `initSortableTable` deliberately does not paint at init, and `initDomDisclosures` covers only `[data-compact-dom]`. (d) `<noscript>` renders only when scripting is DISABLED, not when a module throws or returns early — a state this repository has shipped (F1). An owner-directed `<noscript>` attempt was built in full and reverted: it closes (b) alone.
 
-**(b) DISQUALIFYING — the adjacent control states nothing at all without JavaScript.** `compactDisclosure` emits the `hidden` attribute in **both** of its return branches (`format.ts`); `initDomDisclosures` (`inst-index-client.ts`) and each island's `syncDisclosure` are what call `removeAttribute("hidden")`. So in the no-JavaScript view the count is **not duplicated** — it is stated exactly **once**, by the terminus row. Deleting the terminus therefore removes the reader's only statement of what is being held back, on every one of the five surfaces. That is not a de-duplication; it is the omission the terminus exists to prevent, and it is the same §7 violation the plan's own Alternatives table uses to reject "delete all 13".
+**What was done instead — fix the root cause, then delete.** `compactDisclosure` now emits the bound as a real element the server ships **VISIBLE**: `<p class="compact-bound"><span class="compact-bound-count">…</span><span class="compact-bound-extra">…</span></p>`, with the `<button>` carrying `hidden` in every branch. The count clause and the remainder are separate elements because expanding retracts the first and must never retract the second. The four non-count facts moved into the remainder, verbatim in substance; the activity feed's publication bound gained a `Read the first shard` link that now survives an expansion too, which the old collapsed-only clause did not. The `hidden <= 0` SHELL still ships hidden when there is nothing whatever to state (F16), and stays visible only when the caller published a remainder that is true at every row count. (b), (c) and (d) are then closed **by construction**: nothing can hide a span the server rendered without `hidden`.
 
-**Attempted and reverted.** A version that deleted all five and moved each remainder onto the control as a note was written and backed out, precisely because of (b): the note inherits the control's `hidden`, so the relocation would have hidden the honesty text from the no-JS reader too. Reverting was cheaper than shipping it.
+**No double statement with scripting on.** The button now reads `Show all 833 tickers` — the TOTAL — instead of `Show all 833 tickers (833 more)`. The held-back count is stated once, by the sentence above it. Without that change the deletion would have been cosmetic.
 
-**Pinned, not just described.** `dashboard/test/sl-surfaces.test.ts` carries `SL-R10 BLOCKER`, which asserts (b) directly — the control ships hidden, the terminus does not, and both islands reveal the control by script. A later attempt fails immediately rather than rediscovering this after the deletion lands.
+**`syncTerminusFor` → `syncCompactDisclosure`,** beside the renderer it serves. It commits the count clause, the button's reveal and label, and the wrapper's visibility in one pass, so the three client owners cannot drift from the renderer or from each other.
 
-**The `<noscript>` option was DIRECTED, IMPLEMENTED AND REVERTED, 2026-08-24.** The owner chose the third option
-above — make each bound survive without scripting first, then delete — and it was built in full: a
-`noscriptBound` primitive in `format.ts`, an opt-in note on `compactDisclosure` carrying each terminus's
-non-count remainder (the `feed.v1.json` link, the adds payload link, "every filer has its own page", the
-activity feed's shard link), `syncTerminusFor` and its three callers deleted, the five `terminusRow` sites
-removed, and every assertion the change invalidated retargeted in the same working tree — ten reddened tests
-across `c4-rankings`, `r19-collapsed-honesty`, `r-codex-regressions` and `r12-congress-behaviour`, all brought
-back green against the moved text. It was then backed out, because implementing it surfaced **two further
-states** in which the adjacent control states nothing, and `<noscript>` closes only one of the three.
-
-**(c) The control is not revealed at page load, with scripting fully ON, on three of the five surfaces.**
-Measured in the worktree. `compactDisclosure` ships `hidden` and something must reveal it:
-`congress-sections.ts` reveals the two ranking controls from `syncDisclosure`, which F25 deliberately does
-**not** run at bind time — it runs when rows arrive, i.e. after the 22 MB `feed.v1.json` download completes.
-The manager directory's control is revealed only from `initSortableTable`'s `render`, and that module
-deliberately does **not** paint at init ("the SSR body is already correct, and repainting on load would risk a
-visible flash"). `initDomDisclosures` reveals only `[data-compact-dom]` controls, which is the activity feed
-alone. So on `/congress/` for the whole duration of a 22 MB download, and on `/institutional/` until the reader
-sorts or filters the directory, the terminus is the only statement of the bound **for a reader with scripting
-enabled**. A `<noscript>` block does not render for that reader.
-
-**(d) `<noscript>` does not cover "scripting on, island did not run."** It renders when scripting is
-*disabled*, which is a different condition from a module that failed to load, threw, or returned early. That
-state is not hypothetical in this repository: `r-codex-regressions.test.ts`'s F1 records the feed island
-returning before it fetched anything because the page had lost an id — shipped, and invisible to every test for
-a review cycle. Under the deletion, that failure silently removes the bound from **every** reader.
-
-The terminus is the only channel correct in all three states, so the deletion is still the omission it was
-blocked for. **(b), (c) and (d) are now pinned as tests** in `dashboard/test/sl-surfaces.test.ts`, two of them
-behavioural — the ranking control is asserted still `hidden` after the island has initialised over
-server-rendered rows, and `initDomDisclosures` is asserted to reveal only the DOM-backed control — plus a
-JavaScript-disabled Playwright proof in `test/geometry/sl-notes.spec.ts` that no control is visible and the
-terminus carries the bound. A later attempt trips on all three before it writes any code.
-
-**What the owner must decide** (any one unblocks it): render `compactDisclosure` visible and inert without
-scripting, keep only the count in it, and additionally reveal it at load on all five surfaces — which is a
-change to three islands' initialisation order, not a rendering change — then delete the five termini; or accept
-that the count is stated twice for a scripted reader after load and delete nothing; or delete only the
-wholly-undisclosed bucket's terminus, which is the one true pure-count duplicate, and keep four — a change
-whose benefit is one sentence on one table. `syncTerminusFor` cannot be deleted under any of these until its
-three callers' termini are, so it stays. |
+**Tests.** The three pinned `SL-R10 BLOCKER` tests in `dashboard/test/sl-surfaces.test.ts` are replaced, not deleted, by seven that assert the new arrangement and keep behavioural coverage of the three states: the island really initialises over server-rendered rows and the bound is stated while the button is still hidden (c); `initDomDisclosures` really runs and reveals only DOM-backed buttons (c); an island that returns early — simulated the way F1 happened, with its root absent — leaves the bound exactly as published (d); and every emitted surface is scanned for a count clause that ships `hidden` (b). Plus an exact-partition inventory test, a clause-by-clause survival test for the four moved facts, and two Playwright specs — one with `javaScriptEnabled: false` and one asserting the bound stands before the feed arrives with scripting on. |
 | R11 | The visible exclusion `.caveat-line` and its `#<sectionId>-caveat` root are deleted. `rankingExclusions()` is kept and its clauses compose the window note's body. The window statement carries a visible **excluded-row total** suffix as the note's anchor — the summed magnitude (`· 1,696 rows excluded ⓘ`), not a count of categories — so the size of what the reader cannot see is on the page at every width. The three per-category counts and their definitions live in the note body. |
 | R12 | The window note's body is rewritten by the client whenever the range or basis changes, atomically with the rows and the window text. |
 | R13 | A range or basis click made before the feed dataset arrives **already applies** — `range`/`basis` are module-scoped state and `receiveRows` calls `recomputeMomentumIfChanged()`. No queue is added. The defect is that `setSeg` paints the button pressed immediately while the table still shows SSR data, so the control asserts a window it has not painted. R13 adds only an honest **pending indicator** on the section (a stated "applying …" state) that clears in `receiveRows`, and changes no state mechanism. |
@@ -300,15 +260,17 @@ Observed 2026-08-23 against `origin/main` @ `b4787ff` and the live build `202608
 - Live exclusion counts on `/congress/`: 72 date-anomaly rows, 212 rows with no trade date, 1,412 in-window
   rows with no ticker — **1,696 excluded rows in total**, the figure R11's visible suffix carries. The total is
   recomputed with the clauses whenever the range or basis changes (R12); it is never hard-coded. Held back: 981 ranked tickers, 118 ranked members. Wholly-undisclosed members: 1.
-- `terminusRow` has **13** production call sites, not 12 (`git grep -n "terminusRow(" origin/main -- dashboard/src`
-  returns 14 lines; `format.ts:1109` is the definition). They are: `ui.ts:579`, `:936`, `:1104`, `:1168`,
+- `terminusRow` had **13** production call sites on `origin/main`, not 12 (`git grep -n "terminusRow(" origin/main -- dashboard/src`
+  returns 14 lines; `format.ts:1109` is the definition). **Eight remain after R10;** re-measured in the worktree
+  at implementation, and the partition is pinned as an exact count per file in `sl-surfaces.test.ts`. They are: `ui.ts:579`, `:936`, `:1104`, `:1168`,
   `:1773`, `:1792`, `:1966`, `:2377` (**eight** in `ui.ts`); `activity.ts:802`, `:989`; `holdings.ts:1287`,
   `:1514`; `institutional/index.astro:168`. Five are adjacent to a `compactDisclosure` that states the same
   count: `ui.ts:1773`/`:1781`, `ui.ts:1792`/`:1797`, `ui.ts:1966`/`:1978`, `activity.ts:989`/`:1013`,
   `institutional/index.astro:168`/`:176`. The **eight** standalone sites R10 keeps are therefore `ui.ts:579`,
   `:936`, `:1104`, `:1168`, `:2377`, `activity.ts:802`, `holdings.ts:1287`, `holdings.ts:1514`.
-- `syncTerminusFor` (`format.ts:1143`) has exactly three callers: `congress-sections.ts:226`,
-  `inst-index-client.ts:110`, `:241` — all three belong to tables whose terminus R10 deletes.
+- `syncTerminusFor` (`format.ts:1143`) had exactly three callers: `congress-sections.ts:226`,
+  `inst-index-client.ts:110`, `:241` — all three belong to tables whose terminus R10 deletes. **All three now
+  call `syncCompactDisclosure` and `syncTerminusFor` is gone from the tree.**
 - `addsSectionHtml` (`ui.ts`) emits two sibling `<div class="mgr-chips">`, which stack. `.range-control`
   (`global.css:2820`) is the existing one-row idiom.
 - `table-sort.ts:86` attaches the sort listener to the **`<th>` itself** (`th.addEventListener("click", …)`),
@@ -1035,7 +997,9 @@ own preconditions (attested `code_sha`, the promotion settle) are out of scope h
 
 **Rollback.** Every item is independently revertible, and three are worth naming: R11 reverts by re-rendering
 `rankingCaveatHtml(rankingExclusions(...))` into a visible `.caveat-line` (LD4); R10 reverts by restoring the
-five `terminusRow` calls and `syncTerminusFor`; R15 must **not** be reverted to a deleted box — the contract in Constraint 2
+five `terminusRow` calls and `syncTerminusFor` — and, because the deletion depended on it, by restoring
+`compactDisclosure`'s `hidden` on the `hidden > 0` branch, which must go back in the SAME revert or the bound
+is stated nowhere; R15 must **not** be reverted to a deleted box — the contract in Constraint 2
 stands regardless.
 
 ## Simplicity Audit

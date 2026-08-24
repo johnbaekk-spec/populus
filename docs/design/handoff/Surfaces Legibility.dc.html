@@ -203,11 +203,16 @@ Three frames in this preview show a state the run did not ship, and each is corr
 than redrawn — a mockup and a shipped page disagreeing is exactly the drift this reconciliation exists to
 stop.
 <ul style="margin:8px 0 0;padding-left:18px">
-<li><b>The terminus rows are NOT deleted.</b> Every frame that says the expand button already states the same
-bound is wrong for three measured reasons: only one of the five was a pure count duplicate; the control emits
-<code>hidden</code> in both branches, so it says nothing at all without JavaScript; and on three of the five
-surfaces it is not revealed at page load even <i>with</i> JavaScript — the ranking controls wait for a 22 MB
-download and the manager directory's waits for a render. All 13 stay, and the decision is the owner's.</li>
+<li><b>The five terminus rows were deleted only after the control learned to state its bound without
+JavaScript.</b> Every frame that says the expand button already states the same bound was wrong for three
+measured reasons: only one of the five was a pure count duplicate; the control emitted <code>hidden</code> in
+both branches, so it said nothing at all without JavaScript; and on three of the five surfaces it is not
+revealed at page load even <i>with</i> JavaScript — the ranking controls wait for a 22 MB download and the
+manager directory's waits for a render. The fix was to stop the bound depending on a script: the count is now
+a server-rendered <b>visible</b> <code>.compact-bound-count</code> inside the control, the four non-count
+clauses moved into a sibling <code>.compact-bound-extra</code> beside it, and only the <code>&lt;button&gt;</code>
+still waits to be revealed. Then, and only then, the five rows went. The other <b>eight</b> stay, and so does
+<code>terminusRow</code>.</li>
 <li><b>The position-changes issuer names are NOT resolved.</b> That work was cut from the run as
 <code>R21</code> and is recorded in <code>docs/build/RUN-FILER-IDENTITY-notes.md</code>. The cells still print
 the raw <code>position_key</code>; the table's <i>headers</i> gained notes.</li>
@@ -349,15 +354,17 @@ excluded” is a number about what you cannot see → stays on the page, with on
         </tbody>
       </table>
     </div>
-    <div class="compact-disclosure"><button class="compact-toggle" type="button" aria-expanded="false">Show all 991 tickers (981 more)</button></div>
+    <div class="compact-disclosure"><button class="compact-toggle" type="button" aria-expanded="false">Show all 991 tickers</button></div>
   </section>
 </div>
 <p class="now"><b>where the deleted prose went</b> — the section paragraph, the <code>§ ≈ †</code> footnote stack
 and the per-column sub-labels are all in the notes above. <b style="color:var(--amber)">Corrected
-2026-08-24:</b> the <b>terminus row</b> is <b>not</b> gone. The button beneath it states the same bound only
-for a reader who has JavaScript <i>and</i> has waited for the dataset — it ships <code>hidden</code> and is
-revealed by script, and on this surface not until 22 MB has downloaded. It was not said twice; deleting it
-would have been the omission the terminus exists to prevent. The
+2026-08-24:</b> the <b>terminus row</b> is gone, but not for the reason this frame gave. The button beneath it
+states its bound only for a reader who has JavaScript <i>and</i> has waited for the dataset — it ships
+<code>hidden</code> and is revealed by script, and on this surface not until 22 MB has downloaded, so the
+count was never said twice to the reader who needed it. What changed is the control: the sentence above the
+button is now part of it, server-rendered and visible, and carries the link to the published dataset that the
+terminus used to carry. The
 three <b>exclusion counts</b> (72 impossible dates · 212 undated · 1,412 no ticker) <b>did</b> move into the
 note on the window statement in the panel head, top right — with their <b>sum</b> left visible on the page as
 the note's anchor (<code>· 1,696 rows excluded ⓘ</code>), so the size of what the reader cannot see is on
@@ -778,7 +785,7 @@ exists.</p>
         <div class="mrow"><div class="mrow-top"><span class="mrow-tk">1 · AESI</span><span class="mrow-net">$4.9M–$25.2M</span></div><div class="mrow-sub">3 txns · 2 purch · 1 sale · net accumulation · 0 late</div></div>
         <div class="mrow"><div class="mrow-top"><span class="mrow-tk">2 · AB</span><span class="mrow-net">$1.0M–$5.0M ≈</span></div><div class="mrow-sub">1 txn · 1 purch · 0 sales · net accumulation · 0 late</div></div>
         <div class="mrow"><div class="mrow-top"><span class="mrow-tk">3 · INTC</span><span class="mrow-net">$879K–$5.0M ≈</span></div><div class="mrow-sub">11 txns · 5 purch · 6 sales · net accumulation · 2 late</div></div>
-        <div class="compact-disclosure" style="padding:8px 0 0"><button class="compact-toggle">Show all 991 tickers (981 more)</button></div>
+        <div class="compact-disclosure" style="padding:8px 0 0"><button class="compact-toggle">Show all 991 tickers</button></div>
         <div style="margin-top:10px;font:400 11px var(--mono);color:var(--ink3)">window: 12m · traded
           <span class="note"><button class="note-btn" type="button" aria-expanded="false">i</button><span class="note-pop" popover role="tooltip"><span class="np-h">this window, and what it leaves out</span>Trade dates in the 12 months to 2026-08-23. Out of this window: <b>72</b> impossible trade dates · <b>212</b> no trade date · <b>1,412</b> in-window rows with no ticker. Tap anywhere to close.</span></span>
         </div>
@@ -793,14 +800,15 @@ exists.</p>
       These do not change when the reader changes a control, and a reader who already knows them does not need
       them on screen.</p>
       <p style="font-size:12.5px;color:var(--ink2);margin:0 0 10px"><b style="color:var(--sell)">Stays on the page — a live control state.</b>
-      <i>“Show all 991 tickers (981 more)”</i> and <i>“4 rows disclose no amount for this column”</i> both move when
+      <i>“Show all 991 tickers”</i> and <i>“4 rows disclose no amount for this column”</i> both move when
       the reader moves a control, and both are the label of a control or a row inside the table. They are not prose
       about the data; they are the table describing its own current state.</p>
       <p style="font-size:12.5px;color:var(--ink2);margin:0 0 10px"><b style="color:var(--amber)">Moved off the page — reachable, never removed.</b>
       The three exclusion counts moved into the window note, with their <b>sum</b> left visible as its anchor.
-      <b>Corrected 2026-08-24:</b> the terminus row did <i>not</i> move. It looked like a duplicate of the
-      expand button's count and is not one — the button is invisible without JavaScript and, on three of the
-      five surfaces, invisible with it until the data arrives.</p>
+      <b>Corrected 2026-08-24:</b> the terminus row did not move — it was <i>absorbed</i>. It looked like a
+      duplicate of the expand button's count and was not one, because the button is invisible without
+      JavaScript and, on three of the five surfaces, invisible with it until the data arrives. So the
+      statement became part of the control and stayed visible, and the row it duplicated went.</p>
       <p style="font-size:12.5px;color:var(--ink2);margin:0"><b>Three channels, one text.</b> Hover · click-pin
       (touch and keyboard) · the print stylesheet. One source string renders all three, so they cannot drift.</p>
     </div>
@@ -822,9 +830,9 @@ this preview called it <code>assetCellHtml</code>, which does not exist) keeps i
 and <code>memberV2Sections</code>' card-foot caveats become notes; the methodology page gains six stable
 anchors; <code>rankingCaveatHtml</code> is <b>removed</b> along with the <code>-caveat</code> render root the
 client rewrites. <b style="color:var(--amber)">Corrected 2026-08-24:</b> <code>changesTableHtml</code> gains
-<i>no</i> issuer-name join — that left the run as <code>R21</code> — and <code>terminusRow</code> and
-<code>syncTerminusFor</code> are <b>not</b> removed, because the deletion that would have orphaned them is
-blocked. Test work is the real cost and it is deliberate, not
+<i>no</i> issuer-name join — that left the run as <code>R21</code> — and <code>terminusRow</code> is <b>not</b>
+removed: it keeps its <b>eight</b> standalone call sites. <code>syncTerminusFor</code> <i>is</i> removed,
+replaced by <code>syncCompactDisclosure</code> beside the renderer whose statement it now updates. Test work is the real cost and it is deliberate, not
 incidental — <code>css-fold</code>, <code>r19-collapsed-honesty</code>, <code>activity</code>,
 <code>c4-rankings</code>, <code>r5-feed-table</code>, <code>r-codex-regressions</code> and
 <code>post/fixture-preview</code> assert on <code>.col-why</code>, <code>.terminus</code> or the

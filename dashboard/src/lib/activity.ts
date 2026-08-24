@@ -1044,22 +1044,38 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     // could enforce single ownership.
     `<tbody id="inst-activity-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
 
-    /* F2: this sentence now states BOTH bounds, because there are two and the
+    /* F2 + SL-R10: this states BOTH bounds, because there are two and the
        reader is inside the tighter one. The compact slice is a render bound
-       this page applies; the shard budget is a publication bound the build
-       applies. Naming only the second while silently applying the first is the
-       unstated omission R14 forbids. The shard is a LINK, not a path in a
-       code span: with scripting off the expand control cannot appear, so the
-       link is the only route to the rows below the slice. */
-    terminusRow({
-      author: "populus",
-      html:
-        (collapsed
-          ? `Showing the first ${fmtInt(COMPACT_ROWS)} of the ${fmtInt(rows.length)} rows` +
-            ` rendered here — a Public Filings render bound, lifted by the control below or by` +
-            ` reading <a href="${esc(firstShard)}">the published shard</a> directly. `
-          : `Showing the ${fmtInt(rows.length)} largest change records rendered here. `) +
-        `Those are the largest of ${fmtInt(emitted)} ordered change records` +
+       this page applies; the shard budget is a PUBLICATION bound the build
+       applies, and it is stated nowhere else on the site. Naming only the
+       second while silently applying the first is the unstated omission R14
+       forbids.
+
+       The two clauses are split along exactly the line that decides whether
+       expanding retracts them. The render bound is the count clause: expand,
+       and the rows are on screen, so it goes. The publication bound is the
+       remainder: it is true at every row count and in both states, so it never
+       goes — which is why it is emitted here rather than left on the collapsed
+       branch. The shard is a LINK, not a path in a code span: the expand
+       control is `hidden` until a script reveals it, so the link is the only
+       route to the rows below the slice for a reader who never gets one.
+
+       Note that both clauses are rendered by the control itself, VISIBLE from
+       the server. This surface is the one of the five whose control IS revealed
+       at load (`initDomDisclosures`), and it still must not depend on that: an
+       island that throws leaves the button unrevealed with scripting fully on,
+       and F1 records exactly that shipping here for a review cycle. */
+    compactDisclosure({
+      rootId: "inst-activity-tbody",
+      total: rows.length,
+      shown: Math.min(rows.length, COMPACT_ROWS),
+      noun: "changes",
+      domBacked: true,
+      boundCount:
+        `Showing the first ${fmtInt(COMPACT_ROWS)} of the ${fmtInt(rows.length)} rows` +
+        ` rendered here — a Public Filings render bound, not a data bound.`,
+      bound:
+        `These rows are the largest of ${fmtInt(emitted)} ordered change records` +
         ` published in this build${
           emitted === total ? "" : ` (of ${fmtInt(total)} in the ordered set)`
         }. The complete ordered set is served as ${fmtInt(feed.pagination.pages.length)} same-origin shard${
@@ -1067,20 +1083,9 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
         } under <span class="mono-note">${esc(shardBase)}/&lt;page&gt;.v1.json</span>,` +
         ` each closed at whichever binds first — ${fmtInt(
           feed.pagination.limits.recordLimit,
-        )} records or ${fmtInt(feed.pagination.limits.byteLimit)} bytes of serialized JSON.`,
-    }) +
-    /* F15: the terminus precedes its control, matching every other compact
-       table on the site — and matching what the sentence says. It used to be
-       emitted AFTER the control while telling the reader the control was
-       "below" it. The order is also what `syncTerminusFor` assumes
-       (`previousElementSibling`), so a later owner wiring this disclosure to the
-       shared updater finds the terminus where the other three tables keep it. */
-    compactDisclosure({
-      rootId: "inst-activity-tbody",
-      total: rows.length,
-      shown: Math.min(rows.length, COMPACT_ROWS),
-      noun: "changes",
-      domBacked: true,
+        )} records or ${fmtInt(feed.pagination.limits.byteLimit)} bytes of serialized JSON.` +
+        ` <a href="${esc(firstShard)}">Read the first shard</a> to reach every record` +
+        ` directly, with or without scripting.`,
     }) +
     truncationNoticeHtml(feed.pagination.truncation, feed.pagination.limits.shardLimit) +
     `<div class="caveat-line">Quarter-over-quarter comparisons are between two quarter-end` +

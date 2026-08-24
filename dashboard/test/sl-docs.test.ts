@@ -67,9 +67,24 @@ test("T14: each reversal is stated POSITIVELY at its own anchor — corrected, n
   // R22 — the pointer is KEPT and the box is not relocated.
   assert.match(rationale, /keeps its\s*\n?\s*`href="#inst-data-note"` pointer|\*\*kept, not replaced\*\*/);
 
-  // R10 — blocked, all 13 retained, with the count corrected from 12.
-  assert.match(rationale, /\*\*BLOCKED, NOT IMPLEMENTED\*\*/);
+  /* R10 — RETARGETED in the commit that unblocked it. It was blocked twice and
+     then implemented by fixing its root cause: the rationale must now record
+     that resolution positively, keep the corrected inventory (13, not 12; the
+     eight standalone sites retained), and state that the deletion followed the
+     fix rather than preceding it. A document that still said BLOCKED would be
+     the drift this test exists to catch. */
+  assert.match(rationale, /\*\*IMPLEMENTED 2026-08-24, after the root cause was fixed\*\*/);
   assert.match(rationale, /\*\*13\*\* production call sites, not\n?12/);
+  assert.match(rationale, /Those\s*\n?eight are untouched/i, "the eight standalone sites are kept, by name");
+  assert.match(
+    rationale,
+    /the bound stopped depending on a script at all/i,
+    "…and the reason the deletion became honest is stated, not just the deletion",
+  );
+  assert.ok(
+    !/All \*\*13\*\* terminus rows stay/.test(rationale),
+    "the superseded conclusion may not survive beside its replacement",
+  );
 
   // R13 — an indicator, and no queue, on either settled outcome.
   assert.match(rationale, /an indicator, and NO queue/i);
@@ -88,7 +103,7 @@ test("T14: each reversal is stated POSITIVELY at its own anchor — corrected, n
 
   // The preview carries its own correction banner rather than being silently redrawn.
   assert.match(preview, /Reconciled against implementation, 2026-08-24/);
-  assert.match(preview, /The terminus rows are NOT deleted/);
+  assert.match(preview, /The five terminus rows were deleted only after the control learned/);
   assert.match(preview, /position-changes issuer names are NOT resolved/);
   assert.match(preview, /There is no pending queue/);
 });

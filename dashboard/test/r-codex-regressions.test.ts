@@ -390,7 +390,20 @@ test("F16: the disclosure label is derived from the LIMIT, never the shown count
     path.resolve(import.meta.dirname, "..", "src", "scripts", "congress-sections.ts"),
     "latin1",
   );
-  assert.match(src, /Show only the first \$\{limit/,
+  /* SL-R10 retarget: the collapse label moved into `compactCollapseLabel`
+     (`format.ts`), which composes it from COMPACT_ROWS — the LIMIT — for every
+     owner at once. The property is unchanged and now holds in one place
+     instead of three, so this asserts the island reaches the shared updater
+     and that the updater derives the label from the limit. */
+  assert.match(src, /syncCompactDisclosure\(/,
+    "the island commits its label through the shared updater");
+  assert.match(src, /const hidden = Math\.max\(0, total - limit\)/,
+    "…and the count it passes is derived from the LIMIT, not from the shown rows");
+  const fmt = readFileSync(
+    path.resolve(import.meta.dirname, "..", "src", "lib", "format.ts"),
+    "latin1",
+  );
+  assert.match(fmt, /export function compactCollapseLabel[\s\S]{0,200}Show only the first \$\{fmtInt\(COMPACT_ROWS\)\}/,
     "an expanded control must not promise to keep every row it is about to collapse");
 });
 
@@ -470,10 +483,16 @@ test("F16: a table with nothing hidden still renders an inert TERMINUS shell", (
     CTX,
     { rootId: CONGRESS_ROOTS.momentum, heading: "Ticker momentum", sectionId: "momentum-section" },
   );
-  // Both the button AND the sentence must exist so a later range change can
-  // reveal them together — one without the other is the omission itself.
-  assert.match(html, /class="terminus"[^>]*hidden>/, "the terminus shell exists and starts hidden");
-  assert.match(html, /class="compact-disclosure"[^>]*hidden>/, "as does the control");
+  /* Both the button AND the sentence must exist so a later range change can
+     reveal them together — one without the other is the omission itself.
+
+     SL-R10 retarget: they now live in ONE element, which is what makes "one
+     without the other" structurally impossible rather than merely asserted.
+     The count clause is the inert shell here: present, empty, hidden. */
+  assert.match(html, /<span class="compact-bound-count" hidden><\/span>/,
+    "the sentence shell exists and starts empty and hidden");
+  assert.match(html, /class="linklike compact-toggle"[^>]*hidden><\/button>/,
+    "as does the control, which no reader is offered");
 });
 
 /* ================= cycle 3 findings ================= */
@@ -537,9 +556,19 @@ test("F2: the activity feed's COLLAPSED state is server-rendered, not JS-only", 
     /<tbody id="inst-activity-tbody"\$\{collapsed \? ' data-collapsed="true"' : ""\}>/,
     "the collapsed state must travel in the SSR bytes",
   );
-  // and the no-JS reader keeps a route to the rows below the slice: with
-  // scripting off the expand control cannot appear at all
-  assert.match(src, /<a href="\$\{esc\(firstShard\)\}">the published shard<\/a>/);
+  /* And the no-JS reader keeps a route to the rows below the slice: with
+     scripting off the expand button cannot appear at all.
+
+     SL-R10 retarget: the link moved from the terminus row's collapsed-only
+     clause into the control's state-independent remainder, so it now survives
+     an EXPANSION too — the strictly stronger property. The assertion follows
+     it, and reads the emitted markup rather than the source template. */
+  assert.match(src, /<a href="\$\{esc\(firstShard\)\}">Read the first shard<\/a>/);
+  const feedHtml = activityFeedHtml(activityFixture(), { rowLimit: 50 });
+  const boundP = feedHtml.slice(feedHtml.indexOf('<p class="compact-bound">'));
+  const extra = boundP.slice(boundP.indexOf('<span class="compact-bound-extra">'), boundP.indexOf("</p>"));
+  assert.match(extra, /<a href="\/institutional\/data\/activity\/0\.v1\.json">/,
+    "the shard link is in the clause no state change can retract");
 });
 
 test("F3: the directory applies ONE compact budget across ranked and unranked rows", () => {
@@ -621,24 +650,33 @@ test("F6: the leaderboard and the directory carry a NAMED terminus beside the co
     },
     { period: "2026-03-31", mode: "all", periods: ["2026-03-31"], buildId: "b" },
   );
-  // R19's locked list: the terminus row and its NAMED author, beside every
-  // compact table. Both surfaces held rows back with no such statement.
-  assert.match(html, /class="terminus" data-terminus-author="populus"/);
+  /* R19's locked list: the bound and its NAMED author, beside every compact
+     table. Both surfaces held rows back with no such statement.
+
+     SL-R10 retarget: the statement is no longer a separate `terminusRow` above
+     the control — it is the control's own first child, and it is VISIBLE from
+     the server where the row's duplicate of it was. The author is named by the
+     sentence ("a Public Filings render bound"), not by a `data-terminus-author`
+     wrapper, so the assertion follows the text. */
   assert.match(html, /15 further issuers are not rendered above/);
-  assert.match(html, /Truncated by Public Filings\./);
-  // it precedes the control, which is what makes `previousElementSibling` the
-  // client's handle on it
+  assert.match(html, /a Public Filings render bound, not a data bound/);
+  // it precedes the button, which is what puts the STATED bound in front of the
+  // reader before the offer to lift it
   assert.ok(
-    html.indexOf('class="terminus"') < html.indexOf('class="compact-disclosure"'),
-    "the terminus must precede the control it belongs to",
+    html.indexOf('class="compact-bound"') < html.indexOf("compact-toggle"),
+    "the statement must precede the control it belongs to",
+  );
+  assert.ok(
+    !/<p class="compact-bound"[^>]*hidden/.test(html),
+    "…and it is not hidden: nothing but a script reveals the button beside it",
   );
 
   const page = readFileSync(
     path.resolve(import.meta.dirname, "..", "src", "pages", "institutional", "index.astro"),
     "latin1",
   );
-  assert.match(page, /terminusRow\(\{[\s\S]{0,400}further managers are not/,
-    "the directory states its bound too");
+  assert.match(page, /compactDisclosure\(\{[\s\S]{0,400}Every filer in this build has its own page/,
+    "the directory states its bound too, and keeps the fact its terminus carried");
 });
 
 test("F6: a table with nothing held back still renders the terminus SHELL", () => {
@@ -651,25 +689,42 @@ test("F6: a table with nothing held back still renders the terminus SHELL", () =
     },
     { period: "2026-03-31", mode: "all", periods: ["2026-03-31"], buildId: "b" },
   );
-  assert.match(html, /class="terminus"[^>]*hidden>/);
-  assert.match(html, /class="compact-disclosure"[^>]*hidden>/);
+  assert.match(html, /<span class="compact-bound-count" hidden><\/span>/, "the sentence shell");
+  assert.match(html, /class="linklike compact-toggle"[^>]*hidden><\/button>/, "and the button shell");
+  /* SL-R10: the WRAPPER stays visible, because it also carries the link to this
+     quarter's published payload — a fact that is true whether or not rows are
+     held back, and one the deleted terminus row used to carry. */
+  assert.match(html, /the published JSON<\/a>/, "the payload link is stated in every state");
 });
 
 test("F6: every client owner of a compact table syncs its terminus through ONE helper", () => {
-  // Three private copies of the update is three chances for one to drift out of
-  // step with the renderer. `syncTerminusFor` lives beside `terminusRow`.
+  /* Three private copies of the update is three chances for one to drift out of
+     step with the renderer. SL-R10: the helper is now `syncCompactDisclosure`,
+     which lives beside `compactDisclosure` — the sentence moved INTO the
+     control, so its updater moved with it. `syncTerminusFor` is gone, and its
+     absence is asserted so a caller cannot be left pointing at it. */
   for (const f of ["congress-sections.ts", "inst-index-client.ts"]) {
     const src = readFileSync(
       path.resolve(import.meta.dirname, "..", "src", "scripts", f),
       "latin1",
     );
-    assert.match(src, /syncTerminusFor\(/, `${f} must use the shared terminus updater`);
+    assert.match(src, /syncCompactDisclosure\(/, `${f} must use the shared disclosure updater`);
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     assert.ok(
-      !/classList\.contains\(["']terminus["']\)/.test(code),
-      `${f} re-implements the terminus lookup instead of using the shared one`,
+      !/syncTerminusFor/.test(code),
+      `${f} calls a helper this run deleted`,
+    );
+    assert.ok(
+      !/querySelector\(["']\.compact-bound/.test(code),
+      `${f} re-implements the bound lookup instead of using the shared one`,
     );
   }
+  const fmt = readFileSync(
+    path.resolve(import.meta.dirname, "..", "src", "lib", "format.ts"),
+    "latin1",
+  );
+  const fmtCode = fmt.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/syncTerminusFor/.test(fmtCode), "the retired updater is gone from the tree");
 });
 
 /* ================= cycle 3, round 2 findings ================= */
@@ -709,16 +764,28 @@ test("F14: the adds endpoint path has exactly ONE builder, and every consumer us
 });
 
 test("F15: the terminus precedes the control it describes, on every compact table", () => {
-  // The activity feed emitted its control FIRST and then a sentence telling the
-  // reader the control was "below" it. The order is also what `syncTerminusFor`
-  // assumes, so an inconsistent table is a trap for the next owner of it.
-  const feed = activityFixture();
-  const html = activityFeedHtml(feed, { rowLimit: 50 });
-  const terminus = html.indexOf('class="terminus"');
-  const control = html.indexOf('class="compact-disclosure"');
-  assert.ok(terminus >= 0 && control >= 0, "the section renders both");
-  assert.ok(
-    terminus < control,
-    "the terminus must precede its control — `syncTerminusFor` reads previousElementSibling",
-  );
+  /* The activity feed emitted its control FIRST and then a sentence telling the
+     reader the control was "below" it.
+
+     SL-R10 retarget: sentence and control are now one element, so the ordering
+     is between siblings inside it and cannot be got wrong per table. The
+     property — the reader meets the STATED bound before the offer to lift it —
+     is asserted on every compact surface at once. */
+  const surfaces = [
+    activityFeedHtml(activityFixture(), { rowLimit: 50 }),
+    addsSectionHtml(
+      {
+        period: "2026-03-31", generated_at: "2026-08-12",
+        rows: Array.from({ length: 25 }, (_, i) => addsRow({ issuer_key: `e${i}`, delta_value_usd: 1000 - i })),
+        truncated: false, truncation_boundary: null, ambiguous_identity_exclusion_count: 0,
+      },
+      { period: "2026-03-31", mode: "all", periods: ["2026-03-31"], buildId: "b" },
+    ),
+  ];
+  for (const html of surfaces) {
+    const bound = html.indexOf('<p class="compact-bound">');
+    const control = html.indexOf("compact-toggle");
+    assert.ok(bound >= 0 && control >= 0, "the section renders both");
+    assert.ok(bound < control, "the stated bound must precede the offer to lift it");
+  }
 });

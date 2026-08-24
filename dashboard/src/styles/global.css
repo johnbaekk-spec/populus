@@ -2688,6 +2688,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   .star-btn,
   .pager,
   .filterbar .filter-controls,
+  .compact-toggle,
   .s4-actions {
     display: none !important;
   }
@@ -2695,6 +2696,11 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   .feed-footnote,
   .footnotes-stacked,
   .terminus,
+  /* SL-R10: the bound a compact table states about itself. It prints for the
+     same reason the terminus row it replaced did — a reader holding paper
+     cannot expand anything, so the statement of what is missing has to be on
+     the page. The BUTTON above stays in the no-print list. */
+  .compact-bound,
   .caveat-line,
   .rb-caption,
   .table-stamp {
@@ -2920,10 +2926,27 @@ th[data-inst-sort] .th-sort {
   white-space: normal;
 }
 
-/* R7: the expand control. It sits directly under its table, after the terminus
-   row, so the reader meets the STATED bound before the offer to lift it. */
+/* R7/SL-R10: the bound a compact table states about itself, and the control
+   that lifts it. The STATEMENT comes first, so the reader meets the bound
+   before the offer to lift it — and it is styled like the `.terminus` row it
+   replaced, because it is the same fact in the same voice.
+
+   The statement is server-rendered VISIBLE; only the button waits for a script
+   (`[hidden]` above). Nothing here may hide `.compact-bound` at any width — it
+   is on the fold sweep's honesty list. */
 .compact-disclosure {
   margin: 8px 0 2px;
+}
+.compact-bound {
+  font: 400 12px/1.6 var(--sans);
+  color: var(--ink2);
+  margin: 0 0 6px;
+}
+.compact-bound-count {
+  color: var(--ink);
+}
+.compact-bound-extra {
+  color: var(--ink2);
 }
 .compact-toggle {
   font: 600 12px var(--sans);

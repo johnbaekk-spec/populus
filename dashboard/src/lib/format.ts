@@ -1269,61 +1269,6 @@ export function terminusRow(opts: {
   );
 }
 
-/** The client-side counterpart of `terminusRow`, kept BESIDE it deliberately.
-
-    Every compact table has a client owner that changes its row set — a range
-    switch, a chip filter, a quarter selection — and each one has to restate the
-    bound in the same breath as the control. Three private copies of that update
-    is three chances for one of them to drift out of step with the renderer
-    above, which is exactly the class of defect R19 exists to catch. So the
-    renderer and its updater have ONE home.
-
-    `disclosure` is the `.compact-disclosure` wrapper; the terminus is its
-    immediately preceding sibling, which is the order `terminusRow` and
-    `compactDisclosure` are emitted in. `hidden <= 0` hides the sentence, which
-    is the same condition that hides the control — the two appear and disappear
-    together, never one without the other (F16). */
-export function syncTerminusFor(
-  disclosure: TerminusHost | null | undefined,
-  hidden: number,
-  body: TerminusBody,
-): void {
-  /* The host is typed as `unknown` and narrowed HERE rather than declared as an
-     element type. A real `HTMLElement.previousElementSibling` is `Element |
-     null`, which does not carry `hidden`; the alternative was an
-     `instanceof HTMLElement` guard, and that throws under `node --test` where
-     `HTMLElement` is not defined — which is precisely where the behavioural
-     tests for this contract run. */
-  const terminus = disclosure?.previousElementSibling as TerminusNode | null | undefined;
-  if (!terminus || typeof terminus.classList?.contains !== "function") return;
-  if (!terminus.classList.contains("terminus")) return;
-  terminus.hidden = hidden <= 0;
-  const el = terminus.querySelector(".terminus-body");
-  if (!el || hidden <= 0) return;
-  // `html` exists for the ONE case that needs it: a terminus whose sentence
-  // carries a link to the published payload. Writing that through `textContent`
-  // would print the markup, and dropping it would delete the no-JS route the
-  // sentence exists to offer. Callers with no markup use `text` and cannot
-  // inject anything.
-  if ("html" in body) el.innerHTML = ` ${body.html}`;
-  else el.textContent = ` ${body.text}`;
-}
-
-export type TerminusBody = { text: string } | { html: string };
-
-/** The narrow DOM surface `syncTerminusFor` touches, declared structurally so
-    it can be exercised without a browser — the same convention `table-sort.ts`
-    already uses for its own element interfaces. */
-export interface TerminusHost {
-  previousElementSibling: unknown;
-}
-
-export interface TerminusNode {
-  hidden: boolean;
-  classList: { contains(name: string): boolean };
-  querySelector(sel: string): { textContent: string | null; innerHTML: string } | null;
-}
-
 /* ---------- R7/R19: compact-by-default tables with an in-place expand ------
 
    THE COMPACT SLICE IS A RENDER BOUND, AND IT SAYS SO. Collapsing a table hides
@@ -1338,10 +1283,18 @@ export interface TerminusNode {
    and are rendered on expand. `display:none` on a honesty-bearing selector is
    what the fold gate exists to reject, so this primitive never reaches for it.
 
-   THE CONTROL IS HIDDEN UNTIL SCRIPTED, exactly like the feed's reset control:
-   a button that cannot work without JavaScript must not be presented as though
-   it can. With scripting off the reader still gets the compact slice, the
-   terminus row stating the exact bound, and the link to the full dataset. */
+   THE BUTTON IS HIDDEN UNTIL SCRIPTED — THE STATEMENT NEVER IS (SL-R10).
+   A button that cannot work without JavaScript must not be presented as though
+   it can, so the `<button>` ships `hidden` and a client reveals it. The
+   SENTENCE beside it is a different thing entirely: it is the reader's notice
+   of what is being held back, and it is emitted VISIBLE by the server whenever
+   there is anything to hold back. That split is the whole point. Three states
+   leave the button unrevealed — scripting off, scripting on before the island
+   syncs (the congress ranking waits for a 22 MB feed; the directory waits for a
+   sort), and an island that loaded, threw or returned early — and a bound that
+   lived only on the button was stated in none of them. `<noscript>` closes only
+   the first. A server-rendered visible statement closes all three, which is
+   what let R10's five duplicated terminus rows finally be deleted. */
 
 /** Rows rendered before a table asks the reader to expand it. */
 export const COMPACT_ROWS = 10;
@@ -1358,40 +1311,204 @@ export interface CompactDisclosureOpts {
   /** the full body is already in the DOM and the control reveals it, rather
       than the owner re-rendering rows from data */
   domBacked?: boolean;
+  /** SL-R10: the noun the BOUND SENTENCE uses, when it differs from the noun
+      the button uses — "ranked tickers" reads correctly in "823 further ranked
+      tickers are not rendered above" and wrongly in "Show all 833 ranked
+      tickers". Defaults to `noun`. */
+  boundNoun?: string;
+  /** SL-R10: the whole count sentence, for the one table whose bound is not of
+      the "N further X are not rendered above" shape (the activity feed states
+      a first-of-total slice). Pre-escaped by the caller. */
+  boundCount?: string;
+  /** SL-R10: the STATE-INDEPENDENT remainder of the bound — the facts the
+      deleted terminus rows carried beside their count: the link to the
+      published dataset, the link to this quarter's payload, that every filer
+      has its own page, the activity feed's publication bound. Pre-escaped by
+      the caller (R26: the renderer never invents one).
+
+      It is separate from the count clause because it stays TRUE when the table
+      is expanded, and the count clause does not: expanding retracts "823 are
+      not rendered above" and must not retract "every row remains in the
+      published dataset". */
+  bound?: string;
 }
 
-/** The expand control, or "" when there is nothing to expand.
+/** The count clause, composed in ONE place so the server's first render and
+    every client that later restates it cannot drift into two wordings. */
+export function compactBoundCount(hidden: number, noun: string): string {
+  return (
+    `${fmtInt(hidden)} further ${esc(noun)} are not rendered above — ` +
+    `a Public Filings render bound, not a data bound.`
+  );
+}
+
+/** The bound statement plus its expand control.
 
     OMISSION RULE (R7): a table whose row count does not EXCEED the compact
     slice renders no control. A disclosure that expands to the same rows is a
-    lie about there being more, and an inert control is worse than none. */
+    lie about there being more, and an inert control is worse than none.
+
+    SL-R10: what "renders no control" means is that the BUTTON is hidden and
+    empty. The wrapper itself stays hidden too when there is nothing whatever to
+    say — the F16 shell below. But a caller that supplied a `bound` remainder
+    has something true to say in every state, so that wrapper renders visible
+    with the count clause alone withheld. */
 export function compactDisclosure(o: CompactDisclosureOpts): string {
   const hidden = o.total - o.shown;
+  const attrs =
+    `class="compact-disclosure"${o.domBacked ? " data-compact-dom" : ""} ` +
+    `data-compact-for="${esc(o.rootId)}" ` +
+    `data-compact-total="${o.total}" data-compact-shown="${o.shown}" ` +
+    `data-compact-noun="${esc(o.noun)}" ` +
+    // The BOUND noun travels with the markup so a client restating the count
+    // for a changed row set uses the same words the server did. The congress
+    // island owns three roots with three different nouns — "ranked tickers",
+    // "ranked members", "wholly-undisclosed members" — through ONE sync
+    // function, and reading the noun back off the element is what stops it
+    // relabelling the undisclosed bucket as ranked.
+    `data-compact-bound-noun="${esc(o.boundNoun ?? o.noun)}"`;
+  // The button is `hidden` in EVERY branch, including this one: nothing reveals
+  // it but a script, and a script is exactly what it needs to work.
+  const btn = (label: string): string =>
+    `<button class="linklike compact-toggle" type="button" aria-expanded="false" ` +
+    `aria-controls="${esc(o.rootId)}" hidden>${label}</button>`;
+  // The count clause is addressable and separately hideable so expanding can
+  // retract IT without touching the remainder beside it.
+  const bound = (count: string, countHidden: boolean): string =>
+    `<p class="compact-bound">` +
+    `<span class="compact-bound-count"${countHidden ? " hidden" : ""}>${count}</span>` +
+    (o.bound ? `<span class="compact-bound-extra"> ${o.bound}</span>` : "") +
+    `</p>`;
+
   if (hidden <= 0) {
     // F16: a SHELL, not nothing. R7's omission rule is about what the reader
-    // SEES — and this shell is `hidden`, so they see nothing, which satisfies
+    // SEES — and with nothing to disclose this states no count, which satisfies
     // it. But a section whose row set can change (a momentum range switch, a
     // directory filter) must be able to gain a control later, and a client
     // cannot reveal an element that was never rendered. Rows beyond ten used
     // to become unreachable after exactly that transition.
-    return (
-      `<div class="compact-disclosure" data-compact-for="${esc(o.rootId)}" ` +
-      `data-compact-total="${o.total}" data-compact-shown="${o.shown}" ` +
-      `data-compact-noun="${esc(o.noun)}" hidden>` +
-      `<button class="linklike compact-toggle" type="button" aria-expanded="false" ` +
-      `aria-controls="${esc(o.rootId)}"></button></div>`
-    );
+    //
+    // SL-R10: the WRAPPER is hidden only when the remainder is absent too.
+    // With a remainder present there is a published fact here that is true at
+    // every row count, and hiding it would be the omission the terminus row it
+    // replaced existed to prevent.
+    return `<div ${attrs}${o.bound ? "" : " hidden"}>` + bound("", true) + btn("") + `</div>`;
   }
-  // The hidden count lives in the LABEL, not only in a title: the control has
-  // to say how much it is holding back before it is activated.
   return (
-    `<div class="compact-disclosure"${o.domBacked ? " data-compact-dom" : ""} data-compact-for="${esc(o.rootId)}" ` +
-    `data-compact-total="${o.total}" data-compact-shown="${o.shown}" ` +
-    `data-compact-noun="${esc(o.noun)}" hidden>` +
-    `<button class="linklike compact-toggle" type="button" aria-expanded="false" ` +
-    `aria-controls="${esc(o.rootId)}">` +
-    `Show all ${fmtInt(o.total)} ${esc(o.noun)} (${fmtInt(hidden)} more)</button></div>`
+    `<div ${attrs}>` +
+    bound(o.boundCount ?? compactBoundCount(hidden, o.boundNoun ?? o.noun), false) +
+    // The button carries the TOTAL, never the held-back count: the sentence
+    // above it already states that count, and one bound stated twice, two
+    // elements apart, is the duplication R10 set out to remove.
+    btn(`Show all ${fmtInt(o.total)} ${esc(o.noun)}`) +
+    `</div>`
   );
+}
+
+/** The collapse label, shared by every client owner for the same reason
+    `compactBoundCount` is. */
+export function compactCollapseLabel(noun: string): string {
+  return `Show only the first ${fmtInt(COMPACT_ROWS)} ${noun}`;
+}
+
+export function compactExpandLabel(total: number, noun: string): string {
+  return `Show all ${fmtInt(total)} ${noun}`;
+}
+
+/** The client-side counterpart of `compactDisclosure`, kept BESIDE it
+    deliberately — the replacement for `syncTerminusFor`, which owned the same
+    contract when the sentence lived in a separate `terminusRow` above.
+
+    Every compact table has a client owner that changes its row set — a range
+    switch, a chip filter, a quarter selection — and each one has to restate the
+    bound in the same breath as the control. Three private copies of that update
+    is three chances for one of them to drift out of step with the renderer
+    above. So the renderer and its updater have ONE home.
+
+    Three things move together and are never separable: the COUNT CLAUSE (shown
+    only while rows are actually held back), the BUTTON (revealed here, because
+    this is the first moment a script has proved it can work), and the WRAPPER
+    (hidden only when there is neither a count nor a remainder to state). */
+export function syncCompactDisclosure(
+  disclosure: CompactDisclosureNode | null | undefined,
+  o: {
+    /** rows the table holds right now */
+    total: number;
+    /** rows currently held back — 0 while expanded */
+    hidden: number;
+    expanded: boolean;
+    noun: string;
+    /** the count clause for this row set; omit to leave the server's wording
+        in place and only toggle its visibility (the activity feed, whose rows
+        never change). Pre-escaped when `html`. */
+    count?: CompactBoundBody;
+    /** the remainder, when it moves with the selection — the adds leaderboard's
+        payload link changes with the quarter. Omit to leave it alone. */
+    extra?: CompactBoundBody;
+  },
+): void {
+  if (!disclosure) return;
+  const countEl = boundNode(disclosure.querySelector(".compact-bound-count"));
+  const extraEl = boundNode(disclosure.querySelector(".compact-bound-extra"));
+  const btn = boundNode(disclosure.querySelector("button"));
+  const showCount = o.hidden > 0 && !o.expanded;
+
+  if (extraEl && o.extra) writeBound(extraEl, o.extra, " ");
+  if (countEl) {
+    if (showCount && o.count) writeBound(countEl, o.count, "");
+    countEl.hidden = !showCount;
+  }
+  // R7's omission rule: nothing to disclose, no control. The button is emptied
+  // as well as hidden so a stale label cannot survive into a later reveal.
+  const inert = o.hidden <= 0 && !o.expanded;
+  if (btn) {
+    btn.hidden = inert;
+    btn.setAttribute("aria-expanded", String(o.expanded));
+    btn.textContent = inert
+      ? ""
+      : o.expanded
+        ? compactCollapseLabel(o.noun)
+        : compactExpandLabel(o.total, o.noun);
+  }
+  // The wrapper goes away only when it would state nothing at all. `extraEl`
+  // exists exactly when the caller published a state-independent remainder,
+  // and that remainder is true in every state.
+  disclosure.hidden = !showCount && !extraEl && !o.expanded;
+}
+
+/* The nodes are narrowed from `unknown` rather than declared as element types.
+   A real `Element` does not carry `hidden`, and an `instanceof HTMLElement`
+   guard throws under `node --test`, where `HTMLElement` is not defined — which
+   is precisely where the behavioural tests for this contract run. */
+function boundNode(el: unknown): CompactBoundNode | null {
+  const n = el as CompactBoundNode | null | undefined;
+  return n && typeof n.setAttribute === "function" ? n : null;
+}
+
+function writeBound(el: CompactBoundNode, body: CompactBoundBody, lead: string): void {
+  // `html` exists for the cases that need it: a bound whose sentence carries a
+  // link to the published payload. Writing that through `textContent` would
+  // print the markup, and dropping it would delete the no-JS route the sentence
+  // exists to offer. Callers with no markup use `text` and cannot inject.
+  if ("html" in body) el.innerHTML = `${lead}${body.html}`;
+  else el.textContent = `${lead}${body.text}`;
+}
+
+export type CompactBoundBody = { text: string } | { html: string };
+
+/** The narrow DOM surface `syncCompactDisclosure` touches, declared structurally
+    so it can be exercised without a browser — the same convention
+    `table-sort.ts` already uses for its own element interfaces. */
+export interface CompactDisclosureNode {
+  hidden: boolean | string;
+  querySelector(sel: string): unknown;
+}
+
+export interface CompactBoundNode {
+  hidden: boolean | string;
+  textContent: string | null;
+  innerHTML: string;
+  setAttribute(name: string, value: string): void;
 }
 
 /**

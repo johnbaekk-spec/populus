@@ -210,44 +210,98 @@ test("CODE-REVIEW F1: a CANCELLED press does not disable hover and focus page-wi
   ).toBeVisible();
 });
 
-/* SL-R10, JavaScript DISABLED. The plan's R10 asks for five terminus rows to be
-   deleted because "an adjacent compactDisclosure states the same count". This
-   is that claim, put to a real browser with scripting off — the state the claim
-   is false in. It is a BLOCKER proof, not a regression guard: it must keep
-   passing for as long as R10 stays blocked, and an attempt that deletes the
-   termini must make it fail before anything else does.
+/* SL-R10, put to a real browser. The requirement asked for five terminus rows
+   to be deleted because "an adjacent compactDisclosure states the same count",
+   and that claim was FALSE in three states — scripting off, scripting on before
+   the island syncs, and scripting on with an island that returned early. It was
+   blocked twice on exactly that, and unblocked by making the claim true: the
+   bound is now a server-rendered visible element inside the control, and only
+   the button waits for a script.
 
-   Placed here rather than asserted from markup because the difference is
-   rendered, not textual: `hidden` is an attribute the unit tests can read, but
-   what matters is that the reader is shown nothing, and only an engine can say
-   that. */
-test("SL-R10: with JavaScript disabled the expand control is INVISIBLE and the terminus is the bound", async ({
+   These are the proofs of the fixed property, in the only place that can give
+   them. `hidden` is an attribute a unit test can read, but what matters is that
+   the reader is SHOWN the bound and not shown an inert button, and only an
+   engine can say that. */
+test("SL-R10: with JavaScript disabled the bound is STATED and the button is invisible", async ({
   browser,
 }) => {
   const ctx = await browser.newContext({ javaScriptEnabled: false });
   const page = await ctx.newPage();
-  await page.goto(CONGRESS);
 
-  const controls = page.locator(".compact-disclosure");
-  const n = await controls.count();
-  expect(n, "the congress page renders at least one compact table").toBeGreaterThan(0);
-  for (let i = 0; i < n; i++) {
-    await expect(
-      controls.nth(i),
-      "with no script running the control is never revealed, so it states no count",
-    ).toBeHidden();
+  /* Both in-scope surfaces are visited, and each is asserted only if this
+     build actually ships it: `build:bounded` may render `/institutional/` as a
+     stated absence ("the institutional 13F module is not in this build"), which
+     is itself honest and has no compact table to bound. Skipping a surface that
+     is not there is right; skipping one that IS there would hide the failure
+     this spec exists to catch, so the presence check is per surface and the
+     congress page — always present — is asserted unconditionally. */
+  let asserted = 0;
+  for (const url of [CONGRESS, HOLDERS_HINT]) {
+    await page.goto(url);
+
+    const controls = page.locator(".compact-disclosure");
+    const n = await controls.count();
+    if (n === 0) {
+      expect(url, "the congress page always ships compact tables").not.toBe(CONGRESS);
+      continue;
+    }
+    asserted++;
+
+    // Not one expand button may be visible: with no script running it cannot
+    // work, and a control that cannot work must not be presented as one.
+    for (let i = 0; i < (await page.locator(".compact-toggle").count()); i++) {
+      await expect(
+        page.locator(".compact-toggle").nth(i),
+        "an inert control is worse than no control",
+      ).toBeHidden();
+    }
+
+    // …and the bound is on the page anyway, in real text, rendered by the
+    // server. This is the assertion the deletion had to earn.
+    const stated = page.locator(".compact-bound-count:not([hidden])");
+    expect(
+      await stated.count(),
+      `${url}: no bound is stated to a reader with scripting off — this is the ` +
+        `omission the deleted terminus rows existed to prevent`,
+    ).toBeGreaterThan(0);
+    await expect(stated.first()).toBeVisible();
+    await expect(stated.first()).toContainText(/not rendered above|Showing the first/);
+    await expect(stated.first()).toContainText(/Public Filings render bound/);
   }
-
-  // …and the terminus beside it is what the reader actually reads.
-  const termini = page.locator(".terminus:not([hidden])");
-  expect(
-    await termini.count(),
-    "deleting these rows would leave the no-JS reader no statement of what is held back",
-  ).toBeGreaterThan(0);
-  await expect(termini.first()).toContainText(/not rendered above|Showing the first/);
-  await expect(termini.first()).toContainText("Truncated by Public Filings.");
+  expect(asserted, "at least one in-scope surface was actually measured").toBeGreaterThan(0);
 
   await ctx.close();
+});
+
+test("SL-R10: with JavaScript ON, the bound stands BEFORE the feed arrives", async ({ page }) => {
+  /* State (c), the one that survived the `<noscript>` attempt. `syncDisclosure`
+     deliberately waits for `feed.v1.json` (F25) — 22 MB in production — so for
+     the whole duration of that download nothing reveals the ranking control. A
+     `<noscript>` block does not render for this reader either.
+
+     The wait is made deterministic by never answering the request, which is
+     also a faithful stand-in for state (d): an island that loaded and did not
+     finish. Either way the reader must be told what is held back. */
+  await page.route("**/congress/data/feed.v1.json", (route) => route.abort());
+  await page.goto(CONGRESS);
+
+  const stated = page.locator(".compact-bound-count:not([hidden])").first();
+  await expect(
+    stated,
+    "scripting is on, the island has run, the dataset has not arrived — and the reader is still told",
+  ).toBeVisible();
+  await expect(stated).toContainText(/further ranked .* are not rendered above/);
+
+  // The button is what waits, and it is still waiting.
+  await expect(
+    page.locator(".compact-toggle").first(),
+    "nothing has revealed the control yet, which is exactly why the statement may not live on it",
+  ).toBeHidden();
+
+  // The remainder — the route to the rows being held back — is stated too.
+  await expect(
+    page.locator('.compact-bound-extra a[href="/congress/data/feed.v1.json"]').first(),
+  ).toBeVisible();
 });
 
 test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every width", async ({ page }) => {

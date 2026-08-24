@@ -36,7 +36,7 @@ import {
   rankingRootHtml,
   rankingWindowHtml,
 } from "../lib/ui.ts";
-import { COMPACT_ROWS, syncTerminusFor } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
 import type { CongressSortKey } from "../lib/congress-columns.ts";
 import { congressRankingColumns } from "../lib/congress-columns.ts";
@@ -200,38 +200,32 @@ export function initCongressSections(): CongressSections {
       range change that drops the total to at-or-below it removes the control
       instead of leaving one that expands to the rows already on screen. */
   function syncDisclosure(b: RootBinding): void {
-    if (!b.disclosure || !b.disclosureBtn) return;
+    if (!b.disclosure) return;
     const total = b.rows.length;
     const limit = COMPACT_ROWS;
     const hidden = Math.max(0, total - limit);
+    const noun = b.noun ?? "rows";
+    // The bound noun is the SERVER's, read back off the element: this one
+    // function serves the ranked tables and the wholly-undisclosed bucket, and
+    // composing "ranked …" for all three would relabel the bucket.
+    const boundNoun = b.disclosure.dataset?.compactBoundNoun ?? `ranked ${noun}`;
 
-    // R7's omission rule, evaluated against the LIMIT — never against how many
-    // happen to be rendered right now.
-    if (hidden === 0) {
-      b.disclosure.hidden = true;
-      b.expanded = false;
-      setTerminus(b, 0);
-      return;
-    }
-    b.disclosure.hidden = false;
-    b.disclosureBtn.setAttribute("aria-expanded", String(b.expanded));
-    b.disclosureBtn.textContent = b.expanded
-      ? `Show only the first ${limit.toLocaleString("en-US")} ${b.noun}`
-      : `Show all ${total.toLocaleString("en-US")} ${b.noun} (${hidden.toLocaleString("en-US")} more)`;
-    setTerminus(b, b.expanded ? 0 : hidden);
-  }
+    /* F6/SL-R10: the count clause, the button and the wrapper commit TOGETHER,
+       in one call to the shared updater. Three private copies of that contract
+       was three chances for one to drift out of step with the renderer; only
+       the NOUN differs per table, and that is what stays here.
 
-  /** The terminus states the same bound in prose and must not contradict it.
-
-      F6: the update itself now lives beside `terminusRow` in `format.ts`, with
-      the leaderboard's and the directory's. Three private copies of one
-      contract is three chances for one to drift; only the SENTENCE differs per
-      table, and that is what stays here. */
-  function setTerminus(b: RootBinding, hidden: number): void {
-    syncTerminusFor(b.disclosure, hidden, {
-      text:
-        `${hidden.toLocaleString("en-US")} further ranked ${b.noun} are not rendered above — ` +
-        `a Public Filings render bound, not a data bound.`,
+       R7's omission rule is evaluated against the LIMIT, never against how many
+       rows happen to be rendered right now — a range change that drops the
+       total to at-or-below it must retract the control rather than leave one
+       that expands to the rows already on screen. */
+    if (hidden === 0) b.expanded = false;
+    syncCompactDisclosure(b.disclosure, {
+      total,
+      hidden: b.expanded ? 0 : hidden,
+      expanded: b.expanded,
+      noun,
+      count: { text: compactBoundCount(hidden, boundNoun) },
     });
   }
 

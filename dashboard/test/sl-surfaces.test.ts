@@ -68,98 +68,228 @@ test("SL-R9: the client no longer reconstructs a build id out of rendered text",
 });
 
 /* ---------------------------------------------------------------- T6 / SL-R10
-   R10 is BLOCKED, and this is the measurement that blocks it. Recorded as a
-   test rather than as a comment so a later attempt fails immediately instead of
-   rediscovering it after the deletion has landed. */
 
-test("SL-R10 BLOCKER: `.compact-disclosure` ships HIDDEN, so a terminus is the only no-JS statement of a bound", async () => {
-  const { compactDisclosure, terminusRow } = await import("../src/lib/format.ts");
+   R10 was BLOCKED TWICE, and these tests are what blocked it. It asked for five
+   `terminusRow` call sites to be deleted because "an adjacent compactDisclosure
+   states the same count" — and the control stated that count in exactly one
+   state, the one where a script had already revealed it. Three states left it
+   silent, and the terminus was the only channel correct in all three:
 
-  /* R10 would delete the five terminus rows that "sit beside a
-     compactDisclosure stating the same count". Measured: the control states
-     NOTHING to a reader with scripting off — `compactDisclosure` emits the
-     `hidden` attribute in BOTH of its branches, and `initDomDisclosures` /
-     `syncDisclosure` are what remove it. So the count is not duplicated at all
-     in the no-JavaScript view; it is stated exactly once, by the terminus.
-     Deleting the terminus removes the reader's only statement of what is being
-     held back, which is DESIGN-BRIEF §7 (Constraint 1) and success criterion 2,
-     not a de-duplication. */
-  const live = compactDisclosure({ rootId: "t", total: 25, shown: 10, noun: "rows" });
-  assert.match(live, /class="compact-disclosure"[^>]*hidden>/, "the control ships hidden");
-  assert.match(live, /Show all 25 rows \(15 more\)/, "its count is reachable ONLY once JS unhides it");
+     (b) scripting OFF — `compactDisclosure` emitted `hidden` in both branches,
+         and only `initDomDisclosures` / `syncDisclosure` removed it;
+     (c) scripting ON, before the island syncs — the congress ranking waits for
+         a 22 MB feed (F25) and the directory waits for a sort, so on three of
+         the five surfaces nothing revealed the control at load;
+     (d) scripting ON, island loaded and returned early — F1 is a shipped
+         instance of exactly that, and `<noscript>` does not render for it.
 
-  const shell = compactDisclosure({ rootId: "t", total: 10, shown: 10, noun: "rows" });
-  assert.match(shell, /hidden>/, "and the nothing-held-back shell too");
+   An owner-directed `<noscript>` attempt closed (b) alone and was reverted.
+   What unblocked R10 was fixing the root cause instead: the bound is now a real
+   element inside the control, emitted VISIBLE by the server, with only the
+   BUTTON waiting for a script. All three states are closed by construction —
+   none of them can hide a `<span>` the server rendered without `hidden`.
 
-  // The terminus, by contrast, is visible as rendered.
-  const t = terminusRow({ author: "populus", html: "15 further rows are not rendered above." });
-  assert.doesNotMatch(t, /<div class="terminus"[^>]*\shidden/, "the terminus is the visible channel");
+   These tests are the replacement for the blockers, and they carry the same
+   burden: they must fail loudly if anyone makes the bound script-dependent
+   again. Two are behavioural — the island is really initialised over
+   server-rendered rows, and `initDomDisclosures` is really run — because
+   states (c) and (d) are about what an island does, not about what markup
+   says. */
 
-  for (const f of ["../src/scripts/inst-index-client.ts", "../src/scripts/congress-sections.ts"]) {
-    const src = readFileSync(new URL(f, import.meta.url), "utf8");
-    assert.ok(
-      /removeAttribute\("hidden"\)|\.hidden = false/.test(src),
-      `${f}: the control is revealed by script, which is what makes it a JS-only channel`,
-    );
-  }
-});
+/** Every surface whose terminus R10 deleted, rendered as the server ships it. */
+async function boundedSurfaces(): Promise<{ name: string; html: string }[]> {
+  const { congressRankingSection, addsSectionHtml, CONGRESS_ROOTS } = await import("../src/lib/ui.ts");
+  const { leadersRollup, congressTickersRollup } = await import("../src/lib/derive.ts");
+  const { activityFeedHtml, paginateActivity } = await import("../src/lib/activity.ts");
 
-/* SL-R10 BLOCKER, second and third measurements — added after an attempt to
-   unblock R10 with the owner-directed `<noscript>` approach.
+  const rows = rankingRows(24);
+  const stamps = {
+    buildId: "b", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12",
+  } as never;
+  const ctx = { watched: new Set() } as never;
+  return [
+    {
+      name: "congress ranking (members)",
+      html: congressRankingSection(
+        "leaders",
+        leadersRollup(rows, "2026-08-12", { range: "12m", basis: "traded" }),
+        stamps, ctx,
+        {
+          rootId: CONGRESS_ROOTS.membersRanked,
+          heading: "Member net disclosed flow",
+          sectionId: "members-section",
+          undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed,
+        } as never,
+      ),
+    },
+    {
+      name: "congress ranking (tickers)",
+      html: congressRankingSection(
+        "tickers",
+        congressTickersRollup(rows, "2026-08-12", { range: "12m", basis: "traded" }),
+        stamps, ctx,
+        { rootId: CONGRESS_ROOTS.momentum, heading: "Ticker momentum", sectionId: "momentum-section" } as never,
+      ),
+    },
+    {
+      name: "institutional adds leaderboard",
+      html: addsSectionHtml(
+        {
+          period: "2026-03-31", generated_at: "2026-08-12",
+          rows: Array.from({ length: 25 }, (_, i) => addsRow({ issuer_key: `e${i}`, delta_value_usd: 1000 - i })),
+          truncated: false, truncation_boundary: null, ambiguous_identity_exclusion_count: 0,
+        } as never,
+        { period: "2026-03-31", mode: "all", periods: ["2026-03-31"], buildId: "b" } as never,
+      ),
+    },
+    {
+      name: "institutional activity feed",
+      html: activityFeedHtml(
+        { present: true, reason: null, filings: FILINGS, pagination: paginateActivity(activityRecords(30), FILINGS) } as never,
+        { rowLimit: 50 },
+      ),
+    },
+  ];
+}
 
-   The approach was: give each affected `compactDisclosure` a `<noscript>`
-   statement of the same bound, so the no-JS reader keeps it, and only then
-   delete the five terminus rows. It was implemented in full — a `noscriptBound`
-   primitive, an opt-in note on the control carrying each terminus's non-count
-   remainder, `syncTerminusFor` deleted, every invalidated assertion retargeted —
-   and then reverted, because the implementation surfaced two further states in
-   which the control states nothing. `<noscript>` closes exactly one of the
-   three, and R10's premise needs all three.
+/** The fixtures the surfaces above need, kept local to this file rather than
+    shared: a fixture two files apart is a fixture that drifts. */
+const FILINGS = {
+  "1": {
+    accession: "0000000000-26-000001", submission_type: "13F-HR",
+    period_of_report: "2026-03-31", filed_date: "2026-05-10",
+    doc_url: "https://www.sec.gov/Archives/1", source: "sec-edgar",
+  },
+} as never;
 
-   (c) THE CONTROL IS NOT REVEALED AT PAGE LOAD on three of the five surfaces.
-       With scripting fully ON, `compactDisclosure` stays `hidden` until
-       something reveals it, and on those three nothing does until the reader
-       waits or acts. The terminus is the only statement of the bound in that
-       window.
+function activityRecords(n: number): never[] {
+  return Array.from({ length: n }, (_, i) => ({
+    cik: `000${String(1_000_000 + i)}`, filer_name: "FIXTURE HOLDINGS LLC",
+    issuer_key: "entity:cik:0000320193", issuer_name: "APPLE INC",
+    position_key: `sid:${String(i).padStart(6, "0")}`, put_call: "LONG",
+    ssh_prnamt_type: "SH", change_kind: "add", curr_period: "2026-03-31",
+    prev_period: "2025-12-31", prev_value_usd: 1_000, curr_value_usd: 3_000,
+    delta_value_usd: 1_000_000 - i, prev_shares: 10, curr_shares: 30,
+    delta_shares: 20, filing_keys: [1], prior_filing_keys: [],
+    current_filing_keys: [], flags: [],
+  })) as never[];
+}
 
-   (d) `<noscript>` DOES NOT COVER "scripting on, island did not run" — it
-       renders when scripting is DISABLED, which is a different condition from
-       a module that failed to load, threw, or returned early. This repository
-       has shipped exactly that state: `r-codex-regressions.test.ts`'s F1
-       records the feed island returning before it fetched anything because the
-       page had lost an id, invisible to every test for a review cycle. Under
-       the deletion, that failure silently removes the bound from every reader.
+function addsRow(over: Record<string, unknown> = {}): never {
+  return {
+    issuer_key: "entity:1", issuer_key_source: "entity", issuer_name: "I",
+    manager_count: 1, new_position_count: 0, delta_value_usd: 100,
+    delta_value_is_partial: false, top_adder_cik: 1, top_adder_name: "M", ...over,
+  } as never;
+}
 
-   Together with (b) these are three distinct states, and the terminus is the
-   only channel correct in all of them. Recorded as tests, not prose, so the
-   next attempt trips on all three before writing any code. */
-
-test("SL-R10 BLOCKER (c): with scripting ON, the ranking control is HIDDEN until the 22 MB feed lands", async () => {
-  const { installDom } = await import("./lib/mini-dom.ts");
-  const { congressRankingSection, CONGRESS_ROOTS } = await import("../src/lib/ui.ts");
-  const { leadersRollup } = await import("../src/lib/derive.ts");
-  const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
-
-  // 24 members, compact bound 10 — so rows ARE held back and the bound is real.
-  const rows = Array.from({ length: 24 }, (_, i) => ({
+function rankingRows(n: number): TxnRow[] {
+  return Array.from({ length: n }, (_, i) => ({
     kind: "txn", txnId: `t${i}`, asset: null, assetType: null,
     filed: "2026-07-21", traded: "2026-08-01", name: `M${i}`, bioguide: `B${i}`,
     party: "R", state: "OK", district: null, chamber: "senate", ticker: `T${i}`,
     side: "purchase", owner: "self", low: 1001 + i * 1000, high: 15000 + i * 1000,
     lag: 27, late: 0, flags: [], doc: "https://example.invalid/d",
-  })) as never[];
+  })) as unknown as TxnRow[];
+}
 
-  const section = congressRankingSection(
-    "leaders",
-    leadersRollup(rows, "2026-08-12", { range: "12m", basis: "traded" }),
-    { buildId: "b", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12" } as never,
-    { watched: new Set() } as never,
-    {
-      rootId: CONGRESS_ROOTS.membersRanked,
-      heading: "Member net disclosed flow",
-      sectionId: "members-section",
-    } as never,
+test("SL-R10 (b): every bounded surface STATES its bound in server bytes, with no script", async () => {
+  /* State (b), asserted where it is decided: in the emitted markup. The button
+     is `hidden` in every branch — a control that cannot work without JavaScript
+     must not be presented as though it can — and the sentence beside it is
+     `hidden` in none, because it is the reader's only notice otherwise. */
+  const { compactDisclosure } = await import("../src/lib/format.ts");
+
+  const live = compactDisclosure({ rootId: "t", total: 25, shown: 10, noun: "rows" });
+  assert.doesNotMatch(live, /class="compact-disclosure"[^>]*\shidden>/, "the wrapper is NOT hidden");
+  assert.match(
+    live,
+    /<span class="compact-bound-count">15 further rows are not rendered above/,
+    "the count is real text, reachable with scripting off",
   );
+  assert.match(live, /class="linklike compact-toggle"[^>]*\shidden>/, "the BUTTON is what waits for a script");
+
+  // F16's shell survives unchanged: nothing to disclose, nothing shown, and an
+  // element a client can fill in later.
+  const shell = compactDisclosure({ rootId: "t", total: 10, shown: 10, noun: "rows" });
+  assert.match(shell, /class="compact-disclosure"[^>]*\shidden>/, "the nothing-held-back shell is hidden");
+  assert.match(shell, /<span class="compact-bound-count" hidden><\/span>/, "…and claims no count");
+
+  for (const { name, html } of await boundedSurfaces()) {
+    const bounds = [...html.matchAll(/<p class="compact-bound">([\s\S]*?)<\/p>/g)].map((m) => m[1]!);
+    assert.ok(bounds.length > 0, `${name}: renders no bound statement at all`);
+    const stated = bounds.filter((b) => !/^<span class="compact-bound-count" hidden>/.test(b));
+    assert.ok(stated.length > 0, `${name}: every bound it renders is hidden — state (b) is back`);
+    for (const b of stated) {
+      assert.doesNotMatch(
+        b.slice(0, b.indexOf("</span>")),
+        /hidden/,
+        `${name}: the count clause ships hidden, so no-JS readers are told nothing`,
+      );
+    }
+  }
+});
+
+test("SL-R10: the five deleted termini took NOTHING with them — every clause still ships", async () => {
+  /* Requirement 3, asserted clause by clause. Four of the five terminus rows
+     carried more than a count, and each of those facts is stated nowhere else:
+     the feed dataset link, this quarter-and-mode's payload link, that every
+     filer has a page, and the activity feed's PUBLICATION bound — which is a
+     different fact from a render bound. If a later refactor drops one, this
+     fails; that is the whole point of writing them out. */
+  const surfaces = new Map((await boundedSurfaces()).map((s) => [s.name, s.html]));
+
+  const ranking = surfaces.get("congress ranking (tickers)")!;
+  assert.match(ranking, /Every row remains in the <a href="\/congress\/data\/feed\.v1\.json">published dataset<\/a>\./);
+
+  const adds = surfaces.get("institutional adds leaderboard")!;
+  assert.match(adds, /Every issuer in this quarter's bounded payload remains in /);
+  assert.match(adds, /<a href="\/institutional\/data\/adds\/2026-03-31\.all\.v1\.json">the published JSON<\/a>/);
+
+  const feed = surfaces.get("institutional activity feed")!;
+  assert.match(feed, /ordered change records published in this build/, "the publication bound");
+  assert.match(feed, /same-origin shard/, "…its shard count");
+  assert.match(feed, /institutional\/data\/activity\/&lt;page&gt;\.v1\.json/, "…the shard base path");
+  assert.match(feed, /records or [\d,]+ bytes of serialized JSON/, "…and the per-shard limits");
+
+  // The directory's clause is on an Astro page, so it is read from source.
+  const page = readFileSync(new URL("../src/pages/institutional/index.astro", import.meta.url), "utf8");
+  assert.match(page, /Every filer in this build has its own page/);
+  assert.ok(
+    page.indexOf("Every filer in this build has its own page") >
+      page.indexOf("compactDisclosure({"),
+    "…and it travels INSIDE the control, which is what makes it survive with no script",
+  );
+});
+
+test("SL-R10 (5): the bound is stated ONCE — the button carries the total, not the held-back count", async () => {
+  /* The de-duplication R10 actually asked for. With scripting on and the
+     control revealed, the reader must not meet the same number twice, two
+     elements apart — which is what the terminus row and the old
+     "(15 more)" label did. */
+  const { compactDisclosure } = await import("../src/lib/format.ts");
+  const html = compactDisclosure({ rootId: "t", total: 25, shown: 10, noun: "rows" });
+  const label = html.slice(html.indexOf("aria-controls"));
+  assert.match(label, />Show all 25 rows</, "the button states the TOTAL");
+  assert.doesNotMatch(label, /15/, "…and never repeats the count the sentence above it carries");
+
+  for (const { name, html: surface } of await boundedSurfaces()) {
+    assert.ok(!/class="terminus"/.test(surface.slice(surface.indexOf('<p class="compact-bound">'))),
+      `${name}: a terminus row still stands beside the control that states the same bound`);
+  }
+});
+
+test("SL-R10 (c): the ranking bound is stated BEFORE the 22 MB feed arrives, scripting ON", async () => {
+  /* State (c), behavioural — the exact scenario that blocked R10, inverted.
+     `syncDisclosure` deliberately does not run at bind time (F25), so the
+     button is still hidden after the island has initialised over the
+     server-rendered rows. The bound has to be stated anyway, and by the server,
+     because nothing else is going to state it in this window. */
+  const { installDom } = await import("./lib/mini-dom.ts");
+  const { CONGRESS_ROOTS } = await import("../src/lib/ui.ts");
+  const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
+
+  const section = (await boundedSurfaces()).find((s) => s.name === "congress ranking (members)")!.html;
   const { doc, restore } = installDom(
     `<main class="shell page" id="congress-page" data-generated-at-date="2026-08-12" ` +
       `data-range="12m" data-basis="traded">${section}</main>`,
@@ -172,33 +302,35 @@ test("SL-R10 BLOCKER (c): with scripting ON, the ranking control is HIDDEN until
     );
     assert.ok(control, "the section renders a disclosure control");
     assert.equal(
-      control!.hidden,
+      control!.querySelector("button")!.hidden,
       true,
-      "scripting is ON and the island has run — and the control still states NOTHING, " +
-        "because `syncDisclosure` deliberately waits for rows (F25). A `<noscript>` " +
-        "block does not render for this reader.",
+      "the button is still hidden — nothing reveals it until rows arrive (F25)",
     );
-
-    const terminus = control!.previousElementSibling;
-    assert.ok(terminus?.classList.contains("terminus"), "the terminus stands beside it");
-    assert.equal(terminus!.hidden, false, "…and it is VISIBLE — the only statement of the bound here");
-    assert.match(terminus!.textContent, /further ranked members are not rendered above/);
+    const bound = control!.querySelector(".compact-bound-count")!;
+    assert.equal(
+      bound.hidden,
+      false,
+      "…and the bound is stated regardless. A bound that lived on the button was " +
+        "stated to nobody for the whole duration of a 22 MB download.",
+    );
+    assert.match(bound.textContent, /further ranked members are not rendered above/);
+    assert.match(control!.textContent, /published dataset/, "and the route to the withheld rows");
   } finally {
     restore();
   }
 });
 
-test("SL-R10 BLOCKER (c): `initDomDisclosures` reveals ONLY `[data-compact-dom]` controls", async () => {
+test("SL-R10 (c): `initDomDisclosures` reveals only DOM-backed BUTTONS — never a bound", async () => {
+  /* The other half of state (c). The manager directory's control is not
+     DOM-backed: its rows live in an embedded JSON payload and its
+     `syncDisclosure` runs only from a RENDER, which `initSortableTable`
+     deliberately does not perform at init. So on page load, with scripting on,
+     nothing reveals its button — and its bound is stated anyway, by the server,
+     exactly like the DOM-backed one's. */
   const { installDom } = await import("./lib/mini-dom.ts");
   const { compactDisclosure } = await import("../src/lib/format.ts");
   const { initDomDisclosures } = await import("../src/scripts/inst-index-client.ts");
 
-  /* The manager directory's control is not DOM-backed: its rows live in an
-     embedded JSON payload and its `syncDisclosure` runs only from a RENDER,
-     which `initSortableTable` deliberately does not perform at init ("the SSR
-     body is already correct, and repainting on load would risk a visible flash
-     and would mask a server/client ordering disagreement"). So on page load,
-     with scripting on, nothing reveals it. */
   const html =
     `<div><tbody id="plain-tbody"></tbody>` +
     compactDisclosure({ rootId: "plain-tbody", total: 25, shown: 10, noun: "managers" }) +
@@ -208,41 +340,83 @@ test("SL-R10 BLOCKER (c): `initDomDisclosures` reveals ONLY `[data-compact-dom]`
   const { doc, restore } = installDom(html);
   try {
     initDomDisclosures();
+    const plain = doc.querySelector('.compact-disclosure[data-compact-for=plain-tbody]')!;
+    const dom = doc.querySelector('.compact-disclosure[data-compact-for=dom-tbody]')!;
     assert.equal(
-      doc.querySelector('.compact-disclosure[data-compact-for=plain-tbody]')!.hidden,
+      plain.querySelector("button")!.hidden,
       true,
-      "a non-DOM-backed control is still hidden after every load-time reveal path has run",
+      "a non-DOM-backed button is still hidden after every load-time reveal path has run",
     );
     assert.equal(
-      doc.querySelector('.compact-disclosure[data-compact-for=dom-tbody]')!.hidden,
+      dom.querySelector("button")!.hidden,
       false,
       "…while the DOM-backed one IS revealed, which is what makes the difference measurable",
     );
+    // The difference the reveal makes is to the BUTTON and to nothing else.
+    for (const wrap of [plain, dom]) {
+      assert.equal(wrap.hidden, false);
+      assert.equal(wrap.querySelector(".compact-bound-count")!.hidden, false);
+      assert.match(wrap.querySelector(".compact-bound-count")!.textContent, /are not rendered above/);
+    }
   } finally {
     restore();
   }
 });
 
-test("SL-R10 BLOCKER (d): `<noscript>` cannot stand in for a control an island failed to reveal", () => {
-  /* Stated as an assertion about the repository's own record rather than as a
-     comment, because the state is not hypothetical here: F1 is a shipped
-     instance of an island that ran, returned early, and left every control it
-     owned unrevealed — with scripting enabled the whole time, so no
-     `<noscript>` would have rendered. The terminus is what stood.
+test("SL-R10 (d): an island that returns early cannot take the bound with it", async () => {
+  /* State (d) — the one `<noscript>` does not cover, and the one this
+     repository has actually shipped: F1 records the feed island returning
+     before it fetched anything because the page had lost an id, with scripting
+     enabled the whole time and invisible to every test for a review cycle.
 
-     If this test ever fails because the F1 record moved, do not delete it:
-     find the record's new home. The claim it pins is why R10 stays blocked. */
-  const f1 = readFileSync(new URL("../test/r-codex-regressions.test.ts", import.meta.url), "utf8");
-  assert.match(
-    f1,
-    /F1: every id the feed island REQUIRES exists on the real congress page/,
-    "the repository carries a regression test for an island that silently did not run",
+     Simulated the way it really happened: the root the island requires is
+     absent, so `initCongressSections` returns before it binds anything. The
+     bound must be exactly as the server published it. */
+  const { installDom } = await import("./lib/mini-dom.ts");
+  const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
+
+  const section = (await boundedSurfaces()).find((s) => s.name === "congress ranking (members)")!.html;
+  // No `#congress-page`: the island finds nothing to bind and returns early.
+  const { doc, restore } = installDom(`<main class="shell page">${section}</main>`);
+  try {
+    initCongressSections();
+    const bound = doc.querySelector(".compact-bound-count");
+    assert.ok(bound, "the statement is in the server's bytes, not produced by the island");
+    assert.equal(bound!.hidden, false, "an island that never ran cannot retract it");
+    assert.match(bound!.textContent, /further ranked members are not rendered above/);
+  } finally {
+    restore();
+  }
+});
+
+test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight kept, updater gone", async () => {
+  /* The DoD gate. Measured in this tree rather than remembered: `terminusRow`
+     has 13 production call sites, the five beside a `compactDisclosure` are
+     gone, the eight standalone ones stand, `terminusRow` itself stays, and
+     `syncTerminusFor` has no callers and no definition. */
+  const files = {
+    "../src/lib/ui.ts": 5,
+    "../src/lib/activity.ts": 1,
+    "../src/lib/holdings.ts": 2,
+    "../src/pages/institutional/index.astro": 0,
+  } as const;
+  let total = 0;
+  for (const [f, want] of Object.entries(files)) {
+    const src = readFileSync(new URL(f, import.meta.url), "utf8");
+    const calls = (src.match(/terminusRow\(\{/g) ?? []).length;
+    assert.equal(calls, want, `${f}: ${calls} terminusRow call sites, expected ${want}`);
+    total += calls;
+    assert.ok(!/syncTerminusFor/.test(src.replace(/\/\*[\s\S]*?\*\//g, "")), `${f} still calls syncTerminusFor`);
+  }
+  assert.equal(total, 8, "eight standalone terminus rows are KEPT — R10 deletes only the five duplicates");
+
+  const fmt = readFileSync(new URL("../src/lib/format.ts", import.meta.url), "utf8");
+  assert.match(fmt, /export function terminusRow\(/, "the primitive itself stays");
+  assert.ok(
+    !/export function syncTerminusFor/.test(fmt),
+    "its client updater loses all three callers with the five deletions and is deleted",
   );
-  assert.match(
-    f1,
-    /island silently returned on the real page/,
-    "…and it names the failure mode `<noscript>` does not cover",
-  );
+  assert.match(fmt, /export function syncCompactDisclosure\(/, "one updater, beside the renderer it serves");
 });
 
 /* ------------------------------------------------------ T7 / SL-R11 R12 LD4 */

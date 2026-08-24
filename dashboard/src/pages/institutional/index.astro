@@ -17,7 +17,6 @@ import {
   compactDisclosure,
   noteBody,
   noteFromHtml,
-  terminusRow,
   COMPACT_ROWS,
 } from "../../lib/format";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
@@ -186,22 +185,23 @@ if (!inst.present) {
       ],
       { id: "inst-index-footnotes" },
     ) +
-    /* R19/F6: the named bound beside the compact table. Rendered in both
-       states so the client can reveal the sentence and the button together
-       when a chip change pushes the row count back over the limit (F16). */
-    terminusRow({
-      author: "populus",
-      hidden: directory.total <= directory.shown,
-      html:
-        `${fmtInt(Math.max(0, directory.total - directory.shown))} further managers are not ` +
-        `rendered above — a Public Filings render bound, not a data bound. Every filer in this ` +
-        `build has its own page, reachable from this table once expanded.`,
-    }) +
+    /* R19/F6 + SL-R10: the named bound is stated by the control itself, VISIBLE
+       from the server. Nothing reveals this control at load — the directory's
+       `syncDisclosure` runs only from a render, and `initSortableTable`
+       deliberately does not paint at init — so a bound that lived on the button
+       was stated to nobody until the reader sorted or filtered. That is why
+       the separate terminus row above it existed, and why deleting it was only
+       honest once the statement moved into the control.
+
+       "Every filer has its own page" is the state-independent remainder: true
+       collapsed and expanded alike, so it survives an expansion that retracts
+       the count. */
     compactDisclosure({
       rootId: "inst-managers-tbody",
       total: directory.total,
       shown: directory.shown,
       noun: "managers",
+      bound: `Every filer in this build has its own page, linked from its row here.`,
     }) +
     `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
     `<script type="application/json" id="inst-index-data">${JSON.stringify(indexRows).replaceAll("</", "<\\/")}</script>` +

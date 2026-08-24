@@ -691,15 +691,34 @@ test("the feed states how much of the ordered set it shows, and where the rest i
     { present: true, reason: null, filings: FILINGS, pagination: p },
     { rowLimit: 50 },
   );
-  // F2: BOTH bounds are stated — the compact render bound the reader is
-  // currently inside, and the shard budget the build published under.
-  assert.match(html, /Showing the first 10 of the 50 rows rendered here/);
-  assert.match(html, /the largest of 300 ordered change records/);
+  /* F2: BOTH bounds are stated — the compact render bound the reader is
+     currently inside, and the shard budget the build published under.
+
+     SL-R10 retarget: both used to live in a `terminusRow` above the control,
+     which duplicated the control's count. The row is deleted and the two
+     clauses moved INTO the control, which now states them visibly from the
+     server. They are split along the line that decides whether expanding
+     retracts them — the render bound is retractable, the publication bound
+     never is — so this asserts each in its own element. */
+  assert.match(
+    html,
+    /<span class="compact-bound-count">Showing the first 10 of the 50 rows rendered here/,
+    "the render bound, visible, in the clause expanding is allowed to retract",
+  );
+  assert.match(html, /a Public Filings render bound, not a data bound/, "the author of the cut is named");
+  assert.match(
+    html,
+    /<span class="compact-bound-extra">[^<]*These rows are the largest of 300 ordered change records/,
+    "the PUBLICATION bound is in the clause expanding must never retract",
+  );
   // and the no-JavaScript route out of the compact slice is a real link
   assert.match(html, /<a href="\/institutional\/data\/activity\/0\.v1\.json">/);
   assert.match(html, /institutional\/data\/activity\/&lt;page&gt;\.v1\.json/);
   assert.match(html, /2,000 records or 2,097,152 bytes of serialized JSON/);
-  assert.match(html, /Truncated by Public Filings\./, "the terminus names the author of the cut");
+  // …and none of it is behind a `hidden` the reader needs a script to lift.
+  const bound = html.slice(html.indexOf('<p class="compact-bound">'));
+  assert.match(bound.slice(0, bound.indexOf("</p>")), /^(?:(?!hidden).)*$/s,
+    "no clause of the bound ships hidden — the button below it is the only hidden thing");
 });
 
 test("each absence state renders as itself — the reader learns WHICH one", () => {

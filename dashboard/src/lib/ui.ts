@@ -2062,21 +2062,22 @@ export function congressRankingSection(
         )
       : "") +
     `</div>` +
-    // The terminus row states the bound in BOTH states — it is not a
-    // consequence of collapsing, it is the fact that the table is bounded.
-    // F16: the terminus renders in BOTH states — visible when rows are held
-    // back, hidden-but-present when they are not. A momentum range change can
-    // take this table from "everything fits" to "833 tickers, 10 shown", and
-    // the client can only reveal a notice that exists.
-    terminusRow({
-      author: "populus",
-      hidden: main.total <= main.shown,
-      html:
-        `${fmtInt(Math.max(0, main.total - main.shown))} further ranked ${esc(noun)} are not rendered above — ` +
-        `a Public Filings render bound, not a data bound. Every row remains in the ` +
-        `<a href="/congress/data/feed.v1.json">published dataset</a>.`,
+    /* SL-R10: the bound and its control are ONE element now. The count clause
+       this used to state from a separate `terminusRow` above is emitted by
+       `compactDisclosure` itself, VISIBLE from the server — which is what the
+       terminus was really for, since the control ships `hidden` and nothing
+       reveals it here until the 22 MB feed lands (F25). The link to the
+       published dataset travels as the state-independent remainder: it is true
+       whether the table is collapsed or expanded, so expanding retracts the
+       count and leaves the link standing. */
+    compactDisclosure({
+      rootId: opts.rootId,
+      total: main.total,
+      shown: main.shown,
+      noun,
+      boundNoun: `ranked ${noun}`,
+      bound: `Every row remains in the <a href="/congress/data/feed.v1.json">published dataset</a>.`,
     }) +
-    compactDisclosure({ rootId: opts.rootId, total: main.total, shown: main.shown, noun }) +
     (undisclosedBucket.length > 0 && opts.undisclosedRootId
       ? `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>` +
         `<p class="section-note">These rows include at least one side whose every amount failed to parse. ` +
@@ -2086,17 +2087,15 @@ export function congressRankingSection(
         `<caption class="visually-hidden">Unrankable ${esc(noun)} — amounts wholly undisclosed</caption>` +
         `<thead><tr>${rankingHeadHtml(cols, "name", "asc", { scope: `undisc-${opts.sectionId}` })}</tr></thead>` +
         `<tbody id="${esc(opts.undisclosedRootId)}">${bucket.html}</tbody></table></div>` +
-        (bucket.total > bucket.shown
-          ? terminusRow({
-              author: "populus",
-              html: `${fmtInt(bucket.total - bucket.shown)} further wholly-undisclosed ${esc(noun)} are not rendered above.`,
-            })
-          : "") +
+        /* SL-R10: the one terminus of the five that was NOTHING but its count,
+           so it is deleted outright rather than relocated — the control's own
+           server-visible count clause is the same sentence. */
         compactDisclosure({
           rootId: opts.undisclosedRootId,
           total: bucket.total,
           shown: bucket.shown,
           noun,
+          boundNoun: `wholly-undisclosed ${noun}`,
         }) +
         `</div>`
       : "") +
@@ -2298,28 +2297,25 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     )}</caption>` +
     `<thead><tr>${addsHeadHtml(cols, "value", "desc", { scope: "inst-adds" })}</tr></thead>` +
     `<tbody id="inst-adds-tbody">${rows}</tbody></table></div>` +
-    /* R19/F6: the NAMED bound beside the compact table. The congress ranking
-       sections have carried this since R19 was written; the leaderboard and
-       the directory were rendering a disclosure control with no statement of
-       what it was holding back, so rows were withheld with no named author.
+    /* R19/F6 + SL-R10: the NAMED bound, stated by the control itself and
+       VISIBLE from the server. The leaderboard and the directory used to render
+       a disclosure control with no statement of what it was holding back; the
+       statement then lived in a separate terminus row above, which is the
+       duplication R10 removes. The link to THIS quarter-and-mode's published
+       JSON is the state-independent remainder — the no-JS route to every row,
+       true in both states, so expanding never takes it away.
 
-       Rendered in BOTH states — visible when rows are held back, present but
-       hidden when they are not — so the client can reveal the sentence and the
-       button TOGETHER when a quarter with more issuers is selected. A notice
-       that was never rendered cannot be filled in later (F16). */
-    terminusRow({
-      author: "populus",
-      hidden: total <= shown,
-      html:
-        `${fmtInt(Math.max(0, total - shown))} further issuers are not rendered above — ` +
-        `a Public Filings render bound, not a data bound. Every issuer in this quarter's ` +
-        `bounded payload remains in ` +
+       R7: the note below reports the ENDPOINT's truncation, which is a
+       different fact from this render bound and is stated separately. */
+    compactDisclosure({
+      rootId: "inst-adds-tbody",
+      total,
+      shown,
+      noun: "issuers",
+      bound:
+        `Every issuer in this quarter's bounded payload remains in ` +
         `<a href="${esc(addsPayloadHref(opts.period, opts.mode))}">the published JSON</a>.`,
     }) +
-    // R7: the leaderboard is compact-by-default like every other table, and the
-    // note below reports the ENDPOINT's truncation, which is a different fact
-    // from this render bound and is stated separately.
-    compactDisclosure({ rootId: "inst-adds-tbody", total, shown, noun: "issuers" }) +
     // The note container ALWAYS renders, even when empty: the client cannot
     // insert a container that was never there, so an initially-absent note
     // meant a later period's omission could not be stated at all (F12).

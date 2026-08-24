@@ -127,9 +127,16 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
   assert.match(html, /rows excluded<span class="note">/, "the summed magnitude is visible, and anchors the note");
   assert.match(html, /date-anomaly row excluded from the trade-date window/);
   assert.match(html, /discloses no trade date and cannot be placed in a trade-date window/);
-  // terminus row and its named author
-  assert.match(html, /class="terminus" data-terminus-author="populus"/);
-  assert.match(html, /Truncated by Public Filings\./);
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R10 (LD6). The enumerated honesty
+     element is the STATED BOUND and its named author, and both are unchanged;
+     what moved is that they are no longer a separate `terminusRow` above the
+     control repeating the control's own count. They are the control's first
+     child now, and — the property that made the deletion honest — they are
+     emitted VISIBLE, while the button beside them waits for a script. The
+     assertions follow the text, and pin the visibility the row used to supply. */
+  assert.match(html, /<span class="compact-bound-count">\d+ further ranked members are not rendered above/);
+  assert.match(html, /a Public Filings render bound, not a data bound/);
+  assert.match(html, /published dataset<\/a>/, "and the route to the rows it holds back");
   // footnote markers AND their printed lines
   /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R6/R7 (LD6). The section's
      footnote block is deleted; its three clauses are notes on the columns they
@@ -141,8 +148,12 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
   assert.match(html, /overlapping intervals are incomparable/);
   // the stated absence: the wholly-undisclosed bucket and its explanation
   assert.match(html, /Not rankable — amounts wholly undisclosed/);
-  // the disclosure control states the hidden count in its own LABEL
-  assert.match(html, /Show all \d+ members \(\d+ more\)/);
+  /* The control offers to lift the bound, and states the TOTAL rather than
+     re-stating the held-back count the sentence above it already carries
+     (SL-R10). It ships `hidden`: a button that cannot work without JavaScript
+     must not be presented as though it can — which is precisely why the
+     sentence beside it may not ship hidden. */
+  assert.match(html, /class="linklike compact-toggle"[^>]*hidden>Show all \d+ members</);
 });
 
 test("R19: collapsing omits DATA ROWS and only data rows", () => {
@@ -166,7 +177,10 @@ test("R19: collapsing omits DATA ROWS and only data rows", () => {
     html
       .replace(/<tbody id="[^"]+">[\s\S]*?<\/tbody>/g, "<tbody/>")
       .replace(/<div class="terminus"[\s\S]*?<\/div>/g, "")
-      .replace(/<div class="compact-disclosure"[\s\S]*?<\/div>/g, "");
+      // SL-R10: the terminus row's content is inside the control now, so the
+      // strip has to reach the whole wrapper — `[\s\S]*?</div>` stops at the
+      // first close tag, and the wrapper's children are elements too.
+      .replace(/<div class="compact-disclosure"[\s\S]*?<\/button><\/div>/g, "");
   assert.equal(
     strip(collapsed),
     strip(expanded),
@@ -215,15 +229,19 @@ test("R7: the omission rule holds at the boundary — equal to the slice renders
       ctx,
       { rootId: CONGRESS_ROOTS.momentum, heading: "Ticker momentum", sectionId: "momentum-section" },
     );
-  // The shell exists (F16) but is hidden and unlabelled: the reader is offered
-  // nothing, which is what the omission rule is about.
-  assert.match(sectionFor(atLimit), /class="compact-disclosure"[^>]*hidden>/);
+  /* The shell exists (F16) but is hidden and unlabelled: the reader is offered
+     nothing, which is what the omission rule is about. SL-R10: the shell is now
+     the button plus an empty, hidden count clause — and NO count is claimed,
+     which is the honesty the rule is protecting. */
   assert.doesNotMatch(sectionFor(atLimit), /Show all/);
-  assert.match(sectionFor(atLimit), /class="terminus"[^>]*hidden>/, "hidden shell, nothing shown");
+  assert.match(sectionFor(atLimit), /class="linklike compact-toggle"[^>]*hidden><\/button>/);
+  assert.match(sectionFor(atLimit), /<span class="compact-bound-count" hidden><\/span>/,
+    "no rows are held back, so no count is stated");
 
   const overLimit = [...atLimit, txn({ txnId: "extra", ticker: "ZZZ", low: 1, high: 2 })];
   assert.match(sectionFor(overLimit), /compact-toggle/);
-  assert.match(sectionFor(overLimit), /Truncated by Public Filings/);
+  assert.match(sectionFor(overLimit), /1 further ranked tickers are not rendered above/);
+  assert.match(sectionFor(overLimit), /a Public Filings render bound, not a data bound/);
 });
 
 /* ---------- R3 parity ---------- */

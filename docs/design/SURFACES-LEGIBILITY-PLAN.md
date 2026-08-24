@@ -172,33 +172,44 @@ Remove `· build <id>` from every `.panel-head` `.panel-note` (`congressRankingS
 **window** statement stays — it changes with the control, so it belongs beside the control. Delete the
 `" · build "` string-split in `applyRollup()` (`congress-sections.ts:276`) with it.
 
-### 4.5 Delete the terminus rows (R5) — **BLOCKED, NOT IMPLEMENTED**
-**Superseded 2026-08-24 at implementation. Nothing here was done, and the run plan's `R10` row is the
-authority.** The section is kept, corrected, so a later reader finds the measurement rather than the
-instruction.
+### 4.5 Delete the terminus rows (R5) — **IMPLEMENTED 2026-08-24, after the root cause was fixed**
+**Blocked twice, then unblocked by fixing what blocked it.** The section is kept, corrected, so a later reader
+finds the measurement and the resolution rather than the original instruction.
 
 Two counts in the paragraph that stood here were wrong. `terminusRow` has **13** production call sites, not
-12 (`ui.ts` holds **eight**: `:579`, `:936`, `:1104`, `:1168`, `:1773`, `:1792`, `:1966`, `:2377`), so the
-sites with no adjacent expand control number **eight**, not seven.
+12 (`ui.ts` held **eight**), so the sites with no adjacent expand control number **eight**, not seven. Those
+eight are untouched, and `terminusRow` itself stays.
 
-The premise is also wrong, in three separate ways, each measured in the worktree:
+The premise was also wrong, in three separate ways, each measured in the worktree — and all three had ONE
+cause, which is why the fix is one change rather than five:
 
-1. **Only ONE of the five is a duplicate of a count.** The other four additionally carry the
+1. **Only ONE of the five was a duplicate of a count.** The other four additionally carried the
    `/congress/data/feed.v1.json` link, the adds payload link, "every filer has its own page", and the activity
    feed's whole publication bound — the shard base path, the shard count, and the record/byte limits each
-   shard is closed at. Deleting them loses published text (§7).
-2. **The adjacent control states nothing without JavaScript.** `compactDisclosure` emits `hidden` in BOTH
-   return branches; only `congress-sections.ts` and `inst-index-client.ts` remove it. With scripting off the
-   count is not duplicated at all — it is stated exactly once, by the terminus.
-3. **The control is not revealed at page load even WITH scripting**, on three of the five surfaces. The two
+   shard is closed at. Deleting them would have lost published text (§7).
+2. **The adjacent control stated nothing without JavaScript.** `compactDisclosure` emitted `hidden` in BOTH
+   return branches; only `congress-sections.ts` and `inst-index-client.ts` removed it.
+3. **The control was not revealed at page load even WITH scripting**, on three of the five surfaces. The two
    ranking controls are revealed from `syncDisclosure`, which deliberately does not run at bind time — it runs
    when rows arrive, after a 22 MB download. The manager directory's is revealed only from a render, and
    `initSortableTable` deliberately does not paint at init.
 
 A `<noscript>` restatement was directed by the owner, implemented in full and reverted: it closes (2) and
 neither (1) nor (3), and it does not cover "scripting on, island did not run" — a state this repository has
-shipped. All **13** terminus rows stay, `syncTerminusFor` keeps its three callers, and the decision is the
-owner's to make from the three options in the run plan's `R10` row.
+shipped.
+
+**What was done instead: the bound stopped depending on a script at all.** `compactDisclosure` now emits its
+count in a real `<span class="compact-bound-count">` that the server ships **visible**, and only the
+`<button>` waits for a script to reveal it. The remainder each deleted terminus carried moves into a sibling
+`<span class="compact-bound-extra">` in the same statement — kept separate because expanding retracts the
+count clause and must never retract "every row remains in the published dataset". States (2) and (3) are then
+closed by construction, and so is the state `<noscript>` could not reach: nothing can hide a span the server
+rendered without `hidden`. Only then were the five terminus rows deleted, which made the deletion the
+de-duplication it always claimed to be. `syncTerminusFor` lost its three callers with them and is replaced by
+`syncCompactDisclosure`, beside the renderer it serves.
+
+The button now carries the **total** (`Show all 833 tickers`) rather than repeating the held-back count, so
+the reader with scripting on meets that number once, not twice two elements apart.
 
 ### 4.6 Delete the exclusion line (R6)
 Delete the visible `<div class="caveat-line" id="…-caveat">` and its render root. `rankingExclusions()` is
