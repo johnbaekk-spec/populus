@@ -1479,6 +1479,8 @@ import {
   type LeaderRow,
   type NetInterval,
   congressRangeBounds,
+  congressTickersRollup,
+  leadersRollup,
   windowStatement,
   netDirection,
   netIntervalText,
@@ -1586,6 +1588,12 @@ export interface RankingSectionOpts {
   controls?: boolean;
   /** rows rendered while collapsed */
   compact?: number;
+  /** SL-R14. What the SAME corpus holds on the other basis and at the next
+      wider range. Supplied by the caller because only the caller holds the
+      full row set — the rollup handed to this renderer is already windowed.
+      Absent means "not computed", and the empty-window block then states the
+      lag without offering a switch it cannot price. */
+  alternatives?: RankingAlternatives;
 }
 
 /** The sortable header row. A sortable column carries its key and a real
@@ -1804,6 +1812,85 @@ export function rankingWindowHtml(
   );
 }
 
+
+/* ------------------------------------------------ SL-R14: the empty window */
+
+/** The ordered range vocabulary, single-sourced from the control that offers
+    it — so "the next wider range" cannot disagree with what is clickable. */
+export const CONGRESS_RANGES: readonly CongressRange[] = ["7d", "30d", "90d", "12m"];
+
+export interface RankingAlternatives {
+  /** rankable rows this window holds on the OTHER date basis */
+  otherBasis: number;
+  /** the next wider range and what it holds, or null at the widest */
+  wider: { range: CongressRange; n: number } | null;
+}
+
+/** SL-R14. Both alternatives are computed from the rows in hand, by the SAME
+    rollup functions the view uses, so a stated count cannot disagree with what
+    the control paints when the reader presses it. */
+export function rankingAlternatives(
+  rows: readonly TxnRow[],
+  generatedAtDate: string,
+  kind: "leaders" | "tickers",
+  range: CongressRange,
+  basis: CongressBasis,
+): RankingAlternatives {
+  const roll = kind === "tickers" ? congressTickersRollup : leadersRollup;
+  const other: CongressBasis = basis === "traded" ? "filed" : "traded";
+  const i = CONGRESS_RANGES.indexOf(range);
+  const widerRange = i >= 0 && i < CONGRESS_RANGES.length - 1 ? CONGRESS_RANGES[i + 1]! : null;
+  return {
+    otherBasis: roll(rows, generatedAtDate, { range, basis: other }).rows.length,
+    wider:
+      widerRange === null
+        ? null
+        : { range: widerRange, n: roll(rows, generatedAtDate, { range: widerRange, basis }).rows.length },
+  };
+}
+
+/** SL-R14 / LD2. `7d` stays offered: an empty window is a true and interesting
+    fact about the corpus — the statutory filing lag — so the section STATES it
+    instead of the control being hidden or the tbody painting empty with no
+    explanation, which is what `rankingRootHtml([])` produced before.
+
+    TERMINAL BRANCHES, both real and both tested: at `12m` there is no wider
+    range, so only the other basis is named; and when the other basis is ALSO
+    zero at that range, the block says the corpus holds no rankable rows in this
+    window on either basis and offers NO control — it never renders a switch
+    that would change nothing. */
+export function emptyWindowHtml(
+  range: CongressRange,
+  basis: CongressBasis,
+  alt: RankingAlternatives,
+  noun: string,
+): string {
+  const basisWord = basis === "traded" ? "trade date" : "filing date";
+  const otherWord = basis === "traded" ? "filing date" : "trade date";
+  const lag =
+    `No ${esc(noun)} disclose a ${esc(basisWord)} inside this ${esc(range)} window. That is a fact about the ` +
+    `corpus, not a gap in it: a Periodic Transaction Report may be filed up to 45 days after the ` +
+    `trade, so a short window measured by trade date can be genuinely empty while filings arrive.`;
+  const offers: string[] = [];
+  if (alt.otherBasis > 0)
+    offers.push(
+      `<button type="button" class="linklike" data-basis="${esc(basis === "traded" ? "filed" : "traded")}">` +
+        `${fmtInt(alt.otherBasis)} by ${esc(otherWord)}</button>`,
+    );
+  if (alt.wider && alt.wider.n > 0)
+    offers.push(
+      `<button type="button" class="linklike" data-range="${esc(alt.wider.range)}">` +
+        `${fmtInt(alt.wider.n)} at ${esc(alt.wider.range)}</button>`,
+    );
+  const body =
+    offers.length > 0
+      ? `${lag} The same corpus holds ${offers.join(" and ")}.`
+      : `${lag} The corpus holds no rankable ${esc(noun)} in this window on either basis` +
+        `${alt.wider === null ? " and there is no wider range to offer" : ""}, so no switch is offered — ` +
+        `a control that would change nothing is worse than none.`;
+  return `<p class="section-note empty-window">${body}</p>`;
+}
+
 /** One ranking section — used for BOTH the ticker momentum section and the
     member net-flow section. SSR renders the authoritative default view; the
     client re-renders only the roots. */
@@ -1843,6 +1930,16 @@ export function congressRankingSection(
     rankingWindowHtml(windowText, rollup, kind, opts.sectionId) +
     `</span></div>` +
     (opts.controls ? rangeControlHtml(rollup.range, rollup.basis) : "") +
+    /* SL-R13/R29: the pending indicator. NOT a queue — `range` and `basis` are
+       module state and `receiveRows` already reapplies them, so a pre-arrival
+       click has always been applied. The defect is that `setSeg` paints the
+       button pressed at click time, so between the click and the dataset's
+       arrival the control asserts a window the table has not painted. This
+       node lets it say so instead. It ships in the SSR bytes and starts hidden
+       because a client cannot reveal an element that was never rendered. */
+    (opts.controls
+      ? `<p class="section-note pending-note" id="${esc(opts.sectionId)}-pending" role="status" aria-live="polite" hidden></p>`
+      : "") +
     /* SL-R6: the three prose claims this paragraph carried are now notes on the
        columns they are about — interval-ness and the § derivation on the three
        flow columns, the direction rule and the ≈ incomparability rule on Net.
@@ -1854,6 +1951,20 @@ export function congressRankingSection(
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
     `<thead><tr>${rankingHeadHtml(cols, "net", "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
+    /* SL-R14 / LD2: a zero-rankable window STATES itself. The container ships
+       in both states so the client can fill it when a range change empties the
+       window — an element that was never rendered cannot be filled in later,
+       which is the F16 lesson applied to this block. */
+    `<div id="${esc(opts.sectionId)}-empty">` +
+    (main.total === 0
+      ? emptyWindowHtml(
+          rollup.range,
+          rollup.basis,
+          opts.alternatives ?? { otherBasis: 0, wider: null },
+          noun,
+        )
+      : "") +
+    `</div>` +
     // The terminus row states the bound in BOTH states — it is not a
     // consequence of collapsing, it is the fact that the table is bounded.
     // F16: the terminus renders in BOTH states — visible when rows are held

@@ -160,3 +160,84 @@ test("SL-R11: the deleted caveat root is gone from BOTH the renderer and its cli
   assert.ok(!client.includes("rankingCaveatHtml"), "and no caller");
   assert.ok(client.includes("rankingWindowHtml"), "the client rewrites through the SAME function the server used");
 });
+
+/* --------------------------------------------- T8 / SL-R13 R14 R29 */
+
+test("SL-R29: `onSettled` fires on BOTH paths — the failure path is the one `onRows` cannot serve", () => {
+  const src = readFileSync(new URL("../src/scripts/feed-client.ts", import.meta.url), "utf8");
+  // `onRows` documents itself as firing on success alone, so an indicator
+  // cleared only there reads "applying …" forever after a failed download — a
+  // false statement about a view that will never be painted.
+  assert.ok(/onSettled\?: \(ok: boolean\) => void/.test(src), "the callback takes the OUTCOME, not just a signal");
+  assert.ok(/settle\(true\)/.test(src), "fired on the success path");
+  assert.ok(/settle\(false\)/.test(src), "and on the failure path");
+  // exactly once per load, and a throwing consumer cannot turn a good decode bad
+  assert.ok(/if \(settled\) return;/.test(src), "once per load");
+  assert.ok(/a feed-settled consumer failed/.test(src), "a consumer's throw is contained");
+});
+
+test("SL-R13: the pending indicator is an indicator, NOT a queue", async () => {
+  const src = readFileSync(new URL("../src/scripts/congress-sections.ts", import.meta.url), "utf8");
+  // R13's whole point: `range`/`basis` are module state and `receiveRows`
+  // already reapplies them, so a pre-arrival click was never dropped. Nothing
+  // may be buffered here.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/pendingClicks|[Qq]ueue|deferred(Range|Basis)/.test(code), "no queue is introduced");
+  assert.ok(/function markPendingIfUnpainted/.test(src));
+  assert.ok(/if \(allRows\) return;/.test(src), "nothing is stated when the table CAN paint");
+  assert.ok(/setPending\(null\)/.test(src), "and it is cleared when the rows land");
+  assert.ok(/recomputeMomentumIfChanged\(\);/.test(src), "the existing apply mechanism is untouched");
+
+  // The node ships in the SSR bytes: a client cannot reveal what was never rendered.
+  const { congressRankingSection } = await import("../src/lib/ui.ts");
+  assert.equal(typeof congressRankingSection, "function");
+  const ui = readFileSync(new URL("../src/lib/ui.ts", import.meta.url), "utf8");
+  assert.ok(/id="\$\{esc\(opts\.sectionId\)\}-pending" role="status" aria-live="polite" hidden/.test(ui));
+});
+
+test("SL-R14/LD2: a zero-rankable window states the lag and prices both switches", async () => {
+  const { emptyWindowHtml } = await import("../src/lib/ui.ts");
+  const html = emptyWindowHtml("7d", "traded", { otherBasis: 58, wider: { range: "30d", n: 123 } }, "tickers");
+  assert.match(html, /No tickers disclose a trade date inside this 7d window/);
+  assert.match(html, /45 days after the/, "the lag is NAMED, which is why the window is honestly empty");
+  assert.match(html, /data-basis="filed"[^>]*>58 by filing date/, "the other basis, priced");
+  assert.match(html, /data-range="30d"[^>]*>123 at 30d/, "the next wider range, priced");
+});
+
+test("SL-R14: the TERMINAL branches — no wider range, and doubly empty", async () => {
+  const { emptyWindowHtml } = await import("../src/lib/ui.ts");
+
+  // 12m: there is no wider range, so only the other basis is named.
+  const atWidest = emptyWindowHtml("12m", "traded", { otherBasis: 7626, wider: null }, "members");
+  assert.match(atWidest, /7,626 by filing date/);
+  assert.doesNotMatch(atWidest, /data-range=/, "no wider range is invented");
+
+  // …and when the other basis is ALSO zero, no switch at all.
+  const doublyEmpty = emptyWindowHtml("12m", "traded", { otherBasis: 0, wider: null }, "members");
+  assert.match(doublyEmpty, /no rankable members in this window on either basis/);
+  assert.match(doublyEmpty, /no wider range to offer/);
+  assert.doesNotMatch(doublyEmpty, /<button/, "a control that would change nothing is worse than none");
+
+  // A wider range that is ALSO empty is not offered either.
+  const emptyWider = emptyWindowHtml("7d", "filed", { otherBasis: 0, wider: { range: "30d", n: 0 } }, "tickers");
+  assert.doesNotMatch(emptyWider, /<button/);
+});
+
+test("SL-R14: every range on both bases renders the block, and its counts come from the same rollups the control paints", async () => {
+  const { rankingAlternatives, CONGRESS_RANGES, emptyWindowHtml } = await import("../src/lib/ui.ts");
+  // Zero-result fixtures at EVERY range on BOTH bases, not only the
+  // `7d · traded` specimen the plan measured.
+  const rows: never[] = [];
+  for (const range of CONGRESS_RANGES) {
+    for (const basis of ["traded", "filed"] as const) {
+      for (const kind of ["tickers", "leaders"] as const) {
+        const alt = rankingAlternatives(rows, "2026-08-23", kind, range, basis);
+        assert.equal(alt.otherBasis, 0);
+        assert.equal(alt.wider === null, range === "12m", "only 12m is terminal");
+        const html = emptyWindowHtml(range, basis, alt, kind === "tickers" ? "tickers" : "members");
+        assert.match(html, /class="section-note empty-window"/);
+        assert.doesNotMatch(html, /<button/, "an empty corpus offers nothing");
+      }
+    }
+  }
+});

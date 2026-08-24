@@ -12,7 +12,7 @@ import {
   type RenderCtx,
 } from "../../lib/format";
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
-import { congressRankingSection, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui";
+import { congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui";
 
 const build = getBuildData();
 
@@ -57,6 +57,17 @@ const momentumHtml = congressRankingSection(
     heading: "Ticker momentum — net disclosed flow",
     sectionId: "momentum-section",
     controls: true,
+    /* SL-R14: computed here because only this page holds the full row set —
+       the rollup above is already windowed. The client recomputes the same
+       thing from the same rows through the same function when the reader
+       changes the window. */
+    alternatives: rankingAlternatives(
+      build.txns,
+      build.generatedAtDate,
+      "tickers",
+      MOMENTUM_RANGE,
+      MOMENTUM_BASIS,
+    ),
   },
 );
 
@@ -320,7 +331,10 @@ const description =
     import { initFeed } from "../../scripts/feed-client";
     import { initCongressSections } from "../../scripts/congress-sections";
     const sections = initCongressSections();
-    initFeed({ onRows: sections.receiveRows });
+    /* SL-R29: `onSettled` fires on BOTH the success and failure paths, so the
+       momentum section's "applying …" state clears either way. Cleared only in
+       `onRows` it would survive a failed download for the life of the page. */
+    initFeed({ onRows: sections.receiveRows, onSettled: sections.feedSettled });
   </script>
 </Base>
 

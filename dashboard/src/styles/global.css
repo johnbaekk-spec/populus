@@ -1428,6 +1428,14 @@ button {
   border-top: 1px solid var(--rule);
 }
 .caveat-inline { color: var(--ink3); }
+/* SL-R13: the momentum control's pending state. It is a STATEMENT, not a
+   spinner — a spinner says "wait", this says what the control has and has not
+   done yet. Tinted so it reads as a live claim rather than as chrome. */
+.pending-note { color: var(--ink2); }
+/* SL-R14 / LD2: a true empty window states itself here rather than the table
+   painting blank. The offers are `.linklike` buttons, matching the rest of the
+   page's in-prose controls. */
+.empty-window .linklike { font-weight: 600; }
 /* SL-R1: the /congress/ head's stamp and its four methodology deep links. The
    stamp keeps `.caveat-line`'s mono voice — it is the same kind of statement —
    but drops the top rule, because it sits inside the page head rather than
