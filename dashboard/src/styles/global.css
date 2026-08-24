@@ -1428,6 +1428,23 @@ button {
   border-top: 1px solid var(--rule);
 }
 .caveat-inline { color: var(--ink3); }
+/* SL-R1: the /congress/ head's stamp and its four methodology deep links. The
+   stamp keeps `.caveat-line`'s mono voice — it is the same kind of statement —
+   but drops the top rule, because it sits inside the page head rather than
+   under a table. The links wrap on narrow viewports instead of scrolling, so
+   none of the four can end up off-screen. */
+.stamp-line {
+  padding: 4px 0 0;
+  font: 400 11px/1.6 var(--mono);
+  color: var(--ink3);
+}
+.method-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 6px 0 0;
+  font: 400 11px/1.6 var(--mono);
+}
 /* R10 defect #12: a flag carried by EVERY row states itself here instead of on
    each row. It sits ABOVE the table it describes and reads as a caveat, not as
    chrome — the border-bottom pairs it with the table rather than the block

@@ -273,10 +273,16 @@ export function initCongressSections(): CongressSections {
 
     const windowEl = document.getElementById(`${sectionId}-window`);
     if (windowEl) {
-      const build = windowEl.textContent?.split(" · build ")[1] ?? "";
-      windowEl.textContent =
-        windowStatement(rollup.range, rollup.basis, congressRangeBounds(rollup.range, generatedAtDate)) +
-        (build ? ` · build ${build}` : "");
+      /* SL-R9: the `" · build "` split is gone with the stamp it preserved.
+         It existed only so a re-render did not drop a build id the server had
+         put there; the server no longer puts one there, and parsing a suffix
+         back out of rendered text to re-append it was the fragile half of that
+         arrangement. */
+      windowEl.textContent = windowStatement(
+        rollup.range,
+        rollup.basis,
+        congressRangeBounds(rollup.range, generatedAtDate),
+      );
     }
     const caveatEl = document.getElementById(`${sectionId}-caveat`);
     if (caveatEl) caveatEl.innerHTML = rankingCaveatHtml(rankingExclusions(rollup, kind));

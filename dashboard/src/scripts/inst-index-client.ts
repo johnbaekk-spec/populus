@@ -303,10 +303,11 @@ export function initAddsControls(): void {
     press("mode", mode);
 
     const win = document.getElementById("inst-adds-window");
-    if (win) {
-      const build = win.textContent?.split(" · build ")[1] ?? "";
-      win.textContent = `quarter ended ${payload.period}${build ? ` · build ${build}` : ""}`;
-    }
+    /* SL-R9: same split, same removal. The plan named only `applyRollup`; this
+       is the second site doing exactly the same thing for the adds window, and
+       leaving it would have re-appended a build id the server no longer
+       renders — reconstructing a stamp from an empty capture group. */
+    if (win) win.textContent = `quarter ended ${payload.period}`;
     const caption = section!.querySelector("caption");
     if (caption) {
       caption.textContent =

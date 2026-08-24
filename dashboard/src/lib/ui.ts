@@ -103,8 +103,16 @@ export function breadcrumb(parts: { text: string; href?: string }[]): string {
   );
 }
 
+/* SL-R9: the build id is OUT of this stamp. It is not a fact about the window
+   the panel rendered, it is a fact about the deploy, and `Base.astro`'s footer
+   already prints it once per page — `m1-layout.test.ts:52` pins exactly that
+   "rendered once, in the footer" rule. Repeating it beside every window
+   statement spent characters on the least reader-relevant token in the line.
+   The one caller that is NOT a `.panel-note` — the signals page's `.si-asof`,
+   out of scope for this run — appends it explicitly, so that surface's bytes
+   are unchanged. */
 function asOfNote(stamps: BuildStamps): string {
-  return `as of ${esc(stamps.generatedAt)} · build ${esc(stamps.buildId)}`;
+  return `as of ${esc(stamps.generatedAt)}`;
 }
 
 /** Locked #20: the institutional table time stamp. The published aggregate has
@@ -692,7 +700,7 @@ export function tickerUnifiedBody(
     }</a>` +
     `<span class="si-soon">Financials <span class="badge-soon">SOON</span></span>` +
     `<span class="si-soon">Macro <span class="badge-soon">SOON</span></span>` +
-    `<span class="si-asof">${asOfNote(stamps)}</span>` +
+    `<span class="si-asof">${asOfNote(stamps)} · build ${esc(stamps.buildId)}</span>` +
     `</nav>` +
     `<section class="page-section" id="congress">` +
     `<div class="section-head"><h2 class="section-h2">Congressional disclosures <span class="section-note-inline">· PTRs · statutory ranges · filed ≤45d late</span></h2>` +
@@ -1788,9 +1796,7 @@ export function congressRankingSection(
   return (
     `<section class="panel panel-wide" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
     `<div class="panel-head"><h2 class="section-h">${esc(opts.heading)}</h2>` +
-    `<span class="panel-note" id="${esc(opts.sectionId)}-window">${esc(windowText)} · build ${esc(
-      stamps.buildId,
-    )}</span></div>` +
+    `<span class="panel-note" id="${esc(opts.sectionId)}-window">${esc(windowText)}</span></div>` +
     (opts.controls ? rangeControlHtml(rollup.range, rollup.basis) : "") +
     /* SL-R6: the three prose claims this paragraph carried are now notes on the
        columns they are about — interval-ness and the § derivation on the three
@@ -2001,9 +2007,7 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
   return (
     `<section class="panel panel-wide" id="inst-adds-section" aria-label="Recently added issuers">` +
     `<div class="panel-head"><h2 class="section-h">Recently added issuers</h2>` +
-    `<span class="panel-note" id="inst-adds-window">quarter ended ${esc(payload.period)} · build ${esc(
-      opts.buildId,
-    )}</span></div>` +
+    `<span class="panel-note" id="inst-adds-window">quarter ended ${esc(payload.period)}</span></div>` +
     `<p class="section-note">Which issuers 13F managers reported <strong>adding</strong> in a closed ` +
     `reporting quarter. The window is a <strong>quarter</strong>, never a rolling day count — ` +
     `quarterly filings cannot support one — and only quarters whose 45-day filing deadline has ` +

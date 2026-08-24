@@ -126,10 +126,25 @@ const description =
           — what you read here is what was filed; nothing more current exists in the
           public record. <a href="/methodology/">How this data is made ↗</a>
         </p>
-        <div class="caveat-line" id="congress-caveat">
-          {fmtInt(build.txnCount)} rows filed since {build.filedFrom} · as of {build.generatedAt} ·
-          amounts are statutory ranges, not exact values, and are filed up to 45 days after the
-          trade · <a href="/methodology/#coverage">parse coverage, in full ↗</a>
+        {/* SL-R1. The `.caveat-line` is replaced by a STAMP plus four deep
+            methodology links. Nothing is softened: every claim the line made
+            still ships, at its authoritative source rather than as a compressed
+            restatement above the fold. "amounts are statutory ranges" is
+            `#amount-ranges`; "filed up to 45 days after the trade" is
+            `#filing-lag` — and both of those sentences are ALSO still in the
+            lede paragraph directly above, verbatim, so neither claim depends on
+            a reader following a link. The two links the page never had are
+            `#owner-codes` (SP/DC/JT, which no surface explained) and
+            `#coverage`, whose id did not exist until T1 — the old link
+            resolved to the top of the methodology page. */}
+        <div class="stamp-line" id="congress-stamp">
+          {fmtInt(build.txnCount)} rows · filed since {build.filedFrom} · as of {build.generatedAt}
+        </div>
+        <div class="method-links" id="congress-method-links">
+          <a href="/methodology/#coverage">parse coverage, in full ↗</a>
+          <a href="/methodology/#amount-ranges">why amounts are ranges ↗</a>
+          <a href="/methodology/#filing-lag">the 45-day filing lag ↗</a>
+          <a href="/methodology/#owner-codes">whose trade is it — SP · DC · JT ↗</a>
         </div>
       </div>
     </div>
