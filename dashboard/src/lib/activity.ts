@@ -839,7 +839,16 @@ export function truncationNoticeHtml(t: ActivityTruncation | null, shards: numbe
     html:
       `The ordered set does not fit in this build's ${fmtInt(shards)}-shard budget: ` +
       `<strong>${fmtInt(t.dropped_records)}</strong> further records are not published here. ` +
-      `The cut falls at ${boundary} — filer CIK ${esc(k.cik)}, position ${esc(k.position_key)}, ` +
+      /* CODE-REVIEW F7: the boundary's `position_key` may be a provisional
+         `sid:sec:prov:<hash>`, and this prose is VISIBLE on /institutional/ —
+         so printing it raw violates SL-R17 and success criterion 4 on a surface
+         this run owns. The publication bound is the honesty content here and it
+         is unchanged; only the identity's CHANNEL moves. The readable chip
+         states how strong the identity is, its note carries the exact key, and
+         the raw value stays machine-reachable in a `data-` attribute — the same
+         treatment R17 applies everywhere else a weak key surfaces. */
+      `The cut falls at ${boundary} — filer CIK ${esc(k.cik)}, position ` +
+      `${identityChipHtml(k.position_key, { scope: "activity-cut" }, "boundary")}, ` +
       `${esc(k.put_call)} · ${esc(k.ssh_prnamt_type)}. Everything below that boundary is absent ` +
       `from these shards and remains in the filings on EDGAR.`,
   });

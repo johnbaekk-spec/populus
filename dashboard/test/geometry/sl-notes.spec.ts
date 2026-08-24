@@ -249,3 +249,37 @@ test("SL-R10: with JavaScript disabled the expand control is INVISIBLE and the t
 
   await ctx.close();
 });
+
+test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every width", async ({ page }) => {
+  // The panel is written inside a <th>, and CSS inheritance follows the DOM
+  // tree — so it inherited `.etable th`'s nowrap/uppercase/letter-spacing and
+  // long footnote prose ran off one line. Visibility and anchor-distance are
+  // both TRUE of an overflowing line, which is why the earlier specs passed.
+  for (const w of WIDTHS) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.goto(CONGRESS);
+    const btn = page.locator("th .note-btn").first();
+    if ((await btn.count()) === 0) continue;
+    const id = await btn.getAttribute("popovertarget");
+    await btn.click();
+    const pop = page.locator(`#${id}`);
+    await expect(pop).toBeVisible();
+
+    const m = await pop.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        whiteSpace: cs.whiteSpace,
+        transform: cs.textTransform,
+        scrollW: el.scrollWidth,
+        clientW: el.clientWidth,
+        right: el.getBoundingClientRect().right,
+        left: el.getBoundingClientRect().left,
+      };
+    });
+    expect(m.whiteSpace, `wraps at ${w}px`).not.toBe("nowrap");
+    expect(m.transform, `not uppercased at ${w}px`).toBe("none");
+    expect(m.scrollW, `no horizontal overflow inside the panel at ${w}px`).toBeLessThanOrEqual(m.clientW + 1);
+    expect(m.left, `panel starts inside the viewport at ${w}px`).toBeGreaterThanOrEqual(0);
+    expect(m.right, `panel ends inside the viewport at ${w}px`).toBeLessThanOrEqual(w);
+  }
+});

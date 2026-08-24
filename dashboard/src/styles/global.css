@@ -3047,6 +3047,27 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   font-size: 0.86rem;
   line-height: 1.45;
   box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
+
+  /* CODE-REVIEW F8: reset the header typography this panel INHERITS.
+
+     CSS inheritance follows the DOM tree, not the layout tree, so a panel in
+     the top layer still inherits from the `<th>` it is written inside — and
+     `.etable th` sets `white-space: nowrap`, `text-transform: uppercase`,
+     `letter-spacing: 0.12em` and `text-align: left`. Header notes are the
+     PRIMARY case this run creates (R5, R6, R7), so without this every one of
+     them rendered its footnote prose as a single unwrapped uppercase
+     letter-spaced line running out of the panel.
+
+     The browser tests missed it because they assert the panel is visible and
+     near its anchor. Both are true of an overflowing line. `sl-notes.spec.ts`
+     now measures wrapping and containment instead. */
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
+  font-weight: 400;
+  font-variant: normal;
+  overflow-wrap: anywhere;
 }
 
 /* SL-R2b: a DEFAULT resting place for a panel nobody positions.

@@ -776,3 +776,38 @@ test("CODE-REVIEW F3: on the SUCCESS path the indicator is cleared outright, not
     restore();
   }
 });
+
+test("CODE-REVIEW F7: the activity truncation notice never prints a raw provisional key", async () => {
+  const { truncationNoticeHtml } = await import("../src/lib/activity.ts");
+  const html = truncationNoticeHtml(
+    {
+      dropped_records: 12,
+      boundary_sort_key: {
+        cik: "0001067983",
+        position_key: "sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7",
+        put_call: "CALL",
+        ssh_prnamt_type: "SH",
+        delta_value_usd: null,
+        abs_delta_value_usd: null,
+      },
+    },
+    4,
+  ) as string;
+  // The publication bound is honesty content and must survive verbatim.
+  assert.match(html, /further records are not published here/);
+  /* SL-R17 permits the raw key in exactly two channels — a note panel and a
+     `data-` attribute — and forbids it as page prose. So strip the ALLOWED
+     channels first, then assert on what a reader actually sees unaided. An
+     assertion that simply banned the substring would have failed on a correct
+     implementation, which is a test bug, not a finding. */
+  const prose = html
+    .replace(/<span class="note-pop"[^>]*>[\s\S]*?<\/span>/g, " ")
+    .replace(/\sdata-[a-z-]+="[^"]*"/g, " ")
+    .replace(/<[^>]*>/g, " ");
+  assert.ok(
+    !prose.includes("sid:sec:prov:"),
+    "a provisional key must not render as visible prose on a surface this run owns",
+  );
+  // It stays reachable: a data- attribute and/or the chip's own note.
+  assert.ok(html.includes("sid:sec:prov:"), "and it is still present in an allowed channel");
+});
