@@ -321,3 +321,29 @@ test("SL-R18: the curated-typing caveat is a Type-column note carrying its N of 
   // the `<noscript>` stays VISIBLE: it is about scripting, not about a column
   assert.match(page, /<noscript>Filtering by chip needs JavaScript/);
 });
+
+/* ------------------------------------------------------------- SL-R28 */
+
+test("SL-R28: every surface that passes a note scope calls initNotes(), and Base.astro does not", () => {
+  /* The gap this catches is the one R28 names: `notes.ts` can exist, be
+     correct, be unit-tested, and be called by NO page — in which case every
+     note on the site loses placement, hover, Escape and outside-click while
+     every test stays green. It was exactly that state when T3–T9 landed their
+     notes, which is why this assertion exists at all. */
+  const surfaces = [
+    "../src/pages/congress/index.astro",
+    "../src/pages/institutional/index.astro",
+    "../src/pages/congress/members/[bioguide].astro",
+    "../src/pages/institutional/filers/[cik].astro",
+    "../src/pages/institutional/tickers/[t]/holders.astro",
+  ];
+  for (const f of surfaces) {
+    const src = readFileSync(new URL(f, import.meta.url), "utf8");
+    assert.match(src, /import \{ initNotes \}/, `${f} imports initNotes`);
+    assert.match(src, /^\s*initNotes\(\);/m, `${f} calls it`);
+  }
+  // NOT in Base.astro: that would load the module on every page in the site,
+  // including the six this run does not touch, for no benefit.
+  const base = readFileSync(new URL("../src/layouts/Base.astro", import.meta.url), "utf8");
+  assert.ok(!base.includes("initNotes"), "Base.astro must not load it site-wide");
+});
