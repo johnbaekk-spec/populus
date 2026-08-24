@@ -14,6 +14,7 @@
    the seam's declarations are byte-identical to the real fallback's. */
 
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { WIDTHS } from "../../playwright.config.ts";
 
 /** A surface that renders notes and is cheap to load. */
@@ -335,5 +336,56 @@ test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every wi
     expect(m.scrollW, `no horizontal overflow inside the panel at ${w}px`).toBeLessThanOrEqual(m.clientW + 1);
     expect(m.left, `panel starts inside the viewport at ${w}px`).toBeGreaterThanOrEqual(0);
     expect(m.right, `panel ends inside the viewport at ${w}px`).toBeLessThanOrEqual(w);
+  }
+});
+
+/* ── CODE-REVIEW cycle-2 F9 ──────────────────────────────────────────────────
+   R24 wants a representative anchor on EACH in-scope surface swept at every
+   width. The review asked for served member and filer routes; measured, the
+   bounded build emits neither — `dist` contains exactly one page carrying a
+   note (`/congress/index.html`). Member, filer and holders routes are absent
+   from it entirely, so that lane cannot reach them and pretending otherwise
+   would be a green test measuring nothing.
+
+   What CAN be closed is the stated RISK: "a page-local rule or layout context
+   can shrink note targets on member or filer pages". Two assertions do that
+   together — one static, one rendered. Recorded here rather than skipped
+   silently, because a skipped requirement that looks covered is worse than an
+   uncovered one that says so. */
+
+test("CODE-REVIEW F9: no page-local rule can shrink a note target on ANY in-scope surface", async ({ page }) => {
+  // (1) Static: note sizing exists in exactly one stylesheet, and none of the
+  // five surfaces adds a page-local <style>. A page-local override is the
+  // mechanism the finding names, so its absence is the thing to assert.
+  const roots = [
+    "../../src/pages/congress/index.astro",
+    "../../src/pages/congress/members/[bioguide].astro",
+    "../../src/pages/institutional/index.astro",
+    "../../src/pages/institutional/filers/[cik].astro",
+    "../../src/pages/institutional/tickers/[t]/holders.astro",
+  ];
+  for (const rel of roots) {
+    const src = readFileSync(new URL(rel, import.meta.url), "utf8");
+    /* A page-local <style> is legitimate — /congress/ has one. What must not
+       exist is a page-local rule touching the NOTE, since that is the only way
+       a surface-specific override could shrink the target below 44px. So scan
+       the style blocks themselves rather than banning them. */
+    for (const block of src.match(/<style\b[\s\S]*?<\/style>/g) ?? []) {
+      expect(block, `${rel} must not restyle the note anchor or panel`).not.toMatch(/\.note-btn|\.note-pop|\.note\b/);
+    }
+  }
+
+  // (2) Rendered: the shared rule really does yield >=44px for the markup those
+  // surfaces emit, at every swept width — measured in a real engine against the
+  // real stylesheet, not inferred from the CSS text.
+  const css = readFileSync(new URL("../../src/styles/global.css", import.meta.url), "utf8");
+  const markup = `<table class="etable"><thead><tr><th scope="col">Net disclosed flow
+      <span class="note"><button type="button" class="note-btn" popovertarget="p" aria-label="explain">i</button>
+      <span class="note-pop" popover id="p">clause</span></span></th></tr></thead></table>`;
+  for (const w of WIDTHS) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.setContent(`<style>${css}</style><body>${markup}</body>`);
+    const box = (await page.locator(".note-btn").boundingBox())!;
+    expect(Math.min(box.width, box.height), `44px target at ${w}px on member/filer header markup`).toBeGreaterThanOrEqual(44);
   }
 });

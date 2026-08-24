@@ -575,6 +575,12 @@ line carries only its path so the manifest extraction stays exact.
 - `dashboard/test/client-wiring.test.ts`
 - `dashboard/test/geometry/layout.spec.ts`
 - `dashboard/test/geometry/sl-notes.spec.ts`
+- `dashboard/test/sl-member.test.ts`
+- `dashboard/test/sl-filer.test.ts`
+- `dashboard/test/sl-docs.test.ts`
+- `dashboard/test/sl-propagation.test.ts`
+- `dashboard/test/holders-browser/holders.spec.ts`
+- `dashboard/test/lib/fake-dom.ts`
 - `dashboard/test/post/fixture-preview.test.ts`
 - `dashboard/test/format.test.ts`
 - `dashboard/test/pages-render.test.ts`
@@ -585,11 +591,11 @@ line carries only its path so the manifest extraction stays exact.
 **ADDED AT IMPLEMENTATION, 2026-08-24 (code-review F3, F4).** Two more files were edited and are recorded
 here, each with the reason, so the bundle stays traceable to its approved scope:
 
-- `dashboard/test/lib/fake-dom.ts` — gains `hasAttribute` and an optional selector map, so a test can drive the
-  real listeners an island binds through `document.querySelectorAll`. Absent selectors still answer with an
+- `dashboard/test/lib/fake-dom.ts` — gains hasAttribute and an optional selector map, so a test can drive the
+  real listeners an island binds through document.querySelectorAll. Absent selectors still answer with an
   empty list, so every existing caller is unchanged.
 - `dashboard/test/holders-browser/holders.spec.ts` — carries the holders period-swap note test and the holders
-  touch-target sweep. The geometry lane previews `dist`, which builds no holders route, so this lane's fixture
+  touch-target sweep. The geometry lane previews dist, which builds no holders route, so this lane's fixture
   envelope is the only served build where that surface exists.
 
 Why the four added after round 1, and what each is for:
@@ -605,14 +611,13 @@ Why the four added after round 1, and what each is for:
   from panel notes and must leave the footer alone; this test proves it and is expected to need NO edit. It is
   listed so the claim is checked rather than assumed.
 
-Added at implementation, code-review F6 and round 3 F6. Three files were edited without being on the
-manifest, which made the bundle untraceable to its approved scope before T13's audit had even run. All three
-are genuine consumers this plan should have listed: r12-congress-behaviour asserts the momentum control
-behaviour that R13 and R29 change; c3-member-v2 renders memberV2Sections, whose hand-rolled table header lost
-its section-mark clause under R7; and the Playwright spec is the browser coverage R2, R3, R4, R27 and R28
-require and that no earlier revision listed. Recorded as deviations rather than quietly added. Note the
-prose here deliberately carries no backticks: the manifest extractor takes the last backticked span on each
-line, so a backticked non-path in this section becomes a fake manifest entry.
+Added at implementation, code-review F6, round 3 F6, and cycle-2 F6. Nine files were edited or created
+without being on the manifest across three rounds, which made the bundle untraceable to its approved scope.
+The last six are the new suites T10 through T15 created — member, filer, docs and propagation coverage, the
+holders browser lane, and a shared fake-DOM helper. All are recorded rather than quietly added. Note the prose
+here deliberately carries no backticks: the manifest extractor takes the last backticked span on each line, so
+a backticked non-path in this section becomes a fake manifest entry, which is how two earlier revisions
+polluted it.
 
 Two source files were added to scope after round 2 and are listed above: table-sort.ts (R25's target guard)
 and feed-client.ts (R29's settled callback). A third, data.ts, left again with R21.
@@ -628,7 +633,7 @@ Documentation:
 - `docs/design/SURFACES-LEGIBILITY-PLAN.md`
 - `docs/build/RUN-FILER-IDENTITY-notes.md`
 - `docs/design/handoff/Surfaces Legibility.dc.html`
-- `BACKLOG.md`
+- BACKLOG.md
 
 ## Implementation Tasks
 

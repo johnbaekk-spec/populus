@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 import type { InstIndexRow } from "../src/lib/inst-index.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
@@ -540,11 +540,28 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
     total += got.length;
   }
 
-  // …and no EIGHTEENTH anywhere else under src/lib. A per-file table cannot
-  // see a tooltip that appears in a file the table does not mention.
-  const others = ["src/lib/inst-index.ts", "src/lib/inst-adds-render.ts", "src/lib/activity.ts", "src/lib/congress-columns.ts"];
-  for (const rel of others) {
-    assert.deepEqual(titleSites(rel), [], `${rel}: converted in full — no title= may reappear here`);
+  /* …and no EIGHTEENTH anywhere else under src/lib.
+
+     CODE-REVIEW cycle-2 F5: this used to name four files explicitly, which
+     left the same hole one level up — a tooltip introduced in any src/lib
+     module absent from BOTH tables passed while the gate reported 17. The
+     directory is enumerated instead, so "everywhere else" means everywhere
+     else, and a new module is covered the day it is added rather than the day
+     someone remembers to list it here. */
+  const declared = new Set(Object.keys(expected));
+  const libDir = new URL("../src/lib/", import.meta.url);
+  const undeclared: string[] = [];
+  for (const name of readdirSync(libDir)) {
+    if (!name.endsWith(".ts")) continue;
+    const rel = `src/lib/${name}`;
+    if (declared.has(rel)) continue;
+    for (const site of titleSites(rel)) undeclared.push(`${rel}:${site.fn}`);
   }
+  assert.deepEqual(
+    undeclared,
+    [],
+    "an undeclared title= site exists in a src/lib module outside the Class-C table — " +
+      "convert it, or declare it with its path, function and text in the same commit",
+  );
   assert.equal(total, 17, "the Class-C survivor count is exactly 17 (32 measured - 5 deleted - 10 converted)");
 });
