@@ -1301,7 +1301,18 @@ export function filerPeriodSectionHtml(
         )} — either the first period on record for this filer, or nothing keyable on either side.</p>`
       : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page });
   return (
-    statTiles(filerTiles(conc, total), { label: `Period statistics for ${period}`, compact: true }) +
+    /* SL-R22/SL-R26: the filer tiles' breakdowns become notes, keyed on each
+       tile's LABEL — unique within a tile group by construction, in both the
+       populated and the null-concentration branch. The scope is fixed rather
+       than derived from the period: `entity-client.ts` re-renders this whole
+       section on a period change, and an id that moved with the period would
+       make the server's bytes and the client's differ for the same row set
+       (Constraint 5). */
+    statTiles(filerTiles(conc, total), {
+      label: `Period statistics for ${period}`,
+      compact: true,
+      notes: { scope: "filer-tiles" },
+    }) +
     `<section class="panel panel-wide" aria-label="Position changes">` +
     `<div class="panel-head"><h2 class="section-h">Position changes — into ${esc(period)}</h2>` +
     `<span class="panel-note">producer-classified (change_kind) · grain: position × put/call × unit</span></div>` +
