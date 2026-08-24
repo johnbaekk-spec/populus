@@ -243,3 +243,74 @@ test("SL-R26b: /congress/'s TWO ranking tables in one section emit no duplicate 
   assert.notEqual(ids[0], ids[1]);
   assert.equal(typeof congressRankingSection, "function");
 });
+
+/* ---------------------------------------------------------------- T4 / SL-R8
+   The `title=` partition. Two properties matter and neither is "a note
+   exists": Class A never deletes text that its sibling does not already carry,
+   and Class B never emits two panels with the same id. */
+
+test("SL-R8 Class A: every deleted attribute's content is still carried by its sibling", async () => {
+  const { assetNameCell, statTiles, txnRowHtml } = await import("../src/lib/format.ts");
+
+  const asset = assetNameCell({ asset: "A VERY LONG ASSET NAME THAT THE CELL TRUNCATES HARD", assetType: "OP" });
+  assert.ok(!asset.includes("title="), "attribute deleted");
+  // Containment is of the CONTENT, not the bytes: the two channels separated
+  // name from type with `·` and `—` respectively, so this asserts each part.
+  assert.ok(asset.includes("A VERY LONG ASSET NAME THAT THE CELL TRUNCATES HARD"), "full name survives in real DOM");
+  assert.ok(asset.includes("asset type as filed: OP"), "type survives in real DOM");
+  assert.ok(asset.includes("asset as filed, no ticker disclosed"), "the sibling's extra clause is untouched");
+
+  const tile = statTiles([{ value: "1", label: "L", title: "full breakdown" }]);
+  assert.ok(!tile.includes("title="), "attribute deleted");
+  assert.ok(tile.includes('visually-hidden">full breakdown'), "sibling untouched");
+
+  const ctx = { watched: new Set<string>(), tickers: new Set<string>(), members: new Set<string>() } as never;
+  const row = txnRowHtml(
+    {
+      txnId: "t1", filed: "2026-01-02", traded: "2026-01-01", name: "N", bioguide: "B000001",
+      party: "R", state: "OK", chamber: "house", ticker: "AAA", side: "purchase",
+      low: 1001, high: 15000, flags: ["owner_spouse"], doc: "https://x.example/d", asset: null,
+      assetType: null, lag: 1, late: false, owner: "spouse",
+    } as never,
+    ctx,
+  );
+  assert.ok(!row.includes('class="owner-note" title='), "owner-note attribute deleted");
+  assert.ok(/owner-note[\s\S]*visually-hidden/.test(row), "the owner long-form sibling survives");
+});
+
+test("SL-R8 Class B / SL-R26: duplicate-variant rows differing in ONE identity component emit UNIQUE panel ids", async () => {
+  const { addsRowHtml } = await import("../src/lib/inst-adds-render.ts");
+  // Two rows for the SAME issuer under different key sources — the case `pos`
+  // exists to separate. A key of `issuer_key` alone would collide here.
+  const base = {
+    issuer_key: "cusip6:464287", issuer_name: "ISHARES", manager_count: 2,
+    new_position_count: 1, delta_value_usd: null, delta_value_is_partial: false,
+    top_adder_cik: null, top_adder_name: null, issuer_key_source: "cusip6",
+  } as never;
+  const html = addsRowHtml(base, 1) + addsRowHtml(base, 2);
+  const ids = [...html.matchAll(/<span class="note-pop" popover id="([^"]+)"/g)].map((m) => m[1]!);
+  assert.equal(new Set(ids).size, ids.length, "no duplicate panel id across duplicate-variant rows");
+  assert.ok(ids.length >= 4, "both rows emitted both of their notes");
+});
+
+test("SL-R8e: the activity lag note carries the CAUSE and the sibling keeps the EFFECT — both survive", async () => {
+  const { activityRowHtml } = await import("../src/lib/activity.ts");
+  const row = {
+    cik: "0001", position_key: "sid:sec:prov:abc", put_call: "PUT", ssh_prnamt_type: "SH",
+    issuer_name: "X", filer_name: "F", change_kind: "add", delta_value_usd: 1,
+    curr_period: "2026-03-31", filed_date: null, filed_from: "composition",
+    reporting_lag_days: null, flags: [], filed_accession: null,
+  } as never;
+  const html = activityRowHtml(row);
+  assert.ok(html.includes("reporting lag not resolvable"), "the EFFECT sibling is byte-identical");
+  assert.ok(
+    html.includes("filed date not resolvable from this build&#39;s filing dictionary") ||
+      html.includes("filed date not resolvable from this build's filing dictionary"),
+    "the CAUSE survives in the note — deleting it as a duplicate would have lost it",
+  );
+  // Same CIK, same position_key, differing only in PUT/CALL — the collision
+  // `activity.test.ts:172` proves is real.
+  const other = activityRowHtml({ ...(row as object), put_call: "CALL" } as never);
+  const ids = [...(html + other).matchAll(/popover id="([^"]+)"/g)].map((m) => m[1]!);
+  assert.equal(new Set(ids).size, ids.length, "PUT and CALL rows do not share a panel id");
+});

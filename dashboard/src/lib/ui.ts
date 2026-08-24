@@ -256,7 +256,7 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
     `<td class="c-ticker">${tickerCell}</td>` +
     `<td class="c-side ${side.cls}">${esc(side.text)}${
       owner
-        ? ` <span class="owner-note" title="${esc(ownerLong)}">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
+        ? ` <span class="owner-note">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
         : ""
     }</td>` +
     `<td class="c-traded">${dualDate(r)}</td>` +
@@ -281,7 +281,7 @@ function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
     `<td class="c-member">${memberCell}</td>` +
     `<td class="c-side ${side.cls}">${esc(side.text)}${
       owner
-        ? ` <span class="owner-note" title="${esc(ownerLong)}">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
+        ? ` <span class="owner-note">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
         : ""
     }</td>` +
     `<td class="c-traded">${dualDate(r)}</td>` +

@@ -372,7 +372,15 @@ export function assetNameCell(r: Pick<TxnRow, "asset" | "assetType">): string {
      what was traded is exactly that. So the visible span is aria-hidden and
      the accessible name carries the whole string. */
   return (
-    `<span class="asset-name" title="${esc(name)}${type ? ` · asset type as filed: ${esc(type)}` : ""}">` +
+    /* SL-R8 Class A: the `title=` is DELETED, not converted. The
+       `.visually-hidden` sibling below is a strict superset — it carries the
+       same name, the same type, and one clause more ("asset as filed, no
+       ticker disclosed"). A prior review put that sibling there precisely
+       because tooltip-only identity was forbidden; adding a note here would be
+       a THIRD channel for text that already has two. Recorded honestly: the
+       containment is of the CONTENT, not of the bytes — the two channels
+       separate name from type with `·` and `—` respectively. */
+    `<span class="asset-name">` +
     `<span aria-hidden="true">${esc(short)}</span>` +
     `<span class="visually-hidden">${esc(name)}${type ? ` — asset type as filed: ${esc(type)}` : ""} — asset as filed, no ticker disclosed</span></span>`
   );
@@ -1064,8 +1072,24 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
   const ownerLong = ownerNoteLong(r);
   const amount = amountText(r);
   const amountUnknown = r.low == null && r.high == null;
+  /* SL-R8 Class B: the sole channel for this fact was a `title=`, which no
+     touch device can open. It becomes a note keyed on the row's own `txnId`
+     (SL-R26) — a per-row identity the renderer already holds, so no signature
+     changes and no caller is edited.
+
+     JUDGEMENT CALL, recorded for the owner: `txnRowHtml` also renders on
+     `/watchlist/` and `/e/`, which this run does not own, so this is NOT a
+     no-scope-no-note renderer under SL-R2b. It is converted anyway because
+     R2b's harm is LOSING published text on a route this run does not own, and
+     nothing is lost here — a tooltip unreachable by touch is replaced by real
+     DOM that opens declaratively via `popovertarget` with no JavaScript at
+     all. Those routes strictly gain a channel. The alternative — an opt-in
+     parameter — would keep the `title=` in the source for the fallback branch
+     and so break R8d's exact 32→17 inventory gate while leaving the
+     tooltip-only channel on the very rows LD10 ratified converting. */
   const spouseCapDagger = r.flags.includes("amount_spouse_cap")
-    ? `<sup class="dagger" title="disclosed only as an open-ended cap">‡</sup>`
+    ? `<sup class="dagger">‡</sup>` +
+      note("disclosed only as an open-ended cap", { scope: "txn" }, `${r.txnId}-dagger`)
     : "";
   const tickerHtml = r.ticker
     ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
@@ -1079,7 +1103,7 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
 <td class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>
 <td class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${
     owner
-      ? ` <span class="owner-note" title="${esc(ownerLong)}">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
+      ? ` <span class="owner-note">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
       : ""
   }</td>
 ${dualDateCell(r)}
@@ -1423,7 +1447,12 @@ export function statTiles(
   const aria = opts.label ?? "Statistics";
   const cls = opts.compact ? "tiles tiles-entity" : "tiles";
   const tile = (t: StatTile): string =>
-    `<div class="tile" role="listitem"${t.title ? ` title="${esc(t.title)}"` : ""}>` +
+    /* SL-R8 Class A: attribute deleted; the `.visually-hidden` span below
+       already publishes the SAME `t.title` as real DOM, and
+       `format.test.ts:764` guards that sibling with the message "tooltip is
+       never the only channel". The tile's own note is R19/R22's separate,
+       additive change — this is only the removal of the duplicate. */
+    `<div class="tile" role="listitem">` +
     `<div class="tile-value${t.muted ? " muted" : ""}">${esc(t.value)}${
       t.unit ? `<span class="unit">${esc(t.unit)}</span>` : ""
     }</div>` +

@@ -51,6 +51,7 @@ import {
   fmtInt,
   fmtUsd,
   fnMark,
+  note,
   noteBody,
   noteFromHtml,
   intOrNull,
@@ -720,13 +721,32 @@ function deltaCell(r: ActivityFeedRecord): string {
     printed as if it were normal. */
 function lagCell(r: ActivityFeedRecord): string {
   const lag = r.reporting_lag_days;
+  /* SL-R8 Class B / SL-R8e / SL-R26. The key is the repository's OWN declared
+     row identity (`ActivitySortKey`), which `lagCell` already receives whole —
+     that is why these two are Class B rather than Class C, and why no
+     signature changes. `position_key` alone is insufficient:
+     `activity.test.ts:172` holds same-CIK, same-`position_key` rows separated
+     only by PUT/CALL, so a bare key would emit duplicate panel ids. */
+  const nctx = { scope: "activity-lag" };
+  const rowKey = `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`;
   if (lag == null) {
-    return `<span class="lag" title="filed date not resolvable from this build's filing dictionary">—<span class="visually-hidden"> reporting lag not resolvable</span></span>`;
+    /* SL-R8e: this was nearly a §7 violation. The attribute carried the CAUSE
+       ("not resolvable from this build's filing dictionary") while the
+       `.visually-hidden` sibling carries only the EFFECT ("reporting lag not
+       resolvable"). Deleting it as a Class-A duplicate would have removed the
+       filing-dictionary explanation with no replacement channel while the
+       exact inventory gate passed green. The cause moves into the note; the
+       sibling is preserved BYTE-IDENTICAL below. */
+    return (
+      `<span class="lag">—<span class="visually-hidden"> reporting lag not resolvable</span></span>` +
+      note("filed date not resolvable from this build's filing dictionary", nctx, `${rowKey}-lagcause`)
+    );
   }
   if (lag < 0) {
-    return `<span class="lag lag-anomaly" title="filed before the quarter it reports ended">filed ${esc(
-      String(Math.abs(lag)),
-    )}d before quarter end</span>`;
+    return (
+      `<span class="lag lag-anomaly">filed ${esc(String(Math.abs(lag)))}d before quarter end</span>` +
+      note("filed before the quarter it reports ended", nctx, `${rowKey}-laganomaly`)
+    );
   }
   if (lag > STATUTORY_LAG_DAYS) {
     return `<span class="lag-late">LATE·${esc(String(lag))}d</span><span class="visually-hidden"> — filed ${esc(

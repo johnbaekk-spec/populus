@@ -760,7 +760,14 @@ test("statTiles: value/unit/label/title with a screen-reader copy of the breakdo
   assert.ok(html.includes('aria-label="Data coverage"'));
   assert.ok(html.includes("97.5"));
   assert.ok(html.includes('<span class="unit">%</span>'));
-  assert.ok(html.includes('title="full breakdown"'));
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R8 Class A (LD6). The `title=`
+     assertion is RETIRED: R8 deletes the attribute at this site because the
+     `.visually-hidden` sibling below already publishes the same `t.title` as
+     real DOM. The sibling assertion is KEPT UNCHANGED — it is the one that
+     protects the rule the retired line was written for, that a tooltip is
+     never the only channel, and it is now the ONLY channel assertion, so it
+     carries more weight than before rather than less. */
+  assert.ok(!html.includes('title="full breakdown"'), "the duplicate tooltip channel is gone");
   assert.ok(html.includes('visually-hidden">full breakdown'), "tooltip is never the only channel");
 });
 
