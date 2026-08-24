@@ -1494,6 +1494,7 @@ import {
   sortRankingRows,
   type CongressColumn,
   type CongressSortKey,
+  RANKING_FOOTNOTES as RANKING_FOOTNOTES_LIST,
 } from "./congress-columns.ts";
 
 /* SL-R6/R7: `footnotesId` is gone from this path. It existed ONLY so the ≈
@@ -1840,12 +1841,21 @@ export function rankingAlternatives(
   const other: CongressBasis = basis === "traded" ? "filed" : "traded";
   const i = CONGRESS_RANGES.indexOf(range);
   const widerRange = i >= 0 && i < CONGRESS_RANGES.length - 1 ? CONGRESS_RANGES[i + 1]! : null;
+  /* CODE-REVIEW F2: count the rows that can actually ENTER the ranked table,
+     not every row in the rollup. `rankNetRows` moves a wholly-undisclosed row
+     into its own bucket with its own root, unreachable by any sort of the
+     ranked table — so a rollup of one undisclosed row has `rows.length === 1`
+     and `ranked.length === 0`. Counting the former made the empty-window block
+     offer "1 by filing date", and activating that control produced another
+     empty ranked table. R14 forbids exactly that: an offer that resolves to
+     nothing is worse than stating the window is empty, because it spends the
+     reader's trust as well as their click. Same derivation as the section
+     itself uses at the `rankNetRows` call above, so the two cannot disagree. */
+  const rankableAt = (r: CongressRange, b: CongressBasis): number =>
+    rankNetRows(roll(rows, generatedAtDate, { range: r, basis: b }).rows, (x) => x.net, (x) => x.id).ranked.length;
   return {
-    otherBasis: roll(rows, generatedAtDate, { range, basis: other }).rows.length,
-    wider:
-      widerRange === null
-        ? null
-        : { range: widerRange, n: roll(rows, generatedAtDate, { range: widerRange, basis }).rows.length },
+    otherBasis: rankableAt(range, other),
+    wider: widerRange === null ? null : { range: widerRange, n: rankableAt(widerRange, basis) },
   };
 }
 
@@ -2342,6 +2352,14 @@ function absentPanel(title: string, detail: string): string {
   );
 }
 
+/* SL-R7 / CODE-REVIEW F1: the `§` clause for the member net-flow table, taken
+   from the same `RANKING_FOOTNOTES` registry whose block R7 deleted. Scope is
+   the table, key is the column — both stable, neither derived from a counter. */
+function memberFlowNote(column: string): string {
+  const clause = RANKING_FOOTNOTES_LIST.find((f) => f.mark === "§")?.html ?? "";
+  return clause ? noteFromHtml(clause, { scope: "member-netflow" }, column) : "";
+}
+
 export function memberV2Sections(
   m: MemberEntityT,
   stamps: BuildStamps,
@@ -2364,7 +2382,15 @@ export function memberV2Sections(
       : `<div class="table-scroll"><table class="etable etable-compact">` +
         `<caption class="visually-hidden">Net disclosed flow by ticker for ${esc(m.name)}</caption>` +
         `<thead><tr><th scope="col">Ticker</th><th scope="col">Purch.</th><th scope="col">Sales</th>` +
-        `<th scope="col">Gross purchases ·§</th><th scope="col">Gross sales ·§</th><th scope="col">Net disclosed flow ·§</th></tr></thead>` +
+        /* SL-R7 / CODE-REVIEW F1: this table hand-rolls its `<thead>` — it never
+           went through `rankingHeadHtml`, so R7's header conversion missed it while the
+           `footnoteBlock(RANKING_FOOTNOTES, …)` explaining its three `·§` markers WAS
+           deleted. That left three markers on a reader-facing surface pointing at an
+           explanation that no longer existed anywhere. A marker without its clause is
+           the §7 failure this run exists to prevent, not a cosmetic gap. */
+        `<th scope="col">Gross purchases ${fnMark("·§")}${memberFlowNote("gross-purchases")}</th>` +
+        `<th scope="col">Gross sales ${fnMark("·§")}${memberFlowNote("gross-sales")}</th>` +
+        `<th scope="col">Net disclosed flow ${fnMark("·§")}${memberFlowNote("net")}</th></tr></thead>` +
         `<tbody>${ranked
           .map((r, i) => netRowHtml(r, i > 0 ? netOverlaps(r.net, ranked[i - 1]!.net) === true : false))
           .join("\n")}${

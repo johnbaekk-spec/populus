@@ -119,9 +119,17 @@ export interface FeedOptions {
 }
 
 export function initFeed(options: FeedOptions = {}): void {
-  /* SL-R29: fired once per load, on either outcome. A consumer's throw is
-     contained the same way `onRows`'s is — a broken consumer must not turn a
-     successful decode into a failed one. */
+  /* SL-R29: fired once per LOAD ATTEMPT, on either outcome. A consumer's throw
+     is contained the same way `onRows`'s is — a broken consumer must not turn a
+     successful decode into a failed one.
+
+     CODE-REVIEW F3: this flag is per-attempt, not per-island. It was an
+     `initFeed`-lifetime latch, and `loadData()` runs again from the "Try again"
+     button and from the filter path — so after ONE failure every later attempt
+     was silently unsettleable. A reader who pressed a range control, failed,
+     retried and failed again would sit on "Applying …" forever: exactly the
+     false statement about an unpainted view that SL-R29 exists to remove,
+     reintroduced one layer down. `loadData()` re-arms it. */
   let settled = false;
   function settle(ok: boolean): void {
     if (settled) return;
@@ -204,6 +212,7 @@ export function initFeed(options: FeedOptions = {}): void {
   let pendingApply = false;
 
   function loadData(): Promise<void> {
+    settled = false; // CODE-REVIEW F3: each attempt settles exactly once.
     loadPromise ??= fetch("/congress/data/feed.v1.json")
       .then((r) => {
         if (!r.ok) throw new Error(`dataset fetch failed: ${r.status}`);

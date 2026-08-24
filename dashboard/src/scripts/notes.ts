@@ -72,14 +72,61 @@ function closeAll(except?: Element | null): void {
 
 let bound = false;
 
+/* CODE-REVIEW F4: true between pointerdown and the click that follows it.
+
+   `popovertarget`'s activation behaviour runs LAST and TOGGLES, so it must be
+   handed a closed panel or a click closes the note. Retracting on pointerdown
+   is not enough on its own: mousedown also raises `focusin`, and the focus
+   channel re-opened the panel before the toggle ran. Measured transitions were
+   closed->open, open->closed, closed->open, open->closed — four flips for one
+   click, ending shut.
+
+   While this is set, the hover and focus channels stand down and the native
+   toggle owns the transition. Touch and keyboard never enter this path. */
+let pointerActive = false;
+
 /** Idempotent: a second call on a page binds nothing further. */
 export function initNotes(): void {
   if (bound) return;
   bound = true;
 
-  /* Click PINS — the touch and keyboard channel. popovertarget has already
-     toggled the panel by the time this runs; we only record the pin and place
-     it, so behaviour with and without this module agrees. */
+  /* Click PINS — the touch and keyboard channel.
+
+     CODE-REVIEW F4, second iteration. Two ordering facts drive this, both
+     learned from a real browser and invisible to markup tests:
+
+     1. A `popovertarget` button's ACTIVATION BEHAVIOUR runs AFTER the click
+        listeners, so anything this handler does to the open state is toggled
+        again a moment later. The first fix opened the panel here and the native
+        toggle closed it; the note ended shut and marked pinned.
+     2. `pointerover` has usually already opened the panel by the time a mouse
+        user presses, so the native toggle CLOSES it — hover-then-click
+        dismissed the explanation instead of pinning it.
+
+     So: do not fight the toggle, cooperate with it. On pointerdown, retract a
+     hover-opened panel so the toggle has a closed panel to open. After the
+     click, read the state the toggle actually settled on and record the pin
+     from that. Touch and keyboard never fire the hover path, so they simply
+     open and pin. */
+  /* CODE-REVIEW F4: retract a HOVER-opened panel on pointerdown.
+
+     Measured sequence without this, from a real browser:
+       pointerover -> beforetoggle closed->open   (this module opened it)
+       pointerdown, mousedown, mouseup, click
+       beforetoggle open->closed                  (popovertarget's toggle)
+     The native toggle runs last and sees an already-open panel, so a mouse
+     click CLOSED the note instead of pinning it. Retracting here gives the
+     toggle a closed panel, so its transition is closed->open and click means
+     open on every input. Touch and keyboard never fire pointerover, so they
+     were always correct and are unaffected. */
+  document.addEventListener("pointerdown", (ev) => {
+    const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
+    if (!btn) return;
+    pointerActive = true;
+    const pop = popOf(btn);
+    if (pop && !pop.hasAttribute(PINNED) && pop.matches(":popover-open")) hide(pop);
+  });
+
   document.addEventListener("click", (ev) => {
     const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
     if (!btn) {
@@ -89,17 +136,31 @@ export function initNotes(): void {
     const pop = popOf(btn);
     if (!pop) return;
     closeAll(pop);
-    if (pop.matches(":popover-open")) {
-      pop.setAttribute(PINNED, "true");
-      place(btn, pop);
-    }
+    /* Deferred so the activation behaviour has settled. Reading the state
+       synchronously here reads the state BEFORE the toggle, which is what
+       produced a pinned-but-hidden panel. */
+    queueMicrotask(() => {
+      pointerActive = false;
+      if (pop.matches(":popover-open")) {
+        pop.setAttribute(PINNED, "true");
+        place(btn, pop);
+      } else {
+        pop.removeAttribute(PINNED);
+      }
+    });
   });
 
   document.addEventListener("pointerover", (ev) => {
     const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
     if (!btn) return;
     const pop = popOf(btn);
-    if (pop) show(btn, pop);
+    if (!pop || pop.hasAttribute(PINNED) || pointerActive) return;
+    /* CODE-REVIEW F4: hover opens only when the pointer is NOT pressed. A
+       hover-opened panel plus `popovertarget`'s toggle raced every mouse click:
+       whichever ran last decided, and the note ended shut. Letting the native
+       toggle own the click transition entirely is the only version that agrees
+       across pointer, touch and keyboard. */
+    show(btn, pop);
   });
 
   document.addEventListener("pointerout", (ev) => {
@@ -113,6 +174,10 @@ export function initNotes(): void {
   document.addEventListener("focusin", (ev) => {
     const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
     if (!btn) return;
+    /* Keyboard focus is a first-class channel; focus raised BY a mouse press is
+       not — it would re-open the panel the pointerdown retraction just closed,
+       and the native toggle would then shut it. */
+    if (pointerActive) return;
     const pop = popOf(btn);
     if (pop) show(btn, pop);
   });

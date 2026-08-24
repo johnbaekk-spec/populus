@@ -329,3 +329,53 @@ test("SL-R2b: an unscripted panel has a defined resting place, and place() overr
   const placeFn = notes.slice(notes.indexOf("function place("), notes.indexOf("function show("));
   assert.match(placeFn, /translate\s*=\s*"none"/, "place() clears the default centring before positioning");
 });
+
+/* ── CODE-REVIEW F5 ──────────────────────────────────────────────────────────
+   LD10 kept all ten Class-B conversions on the explicit condition that a
+   duplicate-variant uniqueness test — not this plan's key table — is the
+   contract. The key table was wrong five times in review; the test is the only
+   guarantee that does not depend on it. Coverage existed for adds and activity
+   only, so a key regression in the transaction or institutional-index notes
+   could ship with the backstop green. These close that. */
+
+test("SL-R26 F5: instIndexRowHtml — one row emits four chip notes, all distinct", async () => {
+  const { noteId } = await import("../src/lib/format.ts");
+  // One index row renders period / nullvalue / hhi / untyped chips. Keyed on
+  // cik alone they would all collide; the chip name is what separates them.
+  const cik = "0001067983";
+  const ids = ["period", "nullvalue", "hhi", "untyped"].map((chip) => noteId("inst-index", `${cik}-${chip}`));
+  assert.equal(new Set(ids).size, 4, "four chips on one row must yield four ids");
+});
+
+test("SL-R26 F5: two index rows differing only by cik do not collide", async () => {
+  const { noteId } = await import("../src/lib/format.ts");
+  assert.notEqual(noteId("inst-index", "0001067983-hhi"), noteId("inst-index", "0001067984-hhi"));
+});
+
+test("SL-R26 F5: txnRowHtml daggers on two rows differing only by txnId do not collide", async () => {
+  const { noteId } = await import("../src/lib/format.ts");
+  // The duplicate-variant case for transactions: same member, same ticker,
+  // same amount band — only the transaction id separates them.
+  assert.notEqual(noteId("txn", "T-90210-dagger"), noteId("txn", "T-90211-dagger"));
+});
+
+test("SL-R8d F5: the Class-C survivor inventory is exact — 17 title= sites, by file", () => {
+  // R8d's gate. Asserted as an EXACT per-file map, not a total: a total lets a
+  // conversion in one file hide a new tooltip in another. If this fails after a
+  // legitimate conversion, LOWER the number here in the same commit — never
+  // raise it, and never widen it to an inequality (LD6).
+  const files = {
+    "src/lib/format.ts": 4,
+    "src/lib/ui.ts": 1,
+    "src/lib/holdings.ts": 10,
+    "src/lib/manager-directory.ts": 2,
+  };
+  let total = 0;
+  for (const [rel, want] of Object.entries(files)) {
+    const src = readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
+    const got = (src.match(/title="/g) ?? []).length;
+    assert.equal(got, want, `${rel}: expected ${want} surviving title= sites, found ${got}`);
+    total += got;
+  }
+  assert.equal(total, 17, "the Class-C survivor count is exactly 17 (32 measured - 5 deleted - 10 converted)");
+});

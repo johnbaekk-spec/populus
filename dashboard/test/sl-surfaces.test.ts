@@ -1,4 +1,5 @@
 /* RUN SURFACES-LEGIBILITY — the surface-level changes (SL-R1, SL-R9, SL-R10,
+import { readFileSync } from "node:fs";
    SL-R11, SL-R12, SL-R13, SL-R14, SL-R15, SL-R29).
 
    `sl-` prefix per Constraint 9: this run's R-numbers collide with earlier
@@ -346,4 +347,22 @@ test("SL-R28: every surface that passes a note scope calls initNotes(), and Base
   // including the six this run does not touch, for no benefit.
   const base = readFileSync(new URL("../src/layouts/Base.astro", import.meta.url), "utf8");
   assert.ok(!base.includes("initNotes"), "Base.astro must not load it site-wide");
+});
+
+test("CODE-REVIEW F3: settlement re-arms per attempt — failure, retry, failure both settle", async () => {
+  // SL-R29's indicator clears on `onSettled`. The flag was initFeed-lifetime,
+  // so after ONE failure every later attempt was unsettleable and a reader who
+  // pressed a control, failed, retried and failed again sat on "Applying …"
+  // forever — the exact false statement R29 exists to remove, one layer down.
+  const src = readFileSync(new URL("../src/scripts/feed-client.ts", import.meta.url), "utf8");
+  const load = src.slice(src.indexOf("function loadData("), src.indexOf("function loadData(") + 400);
+  assert.match(load, /settled\s*=\s*false/, "loadData() must re-arm settlement before each attempt");
+
+  // And the catch must clear the memoised promise, or a retry never refetches
+  // and the re-arm would be moot.
+  const cat = src.slice(src.indexOf(".catch("), src.indexOf(".catch(") + 200);
+  assert.match(cat, /loadPromise\s*=\s*null/, "a failed attempt releases the memoised promise");
+
+  // The latch itself must still exist: one settle per attempt, not per event.
+  assert.match(src, /if \(settled\) return;/, "settlement is still idempotent within an attempt");
 });

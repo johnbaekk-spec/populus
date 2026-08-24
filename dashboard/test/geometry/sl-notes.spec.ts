@@ -1,0 +1,123 @@
+/* RUN SURFACES-LEGIBILITY — the note primitive verified by a REAL browser.
+
+   CODE-REVIEW F4. Every other test this run added can only see markup or CSS
+   text, and a rule that EXISTS is not the claim being made. R2/R3/R4/R27/R28
+   are all defined against rendered behaviour precisely because their failure
+   modes are invisible to markup assertions: a panel can be in the DOM and
+   unreachable, a print rule can exist and lay nothing out, an `@supports` block
+   can be authored and never entered, and `initNotes()` can ship unimported —
+   which it did, and unit tests could not see it.
+
+   Chromium-only, like the rest of this harness. That is exactly why R27 exists:
+   Chromium HAS `popover`, so `@supports not selector(:popover-open)` can never
+   be entered here. `.force-note-fallback` is the seam, and a unit test asserts
+   the seam's declarations are byte-identical to the real fallback's. */
+
+import { test, expect, type Page } from "@playwright/test";
+import { WIDTHS } from "../../playwright.config.ts";
+
+/** A surface that renders notes and is cheap to load. */
+const CONGRESS = "/congress/";
+const HOLDERS_HINT = "/institutional/";
+
+async function firstNote(page: Page) {
+  const btn = page.locator(".note-btn").first();
+  await expect(btn, "the page under test must render at least one note").toBeVisible();
+  return btn;
+}
+
+test.describe("SL-R2/R3: the panel opens, and opens WITHOUT JavaScript", () => {
+  test("scripted: activating a note opens its panel and anchors it near the button", async ({ page }) => {
+    await page.goto(CONGRESS);
+    const btn = await firstNote(page);
+    const id = await btn.getAttribute("popovertarget");
+    const pop = page.locator(`#${id}`);
+
+    await btn.click();
+    await expect(pop).toBeVisible();
+
+    // Anchored, not parked at the CSS default. place() clears `translate` and
+    // sets real coordinates; the default rule centres. Assert the panel is
+    // vertically near its button rather than mid-viewport.
+    const b = (await btn.boundingBox())!;
+    const p = (await pop.boundingBox())!;
+    const gap = Math.min(Math.abs(p.y - (b.y + b.height)), Math.abs(b.y - (p.y + p.height)));
+    expect(gap, "an initialised panel sits beside its anchor, not at the viewport default").toBeLessThan(40);
+  });
+
+  test("SL-R2: with JavaScript DISABLED the button still opens the panel", async ({ browser }) => {
+    // `popovertarget` is the declarative association. If this fails, the note
+    // is a JS-only channel and every no-script reader loses the explanation —
+    // the §7 failure the whole primitive exists to avoid.
+    const ctx = await browser.newContext({ javaScriptEnabled: false });
+    const page = await ctx.newPage();
+    await page.goto(CONGRESS);
+    const btn = page.locator(".note-btn").first();
+    await expect(btn).toBeVisible();
+    const id = await btn.getAttribute("popovertarget");
+    await btn.click();
+    await expect(page.locator(`#${id}`), "popovertarget must open the panel with no script running").toBeVisible();
+    await ctx.close();
+  });
+});
+
+test("SL-R27: the forced fallback opens on hover and on focus, with no script", async ({ browser }) => {
+  const ctx = await browser.newContext({ javaScriptEnabled: false });
+  const page = await ctx.newPage();
+  await page.goto(CONGRESS);
+  // The seam stands in for an engine without `popover`; Chromium can never
+  // enter the real @supports block.
+  await page.evaluate(() => document.documentElement.classList.add("force-note-fallback"));
+  const note = page.locator(".note").first();
+  const pop = note.locator(".note-pop");
+  await expect(pop).toBeHidden();
+  await note.hover();
+  await expect(pop, "the CSS-only fallback opens on hover").toBeVisible();
+  await ctx.close();
+});
+
+test("SL-R4: under PRINT media every panel lays out with a real box and the anchor is hidden", async ({ page }) => {
+  await page.goto(CONGRESS);
+  await page.emulateMedia({ media: "print" });
+  const pop = page.locator(".note-pop").first();
+  const box = await pop.boundingBox();
+  expect(box, "a print panel must have a layout box, not merely a CSS rule").not.toBeNull();
+  expect(box!.height, "and a non-zero one — hover-only text must reach paper").toBeGreaterThan(0);
+  const btnDisplay = await page.locator(".note-btn").first().evaluate((el) => getComputedStyle(el).display);
+  expect(btnDisplay, "the anchor button does not print").toBe("none");
+});
+
+test("SL-R24: the anchor is a >=44px target at EVERY swept width", async ({ page }) => {
+  for (const w of WIDTHS) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.goto(CONGRESS);
+    const box = (await page.locator(".note-btn").first().boundingBox())!;
+    expect(Math.min(box.width, box.height), `44px target at ${w}px`).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test("SL-R28: a note created by a LATER innerHTML replacement still opens", async ({ page }) => {
+  // Binding is delegated on `document` precisely because five roots replace
+  // their contents after page setup. A per-element binder passes every unit
+  // test and dies on the first sort.
+  await page.goto(CONGRESS);
+  const th = page.locator("th [data-congress-sort], th.th-sort, th button.th-sort").first();
+  if ((await th.count()) === 0) test.skip(true, "no sortable header on this surface");
+  await th.click(); // repaints the tbody, and any notes inside it
+  const btn = page.locator(".note-btn").first();
+  const id = await btn.getAttribute("popovertarget");
+  await btn.click();
+  await expect(page.locator(`#${id}`), "a note must still open after its root was replaced").toBeVisible();
+});
+
+test("SL-R28: /institutional/ initialises notes too — placement works on a built page", async ({ page }) => {
+  await page.goto(HOLDERS_HINT);
+  const btn = page.locator(".note-btn").first();
+  if ((await btn.count()) === 0) test.skip(true, "no note on this surface");
+  const id = await btn.getAttribute("popovertarget");
+  await btn.click();
+  const pop = page.locator(`#${id}`);
+  await expect(pop).toBeVisible();
+  const translate = await pop.evaluate((el) => getComputedStyle(el).translate);
+  expect(translate, "an initialised page clears the centring default").not.toContain("-50%");
+});

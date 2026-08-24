@@ -567,6 +567,8 @@ line carries only its path so the manifest extraction stays exact.
 - `dashboard/test/format.test.ts`
 - `dashboard/test/pages-render.test.ts`
 - `dashboard/test/m1-layout.test.ts`
+- `dashboard/test/r12-congress-behaviour.test.ts`
+- `dashboard/test/c3-member-v2.test.ts`
 
 Why the four added after round 1, and what each is for:
 
@@ -580,6 +582,12 @@ Why the four added after round 1, and what each is for:
 - m1-layout.test.ts — line 52 asserts the build id renders exactly once, in the footer. R9 strips the build id
   from panel notes and must leave the footer alone; this test proves it and is expected to need NO edit. It is
   listed so the claim is checked rather than assumed.
+
+**Added at implementation, code-review F6.** `r12-congress-behaviour.test.ts` and `c3-member-v2.test.ts` were
+edited without being on the manifest, which made the bundle untraceable to its approved scope before T13's
+audit had even run. Both are genuine consumers this plan should have listed: the first asserts the momentum
+control's behaviour that `R13`/`R29` change, the second renders `memberV2Sections`, whose hand-rolled `<thead>`
+lost its `§` clause under `R7` (code-review F1). Recorded as a deviation rather than quietly added.
 
 Two source files were added to scope after round 2 and are listed above: table-sort.ts (R25's target guard)
 and feed-client.ts (R29's settled callback). A third, data.ts, left again with R21.

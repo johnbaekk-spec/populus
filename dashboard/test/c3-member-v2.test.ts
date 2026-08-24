@@ -177,3 +177,30 @@ test("memberV2Sections: the non-allegation caveat is present whenever committees
   assert.ok(none.includes(NON_ALLEGATION_CAVEAT.slice(0, 60)));
   assert.match(none, /unanswerable, not cleared/);
 });
+
+test("CODE-REVIEW F1: the net-flow table's ·§ markers still carry their clause", async () => {
+  const { RANKING_FOOTNOTES } = await import("../src/lib/ui.ts");
+  const clause = (RANKING_FOOTNOTES as { mark: string; html: string }[]).find((f) => f.mark === "§")!.html;
+
+  // SL-R7 deleted `footnoteBlock(RANKING_FOOTNOTES, …)`. This table hand-rolls
+  // its own <thead>, so the header conversion missed it and left three `·§`
+  // markers pointing at an explanation that existed nowhere on the page. A
+  // marker without its clause is the §7 failure this run exists to prevent.
+  const deps: MemberV2Deps = {
+    resolveSector: () => ({ state: "sector", sector: "agriculture" }),
+    sectorMeta: { taxonomyVersion: "1", asOf: "2026-08-12" },
+    committees: {
+      memberships,
+      windowFrom: "2025-01-03",
+      windowTo: "2026-08-12",
+      jurisdictionByCommittee: new Map([["HSAG", ["agriculture"]]]),
+      mappingVersion: "1",
+      snapshotDate: "2026-08-12",
+    },
+  };
+  const html = memberV2Sections(member([txn({ ticker: "AGRO" })]), stamps, ctx, deps);
+  assert.ok(html.includes("Gross purchases"), "fixture renders the net-flow table");
+  assert.ok(html.includes(clause), "the § clause is reachable from the columns that carry the mark");
+  assert.match(html, /class="note-pop"/, "and it lives in the note channel");
+  assert.ok(!html.includes('href="#member-footnotes"'), "no link into the deleted footnote block survives");
+});
