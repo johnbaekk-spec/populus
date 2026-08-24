@@ -121,3 +121,29 @@ test("SL-R28: /institutional/ initialises notes too — placement works on a bui
   const translate = await pop.evaluate((el) => getComputedStyle(el).translate);
   expect(translate, "an initialised page clears the centring default").not.toContain("-50%");
 });
+
+test("CODE-REVIEW F1: a CANCELLED press does not disable hover and focus page-wide", async ({ page }) => {
+  // `pointerActive` stands the hover/focus channels down between pointerdown
+  // and click so `popovertarget`'s toggle owns the transition. Cleared only on
+  // a completed note click, a press that never became one — drag away, scroll,
+  // cancelled touch — left it set for the page's lifetime and killed both
+  // channels on every note. A latch that only opens on the happy path is a
+  // latch that stays shut.
+  await page.goto(CONGRESS);
+  const btn = await firstNote(page);
+  const box = (await btn.boundingBox())!;
+
+  // Press on the note, then release far away: no click lands on the button.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 400, box.y + 400);
+  await page.mouse.up();
+
+  // Hover must still work afterwards.
+  const id = await btn.getAttribute("popovertarget");
+  await btn.hover();
+  await expect(
+    page.locator(`#${id}`),
+    "hover must survive an abandoned press — the latch has to release on pointerup too",
+  ).toBeVisible();
+});

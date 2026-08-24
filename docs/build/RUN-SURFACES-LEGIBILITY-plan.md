@@ -563,6 +563,7 @@ line carries only its path so the manifest extraction stays exact.
 - `dashboard/test/inst-index-client.test.ts`
 - `dashboard/test/client-wiring.test.ts`
 - `dashboard/test/geometry/layout.spec.ts`
+- `dashboard/test/geometry/sl-notes.spec.ts`
 - `dashboard/test/post/fixture-preview.test.ts`
 - `dashboard/test/format.test.ts`
 - `dashboard/test/pages-render.test.ts`
@@ -583,11 +584,14 @@ Why the four added after round 1, and what each is for:
   from panel notes and must leave the footer alone; this test proves it and is expected to need NO edit. It is
   listed so the claim is checked rather than assumed.
 
-**Added at implementation, code-review F6.** `r12-congress-behaviour.test.ts` and `c3-member-v2.test.ts` were
-edited without being on the manifest, which made the bundle untraceable to its approved scope before T13's
-audit had even run. Both are genuine consumers this plan should have listed: the first asserts the momentum
-control's behaviour that `R13`/`R29` change, the second renders `memberV2Sections`, whose hand-rolled `<thead>`
-lost its `§` clause under `R7` (code-review F1). Recorded as a deviation rather than quietly added.
+Added at implementation, code-review F6 and round 3 F6. Three files were edited without being on the
+manifest, which made the bundle untraceable to its approved scope before T13's audit had even run. All three
+are genuine consumers this plan should have listed: r12-congress-behaviour asserts the momentum control
+behaviour that R13 and R29 change; c3-member-v2 renders memberV2Sections, whose hand-rolled table header lost
+its section-mark clause under R7; and the Playwright spec is the browser coverage R2, R3, R4, R27 and R28
+require and that no earlier revision listed. Recorded as deviations rather than quietly added. Note the
+prose here deliberately carries no backticks: the manifest extractor takes the last backticked span on each
+line, so a backticked non-path in this section becomes a fake manifest entry.
 
 Two source files were added to scope after round 2 and are listed above: table-sort.ts (R25's target guard)
 and feed-client.ts (R29's settled callback). A third, data.ts, left again with R21.

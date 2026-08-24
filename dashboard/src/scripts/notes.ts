@@ -127,6 +127,22 @@ export function initNotes(): void {
     if (pop && !pop.hasAttribute(PINNED) && pop.matches(":popover-open")) hide(pop);
   });
 
+  /* CODE-REVIEW round 3 F1: release the latch on EVERY terminal pointer path,
+     not only on a completed note click.
+
+     The first version cleared it in the click microtask alone, so a press that
+     never became a click — drag away, scroll, a cancelled touch, a context menu
+     — left it set for the lifetime of the page and silently disabled hover AND
+     keyboard focus on every note. A latch that only opens on the happy path is
+     a latch that stays shut. Bound on `window` in the capture phase so it fires
+     even when the gesture ends outside the document. */
+  const releasePointer = (): void => {
+    pointerActive = false;
+  };
+  window.addEventListener("pointerup", releasePointer, { capture: true });
+  window.addEventListener("pointercancel", releasePointer, { capture: true });
+  window.addEventListener("blur", releasePointer);
+
   document.addEventListener("click", (ev) => {
     const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
     if (!btn) {
