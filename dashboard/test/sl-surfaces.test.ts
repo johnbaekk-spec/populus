@@ -63,3 +63,40 @@ test("SL-R9: the client no longer reconstructs a build id out of rendered text",
     );
   }
 });
+
+/* ---------------------------------------------------------------- T6 / SL-R10
+   R10 is BLOCKED, and this is the measurement that blocks it. Recorded as a
+   test rather than as a comment so a later attempt fails immediately instead of
+   rediscovering it after the deletion has landed. */
+
+test("SL-R10 BLOCKER: `.compact-disclosure` ships HIDDEN, so a terminus is the only no-JS statement of a bound", async () => {
+  const { compactDisclosure, terminusRow } = await import("../src/lib/format.ts");
+
+  /* R10 would delete the five terminus rows that "sit beside a
+     compactDisclosure stating the same count". Measured: the control states
+     NOTHING to a reader with scripting off — `compactDisclosure` emits the
+     `hidden` attribute in BOTH of its branches, and `initDomDisclosures` /
+     `syncDisclosure` are what remove it. So the count is not duplicated at all
+     in the no-JavaScript view; it is stated exactly once, by the terminus.
+     Deleting the terminus removes the reader's only statement of what is being
+     held back, which is DESIGN-BRIEF §7 (Constraint 1) and success criterion 2,
+     not a de-duplication. */
+  const live = compactDisclosure({ rootId: "t", total: 25, shown: 10, noun: "rows" });
+  assert.match(live, /class="compact-disclosure"[^>]*hidden>/, "the control ships hidden");
+  assert.match(live, /Show all 25 rows \(15 more\)/, "its count is reachable ONLY once JS unhides it");
+
+  const shell = compactDisclosure({ rootId: "t", total: 10, shown: 10, noun: "rows" });
+  assert.match(shell, /hidden>/, "and the nothing-held-back shell too");
+
+  // The terminus, by contrast, is visible as rendered.
+  const t = terminusRow({ author: "populus", html: "15 further rows are not rendered above." });
+  assert.doesNotMatch(t, /<div class="terminus"[^>]*\shidden/, "the terminus is the visible channel");
+
+  for (const f of ["../src/scripts/inst-index-client.ts", "../src/scripts/congress-sections.ts"]) {
+    const src = readFileSync(new URL(f, import.meta.url), "utf8");
+    assert.ok(
+      /removeAttribute\("hidden"\)|\.hidden = false/.test(src),
+      `${f}: the control is revealed by script, which is what makes it a JS-only channel`,
+    );
+  }
+});
