@@ -621,6 +621,98 @@ markup. What remains:
       false positive — noisy rather than silent, which is the safer direction,
       but the gate cannot close that gap from HTML alone.
 
+## 13. Carried open from RUN ALPHA-SURFACES-V2 (deployed 2026-08-24)
+
+The run itself shipped: the `/congress/` and `/institutional/` one-page
+overhaul, 27 requirements, three external review cycles (35 blockers and 5 nits
+closed, final verdict APPROVED), live on `publicfilings.org` as `b4787ff` /
+build `20260823.1`, with deployment generation
+`builds/20260823.1/deployments/1.json` attested.
+
+Two of the three below are DEPLOY-INFRASTRUCTURE defects, found by operating the
+pipeline rather than by reviewing the feature. Both cost real time on the night
+of the deploy and both will recur.
+
+- [ ] **B36 — the runner controller cannot tell "lock contended" from "lock
+      unopenable", and bricks the publish runner until a human notices.** Cost
+      ~14 hours on 2026-08-23: the nightly sat queued for 8 hours, a ready
+      deploy could not run, and the runner showed `offline` while the launchd
+      controller crash-looped (`runs = 455`, `last exit code = 1`,
+      `state = spawn scheduled`).
+
+      **Root cause.**
+      `/usr/local/populus-runner/controller/state/.controller.lock` existed as a
+      **DIRECTORY**, left from the historical `mkdir`-based lock the current
+      flock design replaced. The lock helper does
+      `os.open(path, O_WRONLY|...)`, which raises `EISDIR`; that exception is
+      uncaught, so Python exits **1** — and `acquire_lock` maps exit 1
+      unconditionally to `refuse lock-held`. 840 consecutive cycles reported
+      contention with a process that did not exist. Preceded by 44 cycles of
+      `A runner exists with the same name` from a stale registration that later
+      aged out on its own.
+
+      **The stale directory is cleared; the conflation is NOT.** Any future
+      unopenable-lock condition — wrong mode, wrong owner, a directory again —
+      reproduces this exactly, and tells the operator the opposite of what is
+      true. The helper already distinguishes the two cases internally (it writes
+      `busy` to stdout only on genuine contention); the exit-code contract
+      throws that distinction away.
+
+      **Fix:** give the helper a distinct exit code for "could not open the lock
+      path" and map it to its own refusal (`lock-unopenable`), so the message
+      names the real condition. `acquire_lock` already has an `*)` branch for
+      `lock-primitive-missing` — this is a third case, not a new mechanism.
+
+      **Diagnosing it next time (no root needed):**
+      `gh api repos/johnbaekk-spec/populus/actions/runners` — `status=offline`
+      is the tell — then
+      `launchctl print system/com.populus.runner-controller | grep -E "runs =|last exit"`.
+      A publish still queued past ~100 min is not late, it is stuck.
+
+- [ ] **B37 — preview verification has no retry for `unavailable`, so one
+      transport timeout discards a 2.5-hour run.** On 2026-08-23 the deploy
+      failed with `preview verification did not pass (unavailable): transport
+      error ... The read operation timed out` on a single path
+      (`/institutional/filers/2056088/`) out of roughly 5,000 swept. That page
+      serves 200 in 0.18–0.48 s on retry, three for three: a transient stall,
+      not a defect. Production was correctly never touched, and a plain
+      `gh run rerun --failed` then redeployed the already-built artifact and
+      passed.
+
+      **Why the asymmetry is wrong here specifically.**
+      `PROPAGATION_RETRIES = 1` applies only to the PRODUCTION sweep (the narrow
+      R11a 404-shape retry). The preview sweep has none, under the stated
+      principle *"not-verified is not verified"*. That principle is exactly right
+      for production, where the reasoning is about unverified bytes **already
+      serving**. On the preview leg nothing is serving — production is untouched
+      by construction — so a transport failure there carries no honesty risk at
+      all. It is a robustness gap wearing an honesty argument.
+
+      **Fix:** a bounded retry of `unavailable` findings **on the preview leg
+      only**. Never retry `mismatch` — a body-hash divergence stays immediately
+      disqualifying, because that is the case the strictness exists for — and do
+      not touch the production leg's rules. The verification client is
+      `httpx.Client(follow_redirects=False, timeout=30.0)`
+      (`orchestrator.py:963`); raising that timeout is the cruder alternative and
+      cannot distinguish a stall from a wrong answer, so prefer the retry.
+
+- [ ] **B38 — R27's data-wired acceptance cannot go green: no local release
+      carries two adjacent 13F quarters.** `scripts/accept_alpha_surfaces_v2.py`
+      exists, runs, preflights every artifact against its own contract, asserts
+      registry coverage (113/113) — and then correctly REFUSES to certify,
+      because a quarter-over-quarter delta requires two adjacent quarters and
+      every one of the nine local releases carries at most one.
+
+      Not an implementation defect and not a gap in the script: the script
+      refusing is the script working. End-to-end leaderboard coverage is proven
+      instead by the two-period integration test through the real
+      `build_inst_agg` in `tests/test_issuer_adds.py`, which exercises both
+      aggregate build paths — but that is a fixture, not the corpus.
+
+      **Needs owner input: a two-quarter 13F corpus.** Until then R27 stands as
+      "script complete, acceptance data-limited", which is how it is recorded in
+      the run's Dev Notes and QA report.
+
 ## Notes for whoever picks this up
 
 - **G-guardrails govern**: G1 no paid/vendor data · G3 never silently drop ·
