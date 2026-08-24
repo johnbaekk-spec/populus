@@ -31,9 +31,8 @@ import {
 import type { TxnRow, RenderCtx } from "../lib/format.ts";
 import {
   CONGRESS_ROOTS,
-  rankingCaveatHtml,
-  rankingExclusions,
   rankingRootHtml,
+  rankingWindowHtml,
 } from "../lib/ui.ts";
 import { COMPACT_ROWS, syncTerminusFor } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
@@ -278,14 +277,18 @@ export function initCongressSections(): CongressSections {
          put there; the server no longer puts one there, and parsing a suffix
          back out of rendered text to re-append it was the fragile half of that
          arrangement. */
-      windowEl.textContent = windowStatement(
-        rollup.range,
-        rollup.basis,
-        congressRangeBounds(rollup.range, generatedAtDate),
+      /* SL-R12: the window statement, its excluded-row TOTAL and the note body
+         are rewritten in ONE call to the SAME function the server used, so the
+         three cannot drift apart on a range or basis change. The separate
+         `#<sectionId>-caveat` element is gone (SL-R11); its clauses are the
+         note's body. */
+      windowEl.innerHTML = rankingWindowHtml(
+        windowStatement(rollup.range, rollup.basis, congressRangeBounds(rollup.range, generatedAtDate)),
+        rollup,
+        kind,
+        sectionId,
       );
     }
-    const caveatEl = document.getElementById(`${sectionId}-caveat`);
-    if (caveatEl) caveatEl.innerHTML = rankingCaveatHtml(rankingExclusions(rollup, kind));
   }
 
   function recomputeMomentum(): void {

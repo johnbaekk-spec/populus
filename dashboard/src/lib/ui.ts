@@ -15,6 +15,7 @@ import {
   assetNameCell,
   colWhyHtml,
   fnMark,
+  note,
   noteBody,
   noteFromHtml,
   esc,
@@ -1728,35 +1729,79 @@ function rangeControlHtml(range: CongressRange, basis: CongressBasis): string {
 
 /** The exclusion clauses for a rollup. Every clause is a count of rows the
     reader cannot see and why — never a silent shrink. */
+/* SL-R11/R12/LD4. The clauses and their SUMMED ROW TOTAL are produced by ONE
+   pass over one list, so the visible suffix and the note body cannot disagree.
+   That is the whole point: a stale count inside a hover is worse than one on
+   the page, because nobody sees it go wrong. */
+function exclusionParts(
+  rollup: CongressRollup & { noTickerRows?: number },
+  kind: "leaders" | "tickers",
+): { n: number; text: string }[] {
+  const out: { n: number; text: string }[] = [];
+  if (rollup.dateAnomalies > 0)
+    out.push({
+      n: rollup.dateAnomalies,
+      text:
+        `${fmtInt(rollup.dateAnomalies)} date-anomaly ${
+          rollup.dateAnomalies === 1 ? "row" : "rows"
+        } excluded from the trade-date window (impossible trade dates)`,
+    });
+  if (rollup.undated > 0)
+    out.push({
+      n: rollup.undated,
+      text:
+        `${fmtInt(rollup.undated)} ${
+          rollup.undated === 1 ? "row discloses" : "rows disclose"
+        } no trade date and cannot be placed in a trade-date window — switch the basis to filing date to include them`,
+    });
+  if (kind === "tickers" && (rollup.noTickerRows ?? 0) > 0)
+    out.push({
+      n: rollup.noTickerRows!,
+      text:
+        `${fmtInt(rollup.noTickerRows!)} in-window rows disclose no ticker and cannot appear in a ticker ranking — ` +
+        `the largest disclosers by flow can be entirely non-equity; the member ranking below is keyed by member instead`,
+    });
+  return out;
+}
+
 export function rankingExclusions(
   rollup: CongressRollup & { noTickerRows?: number },
   kind: "leaders" | "tickers",
 ): string[] {
-  const out: string[] = [];
-  if (rollup.dateAnomalies > 0)
-    out.push(
-      `${fmtInt(rollup.dateAnomalies)} date-anomaly ${
-        rollup.dateAnomalies === 1 ? "row" : "rows"
-      } excluded from the trade-date window (impossible trade dates)`,
-    );
-  if (rollup.undated > 0)
-    out.push(
-      `${fmtInt(rollup.undated)} ${
-        rollup.undated === 1 ? "row discloses" : "rows disclose"
-      } no trade date and cannot be placed in a trade-date window — switch the basis to filing date to include them`,
-    );
-  if (kind === "tickers" && (rollup.noTickerRows ?? 0) > 0)
-    out.push(
-      `${fmtInt(rollup.noTickerRows!)} in-window rows disclose no ticker and cannot appear in a ticker ranking — ` +
-        `the largest disclosers by flow can be entirely non-equity; the member ranking below is keyed by member instead`,
-    );
-  return out;
+  return exclusionParts(rollup, kind).map((p) => p.text);
 }
 
-/** The caveat line, exported so the client island rewrites exactly what the
-    server wrote when a range or basis change changes the exclusions. */
-export function rankingCaveatHtml(exclusions: readonly string[]): string {
-  return exclusions.length > 0 ? exclusions.map((e) => esc(e)).join(" · ") : "";
+/** SL-R11/LD4: the SUMMED excluded-row magnitude — never a count of categories.
+    Round-1 review objected that "· 3 exclusions" surfaces the number of
+    CATEGORIES while burying the number of ROWS, which is the honesty-bearing
+    figure. The owner accepted it. This is that figure. */
+export function rankingExcludedRows(
+  rollup: CongressRollup & { noTickerRows?: number },
+  kind: "leaders" | "tickers",
+): number {
+  return exclusionParts(rollup, kind).reduce((sum, p) => sum + p.n, 0);
+}
+
+/** SL-R11/R12: the window statement AND its excluded-row suffix AND the note
+    carrying the per-category clauses — one function, so the server render and
+    the client rewrite are the same bytes by construction rather than by two
+    call sites remembering to agree. */
+export function rankingWindowHtml(
+  windowText: string,
+  rollup: CongressRollup & { noTickerRows?: number },
+  kind: "leaders" | "tickers",
+  sectionId: string,
+): string {
+  const clauses = rankingExclusions(rollup, kind);
+  if (clauses.length === 0) return esc(windowText);
+  const rows = rankingExcludedRows(rollup, kind);
+  /* LD4, the mitigation the owner directed: the SIZE of what the reader cannot
+     see stays on the page at every width, and is the note's anchor. The three
+     per-category counts and their definitions live in the note body. */
+  return (
+    `${esc(windowText)} · ${fmtInt(rows)} ${rows === 1 ? "row" : "rows"} excluded` +
+    note(clauses.join(" · "), { scope: "window" }, sectionId)
+  );
 }
 
 /** One ranking section — used for BOTH the ticker momentum section and the
@@ -1791,12 +1836,12 @@ export function congressRankingSection(
       ? `Members ranked by net disclosed flow, ${windowText}`
       : `Tickers ranked by net disclosed flow, ${windowText}`;
   const noun = kind === "leaders" ? "members" : "tickers";
-  const exclusions = rankingExclusions(rollup, kind);
-
   return (
     `<section class="panel panel-wide" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
     `<div class="panel-head"><h2 class="section-h">${esc(opts.heading)}</h2>` +
-    `<span class="panel-note" id="${esc(opts.sectionId)}-window">${esc(windowText)}</span></div>` +
+    `<span class="panel-note" id="${esc(opts.sectionId)}-window">` +
+    rankingWindowHtml(windowText, rollup, kind, opts.sectionId) +
+    `</span></div>` +
     (opts.controls ? rangeControlHtml(rollup.range, rollup.basis) : "") +
     /* SL-R6: the three prose claims this paragraph carried are now notes on the
        columns they are about — interval-ness and the § derivation on the three
@@ -1847,7 +1892,11 @@ export function congressRankingSection(
         }) +
         `</div>`
       : "") +
-    `<div class="caveat-line" id="${esc(opts.sectionId)}-caveat">${rankingCaveatHtml(exclusions)}</div>` +
+    /* SL-R11: the visible `.caveat-line` and its `#<sectionId>-caveat` root are
+       DELETED. Unlike R10's terminus rows, nothing is lost to a reader with
+       scripting off: the clauses moved into a note, which opens declaratively
+       through `popovertarget` with no JavaScript at all, and their SUMMED ROW
+       TOTAL stays visible on the window statement at every width (LD4). */
     `</section>`
   );
 }

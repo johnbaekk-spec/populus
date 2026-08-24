@@ -116,8 +116,15 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
      keyboard and print as the span was not. Asserting the TEXT, not the
      wrapper, is what keeps this a guard rather than a spelling check. */
   assert.match(html, /class="note-pop"/);
-  // the caveat line and BOTH exclusion clauses
-  assert.match(html, /class="caveat-line"/);
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R11 / LD4 (LD6). The visible
+     `.caveat-line` and its `#<sectionId>-caveat` root are deleted; the two
+     exclusion clauses are the body of a note on the window statement, and the
+     SUMMED EXCLUDED-ROW TOTAL — never a count of categories — is that note's
+     visible anchor, on the page at every width. Both clause assertions below
+     are UNCHANGED: they still prove the text is in this collapsed body. The
+     line the wrapper assertion becomes proves the new visible channel, so the
+     honesty content asserted here went up rather than down. */
+  assert.match(html, /rows excluded<span class="note">/, "the summed magnitude is visible, and anchors the note");
   assert.match(html, /date-anomaly row excluded from the trade-date window/);
   assert.match(html, /discloses no trade date and cannot be placed in a trade-date window/);
   // terminus row and its named author

@@ -181,7 +181,11 @@ test("F12/F25: initializing over SSR rows changes NO honesty content before rows
       momentumRows: doc.getElementById(CONGRESS_ROOTS.momentum)!.innerHTML,
       memberRows: doc.getElementById(CONGRESS_ROOTS.membersRanked)!.innerHTML,
       terminus: terminusFor(doc, CONGRESS_ROOTS.momentum).outerHTML,
-      caveat: doc.getElementById("momentum-section-caveat")!.innerHTML,
+      // RETARGETED — RUN SURFACES-LEGIBILITY, SL-R11 (LD6): the exclusion
+      // clauses are no longer a separate `.caveat-line` element; they are the
+      // body of the note on the window statement, and their summed row total is
+      // the note's visible anchor. Same honesty content, one element up.
+      windowNote: doc.getElementById("momentum-section-window")!.innerHTML,
       window: doc.getElementById("momentum-section-window")!.textContent,
     };
     // Re-reading after init is the whole test: `syncDisclosure` used to run at
@@ -191,7 +195,7 @@ test("F12/F25: initializing over SSR rows changes NO honesty content before rows
     assert.equal(doc.getElementById(CONGRESS_ROOTS.momentum)!.innerHTML, before.momentumRows);
     assert.equal(doc.getElementById(CONGRESS_ROOTS.membersRanked)!.innerHTML, before.memberRows);
     assert.equal(terminusFor(doc, CONGRESS_ROOTS.momentum).outerHTML, before.terminus);
-    assert.equal(doc.getElementById("momentum-section-caveat")!.innerHTML, before.caveat);
+    assert.equal(doc.getElementById("momentum-section-window")!.innerHTML, before.windowNote);
     assert.equal(doc.getElementById("momentum-section-window")!.textContent, before.window);
     assert.equal(
       terminusFor(doc, CONGRESS_ROOTS.momentum).hidden,

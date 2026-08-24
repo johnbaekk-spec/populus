@@ -100,3 +100,63 @@ test("SL-R10 BLOCKER: `.compact-disclosure` ships HIDDEN, so a terminus is the o
     );
   }
 });
+
+/* ------------------------------------------------------ T7 / SL-R11 R12 LD4 */
+
+test("SL-R11/LD4: the visible suffix is the SUMMED ROW TOTAL, never a count of categories", async () => {
+  const { rankingWindowHtml, rankingExclusions, rankingExcludedRows } = await import("../src/lib/ui.ts");
+  const rollup = {
+    range: "12m", basis: "traded", rows: [],
+    dateAnomalies: 72, undated: 212, noTickerRows: 1412,
+  } as never;
+
+  const html = rankingWindowHtml("12 months to 2026-08-23 by trade date", rollup, "tickers", "momentum-section");
+  // 72 + 212 + 1,412 = 1,696 — the live figure from Current State.
+  assert.equal(rankingExcludedRows(rollup, "tickers"), 1696);
+  assert.match(html, /· 1,696 rows excluded/, "the SIZE of what the reader cannot see is on the page");
+  assert.doesNotMatch(html, /3 exclusions/, "never a count of categories — the round-1 objection LD4 accepted");
+
+  // …and the three per-category counts are in the note body, not lost.
+  for (const clause of rankingExclusions(rollup, "tickers")) {
+    assert.ok(html.includes(clause.replace(/&/g, "&amp;")), "each clause is reachable in the note");
+  }
+});
+
+test("SL-R11/R12: the suffix total and the note body are produced by ONE pass and cannot disagree", async () => {
+  const { rankingWindowHtml, rankingExclusions, rankingExcludedRows } = await import("../src/lib/ui.ts");
+  // Every combination of present/absent categories, on both kinds. A stale
+  // count inside a hover is worse than one on the page: nobody sees it go
+  // wrong, so the agreement is asserted rather than reasoned about.
+  for (const dateAnomalies of [0, 1, 72]) {
+    for (const undated of [0, 1, 212]) {
+      for (const noTickerRows of [0, 1, 1412]) {
+        for (const kind of ["tickers", "leaders"] as const) {
+          const rollup = { range: "12m", basis: "traded", rows: [], dateAnomalies, undated, noTickerRows } as never;
+          const clauses = rankingExclusions(rollup, kind);
+          const total = rankingExcludedRows(rollup, kind);
+          const html = rankingWindowHtml("W", rollup, kind, "s");
+          if (clauses.length === 0) {
+            assert.equal(total, 0);
+            assert.equal(html, "W", "no exclusions -> no suffix and no note");
+            continue;
+          }
+          const expected = dateAnomalies + undated + (kind === "tickers" ? noTickerRows : 0);
+          assert.equal(total, expected, `${kind} ${dateAnomalies}/${undated}/${noTickerRows}`);
+          assert.ok(
+            html.includes(`· ${total.toLocaleString("en-US")} ${total === 1 ? "row" : "rows"} excluded`),
+            "the visible suffix IS the sum of the clauses it anchors",
+          );
+        }
+      }
+    }
+  }
+});
+
+test("SL-R11: the deleted caveat root is gone from BOTH the renderer and its client", async () => {
+  const ui = readFileSync(new URL("../src/lib/ui.ts", import.meta.url), "utf8");
+  const client = readFileSync(new URL("../src/scripts/congress-sections.ts", import.meta.url), "utf8");
+  assert.ok(!ui.includes("-caveat\">"), "no `#<sectionId>-caveat` root is rendered");
+  assert.ok(!ui.includes("rankingCaveatHtml"), "the retired renderer has no definition left");
+  assert.ok(!client.includes("rankingCaveatHtml"), "and no caller");
+  assert.ok(client.includes("rankingWindowHtml"), "the client rewrites through the SAME function the server used");
+});
