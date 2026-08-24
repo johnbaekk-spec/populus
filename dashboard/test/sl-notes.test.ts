@@ -314,3 +314,18 @@ test("SL-R8e: the activity lag note carries the CAUSE and the sibling keeps the 
   const ids = [...(html + other).matchAll(/popover id="([^"]+)"/g)].map((m) => m[1]!);
   assert.equal(new Set(ids).size, ids.length, "PUT and CALL rows do not share a panel id");
 });
+
+test("SL-R2b: an unscripted panel has a defined resting place, and place() overrides it", () => {
+  // /watchlist/ and /e/ render notes through a shared renderer but never call
+  // initNotes(). Without a default they would open wherever the UA chose.
+  const open = /\.note-pop:popover-open\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+  assert.match(open, /top:\s*50%/);
+  assert.match(open, /left:\s*50%/);
+  assert.match(open, /translate:\s*-50% -50%/);
+
+  // And the scripted path must neutralise it, or every anchored panel would sit
+  // half its own width and height off target.
+  const notes = readFileSync(new URL("../src/scripts/notes.ts", import.meta.url), "utf8");
+  const placeFn = notes.slice(notes.indexOf("function place("), notes.indexOf("function show("));
+  assert.match(placeFn, /translate\s*=\s*"none"/, "place() clears the default centring before positioning");
+});

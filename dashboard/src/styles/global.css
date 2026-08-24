@@ -3049,6 +3049,28 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
 }
 
+/* SL-R2b: a DEFAULT resting place for a panel nobody positions.
+
+   `note()` renders through shared renderers, two of which (`txnRowHtml` via
+   `feedItemHtml`) also draw rows on `/watchlist/` and `/e/` — routes this run
+   does not own and does not initialise. There the panel still OPENS, because
+   `popovertarget` is declarative, and it still light-dismisses and closes on
+   Escape, because those are native to `popover`. What it does not get is
+   `place()`. Without this rule it would open wherever the UA put it.
+
+   Centring is deliberate rather than clever: it is predictable at every width,
+   needs no anchor knowledge, and reads as a deliberate panel instead of a
+   misplaced one. `place()` clears `translate` before setting top/left, so a
+   scripted panel is unaffected by this rule.
+
+   This is the structural fix for the whole class: any shared renderer that
+   grows a note later is safe by default instead of by someone remembering. */
+.note-pop:popover-open {
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+}
+
 /* Under 720px a panel that tries to sit beside its anchor has nowhere to go. */
 @media (max-width: 719px) {
   .note-pop {

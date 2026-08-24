@@ -43,6 +43,11 @@ function place(btn: HTMLElement, pop: HTMLElement): void {
   }
   let left = a.left + a.width / 2 - p.width / 2;
   left = Math.max(gap, Math.min(left, window.innerWidth - p.width - gap));
+  /* Clear the centring translate from the SL-R2b default rule before applying
+     real coordinates, or an anchored panel would be shifted by half its own
+     size. Inline styles beat the stylesheet, so this is the only interaction
+     between the two positioning paths. */
+  pop.style.translate = "none";
   pop.style.top = `${Math.round(top)}px`;
   pop.style.left = `${Math.round(left)}px`;
 }
