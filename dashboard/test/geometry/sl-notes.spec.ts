@@ -353,39 +353,100 @@ test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every wi
    silently, because a skipped requirement that looks covered is worse than an
    uncovered one that says so. */
 
-test("CODE-REVIEW F9: no page-local rule can shrink a note target on ANY in-scope surface", async ({ page }) => {
-  // (1) Static: note sizing exists in exactly one stylesheet, and none of the
-  // five surfaces adds a page-local <style>. A page-local override is the
-  // mechanism the finding names, so its absence is the thing to assert.
-  const roots = [
+test("CODE-REVIEW F9: REAL member and filer renderer output meets 44px at every swept width", async ({ page }) => {
+  /* Cycle-3 F9. The previous version swept a hand-written table header, which
+     the review rightly rejected: a generic fixture cannot see a surface's own
+     ancestor styles, button rules, transforms or layout constraints. This
+     renders the ACTUAL renderers and sweeps their real anchors.
+
+     It does not serve the routes, because measured, `build:bounded` emits
+     exactly one page carrying a note — member and filer are absent from `dist`
+     entirely. Renderer-backed fixture pages give the real markup and the real
+     stylesheet without expanding the production build, which is what the
+     finding asked for. */
+  const { filerBody, memberV2Sections } = await import("../../src/lib/ui.ts");
+  const css = readFileSync(new URL("../../src/styles/global.css", import.meta.url), "utf8");
+
+  const CONC = {
+    cik: "0001067983", period_of_report: "2026-03-31", position_count: 2,
+    total_value_usd: 2300, null_value_positions: 3, topn_value_usd: 2300,
+    topn_share_bps: 10000, hhi: 7500, flags: [],
+  };
+  const DELTA = {
+    cik: "0001067983", position_key: "sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7",
+    put_call: "LONG", curr_period: "2026-03-31", prev_period: "2025-12-31",
+    change_kind: "trim", prev_value_usd: 1_000_000, curr_value_usd: 400_000,
+    delta_value_usd: -600_000, prev_shares: 10, curr_shares: 4, delta_shares: -6,
+    ssh_prnamt_type: "SH", flags: [],
+  };
+
+  const surfaces: { name: string; html: string }[] = [
+    {
+      name: "filer",
+      html: filerBody(
+        { cik: "0001067983", name: "FIXTURE HOLDINGS LLC", latestPeriod: "2026-03-31" } as never,
+        ["2025-12-31", "2026-03-31"], "2026-03-31",
+        CONC as never, [DELTA] as never, "2026-05-15", 25, null,
+      ),
+    },
+    {
+      name: "member",
+      html: memberV2Sections(
+        {
+          name: "Test Member", bioguide: "T000001", party: "R", state: "OK",
+          district: "1", chamber: "house", servingSince: "2019-01-03",
+          txns: [{
+            txnId: "T-1", bioguide: "T000001", name: "Test Member", party: "R", state: "OK",
+            district: "1", chamber: "house", ticker: "AGRO", asset: "Agro Corp", assetType: "ST",
+            side: "purchase", traded: "2026-01-15", filed: "2026-02-01", lag: 17, late: false,
+            low: 1000, high: 15000, owner: "SP", flags: [], src: null,
+          }],
+        } as never,
+        { buildId: "t.1", generatedAtDate: "2026-08-24" } as never,
+        {} as never,
+        {
+          resolveSector: () => ({ state: "sector", sector: "agriculture" }),
+          sectorMeta: { taxonomyVersion: "1", asOf: "2026-08-12" },
+          committees: {
+            memberships: [], windowFrom: "2025-01-03", windowTo: "2026-08-12",
+            jurisdictionByCommittee: new Map(), mappingVersion: "1", snapshotDate: "2026-08-12",
+          },
+        } as never,
+      ),
+    },
+  ];
+
+  for (const s of surfaces) {
+    expect(s.html, `${s.name}: fixture must actually render a note`).toContain("note-btn");
+    for (const w of WIDTHS) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.setContent(`<style>${css}</style><body>${s.html}</body>`);
+      const anchors = page.locator(".note-btn");
+      const n = await anchors.count();
+      expect(n, `${s.name}: at least one real anchor at ${w}px`).toBeGreaterThan(0);
+      for (let k = 0; k < Math.min(n, 6); k += 1) {
+        const box = await anchors.nth(k).boundingBox();
+        if (!box) continue; // inside a collapsed <details>; covered by the print/fold specs
+        expect(
+          Math.min(box.width, box.height),
+          `${s.name} anchor ${k} is a 44px target at ${w}px`,
+        ).toBeGreaterThanOrEqual(44);
+      }
+    }
+  }
+
+  // Static half retained: note sizing lives in ONE stylesheet and no in-scope
+  // page restyles it, so no surface-local rule can undercut the sweep above.
+  for (const rel of [
     "../../src/pages/congress/index.astro",
     "../../src/pages/congress/members/[bioguide].astro",
     "../../src/pages/institutional/index.astro",
     "../../src/pages/institutional/filers/[cik].astro",
     "../../src/pages/institutional/tickers/[t]/holders.astro",
-  ];
-  for (const rel of roots) {
+  ]) {
     const src = readFileSync(new URL(rel, import.meta.url), "utf8");
-    /* A page-local <style> is legitimate — /congress/ has one. What must not
-       exist is a page-local rule touching the NOTE, since that is the only way
-       a surface-specific override could shrink the target below 44px. So scan
-       the style blocks themselves rather than banning them. */
     for (const block of src.match(/<style\b[\s\S]*?<\/style>/g) ?? []) {
       expect(block, `${rel} must not restyle the note anchor or panel`).not.toMatch(/\.note-btn|\.note-pop|\.note\b/);
     }
-  }
-
-  // (2) Rendered: the shared rule really does yield >=44px for the markup those
-  // surfaces emit, at every swept width — measured in a real engine against the
-  // real stylesheet, not inferred from the CSS text.
-  const css = readFileSync(new URL("../../src/styles/global.css", import.meta.url), "utf8");
-  const markup = `<table class="etable"><thead><tr><th scope="col">Net disclosed flow
-      <span class="note"><button type="button" class="note-btn" popovertarget="p" aria-label="explain">i</button>
-      <span class="note-pop" popover id="p">clause</span></span></th></tr></thead></table>`;
-  for (const w of WIDTHS) {
-    await page.setViewportSize({ width: w, height: 900 });
-    await page.setContent(`<style>${css}</style><body>${markup}</body>`);
-    const box = (await page.locator(".note-btn").boundingBox())!;
-    expect(Math.min(box.width, box.height), `44px target at ${w}px on member/filer header markup`).toBeGreaterThanOrEqual(44);
   }
 });

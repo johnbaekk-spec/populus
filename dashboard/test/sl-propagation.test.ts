@@ -105,6 +105,13 @@ const VERIFIED_UNCHANGED: Record<string, string> = {
   "geometry/layout.spec.ts": "the pre-existing geometry sweep; its R6 scroll-cue failures are identical on the pristine baseline.",
   "post/fixture-preview.test.ts": "built-output assertions; run in the `test:post` lane, unchanged by this run.",
   "lib/mini-dom.ts": "a DOM double; mentions `initFeed` only in its header comment.",
+  "r5-feed-table.test.ts":
+    "asserts `class=\"col-why\"` on the feed header and PASSES unchanged — which is R2b working, not a gap. " +
+    "`feedHeadHtml` is called there without a NoteCtx, and the opt-in contract requires the no-scope path to " +
+    "emit pre-run output byte for byte, because that same renderer draws /watchlist/. This file is therefore " +
+    "a live proof of the contract rather than a stale assertion: if someone made the note conversion " +
+    "unconditional, this test would go red and /watchlist/ would have silently changed. Verified green (12/12) " +
+    "at the commit that removed it from the manifest.",
 };
 
 test("T13: every sweep hit is accounted for — manifest, this run's edits, or a declared carve-out", () => {

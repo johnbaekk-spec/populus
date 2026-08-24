@@ -531,10 +531,8 @@ Modified — shared renderers:
 - `dashboard/src/lib/congress-columns.ts`
 - `dashboard/src/lib/inst-adds-render.ts`
 - `dashboard/src/lib/inst-index.ts`
-- `dashboard/src/lib/manager-directory.ts`
 - `dashboard/src/lib/activity.ts`
 - `dashboard/src/lib/holdings.ts`
-- `dashboard/src/lib/signals.ts`
 - `dashboard/src/styles/global.css`
 
 Modified — pages and islands:
@@ -564,16 +562,11 @@ line carries only its path so the manifest extraction stays exact.
 
 - `dashboard/test/c4-rankings.test.ts`
 - `dashboard/test/r-codex-regressions.test.ts`
-- `dashboard/test/r5-feed-table.test.ts`
 - `dashboard/test/r19-collapsed-honesty.test.ts`
 - `dashboard/test/css-fold.test.ts`
-- `dashboard/test/a5-table-css.test.ts`
 - `dashboard/test/ui.test.ts`
 - `dashboard/test/activity.test.ts`
 - `dashboard/test/holdings.test.ts`
-- `dashboard/test/inst-index-client.test.ts`
-- `dashboard/test/client-wiring.test.ts`
-- `dashboard/test/geometry/layout.spec.ts`
 - `dashboard/test/geometry/sl-notes.spec.ts`
 - `dashboard/test/sl-member.test.ts`
 - `dashboard/test/sl-filer.test.ts`
@@ -581,7 +574,6 @@ line carries only its path so the manifest extraction stays exact.
 - `dashboard/test/sl-propagation.test.ts`
 - `dashboard/test/holders-browser/holders.spec.ts`
 - `dashboard/test/lib/fake-dom.ts`
-- `dashboard/test/post/fixture-preview.test.ts`
 - `dashboard/test/format.test.ts`
 - `dashboard/test/pages-render.test.ts`
 - `dashboard/test/m1-layout.test.ts`
@@ -634,6 +626,15 @@ Documentation:
 - `docs/build/RUN-FILER-IDENTITY-notes.md`
 - `docs/design/handoff/Surfaces Legibility.dc.html`
 - BACKLOG.md
+
+Eight paths were REMOVED from this list at the end of implementation, recorded rather than silently dropped:
+dashboard/src/lib/manager-directory.ts, dashboard/src/lib/signals.ts, and the six assertion files
+a5-table-css, client-wiring, geometry/layout.spec, inst-index-client, post/fixture-preview and r5-feed-table.
+The plan predicted each would need editing; implementation measured that none did. The two source files were
+predicted for R8 Class-B conversions that turned out to be Class C, and for a signal-rule note that R20 keys
+on the Kind cell instead. The six assertion files read markup this run did change, but each reads a part of it
+that did not move, so no assertion in them became stale. Listing a file the bundle never touches makes the
+manifest claim coverage it does not have, which is the same defect as omitting one, pointing the other way.
 
 ## Implementation Tasks
 

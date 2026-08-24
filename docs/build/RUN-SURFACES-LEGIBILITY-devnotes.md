@@ -9,19 +9,22 @@
 
 ## Requirement and Task Completion
 
-T0, T0.a, T1, T2 complete. T3–T5, T7–T9 complete. **T6 BLOCKED and not implemented** (see Plan Deviations).
-T10, T11, T12, T13, T14, T15 complete. **T6/R10 re-attempted under the owner's `<noscript>` direction and
-reverted a second time** — see Plan Deviations 10.
+**Every task is complete: T0, T0.a and T1–T15.** T6/R10 was blocked twice — once on its own premise, once
+under the owner's `<noscript>` direction — and is now **implemented** by fixing its root cause, which the
+owner directed after the second revert. See Plan Deviations.
 
 Requirements delivered: `R1`, `R2`, `R2b`, `R3`, `R4`, `R5`, `R6`, `R7`, `R7b`, `R7c`, `R8`, `R8b`, `R8c`,
 `R8d`, `R8e`, `R9`, `R11`, `R12`, `R13`, `R14`, `R15`, `R16`, `R17`, `R18`, `R23`, `R25`, `R26`, `R26b`,
 `R28`, `R29`, and `LD4`, `LD6`, `LD8`, `LD10`. Added in the second half: `R19`, `R20`, `R22`, `R24`.
-`R10` is blocked. `R21`, `R30`, `R31`, `LD5`, `LD9` left the run by owner decision and are not reused.
+**`R10` is delivered** — see Plan Deviations. `R21`, `R30`, `R31`, `LD5`, `LD9` left the run by owner
+decision, their ids are retired and not reused, and the work is carried in
+`docs/build/RUN-FILER-IDENTITY-notes.md`.
 
 ## Changed Files
 
-48 files under `dashboard/`, `docs/` and the run's own artifacts; 7,812 insertions, 317 deletions across the
-whole branch. New: `src/scripts/notes.ts`, `test/sl-notes.test.ts`, `test/sl-surfaces.test.ts`,
+**42 files under `dashboard/src` and `dashboard/test`**, plus the run's own docs. The planned-files manifest
+is now **exactly equal** to that source/test set — zero missing, zero surplus — which took three corrections
+to reach; the last removed eight paths the plan predicted and implementation never needed. New: `src/scripts/notes.ts`, `test/sl-notes.test.ts`, `test/sl-surfaces.test.ts`,
 `test/sl-member.test.ts` (T10), `test/sl-filer.test.ts` (T11), `test/sl-propagation.test.ts` (T13),
 `test/sl-docs.test.ts` (T14).
 
@@ -45,8 +48,10 @@ optional `NoteCtx` parameter threaded through note-capable renderers, one option
 
 1. **17 surviving sole-channel `title=` sites (`R8c`).** Their renderers hold no stable non-null identity, so
    keying them is a signature refactor across eight shared helpers. Gated at exactly 17 by file and line.
-2. **`R10` blocked, terminus duplication unresolved.** Five terminus rows still restate a count the adjacent
-   control also carries *when scripting is on*. Deferred rather than removed — see Plan Deviations.
+2. **`compactDisclosure` now ships visible markup on five surfaces (`R10`).** Its bound is server-rendered
+   text rather than a script-revealed control, which is strictly more honest but does mean the control's
+   resting appearance changed on `/congress/` and `/institutional/`. Owner-directed. Removal condition: none —
+   this is the intended shape; recorded so the visual change is not mistaken for drift.
 3. **Scripted popover placement.** ~25 lines that CSS anchor positioning will make redundant.
 4. **A dynamic note body (`R11`/`R12`).** One note's content is live state; every other note is static.
 5. **`/watchlist/` and `/e/` render notes without `initNotes()`.** Owner-decided: they get a CSS default
@@ -84,8 +89,8 @@ about the tree as committed.
     this run and is run to prove no collateral damage.
   - `npm ci` + `npm run check` → **0 errors, 0 warnings, 1 hint** — `memberSignalsPanel`'s unused `ctx`,
     present on `origin/main` and deliberately left.
-  - `npm test` → **639 pass, 0 fail** (571 at baseline, 608 at the T9 handoff, 614 before the code-review
-    round).
+  - `npm test` → **644 pass, 0 fail** (571 at baseline; 608 at the T9 handoff; 614 after code-review cycle 1;
+    639 after T15; 644 after R10 landed and the cycle-2/3 test gaps were closed).
   - `npm run build:bounded` → **3,496 pages built**.
   - `npm run test:post` → **59 pass, 6 fail**, which is exactly the pristine baseline's result. `make` stops
     here, so the two browser lanes below were run directly rather than through it.
@@ -103,9 +108,27 @@ produces no member pages; and `no unqualified 'all' claim on the rendered holder
 `"$0 means nothing disclosed at all"`, which is **byte-identical at `holders-sort.ts:133` on `origin/main`**
 in a file this run never touched — verified present in the pristine baseline's own built fixture.
 
+
+**Later than T15, and therefore not covered by the frozen-tree hashes above.** Three review cycles and the
+R10 root-cause fix landed after T15 ran. Re-measured at `HEAD`: `npm run check` 0 errors; `npm test`
+**644 pass / 0 fail**; `build:bounded` clean at 3,496 pages; `test/geometry/sl-notes.spec.ts` **13 pass /
+0 fail**. The pre-existing sets are unchanged and were re-verified byte-identically against a pristine
+`origin/main` worktree: `test:post` 59 / 6, full geometry 41 pass / 6 fail (baseline 29 / 6, same six R6
+scroll-cue specs). T15's hashes are stated as covering T15, not as covering the branch tip — claiming
+otherwise would be the "half-written tree measured as green" failure this plan's own sweep lists.
+
 ## Plan Deviations
 
-1. **`R10` / T6 — BLOCKED, reverted, escalated.** `compactDisclosure` emits `hidden` in **both** return
+1. **`R10` / T6 — blocked twice, then IMPLEMENTED via its root cause.** The requirement's premise ("an
+   adjacent control states the same count") was false in three separate states: with scripting off; with
+   scripting on before the 22 MB feed arrives; and when an island throws or returns early. A `<noscript>`
+   attempt closed only the first and was reverted. The owner then directed fixing the cause: `compactDisclosure`
+   now emits its bound as **visible server markup** (a `.compact-bound-count` span carrying no `hidden`), with
+   only the toggle button awaiting a script, and the nothing-to-disclose shell still hidden. All three states
+   are closed by construction — a script that never ran cannot retract markup it never reached. Only then were
+   the five `terminusRow` sites and `syncTerminusFor` deleted (13 sites → 8, asserted as an exact per-file
+   partition), with all four non-count clauses moved verbatim. 19 assertions across 6 files retargeted to the
+   moved text. **Superseded detail, kept for the record:** `compactDisclosure` emits `hidden` in **both** return
    branches; only `congress-sections.ts` and `inst-index-client.ts` remove it. With scripting off the control
    states nothing, the count is not duplicated at all, and the terminus is the reader's only statement of what
    is held back — so deleting the five rows is the omission the terminus exists to prevent (Constraint 1,
@@ -164,7 +187,7 @@ in a file this run never touched — verified present in the pristine baseline's
     code-review round. All are now recorded in Planned Files with their reason. T13's audit caught the last of
     them before it was registered, which is the first evidence the audit does what it claims.
 
-## Code review round (F1–F6) — the tests were rejected, and rewritten
+### Code review round (F1–F6) — the tests were rejected, and rewritten
 
 An external review accepted the production fixes and rejected four of their tests as source greps. The
 criticism was correct and it is measurable: the behavioural tests this run wrote found two real bugs, the
