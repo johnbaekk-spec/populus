@@ -198,6 +198,24 @@ date anomalies, 212 undated, and the measured 7d/30d/90d/12m window counts), fro
 live tables. <b>One exception, labelled in place:</b> the issuer names in the position-changes frame (§8) are
 illustrative of a join, not resolved values.</div>
 
+<div class="mk-real" style="border-color:var(--amber)"><b>Reconciled against implementation, 2026-08-24.</b>
+Three frames in this preview show a state the run did not ship, and each is corrected in place below rather
+than redrawn — a mockup and a shipped page disagreeing is exactly the drift this reconciliation exists to
+stop.
+<ul style="margin:8px 0 0;padding-left:18px">
+<li><b>The terminus rows are NOT deleted.</b> Every frame that says the expand button already states the same
+bound is wrong for three measured reasons: only one of the five was a pure count duplicate; the control emits
+<code>hidden</code> in both branches, so it says nothing at all without JavaScript; and on three of the five
+surfaces it is not revealed at page load even <i>with</i> JavaScript — the ranking controls wait for a 22 MB
+download and the manager directory's waits for a render. All 13 stay, and the decision is the owner's.</li>
+<li><b>The position-changes issuer names are NOT resolved.</b> That work was cut from the run as
+<code>R21</code> and is recorded in <code>docs/build/RUN-FILER-IDENTITY-notes.md</code>. The cells still print
+the raw <code>position_key</code>; the table's <i>headers</i> gained notes.</li>
+<li><b>There is no pending queue.</b> A pre-arrival click already applies — the selection is module state and
+<code>receiveRows</code> reapplies it. What shipped is a pending <i>indicator</i> that clears when the feed
+settles, on the failure path as well as the success one.</li>
+</ul></div>
+
 <!-- ============================================================ CONGRESS -->
 <div class="mk-band"><span class="mk-tag">/congress</span><h2>1 · The first screen: summary, then one link out</h2></div>
 <p class="mk-note"><b>Your note (1).</b> The three-line caveat block goes. It is not deleted from the product —
@@ -335,10 +353,15 @@ excluded” is a number about what you cannot see → stays on the page, with on
   </section>
 </div>
 <p class="now"><b>where the deleted prose went</b> — the section paragraph, the <code>§ ≈ †</code> footnote stack
-and the per-column sub-labels are all in the notes above. The <b>terminus row</b> is gone because the
-<i>“Show all 991 tickers (981 more)”</i> button beneath it already states the same bound — it was said twice. The
-three <b>exclusion counts</b> (72 impossible dates · 212 undated · 1,412 no ticker) moved into the note on the
-window statement in the panel head, top right: zero pixels on the page, one hover away. Notes are DOM, are
+and the per-column sub-labels are all in the notes above. <b style="color:var(--amber)">Corrected
+2026-08-24:</b> the <b>terminus row</b> is <b>not</b> gone. The button beneath it states the same bound only
+for a reader who has JavaScript <i>and</i> has waited for the dataset — it ships <code>hidden</code> and is
+revealed by script, and on this surface not until 22 MB has downloaded. It was not said twice; deleting it
+would have been the omission the terminus exists to prevent. The
+three <b>exclusion counts</b> (72 impossible dates · 212 undated · 1,412 no ticker) <b>did</b> move into the
+note on the window statement in the panel head, top right — with their <b>sum</b> left visible on the page as
+the note's anchor (<code>· 1,696 rows excluded ⓘ</code>), so the size of what the reader cannot see is on
+screen at every width. Notes are DOM, are
 announced via <code>aria-describedby</code>, and are laid out in flow by the print stylesheet.</p>
 
 <div class="mk-band"><span class="mk-tag">/congress</span><h2>4 · Member table + the unrankable bucket, and the build stamp</h2></div>
@@ -773,9 +796,11 @@ exists.</p>
       <i>“Show all 991 tickers (981 more)”</i> and <i>“4 rows disclose no amount for this column”</i> both move when
       the reader moves a control, and both are the label of a control or a row inside the table. They are not prose
       about the data; they are the table describing its own current state.</p>
-      <p style="font-size:12.5px;color:var(--ink2);margin:0 0 10px"><b style="color:var(--amber)">Deleted from the page — said twice.</b>
-      The terminus row repeated the bound the expand button already states. The three exclusion counts moved into
-      the window note. Nothing is unreachable; nothing is duplicated.</p>
+      <p style="font-size:12.5px;color:var(--ink2);margin:0 0 10px"><b style="color:var(--amber)">Moved off the page — reachable, never removed.</b>
+      The three exclusion counts moved into the window note, with their <b>sum</b> left visible as its anchor.
+      <b>Corrected 2026-08-24:</b> the terminus row did <i>not</i> move. It looked like a duplicate of the
+      expand button's count and is not one — the button is invisible without JavaScript and, on three of the
+      five surfaces, invisible with it until the data arrives.</p>
       <p style="font-size:12.5px;color:var(--ink2);margin:0"><b>Three channels, one text.</b> Hover · click-pin
       (touch and keyboard) · the print stylesheet. One source string renders all three, so they cannot drift.</p>
     </div>
@@ -786,17 +811,20 @@ exists.</p>
 <p class="mk-note">Roughly: one new render primitive (<code>note()</code> in <code>format.ts</code>) plus its CSS;
 two page heads rewritten; <code>congress-columns.ts</code> and <code>addsColumns()</code> gain note text beside the
 labels they already carry; <code>rankingHeadHtml</code>/<code>addsHeadHtml</code>/<code>INST_INDEX_HEADS</code> emit
-notes instead of <code>.col-why</code> spans; <code>congress-sections.ts</code> gains the pending queue and the
-empty-window state; <code>addsSectionHtml</code> merges two chip rows into one; <code>addsRowHtml</code> and the
+notes instead of <code>.col-why</code> spans; <code>congress-sections.ts</code> gains a pending <b>indicator</b> (not a queue — the
+selection already applies) and the empty-window state; <code>addsSectionHtml</code> merges two chip rows into one; <code>addsRowHtml</code> and the
 activity renderer swap raw keys for identity chips; <code>institutionalDataNoteHtml()</code> becomes a
 <code>&lt;details&gt;</code>; <code>memberStatTiles</code> / <code>filerTiles</code> / <code>statTiles</code>
-trade their <code>title=</code> attributes for notes; <code>assetCellHtml</code> (<code>format.ts:265</code>)
-does the same per row; <code>changesTableHtml</code> gains the <code>position_key</code> → issuer-name join over
-the previous <b>and</b> current period, with a stated fallback; <code>signalRowHtml</code>'s per-row rule and
-<code>memberV2Sections</code>' card-foot caveats become notes; the methodology page gains six stable anchors;
-<code>terminusRow</code>,
-<code>syncTerminusFor</code> and <code>rankingCaveatHtml</code> are <b>removed</b>, along with the
-<code>-caveat</code> render root the client rewrites. Test work is the real cost and it is deliberate, not
+trade their <code>title=</code> attributes for notes; <code>assetNameCell</code> (<code>format.ts:249</code> —
+this preview called it <code>assetCellHtml</code>, which does not exist) keeps its
+<code>.visually-hidden</code> sibling and only sheds its duplicate attribute;
+<code>signalRowHtml</code>'s per-row rule — on each row's <b>Kind cell</b>, keyed on <code>Signal.id</code> —
+and <code>memberV2Sections</code>' card-foot caveats become notes; the methodology page gains six stable
+anchors; <code>rankingCaveatHtml</code> is <b>removed</b> along with the <code>-caveat</code> render root the
+client rewrites. <b style="color:var(--amber)">Corrected 2026-08-24:</b> <code>changesTableHtml</code> gains
+<i>no</i> issuer-name join — that left the run as <code>R21</code> — and <code>terminusRow</code> and
+<code>syncTerminusFor</code> are <b>not</b> removed, because the deletion that would have orphaned them is
+blocked. Test work is the real cost and it is deliberate, not
 incidental — <code>css-fold</code>, <code>r19-collapsed-honesty</code>, <code>activity</code>,
 <code>c4-rankings</code>, <code>r5-feed-table</code>, <code>r-codex-regressions</code> and
 <code>post/fixture-preview</code> assert on <code>.col-why</code>, <code>.terminus</code> or the

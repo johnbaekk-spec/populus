@@ -66,6 +66,8 @@ const ADDED_AT_IMPLEMENTATION: Record<string, string> = {
   "sl-member.test.ts": "new (T10) — the plan named no test file for the member page",
   "sl-filer.test.ts": "new (T11) — the plan named no test file for the filer page",
   "sl-propagation.test.ts": "new (T13) — this file",
+  "sl-docs.test.ts":
+    "new (T14) — the documentation-reconciliation completion check: retired phrases absent AND their corrections present at a named anchor",
   "holders-browser/holders.spec.ts":
     "code-review F4: the holders period-swap note test. The geometry lane builds no holders route, so this is the only served build where it exists.",
   "lib/fake-dom.ts":

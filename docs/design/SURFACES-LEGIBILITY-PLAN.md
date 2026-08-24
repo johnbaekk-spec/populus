@@ -40,7 +40,7 @@ worktree rule that worktree is `<repo>/.claude/worktrees/surfaces-legibility`, b
 | R2 | The 7d button "defaults to previous shown or doesn't show anything" | **Two real bugs, reproduced and measured** | §5 |
 | R3 | Any description/information in a table becomes a hover box | One `note()` primitive, three channels | §3 |
 | R4 | Remove `build 20260823.1` | Yes — already in the site footer | §4.4 |
-| R5 | Delete the terminus row on the ranking tables | Yes — it duplicated the expand button | §4.5 |
+| R5 | Delete the terminus row on the ranking tables | **No — blocked at implementation.** The expand button duplicates it only for a reader who has JavaScript *and* has waited for the dataset | §4.5 |
 | R6 | Delete the exclusion count line (72 / 212 / 1,412) | Yes — counts move into the window note | §4.6 |
 | R7 | Delete the "Notes on this table" blocks | Yes — hover plus a print rule replaces them | §3.2 |
 | R8 | Remove the "What a 13F is — and is not" box | **Collapse, not remove — it is a gated contract** | §6.1 |
@@ -112,10 +112,20 @@ once it is gone, and the `@supports` fallback (below) is what keeps CSS-only hov
   **clipped by the scroll container**; the last column's note was unreachable. The panel uses the `popover`
   attribute (top layer) with JS placement, plus an `@supports not selector(:popover-open)` fallback to the
   absolute path. Verified in the preview: **54/54** notes open fully inside the viewport.
-- **`title=` is not the mechanism — and is already the status quo in five places.** `statTiles`
-  (`format.ts:1294`), `assetCellHtml` (`format.ts:265`), `addsRowHtml` (2 sites) and `inst-index.ts:201`
-  already put real explanation in a bare `title=`, which no touch device can open and which is unstyled.
-  Converting them is a strict upgrade, not a regression.
+- **`title=` is not the mechanism — and it is the status quo in THIRTY-TWO places, not five.** Measured
+  (`git grep -o 'title="' -- dashboard/src/lib | wc -l`): `format.ts` 8, `holdings.ts` 10, `inst-index.ts` 4,
+  `inst-adds-render.ts` 3, `ui.ts` 3, `activity.ts` 2, `manager-directory.ts` 2. Two of the five this section
+  originally named were themselves wrong — the renderer at `format.ts:249` is **`assetNameCell`**, not
+  `assetCellHtml`, which does not exist anywhere in the tree, and `inst-index.ts` holds four such sites, not
+  one. The 32 partition **exactly** into three classes, asserted as an exact count rather than an inequality:
+  - **Class A — 5, deleted with no note.** The attribute's full text is already carried by a sibling real-DOM
+    channel, verified per site rather than inferred from the sibling's existence. A prior review put those
+    siblings there deliberately, so converting them would add a third channel for text that already has two.
+  - **Class B — 10, converted to notes.** No sibling: removing the attribute without a note would delete the
+    explanation outright.
+  - **Class C — 17, unchanged.** The renderer holds no unique non-null identity to key on, and a renderer may
+    never invent one, so keying them is a signature refactor across eight shared helpers. They keep exactly
+    the channels they have today; nothing is lost. Gated at exactly 17 by path and emitting function.
 
 ### 3.4 What replaces what
 
@@ -126,12 +136,12 @@ once it is gone, and the `@supports` fallback (below) is what keeps CSS-only hov
 | `footnoteBlock(RANKING_FOOTNOTES)` — the `§ ≈ †` stack | notes on Net / ≈ / Txns · Late |
 | `footnoteBlock(ADDS_FOOTNOTES)` — `‡ § †` | notes on Δ value / Issuer / Top adder |
 | `footnoteBlock(QOQ_FOOTNOTES)` + the filer's `§ †u ‡a ‡c` | notes on Position / Change / Δ value |
-| `title=` on tiles, asset cells, partial sums, null adders | notes |
+| `title=` — **32 sites**, partitioned 5 deleted / 10 converted to notes / 17 declared unchanged | see §3.3 |
 | `.mtile-sub` / `StatTile.title` on 11 tiles across two pages | notes |
 | `.rb-caption` (the quarter chart's caption) | a note on the chart's panel note |
 | `.card-foot` ("PTRs are flows, not holdings…") | a note on the net-flow panel note |
-| `signalRowHtml`'s per-row rule string | a note on **each row's Kind cell**, keyed by kind (revised 2026-08-24 after plan review: `signals.ts` composes one rule **per kind**, so a mixed-kind table carries several distinct rules and a single shared header note cannot hold them all) |
-| `.terminus` **where a `compactDisclosure` sits beside it** | **deleted** (§4.5) |
+| `signalRowHtml`'s per-row rule string | a note on **each row's Kind cell**, keyed on **`Signal.id`** — the stable per-signal hash from `signalId(kind, identity)`, **never the kind** (revised twice: 2026-08-24 after plan review, because `signals.ts` composes one rule **per kind** so a single shared header note cannot hold several at once; and again at implementation, because `memberSignalsPanel` renders up to ten rows in which the same kind may appear several times, so a kind-keyed id emits duplicate panel ids and `aria-describedby` targets that address the wrong rule) |
+| `.terminus` **where a `compactDisclosure` sits beside it** | **NOT deleted — blocked** (§4.5): the control says nothing without JavaScript, and nothing at all until its rows arrive |
 | `.terminus` **where nothing else states the bound** | **kept** (§8.4) |
 | `rankingCaveatHtml`'s visible `.caveat-line` | folded into the window note (§4.6) |
 | `.compact-disclosure`, `.unranked-sep` | unchanged, visible |
@@ -162,25 +172,33 @@ Remove `· build <id>` from every `.panel-head` `.panel-note` (`congressRankingS
 **window** statement stays — it changes with the control, so it belongs beside the control. Delete the
 `" · build "` string-split in `applyRollup()` (`congress-sections.ts:276`) with it.
 
-### 4.5 Delete the terminus rows (R5) — scoped precisely
-`terminusRow` has **12 call sites**. Five sit directly beside a `compactDisclosure`, whose button already
-states the same count — those five are the duplicates and are deleted:
+### 4.5 Delete the terminus rows (R5) — **BLOCKED, NOT IMPLEMENTED**
+**Superseded 2026-08-24 at implementation. Nothing here was done, and the run plan's `R10` row is the
+authority.** The section is kept, corrected, so a later reader finds the measurement rather than the
+instruction.
 
-| Site | Paired disclosure |
-|---|---|
-| `ui.ts:1773` (ranking, ranked root) | `ui.ts:1781` |
-| `ui.ts:1792` (ranking, undisclosed bucket) | `ui.ts:1797` |
-| `ui.ts:1966` (adds leaderboard) | `ui.ts:1978` |
-| `activity.ts:989` (activity feed) | `activity.ts:1013` |
-| `institutional/index.astro:168` (manager directory) | `:176` |
+Two counts in the paragraph that stood here were wrong. `terminusRow` has **13** production call sites, not
+12 (`ui.ts` holds **eight**: `:579`, `:936`, `:1104`, `:1168`, `:1773`, `:1792`, `:1966`, `:2377`), so the
+sites with no adjacent expand control number **eight**, not seven.
 
-The other **seven** (`ui.ts:579`, `:936`, `:1104`, `:1168`, `:2377`, `holdings.ts:1287`, `:1514`) have no
-expand button; there the terminus is the only statement of the bound and it **stays**. `terminusRow` therefore
-survives in `format.ts` for them.
+The premise is also wrong, in three separate ways, each measured in the worktree:
 
-`syncTerminusFor` loses all three of its callers (`congress-sections.ts:226`, `inst-index-client.ts:110`,
-`:241`) and is **deleted**. The disclosure button's own text is already recomputed on every render by
-`syncDisclosure()`, so the live count survives.
+1. **Only ONE of the five is a duplicate of a count.** The other four additionally carry the
+   `/congress/data/feed.v1.json` link, the adds payload link, "every filer has its own page", and the activity
+   feed's whole publication bound — the shard base path, the shard count, and the record/byte limits each
+   shard is closed at. Deleting them loses published text (§7).
+2. **The adjacent control states nothing without JavaScript.** `compactDisclosure` emits `hidden` in BOTH
+   return branches; only `congress-sections.ts` and `inst-index-client.ts` remove it. With scripting off the
+   count is not duplicated at all — it is stated exactly once, by the terminus.
+3. **The control is not revealed at page load even WITH scripting**, on three of the five surfaces. The two
+   ranking controls are revealed from `syncDisclosure`, which deliberately does not run at bind time — it runs
+   when rows arrive, after a 22 MB download. The manager directory's is revealed only from a render, and
+   `initSortableTable` deliberately does not paint at init.
+
+A `<noscript>` restatement was directed by the owner, implemented in full and reverted: it closes (2) and
+neither (1) nor (3), and it does not cover "scripting on, island did not run" — a state this repository has
+shipped. All **13** terminus rows stay, `syncTerminusFor` keeps its three callers, and the decision is the
+owner's to make from the three options in the run plan's `R10` row.
 
 ### 4.6 Delete the exclusion line (R6)
 Delete the visible `<div class="caveat-line" id="…-caveat">` and its render root. `rankingExclusions()` is
@@ -192,6 +210,20 @@ Delete the visible `<div class="caveat-line" id="…-caveat">` and its render ro
 - a test must assert that a range change updates the note body, not just the window text. A stale count inside
   a hover is worse than a stale count on the page, because nobody sees it go wrong.
 
+**The visible anchor is the summed ROW total, never a count of categories (LD4, decided 2026-08-24).** Moving
+the exclusion counts into a hover is the one change in this plan that puts *a count of what the reader cannot
+see* behind an interaction, so it is paid for on the page: the window statement carries
+`· 1,696 rows excluded ⓘ` — the **sum of the clause counts** — at every width. An earlier suffix that
+named the number of *categories* was rejected: it buries the number of *rows*, which is the honesty-bearing
+figure, and the summed form costs the same characters. The three per-category counts and their
+definitions live in the note body, and the total is recomputed **with** the clauses on every range or basis
+change, so the two cannot disagree — asserted together, in one test, over every combination of present and
+absent categories on both kinds.
+
+**Residual, stated:** a reader who never hovers sees how many rows are excluded but not the split between date
+anomalies, missing trade dates and missing tickers. **Reversal:** re-render
+`rankingCaveatHtml(rankingExclusions(...))` into a visible `.caveat-line` — one function call, no data change.
+
 ### 4.7 Delete the per-table notes block (R7)
 Never shipped; it exists only in the preview. Its job passes to the print rule in §3.2.
 
@@ -199,13 +231,25 @@ Never shipped; it exists only in the preview. Its job passes to the print rule i
 
 ## 5 · The 7d bug (R2) — two defects
 
-### 5.1 Defect A — a click before the data lands is silently dropped
-`recomputeMomentum()` opens `if (!allRows) return;`. The payload is 22 MB. A click in the first seconds sets
-`aria-pressed="true"` on 7d and changes nothing: the control claims a window it did not apply.
+### 5.1 Defect A — the control asserts a window it has not painted
+**Corrected 2026-08-24 (R13). The framing above was wrong and the fix it proposed is now forbidden.** A
+pre-arrival click is **not** dropped: `range` and `basis` are module-scoped `let`s that the click handlers
+assign *before* calling `recomputeMomentum()`, and `receiveRows()` ends by calling
+`recomputeMomentumIfChanged()`, which recomputes whenever either differs from the SSR default. The selection
+already applies.
 
-**Fix.** Record `pendingRange` / `pendingBasis`, render a pending line on the control, and apply the queued
-selection in `receiveRows()`. `recomputeMomentumIfChanged()` already compares against the SSR defaults, so
-this extends a path that exists rather than adding one.
+What is wrong is that `setSeg()` paints the button pressed at click time, so between the click and the feed's
+arrival the control asserts a window the table has not painted.
+
+**Fix — an indicator, and NO queue.** A pending state is set alongside `setSeg()` and cleared when the feed
+**settles**. Recording a `pendingRange` / `pendingBasis` would add a second copy of state the module already
+holds, and two copies of one selection is a defect waiting for a divergence; the plan forbids it explicitly.
+
+The indicator clears on **both** outcomes, not only success. `initFeed`'s `onRows` fires on a successful
+decode alone, so an indicator cleared only there would read "Applying …" forever after a failed download — a
+false statement about a view that will never be painted. `initFeed` gains an `onSettled(ok)` callback fired on
+both paths, and on failure the section states that the selection could not be applied because the dataset did
+not load.
 
 ### 5.2 Defect B — 7d on the traded basis is structurally empty, and says nothing
 **0 of 71,632** rows have a trade date in the last 7 days. `rankingRootHtml([])` returns an empty string, so
@@ -236,9 +280,22 @@ structural caveat:
 - rendered on three surfaces: this page, `HoldingsTable.astro:246`, `entity-client.ts:480`
 
 Deleting it reddens three gates and drops a published contract. Instead: **same six clauses, same ids, same
-`.caveat-line` classes, same DOM**, wrapped in `<details class="caveat-box">` whose `<summary>` carries the
-gist and the deep methodology link. ~400px becomes ~40px. `<details>` is already this repo's disclosure idiom
-(`<details class="flag">`, `.flag-provenance`), and the print block forces it open the same way.
+`.caveat-line` classes, same DOM**, wrapped in `<details class="caveat-box">`. ~400px becomes ~40px.
+`<details>` is already this repo's disclosure idiom (`<details class="flag">`, `.flag-provenance`), and the
+print block forces it open the same way.
+
+**Corrected 2026-08-24 — the summary carries the CLAIM, not "the gist" (LD8).** A collapsed box hides all six
+clauses at every width, so the honesty load moves onto the `<summary>`, which must carry the load-bearing
+claim in visible text: that a 13F is a quarterly, long-only, delayed snapshot and **not** current holdings. A
+summary reading only `Details`, or the bare heading, fails the requirement. Two consequences the earlier
+wording did not state:
+
+- `@media print` forces the box **open**, so the paper channel is unchanged.
+- The never-fold assertion at `css-fold.test.ts:1157` is **deleted and replaced in the same commit**, not left
+  standing. It could not have caught this change: `droppedAt` matches project CSS *rules* against class names,
+  while a collapsed `<details>` is hidden by the user agent's own default — so it would have stayed green
+  while all six clauses were hidden at every width. Its replacement asserts reachability, which the old one
+  never did, and `HONESTY_SELECTORS` gains the summary's class.
 
 ### 6.2 One control row (R9)
 `addsSectionHtml` emits two sibling `<div class="mgr-chips">`, so they stack. Wrap both in one `.control-row`
@@ -283,8 +340,13 @@ The heaviest prose on the site. Beyond the shared work in §3.4:
 - **7.5 The net-flow card foot.** `ui.ts:2130` — "PTRs are flows, not holdings … 77 rows disclose no ticker
   and are outside this table" — becomes a note on that panel.
 - **7.6 The signal rule.** `signals.ts:310` composes the rule string and it renders on **every** signal row.
-  One note on the `Kind` header replaces N copies; the "a signal describes a disclosure, never a current
-  holding" caveat and the superseded count join it.
+  It becomes a note on **each row's Kind cell**, keyed on `Signal.id`. **Corrected 2026-08-24** — an earlier
+  revision said "one note on the `Kind` header replaces N copies", which is not implementable: the rules are
+  composed *per kind*, a member's panel can render several kinds at once, and a single header note cannot
+  carry several distinct rules. Two fixtures pin it: mixed-kind, asserting each rendered kind's exact rule is
+  reachable from its own row, and same-member duplicate-kind, asserting page-wide panel-id uniqueness — the
+  case a mixed-kind test can never see. The lag caveat and the superseded count stay in the card foot, which
+  is a live count rather than a definition.
 - **7.7 Kept verbatim.** The *Sector mix* and *Committees* absent panels. Each states an absence — "not in
   this build; it lands with the first build after the issuer-SIC ingest (B-5)" — and that sentence **is** the
   section's whole content. There is nothing to hover it behind. `NON_ALLEGATION_CAVEAT` likewise stays visible.
@@ -293,43 +355,52 @@ The heaviest prose on the site. Beyond the shared work in §3.4:
 
 ## 8 · `/institutional/filers/[cik]/` (R12)
 
-### 8.1 The worst defect on the site
+### 8.1 The worst defect on the site — **DEFERRED, NOT FIXED HERE**
 The position-changes table renders a bare 32-character hash as its entire identity column. Live, on BlackRock,
 across 5,532 moves: `sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7 · exit · −$631M`. Not one issuer name. The
 holdings table further down **the same page** prints `MICROSOFT CORP · COM · CUSIP 594918104`.
 
-### 8.2 Cause, and the fix
-`changesTableHtml` takes `QoqDeltaRow`, selected from `agg_qoq_deltas`, which **has no `issuer_name` column**
-(`inst.ts:171-186`). The filer's own reported rows do: `serving_filer_rows` carries
-`(security_id, cusip, issuer_name, position_key)` keyed by the **same** `position_key`
-(`inst_serving.py:679`). So this is a local join over data the page already loads — **no producer change**.
+**It is still there.** By owner decision on 2026-08-24 this work was **cut from this run** as `R21`, after
+three review rounds each closed one face of the defect and exposed the next: the map covered too few periods,
+then it was built in a function the pre-rendered route never calls, then that route was found to have no
+access at all to the uncapped serving rows the map needs — and finally, that the payload shape it must change
+is byte-compared against a Python-generated fixture, which this run's own non-goal forbade touching. That is a
+cross-runtime contract change, not a presentation fix.
 
-**The trap.** An *exit* is by definition absent from the current quarter's rows. Joining only the current
-period would leave every exit unresolved — which is most of this table. The join must run over the **union of
-the previous and current period's** rows for that filer.
+Everything the three rounds established is preserved in `docs/build/RUN-FILER-IDENTITY-notes.md` so the
+successor run starts from measured facts. The cells are **untouched** here and the built-output gate carries a
+single **named** exemption for that one table — never a relaxed pattern — so the deferral is visible in the
+gate rather than hidden by it. The table's **headers** do gain notes under R7/R7b/R7c: the boundary is cells,
+not the table.
 
-**The fallback.** Where neither period names the security, the cell reads `unresolved security` with a
-`provisional id` chip whose note carries the raw key. No name is invented. The preview shows both states, and
-its issuer names are labelled in place as illustrative of the join rather than resolved.
-
-**Parity.** `filer-payload.ts:173` builds the client payload and selects `position_key`; it must carry the
-resolved name too, or a period switch re-renders rows that disagree with the server's.
+The design work this section carried — the join over the union of both periods, the `unresolved security`
+fallback, the payload parity requirement — is **not repeated here**, because two authoritative descriptions of
+one unbuilt change is exactly the drift §12 exists to stop. It lives in the successor run's notes.
 
 ### 8.3 The rest
-- **8.3.1** The `.explainer` pointer ("A quarter-end snapshot. Filed up to 45 days later, so this page is not
-  current holdings…") is replaced by the collapsed box of §6.1 plus the deep link. `ui.ts:1221` already
-  documents that this text was reduced from a duplicate phrasing to a pointer; this finishes that move.
+- **8.3.1** **Corrected 2026-08-24 (R22).** The `.explainer` pointer ("A quarter-end snapshot. Filed up to 45
+  days later, so this page is not current holdings…") is **kept, not replaced**, and it **keeps its
+  `href="#inst-data-note"` pointer**. The §5 box is *not* moved into `filerBody`: both `HoldingsTable.astro`
+  and `entity-client.ts` already render it for their route, so a third copy would emit a duplicate
+  `id="inst-data-note"` and reintroduce the two-same-titled-blocks defect `pages-render.test.ts` guards.
+  §6.1's collapse supplies the height saving without relocating ownership. Measured at implementation: the
+  explainer already carried its `/methodology/#m2` deep link on `origin/main`, so nothing was added.
 - **8.3.2** Six stat tiles (`filerTiles`, `ui.ts:931`) → notes, as §7.2.
 - **8.3.3** The `§ †u ‡a ‡c` footnote block → notes on Position / Change / Δ value.
 - **8.3.4** "every row this filer reported for the quarter, as it reported it — cross-filer de-duplication…"
   (`holdings.ts:1332`) → a note on the holdings panel.
-- **8.3.5** Period chips → one labelled `.control-row`, as §6.2.
+- **8.3.5** Period chips → one labelled control row. **Measured at implementation: already true.**
+  `.period-row` carries a visible `Period` label and lays out as a single flex row. §6.2's defect — two
+  stacked, *unlabelled* `.mgr-chips` groups — belongs to the institutional adds section and this surface never
+  had it. Converting to `.control-row` would change the chip grammar (`.control-row .chips` drops the joined
+  border) for no reader-facing gain, so it was left alone.
 
 ### 8.4 What stays
 The truncation notice — *"45,466 of this filer's 50,651 reported rows for 2026-03-31 are not embedded in this
 page — the page byte budget caps the embed"* — is a `terminusRow` with **no expand button beside it** (the
-table is behind a pager). It names a bound nothing else on the page states, so by the §4.5 rule it stays. So
-does the pager's `1–100 of 5,185 positions · page 1 of 52`.
+table is behind a pager). It names a bound nothing else on the page states, so it stays. So does the pager's
+`1–100 of 5,185 positions · page 1 of 52`. With §4.5 blocked, *every* terminus stays; these two were never in
+question either way, and both are pinned by test.
 
 ---
 
@@ -363,7 +434,8 @@ is opacity- and top-layer-driven, which keeps the fold guard honest rather than 
 ## 11 · What this plan refuses to do
 
 1. **Delete the 13F box** (§6.1) — gated contract. Collapsed instead.
-2. **Delete every terminus** (§4.5) — only the five that duplicate an adjacent expand button. Seven stay.
+2. **Delete every terminus** (§4.5) — and, as it turned out, not even the five: the adjacent expand button
+   duplicates the count only for a reader who has JavaScript *and* has waited for the dataset. All **13** stay.
 3. **Remove the 7d button** (§5.2) — an empty window is a fact worth stating.
 4. **Thin the desktop tables** — the request was legibility, not fewer columns.
 5. **Invent an issuer name** (§8.2) — an unresolvable security says so.
@@ -381,29 +453,40 @@ Each of these asserts on markup this plan removes. None may be weakened by widen
 | `c4-rankings.test.ts:183` | literal `<span class="col-why">the rank number…` | retarget to the note's DOM |
 | `r-codex-regressions.test.ts:178` | same literal | retarget |
 | `r5-feed-table.test.ts:140,159` | counts `.col-why` == `FEED_COLUMNS.length - 1` | count notes instead |
-| `r19-collapsed-honesty.test.ts:112,165` | `.col-why`, `.terminus`, `caveat-line` present | retire the two deleted selectors **with a comment naming R5/R6 and this plan**; keep `.compact-disclosure` and `.unranked-sep` |
-| `css-fold.test.ts:267,292` | `.terminus`, `.caveat-line`, `.col-why` in `HONESTY_SELECTORS` | drop `.terminus`/`.col-why`; **keep `.caveat-line`** (the 13F box still uses it); add `.note-pop` |
-| `css-fold.test.ts:668` | `.terminus` in the fold sweep | drop |
+| `r19-collapsed-honesty.test.ts:112,165` | `.col-why`, `.terminus`, `caveat-line` present | retarget the moved TEXT, **with a comment naming the requirement and this plan**; keep `.compact-disclosure` and `.unranked-sep` |
+| `css-fold.test.ts:267,292` | `.terminus`, `.caveat-line`, `.col-why` in `HONESTY_SELECTORS` | **corrected 2026-08-24: drop NOTHING.** `.terminus` stays because R10 is blocked and every terminus still ships; `.col-why` stays because it is the no-scope fallback every out-of-scope route still renders (R2b). **Add `.note-btn` and `.note-pop`** — the note primitive is now the channel most of this site's explanations travel on, and suppressing either half at a breakpoint would hide all of it at the width with least room |
+| `css-fold.test.ts:668` | `.terminus` in the fold sweep | **keep** — see above |
 | `css-fold.test.ts:1166` | print block includes `.caveat-line` | keep; add `.note-pop` |
 | `activity.test.ts:679-682` | `.caveat-line` count == clause count | **unaffected** — the 13F box keeps its six |
 | `post/fixture-preview.test.ts:70` | header carries no second 13F phrasing | still true after §8.3.1 |
 | `a5-table-css.test.ts`, `geometry/*.spec.ts` | header geometry | re-measure: `.col-why` leaving the `<th>` shortens every ranking header |
 
 **New tests worth having.** (a) every note emits `aria-describedby` and resolves to a populated panel; (b) a
-range change rewrites the window note's body, not only the window text (§4.6); (c) the empty-window state
-renders whenever a rollup has zero rankable rows; (d) a queued range applies on `receiveRows`; (e) the
-`position_key` join resolves over the previous **and** current period, with an exit-only fixture; (f) no
-surface renders a bare `sid:sec:prov:` or `cusip6:` token in visible text.
+range change rewrites the window note's body **and its visible summed total** together, not only the window
+text (§4.6); (c) the empty-window state renders whenever a rollup has zero **rankable** rows — counted through
+`rankNetRows(...).ranked.length`, never the raw rollup, or the block offers a switch that resolves to another
+empty table; (d) **corrected:** a range or basis click before the dataset arrives already applies, so what is
+tested is the **pending indicator** — it appears at click time and is cleared once the feed *settles*, on the
+failure path as well as the success one (R13/R29). A queue is explicitly forbidden, so there is no queue to
+test; (e) **removed** — the `position_key` join left this run with R21 and is recorded in
+`docs/build/RUN-FILER-IDENTITY-notes.md`; (f) no surface renders a bare `sid:sec:prov:` or `cusip6:` token in
+visible text, **with one named exemption**: the filer page's position-changes table, whose raw column is
+deferred with R21, expressed as a named selector rather than a relaxed pattern so the deferral is visible in
+the gate instead of hidden by it.
 
 ---
 
 ## 13 · Sequencing
 
-1. Pull `origin/main`; cut the worktree; add the six methodology anchors (§9) — everything links to them.
-2. `note()` + CSS + the print rule + the `@supports` fallback. Convert `.col-why` and the five `title=` sites.
-   Migrate the §12 assertions in the same commit.
-3. Congress: page head, build id, notes, **delete** the terminus and the exclusion line, fold the counts into
-   the window note.
+1. **Fetch, never pull** — `git fetch --prune origin`, record `git rev-parse origin/main`, cut the worktree
+   from that SHA (see the Precondition above; local `main` is divergent and the checkout is dirty, so `pull`
+   would attempt a merge in the owner's working tree). Add the six methodology anchors (§9) — everything links
+   to them.
+2. `note()` + CSS + the print rule + the `@supports` fallback. Convert `.col-why` and the **fifteen** `title=`
+   sites R8 changes (5 deleted, 10 converted); the other 17 are declared and left. Migrate the §12 assertions
+   in the same commit.
+3. Congress: page head, build id, notes, delete the exclusion line and fold the counts into the window note.
+   **The terminus deletion is blocked — see §4.5.**
 4. The two 7d defects (§5) — independent of the cosmetic work, and the only reader-visible *bugs* here.
 5. Institutional index: collapse the box, merge the control row, identity chips, notes.
 6. Member page (§7).

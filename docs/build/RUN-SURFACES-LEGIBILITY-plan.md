@@ -560,6 +560,7 @@ discovered by T13's own sweep:
 - `dashboard/test/sl-member.test.ts`
 - `dashboard/test/sl-filer.test.ts`
 - `dashboard/test/sl-propagation.test.ts`
+- `dashboard/test/sl-docs.test.ts`
 
 Modified — shared renderers:
 
