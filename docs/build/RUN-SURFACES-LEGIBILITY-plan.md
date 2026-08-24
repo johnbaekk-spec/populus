@@ -553,6 +553,14 @@ New:
 - `dashboard/test/sl-notes.test.ts`
 - `dashboard/test/sl-surfaces.test.ts`
 
+**ADDED AT IMPLEMENTATION, 2026-08-24 (T10, T11, T13).** The plan named no test file for the member page, the
+filer page or the propagation audit, so three more new files exist and are recorded here rather than
+discovered by T13's own sweep:
+
+- `dashboard/test/sl-member.test.ts`
+- `dashboard/test/sl-filer.test.ts`
+- `dashboard/test/sl-propagation.test.ts`
+
 Modified — shared renderers:
 
 - `dashboard/src/lib/format.ts`
@@ -610,6 +618,16 @@ line carries only its path so the manifest extraction stays exact.
 - `dashboard/test/m1-layout.test.ts`
 - `dashboard/test/r12-congress-behaviour.test.ts`
 - `dashboard/test/c3-member-v2.test.ts`
+
+**ADDED AT IMPLEMENTATION, 2026-08-24 (code-review F3, F4).** Two more files were edited and are recorded
+here, each with the reason, so the bundle stays traceable to its approved scope:
+
+- `dashboard/test/lib/fake-dom.ts` — gains `hasAttribute` and an optional selector map, so a test can drive the
+  real listeners an island binds through `document.querySelectorAll`. Absent selectors still answer with an
+  empty list, so every existing caller is unchanged.
+- `dashboard/test/holders-browser/holders.spec.ts` — carries the holders period-swap note test and the holders
+  touch-target sweep. The geometry lane previews `dist`, which builds no holders route, so this lane's fixture
+  envelope is the only served build where that surface exists.
 
 Why the four added after round 1, and what each is for:
 
