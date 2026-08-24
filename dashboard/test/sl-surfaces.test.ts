@@ -241,3 +241,83 @@ test("SL-R14: every range on both bases renders the block, and its counts come f
     }
   }
 });
+
+/* ----------------------------------------- T9 / SL-R16 R17 R18 (LD8 in css-fold) */
+
+test("SL-R16: the adds control is ONE labelled row, and the island's hooks are unchanged", async () => {
+  const { addsSectionHtml } = await import("../src/lib/ui.ts");
+  const html = addsSectionHtml(
+    {
+      period: "2026-03-31", generated_at: "2026-08-12", rows: [],
+      truncated: false, truncation_boundary: null, ambiguous_identity_exclusion_count: 0,
+    } as never,
+    { period: "2026-03-31", mode: "all", periods: ["2026-03-31", "2025-12-31"], buildId: "b" },
+  );
+  // Two stacked `.mgr-chips` groups became one `.control-row`, reusing
+  // `.range-control` rather than inventing a second control idiom.
+  assert.equal((html.match(/class="mgr-chips"/g) ?? []).length, 0, "no stacked chip groups left");
+  assert.match(html, /class="range-control control-row"/);
+  // The labels are VISIBLE now, not only aria-labels — a sighted reader met two
+  // unlabelled button rows and had to infer which axis each moved.
+  assert.match(html, /class="filter-label">Quarter</);
+  assert.match(html, /class="filter-label">Count</);
+  // and the island binds exactly what it bound before
+  assert.match(html, /id="inst-adds-controls"/);
+  assert.match(html, /data-adds-period="2026-03-31"/);
+  assert.match(html, /data-adds-mode="all"/);
+});
+
+test("SL-R17: raw issuer and position keys stop being visible text; `entity:` gets NO chip", async () => {
+  const { identityChipHtml, identityStrengthOf } = await import("../src/lib/format.ts");
+  const ctx = { scope: "t" };
+
+  // A resolved entity is the ordinary case and the strong one — chipping it
+  // would flag the absence of a problem.
+  assert.equal(identityStrengthOf("entity:0000320193"), "entity");
+  assert.equal(identityChipHtml("entity:0000320193", ctx, "k"), "", "no chip for a resolved entity");
+
+  for (const [key, label] of [
+    ["cusip6:464287", "issuer from CUSIP-6"],
+    ["name:apple-inc", "issuer from name"],
+    ["sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7", "provisional position id"],
+  ] as const) {
+    const chip = identityChipHtml(key, ctx, `k-${key}`);
+    assert.ok(chip.includes(label), `${key} renders a READABLE label`);
+    // nothing is lost: the raw key survives in the note AND in a data attribute
+    assert.ok(chip.includes(`data-identity-key="${key}"`), "the raw key persists as data");
+    assert.ok(chip.includes(`key as published: ${key}`), "and is reachable in the note");
+  }
+});
+
+test("SL-R17/SL-R26: the activity identity chip is keyed on the FULL composite, not the bare position_key", async () => {
+  const { activityRowHtml } = await import("../src/lib/activity.ts");
+  const base = {
+    cik: "0001", position_key: "sid:sec:prov:abc", ssh_prnamt_type: "SH",
+    issuer_name: "X", filer_name: "F", change_kind: "add", delta_value_usd: 1,
+    curr_period: "2026-03-31", filed_date: "2026-05-01", filed_from: "composition",
+    reporting_lag_days: 31, flags: [], filed_accession: null,
+  };
+  // `activity.test.ts:172` holds same-CIK, same-`position_key` rows separated
+  // only by PUT/CALL. A bare-key id collides on exactly this pair.
+  const html =
+    activityRowHtml({ ...base, put_call: "PUT" } as never) +
+    activityRowHtml({ ...base, put_call: "CALL" } as never);
+  assert.ok(!html.includes("> sid:sec:prov:abc<"), "the raw key is not printed as visible text");
+  const ids = [...html.matchAll(/popover id="([^"]+)"/g)].map((m) => m[1]!);
+  assert.equal(new Set(ids).size, ids.length, "PUT and CALL rows emit distinct panel ids");
+});
+
+test("SL-R18: the curated-typing caveat is a Type-column note carrying its N of M count", () => {
+  const page = readFileSync(new URL("../src/pages/institutional/index.astro", import.meta.url), "utf8");
+  // The paragraph is gone from the page surface…
+  assert.ok(
+    !/class="caveat-line">Manager type and display name/.test(page),
+    "the standalone caveat paragraph is gone",
+  );
+  // …and its text, WITH the live count, is the Type column's note.
+  assert.match(page, /const typeNote =[\s\S]{0,400}curated registry covering/);
+  assert.match(page, /fmtInt\(typedCount\)\} of \$\{fmtInt\(indexRows\.length\)\}/, "the N of M count travels with it");
+  assert.match(page, /h\.label === "Type" \? typeNote : null/, "anchored on the column it is about");
+  // the `<noscript>` stays VISIBLE: it is about scripting, not about a column
+  assert.match(page, /<noscript>Filtering by chip needs JavaScript/);
+});

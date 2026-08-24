@@ -1407,6 +1407,70 @@ export function fnMark(mark: string): string {
   return `<span class="fn-ref">${esc(mark)}</span>`;
 }
 
+/* ------------------------------------------------- SL-R17: identity chips */
+
+/** How strong an issuer/position identity actually is, read off the key's own
+    prefix. The producer publishes these prefixes; this only names them. */
+export type IdentityStrength = "entity" | "cusip6" | "name" | "provisional" | "unknown";
+
+export function identityStrengthOf(key: string): IdentityStrength {
+  if (key.startsWith("entity:")) return "entity";
+  if (key.startsWith("cusip6:")) return "cusip6";
+  if (key.startsWith("name:")) return "name";
+  if (key.startsWith("sid:sec:prov:")) return "provisional";
+  return "unknown";
+}
+
+/* Wording is REUSED from the flag registry above (`issuer_from_cusip6`,
+   `issuer_from_name`), not authored a second time for the same fact — a second
+   vocabulary for one identity is exactly the drift this repo keeps paying for. */
+const IDENTITY_CHIP: Record<Exclude<IdentityStrength, "entity">, { label: string; why: string }> = {
+  cusip6: {
+    label: "issuer from CUSIP-6",
+    why:
+      "this issuer is keyed by its CUSIP-6 issuer block, not by a resolved entity — a weaker " +
+      "claim: it groups the issuer's securities without asserting which company record they belong to",
+  },
+  name: {
+    label: "issuer from name",
+    why:
+      "this issuer is keyed by a normalized reported NAME — the weakest identity of the three, " +
+      "because two filers writing the same issuer differently are two keys, and one filer writing " +
+      "two issuers alike is one",
+  },
+  provisional: {
+    label: "provisional position id",
+    why:
+      "a provisional per-position identifier the producer assigns when a reported row resolves to " +
+      "no security and carries no usable CUSIP — it identifies the ROW, and asserts nothing about " +
+      "what was held",
+  },
+  unknown: {
+    label: "unrecognized key",
+    why: "this key carries no prefix this build recognises, so its identity strength is unknown",
+  },
+};
+
+/**
+ * SL-R17. A raw `cusip6:464287` or `sid:sec:prov:00076fbd…` printed as visible
+ * text tells a reader nothing they can act on and reads as machine spill. The
+ * chip states what the key IS in words; the raw key stays in the note and in a
+ * `data-` attribute, so nothing is lost and a copy/paste path survives.
+ *
+ * `entity:` renders NO chip: a resolved entity is the ordinary case and the
+ * strong one, and chipping it would flag the absence of a problem.
+ */
+export function identityChipHtml(key: string, ctx: NoteCtx, noteKey: string): string {
+  const strength = identityStrengthOf(key);
+  if (strength === "entity") return "";
+  const chip = IDENTITY_CHIP[strength];
+  return (
+    `<span class="id-chip" data-identity-key="${esc(key)}" data-identity-strength="${esc(strength)}">` +
+    `${esc(chip.label)}</span>` +
+    note(`${chip.why} · key as published: ${key}`, ctx, noteKey)
+  );
+}
+
 /* ---------- FootnoteBlock (G5) ---------- */
 
 export interface FootnoteEntry {

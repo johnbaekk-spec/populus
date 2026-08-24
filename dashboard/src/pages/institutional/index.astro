@@ -14,8 +14,9 @@ import {
   footnoteBlock,
   fmtInt,
   esc,
-  colWhyHtml,
   compactDisclosure,
+  noteBody,
+  noteFromHtml,
   terminusRow,
   COMPACT_ROWS,
 } from "../../lib/format";
@@ -75,9 +76,28 @@ if (!inst.present) {
      the key is the column's own sort key where it has one and its label where
      it does not — this mapper renders exactly once per page. */
   const headNotes = { scope: "inst-index" };
+  // SL-R18: declared HERE now, because the Type column's note reads it and the
+  // note renders above the chip row that used to be its only consumer.
+  const typedCount = indexRows.filter((r) => r.typing !== null).length;
+  /* SL-R18: the Type column's note carries BOTH its own unsortability reason
+     and the curated-coverage caveat with its live `N of M` count — the two
+     facts a reader needs at that column, in one place, instead of a paragraph
+     above the table repeating the second. */
+  const typeNote =
+    `Manager type and display name come from a curated registry covering ` +
+    `<strong>${fmtInt(typedCount)} of ${fmtInt(indexRows.length)}</strong> filers in this build. ` +
+    `The rest render the name exactly as filed and carry no type — that is a gap in the curation, ` +
+    `not a statement that the manager is uncategorised. Automatic classification across the full ` +
+    `filer population is future work.`;
+  // `h.why` is plain text and is escaped here; `typeNote` is pre-escaped html
+  // carrying the `<strong>` emphasis the deleted paragraph published.
+  const headNoteBody = (h: (typeof INST_INDEX_HEADS)[number]): string =>
+    noteBody(h.why ? esc(h.why) : null, h.label === "Type" ? typeNote : null);
   const heads = INST_INDEX_HEADS.map((h) =>
     h.key == null
-      ? `<th scope="col">${esc(h.label)}${colWhyHtml(h.why ?? "", headNotes, h.label)}</th>`
+      ? `<th scope="col">${esc(h.label)}${
+          headNoteBody(h) ? noteFromHtml(headNoteBody(h), headNotes, h.label) : ""
+        }</th>`
       : `<th scope="col" data-inst-sort="${h.key}" aria-sort="${h.key === "value" ? "descending" : "none"}"><button class="th-sort">${esc(h.label)}</button></th>`,
   ).join("");
 
@@ -107,7 +127,6 @@ if (!inst.present) {
   /* R11: the type chips. `Notable` is EDITORIAL and orthogonal — it renders
      beside the type chips but is not one of them, so selecting a type never
      hides a notable manager of that type. */
-  const typedCount = indexRows.filter((r) => r.typing !== null).length;
   const chipsHtml =
     `<div class="mgr-chips" id="mgr-chips" role="group" aria-label="Filter managers">` +
     `<button type="button" class="mgr-chip mgr-chip-notable" data-mgr-notable="1" aria-pressed="false">notable</button>` +
@@ -120,12 +139,12 @@ if (!inst.present) {
       )
       .join("") +
     `</div>` +
-    `<p class="caveat-line">Manager type and display name come from a curated registry covering ` +
-    `<strong>${fmtInt(typedCount)} of ${fmtInt(indexRows.length)}</strong> filers in this build. ` +
-    `The rest render the name exactly as filed and carry no type — that is a gap in the curation, ` +
-    `not a statement that the manager is uncategorised. Automatic classification across the full ` +
-    `filer population is future work.` +
-    `<noscript> Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
+    /* SL-R18: the curated-coverage caveat moves onto the Type column it is
+       about, carrying its `N of M` count with it — see `typeNote` below, which
+       is what `headNotes` renders. The `<noscript>` stays visible here, because
+       it is about scripting rather than about a column and no column note is
+       the right home for it. */
+    `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
   bodyHtml =
     breadcrumb([{ text: "/institutional" }]) +
     `<header class="entity-head"><div class="entity-head-copy">` +

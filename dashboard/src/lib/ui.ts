@@ -2182,10 +2182,19 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     `compact slice of this quarter — not the whole of it. The complete bounded payload for this ` +
     `quarter is published as JSON at <a href="${esc(addsPayloadHref(opts.period, opts.mode))}">` +
     `${esc(addsPayloadHref(opts.period, opts.mode))}</a>.</noscript></p>` +
-    `<div class="mgr-chips" id="inst-adds-controls" role="group" aria-label="Reporting quarter">` +
-    periodBtns +
+    /* SL-R16: two sibling `.mgr-chips` groups STACKED, each with only an
+       `aria-label` — so a sighted reader met two unlabelled rows of buttons and
+       had to infer which axis each one moved. They become ONE `.control-row`
+       with VISIBLE `Quarter` and `Count` labels, reusing `.range-control`'s
+       one-row idiom (`global.css`) rather than adding a second. The
+       `data-adds-period` / `data-adds-mode` hooks and the `#inst-adds-controls`
+       id are unchanged, so the island binds exactly what it bound before. */
+    `<div class="range-control control-row">` +
+    `<div class="filter-group" id="inst-adds-controls" role="group" aria-label="Reporting quarter">` +
+    `<span class="filter-label">Quarter</span><div class="chips">${periodBtns}</div></div>` +
+    `<div class="filter-group" role="group" aria-label="Which changes to count">` +
+    `<span class="filter-label">Count</span><div class="chips">${modeBtns}</div></div>` +
     `</div>` +
-    `<div class="mgr-chips" role="group" aria-label="Which changes to count">${modeBtns}</div>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">Issuers ranked by disclosed value added in the quarter ended ${esc(
       payload.period,

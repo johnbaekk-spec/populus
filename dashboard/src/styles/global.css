@@ -1428,6 +1428,17 @@ button {
   border-top: 1px solid var(--rule);
 }
 .caveat-inline { color: var(--ink3); }
+/* SL-R17: a readable identity chip in place of a raw key. Quiet, dashed like
+   the flag vocabulary it borrows its wording from — it is a qualifier on the
+   name beside it, never a claim of its own. */
+.id-chip {
+  font: 500 10.5px var(--sans);
+  color: var(--ink3);
+  border: 1px dashed var(--rule2);
+  padding: 0 5px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
 /* SL-R13: the momentum control's pending state. It is a STATEMENT, not a
    spinner — a spinner says "wait", this says what the control has and has not
    done yet. Tinted so it reads as a live claim rather than as chrome. */
@@ -2109,6 +2120,19 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   text-transform: uppercase;
   color: var(--ink3);
 }
+/* SL-R15/LD8: the summary carries the load-bearing claim, so it is a SENTENCE
+   and must read as one — not the uppercase micro-label the head was. It is not
+   letter-spaced, not uppercased and not muted, because this is now the honesty
+   channel that stands in for the always-open body. */
+.caveat-box-summary {
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font: 600 12.5px/1.6 var(--sans);
+  color: var(--ink2);
+  border-bottom: 0;
+}
+details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
 .caveat-box-body {
   padding: 12px 16px;
   font: 400 12.5px/1.8 var(--sans);
@@ -2694,6 +2718,18 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .flag-provenance::details-content {
     content-visibility: visible !important;
   }
+  /* SL-R15/LD8 point 2: the §5 box PRINTS OPEN. The paper channel is unchanged
+     by the collapse — a reader printing this page gets all six clauses whether
+     or not they opened the box first. `open` is forced by the same
+     `::details-content` mechanism B33 measured for `.flag-provenance`; the
+     `display` line beside it covers engines that hide the content the older
+     way. */
+  .caveat-box::details-content {
+    content-visibility: visible !important;
+  }
+  .caveat-box > .caveat-box-body {
+    display: block !important;
+  }
   .flag-provenance > .flag-raw {
     display: block !important;
   }
@@ -2848,6 +2884,24 @@ th[data-inst-sort] .th-sort {
   align-items: center;
   gap: 14px;
   margin: 10px 0 4px;
+}
+/* SL-R16: the adds control adopts the SAME one-row idiom. Its buttons are
+   `.chip`s rather than a `.seg`, so the chip row keeps its own spacing inside
+   the shared layout instead of a second control grammar being invented. */
+.control-row .chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The label is VISIBLE now, not only an aria-label — a sighted reader met two
+   unlabelled button rows and had to guess which axis each moved. */
+.control-row .filter-label {
+  font: 600 10.5px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-right: 8px;
 }
 
 /* R5: the stated reason an unsortable column carries. VISIBLE text, never a

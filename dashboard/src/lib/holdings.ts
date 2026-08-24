@@ -213,20 +213,49 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
   },
 ];
 
+/** SL-R15/LD8: the load-bearing claim, in the summary, in VISIBLE TEXT.
+
+    This string is the honesty channel that replaces the always-open body, and
+    it is asserted verbatim by `css-fold.test.ts`. A summary reading `Details`,
+    or the bare heading, FAILS the requirement — the whole justification for
+    taking ~400px of height back is that the claim a reader most needs is the
+    one that stays on the page. Do not shorten it. */
+export const INST_DATA_NOTE_SUMMARY =
+  "A 13F is a quarterly, long-only snapshot filed up to 45 days late — not current holdings.";
+
 /**
  * The §5 structural caveat as markup. Non-removable: every clause is a
  * `.caveat-line`, which the fold guard and the print block both protect, and the
  * block carries `data-inst-data-note` so a test can find it on any surface.
+ *
+ * SL-R15 / LD1 / LD8 — COLLAPSED, NEVER DELETED, AND PAID FOR IN THE OPEN.
+ *
+ * The owner asked for this box's removal. It is the M2-CONTRACT §5 structural
+ * caveat, pinned to `populus.normalize_inst.INST_DATA_NOTE` and asserted
+ * clause-by-clause on every built institutional page, so deleting it would
+ * break a published contract. LD1 collapses it instead: identical DOM,
+ * identical element id, identical six `data-note-clause` ids, identical six
+ * `.caveat-line` classes, identical print behaviour.
+ *
+ * LD8 is the part LD1 did not say. Collapsing HIDES ALL SIX CLAUSES BY DEFAULT
+ * AT EVERY WIDTH, which is exactly the state `css-fold.test.ts`'s never-fold
+ * guard forbade — and, verified, that guard could not have seen it: `droppedAt`
+ * matches PROJECT CSS RULES against class names, while a collapsed `<details>`
+ * is hidden by the USER AGENT's own default. The box would have shipped with
+ * the guard green and every clause hidden. So the guard is replaced, in the
+ * same commit, by a behavioural contract, and the height is paid for by the
+ * `<summary>` carrying the claim in visible text at every width.
  */
 export function institutionalDataNoteHtml(): string {
   return (
-    `<section class="caveat-box" id="inst-data-note" data-inst-data-note aria-label="What a 13F is and is not">` +
-    `<div class="caveat-box-head">What a 13F is — and is not</div>` +
+    `<details class="caveat-box" id="inst-data-note" data-inst-data-note aria-label="What a 13F is and is not">` +
+    `<summary class="caveat-box-head caveat-box-summary">${esc(INST_DATA_NOTE_SUMMARY)} ` +
+    `<a href="/methodology/#13f-scope">what a 13F covers ↗</a></summary>` +
     `<div class="caveat-box-body">` +
     INSTITUTIONAL_DATA_NOTE_CLAUSES.map(
       (c) => `<p class="caveat-line" data-note-clause="${esc(c.id)}">${esc(c.text)}</p>`,
     ).join("") +
-    `</div></section>`
+    `</div></details>`
   );
 }
 

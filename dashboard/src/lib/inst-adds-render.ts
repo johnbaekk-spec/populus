@@ -3,7 +3,7 @@
    the island imports it dynamically and `ui.ts` pulls in the whole rendering
    surface. */
 
-import { esc, fmtInt, fmtUsd, note } from "./format.ts";
+import { esc, fmtInt, fmtUsd, identityChipHtml, note } from "./format.ts";
 import type { AddsRow } from "./inst-adds.ts";
 
 /** One leaderboard row. Every metric is that row's OWN mode — the payload is
@@ -43,7 +43,12 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
       : esc(r.top_adder_name ?? `CIK ${r.top_adder_cik}`);
   return (
     `<tr><td class="c-num c-muted">${fmtInt(pos)}</td>` +
-    `<td class="c-issuer">${name}<span class="mono-note"> ${esc(r.issuer_key)}</span></td>` +
+    /* SL-R17: the raw issuer key (`cusip6:464287`) stops being visible text.
+       The chip says what the key IS; the key itself lives in the note and in
+       `data-identity-key`, so nothing is lost and it stays copyable. An
+       `entity:` key renders no chip at all — a resolved entity is the ordinary
+       case, and marking it would flag the absence of a problem. */
+    `<td class="c-issuer">${name}${identityChipHtml(r.issuer_key, ctx, `${rowKey}-identity`)}</td>` +
     `<td class="c-num">${fmtInt(r.manager_count)}</td>` +
     `<td class="c-num">${fmtInt(r.new_position_count)}</td>` +
     `<td class="c-num c-strong">${value}</td>` +

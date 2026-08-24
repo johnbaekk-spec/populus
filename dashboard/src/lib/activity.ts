@@ -51,6 +51,7 @@ import {
   fmtInt,
   fmtUsd,
   fnMark,
+  identityChipHtml,
   note,
   noteBody,
   noteFromHtml,
@@ -756,15 +757,27 @@ function lagCell(r: ActivityFeedRecord): string {
   return `<span class="lag">+${esc(String(lag))}d<span class="visually-hidden"> after quarter end</span></span>`;
 }
 
+/* SL-R17. Every row printed its raw 32-character `position_key`
+   (`sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7`) as visible text beside the
+   issuer name — machine spill a reader cannot act on. It becomes a chip that
+   says what the key is, with the key itself in the chip's note and in
+   `data-identity-key`, so it stays readable and copyable.
+
+   The note key is the FULL activity composite, never the bare `position_key`:
+   `activity.test.ts:172` holds same-CIK, same-`position_key` rows separated
+   only by PUT/CALL, so a bare key would emit duplicate panel ids and ambiguous
+   `aria-describedby` targets (SL-R26). */
 function issuerCell(r: ActivityFeedRecord): string {
+  const chip = identityChipHtml(
+    r.position_key,
+    { scope: "activity-identity" },
+    `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}-identity`,
+  );
   if (r.issuer_name && r.issuer_name.trim() !== "") {
     /* filed verbatim off the 13F — see `filed-name` in holdings.ts */
-    return `<span class="filed-name">${esc(r.issuer_name)}</span><span class="mono-note"> ${esc(r.position_key)}</span>`;
+    return `<span class="filed-name">${esc(r.issuer_name)}</span>${chip}`;
   }
-  return (
-    `<span class="none">issuer not identified in this build</span>` +
-    `<span class="mono-note"> ${esc(r.position_key)}</span>`
-  );
+  return `<span class="none">issuer not identified in this build</span>${chip}`;
 }
 
 function filedCell(r: ActivityFeedRecord): string {
