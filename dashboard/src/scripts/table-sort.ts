@@ -25,7 +25,11 @@ export interface SortState {
 export interface SortHeaderEl {
   getAttribute(name: string): string | null;
   setAttribute(name: string, value: string): void;
-  addEventListener(type: "click", listener: () => void): void;
+  /* SL-R25: the listener now receives the event so it can ignore clicks that
+     originated inside a `.note-btn`. Typed as an optional structural argument
+     rather than the DOM `Event`, so the fake-DOM tests that satisfy this
+     interface keep working and can dispatch a bare `{ target }`. */
+  addEventListener(type: "click", listener: (ev?: { target?: unknown }) => void): void;
 }
 
 export interface SortRootEl {
@@ -83,7 +87,20 @@ export function initSortableTable(options: SortableTableOptions): () => void {
   for (const th of headers) {
     const key = keyOf(th);
     if (key === undefined) continue;
-    th.addEventListener("click", () => {
+    th.addEventListener("click", (ev?: { target?: unknown }) => {
+      /* SL-R25: a note button lives inside this <th>, and this listener is on
+         the <th> itself with no target check — so activating a note would sort
+         the table. The guard belongs HERE and not in the note's own handler:
+         delegated on document it runs AFTER this listener in the bubble phase
+         (too late), and in the capture phase it would stop the event before the
+         button received it, breaking popovertarget and with it the
+         no-JavaScript open path. This placement is correct in both phases. */
+      /* The event is OPTIONAL: the fake-DOM doubles in this repo's tests call
+         the listener bare, and a real browser always supplies it. Absent event
+         or absent target means "not a note click", which is the safe default —
+         the sort proceeds exactly as it did before SL-R25. */
+      const t = ev?.target as { closest?: (sel: string) => unknown } | undefined;
+      if (t && typeof t.closest === "function" && t.closest(".note-btn")) return;
       if (key === state.key) {
         state.dir = state.dir === "desc" ? "asc" : "desc";
       } else {

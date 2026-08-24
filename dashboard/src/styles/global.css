@@ -2917,3 +2917,123 @@ th[data-inst-sort] .th-sort {
 tbody[data-collapsed="true"] tr[data-compact-extra] {
   display: none;
 }
+
+/* ==================================================== notes (SL-R2 … SL-R4)
+
+   One explanation primitive. The panel uses the TOP LAYER via `popover`,
+   because a panel positioned inside `.table-scroll { overflow-x: auto }` is
+   clipped by the scroll container and the last column's note is unreachable —
+   measured, not assumed. */
+
+.note {
+  display: inline-block;
+  position: relative;
+  vertical-align: baseline;
+}
+
+/* >= 44px hit target at every width (SL-R24). The visual dot is smaller than
+   the tappable box: padding carries the target, so the glyph can stay quiet. */
+.note-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: help;
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 1;
+  color: var(--muted, #667);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.35em;
+  margin: -14px -0.1em;
+  border-radius: 999px;
+}
+
+.note-btn:hover,
+.note-btn:focus-visible {
+  color: var(--fg, #111);
+  text-decoration: underline dotted;
+}
+
+.note-pop {
+  position: fixed;
+  margin: 0;
+  inset: auto;
+  max-width: min(38ch, calc(100vw - 2rem));
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--rule, #ccc);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  color: var(--fg, #111);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
+}
+
+/* Under 720px a panel that tries to sit beside its anchor has nowhere to go. */
+@media (max-width: 719px) {
+  .note-pop {
+    max-width: calc(100vw - 1.5rem);
+  }
+}
+
+/* --- the non-supporting-engine fallback (SL-R3), and its test seam (SL-R27).
+
+   The declarations are authored ONCE and emitted into two selectors: the real
+   `@supports not` block, and a `:root.force-note-fallback` block a test can
+   switch on. The gate installs only Chromium, which has supported `popover`
+   since v114, so the real block can never be entered by the browser tests —
+   without the seam this fallback could be entirely broken and stay green. A
+   unit test asserts the two blocks carry byte-identical declarations, so the
+   seam cannot drift from the thing it stands for.
+
+   Note it opens on :hover and :focus-within in CSS ALONE — no script runs on
+   this path, which is what makes the no-JavaScript claim true on every engine. */
+@supports not selector(:popover-open) {
+  .note-pop {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+  }
+  .note:hover .note-pop,
+  .note:focus-within .note-pop {
+    display: block;
+  }
+}
+
+:root.force-note-fallback .note-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+}
+:root.force-note-fallback .note:hover .note-pop,
+:root.force-note-fallback .note:focus-within .note-pop {
+  display: block;
+}
+
+/* --- print (SL-R4). Hover-only text must still reach paper: every panel is
+   laid out in NORMAL FLOW beneath its anchor and the button is hidden. This is
+   asserted by rendering under emulated print media and measuring a non-zero
+   box, not by grepping for this rule. */
+@media print {
+  .note-btn {
+    display: none;
+  }
+  .note-pop {
+    display: block !important;
+    position: static !important;
+    transform: none !important;
+    max-width: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0.15rem 0 0.15rem 1rem;
+    font-size: 0.8rem;
+    color: var(--muted, #444);
+  }
+}

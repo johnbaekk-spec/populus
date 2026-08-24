@@ -109,7 +109,13 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
   for (const label of ["Member", "Txns", "Purch.", "Sales", "Gross purchases", "Gross sales", "Net disclosed flow", "Late"]) {
     assert.ok(html.includes(label), `the "${label}" header must survive collapse`);
   }
-  assert.match(html, /<span class="col-why">/);
+  /* RETARGETED by RUN SURFACES-LEGIBILITY (SL-R5/SL-R2b), same commit as the
+     change that invalidated it. The property is UNCHANGED — an unsortable
+     column must still state why it cannot be sorted — but the channel moved
+     from a `.col-why` span to a note panel, which is reachable by touch,
+     keyboard and print as the span was not. Asserting the TEXT, not the
+     wrapper, is what keeps this a guard rather than a spelling check. */
+  assert.match(html, /class="note-pop"/);
   // the caveat line and BOTH exclusion clauses
   assert.match(html, /class="caveat-line"/);
   assert.match(html, /date-anomaly row excluded from the trade-date window/);
@@ -162,7 +168,10 @@ test("R19: no honesty element is rendered INSIDE a collapsible root", () => {
   const html = membersSection(corpus(25), 5);
   const at = html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}">`);
   const body = html.slice(at, html.indexOf("</tbody>", at));
-  for (const sel of ["caveat-line", "terminus", "footnotes-stacked", "compact-disclosure", "col-why"]) {
+  /* SL-R5: `col-why` -> `note-pop`; the enumerated honesty element is the
+     explanation itself, and it is still in the tree — now in a channel a touch
+     user can actually open. */
+  for (const sel of ["caveat-line", "terminus", "footnotes-stacked", "compact-disclosure", "note-pop"]) {
     assert.ok(!body.includes(sel), `"${sel}" must live outside the collapsible root, not inside it`);
   }
   // Footnote MARKERS legitimately sit on rows — a marker belongs to the row it

@@ -175,7 +175,13 @@ test("F3: every well-defined leaderboard column is sortable and the rest states 
   for (const k of ["issuer", "managers", "new", "value", "adder"]) {
     assert.ok(html.includes(`data-adds-sort="${k}"`), `${k} must be sortable`);
   }
-  assert.match(html, /<span class="col-why">the rank number is produced by the active sort/);
+  /* RETARGETED by RUN SURFACES-LEGIBILITY (SL-R5/SL-R2b), same commit as the
+     change that invalidated it. The property is UNCHANGED — an unsortable
+     column must still state why it cannot be sorted — but the channel moved
+     from a `.col-why` span to a note panel, which is reachable by touch,
+     keyboard and print as the span was not. Asserting the TEXT, not the
+     wrapper, is what keeps this a guard rather than a spelling check. */
+  assert.match(html, /class="note-pop"[^>]*>the rank number is produced by the active sort/);
 });
 
 /* ---------- F13/F14: one pipeline, displayed-name ordering ---------- */

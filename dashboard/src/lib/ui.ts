@@ -11,7 +11,9 @@ import {
   type RenderCtx,
   type StatTile,
   type FootnoteEntry,
+  type NoteCtx,
   assetNameCell,
+  colWhyHtml,
   esc,
   fmtInt,
   fmtUsd,
@@ -1549,13 +1551,18 @@ export interface RankingSectionOpts {
     button; an unsortable one carries its stated reason as visible text, not a
     title attribute — a tooltip is not a channel this site treats as published.
     `aria-sort` starts on the column the server actually ordered by. */
-function rankingHeadHtml(cols: CongressColumn[], active: CongressSortKey, dir: "asc" | "desc"): string {
+function rankingHeadHtml(
+  cols: CongressColumn[],
+  active: CongressSortKey,
+  dir: "asc" | "desc",
+  notes: NoteCtx,
+): string {
   return cols
     .map((c) => {
       if (!c.sortable) {
         return (
           `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${esc(c.label)}` +
-          `<span class="col-why">${esc(c.why)}</span></th>`
+          colWhyHtml(c.why, notes, c.key ?? c.label) + `</th>`
         );
       }
       const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
@@ -1762,7 +1769,7 @@ export function congressRankingSection(
     `<noscript> Sorting by column header needs JavaScript; the order below is by net disclosed flow, largest first.</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${rankingHeadHtml(cols, "net", "desc")}</tr></thead>` +
+    `<thead><tr>${rankingHeadHtml(cols, "net", "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
     // The terminus row states the bound in BOTH states — it is not a
     // consequence of collapsing, it is the fact that the table is bounded.
@@ -1786,7 +1793,7 @@ export function congressRankingSection(
         `to the bottom as if small, and never merged into it by any sort.</p>` +
         `<div class="table-scroll"><table class="etable">` +
         `<caption class="visually-hidden">Unrankable ${esc(noun)} — amounts wholly undisclosed</caption>` +
-        `<thead><tr>${rankingHeadHtml(cols, "name", "asc")}</tr></thead>` +
+        `<thead><tr>${rankingHeadHtml(cols, "name", "asc", { scope: `undisc-${opts.sectionId}` })}</tr></thead>` +
         `<tbody id="${esc(opts.undisclosedRootId)}">${bucket.html}</tbody></table></div>` +
         (bucket.total > bucket.shown
           ? terminusRow({
@@ -1868,13 +1875,18 @@ export function addsColumns(): CongressColumn[] {
   ];
 }
 
-function addsHeadHtml(cols: CongressColumn[], active: string, dir: "asc" | "desc"): string {
+function addsHeadHtml(
+  cols: CongressColumn[],
+  active: string,
+  dir: "asc" | "desc",
+  notes: NoteCtx,
+): string {
   return cols
     .map((c) => {
       if (!c.sortable) {
         return (
           `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${esc(c.label)}` +
-          `<span class="col-why">${esc(c.why)}</span></th>`
+          colWhyHtml(c.why, notes, c.key ?? c.label) + `</th>`
         );
       }
       const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
@@ -1952,7 +1964,7 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     `<caption class="visually-hidden">Issuers ranked by disclosed value added in the quarter ended ${esc(
       payload.period,
     )}</caption>` +
-    `<thead><tr>${addsHeadHtml(cols, "value", "desc")}</tr></thead>` +
+    `<thead><tr>${addsHeadHtml(cols, "value", "desc", { scope: "inst-adds" })}</tr></thead>` +
     `<tbody id="inst-adds-tbody">${rows}</tbody></table></div>` +
     /* R19/F6: the NAMED bound beside the compact table. The congress ranking
        sections have carried this since R19 was written; the leaderboard and

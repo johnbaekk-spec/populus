@@ -263,7 +263,7 @@ const description =
              shows the same nine cells through the same `feedItemHtml`. The
              watchlist had no <thead> at all; a second hand-written copy here
              would be the drift that caused it. -->
-        <Fragment set:html={feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc" })} />
+        <Fragment set:html={feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } })} />
 
 
         <tbody id="feed-tbody" set:html={rowsHtml} />

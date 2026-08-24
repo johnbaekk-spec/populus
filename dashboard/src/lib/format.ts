@@ -166,6 +166,91 @@ export function esc(s: string): string {
     .replaceAll("'", "&#39;");
 }
 
+/* ============================================================ notes (SL-R2)
+
+   ONE explanation primitive for the reader-facing surfaces. It replaces the
+   `title=` channel, which cannot be opened by touch, cannot be styled, and is
+   announced inconsistently — `rankingHeadHtml`'s own comment already said a
+   tooltip "is not a channel this site treats as published", while five sites
+   used one anyway.
+
+   THE ID IS A PURE FUNCTION OF ITS ARGUMENTS (SL-R2, SL-R26). No counter, no
+   ordinal, no module state, no Math.random(), no timestamp. Server and client
+   must emit identical bytes for a given row set (Constraint 5), and any of
+   those would break that the moment a root re-renders. `scope` names the table
+   or section; `key` is a stable per-row or per-column identity the CALLER
+   already holds — a renderer never invents one.
+
+   OPT-IN (SL-R2b). Renderers take an optional NoteCtx. Called WITHOUT one they
+   emit exactly what they emit on origin/main, byte for byte, because several of
+   them also render on routes this run does not own (/tickers/*, /watchlist/,
+   /e/). A note appears only where a caller asked for one. */
+
+export interface NoteCtx {
+  /** Table or section identity, e.g. "filer-changes". Unique per rendered table. */
+  scope: string;
+}
+
+/** Lowercase, and every run of non-[a-z0-9] becomes a single "-", so any caller
+    key is legal in an id without a lookup table. Deliberately NOT reversible:
+    uniqueness comes from the caller's key already being a row/column identity. */
+export function slug(key: string): string {
+  const s = key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (s) return s;
+  /* A key of entirely non-alphanumeric characters slugs to "" — the ranking
+     tables' "#" column is exactly this — which would emit `n-<scope>-` for
+     EVERY such column and collide them. Fall back to a deterministic encoding
+     of the code points, so the id stays a pure function of the key and stays
+     unique. Found by c4-rankings.test.ts, not by inspection. */
+  return "c" + [...key].map((ch) => ch.codePointAt(0)!.toString(36)).join("");
+}
+
+export function noteId(scope: string, key: string): string {
+  return `n-${slug(scope)}-${slug(key)}`;
+}
+
+/**
+ * An inline anchor button plus its panel.
+ *
+ * The button carries `popovertarget`, which is the HTML-standard declarative
+ * association that shows/hides a popover WITH NO JAVASCRIPT. That is the
+ * primary open path; `initNotes()` only adds placement, hover, Escape and
+ * outside-click on top. There is no configuration in which the text is
+ * unreachable with scripting disabled.
+ *
+ * The panel is a real element, so it is DOM, it is referenced by
+ * `aria-describedby`, and the print stylesheet can lay it out in flow.
+ */
+export function note(text: string, ctx: NoteCtx, key: string, opts: { label?: string } = {}): string {
+  const id = noteId(ctx.scope, key);
+  const label = opts.label ?? "explain";
+  return (
+    `<span class="note">` +
+    `<button type="button" class="note-btn" popovertarget="${esc(id)}"` +
+    ` aria-describedby="${esc(id)}" aria-label="${esc(label)}">i</button>` +
+    `<span class="note-pop" popover id="${esc(id)}" role="note">${esc(text)}</span>` +
+    `</span>`
+  );
+}
+
+/**
+ * SL-R5 / SL-R2b: the column-explanation channel, opt-in.
+ *
+ * WITH a NoteCtx the `why` text becomes a note anchored on the header.
+ * WITHOUT one it emits the `.col-why` span byte-for-byte as `origin/main`
+ * does — because `feedHeadHtml` renders on `/congress/` (in scope) AND
+ * `/watchlist/` (not in scope), so this cannot be an unconditional swap.
+ * That is the whole point of the opt-in contract: the out-of-scope route is
+ * untouched by construction, not by remembering to exclude it.
+ */
+export function colWhyHtml(why: string, ctx: NoteCtx | undefined, key: string): string {
+  if (!why) return "";
+  return ctx ? note(why, ctx, key) : `<span class="col-why">${esc(why)}</span>`;
+}
+
 export function fmtInt(n: number): string {
   return n.toLocaleString("en-US");
 }
@@ -1058,6 +1143,9 @@ export const FEED_COLUMNS: readonly FeedColumn[] = [
 ];
 
 export interface FeedHeadOpts {
+  /** SL-R2b: opt-in. Present -> column explanations render as notes. Absent ->
+      `.col-why` exactly as today, which is what `/watchlist/` relies on. */
+  notes?: NoteCtx;
   /** false on a surface with no sort control; the two orderable columns then
       state `whyUnsorted` instead of carrying a dead header button */
   sortable: boolean;
@@ -1090,7 +1178,7 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
     const why = c.sortKey ? (opts.whyUnsorted ?? "") : (c.why ?? "");
     return (
       `<th scope="col"${cls}>${esc(c.label)}` +
-      (why ? `<span class="col-why">${esc(why)}</span>` : "") +
+      colWhyHtml(why, opts.notes, c.sortKey ?? c.label) +
       `</th>`
     );
   }).join("");
