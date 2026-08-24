@@ -171,7 +171,11 @@ function quarterSummary(q: { q: string; buy: SumRanges; sell: SumRanges }): stri
     count-based caption. `twoSided` puts sales below the axis (deep ticker). */
 export function flowRibbon(
   flow: QuarterlyFlowResult,
-  opts: { twoSided: boolean; sourceLine: string },
+  /* SL-R20 / SL-R2b: `notes` is OPTIONAL and only the member page passes one.
+     The other caller is the deep ticker page (`ui.ts` `tickerUnifiedBody`),
+     which this run does not own, so without a scope this renderer emits the
+     visible `.rb-caption` byte-for-byte as before. */
+  opts: { twoSided: boolean; sourceLine: string; notes?: NoteCtx },
 ): string {
   const axisMax = ribbonAxisMax(flow.quarters.flatMap((q) => [q.buy, q.sell]));
   const cols = flow.quarters
@@ -226,7 +230,16 @@ export function flowRibbon(
     `<div class="ribbon${opts.twoSided ? " ribbon-two" : ""}">` +
     `<div class="rb-track">${cols}</div>` +
     `<div class="rb-labels">${labels}</div>` +
-    `<div class="rb-caption">${esc(caption)}</div>` +
+    /* SL-R20: the caption is a DEFINITION — how the chart is drawn, what the
+       hatching means, what is excluded — so it moves into a note anchored on
+       the chart, with the marker left visible as its cue (LD3). The
+       accessibility summary below is untouched: it is the chart's data, not its
+       method, and it was never the channel this requirement moves. */
+    (opts.notes
+      ? `<div class="rb-caption rb-caption-note"><span class="src-derived">how this chart is drawn&nbsp;·§</span>` +
+        note(caption, opts.notes, "chart-method") +
+        `</div>`
+      : `<div class="rb-caption">${esc(caption)}</div>`) +
     `<p class="visually-hidden">Disclosed flow by quarter. ${esc(summary)}</p>` +
     `</div>`
   );
@@ -250,7 +263,29 @@ export interface EntityTableOpts {
   caption: string;
   page: number;
   ctx: RenderCtx;
+  /* SL-R19 / SL-R2b: OPT-IN. This renderer has three call sites — the member
+     page (in scope) and two `/tickers/*` bodies (not). Without a scope its
+     `<thead>` is byte-identical to the pre-run output, so the ticker pages are
+     untouched; with one, the `Side · Owner` header carries the owner-code
+     explanation the member page's `.entity-lede` used to print as a paragraph.
+
+     SL-R7b: this is a FIFTH key-less table variant, which no revision of the
+     plan enumerated — its `<thead>` is a literal with no sort or data key, so
+     the descriptor is supplied here rather than invented at render time
+     (SL-R26). Recorded as a deviation; the plan named four. */
+  notes?: NoteCtx;
 }
+
+/* SL-R19: the owner-code explanation, in ONE place in this module. The full
+   text also lives at `/methodology/#owner-codes`, which T1 populated by moving
+   it off this page — the note carries it too because a reader looking at an
+   `SP` badge inside a table should not have to leave the table to learn what it
+   means, and §7 forbids softening text on the way to a new channel. The deep
+   link is what makes the two the same statement rather than two wordings. */
+const OWNER_CODE_NOTE =
+  `Filings under this member include transactions by spouse (SP), dependent children (DC), and ` +
+  `joint accounts (JT) — the STOCK Act does not distinguish who directed a trade. ` +
+  `<a href="/methodology/#owner-codes">Owner codes ↗</a>`;
 
 function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = []): string {
   const side = sideLabel(r.side, r.flags);
@@ -335,6 +370,14 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
     opts.kind === "member"
       ? ["Filed ▾", "Ticker", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"]
       : ["Filed ▾", "Member", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"];
+  /* SL-R19. Only `Side · Owner` carries a note, and only when a scope is
+     passed. Deliberately not every column: this run moves the strings that WERE
+     on the page, and inventing an explanation for six columns that never had
+     one would be new copy, not a relocation. */
+  const headNote = (label: string): string =>
+    opts.notes && label === "Side · Owner"
+      ? noteFromHtml(OWNER_CODE_NOTE, opts.notes, "side-owner")
+      : "";
   const count = entityTableCountText(opts.page, pageRows.length, txns.length);
   return (
     universalFlagNote(stated) +
@@ -345,7 +388,9 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
        one case the gate cannot judge from HTML. */
     `${pages > 1 ? ' data-paged="1"' : ""} data-stated-flags="${esc(stated.join(","))}">` +
     `<caption class="visually-hidden">${esc(opts.caption)}</caption>` +
-    `<thead><tr>${heads.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead>` +
+    `<thead><tr>${heads
+      .map((h) => `<th scope="col">${esc(h)}${headNote(h)}</th>`)
+      .join("")}</tr></thead>` +
     `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx, stated)}</tbody>` +
     `</table></div>` +
     `<div class="table-foot">` +
@@ -474,17 +519,45 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       partyWord ? `${partyWord} — ${aff}` : aff,
     )}</span> · ${esc(chamberWord)}${
       m.servingSince ? ` · serving since ${esc(m.servingSince)}` : ""
-    } · <span class="mono-id">bioguide ${esc(m.bioguide)}</span></div>` +
-    `<p class="entity-lede">Filings under this member include transactions by spouse (SP), dependent children (DC), and joint accounts (JT) — the STOCK Act does not distinguish who directed a trade. Amounts are statutory ranges; totals below are therefore ranges too.</p>` +
+    } · <span class="mono-id">bioguide ${esc(m.bioguide)}</span>` +
+    /* SL-R19: the identity `.entity-lede` paragraph is gone from the page
+       surface and its two claims are notes on the things they are about.
+
+       The RANGES claim is a property of every total on this page, so it
+       anchors on the stamp line beside the identity it qualifies. The
+       OWNER-CODE claim is a property of one column, so it anchors on that
+       column's header (see `entityTxnTable`) — anchoring both here would put an
+       explanation of the `SP` badge three panels above the badge.
+
+       Neither is softened and neither is lost: both open declaratively with no
+       JavaScript, both print, and the owner-code text additionally has its own
+       methodology anchor, which T1 populated by moving it off this page. */
+    noteFromHtml(
+      `Amounts are statutory ranges; totals on this page are therefore ranges too. ` +
+        `<a href="/methodology/#amount-ranges">Amount ranges ↗</a>`,
+      { scope: "member-stamp" },
+      "statutory-ranges",
+    ) +
     `</div>` +
-    statTiles(memberStatTiles(m, stamps), { label: "Member disclosure statistics", compact: true }) +
+    `</div>` +
+    statTiles(memberStatTiles(m, stamps), {
+      label: "Member disclosure statistics",
+      compact: true,
+      // SL-R19/SL-R26: the tile LABEL is the key — one tile per label here.
+      notes: { scope: "member-tiles" },
+    }) +
     `</header>` +
     `<div class="entity-grid">` +
     `<section class="panel" aria-labelledby="flow-h">` +
     `<div class="panel-head"><h2 id="flow-h" class="section-h">Disclosed flow by quarter</h2>` +
     `<span class="panel-note">bar = [min, max] of bucket sums · <span class="src-derived">derived&nbsp;·§</span>` +
     noteFromHtml(MEMBER_FLOW_NOTE, { scope: "member-flow" }, "derived") + `</span></div>` +
-    flowRibbon(flow, { twoSided: false, sourceLine: "source: House Clerk + Senate eFD" }) +
+    // SL-R20: the chart's `.rb-caption` becomes a note on the chart.
+    flowRibbon(flow, {
+      twoSided: false,
+      sourceLine: "source: House Clerk + Senate eFD",
+      notes: { scope: "member-chart" },
+    }) +
     `</section>` +
     `<section class="panel" aria-labelledby="top-h">` +
     `<div class="panel-head"><h2 id="top-h" class="section-h">Most-disclosed tickers</h2><span class="panel-note">trailing 24m</span></div>` +
@@ -499,6 +572,9 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       caption: `All disclosed transactions for ${m.name}`,
       page,
       ctx,
+      // SL-R19: the owner-code half of the deleted `.entity-lede`, on the
+      // column it is about. The two `/tickers/*` callers pass nothing (R2b).
+      notes: { scope: "member-txns" },
     }) +
     `</section>` +
     memberPaperBlock(m)
@@ -2399,9 +2475,22 @@ export function memberV2Sections(
               undisclosedBucket.map((r) => netRowHtml(r, false)).join("\n")
             : ""
         }</tbody></table></div>` +
-        `<div class="card-foot">PTRs are flows, not holdings — this table nets disclosed flow intervals; it is NOT a portfolio and cannot become one without the member's annual FD report${
-          noTickerRows > 0 ? ` · ${fmtInt(noTickerRows)} rows disclose no ticker and are outside this table` : ""
-        }</div>`;
+        "";
+  /* SL-R20: the net-flow card's `.card-foot` is a DEFINITION of what the table
+     is and is not, so it becomes a note. It is composed here rather than inside
+     the branch above because the panel head that anchors it is assembled below,
+     and the string must be identical on both sides — one composition, one
+     text, no chance of the anchor and the table disagreeing.
+
+     The row-exclusion clause travels WITH it: `noTickerRows` is a count of what
+     the reader cannot see in this table, and separating it from the sentence
+     that explains the table's scope is how a count loses its meaning. */
+  const netFootNote =
+    `PTRs are flows, not holdings — this table nets disclosed flow intervals; it is NOT a portfolio ` +
+    `and cannot become one without the member's annual FD report` +
+    (noTickerRows > 0
+      ? ` · ${fmtInt(noTickerRows)} rows disclose no ticker and are outside this table`
+      : "");
 
   /* --- largest recent disclosures (F-12: rank by lower bound) --- */
   const recent = notableRecent(m.txns, stamps.generatedAtDate, 90, 5);
@@ -2532,6 +2621,10 @@ export function memberV2Sections(
     `<div class="entity-grid">` +
     `<section class="panel" aria-label="Net disclosed flow by ticker">` +
     `<div class="panel-head"><h2 class="section-h">Net disclosed flow by ticker</h2>` +
+    // SL-R20: the card-foot's text, anchored on the panel it qualifies.
+    `<span class="panel-note"><span class="src-derived">flows, not holdings&nbsp;·§</span>` +
+    note(netFootNote, { scope: "member-netflow" }, "scope") +
+    `</span>` +
     `<span class="panel-note">interval subtraction · open bounds propagate</span></div>` +
     netTable +
     `</section>` +
@@ -2746,7 +2839,20 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, c
     .slice(0, 10)
     .map(
       (s) =>
-        `<tr><td>${esc(SIGNAL_KIND_LABELS[s.kind])}<div class="signal-rule-inline">${esc(s.rule)}</div></td>` +
+        /* SL-R20 / SL-R26: the EXACT rule moves from an inline block under the
+           kind label into a note on the row's KIND CELL — per row, never one
+           note on the shared Kind header, because `signals.ts` composes one
+           rule per kind (`computeS1` … ) and this panel renders up to ten rows
+           in which the same kind may appear several times; a single header note
+           cannot carry several distinct rules at once.
+
+           The key is `s.id` — the stable per-signal hash from
+           `signalId(kind, identity)` (`signals.ts`) — and NEVER the kind, for
+           the same reason: a kind-keyed id emits duplicate panel ids and
+           `aria-describedby` targets that address the wrong rule. The rule is
+           not softened, shrunk or lost: it is real DOM, it opens with no
+           JavaScript, and it prints (R4). */
+        `<tr><td>${esc(SIGNAL_KIND_LABELS[s.kind])}${note(s.rule, { scope: "member-signals" }, s.id)}</td>` +
         `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
         `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
         `<td class="c-src">${srcLink(s.receipts[0] ?? "")}</td></tr>`,

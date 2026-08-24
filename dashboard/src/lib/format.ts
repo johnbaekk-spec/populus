@@ -1506,7 +1506,13 @@ export function footnoteBlock(
     breakdown in the title attribute AND available to assistive tech. */
 export function statTiles(
   tiles: StatTile[],
-  opts: { label?: string; compact?: boolean } = {},
+  /* SL-R2b / SL-R26: `notes` is OPTIONAL. `statTiles` has six call sites, two of
+     them on `/tickers/*` and one on the holders page, and only the member and
+     filer headers pass a scope. Without one this renderer emits exactly what it
+     emitted before this run — which is what keeps the routes this run does not
+     own byte-identical, and is why R26's earlier "required scope" was
+     withdrawn. */
+  opts: { label?: string; compact?: boolean; notes?: NoteCtx } = {},
 ): string {
   const aria = opts.label ?? "Statistics";
   const cls = opts.compact ? "tiles tiles-entity" : "tiles";
@@ -1515,13 +1521,22 @@ export function statTiles(
        already publishes the SAME `t.title` as real DOM, and
        `format.test.ts:764` guards that sibling with the message "tooltip is
        never the only channel". The tile's own note is R19/R22's separate,
-       additive change — this is only the removal of the duplicate. */
+       additive change — this is only the removal of the duplicate.
+
+       SL-R19/R22: WITH a scope the breakdown becomes a note instead. The
+       `.visually-hidden` span is dropped in that branch and only in it — the
+       note panel is real DOM carrying the same string, referenced by
+       `aria-describedby`, so keeping both would read the breakdown to a screen
+       reader twice. The tile's own LABEL is the key (SL-R26): one tile per
+       label per tile group, which is what makes it singular. */
     `<div class="tile" role="listitem">` +
     `<div class="tile-value${t.muted ? " muted" : ""}">${esc(t.value)}${
       t.unit ? `<span class="unit">${esc(t.unit)}</span>` : ""
     }</div>` +
-    `<div class="tile-label">${esc(t.label)}</div>` +
-    (t.title ? `<span class="visually-hidden">${esc(t.title)}</span>` : "") +
+    `<div class="tile-label">${esc(t.label)}${
+      t.title && opts.notes ? note(t.title, opts.notes, t.label) : ""
+    }</div>` +
+    (t.title && !opts.notes ? `<span class="visually-hidden">${esc(t.title)}</span>` : "") +
     `</div>`;
   return `<div class="${cls}" role="list" aria-label="${esc(aria)}">${tiles.map(tile).join("\n")}</div>`;
 }
