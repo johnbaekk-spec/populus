@@ -96,7 +96,7 @@ section's own block — is **deleted**, since both blocks are gone and the marke
 | R8c | **Class C — unchanged, because the renderer cannot supply a unique non-null identity without a signature change.** R26 forbids a renderer inventing a key, so this is the disqualifying test, applied per site. **Seventeen** sites qualify. Identity-free helpers that receive no row: `format.ts:827` (`srcLinkInner(doc: string)`), `:893`, `:901` (`lagHtml(r: Pick<TxnRow, "lag" \| "late">)` — the `Pick` excludes `txnId`), `ui.ts:227` (`flowCellHtml(s: SumRanges)`), `manager-directory.ts:127`, `:137` (`biggestChangeCellHtml(result)`), and all ten `holdings.ts` sites (`provenanceCellHtml(p, stated)` ×3, `valueCell(value, undisclosedNote)`, `sharesCell(shares, unit)`, `filerLinkHtml()`, `positionCell(row)`, `positionDiffHtml(diff, page)`, `holdersFullTableHtml(opts)` ×2). Plus `format.ts:884` (`memberCellHtml`), added in review for a specific measured reason: the site sits in the branch reached **only when `r.bioguide` is falsy** (`:876` returns early when it is set), so the natural key is null exactly where it is needed and every unjoined row would collide. The two `activity.ts` sites were briefly deferred here and then moved back to Class B: `lagCell` already receives the whole declared composite, so it fails the disqualifying test and Class C would have been the wrong home for it. Since Class C sites are untouched, **no string is lost**: they keep exactly the channels they have today. |
 | R8e | **`activity.ts:722` is Class B, not Class A, and this was nearly a §7 violation.** Its `title=` reads *"filed date not resolvable from this build's filing dictionary"* — the **cause** — while its `.visually-hidden` sibling reads *"reporting lag not resolvable"* — only the **effect**. Deleting the attribute as a Class-A duplicate would have removed the filing-dictionary explanation with no replacement channel, violating success criterion 2 while the exact inventory gate passed green. It is therefore **converted**: the cause moves into its note (keyed per R26) and the effect sibling is **preserved byte-identical**, so both strings survive and neither channel is lost. This is why R8's Class-A containment is asserted per site rather than inferred from the presence of a sibling — the sibling's existence proved nothing here. |
 | R9 | `· build <id>` is removed from every `.panel-head` `.panel-note`. The window statement stays. The `" · build "` split in `applyRollup` is removed with it. |
-| R10 | **BLOCKED AT IMPLEMENTATION, 2026-08-24 (T6). NOT IMPLEMENTED — escalated to the owner.** The requirement reads: of the **13** production `terminusRow` call sites, the five that sit beside a `compactDisclosure` stating the same count are deleted; the **eight** with no adjacent expand control are kept; `syncTerminusFor` loses all callers and is deleted; `terminusRow` itself stays. Two measurements taken before implementing it contradict its premise, and the second is disqualifying.
+| R10 | **BLOCKED AT IMPLEMENTATION, 2026-08-24 (T6), AND RE-BLOCKED AFTER THE OWNER-DIRECTED `<noscript>` ATTEMPT. NOT IMPLEMENTED — escalated to the owner.** The requirement reads: of the **13** production `terminusRow` call sites, the five that sit beside a `compactDisclosure` stating the same count are deleted; the **eight** with no adjacent expand control are kept; `syncTerminusFor` loses all callers and is deleted; `terminusRow` itself stays. Two measurements taken before implementing it contradict its premise, and the second is disqualifying.
 
 **(a) Only ONE of the five is a duplicate of a count.** Measured in the worktree: `ui.ts` ranking-main also carries "a Public Filings render bound, not a data bound" and a link to `/congress/data/feed.v1.json`; `ui.ts` adds also carries the link to that quarter-and-mode's published JSON; `institutional/index.astro` also states that every filer has its own page; `activity.ts` also carries the shard base path, the shard count, and the record/byte limits each shard is closed at — a **publication** bound, which is a different fact from the render bound and is stated nowhere else in a scripting-on view. Only the wholly-undisclosed bucket's terminus (`ui.ts`) is nothing but its count. Deleting the other four loses published text, which Constraint 1 (DESIGN-BRIEF §7, verbatim) and success criterion 2 forbid.
 
@@ -106,7 +106,47 @@ section's own block — is **deleted**, since both blocks are gone and the marke
 
 **Pinned, not just described.** `dashboard/test/sl-surfaces.test.ts` carries `SL-R10 BLOCKER`, which asserts (b) directly — the control ships hidden, the terminus does not, and both islands reveal the control by script. A later attempt fails immediately rather than rediscovering this after the deletion lands.
 
-**What the owner must decide** (any one unblocks it): render `compactDisclosure` visible without scripting and keep only the count in it, then delete the five termini; or delete only the wholly-undisclosed bucket's terminus, which is the one true duplicate, and keep four; or accept a `<noscript>` statement of each bound beside the control. `syncTerminusFor` cannot be deleted under any of these until its three callers' termini are, so it stays for now. |
+**The `<noscript>` option was DIRECTED, IMPLEMENTED AND REVERTED, 2026-08-24.** The owner chose the third option
+above — make each bound survive without scripting first, then delete — and it was built in full: a
+`noscriptBound` primitive in `format.ts`, an opt-in note on `compactDisclosure` carrying each terminus's
+non-count remainder (the `feed.v1.json` link, the adds payload link, "every filer has its own page", the
+activity feed's shard link), `syncTerminusFor` and its three callers deleted, the five `terminusRow` sites
+removed, and every assertion the change invalidated retargeted in the same working tree — ten reddened tests
+across `c4-rankings`, `r19-collapsed-honesty`, `r-codex-regressions` and `r12-congress-behaviour`, all brought
+back green against the moved text. It was then backed out, because implementing it surfaced **two further
+states** in which the adjacent control states nothing, and `<noscript>` closes only one of the three.
+
+**(c) The control is not revealed at page load, with scripting fully ON, on three of the five surfaces.**
+Measured in the worktree. `compactDisclosure` ships `hidden` and something must reveal it:
+`congress-sections.ts` reveals the two ranking controls from `syncDisclosure`, which F25 deliberately does
+**not** run at bind time — it runs when rows arrive, i.e. after the 22 MB `feed.v1.json` download completes.
+The manager directory's control is revealed only from `initSortableTable`'s `render`, and that module
+deliberately does **not** paint at init ("the SSR body is already correct, and repainting on load would risk a
+visible flash"). `initDomDisclosures` reveals only `[data-compact-dom]` controls, which is the activity feed
+alone. So on `/congress/` for the whole duration of a 22 MB download, and on `/institutional/` until the reader
+sorts or filters the directory, the terminus is the only statement of the bound **for a reader with scripting
+enabled**. A `<noscript>` block does not render for that reader.
+
+**(d) `<noscript>` does not cover "scripting on, island did not run."** It renders when scripting is
+*disabled*, which is a different condition from a module that failed to load, threw, or returned early. That
+state is not hypothetical in this repository: `r-codex-regressions.test.ts`'s F1 records the feed island
+returning before it fetched anything because the page had lost an id — shipped, and invisible to every test for
+a review cycle. Under the deletion, that failure silently removes the bound from **every** reader.
+
+The terminus is the only channel correct in all three states, so the deletion is still the omission it was
+blocked for. **(b), (c) and (d) are now pinned as tests** in `dashboard/test/sl-surfaces.test.ts`, two of them
+behavioural — the ranking control is asserted still `hidden` after the island has initialised over
+server-rendered rows, and `initDomDisclosures` is asserted to reveal only the DOM-backed control — plus a
+JavaScript-disabled Playwright proof in `test/geometry/sl-notes.spec.ts` that no control is visible and the
+terminus carries the bound. A later attempt trips on all three before it writes any code.
+
+**What the owner must decide** (any one unblocks it): render `compactDisclosure` visible and inert without
+scripting, keep only the count in it, and additionally reveal it at load on all five surfaces — which is a
+change to three islands' initialisation order, not a rendering change — then delete the five termini; or accept
+that the count is stated twice for a scripted reader after load and delete nothing; or delete only the
+wholly-undisclosed bucket's terminus, which is the one true pure-count duplicate, and keep four — a change
+whose benefit is one sentence on one table. `syncTerminusFor` cannot be deleted under any of these until its
+three callers' termini are, so it stays. |
 | R11 | The visible exclusion `.caveat-line` and its `#<sectionId>-caveat` root are deleted. `rankingExclusions()` is kept and its clauses compose the window note's body. The window statement carries a visible **excluded-row total** suffix as the note's anchor — the summed magnitude (`· 1,696 rows excluded ⓘ`), not a count of categories — so the size of what the reader cannot see is on the page at every width. The three per-category counts and their definitions live in the note body. |
 | R12 | The window note's body is rewritten by the client whenever the range or basis changes, atomically with the rows and the window text. |
 | R13 | A range or basis click made before the feed dataset arrives **already applies** — `range`/`basis` are module-scoped state and `receiveRows` calls `recomputeMomentumIfChanged()`. No queue is added. The defect is that `setSeg` paints the button pressed immediately while the table still shows SSR data, so the control asserts a window it has not painted. R13 adds only an honest **pending indicator** on the section (a stated "applying …" state) that clears in `receiveRows`, and changes no state mechanism. |

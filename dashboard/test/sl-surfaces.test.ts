@@ -104,6 +104,147 @@ test("SL-R10 BLOCKER: `.compact-disclosure` ships HIDDEN, so a terminus is the o
   }
 });
 
+/* SL-R10 BLOCKER, second and third measurements — added after an attempt to
+   unblock R10 with the owner-directed `<noscript>` approach.
+
+   The approach was: give each affected `compactDisclosure` a `<noscript>`
+   statement of the same bound, so the no-JS reader keeps it, and only then
+   delete the five terminus rows. It was implemented in full — a `noscriptBound`
+   primitive, an opt-in note on the control carrying each terminus's non-count
+   remainder, `syncTerminusFor` deleted, every invalidated assertion retargeted —
+   and then reverted, because the implementation surfaced two further states in
+   which the control states nothing. `<noscript>` closes exactly one of the
+   three, and R10's premise needs all three.
+
+   (c) THE CONTROL IS NOT REVEALED AT PAGE LOAD on three of the five surfaces.
+       With scripting fully ON, `compactDisclosure` stays `hidden` until
+       something reveals it, and on those three nothing does until the reader
+       waits or acts. The terminus is the only statement of the bound in that
+       window.
+
+   (d) `<noscript>` DOES NOT COVER "scripting on, island did not run" — it
+       renders when scripting is DISABLED, which is a different condition from
+       a module that failed to load, threw, or returned early. This repository
+       has shipped exactly that state: `r-codex-regressions.test.ts`'s F1
+       records the feed island returning before it fetched anything because the
+       page had lost an id, invisible to every test for a review cycle. Under
+       the deletion, that failure silently removes the bound from every reader.
+
+   Together with (b) these are three distinct states, and the terminus is the
+   only channel correct in all of them. Recorded as tests, not prose, so the
+   next attempt trips on all three before writing any code. */
+
+test("SL-R10 BLOCKER (c): with scripting ON, the ranking control is HIDDEN until the 22 MB feed lands", async () => {
+  const { installDom } = await import("./lib/mini-dom.ts");
+  const { congressRankingSection, CONGRESS_ROOTS } = await import("../src/lib/ui.ts");
+  const { leadersRollup } = await import("../src/lib/derive.ts");
+  const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
+
+  // 24 members, compact bound 10 — so rows ARE held back and the bound is real.
+  const rows = Array.from({ length: 24 }, (_, i) => ({
+    kind: "txn", txnId: `t${i}`, asset: null, assetType: null,
+    filed: "2026-07-21", traded: "2026-08-01", name: `M${i}`, bioguide: `B${i}`,
+    party: "R", state: "OK", district: null, chamber: "senate", ticker: `T${i}`,
+    side: "purchase", owner: "self", low: 1001 + i * 1000, high: 15000 + i * 1000,
+    lag: 27, late: 0, flags: [], doc: "https://example.invalid/d",
+  })) as never[];
+
+  const section = congressRankingSection(
+    "leaders",
+    leadersRollup(rows, "2026-08-12", { range: "12m", basis: "traded" }),
+    { buildId: "b", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12" } as never,
+    { watched: new Set() } as never,
+    {
+      rootId: CONGRESS_ROOTS.membersRanked,
+      heading: "Member net disclosed flow",
+      sectionId: "members-section",
+    } as never,
+  );
+  const { doc, restore } = installDom(
+    `<main class="shell page" id="congress-page" data-generated-at-date="2026-08-12" ` +
+      `data-range="12m" data-basis="traded">${section}</main>`,
+  );
+  try {
+    initCongressSections(); // the island initialises; the dataset has NOT arrived
+
+    const control = doc.querySelector(
+      `.compact-disclosure[data-compact-for=${CONGRESS_ROOTS.membersRanked}]`,
+    );
+    assert.ok(control, "the section renders a disclosure control");
+    assert.equal(
+      control!.hidden,
+      true,
+      "scripting is ON and the island has run — and the control still states NOTHING, " +
+        "because `syncDisclosure` deliberately waits for rows (F25). A `<noscript>` " +
+        "block does not render for this reader.",
+    );
+
+    const terminus = control!.previousElementSibling;
+    assert.ok(terminus?.classList.contains("terminus"), "the terminus stands beside it");
+    assert.equal(terminus!.hidden, false, "…and it is VISIBLE — the only statement of the bound here");
+    assert.match(terminus!.textContent, /further ranked members are not rendered above/);
+  } finally {
+    restore();
+  }
+});
+
+test("SL-R10 BLOCKER (c): `initDomDisclosures` reveals ONLY `[data-compact-dom]` controls", async () => {
+  const { installDom } = await import("./lib/mini-dom.ts");
+  const { compactDisclosure } = await import("../src/lib/format.ts");
+  const { initDomDisclosures } = await import("../src/scripts/inst-index-client.ts");
+
+  /* The manager directory's control is not DOM-backed: its rows live in an
+     embedded JSON payload and its `syncDisclosure` runs only from a RENDER,
+     which `initSortableTable` deliberately does not perform at init ("the SSR
+     body is already correct, and repainting on load would risk a visible flash
+     and would mask a server/client ordering disagreement"). So on page load,
+     with scripting on, nothing reveals it. */
+  const html =
+    `<div><tbody id="plain-tbody"></tbody>` +
+    compactDisclosure({ rootId: "plain-tbody", total: 25, shown: 10, noun: "managers" }) +
+    `<tbody id="dom-tbody"></tbody>` +
+    compactDisclosure({ rootId: "dom-tbody", total: 25, shown: 10, noun: "changes", domBacked: true }) +
+    `</div>`;
+  const { doc, restore } = installDom(html);
+  try {
+    initDomDisclosures();
+    assert.equal(
+      doc.querySelector('.compact-disclosure[data-compact-for=plain-tbody]')!.hidden,
+      true,
+      "a non-DOM-backed control is still hidden after every load-time reveal path has run",
+    );
+    assert.equal(
+      doc.querySelector('.compact-disclosure[data-compact-for=dom-tbody]')!.hidden,
+      false,
+      "…while the DOM-backed one IS revealed, which is what makes the difference measurable",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("SL-R10 BLOCKER (d): `<noscript>` cannot stand in for a control an island failed to reveal", () => {
+  /* Stated as an assertion about the repository's own record rather than as a
+     comment, because the state is not hypothetical here: F1 is a shipped
+     instance of an island that ran, returned early, and left every control it
+     owned unrevealed — with scripting enabled the whole time, so no
+     `<noscript>` would have rendered. The terminus is what stood.
+
+     If this test ever fails because the F1 record moved, do not delete it:
+     find the record's new home. The claim it pins is why R10 stays blocked. */
+  const f1 = readFileSync(new URL("../test/r-codex-regressions.test.ts", import.meta.url), "utf8");
+  assert.match(
+    f1,
+    /F1: every id the feed island REQUIRES exists on the real congress page/,
+    "the repository carries a regression test for an island that silently did not run",
+  );
+  assert.match(
+    f1,
+    /island silently returned on the real page/,
+    "…and it names the failure mode `<noscript>` does not cover",
+  );
+});
+
 /* ------------------------------------------------------ T7 / SL-R11 R12 LD4 */
 
 test("SL-R11/LD4: the visible suffix is the SUMMED ROW TOTAL, never a count of categories", async () => {

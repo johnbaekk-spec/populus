@@ -169,3 +169,43 @@ test("CODE-REVIEW F1: a CANCELLED press does not disable hover and focus page-wi
     "hover must survive an abandoned press — the latch has to release on pointerup too",
   ).toBeVisible();
 });
+
+/* SL-R10, JavaScript DISABLED. The plan's R10 asks for five terminus rows to be
+   deleted because "an adjacent compactDisclosure states the same count". This
+   is that claim, put to a real browser with scripting off — the state the claim
+   is false in. It is a BLOCKER proof, not a regression guard: it must keep
+   passing for as long as R10 stays blocked, and an attempt that deletes the
+   termini must make it fail before anything else does.
+
+   Placed here rather than asserted from markup because the difference is
+   rendered, not textual: `hidden` is an attribute the unit tests can read, but
+   what matters is that the reader is shown nothing, and only an engine can say
+   that. */
+test("SL-R10: with JavaScript disabled the expand control is INVISIBLE and the terminus is the bound", async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext({ javaScriptEnabled: false });
+  const page = await ctx.newPage();
+  await page.goto(CONGRESS);
+
+  const controls = page.locator(".compact-disclosure");
+  const n = await controls.count();
+  expect(n, "the congress page renders at least one compact table").toBeGreaterThan(0);
+  for (let i = 0; i < n; i++) {
+    await expect(
+      controls.nth(i),
+      "with no script running the control is never revealed, so it states no count",
+    ).toBeHidden();
+  }
+
+  // …and the terminus beside it is what the reader actually reads.
+  const termini = page.locator(".terminus:not([hidden])");
+  expect(
+    await termini.count(),
+    "deleting these rows would leave the no-JS reader no statement of what is held back",
+  ).toBeGreaterThan(0);
+  await expect(termini.first()).toContainText(/not rendered above|Showing the first/);
+  await expect(termini.first()).toContainText("Truncated by Public Filings.");
+
+  await ctx.close();
+});
