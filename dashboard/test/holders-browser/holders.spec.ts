@@ -117,3 +117,20 @@ test("SL-R28/F4: a note opens BEFORE the period swap, and again from the REPLACE
   const after = await openFirstNote(page);
   await expect(after).toContainText(/\S/, "the replaced root's note carries its explanation too");
 });
+
+test("SL-R24/T12: the holders page's note anchor is a >=44px target at every swept width", async ({ page }) => {
+  /* The third in-scope surface a browser can reach in this repository. The
+     geometry lane previews the bounded `dist`, which builds no holders route,
+     so R24's "a representative anchor per surface" is only satisfiable for this
+     one here. Same five widths the geometry harness sweeps, restated rather
+     than imported: the two lanes serve different builds and must not share a
+     config that implies otherwise. */
+  for (const w of [360, 720, 964, 1080, 1440]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.goto(ROUTE);
+    const btn = page.locator(".note-btn").first();
+    expect(await btn.count(), `the holders page must render a note anchor at ${w}px`).toBeGreaterThan(0);
+    const box = (await btn.boundingBox())!;
+    expect(Math.min(box.width, box.height), `44px target at ${w}px`).toBeGreaterThanOrEqual(44);
+  }
+});

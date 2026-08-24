@@ -109,13 +109,53 @@ test("SL-R4: under PRINT media every panel lays out with a real box and the anch
   expect(btnDisplay, "the anchor button does not print").toBe("none");
 });
 
-test("SL-R24: the anchor is a >=44px target at EVERY swept width", async ({ page }) => {
-  for (const w of WIDTHS) {
-    await page.setViewportSize({ width: w, height: 900 });
-    await page.goto(CONGRESS);
-    const box = (await page.locator(".note-btn").first().boundingBox())!;
-    expect(Math.min(box.width, box.height), `44px target at ${w}px`).toBeGreaterThanOrEqual(44);
-  }
+/* SL-R24 / T12. A representative anchor PER SURFACE, at EVERY swept width —
+   plan-v1 measured 375px on one page, and 375px is not even one of the five
+   widths this harness sweeps.
+
+   WHAT THIS LANE CAN AND CANNOT REACH, stated rather than papered over. The
+   member and filer routes are not in the bounded `dist` at all, and
+   `/institutional/` renders `s1ModuleAbsent` — the stated-absence page, with no
+   tables and therefore no notes — whenever the build carries no institutional
+   aggregate, which is the case in a data-free checkout. The holders route has
+   its own lane and its own touch-target check.
+
+   `/congress/` is therefore swept unconditionally and `/institutional/` when
+   its module is present. That is not as weak as it sounds: `.note-btn` has ONE
+   rule in one stylesheet, so a width at which it shrank would shrink it on
+   every surface at once. What a second surface adds is proof that no LOCAL rule
+   overrides it, and the sweep takes it whenever the build offers it. */
+for (const surface of [CONGRESS, HOLDERS_HINT] as const) {
+  test(`SL-R24: the anchor on ${surface} is a >=44px target at EVERY swept width`, async ({ page }) => {
+    await page.goto(surface);
+    if ((await page.locator(".s1-block").count()) > 0) {
+      test.skip(true, `${surface} renders the stated-absence page in this build — no table, no note`);
+    }
+    for (const w of WIDTHS) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.goto(surface);
+      const btn = page.locator(".note-btn").first();
+      expect(await btn.count(), `${surface} must render a note anchor to measure`).toBeGreaterThan(0);
+      const box = (await btn.boundingBox())!;
+      expect(Math.min(box.width, box.height), `44px target at ${w}px on ${surface}`).toBeGreaterThanOrEqual(44);
+    }
+  });
+}
+
+test("SL-R24: under 720px the panel takes the width it needs and is never clipped away", async ({ page }) => {
+  // The narrow viewport is where a panel that tries to sit beside its anchor has
+  // nowhere to go. Measured, not read off the stylesheet: a rule that exists and
+  // a panel that fits are different claims.
+  await page.setViewportSize({ width: 360, height: 900 });
+  await page.goto(CONGRESS);
+  const btn = page.locator(".note-btn").first();
+  await btn.click();
+  const pop = page.locator(`#${await btn.getAttribute("popovertarget")}`);
+  await expect(pop).toBeVisible();
+  const box = (await pop.boundingBox())!;
+  expect(box.width, "the panel uses the narrow viewport rather than shrinking into a column").toBeGreaterThan(240);
+  expect(box.x, "…and starts on screen").toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width, "…and ends on screen").toBeLessThanOrEqual(360);
 });
 
 test("SL-R28: a note created by a LATER innerHTML replacement still opens", async ({ page }) => {

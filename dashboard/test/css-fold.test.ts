@@ -307,6 +307,15 @@ const HONESTY_SELECTORS = [
   ".mgr-chip",
   ".c-issuer",
   ".c-secondary",
+  /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
+     channel a large share of this site's explanations travel on — every
+     `.col-why`, every footnote clause, the exclusion counts, the owner codes,
+     the signal rules. Suppressing either half of it at a breakpoint would hide
+     all of that at exactly the width where the page has least room, which is
+     the failure mode this sweep exists to catch. `.note-btn` is the reader's
+     only cue that an explanation exists; `.note-pop` is the explanation. */
+  ".note-btn",
+  ".note-pop",
 ];
 
 const PROHIBITED = [/display\s*:\s*none/, /visibility\s*:\s*hidden/, /content-visibility\s*:\s*hidden/];
