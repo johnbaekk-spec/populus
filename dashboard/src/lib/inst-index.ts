@@ -15,7 +15,7 @@
    reason, and n/a rows are excluded from HHI ordering — bucketed after,
    never given a sentinel. */
 
-import { esc, fmtInt, fmtUsd } from "./format.ts";
+import { esc, fmtInt, fmtUsd, note } from "./format.ts";
 // F3: the directory body renderer lives here now and needs the filer href
 // builder the page and the island both used.
 import { filerHref } from "./holdings.ts";
@@ -192,22 +192,37 @@ function nameCellHtml(r: InstIndexRow, href: string): string {
 }
 
 export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow) => string): string {
+  /* SL-R8 Class B / SL-R26: four tooltip-only explanations become notes, keyed
+     on the row's CIK — one row per CIK per rendered table, so it is singular
+     by construction. */
+  const nctx = { scope: "inst-index-row" };
   const valueCell =
     r.value == null
-      ? `<span class="none" title="no period-correct value for ${esc(r.period)} — never zero-filled">n/a ·§</span>`
+      ? `<span class="none">n/a ·§</span>` +
+        note(`no period-correct value for ${r.period} — never zero-filled`, nctx, `${r.cik}-period`)
       : esc(fmtUsd(r.value));
   const nullNote =
     r.nullValuePositions != null && r.nullValuePositions > 0
-      ? ` <span class="mono-note" title="positions whose value did not parse — excluded from the sum, surfaced beside it">+${fmtInt(r.nullValuePositions)} null</span>`
+      ? ` <span class="mono-note">+${fmtInt(r.nullValuePositions)} null</span>` +
+        note(
+          "positions whose value did not parse — excluded from the sum, surfaced beside it",
+          nctx,
+          `${r.cik}-nullvalue`,
+        )
       : "";
   const hhiCell =
     r.hhi == null
-      ? `<span class="none" title="${esc(r.hhiNote)}">n/a ·§</span>`
+      ? `<span class="none">n/a ·§</span>` + note(r.hhiNote, nctx, `${r.cik}-hhi`)
       : `${fmtInt(r.hhi)}`;
   const typing = r.typing ?? null;
   const typeCell =
     typing === null
-      ? `<span class="none" title="not in the curated registry — this build types a curated subset, not the population">—</span>`
+      ? `<span class="none">—</span>` +
+        note(
+          "not in the curated registry — this build types a curated subset, not the population",
+          nctx,
+          `${r.cik}-untyped`,
+        )
       : `<span class="mgr-chip" data-type="${esc(typing.manager_type)}">${esc(
           MANAGER_TYPE_LABELS[typing.manager_type] ?? typing.manager_type,
         )}</span>${typing.notable ? ` <span class="mgr-chip mgr-chip-notable">notable</span>` : ""}`;

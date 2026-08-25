@@ -15,7 +15,8 @@ import {
   fmtInt,
   esc,
   compactDisclosure,
-  terminusRow,
+  noteBody,
+  noteFromHtml,
   COMPACT_ROWS,
 } from "../../lib/format";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
@@ -66,12 +67,35 @@ if (!inst.present) {
      none of its rows fit, and it is now the only renderer of this table. */
   const directory = instIndexBodyHtml(indexRows, "", "value", "desc", undefined, COMPACT_ROWS);
   const rows = directory.html;
-  // R5's rule applies here too: a column with no well-defined order STATES why,
-  // in visible text, rather than sitting mute.
+  /* SL-R5: a column with no well-defined order still STATES why — the channel
+     changed, not the text. It was a `.col-why` sub-label under every unsortable
+     header, which is the single largest contributor to this table's header
+     height; it is now a note anchored on that same header, reachable by hover,
+     tap, keyboard and print. R26b: the scope is supplied by this caller, and
+     the key is the column's own sort key where it has one and its label where
+     it does not — this mapper renders exactly once per page. */
+  const headNotes = { scope: "inst-index" };
+  // SL-R18: declared HERE now, because the Type column's note reads it and the
+  // note renders above the chip row that used to be its only consumer.
+  const typedCount = indexRows.filter((r) => r.typing !== null).length;
+  /* SL-R18: the Type column's note carries BOTH its own unsortability reason
+     and the curated-coverage caveat with its live `N of M` count — the two
+     facts a reader needs at that column, in one place, instead of a paragraph
+     above the table repeating the second. */
+  const typeNote =
+    `Manager type and display name come from a curated registry covering ` +
+    `<strong>${fmtInt(typedCount)} of ${fmtInt(indexRows.length)}</strong> filers in this build. ` +
+    `The rest render the name exactly as filed and carry no type — that is a gap in the curation, ` +
+    `not a statement that the manager is uncategorised. Automatic classification across the full ` +
+    `filer population is future work.`;
+  // `h.why` is plain text and is escaped here; `typeNote` is pre-escaped html
+  // carrying the `<strong>` emphasis the deleted paragraph published.
+  const headNoteBody = (h: (typeof INST_INDEX_HEADS)[number]): string =>
+    noteBody(h.why ? esc(h.why) : null, h.label === "Type" ? typeNote : null);
   const heads = INST_INDEX_HEADS.map((h) =>
     h.key == null
       ? `<th scope="col">${esc(h.label)}${
-          h.why ? `<span class="col-why">${esc(h.why)}</span>` : ""
+          headNoteBody(h) ? noteFromHtml(headNoteBody(h), headNotes, h.label) : ""
         }</th>`
       : `<th scope="col" data-inst-sort="${h.key}" aria-sort="${h.key === "value" ? "descending" : "none"}"><button class="th-sort">${esc(h.label)}</button></th>`,
   ).join("");
@@ -102,7 +126,6 @@ if (!inst.present) {
   /* R11: the type chips. `Notable` is EDITORIAL and orthogonal — it renders
      beside the type chips but is not one of them, so selecting a type never
      hides a notable manager of that type. */
-  const typedCount = indexRows.filter((r) => r.typing !== null).length;
   const chipsHtml =
     `<div class="mgr-chips" id="mgr-chips" role="group" aria-label="Filter managers">` +
     `<button type="button" class="mgr-chip mgr-chip-notable" data-mgr-notable="1" aria-pressed="false">notable</button>` +
@@ -115,12 +138,12 @@ if (!inst.present) {
       )
       .join("") +
     `</div>` +
-    `<p class="caveat-line">Manager type and display name come from a curated registry covering ` +
-    `<strong>${fmtInt(typedCount)} of ${fmtInt(indexRows.length)}</strong> filers in this build. ` +
-    `The rest render the name exactly as filed and carry no type — that is a gap in the curation, ` +
-    `not a statement that the manager is uncategorised. Automatic classification across the full ` +
-    `filer population is future work.` +
-    `<noscript> Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
+    /* SL-R18: the curated-coverage caveat moves onto the Type column it is
+       about, carrying its `N of M` count with it — see `typeNote` below, which
+       is what `headNotes` renders. The `<noscript>` stays visible here, because
+       it is about scripting rather than about a column and no column note is
+       the right home for it. */
+    `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
   bodyHtml =
     breadcrumb([{ text: "/institutional" }]) +
     `<header class="entity-head"><div class="entity-head-copy">` +
@@ -162,22 +185,23 @@ if (!inst.present) {
       ],
       { id: "inst-index-footnotes" },
     ) +
-    /* R19/F6: the named bound beside the compact table. Rendered in both
-       states so the client can reveal the sentence and the button together
-       when a chip change pushes the row count back over the limit (F16). */
-    terminusRow({
-      author: "populus",
-      hidden: directory.total <= directory.shown,
-      html:
-        `${fmtInt(Math.max(0, directory.total - directory.shown))} further managers are not ` +
-        `rendered above — a Public Filings render bound, not a data bound. Every filer in this ` +
-        `build has its own page, reachable from this table once expanded.`,
-    }) +
+    /* R19/F6 + SL-R10: the named bound is stated by the control itself, VISIBLE
+       from the server. Nothing reveals this control at load — the directory's
+       `syncDisclosure` runs only from a render, and `initSortableTable`
+       deliberately does not paint at init — so a bound that lived on the button
+       was stated to nobody until the reader sorted or filtered. That is why
+       the separate terminus row above it existed, and why deleting it was only
+       honest once the statement moved into the control.
+
+       "Every filer has its own page" is the state-independent remainder: true
+       collapsed and expanded alike, so it survives an expansion that retracts
+       the count. */
     compactDisclosure({
       rootId: "inst-managers-tbody",
       total: directory.total,
       shown: directory.shown,
       noun: "managers",
+      bound: `Every filer in this build has its own page, linked from its row here.`,
     }) +
     `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
     `<script type="application/json" id="inst-index-data">${JSON.stringify(indexRows).replaceAll("</", "<\\/")}</script>` +
@@ -204,8 +228,18 @@ const description = build.inst.present
       initAddsControls,
       initDomDisclosures,
     } from "../../scripts/inst-index-client";
+    import { initNotes } from "../../scripts/notes";
     initInstIndex();
     initAddsControls();
     initDomDisclosures();
+    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+       is DELEGATED on `document`, so one call covers notes created later by an
+       `innerHTML` replacement — a sort repaint, a page change, a period switch —
+       and a second call would be idempotent. It is NOT added to `Base.astro`:
+       that would load the module on every page in the site, including the ones
+       this run does not touch, for no benefit. Without it a note still OPENS,
+       through `popovertarget` alone; what this adds is placement, hover, Escape
+       and outside-click. */
+    initNotes();
   </script>
 </Base>

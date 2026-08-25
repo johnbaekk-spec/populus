@@ -31,11 +31,12 @@ import {
 import type { TxnRow, RenderCtx } from "../lib/format.ts";
 import {
   CONGRESS_ROOTS,
-  rankingCaveatHtml,
-  rankingExclusions,
+  emptyWindowHtml,
+  rankingAlternatives,
   rankingRootHtml,
+  rankingWindowHtml,
 } from "../lib/ui.ts";
-import { COMPACT_ROWS, syncTerminusFor } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
 import type { CongressSortKey } from "../lib/congress-columns.ts";
 import { congressRankingColumns } from "../lib/congress-columns.ts";
@@ -60,11 +61,15 @@ const BUCKET_SORT: SortState = { key: "name", dir: "asc" };
 export interface CongressSections {
   /** Called once by the feed island with the single decoded row set (R17). */
   receiveRows(rows: readonly TxnRow[]): void;
+  /** SL-R29: called once by the feed island on EITHER outcome, so a pending
+      indicator clears on the failure path too. `ok` is false when the dataset
+      did not load, and the section then says so rather than staying "applying". */
+  feedSettled(ok: boolean): void;
 }
 
 export function initCongressSections(): CongressSections {
   const page = document.getElementById("congress-page");
-  if (!page) return { receiveRows: () => {} };
+  if (!page) return { receiveRows: () => {}, feedSettled: () => {} };
   // The build's generated-at date is the window's `end`. It is read from the
   // document rather than the clock: a client that used its own "today" would
   // compute a different window from the server and silently disagree with the
@@ -100,8 +105,6 @@ export function initCongressSections(): CongressSections {
       repaint: () => {},
     };
     const cols = congressRankingColumns(kind);
-    const section = el.closest("section");
-    const footnotesId = `${section?.id ?? ""}-footnotes`;
     const repaint = initSortableTable({
       root: el,
       headers,
@@ -117,11 +120,13 @@ export function initCongressSections(): CongressSections {
         // already there instead, so a click before the dataset lands is inert
         // rather than destructive.
         if (binding.rows.length === 0) return el.innerHTML;
+        /* SL-R7: `footnotesId` is gone. It existed so a re-sorted row's ≈
+           marker addressed THIS section's footnote block; R7 deletes both
+           blocks and moves their text onto the Net column's header note, so
+           the marker no longer carries an href at all and the server and the
+           client are identical again by having one fewer thing to agree on. */
         return rankingRootHtml(binding.rows, state.key as CongressSortKey, state.dir, kind, ctx, {
           compact: binding.expanded ? undefined : COMPACT_ROWS,
-          // The client must address the SAME footnote block the server did, or
-          // every re-sorted row's ≈ marker becomes a dangling anchor.
-          footnotesId,
         }).html;
       },
       announce: (state) => {
@@ -195,42 +200,36 @@ export function initCongressSections(): CongressSections {
       range change that drops the total to at-or-below it removes the control
       instead of leaving one that expands to the rows already on screen. */
   function syncDisclosure(b: RootBinding): void {
-    if (!b.disclosure || !b.disclosureBtn) return;
+    if (!b.disclosure) return;
     const total = b.rows.length;
     const limit = COMPACT_ROWS;
     const hidden = Math.max(0, total - limit);
+    const noun = b.noun ?? "rows";
+    // The bound noun is the SERVER's, read back off the element: this one
+    // function serves the ranked tables and the wholly-undisclosed bucket, and
+    // composing "ranked …" for all three would relabel the bucket.
+    const boundNoun = b.disclosure.dataset?.compactBoundNoun ?? `ranked ${noun}`;
 
-    // R7's omission rule, evaluated against the LIMIT — never against how many
-    // happen to be rendered right now.
-    if (hidden === 0) {
-      b.disclosure.hidden = true;
-      b.expanded = false;
-      setTerminus(b, 0);
-      return;
-    }
-    b.disclosure.hidden = false;
-    b.disclosureBtn.setAttribute("aria-expanded", String(b.expanded));
-    b.disclosureBtn.textContent = b.expanded
-      ? `Show only the first ${limit.toLocaleString("en-US")} ${b.noun}`
-      : `Show all ${total.toLocaleString("en-US")} ${b.noun} (${hidden.toLocaleString("en-US")} more)`;
-    setTerminus(b, b.expanded ? 0 : hidden);
-  }
+    /* F6/SL-R10: the count clause, the button and the wrapper commit TOGETHER,
+       in one call to the shared updater. Three private copies of that contract
+       was three chances for one to drift out of step with the renderer; only
+       the NOUN differs per table, and that is what stays here.
 
-  /** The terminus states the same bound in prose and must not contradict it.
-
-      F6: the update itself now lives beside `terminusRow` in `format.ts`, with
-      the leaderboard's and the directory's. Three private copies of one
-      contract is three chances for one to drift; only the SENTENCE differs per
-      table, and that is what stays here. */
-  function setTerminus(b: RootBinding, hidden: number): void {
-    syncTerminusFor(b.disclosure, hidden, {
-      text:
-        `${hidden.toLocaleString("en-US")} further ranked ${b.noun} are not rendered above — ` +
-        `a Public Filings render bound, not a data bound.`,
+       R7's omission rule is evaluated against the LIMIT, never against how many
+       rows happen to be rendered right now — a range change that drops the
+       total to at-or-below it must retract the control rather than leave one
+       that expands to the rows already on screen. */
+    if (hidden === 0) b.expanded = false;
+    syncCompactDisclosure(b.disclosure, {
+      total,
+      hidden: b.expanded ? 0 : hidden,
+      expanded: b.expanded,
+      noun,
+      count: { text: compactBoundCount(hidden, boundNoun) },
     });
   }
 
-  /* ---------- range and basis (R2/R3) ---------- */
+  /* ---------- range and basis (R2/R3), and SL-R13's honesty ---------- */
 
   function setSeg(attr: "range" | "basis", value: string): void {
     document.querySelectorAll<HTMLElement>(`#momentum-controls [data-${attr}]`).forEach((b) => {
@@ -238,10 +237,38 @@ export function initCongressSections(): CongressSections {
     });
   }
 
+  /* SL-R13. This adds NO state and NO queue. A pre-arrival click already
+     applies: `range` and `basis` are module-scoped and `receiveRows` ends by
+     calling `recomputeMomentumIfChanged()`. What was wrong is that `setSeg`
+     paints the button pressed immediately while the table still shows the
+     server's window — so for as long as the 22 MB dataset takes to arrive, the
+     control asserts a view it has not painted. It now says which. */
+  function setPending(text: string | null): void {
+    const el = document.getElementById("momentum-section-pending");
+    if (!el) return;
+    if (text === null) {
+      el.textContent = "";
+      el.setAttribute("hidden", "");
+      return;
+    }
+    el.textContent = text;
+    el.removeAttribute("hidden");
+  }
+
+  function markPendingIfUnpainted(): void {
+    if (allRows) return;
+    setPending(
+      `Applying ${windowStatement(range, basis, congressRangeBounds(range, generatedAtDate))} — ` +
+        `the full dataset is still downloading. The table below is still the window the page was ` +
+        `built with, and it is real published data.`,
+    );
+  }
+
   document.querySelectorAll<HTMLElement>("#momentum-controls [data-range]").forEach((btn) => {
     btn.addEventListener("click", () => {
       range = btn.dataset.range as CongressRange;
       setSeg("range", range);
+      markPendingIfUnpainted();
       recomputeMomentum();
     });
   });
@@ -249,9 +276,51 @@ export function initCongressSections(): CongressSections {
     btn.addEventListener("click", () => {
       basis = btn.dataset.basis as CongressBasis;
       setSeg("basis", basis);
+      markPendingIfUnpainted();
       recomputeMomentum();
     });
   });
+
+  /* SL-R14: the empty-window block's own controls. They are DELEGATED on the
+     section, not bound per button, because the block is replaced by
+     `innerHTML` on every window change — a per-button binder would leave the
+     second empty window's offers inert, which is the same lifecycle problem
+     SL-R2 solved for notes. Pressing one drives the SAME `range`/`basis` state
+     the segmented control drives; it does not fork a second path. */
+  const emptyHost = document.getElementById("momentum-section-empty");
+  emptyHost?.addEventListener?.("click", (ev) => {
+    const t = ev.target as HTMLElement | null;
+    const btn = t?.closest?.<HTMLElement>("[data-range], [data-basis]") ?? null;
+    if (!btn) return;
+    if (btn.dataset.range) {
+      range = btn.dataset.range as CongressRange;
+      setSeg("range", range);
+    } else if (btn.dataset.basis) {
+      basis = btn.dataset.basis as CongressBasis;
+      setSeg("basis", basis);
+    } else {
+      return;
+    }
+    markPendingIfUnpainted();
+    recomputeMomentum();
+  });
+
+  /* SL-R29: fired by `initFeed` on BOTH outcomes. On success the rows have
+     already been applied by `receiveRows`, so the indicator simply clears. On
+     failure there is nothing to clear it later — `onRows` never fires — so the
+     section states that the selection could not be applied, and why. */
+  function feedSettled(ok: boolean): void {
+    if (ok) {
+      setPending(null);
+      return;
+    }
+    const el = document.getElementById("momentum-section-pending");
+    if (!el || el.hasAttribute("hidden")) return;
+    setPending(
+      `That selection could not be applied: the full dataset did not load. The table below is ` +
+        `still the window the page was built with, and it is real published data.`,
+    );
+  }
 
   /** Rewrite the section's window statement and caveat line together with its
       rows. A window that changed while its stated bounds did not would be the
@@ -272,14 +341,41 @@ export function initCongressSections(): CongressSections {
     syncDisclosure(binding);
 
     const windowEl = document.getElementById(`${sectionId}-window`);
-    if (windowEl) {
-      const build = windowEl.textContent?.split(" · build ")[1] ?? "";
-      windowEl.textContent =
-        windowStatement(rollup.range, rollup.basis, congressRangeBounds(rollup.range, generatedAtDate)) +
-        (build ? ` · build ${build}` : "");
+    /* SL-R9: the `" · build "` split is gone with the stamp it preserved.
+         It existed only so a re-render did not drop a build id the server had
+         put there; the server no longer puts one there, and parsing a suffix
+         back out of rendered text to re-append it was the fragile half of that
+         arrangement. */
+      /* SL-R12: the window statement, its excluded-row TOTAL and the note body
+         are rewritten in ONE call to the SAME function the server used, so the
+         three cannot drift apart on a range or basis change. The separate
+       `#<sectionId>-caveat` element is gone (SL-R11); its clauses are the
+       note's body. */
+    /* SL-R14: the empty-window block is rewritten with the rows, through the
+       SAME renderer the server used and over the SAME row set the control will
+       paint if the reader takes one of its offers — so a stated count cannot
+       disagree with what pressing it produces. */
+    const emptyEl = document.getElementById(`${sectionId}-empty`);
+    if (emptyEl) {
+      emptyEl.innerHTML =
+        binding.rows.length === 0 && allRows
+          ? emptyWindowHtml(
+              rollup.range,
+              rollup.basis,
+              rankingAlternatives(allRows, generatedAtDate, kind, rollup.range, rollup.basis),
+              kind === "tickers" ? "tickers" : "members",
+            )
+          : "";
     }
-    const caveatEl = document.getElementById(`${sectionId}-caveat`);
-    if (caveatEl) caveatEl.innerHTML = rankingCaveatHtml(rankingExclusions(rollup, kind));
+
+    if (windowEl) {
+      windowEl.innerHTML = rankingWindowHtml(
+        windowStatement(rollup.range, rollup.basis, congressRangeBounds(rollup.range, generatedAtDate)),
+        rollup,
+        kind,
+        sectionId,
+      );
+    }
   }
 
   function recomputeMomentum(): void {
@@ -341,6 +437,10 @@ export function initCongressSections(): CongressSections {
     // exact view at this exact sort; repainting would risk a visible flash and
     // would MASK a server/client disagreement instead of leaving it visible.
     recomputeMomentumIfChanged();
+    // SL-R13: the rows are painted, so the control no longer asserts anything
+    // it has not shown. Cleared here as well as in `feedSettled` because this
+    // is the moment the claim becomes true.
+    setPending(null);
   }
 
   /** Only recompute the momentum section if the reader has already moved it off
@@ -351,5 +451,5 @@ export function initCongressSections(): CongressSections {
     }
   }
 
-  return { receiveRows };
+  return { receiveRows, feedSettled };
 }

@@ -120,11 +120,25 @@ test("ranking body: overlap marker when adjacent ranked intervals overlap", () =
     txn({ bioguide: "B000002", name: "Beta", low: 1001, high: 15000 }),
   ];
   const html = section("leaders", leadersRollup(rows, NOW, { range: "12m", basis: "traded" }));
-  assert.match(html, /aria-label="footnote: overlapping intervals are incomparable"/);
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6).
+     The ≈ marker used to be an <a> into `#<section>-footnotes`. R7 deletes that
+     block and moves its text onto the Net column's header note, so the marker
+     is now a plain span — a link into a removed id would be a broken internal
+     link. The PROPERTY is unchanged and is asserted in both halves: the marker
+     is still rendered on the overlapping row, and its text is still reachable
+     in the same body. Only the wrapper moved. */
+  assert.match(html, /<span class="fn-ref">≈<\/span>/);
   assert.match(html, /incomparable<\/strong>, not tied/);
 });
 
-test("ranking body: the render bound names its author (terminus), counts survive", () => {
+test("ranking body: the render bound is STATED VISIBLY by the server, counts survive", () => {
+  /* SL-R10 retarget. The bound used to be stated by a `terminusRow` above the
+     control, which named "Truncated by Public Filings." as its author. That row
+     was a duplicate of the control's own count and is deleted; the count clause
+     now belongs to the control itself and — this is the property that matters —
+     is emitted VISIBLE, with the button beside it hidden until a script proves
+     it can work. The assertion follows the TEXT, and it is narrowed, not
+     widened: it now also pins that the statement carries no `hidden`. */
   const rows = [
     txn({ bioguide: "A000001", name: "Alpha", ticker: "AAA" }),
     txn({ bioguide: "B000002", name: "Beta", ticker: "BBB", low: 15001, high: 50000 }),
@@ -132,10 +146,21 @@ test("ranking body: the render bound names its author (terminus), counts survive
   const html = section("tickers", congressTickersRollup(rows, NOW, { range: "12m", basis: "traded" }), {
     compact: 1,
   });
-  assert.match(html, /Truncated by Public Filings\./);
-  assert.match(html, /1 further ranked\s+tickers/);
-  // R7: the bound is stated AND the control offering to lift it is present.
-  assert.match(html, /Show all 2 tickers \(1 more\)/);
+  assert.match(html, /1 further ranked\s+tickers are not rendered above/);
+  assert.match(html, /a Public Filings render bound, not a data bound/, "the author of the cut is named");
+  assert.match(
+    html,
+    /<span class="compact-bound-count">1 further ranked/,
+    "…in a span with NO hidden attribute — the no-JS reader is the reason this exists",
+  );
+  assert.match(
+    html,
+    /<a href="\/congress\/data\/feed\.v1\.json">published dataset<\/a>/,
+    "and the deleted terminus's link travelled with it",
+  );
+  // R7: the control offering to lift the bound is present — and hidden, because
+  // it cannot work until a script reveals it.
+  assert.match(html, /class="linklike compact-toggle"[^>]*hidden>Show all 2 tickers</);
 });
 
 test("R7: the disclosure control is OMITTED when the table does not exceed the slice", () => {
@@ -145,15 +170,30 @@ test("R7: the disclosure control is OMITTED when the table does not exceed the s
   const html = section("tickers", congressTickersRollup(rows, NOW, { range: "12m", basis: "traded" }), {
     compact: 10,
   });
-  // F16: a hidden SHELL is rendered so a later state that DOES hide rows has
-  // a control to reveal them. R7's omission rule is about what the READER
-  // SEES, so the assertion is that nothing is offered — not that nothing exists.
-  assert.match(html, /class="compact-disclosure"[^>]*hidden>/, "the shell is present but hidden");
+  // F16: a SHELL is rendered so a later state that DOES hide rows has a control
+  // and a sentence to reveal. R7's omission rule is about what the READER SEES,
+  // so the assertion is that nothing is offered — not that nothing exists.
   assert.doesNotMatch(html, /Show all/, "no offer is made to the reader");
-  // F16: the terminus is a hidden SHELL now, for the same reason the control
-  // is — so a later range change can reveal both together. The reader is shown
-  // neither, which is what the omission rule is actually about.
-  assert.match(html, /class="terminus"[^>]*hidden>/, "the terminus shell is present but hidden");
+  assert.match(
+    html,
+    /<span class="compact-bound-count" hidden><\/span>/,
+    "SL-R10: nothing is held back, so NO count is claimed — the clause is empty and hidden",
+  );
+  assert.match(
+    html,
+    /class="linklike compact-toggle"[^>]*hidden><\/button>/,
+    "…and the control is hidden and unlabelled, so the reader is offered nothing",
+  );
+  /* SL-R10: the WRAPPER stays visible here, and that is deliberate. It carries
+     the link to the published dataset, which is true at every row count — the
+     remainder of the terminus row this replaced. Hiding it because the count
+     clause is empty would delete a published fact. */
+  assert.match(html, /class="compact-disclosure" data-compact-for="momentum-tbody"/);
+  assert.doesNotMatch(
+    html,
+    /class="compact-disclosure"[^>]*\shidden>/,
+    "the statement of where the rows live is not conditional on rows being held back",
+  );
 });
 
 test("R18: the member ranking renders TWO tables with two distinct render roots", () => {
@@ -180,7 +220,13 @@ test("R5: every sortable column carries a key and a button; the unsortable one s
   }
   // The rank column is deliberately unsortable and says so in VISIBLE text,
   // not a title attribute.
-  assert.match(html, /<span class="col-why">the rank number is produced by the active sort/);
+  /* RETARGETED by RUN SURFACES-LEGIBILITY (SL-R5/SL-R2b), same commit as the
+     change that invalidated it. The property is UNCHANGED — an unsortable
+     column must still state why it cannot be sorted — but the channel moved
+     from a `.col-why` span to a note panel, which is reachable by touch,
+     keyboard and print as the span was not. Asserting the TEXT, not the
+     wrapper, is what keeps this a guard rather than a spelling check. */
+  assert.match(html, /class="note-pop"[^>]*>the rank number is produced by the active sort/);
   assert.doesNotMatch(html, /<select[^>]*id="filter-sort"/, "the sort select is gone");
 });
 

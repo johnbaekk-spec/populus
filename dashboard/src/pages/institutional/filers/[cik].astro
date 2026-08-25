@@ -100,6 +100,16 @@ const description =
   </main>
   <script>
     import { initFilerPeriods } from "../../../scripts/entity-client";
+    import { initNotes } from "../../../scripts/notes";
     initFilerPeriods();
+    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+       is DELEGATED on `document`, so one call covers notes created later by an
+       `innerHTML` replacement — a sort repaint, a page change, a period switch —
+       and a second call would be idempotent. It is NOT added to `Base.astro`:
+       that would load the module on every page in the site, including the ones
+       this run does not touch, for no benefit. Without it a note still OPENS,
+       through `popovertarget` alone; what this adds is placement, hover, Escape
+       and outside-click. */
+    initNotes();
   </script>
 </Base>

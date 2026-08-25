@@ -50,7 +50,11 @@ import {
   universalFlagNote,
   fmtInt,
   fmtUsd,
-  footnoteBlock,
+  fnMark,
+  identityChipHtml,
+  note,
+  noteBody,
+  noteFromHtml,
   intOrNull,
   jsonArrayOf,
   latestFiling,
@@ -718,13 +722,32 @@ function deltaCell(r: ActivityFeedRecord): string {
     printed as if it were normal. */
 function lagCell(r: ActivityFeedRecord): string {
   const lag = r.reporting_lag_days;
+  /* SL-R8 Class B / SL-R8e / SL-R26. The key is the repository's OWN declared
+     row identity (`ActivitySortKey`), which `lagCell` already receives whole —
+     that is why these two are Class B rather than Class C, and why no
+     signature changes. `position_key` alone is insufficient:
+     `activity.test.ts:172` holds same-CIK, same-`position_key` rows separated
+     only by PUT/CALL, so a bare key would emit duplicate panel ids. */
+  const nctx = { scope: "activity-lag" };
+  const rowKey = `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`;
   if (lag == null) {
-    return `<span class="lag" title="filed date not resolvable from this build's filing dictionary">—<span class="visually-hidden"> reporting lag not resolvable</span></span>`;
+    /* SL-R8e: this was nearly a §7 violation. The attribute carried the CAUSE
+       ("not resolvable from this build's filing dictionary") while the
+       `.visually-hidden` sibling carries only the EFFECT ("reporting lag not
+       resolvable"). Deleting it as a Class-A duplicate would have removed the
+       filing-dictionary explanation with no replacement channel while the
+       exact inventory gate passed green. The cause moves into the note; the
+       sibling is preserved BYTE-IDENTICAL below. */
+    return (
+      `<span class="lag">—<span class="visually-hidden"> reporting lag not resolvable</span></span>` +
+      note("filed date not resolvable from this build's filing dictionary", nctx, `${rowKey}-lagcause`)
+    );
   }
   if (lag < 0) {
-    return `<span class="lag lag-anomaly" title="filed before the quarter it reports ended">filed ${esc(
-      String(Math.abs(lag)),
-    )}d before quarter end</span>`;
+    return (
+      `<span class="lag lag-anomaly">filed ${esc(String(Math.abs(lag)))}d before quarter end</span>` +
+      note("filed before the quarter it reports ended", nctx, `${rowKey}-laganomaly`)
+    );
   }
   if (lag > STATUTORY_LAG_DAYS) {
     return `<span class="lag-late">LATE·${esc(String(lag))}d</span><span class="visually-hidden"> — filed ${esc(
@@ -734,15 +757,27 @@ function lagCell(r: ActivityFeedRecord): string {
   return `<span class="lag">+${esc(String(lag))}d<span class="visually-hidden"> after quarter end</span></span>`;
 }
 
+/* SL-R17. Every row printed its raw 32-character `position_key`
+   (`sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7`) as visible text beside the
+   issuer name — machine spill a reader cannot act on. It becomes a chip that
+   says what the key is, with the key itself in the chip's note and in
+   `data-identity-key`, so it stays readable and copyable.
+
+   The note key is the FULL activity composite, never the bare `position_key`:
+   `activity.test.ts:172` holds same-CIK, same-`position_key` rows separated
+   only by PUT/CALL, so a bare key would emit duplicate panel ids and ambiguous
+   `aria-describedby` targets (SL-R26). */
 function issuerCell(r: ActivityFeedRecord): string {
+  const chip = identityChipHtml(
+    r.position_key,
+    { scope: "activity-identity" },
+    `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}-identity`,
+  );
   if (r.issuer_name && r.issuer_name.trim() !== "") {
     /* filed verbatim off the 13F — see `filed-name` in holdings.ts */
-    return `<span class="filed-name">${esc(r.issuer_name)}</span><span class="mono-note"> ${esc(r.position_key)}</span>`;
+    return `<span class="filed-name">${esc(r.issuer_name)}</span>${chip}`;
   }
-  return (
-    `<span class="none">issuer not identified in this build</span>` +
-    `<span class="mono-note"> ${esc(r.position_key)}</span>`
-  );
+  return `<span class="none">issuer not identified in this build</span>${chip}`;
 }
 
 function filedCell(r: ActivityFeedRecord): string {
@@ -780,7 +815,7 @@ export function activityRowHtml(
     `<td class="c-filer c-secondary">${filerLinkHtml(r.cik, filerName, tier)}</td>` +
     `<td><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span>` +
     `<span class="visually-hidden"> ${esc(label.spoken)}</span>` +
-    `<a class="fn-ref" href="#activity-footnotes" aria-label="footnote: what the change labels mean">§</a></td>` +
+    `${fnMark("§")}</td>` +
     `<td class="c-num">${deltaCell(r)}</td>` +
     `<td class="c-num mono-id">${esc(r.curr_period)}</td>` +
     `<td class="c-num">${filedCell(r)}</td>` +
@@ -804,7 +839,16 @@ export function truncationNoticeHtml(t: ActivityTruncation | null, shards: numbe
     html:
       `The ordered set does not fit in this build's ${fmtInt(shards)}-shard budget: ` +
       `<strong>${fmtInt(t.dropped_records)}</strong> further records are not published here. ` +
-      `The cut falls at ${boundary} — filer CIK ${esc(k.cik)}, position ${esc(k.position_key)}, ` +
+      /* CODE-REVIEW F7: the boundary's `position_key` may be a provisional
+         `sid:sec:prov:<hash>`, and this prose is VISIBLE on /institutional/ —
+         so printing it raw violates SL-R17 and success criterion 4 on a surface
+         this run owns. The publication bound is the honesty content here and it
+         is unchanged; only the identity's CHANNEL moves. The readable chip
+         states how strong the identity is, its note carries the exact key, and
+         the raw value stays machine-reachable in a `data-` attribute — the same
+         treatment R17 applies everywhere else a weak key surfaces. */
+      `The cut falls at ${boundary} — filer CIK ${esc(k.cik)}, position ` +
+      `${identityChipHtml(k.position_key, { scope: "activity-cut" }, "boundary")}, ` +
       `${esc(k.put_call)} · ${esc(k.ssh_prnamt_type)}. Everything below that boundary is absent ` +
       `from these shards and remains in the filings on EDGAR.`,
   });
@@ -835,6 +879,28 @@ const ACTIVITY_FOOTNOTES = [
       ` a lag over 45 days is past the statutory deadline`,
   },
 ];
+
+const ACTIVITY_FN = new Map(ACTIVITY_FOOTNOTES.map((e) => [e.mark, e.html]));
+
+/** SL-R7b: the activity table's column descriptors — key, label, and the
+    stated non-sortability reason that used to render as visible `.col-why`. */
+const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
+  ["issuer-position", "Issuer · position", "this view is the largest reported changes, cut at a shard bound — re-ordering the slice by issuer would present a partial list as a complete one"],
+  ["filer", "Filer", "same bound: the managers leading a filer ordering may be in shards this page never loaded. The manager directory below sorts its complete set"],
+  ["change", "Change ·§", "change kind is a category, not an order — the filters above select one"],
+  ["delta-value", "Δ value ·‡", "the rows are ALREADY ordered by absolute reported change; that is the ordering this slice was cut on"],
+  ["quarter-ended", "Quarter ended", "every row here shares the reporting period the feed was built for"],
+  ["filed", "Filed ·†", "a filed-date ordering over a value-cut slice would rank the wrong rows first"],
+  ["lag", "Lag", "as above — lag orders the slice, not the corpus"],
+  ["flags", "Flags", "flags are a set per row, with no order over them"],
+];
+
+/** SL-R7c: mark → column, read off the emitter. */
+const ACTIVITY_COL_FN: Record<string, string | undefined> = {
+  change: ACTIVITY_FN.get("§"),
+  "delta-value": ACTIVITY_FN.get("‡"),
+  filed: ACTIVITY_FN.get("†"),
+};
 
 export interface ActivityFeedOptions {
   /** Rows rendered inline; the remainder is served from the shards. */
@@ -957,44 +1023,59 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
        The two surfaces that DO sort — the congress rankings and the manager
        directory — hold their complete row set, which is exactly what makes
        sorting honest there. */
+    /* SL-R5/R7: this mapper is the fourth `.col-why` site — the plan's inventory
+       said three. Each column's stated reason becomes its note, and the three
+       marks `#activity-footnotes` published join the columns that emit them:
+       § on the change chip (`activityRowHtml`), ‡ on Δ value, † on Filed.
+       R7b's descriptor rule applies: the `<thead>` is a literal with no sort
+       key, so the keys are supplied here rather than invented at render time. */
     `<thead><tr>` +
-    [
-      ["Issuer · position", "this view is the largest reported changes, cut at a shard bound — re-ordering the slice by issuer would present a partial list as a complete one"],
-      ["Filer", "same bound: the managers leading a filer ordering may be in shards this page never loaded. The manager directory below sorts its complete set"],
-      ["Change ·§", "change kind is a category, not an order — the filters above select one"],
-      ["Δ value ·‡", "the rows are ALREADY ordered by absolute reported change; that is the ordering this slice was cut on"],
-      ["Quarter ended", "every row here shares the reporting period the feed was built for"],
-      ["Filed ·†", "a filed-date ordering over a value-cut slice would rank the wrong rows first"],
-      ["Lag", "as above — lag orders the slice, not the corpus"],
-      ["Flags", "flags are a set per row, with no order over them"],
-    ]
-      .map(
-        ([label, why]) =>
-          `<th scope="col">${esc(label!)}<span class="col-why">${esc(why!)}</span></th>`,
-      )
-      .join("") +
+    ACTIVITY_COLS.map(([key, label, why]) => {
+      const body = noteBody(why, ACTIVITY_COL_FN[key]);
+      return (
+        `<th scope="col">${esc(label)}` +
+        (body ? noteFromHtml(body, { scope: "inst-activity" }, key) : "") +
+        `</th>`
+      );
+    }).join("") +
     `</tr></thead>` +
     // R18/F4: the LOCKED render root. It was an anonymous <tbody>, which meant
     // no sort or expansion could be scoped to it and no root-integrity test
     // could enforce single ownership.
     `<tbody id="inst-activity-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
 
-    /* F2: this sentence now states BOTH bounds, because there are two and the
+    /* F2 + SL-R10: this states BOTH bounds, because there are two and the
        reader is inside the tighter one. The compact slice is a render bound
-       this page applies; the shard budget is a publication bound the build
-       applies. Naming only the second while silently applying the first is the
-       unstated omission R14 forbids. The shard is a LINK, not a path in a
-       code span: with scripting off the expand control cannot appear, so the
-       link is the only route to the rows below the slice. */
-    terminusRow({
-      author: "populus",
-      html:
-        (collapsed
-          ? `Showing the first ${fmtInt(COMPACT_ROWS)} of the ${fmtInt(rows.length)} rows` +
-            ` rendered here — a Public Filings render bound, lifted by the control below or by` +
-            ` reading <a href="${esc(firstShard)}">the published shard</a> directly. `
-          : `Showing the ${fmtInt(rows.length)} largest change records rendered here. `) +
-        `Those are the largest of ${fmtInt(emitted)} ordered change records` +
+       this page applies; the shard budget is a PUBLICATION bound the build
+       applies, and it is stated nowhere else on the site. Naming only the
+       second while silently applying the first is the unstated omission R14
+       forbids.
+
+       The two clauses are split along exactly the line that decides whether
+       expanding retracts them. The render bound is the count clause: expand,
+       and the rows are on screen, so it goes. The publication bound is the
+       remainder: it is true at every row count and in both states, so it never
+       goes — which is why it is emitted here rather than left on the collapsed
+       branch. The shard is a LINK, not a path in a code span: the expand
+       control is `hidden` until a script reveals it, so the link is the only
+       route to the rows below the slice for a reader who never gets one.
+
+       Note that both clauses are rendered by the control itself, VISIBLE from
+       the server. This surface is the one of the five whose control IS revealed
+       at load (`initDomDisclosures`), and it still must not depend on that: an
+       island that throws leaves the button unrevealed with scripting fully on,
+       and F1 records exactly that shipping here for a review cycle. */
+    compactDisclosure({
+      rootId: "inst-activity-tbody",
+      total: rows.length,
+      shown: Math.min(rows.length, COMPACT_ROWS),
+      noun: "changes",
+      domBacked: true,
+      boundCount:
+        `Showing the first ${fmtInt(COMPACT_ROWS)} of the ${fmtInt(rows.length)} rows` +
+        ` rendered here — a Public Filings render bound, not a data bound.`,
+      bound:
+        `These rows are the largest of ${fmtInt(emitted)} ordered change records` +
         ` published in this build${
           emitted === total ? "" : ` (of ${fmtInt(total)} in the ordered set)`
         }. The complete ordered set is served as ${fmtInt(feed.pagination.pages.length)} same-origin shard${
@@ -1002,26 +1083,14 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
         } under <span class="mono-note">${esc(shardBase)}/&lt;page&gt;.v1.json</span>,` +
         ` each closed at whichever binds first — ${fmtInt(
           feed.pagination.limits.recordLimit,
-        )} records or ${fmtInt(feed.pagination.limits.byteLimit)} bytes of serialized JSON.`,
-    }) +
-    /* F15: the terminus precedes its control, matching every other compact
-       table on the site — and matching what the sentence says. It used to be
-       emitted AFTER the control while telling the reader the control was
-       "below" it. The order is also what `syncTerminusFor` assumes
-       (`previousElementSibling`), so a later owner wiring this disclosure to the
-       shared updater finds the terminus where the other three tables keep it. */
-    compactDisclosure({
-      rootId: "inst-activity-tbody",
-      total: rows.length,
-      shown: Math.min(rows.length, COMPACT_ROWS),
-      noun: "changes",
-      domBacked: true,
+        )} records or ${fmtInt(feed.pagination.limits.byteLimit)} bytes of serialized JSON.` +
+        ` <a href="${esc(firstShard)}">Read the first shard</a> to reach every record` +
+        ` directly, with or without scripting.`,
     }) +
     truncationNoticeHtml(feed.pagination.truncation, feed.pagination.limits.shardLimit) +
     `<div class="caveat-line">Quarter-over-quarter comparisons are between two quarter-end` +
     ` snapshots of what was reported — not a record of transactions, and not a claim about what` +
     ` any manager holds now.</div>` +
-    footnoteBlock(ACTIVITY_FOOTNOTES, { id: "activity-footnotes" }) +
     `</section>`
   );
 }

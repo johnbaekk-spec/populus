@@ -40,7 +40,6 @@ import {
   type BuildStamps,
 } from "../lib/ui.ts";
 import {
-  holdingsFootnotesHtml,
   institutionalDataNoteHtml,
   projectionAbsentHtml,
   surfaceHtml,
@@ -477,8 +476,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       `<div data-holdings-body>` +
       surface +
       `</div></section>` +
-      institutionalDataNoteHtml() +
-      holdingsFootnotesHtml()
+      institutionalDataNoteHtml()
     );
   }
 

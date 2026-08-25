@@ -1428,6 +1428,42 @@ button {
   border-top: 1px solid var(--rule);
 }
 .caveat-inline { color: var(--ink3); }
+/* SL-R17: a readable identity chip in place of a raw key. Quiet, dashed like
+   the flag vocabulary it borrows its wording from — it is a qualifier on the
+   name beside it, never a claim of its own. */
+.id-chip {
+  font: 500 10.5px var(--sans);
+  color: var(--ink3);
+  border: 1px dashed var(--rule2);
+  padding: 0 5px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+/* SL-R13: the momentum control's pending state. It is a STATEMENT, not a
+   spinner — a spinner says "wait", this says what the control has and has not
+   done yet. Tinted so it reads as a live claim rather than as chrome. */
+.pending-note { color: var(--ink2); }
+/* SL-R14 / LD2: a true empty window states itself here rather than the table
+   painting blank. The offers are `.linklike` buttons, matching the rest of the
+   page's in-prose controls. */
+.empty-window .linklike { font-weight: 600; }
+/* SL-R1: the /congress/ head's stamp and its four methodology deep links. The
+   stamp keeps `.caveat-line`'s mono voice — it is the same kind of statement —
+   but drops the top rule, because it sits inside the page head rather than
+   under a table. The links wrap on narrow viewports instead of scrolling, so
+   none of the four can end up off-screen. */
+.stamp-line {
+  padding: 4px 0 0;
+  font: 400 11px/1.6 var(--mono);
+  color: var(--ink3);
+}
+.method-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 6px 0 0;
+  font: 400 11px/1.6 var(--mono);
+}
 /* R10 defect #12: a flag carried by EVERY row states itself here instead of on
    each row. It sits ABOVE the table it describes and reads as a caveat, not as
    chrome — the border-bottom pairs it with the table rather than the block
@@ -2084,6 +2120,19 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   text-transform: uppercase;
   color: var(--ink3);
 }
+/* SL-R15/LD8: the summary carries the load-bearing claim, so it is a SENTENCE
+   and must read as one — not the uppercase micro-label the head was. It is not
+   letter-spaced, not uppercased and not muted, because this is now the honesty
+   channel that stands in for the always-open body. */
+.caveat-box-summary {
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font: 600 12.5px/1.6 var(--sans);
+  color: var(--ink2);
+  border-bottom: 0;
+}
+details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
 .caveat-box-body {
   padding: 12px 16px;
   font: 400 12.5px/1.8 var(--sans);
@@ -2639,6 +2688,7 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .star-btn,
   .pager,
   .filterbar .filter-controls,
+  .compact-toggle,
   .s4-actions {
     display: none !important;
   }
@@ -2646,6 +2696,11 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   .feed-footnote,
   .footnotes-stacked,
   .terminus,
+  /* SL-R10: the bound a compact table states about itself. It prints for the
+     same reason the terminus row it replaced did — a reader holding paper
+     cannot expand anything, so the statement of what is missing has to be on
+     the page. The BUTTON above stays in the no-print list. */
+  .compact-bound,
   .caveat-line,
   .rb-caption,
   .table-stamp {
@@ -2668,6 +2723,18 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
      the `<summary>`, which always prints. */
   .flag-provenance::details-content {
     content-visibility: visible !important;
+  }
+  /* SL-R15/LD8 point 2: the §5 box PRINTS OPEN. The paper channel is unchanged
+     by the collapse — a reader printing this page gets all six clauses whether
+     or not they opened the box first. `open` is forced by the same
+     `::details-content` mechanism B33 measured for `.flag-provenance`; the
+     `display` line beside it covers engines that hide the content the older
+     way. */
+  .caveat-box::details-content {
+    content-visibility: visible !important;
+  }
+  .caveat-box > .caveat-box-body {
+    display: block !important;
   }
   .flag-provenance > .flag-raw {
     display: block !important;
@@ -2824,6 +2891,24 @@ th[data-inst-sort] .th-sort {
   gap: 14px;
   margin: 10px 0 4px;
 }
+/* SL-R16: the adds control adopts the SAME one-row idiom. Its buttons are
+   `.chip`s rather than a `.seg`, so the chip row keeps its own spacing inside
+   the shared layout instead of a second control grammar being invented. */
+.control-row .chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The label is VISIBLE now, not only an aria-label — a sighted reader met two
+   unlabelled button rows and had to guess which axis each moved. */
+.control-row .filter-label {
+  font: 600 10.5px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-right: 8px;
+}
 
 /* R5: the stated reason an unsortable column carries. VISIBLE text, never a
    title attribute — a tooltip is not a channel a touch device can open, and
@@ -2841,10 +2926,27 @@ th[data-inst-sort] .th-sort {
   white-space: normal;
 }
 
-/* R7: the expand control. It sits directly under its table, after the terminus
-   row, so the reader meets the STATED bound before the offer to lift it. */
+/* R7/SL-R10: the bound a compact table states about itself, and the control
+   that lifts it. The STATEMENT comes first, so the reader meets the bound
+   before the offer to lift it — and it is styled like the `.terminus` row it
+   replaced, because it is the same fact in the same voice.
+
+   The statement is server-rendered VISIBLE; only the button waits for a script
+   (`[hidden]` above). Nothing here may hide `.compact-bound` at any width — it
+   is on the fold sweep's honesty list. */
 .compact-disclosure {
   margin: 8px 0 2px;
+}
+.compact-bound {
+  font: 400 12px/1.6 var(--sans);
+  color: var(--ink2);
+  margin: 0 0 6px;
+}
+.compact-bound-count {
+  color: var(--ink);
+}
+.compact-bound-extra {
+  color: var(--ink2);
 }
 .compact-toggle {
   font: 600 12px var(--sans);
@@ -2916,4 +3018,167 @@ th[data-inst-sort] .th-sort {
    The rows return the moment the disclosure is activated. */
 tbody[data-collapsed="true"] tr[data-compact-extra] {
   display: none;
+}
+
+/* ==================================================== notes (SL-R2 … SL-R4)
+
+   One explanation primitive. The panel uses the TOP LAYER via `popover`,
+   because a panel positioned inside `.table-scroll { overflow-x: auto }` is
+   clipped by the scroll container and the last column's note is unreachable —
+   measured, not assumed. */
+
+.note {
+  display: inline-block;
+  position: relative;
+  vertical-align: baseline;
+}
+
+/* >= 44px hit target at every width (SL-R24). The visual dot is smaller than
+   the tappable box: padding carries the target, so the glyph can stay quiet. */
+.note-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: help;
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 1;
+  color: var(--muted, #667);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.35em;
+  margin: -14px -0.1em;
+  border-radius: 999px;
+}
+
+.note-btn:hover,
+.note-btn:focus-visible {
+  color: var(--fg, #111);
+  text-decoration: underline dotted;
+}
+
+.note-pop {
+  position: fixed;
+  margin: 0;
+  inset: auto;
+  max-width: min(38ch, calc(100vw - 2rem));
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--rule, #ccc);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  color: var(--fg, #111);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
+
+  /* CODE-REVIEW F8: reset the header typography this panel INHERITS.
+
+     CSS inheritance follows the DOM tree, not the layout tree, so a panel in
+     the top layer still inherits from the `<th>` it is written inside — and
+     `.etable th` sets `white-space: nowrap`, `text-transform: uppercase`,
+     `letter-spacing: 0.12em` and `text-align: left`. Header notes are the
+     PRIMARY case this run creates (R5, R6, R7), so without this every one of
+     them rendered its footnote prose as a single unwrapped uppercase
+     letter-spaced line running out of the panel.
+
+     The browser tests missed it because they assert the panel is visible and
+     near its anchor. Both are true of an overflowing line. `sl-notes.spec.ts`
+     now measures wrapping and containment instead. */
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
+  font-weight: 400;
+  font-variant: normal;
+  overflow-wrap: anywhere;
+}
+
+/* SL-R2b: a DEFAULT resting place for a panel nobody positions.
+
+   `note()` renders through shared renderers, two of which (`txnRowHtml` via
+   `feedItemHtml`) also draw rows on `/watchlist/` and `/e/` — routes this run
+   does not own and does not initialise. There the panel still OPENS, because
+   `popovertarget` is declarative, and it still light-dismisses and closes on
+   Escape, because those are native to `popover`. What it does not get is
+   `place()`. Without this rule it would open wherever the UA put it.
+
+   Centring is deliberate rather than clever: it is predictable at every width,
+   needs no anchor knowledge, and reads as a deliberate panel instead of a
+   misplaced one. `place()` clears `translate` before setting top/left, so a
+   scripted panel is unaffected by this rule.
+
+   This is the structural fix for the whole class: any shared renderer that
+   grows a note later is safe by default instead of by someone remembering. */
+.note-pop:popover-open {
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+}
+
+/* Under 720px a panel that tries to sit beside its anchor has nowhere to go. */
+@media (max-width: 719px) {
+  .note-pop {
+    max-width: calc(100vw - 1.5rem);
+  }
+}
+
+/* --- the non-supporting-engine fallback (SL-R3), and its test seam (SL-R27).
+
+   The declarations are authored ONCE and emitted into two selectors: the real
+   `@supports not` block, and a `:root.force-note-fallback` block a test can
+   switch on. The gate installs only Chromium, which has supported `popover`
+   since v114, so the real block can never be entered by the browser tests —
+   without the seam this fallback could be entirely broken and stay green. A
+   unit test asserts the two blocks carry byte-identical declarations, so the
+   seam cannot drift from the thing it stands for.
+
+   Note it opens on :hover and :focus-within in CSS ALONE — no script runs on
+   this path, which is what makes the no-JavaScript claim true on every engine. */
+@supports not selector(:popover-open) {
+  .note-pop {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+  }
+  .note:hover .note-pop,
+  .note:focus-within .note-pop {
+    display: block;
+  }
+}
+
+:root.force-note-fallback .note-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+}
+:root.force-note-fallback .note:hover .note-pop,
+:root.force-note-fallback .note:focus-within .note-pop {
+  display: block;
+}
+
+/* --- print (SL-R4). Hover-only text must still reach paper: every panel is
+   laid out in NORMAL FLOW beneath its anchor and the button is hidden. This is
+   asserted by rendering under emulated print media and measuring a non-zero
+   box, not by grepping for this rule. */
+@media print {
+  .note-btn {
+    display: none;
+  }
+  .note-pop {
+    display: block !important;
+    position: static !important;
+    transform: none !important;
+    max-width: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0.15rem 0 0.15rem 1rem;
+    font-size: 0.8rem;
+    color: var(--muted, #444);
+  }
 }

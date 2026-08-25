@@ -34,7 +34,7 @@ import {
   holdingsPageCount,
   holdingsPageSlice,
   holdingsRangeText,
-  holdingsFootnotesHtml,
+  HOLDINGS_FOOTNOTES,
   holdingsTableHtml,
   isAsOfResolved,
   parseFilerShard,
@@ -551,7 +551,13 @@ test('"absent" describes two reported lists — no banned trading verb on any su
     ["filer positions", surfaceHtml(filerPayload(), { view: "current", page: 0, period: "2026-03-31" })],
     ["added/absent/changed", surfaceHtml(filerPayload(), { view: "diff", page: 0, period: "2026-03-31" })],
     ["holders", surfaceHtml(holdersPayload([issuerRow()]), { view: "current", page: 0, period: "2026-03-31" })],
-    ["footnotes", holdingsFootnotesHtml()],
+    /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6).
+       `holdingsFootnotesHtml()` is deleted: its four clauses are now notes on
+       the columns whose cells emit their marks. The banned-wording ban is a
+       property of the TEXT, not of the container, so the scan runs over the
+       registry the notes read from — which is strictly closer to the source
+       than scanning one rendering of it was. */
+    ["footnote clauses", HOLDINGS_FOOTNOTES.map((e) => e.html).join(" ")],
   ] as const) {
     assert.deepEqual(scanBannedWording(html), [], `${name} carries banned wording`);
   }

@@ -12,7 +12,7 @@ import {
   type RenderCtx,
 } from "../../lib/format";
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
-import { congressRankingSection, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui";
+import { congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui";
 
 const build = getBuildData();
 
@@ -57,6 +57,17 @@ const momentumHtml = congressRankingSection(
     heading: "Ticker momentum — net disclosed flow",
     sectionId: "momentum-section",
     controls: true,
+    /* SL-R14: computed here because only this page holds the full row set —
+       the rollup above is already windowed. The client recomputes the same
+       thing from the same rows through the same function when the reader
+       changes the window. */
+    alternatives: rankingAlternatives(
+      build.txns,
+      build.generatedAtDate,
+      "tickers",
+      MOMENTUM_RANGE,
+      MOMENTUM_BASIS,
+    ),
   },
 );
 
@@ -126,10 +137,25 @@ const description =
           — what you read here is what was filed; nothing more current exists in the
           public record. <a href="/methodology/">How this data is made ↗</a>
         </p>
-        <div class="caveat-line" id="congress-caveat">
-          {fmtInt(build.txnCount)} rows filed since {build.filedFrom} · as of {build.generatedAt} ·
-          amounts are statutory ranges, not exact values, and are filed up to 45 days after the
-          trade · <a href="/methodology/#coverage">parse coverage, in full ↗</a>
+        {/* SL-R1. The `.caveat-line` is replaced by a STAMP plus four deep
+            methodology links. Nothing is softened: every claim the line made
+            still ships, at its authoritative source rather than as a compressed
+            restatement above the fold. "amounts are statutory ranges" is
+            `#amount-ranges`; "filed up to 45 days after the trade" is
+            `#filing-lag` — and both of those sentences are ALSO still in the
+            lede paragraph directly above, verbatim, so neither claim depends on
+            a reader following a link. The two links the page never had are
+            `#owner-codes` (SP/DC/JT, which no surface explained) and
+            `#coverage`, whose id did not exist until T1 — the old link
+            resolved to the top of the methodology page. */}
+        <div class="stamp-line" id="congress-stamp">
+          {fmtInt(build.txnCount)} rows · filed since {build.filedFrom} · as of {build.generatedAt}
+        </div>
+        <div class="method-links" id="congress-method-links">
+          <a href="/methodology/#coverage">parse coverage, in full ↗</a>
+          <a href="/methodology/#amount-ranges">why amounts are ranges ↗</a>
+          <a href="/methodology/#filing-lag">the 45-day filing lag ↗</a>
+          <a href="/methodology/#owner-codes">whose trade is it — SP · DC · JT ↗</a>
         </div>
       </div>
     </div>
@@ -263,7 +289,7 @@ const description =
              shows the same nine cells through the same `feedItemHtml`. The
              watchlist had no <thead> at all; a second hand-written copy here
              would be the drift that caused it. -->
-        <Fragment set:html={feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc" })} />
+        <Fragment set:html={feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } })} />
 
 
         <tbody id="feed-tbody" set:html={rowsHtml} />
@@ -304,8 +330,21 @@ const description =
        parsed rows to the ranking sections — they never fetch. */
     import { initFeed } from "../../scripts/feed-client";
     import { initCongressSections } from "../../scripts/congress-sections";
+    import { initNotes } from "../../scripts/notes";
     const sections = initCongressSections();
-    initFeed({ onRows: sections.receiveRows });
+    /* SL-R29: `onSettled` fires on BOTH the success and failure paths, so the
+       momentum section's "applying …" state clears either way. Cleared only in
+       `onRows` it would survive a failed download for the life of the page. */
+    initFeed({ onRows: sections.receiveRows, onSettled: sections.feedSettled });
+    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+       is DELEGATED on `document`, so one call covers notes created later by an
+       `innerHTML` replacement — a sort repaint, a page change, a period switch —
+       and a second call would be idempotent. It is NOT added to `Base.astro`:
+       that would load the module on every page in the site, including the ones
+       this run does not touch, for no benefit. Without it a note still OPENS,
+       through `popovertarget` alone; what this adds is placement, hover, Escape
+       and outside-click. */
+    initNotes();
   </script>
 </Base>
 

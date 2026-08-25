@@ -49,9 +49,12 @@ const description =
         <div class="mono-note">build {build.buildId} · generated {build.generatedAtDate}</div>
       </div>
       <blockquote class="standing-caveat">
-        Standing caveat: trades are disclosed in statutory dollar ranges, never
-        exact amounts, and may be filed up to 45 days after the trade —
-        sometimes later. A filing is a disclosure event, not a market event.
+        {/* SL-R23: the two facts this caveat carries are linked separately from the
+            reader-facing surfaces, so each sentence gets its own stable anchor.
+            Text is unchanged — only the wrapping spans and ids are new. */}
+        <span id="amount-ranges">Standing caveat: trades are disclosed in statutory dollar ranges, never
+        exact amounts</span>, and <span id="filing-lag">may be filed up to 45 days after the trade —
+        sometimes later. A filing is a disclosure event, not a market event.</span>
       </blockquote>
       <div class="metho-tiles">
         {m1.map((t) => (
@@ -85,12 +88,26 @@ const description =
           </div>
         </div>
         <div>
-          <h3 class="section-h">Known gaps — published, not hidden</h3>
+          {/* SL-R23: `/congress/`'s head has linked `/methodology/#coverage` since
+              ALPHA-SURFACES-V2; the id never existed, so the link resolved to the top
+              of the page. This is the section it always meant. */}
+          <h3 class="section-h" id="coverage">Known gaps — published, not hidden</h3>
           <div class="gaps-block" id="defaults">
             <div>· {fmtInt(build.stats.totals.needs_ocr_filing_count_including_excluded)} paper filings <span class="flag dashed">needs OCR</span> — counted in totals labeled *_including_excluded</div>
             <div>· {fmtInt(build.stats.totals.unresolved_pair_count)} filer name-pairs not yet joined to members — the join is name × chamber × term, only on a unique candidate; the alias file is version-controlled and public</div>
             <div>· amendments carry <span class="flag amber">amendment pending</span> until amendment semantics are settled — the default view (v_default_transactions) excludes the superseded original, and both readings are queryable</div>
             <div>· rows with defect flags are visible and flagged, never dropped</div>
+          </div>
+          {/* SL-R23: the ONE anchor whose text was not already on this page. Moved
+              verbatim from `lib/ui.ts`'s member-page `.entity-lede`, which SL-R19
+              converts to a note in the same run — the claim relocates, it is not
+              duplicated and it is not newly authored. */}
+          <h3 class="section-h" id="owner-codes">Whose trade is it — owner codes</h3>
+          <div class="gaps-block">
+            <div>· Filings under a member include transactions by spouse (SP), dependent
+              children (DC), and joint accounts (JT) — the STOCK Act does not distinguish
+              who directed a trade.</div>
+            <div>· Amounts are statutory ranges; member totals are therefore ranges too.</div>
           </div>
         </div>
       </div>
@@ -105,7 +122,7 @@ const description =
             : "not in this build"}
         </div>
       </div>
-      <blockquote class="standing-caveat">
+      <blockquote class="standing-caveat" id="13f-scope">
         Standing caveat: 13F covers long positions in Section 13(f) securities —
         no shorts, no cash — as quarter-end snapshots filed up to 45 days late,
         in era-dependent value units. Only managers over $100M file: it is not a
@@ -153,7 +170,7 @@ const description =
         <div>· "Exit" is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
         <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Public Filings build parameter.</div>
         <div>· Concentration is computed only when the denominator is disclosed; otherwise the stat prints "n/a" with its reason <span class="mono-id">concentration_unavailable</span>.</div>
-        <div>· Ticker→issuer joins use the SEC's present-day ticker file against entity-keyed issuers only — never a name match, never a guessed identity.</div>
+        <div id="13f-identity">· Ticker→issuer joins use the SEC's present-day ticker file against entity-keyed issuers only — never a name match, never a guessed identity.</div>
       </div>
     </section>
 

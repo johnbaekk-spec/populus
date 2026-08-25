@@ -52,6 +52,7 @@ import {
   leadersRollup,
 } from "../src/lib/derive.ts";
 import type { MemberEntity } from "../src/lib/derive.ts";
+import { INST_DATA_NOTE_SUMMARY, INSTITUTIONAL_DATA_NOTE_CLAUSES } from "../src/lib/holdings.ts";
 import {
   activitySectionHtml,
   institutionalDataNoteHtml,
@@ -266,6 +267,10 @@ const HONESTY_SELECTORS = [
   ".terminus",
   ".caveat-line",
   ".caveat-inline",
+  /* SL-R15/LD8 point 4: the collapsed §5 box's summary is now the honesty
+     channel that stands in for the always-open body, so the fold sweep must
+     protect it exactly as it protects `.caveat-line`. */
+  ".caveat-box-summary",
   ".table-stamp",
   ".inst-stamp",
   ".rb-caption",
@@ -302,6 +307,15 @@ const HONESTY_SELECTORS = [
   ".mgr-chip",
   ".c-issuer",
   ".c-secondary",
+  /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
+     channel a large share of this site's explanations travel on — every
+     `.col-why`, every footnote clause, the exclusion counts, the owner codes,
+     the signal rules. Suppressing either half of it at a breakpoint would hide
+     all of that at exactly the width where the page has least room, which is
+     the failure mode this sweep exists to catch. `.note-btn` is the reader's
+     only cue that an explanation exists; `.note-pop` is the explanation. */
+  ".note-btn",
+  ".note-pop",
 ];
 
 const PROHIBITED = [/display\s*:\s*none/, /visibility\s*:\s*hidden/, /content-visibility\s*:\s*hidden/];
@@ -1154,18 +1168,95 @@ test("T14/R16: the §5 data_note renders on every institutional surface", () => 
   );
 });
 
-test("T14/R16: the data_note's own classes are never dropped at any breakpoint", () => {
+/* RETIRED AND REPLACED — RUN SURFACES-LEGIBILITY, SL-R15 / LD8.
+
+   The assertion that stood here read:
+
+       for (const bp of BREAKPOINTS)
+         assert.deepEqual(droppedAt(note, bp.width), [],
+           `the §5 data_note loses content at ${bp.name}px — it may never fold`);
+
+   It is DELETED, and this is its replacement, landing in the same commit as the
+   change that invalidated it. Two facts drove LD8, and the second is the one
+   that matters:
+
+   1. R15 collapses the box into a `<details>`, which REVERSES the never-fold
+      invariant's intent. That alone would be a reviewed decision to re-open,
+      not to evade.
+
+   2. Worse, and verified: THE OLD ASSERTION COULD NOT HAVE CAUGHT IT.
+      `droppedAt` matches PROJECT CSS rules against class names, while a
+      collapsed `<details>` is hidden by the USER AGENT's own default — no
+      project rule is involved. The guard would have stayed green while all six
+      clauses were hidden at every width. A guard that passes while its property
+      is false is the one thing the repo memory
+      `invariant-boundary-test-update-design-change` forbids leaving in place.
+
+   The replacement is STRICTLY STRONGER, not merely different: it tests
+   REACHABILITY, which the retired assertion never did. */
+test("T14/R16 + SL-R15/LD8: the §5 box may collapse, but every clause stays reachable and the summary carries the claim", () => {
   const note = institutionalDataNoteHtml();
-  for (const bp of BREAKPOINTS) {
-    assert.deepEqual(
-      droppedAt(note, bp.width),
-      [],
-      `the §5 data_note loses content at ${bp.name}px — it may never fold`,
+
+  // (a) all six clauses are present in the DOM, collapsed or not — the
+  //     container changed, the contract did not.
+  for (const c of INSTITUTIONAL_DATA_NOTE_CLAUSES) {
+    assert.ok(
+      note.includes(`data-note-clause="${c.id}"`),
+      `clause ${c.id} left the DOM — R15 may change the container, never the clauses`,
     );
+    assert.ok(note.includes('class="caveat-line"'), "and each is still a .caveat-line");
   }
-  // and it prints: .caveat-line is forced visible in the print block
+  assert.equal(
+    (note.match(/data-note-clause=/g) ?? []).length,
+    INSTITUTIONAL_DATA_NOTE_CLAUSES.length,
+    "six clauses, no more and no fewer",
+  );
+
+  // (b) they are reachable by TOGGLING — the box is a real <details> with a
+  //     real <summary>, not a div styled to look shut.
+  assert.match(note, /^<details /, "a real disclosure element");
+  assert.match(note, /<summary class="[^"]*caveat-box-summary/, "with a real summary");
+  assert.ok(note.includes('id="inst-data-note"'), "the element id is preserved");
+  assert.ok(note.includes("data-inst-data-note"), "and its finder attribute");
+  const body = note.slice(note.indexOf("</summary>"));
+  for (const c of INSTITUTIONAL_DATA_NOTE_CLAUSES) {
+    assert.ok(body.includes(c.id), `clause ${c.id} is inside the toggled region`);
+  }
+
+  // (c) the summary's REQUIRED SUBSTRING, asserted verbatim. LD8 point 1: a
+  //     summary reading only "Details", or the bare heading, fails — the claim
+  //     a reader most needs must be visible at every width without opening
+  //     anything.
+  const summary = note.slice(note.indexOf("<summary"), note.indexOf("</summary>"));
+  assert.ok(summary.includes(INST_DATA_NOTE_SUMMARY), "the summary carries the load-bearing claim verbatim");
+  for (const required of ["quarterly", "long-only", "45 days", "not current holdings"]) {
+    assert.ok(summary.includes(required), `the summary must say "${required}" in visible text`);
+  }
+  assert.ok(!/^\s*<summary[^>]*>\s*(Details|More)\s*</i.test(summary), "not a bare disclosure label");
+  assert.ok(summary.includes('href="/methodology/#13f-scope"'), "and the deep methodology link R15 requires");
+
+  // (d) LD8 point 2: @media print forces the box OPEN, so the paper channel is
+  //     unchanged by the collapse. Asserted against the same mechanism B33
+  //     measured for `.flag-provenance`: `display` on the child does NOT defeat
+  //     a closed <details>; `::details-content` is what does the work.
   const printBlock = css.slice(css.indexOf("@media print"));
   assert.ok(printBlock.includes(".caveat-line"), "the note's lines print");
+  assert.match(
+    printBlock,
+    /\.caveat-box::details-content\s*\{[^}]*content-visibility:\s*visible/,
+    "print forces the collapsed box open — a disclosure is no use on paper",
+  );
+
+  // (e) `droppedAt` still runs, over the SUMMARY markup, which may never fold.
+  //     This is the half of the retired assertion that remains meaningful: the
+  //     summary is project-CSS territory, so `droppedAt` can actually see it.
+  for (const bp of BREAKPOINTS) {
+    assert.deepEqual(
+      droppedAt(summary + "</summary>", bp.width),
+      [],
+      `the §5 summary loses content at ${bp.name}px — it carries the claim and may never fold`,
+    );
+  }
 });
 
 test("T14/R16: no banned trading verb on any institutional surface", () => {

@@ -35,7 +35,6 @@ import { filerAggregateInputs, getBuildData, topFilerCiks } from "../lib/data.ts
 import {
   capRows,
   coverageFromCounters,
-  holdingsFootnotesHtml,
   isAsOfResolved,
   parseIssuerShard,
   projectionAbsentHtml,
@@ -244,7 +243,6 @@ const payloadJson =
   <div data-holdings-body set:html={bodyHtml} />
 </section>
 <Fragment set:html={institutionalDataNoteHtml()} />
-<Fragment set:html={holdingsFootnotesHtml()} />
 {
   payload && (
     <script type="application/json" id="holdings-data" is:inline set:html={payloadJson} />

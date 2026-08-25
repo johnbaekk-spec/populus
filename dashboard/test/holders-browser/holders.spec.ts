@@ -73,3 +73,64 @@ test("sort buttons meet the 44px touch target in a real layout", async ({ page }
   expect(box!.width).toBeGreaterThanOrEqual(44);
   expect(box!.height).toBeGreaterThanOrEqual(44);
 });
+
+/* ── CODE-REVIEW F4 ──────────────────────────────────────────────────────────
+   SL-R28 requires the holders page to be tested BEFORE and AFTER a period
+   replacement, because `initHoldersPeriods` repaints the whole root and a note
+   created by that repaint must still open. The geometry lane cannot carry this
+   test: it previews `dist`, which builds no holders route under
+   `/institutional/tickers/` at all — this lane's producer-backed fixture envelope is the only
+   served build where the route exists. Recorded as a deviation from the plan's
+   placement, not as a silent move.
+
+   Delegation is the mechanism: `initNotes()` binds one listener set on
+   `document`, so a note in a root replaced afterwards is live with no rebind.
+   A per-element binder passes every unit test in the suite and dies here. */
+
+async function openFirstNote(page: Page) {
+  const btn = page.locator(".note-btn").first();
+  await expect(btn, "the holders page must render at least one note").toBeVisible();
+  const id = await btn.getAttribute("popovertarget");
+  expect(id, "a note button must address a panel").toBeTruthy();
+  await btn.click();
+  const pop = page.locator(`#${id}`);
+  await expect(pop).toBeVisible();
+  return pop;
+}
+
+test("SL-R28/F4: a note opens BEFORE the period swap, and again from the REPLACED root", async ({ page }) => {
+  await page.goto(ROUTE);
+
+  // Before: the server-rendered root's notes work.
+  const before = await openFirstNote(page);
+  await expect(before).toContainText(/\S/, "an empty panel is not a channel");
+  await page.keyboard.press("Escape");
+
+  // Swap the period. `initHoldersPeriods` replaces the root's innerHTML, so
+  // every note node the first assertion touched is now detached.
+  await page.locator('[data-period="2025-12-31"]').click();
+  await expect(page.locator('[data-period="2025-12-31"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(filerCells(page)).toHaveText([/BERKSHIRE HATHAWAY/]);
+
+  // After: a note from the NEW root must open. This is the assertion that
+  // fails if binding ever moves from `document` to the elements themselves.
+  const after = await openFirstNote(page);
+  await expect(after).toContainText(/\S/, "the replaced root's note carries its explanation too");
+});
+
+test("SL-R24/T12: the holders page's note anchor is a >=44px target at every swept width", async ({ page }) => {
+  /* The third in-scope surface a browser can reach in this repository. The
+     geometry lane previews the bounded `dist`, which builds no holders route,
+     so R24's "a representative anchor per surface" is only satisfiable for this
+     one here. Same five widths the geometry harness sweeps, restated rather
+     than imported: the two lanes serve different builds and must not share a
+     config that implies otherwise. */
+  for (const w of [360, 720, 964, 1080, 1440]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.goto(ROUTE);
+    const btn = page.locator(".note-btn").first();
+    expect(await btn.count(), `the holders page must render a note anchor at ${w}px`).toBeGreaterThan(0);
+    const box = (await btn.boundingBox())!;
+    expect(Math.min(box.width, box.height), `44px target at ${w}px`).toBeGreaterThanOrEqual(44);
+  }
+});

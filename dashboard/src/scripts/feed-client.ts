@@ -108,9 +108,39 @@ export function amountOrder(
 export interface FeedOptions {
   /** Receives the one decoded row set. Called once, only on success. */
   onRows?: (rows: readonly TxnRow[]) => void;
+  /* SL-R29. `onSettled` fires on BOTH outcomes, exactly once, AFTER `onRows`
+     on the success path. It exists because a consumer that shows a pending
+     state has to clear it on failure too, and `onRows` documents itself as
+     firing on success alone — so a pending indicator cleared only there would
+     read "applying …" forever after a failed download, which is a false
+     statement about a view that will never be painted. `ok` is the outcome, so
+     the consumer can say WHY it could not apply rather than merely stopping. */
+  onSettled?: (ok: boolean) => void;
 }
 
 export function initFeed(options: FeedOptions = {}): void {
+  /* SL-R29: fired once per LOAD ATTEMPT, on either outcome. A consumer's throw
+     is contained the same way `onRows`'s is — a broken consumer must not turn a
+     successful decode into a failed one.
+
+     CODE-REVIEW F3: this flag is per-attempt, not per-island. It was an
+     `initFeed`-lifetime latch, and `loadData()` runs again from the "Try again"
+     button and from the filter path — so after ONE failure every later attempt
+     was silently unsettleable. A reader who pressed a range control, failed,
+     retried and failed again would sit on "Applying …" forever: exactly the
+     false statement about an unpainted view that SL-R29 exists to remove,
+     reintroduced one layer down. `loadData()` re-arms it. */
+  let settled = false;
+  function settle(ok: boolean): void {
+    if (settled) return;
+    settled = true;
+    try {
+      options.onSettled?.(ok);
+    } catch (err) {
+      console.error("populus: a feed-settled consumer failed", err);
+    }
+  }
+
   const rootEl = document.getElementById("congress-feed");
   const bodyEl = document.getElementById("feed-tbody");
   /* F1: this used to require `#feed`, an id the page LOST when the feed became
@@ -182,6 +212,7 @@ export function initFeed(options: FeedOptions = {}): void {
   let pendingApply = false;
 
   function loadData(): Promise<void> {
+    settled = false; // CODE-REVIEW F3: each attempt settles exactly once.
     loadPromise ??= fetch("/congress/data/feed.v1.json")
       .then((r) => {
         if (!r.ok) throw new Error(`dataset fetch failed: ${r.status}`);
@@ -215,6 +246,7 @@ export function initFeed(options: FeedOptions = {}): void {
           pendingApply = false;
           apply();
         }
+        settle(true);
       })
       .catch((err) => {
         loadPromise = null;
@@ -223,6 +255,7 @@ export function initFeed(options: FeedOptions = {}): void {
         // Review F5: a refused or failed dataset states itself on the page
         // unconditionally — not only when an interaction was already pending.
         renderLoadFailure();
+        settle(false);
       });
     return loadPromise;
   }

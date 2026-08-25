@@ -128,8 +128,14 @@ test("memberBody: honesty invariants — dual dates, star, § resolves, S5 block
   assert.ok(html.includes('data-watch-kind="member"'), "watch star wired to the v2 store");
   assert.ok(html.includes("saved in this browser only"));
   // § marker on the flow column resolves to a printed line in the same body
-  assert.ok(html.includes('href="#member-footnotes"'));
-  assert.ok(html.includes('id="member-footnotes"'));
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6). `#member-footnotes`
+     held ONE clause and it is now a note on the Flow range column and on the
+     quarterly-flow panel's "derived ·§" marker. The § marker still renders;
+     the clause is still in the same body. Both are asserted, so nothing about
+     the honesty property is weaker than before — only the wrapper moved. */
+  assert.ok(html.includes('<span class="fn-ref">§</span>'));
+  assert.ok(html.includes('id="n-member-top-flow-range"'));
+  assert.ok(html.includes("flow range = sum of statutory bucket bounds"));
   assert.ok(html.includes("an interval, not an estimate of value"));
   assert.ok(html.includes("<caption"), "real table semantics");
   assert.ok(html.includes("retained and counted"), "S5 paper block present");
@@ -349,7 +355,44 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
   assert.ok(!html.includes("not rendered here yet"));
   assert.ok(!html.includes("never served"));
   assert.ok(html.includes("CIK 0001067983"));
-  assert.ok(html.includes('id="filer-footnotes"'), "the marker registry prints on the page");
+  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6). `#filer-footnotes` is
+     deleted and its six clauses are notes on the position-changes columns whose
+     cells emit their marks. That is a real behaviour change worth pinning: with
+     NO changes to show — this fixture's case — the registry no longer prints at
+     all, which is correct, because no marker prints either. The positive case
+     is asserted immediately below on a body that HAS a change row, so the
+     clauses are proved present where the marks are rather than merely absent
+     where they are not. */
+  assert.ok(!html.includes('id="filer-footnotes"'));
+  const withChanges = filerBody(
+    { cik: "0001067983", name: "FIXTURE HOLDINGS LLC", latestPeriod: "2026-03-31" },
+    ["2025-12-31", "2026-03-31"],
+    "2026-03-31",
+    null,
+    [
+      {
+        cik: "0001067983",
+        position_key: "cusip:037833100",
+        put_call: "LONG",
+        curr_period: "2026-03-31",
+        prev_period: "2025-12-31",
+        change_kind: "trim",
+        prev_value_usd: 1_000_000,
+        curr_value_usd: 400_000,
+        delta_value_usd: -600_000,
+        prev_shares: 1_000,
+        curr_shares: 400,
+        delta_shares: -600,
+        ssh_prnamt_type: "SH",
+        flags: [],
+      },
+    ],
+    "2026-05-15",
+    25,
+    null,
+  );
+  assert.ok(withChanges.includes('id="n-filer-changes-change"'));
+  assert.ok(withChanges.includes("direction classified from reported value, not shares"));
 });
 
 /* ---------- grep-negative: mockup sample literals never ship (R14) ---------- */

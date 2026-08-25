@@ -11,7 +11,7 @@
    that: it captures this island's output and asserts it is unchanged. */
 
 import { type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, syncTerminusFor } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
   addsNoteHtml,
@@ -100,28 +100,23 @@ export function initInstIndex(): void {
   });
 
   function syncDisclosure(total: number, _shown: number): void {
-    if (!disclosure || !disclosureBtn) return;
-    // F16: the label is derived from the COMPACT LIMIT, not from how many rows
-    // are rendered right now. Using the shown count made an expanded control
-    // promise to keep every row it was about to collapse away.
+    // F16: the label and the omission rule are derived from the COMPACT LIMIT,
+    // not from how many rows are rendered right now. Using the shown count made
+    // an expanded control promise to keep every row it was about to collapse
+    // away.
     const hidden = Math.max(0, total - COMPACT_ROWS);
-    // F6: the sentence and the button commit TOGETHER, in this one pass. A
-    // chip that drops the directory below the compact bound must retract both.
-    syncTerminusFor(disclosure, expanded ? 0 : hidden, {
-      text:
-        `${hidden.toLocaleString("en-US")} further ${noun} are not rendered above — ` +
-        `a Public Filings render bound, not a data bound.`,
+    if (hidden === 0) expanded = false;
+    /* F6/SL-R10: the sentence and the button commit TOGETHER, in this one pass.
+       A chip that drops the directory below the compact bound must retract
+       both. The "every filer has its own page" remainder is untouched here:
+       it is true at every row count, so no filter can invalidate it. */
+    syncCompactDisclosure(disclosure, {
+      total,
+      hidden: expanded ? 0 : hidden,
+      expanded,
+      noun,
+      count: { text: compactBoundCount(hidden, noun) },
     });
-    if (hidden === 0) {
-      disclosure.hidden = true;
-      expanded = false;
-      return;
-    }
-    disclosure.hidden = false;
-    disclosureBtn.setAttribute("aria-expanded", String(expanded));
-    disclosureBtn.textContent = expanded
-      ? `Show only the first ${COMPACT_ROWS.toLocaleString("en-US")} ${noun}`
-      : `Show all ${total.toLocaleString("en-US")} ${noun} (${hidden.toLocaleString("en-US")} more)`;
   }
 
   disclosureBtn?.addEventListener("click", () => {
@@ -231,29 +226,26 @@ export function initAddsControls(): void {
   }
 
   function syncDisclosure(): void {
-    if (!disclosure || !disclosureBtn) return;
     // F16: derived from the LIMIT, not from the rendered count.
     const hidden = Math.max(0, rows.length - COMPACT_ROWS);
-    // F6: the named bound moves with the quarter. Its sentence carries the link
-    // to THIS period and mode's published payload, so the no-JS route the SSR
-    // view offered is still correct after a selection — which is why this one
-    // writes html rather than text.
-    syncTerminusFor(disclosure, expanded ? 0 : hidden, {
-      html:
-        `${hidden.toLocaleString("en-US")} further issuers are not rendered above — ` +
-        `a Public Filings render bound, not a data bound. Every issuer in this quarter's ` +
-        `bounded payload remains in <a href="${addsPayloadHref(period, mode)}">the published JSON</a>.`,
+    if (hidden === 0) expanded = false;
+    /* F6/SL-R10: the named bound moves with the quarter. Its REMAINDER carries
+       the link to THIS period and mode's published payload, so the no-JS route
+       the server-rendered view offered is still correct after a selection —
+       which is why this one rewrites the remainder as well as the count, and
+       why it writes html rather than text. */
+    syncCompactDisclosure(disclosure, {
+      total: rows.length,
+      hidden: expanded ? 0 : hidden,
+      expanded,
+      noun: "issuers",
+      count: { text: compactBoundCount(hidden, "issuers") },
+      extra: {
+        html:
+          `Every issuer in this quarter's bounded payload remains in ` +
+          `<a href="${addsPayloadHref(period, mode)}">the published JSON</a>.`,
+      },
     });
-    if (hidden === 0) {
-      disclosure.hidden = true;
-      expanded = false;
-      return;
-    }
-    disclosure.hidden = false;
-    disclosureBtn.setAttribute("aria-expanded", String(expanded));
-    disclosureBtn.textContent = expanded
-      ? `Show only the first ${COMPACT_ROWS.toLocaleString("en-US")} issuers`
-      : `Show all ${rows.length.toLocaleString("en-US")} issuers (${hidden.toLocaleString("en-US")} more)`;
   }
 
   disclosureBtn?.addEventListener("click", () => {
@@ -303,10 +295,11 @@ export function initAddsControls(): void {
     press("mode", mode);
 
     const win = document.getElementById("inst-adds-window");
-    if (win) {
-      const build = win.textContent?.split(" · build ")[1] ?? "";
-      win.textContent = `quarter ended ${payload.period}${build ? ` · build ${build}` : ""}`;
-    }
+    /* SL-R9: same split, same removal. The plan named only `applyRollup`; this
+       is the second site doing exactly the same thing for the adds window, and
+       leaving it would have re-appended a build id the server no longer
+       renders — reconstructing a stamp from an empty capture group. */
+    if (win) win.textContent = `quarter ended ${payload.period}`;
     const caption = section!.querySelector("caption");
     if (caption) {
       caption.textContent =
@@ -359,15 +352,20 @@ export function initDomDisclosures(): void {
       // no-op. It stays because an island that assumes the server did its half
       // acquires a second precondition, and this one is idempotent.
       root.setAttribute("data-collapsed", "true");
-      wrap.removeAttribute("hidden");
       let expanded = false;
+      /* SL-R10: this REVEALS THE BUTTON — it does not reveal the statement,
+         which the server already published visible. The count clause is what
+         moves with the state: expanding puts the rows on screen, so the claim
+         that they are held back is retracted, while the publication bound
+         beside it stays. The server's own wording is left in place (no `count`
+         here) because this table's rows never change. */
+      const sync = (): void =>
+        syncCompactDisclosure(wrap, { total, hidden, expanded, noun });
+      sync();
       btn.addEventListener("click", () => {
         expanded = !expanded;
         root.setAttribute("data-collapsed", String(!expanded));
-        btn.setAttribute("aria-expanded", String(expanded));
-        btn.textContent = expanded
-          ? `Show only the first ${shown.toLocaleString("en-US")} ${noun}`
-          : `Show all ${total.toLocaleString("en-US")} ${noun} (${hidden.toLocaleString("en-US")} more)`;
+        sync();
       });
     });
 }
