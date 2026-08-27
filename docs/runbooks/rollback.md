@@ -267,3 +267,25 @@ EOF
 python3 scripts/monitor.py --attestation=sigstore \
   --state-dir /var/populus-monitor --repo johnbaekk-spec/populus-data
 ```
+
+## Pre-upload rollback evidence (PR 5, LD12a/LD12c)
+
+Before any freeze or upload, the orchestrator captures a
+`RollbackExpectation` from the provider's RAW production listing (a non-empty
+id, `environment="production"`, an explicit `uses_functions is False` — an
+absent signal is a refusal, never a default) plus ONE cache-busted,
+redirect-disabled observation of the custom-domain root: body hash/length,
+exactly one non-empty `populus:build_id` and `populus:code_sha`, and the
+normalized security-header multimap (explicit absence; a duplicated policy
+header is refused, never collapsed). Raw provider reads bracket the
+observation and must agree; any capture failure or provider-id drift aborts
+the deploy with **zero** snapshot, upload, or provider-mutation calls.
+
+After a compensating rollback, the raw rollback response must name the
+captured id/production/no-Functions and a fresh observation must equal the
+captured one exactly; any mismatch or unavailability keeps
+`rollback_verified=False` on the loud `ProductionVerificationFailed` path.
+This is honest point-in-time identity/marker/header restoration — the failed
+artifact's inventory is never consulted, and no v1 inventory is ever parsed
+(TD-PSH-8: rollback does not prove the prior full tree). Raw provider
+mappings stay ephemeral: never logged, signed, or written into evidence.
