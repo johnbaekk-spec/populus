@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from populus.publish.digests import DigestError, _walk_regular, dist_digest
-from populus.publish.inventory import build_inventory
+from populus.publish.inventory import InventoryError, build_inventory
 
 # Read size for the one-pass copy. Large enough that syscall overhead is not the
 # bottleneck on a few thousand small files; small enough not to hold a whole
@@ -85,6 +85,10 @@ class UploadSnapshot:
     is the §12.1 envelope computed over that same path, so ``dist_digest`` here
     and the digest a verifier recomputes from the served tree are comparable
     without a second enumeration of the original ``dist/``.
+
+    ``file_count`` keeps its historical meaning — every regular uploaded
+    artifact — which under inventory v2 is ``len(files) + len(controls)``
+    (LD12b). Served-entry counts are the verifier's ``files_total``, never this.
     """
 
     path: Path
@@ -201,13 +205,22 @@ def freeze_tree(source: Path | str, *, parent: Path | str | None = None) -> Uplo
         # (5) seal — advisory
         _seal(dest)
 
-        # (6) digest and inventory FROM THE DESTINATION
-        inventory = build_inventory(dest)
+        # (6) digest and inventory FROM THE DESTINATION. `build_inventory`
+        # self-validates through `validate_inventory_v2`, so a tree that
+        # cannot produce an exact v2 document (no root `_headers`, say) fails
+        # here — before any uploader ever sees the sealed path.
+        try:
+            inventory = build_inventory(dest)
+        except InventoryError as exc:
+            raise SnapshotError(
+                f"the frozen tree does not produce an exact inventory v2: {exc}"
+            ) from exc
         snapshot = UploadSnapshot(
             path=dest,
             dist_digest=dist_digest(dest),
             inventory=inventory,
-            file_count=len(inventory["files"]),
+            # LD12b: every regular uploaded artifact — files PLUS controls.
+            file_count=len(inventory["files"]) + len(inventory["controls"]),
         )
     except BaseException:
         # A half-frozen tree must never reach an uploader (7).
@@ -257,7 +270,7 @@ def _require_copy_faithful(
 ) -> None:
     """The copy's own hashes must agree with the sealed tree's inventory.
 
-    Compared against ``files`` ∪ ``control_files``, never ``files`` alone: the
+    Compared against ``files`` ∪ ``controls``, never ``files`` alone: the
     inventory splits the two so that URL-assuming consumers skip provider
     control artifacts, but packaging still refuses any unaccounted byte. Reading
     ``files`` alone here would let a control file be copied without ever being
@@ -265,7 +278,7 @@ def _require_copy_faithful(
     """
     inventoried = {
         entry["path"]: entry["sha256"]
-        for key in ("files", "control_files")
+        for key in ("files", "controls")
         for entry in snapshot.inventory.get(key, [])
     }
     if inventoried.keys() != copied.keys():

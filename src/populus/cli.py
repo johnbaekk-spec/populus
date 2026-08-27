@@ -1284,7 +1284,7 @@ def snapshot_site_cmd(source: str, dest: str) -> None:
 
     from populus.deploy.snapshot import SnapshotError, freeze_tree
     from populus.publish.digests import DigestError
-    from populus.publish.inventory import write_inventory
+    from populus.publish.inventory import InventoryError, write_inventory
 
     dest_path = Path(dest)
     dest_path.mkdir(parents=True, exist_ok=True)
@@ -1304,12 +1304,16 @@ def snapshot_site_cmd(source: str, dest: str) -> None:
             snapshot.cleanup()
             raise
         inventory = write_inventory(site_dir, dest_path / "inventory.json")
-    except (SnapshotError, DigestError, OSError) as exc:
+    except (SnapshotError, DigestError, InventoryError, OSError) as exc:
         raise click.ClickException(str(exc))
+    # LD12b: `file_count` keeps its historical meaning — EVERY regular uploaded
+    # artifact — which under inventory v2 is len(files) + len(controls).
+    artifact_count = len(inventory["files"]) + len(inventory["controls"])
     click.echo(f"dist_digest={inventory['dist_digest']}")
-    click.echo(f"file_count={len(inventory['files'])}")
+    click.echo(f"file_count={artifact_count}")
     click.echo(
-        f"froze {len(inventory['files'])} files into {site_dir}"
+        f"froze {artifact_count} files ({len(inventory['files'])} served, "
+        f"{len(inventory['controls'])} control) into {site_dir}"
         f" (dist_digest {inventory['dist_digest'][:12]}…)"
     )
 

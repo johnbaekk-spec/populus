@@ -130,15 +130,21 @@ def test_dist_digest_rejects_missing_tree(tmp_path):
 
 
 def test_inventory_envelope_order_and_digest(tmp_path):
-    files = {"b.txt": b"bee", "a/c.txt": b"sea"}
+    files = {"b.txt": b"bee", "a/c.txt": b"sea", "_headers": b"/*\n"}
     tree = make_tree(tmp_path, files)
     inventory = build_inventory(tree)
+    assert inventory["inventory_version"] == "2"
     assert inventory["dist_digest_version"] == "1"
+    # The v1 dist-digest framing is UNCHANGED and covers every regular file —
+    # the `_headers` control included (LD12).
     assert inventory["dist_digest"] == expected_dist(files)
+    assert [c["path"] for c in inventory["controls"]] == ["_headers"]
+    assert inventory["controls"][0]["kind"] == "cloudflare-pages-headers"
     assert [entry["path"] for entry in inventory["files"]] == ["a/c.txt", "b.txt"]
     for entry in inventory["files"]:
         assert entry["bytes"] == len(files[entry["path"]])
         assert entry["sha256"] == hashlib.sha256(files[entry["path"]]).hexdigest()
+    assert [entry["path"] for entry in inventory["files"]] == ["a/c.txt", "b.txt"]
     # RFC 8785 exact canonical bytes; the digest covers exactly those bytes.
     rendered = render_inventory(inventory)
     assert rendered == canonical_json(inventory)
@@ -146,7 +152,7 @@ def test_inventory_envelope_order_and_digest(tmp_path):
 
 
 def test_write_inventory_sibling_guard(tmp_path):
-    tree = make_tree(tmp_path, {"x.txt": b"x"})
+    tree = make_tree(tmp_path, {"x.txt": b"x", "_headers": b"/*\n"})
     with pytest.raises(DigestError, match="inside the tree"):
         write_inventory(tree, tree / "inventory.json")
     with pytest.raises(DigestError, match="inside the tree"):
