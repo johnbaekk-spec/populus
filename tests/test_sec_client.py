@@ -616,5 +616,7 @@ def test_the_real_transport_holds_no_persistent_client():
     # A persistent pooled client would need an explicit close, and nothing here
     # has a lifecycle to close it in.
     transport = HttpxSecTransport()
-    assert vars(transport) == {}
+    # The only instance state is the optional hermetic-test transport seam
+    # (None on the live path) — never a pooled httpx client.
+    assert vars(transport) == {"_transport": None}
     assert "httpx" not in dir(sec_client_module)
