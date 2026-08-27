@@ -274,6 +274,116 @@ def test_discover_live_unreadable_zip_is_a_failure(tmp_path):
     assert "unreadable" in result.note
 
 
+# --- index-ZIP ceilings (RUN PUBLIC-SECURITY-HARDENING, R9/LD10) --------------
+
+
+def _custom_zip(members) -> bytes:
+    """A ZIP with exact member names/bytes: [(name, data), ...]."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in members:
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _assert_no_partial_writes(tmp_path):
+    raw_root = tmp_path / "raw"
+    for name in ("2026FD.zip", "2026FD.xml", "2026FD.zip.meta.json"):
+        assert not (raw_root / name).exists(), f"{name} written on a breach"
+
+
+def test_zip_with_duplicate_xml_members_is_a_failure(tmp_path):
+    payload = _custom_zip(
+        [("2026FD.xml", _index_xml(2026, [WITTMAN])), ("extra.xml", b"<x/>")]
+    )
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert "exactly one" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_zip_directory_member_is_not_the_xml_member(tmp_path):
+    payload = _custom_zip([("2026FD.xml/", b"")])
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert "no XML member" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "name", ["../evil.xml", "/abs.xml", "a/../../b.xml", "up\\down.xml"]
+)
+def test_zip_traversing_member_name_is_a_failure(tmp_path, name):
+    payload = _custom_zip([(name, _index_xml(2026, [WITTMAN]))])
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert "non-traversing" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_compressed_body_over_the_zip_cap_is_a_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(house, "HOUSE_ZIP_CAP", 64)
+    payload = _custom_zip([("2026FD.xml", _index_xml(2026, [WITTMAN]))])
+    assert len(payload) > 64
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert "compressed cap" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_declared_oversize_xml_member_is_a_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(house, "XML_MEMBER_CAP", 128)
+    payload = _custom_zip([("2026FD.xml", _index_xml(2026, [WITTMAN]))])
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert "uncompressed cap" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_ratio_bomb_is_a_failure_without_extraction(tmp_path):
+    # 8 MiB of zeros deflates to ~8 KiB: a >100:1 declared ratio — refused
+    # from the central directory, with the real (unmonkeypatched) ceilings.
+    payload = _custom_zip([("2026FD.xml", b"\0" * (8 * 1024 * 1024))])
+    assert len(payload) < house.HOUSE_ZIP_CAP
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert "ratio" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_corrupt_zip_member_data_is_a_failure(tmp_path):
+    payload = bytearray(_custom_zip([("2026FD.xml", _index_xml(2026, [WITTMAN]))]))
+    # Flip bytes inside the compressed data (past the local header).
+    for offset in range(60, 72):
+        payload[offset] ^= 0xFF
+    result, _t, _c = _discover_live(tmp_path, _resp(200, bytes(payload)))
+    assert result.failed is True
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_doctype_bearing_index_xml_is_refused_and_never_archived(tmp_path):
+    evil = (
+        b'<?xml version="1.0"?><!DOCTYPE FinancialDisclosure ['
+        b'<!ENTITY x "y">]><FinancialDisclosure>&x;</FinancialDisclosure>'
+    )
+    payload = _custom_zip([("2026FD.xml", evil)])
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert "refused" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_a_clean_index_zip_passes_all_ceilings_and_is_archived(tmp_path):
+    payload = _custom_zip([("2026FD.xml", _index_xml(2026, [WITTMAN]))])
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is False
+    assert result.docids == ("20034916",)
+    raw_root = tmp_path / "raw"
+    assert (raw_root / "2026FD.zip").read_bytes() == payload
+    assert (raw_root / "2026FD.xml").read_bytes() == _index_xml(2026, [WITTMAN])
+    assert (raw_root / "2026FD.zip.meta.json").exists()
+
+
 @pytest.mark.parametrize(
     "responses,seed",
     [
@@ -1403,7 +1513,11 @@ def test_the_checkpoint_is_written_before_the_bytes(tmp_path, initialized_db, mo
         transport=_live_transport([WITTMAN], {"20034916": EFILE_2026}),
         sleep=FakeClock().sleep, monotonic=FakeClock().monotonic,
     )
-    assert order == ["20034916.pdf.fetch-meta.json", "20034916.pdf"]
+    # Discovery now archives the index ZIP/XML atomically too (R9/LD10), so
+    # the spy sees those writes first; the ordering rule under test is the
+    # per-document checkpoint-before-bytes pair.
+    doc_writes = [n for n in order if not n.startswith("2026FD")]
+    assert doc_writes == ["20034916.pdf.fetch-meta.json", "20034916.pdf"]
 
 
 def test_a_crash_between_the_checkpoint_and_the_bytes_refetches_exactly_once(
@@ -1423,6 +1537,10 @@ def test_a_crash_between_the_checkpoint_and_the_bytes_refetches_exactly_once(
 
     def spy(path, data):
         real_write(path, data)
+        # Discovery's atomic index ZIP/XML writes (R9/LD10) are not part of
+        # the per-document ordering this test exercises.
+        if Path(path).name.startswith("2026FD"):
+            return
         written.append(Path(path).name)
         if Path(path).name.endswith(".fetch-meta.json"):
             raise _Interrupt("crash immediately after the checkpoint")
