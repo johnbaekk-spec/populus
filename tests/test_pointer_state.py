@@ -59,22 +59,19 @@ from populus.publish.pointer import (
 )
 
 
-def _load_monitor():
-    """scripts/monitor.py is a standalone script, loaded by path (the
-    repository's script-module pattern, like dep_guard)."""
-    import importlib.util
-
-    repo_root = Path(__file__).resolve().parent.parent
-    spec = importlib.util.spec_from_file_location(
-        "populus_monitor", repo_root / "scripts" / "monitor.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from populus.monitoring import monitor  # noqa: E402
 
 
-monitor = _load_monitor()
-run_monitor = monitor.run_monitor
+def run_monitor(*args, **kwargs):
+    """The packaged core with this suite's default no-op report sink.
+
+    `report` is a REQUIRED keyword on the packaged `run_monitor` (D8); the
+    checks in this module predate the observability record and are about the
+    pointer state machine, so they default it. tests/test_monitoring.py owns
+    the report/MonitorCheck contract itself.
+    """
+    kwargs.setdefault("report", lambda check: None)
+    return monitor.run_monitor(*args, **kwargs)
 
 NOOP = StagingNoop()
 

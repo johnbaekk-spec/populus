@@ -23,6 +23,7 @@ dependencies = [
 [project.scripts]
 populus = "populus.cli:main"
 populus-mcp = "populus.mcp_server.server:main"
+populus-monitor = "populus.monitoring.monitor:main"
 
 [dependency-groups]
 dev = ["pytest", "jsonschema", "pip-audit==2.10.1"]

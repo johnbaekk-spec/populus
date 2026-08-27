@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """External heartbeat monitor (ARCHITECTURE.md §13.2) — the Mac mini consumer.
 
 A §5.5 protocol-conformant consumer: resolve ``latest.json`` → evaluate the
@@ -25,6 +24,7 @@ owns the wall clock, the token env, and the Discord transport.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from collections.abc import Callable
@@ -32,21 +32,17 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "src"))
-
-from populus.client.snapshot import FetchError, Fetcher  # noqa: E402
-from populus.publish.attestation import (  # noqa: E402
+from populus.client.snapshot import FetchError, Fetcher
+from populus.publish.attestation import (
     AttestationProvider,
     StagingNoop,
 )
-from populus.publish.manifest import (  # noqa: E402
+from populus.publish.manifest import (
     MODULE,
     pointer_manifest_identity_error,
     validate_manifest,
 )
-from populus.publish.pointer import (  # noqa: E402
+from populus.publish.pointer import (
     TrustTupleError,
     evaluate_pointer,
     load_tuple,
@@ -62,12 +58,40 @@ TUPLE_FILE = "pointer-tuple.json"
 FAILURES_FILE = "failures"
 
 
-def check_immutable_releases_stub() -> str:
+_CHECK_STATUSES = ("passed", "unchecked", "failed")
+
+
+@dataclasses.dataclass(frozen=True)
+class MonitorCheck:
+    """One observability record from a monitor check (D8 contract).
+
+    ``status`` is exactly one of ``passed`` / ``unchecked`` / ``failed``, and
+    ``detail`` must be secret-free: a human-readable reason, never a token,
+    webhook, or credential value.
+    """
+
+    check: str
+    status: str
+    detail: str
+
+    def __post_init__(self) -> None:
+        if self.status not in _CHECK_STATUSES:
+            raise ValueError(
+                f"MonitorCheck.status must be one of {_CHECK_STATUSES},"
+                f" got {self.status!r}"
+            )
+
+
+def check_immutable_releases_stub() -> MonitorCheck:
     """§13.2 setting-drift check — STUB until the Administration:read PAT
-    exists (§14 secret 4, P-setup). Returns the honest status string; the
-    real implementation queries the repository-settings API and alarms if
-    immutable releases ever flips off."""
-    return "unchecked (stub: requires the Administration:read PAT, §14)"
+    exists (§14 secret 4, P-setup). Returns the honest ``unchecked`` record;
+    the real implementation queries the repository-settings API and returns
+    ``failed`` if immutable releases ever flips off."""
+    return MonitorCheck(
+        check="immutable_releases",
+        status="unchecked",
+        detail="stub: requires the Administration:read PAT (§14)",
+    )
 
 
 def _read_failures(path: Path) -> int:
@@ -88,11 +112,15 @@ def run_monitor(
     *,
     now: Callable[[], datetime],
     alert: Callable[[str], None],
+    report: Callable[[MonitorCheck], None],
     attestation: AttestationProvider | None = None,
+    check_immutable_releases: Callable[[], MonitorCheck] | None = None,
 ) -> int:
     """One monitor poll; see the module docstring for the contract."""
     state_dir = Path(state_dir)
     attestation = attestation or StagingNoop()
+    if check_immutable_releases is None:
+        check_immutable_releases = check_immutable_releases_stub
     tuple_path = state_dir / TUPLE_FILE
     failures_path = state_dir / FAILURES_FILE
 
@@ -243,8 +271,24 @@ def run_monitor(
                 f" ({freshness[stats_key]!r})"
             )
 
-    # Setting drift (immutable releases) — stub until the PAT exists.
-    check_immutable_releases_stub()
+    # Setting drift (immutable releases): every evaluation is REPORTED — no
+    # state is silent or represented as passed (D8). A checker that raises is
+    # a fail-closed `failed` record (the exception type only, so a raised
+    # message can never leak a credential into the observable detail).
+    try:
+        settings_check = check_immutable_releases()
+    except Exception as exc:  # noqa: BLE001 — fail closed, never silently pass
+        settings_check = MonitorCheck(
+            check="immutable_releases",
+            status="failed",
+            detail=f"checker raised {type(exc).__name__} — failing closed",
+        )
+    report(settings_check)
+    if settings_check.status == "failed":
+        # Failure counter/alarm policy applies, and the tuple is NOT advanced.
+        return _fail(f"immutable_releases check failed: {settings_check.detail}")
+    # `unchecked` is visible (reported above) but is not an alarm and does not
+    # change an otherwise-successful exit 0.
 
     # Full check passed: only now does a higher pointer become the baseline.
     if decision.status == "install":
@@ -253,6 +297,14 @@ def run_monitor(
         )
     _write_failures(failures_path, 0)
     return 0
+
+
+def _report_check(check: MonitorCheck) -> None:
+    """CLI observability: one JSON line per MonitorCheck on stdout (D8).
+
+    Alarms stay on stderr/Discord; stdout carries only these records.
+    """
+    print(json.dumps(dataclasses.asdict(check), sort_keys=True), flush=True)
 
 
 def _discord_alert(message: str) -> None:
@@ -324,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         fetcher,
         now=lambda: datetime.now(timezone.utc),
         alert=_discord_alert,
+        report=_report_check,
         attestation=_attestation_provider(args.attestation),
     )
 

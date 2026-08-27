@@ -264,9 +264,17 @@ persist_tuple(
     sha256(pointer_bytes).hexdigest(),  # the VERIFIED digest, never a placeholder
 )
 EOF
-python3 scripts/monitor.py --attestation=sigstore \
+uv run populus-monitor --attestation=sigstore \
   --state-dir /var/populus-monitor --repo johnbaekk-spec/populus-data
 ```
+
+The monitor is the installed `populus-monitor` console entry
+(`populus.monitoring.monitor`; library API `run_monitor`, exit codes 0 = pass,
+1 = alarm/failure with the trust tuple preserved, 2 = fail-closed). Each
+observability check — currently `immutable_releases`, honestly `unchecked`
+until the Administration:read PAT exists — is emitted as one JSON line on
+stdout (`{"check": ..., "status": "passed|unchecked|failed", "detail": ...}`);
+alarms stay on stderr/Discord.
 
 ## Pre-upload rollback evidence (PR 5, LD12a/LD12c)
 

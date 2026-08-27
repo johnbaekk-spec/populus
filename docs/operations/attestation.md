@@ -122,7 +122,7 @@ There is no default. Every entry point requires an explicit choice:
 populus build   --attestation=sigstore --db populus.db --data-repo ../populus-data
 populus publish --attestation=sigstore --data-repo ../populus-data
 populus verify  --attestation=sigstore --data-repo ../populus-data
-python3 scripts/monitor.py --attestation=sigstore --state-dir ... --repo ...
+uv run populus-monitor --attestation=sigstore --state-dir ... --repo ...
 populus-mcp --attestation=sigstore --data-repo ../populus-data
 ```
 
