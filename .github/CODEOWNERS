@@ -1,0 +1,35 @@
+# CODEOWNERS — RUN PUBLIC-SECURITY-HARDENING PR 1 (R3/R13).
+#
+# NOTE (R3 prerequisite): the independent-reviewer GitHub handle is PENDING.
+# Before the main ruleset is activated, the owner must add the accepted
+# independent reviewer's handle alongside @johnbaekk-spec on every line below.
+# A solo owner cannot approve their own change; activation without the second
+# handle leaves R3 BLOCKED (see docs/runbooks/github-security.md).
+
+# Default: everything.
+*                               @johnbaekk-spec
+
+# Workflow / CI / repository governance.
+/.github/                       @johnbaekk-spec
+
+# Self-hosted runner provisioning and controls.
+/ops/runner/                    @johnbaekk-spec
+
+# Deployment, network, and parser code (security-sensitive surfaces).
+/src/populus/deploy/            @johnbaekk-spec
+/src/populus/net/               @johnbaekk-spec
+/src/populus/parse/             @johnbaekk-spec
+/src/populus/ingest/            @johnbaekk-spec
+
+# Dependency lockfiles.
+/uv.lock                        @johnbaekk-spec
+/dashboard/package-lock.json    @johnbaekk-spec
+
+# Secret-scanner policy.
+/.gitleaks.toml                 @johnbaekk-spec
+/.gitleaksignore                @johnbaekk-spec
+
+# Security and licensing conditions.
+/SECURITY.md                    @johnbaekk-spec
+/DATA-LICENSE.md                @johnbaekk-spec
+/NOTICE                         @johnbaekk-spec
