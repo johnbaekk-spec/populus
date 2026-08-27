@@ -1,0 +1,12 @@
+# Exact-fingerprint false-positive exclusions ONLY (R5). Format:
+#   commit:file:rule-id:line
+# Each entry must name the confirmed benign match it excludes. Broad or
+# path-only entries are forbidden; tests/test_workflow_governance.py enforces
+# the fingerprint shape.
+#
+# Both entries below are the same benign fixture string: a fake
+# AttestationResult(detail="HTTP 429 from the attestation API") in the deploy
+# record test suite, which trips the default generic-api-key rule. Confirmed
+# 2026-08-27 by inspecting both commits; no credential is present.
+2e13ee0f31144f776e0b94ced946466a8c2d3abc:tests/test_deploy_record.py:generic-api-key:1730
+99166772cef5d97a7cff155f956039ba1f193159:tests/test_deploy_record.py:generic-api-key:656

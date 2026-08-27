@@ -7,3 +7,33 @@ dist/
 .pytest_cache/
 .orchestrate/
 .DS_Store
+
+# --- Secret-prevention classes (RUN PUBLIC-SECURITY-HARDENING R5/Task 4) ---
+# Dotenv files. If a committed example is ever wanted, add `!.env.example`.
+.env
+.env.*
+# Key / certificate / credential material.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials.json
+credentials.yaml
+credentials.yml
+*.credentials
+# Local database sidecars. No fixture DB is tracked today
+# (`git ls-files '*.db' '*.sqlite*'` is empty); if one is ever committed,
+# add an anchored `!path/to/fixture.db` negation here — never un-ignore
+# the class globally.
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+# Tool-local state and review outputs.
+.claude/settings.local.json
+.claude/worktrees/
+.codex-review/
+planned-files.json
