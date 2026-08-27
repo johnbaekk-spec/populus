@@ -1270,7 +1270,7 @@ test("T14/R16: no banned trading verb on any institutional surface", () => {
   assert.deepEqual(
     findings,
     [],
-    "M2-8-outsized-position-spec.md §1.1: a 13F is a quarter-end snapshot filed up to 45 days" +
+    "docs/architecture/data-contracts/outsized-positions.md §1.1: a 13F is a quarter-end snapshot filed up to 45 days" +
       " late, so at render time the position may not exist — no trading verb may claim otherwise",
   );
 });

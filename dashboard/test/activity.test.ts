@@ -535,7 +535,7 @@ test("EVERY §1.1 term in the spec is caught — the list is derived, not counte
 
      Mutation guard: deleting any entry from BANNED_WORDING fails here by name. */
   const spec = readFileSync(
-    path.join(REPO_ROOT, "docs", "build", "M2-8-outsized-position-spec.md"),
+    path.join(REPO_ROOT, "docs", "architecture", "data-contracts", "outsized-positions.md"),
     "utf-8",
   );
   const section = /### 1\.1 Banned wording[^]*?\n\n([^]*?)\n\n/.exec(spec);
