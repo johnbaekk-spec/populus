@@ -2325,6 +2325,194 @@ def test_record_sign_workflow_shape():
     assert any("CLOUDFLARE_PAGES_READ_TOKEN" in env for env in step_envs)
 
 
+# --- RUN PUBLIC-SECURITY-HARDENING PR 4 (R4/R8, LD5/LD9): environments and ---
+# --- the locked Wrangler cutover ---------------------------------------------
+
+#: R4/LD5 — the exact job-to-environment mapping. Three environments, three
+#: privilege domains, and any job absent from this table must carry NO
+#: environment at all. Adding a fourth environment (or moving a job) is a plan
+#: revision, not an edit.
+ENVIRONMENT_BY_JOB: dict[tuple[str, str], str] = {
+    ("publish.yml", "publish"): "production-data-publish",
+    ("publish.yml", "deploy"): "production-pages-deploy",
+    ("record-sign.yml", "record"): "production-record-sign",
+}
+
+#: LD5 — the exact secret names each job may reference, anywhere in its
+#: rendered body. The three privilege domains never combine: publish holds the
+#: data PAT and no Cloudflare token; deploy holds Pages Write only; record-sign
+#: holds the data PAT plus Pages READ. An empty set is asserted, not skipped —
+#: a job growing its first secret is exactly the regression this pins.
+SECRETS_BY_JOB: dict[tuple[str, str], set[str]] = {
+    ("publish.yml", "publish"): {"DATA_REPO_PAT"},
+    ("publish.yml", "deploy"): {"CLOUDFLARE_PAGES_EDIT_TOKEN"},
+    ("publish.yml", "sign"): set(),
+    ("publish.yml", "assert-signed"): set(),
+    ("record-sign.yml", "record"): {"DATA_REPO_PAT", "CLOUDFLARE_PAGES_READ_TOKEN"},
+}
+
+_SECRET_REF = re.compile(r"\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+PRODUCTION_WORKFLOWS = ("publish.yml", "record-sign.yml")
+
+
+def _all_production_jobs() -> dict[tuple[str, str], dict]:
+    jobs: dict[tuple[str, str], dict] = {}
+    for name in PRODUCTION_WORKFLOWS:
+        for job_id, job in _load_workflow(name)["jobs"].items():
+            jobs[(name, job_id)] = job
+    return jobs
+
+
+def test_the_three_production_environments_are_bound_to_exactly_their_jobs():
+    """R4: environment selection is per-JOB and exact — nothing else has one.
+
+    The environments themselves (and their selected-branch-main restriction)
+    are repository settings the github-security runbook proves via `gh api`;
+    what the tree can prove is that each workflow job asks for exactly its own
+    environment, so an environment secret can never resolve outside its
+    privilege domain.
+    """
+    jobs = _all_production_jobs()
+    for key, job in jobs.items():
+        expected = ENVIRONMENT_BY_JOB.get(key)
+        assert job.get("environment") == expected, (
+            f"{key[0]}:{key[1]} environment is {job.get('environment')!r}, "
+            f"expected {expected!r} (R4/LD5; a change is a plan revision)"
+        )
+    # The mapping is not vacuous: every mapped job exists.
+    assert set(ENVIRONMENT_BY_JOB) <= set(jobs)
+
+
+def test_each_job_references_exactly_its_own_secrets_and_no_others():
+    """LD5: the secret-to-job mapping is an equality, in both directions."""
+    jobs = _all_production_jobs()
+    assert set(SECRETS_BY_JOB) == set(jobs), (
+        "a production job appeared or vanished without updating SECRETS_BY_JOB"
+    )
+    for key, job in jobs.items():
+        found = set(_SECRET_REF.findall(yaml.safe_dump(job)))
+        assert found == SECRETS_BY_JOB[key], (
+            f"{key[0]}:{key[1]} references secrets {sorted(found)}, "
+            f"allowed exactly {sorted(SECRETS_BY_JOB[key])} (LD5)"
+        )
+
+
+def test_no_workflow_call_secret_declarations_remain():
+    """R4: the called signer resolves ENVIRONMENT secrets itself.
+
+    A `workflow_call` secrets block re-opens the caller-passes-repository-
+    secrets path this PR removed; equally, the caller-side `sign` job must not
+    carry a `secrets:` mapping (or `secrets: inherit`).
+    """
+    triggers = _triggers(_load_workflow("record-sign.yml"))
+    assert set(triggers) == {"workflow_call"}
+    assert "secrets" not in (triggers["workflow_call"] or {}), (
+        "record-sign.yml declares workflow_call secrets; environment secrets "
+        "are selected by `environment:` on the called job (R4)"
+    )
+    sign = _load_workflow("publish.yml")["jobs"]["sign"]
+    assert "secrets" not in sign, (
+        "the sign caller passes secrets; the called job must resolve its own "
+        "environment secrets (R4/LD5)"
+    )
+
+
+def test_no_job_level_env_block_exists_in_any_production_workflow():
+    """Secrets stay STEP-scoped: a job- or workflow-level `env:` would put a
+    token in scope for every step, including ones that run other tools."""
+    for name in PRODUCTION_WORKFLOWS:
+        workflow = _load_workflow(name)
+        assert "env" not in workflow, f"{name}: workflow-level env block"
+        for job_id, job in workflow["jobs"].items():
+            assert "env" not in job, f"{name}:{job_id}: job-level env block"
+
+
+def test_pages_write_is_never_co_located_with_github_write_or_attestation():
+    """LD5/§14, by secret NAME as well as by rendered content: the job holding
+    the Pages Write token has `contents: read` and nothing wider."""
+    for key, job in _all_production_jobs().items():
+        if "CLOUDFLARE_PAGES_EDIT_TOKEN" not in yaml.safe_dump(job):
+            continue
+        perms = job.get("permissions") or {}
+        assert perms == {"contents": "read"}, (
+            f"{key[0]}:{key[1]} holds Pages Write with permissions {perms!r}; "
+            "LD5 allows contents: read and nothing else"
+        )
+
+
+def _deploy_steps() -> list[dict]:
+    return _load_workflow("publish.yml")["jobs"]["deploy"]["steps"]
+
+
+def _deploy_step_index(fragment: str) -> int:
+    for index, step in enumerate(_deploy_steps()):
+        if fragment in (step.get("name") or ""):
+            return index
+    raise AssertionError(
+        f"no deploy step named like {fragment!r}: "
+        f"{[s.get('name') for s in _deploy_steps()]}"
+    )
+
+
+def test_the_deploy_job_installs_then_asserts_wrangler_then_deploys():
+    """R8/LD9 ordering is the enforcement: frozen install → exact version
+    assertion → the ONE token-bearing step, in that order."""
+    install = _deploy_step_index("Install the locked deploy toolchain")
+    version = _deploy_step_index("Assert the lock-installed wrangler version")
+    deploy = _deploy_step_index("Deploy to preview")
+    assert install < version < deploy
+
+    steps = _deploy_steps()
+    assert steps[install].get("working-directory") == "dashboard"
+    assert steps[install]["run"].strip() == "npm ci", (
+        "the install must be exactly the frozen `npm ci` — anything else can "
+        "resolve outside the committed lock"
+    )
+    run = steps[version]["run"]
+    assert "dashboard/node_modules/.bin/wrangler" in run
+    assert '"4.60.0"' in run, "the exact locked version must be asserted"
+    assert "exit 1" in run, "a drifted or missing binary must fail closed"
+    assert "npx" not in run and "npm install" not in run and "npm exec" not in run, (
+        "the assertion step must never fall back to a remote install"
+    )
+
+
+def test_the_cloudflare_token_appears_only_on_the_final_deploy_step():
+    """R8: no step BEFORE the deploy step — install and version assertion
+    included — has the Cloudflare credential in scope."""
+    steps = _deploy_steps()
+    token = "${{ secrets.CLOUDFLARE_PAGES_EDIT_TOKEN }}"
+    bearing = [
+        index
+        for index, step in enumerate(steps)
+        if token in yaml.safe_dump(step)
+    ]
+    assert bearing == [len(steps) - 1], (
+        f"the Pages Write token appears on step(s) {bearing}; it is allowed "
+        "only on the final deploy step"
+    )
+    final = steps[-1]
+    assert "Deploy to preview" in final["name"]
+    assert (final.get("env") or {}).get("CLOUDFLARE_API_TOKEN") == token, (
+        "the token must be step-scoped env on the deploy step itself"
+    )
+
+
+def test_no_production_step_invokes_npx_or_a_remote_wrangler():
+    """R8/LD9: the remote-install seam is gone from the workflows, not merely
+    from the Python module. Swept over every step's executable body (comments
+    may still NAME `npx` to say why it is banned)."""
+    for key, job in _all_production_jobs().items():
+        for step in job.get("steps") or []:
+            run = step.get("run") or ""
+            assert "npx" not in run, f"{key}: a step invokes npx: {step.get('name')!r}"
+            assert "npm exec" not in run, f"{key}: a step invokes npm exec"
+            assert "wrangler@" not in run, (
+                f"{key}: a package spec in a run body is a deploy-time registry fetch"
+            )
+
+
 def test_every_external_action_is_sha_pinned():
     uses = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)", re.MULTILINE)
     pinned = re.compile(r"@[0-9a-f]{40}$")

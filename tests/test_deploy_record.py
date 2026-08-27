@@ -2306,18 +2306,24 @@ def _publish_gate_step() -> dict:
     return matches[0]
 
 
-def test_the_reusable_workflow_declares_both_secrets():
-    """R13 — a called workflow inherits nothing; undeclared secrets are empty.
+def test_the_signer_resolves_both_secrets_from_its_own_environment():
+    """RUN PUBLIC-SECURITY-HARDENING R4/LD5 — superseding the workflow_call
+    declaration this test used to pin.
 
-    The file already referenced ``CLOUDFLARE_PAGES_READ_TOKEN`` while declaring
-    no ``secrets:`` block at all, which resolves to the empty string at run time
-    and would have failed as a missing credential — closed, but for the wrong
-    reason and one deploy later than necessary.
+    Environment secrets in a reusable workflow are selected by ``environment:``
+    on the CALLED job, never passed through ``workflow_call``: the record job
+    names `production-record-sign`, references exactly its two secrets, and the
+    trigger declares NO secrets block (a caller-passed mapping would be a
+    second, wider path to the same credentials). Until the owner creates the
+    environment, both references resolve empty and the job fails closed.
     """
-    secrets = _triggers(_workflow())["workflow_call"]["secrets"]
-    assert set(secrets) == {"DATA_REPO_PAT", "CLOUDFLARE_PAGES_READ_TOKEN"}
-    for name, spec in secrets.items():
-        assert spec["required"] is True, f"{name} is declared optional"
+    triggers = _triggers(_workflow())
+    assert "secrets" not in (triggers["workflow_call"] or {})
+    job = _workflow()["jobs"]["record"]
+    assert job.get("environment") == "production-record-sign"
+    rendered = yaml.safe_dump(job)
+    assert "secrets.DATA_REPO_PAT" in rendered
+    assert "secrets.CLOUDFLARE_PAGES_READ_TOKEN" in rendered
 
 
 def test_the_workflow_keeps_its_permissions_and_its_arming_guard():

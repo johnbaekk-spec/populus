@@ -46,15 +46,14 @@ on:
         type: string
         required: false
         default: ""
-    # A called workflow inherits NOTHING: secrets a caller does not pass
-    # resolve to the empty string. This block used to be absent while the body
-    # already referenced CLOUDFLARE_PAGES_READ_TOKEN, so the signer would have
-    # failed on a missing credential — closed, but for the wrong reason.
-    secrets:
-      DATA_REPO_PAT:
-        required: true
-      CLOUDFLARE_PAGES_READ_TOKEN:
-        required: true
+    # RUN PUBLIC-SECURITY-HARDENING R4/LD5 — deliberately NO `secrets:` block.
+    # Environment secrets in a reusable workflow are selected by `environment:`
+    # on the CALLED job, never passed through `workflow_call`: the `record` job
+    # below resolves DATA_REPO_PAT and CLOUDFLARE_PAGES_READ_TOKEN from the
+    # `production-record-sign` environment itself, so the caller holds neither
+    # credential and a caller-side mapping would be a second, wider path to the
+    # same secrets. Until the owner creates the environment and enters both
+    # secrets, they resolve to the empty string and the job fails closed.
 
 permissions:
   contents: write
@@ -65,6 +64,10 @@ jobs:
   record:
     if: vars.POPULUS_RECORD_SIGN_ARMED == 'true'
     runs-on: ubuntu-latest
+    # R4/LD5 — the signer's two secrets live only in this environment
+    # (selected branch `main`): the data PAT and the Pages READ token, plus
+    # the attestation permissions granted by the caller. Never Pages Write.
+    environment: production-record-sign
     steps:
       - name: Check out populus
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

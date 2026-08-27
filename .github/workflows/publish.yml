@@ -96,6 +96,15 @@ jobs:
     # isolation analysis assumes an ephemeral hosted runner, and none of them
     # needs the store. See ARCHITECTURE.md §13.1.
     runs-on: [self-hosted, macOS, populus-ops]
+    # RUN PUBLIC-SECURITY-HARDENING R4/LD5 — DATA_REPO_PAT is an ENVIRONMENT
+    # secret now, resolved only inside `production-data-publish`, whose
+    # deployment branch policy is selected-branch `main`. This job holds the
+    # data PAT and NO Cloudflare token; the three privilege domains
+    # (publish / deploy / record-sign) each have their own environment and
+    # never combine. Until the owner creates the environment and enters the
+    # secret, this reference resolves to the empty string and the job fails
+    # CLOSED — which is the intended state while publishing is disarmed.
+    environment: production-data-publish
     # RUN P3-3a R1/R9 — job-scoped least privilege (§14). `attestations: write`
     # is required to create bundles and also permits reading them back, so the
     # Verify step's lookups are authenticated: without a token they fall to the
@@ -565,6 +574,11 @@ jobs:
     needs: publish
     if: needs.publish.result == 'success' && needs.publish.outputs.deployed == 'true'
     runs-on: ubuntu-latest
+    # R4/LD5 — CLOUDFLARE_PAGES_EDIT_TOKEN is an ENVIRONMENT secret, resolved
+    # only inside `production-pages-deploy` (selected branch `main`). This job
+    # holds Pages Write and `contents: read`, and nothing else — no data PAT,
+    # no id-token/attestations, per the §14 invariant.
+    environment: production-pages-deploy
     permissions:
       contents: read
     outputs:
@@ -579,13 +593,45 @@ jobs:
           name: site-${{ needs.publish.outputs.build_id }}
           path: site-artifact
 
-      # `wrangler` is invoked through `npx`, so this job needs Node too. Without
-      # it `npx` runs against whatever the runner image happens to ship —
-      # unpinned drift on the one tool that actually moves the bytes.
+      # The deploy invokes the LOCK-INSTALLED dashboard/node_modules/.bin/wrangler
+      # directly (R8/LD9) — never `npx`, never a deploy-time registry fetch —
+      # so this job needs the pinned Node toolchain and a frozen `npm ci`.
       - name: Set up Node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version-file: dashboard/.node-version
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # R8/LD9 step 1 of 3 — install from the committed lock, with NO
+      # Cloudflare credential anywhere in scope. Ordering is the enforcement:
+      # install, then assert the binary/version, and only then run the one
+      # token-bearing step.
+      - name: Install the locked deploy toolchain (frozen, no credential)
+        working-directory: dashboard
+        run: npm ci
+
+      # R8/LD9 step 2 of 3 — prove the binary the deploy will invoke exists,
+      # is executable, and is EXACTLY the locked 4.60.0, before the secret is
+      # exposed to any step. A missing or drifted binary fails closed here;
+      # the remediation is fixing the lock, never a remote install.
+      - name: Assert the lock-installed wrangler version (before any secret)
+        run: |
+          bin="dashboard/node_modules/.bin/wrangler"
+          if [ ! -x "$bin" ]; then
+            echo "::error::$bin is missing or not executable after npm ci."
+            echo "::error::wrangler must come from the committed npm lock (R8);"
+            echo "::error::the deploy never installs it from the registry."
+            exit 1
+          fi
+          version="$("$bin" --version)"
+          if [ "$version" != "4.60.0" ]; then
+            echo "::error::$bin reports '$version', locked 4.60.0."
+            echo "::error::Fix dashboard/package.json + package-lock.json;"
+            echo "::error::never override the binary at deploy time."
+            exit 1
+          fi
+          echo "wrangler $version (lock-installed)"
 
       - name: Install uv (version-pinned)
         run: python3 -m pip install --quiet 'uv==0.7.13'
@@ -634,10 +680,12 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    # R4/LD5 — NO `secrets:` mapping. Environment secrets in a reusable
+    # workflow are selected by `environment:` on the CALLED job, not passed by
+    # `workflow_call`: record-sign.yml's `record` job resolves DATA_REPO_PAT
+    # and CLOUDFLARE_PAGES_READ_TOKEN from `production-record-sign` itself, so
+    # the caller holds neither credential.
     uses: ./.github/workflows/record-sign.yml
-    secrets:
-      DATA_REPO_PAT: ${{ secrets.DATA_REPO_PAT }}
-      CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
     with:
       # These names are validated against record-sign.yml's declared inputs at
       # PARSE time — an undeclared one rejects the whole workflow before any job
