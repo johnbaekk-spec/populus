@@ -167,7 +167,7 @@ measurement or contract citation.
    table + a designed EDGAR link-out block.** M2-CONTRACT §3: per-filer
    holdings detail is "not served — link out to EDGAR". The changes table
    renders `agg_qoq_deltas` verbatim (producer-classified, Locked #8,
-   `docs/qoq-presentation.md`).
+   `docs/frontend/qoq-presentation.md`).
    > **SUPERSEDED 2026-08-01 — still accurate for the code as it stands today.**
    > M2-CONTRACT §3 has been reversed by owner decision: per-filer holdings detail
    > **is** to be served (`docs/build/M2-8-holdings-publication-decision.md`). This
@@ -311,7 +311,7 @@ measurement or contract citation.
   period-correct sourcing**: registry = identity only; period tiles from
   `agg_filer_concentration`; changes from `agg_qoq_deltas` with the
   producer-authoritative presentation mapping fixed in
-  [docs/qoq-presentation.md](docs/qoq-presentation.md). NULL integers render
+  [docs/qoq-presentation.md](../docs/frontend/qoq-presentation.md). NULL integers render
   em-dash (never 0), disclosed zeros print 0, undisclosed sides render the
   hatched `n/c`.
 - **Ticker→issuer resolution is an explicit build input** (`POPULUS_TICKER_MAP`
@@ -434,7 +434,7 @@ was computed from `page × PAGE_SIZE` rather than from what the page holds.
 
 Three rounds of defects in one mechanism met the threshold in a standing project
 lesson (*specify before rewriting*), so before touching it a fourth time the
-invariants were written down: **[docs/pagination-and-counts.md](docs/pagination-and-counts.md)**.
+invariants were written down: **[docs/pagination-and-counts.md](../docs/frontend/pagination-and-counts.md)**.
 The diagnostic signature is recorded there — every one of the three defects was
 a function reasoning about *where items sit on a page* from parameters that only
 described *how many items exist*. The fix then followed from invariant I5:

@@ -2,7 +2,7 @@
 
    The pagination block is deliberately the longest thing here. This repository
    produced THREE consecutive defects in its other paginator
-   (`dashboard/docs/pagination-and-counts.md`), every one of them at or beside a
+   (`docs/frontend/pagination-and-counts.md`), every one of them at or beside a
    PAGE_SIZE multiple, and two of the three were found only by exhaustive
    sweeps — hand-picked fixtures passed all of them. So the boundaries are
    asserted by name (exact multiple, one under, one over, the last page, one
@@ -80,7 +80,7 @@ import {
 } from "./fixtures/institutional.ts";
 
 /* ================================================================ pagination
-   Boundaries first, by name. `docs/pagination-and-counts.md`: "PAGE_SIZE
+   Boundaries first, by name. `docs/frontend/pagination-and-counts.md`: "PAGE_SIZE
    multiples are the recurring blind spot, because that is where 'page of the
    last row' and 'page after the last row' diverge." */
 
