@@ -126,10 +126,12 @@ from populus.deploy.verify import (
     HttpResponse,
     VerificationResult,
     VerifyUnavailable,
+    _sweep_entries,
+    check_headers,
     check_markers,
+    probe_control_paths,
     read_markers,
     served_path,
-    sweep_inventory,
     verify_deployment,
 )
 from populus.publish import atomic_write_bytes
@@ -143,7 +145,15 @@ from populus.publish.attestation import (
     resolve_identity,
 )
 from populus.publish.digests import DIST_DIGEST_VERSION
-from populus.publish.inventory import build_inventory, inventory_digest, render_inventory
+from populus.publish.inventory import (
+    INVENTORY_VERSION,
+    InventoryError,
+    ValidatedInventoryV2,
+    build_inventory,
+    inventory_digest,
+    render_inventory,
+    validate_inventory_v2,
+)
 from populus.publish.manifest import resolve_within
 from populus.publish.pointer import rfc3339z
 
@@ -397,9 +407,16 @@ class CloudflareReads:
 
 @dataclass(frozen=True)
 class ArtifactFacts:
-    """Everything the signer derived from the artifact it downloaded itself."""
+    """Everything the signer derived from the artifact it downloaded itself.
+
+    ``validated`` is the proof the recomputed inventory passed the FULL
+    exact-v2 validation (LD12/LD12b) — it, not the raw mapping, is what the
+    domain leg's typed entry sweep consumes. A v1-shaped or control-less
+    artifact never constructs one of these.
+    """
 
     inventory: dict
+    validated: ValidatedInventoryV2
     inventory_digest: str
     dist_digest: str
     build_id: str
@@ -584,6 +601,17 @@ def artifact_facts(
             f"{recomputed.get('dist_digest_version')!r}, this signer computes "
             f"{DIST_DIGEST_VERSION!r}"
         )
+    # LD12/LD12b: the FULL exact-v2 validation, before anything is fetched or
+    # signed. `build_inventory` self-validates today, but the signer's refusal
+    # must not rest on the producer's manners: a v1-shaped, partial, or
+    # control-less artifact is refused HERE, in the signer's own contract.
+    try:
+        validated = validate_inventory_v2(recomputed)
+    except InventoryError as exc:
+        raise RecordRefused(
+            f"the artifact's inventory is not an exact inventory v2 — nothing "
+            f"is fetched or signed over it: {exc}"
+        ) from exc
 
     marker_file = site / marker_path
     if not marker_file.is_file():
@@ -598,6 +626,7 @@ def artifact_facts(
 
     return ArtifactFacts(
         inventory=recomputed,
+        validated=validated,
         inventory_digest=inventory_digest(recomputed),
         dist_digest=str(recomputed["dist_digest"]),
         build_id=build_id,
@@ -796,14 +825,37 @@ def _sign(
             f"record may only ever claim {VERIFICATION_SCOPE!r}"
         )
 
-    domain_files_verified = _confirm_domain(
-        http,
-        domain,
-        inventory=facts.inventory,
-        build_id=build_id,
-        code_sha=facts.code_sha,
-        marker_path=marker_path,
+    # LD12b: a successful sign requires each control total/verified value to be
+    # exactly one. `verification.ok` already implies the effect verified, but
+    # the requirement is stated on the RECORD's fields, so it is enforced on
+    # them rather than inferred.
+    if (
+        verification.controls_total != 1
+        or verification.control_effects_verified != 1
+    ):
+        raise RecordRefused(
+            "the origin sweep did not verify exactly one control effect "
+            f"(controls_total={verification.controls_total}, "
+            f"control_effects_verified={verification.control_effects_verified}); "
+            "a generation is signed only over a proven `_headers` control"
+        )
+
+    domain_files_verified, domain_controls_total, domain_control_effects = (
+        _confirm_domain(
+            http,
+            domain,
+            validated=facts.validated,
+            build_id=build_id,
+            code_sha=facts.code_sha,
+            marker_path=marker_path,
+        )
     )
+    if domain_controls_total != 1 or domain_control_effects != 1:
+        raise RecordRefused(
+            "the custom-domain leg did not verify exactly one control effect "
+            f"(domain_controls_total={domain_controls_total}, "
+            f"domain_control_effects_verified={domain_control_effects})"
+        )
 
     generation, path = next_generation(data_repo, build_id)
     subject_name = generation_subject_name(generation)
@@ -820,7 +872,13 @@ def _sign(
         "code_sha": facts.code_sha,
         "dist_digest": facts.dist_digest,
         "dist_digest_version": DIST_DIGEST_VERSION,
+        # LD12b: the generation names the exact schema it was verified under
+        # and the exact canonical controls identity — no redundant
+        # unauthenticated "control digest" field exists; `inventory_digest`
+        # over the full canonical document already binds `controls`.
+        "inventory_version": INVENTORY_VERSION,
         "inventory_digest": facts.inventory_digest,
+        "controls": facts.validated.controls_identity(),
         # --- the deployment-origin leg: which host, what scope, how many ---
         # `swept_origin` is not decoration. Without it `files_verified` names no
         # host, and a reader of a record for a custom domain has every reason to
@@ -829,14 +887,20 @@ def _sign(
         "verification_scope": verification.verification_scope,
         "files_verified": verification.files_verified,
         "files_total": verification.files_total,
+        "controls_total": verification.controls_total,
+        "control_effects_verified": verification.control_effects_verified,
         # --- the custom-domain leg: same three questions, different answers ---
         # One path was checked here, out of the same inventory total, which is
-        # why `domain_files_total` is the inventory count rather than 1: "1/5"
-        # states the gap, "1/1" would hide it behind a full-marks fraction.
+        # why `domain_files_total` is the served-entry count rather than 1:
+        # "1/5" states the gap, "1/1" would hide it behind a full-marks
+        # fraction. LD12b: `domain_files_total` means len(files) — served
+        # entries only, never files-plus-controls.
         "domain": domain,
         "domain_scope": DOMAIN_SCOPE,
         "domain_files_verified": domain_files_verified,
         "domain_files_total": verification.files_total,
+        "domain_controls_total": domain_controls_total,
+        "domain_control_effects_verified": domain_control_effects,
         "workflow_run_id": workflow_run_id,
         "dist_artifact_id": dist_artifact_id or None,
         "dist_artifact_expires_at": dist_artifact_expires_at or None,
@@ -876,23 +940,33 @@ def _confirm_domain(
     http: HttpGetter,
     domain: str,
     *,
-    inventory: Mapping[str, Any],
+    validated: ValidatedInventoryV2,
     build_id: str,
     code_sha: str,
     marker_path: str,
-) -> int:
-    """Confirm the live custom domain serves this same build (§5.5).
+) -> tuple[int, int, int]:
+    """Confirm the live custom domain serves this same build (§5.5, LD12b).
 
-    §5.5 defines this leg as *identity plus markers*, not a second byte proof of
-    the whole tree — the tree was just swept on the deployment-specific origin,
-    and the Pages API already answered which deployment production is. It is
-    still run through :func:`~populus.deploy.verify.sweep_inventory` rather than
-    a hand-rolled fetch, over a one-path envelope, so the domain leg inherits
-    exactly the same policy: redirects disabled, cache-busted, decoded-body hash
-    **and** length compared, outages raised as outages.
+    §5.5 defines this leg as *identity plus markers plus the control's exact
+    effect*, not a second byte proof of the whole tree — the tree was just
+    swept on the deployment-specific origin, and the Pages API already answered
+    which deployment production is. It receives the **already-validated**
+    :class:`~populus.publish.inventory.ValidatedInventoryV2`, selects its one
+    marker entry, and hands that typed entry to the package-internal
+    :func:`~populus.deploy.verify._sweep_entries` — it never constructs a
+    synthetic partial envelope, because no public seam may accept one. The
+    typed entry inherits exactly the same fetch policy: redirects disabled,
+    cache-busted, decoded-body hash **and** length compared, outages raised as
+    outages.
 
-    Returns the number of paths confirmed **on the domain** — one — so the
-    caller records a count it measured rather than a constant it assumed.
+    The control's effect is checked on the domain too: the exact required
+    security-header values on the marker response
+    (:func:`~populus.deploy.verify.check_headers`) plus the ``/_headers``-must-
+    404 control-path probes.
+
+    Returns ``(domain_files_verified, domain_controls_total,
+    domain_control_effects_verified)`` — measured, never assumed; on success
+    ``(1, 1, 1)``.
 
     The cache-bust is :func:`~uuid.uuid4`, matching
     :func:`~populus.deploy.verify.verify_deployment`. It used to be
@@ -902,29 +976,27 @@ def _confirm_domain(
     and an edge cache could answer the second check from the first check's
     stored body. A cache-bust that repeats is not a cache-bust.
     """
-    files = [
-        entry
-        for entry in inventory.get("files", [])
-        if isinstance(entry, Mapping) and entry.get("path") == marker_path
+    markers_in_files = [
+        entry for entry in validated.files if entry.path == marker_path
     ]
-    if not files:
+    if not markers_in_files:
         raise RecordRefused(
             f"the inventory has no entry for {marker_path!r}; the domain leg has "
             "nothing to confirm against"
         )
-    envelope = {
-        "dist_digest_version": inventory.get("dist_digest_version"),
-        "dist_digest": inventory.get("dist_digest"),
-        "files": files,
-    }
+    marker_entry = markers_in_files[0]
+    bust = uuid4().hex
+    base_url = f"https://{domain}"
     try:
-        sweep = sweep_inventory(
+        sweep = _sweep_entries(
             http,
-            f"https://{domain}",
-            envelope,
-            cache_bust=uuid4().hex,
+            base_url,
+            (marker_entry,),
+            cache_bust=bust,
             keep=(marker_path,),
+            header_paths=(marker_path,),
         )
+        control_findings = probe_control_paths(http, base_url, cache_bust=bust)
     except VerifyUnavailable as exc:
         raise RecordUnavailable(f"the custom domain did not answer: {exc}") from exc
 
@@ -934,12 +1006,17 @@ def _confirm_domain(
         findings.append(f"{domain} did not serve {marker_path}")
     else:
         findings.extend(check_markers(body, build_id=build_id, code_sha=code_sha))
-    if findings:
+    observed_headers = sweep.headers.get(marker_path)
+    if observed_headers is not None:
+        control_findings.extend(check_headers(observed_headers, path=marker_path))
+    if findings or control_findings:
         raise RecordRefused(
             f"the custom domain {domain} does not serve this deployment: "
-            + "; ".join(findings)
+            + "; ".join(findings + control_findings)
         )
-    return sweep.files_verified
+    domain_controls_total = len(validated.controls)
+    domain_control_effects = domain_controls_total if domain_controls_total == 1 else 0
+    return sweep.files_verified, domain_controls_total, domain_control_effects
 
 
 # --- the pre-publish gate (R18) ----------------------------------------------

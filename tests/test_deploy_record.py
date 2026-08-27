@@ -56,6 +56,8 @@ from populus.deploy.record import (
 )
 from populus.deploy.verify import (
     LOCKED_CONTENT_SECURITY_POLICY,
+    REQUIRED_RESPONSE_HEADERS,
+    CONTROL_PATHS,
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
     TD10_NOTE,
@@ -131,6 +133,11 @@ def _page(*, build_id: str = BUILD_ID, code_sha: str = CODE_SHA, extra: str = ""
     return f"<!doctype html><html><head>{head}</head><body>{body}</body></html>".encode()
 
 
+#: LD12: the one control every valid tree carries. Never SERVED by `_Origin` —
+#: the provider consumes it as configuration and answers 404 on `/_headers`.
+HEADERS_CONTROL = b"/*\n  Content-Security-Policy: default-src 'self'\n"
+
+
 def _site(**kwargs) -> dict[str, bytes]:
     return {
         "index.html": _page(**kwargs),
@@ -149,6 +156,7 @@ def _artifact(tmp_path: Path, site: dict[str, bytes]) -> Path:
         target = tree / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
+    tree.joinpath("_headers").write_bytes(HEADERS_CONTROL)
     write_inventory(tree, root / "inventory.json")
     return root
 
@@ -297,17 +305,19 @@ class _Origin:
         # Tables are keyed in INVENTORY coordinates (that is what the build
         # produces and what a divergence must name), so the lookup maps them the
         # way the provider does.
-        answers = {served_path(path): body for path, body in table.items()}
+        answers = {
+            served_path(path): body
+            for path, body in table.items()
+            if path != "_headers"  # provider configuration, never an asset
+        }
         path = request.url.path.lstrip("/")
         if path in answers:
             # Faithful to a real Pages deployment, whose `_headers` `/*`
-            # rule puts the locked policy on every served asset.
+            # rule puts the exact required headers on every served asset.
             return httpx.Response(
                 200,
                 content=answers[path],
-                headers={
-                    "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY
-                },
+                headers=dict(REQUIRED_RESPONSE_HEADERS),
             )
         if served_path(path) != path and served_path(path) in answers:
             return httpx.Response(307, headers={"location": f"/{served_path(path)}"})
@@ -406,15 +416,31 @@ def test_every_recorded_field_is_one_the_signer_derived(tmp_path):
         "code_sha": CODE_SHA,
         "dist_digest": inventory["dist_digest"],
         "dist_digest_version": "1",
+        # LD12b: the exact schema version and the exact canonical controls
+        # identity the sign was verified under, plus separately named
+        # control-effect counts — each exactly 1 on a successful sign.
+        "inventory_version": "2",
         "inventory_digest": hashlib.sha256(shipped).hexdigest(),
+        "controls": [
+            {
+                "path": "_headers",
+                "kind": "cloudflare-pages-headers",
+                "bytes": len(HEADERS_CONTROL),
+                "sha256": hashlib.sha256(HEADERS_CONTROL).hexdigest(),
+            }
+        ],
         "swept_origin": DEPLOYMENT_URL,
         "verification_scope": "expected_paths",
         "files_verified": 5,
         "files_total": 5,
+        "controls_total": 1,
+        "control_effects_verified": 1,
         "domain": DOMAIN,
         "domain_scope": "marker_only",
         "domain_files_verified": 1,
         "domain_files_total": 5,
+        "domain_controls_total": 1,
+        "domain_control_effects_verified": 1,
         "workflow_run_id": RUN_ID,
         "dist_artifact_id": ARTIFACT_ID,
         "dist_artifact_expires_at": ARTIFACT_EXPIRES,
@@ -1187,7 +1213,7 @@ def test_the_class_the_signer_catches_is_the_class_verify_raises():
         "code and an outage will page as tampering"
     )
     assert (
-        record.sweep_inventory.__globals__["VerifyUnavailable"]
+        record._sweep_entries.__globals__["VerifyUnavailable"]
         is record.VerifyUnavailable
     )
     assert record.served_path is verify_module.served_path
@@ -1479,11 +1505,22 @@ def test_the_domain_count_is_measured_not_assumed(tmp_path):
     harness = _run(tmp_path)
     assert harness.result.record["domain_files_verified"] == 1
     seen = [url for url in harness.origin.seen if DOMAIN in url]
-    assert len(seen) == 1, "the domain leg issued more requests than it counted"
+    # One counted marker fetch plus the control-path probes and the
+    # never-published probe (LD12b: the domain leg now proves the control's
+    # absence-as-asset too).
+    assert len(seen) == 1 + len(CONTROL_PATHS) + 1, (
+        "the domain leg issued a different request set than it counted"
+    )
+    marker_fetches = [
+        url for url in seen
+        if "_redirects" not in url and "_headers" not in url
+        and "_worker" not in url and "never-published" not in url
+    ]
+    assert len(marker_fetches) == 1
 
     original = record._confirm_domain
     try:
-        record._confirm_domain = lambda *a, **kw: 3
+        record._confirm_domain = lambda *a, **kw: (3, 1, 1)
         widened = _run(tmp_path / "widened")
     finally:
         record._confirm_domain = original

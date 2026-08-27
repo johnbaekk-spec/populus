@@ -47,6 +47,7 @@ from populus.deploy.verify import (
     ALLOWED_RESPONSE_HEADERS,
     CONTROL_PATHS,
     LOCKED_CONTENT_SECURITY_POLICY,
+    REQUIRED_RESPONSE_HEADERS,
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
     VERIFICATION_SCOPE,
@@ -109,6 +110,11 @@ def _page(*, markers: bool = True, blob: bool = True, extra: str = "") -> bytes:
     return f"<!doctype html><html><head>{head}</head><body>{body}</body></html>".encode()
 
 
+#: The exact shipped control bytes — trees under test carry the real policy
+#: file, so the fixtures stay statements about the artifact that ships.
+HEADERS_BYTES = (REPO_ROOT / "dashboard" / "public" / "_headers").read_bytes()
+
+
 def _site() -> dict[str, bytes]:
     return {
         "index.html": _page(),
@@ -159,16 +165,23 @@ class _Origin:
         extra_headers: dict[str, dict[str, str]] | None = None,
         raiser: Exception | None = None,
         catch_all: bytes | None = None,
-        content_security_policy: str | None = LOCKED_CONTENT_SECURITY_POLICY,
+        security_headers: dict[str, str] | None = None,
+        drop_security_headers: bool = False,
     ) -> None:
         self.served = dict(served)
         self.overrides = dict(overrides or {})
         self.extra_headers = dict(extra_headers or {})
         # A real Pages deployment applies the `/*` rule in `_headers` to every
-        # served asset, so the faithful default is "present on every 200".
-        # `None` models a deployment that lost the policy; a different string
-        # models one whose policy was altered.
-        self.content_security_policy = content_security_policy
+        # served asset, so the faithful default is "all four security headers
+        # present on every 200". `drop_security_headers` models a deployment
+        # that lost the control; a `security_headers` dict models one whose
+        # policy was altered.
+        if drop_security_headers:
+            self.security_headers: dict[str, str] = {}
+        else:
+            self.security_headers = dict(
+                REQUIRED_RESPONSE_HEADERS if security_headers is None else security_headers
+            )
         self.raiser = raiser
         self.catch_all = catch_all
         self.seen: list[str] = []
@@ -193,10 +206,8 @@ class _Origin:
         served = self._by_served(self.served)
         if path in served:
             headers = dict(self._by_served(self.extra_headers).get(path, {}))
-            if self.content_security_policy is not None:
-                headers.setdefault(
-                    "content-security-policy", self.content_security_policy
-                )
+            for name, value in self.security_headers.items():
+                headers.setdefault(name, value)
             return httpx.Response(200, content=served[path], headers=headers)
         if served_path(path) != path:
             # The provider quirk, reproduced: an HTML path is never served at
@@ -232,9 +243,17 @@ class _RecordingClient:
 
 
 def _inventory(tmp_path: Path, site: dict[str, bytes], name: str = "site") -> dict:
-    """The real §12.1 envelope, built by the real builder over a real tree."""
+    """The real §12.1 v2 envelope, built by the real builder over a real tree.
+
+    Every real tree ships the `_headers` control (LD12: a new build carries
+    exactly one), so it is written unless the caller supplied its own bytes.
+    The ORIGIN fixtures never serve it — `/_headers` must 404 — which is why
+    it is added here, at inventory-build time, and not in `_site()`.
+    """
+    tree = dict(site)
+    tree.setdefault("_headers", HEADERS_BYTES)
     root = tmp_path / name
-    for path, body in site.items():
+    for path, body in tree.items():
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
@@ -322,9 +341,9 @@ def test_body_is_hashed_after_content_decoding(tmp_path):
                 headers={
                     "content-encoding": "gzip",
                     # An `overrides` response is returned verbatim, so this
-                    # legitimately-served asset must carry the policy a real
+                    # legitimately-served asset must carry the headers a real
                     # `/*` rule would have put on it.
-                    "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY,
+                    **REQUIRED_RESPONSE_HEADERS,
                 },
             )
         },
@@ -786,11 +805,12 @@ def test_two_inventory_entries_served_from_one_url_are_refused(tmp_path):
     verdict, so it raises rather than resolving into `ok` or `rejected`.
     """
     site = _site()
+    # A REAL tree holding both spellings: the inventory it produces is exact,
+    # sorted and unique — the ambiguity lives only in the served-URL mapping,
+    # which is precisely why the full-document validator cannot own this check.
+    site["about"] = b"i am the extensionless file\n"
+    site["about.html"] = _page(extra="<h1>About</h1>")
     inventory = _inventory(tmp_path, site)
-    entry = dict(inventory["files"][0])
-    entry["path"] = "about.html"
-    inventory["files"].append(entry)
-    inventory["files"].append({**entry, "path": "about"})
 
     with pytest.raises(VerifyInputError) as raised:
         _run(_Origin(site), inventory)
@@ -1085,7 +1105,7 @@ def test_the_module_opens_nothing_and_names_no_transport_library():
     assert throwaway is not verify_module, "the shared module was mutated in place"
 
     primitives = re.compile(
-        r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
+        r"(?<!insecure-)\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
         r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
     )
     source = (REPO_ROOT / "src" / "populus" / "deploy" / "verify.py").read_text()
@@ -1246,33 +1266,62 @@ def test_the_locked_constant_equals_the_shipped_headers_file() -> None:
     assert shipped.splitlines()[0] == "/*"
 
 
-def test_the_policy_lists_script_hashes_and_no_style_hash() -> None:
-    """CSP2+ IGNORES `'unsafe-inline'` in a directive that also lists hashes.
+def test_the_policy_is_the_ld13_shape_with_zero_inline_hashes() -> None:
+    """RUN PUBLIC-SECURITY-HARDENING LD13: strict on script, pragmatic on style.
 
-    So a style hash added here would not tighten anything — it would silently
-    re-block every data-driven bar width on the site. Asserted structurally
-    rather than by eyeballing a 364-character string.
+    `script-src` carries NO hash, NO `'unsafe-inline'`, NO `'unsafe-eval'` —
+    the pre-paint theme script is external now. `style-src` keeps
+    `'unsafe-inline'` and deliberately NO style hash (CSP2+ IGNORES
+    `'unsafe-inline'` in a directive that also lists hashes, so a hash here
+    would silently re-block every data-driven bar width — TD-PSH-3). The only
+    non-'self' origins are the R28 beacon's.
     """
     directives = {
         part.split(" ", 1)[0]: part
         for part in (p.strip() for p in LOCKED_CONTENT_SECURITY_POLICY.split(";"))
     }
-    assert len(re.findall(r"'sha256-", directives["script-src"])) == 2
-    assert "'sha256-" not in directives["style-src"]
+    assert "'sha256-" not in LOCKED_CONTENT_SECURITY_POLICY
+    assert "'unsafe-inline'" not in directives["script-src"]
+    assert "'unsafe-eval'" not in LOCKED_CONTENT_SECURITY_POLICY
+    assert directives["script-src"] == (
+        "script-src 'self' https://static.cloudflareinsights.com"
+    )
     assert "'unsafe-inline'" in directives["style-src"]
-    assert "https://static.cloudflareinsights.com" in directives["script-src"]
     assert "https://cloudflareinsights.com" in directives["connect-src"]
+    assert directives["base-uri"] == "base-uri 'none'"
+    assert directives["frame-ancestors"] == "frame-ancestors 'none'"
+    assert directives["object-src"] == "object-src 'none'"
+    assert "upgrade-insecure-requests" in directives
+
+
+def test_hsts_is_one_year_without_subdomains_or_preload() -> None:
+    """LD13/R12: reversible by `max-age=0`; never preloaded from this run."""
+    hsts = REQUIRED_RESPONSE_HEADERS["strict-transport-security"]
+    assert hsts == "max-age=31536000"
+    assert "includeSubDomains" not in hsts and "preload" not in hsts
+    assert REQUIRED_RESPONSE_HEADERS["x-content-type-options"] == "nosniff"
+    assert (
+        REQUIRED_RESPONSE_HEADERS["referrer-policy"]
+        == "strict-origin-when-cross-origin"
+    )
 
 
 def test_a_deployment_serving_no_policy_is_rejected(tmp_path) -> None:
     """NEGATIVE: the policy is REQUIRED, not merely allowed."""
     site = _site()
-    origin = _Origin(site, content_security_policy=None)
+    without_csp = {
+        name: value
+        for name, value in REQUIRED_RESPONSE_HEADERS.items()
+        if name != "content-security-policy"
+    }
+    origin = _Origin(site, security_headers=without_csp)
     result = _run(origin, _inventory(tmp_path, site))
     assert result.ok is False
     assert result.outcome == "rejected"
     assert "missing required response header" in result.detail
     assert "content-security-policy" in result.detail
+    assert result.control_effects_verified == 0
+    assert result.controls_total == 1
 
 
 def test_a_deployment_serving_an_altered_policy_is_rejected(tmp_path) -> None:
@@ -1285,7 +1334,13 @@ def test_a_deployment_serving_an_altered_policy_is_rejected(tmp_path) -> None:
     site = _site()
     weakened = LOCKED_CONTENT_SECURITY_POLICY.replace("object-src 'none'", "object-src *")
     assert weakened != LOCKED_CONTENT_SECURITY_POLICY, "the mutation did not apply"
-    origin = _Origin(site, content_security_policy=weakened)
+    origin = _Origin(
+        site,
+        security_headers={
+            **REQUIRED_RESPONSE_HEADERS,
+            "content-security-policy": weakened,
+        },
+    )
     result = _run(origin, _inventory(tmp_path, site))
     assert result.ok is False
     assert result.outcome == "rejected"
@@ -1303,7 +1358,7 @@ def test_the_control_file_is_never_swept_as_a_served_url(tmp_path) -> None:
     site["_headers"] = b"/*\n  Content-Security-Policy: default-src 'self'\n"
     inventory = _inventory(tmp_path, site)
     assert "_headers" not in {entry["path"] for entry in inventory["files"]}
-    assert "_headers" in {entry["path"] for entry in inventory["control_files"]}
+    assert "_headers" in {entry["path"] for entry in inventory["controls"]}
 
     origin = _Origin(_site())  # the ORIGIN does not serve `_headers` — it 404s
     result = _run(origin, inventory)
