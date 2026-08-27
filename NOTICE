@@ -1,7 +1,7 @@
 Public Filings NOTICE — required attributions and notices
 GENERATED FILE — do not edit by hand. Source of truth:
 src/populus/licenses.json; regenerate with
-`python scripts/render_licenses.py`.
+`python scripts/maintenance/render_licenses.py`.
 
 [us-congress-disclosures]
   Source: U.S. House of Representatives Office of the Clerk; U.S. Senate Office of Public Records (eFD).

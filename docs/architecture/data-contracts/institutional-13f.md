@@ -153,7 +153,7 @@ from published aggregate JSON. No browser calls to SEC (G7).
 - **Amendments:** golden fixtures prove RESTATEMENT supersedes and NEW HOLDINGS merges; the real Berkshire NEW-HOLDINGS/`confDeniedExpired` amendment round-trips through the merge path; no double-count across affiliated filers (`otherManager`).
 - **Reproducibility:** two independent builds of the same cached inputs yield identical `inst` logical digest (extends the §5.5 two-build gate to the inst module).
 - **Federated client:** politeness floors in code (≤2 req/s SEC), SEC-accepted UA, ETag cache, backoff, circuit breaker — unit-tested with an injectable transport; **no live network in tests**.
-- `uv run pytest -q` green (whole repo); `scripts/dep_guard.py` clean (G1); end-to-end cache-mode ingest → build → publish → verify on real cached filings.
+- `uv run pytest -q` green (whole repo); `scripts/maintenance/dependency_guard.py` clean (G1); end-to-end cache-mode ingest → build → publish → verify on real cached filings.
 
 ---
 

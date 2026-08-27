@@ -228,7 +228,7 @@ history). These are the measured bounds future institutional work inherits:
   Filings …" while the served `DATA-LICENSE.md`/`NOTICE` still read
   "Populus". The next data publish carries the fix with no code change; it is
   an owner action because it moves the signed pointer.
-- **B38 — a two-quarter 13F corpus.** `scripts/accept_alpha_surfaces_v2.py`
+- **B38 — a two-quarter 13F corpus.** `scripts/acceptance/surfaces.py`
   runs, preflights every artifact, asserts registry coverage 113/113, and
   then correctly REFUSES to certify: a quarter-over-quarter delta needs two
   adjacent quarters and every local release carries at most one. The script

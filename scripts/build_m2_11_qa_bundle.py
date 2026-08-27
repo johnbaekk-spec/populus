@@ -298,8 +298,8 @@ docs/build/RUN-M2-11-devnotes.md
 docs/build/RUN-M2-11-plan.md
 docs/build/RUN-M2-11-qa-report.md
 docs/runbooks/self-hosted-runner.md
-scripts/accept_m2_11.py
-scripts/accept_m2_8.py
+scripts/acceptance/institutional_serving.py
+scripts/acceptance/holdings_substrate.py
 scripts/build_m2_11_qa_bundle.py
 scripts/measure_inst_derive.py
 src/populus/amendments.py

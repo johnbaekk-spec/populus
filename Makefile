@@ -15,7 +15,7 @@
 # The orchestration gate runner maps `make test` to the required "test" gate
 # and `make security` to the required "security" gate, so `uv sync --frozen`,
 # `uv run pytest -q`, `npm ci` + `npm run gates`
-# (check → test → build → test:post), and `uv run python scripts/dep_guard.py`
+# (check → test → build → test:post), and `uv run python scripts/maintenance/dependency_guard.py`
 # are ALL authoritatively executed with recorded exit status under one
 # canonical entrypoint. The dashboard suite (RUN P3-2, R19) is therefore no
 # longer green only in a separate, unrecorded invocation — it runs inside the
@@ -71,7 +71,7 @@ dashboard-gates:
 # advisory-service outage fails this gate with the tool's own named error — a
 # red check, never "no vulnerabilities" (TD-PSH-4). Re-run: `make security`.
 security:
-	uv run python scripts/dep_guard.py
+	uv run python scripts/maintenance/dependency_guard.py
 	tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
 	  uv export --frozen --no-dev --no-emit-project -o "$$tmp/requirements.txt" && \
 	  uv run pip-audit --require-hashes --disable-pip -r "$$tmp/requirements.txt"
@@ -82,7 +82,7 @@ security:
 # are absent, runs the full-file R5 cross-format identity, and prints the exact
 # per-period coverage measured on the real corpus on both rollout paths.
 accept-m2-5:
-	uv run python scripts/accept_m2_5.py
+	uv run python scripts/acceptance/institutional_list.py
 
 # RUN M2-6 acceptance (R8/R10): the mandatory synchronous DEV gate. Fully
 # hermetic (committed fixtures, zero sockets, autouse no-network guard), it
@@ -95,7 +95,7 @@ accept-m2-5:
 # `make accept-m2-6` could pass against an environment the committed lockfile
 # does not describe.
 accept-m2-6: sync
-	uv run python scripts/accept_m2_6.py
+	uv run python scripts/acceptance/institutional_bulk.py
 
 # RUN M2-8 acceptance (R20): the mandatory synchronous DEV gate for the serving
 # increment. Hermetic (committed fixtures, no network) and it NEVER skips: it
@@ -113,7 +113,7 @@ accept-m2-6: sync
 #
 # Depends on `sync` for the same reason accept-m2-6 does.
 accept-m2-8: sync
-	uv run python scripts/accept_m2_8.py
+	uv run python scripts/acceptance/holdings_substrate.py
 
 # RUN M1-B Phase A acceptance (R11/R16): the mandatory synchronous DEV gate.
 # Fully hermetic (committed tests/fixtures/ bytes, zero sockets, autouse
@@ -131,7 +131,7 @@ accept-m2-8: sync
 # Depends on `sync` for the same reason accept-m2-6 does: the gate must run in
 # the same frozen-lockfile environment as `make test`.
 accept-m1-b: sync
-	uv run python scripts/accept_m1_b.py
+	uv run python scripts/acceptance/congress_history.py
 
 # RUN M2-11 acceptance (R21): the mandatory synchronous DEV gate for the
 # accepted-snapshot publish path. Fully hermetic — it CUTS its own fixture
@@ -152,6 +152,6 @@ accept-m1-b: sync
 # Depends on `sync` for the same reason accept-m2-6 does: the gate must run in
 # the same frozen-lockfile environment as `make test`.
 accept-m2-11: sync
-	uv run python scripts/accept_m2_11.py
+	uv run python scripts/acceptance/institutional_serving.py
 
 check: test security

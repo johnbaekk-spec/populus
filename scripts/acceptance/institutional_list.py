@@ -27,7 +27,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 DATA_CACHE = REPO_ROOT / "data-cache" / "13flist"

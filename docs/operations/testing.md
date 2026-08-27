@@ -43,7 +43,7 @@ Notes on each:
 
 `make security` runs three gates:
 
-1. `scripts/dep_guard.py` — offline, deterministic.
+1. `scripts/maintenance/dependency_guard.py` — offline, deterministic.
 2. `pip-audit --require-hashes --disable-pip` over the frozen production
    export — **calls remote advisory services** (PyPI/OSV).
 3. `npm ci && npm audit --audit-level=high` in `dashboard/` — **calls the

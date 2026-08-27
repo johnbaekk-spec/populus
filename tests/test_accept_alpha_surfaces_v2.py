@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _load():
     spec = importlib.util.spec_from_file_location(
-        "accept_alpha_surfaces_v2", REPO_ROOT / "scripts" / "accept_alpha_surfaces_v2.py"
+        "accept_alpha_surfaces_v2", REPO_ROOT / "scripts" / "acceptance" / "surfaces.py"
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

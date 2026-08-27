@@ -282,7 +282,7 @@ def test_render_script_is_stdlib_plus_populus_only():
     import ast
 
     tree = ast.parse(
-        (REPO_ROOT / "scripts" / "render_licenses.py").read_text(encoding="utf-8")
+        (REPO_ROOT / "scripts" / "maintenance" / "render_licenses.py").read_text(encoding="utf-8")
     )
     roots = set()
     for node in ast.walk(tree):

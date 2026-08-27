@@ -18,7 +18,7 @@ DATA_CACHE = REPO_ROOT / "data-cache" / "13flist"
 
 def _load_accept():
     spec = importlib.util.spec_from_file_location(
-        "accept_m2_5", REPO_ROOT / "scripts" / "accept_m2_5.py"
+        "accept_m2_5", REPO_ROOT / "scripts" / "acceptance" / "institutional_list.py"
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

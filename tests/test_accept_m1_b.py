@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _load_accept():
     sys.path.insert(0, str(REPO_ROOT / "tests"))
     spec = importlib.util.spec_from_file_location(
-        "accept_m1_b", REPO_ROOT / "scripts" / "accept_m1_b.py"
+        "accept_m1_b", REPO_ROOT / "scripts" / "acceptance" / "congress_history.py"
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -81,7 +81,7 @@ def test_the_hermetic_gate_reads_only_committed_fixtures():
     """data-cache/ is gitignored, so an acceptance that depended on it would
     pass on this machine and fail everywhere else."""
     accept = _load_accept()
-    source = (REPO_ROOT / "scripts" / "accept_m1_b.py").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "scripts" / "acceptance" / "congress_history.py").read_text(encoding="utf-8")
     assert "data-cache" not in source
     assert accept.FIXTURES == REPO_ROOT / "tests" / "fixtures"
     for name in accept.HOUSE_2015_PDFS.values():
