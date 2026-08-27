@@ -88,8 +88,9 @@ asserted on both sides in tests:
 > substrate of three such products (all-holders-of-issuer, cross-filer activity,
 > outsized-vs-own-history) that no per-entity API can answer. Full rationale,
 > measurements, retained properties, and residual risk:
-> [`M2-8-holdings-publication-decision.md`](./M2-8-holdings-publication-decision.md).
-> Build plan: [`RUN-M2-8-plan.md`](./RUN-M2-8-plan.md).
+> [`holdings-publication.md`](../decisions/holdings-publication.md).
+> (The build plan that executed the reversal, `RUN-M2-8-plan.md`, is completed
+> process history and lives in Git history.)
 >
 > **Parameters locked by the owner 2026-08-02** (superseding this amendment's
 > earlier "four owner decisions still open" note): **OD-1** backfill via the
