@@ -1,30 +1,32 @@
-"""RUN M2-11 R7e — repo-wide workflow governance sweep, plus the T13 absence
-checks for the withdrawn refresh scope (R14/R15).
+"""Workflow governance sweep — RUN PUBLIC-SECURITY-HARDENING PR 1 (R2/R3/R5,
+LD3), superseding the RUN M2-11 R7e blanket PR-trigger ban, plus the retained
+T13 absence checks for the withdrawn refresh scope (R14/R15).
 
-The runner-isolation model (plan R7, OD-4) EXCLUDES public/untrusted PR
-execution by governance, not by hope: this sweep parses every workflow under
-``.github/workflows/`` (read-only — this test never writes there) and pins
-the two invariants that make the exclusion real:
+The repository is now PUBLIC, so fork PRs must run checks before merge. LD3
+allows `pull_request` narrowly: ONLY `.github/workflows/checks.yml` may carry
+it, and that workflow must be structurally fork-safe — every job on a
+GitHub-hosted runner, `permissions: contents: read` and nothing wider, no
+job-level `uses:` (reusable workflow), no `environment:`, no `${{ secrets.* }}`
+reference anywhere in the file, and `persist-credentials: false` on every
+checkout. `pull_request_target` and `issue_comment` remain banned repo-wide,
+and the self-hosted label set appears in exactly the allowlisted jobs
+(`publish.yml:publish` — the comparison is an equality in both directions).
 
-* no workflow anywhere carries a PR-like trigger (``pull_request``,
-  ``pull_request_target``, ``issue_comment``) — the trigger classes through
-  which untrusted content reaches a runner;
-* the self-hosted label set appears in exactly the jobs allowlisted below.
-  Phase D (T7) moved one job — ``publish`` in ``publish.yml`` — onto
-  ``[self-hosted, macOS, populus-ops]``; it is listed in
-  ``ALLOWED_SELF_HOSTED_JOBS``, and the assertion keeps every OTHER job off
-  the self-hosted machine. Dropping the entry does not weaken the sweep, it
-  breaks it — the comparison is an equality in both directions.
+The checks are written as pure functions over (filename, parsed-doc, raw-text)
+so the mutation tests below can prove each one KILLS its regression: a PR job
+moved to self-hosted, a secret reference, `contents: write`, a job-level
+`uses:`, `pull_request_target`, a shallow Gitleaks checkout, candidate-policy
+substitution, removed redaction, a report upload, and a broad ignore entry.
 
-T13: R14/R15 (nightly institutional refresh) were WITHDRAWN, not deferred
-silently — ``docs/build/RUN-M2-12-inst-refresh-stub.md`` carries the scope.
-The absence tests here fail the moment refresh code appears without a plan.
+This sweep is read-only; it never writes under `.github/`.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import copy
 import json
+import re
+from pathlib import Path
 
 import yaml
 
@@ -33,24 +35,44 @@ WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 RUNNER_RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "self-hosted-runner.md"
 DASHBOARD_PACKAGE = REPO_ROOT / "dashboard" / "package.json"
 ENTITY_POST_TEST = REPO_ROOT / "dashboard" / "test" / "post" / "entity-orchestration.test.ts"
+GITLEAKS_TOML = REPO_ROOT / ".gitleaks.toml"
+GITLEAKS_IGNORE = REPO_ROOT / ".gitleaksignore"
 CURRENT_RUNNER_VERSION = "2.336.0"
 CURRENT_RUNNER_MACOS_ARM64_SHA256 = (
     "8e8839c49b7060b6b2154f4931f815df330c27f167d53ef2239ee3dfce28b079"
 )
 
-#: The trigger classes that route untrusted (fork/comment) content into a
-#: workflow run. Banned everywhere, not just on self-hosted jobs: a hosted job
-#: with a PR trigger is one label edit away from being a self-hosted one.
-BANNED_TRIGGERS = {"pull_request", "pull_request_target", "issue_comment"}
+#: The only workflow allowed to respond to `pull_request` (LD3).
+PR_TRIGGER_ALLOWED_WORKFLOWS = {"checks.yml"}
 
-#: (workflow filename, job id) pairs allowed to run self-hosted. Phase D / T7
-#: added the one entry this list will ever hold: the publish job is the only
-#: one that needs the 21 GB institutional store, and R5 pins the other three
-#: jobs to ubuntu-latest. A second entry is a plan revision, not an edit —
-#: the assertion below is an EQUALITY, so adding a job to the machine without
-#: adding it here fails, and adding it here without a plan is a visible diff
-#: in a CODEOWNERS-protected file.
+#: Privileged / content-driven trigger classes banned in EVERY workflow.
+BANNED_TRIGGERS_EVERYWHERE = {"pull_request_target", "issue_comment"}
+
+#: The four exact required-check contexts the main ruleset binds (R3). These
+#: are job `name:` values in checks.yml; renaming one silently unbinds a
+#: required check, so the names are pinned literally.
+REQUIRED_CHECK_NAMES = {
+    "python (pytest)",
+    "dashboard (typecheck + unit)",
+    "gitleaks (all history)",
+    "dependency review",
+}
+
+#: (workflow filename, job id) pairs allowed to run self-hosted. The publish
+#: job is the only one that needs the 21 GB institutional store. A second
+#: entry is a plan revision, not an edit — the assertion is an EQUALITY, so
+#: adding a job to the machine without adding it here fails, and adding it
+#: here without a plan is a visible diff in a CODEOWNERS-protected file.
 ALLOWED_SELF_HOSTED_JOBS: list[tuple[str, str]] = [("publish.yml", "publish")]
+
+#: The immutable multi-platform Gitleaks 8.30.1 image (R5).
+GITLEAKS_IMAGE_DIGEST = (
+    "ghcr.io/gitleaks/gitleaks@sha256:"
+    "c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
+)
+
+#: Exact-fingerprint shape for .gitleaksignore entries: commit:file:rule:line.
+FINGERPRINT_RE = re.compile(r"^[0-9a-f]{40}:[^:*?\[\]]+:[a-z0-9._-]+:\d+$")
 
 
 def workflow_files() -> list[Path]:
@@ -65,11 +87,11 @@ def load_workflow(path: Path) -> dict:
     return doc
 
 
-def triggers_of(doc: dict, path: Path) -> set[str]:
+def triggers_of(doc: dict, name: str) -> set[str]:
     # YAML 1.1 parses a bare `on:` key as boolean True — both spellings must
     # be swept or a workflow hides its triggers from the sweep by accident.
     on = doc.get("on", doc.get(True))
-    assert on is not None, f"{path.name}: workflow has no trigger block"
+    assert on is not None, f"{name}: workflow has no trigger block"
     if isinstance(on, str):
         return {on}
     if isinstance(on, list):
@@ -77,13 +99,171 @@ def triggers_of(doc: dict, path: Path) -> set[str]:
     return set(on.keys())
 
 
-def test_no_pr_like_triggers_anywhere():
+# ---------------------------------------------------------------------------
+# Pure checkers. Each returns a list of violation strings; the real-tree tests
+# require [], and the mutation tests require non-[] for every regression.
+# ---------------------------------------------------------------------------
+
+
+def trigger_errors(name: str, doc: dict) -> list[str]:
+    """Repo-wide trigger policy: banned classes nowhere; PR only on allowlist."""
+    errors = []
+    trig = triggers_of(doc, name)
+    banned = trig & BANNED_TRIGGERS_EVERYWHERE
+    if banned:
+        errors.append(f"{name}: banned trigger(s) {sorted(banned)}")
+    if "pull_request" in trig and name not in PR_TRIGGER_ALLOWED_WORKFLOWS:
+        errors.append(f"{name}: pull_request is allowed only in {PR_TRIGGER_ALLOWED_WORKFLOWS}")
+    return errors
+
+
+def _permissions_write_errors(name: str, where: str, perms: object) -> list[str]:
+    if perms is None:
+        return []
+    if isinstance(perms, str):
+        return [] if perms == "read-all" else [f"{name}: {where} permissions {perms!r}"]
+    assert isinstance(perms, dict), f"{name}: {where} permissions not a mapping"
+    return [
+        f"{name}: {where} permission {scope}: {level}"
+        for scope, level in perms.items()
+        if level != "read"
+    ]
+
+
+def pr_workflow_structure_errors(name: str, doc: dict, text: str) -> list[str]:
+    """LD3 structural fork-safety proof for the PR-triggered workflow."""
+    errors = []
+    if re.search(r"\$\{\{\s*secrets\.", text):
+        errors.append(f"{name}: references ${{{{ secrets.* }}}}")
+    errors += _permissions_write_errors(name, "workflow-level", doc.get("permissions"))
+    if doc.get("permissions") != {"contents": "read"}:
+        errors.append(f"{name}: workflow permissions must be exactly contents: read")
+    for job_id, job in (doc.get("jobs") or {}).items():
+        if "uses" in job:
+            errors.append(f"{name}:{job_id}: job-level uses: (reusable workflow) is banned")
+            continue
+        if "environment" in job:
+            errors.append(f"{name}:{job_id}: environment: is banned in the PR workflow")
+        errors += _permissions_write_errors(name, f"job {job_id}", job.get("permissions"))
+        runs_on = job.get("runs-on")
+        labels = [runs_on] if isinstance(runs_on, str) else list(runs_on or [])
+        if not labels:
+            errors.append(f"{name}:{job_id}: no runs-on")
+        for label in labels:
+            label = str(label)
+            if "self-hosted" in label or not label.startswith(("ubuntu-", "macos-", "windows-")):
+                errors.append(f"{name}:{job_id}: non-hosted runner label {label!r}")
+        for step in job.get("steps") or []:
+            uses = step.get("uses") or ""
+            if uses.startswith("actions/checkout@"):
+                if (step.get("with") or {}).get("persist-credentials") is not False:
+                    errors.append(
+                        f"{name}:{job_id}: checkout without persist-credentials: false"
+                    )
+    return errors
+
+
+def gitleaks_job_errors(doc: dict, text: str) -> list[str]:
+    """R5 structural proof of the full-history secret-scan job."""
+    errors = []
+    jobs = doc.get("jobs") or {}
+    job = next((j for j in jobs.values() if j.get("name") == "gitleaks (all history)"), None)
+    if job is None:
+        return ["checks.yml: no job named 'gitleaks (all history)'"]
+    steps = job.get("steps") or []
+    checkout = next((s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@")), None)
+    if checkout is None or (checkout.get("with") or {}).get("fetch-depth") != 0:
+        errors.append("gitleaks checkout must set fetch-depth: 0 (full history)")
+    runs = "\n".join(s.get("run") or "" for s in steps)
+    if GITLEAKS_IMAGE_DIGEST not in runs:
+        errors.append("gitleaks must run the exact OCI-digest-pinned image")
+    if "--redact=100" not in runs:
+        errors.append("gitleaks must redact 100%")
+    if "--no-banner" not in runs:
+        errors.append("gitleaks must pass --no-banner")
+    if '--log-opts="--all"' not in runs:
+        errors.append("gitleaks must scan every ref (--log-opts=\"--all\")")
+    if ":ro" not in runs:
+        errors.append("gitleaks mounts must be read-only")
+    if "--report-path" in runs or "--report-format" in runs:
+        errors.append("gitleaks must not write a report file")
+    # PR runs must materialize policy from the TRUSTED base SHA, not the
+    # candidate tree: the env plumbing and both `git show <base>:` reads must
+    # exist, and the scan must consume the materialized runner-temp policy.
+    step_text = json.dumps(steps)
+    if "github.event.pull_request.base.sha" not in step_text:
+        errors.append("gitleaks PR policy must come from github.event.pull_request.base.sha")
+    if ":.gitleaks.toml" not in runs or ":.gitleaksignore" not in runs:
+        errors.append("gitleaks must `git show <base>:.gitleaks.toml/.gitleaksignore` on PRs")
+    if "--config" not in runs or "--gitleaks-ignore-path" not in runs:
+        errors.append("gitleaks must pass --config and --gitleaks-ignore-path explicitly")
+    for step in steps:
+        if str(step.get("uses", "")).startswith("actions/upload-artifact"):
+            errors.append("gitleaks job must not upload artifacts")
+    return errors
+
+
+def gitleaksignore_errors(lines: list[str]) -> list[str]:
+    """Every non-comment line must be an exact commit:file:rule:line
+    fingerprint — a path glob or directory-wide entry is a forbidden broad
+    allowlist (R5)."""
+    errors = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if not FINGERPRINT_RE.match(line):
+            errors.append(f".gitleaksignore: not an exact fingerprint: {line!r}")
+    return errors
+
+
+def _checks() -> tuple[dict, str]:
+    path = WORKFLOWS_DIR / "checks.yml"
+    return load_workflow(path), path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Real-tree assertions
+# ---------------------------------------------------------------------------
+
+
+def test_trigger_policy_repo_wide():
     for path in workflow_files():
-        found = triggers_of(load_workflow(path), path) & BANNED_TRIGGERS
-        assert not found, (
-            f"{path.name} uses banned trigger(s) {sorted(found)}: PR-like "
-            f"triggers route untrusted content toward runners (R7e/OD-4)"
-        )
+        assert trigger_errors(path.name, load_workflow(path)) == []
+
+
+def test_only_checks_yml_actually_carries_pull_request():
+    # The allowlist must not be vacuous: checks.yml really is PR-triggered.
+    doc, _ = _checks()
+    assert "pull_request" in triggers_of(doc, "checks.yml")
+
+
+def test_pr_workflow_is_structurally_fork_safe():
+    doc, text = _checks()
+    assert pr_workflow_structure_errors("checks.yml", doc, text) == []
+
+
+def test_required_check_names_are_pinned():
+    doc, _ = _checks()
+    names = {job.get("name") for job in (doc.get("jobs") or {}).values()}
+    missing = REQUIRED_CHECK_NAMES - names
+    assert not missing, (
+        f"checks.yml is missing required-check job name(s) {sorted(missing)}; "
+        f"the main ruleset binds these contexts literally (R3)"
+    )
+
+
+def test_gitleaks_job_structure():
+    doc, text = _checks()
+    assert gitleaks_job_errors(doc, text) == []
+
+
+def test_gitleaks_policy_files_are_narrow():
+    toml_text = GITLEAKS_TOML.read_text()
+    assert "[extend]" in toml_text and "useDefault = true" in toml_text
+    assert "[[rules]]" not in toml_text, "custom rules require a plan revision"
+    assert "paths" not in toml_text, "path allowlists in .gitleaks.toml are forbidden (R5)"
+    assert gitleaksignore_errors(GITLEAKS_IGNORE.read_text().splitlines()) == []
 
 
 def test_self_hosted_labels_only_in_allowed_jobs():
@@ -99,6 +279,167 @@ def test_self_hosted_labels_only_in_allowed_jobs():
         f"self-hosted jobs {actual} != allowed {ALLOWED_SELF_HOSTED_JOBS}; "
         f"moving a job onto the self-hosted machine requires a plan revision"
     )
+
+
+def test_production_workflows_have_no_pr_like_trigger():
+    for path in workflow_files():
+        if path.name in PR_TRIGGER_ALLOWED_WORKFLOWS:
+            continue
+        trig = triggers_of(load_workflow(path), path.name)
+        assert not (trig & ({"pull_request"} | BANNED_TRIGGERS_EVERYWHERE)), (
+            f"{path.name}: production workflows must never carry a PR-like trigger"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Killing mutations (Task 1 step 3). Each rewrites the REAL checks.yml
+# in-memory and proves the corresponding checker fails — so weakening a
+# checker without noticing is not possible.
+# ---------------------------------------------------------------------------
+
+
+def _mutant() -> tuple[dict, str]:
+    doc, text = _checks()
+    return copy.deepcopy(doc), text
+
+
+def _first_job(doc: dict) -> dict:
+    return next(iter(doc["jobs"].values()))
+
+
+def test_mutation_pr_job_on_self_hosted_is_killed():
+    doc, text = _mutant()
+    _first_job(doc)["runs-on"] = ["self-hosted", "macOS", "populus-ops"]
+    assert pr_workflow_structure_errors("checks.yml", doc, text)
+
+
+def test_mutation_secret_reference_is_killed():
+    doc, text = _mutant()
+    assert pr_workflow_structure_errors(
+        "checks.yml", doc, text + "\n# env: TOKEN: ${{ secrets.DATA_REPO_PAT }}\n"
+    )
+
+
+def test_mutation_write_permission_is_killed():
+    doc, text = _mutant()
+    doc["permissions"] = {"contents": "write"}
+    assert pr_workflow_structure_errors("checks.yml", doc, text)
+    doc, text = _mutant()
+    _first_job(doc)["permissions"] = {"id-token": "write"}
+    assert pr_workflow_structure_errors("checks.yml", doc, text)
+
+
+def test_mutation_job_level_reusable_workflow_is_killed():
+    doc, text = _mutant()
+    doc["jobs"]["reused"] = {"uses": "./.github/workflows/record-sign.yml"}
+    assert pr_workflow_structure_errors("checks.yml", doc, text)
+
+
+def test_mutation_environment_is_killed():
+    doc, text = _mutant()
+    _first_job(doc)["environment"] = "production-pages-deploy"
+    assert pr_workflow_structure_errors("checks.yml", doc, text)
+
+
+def test_mutation_pull_request_target_is_killed():
+    doc, _ = _mutant()
+    on = doc.get("on", doc.get(True))
+    on["pull_request_target"] = None
+    assert trigger_errors("checks.yml", doc)
+
+
+def test_mutation_pull_request_on_production_workflow_is_killed():
+    publish = load_workflow(WORKFLOWS_DIR / "publish.yml")
+    publish = copy.deepcopy(publish)
+    on = publish.get("on", publish.get(True))
+    on["pull_request"] = None
+    assert trigger_errors("publish.yml", publish)
+
+
+def test_mutation_persist_credentials_removed_is_killed():
+    doc, text = _mutant()
+    for job in doc["jobs"].values():
+        for step in job.get("steps") or []:
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                step.setdefault("with", {}).pop("persist-credentials", None)
+    assert pr_workflow_structure_errors("checks.yml", doc, text)
+
+
+def _gitleaks_job(doc: dict) -> dict:
+    return next(j for j in doc["jobs"].values() if j.get("name") == "gitleaks (all history)")
+
+
+def _rewrite_runs(job: dict, old: str, new: str) -> None:
+    hit = False
+    for step in job["steps"]:
+        run = step.get("run")
+        if run and old in run:
+            step["run"] = run.replace(old, new)
+            hit = True
+    assert hit, f"mutation target {old!r} not found — the mutation would be vacuous"
+
+
+def test_mutation_shallow_gitleaks_checkout_is_killed():
+    doc, text = _mutant()
+    job = _gitleaks_job(doc)
+    for step in job["steps"]:
+        if str(step.get("uses", "")).startswith("actions/checkout@"):
+            step["with"].pop("fetch-depth", None)
+    assert gitleaks_job_errors(doc, text)
+
+
+def test_mutation_candidate_policy_substitution_is_killed():
+    # A fork editing the scanner policy in the same PR must not be able to
+    # feed that candidate policy to the scan: the base-SHA materialization is
+    # structural. Simulate replacing it with checked-out-tree policy.
+    doc, text = _mutant()
+    job = _gitleaks_job(doc)
+    for step in job["steps"]:
+        if step.get("env") and "github.event.pull_request.base.sha" in json.dumps(step["env"]):
+            step["env"] = {}
+            step["run"] = 'cp .gitleaks.toml .gitleaksignore "$RUNNER_TEMP/"'
+    assert gitleaks_job_errors(doc, text)
+
+
+def test_mutation_removed_redaction_is_killed():
+    doc, text = _mutant()
+    _rewrite_runs(_gitleaks_job(doc), "--redact=100", "")
+    assert gitleaks_job_errors(doc, text)
+
+
+def test_mutation_partial_history_scan_is_killed():
+    doc, text = _mutant()
+    _rewrite_runs(_gitleaks_job(doc), '--log-opts="--all"', "")
+    assert gitleaks_job_errors(doc, text)
+
+
+def test_mutation_report_output_is_killed():
+    doc, text = _mutant()
+    job = _gitleaks_job(doc)
+    _rewrite_runs(job, "--no-banner", "--no-banner --report-path=/tmp/report.json")
+    assert gitleaks_job_errors(doc, text)
+    doc, text = _mutant()
+    job = _gitleaks_job(doc)
+    job["steps"].append({"uses": "actions/upload-artifact@v4", "with": {"path": "/tmp"}})
+    assert gitleaks_job_errors(doc, text)
+
+
+def test_mutation_writable_mount_is_killed():
+    doc, text = _mutant()
+    _rewrite_runs(_gitleaks_job(doc), ":ro", "")
+    assert gitleaks_job_errors(doc, text)
+
+
+def test_mutation_broad_ignore_is_killed():
+    lines = GITLEAKS_IGNORE.read_text().splitlines()
+    assert gitleaksignore_errors(lines + ["tests/*"])
+    assert gitleaksignore_errors(lines + ["tests/test_deploy_record.py"])
+    assert gitleaksignore_errors(lines + ["*:tests/test_deploy_record.py:generic-api-key:1"])
+
+
+# ---------------------------------------------------------------------------
+# Retained pre-hardening governance assertions (unchanged below this line).
+# ---------------------------------------------------------------------------
 
 
 def test_runner_runbook_pins_current_version_checksum_and_readback():
