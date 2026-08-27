@@ -143,7 +143,7 @@ jobs:
       #
       # On the self-hosted machine uv is part of the root-owned, read-only
       # toolchain the controller checksums and puts on PATH before the runner
-      # ever registers (docs/operations/self-hosted-runner.md §4) — so the right
+      # ever registers (docs/runbooks/self-hosted-runner.md §4) — so the right
       # thing there is to USE it, never to reinstall it over the top of the
       # gated copy. The pip fallback remains for a runner with no uv at all,
       # which is the GitHub-hosted shape this job reverts to under the plan's

@@ -50,7 +50,7 @@ is [ARCHITECTURE.md](ARCHITECTURE.md).
   `docs/operations/` — runbooks; `docs/frontend/` — dashboard contracts and
   design principles; `docs/roadmap.md` — open work
 - `ops/runner/` — the self-hosted publish runner's controller (host
-  infrastructure; see `docs/operations/self-hosted-runner.md`)
+  infrastructure; see `docs/runbooks/self-hosted-runner.md`)
 - `.github/workflows/` — `checks.yml` (contributor CI), `publish.yml` (the
   nightly data publish + site deploy), `record-sign.yml` (the deployment
   record signer)
@@ -146,8 +146,10 @@ inventory-wide on preview before production receives bytes, production
 failures roll back to the captured (and serving-verified) prior deployment,
 and `record-sign.yml` attests an append-only deployment record — a live
 deployment without a valid record **gates the next publish** (the R18 gate).
-Operator procedures: `docs/operations/deploy.md`, `rollback.md`,
-`attestation.md`, `self-hosted-runner.md`.
+Operator procedures: `docs/operations/deploy.md`, `rollback.md`, and
+`attestation.md`. The runner runbook stays at
+`docs/runbooks/self-hosted-runner.md` for now — its path is pinned by a
+governance test owned by another active run.
 
 ## Legal and data provenance
 

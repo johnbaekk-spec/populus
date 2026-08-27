@@ -34,7 +34,7 @@ deployment blocks every later publish through the step-6 gate; a verification
 retried. On scheduling: the nightly publish cron is nominally 06:17 UTC but in
 practice fires **43–100 minutes late by platform design tolerance** — monitors
 must key off run existence, never off the clock; a run still queued past ~100
-minutes is stuck (see `self-hosted-runner.md`), not late.
+minutes is stuck (see `docs/runbooks/self-hosted-runner.md`), not late.
 
 Step 4's sweep being inventory-wide is a RUN P3-3b amendment to §12.1, recorded
 in `ARCHITECTURE.md`'s revision table. It is not cosmetic: §18.1's TD-8 accepts
