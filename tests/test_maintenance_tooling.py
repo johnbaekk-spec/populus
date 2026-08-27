@@ -1543,6 +1543,18 @@ BASELINE_ABS_PATH_FILES = {
     "tests/test_m2_11_qa_bundle.py",
 }
 
+# Slice 1 moved the runbook (docs/runbooks/ -> docs/operations/) with `git mv`
+# and no content change to its detected line. The same pre-existing occurrence
+# at the file's new path is NOT a violation this branch introduced, so the
+# candidate-worktree containment check normalizes the moved path back to its
+# baseline name before comparing. The gate itself is location-independent (its
+# exemption table is content-keyed); this alias exists only so the containment
+# test does not mistake a rename for a regression. Remove it together with the
+# baseline entry when T3.10 parameterizes the line.
+BASELINE_ABS_PATH_MOVES = {
+    "docs/operations/self-hosted-runner.md": "docs/runbooks/self-hosted-runner.md",
+}
+
 
 # The ANOMALY set on the pinned baseline is EMPTY, and that is the whole point
 # of the Task-2 fix.
@@ -1831,8 +1843,8 @@ def test_abs_paths_candidate_worktree_reaches_a_clean_scan():
     """
     r = _run_sh(CHECK_ABS, REPO_ROOT, "--worktree")
     assert r.returncode in (0, 1), r.stdout + r.stderr
-    files = _violating_files(r)
-    anom = _anomaly_files(r)
+    files = {BASELINE_ABS_PATH_MOVES.get(f, f) for f in _violating_files(r)}
+    anom = {BASELINE_ABS_PATH_MOVES.get(f, f) for f in _anomaly_files(r)}
     assert not (files - BASELINE_ABS_PATH_FILES), (
         "this branch introduced a machine-specific path: "
         f"{sorted(files - BASELINE_ABS_PATH_FILES)}\n{r.stdout}"
