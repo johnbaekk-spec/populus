@@ -4,7 +4,8 @@
    every narrow-viewport media block in global.css and fails if any honesty
    selector receives display:none / visibility:hidden / content-visibility:
    hidden. Plus the F2 dead-CSS sweep over this run's new classes and the R13
-   corrected-token assertions. */
+   corrected-token assertions. The fold and token rules asserted here are
+   specified by docs/frontend/design-principles.md (§5 and §6). */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

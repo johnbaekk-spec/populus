@@ -473,15 +473,13 @@ single-row bar was never sized for.
   pass every test. The deferred axe/Lighthouse gate is what actually protects
   it; until then that protection is a review obligation, not coverage.
 
-## The design handoff
+## The design contract
 
-The mockups live in the Claude Design project **"UI Mockups for Project"**
-(`1edc8435-2597-4222-b30c-647b0a20d66e`), readable with the design MCP
-(`DesignSync` → `list_files` / `get_file`). `Populus Design System.dc.html` —
-the token and component source of truth — is snapshotted in
-[`docs/design/handoff/`](../docs/design/handoff/) as fetched 2026-07-30, so the
-token values this stylesheet claims to follow are reviewable in-repo. The
-per-page mockups are not snapshotted; read them from the project.
+The durable design contract — principles, uncertainty grammar, mobile-fold
+rules, and the locked token corrections — is
+[`docs/frontend/design-principles.md`](../docs/frontend/design-principles.md).
+The original mockup snapshots (`docs/design/handoff/*.dc.html`) live in Git
+history; their authority transferred to that document.
 
 ## Response-header defense in depth (RUN PUBLIC-SECURITY-HARDENING PR 5)
 

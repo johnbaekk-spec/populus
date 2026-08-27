@@ -1,8 +1,8 @@
 /* Public Filings design tokens + global styles.
-   Source of truth: the Claude Design project "UI Mockups for Project"
-   (Congress Feed.dc.html / Mobile.dc.html / States.dc.html). Values are
-   copied verbatim from the design; do not tune them here without a
-   design-side change.
+   Source of truth: docs/frontend/design-principles.md (which carries the
+   design-system tokens and fold rules extracted from the original design
+   mockups, now in Git history). Do not tune values here without updating
+   that document.
 
    ONE DELIBERATE DEVIATION, recorded rather than silently absorbed:
    --ink3 is darkened (light) / lightened (dark) from the design's #8d8779 /
@@ -2146,7 +2146,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   flex-wrap: wrap;
 }
 
-/* ---------- mobile fold (≤720px, per Mobile.dc.html) ---------- */
+/* ---------- mobile fold (≤720px, per docs/frontend/design-principles.md §5) ---------- */
 
 /* R4 — the MISSING INTERMEDIATE BREAKPOINT.
    The masthead had exactly two states: the full desktop bar and the 720px
