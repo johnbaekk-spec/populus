@@ -53,12 +53,13 @@ from populus.deploy.orchestrator import (
     run_deployment,
 )
 from populus.deploy.upload import (
-    DEFAULT_WRANGLER_PACKAGE,
+    WRANGLER_RELATIVE_PATH,
     DeploymentVerifier,
     PagesDeploySurface,
     UploadFailed,
     WranglerUploader,
     _run_argv,
+    resolve_wrangler_executable,
 )
 from populus.deploy.verify import (
     LOCKED_CONTENT_SECURITY_POLICY,
@@ -80,6 +81,12 @@ ANCHOR_SHA = "a" * 40
 PREVIEW_BRANCH = "populus-preview"
 PRIOR = "dep-prior"
 PRIOR_URL = "https://dep-prior.populus-site.pages.dev"
+
+#: The lock-installed binary the rig's uploader names as argv[0] (R8/LD9). The
+#: injected FakeWrangler is the runner, so the path is never executed — what
+#: matters is that it, and never `npx` or a package spec, is what the argv
+#: carries.
+WRANGLER_BIN = Path("/repo") / WRANGLER_RELATIVE_PATH
 
 BUILD_ID = "20260805.1"
 CODE_SHA = "a" * 40
@@ -357,7 +364,9 @@ def rig(tmp_path: Path) -> Rig:
         served=served,
         wrangler=wrangler,
         surface=surface,
-        upload=WranglerUploader(project=PROJECT, lookup=surface, runner=wrangler),
+        upload=WranglerUploader(
+            project=PROJECT, lookup=surface, executable=WRANGLER_BIN, runner=wrangler
+        ),
         verify=DeploymentVerifier(
             client=served, build_id=BUILD_ID, code_sha=CODE_SHA, stats_bytes=STATS
         ),
@@ -422,10 +431,12 @@ def test_an_unknown_verification_stage_is_refused(rig: Rig) -> None:
 # --- the command ------------------------------------------------------------
 
 
-def test_the_wrangler_command_is_a_pinned_argv_list(rig: Rig, tmp_path: Path) -> None:
-    """Argv, never a shell, and a pinned package rather than "whatever npm serves".
+def test_the_wrangler_command_is_a_locked_local_argv_list(rig: Rig, tmp_path: Path) -> None:
+    """Argv, never a shell — and argv[0] is the LOCK-INSTALLED binary (R8/LD9).
 
-    The credentials are deliberately absent: wrangler reads
+    Never ``npx``, never a package spec: anything that names a package to a
+    runner is a deploy-time registry fetch while the Cloudflare token is in
+    scope. The credentials are deliberately absent: wrangler reads
     ``CLOUDFLARE_API_TOKEN``/``CLOUDFLARE_ACCOUNT_ID`` from the step-scoped
     environment, so no token is ever placed on a command line (where it would be
     visible to every other process on the runner).
@@ -435,9 +446,7 @@ def test_the_wrangler_command_is_a_pinned_argv_list(rig: Rig, tmp_path: Path) ->
     argv = rig.upload.command(sealed, branch=PREVIEW_BRANCH)
 
     assert argv == [
-        "npx",
-        "--yes",
-        DEFAULT_WRANGLER_PACKAGE,
+        str(WRANGLER_BIN),
         "pages",
         "deploy",
         str(sealed),
@@ -445,7 +454,11 @@ def test_the_wrangler_command_is_a_pinned_argv_list(rig: Rig, tmp_path: Path) ->
         f"--branch={PREVIEW_BRANCH}",
         "--commit-dirty=true",
     ]
-    assert "@" in DEFAULT_WRANGLER_PACKAGE, "an unpinned spec is not a pin"
+    assert "npx" not in argv, "npx is the remote-install path R8 removed"
+    assert not any(part.startswith("wrangler@") for part in argv), (
+        "a package spec anywhere in the argv is a registry fetch, not a pin"
+    )
+    assert argv[0].endswith(str(Path("dashboard/node_modules/.bin/wrangler")))
     assert TOKEN not in " ".join(argv)
     assert not any(";" in part or "&&" in part for part in argv)
 
@@ -454,10 +467,72 @@ def test_the_default_command_runner_is_the_real_one_and_is_never_used_here() -> 
     """The seam is injectable, and the suite injects: nothing is spawned.
 
     Without the default the production path would have no transport at all;
-    without the injection this file would spawn ``npx`` on every run.
+    without the injection this file would spawn wrangler on every run.
     """
-    assert WranglerUploader(project=PROJECT, lookup=None).runner is _run_argv
-    assert WranglerUploader(project=PROJECT, lookup=None, runner=len).runner is len
+    assert (
+        WranglerUploader(project=PROJECT, lookup=None, executable=WRANGLER_BIN).runner
+        is _run_argv
+    )
+    assert (
+        WranglerUploader(
+            project=PROJECT, lookup=None, executable=WRANGLER_BIN, runner=len
+        ).runner
+        is len
+    )
+
+
+# --- the lock-installed binary is resolved, or the deploy refuses (R8/LD9) ---
+
+
+def test_resolving_a_missing_wrangler_refuses_before_anything_runs(tmp_path: Path) -> None:
+    """No binary → a named refusal, no subprocess, no registry fetch.
+
+    The message must point at ``npm ci`` — the ONLY sanctioned way to obtain
+    the binary — and never at a remote install.
+    """
+    with pytest.raises(UploadFailed, match="missing") as excinfo:
+        resolve_wrangler_executable(tmp_path)
+
+    message = str(excinfo.value)
+    assert "npm ci" in message
+    assert "never installs" in message
+    assert str(tmp_path / WRANGLER_RELATIVE_PATH) in message
+
+
+def test_resolving_a_non_executable_wrangler_refuses(tmp_path: Path) -> None:
+    target = tmp_path / WRANGLER_RELATIVE_PATH
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\n")
+    target.chmod(0o644)
+
+    with pytest.raises(UploadFailed, match="not executable"):
+        resolve_wrangler_executable(tmp_path)
+
+
+def test_resolving_a_present_executable_wrangler_returns_its_exact_path(tmp_path: Path) -> None:
+    target = tmp_path / WRANGLER_RELATIVE_PATH
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\n")
+    target.chmod(0o755)
+
+    assert resolve_wrangler_executable(tmp_path) == target
+
+
+def test_a_missing_binary_stops_before_any_invocation(tmp_path: Path) -> None:
+    """The refusal happens at resolution — before an uploader even exists, so
+    before any runner could be handed anything to spawn. A sentinel runner
+    proves nothing was invoked on the failure path."""
+    invoked: list[Any] = []
+
+    with pytest.raises(UploadFailed):
+        WranglerUploader(
+            project=PROJECT,
+            lookup=None,
+            executable=resolve_wrangler_executable(tmp_path),
+            runner=invoked.append,
+        )
+
+    assert invoked == []
 
 
 def test_a_failing_wrangler_is_an_upload_failure(rig: Rig, tmp_path: Path) -> None:
@@ -601,7 +676,7 @@ def test_the_sequence_runs_green_through_the_production_objects(rig: Rig) -> Non
     """
     outcome = rig.run()
 
-    assert rig.wrangler.calls[0][:5] == ["npx", "--yes", DEFAULT_WRANGLER_PACKAGE, "pages", "deploy"]
+    assert rig.wrangler.calls[0][:3] == [str(WRANGLER_BIN), "pages", "deploy"]
     assert outcome.preview.environment == PREVIEW
     assert outcome.production.environment == PRODUCTION
     assert outcome.preview_verification.ok and outcome.production_verification.ok

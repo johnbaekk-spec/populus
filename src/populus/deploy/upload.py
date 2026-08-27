@@ -56,6 +56,7 @@ dep guard's allowlist grants it ``subprocess`` and nothing else.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess  # nosec B404 — pinned wrangler CLI, argv list only, never a shell
 from collections.abc import Callable, Mapping, Sequence
@@ -73,20 +74,52 @@ from populus.deploy.orchestrator import (
 from populus.deploy.verify import HttpGetter, VerificationResult, verify_deployment
 
 __all__ = [
-    "DEFAULT_WRANGLER_PACKAGE",
+    "WRANGLER_RELATIVE_PATH",
     "DeploymentLookup",
     "DeploymentVerifier",
     "PagesDeploySurface",
     "UploadFailed",
     "WranglerUploader",
+    "resolve_wrangler_executable",
 ]
 
-#: The exact wrangler the deploy runs. A floating spec is not a pin: `wrangler`
-#: publishes majors that change the Direct Upload flow, and "whatever npm served
-#: today" is not a thing a deployment record can be a statement about. Override
-#: with ``--wrangler-package`` when the pin is rolled; ``npx --yes`` installs
-#: this exact spec and nothing else.
-DEFAULT_WRANGLER_PACKAGE = "wrangler@4.42.0"
+#: Where the committed npm lock installs wrangler, relative to the checked-out
+#: repository root. RUN PUBLIC-SECURITY-HARDENING R8/LD9: wrangler is an exact
+#: `dashboard/package.json` devDependency installed by `npm ci` from
+#: `dashboard/package-lock.json`, and the deploy invokes THAT binary directly.
+#: There is no `npx --yes`, no remote install, no moving tag, and no package or
+#: CLI override — "whatever npm served today" is not a thing a deployment
+#: record can be a statement about, and a deploy-time registry fetch runs
+#: unpinned code while the Cloudflare token is in scope.
+WRANGLER_RELATIVE_PATH = Path("dashboard") / "node_modules" / ".bin" / "wrangler"
+
+
+def resolve_wrangler_executable(repo_root: Path | None = None) -> Path:
+    """The lock-installed wrangler binary, or a refusal BEFORE anything runs.
+
+    *repo_root* defaults to the working directory, which for
+    ``python -m populus.deploy.orchestrator`` under ``publish.yml`` is the
+    checked-out repository root. Missing or non-executable local state raises
+    :class:`UploadFailed` here — before any subprocess is spawned and before
+    any step that could reach the network — and the remedy is named: run
+    ``npm ci`` in ``dashboard/``. Nothing here ever falls back to a registry
+    fetch (LD9).
+    """
+    root = Path.cwd() if repo_root is None else Path(repo_root)
+    candidate = root / WRANGLER_RELATIVE_PATH
+    if not candidate.is_file():
+        raise UploadFailed(
+            f"the lock-installed wrangler executable is missing at {candidate}. "
+            "Run `npm ci` in dashboard/ first; the deploy never installs "
+            "wrangler from the registry (R8/LD9), so nothing was uploaded."
+        )
+    if not os.access(candidate, os.X_OK):
+        raise UploadFailed(
+            f"{candidate} exists but is not executable. Re-run `npm ci` in "
+            "dashboard/; the deploy never falls back to a registry fetch "
+            "(R8/LD9), so nothing was uploaded."
+        )
+    return candidate
 
 #: Every deployment origin Pages hands out lives under this suffix, and the only
 #: thing the printed URL is used for is matching it to an API answer.
@@ -278,24 +311,25 @@ class WranglerUploader:
 
     project: str
     lookup: DeploymentLookup
+    executable: Path
     runner: CommandRunner = _run_argv
-    package: str = DEFAULT_WRANGLER_PACKAGE
 
     def command(self, path: Path, *, branch: str) -> list[str]:
         """The exact argv. Split out so a test can pin it without running it.
 
-        ``--commit-dirty=true`` because the runner's checkout is dirty by
-        construction (the artifact was downloaded into it) and wrangler
-        otherwise stops to ask a question no one is there to answer. The
-        credentials are **not** here: ``CLOUDFLARE_API_TOKEN`` and
+        ``argv[0]`` is the lock-installed binary
+        :func:`resolve_wrangler_executable` already validated — never ``npx``,
+        never a package spec, so nothing here can reach the npm registry
+        (R8/LD9). ``--commit-dirty=true`` because the runner's checkout is
+        dirty by construction (the artifact was downloaded into it) and
+        wrangler otherwise stops to ask a question no one is there to answer.
+        The credentials are **not** here: ``CLOUDFLARE_API_TOKEN`` and
         ``CLOUDFLARE_ACCOUNT_ID`` are read by wrangler from the step-scoped
         environment the workflow injects, so this class never handles the token
         — the same posture as ``GhReleaseBackend`` and ``GH_TOKEN``.
         """
         return [
-            "npx",
-            "--yes",
-            self.package,
+            str(self.executable),
             "pages",
             "deploy",
             str(path),
