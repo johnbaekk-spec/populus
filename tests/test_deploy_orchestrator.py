@@ -67,7 +67,11 @@ from populus.deploy.orchestrator import (
     PROPAGATION_REASON,
     PROPAGATION_RETRIES,
     PROPAGATION_SETTLE_SECONDS,
+    RollbackExpectation,
+    RollbackSiteObservation,
     _propagation_lag_only,
+    capture_rollback_expectation,
+    observe_rollback_root,
 )
 from populus.deploy.verify import Divergence, VerificationResult, check_no_functions
 from populus.publish.attestation import REJECTED, UNAVAILABLE, VERIFIED
@@ -92,7 +96,25 @@ SITE = {
     "assets/app.js": b"console.log(1)\n",
     "assets/app.css": b"body{}\n",
     "stats.json": b'{"stats_version":"stats-1.0.0"}\n',
+    # LD12: every buildable tree carries exactly one root `_headers` control.
+    "_headers": b"/*\n  Content-Security-Policy: default-src 'self'\n",
 }
+
+#: The pre-upload rollback observation the default harness observer reports —
+#: and, unless a test overrides it, what the post-rollback observation reports
+#: too ("restored exactly").
+OBSERVATION = RollbackSiteObservation(
+    body_sha256="c" * 64,
+    body_length=1234,
+    build_id="20260801.1",
+    code_sha=ANCHOR_SHA,
+    headers=(
+        ("content-security-policy", ("default-src 'self'",)),
+        ("referrer-policy", ("strict-origin-when-cross-origin",)),
+        ("strict-transport-security", ("max-age=31536000",)),
+        ("x-content-type-options", ("nosniff",)),
+    ),
+)
 
 
 # --- fakes -------------------------------------------------------------------
@@ -134,6 +156,11 @@ class FakePages:
         self.rollback_uses_functions = rollback_uses_functions
         self.fail_with = fail_with
         self.rollbacks: list[str] = []
+        # LD12c: raw production listings, served per `raw_deployments` call.
+        # None derives a stable listing from `production_ids`; a list of
+        # listings is popped per call so a test can model a concurrent change.
+        self.raw_lists: list[list[dict]] | None = None
+        self.raw_uses_functions: Any = False
 
     def assert_production_branch(self, expected: str) -> str:
         self._log.append(("assert-branch", expected))
@@ -164,6 +191,23 @@ class FakePages:
     def production_deployments(self) -> list[Deployment]:
         self._log.append(("list-production", tuple(self.production_ids)))
         return [_deployment(i) for i in self.production_ids]
+
+    def raw_deployments(self, environment: str | None = None) -> list[dict]:
+        """The RAW production listing the rollback-evidence capture reads."""
+        self._log.append(("raw-list", environment))
+        if self.raw_lists is not None:
+            return list(self.raw_lists.pop(0)) if self.raw_lists else []
+        return [
+            _raw_deployment(i, self.raw_uses_functions) for i in self.production_ids
+        ]
+
+    def _deployments_path(self) -> str:
+        """So `PagesDeploySurface(FakePages)` wiring tests can read raw lists."""
+        return "deployments"
+
+    def _request(self, method: str, path: str, params: dict | None = None) -> list[dict]:
+        assert method == "GET", "the fake transport only reads"
+        return self.raw_deployments((params or {}).get("env"))
 
     def rollback_payload(self, deployment_id: str) -> dict:
         """The provider's RAW object, exactly as ``PagesDeploySurface`` returns one.
@@ -368,6 +412,10 @@ class Harness:
             # anchor keep exercising what they were written to exercise. The
             # disagreement and unreadable cases get explicit overrides.
             serving_probe=lambda url: ANCHOR_SHA,
+            # LD12a/LD12c default: a coherent observation, identical before the
+            # upload and after a rollback, so tests that are not ABOUT rollback
+            # evidence keep exercising what they were written to exercise.
+            observer=lambda url: OBSERVATION,
             # R11b default: never really sleep in the suite.
             settle=lambda seconds: None,
         )
@@ -562,6 +610,10 @@ def test_the_full_sequence_runs_in_order(harness: Harness) -> None:
         ("assert-domain", DOMAIN),
         ("capture", PRIOR),
         ("list-production", (PRIOR,)),
+        # LD12c: the raw bracketing reads around the one rollback observation,
+        # BEFORE the freeze and either upload.
+        ("raw-list", "production"),
+        ("raw-list", "production"),
         ("upload", PREVIEW),
         ("verify", PREVIEW, PREVIEW_URL),
         ("upload", PRODUCTION),
@@ -644,40 +696,83 @@ def test_production_verification_failure_rolls_back_to_the_captured_id(
     assert not isinstance(raised.value, FirstRunUncompensated)
 
 
-def test_the_rollback_is_reverified_on_the_custom_domain(harness: Harness) -> None:
-    """Ordering mutant (a2): roll back but skip the re-verification.
+def test_the_rollback_is_reverified_against_the_captured_expectation(
+    harness: Harness,
+) -> None:
+    """Ordering mutant (a2): roll back but skip the restoration check.
 
-    A rollback that is not re-verified is a hope. The third verification runs
-    against the live custom domain, *after* the rollback call, and its verdict
-    is carried on the exception.
+    LD12a: restoration is judged against the PRE-UPLOAD expectation — a fresh
+    observation of the custom-domain root taken AFTER the rollback call — and
+    never against the attempted (failed) artifact's inventory. The observer is
+    called exactly twice: once for the capture, once post-rollback.
     """
-    harness.with_verifier(plan=[True, False, True])
+    calls: list[str] = []
+
+    def observer(url: str) -> RollbackSiteObservation:
+        calls.append(url)
+        harness.log.append(("observe", url))
+        return OBSERVATION
+
+    harness.with_verifier(plan=[True, False])
 
     with pytest.raises(ProductionVerificationFailed) as raised:
-        harness.run()
+        harness.run(observer=observer)
 
     assert harness.log[-2:] == [
         ("rollback", PRIOR),
-        ("verify", PRODUCTION, DOMAIN_URL),
+        ("observe", DOMAIN_URL),
     ]
-    assert harness.verify.calls[-1].deployment["id"] == PRIOR
+    assert calls == [DOMAIN_URL, DOMAIN_URL]
+    # The attempted inventory is NEVER re-verified against the restored
+    # deployment: the verifier ran exactly twice, preview and production.
+    assert harness.verify.stages == [PREVIEW, PRODUCTION]
     assert raised.value.rollback_verified is True
-    assert "the restored deployment verified" in str(raised.value)
+    assert "matches the pre-upload expectation" in str(raised.value)
 
 
-def test_a_rollback_that_does_not_verify_says_so(harness: Harness) -> None:
-    """The re-verification is a real check, not a formality.
+def test_a_rollback_that_does_not_restore_exactly_says_so(harness: Harness) -> None:
+    """The restoration check is a real comparison, not a formality.
 
-    If it were ignored, both verdicts would produce the same message and the
-    ``rollback_verified`` attribute would be decorative.
+    The post-rollback observation drifts on the body hash and one header;
+    ``rollback_verified`` must be False and the drifted fields named.
     """
-    harness.with_verifier(plan=[True, False, False])
+    drifted = RollbackSiteObservation(
+        body_sha256="d" * 64,
+        body_length=OBSERVATION.body_length,
+        build_id=OBSERVATION.build_id,
+        code_sha=OBSERVATION.code_sha,
+        headers=OBSERVATION.headers[1:],
+    )
+    answers = [OBSERVATION, drifted]
+
+    harness.with_verifier(plan=[True, False])
 
     with pytest.raises(ProductionVerificationFailed) as raised:
-        harness.run()
+        harness.run(observer=lambda url: answers.pop(0))
 
     assert raised.value.rollback_verified is False
     assert "did NOT verify" in str(raised.value)
+    assert "body_sha256" in str(raised.value)
+
+
+def test_an_unavailable_post_rollback_observation_is_not_restored(
+    harness: Harness,
+) -> None:
+    """LD12a: mismatch OR unavailability — both keep rollback_verified False."""
+    answers: list[Any] = [OBSERVATION]
+
+    def observer(url: str) -> RollbackSiteObservation:
+        if answers:
+            return answers.pop(0)
+        raise DeployAborted("the rollback observation requires HTTP 200; got 503")
+
+    harness.with_verifier(plan=[True, False])
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(observer=observer)
+
+    assert raised.value.rollback_verified is False
+    assert "unavailable" in str(raised.value)
 
 
 def test_the_rollback_target_is_captured_before_the_production_upload(
@@ -935,21 +1030,19 @@ def test_the_rollback_reverification_receives_the_raw_provider_payload(
     path no matter what Cloudflare answered.
 
     Mutant: put a reconstruction back (`{"id": …, "uses_functions": d.uses_functions}`)
-    — the key reappears, ``check_no_functions`` returns clean, and this fails.
+    — the key reappears, the refusal never fires, and this fails.
     """
     harness.client.rollback_uses_functions = OMIT
-    harness.with_verifier(plan=[True, False, True])
+    harness.with_verifier(plan=[True, False])
 
-    with pytest.raises(ProductionVerificationFailed):
+    with pytest.raises(ProductionVerificationFailed) as raised:
         harness.run()
 
-    # Non-vacuity: the run really did reach the rollback re-verification.
+    # Non-vacuity: the run really did reach the rollback restoration check.
     assert harness.client.rollbacks == [PRIOR]
-    restored = harness.verify.calls[-1].deployment
-    assert restored["id"] == PRIOR
-    assert "uses_functions" not in restored
-    findings = check_no_functions(restored)
-    assert findings and "fails closed" in findings[0]
+    assert raised.value.rollback_verified is False
+    message = str(raised.value)
+    assert "uses_functions" in message and "absent" in message
 
 
 def test_a_provider_payload_that_does_carry_the_field_still_passes(
@@ -961,14 +1054,13 @@ def test_a_provider_payload_that_does_carry_the_field_still_passes(
     nothing at all, and "fails closed on absence" would be indistinguishable
     from "always fails".
     """
-    harness.with_verifier(plan=[True, False, True])
+    harness.with_verifier(plan=[True, False])
 
-    with pytest.raises(ProductionVerificationFailed):
+    with pytest.raises(ProductionVerificationFailed) as raised:
         harness.run()
 
-    restored = harness.verify.calls[-1].deployment
-    assert restored["uses_functions"] is False
-    assert check_no_functions(restored) == []
+    assert harness.client.rollbacks == [PRIOR]
+    assert raised.value.rollback_verified is True
 
 
 def test_the_sequence_never_reaches_for_the_laundering_rollback(
@@ -981,7 +1073,7 @@ def test_the_sequence_never_reaches_for_the_laundering_rollback(
     say which name it wanted. The source assertion covers the case where a
     future edit reconstructs the mapping *after* calling the raw method.
     """
-    harness.with_verifier(plan=[True, False, True])
+    harness.with_verifier(plan=[True, False])
 
     with pytest.raises(ProductionVerificationFailed):
         harness.run()
@@ -1058,6 +1150,8 @@ class Cli:
             # R11c: an agreeing probe, and R11b: no real sleeps. Tests that are
             # ABOUT either seam override these.
             "probe_factory": lambda: (lambda url: ANCHOR_SHA),
+            # LD12a/LD12c: a coherent, stable observation by default.
+            "observer_factory": lambda: (lambda url: OBSERVATION),
             "settle_factory": lambda: (lambda seconds: None),
         }
         if pages:
@@ -1392,6 +1486,7 @@ def test_the_default_uploader_is_the_wrangler_uploader(cli: Cli, monkeypatch) ->
             readiness_factory=lambda: (lambda url, *, stage: None),
             verifier_factory=lambda: cli.verify,
             probe_factory=lambda: (lambda url: ANCHOR_SHA),
+            observer_factory=lambda: (lambda url: OBSERVATION),
             settle_factory=lambda: (lambda seconds: None),
         )
         == EXIT_DEPLOYED
@@ -1453,6 +1548,7 @@ def test_the_default_verifier_is_bound_to_the_artifact(cli: Cli, monkeypatch) ->
             upload_factory=lambda: cli.upload,
             http_factory=lambda: sentinel,
             probe_factory=lambda: (lambda url: ANCHOR_SHA),
+            observer_factory=lambda: (lambda url: OBSERVATION),
             settle_factory=lambda: (lambda seconds: None),
         )
         == EXIT_DEPLOYED
@@ -1604,9 +1700,10 @@ def test_only_a_pure_404_rejection_is_ever_settled(
 
     assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], why
     assert harness.client.rollbacks == [PRIOR]
-    # Preview, the rejected production pass, and the post-rollback re-verify —
-    # no retry of the production check itself.
-    assert harness.verify.stages == [PREVIEW, PRODUCTION, PRODUCTION]
+    # Preview and the rejected production pass — no retry of the production
+    # check itself, and (LD12a) NO third verify: restoration is judged against
+    # the captured expectation, never the attempted inventory.
+    assert harness.verify.stages == [PREVIEW, PRODUCTION]
 
 
 def test_an_unavailable_production_verification_is_never_settled(

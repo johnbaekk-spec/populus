@@ -45,6 +45,7 @@ from populus.deploy.orchestrator import (
     PREVIEW,
     PRODUCTION,
     DeployAborted,
+    RollbackSiteObservation,
     PreviewVerificationFailed,
     ProductionVerificationFailed,
     Uploader,
@@ -64,6 +65,7 @@ from populus.deploy.upload import (
 from populus.deploy.verify import (
     LOCKED_CONTENT_SECURITY_POLICY,
     ALLOWED_RESPONSE_HEADERS,
+    REQUIRED_RESPONSE_HEADERS,
     served_path,
     verify_deployment,
 )
@@ -102,17 +104,38 @@ SITE = {
     "stats.json": STATS,
 }
 
+#: LD12: the one control every valid tree carries. Kept OUT of SITE so every
+#: `len(SITE)` below keeps meaning "served files"; the rig writes it into the
+#: source tree separately, and ServedTree never serves it — exactly like Pages.
+HEADERS_CONTROL = b"/*\n  Content-Security-Policy: default-src 'self'\n"
+
+#: LD12a/LD12c: the synthetic pre-upload observation the rig's default observer
+#: reports, identical post-rollback ("restored exactly") unless a test says
+#: otherwise. Synthetic because the fixture domain serves nothing before the
+#: first upload; `observe_rollback_root` has its own tests.
+OBSERVATION = RollbackSiteObservation(
+    body_sha256="c" * 64,
+    body_length=99,
+    build_id="20260801.1",
+    code_sha=ANCHOR_SHA,
+    headers=tuple(sorted((k, (v,)) for k, v in REQUIRED_RESPONSE_HEADERS.items())),
+)
+
 
 # --- the served side ---------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class _Response:
-    """The three fields ``populus.deploy.verify`` reads off a response."""
+    """The three fields ``populus.deploy.verify`` reads off a response.
+
+    ``headers`` is an ``httpx.Headers`` so the boundary satisfies the
+    occurrence-preserving ``HeaderMultimap`` protocol (R12/LD12c).
+    """
 
     status_code: int
     content: bytes
-    headers: Mapping[str, str]
+    headers: httpx.Headers
 
 
 class ServedTree:
@@ -140,7 +163,10 @@ class ServedTree:
         self.trees[base_url.rstrip("/")] = {
             served_path(path.relative_to(tree).as_posix()): path.read_bytes()
             for path in sorted(tree.rglob("*"))
-            if path.is_file()
+            # `_headers` is provider CONFIGURATION, never a served asset — the
+            # real provider answers 404 on it, and the control-path probes
+            # require exactly that.
+            if path.is_file() and path.name != "_headers"
         }
 
     def get(
@@ -158,20 +184,22 @@ class ServedTree:
                     return _Response(
                         200,
                         body,
-                        {
-                            "content-type": "text/html",
-                            "etag": "e",
-                            # A real Pages deployment applies the `/*` rule in
-                            # `_headers` to every served asset. Importing the
-                            # constant rather than re-spelling it keeps this
-                            # fake from drifting off the policy the verifier
-                            # requires — the same discipline `publish` applies
-                            # to `served_path` above.
-                            "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY,
-                        },
+                        # A real Pages deployment applies the `/*` rule in
+                        # `_headers` to every served asset. Importing the
+                        # constants rather than re-spelling them keeps this
+                        # fake from drifting off the exact values the verifier
+                        # requires — the same discipline `publish` applies to
+                        # `served_path` above.
+                        httpx.Headers(
+                            {
+                                "content-type": "text/html",
+                                "etag": "e",
+                                **REQUIRED_RESPONSE_HEADERS,
+                            }
+                        ),
                     )
-                return _Response(404, b"not found", {"content-type": "text/plain"})
-        return _Response(404, b"no such origin", {"content-type": "text/plain"})
+                return _Response(404, b"not found", httpx.Headers({"content-type": "text/plain"}))
+        return _Response(404, b"no such origin", httpx.Headers({"content-type": "text/plain"}))
 
 
 # --- the provider side -------------------------------------------------------
@@ -327,6 +355,9 @@ class Rig:
             # anchor keep exercising what they were written to exercise. The
             # disagreement and unreadable cases get explicit overrides.
             serving_probe=lambda url: ANCHOR_SHA,
+            # LD12a/LD12c default: a coherent observation, identical before the
+            # upload and after any rollback.
+            observer=lambda url: OBSERVATION,
             # R11b default: never really sleep in the suite.
             settle=lambda seconds: None,
         )
@@ -341,6 +372,7 @@ def rig(tmp_path: Path) -> Rig:
         target = source / relpath
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(payload)
+    (source / "_headers").write_bytes(HEADERS_CONTROL)
 
     api = FakePagesApi(
         deployments=[
@@ -833,7 +865,7 @@ def test_the_same_rollback_carrying_the_field_re_verifies(rig: Rig) -> None:
 
     assert raised.value.rolled_back_to == PRIOR
     assert raised.value.rollback_verified is True
-    assert "the restored deployment verified" in str(raised.value)
+    assert "matches the pre-upload expectation" in str(raised.value)
 
 
 def test_an_inactive_domain_stops_the_real_chain_before_wrangler_runs(rig: Rig) -> None:
