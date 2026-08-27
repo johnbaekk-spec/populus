@@ -50,17 +50,11 @@ const build = getBuildData();
     <meta name="populus:build_id" content={build.buildId} />
     <meta name="populus:code_sha" content={build.codeSha} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <script is:inline>
-      // Pre-paint theme: an explicit choice wins; otherwise the CSS
-      // prefers-color-scheme fallback applies. Kept inline to avoid FOUC.
-      (function () {
-        try {
-          var t = localStorage.getItem("populus:theme");
-          if (t === "light" || t === "dark")
-            document.documentElement.setAttribute("data-theme", t);
-        } catch (e) {}
-      })();
-    </script>
+    {/* Pre-paint theme (R12/LD13): the former inline IIFE now lives in
+        `public/theme-init.js` so `script-src 'self'` carries no inline hash.
+        `is:inline` keeps Astro's bundler off it; the tag is synchronous and in
+        <head> deliberately — a deferred theme script repaints (FOUC). */}
+    <script is:inline src="/theme-init.js"></script>
   </head>
   <body>
     <header class:list={["masthead", { "masthead-search-first": searchEmphasis }]}>

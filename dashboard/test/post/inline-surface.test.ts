@@ -1,22 +1,21 @@
-/* R36 — the CSP drift guard, over the WHOLE built tree.
+/* R36 → RUN PUBLIC-SECURITY-HARDENING R12/LD13 — the inline-script gate, over
+   the WHOLE built tree.
 
-   The locked policy in `public/_headers` pins `script-src` to exactly two
-   inline script hashes. This recomputes the emitted set and asserts SET
-   EQUALITY with that pair, so it fails three ways: a changed pre-paint script,
-   a changed toggle module, and any unapproved NEW inline surface.
+   The locked policy in `public/_headers` is now `script-src 'self'` with NO
+   inline hashes: the pre-paint theme IIFE moved byte-for-byte to
+   `public/theme-init.js`, and `vite.build.assetsInlineLimit: 0` keeps Astro
+   from inlining small bundled modules. So the gate is stricter than its R36
+   ancestor: the emitted executable-inline-script set must be EMPTY, and the
+   policy must pin zero hashes. It fails three ways: a re-inlined pre-paint
+   script, a bundler that starts inlining small modules again, and any
+   unapproved NEW inline surface.
 
-   B31 — the trap this gate exists to survive. The plan's census ("exactly TWO
-   distinct inline script modules") was taken over 3,668 pages. The tree is now
-   ~9,660, and the institutional embeds brought thousands of
-   `<script type="application/json">` data islands with them, up to 2.4 MB each.
-   A sweep that matched `<script>` without inspecting `type` counts ~2,955
-   distinct bodies rather than 2. The obvious reaction — add the missing hashes —
-   is exactly backwards: `type="application/json"` NEVER EXECUTES, `script-src`
-   does not govern it, and hashing it would pin the CSP to the CORPUS, so every
-   data refresh would break the deploy.
-
-   So only executable bodies count: `type` absent, `module`, `text/javascript`,
-   or `application/javascript`. */
+   B31 — the trap this gate exists to survive, unchanged. The institutional
+   embeds ship thousands of `<script type="application/json">` data islands, up
+   to 2.4 MB each. A sweep that matched `<script>` without inspecting `type`
+   counts ~2,955 distinct bodies. `type="application/json"` NEVER EXECUTES and
+   `script-src` does not govern it — only executable bodies count: `type`
+   absent, `module`, `text/javascript`, or `application/javascript`. */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -60,8 +59,8 @@ function lockedHashes(): Set<string> {
 }
 
 // --- POSITIVE CONTROL: the detector must be able to FIND things -------------
-// Without this, "the emitted set equals the locked pair" is indistinguishable
-// from "the regex matched nothing at all" — failure shape #3 from the handoff.
+// Without this, "the emitted set is empty" is indistinguishable from "the
+// regex matched nothing at all".
 
 test("the detector distinguishes executable inline scripts from JSON islands", () => {
   const html = `
@@ -83,9 +82,13 @@ test("the detector distinguishes executable inline scripts from JSON islands", (
 
 // --- THE GATE ---------------------------------------------------------------
 
-test("the emitted inline-script hash set EQUALS the locked pair", () => {
+test("LD13: no executable inline script exists anywhere in the built tree", () => {
   const locked = lockedHashes();
-  assert.equal(locked.size, 2, "the policy must pin exactly two script hashes");
+  assert.equal(
+    locked.size,
+    0,
+    "the policy must pin ZERO script hashes — `script-src 'self'` admits no inline body",
+  );
 
   const pages = globSync("**/*.html", { cwd: DIST });
   assert.ok(pages.length > 0, "no built pages — the sweep would pass vacuously");
@@ -99,15 +102,57 @@ test("the emitted inline-script hash set EQUALS the locked pair", () => {
     }
   }
 
-  const unpinned = [...emitted].filter((h) => !locked.has(h));
-  const unused = [...locked].filter((h) => !emitted.has(h));
   assert.deepEqual(
-    unpinned.map((h) => `${h} (first at ${firstSeen.get(h)})`),
+    [...emitted].map((h) => `${h} (first at ${firstSeen.get(h)})`),
     [],
-    "an inline script the CSP does not admit — it will be BLOCKED in production",
+    "an executable inline script exists — the LD13 CSP will BLOCK it in production",
   );
-  assert.deepEqual(unused, [], "the policy pins a hash nothing emits — stale lock");
-  assert.equal(emitted.size, 2, `expected 2 distinct executable inline bodies, got ${emitted.size}`);
+});
+
+test("the pre-paint theme script is external, synchronous, and on every page", () => {
+  const pages = globSync("**/*.html", { cwd: DIST });
+  assert.ok(pages.length > 0, "no built pages — this would pass vacuously");
+  const missing: string[] = [];
+  const deferred: string[] = [];
+  for (const rel of pages) {
+    const html = readFileSync(path.join(DIST, rel), "utf8");
+    const m = html.match(/<script([^>]*)\ssrc="\/theme-init\.js"([^>]*)><\/script>/);
+    if (!m) {
+      missing.push(rel);
+      continue;
+    }
+    const attrs = `${m[1]} ${m[2]}`;
+    // Synchronous is the point: a deferred pre-paint script repaints (FOUC).
+    if (/\b(defer|async|type\s*=\s*["']module["'])\b/.test(attrs)) deferred.push(rel);
+    // It must sit in <head>, before the body paints.
+    const headEnd = html.indexOf("</head>");
+    if (headEnd !== -1 && html.indexOf('src="/theme-init.js"') > headEnd) missing.push(rel);
+  }
+  assert.deepEqual(missing.slice(0, 5), [], `theme-init.js absent/after-head on ${missing.length} page(s)`);
+  assert.deepEqual(deferred.slice(0, 5), [], "theme-init.js must load synchronously");
+});
+
+test("theme-init.js ships in dist and is byte-identical to the source file", () => {
+  const shipped = readFileSync(path.join(DIST, "theme-init.js"), "utf8");
+  const source = readFileSync(
+    path.resolve(import.meta.dirname, "../../public/theme-init.js"),
+    "utf8",
+  );
+  assert.equal(shipped, source, "dist/theme-init.js drifted from public/theme-init.js");
+  assert.match(shipped, /populus:theme/, "the moved IIFE lost its localStorage key");
+});
+
+test("_headers ships in dist byte-identical, with the LD13 policy set", () => {
+  const shipped = readFileSync(path.join(DIST, "_headers"), "utf8");
+  const source = readFileSync(HEADERS, "utf8");
+  assert.equal(shipped, source, "dist/_headers drifted from public/_headers");
+  assert.match(shipped, /script-src 'self' https:\/\/static\.cloudflareinsights\.com;/);
+  assert.ok(!shipped.includes("'sha256-"), "LD13: no inline-script hash survives");
+  assert.ok(!shipped.includes("'unsafe-eval'"));
+  assert.match(shipped, /Strict-Transport-Security: max-age=31536000$/m);
+  assert.ok(!shipped.includes("includeSubDomains") && !shipped.includes("preload"));
+  assert.match(shipped, /X-Content-Type-Options: nosniff$/m);
+  assert.match(shipped, /Referrer-Policy: strict-origin-when-cross-origin$/m);
 });
 
 test("R28: the beacon is on every built page, and adds no inline surface", () => {
