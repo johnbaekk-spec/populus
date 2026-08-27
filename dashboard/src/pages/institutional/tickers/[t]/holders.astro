@@ -18,6 +18,7 @@ import { getBuildData, filerTier } from "../../../../lib/data";
 import { holdersFor, issuerPeriods } from "../../../../lib/inst";
 import { holdersBody } from "../../../../lib/ui";
 import { filingWindow, resolveTicker } from "../../../../lib/derive";
+import { serializeInlineJson } from "../../../../lib/inline-json";
 
 export function getStaticPaths() {
   const build = getBuildData();
@@ -59,7 +60,7 @@ const bodyHtml = holdersBody(
   window,
 );
 
-const periodData = JSON.stringify({
+const periodData = serializeInlineJson({
   latestFiled: inst.watermarks.latest_filed_date,
   topn: inst.topn,
   periods: Object.fromEntries(

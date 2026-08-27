@@ -13,6 +13,7 @@ import { filerAggregateInputs, getBuildData, topFilerCiks } from "../../../lib/d
 import { filerPeriods } from "../../../lib/inst";
 import { filerBody } from "../../../lib/ui";
 import { filingWindow } from "../../../lib/derive";
+import { serializeInlineJson } from "../../../lib/inline-json";
 
 export function getStaticPaths() {
   // RUN M2-11 (plan R22/LD-7): pre-render ONLY the top 1,500 by descending
@@ -68,7 +69,7 @@ const bodyHtml = filerBody(
 // re-renders through the SAME filerPeriodSectionHtml the SSR used. `total` rides
 // along per period so a client-rendered period states its bound exactly as the
 // server-rendered one does.
-const periodData = JSON.stringify({
+const periodData = serializeInlineJson({
   latestFiled,
   topn: inst.topn,
   periods: Object.fromEntries(

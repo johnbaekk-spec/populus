@@ -80,6 +80,7 @@ import {
   sortQoqDeltas,
   type FilerBudgetState,
 } from "./holdings.ts";
+import { serializeInlineJson } from "./inline-json.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "./inst.ts";
 import { HOLDER_COLUMNS, HOLDER_ZERO_CAVEAT, holderSortNote, orderRankedHolders, type HolderSortKey } from "./holders-sort.ts";
 import type { TickerInstSection } from "./data.ts";
@@ -2329,10 +2330,7 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     // F2/F3: the bounded rows travel with the page so the island can sort and
     // expand them WITHOUT a fetch. Without this the compact slice was a
     // one-way door: rows past it were unreachable on the default view.
-    `<script type="application/json" id="inst-adds-data">${JSON.stringify(payload.rows).replaceAll(
-      "</",
-      "<\\/",
-    )}</script>` +
+    `<script type="application/json" id="inst-adds-data">${serializeInlineJson(payload.rows)}</script>` +
     `</section>`
   );
 }

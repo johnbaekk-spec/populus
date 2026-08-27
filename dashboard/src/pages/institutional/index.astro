@@ -7,6 +7,7 @@ import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
 import { s1ModuleAbsent, s7Banner, breadcrumb, addsSectionHtml } from "../../lib/ui";
 import { filingWindow } from "../../lib/derive";
+import { serializeInlineJson } from "../../lib/inline-json";
 import { concentrationFor, deltasFor, typingFor, addsFor, addsExclusionCount } from "../../lib/inst";
 import { boundAdds, closedPeriods, type AddsMode } from "../../lib/inst-adds";
 import { biggestChange, MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/manager-directory";
@@ -204,7 +205,7 @@ if (!inst.present) {
       bound: `Every filer in this build has its own page, linked from its row here.`,
     }) +
     `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
-    `<script type="application/json" id="inst-index-data">${JSON.stringify(indexRows).replaceAll("</", "<\\/")}</script>` +
+    `<script type="application/json" id="inst-index-data">${serializeInlineJson(indexRows)}</script>` +
     `</section>`;
 }
 const description = build.inst.present
