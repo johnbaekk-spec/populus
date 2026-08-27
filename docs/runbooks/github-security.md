@@ -81,6 +81,23 @@ dispatch succeeds; a second supervised dispatch with repository scope empty
 proves there is no fallback. Publishing (the `POPULUS_PUBLISH_ARMED` switch)
 stays disarmed until both hardened runs pass.
 
+The Task 2 order, end to end:
+
+1. Disarm publishing (`POPULUS_PUBLISH_ARMED` unset or not `'true'`).
+2. Create the three environments; restrict each to selected branch `main`.
+3. Enter the three secret values from their authoritative provider/keychain
+   sources (GitHub cannot reveal the repository-scope values for migration).
+4. Merge PR 4 (the workflow-side `environment:` binding). **Merging PR 4
+   before steps 2–3 makes the publish/deploy/record jobs fail closed on empty
+   secrets — intended while disarmed; never weaken the binding to avoid it.**
+5. Supervised `workflow_dispatch` on `main`; inspect the job list and the
+   signed deployment generation.
+6. Delete the three repository-scope secrets
+   (`gh secret delete <NAME> --repo johnbaekk-spec/populus`).
+7. A second supervised dispatch with repository scope empty — the no-fallback
+   proof.
+8. Re-arm scheduling only after both supervised runs succeed.
+
 ## 4. API postconditions (`gh api` + `jq -e`)
 
 Each command exits 0 only when the required state holds.

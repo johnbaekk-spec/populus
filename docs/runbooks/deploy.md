@@ -19,9 +19,9 @@ The full normative sequence is §12.1; this is the operator's map of it.
 
 | Step | What happens | Failure leaves |
 |---|---|---|
-| 1 | Pinned inputs: `dashboard/.node-version`, `npm ci` from the committed lockfile, exact Wrangler pin | nothing deployed |
+| 1 | Pinned inputs: `dashboard/.node-version`, `npm ci` from the committed lockfile, **Wrangler locked at exactly `4.60.0` in that same lockfile** (R8/LD9) | nothing deployed |
 | 2 | Stage the data build → build the site from it → count `dist/` files → write the count into **both** `stats.json` copies → assert byte-equality → compute `dist_digest` → assemble/hash/attest the manifest → publish (assets → manifest → pointer) | data possibly published, site **not** deployed |
-| 3 | Isolated deploy job: downloads the artifact, recomputes `dist_digest`, asserts the workflow-locked branch equals the project's configured `production_branch`, asserts the custom domain is `active`, and (R11c) captures the rollback anchor **and proves it is the deployment the domain actually serves** — `latest_production_deployment()` answers *newest by creation*, which diverges from *currently serving* after any dashboard rollback; a disagreement, or an unreadable marker on either side, refuses here | production untouched |
+| 3 | Isolated deploy job: runs a credential-free `npm ci` in `dashboard/`, asserts `dashboard/node_modules/.bin/wrangler --version` outputs exactly `4.60.0` **before any step holds the Cloudflare token** (a missing or drifted binary fails closed here — never a registry fetch), then downloads the artifact, recomputes `dist_digest`, asserts the workflow-locked branch equals the project's configured `production_branch`, asserts the custom domain is `active`, and (R11c) captures the rollback anchor **and proves it is the deployment the domain actually serves** — `latest_production_deployment()` answers *newest by creation*, which diverges from *currently serving* after any dashboard rollback; a disagreement, or an unreadable marker on either side, refuses here | production untouched |
 | 4 | **Preview** upload, then verified **inventory-wide** (every `inventory.json` path fetched with redirects disabled, decoded body hash + length checked) plus markers and `stats.json` | production untouched, prior build still serving |
 | 5 | **Production** upload of provably the same bytes, then live-verified on `publicfilings.org`. The domain is given one 45 s settle **before** the first sweep (R11b — after a promotion the origin answers while individual objects may still be materialising, and a partially written body reads as a hash mismatch, which is never waited out). A failure whose findings are then ALL inventoried paths answering `HTTP 404, expected 200` gets one further 45 s settle and one re-verification of the **full** inventory (R11a — the custom domain can still be resolving individual objects seconds after a promotion); every other failure shape, and a second failure of that same shape, triggers the compensating Cloudflare rollback to the captured prior deployment id | prior build restored — **except on the first run**, §3 |
 | 6 | `record-sign.yml` independently re-derives everything, re-verifies the served tree, and attests `builds/<build_id>/deployments/<gen>.json` | deployment live but **unrecorded** — the next publish is gated (§13.2, §17) until a valid generation exists |
@@ -68,6 +68,33 @@ read three marker files.
 
    Use **this** endpoint. `GET /pages/projects/{project}` returns `domains` as an
    array of bare strings carrying no status; it cannot answer this question.
+
+5. **The three production environments — RUN PUBLIC-SECURITY-HARDENING R4/LD5
+   (owner-only; see `github-security.md` §3 for the full procedure).** The
+   workflows resolve every production secret from a branch-restricted
+   environment, never from repository scope:
+
+   | Job | Environment | Secrets |
+   |---|---|---|
+   | `publish.yml:publish` | `production-data-publish` | `DATA_REPO_PAT` |
+   | `publish.yml:deploy` | `production-pages-deploy` | `CLOUDFLARE_PAGES_EDIT_TOKEN` |
+   | `record-sign.yml:record` | `production-record-sign` | `DATA_REPO_PAT`, `CLOUDFLARE_PAGES_READ_TOKEN` |
+
+   Each environment is restricted to selected branch `main` only. The reusable
+   signer declares **no** `workflow_call` secrets and the caller passes none:
+   the called job's `environment:` is what resolves its secrets.
+
+   **Deployment-safety note.** Merging the PR that adds these `environment:`
+   keys while the environments do not yet exist makes all three jobs fail
+   **closed** (an absent environment secret resolves to the empty string).
+   That is intended: publishing stays DISARMED (`POPULUS_PUBLISH_ARMED`
+   unset/false) until the owner has created the environments, entered the
+   secrets, run one supervised `workflow_dispatch` that succeeds end to end
+   (job list and signed deployment generation inspected), deleted the three
+   repository-scope secrets, and run a second supervised dispatch proving
+   there is no repository-scope fallback. Only then is scheduling re-armed
+   (§3 below). Do not weaken the environment binding to avoid the fail-closed
+   window.
 
 ---
 
