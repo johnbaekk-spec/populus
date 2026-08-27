@@ -325,7 +325,7 @@ class SnapshotClient:
                 )
         self._tuple_path = self._safe_under(module, "trust.json")
         # `install.json` (sidecar), `withdrawn.json` (tombstone) and `current`
-        # are RETIRED — see docs/build/RUN-M2-4-withdrawal-lifecycle.md §2. Every
+        # are RETIRED — see docs/architecture/data-contracts/snapshot-withdrawal.md §2. Every
         # QA finding in rounds 5-8 was cross-file inference between those
         # advisory markers; one anchor-validated record removes the category.
 

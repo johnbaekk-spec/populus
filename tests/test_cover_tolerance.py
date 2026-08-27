@@ -1,6 +1,6 @@
 """Cover reconciliation: tolerance and conflict exclusion (M2-7).
 
-Normative spec: ``docs/build/M2-7-cover-tolerance-spec.md``. One test per
+Normative spec: ``docs/architecture/data-contracts/cover-tolerance.md``. One test per
 invariant, named in the spec. Owner decision 2026-07-31 ("Tolerance + flag"):
 a declared cover total the info table misses by rounding must never de-certify
 the module, and a declared cover total the info table contradicts must never be

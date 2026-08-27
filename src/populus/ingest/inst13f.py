@@ -1069,7 +1069,7 @@ def inst_pair_invariant_errors(conn: sqlite3.Connection) -> list[str]:
 
 # --- cover reconciliation: tolerance + conflict exclusion (M2-7) -------------
 #
-# Normative: docs/build/M2-7-cover-tolerance-spec.md. Owner decision 2026-07-31
+# Normative: docs/architecture/data-contracts/cover-tolerance.md. Owner decision 2026-07-31
 # ("Tolerance + flag"). A filing declares a cover total T and files an info table
 # whose RESOLVED rows sum to S. S > T by a dollar is a printed-rounding artefact;
 # S > T by half the portfolio is the filer's own two numbers disagreeing. M2-3
