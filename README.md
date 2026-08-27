@@ -100,23 +100,22 @@ uv run populus stats --db app.db --out stats.json
 
 ## The two-tier gate model
 
-Two tiers, honestly separated; neither claims the other's coverage.
+Two tiers, honestly separated; neither claims the other's coverage. The full
+description — every CI job, what a green run does and does not prove, and
+the `make security` caveats — is
+[docs/operations/testing.md](docs/operations/testing.md).
 
 **Contributor tier** — runs on a fresh clone and on hosted CI runners:
-
-- `uv run pytest -q` — the Python suite. Offline; two host-bound suites
-  (the macOS runner controller, the parameterized M2-11 QA bundle) declare
-  their own preconditions and skip where their subject does not exist.
-- `dashboard: npm ci && npx astro check && npm test` — types and unit suites.
-- `make security` — `dep_guard` (offline) plus `pip-audit` over the frozen
-  production export and `npm audit --audit-level=high`. The audit halves are
-  **network-dependent**: they call the PyPI/OSV and npm advisory services, so
-  this gate is *not* hermetic and can go red on an advisory-database change
-  with no local edit — loudly, never as a silent pass.
+`uv run pytest -q`; `cd dashboard && npm ci && npx astro check && npm test`;
+and `make security`. The security target's audit halves are
+**network-dependent** (PyPI/OSV and npm advisory services), so it is *not*
+hermetic and can go red on an advisory-database change with no local edit —
+loudly, never as a silent pass.
 
 CI (`.github/workflows/checks.yml`) runs this tier on `pull_request`
-(fork-safe: hosted runners, `contents: read`, no secret access) and `push`;
-`pull_request_target` and comment-driven execution remain banned.
+(fork-safe: hosted runners, `contents: read`, no secret access), `push`, and
+`workflow_dispatch`; `pull_request_target` and comment-driven execution
+remain banned.
 
 **Owner tier** — `make test` / `make check` run the full tree including
 `npm run gates`: the static site build (**32 GiB physical-memory floor**, a
