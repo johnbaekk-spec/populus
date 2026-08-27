@@ -11,11 +11,11 @@ filename is variable and numeric per accession (``53405.xml``, ``50240.xml``,
 ingest (R18/LD-12), which catches the error and records the accession from the
 validated submissions-index metadata rather than dropping it (G3).
 
-XXE / entity-expansion defence (F5): every parse runs through
-:data:`_HARDENED_PARSER` — external-entity resolution and network access are
-off, so a DOCTYPE that references a local file or a remote URL neither expands
-nor fetches; the referenced field then reads as absent and the strict cover
-parse raises rather than leaking anything.
+XXE / entity-expansion defence (F5/R10): every parse runs through the shared
+:func:`populus.parse.xml.parse_untrusted_xml` — external-entity resolution,
+DTD loading and network access are off, and any document carrying a DOCTYPE is
+refused outright (``UnsafeXmlError``), mapped here onto the existing
+``cover_malformed`` / info-table parse failures.
 """
 
 from __future__ import annotations
@@ -29,18 +29,9 @@ from dataclasses import dataclass
 import lxml.etree
 
 from populus.canonical import nfc
+from populus.parse.xml import UnsafeXmlError, parse_untrusted_xml
 
 PARSER_VERSION = "inst-13f-1.0.0"
-
-#: Entity resolution and network access OFF (F5). A fresh parser per parse call
-#: keeps the hardened settings without sharing lxml parser state across calls.
-_HARDENED_PARSER_KWARGS = {
-    "resolve_entities": False,
-    "no_network": True,
-    "load_dtd": False,
-    "dtd_validation": False,
-    "huge_tree": False,
-}
 
 #: An info-table filename discovered from a remote index must be a bare XML
 #: file name — no path separator, no scheme — before it is joined to a path
@@ -94,10 +85,9 @@ class InfoTableAmbiguousError(InstParseError):
 
 
 def _parse(xml: bytes) -> lxml.etree._Element:
-    parser = lxml.etree.XMLParser(**_HARDENED_PARSER_KWARGS)
     if isinstance(xml, str):
         xml = xml.encode("utf-8")
-    return lxml.etree.fromstring(xml, parser)
+    return parse_untrusted_xml(xml)
 
 
 def _local(tag: object) -> str:
@@ -289,7 +279,7 @@ def parse_cover(xml: bytes) -> CoverPage:
     """Parse ``primary_doc.xml`` into a :class:`CoverPage`; strict (R2)."""
     try:
         root = _parse(xml)
-    except lxml.etree.XMLSyntaxError as exc:
+    except (lxml.etree.XMLSyntaxError, UnsafeXmlError) as exc:
         raise CoverParseError(f"cover XML would not parse: {exc}", kind="cover_malformed")
     if root is None:
         raise CoverParseError("cover XML is empty", kind="cover_malformed")
@@ -447,7 +437,7 @@ def parse_info_table(xml: bytes) -> tuple[InfoTableRow, ...]:
     """
     try:
         root = _parse(xml)
-    except lxml.etree.XMLSyntaxError as exc:
+    except (lxml.etree.XMLSyntaxError, UnsafeXmlError) as exc:
         raise InfoTableParseError(f"information table XML would not parse: {exc}")
     rows: list[InfoTableRow] = []
     for ordinal, element in enumerate(_children(root, "infoTable"), start=1):
