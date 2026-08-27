@@ -19,7 +19,7 @@
   root/controller authority.
 
   Paths below are the runbook's canonical layout
-  (docs/runbooks/self-hosted-runner.md); the owner substitutes real values at
+  (docs/operations/self-hosted-runner.md); the owner substitutes real values at
   install time (the REPLACED-AT-INSTALL* tokens). StandardOut/ErrorPath are
   controller-domain logs — the wipe can never destroy the evidence of the
   wipe.

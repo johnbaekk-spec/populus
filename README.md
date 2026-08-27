@@ -33,7 +33,7 @@ public dashboard. Congressional trading ships first.
   denylist check; `render_licenses.py`, the license-document generator)
 - `tests/` — unit tests + golden corpus of real government filings
 - `ARCHITECTURE.md` / `REVIEW-RESPONSE.md` — governing spec + review audit trail;
-  `docs/build/` — build briefs; `docs/runbooks/` — operating procedures
+  `docs/build/` — build briefs; `docs/operations/` — operating procedures
 - `DATA-LICENSE.md` / `NOTICE` — generated from the conditions register; data carries
   per-source conditions, not one license
 - `.github/workflows/` — publish / record-sign / monitor (files; not yet armed)
@@ -163,7 +163,7 @@ named `*_including_excluded`.
 `backfill-audit draw` / `backfill-audit score` implement the §9.6 blocking
 human audit of the kadoa import (pinned sample sizes, sealed draw records,
 independent reconstruction, fail-closed scoring). The operating procedure is
-[docs/runbooks/kadoa-backfill-audit.md](docs/runbooks/kadoa-backfill-audit.md);
+[docs/operations/kadoa-backfill-audit.md](docs/operations/kadoa-backfill-audit.md);
 the signed disposition is a P1 gate, not something the tooling auto-passes.
 
 ## Legal

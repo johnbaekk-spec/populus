@@ -20,7 +20,7 @@ on:
       # blocks every future publish INCLUDING the fix. It must name the exact
       # code_sha the domain is serving, it clears no other refusal, it attests
       # nothing, and it is absent from `schedule:` so a nightly can never carry
-      # one. See docs/runbooks/deploy.md.
+      # one. See docs/operations/deploy.md.
       acknowledge_unrecorded_code_sha:
         description: "TD-4 override: the exact populus:code_sha the live domain serves"
         required: false
@@ -143,7 +143,7 @@ jobs:
       #
       # On the self-hosted machine uv is part of the root-owned, read-only
       # toolchain the controller checksums and puts on PATH before the runner
-      # ever registers (docs/runbooks/self-hosted-runner.md §4) — so the right
+      # ever registers (docs/operations/self-hosted-runner.md §4) — so the right
       # thing there is to USE it, never to reinstall it over the top of the
       # gated copy. The pip fallback remains for a runner with no uv at all,
       # which is the GitHub-hosted shape this job reverts to under the plan's

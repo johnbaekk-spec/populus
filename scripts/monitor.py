@@ -275,7 +275,7 @@ def _attestation_provider(choice: str):
 
     The monitor is a §5.5 consumer like any other, so `sigstore` must be
     genuinely selectable here — the deployed launchd command in
-    docs/runbooks/rollback.md uses it.
+    docs/operations/rollback.md uses it.
     """
     from populus.client.snapshot import github_bundle_fetcher
     from populus.publish.attestation import build_provider, github_trust_config
