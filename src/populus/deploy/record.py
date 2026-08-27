@@ -586,7 +586,13 @@ def artifact_facts(
     if not shipped_path.is_file():
         raise RecordRefused(f"the downloaded artifact has no {INVENTORY_NAME} sibling")
 
-    recomputed = build_inventory(site)
+    try:
+        recomputed = build_inventory(site)
+    except InventoryError as exc:
+        raise RecordRefused(
+            f"the downloaded tree does not produce an exact inventory v2 — "
+            f"nothing is fetched or signed over it: {exc}"
+        ) from exc
     shipped_bytes = shipped_path.read_bytes()
     if shipped_bytes != render_inventory(recomputed):
         raise RecordRefused(

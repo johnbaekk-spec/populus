@@ -41,7 +41,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from populus.deploy import verify as verify_module
+from populus.deploy import verify as verify_module  # noqa: F401
 from populus.deploy.verify import (
     CACHE_BUST_PARAM,
     ALLOWED_RESPONSE_HEADERS,
@@ -1363,3 +1363,161 @@ def test_the_control_file_is_never_swept_as_a_served_url(tmp_path) -> None:
     origin = _Origin(_site())  # the ORIGIN does not serve `_headers` — it 404s
     result = _run(origin, inventory)
     assert result.ok is True, result.detail
+
+
+# --- R12/LD12b: the external seams refuse partial and v1-shaped envelopes ----
+# BEFORE any network I/O: the client records every request, and zero must have
+# been issued when the refusal fires.
+
+
+def _v1_shaped(inventory: dict) -> dict:
+    """The pre-v2 spelling: no inventory_version, control_files not controls."""
+    controls = inventory["controls"]
+    return {
+        "dist_digest_version": inventory["dist_digest_version"],
+        "dist_digest": inventory["dist_digest"],
+        "files": [dict(entry) for entry in inventory["files"]],
+        "control_files": [
+            {k: v for k, v in entry.items() if k != "kind"} for entry in controls
+        ],
+    }
+
+
+def _partial_one_file(inventory: dict) -> dict:
+    """The synthetic marker envelope `_confirm_domain` used to construct."""
+    return {
+        "dist_digest_version": inventory["dist_digest_version"],
+        "dist_digest": inventory["dist_digest"],
+        "files": [
+            entry for entry in inventory["files"] if entry["path"] == "index.html"
+        ],
+    }
+
+
+@pytest.mark.parametrize("shape", [_v1_shaped, _partial_one_file])
+def test_verify_deployment_refuses_bad_envelopes_before_any_fetch(tmp_path, shape):
+    site = _site()
+    origin = _Origin(site)
+    client = origin.client()
+    with pytest.raises(VerifyInputError):
+        _run(origin, shape(_inventory(tmp_path, site)), client=client)
+    assert client.calls == [], "the refusal must precede every network request"
+
+
+@pytest.mark.parametrize("shape", [_v1_shaped, _partial_one_file])
+def test_sweep_inventory_refuses_bad_envelopes_before_any_fetch(tmp_path, shape):
+    site = _site()
+    origin = _Origin(site)
+    client = origin.client()
+    with pytest.raises(VerifyInputError):
+        verify_module.sweep_inventory(
+            client, PREVIEW_URL, shape(_inventory(tmp_path, site)), cache_bust="d"
+        )
+    assert client.calls == []
+
+
+def test_a_v2_inventory_without_its_control_is_refused_not_downgraded(tmp_path):
+    """LD12: a missing control is malformed — never 'probably v1'."""
+    site = _site()
+    inventory = _inventory(tmp_path, site)
+    inventory["controls"] = []
+    origin = _Origin(site)
+    client = origin.client()
+    with pytest.raises(VerifyInputError, match="exactly one control"):
+        _run(origin, inventory, client=client)
+    assert client.calls == []
+
+
+# --- R12/LD12c: the occurrence-preserving header multimap --------------------
+
+
+def test_normalize_security_header_multimap_reports_every_occurrence():
+    headers = httpx.Headers(
+        [
+            ("Content-Security-Policy", "default-src 'self'"),
+            ("content-security-policy", " default-src *  "),
+            ("X-Content-Type-Options", "nosniff"),
+        ]
+    )
+    normalized = verify_module.normalize_security_header_multimap(headers)
+    # Lower-cased names, stripped values, EVERY occurrence, explicit absence.
+    assert normalized["content-security-policy"] == (
+        "default-src 'self'",
+        "default-src *",
+    )
+    assert normalized["x-content-type-options"] == ("nosniff",)
+    assert normalized["strict-transport-security"] == ()
+    assert normalized["referrer-policy"] == ()
+
+
+def test_a_duplicated_policy_header_is_refused_not_collapsed(tmp_path):
+    """Two CSPs — one correct, one weakened — must fail, whichever a mapping
+    lookup would have returned."""
+    site = _site()
+    inventory = _inventory(tmp_path, site)
+    duplicated = httpx.Response(
+        200,
+        content=site["index.html"],
+        headers=httpx.Headers(
+            [
+                *REQUIRED_RESPONSE_HEADERS.items(),
+                ("content-security-policy", "default-src *"),
+            ]
+        ),
+    )
+    origin = _Origin(site, overrides={"index.html": duplicated})
+    result = _run(origin, inventory)
+    assert result.ok is False
+    assert result.outcome == attestation.REJECTED
+    assert any("appears 2 times" in f and "refused, never collapsed" in f for f in result.findings)
+    assert result.control_effects_verified == 0
+
+
+def test_header_effects_are_proven_on_representative_types(tmp_path):
+    """Task 10.4: HTML, JS, CSS and JSON responses all get exact-value checks."""
+    site = _site()
+    origin = _Origin(site)
+    result = _run(origin, _inventory(tmp_path, site))
+    assert result.ok is True
+    assert result.controls_total == 1
+    assert result.control_effects_verified == 1
+    record = result.as_record()
+    assert record["controls_total"] == 1
+    assert record["control_effects_verified"] == 1
+
+    # The sample builder itself: one of each suffix, always.
+    validated = verify_module.validate_inventory_v2(_inventory(tmp_path, site, name="s2"))
+    sample = verify_module._header_sample("index.html", "stats.json", validated.files, 4)
+    suffixes = {s for s in (".html", ".js", ".css", ".json")}
+    for suffix in suffixes:
+        assert any(path.endswith(suffix) for path in sample), suffix
+
+
+@pytest.mark.parametrize(
+    "name", ["strict-transport-security", "x-content-type-options", "referrer-policy"]
+)
+def test_each_missing_security_header_fails_verification(tmp_path, name):
+    site = _site()
+    without = {k: v for k, v in REQUIRED_RESPONSE_HEADERS.items() if k != name}
+    origin = _Origin(site, security_headers=without)
+    result = _run(origin, _inventory(tmp_path, site))
+    assert result.ok is False
+    assert any(f"missing required response header" in f and name in f for f in result.findings)
+    assert result.control_effects_verified == 0
+
+
+def test_a_weakened_hsts_fails_verification(tmp_path):
+    site = _site()
+    origin = _Origin(
+        site,
+        security_headers={
+            **REQUIRED_RESPONSE_HEADERS,
+            "strict-transport-security": "max-age=0",
+        },
+    )
+    result = _run(origin, _inventory(tmp_path, site))
+    assert result.ok is False
+    assert any(
+        "strict-transport-security" in f and "does not equal the locked policy" in f
+        for f in result.findings
+    )

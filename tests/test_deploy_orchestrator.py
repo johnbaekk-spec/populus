@@ -2003,3 +2003,270 @@ def test_the_first_run_never_probes_because_there_is_no_anchor(
 
     harness.run(serving_probe=counting)
     assert probed == [], "with no anchor there is no question to ask"
+
+
+# --- R12/LD12a/LD12c: rollback evidence, captured before anything moves ------
+
+
+def _no_uploads(harness: Harness) -> None:
+    """ZERO snapshot/upload/provider-mutation calls — the LD12c order property."""
+    assert harness.upload.calls == []
+    assert harness.client.rollbacks == []
+    assert harness.sealed_dirs == [], "freeze_tree ran before the capture refusal"
+
+
+def test_capture_failure_aborts_with_zero_snapshot_upload_or_mutation(
+    harness: Harness,
+) -> None:
+    """The observation cannot be taken → DeployAborted, production untouched."""
+
+    def failing_observer(url: str) -> RollbackSiteObservation:
+        raise DeployAborted("the rollback observation requires HTTP 200; got 503")
+
+    with pytest.raises(DeployAborted, match="HTTP 200"):
+        harness.run(observer=failing_observer)
+
+    _no_uploads(harness)
+
+
+def test_a_concurrent_provider_change_during_capture_aborts_pre_freeze(
+    harness: Harness,
+) -> None:
+    """LD12c: the bracketing raw reads must agree on the first entry."""
+    harness.client.raw_lists = [
+        [_raw_deployment(PRIOR)],
+        [_raw_deployment("dep-raced"), _raw_deployment(PRIOR)],
+    ]
+
+    with pytest.raises(DeployAborted, match="changed while the rollback expectation"):
+        harness.run()
+
+    _no_uploads(harness)
+
+
+def test_an_emptied_raw_listing_after_the_observation_aborts(harness: Harness) -> None:
+    harness.client.raw_lists = [[_raw_deployment(PRIOR)], []]
+
+    with pytest.raises(DeployAborted, match="empty after the observation"):
+        harness.run()
+
+    _no_uploads(harness)
+
+
+@pytest.mark.parametrize(
+    "entry, match",
+    [
+        ({"environment": "production", "uses_functions": False}, "carries no id"),
+        (
+            {"id": PRIOR, "environment": "preview", "uses_functions": False},
+            "environment 'preview'",
+        ),
+        ({"id": PRIOR, "environment": "production"}, "uses_functions"),
+        (
+            {"id": PRIOR, "environment": "production", "uses_functions": True},
+            "uses_functions",
+        ),
+    ],
+    ids=["no-id", "wrong-environment", "missing-uses-functions", "true-uses-functions"],
+)
+def test_a_malformed_raw_prior_deployment_aborts_pre_freeze(
+    harness: Harness, entry: dict, match: str
+) -> None:
+    """LD12c reads the RAW mapping: absence never launders into False."""
+    harness.client.raw_lists = [[entry], [entry]]
+
+    with pytest.raises(DeployAborted, match=match):
+        harness.run()
+
+    _no_uploads(harness)
+
+
+def test_the_capture_uses_the_serving_anchors_raw_entry_not_newest_by_creation(
+    harness: Harness,
+) -> None:
+    """R11d reconciliation: after a provider-side rollback the serving anchor is
+    NOT the newest-by-creation deployment, and the expectation must name the
+    anchor — the deployment a compensating rollback would actually restore."""
+    newest = "dep-failed-earlier"
+    harness.client.production_ids = (newest, PRIOR)
+
+    # The domain serves ANCHOR_SHA; the newest deployment serves something else,
+    # so the anchor resolver lands on PRIOR.
+    def probe(url: str) -> str:
+        if newest in url:
+            return "f" * 40
+        return ANCHOR_SHA
+
+    harness.with_verifier(plan=[True, False])
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(serving_probe=probe)
+
+    assert raised.value.rolled_back_to == PRIOR
+    assert harness.client.rollbacks == [PRIOR]
+
+
+def test_capture_rollback_expectation_returns_none_on_an_empty_listing(
+    harness: Harness,
+) -> None:
+    """An empty raw production listing is the existing first-run case."""
+    harness.client.production_ids = ()
+    result = capture_rollback_expectation(
+        harness.client, lambda url: OBSERVATION, DOMAIN_URL
+    )
+    assert result is None
+
+
+def test_the_expectation_carries_the_raw_identity_and_the_one_observation(
+    harness: Harness,
+) -> None:
+    expectation = capture_rollback_expectation(
+        harness.client, lambda url: OBSERVATION, DOMAIN_URL, anchor_id=PRIOR
+    )
+    assert expectation == RollbackExpectation(
+        deployment_id=PRIOR,
+        environment="production",
+        uses_functions=False,
+        observation=OBSERVATION,
+    )
+
+
+def test_a_v1_prior_site_rolls_back_by_observation_not_inventory(
+    harness: Harness,
+) -> None:
+    """LD12a: first v2 failure rolling back to an OBSERVED v1 site.
+
+    A pre-v2 deployment serves no security headers — the observation's header
+    multimap is explicit absence — and no v1 inventory exists or is parsed.
+    Restoration equality is over the observation, so the v1 site restores
+    cleanly; TD-PSH-8 (no prior-tree inventory proof) is the declared limit.
+    """
+    v1_observation = RollbackSiteObservation(
+        body_sha256="e" * 64,
+        body_length=512,
+        build_id="20260701.1",
+        code_sha=ANCHOR_SHA,
+        headers=(
+            ("content-security-policy", ()),
+            ("referrer-policy", ()),
+            ("strict-transport-security", ()),
+            ("x-content-type-options", ()),
+        ),
+    )
+    harness.with_verifier(plan=[True, False])
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(observer=lambda url: v1_observation)
+
+    assert raised.value.rollback_verified is True
+    assert "matches the pre-upload expectation" in str(raised.value)
+
+
+def test_a_v2_to_v2_rollback_restores_the_captured_headers_exactly(
+    harness: Harness,
+) -> None:
+    """v2→v2: the prior site carried the policy; a restore that loses one
+    header is NOT restored."""
+    lost_header = RollbackSiteObservation(
+        body_sha256=OBSERVATION.body_sha256,
+        body_length=OBSERVATION.body_length,
+        build_id=OBSERVATION.build_id,
+        code_sha=OBSERVATION.code_sha,
+        headers=tuple(
+            (name, () if name == "strict-transport-security" else values)
+            for name, values in OBSERVATION.headers
+        ),
+    )
+    answers = [OBSERVATION, lost_header]
+    harness.with_verifier(plan=[True, False])
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(observer=lambda url: answers.pop(0))
+
+    assert raised.value.rollback_verified is False
+    assert "headers" in str(raised.value)
+
+
+def test_a_wrong_raw_rollback_response_keeps_rollback_unverified(
+    harness: Harness,
+) -> None:
+    """The raw rollback result must name the captured id/production."""
+
+    def wrong_rollback(deployment_id: str) -> dict:
+        harness.client.rollbacks.append(deployment_id)
+        return _raw_deployment("dep-somebody-else")
+
+    harness.client.rollback_payload = wrong_rollback
+    harness.with_verifier(plan=[True, False])
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run()
+
+    assert raised.value.rollback_verified is False
+    assert "not the captured target" in str(raised.value)
+
+
+# --- PR #35 classifier: header/control findings never settle -----------------
+
+
+@pytest.mark.parametrize(
+    "extra, why",
+    [
+        (
+            "missing required response header on index.html: "
+            "content-security-policy — the deployment is not carrying the "
+            "policy it was built with",
+            "a LOST control never settles",
+        ),
+        (
+            "content-security-policy on index.html does not equal the locked "
+            "policy: observed \"default-src *\"",
+            "a WEAKENED control never settles",
+        ),
+        (
+            "content-security-policy on index.html appears 2 times; a "
+            "duplicated/conflicting policy header is refused, never collapsed",
+            "a DUPLICATED control never settles",
+        ),
+        (
+            "control-path probe /_headers answered HTTP 200, expected 404 — the "
+            "deployment is serving or acting on a provider control file",
+            "a SERVED control file never settles",
+        ),
+    ],
+    ids=["missing-header", "weakened-header", "duplicated-header", "served-control"],
+)
+def test_a_header_or_control_finding_never_qualifies_for_the_settle(
+    harness: Harness, extra: str, why: str
+) -> None:
+    """R12/Task 10.4: header/control findings always have findings beyond
+    divergences, so the counts diverge and the classifier refuses — the
+    deployment rolls back at once, with no retry settle."""
+    result = _rejected(
+        Divergence("_astro/a.js", PROPAGATION_REASON), extra_findings=(extra,)
+    )
+    assert not _propagation_lag_only(result), why
+
+    harness.with_verifier(plan=[True, result])
+    settle = RecordingSettle()
+    with pytest.raises(ProductionVerificationFailed):
+        harness.run(settle=settle)
+
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], why
+    assert harness.client.rollbacks == [PRIOR]
+    assert harness.verify.stages == [PREVIEW, PRODUCTION]
+
+
+def test_a_pure_v2_file_404_result_still_gets_exactly_one_full_retry(
+    harness: Harness,
+) -> None:
+    """The other half of the mutation pair: v2 changed nothing about the one
+    settle a pure inventoried-file-404 rejection is entitled to."""
+    harness.with_verifier(plan=[True, _lag("congress/data/feed.v1.json"), True])
+    settle = RecordingSettle()
+
+    outcome = harness.run(settle=settle)
+
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, PROPAGATION_SETTLE_SECONDS]
+    assert harness.client.rollbacks == []
+    assert harness.verify.stages == [PREVIEW, PRODUCTION, PRODUCTION]
+    assert outcome.production_verification.ok

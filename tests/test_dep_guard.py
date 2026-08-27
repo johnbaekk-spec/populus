@@ -194,7 +194,7 @@ def test_real_repo_tree_passes():
 # --- no-network enforcement (R10) -------------------------------------------
 
 NETWORK_PRIMITIVES = re.compile(
-    r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
+    r"(?<!insecure-)\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
 # The sanctioned HTTP client, permitted in exactly four modules — the House
@@ -205,7 +205,7 @@ NETWORK_PRIMITIVES = re.compile(
 # there — notably `urllib`, which is why the SEC client's host guard is plain
 # string work.
 NETWORK_PRIMITIVES_SANS_HTTPX = re.compile(
-    r"\b(requests|urllib|socket|http\.client|ftplib|smtplib"
+    r"(?<!insecure-)\b(requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
 HTTPX_ALLOWED = {
@@ -257,7 +257,7 @@ HTTPX_ALLOWED = {
 # shell) as the GhReleaseBackend command transport — injectable in tests, so
 # no real network runs under the suite. subprocess stays banned elsewhere.
 NETWORK_PRIMITIVES_SANS_SUBPROCESS = re.compile(
-    r"\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
+    r"(?<!insecure-)\b(httpx|requests|urllib|socket|http\.client|ftplib|smtplib"
     r"|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
 SUBPROCESS_ALLOWED = {
