@@ -26,7 +26,7 @@ from populus.ingest import house
 from populus.ingest.house import (
     BACKOFF_SCHEDULE,
     MIN_SPACING_S,
-    USER_AGENT,
+    user_agent,
     DiscoverResult,
     ReparseSelector,
     TransportResponse,
@@ -580,7 +580,7 @@ def test_live_fetch_ua_spacing_archive(tmp_path, initialized_db):
 
     # Exact identifying UA on every call (G6).
     assert transport.calls
-    assert all(h["User-Agent"] == USER_AGENT for _url, h in transport.calls)
+    assert all(h["User-Agent"] == user_agent() for _url, h in transport.calls)
     # Strictly sequential with >= MIN_SPACING_S between consecutive fetches:
     # 3 requests, 2 spacing sleeps.
     assert clock.sleeps == [MIN_SPACING_S, MIN_SPACING_S]

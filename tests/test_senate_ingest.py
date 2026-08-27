@@ -23,7 +23,7 @@ from click.testing import CliRunner
 
 from populus.cli import main as cli_main
 from populus.db import connect, init_db
-from populus.ingest import TransportResponse, USER_AGENT, UnsafeArchivePathError
+from populus.ingest import TransportResponse, UnsafeArchivePathError, user_agent
 from populus.ingest import senate
 from populus.ingest.house import ReparseSelector, select_reparse_targets
 from populus.ingest.senate import (
@@ -304,19 +304,19 @@ def test_real_transport_get_is_stateless_and_never_follows_redirects():
         _httpx_response(302, [("location", "/search/"), ("set-cookie", "s=1")])
     )
     transport = senate.HttpxSenateTransport(transport=recorder.transport)
-    response = transport.get(senate.HOME_URL, headers={"User-Agent": USER_AGENT})
+    response = transport.get(senate.HOME_URL, headers={"User-Agent": user_agent()})
 
     # The 302 is returned as-is for the caller to judge (LD13), not chased:
     # exactly one request left the adapter.
     (request,) = recorder.calls
     assert (request.method, str(request.url)) == ("GET", senate.HOME_URL)
-    assert request.headers["User-Agent"] == USER_AGENT
+    assert request.headers["User-Agent"] == user_agent()
     assert response.status_code == 302
     assert response.headers["location"] == "/search/"
 
     # Stateless (LD13): the Set-Cookie from the first response is NOT replayed
     # by the adapter on a second request — the library jar owns session state.
-    transport.get(senate.HOME_URL, headers={"User-Agent": USER_AGENT})
+    transport.get(senate.HOME_URL, headers={"User-Agent": user_agent()})
     assert "cookie" not in recorder.calls[1].headers
 
 
@@ -413,7 +413,7 @@ def test_real_transport_drives_the_full_handshake(tmp_path):
         ("POST", HOME_URL),
         ("POST", DATA_URL),
     ]
-    assert all(r.headers["User-Agent"] == USER_AGENT for r in seen)
+    assert all(r.headers["User-Agent"] == user_agent() for r in seen)
 
 
 # --- handshake (R1/LD13) -----------------------------------------------------
@@ -651,7 +651,7 @@ def test_ua_spacing_and_sequential_order(tmp_path, initialized_db):
     assert report.ok
     # The identifying RUN-2 UA on every fetch, GET and POST alike.
     assert transport.calls
-    assert all(h["User-Agent"] == USER_AGENT for _m, _u_, h, _d in transport.calls)
+    assert all(h["User-Agent"] == user_agent() for _m, _u_, h, _d in transport.calls)
     # 5 fetches, 4 gaps, each exactly the 2.0 s floor with zero jitter.
     assert clock.sleeps == [MIN_SPACING_S] * 4
 

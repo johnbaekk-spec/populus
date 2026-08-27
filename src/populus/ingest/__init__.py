@@ -14,11 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import populus
+from populus.operator_identity import filings_user_agent, operator_contact
 
-USER_AGENT = (
-    f"PopulusBot/{populus.__version__} "
-    "(+https://github.com/johnbaekk-spec/populus; contact: johnbaekk@gmail.com)"
-)
+
+def user_agent() -> str:
+    """The parenthesized filings User-Agent, resolved at CALL time (D9).
+
+    ``POPULUS_CONTACT`` set after import affects every later request — the
+    identity was previously frozen into a module constant at import.
+    """
+    return filings_user_agent(operator_contact()[0], populus.__version__)
 
 
 @dataclass(frozen=True)
