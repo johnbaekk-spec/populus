@@ -140,7 +140,7 @@ def shape_holding(
     signature defaulted to `None` and justified it with "the live federated path
     shapes rows before an accession is resolved" — which the adjacent module
     contradicted, and which shipped `accession: null` on every live-plane
-    holding while `server.py:605` promises "rows are shaped exactly like the
+    holding while `institutional_tools._published_positions` promises "rows are shaped exactly like the
     federated ones so a client parses both planes identically". `null` there is
     indistinguishable from "this filing has no accession", which is never true.
     The parameter is required now so that omission cannot recur silently
