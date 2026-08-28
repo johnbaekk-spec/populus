@@ -3,7 +3,7 @@
    query runs entirely over the shipped index. "/" focuses (except while
    typing), Esc closes, results group Tickers · Members · Filers with
    combobox/listbox semantics. The pre-query state is the v2 watchlist's
-   quick links, or the S6 empty-watchlist starters (Locked #5). */
+   quick links, or the S6 empty-watchlist starters. */
 
 import { esc } from "../lib/format.ts";
 import { searchQuery, searchIndexValid, type SearchIndex, type SearchHit } from "../lib/derive.ts";
@@ -53,7 +53,7 @@ export function renderResults(hits: SearchHit[], active: number): string {
     records, never from traffic. The site does measure page traffic
     (Cloudflare Web Analytics, see the methodology page), but that data is
     aggregate, lives outside the build, and yields no per-page view count
-    this code could rank by (Locked #5 rewording, register entry). */
+    this code could rank by. */
 export function renderPreQuery(watch: WatchStore, index: SearchIndex | null): string {
   const watchedMembers = [...watch.members];
   const watchedTickers = [...watch.tickers];

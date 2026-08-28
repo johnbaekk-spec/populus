@@ -1,5 +1,4 @@
-/* RUN M2-8 T11/T12 (plan R11, R12, R16) — per-filer reported positions and the
-   as-of-resolved holder list.
+/* Per-filer reported positions and the as-of-resolved holder list.
 
    PURE by construction: no `node:` imports and no DOM. The inline pager inside
    `components/HoldingsTable.astro` imports these same renderers, so the SSR page
@@ -147,9 +146,9 @@ export interface IssuerShard {
   rows: IssuerHolderRow[];
 }
 
-/* ---------- the §5 structural caveat (R16) — non-removable ---------- */
+/* ---------- the §5 structural caveat — non-removable ---------- */
 
-/* MOVED here from `lib/activity.ts` in RUN M2-11 (plan R22): still the ONE
+/* MOVED here from `lib/activity.ts`: still the ONE
    canonical copy — activity.ts re-exports it — but it must live in a
    browser-safe module now, because the `/e/` driver's in-extract filer path
    renders the note on the client and activity.ts imports `node:sqlite`. */
@@ -341,7 +340,7 @@ export function parseFilerShard(raw: unknown): FilerShard {
       if (field in r) {
         throw new Error(
           `filer row ${i} carries the change field "${field}" — holding and change ` +
-            `records keep separate grains, joined by position_key (plan Locked #5)`,
+            `records keep separate grains, joined by position_key`,
         );
       }
     }
@@ -1566,8 +1565,8 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
   const total = opts.totalRows ?? matched;
   const pageRows = holdingsPageSlice(opts.rows, opts.page);
   const pageCount = holdingsPageCount(matched);
-  /* B34: the THIRD consumer of `provenanceCellHtml`, and the one cycle 4 round 2
-     found still repeating the badge. Over the full bounded set, resolved once
+  /* The THIRD consumer of `provenanceCellHtml`, and the one that was still
+     repeating the badge. Over the full bounded set, resolved once
      per row and reused below — the same shape as the positions table. */
   const provOf = new Map(
     opts.rows.map((r) => [r, provenanceOf(r.filing_keys, opts.filings, r.period)] as const),
@@ -1948,8 +1947,8 @@ export function projectionAbsentHtml(kind: "filer" | "holders", edgarUrl: string
 
 /* ---------- quarter-over-quarter changes: one ordering, one bound ----------
 
-   RUN M2-12. The changes surface had neither of the two bounds its sibling
-   above has had since QA M2-8 M8, and the arithmetic is the same: at a measured
+   The changes surface originally had neither of the two bounds its sibling
+   above carries, and the arithmetic is the same: at a measured
    ~373 B/row, the 15,885-row filer embeds 5.9 MiB for ONE period and 20.9 MiB
    across five — 29.1 MiB of page against a 25 MiB provider limit. The only
    tree that ever fitted was hand-edited after the build, with the quarter

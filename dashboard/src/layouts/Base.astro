@@ -124,8 +124,8 @@ const build = getBuildData();
           <a href="/legal/DATA-LICENSE.md">DATA-LICENSE ↗</a> ·
           <a href="/legal/NOTICE.txt">NOTICE ↗</a>
         </div>
-        {/* No manifest digest is rendered here, or anywhere else (Locked #6,
-            R19): the manifest is re-assembled AFTER this site builds, so any
+        {/* No manifest digest is rendered here, or anywhere else, deliberately:
+            the manifest is re-assembled AFTER this site builds, so any
             digest printed by a page is stale by construction — a reader who
             checked it would be told the build is corrupt. The build id names
             the release; `populus verify --build <id>` resolves the manifest

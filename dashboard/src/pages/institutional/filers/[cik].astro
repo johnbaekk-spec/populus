@@ -1,6 +1,6 @@
 ---
 // Institutional Filer page (Institutional Filer.dc.html), bound to the
-// published aggregates with period-correct sourcing (Locked #6): identity from
+// published aggregates with period-correct sourcing: identity from
 // agg_filer_registry; every period-scoped tile from agg_filer_concentration;
 // changes from agg_qoq_deltas. The filer's COMPLETE reported position list —
 // the selected quarter and the one before it (OD-5) — is served below the
@@ -16,7 +16,7 @@ import { filingWindow } from "../../../lib/derive";
 import { serializeInlineJson } from "../../../lib/inline-json";
 
 export function getStaticPaths() {
-  // RUN M2-11 (plan R22/LD-7): pre-render ONLY the top 1,500 by descending
+  // Pre-render ONLY the top 1,500 by descending
   // latest-period reported total value, ties ascending CIK — the same exported
   // selection (`selectTopFilers` via `topFilerCiks`) every link producer uses,
   // so the pages that exist and the links that point at them cannot disagree.
@@ -43,7 +43,7 @@ const period = periods.at(-1) ?? filer.latest_period;
 const window = filingWindow(build.generatedAtDate);
 const latestFiled = inst.watermarks.latest_filed_date;
 
-/* RUN M2-12: this page used to rebuild the aggregate payload inline — a second
+/* This page used to rebuild the aggregate payload inline — a second
    implementation of `filerAggregateInputs`, which the shard path already used.
    Two producers of one payload is how the pre-rendered page and a shard-served
    tail filer drift; it is also why a bound applied to one would have missed the

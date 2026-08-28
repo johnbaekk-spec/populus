@@ -1064,7 +1064,7 @@ export function notableRecent(
   };
 }
 
-/* ---------- QoQ presentation mapping (Locked #8, spec §1) ---------- */
+/* ---------- QoQ presentation mapping (docs/qoq-presentation.md §1) ---------- */
 
 export interface QoqPresentation {
   chipText: string;
@@ -1130,7 +1130,7 @@ export function qoqPresentation(row: QoqDeltaRow): QoqPresentation {
   };
 }
 
-/* ---------- S7 filing-window state (Locked #17) ---------- */
+/* ---------- S7 filing-window state ---------- */
 
 export interface FilingWindow {
   open: boolean;
@@ -1203,8 +1203,8 @@ export function parseEntityKey(raw: string | null): EntityKey {
     maps to `~`, which no ticker contains — colons are hostile to some
     filesystems/CDNs in static file names. Deterministic and collision-free. */
 export function tickerDataKey(ticker: string): string {
-  // Injective, filename- and route-safe for EVERY ticker (Locked #13 says
-  // every ticker gets a data endpoint, and the Senate corpus contains tickers
+  // Injective, filename- and route-safe for EVERY ticker (every ticker gets a
+  // data endpoint, and the Senate corpus contains tickers
   // with raw whitespace). Safe bytes pass through; anything else — including
   // the legacy ':' and the escape character itself — becomes ~XX per UTF-8
   // byte. Deterministic and collision-free, so the same function computes the
@@ -1281,7 +1281,7 @@ export function classifyResponse(status: number, body: unknown): FetchClassifica
   return { outcome: "ok", payload: p as unknown as EntityPayload };
 }
 
-/* ---------- ticker→issuer mapping (Locked #18, spec §4) ---------- */
+/* ---------- ticker→issuer mapping (docs/qoq-presentation.md §4) ---------- */
 
 export interface TickerMapEntry {
   cik: string; // 10-digit
@@ -1503,7 +1503,7 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
   return hits;
 }
 
-/* ---------- budget walk (ARCHITECTURE §9.10/§12.1, Locked #13) ---------- */
+/* ---------- budget walk (ARCHITECTURE §9.10/§12.1) ---------- */
 
 /** Headroom under the §9.10 ≤8,500 module-1 page cap (owner decision
     2026-08-01: raised from 4,000 for the 13-year corpus's 3,856-ticker tail):

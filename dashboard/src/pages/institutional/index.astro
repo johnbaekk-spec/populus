@@ -2,7 +2,7 @@
 // /institutional landing — fixes the previously-404ing masthead link. With the
 // module absent this is the S1 withheld/absent full-page state; with it
 // present, an honest filer index over the published registry (identity fields;
-// cumulative registry counts are labeled as all-period values — Locked #6).
+// cumulative registry counts are labeled as all-period values).
 import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
 import { s1ModuleAbsent, s7Banner, breadcrumb, addsSectionHtml } from "../../lib/ui";
@@ -31,7 +31,7 @@ import {
 const build = getBuildData();
 const inst = build.inst;
 const window = inst.present ? filingWindow(build.generatedAtDate) : null;
-// RUN M2-8 T13 (R13): the bounded, byte-paginated cross-filer activity feed.
+// The bounded, byte-paginated cross-filer activity feed.
 // The §5 data_note ships with it by construction (activitySectionHtml) — the
 // feed cannot be rendered without its structural caveat.
 const feed = activityFeed({ instPresent: inst.present });

@@ -76,7 +76,7 @@ export interface BuildData {
   generatedAt: string; // "YYYY-MM-DD HH:MM UTC"
   generatedAtDate: string; // "YYYY-MM-DD" — trailing-window / S7 calendar input
   codeSha: string;
-  /* No manifest digest field exists, deliberately (Locked #6, R19): the
+  /* No manifest digest field exists, deliberately: the
      manifest is re-assembled after the site builds, so any digest the site
      could compute is stale by construction. `manifest` (the parsed document)
      stays because module availability is derived from it, never assumed. */
@@ -100,7 +100,7 @@ export interface BuildData {
   dataset: string; // JSON string served at /congress/data/feed.v1.json
   dataLicenseMd: string;
   noticeTxt: string;
-  /* --- entities (RUN P3-2) --- */
+  /* --- entities --- */
   members: MemberEntity[]; // every member in the extract (txn or paper)
   membersByKey: Map<string, MemberEntity>;
   tickers: TickerEntity[];
@@ -456,7 +456,7 @@ export function getSignalArtifact(): import("./signals.ts").SignalArtifact {
 }
 
 /** One sector-resolution rule for every consumer: ticker → unique issuer CIK
-    (Locked #18 mapping, ambiguity refused) → producer-resolved sector. */
+    (via the ticker→issuer mapping, ambiguity refused) → producer-resolved sector. */
 export function sectorResolver(build: BuildData): ((ticker: string) => import("./derive.ts").SectorResolution) | null {
   if (build.sectorData === null || build.tickerMap === null) return null;
   const { sectorByCik } = build.sectorData;
@@ -643,7 +643,7 @@ function loadRows(dbPath: string): {
     }));
 
     // Member metadata + per-member filing counts for the entity pages: one
-    // query each, grouped in memory (Locked #2 — no per-entity SQL).
+    // query each, grouped in memory — no per-entity SQL.
     const memberMeta = new Map<string, MemberDbMeta>();
     const metaRows = db
       .prepare(
@@ -845,7 +845,7 @@ export function getBuildData(): BuildData {
 
   const generatedAtDate = generatedAtIso.slice(0, 10);
 
-  /* --- entity assembly (RUN P3-2, Locked #2) --- */
+  /* --- entity assembly (grouped in memory, no per-entity SQL) --- */
   const groups = groupEntities(txns, paper);
   const members: MemberEntity[] = [...groups.members.entries()]
     .map(([bioguide, g]) => {
@@ -874,7 +874,7 @@ export function getBuildData(): BuildData {
     .sort((a, b) => (a.ticker < b.ticker ? -1 : 1));
   const tickersByKey = new Map(tickers.map((t) => [t.ticker, t]));
 
-  // Page-budget walk (Locked #13). POPULUS_TEST_PAGE_BUDGET is a build-time
+  // Page-budget walk. POPULUS_TEST_PAGE_BUDGET is a build-time
   // test knob forcing a small budget so the generic-route path is provable;
   // the production constant sits far above the dev extract's entity count.
   const budgetEnv = process.env.POPULUS_TEST_PAGE_BUDGET;
@@ -985,7 +985,7 @@ export function tickerInstSection(build: BuildData, ticker: string): TickerInstS
   if (res.state === "unmapped") return { state: "unmapped" };
   if (res.state === "ambiguous") return { state: "ambiguous" };
   const rows = build.inst.holdersByIssuer.get(res.issuerKey) ?? [];
-  // Locked #18: match ONLY entity-keyed aggregate rows — a cusip6/name-keyed
+  // Match ONLY entity-keyed aggregate rows — a cusip6/name-keyed
   // issuer is never joined from a present-day ticker mapping.
   const entityRows = rows.filter((r) => r.issuer_key_source === "entity");
   if (entityRows.length === 0) {
@@ -1025,7 +1025,7 @@ export { FILER_TAIL_SHARDS_MAX };
 
 /** LD-7 selection over the loaded aggregate — the ONE call site of
     `holdings.selectTopFilers` inputs: latest-period reported total value comes
-    from the period concentration row (Locked #6 — the registry total is
+    from the period concentration row (the registry total is
     cumulative over ALL periods and is NOT a quarter's number). Memoized per
     aggregate object: `getStaticPaths`, every link producer, and the shard
     planner must see the same 1,500. */
@@ -1072,7 +1072,7 @@ export function filerAggregateInputs(build: BuildData, cik: string): FilerAggreg
     };
   }
   const periods = filerPeriods(inst, cik);
-  /* RUN M2-12: the bound is applied HERE, at the one assembly point, because
+  /* The bound is applied HERE, at the one assembly point, because
      both filer renderers read this function — the pre-rendered top-1,500 page
      and the tail filer served through the shard family. Bounding in either
      renderer instead would leave the other unbounded and let the two drift,
@@ -1323,7 +1323,7 @@ export function tickerPayloadJson(build: BuildData, ticker: string): string | nu
 
 /** Endpoint filename keys (colon-safe) for every ticker in the extract. */
 export function tickerDataKeys(build: BuildData): { key: string; ticker: string }[] {
-  // Every ticker, no filter (Locked #13): tickerDataKey escapes every unsafe
+  // Every ticker, no filter: tickerDataKey escapes every unsafe
   // byte, so even a ticker with a raw newline gets a well-formed endpoint.
   // Over-long keys carry a digest tail, so injectivity is asserted here — a
   // collision must fail the BUILD, never serve one ticker's data as another's.

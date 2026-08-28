@@ -4,7 +4,7 @@
 
    Honesty grammar: G1–G7 via the canonical format.ts components; charts per
    C1–C7 (zero-based, gaps stay gaps, no midpoints); NULL-honest institutional
-   integers; the Locked #20 stamp on every 13F table. */
+   integers; the as-of time stamp every 13F table carries. */
 
 import {
   type TxnRow,
@@ -117,7 +117,7 @@ function asOfNote(stamps: BuildStamps): string {
   return `as of ${esc(stamps.generatedAt)}`;
 }
 
-/** Locked #20: the institutional table time stamp. The published aggregate has
+/** The institutional table time stamp. The published aggregate has
     no per-row filed date, so the honest form pairs the quarter-end with the
     module's build-wide filed-date watermark — never "current holdings". */
 export function instStamp(period: string, latestFiled: string | null): string {
@@ -1487,7 +1487,7 @@ export function s7Banner(window: FilingWindow): string {
   );
 }
 
-/* ---------- Home pieces (Locked #14: specimen from a real row) ---------- */
+/* ---------- Home pieces (the specimen comes from a real row) ---------- */
 
 export function pickSpecimen(txns: readonly TxnRow[]): TxnRow | null {
   return (

@@ -476,7 +476,7 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   capgains_unparsed: { label: "cap-gains unparsed", cls: "dashed" },
   row_incomplete: { label: "row incomplete", cls: "dashed" },
   row_orphan: { label: "row orphan", cls: "dashed" },
-  // Producer institutional flags (inst_agg.py, Locked #8 / docs/qoq-presentation.md):
+  // Producer institutional flags (inst_agg.py, docs/qoq-presentation.md):
   // source facts and parse defects in the same two visual classes as above.
   value_undisclosed_one_side: { label: "value undisclosed one side", cls: "dashed" },
   shares_unit_mismatch: { label: "unit mismatch", cls: "dashed" },
@@ -492,9 +492,9 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
      condition we do not recognise" over a fact the producer states precisely is
      a worse failure than the raw slug this requirement set out to remove.
      Wording follows each producer's own definition, cited. */
-  // normalize_inst.py:76 — valid CUSIP, no mapping covers period_of_report (R9)
+  // normalize_inst.py:76 — valid CUSIP, no mapping covers period_of_report
   missing_security: { label: "security not in mapping", cls: "dashed" },
-  // normalize_inst.py:70 — non-numeric otherManager component (QA-F3)
+  // normalize_inst.py:70 — non-numeric otherManager component
   other_manager_unparsed: { label: "other-manager unparsed", cls: "dashed" },
   // normalize.py:32 — the owner field did not parse
   owner_unparsed: { label: "owner unparsed", cls: "dashed" },
@@ -580,9 +580,9 @@ export const UNIVERSAL_FLAG_SHARE = 1.0;
 /** No minimum table size. There WAS one (8 rows), on the reasoning that a
     caveat line above three rows is more chrome than the badges it replaces —
     but the amended requirement says "a flag carried by EVERY row of a table"
-    with no size exception, and an implementer inventing one is the same
-    unapproved-deviation move the "near-universal" threshold already cost a
-    review round. A one-row table with a universal flag states it once, like
+    with no size exception, and an implementer inventing one repeats the same
+    unapproved deviation the earlier "near-universal" threshold turned out to
+    be. A one-row table with a universal flag states it once, like
     every other table. */
 export const UNIVERSAL_FLAG_MIN_ROWS = 1;
 
@@ -885,7 +885,7 @@ export interface RenderCtx {
 export function memberHref(bioguide: string): string {
   return `/congress/members/${esc(encodeURIComponent(bioguide))}/`;
 }
-/** Canonical ticker links go to the unified /tickers/{t}/ page (Locked #4);
+/** Canonical ticker links go to the unified /tickers/{t}/ page;
     the deep congressional view links onward from there. */
 export function tickerHref(ticker: string): string {
   return `/tickers/${esc(encodeURIComponent(ticker))}/`;
@@ -900,7 +900,7 @@ export function congressTickerHref(ticker: string): string {
  * NoMatchingStaticPathFound on the route's own emitted key. Page routes use
  * the raw ticker as their param, so they filter on this; DATA routes never
  * need it — `tickerDataKey` escapes every unsafe byte, so every ticker keeps
- * its endpoint (Locked #13) and the /e/ fallback keeps working.
+ * its endpoint and the /e/ fallback keeps working.
  */
 export function pathSafeTicker(ticker: string): boolean {
   // ':' was allowed here briefly (it IS page-safe for a Linux build and a URL)
@@ -926,7 +926,7 @@ export function memberHrefFor(bioguide: string, ctx: RenderCtx): string {
 }
 export function tickerHrefFor(ticker: string, ctx: RenderCtx): string {
   // Path-unsafe tickers ride the same fallback as budget-cut ones: the /e/
-  // client page, whose data endpoint exists for EVERY ticker (Locked #13).
+  // client page, whose data endpoint exists for EVERY ticker.
   return ctx.cutTickers?.has(ticker) || !pathSafeTicker(ticker)
     ? genericEntityHref("t", ticker)
     : tickerHref(ticker);

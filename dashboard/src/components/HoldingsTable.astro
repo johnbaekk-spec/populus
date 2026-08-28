@@ -1,5 +1,5 @@
 ---
-/* RUN M2-8 T11/T12 (plan R11, R12, R16) — the holdings/holders surface.
+/* The holdings/holders surface.
 
    This component owns the READ; `lib/holdings.ts` owns every pure decision
    (normalise, fold, diff, paginate, render). The split is deliberate: the
@@ -108,7 +108,7 @@ const db = cache.db;
 let payload: SurfacePayload | null = null;
 
 if (db && props.kind === "filer") {
-  /* RUN M2-11 (plan R22): the SQL and the period/cap/sort logic that lived here
+  /* The SQL and the period/cap/sort logic that lived here
      are EXTRACTED to `lib/filer-payload.assembleFilerPayload` — the ONE
      server-side assembler, shared with the tail shard endpoints so the
      pre-rendered page and a shard-served tail filer cannot assemble

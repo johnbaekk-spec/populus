@@ -4,10 +4,10 @@
    fabricated zero), canonical sorted JSON flag arrays, and the five tables the
    producer ships. Per M2-CONTRACT §3 the dashboard receives aggregate slices
    only. Per-filer holdings detail is NOT yet read here; M2-CONTRACT §3 was amended
-   2026-08-02 to serve it, and RUN M2-8 adds the serving projection this module
-   will read. Until then this file intentionally reads agg_* only.
+   2026-08-02 to serve it, and the serving projection this module
+   will read is added separately. Until then this file intentionally reads agg_* only.
 
-   Period-correct sourcing (Locked #6): `agg_filer_registry` supplies identity
+   Period-correct sourcing: `agg_filer_registry` supplies identity
    (name, latest_period) — its count/value fields accumulate over ALL retained
    periods (inst_agg.py builds them without a period predicate) and are NOT
    period stats; every period-scoped number comes from
@@ -24,7 +24,7 @@ export interface FilerRegistryRow {
   filer_name: string;
   latest_period: string;
   /** cumulative over ALL retained periods — identity context only, never a
-      quarter's number (Locked #6) */
+      quarter's number */
   position_count: number;
   total_value_usd: number;
   null_value_positions: number;
@@ -457,7 +457,7 @@ export function addsExclusionCount(inst: InstData, period: string, mode: AddsMod
   return n;
 }
 
-/* ---------- period-correct accessors (Locked #6) ---------- */
+/* ---------- period-correct accessors ---------- */
 
 export function filerPeriods(inst: InstData, cik: string): string[] {
   if (!inst.present) return [];
@@ -493,7 +493,7 @@ export function issuerPeriods(inst: InstData, issuerKey: string): string[] {
 }
 
 /** Issuer keys that are entity-keyed in the aggregate — the ONLY keys a ticker
-    may resolve to (Locked #18): cusip6/name-keyed rows are weaker identity
+    may resolve to: cusip6/name-keyed rows are weaker identity
     claims and are never matched from a present-day ticker mapping. */
 export function entityKeyedIssuers(inst: InstData): Set<string> {
   if (!inst.present) return new Set();
@@ -511,11 +511,11 @@ function isTestFixturePath(p: string): boolean {
   return path.resolve(p).split(path.sep).join("/").includes("/tests/fixtures/");
 }
 
-/** Read the ticker-map snapshot named by POPULUS_TICKER_MAP (Locked #18).
+/** Read the ticker-map snapshot named by POPULUS_TICKER_MAP.
     Dev default: the committed pipeline fixture. A missing file is an explicit
     null — every consumer then renders the honest no-map state.
 
-    CI refuses a fixture-derived map (R1). The refusal rejects the fixture PATH,
+    CI refuses a fixture-derived map. The refusal rejects the fixture PATH,
     not merely an unset variable: no real `company_tickers.json` exists on a
     runner (it reaches this tree only through `populus identity bootstrap
     --from-cache`, and `data-cache/` is not in git), so the fixture is the only

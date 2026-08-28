@@ -1,7 +1,7 @@
 import { initSortableTable } from "./table-sort.ts";
 import { holderDefaultDir, holderSortNote, orderRankedHolders, type HolderSortKey } from "../lib/holders-sort.ts";
-/* Entity client: the watchlist v2 store (Locked #16), the generic-route
-   driver (Locked #3 / qoq-presentation.md §3), and the small enhancements the
+/* Entity client: the watchlist v2 store, the generic-route
+   driver (qoq-presentation.md §3), and the small enhancements the
    prerendered entity pages mount (pager, watch stars, period selectors).
 
    The driver is a PURE orchestration over injected seams (fetch, render,
@@ -61,7 +61,7 @@ import { edgarFilerUrl } from "../lib/derive.ts";
 import type { TickerInstSection } from "../lib/data.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "../lib/inst.ts";
 
-/* ---------- watchlist v2 store (Locked #16) ---------- */
+/* ---------- watchlist v2 store ---------- */
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -234,7 +234,7 @@ interface LoadedEntity {
   stamps: BuildStamps;
 }
 
-/* RUN M2-11 (plan R22): the in-extract filer path. A tail filer resolves
+/* The in-extract filer path. A tail filer resolves
    through the routing index to its shard, is STRICT-validated by
    parseFilerPayload, and renders through the SAME body path the pre-rendered
    pages use (ui.filerBody + holdings.surfaceHtml) — parity by construction.
@@ -919,10 +919,10 @@ export function initFilerPeriods(): void {
       return;
     }
   }
-  /* RUN M2-12: the changes table paginates, so the period section carries page
+  /* The changes table paginates, so the period section carries page
      state. Switching period resets it to 0 — a page index from another quarter
      addresses nothing in this one. */
-  /* Codex F1: this started as "" and the pager handler bails on a falsy period,
+  /* This started as "" and the pager handler bails on a falsy period,
      so on FIRST LOAD every pager click was swallowed and rows past the first page
      were unreachable until a chip was clicked. Seed from the chip the SSR marked
      active — that is the period the server rendered. */
@@ -1009,8 +1009,8 @@ export function initHoldersPeriods(): void {
         const r = row as Record<string, unknown>;
         if (typeof r.filer_name !== "string" || typeof r.cik !== "string") return;
         if (typeof r.value_usd !== "number" || typeof r.rank !== "number") return;
-        // Every field the renderer and sorter actually read (code review,
-        // cycle 5 F3, round 3): `holdersTableHtml` formats `security_count`,
+        // Every field the renderer and sorter actually read:
+        // `holdersTableHtml` formats `security_count`,
         // prints `issuer_key_source`, and maps `.flags` over EVERY row before
         // any sort happens, so a row passing the four checks above still
         // crashed at interaction time on a missing or mistyped one of these.
