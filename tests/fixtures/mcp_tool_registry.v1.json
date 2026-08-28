@@ -1,0 +1,405 @@
+{
+  "congress_health": {
+    "description": "How fresh and complete is the congressional data? Coverage, freshness, source mix, and the standing caveats.",
+    "inputSchema": {
+      "properties": {},
+      "title": "congress_healthArguments",
+      "type": "object"
+    }
+  },
+  "congress_latest_filings": {
+    "description": "What filings are new since a timestamp (ISO-8601, any offset)? Filing-level awareness for polling, including paper filings pending OCR and amendment-flagged filings.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 100,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "since_iso": {
+          "title": "Since Iso",
+          "type": "string"
+        }
+      },
+      "required": [
+        "since_iso"
+      ],
+      "title": "congress_latest_filingsArguments",
+      "type": "object"
+    }
+  },
+  "congress_member_activity": {
+    "description": "Show a member's trading history and habits (top tickers, buy/sell mix, median days-to-file, late-filing count). Use congress_member_lookup to get the bioguide_id.",
+    "inputSchema": {
+      "properties": {
+        "bioguide_id": {
+          "title": "Bioguide Id",
+          "type": "string"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Since"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        }
+      },
+      "required": [
+        "bioguide_id"
+      ],
+      "title": "congress_member_activityArguments",
+      "type": "object"
+    }
+  },
+  "congress_member_flows": {
+    "description": "A member's net disclosed FLOW by ticker (purchases vs sales). These are flow estimates from disclosed transactions, NOT holdings \u2014 true holdings require annual FD reports (not yet ingested).",
+    "inputSchema": {
+      "properties": {
+        "bioguide_id": {
+          "title": "Bioguide Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bioguide_id"
+      ],
+      "title": "congress_member_flowsArguments",
+      "type": "object"
+    }
+  },
+  "congress_member_lookup": {
+    "description": "Who is this member? Resolve a name (or fragment) to canonical members with bioguide IDs for use in other tools.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 25,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "congress_member_lookupArguments",
+      "type": "object"
+    }
+  },
+  "congress_recent_trades": {
+    "description": "What has Congress traded recently? Filter by chamber, party, state, side, ticker, member, or minimum disclosed amount.",
+    "inputSchema": {
+      "properties": {
+        "bioguide_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bioguide Id"
+        },
+        "chamber": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chamber"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "limit": {
+          "default": 50,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "min_amount": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Amount"
+        },
+        "party": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Party"
+        },
+        "side": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Side"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "ticker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ticker"
+        },
+        "window_days": {
+          "default": 30,
+          "title": "Window Days",
+          "type": "integer"
+        }
+      },
+      "title": "congress_recent_tradesArguments",
+      "type": "object"
+    }
+  },
+  "congress_ticker_activity": {
+    "description": "Who in Congress is trading a ticker (mode='detail'), the most-traded tickers (mode='top'), or the biggest disclosed trades (mode='biggest')? Amounts are statutory ranges; 'biggest' ranks by the range's upper bound.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 50,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "mode": {
+          "default": "detail",
+          "title": "Mode",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        },
+        "window_days": {
+          "default": 90,
+          "title": "Window Days",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ticker"
+      ],
+      "title": "congress_ticker_activityArguments",
+      "type": "object"
+    }
+  },
+  "inst_biggest_moves": {
+    "description": "The largest cross-filer 13F position changes in a quarter. side \u2208 {new, add, trim, exit, unclassified}, ranked by the absolute dollar change, truncated at limit. 'unclassified' is a real change whose direction could not be determined because a value was undisclosed on one side; those rows appear under no other side. 'new'/'exit' mean a position was present or absent between two filings \u2014 not bought or sold. Positions with no usable identity key are excluded from the ranking entirely. Reads the published aggregate; period is a quarter-end date like 2026-03-31 (omit for the latest).",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 50,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "period": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Period"
+        },
+        "side": {
+          "default": "new",
+          "title": "Side",
+          "type": "string"
+        }
+      },
+      "title": "inst_biggest_movesArguments",
+      "type": "object"
+    }
+  },
+  "inst_filer_holdings": {
+    "description": "A 13F filer's holdings. mode='snapshot': the published aggregate profile (position count, total value, concentration) plus, when this filer+period is in the published universe, the full published position list. mode='qoq': the filer's quarter-over-quarter position changes. mode='detail': the position list \u2014 served from the published snapshot when the build published it (no network), and fetched LIVE from SEC EDGAR only for a period newer than the build or a filer/period outside the published universe; on the live path check composition_complete, because an unparseable filing or an unread history shard can make it partial. Every response carries `federated_boundary` saying which path answered it and why. Use inst_filer_lookup to get the CIK; period is a quarter-end date like 2026-03-31; limit bounds one page of the published position list, and `cursor` (from a previous response's `next_cursor`) continues it \u2014 a filer with more positions than `limit` is paged, never truncated beyond reach.",
+    "inputSchema": {
+      "properties": {
+        "cik": {
+          "title": "Cik",
+          "type": "string"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "limit": {
+          "default": 500,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "mode": {
+          "default": "snapshot",
+          "title": "Mode",
+          "type": "string"
+        },
+        "period": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Period"
+        }
+      },
+      "required": [
+        "cik"
+      ],
+      "title": "inst_filer_holdingsArguments",
+      "type": "object"
+    }
+  },
+  "inst_filer_lookup": {
+    "description": "Who is this 13F filer? Resolve an institutional manager name fragment or a CIK to canonical filers (with CIKs) from the published aggregate, for use in the other inst tools.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 25,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "inst_filer_lookupArguments",
+      "type": "object"
+    }
+  },
+  "inst_health": {
+    "description": "How fresh and complete is the institutional (13F) data? Module presence, snapshot build, freshness (latest report period + latest filed date), filer/position counts, issuer-keying mix, and the standing caveats.",
+    "inputSchema": {
+      "properties": {},
+      "title": "inst_healthArguments",
+      "type": "object"
+    }
+  },
+  "inst_ticker_holders": {
+    "description": "Who are the biggest institutional (13F) holders of a stock? Resolves the ticker to its issuer CIK via SEC's company_tickers.json (a PRESENT-DAY mapping, explicitly labeled), then ranks 13F filers by the value they reported holding of that issuer at a quarter-end. The published aggregate keeps only a top-N slice of holders per issuer per quarter (see published_topn/effective_cut in the response), so this list is always TRUNCATED. period is a quarter-end date like 2026-03-31; omit it for the latest.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 50,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "period": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Period"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker"
+      ],
+      "title": "inst_ticker_holdersArguments",
+      "type": "object"
+    }
+  },
+  "populus_health": {
+    "description": "Platform-level health: which data modules are loaded, the snapshot build, and freshness.",
+    "inputSchema": {
+      "properties": {},
+      "title": "populus_healthArguments",
+      "type": "object"
+    }
+  }
+}
