@@ -23,7 +23,7 @@ interface Props {
   /** footer variant: the two 13F pages swap the §13107(c) block for the 13F
       caveat (they carry no congressional data); everywhere else is standard */
   footer?: "standard" | "inst13f";
-  /** extra <head> markup. Used only by the R25 redirect stubs, which need a
+  /** extra <head> markup. Used only by the legacy-URL redirect stubs, which need a
       canonical link and a meta refresh in the document head — the one place a
       page cannot express from its body. */
   head?: string;
@@ -41,7 +41,7 @@ const build = getBuildData();
     <title>{title}</title>
     <meta name="description" content={description} />
     {head && <Fragment set:html={head} />}
-    {/* Machine-readable build markers (R19). Deploy verification PARSES these
+    {/* Machine-readable build markers. Deploy verification PARSES these
         by name and compares the values exactly — never a substring search over
         the footer's free text, which a whole-footer replacement would still
         satisfy. Every page carries them, so a per-page tamper is detectable.
@@ -50,7 +50,7 @@ const build = getBuildData();
     <meta name="populus:build_id" content={build.buildId} />
     <meta name="populus:code_sha" content={build.codeSha} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    {/* Pre-paint theme (R12/LD13): the former inline IIFE now lives in
+    {/* Pre-paint theme: the former inline IIFE now lives in
         `public/theme-init.js` so `script-src 'self'` carries no inline hash.
         `is:inline` keeps Astro's bundler off it; the tag is synchronous and in
         <head> deliberately — a deferred theme script repaints (FOUC). */}
@@ -184,7 +184,7 @@ const build = getBuildData();
       initSearch();
     </script>
 
-    {/* R36/R28 — Cloudflare Web Analytics. `is:inline` is load-bearing: without
+    {/* Cloudflare Web Analytics. `is:inline` is load-bearing: without
         it Astro would take this into its own bundling, and the whole point is
         that it stays a plain EXTERNAL script with no inline body, so it adds
         nothing to the locked inline-script hash set the CSP pins. `script-src`

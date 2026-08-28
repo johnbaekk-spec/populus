@@ -1,4 +1,4 @@
-/* Global header search (R11, HANDOFF.md): a prebuilt same-origin index,
+/* Global header search (see HANDOFF.md): a prebuilt same-origin index,
    fetched lazily on first focus. Free text never leaves the device — the
    query runs entirely over the shipped index. "/" focuses (except while
    typing), Esc closes, results group Tickers · Members · Filers with

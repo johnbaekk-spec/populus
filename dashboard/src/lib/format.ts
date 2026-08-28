@@ -93,7 +93,7 @@ export function paperFromArray(a: unknown[]): PaperRow {
   return r;
 }
 
-/* ---------- full-feed dataset classifier (B-7, review F3) ----------
+/* ---------- full-feed dataset classifier (B-7) ----------
    The entity endpoints already refuse a version-mismatched payload
    (classifyResponse); the FULL feed dataset needs the same discipline or a
    cached v1 body is decoded with v2 column offsets — asset fields and txnId
@@ -166,7 +166,7 @@ export function esc(s: string): string {
     .replaceAll("'", "&#39;");
 }
 
-/* ============================================================ notes (SL-R2)
+/* ============================================================ notes
 
    ONE explanation primitive for the reader-facing surfaces. It replaces the
    `title=` channel, which cannot be opened by touch, cannot be styled, and is
@@ -174,14 +174,14 @@ export function esc(s: string): string {
    tooltip "is not a channel this site treats as published", while five sites
    used one anyway.
 
-   THE ID IS A PURE FUNCTION OF ITS ARGUMENTS (SL-R2, SL-R26). No counter, no
+   THE ID IS A PURE FUNCTION OF ITS ARGUMENTS. No counter, no
    ordinal, no module state, no Math.random(), no timestamp. Server and client
    must emit identical bytes for a given row set (Constraint 5), and any of
    those would break that the moment a root re-renders. `scope` names the table
    or section; `key` is a stable per-row or per-column identity the CALLER
    already holds — a renderer never invents one.
 
-   OPT-IN (SL-R2b). Renderers take an optional NoteCtx. Called WITHOUT one they
+   OPT-IN. Renderers take an optional NoteCtx. Called WITHOUT one they
    emit exactly what they emit on origin/main, byte for byte, because several of
    them also render on routes this run does not own (/tickers/*, /watchlist/,
    /e/). A note appears only where a caller asked for one. */
@@ -229,10 +229,10 @@ export function note(text: string, ctx: NoteCtx, key: string, opts: { label?: st
 }
 
 /**
- * SL-R7: the same primitive for text that is ALREADY escaped html.
+ * The same primitive for text that is ALREADY escaped html.
  *
  * `FootnoteEntry.html` is pre-escaped body markup carrying `<strong>`, `<em>`
- * and `<code>` — the emphasis the footnote block published. R7 moves that text
+ * and `<code>` — the emphasis the footnote block published. Footnote text moves
  * into notes, and escaping it here would print the tags as literal characters,
  * which is a silent downgrade of the very text §7 forbids softening. Callers
  * pass html ONLY from the footnote registries and this module's own composed
@@ -255,14 +255,14 @@ export function noteFromHtml(
   );
 }
 
-/** SL-R7: compose one note body from several source clauses, in source order.
-    Where two footnote marks land on one column its note carries both — R7c. */
+/** Compose one note body from several source clauses, in source order.
+    Where two footnote marks land on one column its note carries both. */
 export function noteBody(...parts: (string | null | undefined)[]): string {
   return parts.filter((p): p is string => !!p).join(" · ");
 }
 
 /**
- * SL-R5 / SL-R2b: the column-explanation channel, opt-in.
+ * The column-explanation channel, opt-in.
  *
  * WITH a NoteCtx the `why` text becomes a note anchored on the header.
  * WITHOUT one it emits the `.col-why` span byte-for-byte as `origin/main`
@@ -363,7 +363,7 @@ export function assetNameCell(r: Pick<TxnRow, "asset" | "assetType">): string {
   const name = r.asset.trim();
   const short = name.length > 40 ? name.slice(0, 37) + "…" : name;
   const type = r.assetType != null && r.assetType.trim() !== "" ? r.assetType.trim() : null;
-  /* R5. The visible string is truncated at 40 characters and then clipped
+  /* The visible string is truncated at 40 characters and then clipped
      again by the cell (`.cell-ticker`/`.c-ticker` are 66px columns; 40
      characters of 12.5px mono is ~300px, which used to paint straight over the
      side cell). The FULL name therefore has to live somewhere that is real
@@ -372,7 +372,7 @@ export function assetNameCell(r: Pick<TxnRow, "asset" | "assetType">): string {
      what was traded is exactly that. So the visible span is aria-hidden and
      the accessible name carries the whole string. */
   return (
-    /* SL-R8 Class A: the `title=` is DELETED, not converted. The
+    /* The `title=` is DELETED, not converted. The
        `.visually-hidden` sibling below is a strict superset — it carries the
        same name, the same type, and one clause more ("asset as filed, no
        ticker disclosed"). A prior review put that sibling there precisely
@@ -486,7 +486,7 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   issuer_from_cusip6: { label: "issuer from CUSIP-6", cls: "dashed" },
   issuer_from_name: { label: "issuer from name", cls: "dashed" },
   concentration_unavailable: { label: "concentration unavailable", cls: "dashed" },
-  /* R10, found by measuring the built tree rather than by reading the registry:
+  /* Found by measuring the built tree rather than by reading the registry:
      these four SHIP and were absent here, so the generic-warning path swallowed
      them — 87,099 occurrences of `missing_security` alone. Rendering "a
      condition we do not recognise" over a fact the producer states precisely is
@@ -500,9 +500,9 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   owner_unparsed: { label: "owner unparsed", cls: "dashed" },
   // inst_serving.py:312 — absence is not assertable, so no exit is claimed
   exit_not_assertable: { label: "exit not assertable", cls: "dashed" },
-  /* B34: rendered by `provenanceCellHtml` from `Provenance.known`, not from any
+  /* Rendered by `provenanceCellHtml` from `Provenance.known`, not from any
      row's `flags`. It is a badge a reader sees, so it must be hoistable like
-     one — the point of B34 is that "what the row PRESENTS" is the unit, not
+     one — the point is that "what the row PRESENTS" is the unit, not
      "what the producer flagged". */
   filing_not_in_dictionary: { label: "filing not in dictionary", cls: "dashed" },
 };
@@ -532,7 +532,7 @@ export function flagChips(
   return chips;
 }
 
-/* ---------- R10: flags a reader can read ----------
+/* ---------- flags a reader can read ----------
 
    Two defects, one renderer.
 
@@ -540,7 +540,7 @@ export function flagChips(
    verbatim — `a_flag_from_the_future` — straight into the page. Fail-visible was
    right; spelling the identifier at the reader was not. The warning is now
    plain English and GENERIC, and the raw token sits in a disclosure one
-   interaction away that also prints (B33) — exactly once, never a tooltip. §8
+   interaction away that also prints — exactly once, never a tooltip. §8
    forbids anything honesty-bearing being reachable only behind an interaction,
    and the WARNING is the honesty-bearing half: it lives in the `<summary>` and
    shows with the disclosure shut. The slug is provenance for whoever files the
@@ -562,7 +562,7 @@ export const UNKNOWN_FLAG_LABEL = "unrecognised source condition";
 /** A flag on at least this share of the table's rows states itself once, at
     table level, rather than on every row.
 
-    **1.0, and the plan says so.** R10 originally read "near-universal"; the owner
+    **1.0, and the plan says so.** The rule originally read "near-universal"; the owner
     amended it to "universal" on 2026-08-19 precisely because the original could
     not be implemented truthfully. At exactly 100% the
     hoist is information-preserving: "every row below carries X" is literally
@@ -586,7 +586,7 @@ export const UNIVERSAL_FLAG_SHARE = 1.0;
     every other table. */
 export const UNIVERSAL_FLAG_MIN_ROWS = 1;
 
-/** Badge LABELS carried by every row, in stable order. B34: the label-shaped
+/** Badge LABELS carried by every row, in stable order. The label-shaped
     sibling of `universalFlags`, for badge sources that are free text rather than
     registry keys (the position-diff table's `notes`). Same threshold, same
     whole-collection rule. */
@@ -615,7 +615,7 @@ export function universalFlags(rows: readonly (readonly string[])[]): string[] {
 
 /** The table-level statement for badges identified by the TEXT a reader sees.
 
-    B34: not every badge comes from a flag key. `holdings.ts` renders a
+    Not every badge comes from a flag key. `holdings.ts` renders a
     provenance miss from `Provenance.known`, and the position-diff table renders
     free-text `notes` — both as `.flag` badges, neither in `row.flags`. A
     key-only mechanism cannot state those once, so the unit here is the rendered
@@ -660,7 +660,7 @@ export function universalFlagNote(flags: readonly string[]): string {
 }
 
 /** ONE disclosure renderer, so the row-level and table-level provenance cannot
-    drift apart — they did, and only the row half got B33's treatment. */
+    drift apart — they did, and only the row half got the print-safe treatment. */
 function rawFlagDisclosure(unknown: readonly string[]): string {
   return (
     `<details class="flag dashed flag-provenance">` +
@@ -710,12 +710,12 @@ export function flagTags(
     .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
     .join("");
   const unknown = shown.filter((f) => !FLAG_PRESENTATION[f]);
-  /* R10 / B33. The raw token is ONE INTERACTION away and prints, rather than
+  /* The raw token is ONE INTERACTION away and prints, rather than
      living in a `visually-hidden` span that only assistive technology could
      reach — which gave screen-reader users a fact sighted readers had no route
      to at all, on screen or on paper.
 
-     `<details>` because it needs no script (the locked R36 CSP admits exactly
+     `<details>` because it needs no script (the locked CSP admits exactly
      two inline script hashes, and a gate that required a third would have to be
      unpicked to land the policy), and because `<summary>` is focusable and
      keyboard-operable natively. The WARNING stays in the summary and therefore
@@ -964,7 +964,7 @@ export function srcLinkCell(doc: string): string {
     identity supports (an EDGAR filer page — a real URL, never a fabricated
     per-document link the aggregate does not publish). */
 export function srcLinkDerived(footnoteHref: string | null, edgarUrl: string | null): string {
-  /* SL-R7: `null` means "this surface's footnote block became a column note".
+  /* `null` means "this surface's footnote block became a column note".
      The marker STAYS VISIBLE — LD3 keeps every honesty marker on the page as
      the note's anchor — but it stops being a link into an id that no longer
      exists, which would be a broken internal link. */
@@ -1042,7 +1042,7 @@ export function dualDate(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">): 
 
 /** DualDate as a feed-row CELL.
 
-    F1: `dualDate` returns CONTENT, never a container. It briefly returned a
+    `dualDate` returns CONTENT, never a container. It briefly returned a
     `<td>` of its own when the feed became a table, which produced
     `<td class="c-traded"><td class="cell cell-traded">…</td></td>` on the
     per-member and per-ticker detail pages — pages this change lists as explicit
@@ -1053,7 +1053,7 @@ export function dualDateCell(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late"
   return `<td class="cell cell-traded">${dualDate(r)}</td>`;
 }
 
-/* R5/R18: the feed rows are REAL TABLE ROWS.
+/* The feed rows are REAL TABLE ROWS.
 
    They were `<div>`s in a CSS grid, which looked like a table and behaved like
    one on screen but could not carry sortable column headers, a `<caption>`, or
@@ -1072,21 +1072,21 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
   const ownerLong = ownerNoteLong(r);
   const amount = amountText(r);
   const amountUnknown = r.low == null && r.high == null;
-  /* SL-R8 Class B: the sole channel for this fact was a `title=`, which no
+  /* The sole channel for this fact was a `title=`, which no
      touch device can open. It becomes a note keyed on the row's own `txnId`
-     (SL-R26) — a per-row identity the renderer already holds, so no signature
+     — a per-row identity the renderer already holds, so no signature
      changes and no caller is edited.
 
      JUDGEMENT CALL, recorded for the owner: `txnRowHtml` also renders on
      `/watchlist/` and `/e/`, which this run does not own, so this is NOT a
-     no-scope-no-note renderer under SL-R2b. It is converted anyway because
-     R2b's harm is LOSING published text on a route this run does not own, and
+     no-scope-no-note renderer under the opt-in rule. It is converted anyway because
+     that rule's harm is LOSING published text on a route this run does not own, and
      nothing is lost here — a tooltip unreachable by touch is replaced by real
      DOM that opens declaratively via `popovertarget` with no JavaScript at
      all. Those routes strictly gain a channel. The alternative — an opt-in
      parameter — would keep the `title=` in the source for the fallback branch
-     and so break R8d's exact 32→17 inventory gate while leaving the
-     tooltip-only channel on the very rows LD10 ratified converting. */
+     and so break the exact 32→17 `title=` inventory gate while leaving the
+     tooltip-only channel on the very rows the owner ratified converting. */
   const spouseCapDagger = r.flags.includes("amount_spouse_cap")
     ? `<sup class="dagger">‡</sup>` +
       note("disclosed only as an open-ended cap", { scope: "txn" }, `${r.txnId}-dagger`)
@@ -1129,7 +1129,7 @@ ${srcLinkCell(r.doc)}
 </tr>`;
 }
 
-/* ---------- R5/F7: the feed table's COLUMN CONTRACT, shared by both tables --
+/* ---------- the feed table's COLUMN CONTRACT, shared by both tables --------
 
    `feedItemHtml` emits NINE cells, and two pages render it: `/congress/` and
    `/watchlist/`. The watchlist shipped those nine cells inside a `<tbody>` with
@@ -1198,7 +1198,7 @@ export const FEED_COLUMNS: readonly FeedColumn[] = [
 ];
 
 export interface FeedHeadOpts {
-  /** SL-R2b: opt-in. Present -> column explanations render as notes. Absent ->
+  /** Opt-in. Present -> column explanations render as notes. Absent ->
       `.col-why` exactly as today, which is what `/watchlist/` relies on. */
   notes?: NoteCtx;
   /** false on a surface with no sort control; the two orderable columns then
@@ -1252,7 +1252,7 @@ export function feedItemHtml(item: FeedItem, ctx: RenderCtx, rowClass = ""): str
 export function terminusRow(opts: {
   author: "source" | "populus";
   html: string;
-  /** F16: render the row present-but-hidden, so a client whose row set later
+  /** Render the row present-but-hidden, so a client whose row set later
       exceeds the compact bound can REVEAL the notice. A notice that was never
       rendered cannot be filled in, and the transition then hides rows with no
       statement of the bound — which is the omission the notice exists to
@@ -1264,26 +1264,26 @@ export function terminusRow(opts: {
   return (
     `<div class="terminus" data-terminus-author="${opts.author}"${opts.hidden ? " hidden" : ""}>` +
     // The body is addressable so a client that changes the row set can restate
-    // the bound without rewriting the author label beside it (F16).
+    // the bound without rewriting the author label beside it.
     `<span class="terminus-author">${label}</span><span class="terminus-body"> ${opts.html}</span></div>`
   );
 }
 
-/* ---------- R7/R19: compact-by-default tables with an in-place expand ------
+/* ---------- compact-by-default tables with an in-place expand -------------
 
    THE COMPACT SLICE IS A RENDER BOUND, AND IT SAYS SO. Collapsing a table hides
    DATA ROWS and nothing else. Everything that carries meaning about what the
    reader is not seeing — the caption, every column header, the caveat line, the
    terminus row and its named author, footnote markers and their printed lines,
    the filtered-count line, any stated absence — stays in the accessibility tree
-   in both states. That list is not advice; it is the enumerated allowlist R19
-   pins and `test/collapsed-honesty.test.ts` asserts against.
+   in both states. That list is not advice; it is the enumerated allowlist
+   `test/collapsed-honesty.test.ts` asserts against.
 
    NO CSS SUPPRESSION. Rows beyond the slice are ABSENT from the collapsed DOM
    and are rendered on expand. `display:none` on a honesty-bearing selector is
    what the fold gate exists to reject, so this primitive never reaches for it.
 
-   THE BUTTON IS HIDDEN UNTIL SCRIPTED — THE STATEMENT NEVER IS (SL-R10).
+   THE BUTTON IS HIDDEN UNTIL SCRIPTED — THE STATEMENT NEVER IS.
    A button that cannot work without JavaScript must not be presented as though
    it can, so the `<button>` ships `hidden` and a client reveals it. The
    SENTENCE beside it is a different thing entirely: it is the reader's notice
@@ -1294,7 +1294,7 @@ export function terminusRow(opts: {
    sort), and an island that loaded, threw or returned early — and a bound that
    lived only on the button was stated in none of them. `<noscript>` closes only
    the first. A server-rendered visible statement closes all three, which is
-   what let R10's five duplicated terminus rows finally be deleted. */
+   what let the five duplicated terminus rows finally be deleted. */
 
 /** Rows rendered before a table asks the reader to expand it. */
 export const COMPACT_ROWS = 10;
@@ -1311,20 +1311,20 @@ export interface CompactDisclosureOpts {
   /** the full body is already in the DOM and the control reveals it, rather
       than the owner re-rendering rows from data */
   domBacked?: boolean;
-  /** SL-R10: the noun the BOUND SENTENCE uses, when it differs from the noun
+  /** the noun the BOUND SENTENCE uses, when it differs from the noun
       the button uses — "ranked tickers" reads correctly in "823 further ranked
       tickers are not rendered above" and wrongly in "Show all 833 ranked
       tickers". Defaults to `noun`. */
   boundNoun?: string;
-  /** SL-R10: the whole count sentence, for the one table whose bound is not of
+  /** the whole count sentence, for the one table whose bound is not of
       the "N further X are not rendered above" shape (the activity feed states
       a first-of-total slice). Pre-escaped by the caller. */
   boundCount?: string;
-  /** SL-R10: the STATE-INDEPENDENT remainder of the bound — the facts the
+  /** the STATE-INDEPENDENT remainder of the bound — the facts the
       deleted terminus rows carried beside their count: the link to the
       published dataset, the link to this quarter's payload, that every filer
       has its own page, the activity feed's publication bound. Pre-escaped by
-      the caller (R26: the renderer never invents one).
+      the caller (the renderer never invents one).
 
       It is separate from the count clause because it stays TRUE when the table
       is expanded, and the count clause does not: expanding retracts "823 are
@@ -1344,13 +1344,13 @@ export function compactBoundCount(hidden: number, noun: string): string {
 
 /** The bound statement plus its expand control.
 
-    OMISSION RULE (R7): a table whose row count does not EXCEED the compact
+    OMISSION RULE: a table whose row count does not EXCEED the compact
     slice renders no control. A disclosure that expands to the same rows is a
     lie about there being more, and an inert control is worse than none.
 
-    SL-R10: what "renders no control" means is that the BUTTON is hidden and
+    What "renders no control" means is that the BUTTON is hidden and
     empty. The wrapper itself stays hidden too when there is nothing whatever to
-    say — the F16 shell below. But a caller that supplied a `bound` remainder
+    say — the shell branch below. But a caller that supplied a `bound` remainder
     has something true to say in every state, so that wrapper renders visible
     with the count clause alone withheld. */
 export function compactDisclosure(o: CompactDisclosureOpts): string {
@@ -1381,14 +1381,14 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
     `</p>`;
 
   if (hidden <= 0) {
-    // F16: a SHELL, not nothing. R7's omission rule is about what the reader
+    // A SHELL, not nothing. The omission rule is about what the reader
     // SEES — and with nothing to disclose this states no count, which satisfies
     // it. But a section whose row set can change (a momentum range switch, a
     // directory filter) must be able to gain a control later, and a client
     // cannot reveal an element that was never rendered. Rows beyond ten used
     // to become unreachable after exactly that transition.
     //
-    // SL-R10: the WRAPPER is hidden only when the remainder is absent too.
+    // The WRAPPER is hidden only when the remainder is absent too.
     // With a remainder present there is a published fact here that is true at
     // every row count, and hiding it would be the omission the terminus row it
     // replaced existed to prevent.
@@ -1399,7 +1399,7 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
     bound(o.boundCount ?? compactBoundCount(hidden, o.boundNoun ?? o.noun), false) +
     // The button carries the TOTAL, never the held-back count: the sentence
     // above it already states that count, and one bound stated twice, two
-    // elements apart, is the duplication R10 set out to remove.
+    // elements apart, is exactly the duplication this control removes.
     btn(`Show all ${fmtInt(o.total)} ${esc(o.noun)}`) +
     `</div>`
   );
@@ -1458,7 +1458,7 @@ export function syncCompactDisclosure(
     if (showCount && o.count) writeBound(countEl, o.count, "");
     countEl.hidden = !showCount;
   }
-  // R7's omission rule: nothing to disclose, no control. The button is emptied
+  // The omission rule: nothing to disclose, no control. The button is emptied
   // as well as hidden so a stale label cannot survive into a later reveal.
   const inert = o.hidden <= 0 && !o.expanded;
   if (btn) {
@@ -1512,7 +1512,7 @@ export interface CompactBoundNode {
 }
 
 /**
- * SL-R7: a footnote marker whose block has become a column note.
+ * A footnote marker whose block has become a column note.
  *
  * The marker is the reader's cue that the column carries an explanation, and
  * LD3 keeps every one of them visible on the page — what changes is that it no
@@ -1524,7 +1524,7 @@ export function fnMark(mark: string): string {
   return `<span class="fn-ref">${esc(mark)}</span>`;
 }
 
-/* ------------------------------------------------- SL-R17: identity chips */
+/* ----------------------------------------------------- identity chips --- */
 
 /** How strong an issuer/position identity actually is, read off the key's own
     prefix. The producer publishes these prefixes; this only names them. */
@@ -1569,7 +1569,7 @@ const IDENTITY_CHIP: Record<Exclude<IdentityStrength, "entity">, { label: string
 };
 
 /**
- * SL-R17. A raw `cusip6:464287` or `sid:sec:prov:00076fbd…` printed as visible
+ * A raw `cusip6:464287` or `sid:sec:prov:00076fbd…` printed as visible
  * text tells a reader nothing they can act on and reads as machine spill. The
  * chip states what the key IS in words; the raw key stays in the note and in a
  * `data-` attribute, so nothing is lost and a copy/paste path survives.
@@ -1623,28 +1623,28 @@ export function footnoteBlock(
     breakdown in the title attribute AND available to assistive tech. */
 export function statTiles(
   tiles: StatTile[],
-  /* SL-R2b / SL-R26: `notes` is OPTIONAL. `statTiles` has six call sites, two of
+  /* `notes` is OPTIONAL. `statTiles` has six call sites, two of
      them on `/tickers/*` and one on the holders page, and only the member and
      filer headers pass a scope. Without one this renderer emits exactly what it
      emitted before this run — which is what keeps the routes this run does not
-     own byte-identical, and is why R26's earlier "required scope" was
+     own byte-identical, and is why the earlier "required scope" design was
      withdrawn. */
   opts: { label?: string; compact?: boolean; notes?: NoteCtx } = {},
 ): string {
   const aria = opts.label ?? "Statistics";
   const cls = opts.compact ? "tiles tiles-entity" : "tiles";
   const tile = (t: StatTile): string =>
-    /* SL-R8 Class A: attribute deleted; the `.visually-hidden` span below
+    /* Attribute deleted; the `.visually-hidden` span below
        already publishes the SAME `t.title` as real DOM, and
        `format.test.ts:764` guards that sibling with the message "tooltip is
-       never the only channel". The tile's own note is R19/R22's separate,
+       never the only channel". The tile's own note is a separate,
        additive change — this is only the removal of the duplicate.
 
-       SL-R19/R22: WITH a scope the breakdown becomes a note instead. The
+       WITH a scope the breakdown becomes a note instead. The
        `.visually-hidden` span is dropped in that branch and only in it — the
        note panel is real DOM carrying the same string, referenced by
        `aria-describedby`, so keeping both would read the breakdown to a screen
-       reader twice. The tile's own LABEL is the key (SL-R26): one tile per
+       reader twice. The tile's own LABEL is the key: one tile per
        label per tile group, which is what makes it singular. */
     `<div class="tile" role="listitem">` +
     `<div class="tile-value${t.muted ? " muted" : ""}">${esc(t.value)}${
@@ -1706,8 +1706,7 @@ export function utcDayNumber(iso: string | null | undefined): number | null {
     `utcDayNumber` accepts `2026-02-30` and `0000-00-00` because `Date.UTC`
     silently rolls them over; a date that decides whether a question is
     ANSWERABLE (the committee validity window) must round-trip exactly, or
-    corrupt bounds can turn unsupported dates into known-none answers
-    (review c2r2-F2). */
+    corrupt bounds can turn unsupported dates into known-none answers. */
 export function isCanonicalDate(iso: unknown): iso is string {
   if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
   const t = Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));

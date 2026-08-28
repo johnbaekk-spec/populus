@@ -16,7 +16,7 @@ import { congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type Build
 
 const build = getBuildData();
 
-/* R2/R3: the momentum section's SSR view is AUTHORITATIVE, not a placeholder.
+/* The momentum section's SSR view is AUTHORITATIVE, not a placeholder.
    It is rendered here at the locked defaults — a trailing 12 months on the
    traded basis — through the same functions the client calls, so the two
    cannot disagree. The client recomputes only when the reader changes the
@@ -57,7 +57,7 @@ const momentumHtml = congressRankingSection(
     heading: "Ticker momentum — net disclosed flow",
     sectionId: "momentum-section",
     controls: true,
-    /* SL-R14: computed here because only this page holds the full row set —
+    /* Computed here because only this page holds the full row set —
        the rollup above is already windowed. The client recomputes the same
        thing from the same rows through the same function when the reader
        changes the window. */
@@ -137,7 +137,7 @@ const description =
           — what you read here is what was filed; nothing more current exists in the
           public record. <a href="/methodology/">How this data is made ↗</a>
         </p>
-        {/* SL-R1. The `.caveat-line` is replaced by a STAMP plus four deep
+        {/* The `.caveat-line` is replaced by a STAMP plus four deep
             methodology links. Nothing is softened: every claim the line made
             still ships, at its authoritative source rather than as a compressed
             restatement above the fold. "amounts are statutory ranges" is
@@ -258,8 +258,8 @@ const description =
       </div>
     </div>
 
-    <!-- Section two: the disclosure feed. R4 puts Ticker before Member and
-         gives it the primary emphasis; the default order remains newest filed
+    <!-- Section two: the disclosure feed. Ticker sits before Member and
+         carries the primary emphasis; the default order remains newest filed
          (owner decision) — the visual anchor changed, the ordering did not. -->
     <section class="panel panel-wide" id="feed-section" aria-label="Disclosure feed">
       <div class="panel-head"><h2 class="section-h">Disclosure feed</h2>
@@ -285,7 +285,7 @@ const description =
           header; amounts sort on their disclosed lower bound and wholly-undisclosed rows are
           listed after every ranked row rather than treated as zero.
         </caption>
-        <!-- R5/F7: ONE column contract, rendered here and on /watchlist/, which
+        <!-- ONE column contract, rendered here and on /watchlist/, which
              shows the same nine cells through the same `feedItemHtml`. The
              watchlist had no <thead> at all; a second hand-written copy here
              would be the drift that caused it. -->
@@ -296,7 +296,7 @@ const description =
       </table>
 
       <Fragment set:html={footnoteHtml} />
-      <!-- R7/F2: the feed's compact bound is its PAGE, and the pager below is
+      <!-- The feed's compact bound is its PAGE, and the pager below is
            the disclosure that lifts it. A second "show all" control over a
            50-row page of ~46,000 rows would be a control that cannot honour
            its own label; the pager states the bound and moves through it. -->
@@ -321,22 +321,22 @@ const description =
     </div>
     </section>
 
-    <!-- Section three: member net-flow, two render roots (R18). -->
+    <!-- Section three: member net-flow, two render roots. -->
     <Fragment set:html={membersHtml} />
   </main>
 
   <script>
-    /* R17: ONE fetch, ONE decode. The feed island owns both and hands the
+    /* ONE fetch, ONE decode. The feed island owns both and hands the
        parsed rows to the ranking sections — they never fetch. */
     import { initFeed } from "../../scripts/feed-client";
     import { initCongressSections } from "../../scripts/congress-sections";
     import { initNotes } from "../../scripts/notes";
     const sections = initCongressSections();
-    /* SL-R29: `onSettled` fires on BOTH the success and failure paths, so the
+    /* `onSettled` fires on BOTH the success and failure paths, so the
        momentum section's "applying …" state clears either way. Cleared only in
        `onRows` it would survive a failed download for the life of the page. */
     initFeed({ onRows: sections.receiveRows, onSettled: sections.feedSettled });
-    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+    /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —
        and a second call would be idempotent. It is NOT added to `Base.astro`:

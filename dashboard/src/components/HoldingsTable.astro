@@ -150,7 +150,7 @@ if (db && props.kind === "filer") {
     )
     .all(props.issuerKey) as Record<string, unknown>[];
   const rows = parseIssuerShard({ filings: cache.filings, rows: raw }).rows;
-  // R22: the top/tail budget state rides on every holder row so the embedded
+  // The top/tail budget state rides on every holder row so the embedded
   // payload's client re-render produces the same href the SSR did (filerHref).
   const tops = topFilerCiks(getBuildData());
   for (const row of rows) row.filer_tier = tops.has(row.filer_key) ? "top" : "tail";
@@ -236,7 +236,7 @@ const bodyHtml =
     : surfaceHtml(payload, { view: "current", page: 0, period: payload.current });
 
 /* `</script>` inside an issuer or filer name would otherwise close the embed;
-   the shared R6 serializer escapes every `<`. */
+   the shared inline-JSON serializer escapes every `<`. */
 const payloadJson = payload == null ? "" : serializeInlineJson(payload);
 ---
 

@@ -103,7 +103,7 @@ const description =
     import { initFilerPeriods } from "../../../scripts/entity-client";
     import { initNotes } from "../../../scripts/notes";
     initFilerPeriods();
-    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+    /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —
        and a second call would be idempotent. It is NOT added to `Base.astro`:

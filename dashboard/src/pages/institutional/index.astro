@@ -49,14 +49,14 @@ if (!inst.present) {
       f,
       concentrationFor(inst, f.cik, f.latest_period),
       filerTier(build, f.cik),
-      // R11: curated typing where the registry has it, null otherwise — the
+      // Curated typing where the registry has it, null otherwise — the
       // directory types a curated SUBSET and says so rather than guessing.
       typingFor(inst, f.cik),
-      // R11/R22: the manager's largest change in its own latest period.
+      // The manager's largest change in its own latest period.
       biggestChange(deltasFor(inst, f.cik, f.latest_period), f.latest_period),
     ),
   );
-  /* R7/F2/F3: compact by DEFAULT, server-side, through the SAME renderer the
+  /* Compact by DEFAULT, server-side, through the SAME renderer the
      client island uses.
 
      This page used to render the body itself: it sliced the RANKED rows to the
@@ -68,18 +68,18 @@ if (!inst.present) {
      none of its rows fit, and it is now the only renderer of this table. */
   const directory = instIndexBodyHtml(indexRows, "", "value", "desc", undefined, COMPACT_ROWS);
   const rows = directory.html;
-  /* SL-R5: a column with no well-defined order still STATES why — the channel
+  /* A column with no well-defined order still STATES why — the channel
      changed, not the text. It was a `.col-why` sub-label under every unsortable
      header, which is the single largest contributor to this table's header
      height; it is now a note anchored on that same header, reachable by hover,
-     tap, keyboard and print. R26b: the scope is supplied by this caller, and
+     tap, keyboard and print. The scope is supplied by this caller, and
      the key is the column's own sort key where it has one and its label where
      it does not — this mapper renders exactly once per page. */
   const headNotes = { scope: "inst-index" };
-  // SL-R18: declared HERE now, because the Type column's note reads it and the
+  // Declared HERE now, because the Type column's note reads it and the
   // note renders above the chip row that used to be its only consumer.
   const typedCount = indexRows.filter((r) => r.typing !== null).length;
-  /* SL-R18: the Type column's note carries BOTH its own unsortability reason
+  /* The Type column's note carries BOTH its own unsortability reason
      and the curated-coverage caveat with its live `N of M` count — the two
      facts a reader needs at that column, in one place, instead of a paragraph
      above the table repeating the second. */
@@ -101,7 +101,7 @@ if (!inst.present) {
       : `<th scope="col" data-inst-sort="${h.key}" aria-sort="${h.key === "value" ? "descending" : "none"}"><button class="th-sort">${esc(h.label)}</button></th>`,
   ).join("");
 
-  /* R9/R20: the leaderboard leads the page. Only CLOSED quarters are offered,
+  /* The leaderboard leads the page. Only CLOSED quarters are offered,
      and the newest is the default view — an open quarter counts only the
      managers who happened to file early, so it is not offered at all. */
   const addsPeriods = closedPeriods(inst.addsPeriods, build.generatedAtDate);
@@ -124,7 +124,7 @@ if (!inst.present) {
           { period: addsPeriod, mode: addsMode, periods: addsPeriods, buildId: build.buildId },
         );
 
-  /* R11: the type chips. `Notable` is EDITORIAL and orthogonal — it renders
+  /* The type chips. `Notable` is EDITORIAL and orthogonal — it renders
      beside the type chips but is not one of them, so selecting a type never
      hides a notable manager of that type. */
   const chipsHtml =
@@ -139,7 +139,7 @@ if (!inst.present) {
       )
       .join("") +
     `</div>` +
-    /* SL-R18: the curated-coverage caveat moves onto the Type column it is
+    /* The curated-coverage caveat moves onto the Type column it is
        about, carrying its `N of M` count with it — see `typeNote` below, which
        is what `headNotes` renders. The `<noscript>` stays visible here, because
        it is about scripting rather than about a column and no column note is
@@ -154,7 +154,7 @@ if (!inst.present) {
     )} filers; latest period on record ${esc(inst.watermarks.latest_period_of_report ?? "—")}.</p>` +
     `</div></header>` +
     (window?.open ? s7Banner(window) : "") +
-    // R9 -> R10 -> R11: leaderboard, then the issuer-anchored feed, then the
+    // Page order: leaderboard, then the issuer-anchored feed, then the
     // typed directory.
     addsHtml +
     activitySectionHtml(feed, { tierOf: (cik) => filerTier(build, cik) }) +
@@ -186,7 +186,7 @@ if (!inst.present) {
       ],
       { id: "inst-index-footnotes" },
     ) +
-    /* R19/F6 + SL-R10: the named bound is stated by the control itself, VISIBLE
+    /* The named bound is stated by the control itself, VISIBLE
        from the server. Nothing reveals this control at load — the directory's
        `syncDisclosure` runs only from a render, and `initSortableTable`
        deliberately does not paint at init — so a bound that lived on the button
@@ -233,7 +233,7 @@ const description = build.inst.present
     initInstIndex();
     initAddsControls();
     initDomDisclosures();
-    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+    /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —
        and a second call would be idempotent. It is NOT added to `Base.astro`:

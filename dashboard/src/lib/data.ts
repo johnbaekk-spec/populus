@@ -84,7 +84,7 @@ export interface BuildData {
   dataNote: string;
   stats: Record<string, any>; // parsed congress/stats.json (schema-validated upstream)
   /** The RAW bytes of congress/stats.json, verbatim and unparsed. `/stats.json`
-      must be BYTE-equal to the canonical copy (R24, ARCHITECTURE §12.1) and the
+      must be BYTE-equal to the canonical copy (ARCHITECTURE §12.1) and the
       producer renders it as
       `json.dumps(…, ensure_ascii=False, indent=2, sort_keys=True) + "\n"`
       (`src/populus/stats.py`), which JS re-serialization cannot reproduce. So
@@ -131,7 +131,7 @@ export interface CommitteeData {
   jurisdictionByCommittee: Map<string, string[]>;
   mappingVersion: string;
   snapshotDate: string;
-  /** snapshot-WIDE validity bounds across all members (review F7): a member
+  /** snapshot-WIDE validity bounds across all members: a member
       with zero rows inside this window is known-none, not unknown */
   windowFrom: string;
   windowTo: string;
@@ -139,12 +139,12 @@ export interface CommitteeData {
 
 /** Optional B-5/B-6 tables. Absence (older builds) is an explicit null the
     pages render as honest absence — never a guessed empty mix. */
-/* internal: exported for tests (review F9) — the corruption/absence distinction is load-bearing. */
+/* internal: exported for tests — the corruption/absence distinction is load-bearing. */
 export function loadContext(dbPath: string): { sectorData: SectorData | null; committeeData: CommitteeData | null } {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   let sectorData: SectorData | null = null;
   let committeeData: CommitteeData | null = null;
-  // Review F9: absence is detected EXPLICITLY (sqlite_master), never inferred
+  // Absence is detected EXPLICITLY (sqlite_master), never inferred
   // from a swallowed exception — schema drift, corruption, or a locked file
   // must fail the build loudly, not impersonate the legitimate "not in this
   // build" state.
@@ -152,7 +152,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
     db
       .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
       .get(name) !== undefined;
-  // Review F7: a table FAMILY is wholly absent (→ honest null), complete
+  // A table FAMILY is wholly absent (→ honest null), complete
   // (→ load), or PARTIAL (→ build failure) — a half-migrated or damaged build
   // must never masquerade as "not in this build".
   const familyState = (tables: string[]): "absent" | "complete" | "partial" => {
@@ -177,11 +177,11 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
       for (const r of db.prepare(`SELECT cik, sector FROM issuer_sic`).all() as Record<string, unknown>[]) {
         sectorByCik.set(String(r.cik), String(r.sector));
       }
-      // Review r3-F7: the family is COMPLETE here, so "empty" is a failed or
+      // The family is COMPLETE here, so "empty" is a failed or
       // never-run ingest — a producer defect. Converting it to null would let
       // it wear the legitimate "not in this build" page.
       // The sector snapshot's own as-of date is displayed beside every sector
-      // claim — same strictness (F0 full-set sweep).
+      // claim — same strictness as the full-set date sweep above.
       if (meta.has("snapshot_as_of") && !isCanonicalDate(meta.get("snapshot_as_of"))) {
         throw new Error(
           `sic_taxonomy_meta.snapshot_as_of is not a real YYYY-MM-DD date ` +
@@ -215,7 +215,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
       );
     }
     if (committeeFamily === "complete") {
-      /* Review c2r3-F2: the read below INNER-JOINs memberships to committees,
+      /* The read below INNER-JOINs memberships to committees,
          so a row naming a committee the committees table does not carry would
          vanish silently — and one surviving membership keeps the family
          non-empty, so the affected member is then answered KNOWN-NONE instead
@@ -285,7 +285,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
         list.push(String(r.sector));
         mappingVersions.add(String(r.mapping_version));
       }
-      // Review r3-F8: overlap claims attribute to ONE mapping revision — rows
+      // Overlap claims attribute to ONE mapping revision — rows
       // from mixed revisions (a half-applied re-ingest) cannot share a page
       // under a single arbitrary version label.
       if (mappingVersions.size > 1) {
@@ -302,7 +302,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
             `snapshot; mixed dates mean a partial ingest`,
         );
       }
-      /* Review c2-F2: the validity window is a property of the SNAPSHOT, and
+      /* The validity window is a property of the SNAPSHOT, and
          the ingest writes one `valid_from`/`valid_to` pair for every row. Mixed
          bounds therefore mean a partial ingest — and widening them to the outer
          hull would let a member whose rows begin later be reported as
@@ -325,7 +325,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
         );
       }
       const mappingVersion = [...mappingVersions][0] ?? "";
-      // Review r3-F7: complete-but-empty is a defect here too.
+      // Complete-but-empty is a defect here too.
       if (byMember.size === 0) {
         throw new Error(
           "the B-6 committee tables exist but hold no memberships — an empty or failed " +
@@ -341,7 +341,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
       }
       const windowFrom = [...validFroms][0] ?? "";
       const windowTo = [...validTos][0] ?? "";
-      /* Review c2r2-F2: the window decides what is ANSWERABLE, so its bounds
+      /* The window decides what is ANSWERABLE, so its bounds
          are validated as real calendar dates and ordered — a blank, malformed,
          impossible (`0000-00-00`, `2026-02-30`) or inverted pair would turn
          unsupported dates into known-none or membership answers. */
@@ -384,7 +384,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
 
 let signalCache: import("./signals.ts").SignalArtifact | null = null;
 
-/* D-1c lifecycle chaining (reviews F1 → r3-F1, r3-F2).
+/* D-1c lifecycle chaining.
 
    The prior artifact is DURABLE: the publisher points POPULUS_PRIOR_SIGNALS
    at the previous published build's own copy in the data repo — not at a
@@ -543,7 +543,7 @@ function resolveSources(): { buildDir: string; dbPath: string; buildId: string }
 }
 
 /** Where the ONE canonical `stats.json` lives inside the data build. The site's
-    `/stats.json` route serves these exact bytes (R24), so the byte-equality
+    `/stats.json` route serves these exact bytes, so the byte-equality
     check has a single named source rather than a path re-derived per caller. */
 export function statsSourcePath(): string {
   return path.join(resolveSources().buildDir, "congress", "stats.json");
@@ -790,7 +790,7 @@ export function getBuildData(): BuildData {
   if (!existsSync(dbPath)) throw new Error(`congress.db not found at ${dbPath}`);
 
   // Keep the raw text as well as the parse: `/stats.json` re-serves these exact
-  // bytes (R24). Reading only the parse — as this did — made the canonical bytes
+  // bytes. Reading only the parse — as this did — made the canonical bytes
   // unreachable from the dashboard, and no re-serialization can recover them.
   const statsPath = path.join(buildDir, "congress", "stats.json");
   const statsJson = readFileSync(statsPath, "utf-8");
@@ -907,7 +907,7 @@ export function getBuildData(): BuildData {
         rows: t.txns.length,
       })),
       inst.present
-        ? // R22: search hits must carry the top/tail target too — a tail
+        ? // Search hits must carry the top/tail target too — a tail
           // filer hit linking to the pre-rendered route is a dressed 404.
           inst.filers.map((f) => ({
             cik: f.cik,
@@ -971,7 +971,7 @@ export interface TickerInstSection {
     securities: number;
     keySource: string;
     flags: string[];
-    /** R22: top/tail target for the holder's filer link — the client body
+    /** top/tail target for the holder's filer link — the client body
         renderer routes through `filerHref` with this, so a tail filer in a
         browser ticker payload never links into a 404. */
     tier: FilerBudgetState;
@@ -1015,12 +1015,12 @@ export function tickerInstSection(build: BuildData, ticker: string): TickerInstS
   };
 }
 
-/* ---------- R22: the filer budget seams + the tail shard family ---------- */
+/* ---------- the filer budget seams + the tail shard family ---------- */
 
 /** Mirrored from `src/populus/inst_budget.py::FILER_TAIL_SHARDS_RESERVED` — a
     hard shard budget the tail family must fit inside (the walk FAILS past it,
     never truncates — LD-9/LD-10). Pinned against the Python constant by test. */
-/* internal: exported for tests (F1) — the mirror test reads it; no other module does. */
+/* internal: exported for tests — the mirror test reads it; no other module does. */
 export { FILER_TAIL_SHARDS_MAX };
 
 /** LD-7 selection over the loaded aggregate — the ONE call site of
@@ -1058,7 +1058,7 @@ export function filerTier(build: BuildData, cik: string): FilerBudgetState {
 
 /** The aggregate half of a FilerPayloadV1 — exactly the `ui.filerBody` inputs
     the pre-rendered `[cik].astro` page uses, computed by ONE function so the
-    page, the component, and the shard planner cannot drift (R22 parity). */
+    page, the component, and the shard planner cannot drift. */
 export function filerAggregateInputs(build: BuildData, cik: string): FilerAggregateInputs {
   const inst = build.inst;
   if (!inst.present) {
@@ -1102,7 +1102,7 @@ interface FilerShardFamily {
       infer "no tail" from an empty object. The ONLY absence is a genuinely
       absent module: with the module present, an unlocatable or unreadable
       serving artifact THROWS (build failure) rather than publishing an empty
-      index whose every tail link is dead (Codex F7). */
+      index whose every tail link is dead. */
   reason: "module-absent" | null;
   /** cik10 → inclusive shard range and exact fragment count. */
   routes: Record<string, FilerRouteV2>;
@@ -1125,7 +1125,7 @@ function absentFamily(reason: Exclude<FilerShardFamily["reason"], null>): FilerS
 let filerFamilyCache: { key: string; family: FilerShardFamily } | null = null;
 
 /**
- * The tail shard family (R22, LD-9, LD-10): every published filer OUTSIDE the
+ * The tail shard family: every published filer OUTSIDE the
  * LD-7 top 1,500, assembled once, split at record boundaries, and fed into the
  * ONE byte-bounded filler. The walk FAILS the build — never truncates or widens
  * — so every logical filer reconstructs from a bounded contiguous shard range.
@@ -1139,7 +1139,7 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
   let family: FilerShardFamily;
   if (!inst.present) family = absentFamily("module-absent");
   else {
-    // Codex F7: the absent-family path is reserved for a genuinely absent
+    // The absent-family path is reserved for a genuinely absent
     // module. With inst.present, a missing/unreadable serving artifact is a
     // BUILD FAILURE naming the path — never a silent empty routing index
     // whose every tail link is dead.
@@ -1147,13 +1147,13 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
       throw new Error(
         "inst module is present but no serving artifact path resolves " +
           "(POPULUS_INST_SERVING_DB / POPULUS_INST_DB / POPULUS_BUILD_DIR all unset) — " +
-          "refusing to publish an empty filer routing index (R22)",
+          "refusing to publish an empty filer routing index",
       );
     }
     if (!existsSync(dbPath)) {
       throw new Error(
         `inst module is present but the serving artifact ${dbPath} does not exist — ` +
-          `refusing to publish an empty filer routing index (R22)`,
+          `refusing to publish an empty filer routing index`,
       );
     }
     let db: DatabaseSync;
@@ -1162,7 +1162,7 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
     } catch (err) {
       throw new Error(
         `inst module is present but the serving artifact ${dbPath} cannot be opened ` +
-          `(${(err as Error).message}) — refusing to publish an empty filer routing index (R22)`,
+          `(${(err as Error).message}) — refusing to publish an empty filer routing index`,
       );
     }
     {
@@ -1246,7 +1246,7 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
           if (parts === undefined || route === undefined) {
             throw new Error(
               `published tail filer ${f.cik} is missing from the routing index — ` +
-                `the shard family is incomplete, which is a build failure (R22)`,
+                `the shard family is incomplete, which is a build failure`,
             );
           }
           if (parts < 1 || parts > FILER_FRAGMENT_PARTS_MAX
@@ -1338,7 +1338,7 @@ export function tickerDataKeys(build: BuildData): { key: string; ticker: string 
   return keys;
 }
 
-/* ---------- methodology tiles (R8): every tile names its stats.json key ---- */
+/* ---------- methodology tiles: every tile names its stats.json key ------- */
 
 export interface MethodologyTile extends StatTile {
   /** dotted stats.json path(s) this tile derives from — asserted by tests so a
