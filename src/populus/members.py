@@ -34,7 +34,8 @@ from datetime import date
 from pathlib import Path
 
 import yaml
-from lxml import etree
+
+from populus.parse.xml import parse_untrusted_xml
 
 # Tokens dropped during filer-name normalization. Honorifics and professional
 # / generational suffixes appear in index names ("Dunn, Neal Patrick MD,
@@ -563,7 +564,10 @@ def house_hints_from_index(
     """
     hints: dict[str, tuple[str | None, str | None]] = {}
     for path in xml_paths:
-        root = etree.fromstring(Path(path).read_bytes())
+        # Cached bytes of a REMOTE index: parse through the shared hardened
+        # helper (R10/LD11). UnsafeXmlError/XMLSyntaxError propagate as named
+        # failures — a refused index must never yield silent empty hints.
+        root = parse_untrusted_xml(Path(path).read_bytes())
         for member in root.iter("Member"):
             if (member.findtext("FilingType") or "").strip() != "P":
                 continue

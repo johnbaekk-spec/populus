@@ -20,6 +20,7 @@ import json
 import re
 import sqlite3
 import zipfile
+import zlib
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -30,6 +31,7 @@ from typing import Protocol
 from lxml import etree
 
 from populus.amendments import flag_unresolved_pair_rows
+from populus.parse.xml import UnsafeXmlError, parse_untrusted_xml
 from populus.ingest import (
     USER_AGENT,
     FetchMetrics,
@@ -86,16 +88,23 @@ class Transport(Protocol):
 
 
 class HttpxTransport:
-    """The real HTTP client; constructed only by the CLI's live path."""
+    """The real HTTP client; constructed only by the CLI's live path.
+
+    Routed through the shared bounded transport helper (R9/LD10): decoded
+    bodies over the 128 MiB ceiling raise ``ResponseTooLarge`` — a named
+    ingest failure — instead of buffering without limit.
+    """
+
+    def __init__(self, *, transport: object | None = None) -> None:
+        # *transport* is a hermetic test seam (httpx.MockTransport);
+        # the live path constructs with no arguments.
+        self._transport = transport
 
     def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
-        import httpx
+        from populus.net.bounded_http import bounded_http_request
 
-        response = httpx.get(url, headers=dict(headers), timeout=60.0)
-        return TransportResponse(
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            content=response.content,
+        return bounded_http_request(
+            "GET", url, headers=headers, transport=self._transport
         )
 
 
@@ -220,8 +229,18 @@ def _filing_date_iso(raw: str) -> str:
 
 
 def _index_entries(xml_bytes: bytes, year: int) -> DiscoverResult:
-    """``FilingType=P`` entries from one index XML, deduped in index order."""
-    root = etree.fromstring(xml_bytes)
+    """``FilingType=P`` entries from one index XML, deduped in index order.
+
+    The index is remote input, so it parses through the shared hardened
+    helper (R10/LD11); a refused or malformed document is a named discovery
+    failure, never a partial tree.
+    """
+    try:
+        root = parse_untrusted_xml(xml_bytes)
+    except UnsafeXmlError as exc:
+        return _discovery_failure(f"index XML refused ({exc})")
+    except etree.XMLSyntaxError as exc:
+        return _discovery_failure(f"index XML would not parse ({exc})")
     docids: list[str] = []
     entries: dict[str, IndexEntry] = {}
     rejected: list[str] = []
@@ -256,6 +275,96 @@ def _index_entries(xml_bytes: bytes, year: int) -> DiscoverResult:
         dup_docids=dup,
         rejected_docids=tuple(rejected),
     )
+
+
+# --- index-ZIP ceilings (R9/LD10) — generous availability controls, in code --
+
+#: Compressed index ZIP cap. The measured live ZIPs are ~2-3 MiB.
+HOUSE_ZIP_CAP = 16 * 1024 * 1024
+#: Uncompressed cap for the single XML member.
+XML_MEMBER_CAP = 64 * 1024 * 1024
+#: Compression-ratio ceiling (uncompressed : compressed).
+ZIP_RATIO_CAP = 100
+
+_SAFE_MEMBER_NAME = re.compile(r"^[A-Za-z0-9._ -]+\.[Xx][Mm][Ll]$")
+
+
+def _member_name_unsafe(name: str) -> bool:
+    """True when a ZIP member name could traverse outside the extraction root."""
+    if name.startswith("/") or "\\" in name:
+        return True
+    parts = name.split("/")
+    if any(part in ("", "..", ".") for part in parts[:-1]) or ".." in parts:
+        return True
+    return not _SAFE_MEMBER_NAME.match(parts[-1])
+
+
+def _extract_index_xml(zip_bytes: bytes) -> tuple[bytes | None, str | None]:
+    """``(xml_bytes, None)`` or ``(None, breach)`` for the year index ZIP.
+
+    Enforces LD10 before and during extraction: the compressed cap is checked
+    before anything is opened, the central-directory metadata (member count,
+    kind, name, declared sizes, declared ratio) before ``archive.open``, and
+    the streamed uncompressed byte count and observed ratio while reading.
+    A breach names the ceiling; nothing is written by this function.
+    """
+    if len(zip_bytes) > HOUSE_ZIP_CAP:
+        return None, (
+            f"index ZIP is {len(zip_bytes)} bytes,"
+            f" over the {HOUSE_ZIP_CAP}-byte compressed cap"
+        )
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            members = [i for i in archive.infolist() if not i.is_dir()]
+            xml_members = [
+                i for i in members if i.filename.lower().endswith(".xml")
+            ]
+            if not xml_members:
+                return None, "index ZIP contains no XML member"
+            if len(xml_members) != 1:
+                return None, (
+                    "index ZIP must contain exactly one regular XML member,"
+                    f" found {len(xml_members)}"
+                )
+            info = xml_members[0]
+            if _member_name_unsafe(info.filename):
+                return None, (
+                    f"index ZIP member name {info.filename!r} is not a safe"
+                    " non-traversing XML name"
+                )
+            if info.file_size > XML_MEMBER_CAP:
+                return None, (
+                    f"index XML member declares {info.file_size} bytes,"
+                    f" over the {XML_MEMBER_CAP}-byte uncompressed cap"
+                )
+            declared_ratio_base = max(info.compress_size, 1)
+            if info.file_size > ZIP_RATIO_CAP * declared_ratio_base:
+                return None, (
+                    f"index XML member declares a compression ratio over"
+                    f" {ZIP_RATIO_CAP}:1"
+                )
+            chunks: list[bytes] = []
+            total = 0
+            with archive.open(info) as member:
+                while True:
+                    chunk = member.read(65536)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > XML_MEMBER_CAP:
+                        return None, (
+                            f"index XML member exceeded the {XML_MEMBER_CAP}-byte"
+                            " uncompressed cap while streaming"
+                        )
+                    if total > ZIP_RATIO_CAP * declared_ratio_base:
+                        return None, (
+                            f"index XML member exceeded the {ZIP_RATIO_CAP}:1"
+                            " compression-ratio cap while streaming"
+                        )
+                    chunks.append(chunk)
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, OSError, zlib.error) as exc:
+        return None, f"index ZIP is unreadable ({exc})"
+    return b"".join(chunks), None
 
 
 def _discovery_failure(reason: str) -> DiscoverResult:
@@ -322,16 +431,18 @@ def discover(
     if response.status_code != 200:
         return _discovery_failure(f"index fetch failed (HTTP {response.status_code})")
 
-    zip_path.write_bytes(response.content)
-    try:
-        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            xml_members = [n for n in archive.namelist() if n.lower().endswith(".xml")]
-            if not xml_members:
-                return _discovery_failure("index ZIP contains no XML member")
-            xml_bytes = archive.read(xml_members[0])
-    except zipfile.BadZipFile as exc:
-        return _discovery_failure(f"index ZIP is unreadable ({exc})")
-    xml_path.write_bytes(xml_bytes)
+    xml_bytes, breach = _extract_index_xml(response.content)
+    if breach is not None:
+        # A ZIP-ceiling breach or malformed archive is a named ingest failure
+        # that writes neither the archive nor extracted bytes (R9/LD10).
+        return _discovery_failure(breach)
+    assert xml_bytes is not None
+    result = _index_entries(xml_bytes, year)
+    if result.failed:
+        return result
+    # Archive atomically, and only after EVERY check has passed.
+    atomic_write_bytes(zip_path, response.content)
+    atomic_write_bytes(xml_path, xml_bytes)
     response_headers = {k.lower(): v for k, v in response.headers.items()}
     meta_path.write_text(
         json.dumps(
@@ -347,7 +458,7 @@ def discover(
         ),
         encoding="utf-8",
     )
-    return _index_entries(xml_bytes, year)
+    return result
 
 
 # --- document evaluation (the single status decision point — R21) ------------

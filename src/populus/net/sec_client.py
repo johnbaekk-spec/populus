@@ -164,16 +164,19 @@ class HttpxSecTransport:
     and nothing here has a lifecycle to close it in.
     """
 
-    def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
-        import httpx
+    def __init__(self, *, transport: object | None = None) -> None:
+        # *transport* is a hermetic test seam (httpx.MockTransport);
+        # the live path constructs with no arguments.
+        self._transport = transport
 
-        response = httpx.get(
-            url, headers=dict(headers), timeout=60.0, follow_redirects=False
-        )
-        return TransportResponse(
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            content=response.content,
+    def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
+        # R9/LD10: the shared bounded helper streams and counts decoded bytes;
+        # a body over the 128 MiB ceiling raises ResponseTooLarge (named
+        # failure) instead of buffering without limit. Redirects stay disabled.
+        from populus.net.bounded_http import bounded_http_request
+
+        return bounded_http_request(
+            "GET", url, headers=headers, transport=self._transport
         )
 
 

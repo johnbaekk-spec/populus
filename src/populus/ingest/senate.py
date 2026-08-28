@@ -130,12 +130,24 @@ class HttpxSenateTransport:
     state so the whole handshake is provable offline (LD13/R4).
     """
 
+    def __init__(self, *, transport: object | None = None) -> None:
+        # *transport* is a hermetic test seam (httpx.MockTransport);
+        # the live path constructs with no arguments.
+        self._transport = transport
+
     def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
+        # R9/LD10: the shared bounded helper enforces the 128 MiB decoded-body
+        # ceiling and preserves multiple Set-Cookie values (newline-joined) for
+        # the library-owned jar. ResponseTooLarge propagates as a named
+        # failure; transport-level httpx errors keep their TransportFailure
+        # mapping so the session's retry ladder is unchanged.
         import httpx
 
+        from populus.net.bounded_http import bounded_http_request
+
         try:
-            return _to_transport_response(
-                httpx.get(url, headers=dict(headers), timeout=60.0, follow_redirects=False)
+            return bounded_http_request(
+                "GET", url, headers=headers, transport=self._transport
             )
         except httpx.HTTPError as exc:
             raise TransportFailure(f"GET {url}: {type(exc).__name__}: {exc}") from exc
@@ -145,15 +157,11 @@ class HttpxSenateTransport:
     ) -> TransportResponse:
         import httpx
 
+        from populus.net.bounded_http import bounded_http_request
+
         try:
-            return _to_transport_response(
-                httpx.post(
-                    url,
-                    data=dict(data),
-                    headers=dict(headers),
-                    timeout=60.0,
-                    follow_redirects=False,
-                )
+            return bounded_http_request(
+                "POST", url, headers=headers, data=data, transport=self._transport
             )
         except httpx.HTTPError as exc:
             raise TransportFailure(f"POST {url}: {type(exc).__name__}: {exc}") from exc

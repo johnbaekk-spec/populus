@@ -267,87 +267,79 @@ def _row_flags(conn, uuid):
 # The production transport is otherwise never executed: every other test
 # injects a fake, so redirect-following, an accidental client-side cookie
 # store, or a broken multi-Set-Cookie conversion could regress with the whole
-# suite green. These tests drive HttpxSenateTransport itself with the httpx
-# call surface monkeypatched — no socket is opened (the autouse guard would
-# fail the test if one were).
+# suite green. These tests drive HttpxSenateTransport itself over an
+# httpx.MockTransport, so the REAL bounded streaming path executes with no
+# socket opened (the autouse guard would fail the test if one were).
 
 
-class _RecordedHttpx:
-    """Records httpx.get/httpx.post kwargs and returns a canned response."""
+class _RecordedMock:
+    """An httpx.MockTransport that records requests and serves canned responses.
 
-    def __init__(self, response):
-        self.response = response
-        self.calls: list[tuple[str, str, dict]] = []
+    *responses* maps ``(method, url)`` to an ``httpx.Response`` factory; a
+    single-response recorder answers everything with that response.
+    """
 
-    def install(self, monkeypatch):
+    def __init__(self, response=None, responses=None):
         import httpx
 
-        def _get(url, **kwargs):
-            self.calls.append(("GET", url, kwargs))
-            return self.response
+        self.calls = []
 
-        def _post(url, **kwargs):
-            self.calls.append(("POST", url, kwargs))
-            return self.response
+        def handler(request):
+            self.calls.append(request)
+            if responses is not None:
+                return responses[(request.method, str(request.url))]()
+            return response()
 
-        monkeypatch.setattr(httpx, "get", _get)
-        monkeypatch.setattr(httpx, "post", _post)
-        return self
+        self.transport = httpx.MockTransport(handler)
 
 
 def _httpx_response(status=200, headers=None, content=b""):
     import httpx
 
-    return httpx.Response(status, headers=headers or [], content=content)
+    return lambda: httpx.Response(status, headers=headers or [], content=content)
 
 
-def test_real_transport_get_is_stateless_and_never_follows_redirects(monkeypatch):
-    import httpx
-
-    recorder = _RecordedHttpx(
+def test_real_transport_get_is_stateless_and_never_follows_redirects():
+    recorder = _RecordedMock(
         _httpx_response(302, [("location", "/search/"), ("set-cookie", "s=1")])
-    ).install(monkeypatch)
-    # Any persistent client would carry a cookie jar across requests — the
-    # library owns session state (LD13), so the adapter must not build one.
-    def _no_client(*args, **kwargs):
-        raise AssertionError("the transport must not construct an httpx client")
-
-    monkeypatch.setattr(httpx, "Client", _no_client)
-
-    transport = senate.HttpxSenateTransport()
+    )
+    transport = senate.HttpxSenateTransport(transport=recorder.transport)
     response = transport.get(senate.HOME_URL, headers={"User-Agent": USER_AGENT})
 
-    (method, url, kwargs), = recorder.calls
-    assert (method, url) == ("GET", senate.HOME_URL)
-    assert kwargs["follow_redirects"] is False
-    assert kwargs["headers"] == {"User-Agent": USER_AGENT}
-    assert kwargs["timeout"] == 60.0
-    # The 302 is returned as-is for the caller to judge (LD13), not chased.
+    # The 302 is returned as-is for the caller to judge (LD13), not chased:
+    # exactly one request left the adapter.
+    (request,) = recorder.calls
+    assert (request.method, str(request.url)) == ("GET", senate.HOME_URL)
+    assert request.headers["User-Agent"] == USER_AGENT
     assert response.status_code == 302
     assert response.headers["location"] == "/search/"
 
+    # Stateless (LD13): the Set-Cookie from the first response is NOT replayed
+    # by the adapter on a second request — the library jar owns session state.
+    transport.get(senate.HOME_URL, headers={"User-Agent": USER_AGENT})
+    assert "cookie" not in recorder.calls[1].headers
 
-def test_real_transport_post_forwards_form_data_and_headers(monkeypatch):
-    recorder = _RecordedHttpx(_httpx_response(302)).install(monkeypatch)
-    transport = senate.HttpxSenateTransport()
+
+def test_real_transport_post_forwards_form_data_and_headers():
+    recorder = _RecordedMock(_httpx_response(302))
+    transport = senate.HttpxSenateTransport(transport=recorder.transport)
     response = transport.post(
         senate.HOME_URL,
         data={"csrfmiddlewaretoken": "tok123", "prohibition_agreement": "1"},
         headers={"Referer": senate.HOME_URL, "Cookie": "csrftoken=abc"},
     )
-    (method, url, kwargs), = recorder.calls
-    assert (method, url) == ("POST", senate.HOME_URL)
-    assert kwargs["data"] == {
-        "csrfmiddlewaretoken": "tok123",
-        "prohibition_agreement": "1",
-    }
-    assert kwargs["headers"] == {"Referer": senate.HOME_URL, "Cookie": "csrftoken=abc"}
-    assert kwargs["follow_redirects"] is False
-    assert kwargs["timeout"] == 60.0
+    (request,) = recorder.calls
+    assert (request.method, str(request.url)) == ("POST", senate.HOME_URL)
+    assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+    assert (
+        request.read() == b"csrfmiddlewaretoken=tok123&prohibition_agreement=1"
+    )
+    assert request.headers["Referer"] == senate.HOME_URL
+    assert request.headers["Cookie"] == "csrftoken=abc"
     assert response.status_code == 302
 
 
-def test_real_transport_preserves_every_set_cookie_value(monkeypatch):
+def test_real_transport_preserves_every_set_cookie_value():
     # httpx collapses repeated headers when dict()-ed: two Set-Cookie values
     # become one comma-joined string, and cookie attributes legitimately
     # contain commas ("Expires=Wed, 21 Oct 2026 ..."), so splitting that back
@@ -357,8 +349,10 @@ def test_real_transport_preserves_every_set_cookie_value(monkeypatch):
         ("set-cookie", "sessionid=sess1; Path=/; HttpOnly"),
         ("content-type", "text/html"),
     ]
-    _RecordedHttpx(_httpx_response(200, raw, b"<html></html>")).install(monkeypatch)
-    response = senate.HttpxSenateTransport().get(senate.HOME_URL, headers={})
+    recorder = _RecordedMock(_httpx_response(200, raw, b"<html></html>"))
+    response = senate.HttpxSenateTransport(transport=recorder.transport).get(
+        senate.HOME_URL, headers={}
+    )
 
     values = response.headers["set-cookie"].split("\n")
     assert values == [
@@ -377,11 +371,9 @@ def test_real_transport_preserves_every_set_cookie_value(monkeypatch):
     assert "Expires" not in header  # attributes are not replayed as cookies
 
 
-def test_real_transport_drives_the_full_handshake(tmp_path, monkeypatch):
+def test_real_transport_drives_the_full_handshake(tmp_path):
     # The production adapter wired into the real session: handshake, cookie
     # replay, and index parsing all run through HttpxSenateTransport.
-    import httpx
-
     responses = {
         ("GET", HOME_URL): _httpx_response(
             200, [("set-cookie", "csrftoken=abc; Path=/")], HOME_HTML
@@ -393,22 +385,12 @@ def test_real_transport_drives_the_full_handshake(tmp_path, monkeypatch):
             200, [], _index_json([_index_row(U1)])
         ),
     }
-    seen: list[tuple[str, str, dict]] = []
-
-    def _get(url, **kwargs):
-        seen.append(("GET", url, kwargs))
-        return responses[("GET", url)]
-
-    def _post(url, **kwargs):
-        seen.append(("POST", url, kwargs))
-        return responses[("POST", url)]
-
-    monkeypatch.setattr(httpx, "get", _get)
-    monkeypatch.setattr(httpx, "post", _post)
+    recorder = _RecordedMock(responses=responses)
+    seen = recorder.calls
 
     clock = FakeClock()
     session = senate._PoliteSession(
-        senate.HttpxSenateTransport(),
+        senate.HttpxSenateTransport(transport=recorder.transport),
         sleep=clock.sleep,
         monotonic=clock.monotonic,
         jitter=lambda: 0.0,
@@ -421,11 +403,17 @@ def test_real_transport_drives_the_full_handshake(tmp_path, monkeypatch):
     assert result.failed is False
     assert result.uuids == (U1,)
     # Cookies captured from the real adapter's responses were replayed.
-    assert "csrftoken=abc" in seen[1][2]["headers"]["Cookie"]
-    index_cookie = seen[2][2]["headers"]["Cookie"]
+    assert "csrftoken=abc" in seen[1].headers["Cookie"]
+    index_cookie = seen[2].headers["Cookie"]
     assert "csrftoken=abc" in index_cookie and "sessionid=sess1" in index_cookie
-    assert all(kwargs["follow_redirects"] is False for _m, _u, kwargs in seen)
-    assert all(kwargs["headers"]["User-Agent"] == USER_AGENT for *_x, kwargs in seen)
+    # The 302 answer to the agreement POST was returned as-is, never chased:
+    # exactly the three protocol requests left the adapter.
+    assert [(r.method, str(r.url)) for r in seen] == [
+        ("GET", HOME_URL),
+        ("POST", HOME_URL),
+        ("POST", DATA_URL),
+    ]
+    assert all(r.headers["User-Agent"] == USER_AGENT for r in seen)
 
 
 # --- handshake (R1/LD13) -----------------------------------------------------

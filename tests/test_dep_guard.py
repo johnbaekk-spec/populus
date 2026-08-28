@@ -209,6 +209,12 @@ NETWORK_PRIMITIVES_SANS_HTTPX = re.compile(
     r"|subprocess|os\.system|aiohttp|asyncio\.open_connection)\b"
 )
 HTTPX_ALLOWED = {
+    # RUN PUBLIC-SECURITY-HARDENING (R9/LD10): the ONE bounded transport helper
+    # every real ingest transport below routes through. It is the enforcement
+    # point for the shared 128 MiB decoded-body ceiling, takes an injected
+    # httpx transport in tests (MockTransport — hermetic under conftest), and
+    # opens nothing at import time.
+    "net/bounded_http.py",
     "ingest/house.py",
     "ingest/senate.py",
     "client/snapshot.py",
