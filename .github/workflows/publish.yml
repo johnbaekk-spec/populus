@@ -375,7 +375,7 @@ jobs:
 
       - name: Set up Node
         if: steps.stage.outputs.fresh == 'true'
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: dashboard/.node-version
           cache: npm
@@ -597,7 +597,7 @@ jobs:
       # directly (R8/LD9) — never `npx`, never a deploy-time registry fetch —
       # so this job needs the pinned Node toolchain and a frozen `npm ci`.
       - name: Set up Node
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: dashboard/.node-version
           cache: npm
