@@ -887,7 +887,7 @@ def test_every_live_plane_row_carries_its_OWN_accession():
     """QA M2-8 R2 N4 — the half of the §5.1 contract the published plane already
     keeps (`test_every_published_row_carries_its_own_accession`).
 
-    `server.py:605` states the contract: *"Rows are shaped exactly like the
+    `institutional_tools._published_positions` states the contract: *"Rows are shaped exactly like the
     federated ones so a client parses both planes identically."* The remediation
     added `accession` to `shape_holding`, passed it on the published plane, and
     left the live call site untouched — so `mode='snapshot'` returned a real
