@@ -17,6 +17,10 @@ import pytest
 from populus.deploy.snapshot import SnapshotError, freeze_tree
 from populus.publish.digests import DigestError, dist_digest
 
+#: A minimal but VALID control file: inventory v2 requires every tree to carry
+#: exactly one root `_headers` (LD12), so the fixtures ship one.
+HEADERS = b"/*\n  Content-Security-Policy: default-src 'self'\n"
+
 
 def _tree(root: Path, files: dict[str, bytes]) -> Path:
     for relpath, payload in files.items():
@@ -35,6 +39,7 @@ def site(tmp_path: Path) -> Path:
             "assets/app.js": b"console.log(1)\n",
             "assets/app.css": b"body{}\n",
             "congress/stats.json": b'{"stats_version":"stats-1.0.0"}\n',
+            "_headers": HEADERS,
         },
     )
 
@@ -44,7 +49,9 @@ def test_snapshot_hashes_the_destination_not_the_source(site: Path) -> None:
     snapshot = freeze_tree(site)
     try:
         assert snapshot.dist_digest == dist_digest(snapshot.path)
-        assert snapshot.file_count == 4
+        # LD12b: file_count means every regular uploaded artifact — the four
+        # served files PLUS the `_headers` control.
+        assert snapshot.file_count == 5
     finally:
         snapshot.cleanup()
 
@@ -97,7 +104,7 @@ def test_the_digest_is_taken_from_the_sealed_copy_not_the_source(site: Path, mon
         # R6: the envelope must describe the sealed tree too, not the source.
         paths = {entry["path"] for entry in snapshot.inventory["files"]}
         assert "assets/injected.js" not in paths
-        assert snapshot.file_count == 4
+        assert snapshot.file_count == 5
         sealed_index = next(
             e for e in snapshot.inventory["files"] if e["path"] == "index.html"
         )
@@ -231,6 +238,10 @@ def test_inventory_is_the_published_envelope_over_the_sealed_tree(site: Path) ->
         }
         assert snapshot.inventory["dist_digest"] == snapshot.dist_digest
         assert snapshot.inventory["dist_digest_version"] == "1"
+        assert snapshot.inventory["inventory_version"] == "2"
+        controls = snapshot.inventory["controls"]
+        assert [c["path"] for c in controls] == ["_headers"]
+        assert controls[0]["kind"] == "cloudflare-pages-headers"
     finally:
         snapshot.cleanup()
 
@@ -251,15 +262,21 @@ def test_cleanup_is_idempotent_and_removes_the_seal(site: Path) -> None:
     snapshot.cleanup()
 
 
-def test_empty_tree_is_a_snapshot_not_an_error(tmp_path: Path) -> None:
+def test_an_empty_tree_is_refused_not_frozen(tmp_path: Path) -> None:
+    """LD12: a tree with no served files and no `_headers` control cannot
+    produce an exact inventory v2, so the freeze refuses — before any uploader
+    could be handed a sealed nothing."""
     empty = tmp_path / "dist"
     empty.mkdir()
-    snapshot = freeze_tree(empty)
-    try:
-        assert snapshot.file_count == 0
-        assert snapshot.inventory["files"] == []
-    finally:
-        snapshot.cleanup()
+    with pytest.raises(SnapshotError, match="inventory v2"):
+        freeze_tree(empty)
+
+
+def test_a_tree_without_the_headers_control_is_refused(tmp_path: Path) -> None:
+    """LD12 anti-downgrade: a missing control is malformed, never "probably v1"."""
+    site = _tree(tmp_path / "dist", {"index.html": b"<!doctype html>\n"})
+    with pytest.raises(SnapshotError, match="exactly one control"):
+        freeze_tree(site)
 
 
 # --- R36: the provider-control envelope --------------------------------------
@@ -273,23 +290,24 @@ def test_empty_tree_is_a_snapshot_not_an_error(tmp_path: Path) -> None:
 def test_headers_is_inventoried_as_a_control_file_not_a_served_one(
     tmp_path: Path,
 ) -> None:
-    """`_headers` leaves `files` and appears in `control_files`, with a digest."""
+    """`_headers` leaves `files` and appears in `controls`, with a digest."""
     tree = _tree(tmp_path / "dist", {"index.html": b"<!doctype html>\n", "_headers": b"/*\n"})
     snapshot = freeze_tree(tree)
     try:
         served = {entry["path"] for entry in snapshot.inventory["files"]}
-        control = {entry["path"]: entry for entry in snapshot.inventory["control_files"]}
+        control = {entry["path"]: entry for entry in snapshot.inventory["controls"]}
         assert "_headers" not in served, "a control file must not be swept as a served URL"
         assert "_headers" in control
+        assert control["_headers"]["kind"] == "cloudflare-pages-headers"
         assert control["_headers"]["sha256"] == _sha256(b"/*\n")
         assert control["_headers"]["bytes"] == 3
-        # site_file_count counts served files only.
-        assert snapshot.file_count == 1
+        # LD12b: file_count = len(files) + len(controls).
+        assert snapshot.file_count == 2
     finally:
         snapshot.cleanup()
 
 
-def test_the_union_of_files_and_control_files_is_the_whole_tree(tmp_path: Path) -> None:
+def test_the_union_of_files_and_controls_is_the_whole_tree(tmp_path: Path) -> None:
     """No file falls out of both lists — the split partitions, it does not drop."""
     payloads = {
         "index.html": b"<!doctype html>\n",
@@ -300,7 +318,7 @@ def test_the_union_of_files_and_control_files_is_the_whole_tree(tmp_path: Path) 
     try:
         listed = [
             entry["path"]
-            for key in ("files", "control_files")
+            for key in ("files", "controls")
             for entry in snapshot.inventory[key]
         ]
         assert sorted(listed) == sorted(payloads)

@@ -130,15 +130,21 @@ def test_dist_digest_rejects_missing_tree(tmp_path):
 
 
 def test_inventory_envelope_order_and_digest(tmp_path):
-    files = {"b.txt": b"bee", "a/c.txt": b"sea"}
+    files = {"b.txt": b"bee", "a/c.txt": b"sea", "_headers": b"/*\n"}
     tree = make_tree(tmp_path, files)
     inventory = build_inventory(tree)
+    assert inventory["inventory_version"] == "2"
     assert inventory["dist_digest_version"] == "1"
+    # The v1 dist-digest framing is UNCHANGED and covers every regular file —
+    # the `_headers` control included (LD12).
     assert inventory["dist_digest"] == expected_dist(files)
+    assert [c["path"] for c in inventory["controls"]] == ["_headers"]
+    assert inventory["controls"][0]["kind"] == "cloudflare-pages-headers"
     assert [entry["path"] for entry in inventory["files"]] == ["a/c.txt", "b.txt"]
     for entry in inventory["files"]:
         assert entry["bytes"] == len(files[entry["path"]])
         assert entry["sha256"] == hashlib.sha256(files[entry["path"]]).hexdigest()
+    assert [entry["path"] for entry in inventory["files"]] == ["a/c.txt", "b.txt"]
     # RFC 8785 exact canonical bytes; the digest covers exactly those bytes.
     rendered = render_inventory(inventory)
     assert rendered == canonical_json(inventory)
@@ -146,7 +152,7 @@ def test_inventory_envelope_order_and_digest(tmp_path):
 
 
 def test_write_inventory_sibling_guard(tmp_path):
-    tree = make_tree(tmp_path, {"x.txt": b"x"})
+    tree = make_tree(tmp_path, {"x.txt": b"x", "_headers": b"/*\n"})
     with pytest.raises(DigestError, match="inside the tree"):
         write_inventory(tree, tree / "inventory.json")
     with pytest.raises(DigestError, match="inside the tree"):
@@ -154,6 +160,145 @@ def test_write_inventory_sibling_guard(tmp_path):
     sibling = tmp_path / "inventory.json"
     inventory = write_inventory(tree, sibling)
     assert sibling.read_bytes() == render_inventory(inventory)
+
+
+# --- validate_inventory_v2 (RUN PUBLIC-SECURITY-HARDENING R12/LD12/LD12b) ----
+
+
+def _valid_v2(tmp_path):
+    tree = make_tree(tmp_path, {"b.txt": b"bee", "a/c.txt": b"sea", "_headers": b"/*\n"})
+    return build_inventory(tree)
+
+
+def test_validate_inventory_v2_accepts_the_builders_output_as_typed_tuples(tmp_path):
+    from populus.publish.inventory import validate_inventory_v2
+
+    validated = validate_inventory_v2(_valid_v2(tmp_path))
+    assert validated.inventory_version == "2"
+    assert validated.dist_digest_version == "1"
+    assert [f.path for f in validated.files] == ["a/c.txt", "b.txt"]
+    assert [c.path for c in validated.controls] == ["_headers"]
+    assert validated.controls[0].kind == "cloudflare-pages-headers"
+    assert isinstance(validated.files, tuple) and isinstance(validated.controls, tuple)
+    assert validated.as_document() == _valid_v2(tmp_path)
+    assert validated.controls_identity()[0]["kind"] == "cloudflare-pages-headers"
+
+
+@pytest.mark.parametrize(
+    "mutate, why",
+    [
+        (lambda d: d.pop("inventory_version"), "v1-shaped: no inventory_version"),
+        (lambda d: d.pop("controls"), "v1-shaped: no controls array"),
+        (
+            lambda d: (d.pop("controls"), d.update(control_files=[])),
+            "the OLD v1 control_files spelling is malformed, never reinterpreted",
+        ),
+        (lambda d: d.update(inventory_version="1"), "an explicit v1 is refused"),
+        (lambda d: d.update(inventory_version=2), "a non-string version is refused"),
+        (lambda d: d.update(dist_digest_version="2"), "the v1 framing is fixed"),
+        (lambda d: d.update(extra="x"), "an extra top-level key breaks exactness"),
+        (lambda d: d.update(dist_digest="ABC"), "a non-64-lowercase-hex digest"),
+        (lambda d: d.update(dist_digest=("A" * 64)), "uppercase hex is refused"),
+        (lambda d: d.update(files=[]), "no served files: nothing to verify"),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "bytes": True}),
+            "a boolean bytes is refused",
+        ),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "bytes": -1}),
+            "negative bytes",
+        ),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "extra": 1}),
+            "an extra entry key breaks exactness",
+        ),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "path": "/a/c.txt"}),
+            "a leading slash",
+        ),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "path": "a\\c.txt"}),
+            "a backslash separator",
+        ),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "path": "a/../c.txt"}),
+            "a dot-dot segment",
+        ),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "path": "a/./c.txt"}),
+            "a dot segment",
+        ),
+        (
+            lambda d: d["files"].__setitem__(0, {**d["files"][0], "path": "a/\tc.txt"}),
+            "a control character",
+        ),
+        (
+            lambda d: d.update(files=list(reversed(d["files"]))),
+            "files must be UTF-8-bytewise sorted",
+        ),
+        (
+            lambda d: d.update(files=[d["files"][0], d["files"][0]]),
+            "a duplicated path",
+        ),
+        (
+            lambda d: d["files"].append(
+                {"path": "_headers", "bytes": 3, "sha256": "0" * 64}
+            ),
+            "_headers under files (also a cross-array duplicate)",
+        ),
+        (lambda d: d.update(controls=[]), "a MISSING control is malformed, never v1"),
+        (
+            lambda d: d["controls"].append(
+                {
+                    "path": "_redirects",
+                    "kind": "cloudflare-pages-headers",
+                    "bytes": 1,
+                    "sha256": "0" * 64,
+                }
+            ),
+            "a second control (_redirects stays prohibited)",
+        ),
+        (
+            lambda d: d["controls"].__setitem__(
+                0, {**d["controls"][0], "kind": "cloudflare-worker"}
+            ),
+            "an unknown control kind",
+        ),
+        (
+            lambda d: d["controls"].__setitem__(
+                0, {**d["controls"][0], "path": "_worker.js"}
+            ),
+            "a control that is not the root _headers",
+        ),
+        (
+            lambda d: d["controls"].__setitem__(
+                0, {k: v for k, v in d["controls"][0].items() if k != "kind"}
+            ),
+            "a control missing its kind key",
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+def test_validate_inventory_v2_refuses_every_inexact_document(tmp_path, mutate, why):
+    from populus.publish.inventory import InventoryError, validate_inventory_v2
+
+    document = _valid_v2(tmp_path)
+    mutate(document)
+    with pytest.raises(InventoryError):
+        validate_inventory_v2(document)
+
+
+def test_no_v1_parser_union_or_autodetect_exists_in_production_code():
+    """LD12: grep-level enforcement of the anti-downgrade contract."""
+    import re as _re
+
+    src = Path(__file__).resolve().parents[1] / "src" / "populus"
+    offending = []
+    for path in src.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if _re.search(r"HistoricalInventoryV1|validate_inventory_v1", text):
+            offending.append(str(path))
+    assert offending == []
 
 
 def test_inventory_rejects_non_regular_trees(tmp_path):

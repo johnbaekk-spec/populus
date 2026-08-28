@@ -482,3 +482,35 @@ the token and component source of truth — is snapshotted in
 [`docs/design/handoff/`](../docs/design/handoff/) as fetched 2026-07-30, so the
 token values this stylesheet claims to follow are reviewable in-repo. The
 per-page mockups are not snapshotted; read them from the project.
+
+## Response-header defense in depth (RUN PUBLIC-SECURITY-HARDENING PR 5)
+
+`public/_headers` is the one Cloudflare Pages provider control this site ships
+(LD13): the locked CSP (`script-src 'self'` plus only the R28 analytics beacon
+origins — no inline hashes, no `unsafe-eval`), HSTS `max-age=31536000`
+(deliberately without `includeSubDomains`/`preload`, so `max-age=0` remains an
+emergency rollback), `X-Content-Type-Options: nosniff`, and
+`Referrer-Policy: strict-origin-when-cross-origin`.
+
+Because `script-src` carries no hashes, **no executable inline script may exist
+anywhere in the built tree**. Two mechanisms keep that true:
+
+- the pre-paint theme IIFE lives in `public/theme-init.js`, loaded
+  synchronously from `<head>` (`is:inline src=` — external, unbundled, no
+  FOUC), and
+- `vite.build.assetsInlineLimit: 0` in `astro.config.mjs` stops the bundler
+  from re-inlining small modules (the masthead toggle module was one).
+
+`test/post/inline-surface.test.ts` gates both after every build: the emitted
+executable-inline-script set must be EMPTY, the policy must pin zero hashes,
+`theme-init.js` must be referenced synchronously from every page's head, and
+`dist/_headers` must be byte-identical to `public/_headers`.
+`<script type="application/json">` data islands are inert and exempt (B31).
+
+Deploy-side, `_headers` is an **attested control**: site inventory v2 lists it
+under `controls` (kind `cloudflare-pages-headers`), and preview/production
+verification requires the exact header values on representative HTML/JS/CSS/
+JSON responses while `/_headers` itself still answers 404 (Pages consumes it
+as configuration). `src/populus/deploy/verify.py` pins
+`LOCKED_CONTENT_SECURITY_POLICY` against the shipped bytes — edit the policy in
+both places or the deploy refuses.

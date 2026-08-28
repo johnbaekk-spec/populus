@@ -280,3 +280,37 @@ human overrode a gate and which deployment they overrode.
 
 4. That run deploys the fixed build and writes the first real generation. The
    override is never needed again; the next run has a generation to verify.
+
+## Inventory v2 and the attested `_headers` control (PR 5, R12)
+
+Every new site artifact is **site inventory v2** — exact top-level keys
+`inventory_version="2"`, `dist_digest_version="1"`, `dist_digest`, `files`,
+`controls`; exactly one control (the root `_headers`, kind
+`cloudflare-pages-headers`); per-array UTF-8-bytewise path sort; cross-array
+uniqueness. Every seam (snapshot, upload, verify, sign, record, CLI,
+artifact-facts) validates the FULL document through
+`populus.publish.inventory.validate_inventory_v2` before any network or
+signing operation. There is **no v1 parser, union, or auto-detect**: a
+missing control is malformed, never "probably v1". Pre-v2 signed generations
+remain immutable archival bytes.
+
+Count semantics (LD12b): `file_count` (snapshot, deploy outcome, CLI, and the
+Cloudflare upload budget) means every regular uploaded artifact —
+`len(files) + len(controls)`. `files_total`/`domain_files_total` mean served
+entries only — `len(files)`. The verification result and the signed record add
+separately named `controls_total`/`control_effects_verified` (origin) and
+`domain_controls_total`/`domain_control_effects_verified` (domain); a
+successful sign requires all four to be exactly 1 and carries the exact
+canonical `controls` identity.
+
+Verification now also proves the control's **effect**: exact
+CSP/HSTS/nosniff/referrer values on representative HTML, JS, CSS and JSON
+paths (missing, weakened, duplicated/conflicting, or unexpected headers all
+fail), while `/_headers` must still 404. A header or control finding is never
+a "propagation lag": only a rejection whose EVERY finding is an inventoried
+path answering 404 gets the one 45 s settle and full-inventory retry.
+
+**Owner-run steps, unchanged by this PR:** live preview and production
+verification, and the supervised production deploy itself, remain OWNER-RUN
+after the PR 4 environments cutover — publishing stays disarmed until the two
+supervised post-cutover proofs succeed.

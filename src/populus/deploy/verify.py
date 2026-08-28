@@ -87,15 +87,22 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from populus.publish.attestation import REJECTED, UNAVAILABLE, VERIFIED
-from populus.publish.digests import DIST_DIGEST_VERSION
+from populus.publish.inventory import (
+    InventoryError,
+    InventoryFile,
+    ValidatedInventoryV2,
+    validate_inventory_v2,
+)
 
 __all__ = [
     "ALLOWED_RESPONSE_HEADERS",
     "CONTROL_PATHS",
     "Divergence",
+    "HeaderMultimap",
     "MARKER_BUILD_ID",
     "MARKER_CODE_SHA",
     "REJECTED",
+    "SECURITY_HEADER_NAMES",
     "SweepResult",
     "TD10_NOTE",
     "UNAVAILABLE",
@@ -110,6 +117,7 @@ __all__ = [
     "check_markers",
     "check_no_functions",
     "check_stats",
+    "normalize_security_header_multimap",
     "probe_control_paths",
     "read_markers",
     "served_path",
@@ -140,35 +148,58 @@ TD10_NOTE = (
 #: behind another.
 CONTROL_PATHS = ("/_redirects", "/_headers", "/_worker.js")
 
-#: The byte-exact Content-Security-Policy locked in `UX-OVERHAUL-PLAN.md`
-#: §M1/R36 and shipped as `dashboard/public/_headers`. REQUIRED on every served
-#: asset and required to be EQUAL to this value — not merely present, because a
-#: policy that is present but weakened is precisely what a "has a CSP" check
-#: waves through. `style-src` carries `'unsafe-inline'` and deliberately NO
-#: style hash: CSP2+ ignores `'unsafe-inline'` in a directive that also lists
-#: hashes, so adding one would silently re-block every data-driven bar width on
-#: the site. `tests/test_deploy_verify.py` pins this constant against the
-#: shipped `_headers` bytes, so the two cannot drift apart unnoticed.
+#: The byte-exact Content-Security-Policy locked by RUN PUBLIC-SECURITY-
+#: HARDENING LD13 (superseding the M1/R36 hash-pinned policy) and shipped as
+#: `dashboard/public/_headers`. `script-src` carries NO inline hashes — the
+#: pre-paint theme IIFE is external (`/theme-init.js`) and the bundler is
+#: forbidden to inline modules — and the sole non-'self' origins are the R28
+#: analytics beacon's (a reviewed, post-plan feature LD13's bare policy
+#: predates). REQUIRED on every served asset and required to be EQUAL to this
+#: value — not merely present, because a policy that is present but weakened is
+#: precisely what a "has a CSP" check waves through. `style-src` carries
+#: `'unsafe-inline'` and deliberately NO style hash: CSP2+ ignores
+#: `'unsafe-inline'` in a directive that also lists hashes, so adding one would
+#: silently re-block every data-driven bar width on the site (TD-PSH-3).
+#: `tests/test_deploy_verify.py` pins this constant against the shipped
+#: `_headers` bytes, so the two cannot drift apart unnoticed.
 LOCKED_CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'sha256-l7z5mLHE3mvA5XUH9QJEiNRmReuFTfsBcWHAxRGvW3k=' 'sha256-MqA3PKuITCptalBQPnAhrxVICEdcFhUVx47/2VNIkDU=' https://static.cloudflareinsights.com; "
-    "connect-src 'self' https://cloudflareinsights.com; "
+    "script-src 'self' https://static.cloudflareinsights.com; "
     "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self'; "
+    "img-src 'self' data:; "
+    "font-src 'self'; "
+    "connect-src 'self' https://cloudflareinsights.com; "
     "object-src 'none'; "
-    "base-uri 'self'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'; "
     "form-action 'self'; "
-    "frame-ancestors 'none'"
+    "upgrade-insecure-requests"
 )
 
-#: Response headers that must be present AND equal to the given value. Checked
-#: only on inventory-sampled assets that served 200 — the control-path probes
-#: in :func:`probe_control_paths` are untouched, because a 404 carries no
-#: `_headers` rule and asserting one there would fail the deploy for a
-#: correctly-absent control path.
+#: HSTS per LD13/R12: one year, deliberately WITHOUT `includeSubDomains` or
+#: `preload` — subdomain readiness is unproven and a policy without either
+#: remains reversible by serving `max-age=0` over HTTPS.
+LOCKED_STRICT_TRANSPORT_SECURITY = "max-age=31536000"
+
+#: Response headers that must be present exactly once AND equal to the given
+#: value — the four security headers the shipped `_headers` control sets.
+#: Checked on inventory-sampled assets that served 200 — the control-path
+#: probes in :func:`probe_control_paths` are untouched, because a 404 carries
+#: no `_headers` rule and asserting one there would fail the deploy for a
+#: correctly-absent control path. A missing, weakened, duplicated/conflicting
+#: value on any sampled path fails verification.
 REQUIRED_RESPONSE_HEADERS = {
     "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY,
+    "strict-transport-security": LOCKED_STRICT_TRANSPORT_SECURITY,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "strict-origin-when-cross-origin",
 }
+
+#: The security-header names one shared normalization covers, everywhere a
+#: policy header is judged: ordinary verification here, and the rollback
+#: observation in :mod:`populus.deploy.orchestrator`. One helper, so a
+#: duplicated or conflicting policy header cannot be collapsed before either.
+SECURITY_HEADER_NAMES = tuple(sorted(REQUIRED_RESPONSE_HEADERS))
 
 
 
@@ -275,6 +306,22 @@ class VerifyUnavailable(RuntimeError):
     """
 
 
+class HeaderMultimap(Protocol):
+    """Occurrence-preserving response headers (R12/LD12c).
+
+    A plain ``Mapping[str, str]`` cannot *represent* two occurrences of one
+    header, so judging a policy through one silently collapses the duplicated/
+    conflicting case this run must refuse. The HTTP boundary therefore exposes
+    ``multi_items()`` — every ``(name, value)`` occurrence, in order —
+    alongside the mapping-style ``get`` the redirect handling reads.
+    The real client's ``Headers`` type satisfies this natively.
+    """
+
+    def multi_items(self) -> Sequence[tuple[str, str]]: ...
+
+    def get(self, key: str, default: str | None = None) -> str | None: ...
+
+
 class HttpResponse(Protocol):
     """The three things this module reads off a response.
 
@@ -292,7 +339,7 @@ class HttpResponse(Protocol):
     def content(self) -> bytes: ...
 
     @property
-    def headers(self) -> Mapping[str, str]: ...
+    def headers(self) -> HeaderMultimap: ...
 
 
 class HttpGetter(Protocol):
@@ -310,13 +357,6 @@ class HttpGetter(Protocol):
 
 
 @dataclass(frozen=True)
-class _Entry:
-    path: str
-    size: int
-    sha256: str
-
-
-@dataclass(frozen=True)
 class Divergence:
     """One inventoried path whose served bytes are not the recorded bytes."""
 
@@ -329,13 +369,19 @@ class Divergence:
 
 @dataclass(frozen=True)
 class SweepResult:
-    """Outcome of the inventory-wide sweep."""
+    """Outcome of the served-entry sweep.
+
+    ``files_total`` means SERVED entries only — ``len(files)`` of the validated
+    inventory — never files-plus-controls (LD12b). Controls have no URL, so a
+    sweep cannot count them; their evidence is the separately named
+    control-effect fields on :class:`VerificationResult`.
+    """
 
     divergences: tuple[Divergence, ...]
     files_verified: int
     files_total: int
     bodies: dict[str, bytes] = field(default_factory=dict)
-    headers: dict[str, Mapping[str, str]] = field(default_factory=dict)
+    headers: dict[str, HeaderMultimap] = field(default_factory=dict)
 
     @property
     def diverged_paths(self) -> tuple[str, ...]:
@@ -352,6 +398,12 @@ class VerificationResult:
     verification_scope: str = VERIFICATION_SCOPE
     files_verified: int = 0
     files_total: int = 0
+    #: LD12b: the control-effect leg, counted under its own names so it can
+    #: never masquerade as a served-file count. On a successful sweep both are
+    #: exactly 1 — the one `_headers` control, its effect proven by the exact
+    #: required-header values plus the `/_headers` 404 probe.
+    controls_total: int = 0
+    control_effects_verified: int = 0
     divergences: tuple[Divergence, ...] = ()
     findings: tuple[str, ...] = ()
 
@@ -370,6 +422,8 @@ class VerificationResult:
             "verification_scope": self.verification_scope,
             "files_verified": self.files_verified,
             "files_total": self.files_total,
+            "controls_total": self.controls_total,
+            "control_effects_verified": self.control_effects_verified,
             "outcome": self.outcome,
             "diverged_paths": list(self.diverged_paths),
             "non_detection": TD10_NOTE,
@@ -522,41 +576,76 @@ def probe_control_paths(
     return findings
 
 
+def normalize_security_header_multimap(
+    headers: HeaderMultimap,
+    *,
+    names: Sequence[str] = SECURITY_HEADER_NAMES,
+) -> dict[str, tuple[str, ...]]:
+    """The security headers as an occurrence-preserving normalized multimap.
+
+    One shared normalization (R12/LD12c) used by ordinary verification here and
+    by the rollback observation in :mod:`populus.deploy.orchestrator`, so the
+    two cannot disagree about what a policy header "is": names lower-cased,
+    surrounding whitespace stripped off each value, **absence = empty tuple**
+    (explicit, never a missing key), and every occurrence retained — collapsing
+    two conflicting policies into one is exactly what this exists to prevent.
+    The *consumers* refuse more than one occurrence; this function only makes
+    the duplication observable.
+    """
+    normalized: dict[str, list[str]] = {name: [] for name in names}
+    for raw_name, raw_value in headers.multi_items():
+        name = raw_name.lower()
+        if name in normalized:
+            normalized[name].append(raw_value.strip())
+    return {name: tuple(values) for name, values in normalized.items()}
+
+
 def check_headers(
-    headers: Mapping[str, str],
+    headers: HeaderMultimap,
     *,
     path: str,
     allowlist: frozenset[str] = ALLOWED_RESPONSE_HEADERS,
     required: Mapping[str, str] = REQUIRED_RESPONSE_HEADERS,
 ) -> list[str]:
-    """Flag headers outside the allowlist, and required headers missing or altered.
+    """Flag headers outside the allowlist, and required headers missing/altered/duplicated.
 
     Two independent directions. The allowlist catches behaviour a static asset
     GAINED; *required* catches a control the deployment LOST — a CSP that is
-    absent, or present but rewritten, is not detectable by an allowlist, which
-    by construction only ever objects to headers it does not recognise.
+    absent, present but rewritten, or present **twice with any values** is not
+    detectable by an allowlist, which by construction only ever objects to
+    headers it does not recognise. Occurrences are read through
+    :func:`normalize_security_header_multimap`, so two conflicting policy
+    headers are refused rather than collapsed into whichever one a mapping
+    lookup happened to return.
     """
     findings: list[str] = []
 
-    unexpected = sorted(name.lower() for name in headers if name.lower() not in allowlist)
+    unexpected = sorted(
+        {name.lower() for name, _value in headers.multi_items()} - allowlist
+    )
     if unexpected:
         findings.append(
             f"unexpected response header(s) on {path}: {unexpected} — a static "
             "asset gained behaviour it was not built with"
         )
 
-    observed = {name.lower(): value for name, value in headers.items()}
+    observed = normalize_security_header_multimap(headers, names=sorted(required))
     for name, want in sorted(required.items()):
-        got = observed.get(name)
-        if got is None:
+        values = observed[name]
+        if not values:
             findings.append(
                 f"missing required response header on {path}: {name} — the "
                 "deployment is not carrying the policy it was built with"
             )
-        elif got != want:
+        elif len(values) > 1:
+            findings.append(
+                f"{name} on {path} appears {len(values)} times ({values!r}); a "
+                "duplicated/conflicting policy header is refused, never collapsed"
+            )
+        elif values[0] != want:
             findings.append(
                 f"{name} on {path} does not equal the locked policy: "
-                f"observed {got!r}"
+                f"observed {values[0]!r}"
             )
 
     return findings
@@ -605,7 +694,44 @@ def sweep_inventory(
     keep: Sequence[str] = (),
     header_paths: Sequence[str] = (),
 ) -> SweepResult:
-    """Fetch **every** inventoried path and compare hash and length.
+    """Validate the FULL untrusted envelope, then sweep its served entries.
+
+    The external trust boundary (LD12b): *inventory* is an untrusted mapping
+    and is validated — complete, exact, v2 — through
+    :func:`~populus.publish.inventory.validate_inventory_v2` before any fetch.
+    A partial one-file envelope, a v1-shaped document, or a missing/unknown
+    control raises :class:`VerifyInputError` here, before network. The actual
+    fetching lives in the package-internal :func:`_sweep_entries`, which only
+    ever accepts typed entries from a validated document.
+    """
+    validated = _validated(inventory)
+    return _sweep_entries(
+        client,
+        base_url,
+        validated.files,
+        cache_bust=cache_bust,
+        keep=keep,
+        header_paths=header_paths,
+    )
+
+
+def _sweep_entries(
+    client: HttpGetter,
+    base_url: str,
+    entries: Sequence[InventoryFile],
+    *,
+    cache_bust: str,
+    keep: Sequence[str] = (),
+    header_paths: Sequence[str] = (),
+) -> SweepResult:
+    """Fetch every given served entry and compare hash and length.
+
+    **Package-internal, and typed on purpose** (LD12b): *entries* is a
+    ``Sequence[InventoryFile]`` taken from a :class:`ValidatedInventoryV2` —
+    never an inventory-shaped mapping, which this function deliberately cannot
+    parse. That is what lets :func:`populus.deploy.record._confirm_domain`
+    reuse the exact fetch policy on one already-validated marker entry without
+    any public seam ever accepting a partial envelope.
 
     This is the load-bearing check. Both fields are compared, and which one
     disagreed is reported: a length-only comparison passes any same-size edit,
@@ -622,7 +748,7 @@ def sweep_inventory(
     and not two. Its keys are inventory paths: the mapping is a fetch-time
     detail and a caller that asked for ``index.html`` gets ``index.html`` back.
     """
-    entries = _entries(inventory)
+    _require_served_injective(entries)
     kept = set(keep)
     wanted_headers = set(header_paths)
 
@@ -659,13 +785,13 @@ def sweep_inventory(
 
         digest = hashlib.sha256(body).hexdigest()
         wrong_digest = digest != entry.sha256
-        wrong_length = len(body) != entry.size
+        wrong_length = len(body) != entry.bytes
         if wrong_digest or wrong_length:
             reasons = []
             if wrong_digest:
                 reasons.append(f"sha256 {digest} != {entry.sha256}")
             if wrong_length:
-                reasons.append(f"length {len(body)} != {entry.size}")
+                reasons.append(f"length {len(body)} != {entry.bytes}")
             divergences.append(Divergence(entry.path, "; ".join(reasons)))
             continue
         verified += 1
@@ -705,8 +831,18 @@ def verify_deployment(
     is amended to run this same inventory-wide sweep on the preview, because
     TD-4's bound ("the identical bytes already passed the preview sweep") is
     vacuous if the preview only read markers.
+
+    The FULL untrusted envelope is validated first (LD12b): a v1-shaped,
+    partial, or control-less document raises :class:`VerifyInputError` before
+    any network I/O. The verifier never fetches ``_headers`` as an asset — it
+    still requires ``/_headers`` to answer 404 — and proves the control's exact
+    *effect* through the required security-header values on representative
+    HTML, JS, CSS and JSON paths, recorded under the separately named
+    ``controls_total``/``control_effects_verified`` (both exactly 1 on
+    success).
     """
-    entries = _entries(inventory)
+    validated = _validated(inventory)
+    entries = validated.files
     known = {entry.path for entry in entries}
     for required in (marker_path, stats_path):
         if required not in known:
@@ -721,12 +857,13 @@ def verify_deployment(
     # No network yet: the provider payload is already in hand, and a Functions
     # deployment is not made verifiable by fetching more assets.
     findings: list[str] = check_no_functions(deployment)
+    control_findings: list[str] = []
 
     try:
-        sweep = sweep_inventory(
+        sweep = _sweep_entries(
             client,
             base_url,
-            inventory,
+            entries,
             cache_bust=bust,
             keep=(marker_path, stats_path),
             header_paths=sample,
@@ -749,7 +886,7 @@ def verify_deployment(
         else:
             findings.extend(check_stats(stats_body, stats_bytes))
 
-        findings.extend(
+        control_findings.extend(
             probe_control_paths(
                 client, base_url, cache_bust=bust, control_paths=control_paths
             )
@@ -758,9 +895,12 @@ def verify_deployment(
         for path in sample:
             observed = sweep.headers.get(path)
             if observed is not None:
-                findings.extend(
+                # Header findings are CONTROL-effect findings: the `_headers`
+                # control is what puts these values on served responses.
+                control_findings.extend(
                     check_headers(observed, path=path, allowlist=header_allowlist)
                 )
+        findings.extend(control_findings)
     except VerifyUnavailable as exc:
         # R17: we did not get an answer. Not a divergence, not a finding, and
         # emphatically not tampering — the caller retries or alarms as an
@@ -770,10 +910,15 @@ def verify_deployment(
             outcome=UNAVAILABLE,
             detail=f"verification unavailable: {exc}",
             files_total=len(entries),
+            controls_total=len(validated.controls),
         )
 
     findings.extend(str(divergence) for divergence in sweep.divergences)
     ok = not findings
+    controls_total = len(validated.controls)
+    control_effects_verified = (
+        controls_total if not control_findings and controls_total == 1 else 0
+    )
     detail = (
         f"{VERIFICATION_SCOPE}: {sweep.files_verified}/{sweep.files_total} files "
         f"verified at {base_url}; {TD10_NOTE}"
@@ -796,6 +941,8 @@ def verify_deployment(
         detail=detail,
         files_verified=sweep.files_verified,
         files_total=sweep.files_total,
+        controls_total=controls_total,
+        control_effects_verified=control_effects_verified,
         divergences=sweep.divergences,
         findings=tuple(findings),
     )
@@ -804,76 +951,77 @@ def verify_deployment(
 # --- internals ---------------------------------------------------------------
 
 
+#: The representative response classes on which the control's header effect is
+#: proven (R12/Task 10.4): one of each, always in the sample when present.
+_REPRESENTATIVE_SUFFIXES = (".html", ".js", ".css", ".json")
+
+
 def _header_sample(
-    marker_path: str, stats_path: str, entries: Sequence[_Entry], size: int
+    marker_path: str, stats_path: str, entries: Sequence[InventoryFile], size: int
 ) -> tuple[str, ...]:
-    """The sampled paths: the two load-bearing ones first, then inventory order."""
+    """The sampled paths: load-bearing ones and one of each representative type.
+
+    The marker page and ``stats.json`` come first (they always were the
+    sample's anchors); then the FIRST inventory entry of each representative
+    suffix — HTML, JS, CSS, JSON — so the exact header values are proven on
+    every response class the control governs, not only on whatever happened to
+    sort first; then inventory order up to *size*.
+    """
+    representatives: list[str] = []
+    for suffix in _REPRESENTATIVE_SUFFIXES:
+        for entry in entries:
+            if entry.path.endswith(suffix):
+                representatives.append(entry.path)
+                break
     sample: list[str] = []
-    for candidate in (marker_path, stats_path, *(entry.path for entry in entries)):
+    for candidate in (
+        marker_path,
+        stats_path,
+        *representatives,
+        *(entry.path for entry in entries),
+    ):
         if candidate not in sample:
             sample.append(candidate)
-        if len(sample) >= max(size, 2):
+        if len(sample) >= max(size, 2 + len(representatives)):
             break
     return tuple(sample)
 
 
-def _entries(inventory: Mapping[str, Any]) -> list[_Entry]:
-    """Validate the §12.1 envelope and return its entries.
+def _validated(inventory: Mapping[str, Any]) -> ValidatedInventoryV2:
+    """Full v2 validation at the external seam, in this module's vocabulary.
 
     A malformed envelope raises rather than returning an empty list: a sweep
-    over zero files would report ``0/0 verified`` and pass.
+    over zero files would report ``0/0 verified`` and pass. The one validator
+    lives in :mod:`populus.publish.inventory`; its refusal is re-raised as
+    :class:`VerifyInputError` because "the inventory we were handed is not an
+    inventory" is this module's input-error contract, never a verdict.
     """
-    if not isinstance(inventory, Mapping):
-        raise VerifyInputError(f"inventory is not a mapping: {type(inventory)!r}")
-    version = inventory.get("dist_digest_version")
-    if version != DIST_DIGEST_VERSION:
-        raise VerifyInputError(
-            f"inventory declares dist_digest_version {version!r}, this verifier "
-            f"understands {DIST_DIGEST_VERSION!r}"
-        )
-    files = inventory.get("files")
-    if not isinstance(files, Sequence) or isinstance(files, (str, bytes)):
-        raise VerifyInputError("inventory 'files' is not a list")
-    if not files:
-        raise VerifyInputError("inventory lists no files; there is nothing to verify")
+    try:
+        return validate_inventory_v2(inventory)
+    except InventoryError as exc:
+        raise VerifyInputError(str(exc)) from exc
 
-    entries: list[_Entry] = []
-    seen: set[str] = set()
-    # Two entries can be distinct files and still be served from one URL —
-    # `about.html` and a bare `about`, or `.html` and `index.html`. The tree
-    # this ships (12,543 files) has no such pair, but the mapping is not
-    # injective in general and a silent collision would let one of the two be
-    # verified twice while the other was never fetched at all. Raised, not
-    # folded into a verdict: the ambiguity is in the inputs.
+
+def _require_served_injective(entries: Sequence[InventoryFile]) -> None:
+    """Two entries can be distinct files and still be served from one URL.
+
+    `about.html` and a bare `about`, or `.html` and `index.html`. The tree
+    this ships has no such pair, but the mapping is not injective in general
+    and a silent collision would let one of the two be verified twice while
+    the other was never fetched at all. Raised, not folded into a verdict:
+    the ambiguity is in the inputs.
+    """
     served_by: dict[str, str] = {}
-    for raw in files:
-        if not isinstance(raw, Mapping):
-            raise VerifyInputError(f"inventory entry is not a mapping: {raw!r}")
-        path = raw.get("path")
-        size = raw.get("bytes")
-        digest = raw.get("sha256")
-        if not isinstance(path, str) or not path or path.startswith("/"):
-            raise VerifyInputError(f"inventory entry has a bad 'path': {path!r}")
-        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-            raise VerifyInputError(f"inventory entry {path!r} has a bad 'bytes': {size!r}")
-        if not isinstance(digest, str) or len(digest) != 64:
-            raise VerifyInputError(
-                f"inventory entry {path!r} has a bad 'sha256': {digest!r}"
-            )
-        if path in seen:
-            raise VerifyInputError(f"inventory lists {path!r} twice")
-        seen.add(path)
-        served = served_path(path)
+    for entry in entries:
+        served = served_path(entry.path)
         collides_with = served_by.get(served)
         if collides_with is not None:
             raise VerifyInputError(
-                f"inventory entries {collides_with!r} and {path!r} are both "
+                f"inventory entries {collides_with!r} and {entry.path!r} are both "
                 f"served at /{served} — one URL cannot verify two files, and "
                 "guessing which one it answered for is not verification"
             )
-        served_by[served] = path
-        entries.append(_Entry(path=path, size=size, sha256=digest))
-    return entries
+        served_by[served] = entry.path
 
 
 def _url(base_url: str, path: str, cache_bust: str) -> str:

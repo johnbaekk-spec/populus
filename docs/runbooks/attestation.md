@@ -193,3 +193,17 @@ network), they legitimately want the no-op, and they carry no trust posture.
    the subject-name convention above is the contract that signer must meet — it
    is pinned by the verifier today, whether or not anything writes a generation
    yet.
+
+## Generation fields added by inventory v2 (PR 5, R12/LD12b)
+
+A signed deployment generation now names `inventory_version: "2"`, the exact
+canonical `controls` identity (path/kind/bytes/sha256 of the one `_headers`
+control — bound by `inventory_digest` over the full canonical document, so no
+separate unauthenticated "control digest" exists), and four control-effect
+counts beside the served-file counts: `controls_total`,
+`control_effects_verified` (the origin sweep) and `domain_controls_total`,
+`domain_control_effects_verified` (the custom-domain leg). The signer refuses
+to attest unless each of the four is exactly 1. `files_total` and
+`domain_files_total` mean served entries only; artifact-level `file_count`
+(files + controls) lives on the deploy side. Pre-v2 generations remain
+immutable archival bytes and are never re-parsed by production code.

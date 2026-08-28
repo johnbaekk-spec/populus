@@ -97,12 +97,19 @@ from populus.deploy.verify import (
     DEFAULT_STATS_PATH,
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
+    HeaderMultimap,
+    normalize_security_header_multimap,
     read_markers,
     served_path,
 )
 from populus.publish.attestation import REJECTED, UNAVAILABLE
 from populus.publish.digests import dist_digest
-from populus.publish.inventory import build_inventory, render_inventory
+from populus.publish.inventory import (
+    InventoryError,
+    build_inventory,
+    render_inventory,
+    validate_inventory_v2,
+)
 
 #: The two Cloudflare environments, spelled the way the provider spells them.
 PREVIEW = "preview"
@@ -295,6 +302,13 @@ class PagesSurface(Protocol):
     #: exactly that divergence by design.
     def production_deployments(self) -> Iterable[Deployment]: ...
 
+    #: LD12c: the provider's RAW production listing — the seam rollback
+    #: evidence is captured from, so a typed object can never launder an absent
+    #: ``uses_functions`` into a confident ``False``.
+    def raw_deployments(
+        self, environment: str | None = None
+    ) -> list[Mapping[str, Any]]: ...
+
     def rollback_payload(self, deployment_id: str) -> Mapping[str, Any]: ...
 
 
@@ -478,6 +492,239 @@ def _assert_anchor_is_serving(
         )
 
 
+# --- LD12a/LD12c: rollback evidence, captured BEFORE anything is uploaded ----
+
+
+@dataclass(frozen=True)
+class RollbackSiteObservation:
+    """One coherent, cache-busted observation of the custom-domain root.
+
+    Everything a post-rollback restoration is compared against — body identity,
+    both markers, and the normalized security-header multimap — derived from
+    ONE response, so the expectation cannot be an internally mixed composite of
+    two deployments racing each other. ``headers`` is stored as a sorted tuple
+    of ``(name, (value, ...))`` pairs — fully immutable, with explicit absence
+    as an empty tuple, exactly what
+    :func:`~populus.deploy.verify.normalize_security_header_multimap` reports.
+    """
+
+    body_sha256: str
+    body_length: int
+    build_id: str
+    code_sha: str
+    headers: tuple[tuple[str, tuple[str, ...]], ...]
+
+
+@dataclass(frozen=True)
+class RollbackExpectation:
+    """LD12a: what a compensating rollback must restore, captured pre-upload.
+
+    Provider identity from the RAW production mapping — a non-empty ``id``,
+    ``environment == "production"``, and an explicit ``uses_functions is
+    False`` (a mapping that says nothing is a refusal, never a default) — plus
+    one :class:`RollbackSiteObservation`. This is honest point-in-time
+    identity/marker/header restoration, not a prior-tree inventory proof
+    (TD-PSH-8): the failed artifact's v2 inventory is never consulted, and no
+    v1 inventory is ever parsed.
+    """
+
+    deployment_id: str
+    environment: str
+    uses_functions: bool
+    observation: RollbackSiteObservation
+
+
+class RollbackObserver(Protocol):
+    """Observes the custom-domain root once, or raises :class:`DeployAborted`.
+
+    Injected so the suite stays hermetic; the production adapter is
+    :func:`observe_rollback_root`.
+    """
+
+    def __call__(self, domain_url: str) -> RollbackSiteObservation: ...
+
+
+def _raw_production_head(
+    entries: Sequence[Mapping[str, Any]], *, when: str
+) -> tuple[str, str, bool]:
+    """Validate the first raw production entry into ``(id, environment, False)``."""
+    if not entries:
+        raise DeployAborted(
+            f"the raw production listing was non-empty before the observation "
+            f"and empty {when}; the provider changed under us. Nothing was "
+            "frozen or uploaded"
+        )
+    head = entries[0]
+    if not isinstance(head, Mapping):
+        raise DeployAborted(
+            f"malformed provider payload {when}: the first production entry is "
+            f"{type(head).__name__}, not an object. Nothing was frozen or uploaded"
+        )
+    identifier = head.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        raise DeployAborted(
+            f"malformed provider payload {when}: the first production entry "
+            "carries no id. Nothing was frozen or uploaded"
+        )
+    environment = head.get("environment")
+    if environment != "production":
+        raise DeployAborted(
+            f"the first entry of the production listing reports environment "
+            f"{environment!r} {when}; refusing to derive a rollback expectation "
+            "from it. Nothing was frozen or uploaded"
+        )
+    if "uses_functions" not in head or head["uses_functions"] is not False:
+        raise DeployAborted(
+            f"the prior production deployment {identifier} does not carry an "
+            f"explicit uses_functions=False {when} "
+            f"(observed {head.get('uses_functions', '<absent>')!r}); this site "
+            "is pure static and an absent signal never reads as 'there are "
+            "none'. Nothing was frozen or uploaded"
+        )
+    return identifier, environment, False
+
+
+def capture_rollback_expectation(
+    pages: PagesSurface,
+    observer: RollbackObserver,
+    domain_url: str,
+    *,
+    anchor_id: str | None = None,
+) -> RollbackExpectation | None:
+    """LD12c: the SOLE producer of a :class:`RollbackExpectation`.
+
+    Reads the raw production listing, validates the prior deployment's raw
+    identity, takes exactly one domain-root observation through *observer*,
+    then re-reads the raw listing and requires the same first
+    id/environment/no-Functions signal — a concurrent provider change aborts
+    here, before ``freeze_tree`` or either upload. An empty raw listing is the
+    existing first-run uncompensated case and returns ``None``.
+
+    *anchor_id* reconciles LD12c with the later R11d serving-anchor fix: when
+    the resolved serving anchor is NOT the newest-by-creation deployment (the
+    state any provider-side rollback leaves behind), the expectation's identity
+    is taken from the anchor's own raw entry — the deployment a compensating
+    rollback would actually restore — while the bracketing stability check
+    still pins the FIRST entry, which is where a concurrent deploy appears.
+
+    The complete raw mappings are ephemeral: validated fields are copied out
+    and the mappings are dropped — never logged, signed, or written into any
+    evidence bundle.
+    """
+    before = pages.raw_deployments(environment="production")
+    if not before:
+        return None
+
+    def _select(entries: Sequence[Mapping[str, Any]], *, when: str) -> tuple[str, str, bool]:
+        if anchor_id is None:
+            return _raw_production_head(entries, when=when)
+        for entry in entries:
+            if isinstance(entry, Mapping) and entry.get("id") == anchor_id:
+                return _raw_production_head([entry], when=when)
+        raise DeployAborted(
+            f"the serving anchor {anchor_id} is absent from the raw production "
+            f"listing {when}; refusing to derive a rollback expectation. "
+            "Nothing was frozen or uploaded"
+        )
+
+    head_before = _raw_production_head(before, when="before the observation")
+    target_before = _select(before, when="before the observation")
+
+    observation = observer(domain_url)
+
+    after = pages.raw_deployments(environment="production")
+    head_after = _raw_production_head(after, when="after the observation")
+    target_after = _select(after, when="after the observation")
+    if head_before != head_after or target_before != target_after:
+        raise DeployAborted(
+            f"the raw production listing changed while the rollback expectation "
+            f"was being captured (first entry {head_before[0]} → {head_after[0]}, "
+            f"target {target_before[0]} → {target_after[0]}); a deploy raced "
+            "this run. Nothing was frozen or uploaded"
+        )
+
+    identifier, environment, uses_functions = target_after
+    return RollbackExpectation(
+        deployment_id=identifier,
+        environment=environment,
+        uses_functions=uses_functions,
+        observation=observation,
+    )
+
+
+def observe_rollback_root(client: Any) -> RollbackObserver:
+    """The production :class:`RollbackObserver`: ONE custom-domain root GET.
+
+    Exactly one request — a UUID cache-bust query, ``Cache-Control: no-cache``,
+    ``Pragma: no-cache``, ``follow_redirects=False`` — requiring HTTP 200.
+    Body hash/length, exactly one non-empty ``populus:build_id`` and
+    ``populus:code_sha``, and the shared normalized security-header multimap
+    (explicit absence, more than one occurrence refused rather than collapsed)
+    all derive from that one response. Transport failure, 429/5xx, any non-200,
+    duplicate/missing/empty markers, or an ambiguous header raises
+    :class:`DeployAborted` — before snapshot or upload on the capture leg, and
+    read as "not restored" on the post-rollback leg.
+    """
+
+    def _observe(domain_url: str) -> RollbackSiteObservation:
+        url = f"{domain_url.rstrip('/')}/?{CACHE_BUST_PARAM}={uuid4().hex}"
+        try:
+            response = client.get(
+                url, headers=_REQUEST_HEADERS, follow_redirects=False
+            )
+        except AssertionError:
+            # The suite's no-network guard: an accidental real fetch must fail
+            # loudly, never launder into a tidy abort.
+            raise
+        except Exception as exc:
+            raise DeployAborted(
+                f"the rollback observation could not be taken: transport error "
+                f"fetching {domain_url}: {exc}. Nothing was frozen or uploaded"
+            ) from exc
+        status = getattr(response, "status_code", None)
+        if status != 200:
+            raise DeployAborted(
+                f"the rollback observation requires HTTP 200 from the "
+                f"custom-domain root; {domain_url} answered {status!r}. "
+                "Nothing was frozen or uploaded"
+            )
+        body = response.content
+        markers = read_markers(body)
+        values: dict[str, str] = {}
+        for name in (MARKER_BUILD_ID, MARKER_CODE_SHA):
+            found = markers.get(name, [])
+            if len(found) != 1 or not found[0].strip():
+                raise DeployAborted(
+                    f"the rollback observation requires exactly one non-empty "
+                    f"{name!r} marker; {domain_url} served {len(found)}. "
+                    "Nothing was frozen or uploaded"
+                )
+            values[name] = found[0]
+        raw_headers: HeaderMultimap = response.headers
+        normalized = normalize_security_header_multimap(raw_headers)
+        ambiguous = sorted(
+            name for name, occurrences in normalized.items() if len(occurrences) > 1
+        )
+        if ambiguous:
+            raise DeployAborted(
+                f"the rollback observation refuses ambiguous security "
+                f"header(s) {ambiguous} on {domain_url}: more than one "
+                "occurrence is refused, never collapsed. Nothing was frozen "
+                "or uploaded"
+            )
+        import hashlib
+
+        return RollbackSiteObservation(
+            body_sha256=hashlib.sha256(body).hexdigest(),
+            body_length=len(body),
+            build_id=values[MARKER_BUILD_ID],
+            code_sha=values[MARKER_CODE_SHA],
+            headers=tuple(sorted(normalized.items())),
+        )
+
+    return _observe
+
+
 #: How many production deployments to probe when resolving the anchor. The
 #: common case matches on the first (nothing rolled back); the bound exists so a
 #: project with a long history cannot turn one deploy into hundreds of probes.
@@ -541,6 +788,7 @@ def run_deployment(
     await_origin: OriginReadiness | None = None,
     settle: Callable[[float], None] = time.sleep,
     serving_probe: ServingProbe,
+    observer: RollbackObserver,
 ) -> DeployOutcome:
     """Run the §12.1 deploy sequence in order, or raise saying where it stopped.
 
@@ -577,7 +825,6 @@ def run_deployment(
         prior = _resolve_serving_anchor(
             client, serving_probe, domain_url=_domain_url(custom_domain)
         )
-    rollback_target = prior.id if prior is not None else None
     # R11c: and still PROVED, after resolution. Kept deliberately: the resolver
     # above is now the thing that could be wrong, and this is what makes a wrong
     # answer fail closed. Before any upload, so a refusal costs nothing —
@@ -586,6 +833,33 @@ def run_deployment(
         _assert_anchor_is_serving(
             serving_probe, prior=prior, domain_url=_domain_url(custom_domain)
         )
+
+    # --- (3b) LD12a/LD12c: rollback evidence, BEFORE the freeze --------------
+    # One raw-identity + one coherent domain-root observation, bracketed by raw
+    # provider reads. Any capture failure — transport, non-200, marker/header
+    # ambiguity, provider-id drift, malformed payload — raises DeployAborted
+    # here, with ZERO snapshot/upload/provider-mutation calls made.
+    expectation: RollbackExpectation | None = None
+    if prior is not None:
+        expectation = capture_rollback_expectation(
+            client,
+            observer,
+            _domain_url(custom_domain),
+            anchor_id=prior.id,
+        )
+        if expectation is None:
+            raise DeployAborted(
+                "the provider reported a prior production deployment and then "
+                "an empty raw production listing; the rollback expectation "
+                "cannot be captured. Nothing was frozen or uploaded"
+            )
+        if expectation.deployment_id != prior.id:
+            raise DeployAborted(
+                f"provider-id drift while capturing rollback evidence: the "
+                f"serving anchor is {prior.id} but the expectation resolved to "
+                f"{expectation.deployment_id}. Nothing was frozen or uploaded"
+            )
+    rollback_target = expectation.deployment_id if expectation is not None else None
 
     # --- (4) freeze: from here the uploader only ever sees sealed bytes ------
     snapshot = freeze_tree(source)
@@ -664,10 +938,9 @@ def run_deployment(
             # --- (8) compensate, or say plainly that we cannot ---------------
             _fail_production(
                 client=client,
-                verify=verify,
+                observer=observer,
                 domain_url=domain_url,
-                inventory=snapshot.inventory,
-                rollback_target=rollback_target,
+                expectation=expectation,
                 result=production_result,
                 runbook=runbook,
             )
@@ -742,40 +1015,95 @@ def _require_seal_intact(snapshot: UploadSnapshot) -> None:
 def _fail_production(
     *,
     client: PagesSurface,
-    verify: Verifier,
+    observer: RollbackObserver,
     domain_url: str,
-    inventory: Mapping[str, Any],
-    rollback_target: str | None,
+    expectation: RollbackExpectation | None,
     result: VerificationOutcome,
     runbook: str,
 ) -> NoReturn:
-    """Step 8: roll back to the captured deployment, or declare TD-4."""
-    if rollback_target is None:
+    """Step 8: roll back to the captured expectation, or declare TD-4.
+
+    LD12a: restoration is judged against the PRE-UPLOAD expectation — the raw
+    prior provider identity and the one coherent root observation — never
+    against the attempted (failed) artifact's inventory. The raw rollback
+    response must name the captured id, ``environment == "production"``, and an
+    explicit ``uses_functions is False``; a fresh observation (fresh UUID, same
+    adapter) must match the captured one exactly. Any mismatch or
+    unavailability keeps ``rollback_verified=False`` on the existing loud
+    :class:`ProductionVerificationFailed`/operator-runbook path.
+    """
+    if expectation is None:
         raise FirstRunUncompensated(_td4_message(result, runbook))
+    rollback_target = expectation.deployment_id
 
     # The provider's own object, verbatim. Reconstructing a mapping from the
     # typed `Deployment` here would set `uses_functions` to `bool(...)` of a
-    # possibly-absent field, and R16's check — which exists to fail closed when
-    # the provider says nothing — would be unable to ever do so on this path.
+    # possibly-absent field, and the no-Functions requirement — which exists to
+    # fail closed when the provider says nothing — could never do so here.
     restored = client.rollback_payload(rollback_target)
-    after = verify(
-        domain_url,
-        stage=PRODUCTION,
-        inventory=inventory,
-        deployment=restored,
-    )
+    problems: list[str] = []
+    if restored.get("id") != rollback_target:
+        problems.append(
+            f"the raw rollback response names {restored.get('id')!r}, not the "
+            f"captured target {rollback_target}"
+        )
+    if restored.get("environment") != "production":
+        problems.append(
+            f"the raw rollback response reports environment "
+            f"{restored.get('environment')!r}, not 'production'"
+        )
+    if "uses_functions" not in restored or restored["uses_functions"] is not False:
+        problems.append(
+            "the raw rollback response does not carry an explicit "
+            f"uses_functions=False (observed "
+            f"{restored.get('uses_functions', '<absent>')!r})"
+        )
+    if not problems:
+        try:
+            fresh = observer(domain_url)
+        except DeployAborted as exc:
+            problems.append(f"the post-rollback observation was unavailable: {exc}")
+        else:
+            if fresh != expectation.observation:
+                problems.append(
+                    "the post-rollback observation does not match the captured "
+                    "one exactly: "
+                    + _observation_drift(expectation.observation, fresh)
+                )
+
     restored_state = (
-        "the restored deployment verified"
-        if after.ok
-        else f"the restored deployment did NOT verify ({after.outcome}): {after.detail}"
+        "the restored deployment matches the pre-upload expectation exactly "
+        "(raw id/environment/no-Functions, root body, both markers, and the "
+        "security-header multimap)"
+        if not problems
+        else "the restored deployment did NOT verify: " + "; ".join(problems)
     )
     raise ProductionVerificationFailed(
         f"production verification did not pass ({result.outcome}) at {domain_url}: "
         f"{result.detail}. Rolled back to the deployment captured before the "
         f"upload ({rollback_target}); {restored_state}.",
         rolled_back_to=rollback_target,
-        rollback_verified=after.ok,
+        rollback_verified=not problems,
     )
+
+
+def _observation_drift(
+    expected: RollbackSiteObservation, observed: RollbackSiteObservation
+) -> str:
+    """Name exactly which fields drifted, so the 3am read needs no diffing."""
+    drifted = [
+        f"{field_name} {getattr(expected, field_name)!r} -> "
+        f"{getattr(observed, field_name)!r}"
+        for field_name in (
+            "body_sha256",
+            "body_length",
+            "build_id",
+            "code_sha",
+            "headers",
+        )
+        if getattr(expected, field_name) != getattr(observed, field_name)
+    ]
+    return "; ".join(drifted)
 
 
 def _td4_message(result: VerificationOutcome, runbook: str) -> str:
@@ -861,7 +1189,12 @@ def artifact_expectations(
     if not inventory_path.is_file():
         raise ArtifactRefused(f"--inventory {inventory_path} does not exist")
 
-    observed = build_inventory(source)
+    try:
+        observed = build_inventory(source)
+    except InventoryError as exc:
+        raise ArtifactRefused(
+            f"{source} does not produce an exact inventory v2: {exc}"
+        ) from exc
     declared = inventory_path.read_bytes()
     if render_inventory(observed) != declared:
         raise ArtifactRefused(
@@ -881,6 +1214,16 @@ def artifact_expectations(
                 f"the built tree has no {required.name}; verification cannot be "
                 "scoped to paths it cannot see"
             )
+
+    # LD12b: the external CLI seam validates the FULL document — the byte
+    # comparison above proves declared == observed, and this proves observed is
+    # an exact v2 envelope in its own right, refused before any provider call.
+    try:
+        validate_inventory_v2(observed)
+    except InventoryError as exc:
+        raise ArtifactRefused(
+            f"{inventory_path} is not an exact inventory v2: {exc}"
+        ) from exc
 
     markers = read_markers(marker_file.read_bytes())
     return ArtifactExpectations(
@@ -1056,6 +1399,7 @@ def main(
     readiness_factory=None,
     settle_factory=None,
     probe_factory=None,
+    observer_factory=None,
 ) -> int:
     """Run the §12.1 deploy sequence as a process. The factories keep it testable.
 
@@ -1169,6 +1513,14 @@ def main(
                 probe_factory()
                 if probe_factory is not None
                 else serving_probe(readiness_client)
+            ),
+            # LD12c: always a real observer here. `run_deployment` takes this
+            # as a REQUIRED keyword precisely so no caller can quietly opt out
+            # of pre-upload rollback-evidence capture by omitting it.
+            observer=(
+                observer_factory()
+                if observer_factory is not None
+                else observe_rollback_root(readiness_client)
             ),
         )
     except FirstRunUncompensated as exc:

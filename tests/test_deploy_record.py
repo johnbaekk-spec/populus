@@ -56,6 +56,8 @@ from populus.deploy.record import (
 )
 from populus.deploy.verify import (
     LOCKED_CONTENT_SECURITY_POLICY,
+    REQUIRED_RESPONSE_HEADERS,
+    CONTROL_PATHS,
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
     TD10_NOTE,
@@ -131,6 +133,11 @@ def _page(*, build_id: str = BUILD_ID, code_sha: str = CODE_SHA, extra: str = ""
     return f"<!doctype html><html><head>{head}</head><body>{body}</body></html>".encode()
 
 
+#: LD12: the one control every valid tree carries. Never SERVED by `_Origin` —
+#: the provider consumes it as configuration and answers 404 on `/_headers`.
+HEADERS_CONTROL = b"/*\n  Content-Security-Policy: default-src 'self'\n"
+
+
 def _site(**kwargs) -> dict[str, bytes]:
     return {
         "index.html": _page(**kwargs),
@@ -149,6 +156,7 @@ def _artifact(tmp_path: Path, site: dict[str, bytes]) -> Path:
         target = tree / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
+    tree.joinpath("_headers").write_bytes(HEADERS_CONTROL)
     write_inventory(tree, root / "inventory.json")
     return root
 
@@ -297,17 +305,19 @@ class _Origin:
         # Tables are keyed in INVENTORY coordinates (that is what the build
         # produces and what a divergence must name), so the lookup maps them the
         # way the provider does.
-        answers = {served_path(path): body for path, body in table.items()}
+        answers = {
+            served_path(path): body
+            for path, body in table.items()
+            if path != "_headers"  # provider configuration, never an asset
+        }
         path = request.url.path.lstrip("/")
         if path in answers:
             # Faithful to a real Pages deployment, whose `_headers` `/*`
-            # rule puts the locked policy on every served asset.
+            # rule puts the exact required headers on every served asset.
             return httpx.Response(
                 200,
                 content=answers[path],
-                headers={
-                    "content-security-policy": LOCKED_CONTENT_SECURITY_POLICY
-                },
+                headers=dict(REQUIRED_RESPONSE_HEADERS),
             )
         if served_path(path) != path and served_path(path) in answers:
             return httpx.Response(307, headers={"location": f"/{served_path(path)}"})
@@ -406,15 +416,31 @@ def test_every_recorded_field_is_one_the_signer_derived(tmp_path):
         "code_sha": CODE_SHA,
         "dist_digest": inventory["dist_digest"],
         "dist_digest_version": "1",
+        # LD12b: the exact schema version and the exact canonical controls
+        # identity the sign was verified under, plus separately named
+        # control-effect counts — each exactly 1 on a successful sign.
+        "inventory_version": "2",
         "inventory_digest": hashlib.sha256(shipped).hexdigest(),
+        "controls": [
+            {
+                "path": "_headers",
+                "kind": "cloudflare-pages-headers",
+                "bytes": len(HEADERS_CONTROL),
+                "sha256": hashlib.sha256(HEADERS_CONTROL).hexdigest(),
+            }
+        ],
         "swept_origin": DEPLOYMENT_URL,
         "verification_scope": "expected_paths",
         "files_verified": 5,
         "files_total": 5,
+        "controls_total": 1,
+        "control_effects_verified": 1,
         "domain": DOMAIN,
         "domain_scope": "marker_only",
         "domain_files_verified": 1,
         "domain_files_total": 5,
+        "domain_controls_total": 1,
+        "domain_control_effects_verified": 1,
         "workflow_run_id": RUN_ID,
         "dist_artifact_id": ARTIFACT_ID,
         "dist_artifact_expires_at": ARTIFACT_EXPIRES,
@@ -1187,7 +1213,7 @@ def test_the_class_the_signer_catches_is_the_class_verify_raises():
         "code and an outage will page as tampering"
     )
     assert (
-        record.sweep_inventory.__globals__["VerifyUnavailable"]
+        record._sweep_entries.__globals__["VerifyUnavailable"]
         is record.VerifyUnavailable
     )
     assert record.served_path is verify_module.served_path
@@ -1479,11 +1505,22 @@ def test_the_domain_count_is_measured_not_assumed(tmp_path):
     harness = _run(tmp_path)
     assert harness.result.record["domain_files_verified"] == 1
     seen = [url for url in harness.origin.seen if DOMAIN in url]
-    assert len(seen) == 1, "the domain leg issued more requests than it counted"
+    # One counted marker fetch plus the control-path probes and the
+    # never-published probe (LD12b: the domain leg now proves the control's
+    # absence-as-asset too).
+    assert len(seen) == 1 + len(CONTROL_PATHS) + 1, (
+        "the domain leg issued a different request set than it counted"
+    )
+    marker_fetches = [
+        url for url in seen
+        if "_redirects" not in url and "_headers" not in url
+        and "_worker" not in url and "never-published" not in url
+    ]
+    assert len(marker_fetches) == 1
 
     original = record._confirm_domain
     try:
-        record._confirm_domain = lambda *a, **kw: 3
+        record._confirm_domain = lambda *a, **kw: (3, 1, 1)
         widened = _run(tmp_path / "widened")
     finally:
         record._confirm_domain = original
@@ -2481,3 +2518,83 @@ def test_the_override_clears_no_other_refusal(tmp_path):
     repo = _deployed(tmp_path)  # a generation EXISTS
     result, _ = _gate(repo, served={}, acknowledged_code_sha=CODE_SHA)
     assert result.outcome == REJECTED, "the override leaked into another state"
+
+
+# --- R12/LD12: the signer refuses non-v2 artifacts before network/signing ----
+
+
+def _strip_control(root: Path) -> None:
+    """Rewrite the artifact as its pre-v2 self: no `_headers`, v1-shaped JSON."""
+    import populus.publish.inventory as inventory_module
+    from populus.canonical import canonical_json
+
+    tree = root / "site"
+    (tree / "_headers").unlink()
+    document = {
+        "dist_digest_version": "1",
+        "dist_digest": inventory_module.dist_digest(tree),
+        "files": [
+            {
+                "path": rel,
+                "bytes": path.stat().st_size,
+                "sha256": inventory_module.sha256_file(path),
+            }
+            for rel, path in inventory_module._walk_regular(tree)
+        ],
+    }
+    (root / "inventory.json").write_bytes(canonical_json(document))
+
+
+def test_a_v1_shaped_artifact_is_refused_before_any_network_or_signing(tmp_path):
+    """LD12b killing test: the seam refuses BEFORE the Pages read, the sweep,
+    and the attest call — a v1 envelope cannot even reach I/O."""
+    artifact = _artifact(tmp_path, _site())
+    _strip_control(artifact)
+    harness = _run(tmp_path, artifact=artifact)
+
+    assert harness.result.outcome == REJECTED
+    assert "inventory" in harness.result.detail
+    assert harness.origin.seen == [], "the sweep ran over a refused envelope"
+    assert harness.pages.verbs == [], "the Pages API was read for a refused envelope"
+    assert harness.attestation.attested == [], "a refused envelope was attested"
+
+
+def test_an_artifact_whose_tree_lost_its_control_is_refused(tmp_path):
+    """A tree without `_headers` cannot re-derive an exact v2 inventory."""
+    artifact = _artifact(tmp_path, _site())
+    (artifact / "site" / "_headers").unlink()
+    harness = _run(tmp_path, artifact=artifact)
+
+    assert harness.result.outcome == REJECTED
+    assert harness.origin.seen == []
+    assert harness.attestation.attested == []
+
+
+def test_a_domain_missing_the_control_effect_is_not_signed(tmp_path):
+    """LD12b: the domain leg checks the exact header values too.
+
+    The deployment origin serves the full header set (the sweep passes); the
+    custom domain answers without HSTS. The sign must refuse and attest
+    nothing.
+    """
+    site = _site()
+
+    # Serve the domain WITHOUT the required headers by overriding the origin:
+    class _WeakDomain(_Origin):
+        def handler(self, request):
+            response = super().handler(request)
+            if request.url.host == DOMAIN and response.status_code == 200:
+                headers = {
+                    k: v
+                    for k, v in response.headers.items()
+                    if k.lower() != "strict-transport-security"
+                }
+                return httpx.Response(200, content=response.content, headers=headers)
+            return response
+
+    origin = _WeakDomain(site)
+    harness = _run(tmp_path, site=site, origin=origin)
+
+    assert harness.result.outcome == REJECTED
+    assert "strict-transport-security" in harness.result.detail
+    assert harness.attestation.attested == []
