@@ -1,4 +1,4 @@
-"""RUN M2-8 T10 (plan R15) — the outsized-position flag.
+"""The outsized-position flag.
 
 Normative spec: ``docs/architecture/data-contracts/outsized-positions.md``. That document was
 written and reviewed BEFORE this module existed, and this module implements it
@@ -48,7 +48,7 @@ claim-bearing annotation in the same increment that first published the per-file
 substrate would mean the claim and the data it is computed from were reviewed
 together, once.
 
-What was NOT defensible is that nothing said so. R15 read "met" while the product
+What was NOT defensible is that nothing said so. The requirement read "met" while the product
 had no flag, and spec §1.2 ("every rendering carries the comparison in words, the
 period pair, and the §5 ``data_note``") was vacuously satisfied because there is no
 rendering — as are spec mutations 8 and 9, which cannot be performed against a

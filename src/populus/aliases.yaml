@@ -1,4 +1,4 @@
-# member_aliases seed (ARCHITECTURE.md §9.4/§9.7 — RUN 4).
+# member_aliases seed (ARCHITECTURE.md §9.4/§9.7).
 #
 # Every fuzzy-match decision is a reviewed commit: automatic §9.7 name
 # resolution never guesses, so a filer name the matcher cannot resolve to
@@ -216,7 +216,7 @@ aliases:
       House index prints "McCormick, Richard Dean Dr" (kadoa: "Richard Dean
       McCormick"); legislators records first "Rich" / official_full "Richard
       McCormick" with no "Richard Dean" variant. Exact versioned correction
-      for a verified stale AUTHORITATIVE hint (F2/F3): the Clerk index
+      for a verified stale AUTHORITATIVE hint: the Clerk index
       StateDst is the pre-redistricting GA06 while the member's term from
       2025-01-03 is GA-7 (verified: 2026 DocIDs 20033648/20034542/20034954 all
       print GA06; legislators M001218 holds GA-6 2023-25 then GA-7 2025-27).

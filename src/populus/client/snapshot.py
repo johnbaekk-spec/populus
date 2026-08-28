@@ -1,7 +1,7 @@
 """The snapshot client: §5.5 consumer protocol + crash-consistent cache.
 
-The cache owns its crash-consistency invariant across three boundaries
-(R24): write-time verify-before-rename, content-keyed idempotent re-install,
+The cache owns its crash-consistency invariant across three boundaries:
+write-time verify-before-rename, content-keyed idempotent re-install,
 and read-time :meth:`SnapshotClient.reconcile`. The replay/equivocation
 anchor is exactly the two-field ``(pointer_version, pointer_sha256)`` tuple;
 the install sidecar is advisory metadata, cross-checked against the tuple
@@ -61,7 +61,7 @@ DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "populus"
 
 # A module name is a single lowercase identifier — never a path. Validated at
 # construction so it can never be an absolute/traversal/separator string that
-# would place the cache outside cache_root (R29/F2).
+# would place the cache outside cache_root.
 _MODULE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -91,7 +91,7 @@ class LocalRepoFetcher:
         # An unreadable file is a FETCH failure, not an escaping OSError: every
         # caller guards `FetchError` only, so a bare OSError here propagates out
         # of `refresh()` — which runs on every poll — and kills the whole server,
-        # congress included (QA-VERIFY-N-a).
+        # congress included.
         try:
             if not target.is_file():
                 raise FetchError(f"{relpath} does not exist in {self._data_repo}")
@@ -107,11 +107,11 @@ class LocalRepoFetcher:
 
 
 class GitHubRepoFetcher:
-    """Authenticated reads from the private staging repo (R27).
+    """Authenticated reads from the private staging repo.
 
     Git files come from the contents API (raw media type); release assets are
     resolved and downloaded through the authenticated Release Assets API (never
-    the manifest's browser-download URL — R27/F5). The HTTP transport is
+    the manifest's browser-download URL). The HTTP transport is
     injectable so tests run hermetically over ``httpx.MockTransport``.
     """
 
@@ -158,7 +158,7 @@ class GitHubRepoFetcher:
 
     def fetch_asset(self, url: str, dest: Path) -> None:
         # The manifest hands a canonical github.com browser-download URL. The
-        # bearer token is NEVER sent there (R27/F5): parse the pinned
+        # bearer token is NEVER sent there: parse the pinned
         # (owner/repo, build tag, asset name), confirm it is under THIS repo,
         # resolve the asset id through the authenticated Release Assets API, and
         # download the api.github.com asset endpoint with the octet-stream media
@@ -229,7 +229,7 @@ class RefreshResult:
     incompatible · refused · withdrawn; ``build_id`` is the build now being
     served (``None`` when nothing is). ``withdrawn`` means a VERIFIED manifest
     omitted this module — the M2 coverage gate withheld it — so nothing is
-    served and no previously cached build is reused (QA-r6-F4)."""
+    served and no previously cached build is reused."""
 
     status: str
     build_id: str | None
@@ -237,18 +237,18 @@ class RefreshResult:
     message: str
     #: True only when a VERIFIED manifest was read, demonstrably omitted this
     #: module, AND the withdrawal committed. Consumers may not infer this from
-    #: absence alone, so the fact travels on the result itself (QA-r3-F2).
+    #: absence alone, so the fact travels on the result itself.
     verified_omission: bool = False
     #: True when a verified manifest omitted the module but the withdrawal could
     #: NOT be committed, so the prior build is still being served. Distinct from
     #: `verified_omission` — nothing was withdrawn — but the caller must be able
     #: to say the served data is stale rather than report it as clean published
-    #: data with no signal at all (QA-NIT-3).
+    #: data with no signal at all.
     observed_omission: bool = False
 
 
 #: errnos that mean "this filesystem cannot do flock at all" — as opposed to a
-#: transient or permission problem, which must be reported as itself (QA-NIT-2).
+#: transient or permission problem, which must be reported as itself.
 _LOCKING_UNSUPPORTED = frozenset(
     code for code in (
         getattr(errno, name, None)
@@ -275,7 +275,7 @@ class SnapshotClient:
         self._now = now
         self._client_version = client_version or populus.__version__
         self._attestation = attestation or StagingNoop()
-        # F2: `module` becomes a cache directory name — enforce a strict
+        # `module` becomes a cache directory name — enforce a strict
         # identifier grammar so it can never be an absolute/traversal/separator
         # (or symlink-named) escape.
         if not isinstance(module, str) or _MODULE_NAME.match(module) is None:
@@ -317,7 +317,7 @@ class SnapshotClient:
                 # Some OTHER I/O problem — read-only cache, EACCES, a directory
                 # where the lock file belongs, EMFILE. Still fail closed, but do
                 # NOT blame flock support: that sends an operator chasing the
-                # wrong cause (QA-NIT-2).
+                # wrong cause.
                 self._disabled_reason = (
                     f"the module cache at {self._module_dir} cannot be locked"
                     f" ({errno.errorcode.get(code, code)}: {exc.strerror or exc}),"
@@ -330,7 +330,7 @@ class SnapshotClient:
         # advisory markers; one anchor-validated record removes the category.
 
     def _safe_under(self, *parts: str) -> Path:
-        """The single client cache-path chokepoint (R29/F2).
+        """The single client cache-path chokepoint.
 
         Every cache path — the module dir, trust/sidecar/current markers, each
         per-build dir, and the ``.tmp-<build_id>`` staging dir — is built here.
@@ -392,13 +392,13 @@ class SnapshotClient:
         The pointer bytes are what make this proof rather than assertion: an
         earlier design took ``build_id``/``manifest_sha256`` from the record
         itself, so the record certified its own claim and a valid-shaped corrupt
-        one could name a different complete build (spec rev-1 F2).
+        one could name a different complete build.
         """
         if self._disabled_reason is not None:
             # No transition on this cache could ever be serialized safely, so
             # the module cannot be kept correct — it serves nothing. Checked
             # HERE so there is exactly one oracle (spec §6); putting it only on
-            # the accessors would create the second oracle rev-4 F2 warned of.
+            # the accessors would create a second competing oracle.
             return None
         try:
             trust = load_tuple(self._tuple_path)
@@ -471,7 +471,7 @@ class SnapshotClient:
                 # Cannot even open the lock file (read-only cache, EMFILE, a
                 # directory in its place). Treat as contention: no transition
                 # proceeds, nothing is written, and the error does not escape
-                # refresh() (QA-BLOCKER-2).
+                # refresh().
                 yield False
                 return
             try:
@@ -499,7 +499,7 @@ class SnapshotClient:
         return self.serving_build()
 
     def db_path(self) -> Path | None:
-        # Module-aware (R13/F6): resolve THIS module's database artifact —
+        # Module-aware: resolve THIS module's database artifact —
         # `congress.db` for congress, `inst_agg.db` for inst — never a hardcoded
         # name, so an inst client reads its own aggregate through the accessor.
         build_id = self.current_build()
@@ -513,7 +513,7 @@ class SnapshotClient:
     def serving_db_path(self) -> Path | None:
         """This build's ``inst_serving.db``, or ``None`` when it publishes none.
 
-        RUN M2-8 T9 (plan R10/R17). From M2-8 the inst module publishes TWO
+        From M2-8 the inst module publishes TWO
         database artifacts — the cross-filer aggregate and the per-filer SERVING
         projection — and the retained federated boundary (M2-CONTRACT §3.1) is
         decided from the SERVING one: it, and only it, knows which
@@ -596,7 +596,7 @@ class SnapshotClient:
 
         When *expected_manifest_sha256* is given, the cached ``manifest.json``
         must hash to it — binding a pre-existing cache dir to the authenticated
-        pointer's manifest (R8/R24/F1). Without this a self-consistent OTHER
+        pointer's manifest. Without this a self-consistent OTHER
         build copied under this build_id would pass and be served as current.
         """
         try:
@@ -634,7 +634,7 @@ class SnapshotClient:
                 return False
             # An unreadable artifact is "not complete", never an escaping
             # error: this runs inside serving_build() AND refresh(), so an
-            # EACCES/EIO here would take down every module (QA-BLOCKER-2).
+            # EACCES/EIO here would take down every module.
             try:
                 if not artifact.is_file() or artifact.stat().st_size != size:
                     return False
@@ -649,7 +649,7 @@ class SnapshotClient:
 
         atomic_write_bytes(path, text.encode("utf-8"), mode=0o600)
 
-    # --- crash recovery (R24) ------------------------------------------------
+    # --- crash recovery ------------------------------------------------
 
     def reconcile(self) -> None:
         """Read-time cleanup of orphaned temp directories.
@@ -662,7 +662,7 @@ class SnapshotClient:
 
         Every failure here is swallowed: `refresh()` calls this on every poll,
         so an escaping ``OSError`` would take down the whole server rather than
-        one module (QA-r6-F1).
+        one module.
         """
         try:
             for orphan in self._module_dir.glob(".tmp-*"):
@@ -785,8 +785,7 @@ class SnapshotClient:
         pointer with NO replay protection — is the wrong reading. Checking only
         the record left a hole: clearing just the state files (which the earlier
         refusal message actually RECOMMENDED), or losing both, left the build
-        artifacts behind and let a stale pointer reinstate a withheld build
-        (QA-VERIFY3-B2).
+        artifacts behind and let a stale pointer reinstate a withheld build.
         """
         if self._record_path.exists():
             return True
@@ -889,7 +888,7 @@ class SnapshotClient:
             # The CURRENT, verified build does not carry this module — e.g.
             # `inst` withheld by the M2 >=95% coverage gate. Serving the
             # previously cached build would hand back STALE data while health
-            # reported the module present, defeating the gate (QA-F1).
+            # reported the module present, defeating the gate.
             #
             # TUPLE FIRST — it IS the commit (spec §4). Once it lands, the old
             # record no longer matches the anchor, so the module is immediately
@@ -928,7 +927,7 @@ class SnapshotClient:
                 verified_omission=True,
             )
 
-        # client_compat (R22): a PEP 440 specifier against our own version.
+        # client_compat: a PEP 440 specifier against our own version.
         compat = module["client_compat"]
         try:
             compatible = Version(self._client_version) in SpecifierSet(compat)
@@ -947,12 +946,12 @@ class SnapshotClient:
 
         build_dir = self._safe_under(self._module, build_id)
         # Reuse a pre-existing cache dir ONLY if its manifest binds to the
-        # freshly-authenticated pointer's manifest_sha256 (F1); otherwise treat
+        # freshly-authenticated pointer's manifest_sha256; otherwise treat
         # it as a cache miss and re-install the authenticated artifacts.
         if not self._build_complete(build_id, pointer["manifest_sha256"]):
             tmp_dir = self._safe_under(self._module, f".tmp-{build_id}")
             try:
-                # INSIDE the guard (QA-BLOCKER-2): an unremovable orphan or a
+                # INSIDE the guard: an unremovable orphan or a
                 # full/read-only cache made these two lines raise straight out
                 # of refresh(), which runs on every poll — so one module's I/O
                 # failure killed the server and took congress with it. reconcile
@@ -1004,7 +1003,7 @@ class SnapshotClient:
                 # A hash-consistent but corrupt/non-SQLite database raises
                 # sqlite3.DatabaseError from PRAGMA integrity_check above — it
                 # must take the same controlled refusal path as a fetch/IO
-                # failure (R8/R14/F4): tmp_dir removed, prior cache + trust
+                # failure: tmp_dir removed, prior cache + trust
                 # tuple untouched, last verified build keeps serving.
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return RefreshResult(

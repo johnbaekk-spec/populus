@@ -1,4 +1,4 @@
-"""RUN M2-8 T7 (plan R5/R6/R7) — the inst SERVING projection.
+"""The inst SERVING projection.
 
 `inst_holdings` is the canonical AUDIT store: ~950 B/row payload, mostly per-row
 §5.1 provenance plus a `raw_row` duplicate. That is correct for an audit trail and
@@ -8,7 +8,7 @@ one pass from `v_filer_reported_holdings`, default membership is joined from
 `v_default_inst_filings`, and activity classification comes from the producer-owned
 aggregate (`agg_qoq_deltas`).
 
-Three grains, kept separate (plan §B; external review r2 F8/F9, r3 F6/F7):
+Three grains, kept separate:
 
   filer          bucketed by cik           one row per REPORTED HOLDING
   issuer-holder  bucketed by issuer_key    one row per (issuer, period, FILER)
@@ -21,7 +21,7 @@ grouping that silently absorbs them. `position_key` is therefore an explicit
 REFERENCE from a holding row to its `agg_qoq_deltas` record
 `(cik, position_key, put_call, ssh_prnamt_type, curr_period)` — never a copy of it.
 
-Provenance is COMPRESSED, never dropped (r2 F7): each shard carries a `filings`
+Provenance is COMPRESSED, never dropped: each shard carries a `filings`
 dictionary keyed by `filing_key`, and every row carries that key. One entry per
 filing replaces the duplicated per-row strings while preserving the every-record
 provenance contract and amendment-aware filed dates.
@@ -68,7 +68,7 @@ __all__ = [
 PUBLISHED_PERIODS = 2
 
 
-# --- filing dictionary (R5) ---------------------------------------------------
+# --- filing dictionary ---------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -152,13 +152,13 @@ def publication_periods(
     return tuple(sorted(row[0] for row in rows if row[0] is not None))
 
 
-# --- affiliate grouping (R6; external review r5 F3, r6 F3) --------------------
+# --- affiliate grouping --------------------
 
 
 def affiliate_groups(conn: sqlite3.Connection, period: str) -> dict[str, str]:
     """`cik -> affiliate_group_key` for one period.
 
-    Nodes are **CIKs, not filings** (review r6 F3). An earlier design built the
+    Nodes are **CIKs, not filings**. An earlier design built the
     graph over filings, which left a CIK with several surviving filings — a base
     plus NEW-HOLDINGS amendments — belonging to no single group. Projecting every
     restatement survivor onto its CIK first makes group membership total by
@@ -243,7 +243,7 @@ def _other_manager_file_numbers(raw: str | None) -> list[str]:
     return out
 
 
-# --- authoritative-full composition (R13 exits; review r5 F5, r6 F4) ---------
+# --- authoritative-full composition ---------
 
 
 #: The amendment types the composition rules know how to reason about. A NULL
@@ -467,7 +467,7 @@ def build_serving_projection(
         if value_usd is None:
             # A partial sum presented as a total would overstate nothing but
             # understate the holding — so the row's value becomes NULL + a flag
-            # rather than a number that looks complete (r4 F4).
+            # rather than a number that looks complete.
             bucket["value_undisclosed_component"] = True
         else:
             bucket["value_usd"] += value_usd
@@ -514,7 +514,7 @@ def build_serving_projection(
                 "issuer_name": bucket["issuer_name"],
                 "period": period,
                 # MANDATORY: an issuer bucket holds many filers, so a row without
-                # this cannot say who holds what (review r2 F8).
+                # this cannot say who holds what.
                 "filer_key": cik,
                 "filer_name": out.filer_names.get(cik, cik),
                 "affiliate_group_key": groups_by_period.get(period, {}).get(cik, cik),
@@ -586,7 +586,7 @@ CREATE TABLE IF NOT EXISTS serving_issuer_holder_rows (
   issuer_key_source           TEXT NOT NULL,
   issuer_name                 TEXT NOT NULL,
   period                      TEXT NOT NULL,
-  filer_key                   TEXT NOT NULL,   -- MANDATORY (review r2 F8)
+  filer_key                   TEXT NOT NULL,   -- MANDATORY
   filer_name                  TEXT NOT NULL,
   affiliate_group_key         TEXT NOT NULL,
   value_usd                   INTEGER,         -- NULL when a component is undisclosed
@@ -742,18 +742,18 @@ def _build_activity_rows(
     periods: tuple[str, ...],
     display: dict[tuple[str, str, str], tuple[str, str]],
 ) -> None:
-    """The ACTIVITY grain (plan §B, R13): one row per QoQ position change.
+    """The ACTIVITY grain: one row per QoQ position change.
 
     Read from `agg_qoq_deltas` — the producer-owned classification — and joined to
     display fields and provenance the aggregate does not carry. This is a separate
     grain, not a widening of the holding rows: attaching change fields to holdings
-    would duplicate a delta across the rows a composed position draws on (r2 F9).
+    would duplicate a delta across the rows a composed position draws on.
 
-    `filing_keys` is an ORDERED SET, never a scalar (r3 F7): a composed position
+    `filing_keys` is an ORDERED SET, never a scalar: a composed position
     draws on a base plus NEW-HOLDINGS amendments. Exits additionally carry
     `prior_filing_keys` (the composition that established the position) and
     `current_filing_keys` (the composition it is ABSENT from) — absence is only
-    assertable from an authoritative-full composition (r6 F4).
+    assertable from an authoritative-full composition.
     """
     import json as _json
 
@@ -806,7 +806,7 @@ def _build_activity_rows(
         row_flags = list(_json.loads(flags)) if flags else []
 
         if change_kind == "exit" and (cik, curr_period) not in authoritative:
-            # Absence is not assertable from this composition (r6 F4).
+            # Absence is not assertable from this composition.
             change_kind = "unclassified"
             row_flags = sorted({*row_flags, "exit_not_assertable"})
 

@@ -1,4 +1,4 @@
-"""Senate eFD PTR e-file page parser (ARCHITECTURE.md §9.1/§9.3; RUN 3).
+"""Senate eFD PTR e-file page parser (ARCHITECTURE.md §9.1/§9.3).
 
 Pure functions over HTML bytes — no I/O, no DB. One public entry,
 :func:`parse_ptr_page`, extracts the verified 9-column transactions table

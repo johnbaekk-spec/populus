@@ -1,7 +1,7 @@
-"""Institutional 13F ingest orchestration (ARCHITECTURE.md §10.2 — RUN M2-2).
+"""Institutional 13F ingest orchestration (ARCHITECTURE.md §10.2).
 
 The only inst module that touches the network, and it does so exclusively
-through the RUN-M2-1 ``SecClient`` (politeness in code, G6). Cache mode reads
+through the shared ``SecClient`` (politeness in code, G6). Cache mode reads
 the same on-disk layout offline; **no test reaches the network** (the transport
 is injected and the autouse no-network guard blocks any escape).
 
@@ -9,14 +9,14 @@ Flow, per CIK: discover 13F accessions from ``submissions.json`` (+ the per-CIK
 ``submissions-meta.json`` retrieval sidecar) → obtain each accession's
 ``index.json`` / ``primary_doc.xml`` / the info table discovered from the index
 → ``evaluate_filing`` (the single status-decision point, incl. the persisted
-failed-cover outcome, R18) → atomic per-filing load. After every filing loads:
+failed-cover outcome) → atomic per-filing load. After every filing loads:
 amendment lineage, affiliated-coverage stamping (both over the restatement-
 survivor candidate set), reconciliation, and the never-inflated coverage inputs
-the M2 ≥95% gate consumes at M2-3 publish time (R16).
+the M2 ≥95% gate consumes at M2-3 publish time.
 
 Library code never reads the wall clock: ``now``/``run_id``/``host`` and the
 per-run ``ingested_at`` are injected by the CLI, and ``retrieved_at`` comes from
-committed sidecars (a missing sidecar → NULL + a flag, never the clock; R15/R19).
+committed sidecars (a missing sidecar → NULL + a flag, never the clock).
 """
 
 from __future__ import annotations
@@ -75,9 +75,9 @@ _NOTICE_TYPES = ("13F-NT", "13F-NT/A")
 _CIK_DIR = re.compile(r"CIK(\d{10})")
 #: The canonical dashed SEC accession number, e.g. `0001193125-26-226661`. Remote
 #: values are validated against this BEFORE being interpolated into any cache
-#: path or SEC URL (QA-F3).
+#: path or SEC URL.
 _ACCESSION_RE = re.compile(r"\d{10}-\d{2}-\d{6}")
-#: Canonical ISO calendar date, as the index must supply it (QA-F5).
+#: Canonical ISO calendar date, as the index must supply it.
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -110,7 +110,7 @@ def _archive_base(cik10: str, accession_nodash: str) -> str:
     )
 
 
-# --- per-document resume checkpoints (RUN M2-6, R13) --------------------------
+# --- per-document resume checkpoints -----------------------------------------
 #
 # The checkpoint sidecars ARE the existing provenance sidecars: submissions-
 # meta.json carries a single ``response_hash`` slot, and a per-accession
@@ -118,7 +118,7 @@ def _archive_base(cik10: str, accession_nodash: str) -> str:
 # ``doc_key`` is ``None`` for the single-document submissions sidecar, else the
 # document filename.
 #
-# The three primitives now live in ``populus.ingest.checkpoint`` (RUN M1-B, R1)
+# The three primitives now live in ``populus.ingest.checkpoint``
 # so the House PTR fetch resumes on the same implementation instead of a second
 # copy of the ordering rule. These module-private aliases keep every existing
 # inst call site (and any offline tooling reading them) unchanged.
@@ -167,7 +167,7 @@ class _CacheSource:
         ``raw_path`` discipline. (The first draft passed a non-existent
         ``from_cache`` field and omitted the required ``raw_path``, so every
         call raised ``TypeError``; it was never exercised because the tests
-        drove only the federated source — QA-r4-F2.)
+        drove only the federated source.)
         """
         relpath = f"CIK{cik10}/{name}"
         content = self._read(relpath)
@@ -242,7 +242,7 @@ class _CacheSource:
 class _LiveSource:
     """Fetches through the SecClient, archives raw bytes, writes the sidecars.
 
-    ``resume`` (RUN M2-6, R13) makes every document write **checkpoint-before-
+    ``resume`` makes every document write **checkpoint-before-
     bytes** and every read cache-first: the expected-hash checkpoint entry is
     committed to the sidecar (``atomic_write_bytes``) BEFORE the document bytes
     are atomically renamed into place, on a first write and on a corruption
@@ -300,7 +300,7 @@ class _LiveSource:
         meta_path: Path,
         doc_key: str | None,
     ) -> _Doc:
-        """Cache-first, checkpoint-before-bytes obtain of one document (R13).
+        """Cache-first, checkpoint-before-bytes obtain of one document.
 
         ``doc_key`` selects the checkpoint slot: ``None`` for the single-document
         submissions sidecar, or the filename for a per-accession fetch-meta.
@@ -424,7 +424,7 @@ class _LiveSource:
         # In resume mode every document already committed its own checkpoint
         # (with per-document retrieved_at) into fetch-meta.json before its bytes
         # landed, so this end-of-accession rewrite would only DROP that provenance
-        # — skip it (R13). The non-resume path writes the sidecar once here.
+        # — skip it. The non-resume path writes the sidecar once here.
         if self._resume:
             return
         meta = {
@@ -473,17 +473,17 @@ class _Discovery:
 
 #: A submissions shard filename, e.g. ``CIK0001067983-submissions-001.json``.
 #: Remote input interpolated into a URL and a cache path, so it is validated to
-#: this exact shape before use — same discipline as ``_ACCESSION_RE`` (QA-F3).
+#: this exact shape before use — same discipline as ``_ACCESSION_RE``.
 _SHARD_RE = re.compile(r"CIK\d{10}-submissions-\d{3}\.json")
 
 
 def discover(
     source, cik10: str, *, cache_bounded: bool, include_history: bool = False
 ) -> _Discovery:
-    """Discover a CIK's 13F accessions from ``submissions.json`` (R1/R18/R19).
+    """Discover a CIK's 13F accessions from ``submissions.json``.
 
     ``include_history`` additionally READS the older ``filings.files[]`` shards
-    (TD-M2-2-3, closed for this path by QA-r3-F4). SEC keeps only a recent
+. SEC keeps only a recent
     window inline; a filer with a long history keeps older filings in shards, so
     without this an explicitly-requested historical period returned a FALSE
     "no 13F-HR at that period". The M2-2 ingest path leaves it off, so its cost
@@ -525,7 +525,6 @@ def discover(
             # the filesystem. A malformed or path-bearing value (separators,
             # traversal, wrong length, non-string) is a counted discovery reject —
             # never a filesystem escape, an unintended request, or an aborted run.
-            # (QA-F3)
             if not isinstance(accession, str) or not _ACCESSION_RE.fullmatch(accession):
                 rejected.append(str(accession))
                 continue
@@ -535,7 +534,7 @@ def discover(
             # failed-cover record persists them as temporal keys and `unit_basis_for`
             # parses `filed_date`, so a malformed remote value would either abort the
             # run downstream or persist an invalid key. Validate here and count it as
-            # a discovery reject instead (QA-F5, R18/G3).
+            # a discovery reject instead (G3).
             if not (_is_iso_date(report_date) and _is_iso_date(filing_date)):
                 rejected.append(accession)
                 continue
@@ -549,7 +548,7 @@ def discover(
                 # `recent` and `files[]` are documented as disjoint, but a
                 # repeated accession would be composed TWICE — and a NEW HOLDINGS
                 # amendment applied twice inflates the position list while still
-                # reporting completeness (QA-VERIFY4-N2). Merge semantics are
+                # reporting completeness. Merge semantics are
                 # multiplicity-sensitive, so dedup at the source.
                 continue
             seen_accessions.add(accession)
@@ -592,7 +591,7 @@ def discover(
     )
 
 
-# --- the single status-decision point (R14/G3/R18) ---------------------------
+# --- the single status-decision point (G3) ---------------------------
 
 
 @dataclass(frozen=True)
@@ -619,7 +618,7 @@ def evaluate_filing(
     Every discovered accession ends in exactly one accounted status (G3),
     including a cover-parse failure — which is persisted from the validated
     submissions-index metadata rather than aborting the run or dropping the
-    accession (R18/LD-12).
+    accession.
     """
     index_doc = source.index(entry.cik, entry.accession_nodash)
     cover_doc = source.cover(entry.cik, entry.accession_nodash)
@@ -669,7 +668,7 @@ def evaluate_filing(
             status = "failed"
             table_doc = None
             # Cover parsed, so the reported total is KNOWN and still counts for
-            # coverage (F3): a failed zero-row filing drags coverage down.
+            # coverage: a failed zero-row filing drags coverage down.
             reconciliation = filing_reconciliation(
                 table_entry_total=cover.table_entry_total,
                 table_value_total=cover.table_value_total,
@@ -703,13 +702,13 @@ def evaluate_filing(
     # cover alone let a `13F-HR/A` whose cover omits the element be composed as a
     # BASE — which REPLACES the base's positions, so a 4-row NEW HOLDINGS
     # amendment was returned as a complete 110-row portfolio with
-    # `composition_complete: True`. That is QA-F2 through a second door, and
+    # `composition_complete: True`. That is the silent-inflation defect through a second door, and
     # absence of the element is the NORMAL case (real base covers omit it).
     # Decided once, here, so the pipeline and the federated plane agree.
     form_says_amendment = entry.form.endswith("/A")
     is_amendment = bool(cover.is_amendment) or form_says_amendment
     if bool(cover.is_amendment) != form_says_amendment:
-        # Flagged in BOTH directions (QA-VERIFY4-N5): a plain `13F-HR` whose
+        # Flagged in BOTH directions: a plain `13F-HR` whose
         # cover carries a stray <isAmendment>true</isAmendment> is the safe
         # direction, but it is still a contradiction between the authoritative
         # submission type and the self-declared cover, and it silently turned an
@@ -775,7 +774,7 @@ def _failed_cover_outcome(
     failure_kind: str,
     ingested_at: str,
 ) -> FilingOutcome:
-    """R18: persist a failed cover from validated submissions-index metadata,
+    """Persist a failed cover from validated submissions-index metadata,
     with a NULL ``table_value_total_usd`` (value unknown), and continue."""
     flags = {"cover_failed"}
     retrieved_at = _max_retrieved_at(index_doc, cover_doc, None)
@@ -803,7 +802,7 @@ def _failed_cover_outcome(
         other_managers=[],
         table_entry_total=None,
         table_value_total=None,
-        table_value_total_usd=None,   # value unknown — never inflate the denominator (R16/F7)
+        table_value_total_usd=None,   # value unknown — never inflate the denominator
         row_count=0,
         sum_value_usd=None,
         value_total_delta=None,
@@ -885,7 +884,7 @@ def _to_parsed_row(holding) -> InstParsedRow:
 #: Flags DERIVED from the current restatement-survivor set. They are recomputed
 #: from scratch on every reconciliation, so they must be cleared first — a filing
 #: that no longer has a surviving coverer would otherwise keep a stale
-#: `affiliated_*` flag and diverge from a clean rebuild (QA-F5, R7).
+#: `affiliated_*` flag and diverge from a clean rebuild.
 _AFFILIATION_DERIVED_FLAGS = ("affiliated_covered", "affiliated_mutual_coverage")
 
 
@@ -896,7 +895,7 @@ def _drop_flag(
 
     The inverse of :func:`_add_flag`, for DERIVED flags that must be recomputed
     rather than accumulated — otherwise an incremental run keeps a flag whose
-    cause has gone and diverges from a clean rebuild (QA-F4/QA-F5).
+    cause has gone and diverges from a clean rebuild.
     """
     sql = """
         UPDATE inst_filings
@@ -917,7 +916,7 @@ def _drop_flag(
 
 
 def _clear_affiliation_flags(conn: sqlite3.Connection) -> None:
-    """Drop every affiliation-derived flag before recomputing them (QA-F5)."""
+    """Drop every affiliation-derived flag before recomputing them."""
     for flag in _AFFILIATION_DERIVED_FLAGS:
         _drop_flag(conn, None, flag)
 
@@ -942,9 +941,9 @@ def link_inst_amendments(conn: sqlite3.Connection) -> tuple[int, int]:
 
     The base is the unique NON-amendment (``13F-HR``/``13F-NT``) filing for the
     same ``(cik, period_of_report)`` that predates the amendment, resolved
-    independently of lifecycle (F2/F13), so successive restatements and a later
+    independently of lifecycle, so successive restatements and a later
     new-holdings addition all link to the same base and none is falsely flagged
-    ``amendment_unlinked``. Zero or many candidates ⇒ NULL + flag (R5/F25).
+    ``amendment_unlinked``. Zero or many candidates ⇒ NULL + flag.
     Returns ``(amendments_total, amendments_linked)``.
     """
     amendments = conn.execute(
@@ -970,7 +969,7 @@ def link_inst_amendments(conn: sqlite3.Connection) -> tuple[int, int]:
             # `amendment_unlinked` is DERIVED from lineage, so it must be dropped
             # when a base later appears (amendment ingested first, base second).
             # Leaving it would keep a false flag and diverge from a clean
-            # rebuild. (QA-F4)
+            # rebuild.
             _drop_flag(conn, filing_id, "amendment_unlinked")
             linked += 1
         else:
@@ -984,18 +983,18 @@ def link_inst_amendments(conn: sqlite3.Connection) -> tuple[int, int]:
 
 def mark_affiliated_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
     """Stamp ``affiliated_covered`` / ``affiliated_mutual_coverage`` over the
-    restatement-survivor candidate set (R7/F6). Returns ``(covered, mutual)``.
+    restatement-survivor candidate set. Returns ``(covered, mutual)``.
 
     Derived state is recomputed from scratch: both flags are CLEARED first, so a
     filing whose coverer stopped surviving (e.g. a later restatement dropped an
     other manager) does not keep a stale flag, and an incremental selective-CIK
-    run converges with a clean rebuild (QA-F5).
+    run converges with a clean rebuild.
 
     The clear+recompute is a post-processing pass on the connection as given: the
     per-filing loads are each atomic (``upsert_inst_filing`` owns its own
     transaction), while this pass runs in the connection's autocommit mode — it is
     idempotent and derives entirely from persisted state, so a re-run reproduces
-    the same flags (QA-F8: the docstring previously claimed an enclosing
+    the same flags (an earlier revision of this docstring claimed an enclosing
     transaction that does not exist).
     """
     _clear_affiliation_flags(conn)
@@ -1086,7 +1085,7 @@ def inst_pair_invariant_errors(conn: sqlite3.Connection) -> list[str]:
 #: and arithmetically unsafe: `table_value_total_usd` is a signed 64-bit column,
 #: so SQLite PROMOTES `1000 * delta` to REAL once the product passes ~9.2e18 —
 #: reintroducing floating point inside the predicate that exists to avoid it
-#: (external review F5). Dividing instead of multiplying cannot overflow, and it
+#:. Dividing instead of multiplying cannot overflow, and it
 #: is EXACTLY equivalent for integer deltas: with M = max(FLOOR, T/DIVISOR) and
 #: M' = max(FLOOR, T // DIVISOR) we always have M' <= M < M' + 1, and no integer
 #: lies in (M', M]. Proof and the domain are recorded in the spec.
@@ -1243,7 +1242,7 @@ def mark_cover_dispositions(conn: sqlite3.Connection) -> tuple[int, int]:
     return rounding, conflicts
 
 
-# --- reconciliation + coverage inputs (R16) ----------------------------------
+# --- reconciliation + coverage inputs ----------------------------------
 
 
 #: The M2 publication gate's threshold (M2-CONTRACT §8 / LD-8). Reported here;
@@ -1255,7 +1254,7 @@ COVERAGE_THRESHOLD = 0.95
 #: (NULL) total. Shared verbatim by :func:`compute_coverage` and
 #: :func:`compute_period_coverage` — the per-period figures previously summed the
 #: DECLARED total alone, so a tolerated rounding filing printed a period coverage
-#: of 100.1% beside a corpus coverage of 100.0% (external review F1). Anything
+#: of 100.1% beside a corpus coverage of 100.0%. Anything
 #: that reports a coverage ratio uses this term; the two can no longer drift
 #: because there is only one of them (spec §I3/Rule 5).
 _DENOMINATOR_TERM = """
@@ -1363,7 +1362,7 @@ class InstCoverage:
     cover_failed_count: int
     #: UNRESOLVED cover conflicts: default-view filings whose RESOLVED numerator
     #: exceeds their DECLARED total beyond tol(T) — a per-filing over-count that
-    #: would let corpus coverage read above 100% (F8). M2-7 makes this
+    #: would let corpus coverage read above 100%. M2-7 makes this
     #: structurally zero by excluding conflicts from the view (§I4); it is kept as
     #: an independent fail-closed check, so a stale view or a hand-built database
     #: still cannot certify an over-counting filing (§I6).
@@ -1373,7 +1372,7 @@ class InstCoverage:
     #: unresolved cover conflict.
     certifiable: bool
     #: Measurable AND at/above :data:`COVERAGE_THRESHOLD` — the gate readiness
-    #: signal M2-3 consumes. Distinct from `certifiable` (QA-F6).
+    #: signal M2-3 consumes. Distinct from `certifiable`.
     meets_threshold: bool = False
     #: M2-7 dispositions, REPORTED so no exclusion is silent (§I5). Rounding
     #: filings stay in the corpus (their denominator contribution is max(S,T));
@@ -1407,7 +1406,7 @@ def format_cover_dispositions(
 
     Ingest summary, bulk summary, both acceptance scripts and the CLI's build and
     publish output all call this, so no surface can quietly omit the exclusions —
-    which four of them did until external review F3. Conflicts are named by
+    which four of them once did. Conflicts are named by
     ``filing_id``; a bare count is not an explanation.
     """
     named = f": {', '.join(conflict_filing_ids)}" if conflict_filing_ids else ""
@@ -1428,14 +1427,14 @@ def cover_dispositions_from_mapping(record: Mapping) -> str:
 
 
 def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
-    """The never-inflated coverage inputs the M2 ≥95% gate consumes (R16/LD-8).
+    """The never-inflated coverage inputs the M2 ≥95% gate consumes.
 
     Denominator = Σ ``max(declared, resolved)`` over ``v_default_inst_filings``
     (incl. info-table-failed filings with a known total). Numerator = Σ
     ``value_usd`` over ``v_default_holdings`` with a non-null ``security_id``.
     Any in-scope default filing with a NULL total (a cover-failed filing of
     unknown value) makes coverage non-certifiable rather than shrinking the
-    denominator (F7).
+    denominator.
 
     The denominator banks the LARGER of the filer's two numbers per filing
     (M2-7 §I3): for the overwhelming majority (S <= T) that is the declared total
@@ -1450,9 +1449,9 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
     # Count ONLY filings whose cover actually failed (value UNKNOWN). A valid
     # `13F-NT` notice legitimately reports no holdings and no totals: its NULL
     # total is a genuine ZERO contribution, not an unknown one, so it must not
-    # make coverage non-certifiable and must not block M2-3's publish. (QA-F3)
+    # make coverage non-certifiable and must not block M2-3's publish.
     cover_failed = conn.execute(queries["coverage_cover_failed"]).fetchone()[0]
-    # The per-filing NON-INFLATION invariant (F8), with M2-7's tolerance: no
+    # The per-filing NON-INFLATION invariant, with M2-7's tolerance: no
     # default filing's resolved numerator (Σ value_usd over its holdings with a
     # security_id) may exceed its own DECLARED total by more than tol(T). Without
     # this, one filing whose holdings sum to far more than its cover total
@@ -1477,7 +1476,7 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
     # denominator, no unknown cover totals, and no UNRESOLVED cover conflict. The
     # ≥0.95 threshold is M2-3's publication decision, reported separately —
     # folding it in here would mislabel a fully-measurable 94% as
-    # non-certifiable. (QA-F6)
+    # non-certifiable.
     certifiable = (
         cover_failed == 0
         and inflated == 0
@@ -1500,7 +1499,7 @@ def compute_coverage(conn: sqlite3.Connection) -> InstCoverage:
 
 @dataclass(frozen=True)
 class PeriodCoverage:
-    """Per-``period_of_report`` value coverage (RUN M2-5 reporting; R9/R11).
+    """Per-``period_of_report`` value coverage.
 
     Additive to the gate: the corpus-wide :func:`compute_coverage` decision and
     its 0.95 threshold are UNCHANGED. These per-period figures are reported (on
@@ -1529,16 +1528,16 @@ def _has_list_intervals(conn: sqlite3.Connection) -> bool:
 def compute_period_coverage(
     conn: sqlite3.Connection,
 ) -> tuple[PeriodCoverage, ...]:
-    """Value coverage per ``period_of_report`` (R9), sorted by period.
+    """Value coverage per ``period_of_report``, sorted by period.
 
     Same denominator/numerator definitions as :func:`compute_coverage`, grouped
     by the reporting period — literally the same SQL term (``_DENOMINATOR_TERM``),
     applied PER FILING before the grouping. Summing the declared total here while
     the corpus banked max(T,S) let a tolerated rounding filing report a period
-    coverage above 100% (external review F1); a period figure is a coverage
+    coverage above 100%; a period figure is a coverage
     figure, and §I3 admits no exceptions. ``covered_by_list`` records whether a
     definitional list interval spans the period, so a caller can name the
-    quarters that have no list (R11). Read-only; never mutates, never gates.
+    quarters that have no list. Read-only; never mutates, never gates.
     """
     queries = _production_coverage_queries(conn)
     denominators = dict(
@@ -1593,8 +1592,7 @@ class InstIngestReport:
     rejected_rows: tuple[str, ...] = ()
     unaccounted: tuple[str, ...] = ()
     #: Allowlisted target accessions whose loaded ``period_of_report`` differed
-    #: from the asserted ``report_period`` — recorded, never silently loaded
-    #: (RUN M2-6, R2/R6).
+    #: from the asserted ``report_period`` — recorded, never silently loaded.
     period_mismatched: tuple[str, ...] = ()
     filings: list[dict] = field(default_factory=list)
     coverage: InstCoverage | None = None
@@ -1609,7 +1607,7 @@ class InstIngestReport:
     def ok(self) -> bool:
         """Success = the breaker never tripped, no invariant error, and every
         discovered in-scope accession reconciled into a filing row. A cover- or
-        info-table-failed filing is an ACCOUNTED outcome (R18/G3), not a run
+        info-table-failed filing is an ACCOUNTED outcome (G3), not a run
         failure, so it does not flip ``ok`` — only a genuinely broken run does."""
         if self.circuit_open_url is not None:
             return False
@@ -1620,7 +1618,7 @@ class InstIngestReport:
 
 @dataclass(frozen=True)
 class FinalizeReport:
-    """Outcome of the global post-load passes, run once per bulk run (R16)."""
+    """Outcome of the global post-load passes, run once per bulk run."""
 
     amendments_total: int
     amendments_linked: int
@@ -1631,13 +1629,13 @@ class FinalizeReport:
 
 
 def finalize_inst_ingest(conn: sqlite3.Connection) -> FinalizeReport:
-    """Run the global post-load passes exactly once (RUN M2-6, R16/LD-4).
+    """Run the global post-load passes exactly once.
 
     The identical passes the M2-2 tail runs — amendment lineage, affiliated-
     coverage stamping, the pair invariant check, and the never-inflated coverage
     inputs — factored out so a bulk coordinator drives per-CIK loads with
     ``run_passes=False`` and calls this ONCE at the end, making the number of
-    global passes independent of the number of filers (F8). Each pass derives
+    global passes independent of the number of filers. Each pass derives
     entirely from persisted state and is idempotent, so calling this once after
     N deferred loads is equivalent to N inline tails collapsing to one.
     """
@@ -1682,7 +1680,7 @@ def run_inst13f_ingest(
     ``raw_root``) fetches through the SecClient. The audit row is finalized on
     every exit path (LD6 parity with the Senate run).
 
-    RUN M2-6 seam extension, all default-inert (``accessions=None``,
+    Bulk-ingest seam extension, all default-inert (``accessions=None``,
     ``report_period=None``, ``run_passes=True``, ``resume=False`` reproduce the
     M2-2 behaviour exactly):
 
@@ -1693,7 +1691,7 @@ def run_inst13f_ingest(
       * ``run_passes`` — when ``False``, defer the global post-passes to a single
         :func:`finalize_inst_ingest` the coordinator runs once for the whole run.
       * ``resume`` — engage the live source's per-document cache-first,
-        checkpoint-before-bytes resume (R13).
+        checkpoint-before-bytes resume.
     """
     conn.execute(
         "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
@@ -1813,7 +1811,7 @@ def _run(
         )
 
         for entry in discovery.entries:
-            # RUN M2-6: an accession allowlist restricts the loaded set to the
+            # An accession allowlist restricts the loaded set to the
             # filer's target lineage; a non-target accession is simply not this
             # run's business (never a reject, never unaccounted).
             if accessions is not None and entry.accession not in accessions:
@@ -1822,7 +1820,7 @@ def _run(
             outcome = evaluate_filing(
                 entry, source, resolve_security=resolver, ingested_at=ingested_at
             )
-            # RUN M2-6: assert the loaded period. A target whose authoritative
+            # Assert the loaded period. A target whose authoritative
             # (cover- or index-derived) period_of_report differs from the locked
             # report_period is recorded as a period_mismatch and NOT loaded — so
             # it never silently pollutes the corpus or the reconciliation.
@@ -1846,7 +1844,7 @@ def _run(
             report.filings.append(_filing_summary_row(outcome))
 
     report.ciks = tuple(selected)
-    # RUN M2-6: the coordinator defers the global post-passes to one finalize
+    # The bulk coordinator defers the global post-passes to one finalize
     # over the whole run (run_passes=False); a standalone run keeps running them
     # inline, unchanged.
     if run_passes:
@@ -1926,7 +1924,7 @@ def _unaccounted(conn: sqlite3.Connection, accessions: Sequence[str]) -> tuple[s
 
 
 def format_summary(report: InstIngestReport) -> str:
-    """The one-screen reconciliation summary the CLI prints (R12/R16)."""
+    """The one-screen reconciliation summary the CLI prints."""
     counts = report.status_counts
     failure_detail = ", ".join(
         f"{kind} {count}" for kind, count in sorted(report.failure_kinds.items())

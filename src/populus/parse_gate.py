@@ -1,8 +1,8 @@
-"""Per-era parse gate and member-join coverage (ARCHITECTURE.md §5.2; RUN M1-B).
+"""Per-era parse gate and member-join coverage (ARCHITECTURE.md §5.2).
 
-The ≥97% e-file parse gate that RUN 2 measured on one corpus (``RUN-2-brief``
-line 20: "≥97% of e-filed **rows** parsed clean"; ``STATUS.md`` line 39: 97.5%
-on the real 312-PTR 2026 corpus) was never encoded anywhere — ``format_summary``
+The ≥97% e-file parse gate originally measured on one corpus ("≥97% of e-filed
+**rows** parsed clean"; ``STATUS.md`` line 39: 97.5% on the real 312-PTR 2026
+corpus) was never encoded anywhere — ``format_summary``
 computed a rate and printed it, and nothing compared it to a threshold. A
 historical backfill needs it per ``(chamber, year)``, derived from the persisted
 corpus rather than from one run's ephemeral report, so an era measured across
@@ -56,7 +56,7 @@ from populus.normalize import has_parse_defect
 GATE_THRESHOLD = 0.97
 
 # The three options the owner chooses between when an era does not pass; quoted
-# from the RUN M1-B brief so the tooling never paraphrases the decision.
+# verbatim from the original decision record so the tooling never paraphrases it.
 GATE_OPTIONS = (
     "(a) era-scoped gates published honestly per year in stats.json",
     "(b) a parser extension for the older template era, then"
@@ -131,7 +131,7 @@ class EraJoinCoverage:
     ``stats.json`` publishes an aggregate primary join rate over the whole
     corpus, which lets a large modern corpus mask an era of unresolved
     historical filers. This is the same measurement, per era, so the masking is
-    structurally impossible (R15).
+    structurally impossible.
     """
 
     chamber: str
@@ -207,7 +207,7 @@ def _assert_census_consistency(eras: dict[tuple[str, str], dict]) -> None:
     Held by construction in :func:`compute_parse_gate` — the row census draws
     its era keys from the filing census's measurable set — and checked here so a
     future edit that re-derives the row population in SQL cannot reintroduce
-    F2 silently. Two invariants:
+    the disagreement silently. Two invariants:
 
     * an era whose filing census found **no** measurable e-file filing has no
       measurable denominator at all, so it must contribute **zero** floor rows;
@@ -256,7 +256,7 @@ def compute_parse_gate(
     # This census also DEFINES the measurable population census 2 draws from:
     # each measurable filing's era key is recorded here and reused verbatim
     # below, so the two censuses cannot disagree about which filings count or
-    # about which era a filing belongs to (code review round 1, F2).
+    # about which era a filing belongs to.
     measurable_era: dict[str, tuple[str, str]] = {}
     for filing_id, chamber, year, parse_status, row_count in conn.execute(
         "SELECT filing_id, chamber, substr(filed_date, 1, 4), parse_status,"
@@ -290,7 +290,7 @@ def compute_parse_gate(
     # has already declared unmeasurable, inflating the floor, the severity
     # ordering, the stats figures, and the owner-decision evidence. Membership
     # is tested against `measurable_era` rather than re-derived in SQL, so there
-    # is one predicate, evaluated once (F2).
+    # is one predicate, evaluated once.
     for filing_id, flags in conn.execute(
         "SELECT t.filing_id, t.flags"
         " FROM transactions t JOIN filings f ON f.filing_id = t.filing_id"
@@ -360,7 +360,7 @@ def compute_parse_gate(
 
 
 def compute_join_coverage(conn: sqlite3.Connection) -> tuple[EraJoinCoverage, ...]:
-    """Per-``(chamber, year)`` member-join coverage over primary sources (R15).
+    """Per-``(chamber, year)`` member-join coverage over primary sources.
 
     Filing counts come from ``filings``; row counts from
     ``v_default_transactions``, the same §9.5 population every published

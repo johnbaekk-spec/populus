@@ -79,7 +79,7 @@ SECURITY_ID_REFERENCING_TABLES = (
 #: Repointed by interval CUTTING rather than a plain UPDATE, because their rows
 #: carry validity intervals that may cross an ownership boundary and therefore
 #: belong to more than one owner after a revision. The definitional 13(f)-list
-#: table joins this set for RUN M2-5 (a later securities.yaml revision must recut
+#: table joins this set (a later securities.yaml revision must recut
 #: its quarter intervals exactly as it recuts the FTD identifiers).
 _CUT_TABLES = frozenset({"security_identifiers", "security_list_intervals"})
 
@@ -183,7 +183,7 @@ def normalize_cik(raw: object) -> str | None:
     The canonical result is EXACTLY ten ASCII digits. Overpadded input (more
     leading zeros than needed) is canonicalized down to ten, and input with more
     than ten significant digits — or any non-ASCII/non-decimal text — is
-    rejected, so one numeric CIK never appears under two keys (R1).
+    rejected, so one numeric CIK never appears under two keys.
     """
     if raw is None:
         return None
@@ -772,7 +772,7 @@ def _days_between(start: str, end: str) -> int:
 def union_intervals(
     existing: Iterable[tuple[str, str | None]], observed_dates: Iterable[str]
 ) -> tuple[tuple[str, str | None], ...]:
-    """Adjacency-only union of validity intervals (DC2/R9).
+    """Adjacency-only union of validity intervals.
 
     Each observed date contributes the unit interval ``[d, d+1)``. Two
     intervals merge only when they overlap or MEET exactly — a gap of even one
@@ -815,7 +815,7 @@ def applicable_value(
     ``(valid_from, valid_to, payload, review_state)``; a row applies only
     inside its half-open ``[valid_from, valid_to)`` window (``valid_to`` NULL =
     open); more than one applicable row is an ambiguity, not a preference
-    order; and a ``disputed`` row never resolves (R18).
+    order; and a ``disputed`` row never resolves.
 
     Every resolver and the bootstrap's batched in-memory index go through this
     function, so the SQL path and the bulk path can never drift apart.
@@ -885,11 +885,11 @@ def resolve_cusip(
     interval covers it. A definitional layer that covers the date but resolves
     ambiguously (more than one row) or is ``disputed`` returns ``None`` and NEVER
     falls through to FTD — otherwise a disputed higher-precedence binding would
-    silently resolve through a lower one (F12/R18).
+    silently resolve through a lower one.
 
     Still ``None`` when the value is malformed, when no interval of any source
     covers the date, when more than one row applies, or when the applicable row
-    is ``disputed`` (R18: an unreviewed reuse candidate resolves nowhere).
+    is ``disputed`` (an unreviewed reuse candidate resolves nowhere).
     """
     value = normalize_cusip(cusip)
     if value is None:
@@ -922,7 +922,7 @@ def resolve_security_name(
 ) -> str | None:
     """The canonical issuer name for *security_id* on *as_of_date*, or ``None``.
 
-    The definitional 13(f) list is the SOLE persisted name source (amended R7):
+    The definitional 13(f) list is the SOLE persisted name source:
     this returns the covering quarter's SEC canonical name, or ``None`` when no
     quarter covers the date, more than one does, or the covering row is
     ``disputed`` — never a fabricated fallback. `securities.yaml` carries no name
@@ -1004,7 +1004,7 @@ def reuse_review_decisions(
     registry: IdentityRegistry,
     horizon_days: int = REUSE_REVIEW_HORIZON_DAYS,
 ) -> ReuseDecision:
-    """Decide whether one identifier's gaps are reuse candidates (R18).
+    """Decide whether one identifier's gaps are reuse candidates.
 
     The horizon is a REVIEW trigger, never a validity or identity rule: it
     reads the persisted intervals and touches nothing, so flagging can never
@@ -1028,9 +1028,9 @@ def reuse_review_decisions(
         continuity
         for continuity in registry.continuities
         if (continuity.id_type, continuity.value) == (id_type, value)
-        # Only a REVIEWED continuity clears reuse (R16/R18). An `auto` or
+        # Only a REVIEWED continuity clears reuse. An `auto` or
         # `disputed` continuity must NOT make both eras resolvable — that would
-        # silently conflate potentially distinct securities (QA-F1). Fail closed.
+        # silently conflate potentially distinct securities. Fail closed.
         and continuity.review_state == "reviewed"
     ]
 
@@ -1098,7 +1098,7 @@ def ensure_security(
 def _identifier_raw(
     provenance: str, id_type: str, value: str, valid_from, valid_to
 ) -> str:
-    """Deterministic RFC-8785 raw provenance for one security_identifiers row (R1).
+    """Deterministic RFC-8785 raw provenance for one security_identifiers row.
 
     Never NULL: every persisted identifier interval carries a canonical record of
     its source and the coverage it represents. Deterministic in
@@ -1170,7 +1170,7 @@ def list_interval_raw(
     replay rewrites nothing.
 
     ``source_row`` is the VERBATIM source line the identity was read from (the
-    80-char fixed-width text row, or the reconstructed PDF data row). Round-1 F9:
+    80-char fixed-width text row, or the reconstructed PDF data row):
     without it the stored ``raw`` was synthesized identity/interval metadata only,
     so a published fact could not be audited against its exact source line once
     the gitignored cache was gone. It is a pure function of the source row, so a
@@ -1230,8 +1230,8 @@ def list_interval_row(
     """One `_LIST_INTERVAL_COLUMNS`-ordered bind tuple, incl. the derived ``raw``.
 
     Pure — no database access — so the seeder can build a whole quarter's rows in
-    memory and hand them to :func:`insert_list_intervals` as ONE batch (round-1
-    F10) instead of issuing per-row SQL.
+    memory and hand them to :func:`insert_list_intervals` as ONE batch
+    instead of issuing per-row SQL.
     """
     return (
         security_id,
@@ -1273,7 +1273,7 @@ def list_interval_row(
 def insert_list_intervals(
     conn: sqlite3.Connection, rows: Sequence[tuple], *, mutations
 ) -> int:
-    """Insert many definitional list intervals in ONE ``executemany`` (F10).
+    """Insert many definitional list intervals in ONE ``executemany``.
 
     Set-based by construction: a ~22,000-row quarter costs one prepared statement
     and one batch, not O(rows) round trips. ``ON CONFLICT (value, valid_from) DO
@@ -1305,7 +1305,7 @@ def upsert_list_interval(
     makes a same-list reseed a no-op (the seeder guarantees, before calling this,
     that any pre-existing quarter rows carry the SAME ``list_sha256`` — a changed
     hash is a hard error or an explicit transactional replacement, never a silent
-    overwrite). Every actual insert is counted (R12: no uncounted write).
+    overwrite). Every actual insert is counted (no write is uncounted).
     """
     insert_list_intervals(
         conn, [list_interval_row(**fields)], mutations=mutations
@@ -1426,7 +1426,7 @@ def apply_entity_candidates(
     return "cleared"
 
 
-# --- registry-revision migration (R17) ----------------------------------------
+# --- registry-revision migration ----------------------------------------
 
 
 def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegistry):
@@ -1466,7 +1466,7 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
     ).fetchall()
     # The definitional 13(f)-list intervals are a second FK-to-securities table
     # that carries validity intervals, so a boundary revision must recut them
-    # exactly as it recuts the FTD identifiers (RUN M2-5). Read every column in
+    # exactly as it recuts the FTD identifiers. Read every column in
     # `_LIST_INTERVAL_COLUMNS` order so a cut piece can be re-inserted verbatim
     # save its owner, interval and authority-derived review verdict.
     list_rows = conn.execute(
@@ -1605,7 +1605,7 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
     # name, class, retrieval provenance, row ordinal AND the verbatim source_row);
     # only its owner, interval, authority-derived review verdict and deterministic
     # raw change. Carrying source_row through unchanged is what keeps a recut fact
-    # auditable against its origin line (F9) while `raw` — a pure function of that
+    # auditable against its origin line while `raw` — a pure function of that
     # line plus the new interval — stays byte-deterministic. This is what makes
     # seed-then-revise converge bit-for-bit with revise-then-seed.
     list_deletes: list[tuple[str, str]] = []
@@ -1676,8 +1676,8 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
                 " WHERE security_id = ?",
                 (new_id, old_id),
             )
-            # Count ledger rows the chain collapse actually rewrote (R12: no
-            # uncounted write). Zero on replay: renames is empty once migrated.
+            # Count ledger rows the chain collapse actually rewrote (no
+            # write is uncounted). Zero on replay: renames is empty once migrated.
             if table == "security_supersessions":
                 mutations.supersessions_collapsed += max(cursor.rowcount, 0)
         collapse = conn.execute(
@@ -1687,7 +1687,7 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         # Move candidates ONLY for a fully-transferred (retired) identity. If
         # old_id survives because it is also a live destination, unioning its
         # stale candidates into new_id — while it keeps its own — can falsely
-        # conflict the survivor and break clean-build convergence (QA-F1). Reset
+        # conflict the survivor and break clean-build convergence. Reset
         # the survivor instead; the observation pass re-derives its candidates.
         if old_id not in all_destinations:
             previous_candidates = json.loads(securities[old_id][4])
@@ -1699,7 +1699,7 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         # remains a live destination (e.g. it lost this binding but simultaneously
         # gained another), recording old_id→new_id would redirect a still-live
         # durable id via resolve_security_successor — the retained-owner defect on
-        # the rename path (QA-F3, round 3). A survivor is deleted from nothing and
+        # the rename path. A survivor is deleted from nothing and
         # superseded by nothing.
         if old_id not in all_destinations:
             conn.execute("DELETE FROM securities WHERE security_id = ?", (old_id,))
@@ -1730,7 +1730,7 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         destinations = splits[old_id]
         retained = old_id in destinations
         successors = sorted(destinations - {old_id})
-        # G14 (F3): a split hands different PERIODS of one CUSIP to different
+        # G14: a split hands different PERIODS of one CUSIP to different
         # owners, so a persisted holding cannot be blanket-moved like a rename — it
         # must be repointed as-of ITS OWN filing period. The identifier and list
         # intervals were already recut above (steps 2/2b), so `resolve_cusip`
@@ -1780,13 +1780,13 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
                     )
                     # Chain-repoint inserts are ledger rows too — count them so a
                     # promotion→full-split revision reports its supersession writes
-                    # honestly (not just the direct old_id→successor rows). (R12)
+                    # honestly (not just the direct old_id→successor rows).
                     mutations.supersessions_recorded += max(cursor.rowcount, 0)
         if not retained:
             # A retained declared owner is NOT superseded: it keeps its id and its
             # unaffected bindings, and only hands one identifier to a successor.
             # Recording old_id→successor here would make resolve_security_successor
-            # redirect a still-live durable id away from itself (QA-F4). Only a
+            # redirect a still-live durable id away from itself. Only a
             # fully-retired predecessor is superseded by its successors.
             for successor in successors:
                 cursor = conn.execute(
@@ -1856,10 +1856,10 @@ def _align_authority_metadata(
     ``review_state`` is deliberately NOT rewritten here: it is the effective
     reuse verdict, owned by :func:`_reconcile_review_state`. Setting it to the
     authority value here would toggle a reuse-disputed/cleared security back and
-    forth against ``_stamp_review`` and break the R12 replay-zero contract (QA-F1).
+    forth against ``_stamp_review`` and break the replay-zero contract (a replay must be a no-op).
 
     Every actual ``securities`` rewrite is counted in
-    ``mutations.securities_metadata_updated`` (R12: no uncounted write). The
+    ``mutations.securities_metadata_updated`` (no write is uncounted). The
     ``WHERE``-differs guard means a replay updates nothing and counts zero.
     ``known`` is unused (kept for call-site compatibility) — the table is small
     enough to re-read, and re-reading avoids an index mismatch on its tuples.
@@ -1883,7 +1883,7 @@ def _reconcile_review_state(conn, registry, mutations) -> None:
     A reconcile-only run has no observation pass, so on a populated database the
     persisted ``review_state`` must be brought into line with the (possibly
     revised) authority here, or ``resolve_cusip`` diverges from a clean build.
-    This is BIDIRECTIONAL (QA-F1/F2), computing each value's FINAL target so a
+    This is BIDIRECTIONAL, computing each value's FINAL target so a
     replay is a no-op:
 
     * a reuse-disputed value → ``disputed`` for all its rows (fail closed);
@@ -1922,7 +1922,7 @@ def _reconcile_review_state(conn, registry, mutations) -> None:
             continue
         if decision.cleared:
             # A reviewed continuity resolves the reuse gap → `reviewed`, matching
-            # the observation pass so reconcile-only clearance converges (QA-F2).
+            # the observation pass so reconcile-only clearance converges.
             mutations.securities_cleared_by_continuity += _stamp_review(
                 conn, id_type, value, "reviewed"
             )
@@ -1945,7 +1945,7 @@ def _reconcile_review_state(conn, registry, mutations) -> None:
     # every other security tracks its declared authority value (so an authority
     # review-state revision converges with a clean build). Skipping reuse-touched
     # securities here is what prevents the authority↔reuse toggle that broke the
-    # R12 replay-zero contract (QA-F1).
+    # replay-zero contract.
     for (security_id,) in conn.execute(
         "SELECT security_id FROM securities ORDER BY security_id"
     ).fetchall():

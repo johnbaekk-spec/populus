@@ -1,4 +1,4 @@
-"""Seed the definitional 13(f)-list identity intervals (RUN M2-5, R7).
+"""Seed the definitional 13(f)-list identity intervals.
 
 One quarterly list registers each of its CUSIPs with the validity interval
 EXACTLY that quarter — ``[quarter_start, next_quarter_start)`` — intersected
@@ -15,7 +15,7 @@ from arrival order; re-seeding the same list is replay-zero; re-seeding a
 quarter whose cached list has a DIFFERENT sha256 is a hard error unless the
 caller passes ``replace_quarter`` (an auditable, transactional correction).
 
-Seeding is SET-BASED (round-1 F10): a quarter's owner resolution and bind-tuple
+Seeding is SET-BASED: a quarter's owner resolution and bind-tuple
 construction happen in pure Python, then the whole quarter is written in two
 ``executemany`` batches (securities, then intervals) rather than per-record SQL —
 a ~22,000-row quarter costs two prepared statements, not O(rows) round trips.
@@ -88,7 +88,7 @@ def bootstrap_13f_list(
     replace_quarter: bool = False,
     mutations: Mutations | None = None,
 ) -> List13fBootstrapReport:
-    """Seed one quarter's definitional CUSIP intervals (R7).
+    """Seed one quarter's definitional CUSIP intervals.
 
     *source_meta* is the retrieval sidecar (``source_url``, ``sha256``,
     ``retrieved_at``) plus ``raw_path``. Every accepted, seed-worthy record
@@ -108,7 +108,7 @@ def bootstrap_13f_list(
     raw_path = source_meta.get("raw_path")
 
     # The replay/replacement decision is driven from the quarter-level SEED
-    # LEDGER, NOT from security_list_intervals (F6): a valid DELETED-only quarter
+    # LEDGER, NOT from security_list_intervals: a valid DELETED-only quarter
     # seeds zero interval rows, so an interval-only hash history was blind to it
     # and a different-sha reseed of such a quarter slipped through without the
     # mandated hard error. The ledger carries the source hash even for a
@@ -147,7 +147,7 @@ def bootstrap_13f_list(
     # PHASE 1 (pure, no SQL) — resolve every record's owner pieces and build the
     # bind tuples in memory. Records are walked in CUSIP order and pieces in
     # interval order, so the batch is deterministic and a replay produces the
-    # identical statement sequence (round-1 F10: this replaces the per-record
+    # identical statement sequence (this replaces the per-record
     # security/interval SQL that made a ~22,000-row quarter O(rows) round trips).
     security_rows: dict[str, tuple[str, str, str | None, str]] = {}
     interval_rows: list[tuple] = []
@@ -181,7 +181,7 @@ def bootstrap_13f_list(
                     row_ordinal=record.row_ordinal,
                     parser_version=LIST13F_PARSER_VERSION,
                     normalization_version=LIST13F_NORMALIZATION_VERSION,
-                    # §5.1 / F9: the verbatim source line behind this identity.
+                    # §5.1: the verbatim source line behind this identity.
                     source_row=record.raw_source,
                 )
             )
@@ -200,7 +200,7 @@ def bootstrap_13f_list(
     insert_list_intervals(conn, interval_rows, mutations=mutations)
 
     # Record the quarter in the seed ledger — ALWAYS, even when zero records
-    # seeded (F6). ON CONFLICT DO NOTHING keeps a same-sha replay at zero writes;
+    # seeded. ON CONFLICT DO NOTHING keeps a same-sha replay at zero writes;
     # a different sha was already deleted above (replace_quarter) or hard-errored,
     # so the (quarter, provenance) key is free here.
     ledger_cursor = conn.execute(

@@ -1,4 +1,4 @@
-"""kadoa backfill import, crosswalk, and the §9.6 blocking audit gate (RUN 4).
+"""kadoa backfill import, crosswalk, and the §9.6 blocking audit gate.
 
 Import: congressional rows only from the kadoa seed (``branch='congress'``),
 one filing per kadoa row under the settled identity ``kadoa:<full id>``,
@@ -51,7 +51,7 @@ from populus.normalize import (
 BACKFILL_VERSION = "kadoa-backfill-1.0.0"
 KADOA_LICENSE_ID = "mit-kadoa-seed"
 
-# --- id grammar (R5) ----------------------------------------------------------
+# --- id grammar ----------------------------------------------------------
 
 # <chamber>_<document-key>_<g|t><N>; both generation-suffix letters are valid
 # (verified in the cache: house 910 `_g` + 3 `_t`, senate 191 `_t`).
@@ -89,7 +89,7 @@ def parse_kadoa_id(raw: object) -> KadoaId | None:
     )
 
 
-# --- classification (R5) ------------------------------------------------------
+# --- classification ------------------------------------------------------
 
 _SOURCE_FOR_CHAMBER = {"house": "house_clerk", "senate": "senate_efd"}
 
@@ -119,7 +119,7 @@ def classify_row(record: object) -> str:
     return "congress"
 
 
-# --- row mapping (R5) ---------------------------------------------------------
+# --- row mapping ---------------------------------------------------------
 
 
 def _printed(value: object) -> str | None:
@@ -206,7 +206,7 @@ def kadoa_parsed_row(record: Mapping) -> ParsedRow:
     )
 
 
-# --- import (R5) --------------------------------------------------------------
+# --- import --------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -339,7 +339,7 @@ def format_backfill_summary(report: BackfillReport) -> str:
     return "\n".join(lines)
 
 
-# --- crosswalk (R6) -----------------------------------------------------------
+# --- crosswalk -----------------------------------------------------------
 
 
 # The primary filing_id derived from a kadoa filing_id in pure SQL:
@@ -399,7 +399,7 @@ def apply_crosswalk(conn: sqlite3.Connection) -> int:
     return retired
 
 
-# --- strata (R7/R22) ----------------------------------------------------------
+# --- strata ----------------------------------------------------------
 
 # Version-controlled equity classifier over the printed asset_type
 # vocabulary — never `ticker IS NOT NULL` (ticker presence cuts across asset
@@ -462,7 +462,7 @@ def _stratum_grid() -> list[str]:
     ]
 
 
-# --- population binding (R20) -------------------------------------------------
+# --- population binding -------------------------------------------------
 
 SNAPSHOT_FIELDS = (
     "txn_id",
@@ -506,7 +506,7 @@ def population_digest(conn: sqlite3.Connection) -> str:
 
 def ids_digest(txn_ids) -> str:
     """SHA-256 over the RFC 8785 (JCS) serialization of the sorted ``txn_id``
-    **list** (R7/R21).
+    **list**.
 
     The digest is over the sorted list itself — not an object wrapping it —
     so an independent implementation of the sealed-record protocol that
@@ -517,7 +517,7 @@ def ids_digest(txn_ids) -> str:
     return hashlib.sha256(rfc8785.dumps(sorted(txn_ids))).hexdigest()
 
 
-# --- deterministic sampler (R7/R19/R21) ---------------------------------------
+# --- deterministic sampler ---------------------------------------
 
 # Pinned instrument sizes (§9.6). The scorer reads THESE, never worksheet
 # metadata; the draw command exposes no size flag.
@@ -566,13 +566,13 @@ def select_sample(
     exclude: frozenset[str] = frozenset(),
     stratum: str | None = None,
 ) -> DrawnSample:
-    """The single deterministic sampler, reused by draw AND score (R21).
+    """The single deterministic sampler, reused by draw AND score.
 
     ``initial``/``redraw``: uniform SRS of exactly ``SRS_N`` plus independent
     per-stratum quotas of exactly ``MIN_PER_STRATUM`` over the non-empty
     strata; ``redraw`` draws from the population minus the excluded failed
     SRS. ``stratum-followup``: exactly ``FOLLOWUP_N`` uniform within one
-    named stratum. **Sizes are pinned, never census-clamped (R19)**: when the
+    named stratum. **Sizes are pinned, never census-clamped**: when the
     eligible pool cannot supply the pinned size — the whole population for
     the SRS, the named stratum for a follow-up, or a non-empty stratum for
     its quota — the draw raises rather than silently shrinking, so an
@@ -654,7 +654,7 @@ def select_sample(
     )
 
 
-# --- worksheet (R7/R16/R20) ---------------------------------------------------
+# --- worksheet ---------------------------------------------------
 
 
 def _blank_verification() -> dict:
@@ -686,7 +686,7 @@ def build_audit_worksheet(
     """Draw via :func:`select_sample` and render the reviewable worksheet.
 
     The worksheet embeds the population digest and the drawn ``txn_id`` set
-    per instrument (R20) — both cross-checked by the scorer against its own
+    per instrument — both cross-checked by the scorer against its own
     reconstruction; nothing here is trusted on its own. The sealed draw
     record, not this file, is the authenticated draw specification.
     """
@@ -736,7 +736,7 @@ def build_audit_worksheet(
 
 
 def build_draw_record(worksheet: Mapping) -> dict:
-    """The sealed draw specification (R7/R21) for a freshly built worksheet.
+    """The sealed draw specification for a freshly built worksheet.
 
     Written beside the worksheet and hash-anchored into ``ingest_runs`` at
     draw time; the scorer authenticates it and reconstructs the draw from
@@ -860,7 +860,7 @@ def run_audit_draw(
     host: str,
 ) -> DrawResult:
     """Draw, write worksheet JSON+MD plus the sealed record, and anchor the
-    record's file hash into ``ingest_runs`` (R7/R13)."""
+    record's file hash into ``ingest_runs``."""
     worksheet = build_audit_worksheet(
         conn, mode=mode, seed=seed, exclude=exclude, stratum=stratum, run_id=run_id
     )
@@ -896,7 +896,7 @@ def run_audit_draw(
     )
 
 
-# --- scorer (R16/R19/R20/R21/R22) ---------------------------------------------
+# --- scorer ---------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -950,7 +950,7 @@ def score_audit(
     draw_record_bytes: bytes,
     prior_failed_worksheet: Mapping | None = None,
 ) -> AuditDisposition:
-    """The §9.6 gate scorer: ordered, fail-closed evaluation (R16).
+    """The §9.6 gate scorer: ordered, fail-closed evaluation.
 
     (1) mode + pinned sizes → (2) population digest → (3) sealed-record
     authentication + independent draw reconstruction (+ redraw exclusion/
@@ -959,7 +959,7 @@ def score_audit(
     (8) pass. Steps 1–6 yield ``incomplete`` or ``invalid`` with the
     shortfall enumerated and NO threshold claim and NO binomial bound.
     """
-    # -- step 1: mode + pinned-size enforcement (R19) -------------------------
+    # -- step 1: mode + pinned-size enforcement -------------------------
     mode = filled_worksheet.get("mode")
     if mode not in AUDIT_MODES:
         return _invalid(None, (f"unknown_mode:{mode!r}",))
@@ -977,7 +977,7 @@ def score_audit(
     if mode in ("initial", "redraw"):
         # Required sizes are the PINNED CONSTANTS, read directly — never
         # census-clamped to the population and never taken from worksheet
-        # metadata (R19). If the eligible pool cannot even supply the pinned
+        # metadata. If the eligible pool cannot even supply the pinned
         # size, the audit cannot be satisfied — that is itself a shortfall,
         # so a too-small population fails closed here rather than passing an
         # undersized instrument. For a redraw the pool excludes the declared
@@ -1014,14 +1014,14 @@ def score_audit(
     if shortfalls:
         return _incomplete(mode, shortfalls)
 
-    # -- step 2: population-digest recompute (R20) ----------------------------
+    # -- step 2: population-digest recompute ----------------------------
     recomputed_digest = hashlib.sha256(
         canonical_json({"rows": snapshot})
     ).hexdigest()
     if filled_worksheet.get("population_digest") != recomputed_digest:
         return _invalid(mode, ("population_digest_mismatch",))
 
-    # -- step 3: sealed-record authentication + reconstruction (R21) ----------
+    # -- step 3: sealed-record authentication + reconstruction ----------
     try:
         record = json.loads(draw_record_bytes)
     except ValueError:
@@ -1110,7 +1110,7 @@ def score_audit(
     if reconstruction_errors:
         return _invalid(mode, tuple(reconstruction_errors))
 
-    # -- step 4: per-row source-value and stratum re-read (R20/R22) -----------
+    # -- step 4: per-row source-value and stratum re-read -----------
     db_rows = {row["txn_id"]: row for row in snapshot}
     labels = dict(
         conn.execute(
@@ -1140,7 +1140,7 @@ def score_audit(
     if integrity_errors:
         return _invalid(mode, tuple(integrity_errors))
 
-    # -- step 5: cell parsing and per-row completeness (R16) ------------------
+    # -- step 5: cell parsing and per-row completeness ------------------
     unverified: list[str] = []
     for name, rows in instrument_rows.items():
         for row in rows:
@@ -1167,7 +1167,7 @@ def score_audit(
     if unverified:
         return _incomplete(mode, tuple(f"unverified_row:{u}" for u in unverified))
 
-    # -- step 6: required-stratum-set exact equality (R16) --------------------
+    # -- step 6: required-stratum-set exact equality --------------------
     if mode in ("initial", "redraw"):
         expected_strata = set(expected.quota)
         got_strata = {
@@ -1185,7 +1185,7 @@ def score_audit(
         if tuple(filled_worksheet.get("empty_strata") or ()) != expected.empty_strata:
             return _incomplete(mode, ("empty_strata_mismatch",))
 
-    # -- step 7: thresholds (R16) ---------------------------------------------
+    # -- step 7: thresholds ---------------------------------------------
     critical_by_instrument: dict[str, int] = {}
     critical_by_stratum: dict[str, int] = {}
     cosmetic_errors = 0

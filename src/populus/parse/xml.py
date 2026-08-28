@@ -1,9 +1,9 @@
-"""The one hardened parser for untrusted XML (RUN PUBLIC-SECURITY-HARDENING, R10/LD11).
+"""The one hardened parser for untrusted XML.
 
 Every byte of XML that originated outside this repository — 13F covers and
 information tables, the House Clerk index, member join hints read from cached
 index files — parses through :func:`parse_untrusted_xml` and nothing else.
-The settings are the F5 hardening that previously lived privately in
+The settings are the hardening that previously lived privately in
 ``parse/inst13f.py``, plus ``recover=False`` and an explicit DOCTYPE
 rejection: a document that carries any DTD (internal or external) is refused
 outright, so entity definition, expansion, and external references are

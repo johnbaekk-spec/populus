@@ -1,4 +1,4 @@
-"""Ingest orchestration package (RUN 2+): the shared transport identity.
+"""Ingest orchestration package: the shared transport identity.
 
 These symbols are the cross-chamber transport contract — the identifying
 User-Agent (G6), the transport response shape, and the archive-path
@@ -35,7 +35,7 @@ class TransportResponse:
 
 @dataclass(frozen=True)
 class FetchMetrics:
-    """What one polite fetcher actually did (RUN M1-B, R20).
+    """What one polite fetcher actually did.
 
     Part of the shared transport contract for the same reason
     :class:`TransportResponse` is: both chambers' fetchers report it, and the

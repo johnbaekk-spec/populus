@@ -1,4 +1,4 @@
-"""``stats.json`` — the M1 honesty layer (ARCHITECTURE.md §5.2; RUN 4).
+"""``stats.json`` — the M1 honesty layer (ARCHITECTURE.md §5.2).
 
 Two strictly separated families of numbers:
 
@@ -214,7 +214,7 @@ def compute_stats(
         "SELECT COUNT(*) FROM filings WHERE supersedes IS NOT NULL"
     ).fetchone()
 
-    # Per-era gate + join coverage (RUN M1-B, R6/R15). Both are ADDITIVE: the
+    # Per-era gate + join coverage. Both are ADDITIVE: the
     # existing keys and their shapes are untouched, and
     # parse_coverage_primary_by_chamber_year_including_excluded still auto-
     # extends by year with no code change. The gate figures come from
