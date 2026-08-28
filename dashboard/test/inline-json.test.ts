@@ -18,7 +18,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { serializeInlineJson } from "../src/lib/inline-json.ts";
-import { holdersBody, filerBody, addsSectionHtml } from "../src/lib/ui.ts";
+import { holdersBody, filerBody, addsSectionHtml } from "../src/lib/ui/index.ts";
 import type { TopHolderRow } from "../src/lib/inst.ts";
 
 /* ---------- 1. serializer unit cases ---------- */

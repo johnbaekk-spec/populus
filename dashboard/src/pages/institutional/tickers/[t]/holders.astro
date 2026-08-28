@@ -16,7 +16,7 @@ import Base from "../../../../layouts/Base.astro";
 import HoldingsTable from "../../../../components/HoldingsTable.astro";
 import { getBuildData, filerTier } from "../../../../lib/data";
 import { holdersFor, issuerPeriods } from "../../../../lib/inst";
-import { holdersBody } from "../../../../lib/ui";
+import { holdersBody } from "../../../../lib/ui/index.ts";
 import { filingWindow, resolveTicker } from "../../../../lib/derive";
 import { serializeInlineJson } from "../../../../lib/inline-json";
 

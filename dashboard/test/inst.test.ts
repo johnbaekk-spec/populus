@@ -27,7 +27,7 @@ import {
   type InstData,
 } from "../src/lib/inst.ts";
 import { qoqPresentation } from "../src/lib/derive.ts";
-import { filerPeriodSectionHtml, filerTiles } from "../src/lib/ui.ts";
+import { filerPeriodSectionHtml, filerTiles } from "../src/lib/ui/index.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const BRK = "0001067983";

@@ -5,7 +5,7 @@ import { pathSafeTicker } from "../../lib/format.ts";
 // section (gated on the ticker→issuer mapping contract, spec §4), planned-section placeholders.
 import Base from "../../layouts/Base.astro";
 import { getBuildData, tickerInstSection } from "../../lib/data";
-import { tickerUnifiedBody, type BuildStamps } from "../../lib/ui";
+import { tickerUnifiedBody, type BuildStamps } from "../../lib/ui/index.ts";
 import type { RenderCtx } from "../../lib/format";
 
 export function getStaticPaths() {

@@ -5,7 +5,9 @@ original design briefs (`DESIGN-BRIEF.md`, `docs/build/P3-DESIGN-BRIEF.md`),
 the UX-overhaul and surfaces-legibility design decisions, and the mobile-fold
 rules previously carried by the design mockups (`docs/design/handoff/*.dc.html`)
 — all of which now live in Git history. **This document is the stated authority
-those artifacts used to hold**: `dashboard/src/styles/global.css` and
+those artifacts used to hold**: the stylesheets under `dashboard/src/styles/` (nine region files
+imported by `Base.astro` in cascade order; split from the former
+`global.css` by REPOSITORY-PROFESSIONALIZATION Slice 6) and
 `dashboard/test/css-fold.test.ts` cite it as the spec source for the fold and
 token rules below. Future module surfaces are critiqued against this page.
 
@@ -100,7 +102,8 @@ shipped implementation locked:
 ## 5. The mobile fold (≤720px, and the ≤1080px two-line row)
 
 Previously specified by `Mobile.dc.html`; this section is now the authority
-(`global.css`'s fold region and `css-fold.test.ts` cite it).
+(the fold regions in `styles/media.css` and `styles/late-additions.css`, and
+`css-fold.test.ts`, cite it).
 
 - **Nothing honesty-bearing is media-query-hidden.** The CSS fold gate
   (`css-fold.test.ts`) walks every narrow-viewport media block and fails if

@@ -10,7 +10,21 @@ import "@fontsource/public-sans/700.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
-import "../styles/global.css";
+/* The nine stylesheet regions, split from global.css by REPOSITORY-
+   PROFESSIONALIZATION Slice 6 (T6.4). IMPORT ORDER IS THE CASCADE: the
+   concatenation in this exact order is byte-identical to the pre-split
+   global.css, and late-additions.css MUST stay last — its chronological
+   regions override selectors across every earlier file. css-fold.test.ts
+   reads the files in this order. */
+import "../styles/foundation.css";
+import "../styles/layout.css";
+import "../styles/congress-feed.css";
+import "../styles/entities.css";
+import "../styles/institutional.css";
+import "../styles/states-search.css";
+import "../styles/content.css";
+import "../styles/media.css";
+import "../styles/late-additions.css";
 import { getBuildData } from "../lib/data";
 import Mark from "../components/Mark.astro";
 

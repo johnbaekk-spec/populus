@@ -16,7 +16,7 @@ import {
   holdersBody,
   filerBody,
   type BuildStamps,
-} from "../src/lib/ui.ts";
+} from "../src/lib/ui/index.ts";
 import {
   parseTickerMap,
   resolveTicker,

@@ -1,0 +1,423 @@
+/* ---------- shared component chrome ---------- */
+
+.crumb {
+  font: 400 11.5px var(--mono);
+  color: var(--ink3);
+}
+.crumb a {
+  font: inherit;
+  text-decoration: none;
+}
+.mono-note {
+  font: 400 11px/1.6 var(--mono);
+  color: var(--ink3);
+}
+.mono-note a { font: inherit; }
+.mono-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink3);
+}
+.mono-ticker {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+.fn-ref {
+  font: 600 10px var(--sans);
+  color: var(--accent);
+  text-decoration: none;
+  vertical-align: super;
+  padding: 0 1px;
+}
+.footnotes-stacked .footnote-line {
+  padding: 1px 0;
+}
+.flag-raw {
+  font-family: var(--mono);
+}
+/* The unknown-flag disclosure. The warning lives in the summary and
+   is visible with this shut; only the machine name is behind the interaction. */
+.flag-provenance {
+  display: inline-block;
+  white-space: normal;
+  overflow: visible;
+}
+.flag-provenance > summary {
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+.flag-provenance > summary::-webkit-details-marker {
+  display: none;
+}
+.flag-provenance > summary::after {
+  content: " ⓘ";
+  color: var(--ink3);
+}
+.flag-provenance > .flag-raw {
+  display: block;
+  margin-top: 3px;
+  font-size: 9.5px;
+  color: var(--ink3);
+  white-space: normal;
+}
+
+/* TerminusRow (G3) */
+.terminus {
+  border-top: 1px dashed var(--rule2);
+  border-bottom: 1px dashed var(--rule2);
+  padding: 11px 16px;
+  font: 400 12px/1.6 var(--sans);
+  color: var(--ink2);
+  background: color-mix(in oklab, var(--rule) 30%, var(--raised));
+}
+.terminus-author {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* entity watch star */
+.watch-btn {
+  font: 400 15px var(--sans);
+  color: var(--ink3);
+  border: 1px solid var(--rule2);
+  border-radius: 2px;
+  padding: 4px 10px;
+  vertical-align: 6px;
+  min-height: 32px;
+}
+.watch-btn[aria-pressed="true"] .watch-glyph {
+  color: var(--amber);
+}
+.watch-note {
+  font: 500 11px var(--sans);
+  color: var(--ink2);
+  margin-left: 4px;
+}
+
+/* ---------- entity pages ---------- */
+
+.entity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 40px;
+  margin-top: 14px;
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 22px;
+}
+.entity-head-copy { min-width: 0; }
+.entity-title {
+  font: 600 36px/1.1 var(--serif);
+  margin: 0 0 8px;
+}
+.entity-subline {
+  font: 500 14px var(--sans);
+  color: var(--ink2);
+}
+.entity-lede {
+  font: 400 13px/1.6 var(--sans);
+  color: var(--ink2);
+  margin: 12px 0 0;
+  max-width: 700px;
+}
+.tiles-entity .tile {
+  padding: 14px 18px;
+  min-width: 104px;
+}
+.tiles-entity .tile-value { font-size: 20px; }
+.entity-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 28px;
+  margin-top: 28px;
+}
+.panel {
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  padding: 0 0 8px;
+  min-width: 0;
+}
+.panel-wide { margin-top: 28px; }
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 14px 16px 8px;
+  flex-wrap: wrap;
+}
+.section-h {
+  font: 600 16px var(--serif);
+  margin: 0;
+}
+.section-h2 {
+  font: 600 23px/1.2 var(--serif);
+  margin: 0;
+}
+.panel-note,
+.section-note-inline {
+  font: 400 10.5px var(--mono);
+  color: var(--ink3);
+}
+.section-note {
+  font: 400 12.5px/1.6 var(--sans);
+  color: var(--ink2);
+  padding: 8px 16px;
+  margin: 0;
+}
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  border-bottom: 1.5px solid var(--rule2);
+  padding-bottom: 8px;
+  flex-wrap: wrap;
+}
+.section-link { font: 500 12.5px var(--sans); }
+.page-section { margin-top: 40px; }
+.card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--rule);
+  font: 400 10.5px var(--mono);
+  color: var(--ink3);
+}
+.card-foot a { font: inherit; }
+
+/* section index (unified ticker) */
+.section-index {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--rule2);
+  border-top: none;
+  background: var(--raised);
+  margin-bottom: 28px;
+  overflow-x: auto;
+}
+.section-index a,
+.section-index .si-soon {
+  font: 500 12.5px var(--sans);
+  text-decoration: none;
+  color: var(--ink2);
+  padding: 10px 20px;
+  border-left: 1px solid var(--rule);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.section-index a:first-child { border-left: none; }
+.section-index a.si-active {
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 2px solid var(--accent);
+}
+.si-n {
+  font: 400 10.5px var(--mono);
+  color: var(--ink3);
+}
+.si-soon { color: var(--ink3); }
+.si-asof {
+  font: 400 11px var(--mono);
+  color: var(--ink3);
+  margin-left: auto;
+  padding: 12px 16px;
+  white-space: nowrap;
+}
+.nav-shell .badge-soon { margin-left: 2px; }
+
+/* ---------- real tables ---------- */
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* The scroll cue at EVERY width, not only inside the 720px fold.
+     A container that scrolls without saying so hides the columns past its
+     right edge just as completely as removing them would; the fold already
+     understood this and the wider viewports did not, which is where the
+     decisive column actually went missing.
+
+     These are "scrolling shadows": the two `local` layers travel WITH the
+     content and sit over the shadows when the table is at rest against an
+     edge, so a shadow is visible only while there is more table in that
+     direction. A plain always-on fade would announce overflow that is not
+     there, which is a different lie. */
+  background:
+    linear-gradient(to right, var(--raised) 30%, rgba(0, 0, 0, 0)) left center local,
+    linear-gradient(to left, var(--raised) 30%, rgba(0, 0, 0, 0)) right center local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) left center scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) right center scroll;
+  background-repeat: no-repeat;
+  background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
+}
+/* The identity column stays put while the numbers scroll, at every width.
+   This was fold-only; above 720px a scrolled table lost the row's identity. */
+.etable[data-sticky-first] th:first-child,
+.etable[data-sticky-first] td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--raised);
+  border-right: 1px solid var(--rule2);
+  z-index: 2;
+}
+.etable {
+  width: 100%;
+  border-collapse: collapse;
+}
+.etable th {
+  font: 600 10px var(--sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  text-align: left;
+  padding: 9px 8px 7px;
+  border-bottom: 1.5px solid var(--rule2);
+  white-space: nowrap;
+}
+.etable td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--rule);
+  font: 400 12.5px var(--sans);
+  vertical-align: middle;
+}
+.etable tbody tr:hover {
+  background: color-mix(in oklab, var(--accent) 4%, var(--raised));
+}
+.etable .c-filed,
+.etable .c-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.etable .c-num { text-align: right; }
+.etable .c-muted { color: var(--ink3); }
+.etable .c-strong { font-weight: 600; }
+.etable .c-buy { color: var(--buy); }
+.etable .c-sell { color: var(--sell); }
+.etable .c-ticker a,
+.etable .c-filer a {
+  font: 600 12.5px var(--mono);
+  text-decoration: none;
+}
+.etable .c-filer a {
+  font: 600 13px var(--sans);
+  color: var(--ink);
+}
+.etable .c-member a {
+  font: 600 12.5px var(--sans);
+  text-decoration: none;
+  color: var(--ink);
+}
+/* `.c-ticker` joins this group. It renders the same `assetNameCell` as the
+   feed, so an undisclosed ticker puts a full asset name in a column that had no
+   bound at all — in an auto-layout table that widens the column and pushes the
+   decisive columns out of view, which is the hidden-column defect arriving by another
+   route. */
+.etable .c-member,
+.etable .c-filer,
+.etable .c-pos,
+.etable .c-ticker {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.etable .c-side { font-weight: 600; white-space: nowrap; }
+.etable .c-side.buy { color: var(--buy); }
+.etable .c-side.sell { color: var(--sell); }
+.etable .c-side.neutral { color: var(--ink2); }
+.etable .c-side.unknown { color: var(--ink3); }
+.etable .c-amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.etable .c-amount.unknown { color: var(--ink3); }
+.etable .c-range { min-width: 150px; }
+.etable .c-range .band { display: inline-block; vertical-align: middle; margin-right: 6px; }
+.etable .c-traded .cell-traded { display: inline; }
+.etable .c-src { text-align: right; }
+.etable .c-src .cell-src { display: inline; }
+.etable .c-flags { white-space: nowrap; }
+.etable-compact td { padding: 5px 8px; font-size: 12px; }
+.table-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.unjoined-name { border-bottom: 1.5px dotted var(--ink3); }
+.reconciled { border-bottom: 1.5px dotted var(--ink3); }
+
+/* ---------- flow ribbon ---------- */
+
+.ribbon { padding: 8px 16px 12px; }
+.rb-track {
+  display: flex;
+  gap: 14px;
+  height: 170px;
+  border-bottom: 1.5px solid var(--rule2);
+  padding: 0 6px;
+}
+.ribbon-two .rb-track { border-bottom: none; height: 190px; }
+.rb-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+.rb-up {
+  flex: 1;
+  position: relative;
+}
+.ribbon-two .rb-up { flex: 1; }
+.rb-axis { height: 1.5px; background: var(--rule2); }
+.rb-down {
+  flex: 0.7;
+  position: relative;
+}
+.rb-split { display: flex; gap: 3px; }
+.rb-half { flex: 1; position: relative; }
+.rb-bar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  border: 1px solid var(--rule2);
+  box-sizing: border-box;
+}
+.rb-half .rb-bar { width: 14px; }
+.rb-buy { background: var(--buy); opacity: 0.8; }
+.rb-sell { background: var(--sell); opacity: 0.8; }
+.rb-down .rb-bar { top: 0; bottom: auto; }
+.rb-hatch {
+  background: transparent;
+  background-image: var(--hatch);
+  opacity: 1;
+}
+.rb-gap { display: none; }
+.rb-labels {
+  display: flex;
+  gap: 14px;
+  padding: 5px 6px 0;
+}
+.rb-label {
+  flex: 1;
+  text-align: center;
+  font: 400 10px var(--mono);
+  color: var(--ink3);
+}
+.rb-caption {
+  font: 400 11px/1.6 var(--mono);
+  color: var(--ink3);
+  margin-top: 12px;
+  border-top: 1px solid var(--rule);
+  padding-top: 10px;
+}
+

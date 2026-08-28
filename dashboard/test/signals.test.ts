@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 
 import { buildSignalArtifact, LAG_CAVEAT, type SignalInputs } from "../src/lib/signals.ts";
 import { SIGNAL_THRESHOLDS as SIGNAL_THRESHOLDS_FOR_TESTS } from "../src/lib/signal-thresholds.ts";
-import { signalsBody } from "../src/lib/ui.ts";
+import { signalsBody } from "../src/lib/ui/index.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 
 let seq = 0;
@@ -226,7 +226,7 @@ test("review F2: cohort volume bounds — a busy chamber cannot hide behind a qu
 });
 
 test("review F10: the per-entity signal section renders each signal's exact rule", async () => {
-  const { memberSignalsPanel } = await import("../src/lib/ui.ts");
+  const { memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
   const html = memberSignalsPanel(art, "T000001", { watched: new Set() });
   const mine = art.signals.find((s) => s.entities.bioguide === "T000001")!;
@@ -246,7 +246,7 @@ test("review r2-F2: a tombstone is preserved VERBATIM across later builds", () =
 });
 
 test("review r2-F3: tombstones never render as active — separate section, separate counts", async () => {
-  const { signalsBody: body, memberSignalsPanel: panel } = await import("../src/lib/ui.ts");
+  const { signalsBody: body, memberSignalsPanel: panel } = await import("../src/lib/ui/index.ts");
   const row = txn({ txnId: "keeps", low: 500001, high: 1000000, filed: "2026-08-01" });
   const dies = txn({ txnId: "leaves", low: 500001, high: 1000000, filed: "2026-07-15", bioguide: "T000001" });
   const a = buildSignalArtifact({ ...inputs([...s1Pad(), row, dies]), buildId: "A" });
@@ -306,7 +306,7 @@ function await_thresholds() {
 }
 
 test("review r3-F4: a tombstone-only member states the supersession, never 'no signals'", async () => {
-  const { memberSignalsPanel } = await import("../src/lib/ui.ts");
+  const { memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   // Build A: the member's only signal is active. Build B: it left the view.
   const only = txn({ txnId: "solo", low: 500001, high: 1000000, filed: "2026-07-15", bioguide: "Z000009", name: "Tomb Member" });
   const a = buildSignalArtifact({ ...inputs([...s1Pad(), only]), buildId: "A" });
@@ -379,7 +379,7 @@ test("r3-F3: a WITHHELD kind carries its prior signals as unevaluated, never sup
 });
 
 test("r3-F3: unevaluated rows render with their withholding, not as active", async () => {
-  const { signalsBody: body, memberSignalsPanel: panel } = await import("../src/lib/ui.ts");
+  const { signalsBody: body, memberSignalsPanel: panel } = await import("../src/lib/ui/index.ts");
   const big = txn({ txnId: "big", low: 500001, high: 1000000, filed: "2026-08-01", bioguide: "U000001" });
   const a = buildSignalArtifact({ ...inputs([...s1Pad(), big]), buildId: "A" });
   const flood = Array.from({ length: 500 }, (_, i) =>

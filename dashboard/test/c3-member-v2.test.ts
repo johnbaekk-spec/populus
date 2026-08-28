@@ -15,7 +15,7 @@ import {
   type SectorResolution,
   type MemberEntity,
 } from "../src/lib/derive.ts";
-import { memberV2Sections, NON_ALLEGATION_CAVEAT, type BuildStamps, type MemberV2Deps } from "../src/lib/ui.ts";
+import { memberV2Sections, NON_ALLEGATION_CAVEAT, type BuildStamps, type MemberV2Deps } from "../src/lib/ui/index.ts";
 import type { TxnRow, RenderCtx } from "../src/lib/format.ts";
 
 const stamps: BuildStamps = { buildId: "t.1", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12" };
@@ -179,7 +179,7 @@ test("memberV2Sections: the non-allegation caveat is present whenever committees
 });
 
 test("CODE-REVIEW F1: the net-flow table's ·§ markers still carry their clause", async () => {
-  const { RANKING_FOOTNOTES } = await import("../src/lib/ui.ts");
+  const { RANKING_FOOTNOTES } = await import("../src/lib/ui/index.ts");
   const clause = (RANKING_FOOTNOTES as { mark: string; html: string }[]).find((f) => f.mark === "§")!.html;
 
   // SL-R7 deleted `footnoteBlock(RANKING_FOOTNOTES, …)`. This table hand-rolls

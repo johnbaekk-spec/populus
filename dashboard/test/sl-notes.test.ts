@@ -7,12 +7,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { baseStylesheet } from "./lib/styles.ts";
 
 import type { InstIndexRow } from "../src/lib/inst-index.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 
-const css = readFileSync(new URL("../src/styles/global.css", import.meta.url), "utf8");
+const css = baseStylesheet();
 
 test("SL-R2: markup shape — button carries popovertarget AND aria-describedby, panel is a real element", async () => {
   const { note } = await import("../src/lib/format.ts");
@@ -193,7 +194,7 @@ test("SL-R7: every ranking footnote clause is reachable from a column note, and 
 });
 
 test("SL-R7: every adds footnote clause is reachable from a column note", async () => {
-  const { ADDS_FOOTNOTES, addsColumns } = await import("../src/lib/ui.ts");
+  const { ADDS_FOOTNOTES, addsColumns } = await import("../src/lib/ui/index.ts");
   const notes = addsColumns()
     .map((c) => c.note ?? "")
     .join(" ");
@@ -237,7 +238,7 @@ test("SL-R7: every holdings footnote clause — INCLUDING the orphan ‡c — re
 });
 
 test("SL-R26b: /congress/'s TWO ranking tables in one section emit no duplicate panel id", async () => {
-  const { congressRankingSection } = await import("../src/lib/ui.ts");
+  const { congressRankingSection } = await import("../src/lib/ui/index.ts");
   // The undisclosed bucket renders the SAME header renderer over the SAME
   // columns, in the same section. Section scope alone would collide every
   // column's panel id; distinct `rank-`/`undisc-` scopes are what prevent it.
@@ -506,7 +507,8 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
       { fn: "lagHtml", text: "filed before the stated trade date" },
       { fn: "lagHtml", text: "days to file unknown" },
     ],
-    "src/lib/ui.ts": [{ fn: "flowCellHtml", text: "every amount in this aggregate is unparsed" }],
+    // Slice 6 split ui.ts into src/lib/ui/; flowCellHtml lives in congress.ts.
+    "src/lib/ui/congress.ts": [{ fn: "flowCellHtml", text: "every amount in this aggregate is unparsed" }],
     "src/lib/holdings.ts": [
       { fn: "provenanceCellHtml", text: "filed date unknown for this row, so the lag cannot be computed" },
       { fn: "provenanceCellHtml", text: "filed before the quarter it reports" },
@@ -551,9 +553,18 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
   const declared = new Set(Object.keys(expected));
   const libDir = new URL("../src/lib/", import.meta.url);
   const undeclared: string[] = [];
+  // One level of subdirectories is enough today (src/lib/ui/); recursing keeps
+  // "everywhere else" meaning everywhere else after the Slice 6 split.
+  const rels: string[] = [];
   for (const name of readdirSync(libDir)) {
-    if (!name.endsWith(".ts")) continue;
-    const rel = `src/lib/${name}`;
+    if (name.endsWith(".ts")) rels.push(`src/lib/${name}`);
+    else if (statSync(new URL(name, libDir)).isDirectory()) {
+      for (const inner of readdirSync(new URL(`${name}/`, libDir))) {
+        if (inner.endsWith(".ts")) rels.push(`src/lib/${name}/${inner}`);
+      }
+    }
+  }
+  for (const rel of rels) {
     if (declared.has(rel)) continue;
     for (const site of titleSites(rel)) undeclared.push(`${rel}:${site.fn}`);
   }

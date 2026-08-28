@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { notableRecent } from "../src/lib/derive.ts";
-import { notableRailHtml } from "../src/lib/ui.ts";
+import { notableRailHtml } from "../src/lib/ui/index.ts";
 import type { TxnRow, RenderCtx } from "../src/lib/format.ts";
 
 const NOW = "2026-08-12";

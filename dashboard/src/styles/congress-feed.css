@@ -1,0 +1,564 @@
+/* ---------- filter bar ---------- */
+
+.filterbar {
+  margin-top: 28px;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 10px 16px;
+  flex-wrap: wrap;
+}
+/* On desktop the wrapper is transparent: its children are direct flex items of
+   .filterbar, exactly as the design lays them out. */
+.filter-controls {
+  /* This box computed to the full 360px viewport width
+     inside a 328px parent and started at x=29, so it pushed the document
+     sideways by 29px at the narrow width even though it already carries
+     `overflow-x: auto` — the scroller was scrolling, the BOX was still too
+     wide. Verified in the browser: 29px -> 0. */
+  max-width: 100%;
+  display: contents;
+}
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-label {
+  font: 600 10px var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+.seg {
+  display: flex;
+  border: 1px solid var(--rule2);
+}
+.seg button {
+  font: 500 11.5px var(--sans);
+  padding: 5px 11px;
+  color: var(--ink2);
+  min-height: 28px;
+  white-space: nowrap;
+}
+.seg button + button {
+  border-left: 1px solid var(--rule2);
+}
+.seg button[aria-pressed="true"] {
+  font-weight: 600;
+  background: var(--ink);
+  color: var(--paper);
+}
+.seg button.tint-dem:not([aria-pressed="true"]) { color: var(--dem); font-weight: 600; }
+.seg button.tint-rep:not([aria-pressed="true"]) { color: var(--rep); font-weight: 600; }
+.seg button.tint-ind:not([aria-pressed="true"]) { color: var(--ind); font-weight: 600; }
+.seg button.tint-buy:not([aria-pressed="true"]) { color: var(--buy); }
+.seg button.tint-sell:not([aria-pressed="true"]) { color: var(--sell); }
+
+.filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--rule2);
+  border-radius: 0;
+  background: transparent;
+  padding: 5px 26px 5px 11px;
+  font: 500 11.5px var(--sans);
+  color: var(--ink2);
+  min-height: 28px;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 49%, currentColor 50%),
+    linear-gradient(-45deg, transparent 49%, currentColor 50%);
+  background-position: right 14px center, right 10px center;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+.filter-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 500 11.5px var(--sans);
+  color: var(--ink2);
+  cursor: pointer;
+}
+.filter-check input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--rule2);
+  background: var(--paper);
+  margin: 0;
+  cursor: pointer;
+  display: inline-block;
+}
+.filter-check input:checked {
+  background: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--paper);
+}
+/* Its own line, deliberately. The mock puts this inline at the right end of a
+   single-row filter bar, which fitted when it read "1–14 of 54,213". It now
+   carries every count fragment — transactions, paper filings, the
+   indeterminate-amount disclosure, the privacy statement and the reset control
+   — and those are not negotiable, so the bar gets a designed second line
+   instead of an incidental wrap that shifts with the data. */
+.filter-count {
+  flex: 1 0 100%;
+  margin-left: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  font: 400 11px/1.5 var(--mono);
+  color: var(--ink3);
+  text-align: right;
+}
+.filter-count a {
+  font: inherit;
+}
+
+/* ---------- feed table ---------- */
+
+.feed {
+  margin-top: 16px;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+}
+/* The feed is a real <table> now. `table-layout` and the default
+   row/cell display are overridden so the SAME grid the div version used still
+   drives the columns — the layout did not change, only the elements did. */
+.feed-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+.feed-table thead,
+.feed-table tbody {
+  display: block;
+}
+.feed-grid-cols {
+  display: grid;
+  /* Column order: star · filed · TICKER · member · side · traded · amount · range · src.
+     Ticker moves AHEAD of member and takes the anchor's emphasis — but not the
+     flexible track. EMPHASIS IS TYPE, NOT WIDTH: the ticker is heavier, larger
+     and accent-coloured (see `.cell-ticker`), while `member` keeps `1fr`
+     because it is the column that holds unbounded text. Giving ticker `1fr` and
+     member a fixed 150px truncated a 20-character member name by ONE pixel at
+     1440px — a defect the geometry lane caught. The ticker's own
+     fixed track is generous enough for the full asset name it renders when no
+     ticker was disclosed. */
+  grid-template-columns: 26px 92px 150px 1fr 118px 118px 100px 210px 56px;
+  padding: 0 14px;
+}
+.feed-head {
+  border-bottom: 1.5px solid var(--rule2);
+}
+/* The header cells are <th> now; the `.col` rules below apply to them. */
+.feed-head th,
+.feed-head .col {
+  font: 600 10px var(--sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  padding: 9px 8px 7px 0;
+}
+.feed-head th {
+  text-align: left;
+  vertical-align: bottom;
+}
+.feed-head .num {
+  text-align: right;
+}
+.feed-head .range {
+  padding: 9px 0 7px 16px;
+}
+.feed-head .src {
+  padding: 9px 0 7px;
+  text-align: right;
+}
+/* The header's sort buttons inherit the header's own type; they are controls,
+   not links, and they keep the 44px target the shared rule gives every
+   `.th-sort`. */
+.feed-head .th-sort {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  text-align: inherit;
+}
+
+.feed-row {
+  align-items: center;
+  height: 38px;
+  border-bottom: 1px solid var(--rule);
+}
+/* `.row-line1` / `.row-line2` are DELETED. They were wrapper divs
+   that existed only to group the mobile fold's two lines, and a table row
+   cannot legally contain them. The fold uses grid areas on the row instead, so
+   the wrappers have no remaining purpose and no rule may reference them. */
+.feed-row:hover {
+  background: color-mix(in oklab, var(--accent) 4%, var(--raised));
+}
+.cell {
+  min-width: 0;
+}
+.star-btn {
+  font: 400 13px var(--sans);
+  /* --rule2 measured 1.58:1 — the unstarred ☆ was effectively invisible.
+     --ink3 clears WCAG 1.4.11's 3:1 for a meaningful non-text control. */
+  color: var(--ink3);
+  min-width: 22px;
+  min-height: 30px;
+  text-align: left;
+}
+.star-btn[aria-pressed="true"] {
+  color: var(--amber);
+}
+.star-btn[disabled] {
+  cursor: default;
+}
+.cell-filed,
+.cell-traded {
+  font: 500 12.5px var(--sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink2);
+}
+.cell-member {
+  /* SECONDARY emphasis. Lighter weight and --ink2 against the ticker's
+     accent-coloured mono, so the eye lands on the ticker first. The member is
+     not de-emphasised out of legibility — it keeps full contrast text. */
+  font: 500 12.5px var(--sans);
+  color: var(--ink2);
+  padding-right: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-member a {
+  text-decoration: none;
+  color: var(--ink2);
+}
+.cell-member a.unjoined {
+  border-bottom: 1.5px dotted var(--ink3);
+}
+.cell-member sup {
+  font: 600 10px var(--sans);
+  color: var(--accent);
+}
+.aff {
+  font: 600 11px var(--sans);
+}
+.aff.dem { color: var(--dem); }
+.aff.rep { color: var(--rep); }
+.aff.ind { color: var(--ind); }
+/* party could not be resolved — deliberately NOT tinted as Independent */
+.aff.unknown { color: var(--ink3); }
+.cell-ticker {
+  /* PRIMARY emphasis — the largest, heaviest type in the row. */
+  font: 700 14px var(--mono);
+  /* This is a 66px grid column and it renders the full asset name whenever
+     no ticker was disclosed. Without containment the text simply painted over
+     `.cell-side` and everything after it — `.cell-member` had exactly this
+     treatment already and did not overflow, which is what made the omission
+     easy to miss. The complete name stays in the accessibility tree as real
+     text (see `assetNameCell`), so clipping the PIXELS removes nothing. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 8px;
+}
+.cell-ticker .asset-name {
+  /* the inner span must clip with its cell rather than establish its own
+     unbounded inline box */
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-ticker a {
+  text-decoration: none;
+  color: var(--accent);
+}
+.cell-ticker .none {
+  color: var(--ink3);
+}
+.cell-side {
+  font: 600 12.5px var(--sans);
+}
+.cell-side.buy { color: var(--buy); }
+.cell-side.sell { color: var(--sell); }
+.cell-side.neutral { color: var(--ink2); }
+.cell-side.unknown { color: var(--ink3); }
+.owner-note {
+  font: 500 11px var(--sans);
+  color: var(--ink3);
+}
+.lag {
+  color: var(--ink3);
+}
+/* filed before the stated trade date — an anomaly, named as one */
+.lag-anomaly {
+  color: var(--amber);
+  font-weight: 600;
+}
+.lag-late {
+  display: inline-block;
+  font: 700 9.5px var(--sans);
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+.mobile-dates {
+  display: none;
+}
+.cell-amount {
+  font: 500 12.5px var(--sans);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.cell-amount.unknown {
+  color: var(--ink3);
+}
+.cell-range {
+  padding-left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+.band {
+  position: relative;
+  height: 10px;
+  width: 104px;
+  background: var(--paper);
+  border: 1px solid var(--rule2);
+  flex-shrink: 0;
+}
+.band-fill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  background: var(--accent);
+}
+.band-fill.open {
+  background: transparent;
+  background-image: var(--hatch);
+}
+.flag {
+  font: 600 10px var(--sans);
+  padding: 2px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.flag.solid {
+  background: var(--rule);
+  color: var(--ink2);
+}
+.flag.dashed {
+  border: 1px dashed var(--rule2);
+  color: var(--ink2);
+}
+.flag.amber {
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+.cell-src {
+  text-align: right;
+}
+.cell-src a {
+  font: 500 10.5px var(--mono);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule2);
+}
+/* source URL present but not an https document we will link to */
+.src-missing {
+  font: 500 10.5px var(--mono);
+  color: var(--ink3);
+  border-bottom: 1px dashed var(--rule2);
+}
+
+/* paper (needs-OCR) filing row */
+.feed-row.paper {
+  /* Desktop: star · filed · the spanning main cell · src. `colspan` does not
+     apply under `display: grid`, so the span is expressed as a track. */
+  grid-template-columns: 26px 92px 1fr 56px;
+  grid-template-columns: 26px 92px 1fr 56px;
+}
+.paper-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 500 12.5px var(--sans);
+  color: var(--ink2);
+  min-width: 0;
+  overflow: hidden;
+}
+.paper-main .who {
+  font: 600 13px var(--sans);
+  text-decoration: none;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.chip-ocr {
+  font: 600 10px var(--sans);
+  padding: 2px 7px;
+  border-radius: 2px;
+  border: 1px dashed var(--rule2);
+  color: var(--ink2);
+  white-space: nowrap;
+}
+.paper-note {
+  font: 400 12px var(--sans);
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* footnote + table footer */
+.feed-footnote {
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--rule);
+  font: 400 11.5px/1.6 var(--sans);
+  color: var(--ink2);
+}
+.feed-footnote .dagger {
+  color: var(--accent);
+  font-weight: 600;
+}
+.feed-footnote code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+.feed-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  gap: 16px;
+}
+.view-note {
+  font: 400 11px var(--mono);
+  color: var(--ink3);
+}
+.view-note a {
+  font: inherit;
+}
+.pager {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.pager-range {
+  font: 500 12px var(--sans);
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+/* Focus is moved here programmatically when a pager control becomes
+   unavailable. Chrome does not apply :focus-visible to programmatic focus on a
+   non-input element, so an explicit :focus rule is what makes it visible. */
+.pager-range:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pager-btn {
+  font: 600 12px var(--sans);
+  text-decoration: none;
+  border: 1px solid var(--rule2);
+  padding: 6px 14px;
+  color: var(--ink);
+  min-height: 32px;
+}
+/* Unavailable, but still focusable and in the tab order — removing the control
+   that was just activated dumps keyboard focus to <body>. */
+.pager-btn.is-unavailable {
+  color: var(--ink3);
+  border-color: var(--rule);
+  cursor: default;
+}
+
+/* S3 · filter returns nothing */
+.feed-empty {
+  padding: 36px 40px;
+  border-bottom: 1px solid var(--rule);
+}
+.feed-empty h2 {
+  font: 600 18px/1.3 var(--serif);
+  margin: 0;
+}
+.feed-empty p {
+  font: 400 13px/1.7 var(--sans);
+  color: var(--ink2);
+  margin: 10px 0 0;
+  max-width: 520px;
+}
+.feed-empty .suggestions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.feed-empty .suggestions button {
+  font: 600 12.5px var(--sans);
+  border: 1px solid var(--rule2);
+  padding: 8px 16px;
+  color: var(--ink);
+  min-height: 36px;
+}
+.feed-empty .suggestions .plain {
+  font: 500 12.5px var(--sans);
+  border: none;
+  padding: 8px 4px;
+  color: var(--accent);
+}
+
+/* S4 · shard-loading skeleton (below the painted shell only) */
+@keyframes pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.feed-loading {
+  padding: 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-bottom: 1px solid var(--rule);
+}
+.feed-loading .bar {
+  height: 12px;
+  background: var(--rule);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ---------- notice footer ---------- */
+
+.site-footer {
+  border-top: 1px solid var(--rule2);
+  background: var(--raised);
+}
+.site-footer-inner {
+  padding-top: 24px;
+  padding-bottom: 24px;
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  gap: 40px;
+}
+.footer-block {
+  font: 400 11.5px/1.7 var(--sans);
+  color: var(--ink2);
+}
+.footer-block strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.footer-build {
+  font: 400 11px/1.7 var(--mono);
+  color: var(--ink3);
+}
+
+/* ================= entity, feed & table surfaces ================= */

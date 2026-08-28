@@ -10,11 +10,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { baseStylesheet } from "./lib/styles.ts";
 
-const css = readFileSync(
-  path.join(process.cwd(), "src", "styles", "global.css"),
-  "utf-8",
-);
+const css = baseStylesheet();
 
 test("F-21: .mobile-dates is only ever displayed under a .feed-row scope", () => {
   // The base rule hides it everywhere…

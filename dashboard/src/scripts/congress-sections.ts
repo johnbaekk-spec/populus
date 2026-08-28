@@ -35,7 +35,7 @@ import {
   rankingAlternatives,
   rankingRootHtml,
   rankingWindowHtml,
-} from "../lib/ui.ts";
+} from "../lib/ui/index.ts";
 import { COMPACT_ROWS, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
 import type { CongressSortKey } from "../lib/congress-columns.ts";

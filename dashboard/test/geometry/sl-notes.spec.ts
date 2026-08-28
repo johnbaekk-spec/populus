@@ -14,6 +14,7 @@
    the seam's declarations are byte-identical to the real fallback's. */
 
 import { test, expect, type Page } from "@playwright/test";
+import { baseStylesheet } from "../lib/styles.ts";
 import { readFileSync } from "node:fs";
 import { WIDTHS } from "../../playwright.config.ts";
 
@@ -364,8 +365,8 @@ test("CODE-REVIEW F9: REAL member and filer renderer output meets 44px at every 
      entirely. Renderer-backed fixture pages give the real markup and the real
      stylesheet without expanding the production build, which is what the
      finding asked for. */
-  const { filerBody, memberV2Sections } = await import("../../src/lib/ui.ts");
-  const css = readFileSync(new URL("../../src/styles/global.css", import.meta.url), "utf8");
+  const { filerBody, memberV2Sections } = await import("../../src/lib/ui/index.ts");
+  const css = baseStylesheet();
 
   const CONC = {
     cik: "0001067983", period_of_report: "2026-03-31", position_count: 2,

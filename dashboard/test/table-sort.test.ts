@@ -7,6 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { baseStylesheet } from "./lib/styles.ts";
 
 import { initSortableTable, type SortState } from "../src/scripts/table-sort.ts";
 
@@ -127,7 +128,7 @@ test("headers without a key are skipped, not crashed on", () => {
 import { readFileSync } from "node:fs";
 
 test("both sortable-header surfaces meet the 44 px touch target", () => {
-  const css = readFileSync(new URL("../src/styles/global.css", import.meta.url), "utf8");
+  const css = baseStylesheet();
 
   // Evaluate PER SELECTOR. Joining every .th-sort rule and taking the globally
   // last declaration would let one adopter sit at zero while a later rule for
@@ -165,7 +166,7 @@ test("both sortable-header surfaces meet the 44 px touch target", () => {
 });
 
 test("the base .th-sort reset does not silently re-zero the target", () => {
-  const css = readFileSync(new URL("../src/styles/global.css", import.meta.url), "utf8");
+  const css = baseStylesheet();
   const sized = css.indexOf("th[data-sort] .th-sort,");
   const reset = css.indexOf(".th-sort {");
   assert.ok(sized > reset, "the 44px rule must come AFTER the padding:0 reset, or it loses the cascade");

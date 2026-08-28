@@ -4,7 +4,7 @@
 // with their typed reason.
 import Base from "../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact } from "../../lib/data";
-import { signalsBody } from "../../lib/ui";
+import { signalsBody } from "../../lib/ui/index.ts";
 import type { RenderCtx } from "../../lib/format";
 
 const build = getBuildData();

@@ -6,7 +6,7 @@ import Base from "../layouts/Base.astro";
 import Mark from "../components/Mark.astro";
 import { getBuildData, moduleAvailability, coverageSummary } from "../lib/data";
 import { fmtInt, type RenderCtx } from "../lib/format";
-import { pickSpecimen, specimenCard, moduleCard, notableRailHtml } from "../lib/ui";
+import { pickSpecimen, specimenCard, moduleCard, notableRailHtml } from "../lib/ui/index.ts";
 import { notableRecent } from "../lib/derive";
 
 const build = getBuildData();

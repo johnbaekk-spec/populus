@@ -1,6 +1,7 @@
 # QoQ presentation, `sumRanges`, S4 failure states, the ticker→issuer mapping, and the institutional time stamp — specification
 
-**Status:** normative for `src/lib/derive.ts`, `src/lib/inst.ts`, `src/lib/ui.ts`,
+**Status:** normative for `src/lib/derive.ts`, `src/lib/inst.ts`, the `src/lib/ui/`
+domain modules (formerly the single `ui.ts`),
 `src/scripts/entity-client.ts` and their callers (RUN P3-2, T1).
 **Why this exists:** the standing *specify-before-rewriting* lesson — each of
 these mechanisms is either producer-owned business logic the frontend must map

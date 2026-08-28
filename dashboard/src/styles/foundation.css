@@ -1,0 +1,163 @@
+/* Public Filings design tokens + global styles.
+   Source of truth: docs/frontend/design-principles.md (which carries the
+   design-system tokens and fold rules extracted from the original design
+   mockups, now in Git history). Do not tune values here without updating
+   that document.
+
+   ONE DELIBERATE DEVIATION, recorded rather than silently absorbed:
+   --ink3 is darkened (light) / lightened (dark) from the design's #8d8779 /
+   #7d7869. Those values measure 3.39:1 and 3.68:1 against the surfaces they
+   sit on, and every consumer is 9–12px text — below the WCAG 1.4.3 AA 4.5:1
+   floor that DESIGN-BRIEF §4 makes a phase gate. The affected text is
+   disproportionately the honesty layer (coverage captions, the paper-filing
+   note, "amount unparsed"), so shipping it under-contrast would make the
+   trust argument the least legible thing on the page. Values below clear
+   4.5:1 against BOTH --paper and --raised. Escalate design-side to reconcile
+   the token; do not revert without a replacement that measures ≥4.5:1. */
+
+:root {
+  --paper: #faf9f5;
+  --raised: #fffefb;
+  --ink: #262319;
+  --ink2: #5f5a4e;
+  --ink3: #6b6659; /* design #8d8779 → 3.39:1; this = 5.6:1 on --raised */
+  --rule: #e5e1d6;
+  --rule2: #cec8b9;
+  --accent: #30567c;
+  --accent-h: #1f3d5c;
+  --amber: #7a5a14;
+  --amber-bg: #f4e8cf;
+  --buy: #2b6a52;
+  --sell: #92483a;
+  --dem: #49597c;
+  --rep: #7b524f;
+  --ind: #67624f;
+  /* The hatch is the SOLE visual marker of an open-ended or unparsed range, so
+     it needs WCAG 1.4.11 non-text contrast (≥3:1) against the band's --paper
+     fill; the design's --rule2 stripe measured 1.58:1. #948d7c = 3.13:1. */
+  --hatch: repeating-linear-gradient(45deg, transparent 0 3px, #948d7c 3px 4px);
+
+  --serif: "Source Serif 4", Georgia, serif;
+  --sans: "Public Sans", sans-serif;
+  --mono: "IBM Plex Mono", monospace;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --paper: #1b1915;
+  --raised: #23201a;
+  --ink: #ece8dd;
+  --ink2: #a8a294;
+  --ink3: #948e7e; /* design #7d7869 → 3.68:1; this = 4.97:1 on --raised */
+  --rule: #35322a;
+  --rule2: #4a463c;
+  --accent: #8fb0d4;
+  --accent-h: #b4cde6;
+  --amber: #d9a94e;
+  --amber-bg: #3a2f17;
+  --buy: #7dbd9f;
+  --sell: #d99180;
+  --dem: #93a7cc;
+  --rep: #c99a94;
+  --ind: #a09a88;
+  --hatch: repeating-linear-gradient(45deg, transparent 0 3px, #787264 3px 4px); /* 3.67:1 */
+  color-scheme: dark;
+}
+
+/* System-dark fallback for first paint / no-JS visitors who haven't chosen. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --paper: #1b1915;
+    --raised: #23201a;
+    --ink: #ece8dd;
+    --ink2: #a8a294;
+    --ink3: #948e7e; /* design #7d7869 → 3.68:1; this = 4.97:1 on --raised */
+    --rule: #35322a;
+    --rule2: #4a463c;
+    --accent: #8fb0d4;
+    --accent-h: #b4cde6;
+    --amber: #d9a94e;
+    --amber-bg: #3a2f17;
+    --buy: #7dbd9f;
+    --sell: #d99180;
+    --dem: #93a7cc;
+    --rep: #c99a94;
+    --ind: #a09a88;
+    --hatch: repeating-linear-gradient(45deg, transparent 0 3px, #787264 3px 4px); /* 3.67:1 */
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-color: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+a:hover {
+  color: var(--accent-h);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.shell {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding-left: 40px;
+  padding-right: 40px;
+}
+

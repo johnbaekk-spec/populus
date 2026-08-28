@@ -5,7 +5,7 @@
 // (the budget-cut rule); cut members stay reachable at /e/?k=m:… with their endpoint.
 import Base from "../../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact, sectorResolver } from "../../../lib/data";
-import { memberBody, memberSignalsPanel, memberV2Sections, type BuildStamps, type MemberV2Deps } from "../../../lib/ui";
+import { memberBody, memberSignalsPanel, memberV2Sections, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
 
 export function getStaticPaths() {

@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { baseStylesheet } from "./lib/styles.ts";
 import path from "node:path";
 
 import {
@@ -19,7 +20,7 @@ import {
   congressRankingSection,
   entityTxnTable,
   type BuildStamps,
-} from "../src/lib/ui.ts";
+} from "../src/lib/ui/index.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 import { leadersRollup } from "../src/lib/derive.ts";
 import { instIndexBodyHtml } from "../src/scripts/inst-index-client.ts";
@@ -531,10 +532,7 @@ test("F1: every id the feed island REQUIRES exists on the real congress page", (
 test("F4: the feed's table header FOLDS by clipping, never by display:none", () => {
   // It carries every column name and every stated unsortable reason. Removing
   // it from layout removes all of that from the accessibility tree.
-  const css = readFileSync(
-    path.resolve(import.meta.dirname, "..", "src", "styles", "global.css"),
-    "utf-8",
-  );
+  const css = baseStylesheet();
   const narrow = css.slice(css.indexOf("@media (max-width: 1080px)"));
   const rule = narrow.slice(narrow.indexOf(".feed-head"), narrow.indexOf("}", narrow.indexOf(".feed-head")));
   assert.ok(!/display:\s*none/.test(rule), "the real <thead> must not be display:none'd");
@@ -738,10 +736,11 @@ test("F14: the adds endpoint path has exactly ONE builder, and every consumer us
   assert.equal(addsPayloadHref("2026-03-31", "new"), "/institutional/data/adds/2026-03-31.new.v1.json");
 
   const ROUTE = /["'`][^"'`]*institutional\/data\/adds\//;
-  for (const [dir, file] of [
-    ["scripts", "inst-index-client.ts"],
-    ["lib", "ui.ts"],
-  ] as const) {
+  // Slice 6 split ui.ts into src/lib/ui/*.ts; the whole directory is scanned.
+  const uiFiles = readdirSync(path.resolve(import.meta.dirname, "..", "src", "lib", "ui"))
+    .filter((n) => n.endsWith(".ts"))
+    .map((n) => ["lib/ui", n] as const);
+  for (const [dir, file] of [["scripts", "inst-index-client.ts"] as const, ...uiFiles]) {
     const src = readFileSync(
       path.resolve(import.meta.dirname, "..", "src", dir, file),
       "latin1",

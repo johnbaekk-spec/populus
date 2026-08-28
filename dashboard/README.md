@@ -31,7 +31,8 @@ and `test` run anywhere. The whole chain also runs under the repository's
 canonical `make test`. Node is pinned by `.node-version`; the DB is read with
 `node:sqlite` — no native dependencies.
 
-`src/lib/format.ts`, `src/lib/derive.ts`, and `src/lib/ui.ts` are pure and
+`src/lib/format.ts`, `src/lib/derive.ts`, and the `src/lib/ui/` domain
+modules (entry point `src/lib/ui/index.ts`) are pure and
 environment-agnostic precisely so the honesty rules can be tested without a
 browser or a database.
 
@@ -69,12 +70,13 @@ declared, `inst_agg.db`.
 - `/tickers/[ticker]/` — the unified ticker view; `/signals/`,
   `/watchlist/`, `/search/index.v1.json`
 - `/e/` — the generic client-rendered entity route for budget-cut entities,
-  rendering through the **same** pure body functions (`src/lib/ui.ts`) the
+  rendering through the **same** pure body functions (`src/lib/ui/`) the
   static pages use — parity by construction
 - `/financials/`, `/macro/` — forward-looking module shells
 - `/legal/DATA-LICENSE.md`, `/legal/NOTICE.txt`, `/stats.json`, `404`
 
-Entity pages render through pure body functions in `src/lib/ui.ts`; the G1–G7
+Entity pages render through pure body functions under `src/lib/ui/` — domain
+modules re-exported by the single consumer entry `src/lib/ui/index.ts`; the G1–G7
 honesty components are pure string renderers in `src/lib/format.ts` — one
 implementation each (grep-enforced by test), consumed by SSR pages and the
 client drivers alike, because forked render paths break byte-parity
