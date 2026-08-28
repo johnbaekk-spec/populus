@@ -86,7 +86,7 @@ Register version: `licenses-1.1.0`.
   - The verbatim CGS/ABA notice (see required notices) is non-removable and travels with any redistributed excerpt or derived identity
   - Identity seeding only: the list is used as a definitional CUSIP-validity and canonical-name source, not republished as a CUSIP identifier database
   - Quarter identity comes from the source filename/URL cross-checked against the document's Year/Qtr header; the legend 'current as of' date is not authoritative (it is stale boilerplate on some quarters)
-  - Archive availability recorded during RUN M2-5: the index lists quarterly files back through 2024; quarters 2025Q1–2026Q2 were retrieved and cached (2026Q2 in both PDF and text; 2025Q1–2026Q1 PDF only)
+  - Archive availability recorded during the 2026-07 definitional-list ingest: the index lists quarterly files back through 2024; quarters 2025Q1–2026Q2 were retrieved and cached (2026Q2 in both PDF and text; 2025Q1–2026Q1 PDF only)
   - Retrieved under the same sec-edgar fair-access conditions (SEC-accepted User-Agent, in-code rate floor)
 - **Required notices (verbatim):**
   > Copyright (c) American Bankers Association (ABA). All rights reserved. CUSIP Numbers and descriptions are used with permission by CUSIP Global Services (CGS), which is operated by FactSet Research Systems Inc., on behalf of the ABA. No redistribution without permission of CGS. CGS does not guarantee the accuracy or completeness of the CUSIP Numbers and standard descriptions included herein and none of CGS, ABA or FactSet shall be responsible for any errors, omissions or damages arising out of the use of such information.
@@ -130,7 +130,7 @@ Register version: `licenses-1.1.0`.
 - **Required notices (verbatim):**
   > BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.
 - **Attribution:** Source: U.S. Bureau of Labor Statistics (retrieval date stated per response).
-- **Determination basis:** Placeholder per §15.2 — the full entry (verified ToS text, client limit constants) is completed at M4 phase entry; no BLS data is ingested before that completion (G11).
+- **Determination basis:** Placeholder per §15.2 — the full entry (verified ToS text, client limit constants) is completed at M4 phase entry; no BLS data is ingested before that completion.
 - **Determined:** 2026-07-23 · **Review by:** 2026-10-23
 
 ## `bea-tos` — BEA API *(placeholder — no ingestion before the entry completes)*
@@ -138,7 +138,7 @@ Register version: `licenses-1.1.0`.
 - **Instrument:** US-government work; API not yet verified beyond signup/docs pages (free key).
 - **Status:** placeholder · **Ingestible:** no
 - **Restrictions:**
-  - No ingestion before the M4 phase-entry determination completes (G11)
+  - No ingestion before the M4 phase-entry determination completes
 - **Attribution:** Source: U.S. Bureau of Economic Analysis.
 - **Determination basis:** Deferred-to-M4 placeholder per §15.2 — entry completed at M4 phase entry.
 - **Determined:** 2026-07-23 · **Review by:** 2026-10-23
@@ -150,9 +150,9 @@ Register version: `licenses-1.1.0`.
 - **Restrictions:**
   - Per-series determination mandatory; primary agency preferred wherever one exists
   - User-supplied key only (§11.5)
-  - No ingestion before the M4 per-series determinations (OQ-11, G11)
+  - No ingestion before the M4 per-series determinations
 - **Attribution:** Source: Federal Reserve Bank of St. Louis (FRED), per-series underlying source stated per sub-entry.
-- **Determination basis:** Deferred-to-M4 placeholder per §15.2 — per-series determinations at M4 entry (OQ-11).
+- **Determination basis:** Deferred-to-M4 placeholder per §15.2 — per-series determinations at M4 entry.
 - **Determined:** 2026-07-23 · **Review by:** 2026-10-23
 
 ## `cc0-legislators` — unitedstates/congress-legislators

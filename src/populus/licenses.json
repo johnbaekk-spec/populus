@@ -170,7 +170,7 @@
         "BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov."
       ],
       "attribution": "Source: U.S. Bureau of Labor Statistics (retrieval date stated per response).",
-      "determination_basis": "Placeholder per §15.2 — the full entry (verified ToS text, client limit constants) is completed at M4 phase entry; no BLS data is ingested before that completion (G11).",
+      "determination_basis": "Placeholder per §15.2 — the full entry (verified ToS text, client limit constants) is completed at M4 phase entry; no BLS data is ingested before that completion.",
       "determination_date": "2026-07-23",
       "review_by": "2026-10-23",
       "ingestible": false,
@@ -182,7 +182,7 @@
       "instrument": "US-government work; API not yet verified beyond signup/docs pages (free key).",
       "permitted_uses": [],
       "restrictions": [
-        "No ingestion before the M4 phase-entry determination completes (G11)"
+        "No ingestion before the M4 phase-entry determination completes"
       ],
       "required_notices": [],
       "attribution": "Source: U.S. Bureau of Economic Analysis.",
@@ -200,11 +200,11 @@
       "restrictions": [
         "Per-series determination mandatory; primary agency preferred wherever one exists",
         "User-supplied key only (§11.5)",
-        "No ingestion before the M4 per-series determinations (OQ-11, G11)"
+        "No ingestion before the M4 per-series determinations"
       ],
       "required_notices": [],
       "attribution": "Source: Federal Reserve Bank of St. Louis (FRED), per-series underlying source stated per sub-entry.",
-      "determination_basis": "Deferred-to-M4 placeholder per §15.2 — per-series determinations at M4 entry (OQ-11).",
+      "determination_basis": "Deferred-to-M4 placeholder per §15.2 — per-series determinations at M4 entry.",
       "determination_date": "2026-07-23",
       "review_by": "2026-10-23",
       "ingestible": false,
