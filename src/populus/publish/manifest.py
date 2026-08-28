@@ -44,12 +44,12 @@ REQUIRED_CONGRESS_ARTIFACTS = (
 )
 WATERMARK_KEYS = ("house_index_last_modified", "senate_max_filed_date")
 
-# --- the institutional 13F module (§5.5; M2-CONTRACT §5.6 — RUN M2-3) ---------
-# The inst module carries TWO database artifacts (RUN M2-8 T8, plan R9):
-#   inst_agg.db      — the derived cross-filer aggregate (M2-3)
-#   inst_serving.db  — the per-filer SERVING projection (M2-8), which the MCP
+# --- the institutional 13F module (§5.5; M2-CONTRACT §5.6) --------------------
+# The inst module carries TWO database artifacts:
+#   inst_agg.db      — the derived cross-filer aggregate
+#   inst_serving.db  — the per-filer SERVING projection, which the MCP
 #                      snapshot path reads for published per-filer detail
-# Until M2-8 the module carried exactly one, and `module_db_artifact()` returned
+# Originally the module carried exactly one, and `module_db_artifact()` returned
 # a scalar. External review r3 F9 flagged that a second asset is NOT an ordinary
 # extra entry: three call sites in publish/build.py resolved that scalar, so a
 # second artifact would have been silently skipped at preflight, verification and
@@ -61,18 +61,18 @@ INST_DB_ARTIFACT = "inst_agg.db"
 INST_SERVING_ARTIFACT = "inst_serving.db"
 INST_SCHEMA_VERSION = "1.1"
 INST_CLIENT_COMPAT = ">=0.0.1,<1"
-# DEVIATION FROM R10, RECORDED (QA M2-8 M12).
+# RECORDED DEVIATION: the serving artifact is producer-enforced, not
+# validator-mandatory.
 #
-# R10 says "the manifest policy requires the new artifact". `inst_serving.db` is
-# NOT in this tuple, and that is deliberate: `validate_manifest` runs over
-# manifests this release did not write — the rollback target, the pointer's
-# current build, the client's cached manifest — and every build that predates
-# RUN M2-8 legitimately has no serving artifact. A hard entry here would make
-# each of those invalid, i.e. it would refuse to roll back to a build that was
+# `inst_serving.db` is NOT in this required tuple, and that is deliberate:
+# `validate_manifest` runs over manifests this release did not write — the
+# rollback target, the pointer's current build, the client's cached manifest —
+# and every build that predates the serving projection legitimately has no
+# serving artifact. A hard entry here would make each of those invalid, i.e. it would refuse to roll back to a build that was
 # correct when it was published.
 #
 # What made that unsafe was not the mechanism but the missing half: nothing
-# failed when a POST-M2-8 build omitted the artifact, so "optional" and "absent
+# failed when a newer build omitted the artifact, so "optional" and "absent
 # because nobody wrote the producer" were indistinguishable — which is exactly
 # the state the increment shipped in. The compensating control lives at the
 # PRODUCER instead (`publish/build.py`, beside the inst manifest assembly): a
@@ -81,12 +81,12 @@ INST_CLIENT_COMPAT = ">=0.0.1,<1"
 #
 # Schema 1.1 now signals the independently reviewed QoQ table→view contract
 # change.  It still does not make the serving artifact validator-mandatory:
-# rollback and cached pre-M2-8 manifests remain valid, while the producer guard
+# rollback and cached earlier manifests remain valid, while the producer guard
 # below remains the compatibility-safe boundary for every newly written build.
 REQUIRED_INST_ARTIFACTS = (INST_DB_ARTIFACT,)
 INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
 
-# --- the inst source-provenance artifact (RUN M2-11, R24) ---------------------
+# --- the inst source-provenance artifact --------------------------------------
 # When a build derives the inst module from an accepted external snapshot
 # (`stage-build --inst-db`), it publishes `inst_source.json`: the snapshot's
 # whole-file SHA-256 plus the metadata fields read from the snapshot's own
@@ -97,7 +97,7 @@ INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
 # drives Release-asset handling through five consumers; a JSON there would be
 # misclassified by every one of them. The generic installer already installs
 # path-backed artifacts with zero code change. It is also NOT in any module's
-# `required` set: every manifest written before RUN M2-11 legitimately has none,
+# `required` set: every manifest written before the external-snapshot path existed legitimately has none,
 # and validation must keep accepting those (rollback targets included). The
 # compensating control is the PRODUCER guard in publish/build.py: a build given
 # --inst-db that fails to emit it raises PublishError.
@@ -164,7 +164,7 @@ _MODULE_POLICY: dict[str, dict] = {
         "watermarks": INST_WATERMARK_KEYS,
         "db_artifact": INST_DB_ARTIFACT,
         # Both carry a logical_digest and both must be verified. `inst_serving.db`
-        # is OPTIONAL in REQUIRED_INST_ARTIFACTS (a build predating M2-8 has none)
+        # is OPTIONAL in REQUIRED_INST_ARTIFACTS (a build predating it has none)
         # but when present it is verified exactly like the aggregate.
         "db_artifacts": (INST_DB_ARTIFACT, INST_SERVING_ARTIFACT),
     },
@@ -275,7 +275,7 @@ def module_db_artifacts(module: str = MODULE) -> tuple[str, ...]:
     """EVERY database artifact for *module*, in deterministic order.
 
     Each carries a `logical_digest` and each must be verified independently. A
-    module may legitimately publish a subset (a pre-M2-8 build has no
+    module may legitimately publish a subset (an older build has no
     `inst_serving.db`), so callers skip a name the manifest does not list — but
     they must never skip a name the manifest DOES list.
     """
@@ -499,7 +499,7 @@ def _validate_artifact(
         not isinstance(logical, str) or _SHA256.match(logical) is None
     ):
         errors.append(f"{label}: logical_digest must be 64 lowercase hex characters")
-    # RUN M2-11 (R24): the provenance artifact is ordinary, never a database —
+    # The provenance artifact is ordinary, never a database —
     # a logical_digest on it would signal DB semantics to the five consumers
     # that key on that field, so its presence is a defect, not a nicety.
     if entry.get("name") == INST_SOURCE_ARTIFACT and logical is not None:

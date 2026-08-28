@@ -1,4 +1,4 @@
-# Security identity authority (ARCHITECTURE.md §5.4 — RUN M2-1).
+# Security identity authority (ARCHITECTURE.md §5.4).
 #
 # The stable class-ID authority. Every DURABLE `security_id` is a literal
 # written here by reviewed commit and never changes afterwards — adding an
@@ -48,6 +48,6 @@
 #     review_state: auto | reviewed | disputed
 #
 # This file ships EMPTY: the mechanism is built and tested, the content is
-# authored by reviewed commit as RUN M2-2 surfaces real cases (TD-M2-1-2).
+# authored by reviewed commit as the 13F parser surfaces real cases.
 classes: []
 continuities: []

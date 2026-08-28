@@ -1,4 +1,4 @@
-"""§5.5 artifact publication protocol (RUN 5).
+"""§5.5 artifact publication protocol.
 
 Modules: ``digests`` (logical + dist digests), ``inventory`` (§12.1 envelope),
 ``manifest`` (build manifest + path grammar), ``pointer`` (latest.json + the

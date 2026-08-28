@@ -86,7 +86,7 @@ def _lower_authority(url: str) -> str:
 
     The host guard admits SEC hostnames case-insensitively, so the endpoint-class
     match must too, or an admitted upper-case host (`https://WWW.SEC.GOV/files/…`)
-    falls through to the short default TTL and revalidates needlessly. (QA-F3)
+    falls through to the short default TTL and revalidates needlessly.
     """
     idx = url.find("://")
     if idx == -1:
@@ -417,7 +417,7 @@ def _retry_after_seconds(
 ) -> float | None:
     """``Retry-After`` in seconds, honoured only when LONGER than our backoff.
 
-    Accepts BOTH RFC 7231 forms (QA-F3): delay-seconds, or an HTTP-date resolved
+    Accepts BOTH RFC 7231 forms: delay-seconds, or an HTTP-date resolved
     against ``now_utc`` (an injected UTC reference, so this stays deterministic
     and testable). A past-dated or malformed value yields ``None``.
     """

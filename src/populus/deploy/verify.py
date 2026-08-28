@@ -148,13 +148,13 @@ TD10_NOTE = (
 #: behind another.
 CONTROL_PATHS = ("/_redirects", "/_headers", "/_worker.js")
 
-#: The byte-exact Content-Security-Policy locked by RUN PUBLIC-SECURITY-
-#: HARDENING LD13 (superseding the M1/R36 hash-pinned policy) and shipped as
+#: The byte-exact Content-Security-Policy this deployment locks (it supersedes
+#: an earlier hash-pinned policy) and ships as
 #: `dashboard/public/_headers`. `script-src` carries NO inline hashes — the
 #: pre-paint theme IIFE is external (`/theme-init.js`) and the bundler is
-#: forbidden to inline modules — and the sole non-'self' origins are the R28
-#: analytics beacon's (a reviewed, post-plan feature LD13's bare policy
-#: predates). REQUIRED on every served asset and required to be EQUAL to this
+#: forbidden to inline modules — and the sole non-'self' origins are the
+#: analytics beacon's (a reviewed feature added after the bare policy was
+#: first locked). REQUIRED on every served asset and required to be EQUAL to this
 #: value — not merely present, because a policy that is present but weakened is
 #: precisely what a "has a CSP" check waves through. `style-src` carries
 #: `'unsafe-inline'` and deliberately NO style hash: CSP2+ ignores

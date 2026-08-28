@@ -1,4 +1,4 @@
-"""Member identity: legislators load, aliases, and the §9.7 join (RUN 4).
+"""Member identity: legislators load, aliases, and the §9.7 join.
 
 Loads the congress-legislators seed (CC0 — ``cc0-legislators``) into
 ``members``, maintains the version-controlled ``member_aliases`` table from

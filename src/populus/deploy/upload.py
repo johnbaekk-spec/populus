@@ -84,7 +84,7 @@ __all__ = [
 ]
 
 #: Where the committed npm lock installs wrangler, relative to the checked-out
-#: repository root. RUN PUBLIC-SECURITY-HARDENING R8/LD9: wrangler is an exact
+#: repository root. Security invariant: wrangler is an exact
 #: `dashboard/package.json` devDependency installed by `npm ci` from
 #: `dashboard/package-lock.json`, and the deploy invokes THAT binary directly.
 #: There is no `npx --yes`, no remote install, no moving tag, and no package or

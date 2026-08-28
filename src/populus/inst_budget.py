@@ -1,4 +1,4 @@
-"""RUN M2-8 T15 (plan R19) — the static-file budget contract for inst shards.
+"""The static-file budget contract for inst shards.
 
 This is the mechanical guarantee behind the DR-8 reversal. The original Pattern-F
 decision protected "Populus infra cost stays ~$0" by refusing to publish per-filer
@@ -6,7 +6,7 @@ detail at all. The reversal keeps that property a different way: the deployed tr
 is bounded by a file count that CI enforces. If the measured tree exceeds its
 maximum, the build fails — it does not quietly grow.
 
-**These are HARD MAXIMA, not defaults** (external review r5 F6, r6 F6). Changing
+**These are HARD MAXIMA, not defaults**. Changing
 any of them is a plan change with a re-proved formula, not a configuration tweak.
 
 Provider limits (recorded verified in ARCHITECTURE.md §12.1): Cloudflare Pages free
@@ -185,8 +185,8 @@ M3_RESERVED = 2_064                   # M3's committed 2,000 pages + ~64 shards
 #: as "measured zero", which is a different claim from "this does not exist".
 ACTIVITY_SHARDS_MAX = 64
 
-# --- M2-11 filer tail family — RESERVATIONS pending T0 measurement -----------
-#: RUN M2-11 (plan R22/R27, LD-9/LD-10). The long-tail filer delivery adds three
+# --- filer tail family — RESERVATIONS pending baseline measurement -----------
+#: The long-tail filer delivery adds three
 #: NEW file classes (active shards, active index, transition tombstone), and the
 #: C5/N1 defect class this module documents is exactly "a file class the
 #: projection does not sum" — so all three are REAL
@@ -468,16 +468,15 @@ def worst_case_file_count(
     Omitting it is QA M2-8 R2 N1: a projection 103 files short, in the unsafe
     direction, of a tree the module had already measured.
 
-    M3's reservation is included deliberately (review r2 F15): omitting another
+    M3's reservation is included deliberately: omitting another
     module's committed budget produces a number that looks safe and is not,
     because the 18,000 cap is global, not per-module.
 
-    RUN M2-11 (R27): `filer_tail_shards`, `routing_index_files`, and
+    `filer_tail_shards`, `routing_index_files`, and
     `filer_v1_transition_files` are the three file classes the bounded long-tail
     delivery adds. They are parameters — with every prior term retained,
     including M3's committed 2,064 — because both historical defects in this
-    module (C5(a), R2 N1) were a real file class that a constant named and the
-    sum omitted.
+    module were a real file class that a constant named and the sum omitted.
 
     NOT a gate. This is a forecast over modules that are not built; asserting a
     forecast is how the previous version shipped a proof that measured nothing.

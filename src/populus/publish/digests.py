@@ -74,7 +74,7 @@ _AGG_QOQ_PUBLIC_COLUMNS = (
     "ingested_at",
 )
 
-# --- RUN M2-8 T8: projections are per ARTIFACT, not per module ----------------
+# --- projections are per ARTIFACT, not per module -----------------------------
 # The inst module now publishes TWO databases with DIFFERENT schemas
 # (`inst_agg.db` aggregates, `inst_serving.db` the per-filer serving
 # projection). Digesting the serving DB under the aggregate's projection would

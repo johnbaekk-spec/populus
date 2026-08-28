@@ -1,6 +1,6 @@
-"""Build assembly, release backends, and the §5.5 publication sequence (RUN 5).
+"""Build assembly, release backends, and the §5.5 publication sequence.
 
-The durable-recovery design (R35): every build is captured in ONE
+The durable-recovery design: every build is captured in ONE
 self-contained recovery journal — ``journal.json`` inlines the build metadata,
 the manifest, every build-scoped small artifact verbatim, and the exact
 ``congress.db`` bytes. The journal is durably staged in the data repo
@@ -928,7 +928,7 @@ def next_build_id(data_repo: Path | str, today: date, backend: ReleaseBackend) -
     # documented drafts-only cleanup (rollback.md Appendix A) deletes the draft
     # AND the staged build, after which a same-day rebuild would otherwise
     # REALLOCATE the interrupted id — binding one immutable build identity to
-    # two different byte sets (QA-F1, round 7). The mark lives at the
+    # two different byte sets. The mark lives at the
     # DATA-REPOSITORY ROOT, which survives that cleanup, so an allocated id is
     # never handed out twice.
     _consider(f"{date_str}.{_allocation_high_water(data_repo, date_str)}")
@@ -941,7 +941,7 @@ def next_build_id(data_repo: Path | str, today: date, backend: ReleaseBackend) -
 #: the DATA-REPO ROOT — deliberately NOT in `builds/` (which must not exist
 #: before finalize, and whose base is symlink-guarded) and not in `.staging/` or
 #: the release (both erased by the drafts-only cleanup). Build ids are immutable
-#: identities, so an allocated id is never handed out twice (QA-F1, round 7).
+#: identities, so an allocated id is never handed out twice.
 ALLOCATIONS_FILE = ".build-allocations.json"
 
 
@@ -1089,10 +1089,10 @@ def require_complete_inst_module(
     if aggregate_digest is not None and serving_digest is None:
         raise PublishError(
             f"the inst module cleared its gate and produced {INST_DB_ARTIFACT}"
-            f" but not {INST_SERVING_ARTIFACT}. Since RUN M2-8 both are required"
+            f" but not {INST_SERVING_ARTIFACT}. Both are required"
             " of a build that publishes the module — per-filer detail would"
             " otherwise fall back to live EDGAR while the manifest reports the"
-            " module as published (plan R9/R10)."
+            " module as published."
         )
 
 
@@ -1106,17 +1106,17 @@ def _inst_data_present(conn: sqlite3.Connection) -> bool:
     missing table), so the view exists while `inst_filings` does not, and
     probing the view raises rather than answering "absent". Discovered
     rebuilding a published congress.db, which carries the congress module
-    only (RUN M1-B, stage B).
+    only.
 
     The first version caught `sqlite3.OperationalError` around the probe,
     which read EVERY operational fault as "institutional data absent" — a
     malformed view, an incompatible schema, a locked or corrupt database
     could silently publish a congress-only build and drop a real
-    institutional corpus on the floor (code review round 1, F3). So the
+    institutional corpus on the floor. So the
     missing-table case is identified positively, against `sqlite_master`,
     and the probe itself is left UNGUARDED: if the table is there, any
     error querying the view is a genuine fault and propagates out of
-    `run_build` as a visible publication failure (R13/R16/R18).
+    `run_build` as a visible publication failure.
 
     Presence is asked of the RECONCILED population, never of the default
     view (M2-7, external review F2): the default view excludes
@@ -1240,8 +1240,8 @@ def _derive_inst_module_in_materialized_scope(
 ) -> dict:
     """The full inst gate + derivation against *source*, for both input shapes.
 
-    *source* is either the congress build snapshot (the pre-M2-11 path) or the
-    accepted external snapshot's read-only handle (RUN M2-11, R1). Everything
+    *source* is either the congress build snapshot (the legacy path) or the
+    accepted external snapshot's read-only handle. Everything
     here READS *source* and writes only the two derived databases, so the same
     sequence serves both; the read-only enforcement on the external handle is
     the connection's own ``mode=ro`` (R2), not a property of this function.
@@ -1345,7 +1345,7 @@ def _derive_inst_module_in_materialized_scope(
         )
     finally:
         agg_conn.close()
-    # --- RUN M2-8 T8 (R9): the per-filer SERVING artifact ----------
+    # --- the per-filer SERVING artifact ----------------------------
     # The projection reads the composed views (in *source*) AND
     # `agg_qoq_deltas` (in the aggregate just written), so the
     # aggregate is ATTACHed for the duration. ATTACH does not write
@@ -1520,8 +1520,8 @@ def _complete_extra_module_assets(
     for module_name in sorted(manifest.get("modules", {})):
         if module_name == MODULE:
             continue  # congress.db is sourced from the journal itself
-        # EVERY database artifact for the module, not just the primary one
-        # (RUN M2-8 T8; external review r3 F9). Resolving a single name here is
+        # EVERY database artifact for the module, not just the primary one.
+        # Resolving a single name here is
         # how a second asset gets silently skipped at upload and verification.
         for db_name in module_db_artifacts(module_name):
             entry = find_artifact(manifest, db_name, module=module_name)
@@ -1623,8 +1623,7 @@ def _complete_build(
     # The extra-module asset preflight must run here too: reconciliation reaches
     # this point WITHOUT _preflight, so without it a resumed publish could upload
     # the journal and congress.db before discovering a missing/corrupt staged
-    # inst_agg.db — partially mutating a build that was never publishable
-    # (QA-F1, round 6).
+    # inst_agg.db — partially mutating a build that was never publishable.
     _preflight_module_assets(Path(data_repo), build_id, journal, backend)
     manifest_text: str = journal["artifacts"]["manifest.json"]
     manifest_bytes = manifest_text.encode("utf-8")
@@ -1875,9 +1874,9 @@ class BuildReport:
     # {below_threshold, cover_failed, not_measurable} + the coverage numbers);
     # it is None when inst published or no inst data was present.
     inst_withheld: dict | None = None
-    # The inst logical digest when the inst module published (R5); None otherwise.
+    # The inst logical digest when the inst module published; None otherwise.
     inst_logical_digest: str | None = None
-    # Per-period value-coverage breakdown (RUN M2-5, R9): reporting only, present
+    # Per-period value-coverage breakdown: reporting only, present
     # whenever inst data was measured (pass or withheld); None otherwise.
     inst_period_coverage: list[dict] | None = None
     # The M2-7 cover-reconciliation dispositions behind the coverage numbers:
@@ -1904,7 +1903,7 @@ def _report_from_manifest(
         previous_build_id=manifest.get("previous_build_id"),
         logical_digest=db_entry.get("logical_digest", ""),
         # Count EVERY module's artifacts: a preserved two-module build would
-        # otherwise under-report its display-only count (QA-F2 nit, round 5).
+        # otherwise under-report its display-only count.
         artifact_count=sum(
             len(module.get("artifacts", []))
             for module in manifest.get("modules", {}).values()
@@ -2010,7 +2009,7 @@ def write_stage_state(staged: StagedBuild) -> Path:
             "watermarks": state["watermarks"],
             "db_logical": state["db_logical"],
             "inst_logical": state["inst_logical"],
-            # RUN M2-8's serving substrate crosses the stage/finalize process
+            # The inst serving substrate crosses the stage/finalize process
             # boundary too. `_seal_build` reads it unconditionally whenever
             # `inst_logical` is set, so omitting it here made every build with a
             # populated inst module KeyError at the FINAL seal while the
@@ -2092,7 +2091,7 @@ def read_stage_state(
 
     # The build id comes from the DIRECTORY, never from the sidecar.
     #
-    # Trusting `payload["build_id"]` reintroduced the exact failure QA round 7
+    # Trusting `payload["build_id"]` reintroduced exactly the failure this rule
     # exists to prevent: a hand-edited sidecar published real congress.db bytes
     # under a fabricated identity that never passed through `next_build_id`'s
     # durable high-water mark, so one immutable build id could name two
@@ -2251,7 +2250,7 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
         inst_serving_logical = state["inst_serving_logical"]
         require_complete_inst_module(inst_logical, inst_serving_logical)
         inst_artifacts = [inst_entry.to_dict()]
-        # The SECOND inst database (RUN M2-8 T8, R9). Enumerated here or it is
+        # The SECOND inst database. Enumerated here or it is
         # not published at all: `_complete_extra_module_assets`,
         # `_preflight_module_assets`, `run_verify`, `run_rollback` and the client
         # installer all iterate `module_db_artifacts` and skip a name the
@@ -2351,7 +2350,7 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
         previous_build_id=state["previous_build_id"],
         logical_digest=state["db_logical"],
         # Every module's artifacts, matching `_report_from_manifest` — a fresh
-        # two-module build must not report only the congress count (QA-F4 nit).
+        # two-module build must not report only the congress count.
         artifact_count=sum(
             len(module.get("artifacts", []))
             for module in manifest.get("modules", {}).values()
@@ -2499,7 +2498,7 @@ def stage_build(
     declares fewer, visibly. (A LEGACY staged sidecar predating this gate has
     no persisted expectation; only that recovery-reseal path skips it.)
 
-    ``inst_db_path`` (RUN M2-11, R1): the accepted external inst snapshot.
+    ``inst_db_path``: the accepted external inst snapshot.
     When given, institutional presence, coverage, watermarks and both derived
     databases come from THAT file — opened read-only, one read transaction,
     identity captured as its whole-file SHA-256 plus its own
@@ -2753,7 +2752,7 @@ def stage_build(
         inst_agg_path = assets_dir / INST_DB_ARTIFACT
         inst_serving_path = assets_dir / INST_SERVING_ARTIFACT
         if inst_db_path is not None:
-            # RUN M2-11 (R1): the accepted external snapshot is the ONLY inst
+            # The accepted external snapshot is the ONLY inst
             # input — presence, coverage, watermarks and both derived databases
             # come from its read-only handle, never from the congress snapshot.
             derived, inst_source_document = _derive_inst_from_snapshot(
@@ -2847,7 +2846,7 @@ def stage_build(
         "backend": backend,
         "db_logical": db_logical,
         "inst_logical": inst_logical,
-        # RUN M2-8: `_seal_build` enumerates the serving artifact from these.
+        # `_seal_build` enumerates the serving artifact from these.
         "inst_serving_path": inst_serving_path,
         "inst_serving_logical": inst_serving_logical,
         "inst_watermarks": inst_watermarks,
@@ -2891,10 +2890,10 @@ def _preflight_module_assets(
     asset on the release. Without this a dry-run could claim a build would
     publish while its inst_agg.db is missing/corrupt, and a real publish could
     upload the journal and congress.db before refusing — mutating on a build that
-    was never publishable (QA-F6, §5.5 preflight).
+    was never publishable (§5.5 preflight).
 
     Shared by `_preflight` AND the draft-reconciliation path, which reaches
-    `_complete_build` without `_preflight` (QA-F1, round 6).
+    `_complete_build` without `_preflight`.
     """
     manifest_text = journal["artifacts"].get("manifest.json")
     if manifest_text:

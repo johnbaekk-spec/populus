@@ -1,4 +1,4 @@
-"""The attestation seam (§5.5 trust model; RUN 5 brief, RUN P3-3a).
+"""The attestation seam (§5.5 trust model).
 
 Every §5.5 call site goes through this seam, so the real provider drops in
 without changing any caller's shape.
@@ -11,7 +11,7 @@ published and looked up there. Earlier revisions of this docstring and the two
 identity constants named ``populus-data``, which is where the *artifacts* land,
 not where the workflow runs — that was wrong in both places and is corrected
 here. ``ATTESTATION_REPO`` is the single source both the identities and the
-lookup URL derive from, so they cannot drift apart (RUN P3-3a R19).
+lookup URL derive from, so they cannot drift apart.
 
 **Phase.** P1 was specified as "unattested by necessity" on the reasoning that
 Free-plan attestations are unavailable on a private repo. That premise assumed

@@ -305,13 +305,13 @@ class ProductionDeployment:
 class CloudflareReads:
     """The signer's **entire** Cloudflare surface — and every method is a GET.
 
-    One class, two methods, no write verb reachable from here (R27). The class
+    One class, two methods, no write verb reachable from here. The class
     exists so the property is a shape a reader and a test can both check, rather
     than an absence someone has to prove by reading every line of the module.
 
-    :data:`READ_SURFACE` is documentation, not enforcement: a review round
-    correctly called the surface test decoration, because adding a method *and*
-    adding its name to the constant kept the assertion green. Two things carry
+    :data:`READ_SURFACE` is documentation, not enforcement: a surface test
+    that merely re-asserted the constant would be decoration, because adding a method *and*
+    adding its name to the constant keeps such an assertion green. Two things carry
     the property instead. The test now pins the surface to a **literal** set
     written in the test file, so growing the constant is what fails. And every
     request this class issues leaves through :meth:`_get`, which refuses any

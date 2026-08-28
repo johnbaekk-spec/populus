@@ -1,4 +1,4 @@
-"""SEC 13F cover + information-table parser (ARCHITECTURE.md §10.2 — RUN M2-2).
+"""SEC 13F cover + information-table parser (ARCHITECTURE.md §10.2).
 
 Pure functions, no I/O: bytes in, dataclasses out. The information-table XML
 filename is variable and numeric per accession (``53405.xml``, ``50240.xml``,
@@ -136,7 +136,7 @@ def _raw_text(element: lxml.etree._Element | None) -> str | None:
     ``raw_row`` must hold the observation exactly as printed, so archived source
     text and the canonical row fingerprint faithfully represent the filing.
     Trimming here would alter the record and could collapse rows that differ
-    only in whitespace (QA-F4). ``None`` means the element (or its text) is
+    only in whitespace. ``None`` means the element (or its text) is
     genuinely absent; whitespace-only text is preserved as printed. Consumers
     that need a typed/trimmed view read the :class:`InfoTableRow` accessors.
     """
@@ -190,7 +190,7 @@ def _period_to_iso(raw: str | None) -> str | None:
     The shape match alone would accept an impossible date (``02-30-2026``), which
     would then be persisted as `period_of_report` and used as the as-of key for
     identity resolution. Validate the constructed date so an impossible one
-    becomes a missing required field → failed-cover outcome instead. (QA-F2)
+    becomes a missing required field → failed-cover outcome instead.
     """
     if raw is None:
         return None
@@ -308,7 +308,7 @@ def parse_cover(xml: bytes) -> CoverPage:
     # totals: the value total is the coverage DENOMINATOR contribution, and a
     # missing/non-numeric one must become a cover-failed filing with an UNKNOWN
     # (NULL) total — never a silent 0, which would shrink the denominator and
-    # inflate identity coverage (QA-F1, R2/R16/R18). A NOTICE report (13F-NT)
+    # inflate identity coverage. A NOTICE report (13F-NT)
     # legitimately reports no holdings and no totals.
     if submission_type is not None and submission_type.upper().startswith("13F-HR"):
         required += [

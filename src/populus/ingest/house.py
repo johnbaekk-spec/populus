@@ -1,4 +1,4 @@
-"""House Clerk PTR ingest pipeline (ARCHITECTURE.md §9.2; RUN 2).
+"""House Clerk PTR ingest pipeline (ARCHITECTURE.md §9.2).
 
 One of the two Populus modules that talk to the network — this one and its
 Senate sibling ``populus.ingest.senate`` are the only modules allowed to
@@ -116,7 +116,7 @@ class _PoliteFetcher:
     permanent. Exhausted retries return the final failing response — the
     caller records the failure, never papers over it.
 
-    Counts its own work (RUN M1-B, R20/LD13), in the shape
+    Counts its own work, in the shape
     :class:`populus.inst_bulk.CountingTransport` established: ``attempts`` is
     every request that left this process (retries included), ``status_counts``
     the answered status mix, ``retries`` the derived count of 429/5xx answers
@@ -449,8 +449,8 @@ def discover(
             {
                 "etag": response_headers.get("etag"),
                 "last_modified": response_headers.get("last-modified"),
-                # §5.1 provenance parity with the per-document sidecars
-                # (RUN M1-B, R2): the archived ZIP's own hash, additive beside
+                # §5.1 provenance parity with the per-document sidecars:
+                # the archived ZIP's own hash, additive beside
                 # the conditional-GET validators. `stats.read_house_meta` reads
                 # only `last_modified`, so nothing downstream shifts.
                 "response_hash": sha256_hex(response.content),
@@ -832,7 +832,7 @@ def _ingest_year(
     if discovered.note is not None:
         return
 
-    # Settled = archived AND VERIFIED (RUN M1-B, R3/LD9). A row alone is not
+    # Settled = archived AND VERIFIED. A row alone is not
     # evidence: `raw_path IS NOT NULL` used to skip a filing forever even when
     # its archived document had gone missing or been corrupted at rest, because
     # the decision was made before anything could inspect the bytes. Eligibility
@@ -865,13 +865,13 @@ def _ingest_year(
                 if verified and cache_dir is None:
                     # Boundary 1 of the provenance-boundary spec. LIVE MODE
                     # ONLY: the §5.1 sidecar is part of what "settled" MEANS,
-                    # not a by-product of it (R2/LD3).
+                    # not a by-product of it.
                     #
                     # The bytes agreeing with the DATABASE hash is a second,
                     # independent consistency check — emphatically not the rule
-                    # (round 2 mistook it for the rule and skipped documents
-                    # whose sidecar had been deleted, destroying `source_url`
-                    # and `retrieved_at` permanently). The rule itself is the
+                    # (an earlier revision mistook it for the rule and
+                    # skipped documents whose sidecar had been deleted,
+                    # destroying `source_url` and `retrieved_at` permanently). The rule itself is the
                     # shared predicate, evaluated here exactly as boundary 2
                     # evaluates it — one rule, one implementation (spec I1).
                     #
@@ -939,9 +939,9 @@ def _checkpoint_is_complete(
 
     This function owns the checkpoint half of that sentence. Both resume
     boundaries call it and neither re-derives "complete" from field reads of its
-    own (spec I1) — three review rounds each found a different call site quietly
-    answering this question with a weaker rule of its own making, which is the
-    defect this single predicate exists to end.
+    own (spec I1) — separate call sites repeatedly ended up quietly answering
+    this question with a weaker rule of their own making, which is the defect
+    this single predicate exists to end.
 
     Every field is load-bearing (spec I2): a hash proves the bytes, a timestamp
     proves *when* the source said so, and a URL proves *which* source.
@@ -981,7 +981,7 @@ def _obtain_document(
     already passed :func:`_validate_doc_id` at the index boundary, and the
     resolved path is proven to stay inside its root before any write.
 
-    The live path is cache-first and checkpoint-before-bytes (RUN M1-B, R2),
+    The live path is cache-first and checkpoint-before-bytes,
     on the shared :mod:`populus.ingest.checkpoint` primitives:
 
     * archived bytes that re-hash to their committed checkpoint are returned
@@ -1015,8 +1015,9 @@ def _obtain_document(
     # Boundary 2 of the provenance-boundary spec, and the ONLY boundary a
     # fresh-database resume passes through: the settled pre-pass has no rows to
     # skip there, so an incomplete sidecar reaching zero transport would never
-    # be repaired by anything. Round 2 hardened the pre-pass and left this
-    # accepting a hash-only checkpoint — round 3's finding exactly.
+    # be repaired by anything. An earlier hardening covered the pre-pass but
+    # left this boundary accepting a hash-only checkpoint — hence the full
+    # completeness predicate here too.
     if _checkpoint_is_complete(meta_path, expected_hash=None, url=url) and (
         target.exists()
     ):
@@ -1073,9 +1074,9 @@ def _process_docid(
     only what parsing achieved, while lifecycle records the filing's
     standing (§9.4). Without this, a fetch-failed retry would reset a
     non-active filing to ``active`` through ``upsert_filing``'s ON CONFLICT
-    update. No RUN-2 path sets a non-active House lifecycle today, so this
+    update. No current ingest path sets a non-active House lifecycle today, so this
     is behavior-identical for the current corpus and closes the seam ahead
-    of the kadoa lineage work (§9.6, RUN 4).
+    of the kadoa lineage work (§9.6).
     """
     filing_id = f"house:{entry.doc_id}"
     stored = conn.execute(
@@ -1160,7 +1161,7 @@ def select_reparse_targets(
     ``--parser-version``, and ``--filing`` alike, so no branch can forget it.
     An explicit ``--filing`` naming a NULL-archive filing is reported as
     ``skipped_no_archive``, never read, never a crash. The selection
-    semantics are chamber-neutral; the Senate reparse (RUN 3) passes
+    semantics are chamber-neutral; the Senate reparse passes
     ``chamber='senate'``.
     """
     condition = ""
@@ -1217,7 +1218,7 @@ def reparse_house(
 ) -> ReparseReport:
     """Reparse archived filings atomically from the raw archive — never
     re-fetching (ARCHITECTURE.md §9.3). Identity stability and the atomic
-    replace come from :func:`populus.load.load_filing` (RUN 1).
+    replace come from :func:`populus.load.load_filing`.
     """
     selection = select_reparse_targets(conn, selector)
     statuses: dict[str, str] = {}
@@ -1240,7 +1241,7 @@ def reparse_house(
         )
         statuses[filing_id] = evaluated.status
     # load_filing deleted and re-inserted each target's rows; restore the
-    # amendment_unresolved flag on both sides of every pair (§9.5/RUN 4).
+    # amendment_unresolved flag on both sides of every pair (§9.5).
     flag_unresolved_pair_rows(conn)
     return ReparseReport(selection=selection, statuses=statuses)
 
@@ -1256,7 +1257,7 @@ def format_summary(
     With a *gate* (the CLI computes one from the same connection before it
     closes), the summary also carries the per-era e-file gate lines, the per-era
     member-join lines, and — whenever any era is ``miss`` or ``unmeasurable`` —
-    the OWNER DECISION REQUIRED block (RUN M1-B, R5). The gate is passed in
+    the OWNER DECISION REQUIRED block. The gate is passed in
     rather than computed here so this stays a pure formatter over the report.
     """
     lines: list[str] = []

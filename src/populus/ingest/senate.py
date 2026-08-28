@@ -1,4 +1,4 @@
-"""Senate eFD PTR ingest pipeline (ARCHITECTURE.md §9.1/§9.2; RUN 3).
+"""Senate eFD PTR ingest pipeline (ARCHITECTURE.md §9.1/§9.2).
 
 One of the two Populus modules that talk to the network — this one and its
 House sibling ``populus.ingest.house`` are the only modules allowed to
@@ -230,7 +230,7 @@ class _PoliteSession:
     bot-blocking. Attaches the identifying UA and the session cookie on
     every fetch.
 
-    Counts its own work (RUN M1-B, R20/LD13) in the same shape as the House
+    Counts its own work in the same shape as the House
     fetcher and :class:`populus.inst_bulk.CountingTransport`: ``attempts`` is
     every request that left this process (retries included), ``status_counts``
     the answered status mix, ``retries`` the 429/5xx answers that actually
@@ -485,7 +485,7 @@ def _index_post_body(
 ) -> dict[str, str]:
     """The DataTables search body.
 
-    ``submitted_end_date`` is the RUN M1-B window seam (R14) and is
+    ``submitted_end_date`` is the historical-window seam and is
     **default-inert**: omitted, the body is byte-identical to the open-ended
     "start → forever" request the incremental job has always sent. eFD exposes
     one continuous submitted-date window, so bounding a historical era means
@@ -1041,7 +1041,7 @@ def _ingest(
     report.amendments_total, report.amendments_paired = _link_amendments(
         conn, discovered
     )
-    # §9.5/RUN 4: both sides of every pair carry amendment_unresolved. The
+    # §9.5: both sides of every pair carry amendment_unresolved. The
     # loader delete-and-reinserts rows, so the flag is restored at every
     # job tail that rebuilds rows (here, reparse_senate, reparse_house).
     flag_unresolved_pair_rows(conn)
@@ -1233,7 +1233,7 @@ def reparse_senate(
     never re-fetching (§9.3). The page kind derives from the stored
     ``doc_url`` (paper stays ``needs_ocr``), the amendment flag reproduces
     from the stored ``filing_kind``, and identity stability plus the atomic
-    replace come from :func:`populus.load.load_filing` (RUN 1).
+    replace come from :func:`populus.load.load_filing`.
     """
     # Imported here, not at module top: the selection machinery lives in the
     # House module and a top-level sibling import would couple the chambers.
@@ -1265,12 +1265,12 @@ def reparse_senate(
         )
         statuses[filing_id] = evaluated.status
     # load_filing deleted and re-inserted each target's rows; restore the
-    # amendment_unresolved flag on both sides of every pair (§9.5/RUN 4).
+    # amendment_unresolved flag on both sides of every pair (§9.5).
     flag_unresolved_pair_rows(conn)
     return ReparseReport(selection=selection, statuses=statuses)
 
 
-# --- summaries (R13/R14) ------------------------------------------------------
+# --- summaries ----------------------------------------------------------------
 
 
 def format_summary(
@@ -1281,7 +1281,7 @@ def format_summary(
     With a *gate* (the CLI computes one from the same connection before it
     closes), the summary also carries the per-era e-file gate lines, the per-era
     member-join lines, and the OWNER DECISION REQUIRED block whenever any era is
-    ``miss`` or ``unmeasurable`` (RUN M1-B, R5).
+    ``miss`` or ``unmeasurable``.
     """
     lines: list[str] = []
     if report.window is not None:

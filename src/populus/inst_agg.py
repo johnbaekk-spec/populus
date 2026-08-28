@@ -1,4 +1,4 @@
-"""Cross-filer 13F aggregates (ARCHITECTURE.md §10.2; M2-CONTRACT §5.6 — RUN M2-3).
+"""Cross-filer 13F aggregates (ARCHITECTURE.md §10.2; M2-CONTRACT §5.6).
 
 Pure DB→DB: read the default 13F population (``v_default_holdings`` /
 ``v_default_inst_filings``) joined to the §5.4 securities registry from a source
@@ -100,7 +100,7 @@ def _put_call_bucket(put_call: str | None) -> str:
 def _unit_key(ssh_prnamt_type: str | None) -> str:
     """A non-null grain token for the reported unit: ``'SH'``/``'PRN'``/``'UNKNOWN'``.
 
-    The unit is part of the position GRAIN (QA-F2): shares and principal amounts
+    The unit is part of the position GRAIN: shares and principal amounts
     are different quantities, so merging an SH and a PRN holding of the same
     security would produce a meaningless share count and bogus Δshares.
     """
@@ -142,7 +142,7 @@ class _Position:
     value_usd: int = 0
     #: Whether ANY constituent holding disclosed a parseable value. Without it a
     #: position whose only value was NULL is indistinguishable from a real zero,
-    #: and the QoQ delta fabricates one (QA-VERIFY5-B2).
+    #: and the QoQ delta fabricates one.
     has_disclosed_value: bool = False
     units: set[str] = field(default_factory=set)
     has_null_unit: bool = False
@@ -217,9 +217,9 @@ def _qoq_row(
     reconciled: bool,
     ingested_at: str,
 ) -> tuple:
-    """One ``agg_qoq_deltas`` row tuple, with the F4 unit-guarded Δshares."""
+    """One ``agg_qoq_deltas`` row tuple, with the unit-guarded Δshares."""
     # A position that existed but disclosed NO parseable value must NOT
-    # difference against a fabricated zero (QA-VERIFY5-B2). Absence of the
+    # difference against a fabricated zero. Absence of the
     # position is a real zero; presence with an undisclosed value is not.
     prev_undisclosed = prev is not None and not prev.has_disclosed_value
     curr_undisclosed = curr is not None and not curr.has_disclosed_value
@@ -231,7 +231,7 @@ def _qoq_row(
     )
     prev_shares = prev.shares if prev is not None else None
     curr_shares = curr.shares if curr is not None else None
-    # The grain unit — NOT NULL, because subpositions are unit-distinct (QA-F2).
+    # The grain unit — NOT NULL, because subpositions are unit-distinct.
     ssh_type = unit
     flags: set[str] = set()
     if reconciled:
@@ -306,14 +306,14 @@ def _match_periods(
        position. This is a ``position_key`` (security-id-first) match, so it is
        NOT flagged as CUSIP-reconciled; Δshares stays unit-guarded downstream.
        Without this pass the unit-bearing grain would push a legitimate unit
-       transition into pass 3 (mislabelled) or into exit+new (QA-F2, round 3).
+       transition into pass 3 (mislabelled) or into exit+new.
     3. **Reported-CUSIP reconciliation, ONLY across the resolved↔unresolved
        boundary.** This exists to bridge a registry gap — one quarter resolved to
        a ``sid:`` key, the other still keyed by raw ``cusip:`` — so it requires
        exactly one side to be unresolved and an unambiguous 1:1 pair. Two
        DIFFERENT resolved securities that happen to report the same CUSIP are
-       never collapsed; they stay a genuine exit and a genuine new (QA-F1,
-       round 3). Anything ambiguous stays unmatched — never a guessed bridge.
+       never collapsed; they stay a genuine exit and a genuine new.
+       Anything ambiguous stays unmatched — never a guessed bridge.
     """
     matched: list[tuple] = []
     for key in sorted(set(prev) & set(curr)):
@@ -365,7 +365,7 @@ def _match_periods(
         prev_full_key, prev_pos = prev_cands[0]
         curr_full_key, curr_pos = curr_cands[0]
         # ONLY a resolved↔unresolved bridge. Two distinct RESOLVED securities
-        # sharing a reported CUSIP must not be collapsed (QA-F1).
+        # sharing a reported CUSIP must not be collapsed.
         if _resolved(prev_full_key) == _resolved(curr_full_key):
             continue
         reconciled.append((curr_full_key, prev_pos, curr_pos))
@@ -918,7 +918,7 @@ def _build_inst_agg_python(
 
     # The FILING-LEVEL universe: every (cik, period) that has a default filing,
     # independent of whether it contains keyable holdings. Both the QoQ timeline
-    # (QA-F3) and the concentration rows (QA-F4) derive from this, so a
+    # and the concentration rows derive from this, so a
     # notice-only or all-unkeyable quarter is a REAL period that breaks adjacency
     # and still gets a concentration row — it never silently disappears (G3).
     filer_periods: dict[str, list[str]] = defaultdict(list)
@@ -929,7 +929,7 @@ def _build_inst_agg_python(
         filer_periods[cik].append(period)
 
     # --- filer set (a notice-only filer still gets a registry row) -----------
-    # QA-1 (RUN M2-8): seeded from v_filer_reported_filings, NOT the
+    # Seeded from v_filer_reported_filings, NOT the
     # affiliation-suppressed default set. The registry is a PER-FILER identity
     # structure and the dashboard's getStaticPaths iterates it, so seeding it from
     # the suppressed view meant a filer covered by an affiliate had correct
@@ -987,7 +987,7 @@ def _build_inst_agg_python(
         " LEFT JOIN securities s ON s.security_id = h.security_id"
         " ORDER BY h.cik, h.period_of_report, h.holding_id"
     ):
-        # QA-1: registry COUNTS are accumulated in the second pass, over
+        # Registry COUNTS are accumulated in the second pass, over
         # v_filer_reported_holdings, for the same reason as concentration — they
         # describe the filer's own reported book, not the deduplicated one.
         pk = _position_key(security_id, cusip)
@@ -995,7 +995,7 @@ def _build_inst_agg_python(
         if pk is not None:
             # Unit is part of the GRAIN: an SH position and a PRN position of the
             # same security are different things and must never share an
-            # accumulator, or shares/deltas become meaningless (QA-F2).
+            # accumulator, or shares/deltas become meaningless.
             positions[(cik, period)][(pk, put_bucket, _unit_key(ssh_prnamt_type))].add(
                 value_usd, ssh_prnamt, ssh_prnamt_type, cusip
             )
@@ -1026,18 +1026,18 @@ def _build_inst_agg_python(
         if issuer_name_raw < bucket["issuer_name"]:
             bucket["issuer_name"] = issuer_name_raw
 
-        # NOTE (RUN M2-8 T6): per-filer concentration is NOT accumulated here.
-        # This loop reads v_default_holdings, which suppresses a filer covered by
-        # an affiliate — correct for cross-entity issuer totals, wrong for a
-        # filer's own book, and the flag baseline inherits the error (external
-        # review round 3, F5). Concentration is accumulated in the second pass
-        # below, over v_filer_reported_holdings.
+        # NOTE: per-filer concentration is NOT accumulated here. This loop
+        # reads v_default_holdings, which suppresses a filer covered by an
+        # affiliate — correct for cross-entity issuer totals, wrong for a
+        # filer's own book, and the flag baseline would inherit the error.
+        # Concentration is accumulated in the second pass below, over
+        # v_filer_reported_holdings.
 
     # --- second pass: PER-FILER inputs, from the non-suppressed view ---------
     # v_filer_reported_holdings applies restatement/NEW-HOLDINGS composition and
     # cover reconciliation but NOT cross-filer affiliation suppression, so a
-    # filer's concentration is measured over the book it actually reported
-    # (plan R8/R14; review round 3 F5, round 4 F4). Cross-entity aggregates above
+    # filer's concentration is measured over the book it actually reported.
+    # Cross-entity aggregates above
     # keep reading v_default_holdings so an issuer total counts an affiliate once.
     for (
         cik,
@@ -1107,7 +1107,7 @@ def _build_inst_agg_python(
     for cik in sorted(filer_periods):
         # CONSECUTIVE periods of the filing universe — never a bridge across an
         # intervening quarter that reported no keyable positions, which would
-        # fabricate continuity/additions/trims (QA-F3). A period with no keyable
+        # fabricate continuity/additions/trims. A period with no keyable
         # positions compares as an EMPTY side, so its neighbours read as genuine
         # exits and new positions.
         ordered = sorted(set(filer_periods[cik]))
@@ -1148,7 +1148,7 @@ def _build_inst_agg_python(
     # Every default filer-period gets a concentration row, including a
     # zero-position (notice-only / all-unkeyable) one: total 0 with NULL share
     # and NULL HHI under `concentration_unavailable`, never an omitted row and
-    # never a fabricated zero (QA-F4).
+    # never a fabricated zero.
     for cik, periods in filer_periods.items():
         for period in periods:
             conc[(cik, period)]  # touch the defaultdict to materialize the bucket

@@ -1,4 +1,4 @@
-"""The §15 conditions register: load, validate, render (RUN 4).
+"""The §15 conditions register: load, validate, render.
 
 ``licenses.json`` is the machine-readable register (§15.1): each entry
 carries the license id, source, legal instrument, permitted uses,

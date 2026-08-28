@@ -162,13 +162,13 @@ class Mutations:
     links_cleared: int = 0
     links_reset_on_split: int = 0
     #: inst_holdings rows repointed as-of their filing period when a declared split
-    #: recut a CUSIP's ownership (RUN M2-5 / F3). Zero on replay: no split, no
+    #: recut a CUSIP's ownership. Zero on replay: no split, no
     #: repoint. Distinct from the rename path's blanket move — a split needs
     #: per-holding, period-aware resolution (G14).
     holdings_repointed_on_split: int = 0
     securities_flagged_disputed: int = 0
     securities_cleared_by_continuity: int = 0
-    # sec-13f-list definitional intervals (RUN M2-5: seeding + registry migration)
+    # sec-13f-list definitional intervals (seeding + registry migration)
     list_intervals_inserted: int = 0
     list_intervals_removed: int = 0
     list_intervals_cut: int = 0
@@ -360,7 +360,7 @@ class BootstrapReport:
     status: str
     tickers: TickerBootstrapReport
     ftd: FtdBootstrapReport
-    #: One List13fBootstrapReport per seeded quarter (RUN M2-5), in quarter
+    #: One List13fBootstrapReport per seeded quarter, in quarter
     #: order; empty when no 13(f)-list source was supplied.
     list13f: tuple = ()
 
@@ -413,7 +413,7 @@ def parse_company_tickers(
     """The decision core of :func:`load_company_tickers`, over already-decoded
     JSON — so a federated consumer that fetched the bytes itself (the MCP
     ticker resolver) gets the SAME malformed/duplicate/DC1 title-conflict
-    dispositions instead of reimplementing a laxer subset of them (QA-F9).
+    dispositions instead of reimplementing a laxer subset of them.
     """
     if isinstance(data, Mapping):
         entries = [data[key] for key in sorted(data, key=_entry_order)]
@@ -1092,7 +1092,7 @@ def run_identity_bootstrap(
     selected quarters are loaded, parsed and R5-checked BEFORE the transaction —
     exactly like the ticker/FTD parses — and seeded inside it, after the FTD
     pass so the definitional intervals sit above the FTD identifiers at
-    resolution (RUN M2-5, Locked Decisions 6/9).
+    resolution.
     """
     # Lazy imports: bootstrap.py is imported at module-load time by
     # identity.registry (the reconcile path) and by identity.list13f_seed, so

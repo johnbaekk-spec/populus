@@ -1279,7 +1279,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "production branch or the 'preview' is a production deployment"
         ),
     )
-    # RUN PUBLIC-SECURITY-HARDENING R8/LD9: there is deliberately NO
+    # Security invariant: there is deliberately NO
     # --wrangler-package (or any other wrangler override) flag. The uploader
     # invokes only the lock-installed dashboard/node_modules/.bin/wrangler, and
     # a CLI seam that could name a different package would reintroduce the

@@ -1,10 +1,10 @@
 """Populus pipeline CLI (ARCHITECTURE.md §5.3).
 
 Every §5.3 command is implemented: ``db init``, all four ingest jobs
-(``congress-house``/``congress-senate`` RUNs 2–3; ``congress-backfill``/
-``members`` RUN 4), both reparse jobs, ``stats``, the ``backfill-audit``
-gate commands, and the RUN-5 publication pipeline — ``build``/``publish``/
-``verify`` over the §5.5 protocol (staging P1 mode).
+(``congress-house``/``congress-senate``, ``congress-backfill``/``members``),
+both reparse jobs, ``stats``, the ``backfill-audit`` gate commands, and the
+publication pipeline — ``build``/``publish``/``verify`` over the §5.5
+protocol (staging P1 mode).
 
 This layer owns every current-time/identity/randomness value the library
 needs (``now``/``run_id``/``host``/``sleep``/``monotonic``/``jitter``/
@@ -31,7 +31,7 @@ from populus.db import connect, init_db
 from populus.parse_gate import compute_parse_gate
 
 # The eFD submitted-date window options are MM/DD/YYYY, the exact shape the
-# index POST body carries (RUN M1-B, R14).
+# index POST body carries.
 _MDY_OPTION = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 
 INGEST_JOB_OWNERS = {
@@ -528,7 +528,7 @@ def identity_group() -> None:
     show_default=True,
     help=(
         "DIR of cached SEC Official 13(f) Lists to seed as definitional CUSIP"
-        " intervals (RUN M2-5). Every available quarter whose interval covers a"
+        " intervals. Every available quarter whose interval covers a"
         " loaded period_of_report is seeded; on a fresh database (no periods"
         " yet) pass --list13f-start-quarter. A missing directory seeds nothing."
     ),
@@ -598,7 +598,7 @@ def identity_bootstrap(
     if as_of is not None:
         # Require canonical YYYY-MM-DD: date.fromisoformat also accepts compact
         # (20200101) and week-date forms, which would persist noncanonical into
-        # lexicographically-compared date columns and mis-order intervals (QA-F4).
+        # lexicographically-compared date columns and mis-order intervals.
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of):
             raise click.UsageError(
                 f"--as-of {as_of!r} must be a canonical ISO date (YYYY-MM-DD)"
@@ -609,7 +609,7 @@ def identity_bootstrap(
             raise click.UsageError(f"--as-of {as_of!r} is not a valid date")
     # Default to TODAY IN UTC (not the process-local calendar day): around UTC
     # midnight a local date would open ticker/name intervals on the wrong day and
-    # leave otherwise-applicable FTD symbol links unresolved (G14). (QA-F4)
+    # leave otherwise-applicable FTD symbol links unresolved.
     snapshot_date = (
         as_of
         if as_of is not None
@@ -620,7 +620,7 @@ def identity_bootstrap(
     except (IdentityRegistryError, OSError) as exc:
         raise click.ClickException(str(exc))
 
-    # Resolve the 13(f)-list source (RUN M2-5): explicit --list13f files override
+    # Resolve the 13(f)-list source: explicit --list13f files override
     # the --list13f-cache selection; a missing cache directory seeds nothing.
     list13f_source = None
     list13f_quarters: list[str] | None = None
@@ -787,7 +787,7 @@ _BACKEND_OPTIONS = [
 
 #: Attestation selection is EXPLICIT at the CLI boundary and has no default.
 #: A run that forgets to choose must fail loudly rather than inherit a provider
-#: that answers "verified" to everything (RUN P3-3a R14).
+#: that answers "verified" to everything.
 def _attestation_option(command):
     return click.option(
         "--attestation",
@@ -1001,9 +1001,9 @@ def corpus_floor(db_path: str, counts_path: str, allow_reparse: tuple[str, ...])
 
 def _echo_inst_gate_outcome(report) -> None:
     """Print the M2 gate outcome. Shared so the honesty surface does not
-    depend on which command assembled the build (QA-F5).
+    depend on which command assembled the build.
     """
-    # Surface the M2 gate decision for the inst module (R8): a withheld notice
+    # Surface the M2 gate decision for the inst module: a withheld notice
     # (below the >=95% value-coverage gate) is the honest, owner-accepted
     # outcome, not an error — congress still publishes.
     if report.inst_withheld is not None:
@@ -1048,7 +1048,7 @@ def _echo_inst_gate_outcome(report) -> None:
         )
     # Persist the gate outcome so `publish` can report it truthfully and can
     # DISTINGUISH "withheld by the gate" from "no institutional data ingested"
-    # (QA-F5). This lives in .staging/ — operational state, never a published
+    # — this lives in .staging/ — operational state, never a published
     # artifact, so it touches no manifest, digest or inventory.
 
 
@@ -1112,7 +1112,7 @@ def build(
 
 
 def _refuse_bad_inst_db(inst_db: str) -> None:
-    """Cheap CLI-side refusals for `--inst-db` (RUN M2-11, R2).
+    """Cheap CLI-side refusals for `--inst-db`.
 
     A missing path, a directory, or a snapshot file this process could still
     WRITE is refused before any build work starts — the deep enforcement
@@ -1162,7 +1162,7 @@ def _refuse_bad_inst_db(inst_db: str) -> None:
     "--inst-db",
     "inst_db",
     default=None,
-    help="Accepted institutional source snapshot (RUN M2-11, R1): the"
+    help="Accepted institutional source snapshot: the"
     " finalized, read-only inst-source-v<N>.db cut by scripts/inst_snapshot.py."
     " When given, the inst module derives from it; when absent, the build is"
     " byte-identical to a congress-only build.",
@@ -1376,7 +1376,7 @@ def finalize_build_cmd(
         )
     except (PublishError, BackendError, DigestError, OSError) as exc:
         raise click.ClickException(str(exc))
-    # QA-F5, restored at the new entry point: `populus build` wrote this record
+    # Restored at the new entry point: `populus build` wrote this record
     # and the two-phase path did not, so a WITHHELD M2 module published as "no
     # build-time gate record — rebuild to record the reason" when the truth was
     # "withheld by the >=95% value-coverage gate". The honesty surface must not
@@ -1418,11 +1418,11 @@ def publish(
     make_backend = _make_backend(backend, repo_slug)
     # Capture the build-time gate record BEFORE publishing: a successful publish
     # clears .staging/<build_id>, so reading it afterwards would always miss
-    # and the withheld reason would be lost at the publish boundary (QA-F5).
+    # and the withheld reason would be lost at the publish boundary.
     # A ROLLBACK republishes an EXISTING build, so a staged build's gate record
     # would describe a different target entirely — printing "withheld" for a
     # rollback target that was never gated. Capture a record only for a forward
-    # publish; rollback gets a neutral notice (QA-F3, round 6).
+    # publish; rollback gets a neutral notice.
     _gate_record_before_publish = (
         None if rollback_to else _read_inst_gate_record(data_repo, build_id)
     )
@@ -1462,7 +1462,7 @@ def publish(
         else:
             # The module is absent — say WHY, from the build-time gate record.
             # Silence here would hide the owner-accepted fail-closed outcome at
-            # the publication boundary (QA-F5).
+            # the publication boundary.
             if rollback_to:
                 click.echo(
                     "inst module: not present in this build (rollback target —"
@@ -1482,7 +1482,7 @@ def _inst_gate_path(data_repo: str, build_id: str) -> Path:
 
 
 def _write_inst_gate_record(data_repo: str, report) -> None:
-    """Record the inst gate outcome for `publish` to report (QA-F5).
+    """Record the inst gate outcome for `publish` to report.
 
     Three states are distinguishable: `withheld` (measured, below the gate),
     `included`, and `absent` (no institutional data was ingested at all) — so the
@@ -1498,7 +1498,7 @@ def _write_inst_gate_record(data_repo: str, report) -> None:
     # Re-running `build` for an ALREADY-STAGED build reconstructs no gate
     # metadata, so a naive write would overwrite a real `withheld` verdict with
     # `absent` — and the next publish would falsely claim no institutional data
-    # was ingested, concealing the fail-closed decision (QA-F2, round 4). An
+    # was ingested, concealing the fail-closed decision. An
     # "absent" verdict never overwrites a recorded one.
     if record["state"] == "absent":
         existing = _read_inst_gate_record(data_repo, report.build_id)
@@ -1517,17 +1517,17 @@ def _write_inst_gate_record(data_repo: str, report) -> None:
 
 
 def _read_inst_gate_record(data_repo: str, build_id: str | None) -> dict | None:
-    """The build-time gate outcome, read while .staging still exists (QA-F5)."""
+    """The build-time gate outcome, read while .staging still exists."""
     if build_id is None:
         # Mirror the publisher's build selection: build ids are `YYYYMMDD.N`, so
         # LEXICOGRAPHIC ordering puts `.9` after `.10` and could attach the wrong
         # withholding reason to a publication. Sort numerically and ignore any
-        # staging entry that is not a valid build id (QA-F3, round 4).
+        # staging entry that is not a valid build id.
         # Mirror the PUBLISHER's selection exactly: build ids are `YYYYMMDD.N`
         # (so lexicographic ordering would put `.9` after `.10`), and only a
         # build carrying a valid journal is publishable. Without the journal
         # predicate a newer PARTIAL staging directory could supply the verdict
-        # printed for a different publication (QA-F1, round 5).
+        # printed for a different publication.
         staging = Path(data_repo) / ".staging"
         candidates = []
         for entry in staging.glob("*"):
@@ -1577,7 +1577,7 @@ def _inst_absence_notice(
     # No record: a staging-less reconcile or an explicit re-publish of an
     # already-published build. Say so plainly — and NEVER reference a variable
     # that no longer exists here, which turned a SUCCESSFUL publish into a
-    # NameError traceback and a non-zero exit (QA-F1).
+    # NameError traceback and a non-zero exit.
     return (
         "inst module: not present in this build (no build-time gate record at"
         f" {_inst_gate_path(data_repo, build_id)} — staging is cleared after a"
@@ -1870,7 +1870,7 @@ def backfill_audit_score(
         ctx.exit(1)
 
 
-# --- RUN M2-6: bulk 13F corpus (filer universe + resumable ingest) -----------
+# --- bulk 13F corpus (filer universe + resumable ingest) ----------------------
 
 
 @main.group("inst-bulk")

@@ -7,8 +7,7 @@ render carries no trailing newline (the §12.1 envelope is the byte contract).
 The inventory is written as a sibling OUTSIDE the tree it describes, so it
 never inventories itself and is never deployed.
 
-RUN PUBLIC-SECURITY-HARDENING R12/LD12/LD12b — inventory version "2", the
-anti-downgrade contract. The exact canonical object is::
+Inventory version "2" is the anti-downgrade contract. The exact canonical object is::
 
     {
       "inventory_version": "2",

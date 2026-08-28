@@ -106,7 +106,7 @@
         "The verbatim CGS/ABA notice (see required notices) is non-removable and travels with any redistributed excerpt or derived identity",
         "Identity seeding only: the list is used as a definitional CUSIP-validity and canonical-name source, not republished as a CUSIP identifier database",
         "Quarter identity comes from the source filename/URL cross-checked against the document's Year/Qtr header; the legend 'current as of' date is not authoritative (it is stale boilerplate on some quarters)",
-        "Archive availability recorded during RUN M2-5: the index lists quarterly files back through 2024; quarters 2025Q1–2026Q2 were retrieved and cached (2026Q2 in both PDF and text; 2025Q1–2026Q1 PDF only)",
+        "Archive availability recorded during the 2026-07 definitional-list ingest: the index lists quarterly files back through 2024; quarters 2025Q1–2026Q2 were retrieved and cached (2026Q2 in both PDF and text; 2025Q1–2026Q1 PDF only)",
         "Retrieved under the same sec-edgar fair-access conditions (SEC-accepted User-Agent, in-code rate floor)"
       ],
       "required_notices": [
