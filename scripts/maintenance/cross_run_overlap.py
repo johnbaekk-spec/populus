@@ -298,6 +298,26 @@ IGNORE = {
     "recovery/stage-reconciliation-result.json": "runtime recovery artifact",
     "recovery/transitions/000001.json": "runtime recovery artifact",
     "site-artifact/publication-authority/scheduled.json": "published site artifact",
+    # Paths the LANDED runs removed or moved out from under the plans that cite
+    # them (2026-08-28: security run PRs #57-#61 and professionalization Slices
+    # 0-5, PRs #62-#67, all merged). IGNORE is subordinate to resolution, so if
+    # any of these paths ever returns to the tree, resolution wins again.
+    ".claude/launch.json":
+        "deleted by the security run's PR 2 (#58); the sec plan's citation is "
+        "its own deletion instruction, now executed",
+    "STATUS.md":
+        "deleted by PROF Slice 1 (#63): K4 cutover into docs/roadmap.md",
+    "BACKLOG.md":
+        "deleted by PROF Slice 1 (#63): K4 cutover into docs/roadmap.md",
+    "docs/runbooks/deploy.md":
+        "moved by PROF Slice 1 (#63) to docs/operations/deploy.md",
+    "docs/runbooks/rollback.md":
+        "moved by PROF Slice 1 (#63) to docs/operations/rollback.md",
+    "dashboard/docs/qoq-presentation.md":
+        "moved by PROF Slice 1 (#63) to docs/frontend/qoq-presentation.md",
+    "scripts/accept_m2_11.py":
+        "moved by PROF Slice 3 (#65) to scripts/acceptance/institutional_serving.py; "
+        "the make accept-m2-11 target name is unchanged (D12)",
 }
 
 

@@ -3003,8 +3003,14 @@ def test_cross_run_one_segment_suffix_under_an_unrecognized_prefix():
 
     Each token below ends in the basename of exactly one tracked file, and
     every one of those attributions would be wrong -- a declared-IGNORE runtime
-    artifact, a vendor URL, and a checkout ROOT. The first is LIVE in the I-2
-    plan, so this is not a hypothetical.
+    artifact, a vendor URL, and a root-level filename under a prefix that is
+    NOT a checkout root (the F28 direction-1 fixtures prove the same basename
+    DOES resolve when the prefix IS one). The first is LIVE in the I-2 plan, so
+    this is not a hypothetical. (An earlier third token, `/a/b/projects/Populus`,
+    depended on the since-deleted tracked path `docs/design/handoff/Populus
+    Design System.dc.html` -- and on `load_tracked` truncating that path at its
+    first space, a latent quoting limitation that currently has no tracked
+    space-bearing path to bite.)
 
     `weak` must be False too, not merely `hit is None`: escalating these to
     `unresolved` would turn four already-exempted live IGNORE spans into
@@ -3014,7 +3020,7 @@ def test_cross_run_one_segment_suffix_under_an_unrecognized_prefix():
     for token in (
         "registry/company_tickers/snapshots/<sha>/company_tickers.json",
         "https://www.sec.gov/files/company_tickers.json",
-        "/a/b/projects/Populus",
+        "/a/b/projects/NOTICE",
     ):
         suffix, hits = cross_run.suffix_match(token, tracked, by_suffix)
         assert "/" not in suffix and len(hits) == 1, (token, suffix, hits)
