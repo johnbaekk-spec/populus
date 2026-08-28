@@ -1,6 +1,6 @@
 /* Shared sortable-table PLUMBING. Deliberately owns no ordering semantics.
 
-   External plan review (round 2, F2) rejected an earlier design that shared a
+   External plan review rejected an earlier design that shared a
    comparator across surfaces: the institutional index orders scalars and names,
    the congress feed orders statutory amount ranges, and `compareNet` orders
    six-state intervals. Those are genuinely different orderings, and a helper
@@ -25,7 +25,7 @@ export interface SortState {
 export interface SortHeaderEl {
   getAttribute(name: string): string | null;
   setAttribute(name: string, value: string): void;
-  /* SL-R25: the listener now receives the event so it can ignore clicks that
+  /* The listener receives the event so it can ignore clicks that
      originated inside a `.note-btn`. Typed as an optional structural argument
      rather than the DOM `Event`, so the fake-DOM tests that satisfy this
      interface keep working and can dispatch a bare `{ target }`. */
@@ -88,7 +88,7 @@ export function initSortableTable(options: SortableTableOptions): () => void {
     const key = keyOf(th);
     if (key === undefined) continue;
     th.addEventListener("click", (ev?: { target?: unknown }) => {
-      /* SL-R25: a note button lives inside this <th>, and this listener is on
+      /* A note button lives inside this <th>, and this listener is on
          the <th> itself with no target check — so activating a note would sort
          the table. The guard belongs HERE and not in the note's own handler:
          delegated on document it runs AFTER this listener in the bubble phase
@@ -98,7 +98,7 @@ export function initSortableTable(options: SortableTableOptions): () => void {
       /* The event is OPTIONAL: the fake-DOM doubles in this repo's tests call
          the listener bare, and a real browser always supplies it. Absent event
          or absent target means "not a note click", which is the safe default —
-         the sort proceeds exactly as it did before SL-R25. */
+         the sort proceeds exactly as it did before the guard existed. */
       const t = ev?.target as { closest?: (sel: string) => unknown } | undefined;
       if (t && typeof t.closest === "function" && t.closest(".note-btn")) return;
       if (key === state.key) {

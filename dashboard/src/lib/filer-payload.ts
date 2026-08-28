@@ -1,4 +1,4 @@
-/* RUN M2-11 T5 (plan R22) — the composite FilerPayloadV1 contract.
+/* The composite FilerPayloadV1 contract.
 
    ONE server-side assembler (extracted from `components/HoldingsTable.astro`,
    which now imports it — no duplicated SQL) and ONE strict client validator.
@@ -74,7 +74,7 @@ export const FILER_FRAGMENT_SHARD_ENVELOPE_BYTES = new TextEncoder().encode(
     `"shard_count":${FILER_TAIL_SHARDS_MAX},"entries":{}}`,
 ).byteLength;
 
-/** The R22 contract, literally (plan revision 6). */
+/** The FilerPayloadV1 contract, literally. */
 export interface FilerPayloadV1 {
   v: 1;                                   // version discriminator, strict-checked
   kind: "filer";
@@ -103,7 +103,7 @@ export interface FilerPayloadV1 {
     inputs the pre-rendered page uses. */
 export interface FilerAggregateInputs {
   concByPeriod: Record<string, ConcentrationRow | null>;
-  /** RUN M2-12: ORDERED and BOUNDED by `holdings.boundQoqDeltas` — not the raw
+  /** ORDERED and BOUNDED by `holdings.boundQoqDeltas` — not the raw
       accessor output. The unbounded list is what put a 29.1 MiB page against a
       25 MiB provider limit. */
   deltasByPeriod: Record<string, QoqDeltaRow[]>;
@@ -123,7 +123,7 @@ interface AssembleFilerArgs {
       serving period when the projection does not carry it. */
   requestedPeriod: string;
   /** The build's FULL filing dictionary. The payload carries only the entries
-      the included rows reference (R22: referenced-only). */
+      the included rows reference (referenced-only). */
   filings: FilingDict;
   agg: FilerAggregateInputs;
 }
@@ -153,7 +153,7 @@ export function readServingFilings(db: DatabaseSync): FilingDict {
 }
 
 /**
- * THE server-side assembler (R22) — the SQL and the period/cap/sort logic that
+ * THE server-side assembler — the SQL and the period/cap/sort logic that
  * used to live inline in `HoldingsTable.astro`, verbatim: rows read per entity
  * through the artifact's own index, normalized by the same `parseFilerShard`
  * guards a JSON shard gets, display-ordered, embed-capped, with pre-cap true
@@ -201,7 +201,7 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
     }
   }
 
-  // R22: referenced-only filing entries — the keys the included rows cite,
+  // Referenced-only filing entries — the keys the included rows cite,
   // resolved through the build dictionary. A key the dictionary does not carry
   // stays absent and renders as the stated "filing not in dictionary" state.
   const filings: FilingDict = {};
@@ -253,14 +253,14 @@ function bad(detail: string): never {
   throw new FilerPayloadError("bad_payload", detail);
 }
 
-/** R22 STRICT validation is two-sided: missing fields reject (below), and so
+/** STRICT validation is two-sided: missing fields reject (below), and so
     does any field the contract does not declare — a payload with an extra key
     is not this contract, and silently stripping it would let a producer drift
     ship as a "valid" parse. The error names the offending key path. */
 function onlyKeys(v: Record<string, unknown>, allowed: readonly string[], path: string): void {
   for (const key of Object.keys(v)) {
     if (!allowed.includes(key)) {
-      bad(`unknown key at ${path ? `${path}.` : ""}${key} — not a declared field (strict R22)`);
+      bad(`unknown key at ${path ? `${path}.` : ""}${key} — not a declared field (strict contract)`);
     }
   }
 }
@@ -304,7 +304,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Codex F4: `undefined` here means the property is ABSENT (JSON has no
+/** `undefined` here means the property is ABSENT (JSON has no
     undefined), and an absent property must never default — NULL-honest means
     an explicit null on the wire, never a hole a validator papers over. The
     error names the field path. */
@@ -406,7 +406,7 @@ function deltaOf(v: unknown, field: string): QoqDeltaRow {
   };
 }
 
-/** Codex F4: `parseFilerShard` NORMALIZES — `str`/`strOrNull`/`intOrNull`/
+/** `parseFilerShard` NORMALIZES — `str`/`strOrNull`/`intOrNull`/
     `flagsOf` default an absent or oddly-typed field. That is acceptable for the
     server reading its own artifact, but the client validator must check the
     PRESENCE and TYPE of every `FilerHoldingRow` property BEFORE that
@@ -473,7 +473,7 @@ function windowOf(v: unknown): FilingWindow | null {
 }
 
 /**
- * The strict client validator (R22). Checks the version discriminator first,
+ * The strict client validator. Checks the version discriminator first,
  * then every required field — REJECTING rather than defaulting: a payload that
  * fails here is `bad_payload` in the driver's existing taxonomy, never a
  * silently repaired render. Row lists re-run the `parseFilerShard` guards, so
@@ -513,7 +513,7 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
       // HOLDING_ROW_KEYS includes the banned change fields so they reach
       // parseFilerShard's grain ban and reject under its NAMED defect.
       onlyKeys(row, HOLDING_ROW_KEYS, at);
-      // Codex F4: presence AND type of every contract field, BEFORE the
+      // Presence AND type of every contract field, BEFORE the
       // normalizer below can default an absent one.
       holdingRowShapeOf(row, at);
     });
@@ -550,7 +550,7 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
   for (const [period, value] of Object.entries(raw.deltaTotalsByPeriod)) {
     const path = `deltaTotalsByPeriod[${JSON.stringify(period)}]`;
     const total = reqNumber(value, path);
-    /* Codex F2: a bare number check accepted a total SMALLER than the embedded
+    /* A bare number check accepted a total SMALLER than the embedded
        list — and a total of 0 beside a real row renders the "no changes" state
        over rows that exist. The total is a PRE-cap count, so it can never be
        below the rows shipped with it, and it is a count, so it is a
@@ -568,11 +568,11 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
      back to a length, and a total with no rows is an orphan claim. */
   requireSameKeySet(raw.deltaTotalsByPeriod, Object.keys(deltasByPeriod), "deltaTotalsByPeriod");
 
-  // F3: every nested cik must agree with the payload's own — a shard whose row,
+  // Every nested cik must agree with the payload's own — a shard whose row,
   // concentration, or delta rows carry another filer's CIK is corrupt, and
   // rendering it would attribute one manager's positions to another.
   //
-  // Codex F3 (delta round): the SAME argument holds for the period. Each of
+  // The SAME argument holds for the period. Each of
   // these maps is keyed by period AND its records carry their own period
   // field, so the two can disagree — and a disagreement renders one quarter's
   // positions under another quarter's heading, which is a false claim about
@@ -842,7 +842,7 @@ function uniqueStrings(raw: unknown, field: string): string[] {
   return values;
 }
 
-/** Set equality over object keys — ORDER-INSENSITIVE (Codex F4).
+/** Set equality over object keys — ORDER-INSENSITIVE.
 
     `requireExactObjectKeys` below compares key SEQUENCE, which is right for the
     fragment paths whose ordering is part of the transport contract, and wrong

@@ -4,7 +4,7 @@
    describes — the same shape `sortInstIndexRows` uses for the filer index,
    without pretending the two are one function.
 
-   The no-sentinel rule (Locked #6 / the institutional index's own comment): a
+   The no-sentinel rule (see the institutional index's own comment): a
    row with no value for the active key goes to a trailing bucket in a stated
    order, never interleaved as if it were zero.
 
@@ -15,7 +15,7 @@
    this module cannot synthesize for `agg_issuer_top_holders`, and it means the
    recommended fix is not hypothetical: it exists one module over.
 
-   IMPORTANT LIMIT, found by external code review (F1) and confirmed against the
+   IMPORTANT LIMIT, found in external code review and confirmed against the
    producer: for THIS table the rule cannot be enforced here, because the
    collapse already happened upstream. `agg_issuer_top_holders.value_usd` is
    declared NOT NULL and is populated with `COALESCE(SUM(value_usd), 0)`, so an
@@ -40,7 +40,7 @@ export interface HolderSortColumn {
   label: string;
   /** Required whenever `key` is null. An unexplained non-sortable data column
       is indistinguishable from one that was simply forgotten — external code
-      review (F1) caught exactly that. */
+      review caught exactly that. */
   why?: string;
 }
 

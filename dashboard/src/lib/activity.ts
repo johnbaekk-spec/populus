@@ -1,13 +1,13 @@
-/* RUN M2-8 T13 (plan R13, R16) — the cross-filer ACTIVITY FEED.
+/* The cross-filer ACTIVITY FEED.
 
-   The third directional projection (plan §B). Its grain is one QoQ POSITION
+   The third directional projection. Its grain is one QoQ POSITION
    CHANGE, not a holding: a position composed from several reported rows (a base
    13F-HR plus NEW-HOLDINGS amendments) yields exactly one change record, so the
    feed can neither duplicate a delta nor absorb source rows.
 
    Three properties this module exists to hold:
 
-   1. ONE byte-aware pagination rule (R13, review r5 F5 / r6 F5). A page closes at
+   1. ONE byte-aware pagination rule. A page closes at
       whichever binds first — PAGE_RECORD_LIMIT records or PAGE_BYTE_LIMIT bytes of
       SERIALIZED output. There is no second page-size rule; `{500, 1000, 2000}` was
       a contradictory alternative and is deleted. Bytes are MEASURED on the JSON
@@ -30,7 +30,7 @@
       undisclosed value on one side of the comparison). It renders as *undisclosed*,
       never as 0, and sorts LAST — a null is not a small number.
 
-   Wording ban (R16, `docs/architecture/data-contracts/outsized-positions.md` §1.1): a 13F is a
+   Wording ban (`docs/architecture/data-contracts/outsized-positions.md` §1.1): a 13F is a
    quarter-end snapshot filed up to 45 days late, so at render time the position may
    not exist. No present-tense trading verb may appear on this surface. The ban is
    testable — `BANNED_WORDING` + `scanBannedWording()` — and asserted, not trusted.
@@ -110,7 +110,7 @@ export const FILINGS_TABLE = "serving_filings";
 export type ChangeKind = "new" | "add" | "trim" | "exit" | "unclassified";
 
 /** One entry of a shard's filing dictionary — mirrors `FilingRef.as_dict()` in
-    `src/populus/inst_serving.py`. One per FILING, not per row (R5). */
+    `src/populus/inst_serving.py`. One per FILING, not per row. */
 export interface FilingRef {
   accession: string;
   submission_type: string;
@@ -226,7 +226,7 @@ export interface ActivityFeed {
   pagination: ActivityPagination;
 }
 
-/* ---------- the total order (R13 step 1) ---------- */
+/* ---------- the total order ---------- */
 
 /** Codepoint comparison — deliberately NOT localeCompare, whose result depends
     on the host's ICU data. Two builds of one corpus must order identically. */
@@ -275,7 +275,7 @@ export function sortKeyOf(r: ActivityRecord): ActivitySortKey {
   };
 }
 
-/* ---------- provenance resolution (R13: issuer + both dates + lag) ---------- */
+/* ---------- provenance resolution (issuer + both dates + lag) ---------- */
 
 /** Every filing this row's evidence draws on: the current composition, and for
     an exit also the prior composition that established the position. All of them
@@ -422,7 +422,7 @@ function serializePageBody(meta: PageMeta, filingEntries: string[], recordJsons:
   );
 }
 
-/* ---------- pagination: ONE byte-aware rule (R13) ---------- */
+/* ---------- pagination: ONE byte-aware rule ---------- */
 
 export interface ActivityPaginateOptions extends Partial<PaginationLimits> {
   /** Stated in every shard body when the projection is absent. */
@@ -495,15 +495,15 @@ interface FilledPage {
  * carry it past the byte ceiling, or when the record limit is reached —
  * whichever binds first.
  *
- * There is no no-candidate case (plan R13 step 4): a page always accepts its
+ * There is no no-candidate case: a page always accepts its
  * first record, so a single record larger than the whole ceiling occupies its own
  * page rather than blocking the walk. That is asserted in the tests, not assumed.
  *
- * RUN M2-11 (plan R22): the fill algorithm itself now lives in `lib/shards.ts`
+ * The fill algorithm itself now lives in `lib/shards.ts`
  * — ONE byte-bounded rule shared with the filer shard family. This wrapper
  * keeps activity's observable behaviour bit-for-bit: truncate-and-state past
  * the shard cap, and an over-ceiling record owns its page. The filer family
- * configures the SAME core to fail instead (LD-10).
+ * configures the SAME core to fail instead.
  */
 function fillPages(
   ordered: ActivityFeedRecord[],
@@ -606,7 +606,7 @@ export function paginateActivity(
 }
 
 /**
- * The fragment the producer copies into `stats.json` (plan R13 step 3). The
+ * The fragment the producer copies into `stats.json`. The
  * dropped count and the boundary sort key are published data, not a log line —
  * a reader must be able to see exactly where the cut fell.
  */
@@ -625,7 +625,7 @@ export function activityStatsFragment(p: ActivityPagination): Record<string, unk
   };
 }
 
-/* ---------- R16: the wording ban, testable ---------- */
+/* ---------- the wording ban, testable ---------- */
 
 /**
  * Banned on this surface (`M2-8-outsized-position-spec.md` §1.1). A 13F is a
@@ -682,9 +682,9 @@ export function scanBannedWording(html: string): string[] {
   return BANNED_WORDING.filter((b) => b.pattern.test(text)).map((b) => b.label);
 }
 
-/* ---------- R16: the §5 data_note, non-removable ---------- */
+/* ---------- the §5 data_note, non-removable ---------- */
 
-/* Still ONE canonical copy. RUN M2-11 (plan R22): the clauses and the markup
+/* Still ONE canonical copy. The clauses and the markup
    moved to `lib/holdings.ts` — which is browser-safe — because the `/e/`
    driver's in-extract filer path renders the note on the client, and this
    module's `node:sqlite`/`node:fs` imports cannot ship in the browser bundle.
@@ -722,16 +722,15 @@ function deltaCell(r: ActivityFeedRecord): string {
     printed as if it were normal. */
 function lagCell(r: ActivityFeedRecord): string {
   const lag = r.reporting_lag_days;
-  /* SL-R8 Class B / SL-R8e / SL-R26. The key is the repository's OWN declared
+  /* The key is the repository's OWN declared
      row identity (`ActivitySortKey`), which `lagCell` already receives whole —
-     that is why these two are Class B rather than Class C, and why no
-     signature changes. `position_key` alone is insufficient:
+     which is why no signature changes. `position_key` alone is insufficient:
      `activity.test.ts:172` holds same-CIK, same-`position_key` rows separated
      only by PUT/CALL, so a bare key would emit duplicate panel ids. */
   const nctx = { scope: "activity-lag" };
   const rowKey = `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`;
   if (lag == null) {
-    /* SL-R8e: this was nearly a §7 violation. The attribute carried the CAUSE
+    /* This was nearly a §7 violation. The attribute carried the CAUSE
        ("not resolvable from this build's filing dictionary") while the
        `.visually-hidden` sibling carries only the EFFECT ("reporting lag not
        resolvable"). Deleting it as a Class-A duplicate would have removed the
@@ -757,7 +756,7 @@ function lagCell(r: ActivityFeedRecord): string {
   return `<span class="lag">+${esc(String(lag))}d<span class="visually-hidden"> after quarter end</span></span>`;
 }
 
-/* SL-R17. Every row printed its raw 32-character `position_key`
+/* Readable identity, never raw-key spill. Every row printed its raw 32-character `position_key`
    (`sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7`) as visible text beside the
    issuer name — machine spill a reader cannot act on. It becomes a chip that
    says what the key is, with the key itself in the chip's note and in
@@ -766,7 +765,7 @@ function lagCell(r: ActivityFeedRecord): string {
    The note key is the FULL activity composite, never the bare `position_key`:
    `activity.test.ts:172` holds same-CIK, same-`position_key` rows separated
    only by PUT/CALL, so a bare key would emit duplicate panel ids and ambiguous
-   `aria-describedby` targets (SL-R26). */
+   `aria-describedby` targets. */
 function issuerCell(r: ActivityFeedRecord): string {
   const chip = identityChipHtml(
     r.position_key,
@@ -806,9 +805,9 @@ export function activityRowHtml(
   return (
     `<tr>` +
     // ONE filer-link rule (holdings.filerLinkHtml), which routes through the
-    // ONE href primitive (R22): the caller supplies the top/tail budget state;
+    // ONE href primitive: the caller supplies the top/tail budget state;
     // the default is tail — the reachable direction, never a dressed 404.
-    // R10: ISSUER FIRST. The feed answers "what is being accumulated", so the
+    // ISSUER FIRST. The feed answers "what is being accumulated", so the
     // issuer is the anchor and the manager is the qualifier. Ordering and the
     // change-kind filters are untouched — only the reading order changed.
     `<td class="c-issuer">${issuerCell(r)}</td>` +
@@ -825,7 +824,7 @@ export function activityRowHtml(
   );
 }
 
-/** The truncation statement (R13 step 3). Stated on the page, in the reader's
+/** The truncation statement. Stated on the page, in the reader's
     words, with the boundary the cut fell on — never a silent cut. */
 export function truncationNoticeHtml(t: ActivityTruncation | null, shards: number): string {
   if (t === null) return "";
@@ -839,14 +838,14 @@ export function truncationNoticeHtml(t: ActivityTruncation | null, shards: numbe
     html:
       `The ordered set does not fit in this build's ${fmtInt(shards)}-shard budget: ` +
       `<strong>${fmtInt(t.dropped_records)}</strong> further records are not published here. ` +
-      /* CODE-REVIEW F7: the boundary's `position_key` may be a provisional
+      /* The boundary's `position_key` may be a provisional
          `sid:sec:prov:<hash>`, and this prose is VISIBLE on /institutional/ —
-         so printing it raw violates SL-R17 and success criterion 4 on a surface
-         this run owns. The publication bound is the honesty content here and it
+         so printing it raw violates the no-raw-key rule. The publication bound
+         is the honesty content here and it
          is unchanged; only the identity's CHANNEL moves. The readable chip
          states how strong the identity is, its note carries the exact key, and
          the raw value stays machine-reachable in a `data-` attribute — the same
-         treatment R17 applies everywhere else a weak key surfaces. */
+         treatment applied everywhere else a weak key surfaces. */
       `The cut falls at ${boundary} — filer CIK ${esc(k.cik)}, position ` +
       `${identityChipHtml(k.position_key, { scope: "activity-cut" }, "boundary")}, ` +
       `${esc(k.put_call)} · ${esc(k.ssh_prnamt_type)}. Everything below that boundary is absent ` +
@@ -882,7 +881,7 @@ const ACTIVITY_FOOTNOTES = [
 
 const ACTIVITY_FN = new Map(ACTIVITY_FOOTNOTES.map((e) => [e.mark, e.html]));
 
-/** SL-R7b: the activity table's column descriptors — key, label, and the
+/** The activity table's column descriptors — key, label, and the
     stated non-sortability reason that used to render as visible `.col-why`. */
 const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
   ["issuer-position", "Issuer · position", "this view is the largest reported changes, cut at a shard bound — re-ordering the slice by issuer would present a partial list as a complete one"],
@@ -895,7 +894,7 @@ const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
   ["flags", "Flags", "flags are a set per row, with no order over them"],
 ];
 
-/** SL-R7c: mark → column, read off the emitter. */
+/** Mark → column, read off the emitter. */
 const ACTIVITY_COL_FN: Record<string, string | undefined> = {
   change: ACTIVITY_FN.get("§"),
   "delta-value": ACTIVITY_FN.get("‡"),
@@ -907,7 +906,7 @@ export interface ActivityFeedOptions {
   rowLimit?: number;
   /** Same-origin shard base, stated on the page so the full set is reachable. */
   shardBase?: string;
-  /** R22: top/tail budget state per filer CIK, from the LD-7 selection. Rows
+  /** Top/tail budget state per filer CIK, from the budget selection. Rows
       render tail links when omitted — reachable through /e/, never a 404. */
   tierOf?: (cik: string) => FilerBudgetState;
 }
@@ -966,17 +965,17 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     );
   }
 
-  /* R10 #12: activity is the SIXTH flag-bearing renderer, and the one the
+  /* Activity is the SIXTH flag-bearing renderer, and the one the
      whole-dist gate failed to name because that gate exempted a whole PAGE once
      any table on it carried a caveat. Over the rows this table actually shows —
      it renders `first.records` sliced to `rowLimit` and does not page. */
   const statedActivity = universalFlags(rows.map((r) => r.flags));
-  /* R7/F2: compact by default AND expandable in place.
+  /* Compact by default AND expandable in place.
 
      Every row this section holds is rendered into the DOM; the rows past the
      compact slice carry `data-compact-extra` and are hidden by the CSS the
      disclosure toggles. That is the one case where hiding is right: these are
-     DATA ROWS, which R19 explicitly permits a collapsed table to omit — and
+     DATA ROWS, which the fold rule explicitly permits a collapsed table to omit — and
      unlike the earlier server-side slice, the reader can actually get them
      back. Slicing them away with no client owner made them unreachable, which
      is the opposite of a disclosure. */
@@ -986,13 +985,13 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
       return i < COMPACT_ROWS ? html : html.replace("<tr", "<tr data-compact-extra");
     })
     .join("\n");
-  /* F2: the COLLAPSED STATE IS SERVER-RENDERED.
+  /* The COLLAPSED STATE IS SERVER-RENDERED.
 
      `data-collapsed` used to be set by `initDomDisclosures`, so the emitted
      page showed every shard row visibly and only became compact once
      JavaScript ran. That is not "compact by default" — it is compact once
      scripted, and the initial and no-JavaScript page was the one view of this
-     table that ignored the amended R7 entirely.
+     table that ignored the compact-by-default rule entirely.
 
      The attribute is now part of the SSR bytes, under the same condition the
      island would have used, so the first paint and the scripted state agree.
@@ -1010,7 +1009,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     universalFlagNote(statedActivity) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
     `<caption class="visually-hidden">Quarter-over-quarter position changes by issuer, ordered by absolute reported change</caption>` +
-    /* F23: every column states WHY it is not sortable, in visible text.
+    /* Every column states WHY it is not sortable, in visible text.
 
        This table is a BOUNDED SLICE of an ordered set — the largest reported
        changes, cut at a shard limit. Re-sorting the slice client-side would
@@ -1023,11 +1022,11 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
        The two surfaces that DO sort — the congress rankings and the manager
        directory — hold their complete row set, which is exactly what makes
        sorting honest there. */
-    /* SL-R5/R7: this mapper is the fourth `.col-why` site — the plan's inventory
-       said three. Each column's stated reason becomes its note, and the three
+    /* This mapper is the fourth `.col-why` site.
+       Each column's stated reason becomes its note, and the three
        marks `#activity-footnotes` published join the columns that emit them:
        § on the change chip (`activityRowHtml`), ‡ on Δ value, † on Filed.
-       R7b's descriptor rule applies: the `<thead>` is a literal with no sort
+       The descriptor rule applies: the `<thead>` is a literal with no sort
        key, so the keys are supplied here rather than invented at render time. */
     `<thead><tr>` +
     ACTIVITY_COLS.map(([key, label, why]) => {
@@ -1039,17 +1038,17 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
       );
     }).join("") +
     `</tr></thead>` +
-    // R18/F4: the LOCKED render root. It was an anonymous <tbody>, which meant
+    // The LOCKED render root. It was an anonymous <tbody>, which meant
     // no sort or expansion could be scoped to it and no root-integrity test
     // could enforce single ownership.
     `<tbody id="inst-activity-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
 
-    /* F2 + SL-R10: this states BOTH bounds, because there are two and the
+    /* This states BOTH bounds, because there are two and the
        reader is inside the tighter one. The compact slice is a render bound
        this page applies; the shard budget is a PUBLICATION bound the build
        applies, and it is stated nowhere else on the site. Naming only the
-       second while silently applying the first is the unstated omission R14
-       forbids.
+       second while silently applying the first is the unstated omission the
+       honesty rules forbid.
 
        The two clauses are split along exactly the line that decides whether
        expanding retracts them. The render bound is the count clause: expand,
@@ -1064,7 +1063,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
        the server. This surface is the one of the five whose control IS revealed
        at load (`initDomDisclosures`), and it still must not depend on that: an
        island that throws leaves the button unrevealed with scripting fully on,
-       and F1 records exactly that shipping here for a review cycle. */
+       and code review recorded exactly that shipping here for a cycle. */
     compactDisclosure({
       rootId: "inst-activity-tbody",
       total: rows.length,

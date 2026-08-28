@@ -1,4 +1,4 @@
-/* RUN M2-11 T5 (plan R22, LD-10) — the ONE byte-bounded shard filler.
+/* The ONE byte-bounded shard filler.
 
    Generalized from the activity feed's paginator, which was activity-specific
    and TRUNCATED past its shard cap (verified — that behaviour is preserved for
@@ -156,7 +156,7 @@ export function fillShardsByBytes(
   return { shards, droppedCount: dropped };
 }
 
-/* ---------- the filer-facing planner: FAIL, never truncate (R22) ---------- */
+/* ---------- the filer-facing planner: FAIL, never truncate ---------- */
 
 export interface ShardEntry {
   key: string;
@@ -187,7 +187,7 @@ interface PaginateByBytesOptions {
 }
 
 /**
- * Byte-bounded shard plan over ordered items — the R22 planner. Unlike the
+ * Byte-bounded shard plan over ordered items — the filer-facing planner. Unlike the
  * activity walk this NEVER truncates and NEVER grants an oversized item a
  * dedicated shard: both are thrown errors naming the item or the shortfall,
  * because a silent cut or a silent widening each break a published invariant

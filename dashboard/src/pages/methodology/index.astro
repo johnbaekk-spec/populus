@@ -49,7 +49,7 @@ const description =
         <div class="mono-note">build {build.buildId} · generated {build.generatedAtDate}</div>
       </div>
       <blockquote class="standing-caveat">
-        {/* SL-R23: the two facts this caveat carries are linked separately from the
+        {/* The two facts this caveat carries are linked separately from the
             reader-facing surfaces, so each sentence gets its own stable anchor.
             Text is unchanged — only the wrapping spans and ids are new. */}
         <span id="amount-ranges">Standing caveat: trades are disclosed in statutory dollar ranges, never
@@ -88,8 +88,8 @@ const description =
           </div>
         </div>
         <div>
-          {/* SL-R23: `/congress/`'s head has linked `/methodology/#coverage` since
-              ALPHA-SURFACES-V2; the id never existed, so the link resolved to the top
+          {/* `/congress/`'s head links `/methodology/#coverage`;
+              the id never existed, so the link resolved to the top
               of the page. This is the section it always meant. */}
           <h3 class="section-h" id="coverage">Known gaps — published, not hidden</h3>
           <div class="gaps-block" id="defaults">
@@ -98,9 +98,9 @@ const description =
             <div>· amendments carry <span class="flag amber">amendment pending</span> until amendment semantics are settled — the default view (v_default_transactions) excludes the superseded original, and both readings are queryable</div>
             <div>· rows with defect flags are visible and flagged, never dropped</div>
           </div>
-          {/* SL-R23: the ONE anchor whose text was not already on this page. Moved
-              verbatim from `lib/ui.ts`'s member-page `.entity-lede`, which SL-R19
-              converts to a note in the same run — the claim relocates, it is not
+          {/* The ONE anchor whose text was not already on this page. Moved
+              verbatim from `lib/ui.ts`'s member-page `.entity-lede`, which
+              was converted to a note in the same change — the claim relocates, it is not
               duplicated and it is not newly authored. */}
           <h3 class="section-h" id="owner-codes">Whose trade is it — owner codes</h3>
           <div class="gaps-block">
@@ -207,10 +207,10 @@ const description =
         <div class="pub-card"><div class="pub-h">Raw documents retained</div><div class="pub-body">Every parsed filing links to its archived government document; reparses never re-fetch, so the archive is the evidence.</div></div>
       </div>
       <div class="mono-note verify-line">
-        {/* No `--manifest sha256:…` argument: R2 re-assembles the manifest
-            after this site builds, so a digest rendered here would be stale by
-            construction and every reader who pasted the command would get a
-            mismatch (Locked #6). `--build` alone is sufficient — `populus
+        {/* No `--manifest sha256:…` argument: the publish pipeline re-assembles
+            the manifest after this site builds, so a digest rendered here would
+            be stale by construction and every reader who pasted the command
+            would get a mismatch. `--build` alone is sufficient — `populus
             verify` resolves the manifest from the build id. */}
         verify this page: <span class="verify-cmd">populus verify --build {build.buildId}</span>
       </div>

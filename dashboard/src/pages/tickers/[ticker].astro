@@ -2,7 +2,7 @@
 import { pathSafeTicker } from "../../lib/format.ts";
 // Unified ticker page (Ticker Unified.dc.html) — the primary ticker surface:
 // search-first masthead, congress cards, the mapping-gated institutional
-// section (Locked #18), planned-section placeholders.
+// section (gated on the ticker→issuer mapping contract, spec §4), planned-section placeholders.
 import Base from "../../layouts/Base.astro";
 import { getBuildData, tickerInstSection } from "../../lib/data";
 import { tickerUnifiedBody, type BuildStamps } from "../../lib/ui";

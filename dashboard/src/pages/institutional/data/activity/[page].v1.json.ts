@@ -2,7 +2,7 @@ import type { APIRoute, GetStaticPaths } from "astro";
 import { getBuildData } from "../../../../lib/data";
 import { activityFeed } from "../../../../lib/activity";
 
-/* RUN M2-8 T13 (plan R13) — the activity shard family.
+/* The activity shard family.
    Same-origin, build-scoped JSON (ARCHITECTURE §12.1, G7: no browser call ever
    reaches SEC). One file per page of the ONE byte-aware pagination rule in
    lib/activity.ts — a page closes at 2,000 records or 2 MiB of measured

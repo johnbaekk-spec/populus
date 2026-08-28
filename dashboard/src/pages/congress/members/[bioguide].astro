@@ -2,7 +2,7 @@
 // Congress Member entity page (Congress Member.dc.html). Body rendered by the
 // same pure ui.ts function the generic client route uses — parity by
 // construction. Static paths: every member in the extract minus budget cuts
-// (Locked #13); cut members stay reachable at /e/?k=m:… with their endpoint.
+// (the budget-cut rule); cut members stay reachable at /e/?k=m:… with their endpoint.
 import Base from "../../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact, sectorResolver } from "../../../lib/data";
 import { memberBody, memberSignalsPanel, memberV2Sections, type BuildStamps, type MemberV2Deps } from "../../../lib/ui";
@@ -64,7 +64,7 @@ const description =
     import { initEntityPage } from "../../../scripts/entity-client";
     import { initNotes } from "../../../scripts/notes";
     initEntityPage();
-    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+    /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —
        and a second call would be idempotent. It is NOT added to `Base.astro`:
