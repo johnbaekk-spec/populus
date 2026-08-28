@@ -5,7 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "populus-mcp"
 dynamic = ["version"]
-description = "Populus — open financial-data commons (M1: congressional trading)"
+description = "Populus — the open financial-data commons behind Public Filings (congressional trading + institutional 13F)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "httpx",
@@ -23,6 +26,11 @@ dependencies = [
 [project.scripts]
 populus = "populus.cli:main"
 populus-mcp = "populus.mcp_server.server:main"
+populus-monitor = "populus.monitoring.monitor:main"
+
+[project.urls]
+Repository = "https://github.com/johnbaekk-spec/populus"
+Site = "https://publicfilings.org"
 
 [dependency-groups]
 dev = ["pytest", "jsonschema", "pip-audit==2.10.1"]

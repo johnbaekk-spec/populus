@@ -44,7 +44,7 @@ is [ARCHITECTURE.md](ARCHITECTURE.md).
   §15 conditions register that generates `DATA-LICENSE.md` / `NOTICE`)
 - `dashboard/` — the Astro static site ([dashboard/README.md](dashboard/README.md))
 - `scripts/` — acceptance gates, fixture generators, guards
-  (`dep_guard.py`), and `scripts/maintenance/` (link and path gates)
+  (`scripts/maintenance/dependency_guard.py`), and `scripts/maintenance/` (link and path gates)
 - `tests/` — the Python suite plus a golden corpus of real government filings
 - `docs/architecture/` — durable data contracts and decision records;
   `docs/operations/` — runbooks; `docs/frontend/` — dashboard contracts and

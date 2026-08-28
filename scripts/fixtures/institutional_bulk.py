@@ -6,7 +6,7 @@ through a fake transport); the only committed static fixture is the quarterly
 ``form.idx`` the R1 parser test reads. This script writes it from the SAME spec,
 so the static fixture and the discovery-driving text can never drift.
 
-    uv run python scripts/gen_m2_6_fixtures.py
+    uv run python scripts/fixtures/institutional_bulk.py
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 from bulk_corpus import build_form_index_text  # noqa: E402

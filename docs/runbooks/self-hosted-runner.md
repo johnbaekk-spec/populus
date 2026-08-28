@@ -399,8 +399,11 @@ ORDER is the R25 supervision rule.
 #    UNSET is a supported state: with no value the publish job omits the flag
 #    entirely and builds congress-only, byte-identical to a pre-M2-11 build.
 #    That is also the rollback: unset it, and the next run publishes congress.
+#    POPULUS_OPS_SNAPSHOT is this host's finalized snapshot path — set it to
+#    your own before running. The owner's current value, as an example:
+#    POPULUS_OPS_SNAPSHOT="$HOME/projects/Populus-ops/snapshots/inst-source-v1.db"
 gh variable set POPULUS_INST_DB --repo johnbaekk-spec/populus \
-  --body "/Users/johnbaek/projects/Populus-ops/snapshots/inst-source-v1.db"
+  --body "$POPULUS_OPS_SNAPSHOT"
 
 # Verify what is actually armed (POPULUS_PUBLISH_ARMED is the pre-existing
 # publish switch and is independent of both of these):

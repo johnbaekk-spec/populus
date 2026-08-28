@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from populus.ingest import USER_AGENT as M1_USER_AGENT
+from populus.ingest import user_agent as m1_user_agent
 from populus.net import ACCEPT_ENCODING, DEFAULT_SEC_CONTACT, TransportResponse
 from populus.net import sec_client as sec_client_module
 from populus.net.sec_client import (
@@ -109,7 +109,7 @@ def test_the_parenthesized_m1_user_agent_is_never_sent(tmp_path):
     client.get(BOOTSTRAP_URL)
     _url, headers = transport.sent[0]
     assert headers["User-Agent"] == "Populus johnbaekk@gmail.com"
-    assert headers["User-Agent"] != M1_USER_AGENT
+    assert headers["User-Agent"] != m1_user_agent()
     assert "PopulusBot" not in headers["User-Agent"]
     # And the literal cannot leak in from the source either.
     for name in ("__init__.py", "sec_client.py"):

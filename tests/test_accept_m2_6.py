@@ -20,7 +20,7 @@ def _load_accept():
     # script does (it inserts tests/ on sys.path itself, but be explicit here too).
     sys.path.insert(0, str(REPO_ROOT / "tests"))
     spec = importlib.util.spec_from_file_location(
-        "accept_m2_6", REPO_ROOT / "scripts" / "accept_m2_6.py"
+        "accept_m2_6", REPO_ROOT / "scripts" / "acceptance" / "institutional_bulk.py"
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

@@ -33,7 +33,7 @@ from lxml import etree
 from populus.amendments import flag_unresolved_pair_rows
 from populus.parse.xml import UnsafeXmlError, parse_untrusted_xml
 from populus.ingest import (
-    USER_AGENT,
+    user_agent,
     FetchMetrics,
     TransportResponse,
     UnsafeArchivePathError,
@@ -146,7 +146,7 @@ class _PoliteFetcher:
     def fetch(
         self, url: str, *, headers: Mapping[str, str] | None = None
     ) -> TransportResponse:
-        merged = {"User-Agent": USER_AGENT, **(headers or {})}
+        merged = {"User-Agent": user_agent(), **(headers or {})}
         delays = iter(BACKOFF_SCHEDULE)
         while True:
             self._space()

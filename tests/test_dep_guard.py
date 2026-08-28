@@ -1,6 +1,6 @@
 """G1 dependency guard (R2) and the no-network enforcement checks (R10).
 
-Loads scripts/dep_guard.py by path (it is a standalone script, not a package
+Loads scripts/maintenance/dependency_guard.py by path (it is a standalone script, not a package
 module) and proves it flags every vendor, in every source-appropriate
 spelling, in every scanned source — each injected in isolation.
 """
@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _load_dep_guard():
     spec = importlib.util.spec_from_file_location(
-        "dep_guard", REPO_ROOT / "scripts" / "dep_guard.py"
+        "dep_guard", REPO_ROOT / "scripts" / "maintenance" / "dependency_guard.py"
     )
     module = importlib.util.module_from_spec(spec)
     # dataclasses resolves string annotations via sys.modules[cls.__module__].
@@ -246,6 +246,14 @@ HTTPX_ALLOWED = {
     # client, which is what keeps the suite hermetic and what makes R27's
     # verb-asserting transport fixture possible at all.
     "deploy/record.py",
+    # `monitoring/monitor.py` EARNED this when the heartbeat monitor moved into
+    # the package (T3.3/D8): `populus-monitor` runs as its own process on the
+    # monitoring host, and its Discord alarm transport is one function,
+    # `_discord_alert`, reached only from `main()`'s alert wiring. The library
+    # core (`run_monitor`) takes an INJECTED fetcher and alert/report
+    # callables and names no transport, which is what keeps
+    # tests/test_pointer_state.py and tests/test_monitoring.py hermetic.
+    "monitoring/monitor.py",
     # `deploy/verify.py` is deliberately NOT here: it names no transport library
     # at all and takes an injected client, so it needs no permission. An
     # allowlist entry for a module that has not earned one is a small standing

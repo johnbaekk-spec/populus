@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R24 — re-verify the curated manager registry against a published build.
 
-    uv run python scripts/verify_manager_registry.py --inst-db <inst_agg.db>
+    uv run python scripts/maintenance/verify_manager_registry.py --inst-db <inst_agg.db>
 
 CADENCE AND OWNER. Run QUARTERLY, after each 13F filing deadline (period end
 plus 45 days), by the repository owner. `verified_date` on each row is the
@@ -25,7 +25,7 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from populus.manager_registry import (  # noqa: E402
     VERIFICATION_MAX_AGE_DAYS,

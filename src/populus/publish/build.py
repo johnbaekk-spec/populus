@@ -2441,7 +2441,7 @@ def run_build(
     """Assemble and finalize one staged build in a single call.
 
     The single-phase entry point every existing caller uses (4 in production:
-    ``cli.py``, ``accept_m1_b.py``, ``accept_m2_5.py``, ``accept_m2_6.py``; the
+    ``cli.py``, ``scripts/acceptance/congress_history.py``, ``institutional_list.py``, ``institutional_bulk.py``; the
     rest are tests). It stages and finalizes with **no site file count**, so the
     published ``stats.json`` keeps ``site_file_count: null`` — the deploying
     path uses ``stage_build``/``finalize_build`` directly.
@@ -3114,7 +3114,7 @@ def require_site_file_count(staging_dir: Path | str) -> int:
     **This is deliberately a publish-time check and not a schema rule.** The
     schema requires the key and permits ``null``, because
     ``tests/schemas/stats.schema.json`` is closed-world and is validated in
-    three places (``tests/test_stats.py``, ``scripts/accept_m1_b.py``,
+    three places (``tests/test_stats.py``, ``scripts/acceptance/congress_history.py``,
     ``tests/test_members.py``) that build stats without ever running the site
     seam — making it a non-nullable integer there would break standing gates
     over builds that have no site by design.

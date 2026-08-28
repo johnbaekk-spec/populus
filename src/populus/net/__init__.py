@@ -20,17 +20,14 @@ monitored contact address.
 from __future__ import annotations
 
 from populus.ingest import TransportResponse
+from populus.operator_identity import (
+    CONTACT_ENV as SEC_CONTACT_ENV,
+    DEFAULT_CONTACT as DEFAULT_SEC_CONTACT,
+    SEC_APP_NAME,
+)
 
-#: The application half of the SEC-accepted User-Agent. No version segment:
-#: the verified 200 was against the bare "<name> <email>" form.
-SEC_APP_NAME = "Populus"
-
-#: The contact address used when POPULUS_CONTACT is unset. SEC asks for a
-#: monitored address so it can reach an operator instead of blocking silently.
-DEFAULT_SEC_CONTACT = "johnbaekk@gmail.com"
-
-#: Environment variable holding the operator's contact address.
-SEC_CONTACT_ENV = "POPULUS_CONTACT"
+# The identity halves above live in populus.operator_identity (D9): one
+# contact setting, resolved at call time, shared with the M1 filings clients.
 
 #: Hosts this client will talk to. Anything else is refused before a request is
 #: built, so a mis-constructed or attacker-influenced URL cannot send SEC's

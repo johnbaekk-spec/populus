@@ -18,7 +18,7 @@ coverage. The builder emits no files: it returns the exact URL→bytes map a
 ``_FakeSecTransport`` serves (submissions + per-accession index/cover/table) plus
 the ``form.idx`` text, so ranking and ingest run entirely over committed bytes
 with zero sockets. The committed static ``form.idx`` fixture is generated from
-this same spec (``scripts/gen_m2_6_fixtures.py``).
+this same spec (``scripts/fixtures/institutional_bulk.py``).
 """
 
 from __future__ import annotations

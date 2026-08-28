@@ -35,7 +35,7 @@ import lxml.html
 
 from populus.amendments import flag_unresolved_pair_rows
 from populus.ingest import (
-    USER_AGENT,
+    user_agent,
     FetchMetrics,
     TransportResponse,
     UnsafeArchivePathError,
@@ -291,7 +291,7 @@ class _PoliteSession:
     ) -> TransportResponse:
         delays = iter(BACKOFF_SCHEDULE)
         while True:
-            merged = {"User-Agent": USER_AGENT, **(headers or {})}
+            merged = {"User-Agent": user_agent(), **(headers or {})}
             cookie = self._jar.header()
             if cookie is not None:
                 merged["Cookie"] = cookie

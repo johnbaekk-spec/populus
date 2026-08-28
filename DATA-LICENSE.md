@@ -1,4 +1,4 @@
-<!-- GENERATED FILE — do not edit by hand. Source of truth: src/populus/licenses.json; regenerate with `python scripts/render_licenses.py`. -->
+<!-- GENERATED FILE — do not edit by hand. Source of truth: src/populus/licenses.json; regenerate with `python scripts/maintenance/render_licenses.py`. -->
 
 # Public Filings data conditions register (DATA-LICENSE)
 

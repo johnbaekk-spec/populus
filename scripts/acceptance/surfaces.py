@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R27 — the data-wired acceptance command for RUN ALPHA-SURFACES-V2.
 
-    uv run python scripts/accept_alpha_surfaces_v2.py \
+    uv run python scripts/acceptance/surfaces.py \
       --build-dir <build> --congress-db <populus.db> --inst-db <inst_agg.db> \
       --inst-serving-db <inst_serving.db> --ticker-map <ticker_map.json>
 
@@ -30,7 +30,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from populus.manager_registry import (  # noqa: E402

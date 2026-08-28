@@ -42,11 +42,9 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Protocol
 
+from populus import operator_identity as _identity
 from populus.net import (
     ACCEPT_ENCODING,
-    DEFAULT_SEC_CONTACT,
-    SEC_APP_NAME,
-    SEC_CONTACT_ENV,
     SEC_HOST_SUFFIX,
     SEC_HOSTS,
     TransportResponse,
@@ -109,44 +107,10 @@ def endpoint_class(url: str) -> str:
     return "default"
 
 
-def sec_user_agent(contact: str) -> str:
-    """The exact SEC-accepted User-Agent byte string.
-
-    ``"Populus johnbaekk@gmail.com"`` with the default contact — verified
-    2026-07-24 to return 200 where the parenthesized M1 form returns 403
-    (M2-CONTRACT §1). No version segment, no parentheses, no URL.
-    """
-    return f"{SEC_APP_NAME} {contact}"
-
-
-def sec_contact(
-    environ: Mapping[str, str] | None = None,
-    *,
-    warn: Callable[[str], None] | None = None,
-) -> tuple[str, str | None]:
-    """``(contact, warning)`` — pure; the caller decides how to emit the warning.
-
-    Returns the configured contact address and, when the operator has not set
-    one, the warning explaining why it matters. Optionally routes that warning
-    through an injected callable so a startup path can emit it without
-    reaching for a logger of its own.
-    """
-    if environ is None:
-        import os
-
-        environ = os.environ
-    configured = (environ.get(SEC_CONTACT_ENV) or "").strip()
-    if configured:
-        return (configured, None)
-    warning = (
-        f"{SEC_CONTACT_ENV} is not set: SEC fair access asks every automated"
-        f" client to identify itself with a MONITORED contact address, so it can"
-        f" reach an operator instead of blocking the traffic. Falling back to"
-        f" {DEFAULT_SEC_CONTACT!r}; set {SEC_CONTACT_ENV} to your own address."
-    )
-    if warn is not None:
-        warn(warning)
-    return (DEFAULT_SEC_CONTACT, warning)
+# The shared D9 identity module owns both; these names remain this package's
+# supported spellings for the SEC-side callers.
+sec_user_agent = _identity.sec_user_agent
+sec_contact = _identity.operator_contact
 
 
 # --- transport ----------------------------------------------------------------
