@@ -1,0 +1,241 @@
+/* ---------- masthead ---------- */
+
+.masthead {
+  border-bottom: 1px solid var(--rule2);
+  background: var(--paper);
+}
+.masthead-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* `height` was fixed, so any cluster wider than the shell overflowed and
+     painted over its neighbour instead of reflowing. A MIN height keeps the
+     60px bar identical when everything fits and lets it grow when it does
+     not. Overlap is now structurally impossible rather than merely unobserved
+     at the widths someone happened to try. */
+  min-height: 60px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.masthead-left {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+  min-width: 0;
+  /* Same reason: brand and nav reflow rather than intersect. */
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+.brand-mark {
+  /* the Mark component (components/Mark.astro) — sizing only; the geometry
+     lives in the component and /favicon.svg */
+  width: 22px;
+  height: 22px;
+  display: block;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+.brand-name {
+  font: 700 21px var(--serif);
+  letter-spacing: -0.01em;
+}
+.site-nav {
+  display: flex;
+  gap: 26px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.site-nav a,
+.site-nav .nav-soon {
+  font: 500 13px var(--sans);
+  text-decoration: none;
+  color: var(--ink2);
+  white-space: nowrap;
+}
+.site-nav a[aria-current="page"] {
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 19px;
+  margin-bottom: -21px;
+}
+.site-nav .nav-soon {
+  color: var(--ink3);
+}
+.badge-soon {
+  font: 600 9px var(--mono);
+  color: var(--ink3);
+  border: 1px solid var(--rule2);
+  padding: 1px 4px;
+  border-radius: 2px;
+  vertical-align: 1.5px;
+}
+.masthead-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-shrink: 0;
+}
+.site-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  padding: 6px 12px;
+  width: 230px;
+}
+.site-search .glyph {
+  font: 400 12px var(--mono);
+  color: var(--ink3);
+}
+.site-search input {
+  font: 400 12.5px var(--sans);
+  color: var(--ink);
+  background: none;
+  border: none;
+  padding: 0;
+  width: 100%;
+  min-width: 0;
+}
+.site-search input::placeholder {
+  color: var(--ink3);
+  opacity: 1;
+}
+.site-search input:focus {
+  outline: none;
+}
+.site-search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.theme-toggle {
+  font: 500 10.5px var(--mono);
+  color: var(--ink2);
+  border: 1px solid var(--rule2);
+  padding: 5px 9px;
+  min-height: 28px;
+}
+.theme-toggle:hover {
+  color: var(--ink);
+}
+.nav-burger,
+.search-toggle {
+  display: none;
+}
+
+/* ---------- page frame ---------- */
+
+.page {
+  padding-top: 36px;
+  padding-bottom: 72px;
+}
+.page-head {
+  /* Third attempt at the stat-strip overflow, and the first one that measured the right box. The stat
+     strip was never too wide on its own — 849px inside an 884px parent. It
+     starts at x=315 because it is a flex ITEM of this nowrap row, pushed across
+     by the title beside it, and `flex-shrink: 0` stops it compressing. So the
+     strip overflowed the DOCUMENT while fitting its own max-width.
+     Verified in the browser before landing: 964px 200px -> 0, 1080px 84px -> 0. */
+  flex-wrap: wrap;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 40px;
+}
+.page-head-copy {
+  max-width: 660px;
+}
+.kicker {
+  font: 600 11px var(--sans);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.page-title {
+  font: 600 34px/1.1 var(--serif);
+  margin: 8px 0 12px;
+}
+.page-lede {
+  font: 400 14px/1.6 var(--sans);
+  color: var(--ink2);
+  margin: 0;
+}
+.page-lede a {
+  font-size: 13px;
+}
+/* `.mobile-meta` is DELETED. It was the stat strip's mobile duplicate, and
+   the strip it duplicated is gone — the single `.caveat-line` under the lede
+   now carries the as-of date and the statutory qualifier at every width, so
+   nothing folds away and nothing is stated twice. */
+
+/* stat tiles */
+.tiles {
+  display: flex;
+  gap: 1px;
+  background: var(--rule2);
+  border: 1px solid var(--rule2);
+  flex-shrink: 0;
+  /* Diagnosed against rendered geometry rather than guessed at: this
+     was a non-wrapping flex row of `min-width: 118px` tiles, so the strip took
+     whatever width its tile COUNT demanded — measured at 1164px — and pushed
+     the whole document sideways. At 964px the page scrolled by 200px, at 1080px
+     by 84px, and at 360px a single tile reached x=714. The strip, not the
+     tables, was the horizontal-overflow source on every page that renders it.
+
+     Wrapping is the fix rather than `overflow-x` because these tiles are
+     headline figures: a reader must not have to discover that a number exists
+     by scrolling a strip that gives no cue it scrolls.
+
+     `flex-wrap` ALONE did nothing, which is the instructive part: as a flex
+     ITEM of its parent this box carries `flex-shrink: 0`, so it kept its
+     max-content width and never had a constraint to wrap against. Measured
+     after the first fix: still 1164px at a 964px viewport. The wrap only
+     engages once the box is allowed to be narrower than its contents. */
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.tile {
+  background: var(--raised);
+  padding: 14px 20px;
+  min-width: 118px;
+  /* The strip is a WRAPPING flex row, so content-sized tiles leave a ragged
+     right edge on every row but the last — and because `.tiles` paints
+     `var(--rule2)` behind a 1px gap grid, that ragged space renders as a
+     visible rule-coloured slab INSIDE the bordered strip. Measured on the real
+     tree: 191px of it on row 0 at 720px, 6.5px at 360px. That slab is exactly
+     the "unoccupied trailing area" the geometry gate forbids; it is not a cosmetic tolerance,
+     so the tiles grow to consume it rather than the gate learning to accept it. */
+  flex: 1 1 auto;
+}
+.tile-value {
+  font: 600 22px var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+.tile-value .unit {
+  font-size: 14px;
+}
+.tile-value.muted {
+  color: var(--ink2);
+}
+.tile-label {
+  font: 600 10px var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-top: 3px;
+}
+.tile-label a {
+  color: var(--ink3);
+}
+

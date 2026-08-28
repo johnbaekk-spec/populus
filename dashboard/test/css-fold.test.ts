@@ -11,6 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { baseStyleImports, baseStylesheet, styleFilesOnDisk } from "./lib/styles.ts";
 
 import {
   s1ModuleAbsent,
@@ -73,8 +74,20 @@ import {
   issuerRow as foldIssuerRow,
 } from "./fixtures/institutional.ts";
 
-const CSS_PATH = path.resolve(import.meta.dirname, "..", "src", "styles", "global.css");
-const css = readFileSync(CSS_PATH, "utf-8");
+/* Slice 6 (T6.4/T6.6): the stylesheet is nine region files imported by
+   Base.astro; every contract below runs over their concatenation in import
+   order, so it stays whole-tree. */
+const css = baseStylesheet();
+
+/* T6.4 structure: the nine region files, Base.astro as the single order
+   authority, and no orphan sheet the concatenation would miss. */
+test("the split stylesheet is whole: Base.astro imports every styles/*.css, late-additions last", () => {
+  const imports = baseStyleImports();
+  assert.deepEqual([...imports].sort(), styleFilesOnDisk(), "an orphan or missing stylesheet desyncs the cascade from the tests");
+  assert.equal(imports.length, 9, "nine region files, per the Slice 6 region table");
+  assert.equal(imports[0], "foundation.css", "tokens and reset must come first");
+  assert.equal(imports.at(-1), "late-additions.css", "the chronological overrides must stay last or the cascade changes");
+});
 
 /* ---------- a tiny deterministic CSS walker ---------- */
 

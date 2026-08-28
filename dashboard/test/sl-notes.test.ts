@@ -8,11 +8,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { baseStylesheet } from "./lib/styles.ts";
 
 import type { InstIndexRow } from "../src/lib/inst-index.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 
-const css = readFileSync(new URL("../src/styles/global.css", import.meta.url), "utf8");
+const css = baseStylesheet();
 
 test("SL-R2: markup shape — button carries popovertarget AND aria-describedby, panel is a real element", async () => {
   const { note } = await import("../src/lib/format.ts");

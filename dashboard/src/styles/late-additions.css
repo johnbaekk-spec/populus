@@ -1,0 +1,440 @@
+/* ================= ALPHA-UX additions ================= */
+
+/* A-5: sticky column headers inside every scrolling table container. */
+.table-scroll { max-height: 78vh; overflow-y: auto; }
+.etable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--paper2, var(--paper));
+}
+
+/* A-5: filter chips / controls wrap on mobile instead of clipping. */
+@media (max-width: 720px) {
+  .filter-controls { flex-wrap: wrap; row-gap: 8px; }
+  .chips { flex-wrap: wrap; row-gap: 6px; }
+}
+
+/* The /congress sub-tab nav (.ctabs/.ctab) is DELETED with its markup —
+   a dead selector left behind is how a removed component quietly comes back. */
+
+/* C-4 ranking table pieces */
+.net-dir {
+  font: 600 10px var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.net-acc { color: var(--buy, #2e7d32); background: color-mix(in oklab, currentColor 12%, transparent); }
+.net-dis { color: var(--sell, #c62828); background: color-mix(in oklab, currentColor 12%, transparent); }
+.unrankable-block { margin-top: 18px; }
+.c-net { white-space: nowrap; }
+
+/* B-7/F-6: asset-as-filed cell for no-ticker rows */
+.asset-name {
+  font: 500 11.5px var(--sans);
+  color: var(--ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 26ch;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* A-1: the unrankable-bucket separator inside the sorted feed */
+.feed-separator {
+  font: 600 11px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-top: 1px dashed var(--rule, currentColor);
+  border-bottom: 1px dashed var(--rule, currentColor);
+  padding: 8px 12px;
+  margin: 6px 0;
+}
+.filter-text { min-width: 150px; }
+
+/* A-2: sortable headers + unranked separator on /institutional */
+.th-sort {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+th[data-inst-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
+th[data-inst-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
+/* The same indicator for the generic sortable-table plumbing, driven by
+   aria-sort so the arrow and the announced state cannot disagree. */
+th[data-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
+th[data-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
+/* A real touch target. Originally scoped to [data-sort] alone to leave the
+   shipping [data-inst-sort] surface untouched — but that surface is now an
+   ADOPTER of the same helper, so the 44px requirement applies to it too and the
+   original scoping left it failing, caught in code review. Both selectors. */
+th[data-sort] .th-sort,
+th[data-inst-sort] .th-sort {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 4px;
+  text-align: inherit;
+}
+.unranked-sep td {
+  font: 600 11px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-top: 1px dashed var(--rule, currentColor);
+  padding: 8px 12px;
+}
+
+/* A-4: homepage largest-recent-disclosures rail */
+.rail { margin: 26px 0 8px; }
+.rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.rail-rows { border-top: 1px solid var(--rule, currentColor); }
+.rail-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in oklab, currentColor 12%, transparent);
+  font: 500 13px var(--sans);
+  flex-wrap: wrap;
+}
+.rail-who { min-width: 220px; }
+.rail-what { min-width: 90px; }
+.rail-amount { font-variant-numeric: tabular-nums; font-weight: 600; margin-left: auto; }
+.rail-filed { font: 400 11.5px var(--mono); color: var(--ink3); }
+.rail-caption { font: 400 11px var(--mono); color: var(--ink3); margin-top: 8px; }
+
+/* A-3: /watchlist */
+.watch-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 14px 0; }
+.watch-chip { display: inline-flex; align-items: baseline; gap: 6px; }
+.chip-x { background: none; border: none; cursor: pointer; color: var(--ink3); font-size: 13px; }
+.chip-x:hover { color: var(--sell, #c62828); }
+.watch-note { font: 500 12.5px var(--sans); color: var(--ink2); margin: 10px 0; }
+.watch-gap {
+  font: 500 13px var(--sans);
+  border: 1px dashed var(--amber, #b8860b);
+  color: var(--ink);
+  padding: 10px 14px;
+  margin: 10px 0;
+}
+.watch-new { border-left: 3px solid var(--amber, #b8860b); }
+
+/* C-3: member v2 panels */
+.mix-bucket td { color: var(--ink3); font-style: italic; }
+.non-allegation { font-weight: 600; }
+
+/* The exact rule inside per-entity signal rows */
+.signal-rule-inline { font: 400 10.5px var(--mono); color: var(--ink3); max-width: 46ch; }
+
+
+/* ---------- momentum, leaderboard & activity surfaces ---------- */
+
+/* The momentum range/basis control. It reuses `.filter-group` and `.seg`
+   from the feed's filter bar rather than introducing a second control idiom —
+   one page, one way to press a segmented button. */
+.range-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 10px 0 4px;
+}
+/* The adds control adopts the SAME one-row idiom. Its buttons are
+   `.chip`s rather than a `.seg`, so the chip row keeps its own spacing inside
+   the shared layout instead of a second control grammar being invented. */
+.control-row .chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The label is VISIBLE now, not only an aria-label — a sighted reader met two
+   unlabelled button rows and had to guess which axis each moved. */
+.control-row .filter-label {
+  font: 600 10.5px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-right: 8px;
+}
+
+/* The stated reason an unsortable column carries. VISIBLE text, never a
+   title attribute — a tooltip is not a channel a touch device can open, and
+   this site does not treat one as published. It is small and quiet, but it is
+   on the page at every width. */
+.col-why {
+  display: block;
+  font: 400 10px var(--sans);
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink3);
+  max-width: 22ch;
+  margin-top: 3px;
+  white-space: normal;
+}
+
+/* The bound a compact table states about itself, and the control
+   that lifts it. The STATEMENT comes first, so the reader meets the bound
+   before the offer to lift it — and it is styled like the `.terminus` row it
+   replaced, because it is the same fact in the same voice.
+
+   The statement is server-rendered VISIBLE; only the button waits for a script
+   (`[hidden]` above). Nothing here may hide `.compact-bound` at any width — it
+   is on the fold sweep's honesty list. */
+.compact-disclosure {
+  margin: 8px 0 2px;
+}
+.compact-bound {
+  font: 400 12px/1.6 var(--sans);
+  color: var(--ink2);
+  margin: 0 0 6px;
+}
+.compact-bound-count {
+  color: var(--ink);
+}
+.compact-bound-extra {
+  color: var(--ink2);
+}
+.compact-toggle {
+  font: 600 12px var(--sans);
+  min-height: 44px;
+  padding: 0 2px;
+}
+
+/* The retired sub-tab stubs' visible link — the channel that works with
+   both scripting and meta-refresh disabled, so it is sized as a real target. */
+.stub-link {
+  display: inline-block;
+  font: 600 14px var(--sans);
+  min-height: 44px;
+  line-height: 44px;
+}
+
+/* The activity feed's issuer anchor and its secondary filer column. The
+   emphasis is type, exactly as on the congress feed — the filer keeps full
+   contrast, it simply stops being the first thing the eye lands on. */
+.c-issuer {
+  font: 600 13px var(--sans);
+}
+.c-issuer .filed-name {
+  color: var(--ink);
+}
+.c-secondary {
+  font-weight: 500;
+  color: var(--ink2);
+}
+
+/* Manager-type filter chips. `Notable` is EDITORIAL and orthogonal to
+   type, so it renders in the same chip row but is visually separated — it is
+   not a ninth type and must not read as one. */
+.mgr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.mgr-chip {
+  font: 600 11px var(--sans);
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  color: var(--ink2);
+}
+.mgr-chip[aria-pressed="true"] {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+.mgr-chip-notable {
+  margin-right: 10px;
+  border-style: dashed;
+}
+.mgr-person {
+  font: 400 11px var(--sans);
+  color: var(--ink3);
+}
+
+
+/* Rows beyond the compact slice on a table whose full body is already
+   in the DOM. This is the ONE sanctioned use of display:none in this codebase's
+   honesty model, and it is narrow by construction: `[data-compact-extra]`
+   matches DATA ROWS only — never a caveat, terminus, footnote or stated
+   absence, all of which live outside the tbody. The honesty model permits exactly this and
+   nothing else, and `css-fold.test.ts` keeps every honesty selector out of it.
+   The rows return the moment the disclosure is activated. */
+tbody[data-collapsed="true"] tr[data-compact-extra] {
+  display: none;
+}
+
+/* ==================================================== notes
+
+   One explanation primitive. The panel uses the TOP LAYER via `popover`,
+   because a panel positioned inside `.table-scroll { overflow-x: auto }` is
+   clipped by the scroll container and the last column's note is unreachable —
+   measured, not assumed. */
+
+.note {
+  display: inline-block;
+  position: relative;
+  vertical-align: baseline;
+}
+
+/* >= 44px hit target at every width. The visual dot is smaller than
+   the tappable box: padding carries the target, so the glyph can stay quiet. */
+.note-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: help;
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 1;
+  color: var(--muted, #667);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.35em;
+  margin: -14px -0.1em;
+  border-radius: 999px;
+}
+
+.note-btn:hover,
+.note-btn:focus-visible {
+  color: var(--fg, #111);
+  text-decoration: underline dotted;
+}
+
+.note-pop {
+  position: fixed;
+  margin: 0;
+  inset: auto;
+  max-width: min(38ch, calc(100vw - 2rem));
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--rule, #ccc);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  color: var(--fg, #111);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
+
+  /* Reset the header typography this panel INHERITS.
+
+     CSS inheritance follows the DOM tree, not the layout tree, so a panel in
+     the top layer still inherits from the `<th>` it is written inside — and
+     `.etable th` sets `white-space: nowrap`, `text-transform: uppercase`,
+     `letter-spacing: 0.12em` and `text-align: left`. Header notes are the
+     PRIMARY case here, so without this every one of
+     them rendered its footnote prose as a single unwrapped uppercase
+     letter-spaced line running out of the panel.
+
+     The browser tests missed it because they assert the panel is visible and
+     near its anchor. Both are true of an overflowing line. `sl-notes.spec.ts`
+     now measures wrapping and containment instead. */
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
+  font-weight: 400;
+  font-variant: normal;
+  overflow-wrap: anywhere;
+}
+
+/* A DEFAULT resting place for a panel nobody positions.
+
+   `note()` renders through shared renderers, two of which (`txnRowHtml` via
+   `feedItemHtml`) also draw rows on `/watchlist/` and `/e/` — routes this run
+   does not own and does not initialise. There the panel still OPENS, because
+   `popovertarget` is declarative, and it still light-dismisses and closes on
+   Escape, because those are native to `popover`. What it does not get is
+   `place()`. Without this rule it would open wherever the UA put it.
+
+   Centring is deliberate rather than clever: it is predictable at every width,
+   needs no anchor knowledge, and reads as a deliberate panel instead of a
+   misplaced one. `place()` clears `translate` before setting top/left, so a
+   scripted panel is unaffected by this rule.
+
+   This is the structural fix for the whole class: any shared renderer that
+   grows a note later is safe by default instead of by someone remembering. */
+.note-pop:popover-open {
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+}
+
+/* Under 720px a panel that tries to sit beside its anchor has nowhere to go. */
+@media (max-width: 719px) {
+  .note-pop {
+    max-width: calc(100vw - 1.5rem);
+  }
+}
+
+/* --- the non-supporting-engine fallback, and its test seam.
+
+   The declarations are authored ONCE and emitted into two selectors: the real
+   `@supports not` block, and a `:root.force-note-fallback` block a test can
+   switch on. The gate installs only Chromium, which has supported `popover`
+   since v114, so the real block can never be entered by the browser tests —
+   without the seam this fallback could be entirely broken and stay green. A
+   unit test asserts the two blocks carry byte-identical declarations, so the
+   seam cannot drift from the thing it stands for.
+
+   Note it opens on :hover and :focus-within in CSS ALONE — no script runs on
+   this path, which is what makes the no-JavaScript claim true on every engine. */
+@supports not selector(:popover-open) {
+  .note-pop {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+  }
+  .note:hover .note-pop,
+  .note:focus-within .note-pop {
+    display: block;
+  }
+}
+
+:root.force-note-fallback .note-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+}
+:root.force-note-fallback .note:hover .note-pop,
+:root.force-note-fallback .note:focus-within .note-pop {
+  display: block;
+}
+
+/* --- print. Hover-only text must still reach paper: every panel is
+   laid out in NORMAL FLOW beneath its anchor and the button is hidden. This is
+   asserted by rendering under emulated print media and measuring a non-zero
+   box, not by grepping for this rule. */
+@media print {
+  .note-btn {
+    display: none;
+  }
+  .note-pop {
+    display: block !important;
+    position: static !important;
+    transform: none !important;
+    max-width: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0.15rem 0 0.15rem 1rem;
+    font-size: 0.8rem;
+    color: var(--muted, #444);
+  }
+}

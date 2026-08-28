@@ -1,0 +1,596 @@
+/* ---------- mobile fold (≤720px, per docs/frontend/design-principles.md §5) ---------- */
+
+/* The MISSING INTERMEDIATE BREAKPOINT.
+   The masthead had exactly two states: the full desktop bar and the 720px
+   burger fold. Between them it had neither. The shell is 1360px wide with
+   40px of padding, so a 1080px viewport offers 1000px of usable width against
+   a masthead cluster that needs roughly 1028px (brand + five nav items +
+   a 230px search + the theme toggle) — and 1138px when a page asks for the
+   emphasised search. Nav, search and brand therefore collided across the whole
+   721-1080px band, which is most laptops in a split window.
+
+   This band keeps every element VISIBLE — none of it is hidden, per the
+   plan's constraint that nothing honesty-bearing is media-query-hidden — and
+   buys the room by tightening spacing and letting the clusters wrap. */
+@media (min-width: 721px) and (max-width: 1080px) {
+  .masthead-inner {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    gap: 12px;
+  }
+  .masthead-left {
+    gap: 6px 20px;
+  }
+  .brand-name {
+    font-size: 18px;
+  }
+  .site-nav {
+    gap: 6px 18px;
+  }
+  .masthead-right {
+    gap: 12px;
+  }
+  .site-search {
+    width: 170px;
+  }
+  /* The desktop underline reaches the bar's bottom edge with a 19px pad and a
+     -21px pull. That geometry assumes a single 60px row; once the cluster can
+     wrap it would strike through the row below, so it becomes a compact
+     underline here. */
+  .site-nav a[aria-current="page"] {
+    padding-bottom: 3px;
+    margin-bottom: -5px;
+  }
+}
+
+/* ---------- the feed row folds to two lines from 1080px down ----------
+
+   MEASURED, not guessed. At a 964px viewport the feed has 854px of usable width
+   and its nine columns need 1,033px of content:
+
+     member 193 · ticker 194 · traded 148 · range 179 · side 91 · amount 94
+     · filed 80 · src 32 · star 22
+
+   The single-line grid gives the member column `1fr`, which is whatever the
+   786px of fixed tracks leave over — 68px at 964px and 184px at 1080px. So an
+   ordinary member name was truncated by 125px, which is defect #4, and the
+   ticker column was truncated by 128px at the same time. Total slack across
+   every roomy column is 104px against a 179px shortfall: the row is
+   over-subscribed, so NO reallocation of widths can fix it. That is why this is
+   a layout change and not a wider `1fr`.
+
+   The fix reuses the two-line layout the ≤720px fold already defines rather
+   than inventing a second one, so there is ONE structural definition of a
+   folded row. Only the STRUCTURE lives here; the ≤720px block below keeps what
+   is genuinely about touch and small screens — 44px targets, the smaller type
+   ramp, the 16px gutters — because shrinking type on a laptop would trade one
+   legibility defect for another (defect #6 is imbalance, not density).
+
+   Nothing is removed at this breakpoint. Both dates stay in the accessibility
+   tree, flags, the owner/partial qualifier and the provenance link all stay on
+   screen; the column headers go, exactly as they already do on mobile. */
+@media (max-width: 1080px) {
+  /* The header is the table's REAL <thead> now, and it carries every column
+     name plus every stated reason a column is unsortable. `display: none`
+     removed all of that from the accessibility tree at these widths — the exact
+     honesty deletion the fold gate exists to prevent. It folds through the
+     sanctioned clip pattern instead: gone from the layout, present to a screen
+     reader, exactly like the dual dates below it. */
+  .feed-head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  /* The fold's two-line grammar is expressed as grid AREAS on the row itself.
+     It used to nest `.row-line1` / `.row-line2` divs inside the row; a <tr>
+     may hold only cells, and a browser HOISTS an illegal child out of the
+     table rather than erroring, which would have destroyed this fold silently.
+     Same two lines, same order, no extra elements — and nothing is removed:
+     both dates stay in the accessibility tree via the clip below. */
+  .feed-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "ticker member side"
+      "range  amount traded"
+      "src    src    src";
+    row-gap: 7px;
+    column-gap: 8px;
+    height: auto;
+    position: relative;
+    padding-right: 40px; /* clear of the star */
+  }
+  .feed-row .cell-ticker { grid-area: ticker; }
+  .feed-row .cell-member { grid-area: member; }
+  .feed-row .cell-side { grid-area: side; }
+  .feed-row .cell-range { grid-area: range; }
+  .feed-row .cell-amount { grid-area: amount; }
+  .feed-row .cell-traded { grid-area: traded; }
+  .feed-row .cell-src { grid-area: src; }
+  /* Both dates stay in the accessibility tree — visually-hidden, never
+     `display: none`, which would delete them for screen readers. The visible
+     pair is recomposed by `.mobile-dates` below. */
+  .feed-row .cell-filed,
+  .feed-row .cell-traded .traded-date {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .feed-row .cell-star {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+  }
+  .feed-row .cell-member .aff {
+    white-space: nowrap;
+  }
+  .feed-row .cell-traded {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .feed-row .cell-src {
+    text-align: right;
+  }
+  .feed-row .cell-range {
+    padding-left: 0;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .cell-amount {
+    text-align: left;
+    white-space: nowrap;
+  }
+  .feed-row .mobile-dates {
+    display: inline;
+    font: 400 10px var(--sans);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink3);
+  }
+  .feed-row .flag {
+    max-width: 100%;
+  }
+  /* A paper row has only three visible cells, so it keeps a simple two-line
+     shape of its own rather than inheriting the transaction row's areas. */
+  .feed-row.paper {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "main main"
+      "src  src";
+  }
+  .feed-row.paper .paper-main { grid-area: main; }
+  .feed-row.paper .cell-src { grid-area: src; text-align: right; }
+  .paper-main {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .paper-note {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  /* masthead folds to logo · search · burger */
+  .masthead-inner {
+    height: 52px;
+  }
+  .masthead-left {
+    gap: 0;
+  }
+  .brand-mark {
+    width: 16px;
+    height: 16px;
+  }
+  .brand-name {
+    font-size: 17px;
+  }
+  .site-nav {
+    display: none;
+  }
+  .site-nav.open {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: absolute;
+    top: 52px;
+    left: 0;
+    right: 0;
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule2);
+    z-index: 20;
+    padding: 8px 16px 12px;
+  }
+  .site-nav.open a,
+  .site-nav.open .nav-soon {
+    padding: 12px 0;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .site-nav.open a[aria-current="page"] {
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 0;
+    padding-bottom: 12px;
+  }
+  .masthead-right {
+    gap: 12px;
+  }
+  .site-search {
+    display: none;
+  }
+  .site-search.open {
+    display: flex;
+    position: absolute;
+    top: 52px;
+    left: 0;
+    right: 0;
+    width: auto;
+    margin: 0;
+    z-index: 20;
+    padding: 12px 16px;
+    border-left: none;
+    border-right: none;
+  }
+  .search-toggle,
+  .nav-burger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    font: 600 14px var(--sans);
+    color: var(--ink2);
+  }
+  .search-toggle {
+    font-family: var(--mono);
+  }
+  .masthead {
+    position: relative;
+  }
+
+  .page {
+    padding-top: 18px;
+    padding-bottom: 48px;
+  }
+  .page-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .page-title {
+    font-size: 21px;
+    margin: 6px 0 4px;
+  }
+  /* The lede carries the 45-day-lag and range caveats — it stays, tightened.
+     Hiding it was the "cleaner because a caveat disappeared" failure the
+     brief explicitly forbids (§7). */
+  .page-lede {
+    font-size: 12.5px;
+    line-height: 1.55;
+    margin-top: 6px;
+  }
+  /* Coverage tiles FOLD, they do not vanish — §5.2 puts coverage and known
+     gaps in the response, not in a tooltip a touch device can never open. They
+     now fold by WRAPPING onto further rows rather than by scrolling sideways,
+     which is the stronger form of the same commitment: nothing is off-screen to
+     begin with.
+
+     The scroll affordance is GONE, and its absence is the honest state: since
+     the strip was made to wrap, `scrollWidth === clientWidth` at both fold widths
+     (measured 326/326 at 360px, 686/686 at 720px), so the mask faded the right
+     24px of a strip that cannot scroll. With tiles now filling their row those
+     24px carry a headline figure's own padding and digits, which would put a
+     number behind a permanent fade with no gesture that reveals it — §8's
+     media-query-hidden prohibition. `flex: 0 0 auto` goes with it: it was the
+     scrolling design's rule, and it is what pinned the tiles at content width. */
+  .tiles {
+    margin-top: 12px;
+  }
+  .tile {
+    padding: 10px 14px;
+    min-width: 104px;
+  }
+  .tile-value {
+    font-size: 16px;
+  }
+  .tile-label {
+    font-size: 8.5px;
+  }
+
+  /* filter controls become one horizontally scrollable strip; the count line
+     stays put beneath them */
+  .filterbar {
+    margin-top: 14px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 12px;
+    overflow: visible;
+  }
+  .filter-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 14px;
+    min-width: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .filter-label {
+    display: none;
+  }
+  .seg button,
+  .filter-select,
+  .theme-toggle {
+    padding: 7px 12px;
+    min-height: 44px; /* touch target */
+  }
+  .filter-check {
+    min-height: 44px;
+    white-space: nowrap;
+  }
+  /* The count line STAYS on mobile. It carries three things nothing else
+     does: the indeterminate-amount disclosure ("· 73 amount not comparable"),
+     the "filtered on this device" privacy statement, and the only reset
+     control. Hiding it was the same fold failure as the row-level one —
+     a caveat that disappears at a breakpoint is still a caveat removed. */
+  .filter-count {
+    margin-left: 0;
+    text-align: left;
+    width: 100%;
+    min-width: 0;
+    line-height: 1.55;
+    font-size: 10px;
+    border-top: 1px solid var(--rule);
+    padding-top: 6px;
+  }
+  /* touch target without breaking the text line it sits in */
+  .filter-count .linklike {
+    display: inline-block;
+    padding: 8px 4px;
+    margin: -8px 0;
+  }
+  .filter-count .linklike {
+    display: inline-block;
+    min-height: 28px;
+  }
+
+  /* rows fold to two-line cards: who · what · side / band · amount · dates */
+  .feed-grid-cols {
+    padding: 0 16px;
+  }
+  /* structure (display:block, the two lines, the star, the date collapse) is
+     owned by the ≤1080px block above — only touch sizing and the small-screen
+     type ramp remain here. */
+  .feed-row {
+    padding: 12px 16px;
+    min-height: 44px;
+  }
+  .feed-row .cell-star .star-btn {
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 16px;
+    text-align: center;
+  }
+  .feed-row .cell-member {
+    font-size: 13.5px;
+  }
+  .feed-row .cell-ticker,
+  .feed-row .cell-side {
+    font-size: 12px;
+  }
+  /* Line-2 width budget at 375px: band 64 + amount ~80 + dates ~92 +
+     provenance 44 + gaps ≈ 300 + 32 padding — so the provenance link and the
+     flags stay on the same fold instead of being pushed off or removed. */
+  .band {
+    height: 9px;
+    width: 64px;
+    background: var(--raised);
+  }
+  .cell-amount {
+    font-size: 11.5px;
+  }
+  .feed-row .lag,
+  .feed-row .lag-late {
+    font-size: 9px;
+  }
+  .feed-row .owner-note {
+    font-size: 10.5px;
+  }
+  .feed-row .flag {
+    font-size: 9px;
+  }
+  /* provenance stays reachable: the glyph alone, with its own 44px target */
+  .feed-row .cell-src a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    margin: -14px 0; /* 44px target without inflating the row */
+    border-bottom: none;
+    font-size: 10.5px;
+  }
+
+  .feed-empty {
+    padding: 24px 16px;
+  }
+  .feed-foot {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    text-align: center;
+  }
+  .pager {
+    justify-content: space-between;
+  }
+  .pager-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .view-note {
+    font-size: 8.5px;
+  }
+
+  .site-footer-inner {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+
+/* ---------- mobile fold, entity & feed surfaces (≤720px) ----------
+   THE FOLD RULE (SS4, standing deviation): nothing honesty-bearing — dates,
+   lag, owner/partial qualifiers, flags, SRC receipts, footnotes, terminus
+   rows, as-of stamps — is display:none'd here. Wide tables scroll INSIDE
+   their .table-scroll container with a sticky identity column and an edge
+   fade; the page never scrolls sideways. Enforced by test/css-fold.test.ts. */
+
+@media (max-width: 720px) {
+  .entity-head {
+    flex-direction: column;
+    gap: 16px;
+  }
+  .entity-title { font-size: 24px; }
+  .entity-lede { font-size: 12.5px; }
+  .watch-btn { min-height: 44px; }
+  /* `.tiles-entity` is the same strip in compact dress (`format.ts:808` emits
+     both from one function), so it loses the same dead scroll affordance. */
+  .entity-grid { grid-template-columns: 1fr; }
+  .metho-grid { grid-template-columns: 1fr; }
+  .gaps-block.cols-2 { columns: 1; }
+  .source-row { grid-template-columns: 1fr; gap: 4px; }
+  .hero { padding-top: 36px; padding-bottom: 32px; gap: 32px; grid-template-columns: 1fr; }
+  .hero-title { font-size: 32px; }
+  .metho-title { font-size: 26px; }
+  .section-index { overflow-x: auto; }
+  .section-index a, .section-index .si-soon { min-height: 44px; }
+  .si-asof { margin-left: 0; }
+  .chip { min-height: 44px; }
+  .toc a { min-height: 44px; }
+  .search-opt { min-height: 44px; }
+  .quick-link { min-height: 44px; }
+  .pager-btn { min-height: 44px; }
+  .cta { min-height: 44px; }
+  .module-shell, .s1-block, .s2-block, .s4-error { padding: 24px 18px; }
+
+  /* wide tables: scroll in-container, sticky identity column, edge fade.
+     All cells stay in the DOM — the fade signals overflow, it removes nothing. */
+  .table-scroll {
+    position: relative;
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
+  }
+  .etable[data-sticky-first] th:first-child,
+  .etable[data-sticky-first] td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--raised);
+    border-right: 1px solid var(--rule2);
+    z-index: 2;
+  }
+  .etable th, .etable td { padding: 8px 8px; }
+  .etable td { font-size: 12px; }
+  /* two-line fold for the compact member/ticker cards: identity wraps, the
+     numbers stay on-row — nothing removed, only re-laid-out */
+  .etable .c-member, .etable .c-filer, .etable .c-pos { max-width: 200px; }
+
+  .rb-track { gap: 8px; }
+  .rb-bar { width: 12px; }
+  .rb-half .rb-bar { width: 10px; }
+
+  .search-panel {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    right: 0;
+    max-height: calc(100vh - 52px);
+  }
+}
+
+/* ---------- print ----------
+   Footnotes, terminus rows, flags, both dates and receipts PRINT (G5: no
+   tooltip-only channel; the printed page keeps the honesty layer). Only
+   interactive chrome drops. */
+
+@media print {
+  .masthead-right .search-toggle,
+  .masthead-right .theme-toggle,
+  .masthead-right .nav-burger,
+  .site-search,
+  .search-panel,
+  .watch-btn,
+  .star-btn,
+  .pager,
+  .filterbar .filter-controls,
+  .compact-toggle,
+  .s4-actions {
+    display: none !important;
+  }
+  body { background: #fff; }
+  .feed-footnote,
+  .footnotes-stacked,
+  .terminus,
+  /* The bound a compact table states about itself. It prints for the
+     same reason the terminus row it replaced did — a reader holding paper
+     cannot expand anything, so the statement of what is missing has to be on
+     the page. The BUTTON above stays in the no-print list. */
+  .compact-bound,
+  .caveat-line,
+  .rb-caption,
+  .table-stamp {
+    display: block !important;
+  }
+  .table-scroll { overflow: visible; mask-image: none; -webkit-mask-image: none; }
+  /* Provenance PRINTS. A disclosure the reader must click is no use on
+     paper, so the machine name is forced visible whether or not they opened it
+     before printing.
+
+     `::details-content` is what actually does the work: a closed `<details>`
+     hides its content through that pseudo-element's `content-visibility`, and
+     `display` on the child does NOT defeat it — measured, closed stayed 18px in
+     print with the `display` rule alone and became 36px once the pseudo-element
+     was addressed. The `display` line is kept beside it for engines that hide
+     the content the older way instead; it is harmless where it does nothing.
+
+     A browser too old for `::details-content` prints the WARNING but not the
+     token. That is the acceptable degradation: the honesty-bearing half is in
+     the `<summary>`, which always prints. */
+  .flag-provenance::details-content {
+    content-visibility: visible !important;
+  }
+  /* The §5 box PRINTS OPEN. The paper channel is unchanged
+     by the collapse — a reader printing this page gets all six clauses whether
+     or not they opened the box first. `open` is forced by the same
+     `::details-content` mechanism measured for `.flag-provenance`; the
+     `display` line beside it covers engines that hide the content the older
+     way. */
+  .caveat-box::details-content {
+    content-visibility: visible !important;
+  }
+  .caveat-box > .caveat-box-body {
+    display: block !important;
+  }
+  .flag-provenance > .flag-raw {
+    display: block !important;
+  }
+  a { color: inherit; }
+}
+

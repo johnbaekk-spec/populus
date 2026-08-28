@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { baseStylesheet } from "./lib/styles.ts";
 import path from "node:path";
 
 import {
@@ -531,10 +532,7 @@ test("F1: every id the feed island REQUIRES exists on the real congress page", (
 test("F4: the feed's table header FOLDS by clipping, never by display:none", () => {
   // It carries every column name and every stated unsortable reason. Removing
   // it from layout removes all of that from the accessibility tree.
-  const css = readFileSync(
-    path.resolve(import.meta.dirname, "..", "src", "styles", "global.css"),
-    "utf-8",
-  );
+  const css = baseStylesheet();
   const narrow = css.slice(css.indexOf("@media (max-width: 1080px)"));
   const rule = narrow.slice(narrow.indexOf(".feed-head"), narrow.indexOf("}", narrow.indexOf(".feed-head")));
   assert.ok(!/display:\s*none/.test(rule), "the real <thead> must not be display:none'd");

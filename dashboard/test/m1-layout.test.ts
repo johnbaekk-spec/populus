@@ -9,6 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { baseStylesheet } from "./lib/styles.ts";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -18,7 +19,7 @@ import { changesTableHtml } from "../src/lib/ui/index.ts";
 const DASH = path.resolve(import.meta.dirname, "..");
 /* `grep -a` discipline, in Node form: read as bytes-to-text and never assume
    the file is clean UTF-8 text (derive.ts carries a deliberate NUL). */
-const css = readFileSync(path.join(DASH, "src", "styles", "global.css"), "utf-8");
+const css = baseStylesheet();
 const base = readFileSync(path.join(DASH, "src", "layouts", "Base.astro"), "utf-8");
 
 /* ---------------- R4: the masthead ---------------- */

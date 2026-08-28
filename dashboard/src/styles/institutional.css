@@ -1,0 +1,149 @@
+/* ---------- QoQ chips + institutional bits ---------- */
+
+.qoq-chip {
+  font: 700 10px var(--sans);
+  letter-spacing: 0.06em;
+  padding: 2.5px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.qoq-add { background: color-mix(in oklab, var(--buy) 14%, var(--raised)); color: var(--buy); }
+.qoq-trim { background: color-mix(in oklab, var(--sell) 14%, var(--raised)); color: var(--sell); }
+.qoq-new { border: 1px solid var(--buy); color: var(--buy); }
+.qoq-exit { border: 1px solid var(--sell); color: var(--sell); }
+.qoq-nc {
+  border: 1px solid var(--rule2);
+  background-image: var(--hatch);
+  color: var(--ink2);
+}
+.nc-chip {
+  font: 700 10px var(--sans);
+  padding: 2.5px 8px;
+  border-radius: 2px;
+  border: 1px solid var(--rule2);
+  background-image: var(--hatch);
+  color: var(--ink2);
+  white-space: nowrap;
+}
+.inst-stamp {
+  font: 400 10.5px var(--mono);
+  color: var(--ink3);
+}
+.caveat-line,
+.table-stamp {
+  padding: 8px 16px;
+  font: 400 11px/1.6 var(--mono);
+  color: var(--ink3);
+  border-top: 1px solid var(--rule);
+}
+.caveat-inline { color: var(--ink3); }
+/* A readable identity chip in place of a raw key. Quiet, dashed like
+   the flag vocabulary it borrows its wording from — it is a qualifier on the
+   name beside it, never a claim of its own. */
+.id-chip {
+  font: 500 10.5px var(--sans);
+  color: var(--ink3);
+  border: 1px dashed var(--rule2);
+  padding: 0 5px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+/* The momentum control's pending state. It is a STATEMENT, not a
+   spinner — a spinner says "wait", this says what the control has and has not
+   done yet. Tinted so it reads as a live claim rather than as chrome. */
+.pending-note { color: var(--ink2); }
+/* A true empty window states itself here rather than the table
+   painting blank. The offers are `.linklike` buttons, matching the rest of the
+   page's in-prose controls. */
+.empty-window .linklike { font-weight: 600; }
+/* The /congress/ head's stamp and its four methodology deep links. The
+   stamp keeps `.caveat-line`'s mono voice — it is the same kind of statement —
+   but drops the top rule, because it sits inside the page head rather than
+   under a table. The links wrap on narrow viewports instead of scrolling, so
+   none of the four can end up off-screen. */
+.stamp-line {
+  padding: 4px 0 0;
+  font: 400 11px/1.6 var(--mono);
+  color: var(--ink3);
+}
+.method-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 6px 0 0;
+  font: 400 11px/1.6 var(--mono);
+}
+/* A flag carried by EVERY row states itself here instead of on
+   each row. It sits ABOVE the table it describes and reads as a caveat, not as
+   chrome — the border-bottom pairs it with the table rather than the block
+   above, which `.caveat-line` alone (border-top) would not do. */
+.table-caveat {
+  border-top: none;
+  border-bottom: 1px solid var(--rule);
+}
+.table-caveat strong {
+  color: var(--ink2);
+  font-weight: 600;
+}
+.src-derived {
+  font: 500 10.5px var(--mono);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--rule2);
+  white-space: nowrap;
+}
+.period-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+.period-label {
+  font: 600 10px var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.chips { display: flex; border: 1px solid var(--rule2); overflow-x: auto; }
+.chip {
+  font: 500 11.5px var(--sans);
+  font-variant-numeric: tabular-nums;
+  padding: 5px 11px;
+  color: var(--ink2);
+  min-height: 32px;
+  white-space: nowrap;
+}
+.chip + .chip { border-left: 1px solid var(--rule2); }
+.chip-active {
+  font-weight: 600;
+  background: var(--ink);
+  color: var(--paper);
+}
+.period-note {
+  font: 400 11px var(--mono);
+  color: var(--ink3);
+}
+.explainer {
+  margin-top: 14px;
+  border-top: 1px solid var(--rule2);
+  padding-top: 12px;
+  max-width: 720px;
+  font: 400 13px/1.65 var(--sans);
+  color: var(--ink2);
+}
+.explainer-h {
+  font: 600 14px var(--serif);
+  color: var(--ink);
+}
+.edgar-block {
+  margin-top: 28px;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  padding: 22px 26px;
+}
+.edgar-block p {
+  font: 400 13px/1.7 var(--sans);
+  color: var(--ink2);
+  max-width: 720px;
+}
+
