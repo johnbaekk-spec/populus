@@ -7,7 +7,8 @@
 # locally in 80 seconds; nothing asked.
 #
 # SCOPE: the suites that need no published data build — the full Python tree,
-# the dashboard typecheck, and the dashboard unit suite. The post-build gates
+# the dashboard typecheck, and the dashboard unit suite, plus two security
+# gates (full-history secret scan and dependency review). The post-build gates
 # (`npm run test:post`) are deliberately NOT here: they require a real
 # `POPULUS_BUILD_DIR` + release DBs, which live in the private data repo, so
 # they stay with the publisher-side workflow that has them.
@@ -27,13 +28,26 @@
 # be authoritative where their subject lives.
 name: checks
 
-# NOT `pull_request`: R7e/OD-4 bans PR-like triggers repo-wide because they route
-# untrusted content toward runners, and tests/test_workflow_governance.py enforces
-# it. A push trigger on every branch gets the same protection — the checks attach
-# to the head commit, so the PR displays them and branch protection can require
-# them — without ever letting fork content select a workflow.
+# FORK-SAFE `pull_request` POLICY (RUN PUBLIC-SECURITY-HARDENING, LD3/R2):
+# the earlier repo-wide ban on PR-like triggers existed because PR triggers
+# route untrusted content toward runners. Now that the repository is public,
+# a fork PR must run checks BEFORE merge, so `pull_request` is allowed — but
+# only in THIS workflow, and only because every job here is structurally
+# fork-safe: GitHub-hosted runners only, `permissions: contents: read`, no
+# environment, no secrets-context interpolation, no reusable-workflow call,
+# and `persist-credentials: false` on every checkout. (The governance test
+# scans this file's raw text for any secrets-context interpolation, so this
+# comment names the banned expression indirectly rather than spelling it.)
+# On a `pull_request`
+# event GitHub additionally hands the job a read-only token and no secrets.
+# `pull_request_target` and `issue_comment` remain banned repo-wide, and the
+# sole self-hosted job remains `publish.yml:publish`, unreachable from any
+# PR-like trigger. tests/test_workflow_governance.py structurally enforces
+# every one of these properties, with killing mutations.
 on:
+  pull_request:
   push:
+    branches: [main]
   workflow_dispatch:
 
 # Least privilege (§14): read-only, no secrets referenced anywhere in this file.
@@ -50,6 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
@@ -80,6 +96,8 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -116,3 +134,68 @@ jobs:
 
       - name: Unit suite
         run: npm test
+
+  # Full-history secret scan (R5). Runs Gitleaks 8.30.1 from an immutable
+  # OCI-digest-pinned container over EVERY ref (`--log-opts="--all"`), with the
+  # repository mounted read-only, 100% redaction, no banner, and NO report
+  # file/artifact/summary — a finding fails the job and nothing else. On a PR,
+  # the scanner policy (.gitleaks.toml / .gitleaksignore) is materialized from
+  # the TRUSTED base SHA into read-only runner-temp files, so a fork cannot
+  # edit the policy in the same PR that hides a secret. On push/dispatch the
+  # checked-out (already-trusted) policy is used.
+  gitleaks:
+    name: gitleaks (all history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Materialize trusted scanner policy
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/gitleaks-policy"
+          mkdir -p "$POLICY_DIR"
+          if [ -n "${PR_BASE_SHA:-}" ]; then
+            # PR: policy comes from the trusted base commit, never the candidate.
+            git cat-file -e "$PR_BASE_SHA^{commit}"
+            git show "$PR_BASE_SHA:.gitleaks.toml" > "$POLICY_DIR/gitleaks.toml"
+            git show "$PR_BASE_SHA:.gitleaksignore" > "$POLICY_DIR/gitleaksignore"
+          else
+            # push to main / manual dispatch: the checked-out tree IS trusted.
+            cp .gitleaks.toml "$POLICY_DIR/gitleaks.toml"
+            cp .gitleaksignore "$POLICY_DIR/gitleaksignore"
+          fi
+          chmod 0444 "$POLICY_DIR/gitleaks.toml" "$POLICY_DIR/gitleaksignore"
+
+      - name: Scan full history (pinned container, read-only mounts)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "$RUNNER_TEMP/gitleaks-policy:/policy:ro" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git /repo \
+            --config /policy/gitleaks.toml \
+            --gitleaks-ignore-path /policy/gitleaksignore \
+            --redact=100 \
+            --no-banner \
+            --log-opts="--all"
+
+  # Dependency review (R13): flags known-vulnerable or disallowed dependency
+  # changes on the PR diff. Only meaningful on pull_request events (it diffs
+  # base..head manifests); required-check semantics treat the push-event skip
+  # as not-required for that commit context.
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
