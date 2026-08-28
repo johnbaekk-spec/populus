@@ -3,15 +3,15 @@
 Pure functions, no I/O: bytes in, dataclasses out. The information-table XML
 filename is variable and numeric per accession (``53405.xml``, ``50240.xml``,
 ``43981.xml``) and sometimes named (``form13fInfoTable.xml``), so it is
-**discovered from ``index.json`` in every mode** — never hardcoded (R1/F1).
+**discovered from ``index.json`` in every mode** — never hardcoded.
 
 ``parse_cover`` stays strict: malformed XML or a missing required field raises
 :class:`CoverParseError` carrying a ``kind`` (``cover_malformed`` /
 ``cover_missing_field``). The *persisted* failed-cover outcome is owned by
-ingest (R18/LD-12), which catches the error and records the accession from the
-validated submissions-index metadata rather than dropping it (G3).
+ingest, which catches the error and records the accession from the
+validated submissions-index metadata rather than dropping it.
 
-XXE / entity-expansion defence (F5/R10): every parse runs through the shared
+XXE / entity-expansion defence: every parse runs through the shared
 :func:`populus.parse.xml.parse_untrusted_xml` — external-entity resolution,
 DTD loading and network access are off, and any document carrying a DOCTYPE is
 refused outright (``UnsafeXmlError``), mapped here onto the existing
@@ -40,7 +40,7 @@ _SAFE_XML_NAME = re.compile(r"[A-Za-z0-9._-]+\.[Xx][Mm][Ll]")
 
 #: form 13F file numbers: strip the state/office padding to a canonical form so
 #: differently-formatted encodings of one number match and different numbers
-#: never conflate (R7/F14). ``028-04545`` -> ``028-4545``; ``28-554`` and
+#: never conflate. ``028-04545`` -> ``028-4545``; ``28-554`` and
 #: ``028-00554`` -> ``028-554``.
 _FILE_NUMBER = re.compile(r"^0*(\d{1,3})-0*(\d+)$")
 
@@ -61,7 +61,7 @@ class CoverParseError(InstParseError):
 
     ``kind`` is ``cover_malformed`` (the XML would not parse) or
     ``cover_missing_field`` (a required field is absent), mapped straight to the
-    persisted ``failure_kind`` by ingest (R18).
+    persisted ``failure_kind`` by ingest.
     """
 
     def __init__(self, message: str, *, kind: str) -> None:
@@ -78,7 +78,7 @@ class InfoTableMissingError(InstParseError):
 
 
 class InfoTableAmbiguousError(InstParseError):
-    """``index.json`` names more than one information-table XML (F2)."""
+    """``index.json`` names more than one information-table XML."""
 
 
 # --- namespace-blind XML helpers ---------------------------------------------
@@ -131,7 +131,7 @@ def _text(element: lxml.etree._Element | None) -> str | None:
 
 
 def _raw_text(element: lxml.etree._Element | None) -> str | None:
-    """Element text with **NFC only** — never trimmed (R3/R15).
+    """Element text with **NFC only** — never trimmed.
 
     ``raw_row`` must hold the observation exactly as printed, so archived source
     text and the canonical row fingerprint faithfully represent the filing.
@@ -174,7 +174,7 @@ def _bool(raw: str | None) -> bool | None:
 
 
 def normalize_file_number(raw: str | None) -> str | None:
-    """Canonical 13F file number, or ``None`` when unparseable (R7)."""
+    """Canonical 13F file number, or ``None`` when unparseable."""
     if raw is None:
         return None
     match = _FILE_NUMBER.match(raw.strip())
@@ -276,7 +276,7 @@ def _manager_entry(seq: int | None, manager) -> OtherManager:
 
 
 def parse_cover(xml: bytes) -> CoverPage:
-    """Parse ``primary_doc.xml`` into a :class:`CoverPage`; strict (R2)."""
+    """Parse ``primary_doc.xml`` into a :class:`CoverPage`; strict."""
     try:
         root = _parse(xml)
     except (lxml.etree.XMLSyntaxError, UnsafeXmlError) as exc:
@@ -357,7 +357,7 @@ def parse_cover(xml: bytes) -> CoverPage:
 
 #: The exact raw fields, one flat scalar object per ``<infoTable>``, values as
 #: printed (NFC only), missing field = ``None`` (never ``""``). ``putCall`` is
-#: absent on equities and is a fixed key so fingerprints stay stable (R3/R15).
+#: absent on equities and is a fixed key so fingerprints stay stable.
 INFO_TABLE_RAW_KEYS = (
     "nameOfIssuer",
     "titleOfClass",
@@ -429,7 +429,7 @@ class InfoTableRow:
 
 
 def parse_info_table(xml: bytes) -> tuple[InfoTableRow, ...]:
-    """One :class:`InfoTableRow` per ``<infoTable>`` — never a silent drop (G3).
+    """One :class:`InfoTableRow` per ``<infoTable>`` — never a silent drop.
 
     An uninterpretable field stays as its raw string in ``raw_row`` (normalized
     to ``None`` only when the element is genuinely absent); nothing here decides
@@ -461,14 +461,14 @@ def parse_info_table(xml: bytes) -> tuple[InfoTableRow, ...]:
     return tuple(rows)
 
 
-# --- index-driven info-table discovery (R1) ----------------------------------
+# --- index-driven info-table discovery ----------------------------------
 
 
 def discover_info_table_name(index_json: object) -> str:
-    """The single information-table XML file named by ``index.json`` (R1).
+    """The single information-table XML file named by ``index.json``.
 
     Raises :class:`InfoTableMissingError` when none is named and
-    :class:`InfoTableAmbiguousError` when more than one is (F1/F2). The name is
+    :class:`InfoTableAmbiguousError` when more than one is. The name is
     validated as a bare XML file name before any caller joins it to a path.
     """
     if isinstance(index_json, (bytes, bytearray)):

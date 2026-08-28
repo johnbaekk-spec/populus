@@ -34,11 +34,11 @@ Pages known-issues documentation says the operation "will not delete the active
 production deployment if one exists" — so the compensation would have been a call
 the provider declines, dressed up as a rollback. This module does not call an
 endpoint whose documented behaviour is to refuse. A first run with no prior
-deployment therefore has **no automated compensation** (TD-4); that is stated in
+deployment therefore has **no automated compensation**; that is stated in
 the plan and remediated by the owner, not papered over here. A future reader who
 adds a delete method is undoing that, not completing it.
 
-**Failures are two kinds, never one** (R16/R17, following the ``rejected`` vs
+**Failures are two kinds, never one** (following the ``rejected`` vs
 ``unavailable`` split in ``populus.publish.attestation``):
 
 * :class:`PagesRejected` — we reached Cloudflare and the answer was no. The
@@ -107,7 +107,7 @@ class PagesRejected(PagesError):
 class PagesUnavailable(PagesError):
     """No verdict was reached — transport error, HTTP 429, HTTP 5xx, bad body.
 
-    Distinct from :class:`PagesRejected` on purpose (R17). "Could not ask" is not
+    Distinct from :class:`PagesRejected` on purpose. "Could not ask" is not
     "asked and the answer was bad", and a deploy that conflates them reports a
     rate limit as tampering.
     """
@@ -220,7 +220,7 @@ class PagesClient:
             ) from exc
         return _unwrap(response, path)
 
-    # --- R8: production identity -------------------------------------------
+    # --- production identity -------------------------------------------
 
     def project(self) -> dict:
         """The raw project result.
@@ -262,7 +262,7 @@ class PagesClient:
             )
         return configured
 
-    # --- R11: the domain precondition --------------------------------------
+    # --- the domain precondition --------------------------------------
 
     def custom_domains(self) -> list[CustomDomain]:
         """Every custom domain **with its status** — the ``…/domains`` subresource.
@@ -321,7 +321,7 @@ class PagesClient:
     def latest_production_deployment(self) -> Deployment | None:
         """The newest production deployment, or ``None`` when there is none.
 
-        ``None`` is a real answer, not an error (R14): on the first run there is
+        ``None`` is a real answer, not an error: on the first run there is
         no prior deployment, and that is the only thing special about it. The
         caller decides what that means; this method does not invent one.
         """
@@ -354,7 +354,7 @@ class PagesClient:
 def _unwrap(response: httpx.Response, path: str) -> Any:
     """Turn one Cloudflare response into ``result``, or into the right failure.
 
-    The split is the whole point (R17). 429 and 5xx are *outages*; a 4xx that is
+    The split is the whole point. 429 and 5xx are *outages*; a 4xx that is
     not 429 is Cloudflare telling us something about our request, and failing
     loudly on it is correct — including 401/403, which say our authority is wrong
     and must not be retried away as a blip.

@@ -33,7 +33,7 @@ every guarantee downstream ("production was never touched", "the same bytes")
 is about a deployment this run did not create — so the upload refuses rather
 than verifying someone else's tree under our name.
 
-**Raw provider payloads, never reconstructions** (R16). Both the upload result
+**Raw provider payloads, never reconstructions**. Both the upload result
 and the rollback result carry the provider's own object verbatim.
 :func:`populus.deploy.verify.check_no_functions` fails **closed** on
 ``uses_functions`` being *absent*, and
@@ -103,7 +103,7 @@ def resolve_wrangler_executable(repo_root: Path | None = None) -> Path:
     :class:`UploadFailed` here — before any subprocess is spawned and before
     any step that could reach the network — and the remedy is named: run
     ``npm ci`` in ``dashboard/``. Nothing here ever falls back to a registry
-    fetch (LD9).
+    fetch.
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
     candidate = root / WRANGLER_RELATIVE_PATH
@@ -203,7 +203,7 @@ class PagesDeploySurface:
         "assert_production_branch",
         "assert_custom_domain_active",
         "latest_production_deployment",
-        # Grown deliberately (R11d): resolving the rollback anchor needs the
+        # Grown deliberately: resolving the rollback anchor needs the
         # candidate LIST, because "newest by creation" and "currently serving"
         # are different questions and any provider-side rollback separates them.
         "production_deployments",
@@ -319,8 +319,7 @@ class WranglerUploader:
 
         ``argv[0]`` is the lock-installed binary
         :func:`resolve_wrangler_executable` already validated — never ``npx``,
-        never a package spec, so nothing here can reach the npm registry
-        (R8/LD9). ``--commit-dirty=true`` because the runner's checkout is
+        never a package spec, so nothing here can reach the npm registry. ``--commit-dirty=true`` because the runner's checkout is
         dirty by construction (the artifact was downloaded into it) and
         wrangler otherwise stops to ask a question no one is there to answer.
         The credentials are **not** here: ``CLOUDFLARE_API_TOKEN`` and

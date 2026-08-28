@@ -108,7 +108,7 @@ def validate_pointer(pointer: object) -> list[str]:
     if not errors:
         issued = parse_rfc3339z(pointer["issued_at"])
         expires = parse_rfc3339z(pointer["expires_at"])
-        # R6: expires_at is exactly issued_at + 7 days — the staleness bound is
+        # expires_at is exactly issued_at + 7 days — the staleness bound is
         # a fixed window, not merely "later than issuance".
         if expires != issued + timedelta(days=POINTER_EXPIRY_DAYS):
             errors.append(
@@ -143,9 +143,9 @@ def load_tuple(path: Path | str) -> tuple[int, str] | None:
         or set(raw) != {"pointer_version", "pointer_sha256"}
         or not isinstance(raw.get("pointer_version"), int)
         or isinstance(raw.get("pointer_version"), bool)
-        # A valid pointer_version is a positive int (R6/§5.5); a zero or
+        # A valid pointer_version is a positive int (§5.5); a zero or
         # negative value is corrupt state, not a low trusted floor — the
-        # monitor must fail closed on it, never silently bootstrap (R8/R17).
+        # monitor must fail closed on it, never silently bootstrap.
         or raw["pointer_version"] < 1
         or not isinstance(raw.get("pointer_sha256"), str)
         or _SHA256.match(raw["pointer_sha256"]) is None

@@ -6,7 +6,7 @@ anything else on the runner that touches ``dist/`` between "we hashed it" and
 went live. A digest computed over a directory someone can still write to proves
 nothing about what the uploader read.
 
-The seven steps (R4), and which one carries the weight:
+The seven steps, and which one carries the weight:
 
 1. Enumerate the source, recording ``(path, size, mtime_ns, inode)``.
 2. Create a fresh private destination (``mkdtemp``, ``0700``) on the same
@@ -87,8 +87,7 @@ class UploadSnapshot:
     without a second enumeration of the original ``dist/``.
 
     ``file_count`` keeps its historical meaning — every regular uploaded
-    artifact — which under inventory v2 is ``len(files) + len(controls)``
-    (LD12b). Served-entry counts are the verifier's ``files_total``, never this.
+    artifact — which under inventory v2 is ``len(files) + len(controls)``. Served-entry counts are the verifier's ``files_total``, never this.
     """
 
     path: Path

@@ -82,7 +82,7 @@ def _position_key(security_id: str | None, cusip: str | None) -> str | None:
     """``'sid:<id>'`` when resolved, else ``'cusip:<cusip>'``, else ``None``.
 
     A ``None`` key is an UNKEYABLE holding (neither a resolved security nor a
-    reported CUSIP): retained and counted in the filer registry (G3), excluded
+    reported CUSIP): retained and counted in the filer registry, excluded
     from QoQ (which needs a stable cross-quarter handle).
     """
     if security_id is not None:
@@ -405,7 +405,7 @@ def refuse_if_dest_aliases_source(
 
     This is a PREFLIGHT: callers must run it before any statement that could
     write to the source — schema application, ``ensure_views``, anything — so a
-    refused command leaves the source byte-identical (external review F4).
+    refused command leaves the source byte-identical.
     """
     resolved_dest = Path(dest_path).resolve()
     for _seq, _name, source_file in source_conn.execute("PRAGMA database_list"):
@@ -908,7 +908,7 @@ def _build_inst_agg_python(
     The alias refusal runs FIRST, before ``ensure_views`` or any other statement
     touches the source: since M2-7 ``ensure_views`` REPLACES a stale view
     definition, and a command that is ultimately refused must leave the source
-    byte-identical (external review F4).
+    byte-identical.
     """
     dest_path = Path(dest_path)
     refuse_if_dest_aliases_source(source_conn, dest_path)
@@ -920,7 +920,7 @@ def _build_inst_agg_python(
     # independent of whether it contains keyable holdings. Both the QoQ timeline
     # and the concentration rows derive from this, so a
     # notice-only or all-unkeyable quarter is a REAL period that breaks adjacency
-    # and still gets a concentration row — it never silently disappears (G3).
+    # and still gets a concentration row — it never silently disappears.
     filer_periods: dict[str, list[str]] = defaultdict(list)
     for cik, period in source_conn.execute(
         "SELECT DISTINCT cik, period_of_report FROM v_filer_reported_filings"
@@ -1217,7 +1217,7 @@ def _build_inst_agg_python(
     )
 
 
-# --- R21: the recently-added-issuers leaderboard -----------------------------
+# --- the recently-added-issuers leaderboard -----------------------------
 
 #: Modes are a PATH DIMENSION, not a client filter. The site is static, so a
 #: combined payload cannot be re-aggregated at request time, and filtering
@@ -1430,7 +1430,7 @@ def _concentration_rows(
             topn_value = sum(values[:topn])
             topn_share_bps = topn_value * 10000 // total
             hhi = sum(v * v for v in values) * 10000 // (total * total)
-            # The LARGEST SINGLE position's share (R14) — a different statistic
+            # The LARGEST SINGLE position's share — a different statistic
             # from topn_share_bps, and the one the outsized flag compares against.
             max_position_share_bps = (values[0] * 10000 // total) if values else 0
         else:
@@ -2604,7 +2604,7 @@ def _assert_join_mechanism_intact(conn: sqlite3.Connection) -> None:
 def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> None:
     """R13/R23/R24: fail the build when an `active` seed row stops joining.
 
-    `publication` is an EXPLICIT build input, not a guess about the data (F9).
+    `publication` is an EXPLICIT build input, not a guess about the data.
 
     A publication build additionally proves the join MECHANISM is intact before
     any coverage reasoning, so a regression that matches nothing can no longer
@@ -2660,7 +2660,7 @@ def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> Non
         )
 
     # Always materialize the rows that matched AND are active. `typed_ciks`
-    # already excludes retired and unmatched rows (F8).
+    # already excludes retired and unmatched rows.
     _write_manager_typing(dest, registry, report)
 
 

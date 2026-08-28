@@ -331,7 +331,7 @@ def ingest(
         try:
             # Every M2 entrypoint applies the inst schema before the views, so a
             # pre-existing M1/M2-1 database gains the inst tables AND both inst
-            # views on first M2 use (F19/F33).
+            # views on first M2 use.
             ensure_inst_schema(conn)
             ensure_views(conn)
             ensure_subline_columns(conn)
@@ -655,7 +655,7 @@ def identity_bootstrap(
     try:
         ensure_registry(conn)
         # A pre-inst database must gain the inst tables + views before the
-        # registry reconcile touches inst_holdings (LD-3) — F33.
+        # registry reconcile touches inst_holdings — F33.
         ensure_inst_schema(conn)
         ensure_views(conn)
         report = run_identity_bootstrap(
@@ -826,7 +826,7 @@ def _with_backend_options(command):
     return command
 
 
-# --- R42/R44: the corpus loop ------------------------------------------------
+# --- the corpus loop ------------------------------------------------
 
 
 def _split_filing_ids(values: tuple[str, ...]) -> frozenset[str]:
@@ -881,7 +881,7 @@ def seed_corpus(
     seed_db: str | None,
     seed_sha256: str | None,
 ) -> None:
-    """Seed the working store from the previous release, then baseline it (R42).
+    """Seed the working store from the previous release, then baseline it.
 
     Refuses rather than falling back to an empty database: building fresh is
     what produced B24 and B25.
@@ -982,7 +982,7 @@ def seed_corpus(
     ),
 )
 def corpus_floor(db_path: str, counts_path: str, allow_reparse: tuple[str, ...]) -> None:
-    """Refuse the build if the seed's corpus identities did not survive (R44)."""
+    """Refuse the build if the seed's corpus identities did not survive."""
     from populus.publish import seed as seedmod
 
     authorized = _split_filing_ids(allow_reparse)
@@ -1029,7 +1029,7 @@ def _echo_inst_gate_outcome(report) -> None:
         )
     # M2-7 §I5: the build's own coverage output states what was tolerated and
     # which filings were EXCLUDED to produce it — on the withheld path and on the
-    # published path alike (external review F3). One shared rendering.
+    # published path alike. One shared rendering.
     if report.inst_cover_dispositions is not None:
         from populus.ingest.inst13f import cover_dispositions_from_mapping
 
@@ -1195,7 +1195,7 @@ def stage_build_cmd(
     The site build runs between this and ``finalize-build``: it reads
     ``manifest.json`` to decide which surfaces exist, and its file count is what
     ``finalize-build`` patches into ``stats.json``. Nothing is journalled here —
-    the recovery journal stays last (R35).
+    the recovery journal stays last.
 
     Prints the staging directory so the workflow can pass it onward, and the
     build id. Exits non-zero if the build was preserved or reconciled rather
@@ -1277,7 +1277,7 @@ def snapshot_site_cmd(source: str, dest: str) -> None:
     and is never deployed.
 
     The freeze is what makes "the bytes we hashed are the bytes we uploaded"
-    true (R4): everything downstream reads the sealed copy, so the source can
+    true: everything downstream reads the sealed copy, so the source can
     keep changing without moving the digest.
     """
     import shutil
@@ -1449,7 +1449,7 @@ def publish(
         else ""
     )
     click.echo(f"published build {report.build_id}{version}")
-    # Note whether the published build carries the inst module (R8): its absence
+    # Note whether the published build carries the inst module: its absence
     # on the FTD-only corpus is the gate withholding it at build time.
     manifest_path = Path(data_repo) / "builds" / report.build_id / "manifest.json"
     if manifest_path.is_file():
@@ -1569,7 +1569,7 @@ def _inst_absence_notice(
             " — congress published normally"
             # M2-7 §I5: the publish boundary reports the same dispositions the
             # build did; a withheld notice that hides the named exclusions is
-            # exactly the silence the rule forbids (external review F3).
+            # exactly the silence the rule forbids.
             f"\n  {cover_dispositions_from_mapping(record)}"
         )
     if isinstance(record, dict) and record.get("state") == "absent":
@@ -1656,7 +1656,7 @@ def inst_agg(db_path: str, out_path: str) -> None:
         # The alias refusal comes FIRST — before the schema and view passes,
         # both of which write. `ensure_views` replaces a stale view definition
         # since M2-7, so preflighting after it would let a REFUSED command still
-        # alter the source database's bytes (external review F4).
+        # alter the source database's bytes.
         refuse_if_dest_aliases_source(conn, out_path)
         # Every M2 entrypoint applies the inst schema before the views, so a
         # pre-existing M1/M2-1 database resolves the default 13F views.
@@ -1951,7 +1951,7 @@ def inst_bulk_discover(
 def inst_bulk_ingest(
     ctx: click.Context, db_path: str, universe_path: str, raw_root: str, out_dir: str
 ) -> None:
-    """Resumably ingest the ranked universe's complete lineage (R5/R6/R14)."""
+    """Resumably ingest the ranked universe's complete lineage."""
     from populus.amendments import ensure_views
     from populus.inst_bulk import format_bulk_summary, load_universe, run_bulk_ingest
     from populus.load import ensure_inst_schema

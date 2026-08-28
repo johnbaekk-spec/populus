@@ -124,7 +124,7 @@ def run_monitor(
     tuple_path = state_dir / TUPLE_FILE
     failures_path = state_dir / FAILURES_FILE
 
-    # Owned-file tamper check (R29 / §14 boundary): the configured state_dir root
+    # Owned-file tamper check (§14 boundary): the configured state_dir root
     # is a trusted operator input, but the tuple + failures files Populus OWNS
     # AND CREATES under it must be real files, not symlinks swapped in to
     # redirect a write. Fail closed if either is a symlink.
@@ -231,7 +231,7 @@ def run_monitor(
     # A manifest-consistent stats.json can still be malformed (bad JSON, or a
     # non-object root) — that is a monitored FAILURE, never an uncaught
     # traceback that skips the failure counter and the second-failure alert
-    # (R17/R28/F3).
+    # (the failure counter and second-failure alert must still fire).
     try:
         stats = json.loads(stats_bytes.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -248,7 +248,7 @@ def run_monitor(
         )
     # Freshness evidence must be PRESENT and structurally valid — absent or
     # malformed evidence fails closed, never compares None == None as "fresh"
-    # (R3/R17/F12).
+    # (fail closed on missing evidence).
     freshness = stats.get("freshness")
     if not isinstance(freshness, dict):
         return _alarm("stats.json carries no valid freshness object")

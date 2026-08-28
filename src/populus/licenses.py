@@ -7,7 +7,7 @@ attribution, determination basis, determination date, and review-by date
 (§14's quarterly cadence). ``DATA-LICENSE.md`` (human-readable) and
 ``NOTICE`` (required attributions) are GENERATED from it by
 ``scripts/maintenance/render_licenses.py`` and drift-guarded in CI. No source is
-ingested before its entry exists (G11); a non-``ingestible`` entry is a
+ingested before its entry exists; a non-``ingestible`` entry is a
 recorded marker (reference-only, or a placeholder completed at a later
 phase gate).
 """
@@ -116,7 +116,7 @@ def counsel_flags(register: Mapping, license_id: str) -> list[str]:
 
     The structured surface behind the P2-entry counsel gate: `sec-13f-list`
     carries ``["cusip-redistribution"]`` so the flag is queryable rather than
-    buried in restriction prose (R1).
+    buried in restriction prose.
     """
     for entry in register["entries"]:
         if entry.get("license_id") == license_id:

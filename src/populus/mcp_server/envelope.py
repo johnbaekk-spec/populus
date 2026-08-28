@@ -41,7 +41,7 @@ def license_notices() -> list[dict[str, str]]:
 
 def license_notices_for(license_ids: list[str]) -> list[dict[str, str]]:
     """Module-scoped notices: the register ``attribution`` (and any verbatim
-    required notices) for each id in *license_ids* (§15/R9).
+    required notices) for each id in *license_ids* (§15).
 
     The global :func:`license_notices` emits only the register's non-empty
     ``required_notices``; the ``sec-edgar`` entry has an EMPTY required-notices
@@ -144,7 +144,7 @@ def shape_holding(
     federated ones so a client parses both planes identically". `null` there is
     indistinguishable from "this filing has no accession", which is never true.
     The parameter is required now so that omission cannot recur silently
-    (QA M2-8 R2 N4).
+    (a previously optional parameter let exactly that happen).
     """
     flags = row.get("flags")
     if isinstance(flags, str):

@@ -49,14 +49,14 @@ endpoint's raw result through the client's own request helper, and passes the
 provider's object through untouched. A test removes ``uses_functions`` from the
 recorded fixture and requires a refusal.
 
-**Two failure kinds, never one** (R17). ``rejected`` means we got answers and
+**Two failure kinds, never one**. ``rejected`` means we got answers and
 they did not line up. ``unavailable`` means we did not get an answer — a
 transport failure, a 429, a 5xx, an attestation-API quota error. A rate limit
 reported as tampering is a false alarm on the loudest channel the project has,
 so the vocabulary is imported from :mod:`populus.publish.attestation` rather
 than re-declared here.
 
-**The subject name is pinned in code, not only in YAML (R25).**
+**The subject name is pinned in code, not only in YAML.**
 ``actions/attest-build-provenance`` names subjects by **basename** when given a
 ``subject-path``, so a generation written to
 ``builds/<id>/deployments/<gen>.json`` would attest as ``<gen>.json`` — and
@@ -82,8 +82,8 @@ it swept, not about which host that was.
 
 **Two entry points, one module** (:data:`SUBCOMMANDS`).
 
-* ``sign`` (R13) is everything above, run by ``record-sign.yml`` after a deploy.
-* ``gate`` (R18) is run by ``publish.yml`` *before* the next publish, and it is
+* ``sign`` is everything above, run by ``record-sign.yml`` after a deploy.
+* ``gate`` is run by ``publish.yml`` *before* the next publish, and it is
   a different program with a different trust posture: it holds **no Cloudflare
   credential** (§14 forbids the publish job one), so its only live read is an
   unauthenticated fetch of the domain's own ``populus:code_sha`` marker. It
@@ -276,7 +276,7 @@ class RecordRefused(Exception):
 
 
 class RecordUnavailable(Exception):
-    """No verdict was reached (R17) — nothing is attested, nothing is accused."""
+    """No verdict was reached — nothing is attested, nothing is accused."""
 
 
 class RecordMisconfigured(Exception):
@@ -410,7 +410,7 @@ class ArtifactFacts:
     """Everything the signer derived from the artifact it downloaded itself.
 
     ``validated`` is the proof the recomputed inventory passed the FULL
-    exact-v2 validation (LD12/LD12b) — it, not the raw mapping, is what the
+    exact-v2 validation — it, not the raw mapping, is what the
     domain leg's typed entry sweep consumes. A v1-shaped or control-less
     artifact never constructs one of these.
     """
@@ -468,7 +468,7 @@ class Generation:
 
 @dataclass(frozen=True)
 class GateResult:
-    """What the pre-publish gate concluded (R18).
+    """What the pre-publish gate concluded.
 
     ``first_run`` is a separate field rather than an inference from
     ``generation is None``: "the gate passed because nothing has ever been
@@ -669,7 +669,7 @@ def next_generation(data_repo: Path | str, build_id: str) -> tuple[int, Path]:
     return generation, path
 
 
-# --- the whole signing (R13/R15/R16/R17/R25/R27) -----------------------------
+# --- the whole signing -----------------------------
 
 
 def sign_deployment(
@@ -1025,7 +1025,7 @@ def _confirm_domain(
     return sweep.files_verified, domain_controls_total, domain_control_effects
 
 
-# --- the pre-publish gate (R18) ----------------------------------------------
+# --- the pre-publish gate ----------------------------------------------
 
 
 def highest_generation(data_repo: Path | str) -> Generation | None:
@@ -1560,7 +1560,7 @@ def _build_attestation(choice: str):
 
 
 def _emit_outputs(result: SigningResult) -> None:
-    """Hand the workflow the subject name and digest **the code chose** (R25).
+    """Hand the workflow the subject name and digest **the code chose**.
 
     The attest step reads these, so the YAML cannot name a subject the code did
     not pin — which is exactly how a generation ends up attested under its

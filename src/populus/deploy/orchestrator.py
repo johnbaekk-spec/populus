@@ -9,10 +9,10 @@ all injected — the suite exercises the real ordering with no network at all
 
 The eight steps, and what each one is load-bearing for:
 
-1. **Assert the production branch (R8) — before any upload.** A mismatch means
+1. **Assert the production branch — before any upload.** A mismatch means
    the bytes would land under an identity the workflow does not claim. Asserted
    first because after an upload the question is academic.
-2. **Assert the custom domain is ``active`` (R11) — before any upload.**
+2. **Assert the custom domain is ``active`` — before any upload.**
    Activation is a provisioning precondition (Rollout prerequisite 4), not
    something this run polls for. Read from the ``…/domains`` subresource, which
    is the only endpoint carrying per-domain status.
@@ -20,22 +20,22 @@ The eight steps, and what each one is load-bearing for:
    serving.** This is the rollback target, and it must be read *before* the
    production upload — afterwards the newest production deployment is the one
    that just failed verification, and "rolling back" to it would be a no-op
-   dressed as a compensation. ``None`` is a real answer (R14), not an error.
+   dressed as a compensation. ``None`` is a real answer, not an error.
    **R11c:** "newest production deployment by creation" is not "the deployment
    the domain serves", and the two diverge after any dashboard rollback, so the
    anchor's own ``populus:code_sha`` is compared against the live domain's and a
    disagreement refuses here — before the freeze, production untouched.
-4. **Freeze the built tree** (R4): from here on the uploader is handed a sealed
+4. **Freeze the built tree**: from here on the uploader is handed a sealed
    private copy, so hashed bytes and uploaded bytes are one thing.
-5. **Upload to a preview and verify it INVENTORY-WIDE (R9).** §12.1 step 4 is
+5. **Upload to a preview and verify it INVENTORY-WIDE.** §12.1 step 4 is
    amended to require the same full sweep the signer runs, not markers plus a
    ``stats.json`` hash. This is not a nicety: TD-4 accepts one unverified-serving
    window on the strength of "the identical bytes already passed the preview
    sweep", and if the preview only read markers that sentence is vacuous.
-6. **Upload the same sealed bytes to production (R10)**, re-checking
+6. **Upload the same sealed bytes to production**, re-checking
    ``dist_digest`` immediately before. The preview verified a specific tree; the
    production upload must be that tree and not a successor of it.
-7. **Verify the live custom domain (R11)** — always, no exemption, no polling.
+7. **Verify the live custom domain** — always, no exemption, no polling.
    The preview origin and the custom domain differ only in base URL, so both go
    through one verifier. **R11b:** the domain is given one bounded settle after
    the promotion and BEFORE the first sweep, because ``_await`` returns when the
@@ -216,11 +216,11 @@ class DeployAborted(DeployError):
 
 
 class PreviewVerificationFailed(DeployError):
-    """The preview did not verify, so production was never touched (R9)."""
+    """The preview did not verify, so production was never touched."""
 
 
 class ProductionVerificationFailed(DeployError):
-    """The live custom domain did not verify (R11).
+    """The live custom domain did not verify.
 
     ``rolled_back_to`` is the deployment id captured at step 3 and handed to the
     provider's rollback; ``rollback_verified`` is whether the restored
@@ -256,7 +256,7 @@ class UploadedDeployment:
     """What an uploader reports back about the deployment it just created.
 
     ``payload`` is the provider's raw deployment object, carried because the
-    verifier's no-Functions check (R16) reads ``uses_functions`` off it and
+    verifier's no-Functions check reads ``uses_functions`` off it and
     nothing else in this module has any business interpreting it.
     """
 
@@ -274,7 +274,7 @@ class PagesSurface(Protocol):
     :class:`~populus.deploy.cloudflare.PagesClient`; there is deliberately no
     method here for removing a deployment, because Cloudflare declines that
     operation on an active production deployment and a compensation the provider
-    refuses is not a compensation (TD-4).
+    refuses is not a compensation.
 
     ``rollback_payload`` returns the provider's **raw** deployment object and is
     named differently from ``PagesClient.rollback`` for a reason worth stating.
@@ -492,7 +492,7 @@ def _assert_anchor_is_serving(
         )
 
 
-# --- LD12a/LD12c: rollback evidence, captured BEFORE anything is uploaded ----
+# --- rollback evidence, captured BEFORE anything is uploaded ----
 
 
 @dataclass(frozen=True)
@@ -796,7 +796,7 @@ def run_deployment(
     is touched, :class:`PreviewVerificationFailed` when the preview does not
     verify, :class:`ProductionVerificationFailed` when the live domain does not
     (after rolling back), and :class:`FirstRunUncompensated` when that happens on
-    a run with no rollback target (TD-4). Cloudflare's own
+    a run with no rollback target. Cloudflare's own
     :class:`~populus.deploy.cloudflare.PagesUnavailable` propagates untouched:
     "could not ask" is not this module's verdict to convert.
     """
@@ -864,7 +864,7 @@ def run_deployment(
     # --- (4) freeze: from here the uploader only ever sees sealed bytes ------
     snapshot = freeze_tree(source)
     try:
-        # --- (5) preview, verified inventory-wide (R9) -----------------------
+        # --- (5) preview, verified inventory-wide -----------------------
         preview = _upload(upload, snapshot, environment=PREVIEW, branch=preview_branch)
         _await(await_origin, preview.url, stage=PREVIEW)
         preview_result = verify(
@@ -1156,7 +1156,7 @@ class ArtifactExpectations:
     "is what is serving what we built", and an expectation supplied by the same
     caller that supplies the bytes would make that question circular. Tying the
     build id to an attested pointer is a different question with a different
-    trust model, and it belongs to the signer (R13), which re-derives it in
+    trust model, and it belongs to the signer, which re-derives it in
     another workflow under another identity.
     """
 

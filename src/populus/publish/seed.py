@@ -1,4 +1,4 @@
-"""Seed-forward corpus restoration and the identity-based corpus floor (R42/R44).
+"""Seed-forward corpus restoration and the identity-based corpus floor.
 
 Why this module exists
 ----------------------
@@ -460,7 +460,7 @@ def assert_corpus_floor(
             " passing vacuously"
         )
 
-    # Keyed by (source, chamber), never globally. R44's contract is per-pair,
+    # Keyed by (source, chamber), never globally. the floor contract is per-pair,
     # and a global set answers the wrong question: a filing REASSIGNED from one
     # (source, chamber) to another is still "present" globally, so a chamber
     # could be emptied into its sibling and every check would pass. Identity

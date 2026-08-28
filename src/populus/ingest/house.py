@@ -5,8 +5,7 @@ Senate sibling ``populus.ingest.senate`` are the only modules allowed to
 import ``httpx``. Owns discovery (conditional-GET index ZIP), polite
 sequential fetching (floors in code, never config — G6), raw archiving,
 classification/parse/normalize orchestration, the single filing-status
-decision point, atomic loads, the per-run ``ingest_runs`` audit lifecycle
-(R15), completeness reconciliation (R12/G3), and archive-safe reparse (R19).
+decision point, atomic loads, the per-run ``ingest_runs`` audit lifecycle, completeness reconciliation, and archive-safe reparse.
 
 Library code never reads the wall clock: ``now``/``run_id``/``host`` and the
 live-path ``sleep``/``monotonic`` are supplied by the CLI layer.
@@ -74,7 +73,7 @@ DOC_URL_TEMPLATE = (
 
 
 def default_years(today: date) -> list[int]:
-    """Current year, plus the previous year through January (R18/LD1)."""
+    """Current year, plus the previous year through January."""
     if today.month == 1:
         return [today.year, today.year - 1]
     return [today.year]
@@ -90,7 +89,7 @@ class Transport(Protocol):
 class HttpxTransport:
     """The real HTTP client; constructed only by the CLI's live path.
 
-    Routed through the shared bounded transport helper (R9/LD10): decoded
+    Routed through the shared bounded transport helper: decoded
     bodies over the 128 MiB ceiling raise ``ResponseTooLarge`` — a named
     ingest failure — instead of buffering without limit.
     """
@@ -232,7 +231,7 @@ def _index_entries(xml_bytes: bytes, year: int) -> DiscoverResult:
     """``FilingType=P`` entries from one index XML, deduped in index order.
 
     The index is remote input, so it parses through the shared hardened
-    helper (R10/LD11); a refused or malformed document is a named discovery
+    helper; a refused or malformed document is a named discovery
     failure, never a partial tree.
     """
     try:
@@ -277,7 +276,7 @@ def _index_entries(xml_bytes: bytes, year: int) -> DiscoverResult:
     )
 
 
-# --- index-ZIP ceilings (R9/LD10) — generous availability controls, in code --
+# --- index-ZIP ceilings — generous availability controls, in code --
 
 #: Compressed index ZIP cap. The measured live ZIPs are ~2-3 MiB.
 HOUSE_ZIP_CAP = 16 * 1024 * 1024
@@ -380,7 +379,7 @@ def discover(
     fetcher: _PoliteFetcher | None = None,
     cache_dir: Path | None = None,
 ) -> DiscoverResult:
-    """Obtain the year's PTR index: live conditional-GET or cache read (R1/R3).
+    """Obtain the year's PTR index: live conditional-GET or cache read.
 
     Live mode archives the ZIP, extracts ``<YEAR>FD.xml`` beside it, and
     persists the response validators in ``<YEAR>FD.zip.meta.json``; a 304
@@ -388,11 +387,11 @@ def discover(
     ``<DIR>/<YEAR>FD.xml`` directly and skips (with a note) when absent.
 
     The two no-index outcomes are distinct and must not be conflated: a
-    from-cache year with no cached index is an approved **skip** (LD1),
+    from-cache year with no cached index is an approved **skip**,
     whereas every live-discovery miss — non-200, retry exhaustion, 304 with
     no archived XML, an unreadable ZIP, or a ZIP carrying no XML member — is
     a **failure** (``failed=True``). A failed discovery yields no
-    reconciliation, so the run must never report success on it (R1/R15).
+    reconciliation, so the run must never report success on it.
     """
     if cache_dir is not None:
         xml_path = Path(cache_dir) / f"{year}FD.xml"
@@ -434,7 +433,7 @@ def discover(
     xml_bytes, breach = _extract_index_xml(response.content)
     if breach is not None:
         # A ZIP-ceiling breach or malformed archive is a named ingest failure
-        # that writes neither the archive nor extracted bytes (R9/LD10).
+        # that writes neither the archive nor extracted bytes.
         return _discovery_failure(breach)
     assert xml_bytes is not None
     result = _index_entries(xml_bytes, year)
@@ -484,7 +483,7 @@ def evaluate_document(
     and reparse so the status decision cannot fork.
 
     ``parsed`` vs ``partial`` is decided ONLY by
-    :func:`populus.normalize.has_parse_defect` over the emitted rows (R21).
+    :func:`populus.normalize.has_parse_defect` over the emitted rows.
     """
     empty = EvaluatedDocument(
         status="failed",
@@ -568,7 +567,7 @@ def evaluate_document(
     )
 
 
-# --- reconciliation (R12/R17/R20) --------------------------------------------
+# --- reconciliation --------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -741,7 +740,7 @@ def run_house_ingest(
     monotonic: Callable[[], float] | None = None,
 ) -> IngestReport:
     """One ingest invocation: discover → fetch → classify → parse → load →
-    reconcile, per year, under exactly one complete ``ingest_runs`` row (R15).
+    reconcile, per year, under exactly one complete ``ingest_runs`` row.
     """
     conn.execute(
         "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
@@ -771,7 +770,7 @@ def run_house_ingest(
         for year in years:
             # Attached BEFORE processing so a fatal error mid-year still
             # finalizes the audit with the counters for the documents that
-            # actually committed (R15) — the year report is mutated in place.
+            # actually committed — the year report is mutated in place.
             year_report = YearReport(year=year)
             report.years.append(year_report)
             _ingest_year(
@@ -785,7 +784,7 @@ def run_house_ingest(
     except BaseException:
         # The instrumentation is finalized on EVERY exit path, exactly like the
         # audit row: a run that died mid-year still made real fetches, and those
-        # are the figures the operational record needs (R20).
+        # are the figures the operational record needs.
         _finalize()
         conn.execute(
             "UPDATE ingest_runs SET finished_at = ?, status = 'failed',"
@@ -921,7 +920,7 @@ def _ingest_year(
 
 
 def _sidecar_relpath(relpath: str) -> str:
-    """The per-document provenance sidecar beside an archived PDF (LD3)."""
+    """The per-document provenance sidecar beside an archived PDF."""
     return f"{relpath}.fetch-meta.json"
 
 
@@ -1133,7 +1132,7 @@ def _process_docid(
     )
 
 
-# --- reparse (R14/R19) -------------------------------------------------------
+# --- reparse -------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -1156,7 +1155,7 @@ def select_reparse_targets(
 ) -> ReparseSelection:
     """Build every selection branch with the archive filter applied centrally.
 
-    Reparse operates only on filings with an archived document (R19): the one
+    Reparse operates only on filings with an archived document: the one
     ``raw_path is not None`` split below serves default, ``--since``,
     ``--parser-version``, and ``--filing`` alike, so no branch can forget it.
     An explicit ``--filing`` naming a NULL-archive filing is reported as
@@ -1252,7 +1251,7 @@ def reparse_house(
 def format_summary(
     report: IngestReport, *, gate: ParseGateReport | None = None
 ) -> str:
-    """The per-year reconciliation summary the CLI prints (R13).
+    """The per-year reconciliation summary the CLI prints.
 
     With a *gate* (the CLI computes one from the same connection before it
     closes), the summary also carries the per-era e-file gate lines, the per-era

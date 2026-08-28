@@ -137,7 +137,7 @@ MAX_SHARD_BYTES = 25 * 1024 * 1024    # Cloudflare 25 MiB per file
 #: The M1 footprint as MEASURED on 2026-08-17 against the RESTORED corpus, in
 #: the PRODUCTION configuration (no ticker map — `publish.yml` deliberately
 #: points `POPULUS_TICKER_MAP` at a nonexistent path). Restoring per-stock pages
-#: (TD-7) would add the ticker-tree delta back on top of this.
+#: would add the ticker-tree delta back on top of this.
 #:
 #: 12,901 = `congress/` 9,049 + the top-level `tickers/` tree 3,852, which is
 #: this constant's documented meaning, measured.
@@ -207,7 +207,7 @@ FILER_TAIL_SHARDS_RESERVED = 4_096
 FILER_FRAGMENT_TARGET_BYTES = 768 * 1024
 FILER_FRAGMENT_PARTS_MAX = 64
 FILER_FRAGMENT_SIZING_SENTINEL = 99_999
-#: The routing index (LD-9): one versioned file mapping every published tail
+#: The routing index: one versioned file mapping every published tail
 #: CIK to its shard. Counted because "1" omitted is still an omitted class.
 FILER_ROUTING_INDEX_FILES = 1
 #: Payload-free index tombstones, one per superseded transport version: v1 (from
@@ -227,14 +227,14 @@ FILER_V1_TRANSITION_FILES = 2
 #: ``dashboard/test/post/file-budget.test.ts``.
 FILER_SHARD_BYTE_CEILING = 1024 * 1024
 
-# Pagination (plan R13): ONE byte-aware rule. A page closes at whichever binds
+# Pagination: ONE byte-aware rule. A page closes at whichever binds
 # first. There is no second selection rule — `{500, 1000, 2000}` was a
 # contradictory alternative and is deleted.
 PAGE_RECORD_LIMIT = 2_000
 PAGE_BYTE_LIMIT = 2 * 1024 * 1024     # 2 MiB of SERIALIZED bytes, measured
 
 
-# --- file-class accounting (R45) ---------------------------------------------
+# --- file-class accounting ---------------------------------------------
 #: Every top-level class a real `dist/` emits, mapped to the budget term that
 #: accounts for it.
 #:

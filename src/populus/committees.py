@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS committee_jurisdiction (
 def _canonical_date(value: object) -> date | None:
     """A REAL canonical ``YYYY-MM-DD`` calendar date, or None.
 
-    Shape is not enough (review c2r3-F3): ``2026-02-30`` and ``0000-01-01``
+    Shape is not enough: ``2026-02-30`` and ``0000-01-01``
     match the pattern but name no day, and a dated-membership answer for a
     date that never existed is a fabricated fact. ``date.fromisoformat``
     rejects both; it also accepts other ISO-8601 spellings in 3.11+, so the

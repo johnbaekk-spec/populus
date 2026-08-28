@@ -1,4 +1,4 @@
-"""R12/R13/R23/R24 — the curated manager registry: loader and join validation.
+"""The curated manager registry: loader and join validation.
 
 WHY THIS EXISTS. 13F filings carry a filed manager name and nothing else: no
 display name, no classification. Nothing in the pipeline derives either, and
@@ -148,7 +148,7 @@ def load_manager_registry(path: Path | str | None = None) -> ManagerRegistry:
         if not isinstance(raw, dict):
             raise ManagerRegistryError(f"manager registry: row {pos} is not a mapping")
         entry = dict(raw)
-        # F7: NO document-level fallback for `verified_date`. It is the expiry
+        # NO document-level fallback for `verified_date`. It is the expiry
         # clock for THIS row's verification, so inheriting it from a document
         # default would let a row claim a verification date on which nobody
         # verified it. Every row carries its own, and the seed already does.
@@ -228,7 +228,7 @@ class RegistryJoinReport:
     #: the ACTIVE subset of `matched`. Typed views derive from this and only
     #: this: a row marked retired is excluded whether or not its CIK still
     #: joins, because "retired" is a curation decision about the label, not an
-    #: observation about the filer's presence (F8).
+    #: observation about the filer's presence.
     matched_active: tuple[int, ...]
     #: `active` rows that did not join — a BUILD FAILURE, named individually
     unmatched_active: tuple[ManagerRow, ...]
@@ -298,7 +298,7 @@ def join_manager_registry(
 
 
 def enforce_manager_registry_join(report: RegistryJoinReport) -> None:
-    """Fail the build on an undispositioned mismatch. R24's gate.
+    """Fail the build on an undispositioned mismatch.
 
     IMMEDIATE and EXACT-MATCH, with no persisted state: the seed's own `status`
     field carries the disposition, so the rule needs no ledger from a previous

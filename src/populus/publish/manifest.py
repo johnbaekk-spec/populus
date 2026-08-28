@@ -31,10 +31,10 @@ FEED_ARTIFACT = "congress/feed.json"
 STATS_ARTIFACT = "congress/stats.json"
 JOURNAL_ASSET = "journal.json"
 LICENSING_ARTIFACTS = ("DATA-LICENSE.md", "NOTICE", "licenses.json")
-# The mandatory artifact set every congress build must enumerate (R2/R3/R10):
+# The mandatory artifact set every congress build must enumerate:
 # the database, the feed, the freshness stats, and the full licensing set. A
 # manifest missing any of these is a semantically partial build and is refused
-# by validate_manifest before any consumer dereferences it (F6). Per-member /
+# by validate_manifest before any consumer dereferences it. Per-member /
 # per-ticker slices are data-dependent and therefore not in the fixed set.
 REQUIRED_CONGRESS_ARTIFACTS = (
     DB_ARTIFACT,
@@ -114,7 +114,7 @@ _INST_SOURCE_FIELDS = {
 
 
 def validate_inst_source(document: object) -> list[str]:
-    """Strict ``inst_source/v1`` validation; returns every defect (R24).
+    """Strict ``inst_source/v1`` validation; returns every defect.
 
     Exact field set, no extras: the artifact is a published contract, so an
     unknown field is a defect today rather than a compatibility hazard later.
@@ -287,7 +287,7 @@ _SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SCHEMA_VERSION = re.compile(r"^\d+\.\d+$")
 # A canonical GitHub Release download URL — host pinned to github.com, path
 # pinned to <owner>/<repo>/releases/download/data-<build_id>/<asset>. This
-# forbids the "any HTTPS host containing the build tag" class (F5): a crafted
+# forbids the "any HTTPS host containing the build tag" class: a crafted
 # manifest cannot point a token-bearing fetch at an arbitrary origin.
 _RELEASE_URL = re.compile(
     r"^https://github\.com/"
@@ -327,7 +327,7 @@ def parse_release_download_url(url: object) -> dict[str, str] | None:
 
 
 def safe_artifact_name(name: object) -> bool:
-    """Whether *name* conforms to the artifact-name grammar (R29).
+    """Whether *name* conforms to the artifact-name grammar.
 
     Slash-separated segments, each starting with an alphanumeric and drawn
     from ``[A-Za-z0-9._-]`` — which structurally excludes absolute paths,
@@ -571,7 +571,7 @@ def validate_manifest(
             errors.append(f"module {module_name}: not an object")
             continue
         # Only KNOWN modules are admitted: an unknown name has no policy to
-        # validate against, so it is a defect outright (F1) — unknown modules
+        # validate against, so it is a defect outright — unknown modules
         # never pass as well-formed.
         if module_name not in _MODULE_POLICY:
             errors.append(
@@ -647,7 +647,7 @@ def validate_manifest(
         # — a semantically partial build (congress missing the DB, feed, stats,
         # or any licensing artifact; inst missing inst_agg.db) is refused here,
         # before a consumer persists a higher pointer and makes an incomplete
-        # build current (R2/R3/R8/R10).
+        # build current.
         for required in policy["required"]:
             if required not in seen_names:
                 errors.append(
@@ -662,7 +662,7 @@ def pointer_manifest_identity_error(manifest: object, pointer_build_id: str) -> 
     Centralizes the §5.5 rule that a pointer for build A must authenticate
     build A's manifest — a hash-consistent manifest whose ``build_id`` differs
     would cross-bind identities and defeat cache identity, monitor state, and
-    rollback (R10/R17/R24). Applied identically by the client, monitor, and
+    rollback. Applied identically by the client, monitor, and
     verifier.
     """
     if not isinstance(manifest, dict) or "build_id" not in manifest:

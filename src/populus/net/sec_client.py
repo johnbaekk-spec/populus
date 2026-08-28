@@ -2,7 +2,7 @@
 
 One of the modules allowed to import the sanctioned HTTP client. Everything
 that decides *whether and when* a request goes out lives here, in code, with no
-configuration seam (G6): the request-rate floor, the backoff schedule, the
+configuration seam: the request-rate floor, the backoff schedule, the
 circuit-breaker threshold and the per-endpoint-class cache TTLs are module
 constants, and the constructor takes no knob for any of them.
 
@@ -50,7 +50,7 @@ from populus.net import (
     TransportResponse,
 )
 
-# --- politeness policy: in code, never config (G6) ----------------------------
+# --- politeness policy: in code, never config ----------------------------
 
 #: <= 2 req/s, client-wide. SEC publishes this ceiling; Populus sits at it
 #: rather than probing it.
@@ -365,7 +365,7 @@ class SecClient:
             # floor must still space the NEXT attempt even if this call raises
             # (an immediate timeout/exception must never let a retry skip the
             # 0.5 s floor). Recording it only on success (the old behavior) let a
-            # failed flight's retry fire with no spacing. (G6)
+            # failed flight's retry fire with no spacing.
             self._last_request = self._monotonic()
             response = self._transport.get(url, headers=headers)
             status = response.status_code

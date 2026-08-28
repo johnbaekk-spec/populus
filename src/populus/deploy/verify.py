@@ -55,7 +55,7 @@ rewrite would trip), and a response-header allowlist. What remains is declared
 as **TD-10**, and a test pins the non-detection as *not detected* so the limit
 stays a known limit instead of quietly becoming a claim.
 
-**Why an outage is not an accusation** (R17). A transport failure, a 429 or a
+**Why an outage is not an accusation**. A transport failure, a 429 or a
 5xx means no answer was obtained; it is reported as ``unavailable``, exactly as
 ``populus.publish.attestation`` separates ``UNAVAILABLE`` from ``REJECTED`` —
 the same constants are imported here rather than re-declared, so the two cannot
@@ -125,7 +125,7 @@ __all__ = [
     "verify_deployment",
 ]
 
-#: The two machine-readable markers the site emits (R19). Free text in the
+#: The two machine-readable markers the site emits. Free text in the
 #: footer is not a marker; a `<meta>` with these names is.
 MARKER_BUILD_ID = "populus:build_id"
 MARKER_CODE_SHA = "populus:code_sha"
@@ -269,7 +269,7 @@ CACHE_BUST_PARAM = "populus-verify"
 
 _REQUEST_HEADERS = {"cache-control": "no-cache", "pragma": "no-cache"}
 
-#: Statuses that mean *we did not get an answer* (R17), mirroring the
+#: Statuses that mean *we did not get an answer*, mirroring the
 #: attestation fetcher's treatment of 403/429. Everything >= 500 joins them.
 _NO_ANSWER_STATUSES = frozenset({403, 408, 425, 429})
 
@@ -297,7 +297,7 @@ class VerifyInputError(ValueError):
 
 
 class VerifyUnavailable(RuntimeError):
-    """No verdict was reached (R17): transport failure, 429, 5xx.
+    """No verdict was reached: transport failure, 429, 5xx.
 
     Raised internally and converted to an ``unavailable`` result at the top
     level. It is a distinct type for the same reason
@@ -307,7 +307,7 @@ class VerifyUnavailable(RuntimeError):
 
 
 class HeaderMultimap(Protocol):
-    """Occurrence-preserving response headers (R12/LD12c).
+    """Occurrence-preserving response headers.
 
     A plain ``Mapping[str, str]`` cannot *represent* two occurrences of one
     header, so judging a policy through one silently collapses the duplicated/
@@ -372,7 +372,7 @@ class SweepResult:
     """Outcome of the served-entry sweep.
 
     ``files_total`` means SERVED entries only — ``len(files)`` of the validated
-    inventory — never files-plus-controls (LD12b). Controls have no URL, so a
+    inventory — never files-plus-controls. Controls have no URL, so a
     sweep cannot count them; their evidence is the separately named
     control-effect fields on :class:`VerificationResult`.
     """
@@ -430,7 +430,7 @@ class VerificationResult:
         }
 
 
-# --- marker parsing (R19) ----------------------------------------------------
+# --- marker parsing ----------------------------------------------------
 
 _META_TAG = re.compile(r"<meta\b([^>]*?)/?>", re.IGNORECASE | re.DOTALL)
 _ATTRIBUTE = re.compile(
@@ -494,7 +494,7 @@ def check_markers(document: str | bytes, *, build_id: str, code_sha: str) -> lis
     return findings
 
 
-# --- stats.json byte-equality (R3) -------------------------------------------
+# --- stats.json byte-equality -------------------------------------------
 
 
 def check_stats(served: bytes, expected: bytes) -> list[str]:
@@ -514,7 +514,7 @@ def check_stats(served: bytes, expected: bytes) -> list[str]:
     ]
 
 
-# --- the three closure-narrowing provider checks (R16) -----------------------
+# --- the three closure-narrowing provider checks -----------------------
 
 
 def check_no_functions(deployment: Mapping[str, Any]) -> list[str]:
@@ -583,7 +583,7 @@ def normalize_security_header_multimap(
 ) -> dict[str, tuple[str, ...]]:
     """The security headers as an occurrence-preserving normalized multimap.
 
-    One shared normalization (R12/LD12c) used by ordinary verification here and
+    One shared normalization used by ordinary verification here and
     by the rollback observation in :mod:`populus.deploy.orchestrator`, so the
     two cannot disagree about what a policy header "is": names lower-cased,
     surrounding whitespace stripped off each value, **absence = empty tuple**
@@ -682,7 +682,7 @@ def served_path(path: str) -> str:
     return path
 
 
-# --- the inventory-wide sweep (R15) ------------------------------------------
+# --- the inventory-wide sweep ------------------------------------------
 
 
 def sweep_inventory(
@@ -696,7 +696,7 @@ def sweep_inventory(
 ) -> SweepResult:
     """Validate the FULL untrusted envelope, then sweep its served entries.
 
-    The external trust boundary (LD12b): *inventory* is an untrusted mapping
+    The external trust boundary: *inventory* is an untrusted mapping
     and is validated — complete, exact, v2 — through
     :func:`~populus.publish.inventory.validate_inventory_v2` before any fetch.
     A partial one-file envelope, a v1-shaped document, or a missing/unknown
@@ -726,7 +726,7 @@ def _sweep_entries(
 ) -> SweepResult:
     """Fetch every given served entry and compare hash and length.
 
-    **Package-internal, and typed on purpose** (LD12b): *entries* is a
+    **Package-internal, and typed on purpose**: *entries* is a
     ``Sequence[InventoryFile]`` taken from a :class:`ValidatedInventoryV2` —
     never an inventory-shaped mapping, which this function deliberately cannot
     parse. That is what lets :func:`populus.deploy.record._confirm_domain`
@@ -805,7 +805,7 @@ def _sweep_entries(
     )
 
 
-# --- the whole verification (R9/R11/R15/R16/R17/R19) -------------------------
+# --- the whole verification -------------------------
 
 
 def verify_deployment(
@@ -826,13 +826,13 @@ def verify_deployment(
 ) -> VerificationResult:
     """Verify what *base_url* serves against the inventory and the markers.
 
-    One routine for both live checks: the preview origin (R9) and the custom
-    domain (R11) differ only in *base_url*. That is deliberate — §12.1 step 4
+    One routine for both live checks: the preview origin and the custom
+    domain differ only in *base_url*. That is deliberate — §12.1 step 4
     is amended to run this same inventory-wide sweep on the preview, because
     TD-4's bound ("the identical bytes already passed the preview sweep") is
     vacuous if the preview only read markers.
 
-    The FULL untrusted envelope is validated first (LD12b): a v1-shaped,
+    The FULL untrusted envelope is validated first: a v1-shaped,
     partial, or control-less document raises :class:`VerifyInputError` before
     any network I/O. The verifier never fetches ``_headers`` as an asset — it
     still requires ``/_headers`` to answer 404 — and proves the control's exact
@@ -1045,7 +1045,7 @@ def _url(base_url: str, path: str, cache_bust: str) -> str:
 def _fetch(client: HttpGetter, url: str) -> HttpResponse:
     """One cache-busted fetch with redirects disabled.
 
-    Anything the client raises is an outage, not a verdict (R17) — except
+    Anything the client raises is an outage, not a verdict — except
     ``AssertionError``, which is what the suite's no-network guard raises. That
     one is re-raised so an accidental real fetch fails the test loudly instead
     of being laundered into a tidy ``unavailable``.

@@ -8,7 +8,7 @@ Two sources, both offline and injectable — nothing here reaches the network:
   ``security_identifiers`` and link securities to entities through an
   **as-of** symbol lookup performed independently per observation.
 
-Accounting is three structurally separate families (DC5/G3), each field
+Accounting is three structurally separate families, each field
 carrying a unit, an observation phase, and a first-run -> replay rule:
 
 ``Disposition``   PARSE phase. Mutually exclusive source-row buckets that sum
@@ -88,7 +88,7 @@ class Disposition:
     """PARSE phase. Mutually exclusive buckets that sum to ``rows_read``.
 
     Every source row lands in exactly one bucket, so nothing is silently
-    dropped (G3) and no row is counted twice. The sum is asserted at
+    dropped and no row is counted twice. The sum is asserted at
     construction: an accounting bug fails loudly at the parse boundary rather
     than becoming a wrong number in a summary.
     """
@@ -164,7 +164,7 @@ class Mutations:
     #: inst_holdings rows repointed as-of their filing period when a declared split
     #: recut a CUSIP's ownership. Zero on replay: no split, no
     #: repoint. Distinct from the rename path's blanket move — a split needs
-    #: per-holding, period-aware resolution (G14).
+    #: per-holding, period-aware resolution.
     holdings_repointed_on_split: int = 0
     securities_flagged_disputed: int = 0
     securities_cleared_by_continuity: int = 0
@@ -174,7 +174,7 @@ class Mutations:
     list_intervals_cut: int = 0
     list_intervals_moved: int = 0
     list_intervals_metadata_updated: int = 0
-    #: security_list_seed_ledger writes (F6): one per quarter seeded (even a
+    #: security_list_seed_ledger writes: one per quarter seeded (even a
     #: zero-record quarter), and one removed per replace_quarter supersession.
     #: Zero on a same-sha replay (the ledger row already matches).
     list_seed_ledger_written: int = 0
@@ -350,7 +350,7 @@ class FtdBootstrapReport:
     mutations: Mutations
     state: RegistryState
     #: (id_type, value, issuer name) for every identifier awaiting review —
-    #: counted AND listed, never dropped (G3).
+    #: counted AND listed, never dropped.
     disputed: tuple[tuple[str, str, str], ...] = ()
 
 
@@ -369,7 +369,7 @@ class BootstrapReport:
         return self.status == "ok"
 
 
-# --- company_tickers.json (R3, DC1) -------------------------------------------
+# --- company_tickers.json -------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -687,7 +687,7 @@ def _ticker_registry_state(
     return state
 
 
-# --- SEC fails-to-deliver (R4, DC2, DC3, DC4, R18) ----------------------------
+# --- SEC fails-to-deliver ----------------------------
 
 
 class FtdFormatError(ValueError):
@@ -696,7 +696,7 @@ class FtdFormatError(ValueError):
 
 @dataclass(frozen=True)
 class FtdObservation:
-    """One point-in-time settlement-date row. NOT an interval (DC2/G14)."""
+    """One point-in-time settlement-date row. NOT an interval."""
 
     settlement_date: str  # ISO
     id_type: str
@@ -1031,7 +1031,7 @@ def _ftd_registry_state(
     return state
 
 
-# --- the run: one audit row, one data transaction (R7) ------------------------
+# --- the run: one audit row, one data transaction ------------------------
 
 
 def _finalize_run_ok(
