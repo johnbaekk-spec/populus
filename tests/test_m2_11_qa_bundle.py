@@ -3867,6 +3867,7 @@ def test_release_hygiene_f1_locked_matrix_case(
         assert subprocess.run(["zsh", "-c", broken], cwd=repo, env=deploy_env, check=False).returncode != 0
 
 
+@requires_zsh  # the matrix it audits carries the same marker: no zsh, no runs to count
 def test_release_hygiene_f1_all_locked_ids_executed() -> None:
     assert len(EXPECTED_RELEASE_F1_REFUSAL_IDS) == 136
     assert len(EXPECTED_RELEASE_F1_HAPPY_IDS) == 9
