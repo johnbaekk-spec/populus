@@ -18,7 +18,7 @@ import {
   congressRankingSection,
   rankingRootHtml,
   type BuildStamps,
-} from "../src/lib/ui.ts";
+} from "../src/lib/ui/index.ts";
 import { COMPACT_ROWS, type TxnRow, type RenderCtx } from "../src/lib/format.ts";
 
 const NOW = "2026-08-12";

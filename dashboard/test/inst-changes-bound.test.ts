@@ -23,7 +23,7 @@ import {
   utf8ByteLength,
   type QoqDeltaLike,
 } from "../src/lib/holdings.ts";
-import { changesTableHtml, filerPeriodSectionHtml } from "../src/lib/ui.ts";
+import { changesTableHtml, filerPeriodSectionHtml } from "../src/lib/ui/index.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
 
 /** A delta row shaped like the producer's, sized so a few thousand exceed the

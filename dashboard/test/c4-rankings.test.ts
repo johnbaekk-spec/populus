@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { leadersRollup, congressTickersRollup } from "../src/lib/derive.ts";
-import { congressRankingSection, CONGRESS_ROOTS, type BuildStamps } from "../src/lib/ui.ts";
+import { congressRankingSection, CONGRESS_ROOTS, type BuildStamps } from "../src/lib/ui/index.ts";
 import type { TxnRow, RenderCtx } from "../src/lib/format.ts";
 
 const NOW = "2026-08-12";

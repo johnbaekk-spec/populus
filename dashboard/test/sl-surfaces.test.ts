@@ -1,5 +1,4 @@
 /* RUN SURFACES-LEGIBILITY — the surface-level changes (SL-R1, SL-R9, SL-R10,
-import { readFileSync } from "node:fs";
    SL-R11, SL-R12, SL-R13, SL-R14, SL-R15, SL-R29).
 
    `sl-` prefix per Constraint 9: this run's R-numbers collide with earlier
@@ -7,7 +6,7 @@ import { readFileSync } from "node:fs";
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 import type { TxnRow } from "../src/lib/format.ts";
 
@@ -19,6 +18,17 @@ const methodology = readFileSync(
   new URL("../src/pages/methodology/index.astro", import.meta.url),
   "utf8",
 );
+
+
+/* Slice 6 split ui.ts into src/lib/ui/*.ts. Source-scanning contracts below
+   read the CONCATENATION of every domain module so they stay whole-surface. */
+const UI_DIR = new URL("../src/lib/ui/", import.meta.url);
+const uiModuleSource = (): string =>
+  readdirSync(UI_DIR)
+    .filter((n) => n.endsWith(".ts"))
+    .sort()
+    .map((n) => readFileSync(new URL(n, UI_DIR), "utf8"))
+    .join("\n");
 
 test("SL-R1: the /congress/ head drops its caveat line for a stamp plus FOUR deep methodology links", () => {
   assert.ok(!congressPage.includes('id="congress-caveat"'), "the caveat line is gone");
@@ -44,11 +54,11 @@ test("SL-R1: neither claim the caveat line carried depends on following a link",
 });
 
 test("SL-R9: no `.panel-note` prints a build id, and the footer copy is untouched", async () => {
-  const { congressRankingSection, addsSectionHtml } = await import("../src/lib/ui.ts");
+  const { congressRankingSection, addsSectionHtml } = await import("../src/lib/ui/index.ts");
   assert.equal(typeof congressRankingSection, "function");
   assert.equal(typeof addsSectionHtml, "function");
 
-  const ui = readFileSync(new URL("../src/lib/ui.ts", import.meta.url), "utf8");
+  const ui = uiModuleSource();
   // Every remaining `· build ` in this module must be OUTSIDE a `.panel-note`.
   // There is exactly one, the signals page's `.si-asof`, which this run does
   // not own and whose bytes are therefore unchanged.
@@ -98,7 +108,7 @@ test("SL-R9: the client no longer reconstructs a build id out of rendered text",
 
 /** Every surface whose terminus R10 deleted, rendered as the server ships it. */
 async function boundedSurfaces(): Promise<{ name: string; html: string }[]> {
-  const { congressRankingSection, addsSectionHtml, CONGRESS_ROOTS } = await import("../src/lib/ui.ts");
+  const { congressRankingSection, addsSectionHtml, CONGRESS_ROOTS } = await import("../src/lib/ui/index.ts");
   const { leadersRollup, congressTickersRollup } = await import("../src/lib/derive.ts");
   const { activityFeedHtml, paginateActivity } = await import("../src/lib/activity.ts");
 
@@ -286,7 +296,7 @@ test("SL-R10 (c): the ranking bound is stated BEFORE the 22 MB feed arrives, scr
      server-rendered rows. The bound has to be stated anyway, and by the server,
      because nothing else is going to state it in this window. */
   const { installDom } = await import("./lib/mini-dom.ts");
-  const { CONGRESS_ROOTS } = await import("../src/lib/ui.ts");
+  const { CONGRESS_ROOTS } = await import("../src/lib/ui/index.ts");
   const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
 
   const section = (await boundedSurfaces()).find((s) => s.name === "congress ranking (members)")!.html;
@@ -394,15 +404,18 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
      has 13 production call sites, the five beside a `compactDisclosure` are
      gone, the eight standalone ones stand, `terminusRow` itself stays, and
      `syncTerminusFor` has no callers and no definition. */
+  // Slice 6 split ui.ts into src/lib/ui/*.ts — the five ui call sites now live
+  // in ticker.ts (2: inst section + holders cap), institutional.ts (2: changes
+  // bound + filer period terminus) and signals.ts (1: render bound).
   const files = {
-    "../src/lib/ui.ts": 5,
+    "ui-modules": 5,
     "../src/lib/activity.ts": 1,
     "../src/lib/holdings.ts": 2,
     "../src/pages/institutional/index.astro": 0,
   } as const;
   let total = 0;
   for (const [f, want] of Object.entries(files)) {
-    const src = readFileSync(new URL(f, import.meta.url), "utf8");
+    const src = f === "ui-modules" ? uiModuleSource() : readFileSync(new URL(f, import.meta.url), "utf8");
     const calls = (src.match(/terminusRow\(\{/g) ?? []).length;
     assert.equal(calls, want, `${f}: ${calls} terminusRow call sites, expected ${want}`);
     total += calls;
@@ -422,7 +435,7 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
 /* ------------------------------------------------------ T7 / SL-R11 R12 LD4 */
 
 test("SL-R11/LD4: the visible suffix is the SUMMED ROW TOTAL, never a count of categories", async () => {
-  const { rankingWindowHtml, rankingExclusions, rankingExcludedRows } = await import("../src/lib/ui.ts");
+  const { rankingWindowHtml, rankingExclusions, rankingExcludedRows } = await import("../src/lib/ui/index.ts");
   const rollup = {
     range: "12m", basis: "traded", rows: [],
     dateAnomalies: 72, undated: 212, noTickerRows: 1412,
@@ -441,7 +454,7 @@ test("SL-R11/LD4: the visible suffix is the SUMMED ROW TOTAL, never a count of c
 });
 
 test("SL-R11/R12: the suffix total and the note body are produced by ONE pass and cannot disagree", async () => {
-  const { rankingWindowHtml, rankingExclusions, rankingExcludedRows } = await import("../src/lib/ui.ts");
+  const { rankingWindowHtml, rankingExclusions, rankingExcludedRows } = await import("../src/lib/ui/index.ts");
   // Every combination of present/absent categories, on both kinds. A stale
   // count inside a hover is worse than one on the page: nobody sees it go
   // wrong, so the agreement is asserted rather than reasoned about.
@@ -471,7 +484,7 @@ test("SL-R11/R12: the suffix total and the note body are produced by ONE pass an
 });
 
 test("SL-R11: the deleted caveat root is gone from BOTH the renderer and its client", async () => {
-  const ui = readFileSync(new URL("../src/lib/ui.ts", import.meta.url), "utf8");
+  const ui = uiModuleSource();
   const client = readFileSync(new URL("../src/scripts/congress-sections.ts", import.meta.url), "utf8");
   assert.ok(!ui.includes("-caveat\">"), "no `#<sectionId>-caveat` root is rendered");
   assert.ok(!ui.includes("rankingCaveatHtml"), "the retired renderer has no definition left");
@@ -507,14 +520,14 @@ test("SL-R13: the pending indicator is an indicator, NOT a queue", async () => {
   assert.ok(/recomputeMomentumIfChanged\(\);/.test(src), "the existing apply mechanism is untouched");
 
   // The node ships in the SSR bytes: a client cannot reveal what was never rendered.
-  const { congressRankingSection } = await import("../src/lib/ui.ts");
+  const { congressRankingSection } = await import("../src/lib/ui/index.ts");
   assert.equal(typeof congressRankingSection, "function");
-  const ui = readFileSync(new URL("../src/lib/ui.ts", import.meta.url), "utf8");
+  const ui = uiModuleSource();
   assert.ok(/id="\$\{esc\(opts\.sectionId\)\}-pending" role="status" aria-live="polite" hidden/.test(ui));
 });
 
 test("SL-R14/LD2: a zero-rankable window states the lag and prices both switches", async () => {
-  const { emptyWindowHtml } = await import("../src/lib/ui.ts");
+  const { emptyWindowHtml } = await import("../src/lib/ui/index.ts");
   const html = emptyWindowHtml("7d", "traded", { otherBasis: 58, wider: { range: "30d", n: 123 } }, "tickers");
   assert.match(html, /No tickers disclose a trade date inside this 7d window/);
   assert.match(html, /45 days after the/, "the lag is NAMED, which is why the window is honestly empty");
@@ -523,7 +536,7 @@ test("SL-R14/LD2: a zero-rankable window states the lag and prices both switches
 });
 
 test("SL-R14: the TERMINAL branches — no wider range, and doubly empty", async () => {
-  const { emptyWindowHtml } = await import("../src/lib/ui.ts");
+  const { emptyWindowHtml } = await import("../src/lib/ui/index.ts");
 
   // 12m: there is no wider range, so only the other basis is named.
   const atWidest = emptyWindowHtml("12m", "traded", { otherBasis: 7626, wider: null }, "members");
@@ -542,7 +555,7 @@ test("SL-R14: the TERMINAL branches — no wider range, and doubly empty", async
 });
 
 test("SL-R14: every range on both bases renders the block, and its counts come from the same rollups the control paints", async () => {
-  const { rankingAlternatives, CONGRESS_RANGES, emptyWindowHtml } = await import("../src/lib/ui.ts");
+  const { rankingAlternatives, CONGRESS_RANGES, emptyWindowHtml } = await import("../src/lib/ui/index.ts");
   // Zero-result fixtures at EVERY range on BOTH bases, not only the
   // `7d · traded` specimen the plan measured.
   const rows: never[] = [];
@@ -608,7 +621,7 @@ function undisclosedTxn(over: Partial<TxnRow> = {}): TxnRow {
 }
 
 test("SL-R14 F2: an alternative that is NON-EMPTY but wholly unrankable counts 0, on BOTH kinds", async () => {
-  const { rankingAlternatives, CONGRESS_RANGES, emptyWindowHtml } = await import("../src/lib/ui.ts");
+  const { rankingAlternatives, CONGRESS_RANGES, emptyWindowHtml } = await import("../src/lib/ui/index.ts");
   const { congressTickersRollup, leadersRollup } = await import("../src/lib/derive.ts");
 
   // Two members, two tickers — so neither rollup is a single-group special
@@ -663,7 +676,7 @@ test("SL-R14 F2: an alternative that is NON-EMPTY but wholly unrankable counts 0
 });
 
 test("SL-R14 F2: the same fixture WITH one rankable row does offer the switch — the fixture is not inert", async () => {
-  const { rankingAlternatives, emptyWindowHtml } = await import("../src/lib/ui.ts");
+  const { rankingAlternatives, emptyWindowHtml } = await import("../src/lib/ui/index.ts");
   // A control: one disclosed row, filed inside the window but traded outside
   // it, so the `filed` basis can rank it and the `traded` basis cannot. If the
   // negative test above passed because the fixture reaches nothing at all,
@@ -690,7 +703,7 @@ test("SL-R14 F2: the same fixture WITH one rankable row does offer the switch �
 /* ----------------------------------------- T9 / SL-R16 R17 R18 (LD8 in css-fold) */
 
 test("SL-R16: the adds control is ONE labelled row, and the island's hooks are unchanged", async () => {
-  const { addsSectionHtml } = await import("../src/lib/ui.ts");
+  const { addsSectionHtml } = await import("../src/lib/ui/index.ts");
   const html = addsSectionHtml(
     {
       period: "2026-03-31", generated_at: "2026-08-12", rows: [],

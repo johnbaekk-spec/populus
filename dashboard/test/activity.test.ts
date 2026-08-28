@@ -16,7 +16,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -647,7 +647,13 @@ test("the §5 data_note is ONE text: every substantive qualifier in the Python c
 test("only ONE block on a filer page is titled with the §5 note's heading", () => {
   /* Two same-titled blocks with different wording on one page is the reader-
      facing form of M6: there is no way to tell which is authoritative. */
-  const uiSrc = readFileSync(path.join(REPO_ROOT, "dashboard", "src", "lib", "ui.ts"), "utf-8");
+  // Slice 6 split ui.ts into src/lib/ui/*.ts; the contract is whole-surface.
+  const uiDir = path.join(REPO_ROOT, "dashboard", "src", "lib", "ui");
+  const uiSrc = readdirSync(uiDir)
+    .filter((n) => n.endsWith(".ts"))
+    .sort()
+    .map((n) => readFileSync(path.join(uiDir, n), "utf-8"))
+    .join("\n");
   assert.ok(
     !/What a 13F is\s*\u2014\s*and is not\./.test(uiSrc),
     "ui.ts restates the §5 data_note heading — it must LINK to the canonical box",

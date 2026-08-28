@@ -21,7 +21,7 @@ import {
   NON_ALLEGATION_CAVEAT,
   type BuildStamps,
   type MemberV2Deps,
-} from "../src/lib/ui.ts";
+} from "../src/lib/ui/index.ts";
 import { statTiles, noteId, esc, type RenderCtx, type TxnRow } from "../src/lib/format.ts";
 import { quarterlyFlow, type MemberEntity } from "../src/lib/derive.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";

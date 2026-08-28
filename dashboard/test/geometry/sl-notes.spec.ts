@@ -364,7 +364,7 @@ test("CODE-REVIEW F9: REAL member and filer renderer output meets 44px at every 
      entirely. Renderer-backed fixture pages give the real markup and the real
      stylesheet without expanding the production build, which is what the
      finding asked for. */
-  const { filerBody, memberV2Sections } = await import("../../src/lib/ui.ts");
+  const { filerBody, memberV2Sections } = await import("../../src/lib/ui/index.ts");
   const css = readFileSync(new URL("../../src/styles/global.css", import.meta.url), "utf8");
 
   const CONC = {

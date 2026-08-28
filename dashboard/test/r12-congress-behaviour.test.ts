@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { installDom, type MiniElement } from "./lib/mini-dom.ts";
-import { CONGRESS_ROOTS, congressRankingSection, type BuildStamps } from "../src/lib/ui.ts";
+import { CONGRESS_ROOTS, congressRankingSection, type BuildStamps } from "../src/lib/ui/index.ts";
 import { congressTickersRollup, leadersRollup } from "../src/lib/derive.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 import { initCongressSections } from "../src/scripts/congress-sections.ts";

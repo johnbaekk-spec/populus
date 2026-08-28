@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { assetNameCell } from "../src/lib/format.ts";
-import { changesTableHtml } from "../src/lib/ui.ts";
+import { changesTableHtml } from "../src/lib/ui/index.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..");
 /* `grep -a` discipline, in Node form: read as bytes-to-text and never assume

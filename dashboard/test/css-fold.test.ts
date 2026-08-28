@@ -33,7 +33,7 @@ import {
   breadcrumb,
   congressRankingSection,
   addsSectionHtml,
-} from "../src/lib/ui.ts";
+} from "../src/lib/ui/index.ts";
 import { buildInstIndexRow, instIndexRowHtml } from "../src/lib/inst-index.ts";
 import { renderResults, renderPreQuery } from "../src/scripts/search-client.ts";
 import { loadWatchStore } from "../src/scripts/entity-client.ts";

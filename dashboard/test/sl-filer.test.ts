@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { filerBody, filerTiles } from "../src/lib/ui.ts";
+import { filerBody, filerTiles } from "../src/lib/ui/index.ts";
 import { noteId, esc } from "../src/lib/format.ts";
 import { INSTITUTIONAL_DATA_NOTE_CLAUSES } from "../src/lib/holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow } from "../src/lib/inst.ts";

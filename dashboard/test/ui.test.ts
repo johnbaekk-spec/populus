@@ -28,7 +28,7 @@ import {
   breadcrumb,
   QOQ_FOOTNOTES,
   type BuildStamps,
-} from "../src/lib/ui.ts";
+} from "../src/lib/ui/index.ts";
 import { quarterlyFlow, sumRanges } from "../src/lib/derive.ts";
 import type { MemberEntity } from "../src/lib/derive.ts";
 import type { QoqDeltaRow, TopHolderRow } from "../src/lib/inst.ts";

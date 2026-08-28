@@ -4,7 +4,7 @@ import { pathSafeTicker } from "../../../lib/derive.ts";
 // quarterly ribbon, members-disclosing table, full paginated disclosures.
 import Base from "../../../layouts/Base.astro";
 import { getBuildData } from "../../../lib/data";
-import { congressTickerBody, type BuildStamps } from "../../../lib/ui";
+import { congressTickerBody, type BuildStamps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
 
 export function getStaticPaths() {

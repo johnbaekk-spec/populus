@@ -19,7 +19,7 @@ import {
   congressRankingSection,
   entityTxnTable,
   type BuildStamps,
-} from "../src/lib/ui.ts";
+} from "../src/lib/ui/index.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 import { leadersRollup } from "../src/lib/derive.ts";
 import { instIndexBodyHtml } from "../src/scripts/inst-index-client.ts";
@@ -738,10 +738,11 @@ test("F14: the adds endpoint path has exactly ONE builder, and every consumer us
   assert.equal(addsPayloadHref("2026-03-31", "new"), "/institutional/data/adds/2026-03-31.new.v1.json");
 
   const ROUTE = /["'`][^"'`]*institutional\/data\/adds\//;
-  for (const [dir, file] of [
-    ["scripts", "inst-index-client.ts"],
-    ["lib", "ui.ts"],
-  ] as const) {
+  // Slice 6 split ui.ts into src/lib/ui/*.ts; the whole directory is scanned.
+  const uiFiles = readdirSync(path.resolve(import.meta.dirname, "..", "src", "lib", "ui"))
+    .filter((n) => n.endsWith(".ts"))
+    .map((n) => ["lib/ui", n] as const);
+  for (const [dir, file] of [["scripts", "inst-index-client.ts"] as const, ...uiFiles]) {
     const src = readFileSync(
       path.resolve(import.meta.dirname, "..", "src", dir, file),
       "latin1",

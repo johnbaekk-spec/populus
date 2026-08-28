@@ -38,7 +38,7 @@ import {
   filerPeriodSectionHtml,
   holdersTableHtml,
   type BuildStamps,
-} from "../lib/ui.ts";
+} from "../lib/ui/index.ts";
 import {
   institutionalDataNoteHtml,
   projectionAbsentHtml,

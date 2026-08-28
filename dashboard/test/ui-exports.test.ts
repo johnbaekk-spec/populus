@@ -96,9 +96,9 @@ test("ui entry exports the 10 reconciled type-only symbols (61 total)", () => {
     : path.join(lib, "ui.ts");
   const src = readFileSync(entry, "utf-8");
   for (const t of TYPE_EXPORTS) {
-    const declared = new RegExp(
-      `export (interface ${t}\\b|type ${t}\\b)|export type \\{[^}]*\\b${t}\\b`,
-    );
+    // matches a direct declaration (`export interface X` / `export type X`)
+    // or a `type X` entry inside an export/re-export block
+    const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
   assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 61, "the reconciled surface is 61");
