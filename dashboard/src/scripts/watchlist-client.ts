@@ -49,7 +49,7 @@ export function initWatchlist(): void {
   let newOnly = false;
   let txns: TxnRow[] = [];
   let paper: PaperRow[] = [];
-  // Review F5: the mark-seen action must not exist before a VALIDATED dataset
+  // The mark-seen action must not exist before a VALIDATED dataset
   // is on hand — an early click would advance the cursor past unseen filings.
   let loaded = false;
   if (markBtn) markBtn.disabled = true;
@@ -84,7 +84,7 @@ export function initWatchlist(): void {
   }
 
   /** Paper filings for watched MEMBERS (a paper filing discloses no ticker).
-      Review F4: a watched member's latest filing can be paper-only; dropping
+      A watched member's latest filing can be paper-only; dropping
       them made the latest date stale and hid needs-OCR filings entirely. */
   function watchedPaper(): PaperRow[] {
     return paper.filter((p) => p.bioguide !== null && store.members.has(p.bioguide));
@@ -167,7 +167,7 @@ export function initWatchlist(): void {
       return r.json();
     })
     .then((d) => {
-      // Review F3: classify before decoding — a stale v1 body must be refused,
+      // Classify before decoding — a stale v1 body must be refused,
       // never read with v2 column offsets.
       const cls = classifyDataset(d);
       if (cls.outcome !== "ok") {
@@ -202,7 +202,7 @@ export function initWatchlist(): void {
     render();
   });
   markBtn?.addEventListener("click", () => {
-    // Review F5: only a VERIFIED dataset high-water mark ever becomes the
+    // Only a VERIFIED dataset high-water mark ever becomes the
     // cursor — never the wall clock, and never before the dataset loads.
     if (!loaded) return;
     const maxFiled = [txns[0]?.filed, paper[0]?.filed]

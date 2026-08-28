@@ -1,4 +1,4 @@
-"""Senate eFD PTR ingest pipeline (ARCHITECTURE.md §9.1/§9.2; RUN 3).
+"""Senate eFD PTR ingest pipeline (ARCHITECTURE.md §9.1/§9.2).
 
 One of the two Populus modules that talk to the network — this one and its
 House sibling ``populus.ingest.house`` are the only modules allowed to
@@ -7,14 +7,14 @@ agreement POST → session cookie), polite sequential fetching with the G6
 floors in code (never config), the consecutive-403 circuit breaker, index
 discovery and archiving, raw page archiving, parse/normalize orchestration
 through the single status-decision point, the §9.5 conservative amendment
-linkage, completeness reconciliation (G3), the per-run ``ingest_runs``
+linkage, completeness reconciliation, the per-run ``ingest_runs``
 audit lifecycle, and archive-safe reparse (§9.3).
 
 Library code never reads the wall clock: ``now``/``run_id``/``host`` and
 the live-path ``sleep``/``monotonic``/``jitter`` are supplied by the CLI
 layer. All session state (cookies, spacing, the breaker) lives here in
 injectable, offline-testable code — the real httpx transport is stateless
-and never follows redirects (LD13/R4).
+and never follows redirects.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ DOC_URL_TEMPLATE = f"{EFD_BASE}/search/view/{{kind}}/{{uuid}}/"
 
 # The index is remote input: a UUID reaches both a URL and an archive path,
 # so hrefs are validated at the parse boundary before either is built. A
-# rejected row is counted and surfaced (G3) and makes the run not-ok.
+# rejected row is counted and surfaced and makes the run not-ok.
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 _UUID_RE = re.compile(_UUID)
 _HREF_RE = re.compile(rf"^/search/view/(ptr|paper)/({_UUID})/$")
@@ -97,7 +97,7 @@ def _mdy_iso(raw: str) -> str:
     return date(year, month, day).isoformat()
 
 
-# --- transport, cookie jar, polite session (R2/R3/R4) -------------------------
+# --- transport, cookie jar, polite session -------------------------
 
 
 class SenateTransport(Protocol):
@@ -127,7 +127,7 @@ class HttpxSenateTransport:
 
     Stateless on purpose: redirects are not followed and no client-side
     cookie store exists — the library's :class:`_CookieJar` owns session
-    state so the whole handshake is provable offline (LD13/R4).
+    state so the whole handshake is provable offline.
     """
 
     def __init__(self, *, transport: object | None = None) -> None:
@@ -136,7 +136,7 @@ class HttpxSenateTransport:
         self._transport = transport
 
     def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
-        # R9/LD10: the shared bounded helper enforces the 128 MiB decoded-body
+        # The shared bounded helper enforces the 128 MiB decoded-body
         # ceiling and preserves multiple Set-Cookie values (newline-joined) for
         # the library-owned jar. ResponseTooLarge propagates as a named
         # failure; transport-level httpx errors keep their TransportFailure
@@ -170,7 +170,7 @@ class HttpxSenateTransport:
 class _CookieJar:
     """Minimal library-owned cookie store: name=value pairs, last write wins.
 
-    Single host, no domain/path/expiry semantics (declared debt TD-R3c) —
+    Single host, no domain/path/expiry semantics (declared debt) —
     eFD sets simple session cookies on one host, and owning the jar here
     keeps session behavior fully testable offline. Multiple ``Set-Cookie``
     values arrive newline-joined from the transport (see
@@ -225,12 +225,12 @@ class _PoliteSession:
     backoff per ``BACKOFF_SCHEDULE`` on 429 AND 5xx. A 403 is never retried
     or backed off: the consecutive-403 counter spans every fetch in the run,
     resets on any non-403 response, and at ``CIRCUIT_403_THRESHOLD`` raises
-    :class:`CircuitOpenError` naming the failing URL (LD6) — a CSRF or
+    :class:`CircuitOpenError` naming the failing URL — a CSRF or
     protocol regression is then diagnosable instead of being misread as
     bot-blocking. Attaches the identifying UA and the session cookie on
     every fetch.
 
-    Counts its own work (RUN M1-B, R20/LD13) in the same shape as the House
+    Counts its own work in the same shape as the House
     fetcher and :class:`populus.inst_bulk.CountingTransport`: ``attempts`` is
     every request that left this process (retries included), ``status_counts``
     the answered status mix, ``retries`` the 429/5xx answers that actually
@@ -343,7 +343,7 @@ class _PoliteSession:
             self._sleep(spacing - elapsed)
 
 
-# --- discovery (R1/R5/R8/R9) --------------------------------------------------
+# --- discovery --------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -354,7 +354,7 @@ class SenateIndexEntry:
     title: str
     title_date: str | None  # ISO report date from the link title
     filer_name_raw: str
-    filed_date: str  # ISO, from the index row (R8)
+    filed_date: str  # ISO, from the index row
 
     @property
     def filing_kind(self) -> str:
@@ -485,7 +485,7 @@ def _index_post_body(
 ) -> dict[str, str]:
     """The DataTables search body.
 
-    ``submitted_end_date`` is the RUN M1-B window seam (R14) and is
+    ``submitted_end_date`` is the historical-window seam and is
     **default-inert**: omitted, the body is byte-identical to the open-ended
     "start → forever" request the incremental job has always sent. eFD exposes
     one continuous submitted-date window, so bounding a historical era means
@@ -527,8 +527,8 @@ def discover(
     is archived to ``raw_root/ptr-index.json`` mirroring the cache layout.
 
     From-cache mode reads ``<cache>/ptr-index.json``; a missing or
-    unparseable cache index is a **failure**, not a skip (LD11): the Senate
-    has exactly one index and nothing can reconcile without it (G3).
+    unparseable cache index is a **failure**, not a skip: the Senate
+    has exactly one index and nothing can reconcile without it.
     """
     if cache_dir is not None:
         index_path = Path(cache_dir) / "ptr-index.json"
@@ -714,7 +714,7 @@ def evaluate_page(
     )
 
 
-# --- reconciliation (R13/G3) --------------------------------------------------
+# --- reconciliation --------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -767,7 +767,7 @@ def reconcile(
     )
 
 
-# --- ingest run (R7/R9/R10/R13/R18) -------------------------------------------
+# --- ingest run -------------------------------------------
 
 
 @dataclass
@@ -789,11 +789,11 @@ class SenateIngestReport:
     failure_kinds: Counter = field(default_factory=Counter)
     circuit_open_url: str | None = None
     reconciliation: Reconciliation | None = None
-    # R20: what the polite session actually did, and the monotonic wall-clock
+    # What the polite session actually did, and the monotonic wall-clock
     # of the run. `elapsed_s` is None in cache mode, where no clock is injected.
     fetch: FetchMetrics = field(default_factory=FetchMetrics)
     elapsed_s: float | None = None
-    # R14: the exact window this run requested (None = the derived watermark
+    # The exact window this run requested (None = the derived watermark
     # start / open end), recorded so the operational artifact can state which
     # era the figures describe.
     window: tuple[str, str | None] | None = None
@@ -817,7 +817,7 @@ class SenateIngestReport:
         tripped. A failed discovery or a tripped breaker yields no complete
         reconciliation, so counting failed/unaccounted alone would report
         success for a run that ingested nothing — the false-success mode
-        this guards (G3).
+        this guards.
         """
         if self.discovery_failed or self.circuit_open_url is not None:
             return False
@@ -872,7 +872,7 @@ def run_senate_ingest(
     unattempted UUIDs surface as unaccounted; exit 1).
 
     ``submitted_start_date`` / ``submitted_end_date`` (MM/DD/YYYY) bound the
-    requested window (R14). Both default to today's exact behaviour: the start
+    requested window. Both default to today's exact behaviour: the start
     derived from the store's watermark by :func:`_submitted_start_date`, and no
     end bound at all. Because that derived start is
     ``MAX(filed_date) − 90 days``, inserting OLDER filings can never regress it
@@ -964,7 +964,7 @@ def _ingest(
     fatal error still finalizes the audit with the true committed counters.
 
     *session_box* receives the constructed session so the caller can read its
-    R20 counters on every exit path, including the tripped-breaker one.
+    transport counters on every exit path, including the tripped-breaker one.
     """
     session: _PoliteSession | None = None
     if cache_dir is None:
@@ -998,7 +998,7 @@ def _ingest(
     if discovered.failed:
         return
 
-    # Settled = archived AND unchanged index kind (R18/LD14): §9.2's re-scan
+    # Settled = archived AND unchanged index kind: §9.2's re-scan
     # window exists to catch paper-to-e-file conversions, so a kind change
     # re-fetches and converts; a fetch-failed filing has raw_path NULL and
     # stays re-fetch-eligible. Same-kind content refresh is out of scope —
@@ -1041,7 +1041,7 @@ def _ingest(
     report.amendments_total, report.amendments_paired = _link_amendments(
         conn, discovered
     )
-    # §9.5/RUN 4: both sides of every pair carry amendment_unresolved. The
+    # §9.5: both sides of every pair carry amendment_unresolved. The
     # loader delete-and-reinserts rows, so the flag is restored at every
     # job tail that rebuilds rows (here, reparse_senate, reparse_house).
     flag_unresolved_pair_rows(conn)
@@ -1106,9 +1106,9 @@ def _process_uuid(
 
     ``lifecycle`` is read back and replayed, never defaulted: ingest records
     only what parsing achieved, while lifecycle records the filing's
-    standing (§9.4), and R10/LD9 keeps lifecycle untouched until OQ-13
-    lands. Without this, a fetch-failed retry or a paper-to-e-file
-    conversion (R18) would silently reactivate a ``superseded``/``retired``/
+    standing (§9.4), and lifecycle stays untouched until real lifecycle
+    writes land. Without this, a fetch-failed retry or a paper-to-e-file
+    conversion would silently reactivate a ``superseded``/``retired``/
     ``withdrawn`` filing through ``upsert_filing``'s ON CONFLICT update.
     """
     filing_id = f"senate:{entry.uuid}"
@@ -1171,9 +1171,9 @@ def _process_uuid(
 def _link_amendments(
     conn: sqlite3.Connection, discovered: SenateDiscoverResult
 ) -> tuple[int, int]:
-    """§9.5 conservative pairing (LD9): ``supersedes`` only on an unambiguous
+    """§9.5 conservative pairing: ``supersedes`` only on an unambiguous
     original; zero or many candidates ⇒ NULL. No supersede automation, no
-    lifecycle writes — that seam stays closed until OQ-13 lands with real
+    lifecycle writes — that seam stays closed until supersede automation lands with real
     amended-filing fixtures (the empirical restate-vs-append study).
 
     An original is sought among (a) current-index non-amendment rows with the
@@ -1182,7 +1182,7 @@ def _link_amendments(
     deduped by filing_id. Documented misses (off-by-one filed dates,
     out-of-window originals) leave the pair unresolved: visible via the
     permanent ``amendment_unresolved`` row flag, never double-counted
-    (TD-R3b).
+    (declared debt).
     """
     amendments = 0
     paired = 0
@@ -1219,7 +1219,7 @@ def _link_amendments(
     return amendments, paired
 
 
-# --- reparse (R15) ------------------------------------------------------------
+# --- reparse ------------------------------------------------------------
 
 
 def reparse_senate(
@@ -1233,7 +1233,7 @@ def reparse_senate(
     never re-fetching (§9.3). The page kind derives from the stored
     ``doc_url`` (paper stays ``needs_ocr``), the amendment flag reproduces
     from the stored ``filing_kind``, and identity stability plus the atomic
-    replace come from :func:`populus.load.load_filing` (RUN 1).
+    replace come from :func:`populus.load.load_filing`.
     """
     # Imported here, not at module top: the selection machinery lives in the
     # House module and a top-level sibling import would couple the chambers.
@@ -1265,12 +1265,12 @@ def reparse_senate(
         )
         statuses[filing_id] = evaluated.status
     # load_filing deleted and re-inserted each target's rows; restore the
-    # amendment_unresolved flag on both sides of every pair (§9.5/RUN 4).
+    # amendment_unresolved flag on both sides of every pair (§9.5).
     flag_unresolved_pair_rows(conn)
     return ReparseReport(selection=selection, statuses=statuses)
 
 
-# --- summaries (R13/R14) ------------------------------------------------------
+# --- summaries ----------------------------------------------------------------
 
 
 def format_summary(
@@ -1281,7 +1281,7 @@ def format_summary(
     With a *gate* (the CLI computes one from the same connection before it
     closes), the summary also carries the per-era e-file gate lines, the per-era
     member-join lines, and the OWNER DECISION REQUIRED block whenever any era is
-    ``miss`` or ``unmeasurable`` (RUN M1-B, R5).
+    ``miss`` or ``unmeasurable``.
     """
     lines: list[str] = []
     if report.window is not None:
@@ -1302,7 +1302,7 @@ def format_summary(
         # re-evaluated — its failure would vanish from every subtotal while
         # still being counted as failed. `archived_prior` carries exactly
         # that remainder, so the diagnostics can never be internally
-        # inconsistent (R13).
+        # inconsistent.
         fetch_failed = (
             reconciliation.failed_fetch
             if reconciliation

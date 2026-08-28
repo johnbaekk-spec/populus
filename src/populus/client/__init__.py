@@ -1,4 +1,4 @@
-"""§5.5 consumer protocol (RUN 5): fetchers + the snapshot cache client.
+"""§5.5 consumer protocol: fetchers + the snapshot cache client.
 
 ``populus.client.snapshot`` owns the MCP-client side of the publication
 protocol — pointer state machine over the durable two-field trust tuple,

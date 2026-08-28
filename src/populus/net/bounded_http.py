@@ -1,4 +1,4 @@
-"""Bounded HTTP transport helper (RUN PUBLIC-SECURITY-HARDENING, R9/LD10).
+"""Bounded HTTP transport helper.
 
 Every REAL httpx transport in the repository — House, Senate GET/POST, and the
 SEC federated client — routes its request through :func:`bounded_http_request`,
@@ -64,7 +64,7 @@ HTTP_BODY_CAP = 128 * 1024 * 1024
 
 
 class ResponseTooLarge(RuntimeError):
-    """The response body exceeded the configured ceiling (LD10/R9).
+    """The response body exceeded the configured ceiling.
 
     Carries the URL, the configured cap, the declared ``Content-Length`` when
     the server sent one, and the observed lower bound on the decoded size.

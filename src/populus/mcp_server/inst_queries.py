@@ -99,7 +99,7 @@ def shape_filer(row: Mapping[str, Any]) -> dict[str, Any]:
     (see ``agg_filer_registry`` in inst_agg.sql). Presented next to a requested
     `period_of_report` under bare names like `position_count`, they read as that
     quarter's figures — so the keys carry the `all_periods_` prefix and a label
-    (QA-r5-F4, G5).
+    (G5).
     """
     return {
         "cik": row.get("cik"),
@@ -110,8 +110,7 @@ def shape_filer(row: Mapping[str, Any]) -> dict[str, Any]:
         "all_periods_null_value_positions": row.get("null_value_positions"),
         "all_periods_unkeyed_positions": row.get("unkeyed_positions"),
         # No dangling pointer: `period` exists only on a snapshot profile, and
-        # a caveat that references an absent key invites a client to invent one
-        # (QA-VERIFY5-B4).
+        # a caveat that references an absent key invites a client to invent one.
         "counts_basis": "every retained period for this filer, NOT a single"
         " quarter. Quarter-specific figures are in the `period` block of"
         " inst_filer_holdings(mode='snapshot').",
@@ -130,7 +129,7 @@ def shape_qoq_row(row: Mapping[str, Any]) -> dict[str, Any]:  # noqa: D401
         "prev_value_usd": row.get("prev_value_usd"),
         "curr_value_usd": row.get("curr_value_usd"),
         "delta_value_usd": row.get("delta_value_usd"),
-        # NULL when the reported units are incompatible across quarters (F4) —
+        # NULL when the reported units are incompatible across quarters —
         # never a fabricated 0.
         "prev_shares": row.get("prev_shares"),
         "curr_shares": row.get("curr_shares"),
@@ -139,7 +138,7 @@ def shape_qoq_row(row: Mapping[str, Any]) -> dict[str, Any]:  # noqa: D401
         "value_label": _VALUE_LABEL,
         # A NULL delta means one side's value was never disclosed — NOT a zero
         # change. Kept distinct so a reader cannot mistake "we don't know" for
-        # "nothing moved" (QA-VERIFY5-B2).
+        # "nothing moved".
         "delta_value_known": row.get("delta_value_usd") is not None,
         "flags": _flags(row),
     }
@@ -151,7 +150,7 @@ def shape_qoq_row(row: Mapping[str, Any]) -> dict[str, Any]:  # noqa: D401
 def shape_top_holder(row: Mapping[str, Any]) -> dict[str, Any]:
     """One ``agg_issuer_top_holders`` row — a ranked holder of an issuer.
 
-    Carries ``period_of_report`` and the value unit on the RECORD (QA-F4): a
+    Carries ``period_of_report`` and the value unit on the RECORD: a
     holder row lifted out of its response must still say which quarter-end it
     describes and in what unit, never leave that to surrounding prose (G4/G5).
     The aggregate has no per-row filed date — it rolls up many filings — so the
@@ -181,7 +180,7 @@ def shape_concentration(
 
     ``topn_value_usd``/``topn_share_bps`` are a TOP-N share whose N was never
     stated anywhere in the response, so a reader could not tell a top-10 share
-    from a top-25 one (QA-VERIFY4-B2).
+    from a top-25 one.
     """
     if row is None:
         return None
@@ -229,7 +228,7 @@ def filer_lookup_total(conn: sqlite3.Connection, *, query: str) -> int:
     `filer_lookup` truncates at `limit` with no disclosure, and it is the
     documented entry point for every other inst tool — against a real ~5,000
     filer registry, "Capital" or "Advisors" matches hundreds and filer #26 was
-    indistinguishable from not existing (QA-VERIFY5-B4).
+    indistinguishable from not existing.
     """
     text = query.strip()
     cik = normalize_cik(text)
@@ -294,7 +293,7 @@ def filer_snapshot(
     if conc is None:
         # The filer exists but has nothing for this quarter. Returning a
         # successful profile with `concentration: null` let a NONEXISTENT
-        # quarter read as a valid empty one (QA-r5-F4).
+        # quarter read as a valid empty one.
         available = [
             r[0]
             for r in conn.execute(
@@ -320,7 +319,7 @@ def filer_snapshot(
         "filer": shape_filer(reg),
         "period_of_report": target,
         # The REQUESTED quarter's own figures, so they need not be inferred from
-        # the all-period registry row above (QA-r5-F4).
+        # the all-period registry row above.
         "period": {
             "period_of_report": conc["period_of_report"],
             "position_count": conc["position_count"],
@@ -362,7 +361,7 @@ def qoq_universe(
     `agg_qoq_deltas` is built only from holdings with a `position_key`, so
     unkeyable positions (neither `security_id` nor a parseable CUSIP) never
     enter it. Reporting the changes without this denominator let a filer whose
-    book was 99.99% unkeyed read as "one change this quarter" (QA-VERIFY5-B3).
+    book was 99.99% unkeyed read as "one change this quarter".
     """
     row = conn.execute(
         "SELECT position_count, null_value_positions FROM agg_filer_concentration"
@@ -411,7 +410,7 @@ def published_topn(conn: sqlite3.Connection) -> int | None:
     `build_inst_agg` stores only `ranked[:topn]` per (issuer, period) and records
     the N in `agg_build_meta` "so the cut is legible" — but nothing read it, so
     `inst_ticker_holders` returned a silent top-25 slice while accepting a
-    `limit` of up to 200 (QA-VERIFY4-B2). For a mega-cap, thousands of managers
+    `limit` of up to 200. For a mega-cap, thousands of managers
     file; the flagship "biggest holders" answer was truncated with no disclosure.
     """
     try:
@@ -556,7 +555,7 @@ class _FederatedSource:
         return self._doc(_submissions_url(cik10), f"CIK{cik10}/submissions.json")
 
     def submissions_shard(self, cik10: str, name: str) -> _Doc:
-        """An older ``filings.files[]`` shard, fetched live (QA-r3-F4)."""
+        """An older ``filings.files[]`` shard, fetched live."""
         return self._doc(_shard_url(name), f"CIK{cik10}/{name}")
 
     def index(self, cik10: str, accession_nodash: str) -> _Doc:
@@ -584,7 +583,7 @@ _HR_FORMS = ("13F-HR", "13F-HR/A")
 def _holding_to_dict(holding: Any, *, source: Any = None) -> dict[str, Any]:
     """A federated ``InstParsedRow`` reduced to the fields ``shape_holding``
     reads, plus the filing the row came from when the period was composed from
-    more than one filing (QA-F2/G4)."""
+    more than one filing (G4)."""
     provenance = (
         {
             "source_accession": source.accession,
@@ -633,13 +632,13 @@ def fetch_filer_detail(
     if norm is None:
         raise InstDetailUnavailable(f"not a CIK: {cik!r}")
     source = _FederatedSource(sec_client)
-    # Arbitrary historical periods are part of R4, so the older shards must
-    # actually be READ here (QA-r3-F4).
+    # Arbitrary historical periods are supported, so the older shards must
+    # actually be READ here.
     discovery = discover(source, norm, cache_bounded=False, include_history=True)
     hr = [entry for entry in discovery.entries if entry.form in _HR_FORMS]
     # A filing REJECTED at discovery (malformed accession, non-ISO dates) is
     # just as invisible to this answer as an unread shard — it could be the very
-    # amendment that restates the period (QA-r5-F3).
+    # amendment that restates the period.
     unread = discovery.unread_shards
     rejected = discovery.rejected
     _parts = []
@@ -684,14 +683,14 @@ def fetch_filer_detail(
         latest_period = max(entry.report_date for entry in hr)
         period_entries = [e for e in hr if e.report_date == latest_period]
 
-    # COMPOSE the period's filings (spec: RUN M2-2 R5/R6). This is deliberately
+    # COMPOSE the period's filings. This is deliberately
     # TWO PHASES — classify every filing, then apply semantics — rather than a
     # single fold over arrival order. The fold shipped three separate defects,
     # each "in arrival order X the fold does the wrong thing": an amendment whose
-    # cover omitted <isAmendment> was folded as a base (V3-B1); a first base that
-    # parsed to zero rows skipped the duplicate guard (V4-B1); and a NEW HOLDINGS
+    # cover omitted <isAmendment> was folded as a base; a first base that
+    # parsed to zero rows skipped the duplicate guard; and a NEW HOLDINGS
     # amendment sorting BEFORE its same-day base had its rows discarded by the
-    # base's assignment while the trail still claimed they were added (E-B1).
+    # base's assignment while the trail still claimed they were added.
     # Order-independent classification removes the whole class.
     #
     #   FULL filings      = non-amendments, plus RESTATEMENT amendments
@@ -708,7 +707,7 @@ def fetch_filer_detail(
     # OWN metadata using the PIPELINE's key (views.sql `restatement_survivors`):
     # filed_date, then amendment_no, then accession. Ranking on accession alone
     # for amendment-vs-amendment ties made the federated plane pick a different
-    # restatement than `v_default_inst_filings` for the same filings (F-B3) —
+    # restatement than `v_default_inst_filings` for the same filings —
     # `amendment_no` was available on every row and simply not consulted.
     evaluated = [
         evaluate_filing(
@@ -724,7 +723,7 @@ def fetch_filer_detail(
         """The two components that carry REAL ordering signal."""
         # `amendment_no` is OPTIONAL on the cover — an amendment that omits it
         # collapses to 0, the same value a base gets, so this pair can tie
-        # between a base and the very restatement that supersedes it (G-B1).
+        # between a base and the very restatement that supersedes it.
         return (ev.filing.filed_date, ev.filing.amendment_no or 0)
 
     def _rank(ev: Any) -> tuple:
@@ -751,7 +750,7 @@ def fetch_filer_detail(
     authoritative = fulls[-1] if fulls else None
     # A RESTATEMENT supersedes anything ordering BEFORE it under the pipeline's
     # own key — including a same-day additive, which `filed_date <` missed
-    # because filed_date is date-only (F-B4). `views.sql` supersedes on
+    # because filed_date is date-only. `views.sql` supersedes on
     # (filed_date, amendment_no, accession) strictly-greater, so use the same
     # comparison rather than a date-only one.
     latest_restatement = next(
@@ -768,7 +767,7 @@ def fetch_filer_detail(
         # the last one as the anchor and say so — never guess a merge. This runs
         # BEFORE additives are applied; reassigning `composed` afterwards
         # discarded rows the loop had already appended while `applied_additives`
-        # still reported them as applied (F-B2).
+        # still reported them as applied.
         composed = [(h, unknowns[-1].filing) for h in unknowns[-1].holdings]
     for ev in additives:
         if restatement_key is not None and _rank(ev) < restatement_key:
@@ -779,9 +778,9 @@ def fetch_filer_detail(
     # Completeness is a conjunction of stated facts, never an inference:
     #   1. an authoritative FULL filing exists and parsed EXACTLY "parsed"
     #      ("partial" means defects or an entry-total mismatch — it may be
-    #      missing positions, so it cannot vouch for a whole book, QA-r3-F3);
+    #      missing positions, so it cannot vouch for a whole book);
     #   2. at most ONE non-amendment base — two bases for one period is a
-    #      supersession the filings do not state (V3-B1 sub-case);
+    #      supersession the filings do not state;
     #   3. no unknown-type amendment, whose merge semantic is unstated;
     #   4. the history search was exhaustive (see `history_gap`).
     bases = [ev for ev in fulls if not ev.filing.is_amendment]
@@ -789,14 +788,14 @@ def fetch_filer_detail(
     # just the authoritative one. An unreadable NEW HOLDINGS amendment
     # contributes nothing while its confidential-treatment releases — the entire
     # reason that form exists — go missing, and the answer was still stamped
-    # complete (F-B1).
+    # complete.
     # Unresolvable exactly when two filings share BOTH orderable signals, so
     # only the accession separates them. Checked across EVERY filing the
     # restatement could supersede — bases and other fulls included, not just
     # additives. Scoping it to additives left the base-vs-restatement pairing
     # unguarded, and a restatement whose cover omitted `amendmentNo` then lost
     # to its own base: 110 positions returned as a complete book when the
-    # filer's own restatement said the book was 4 (G-B1).
+    # filer's own restatement said the book was 4.
     same_day_restatement_tie = bool(
         latest_restatement is not None
         and any(
@@ -899,7 +898,7 @@ def fetch_filer_detail(
             "applied": _action(ev),
             "is_amendment_applied": bool(ev.filing.is_amendment),
             # Per-filing parse status: a clean amendment must not mask a failed
-            # or partial base whose rows feed the composed answer (QA-r2-F5).
+            # or partial base whose rows feed the composed answer.
             "parse_status": ev.status,
             "rows": len(ev.holdings),
         }
@@ -907,7 +906,7 @@ def fetch_filer_detail(
     ]
     outcome = authoritative or (evaluated[-1] if evaluated else None)
 
-    # Aggregate status across every APPLIED filing (QA-r2-F5): the composed
+    # Aggregate status across every APPLIED filing: the composed
     # answer is only "parsed" when all of its constituents parsed, because the
     # rows are pooled. Filings that were superseded do not contribute rows and
     # so do not degrade the answer.
@@ -954,7 +953,6 @@ def fetch_filer_detail(
         # Complete requires BOTH an authoritative full filing AND an
         # exhaustively-searched history: an unread shard could hold an amendment
         # for this very period, so the composition cannot be called complete
-        # (QA-r4-F3).
         "composition_complete": has_authoritative_full and not history_gap,
         "history_complete": not history_gap,
         "unread_shards": list(unread),
@@ -966,7 +964,7 @@ def fetch_filer_detail(
                 # Name the reason(s) that ACTUALLY apply. A single catch-all
                 # sentence denied the existence of a base filing the trail
                 # itself reported as parsed — a wrong diagnosis contradicted by
-                # the adjacent payload (F-B5).
+                # the adjacent payload.
                 "composition_warning": (
                     "this position list may NOT be the filer's complete"
                     " quarter-end book: "
@@ -1021,7 +1019,7 @@ def resolve_ticker_to_issuer_key(
         raise InstDetailUnavailable(
             f"company_tickers.json did not parse: {exc}"
         ) from exc
-    # The SAME dispositions the identity pipeline applies (QA-F9): malformed
+    # The SAME dispositions the identity pipeline applies: malformed
     # rows, (cik,ticker) duplicates and DC1 title conflicts are decided by
     # `parse_company_tickers`, not re-derived here. Resolving a ticker the
     # pipeline REJECTED would mint an issuer_key the aggregate never keys, so

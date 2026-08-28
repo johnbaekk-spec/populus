@@ -137,7 +137,7 @@ def run_sectors_ingest(
     """
     # Strict calendar validation, matching the committee module: a snapshot
     # stamped 2026-02-30 would date every sector claim to a day that never
-    # existed (review c2r3-F3, swept across both ingests).
+    # existed (same rule as the committee module).
     try:
         parsed_as_of = date.fromisoformat(as_of)
     except (TypeError, ValueError):

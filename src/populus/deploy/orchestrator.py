@@ -1,4 +1,4 @@
-"""§12.1 R12: the ordered deploy sequence, in one injected, testable function.
+"""§12.1: the ordered deploy sequence, in one injected, testable function.
 
 The order is the mechanism. Every step below is safe only because the steps
 before it already ran, so spreading this sequence across workflow YAML would put
@@ -9,10 +9,10 @@ all injected — the suite exercises the real ordering with no network at all
 
 The eight steps, and what each one is load-bearing for:
 
-1. **Assert the production branch (R8) — before any upload.** A mismatch means
+1. **Assert the production branch — before any upload.** A mismatch means
    the bytes would land under an identity the workflow does not claim. Asserted
    first because after an upload the question is academic.
-2. **Assert the custom domain is ``active`` (R11) — before any upload.**
+2. **Assert the custom domain is ``active`` — before any upload.**
    Activation is a provisioning precondition (Rollout prerequisite 4), not
    something this run polls for. Read from the ``…/domains`` subresource, which
    is the only endpoint carrying per-domain status.
@@ -20,27 +20,27 @@ The eight steps, and what each one is load-bearing for:
    serving.** This is the rollback target, and it must be read *before* the
    production upload — afterwards the newest production deployment is the one
    that just failed verification, and "rolling back" to it would be a no-op
-   dressed as a compensation. ``None`` is a real answer (R14), not an error.
-   **R11c:** "newest production deployment by creation" is not "the deployment
+   dressed as a compensation. ``None`` is a real answer, not an error.
+   **Serving-anchor proof:** "newest production deployment by creation" is not "the deployment
    the domain serves", and the two diverge after any dashboard rollback, so the
    anchor's own ``populus:code_sha`` is compared against the live domain's and a
    disagreement refuses here — before the freeze, production untouched.
-4. **Freeze the built tree** (R4): from here on the uploader is handed a sealed
+4. **Freeze the built tree**: from here on the uploader is handed a sealed
    private copy, so hashed bytes and uploaded bytes are one thing.
-5. **Upload to a preview and verify it INVENTORY-WIDE (R9).** §12.1 step 4 is
+5. **Upload to a preview and verify it INVENTORY-WIDE.** §12.1 step 4 is
    amended to require the same full sweep the signer runs, not markers plus a
    ``stats.json`` hash. This is not a nicety: TD-4 accepts one unverified-serving
    window on the strength of "the identical bytes already passed the preview
    sweep", and if the preview only read markers that sentence is vacuous.
-6. **Upload the same sealed bytes to production (R10)**, re-checking
+6. **Upload the same sealed bytes to production**, re-checking
    ``dist_digest`` immediately before. The preview verified a specific tree; the
    production upload must be that tree and not a successor of it.
-7. **Verify the live custom domain (R11)** — always, no exemption, no polling.
+7. **Verify the live custom domain** — always, no exemption, no polling.
    The preview origin and the custom domain differ only in base URL, so both go
-   through one verifier. **R11b:** the domain is given one bounded settle after
+   through one verifier. **Post-promotion settle:** the domain is given one bounded settle after
    the promotion and BEFORE the first sweep, because ``_await`` returns when the
    origin answers while individual objects may still be materialising, and a
-   partially written body reads as a hash mismatch. **R11a:** when the ONLY
+   partially written body reads as a hash mismatch. **Propagation tolerance:** when the ONLY
    findings are inventoried paths
    answering 404, the domain is given one bounded settle and the FULL inventory
    is verified again — a promotion's last objects can still be resolving on the
@@ -48,7 +48,7 @@ The eight steps, and what each one is load-bearing for:
    a second failure of the same shape, rolls back at once.
 8. **On failure at 7: roll back to the captured deployment and re-verify.**
 
-**TD-4 / R14 — the first run.** When step 3 captured nothing there is no rollback
+**The first run.** When step 3 captured nothing there is no rollback
 target, and Cloudflare **refuses to delete an active production deployment**
 ("this will not delete the active production deployment if one exists"). So there
 is **no automated compensation**, and this module does not invent one: there is no
@@ -57,7 +57,7 @@ delete method to call. The run raises with the remediation pointer instead. That
 exposure exists exactly once — after the first successful deploy every run has a
 rollback target and TD-4 is gone permanently.
 
-A verification that could not reach a verdict (``unavailable``, R17) is handled
+A verification that could not reach a verdict (``unavailable``) is handled
 the same as a negative one: not-verified is not verified, and production serving
 bytes we cannot show are ours is the exposure TD-4 declares as unacceptable
 whenever it *is* avoidable. The distinction is preserved in the message and in
@@ -121,10 +121,10 @@ RUNBOOK = "docs/operations/deploy.md"
 #: The branch name a preview upload is published under. It must differ from the
 #: project's production branch: Pages decides *environment* from the branch name,
 #: so a "preview" pushed under the production branch is a production deployment
-#: with a reassuring label — the exact thing R9 exists to prevent.
+#: with a reassuring label — the exact thing the preview sweep exists to prevent.
 DEFAULT_PREVIEW_BRANCH = "populus-preview"
 
-#: The branch this workflow is locked to. R8 asserts Cloudflare agrees before a
+#: The branch this workflow is locked to. The pre-upload assertion checks Cloudflare agrees before a
 #: byte moves; the default is the repository's default branch and the flag
 #: exists so the lock is a value the workflow can state out loud.
 DEFAULT_PRODUCTION_BRANCH = "main"
@@ -146,11 +146,11 @@ PROJECT_ENV = "CLOUDFLARE_PAGES_PROJECT"
 PROPAGATION_REASON = "HTTP 404, expected 200"
 
 #: How long to let the custom domain settle AFTER a production promotion and
-#: BEFORE the first verification sweep. R11b, added 2026-08-14: run 31774209281
+#: BEFORE the first verification sweep. Added 2026-08-14: run 31774209281
 #: promoted a good build and, seconds later, three `congress/data/tickers/*.json`
 #: shards served TRUNCATED bodies — `AAXJ.v1.json` came back 571 bytes when both
 #: the new build (835) and the previous deployment (835) disagree with that
-#: length, so it was a partial object rather than a stale one. R11a cannot help
+#: length, so it was a partial object rather than a stale one. The 404 tolerance cannot help
 #: there and must not: a body-hash mismatch is indistinguishable from tampering
 #: and is never waited out. Delaying the QUESTION is safe; softening the ANSWER
 #: is not. So the settle moved to before the first sweep, where it costs one
@@ -196,10 +196,10 @@ class RollbackAnchorUnverified(DeployError):
 
     Measured 2026-08-14, run 31774209281: production had been rolled back by
     hand to `2f3830b6` (verified live, code_sha d823597 — which is what let the
-    R18 record gate pass at all). The job still captured `e679ab11`, the prior
+    record gate pass at all). The job still captured `e679ab11`, the prior
     run's failed promotion, as its anchor, and on failure "rolled back" to it.
     The site moved from the attested build to an unattested one, re-opening the
-    R18 deadlock the manual rollback had just cleared.
+    record-gate deadlock the manual rollback had just cleared.
 
     A compensating rollback is only compensating if it restores the state that
     existed before the upload, so this refuses BEFORE anything is uploaded —
@@ -210,17 +210,17 @@ class RollbackAnchorUnverified(DeployError):
 class DeployAborted(DeployError):
     """A precondition refused. Nothing further is uploaded.
 
-    Raised for the pre-upload assertions' own guard rails and for R10's
+    Raised for the pre-upload assertions' own guard rails and for the
     seal re-check, i.e. the cases where the run stops with production untouched.
     """
 
 
 class PreviewVerificationFailed(DeployError):
-    """The preview did not verify, so production was never touched (R9)."""
+    """The preview did not verify, so production was never touched."""
 
 
 class ProductionVerificationFailed(DeployError):
-    """The live custom domain did not verify (R11).
+    """The live custom domain did not verify.
 
     ``rolled_back_to`` is the deployment id captured at step 3 and handed to the
     provider's rollback; ``rollback_verified`` is whether the restored
@@ -256,7 +256,7 @@ class UploadedDeployment:
     """What an uploader reports back about the deployment it just created.
 
     ``payload`` is the provider's raw deployment object, carried because the
-    verifier's no-Functions check (R16) reads ``uses_functions`` off it and
+    verifier's no-Functions check reads ``uses_functions`` off it and
     nothing else in this module has any business interpreting it.
     """
 
@@ -274,11 +274,11 @@ class PagesSurface(Protocol):
     :class:`~populus.deploy.cloudflare.PagesClient`; there is deliberately no
     method here for removing a deployment, because Cloudflare declines that
     operation on an active production deployment and a compensation the provider
-    refuses is not a compensation (TD-4).
+    refuses is not a compensation.
 
     ``rollback_payload`` returns the provider's **raw** deployment object and is
     named differently from ``PagesClient.rollback`` for a reason worth stating.
-    R16's no-Functions assertion fails *closed* on ``uses_functions`` being
+    The no-Functions assertion fails *closed* on ``uses_functions`` being
     absent, and the typed :class:`~populus.deploy.cloudflare.Deployment` coerces
     that field with ``bool(...)`` — so any mapping rebuilt from the typed object
     turns "the provider said nothing" into "there are none", deleting the
@@ -296,7 +296,7 @@ class PagesSurface(Protocol):
     def latest_production_deployment(self) -> Deployment | None: ...
 
     #: Newest-first, so the anchor resolver can stop at the first deployment
-    #: that serves what the domain serves. R11c PROVED the anchor rather than
+    #: that serves what the domain serves. The original proof-only rule PROVED the anchor rather than
     #: resolving it, which refuses correctly but leaves the deploy blocked for
     #: as long as the divergence stands — and a provider-side rollback creates
     #: exactly that divergence by design.
@@ -345,7 +345,7 @@ class VerificationOutcome(Protocol):
 class Verifier(Protocol):
     """Verifies what a base URL serves against the sealed tree's inventory.
 
-    One callable for both live checks (R9's preview origin and R11's custom
+    One callable for both live checks (the preview origin and the custom
     domain), differing only in *base_url*. In production this is
     :func:`populus.deploy.verify.verify_deployment` with the HTTP client,
     ``build_id``, ``code_sha`` and ``stats_bytes`` already bound.
@@ -367,7 +367,7 @@ class DeployOutcome:
 
     The sealed tree is gone by the time this is returned (it is cleaned up on
     every path), so the digest, inventory and file count are carried by value —
-    they are what the signer re-derives independently in R13.
+    they are what the signer re-derives independently.
     """
 
     dist_digest: str
@@ -403,7 +403,7 @@ def _await(ready: OriginReadiness | None, url: str, *, stage: str) -> None:
 
     Cloudflare returns the deployment URL the moment the upload is accepted,
     but the edge needs a few seconds to route it — until then every path
-    answers **522**, which R17 correctly classifies as "no verdict reached"
+    answers **522**, which is correctly classified as "no verdict reached"
     rather than tampering. So the sweep ran against an origin that did not
     exist yet and the whole deploy aborted on an outage that was really a race
     (run 7: `HTTP 522 fetching .../404?populus-verify=...`; the same URL
@@ -437,7 +437,7 @@ def _propagation_lag_only(result: VerificationOutcome) -> bool:
       is a finding with NO divergence, so the counts diverge and this returns
       False;
     * every divergence reason must be exactly `PROPAGATION_REASON`;
-    * the outcome must be REJECTED. Review F1: this was previously left to a
+    * the outcome must be REJECTED. This was previously left to a
       claim in this docstring — "an UNAVAILABLE result carries no divergences,
       so it cannot get here" — which is true of `verify_deployment` today and
       is exactly the kind of invariant that holds until someone edits the other
@@ -492,7 +492,7 @@ def _assert_anchor_is_serving(
         )
 
 
-# --- LD12a/LD12c: rollback evidence, captured BEFORE anything is uploaded ----
+# --- rollback evidence, captured BEFORE anything is uploaded ----
 
 
 @dataclass(frozen=True)
@@ -600,7 +600,7 @@ def capture_rollback_expectation(
     here, before ``freeze_tree`` or either upload. An empty raw listing is the
     existing first-run uncompensated case and returns ``None``.
 
-    *anchor_id* reconciles LD12c with the later R11d serving-anchor fix: when
+    *anchor_id* reconciles the captured rollback evidence with the later serving-anchor fix: when
     the resolved serving anchor is NOT the newest-by-creation deployment (the
     state any provider-side rollback leaves behind), the expectation's identity
     is taken from the anchor's own raw entry — the deployment a compensating
@@ -736,7 +736,7 @@ def _resolve_serving_anchor(
 ) -> Any:
     """The production deployment that serves what the domain serves.
 
-    R11c proved the anchor and refused on divergence, which is right — rolling
+    The original rule proved the anchor and refused on divergence, which is right — rolling
     back to "newest by creation" would move the site to a build nobody asked
     for. But refusing is only half an answer: a provider-side rollback creates
     that divergence *by design*, and the runbook offers it as the operational
@@ -796,7 +796,7 @@ def run_deployment(
     is touched, :class:`PreviewVerificationFailed` when the preview does not
     verify, :class:`ProductionVerificationFailed` when the live domain does not
     (after rolling back), and :class:`FirstRunUncompensated` when that happens on
-    a run with no rollback target (TD-4). Cloudflare's own
+    a run with no rollback target. Cloudflare's own
     :class:`~populus.deploy.cloudflare.PagesUnavailable` propagates untouched:
     "could not ask" is not this module's verdict to convert.
     """
@@ -804,28 +804,28 @@ def run_deployment(
         raise DeployAborted(
             f"the preview branch {preview_branch!r} equals the production branch: "
             "Pages derives the environment from the branch name, so this would "
-            "publish the 'preview' straight to production and R9's "
+            "publish the 'preview' straight to production and the ordered sequence's "
             "preview-verifies-before-production ordering would be a fiction"
         )
 
-    # --- (1) R8: production identity, before anything is uploaded ------------
+    # --- (1) production identity, before anything is uploaded ----------------
     client.assert_production_branch(production_branch)
 
-    # --- (2) R11: the domain precondition, before anything is uploaded -------
+    # --- (2) the domain precondition, before anything is uploaded ------------
     client.assert_custom_domain_active(custom_domain)
 
     # --- (3) the rollback target, captured BEFORE the production upload ------
-    # R11d: RESOLVED as the deployment the domain actually serves, not assumed
+    # RESOLVED as the deployment the domain actually serves, not assumed
     # to be the newest by creation — those are different questions, and any
     # provider-side rollback makes them different answers. `latest_production_
     # deployment()` still decides whether there is a prior deployment at all
-    # (the first-run None), so the R14 first-run path is unchanged.
+    # (the first-run None), so the first-run path is unchanged.
     prior = client.latest_production_deployment()
     if prior is not None:
         prior = _resolve_serving_anchor(
             client, serving_probe, domain_url=_domain_url(custom_domain)
         )
-    # R11c: and still PROVED, after resolution. Kept deliberately: the resolver
+    # And still PROVED, after resolution. Kept deliberately: the resolver
     # above is now the thing that could be wrong, and this is what makes a wrong
     # answer fail closed. Before any upload, so a refusal costs nothing —
     # production is untouched.
@@ -864,7 +864,7 @@ def run_deployment(
     # --- (4) freeze: from here the uploader only ever sees sealed bytes ------
     snapshot = freeze_tree(source)
     try:
-        # --- (5) preview, verified inventory-wide (R9) -----------------------
+        # --- (5) preview, verified inventory-wide -----------------------
         preview = _upload(upload, snapshot, environment=PREVIEW, branch=preview_branch)
         _await(await_origin, preview.url, stage=PREVIEW)
         preview_result = verify(
@@ -877,21 +877,21 @@ def run_deployment(
             raise PreviewVerificationFailed(
                 f"preview verification did not pass ({preview_result.outcome}): "
                 f"{preview_result.detail}. Production was not touched — the "
-                "prior deployment is still serving (R9)."
+                "prior deployment is still serving."
             )
 
-        # --- (6) R10: provably the same bytes --------------------------------
+        # --- (6) provably the same bytes --------------------------------------
         _require_seal_intact(snapshot)
         production = _upload(
             upload, snapshot, environment=PRODUCTION, branch=production_branch
         )
 
-        # --- (7) R11: verify the live custom domain --------------------------
+        # --- (7) verify the live custom domain --------------------------------
         domain_url = _domain_url(custom_domain)
         _await(await_origin, f"https://{custom_domain}", stage=PRODUCTION)
-        # R11b: `_await` returns as soon as the origin ANSWERS; individual
+        # `_await` returns as soon as the origin ANSWERS; individual
         # objects can still be materialising behind it, and a partially written
-        # body reads as a hash mismatch — which R11a rightly refuses to wait
+        # body reads as a hash mismatch — which the 404 tolerance rightly refuses to wait
         # out. So the wait happens here, before the question is asked, where it
         # cannot soften any answer.
         settle(POST_PROMOTION_SETTLE_SECONDS)
@@ -901,7 +901,7 @@ def run_deployment(
             inventory=snapshot.inventory,
             deployment=dict(production.payload),
         )
-        # R11a: absorb custom-domain propagation lag, and NOTHING else. The
+        # Absorb custom-domain propagation lag, and NOTHING else. The
         # re-verification is the SAME inventory-wide check, not a spot-check of
         # the paths that 404'd — so the verdict that lets a deploy stand is
         # always a full verification, never a composite of one full pass plus a
@@ -970,7 +970,7 @@ def _upload(
     The environment check is not defensive noise: "production was never touched"
     is only meaningful if the thing we called a preview really was a preview.
     An uploader that reports ``production`` for the preview leg has already done
-    the damage R9 orders the steps to prevent, and the run must stop rather than
+    the damage the step ordering exists to prevent, and the run must stop rather than
     proceed to verify it under the wrong name.
     """
     uploaded = upload(snapshot.path, environment=environment, branch=branch)
@@ -989,13 +989,13 @@ def _upload(
     if environment == PREVIEW and not uploaded.url:
         raise DeployAborted(
             "the preview upload reported no URL, so the inventory-wide preview "
-            "sweep R9 requires has nothing to fetch"
+            "required inventory-wide sweep has nothing to fetch"
         )
     return uploaded
 
 
 def _require_seal_intact(snapshot: UploadSnapshot) -> None:
-    """R10: re-hash the sealed tree immediately before the production upload.
+    """Re-hash the sealed tree immediately before the production upload.
 
     The seal is advisory — the process that owns it can undo it — so the digest
     the preview verified is re-derived here rather than assumed. A mismatch
@@ -1122,7 +1122,7 @@ def _td4_message(result: VerificationOutcome, runbook: str) -> str:
         "so no delete is attempted here or anywhere in the deploy path. The "
         "bytes that failed verification are serving now and only an owner action "
         f"can replace them: follow {runbook} section 4 (TD-4 remediation). The "
-        "identical sealed bytes passed the inventory-wide preview sweep (R9), so "
+        "identical sealed bytes passed the inventory-wide preview sweep, so "
         "start by suspecting routing, cache or domain state rather than the "
         "build. This exposure exists exactly once: after the first successful "
         "production deploy every run has a rollback target and TD-4 is gone."
@@ -1130,7 +1130,7 @@ def _td4_message(result: VerificationOutcome, runbook: str) -> str:
 
 
 def _domain_url(custom_domain: str) -> str:
-    """R11 verifies the live custom domain, not the deployment's own origin."""
+    """Verify the live custom domain, not the deployment's own origin."""
     if "://" in custom_domain:
         return custom_domain.rstrip("/")
     return f"https://{custom_domain}"
@@ -1156,7 +1156,7 @@ class ArtifactExpectations:
     "is what is serving what we built", and an expectation supplied by the same
     caller that supplies the bytes would make that question circular. Tying the
     build id to an attested pointer is a different question with a different
-    trust model, and it belongs to the signer (R13), which re-derives it in
+    trust model, and it belongs to the signer, which re-derives it in
     another workflow under another identity.
     """
 
@@ -1267,7 +1267,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--production-branch",
         default=DEFAULT_PRODUCTION_BRANCH,
         help=(
-            "the branch this workflow is locked to; R8 asserts Cloudflare agrees "
+            "the branch this workflow is locked to; the deploy asserts Cloudflare agrees "
             f"before any upload (default: {DEFAULT_PRODUCTION_BRANCH})"
         ),
     )
@@ -1279,7 +1279,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "production branch or the 'preview' is a production deployment"
         ),
     )
-    # RUN PUBLIC-SECURITY-HARDENING R8/LD9: there is deliberately NO
+    # Security invariant: there is deliberately NO
     # --wrangler-package (or any other wrangler override) flag. The uploader
     # invokes only the lock-installed dashboard/node_modules/.bin/wrangler, and
     # a CLI seam that could name a different package would reintroduce the
@@ -1317,17 +1317,17 @@ def serving_probe(client: Any, *, marker_path: str = DEFAULT_MARKER_PATH) -> Ser
     """
 
     def _probe(base_url: str) -> str | None:
-        # Review F1: request the path the PROVIDER answers 200 on, not the
+        # Request the path the PROVIDER answers 200 on, not the
         # inventory path. `served_path("index.html")` is "" — Pages redirects
         # /index.html to / with a 307 (the status a live origin returns, and
         # what the `_Origin` fixture reproduces), and with redirects refused
         # (correctly) the literal path never reaches 200 — so the probe
-        # answered None for every deployment and R11c became a blanket
+        # answered None for every deployment and the anchor proof became a blanket
         # pre-upload refusal.
         path = served_path(marker_path)
-        # Review F2: a FRESH bust per request. A fixed key is not a cache bust;
+        # A FRESH bust per request. A fixed key is not a cache bust;
         # a cached domain marker matching a cached anchor marker is exactly the
-        # agreement R11c must not be fooled by. Same param and same uuid4().hex
+        # agreement the anchor proof must not be fooled by. Same param and same uuid4().hex
         # pattern the verifier's own fetches use.
         separator = "&" if "?" in path else "?"
         url = (
@@ -1350,7 +1350,7 @@ def serving_probe(client: Any, *, marker_path: str = DEFAULT_MARKER_PATH) -> Ser
         values = read_markers(response.content).get(MARKER_CODE_SHA, [])
         if len(values) != 1:
             return None
-        # Review F3: an EMPTY marker is not a value. Two empty strings compare
+        # An EMPTY marker is not a value. Two empty strings compare
         # equal, which would have read as "the anchor is serving" — the exact
         # bypass this check exists to prevent. Matches `_one_marker`'s contract.
         return values[0] if values[0].strip() else None
@@ -1459,7 +1459,7 @@ def main(
     if upload_factory is not None:
         upload = upload_factory()
     else:
-        # R8/LD9: resolve the lock-installed binary — and refuse on missing or
+        # Resolve the lock-installed binary — and refuse on missing or
         # non-executable local state — BEFORE any upload, verification, or
         # provider call. The workflow additionally asserts the binary and its
         # version before the token-bearing step; this is the Python-side half
@@ -1506,7 +1506,7 @@ def main(
             # Same reason as await_origin: a test that drives main() through a
             # propagation-shaped rejection must not pay the real settle.
             settle=(settle_factory() if settle_factory is not None else time.sleep),
-            # R11c: always a real probe here. `run_deployment` takes this as a
+            # Always a real probe here. `run_deployment` takes this as a
             # REQUIRED keyword precisely so no caller can quietly opt out of the
             # anchor cross-check by omitting it.
             serving_probe=(
@@ -1541,7 +1541,7 @@ def main(
         _emit_outputs(outcome=OUTCOME_REJECTED)
         return EXIT_REJECTED
     except PagesError as exc:
-        # R17: "we could not ask" is not "the answer was no". A rate-limited or
+        # "We could not ask" is not "the answer was no". A rate-limited or
         # unreachable Pages API must not page the same way tampering does.
         unavailable = exc.outcome == UNAVAILABLE
         print(f"deploy: {exc}", file=sys.stderr)

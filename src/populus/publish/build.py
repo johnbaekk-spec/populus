@@ -1,6 +1,6 @@
-"""Build assembly, release backends, and the §5.5 publication sequence (RUN 5).
+"""Build assembly, release backends, and the §5.5 publication sequence.
 
-The durable-recovery design (R35): every build is captured in ONE
+The durable-recovery design: every build is captured in ONE
 self-contained recovery journal — ``journal.json`` inlines the build metadata,
 the manifest, every build-scoped small artifact verbatim, and the exact
 ``congress.db`` bytes. The journal is durably staged in the data repo
@@ -206,7 +206,7 @@ class LocalDirBackend:
         self._releases = Path(data_repo) / "releases"
 
     def _safe_path(self, build_id: str, *parts: str) -> Path:
-        """The single backend path chokepoint (R29/F1/F3).
+        """The single backend path chokepoint.
 
         EVERY backend path — the release directory, its ``.draft`` marker, and
         each asset — is built here; no backend method joins a path by raw
@@ -235,7 +235,7 @@ class LocalDirBackend:
                 raise BackendError(
                     f"unsafe release path component {part!r} for data-{build_id}"
                 )
-        # Owned-base tamper check (R29 / §14 boundary): the configured data_repo
+        # Owned-base tamper check (§14 boundary): the configured data_repo
         # root is a trusted operator input, but the `releases/` subdir Populus
         # OWNS AND CREATES must be a real directory — not a symlink swapped in.
         # Checked on the component itself, BEFORE `.resolve()` follows it.
@@ -256,7 +256,7 @@ class LocalDirBackend:
         return self._safe_path(build_id)
 
     def _asset_path(self, build_id: str, name: str) -> Path:
-        """Containment-checked absolute path to an asset (R29/F3), via the
+        """Containment-checked absolute path to an asset, via the
         single ``_safe_path`` chokepoint."""
         try:
             return self._safe_path(build_id, name)
@@ -398,7 +398,7 @@ class GhReleaseBackend:
     """Release semantics over ``gh release`` against the private staging repo.
 
     Authentication comes from the step-scoped ``GH_TOKEN`` environment the
-    workflow injects (§14/R33) — this class never handles the token itself.
+    workflow injects (§14) — this class never handles the token itself.
     The command *transport* is injectable; tests exercise command construction
     and lifecycle through a recording shim, the real network path is P2
     operational (declared debt).
@@ -452,7 +452,7 @@ class GhReleaseBackend:
         # `gh` output is remote, external bytes — a malformed or unexpected-
         # SHAPE response is a backend error, never an uncaught JSON/KeyError/
         # attr traceback. Every nested field touched below is type-checked at
-        # this boundary (F8): `assets` is a list, each asset a dict with a
+        # this boundary: `assets` is a list, each asset a dict with a
         # string `name`, and `isDraft` a bool.
         try:
             payload = json.loads(out)
@@ -507,7 +507,7 @@ class GhReleaseBackend:
             # non-bool isDraft) fails CLOSED with a BackendError — consistent
             # with get_release — rather than being silently skipped, so a
             # corrupt listing can never masquerade as "no such release" and let
-            # recovery mis-decide (F1). A well-formed record whose tag is simply
+            # recovery mis-decide. A well-formed record whose tag is simply
             # not one of ours is legitimately skipped below.
             if not isinstance(row, dict):
                 raise BackendError("gh release list returned a non-object record")
@@ -558,7 +558,7 @@ class GhReleaseBackend:
     ) -> None:
         source = Path(path)
         asset_name = name or source.name
-        # R32/F7: enforce the immutability contract inside the backend —
+        # Enforce the immutability contract inside the backend —
         # clobber is permitted only on drafts; a published release is
         # verify-only (exact-byte idempotent, otherwise refused), regardless
         # of the clobber flag or any state race between callers.
@@ -648,7 +648,7 @@ class GhReleaseBackend:
 
     def read_asset(self, build_id: str, name: str) -> bytes:
         # Downloads into a caller-owned scratch dir that is always cleaned up
-        # (F9) — the journal + embedded DB never leak into unmanaged storage.
+        # — the journal + embedded DB never leak into unmanaged storage.
         with tempfile.TemporaryDirectory(prefix="populus-asset-") as scratch:
             self._run(
                 [
@@ -671,7 +671,7 @@ class GhReleaseBackend:
             return asset.read_bytes()
 
 
-# --- the recovery journal (R35) ----------------------------------------------
+# --- the recovery journal ----------------------------------------------
 
 
 def render_journal(journal: dict) -> str:
@@ -829,7 +829,7 @@ def journal_manifest(journal: dict) -> dict:
 
 def _assert_owned_base_real(base: Path, label: str) -> None:
     """A Populus-owned base subdir must be a real directory it created — not a
-    symlink swapped in (R29 / §14 boundary tamper-detection).
+    symlink swapped in (§14 boundary tamper-detection).
 
     The configured ``data_repo`` root is a trusted operator input (a symlink
     planted there already implies publisher-filesystem write access — outside
@@ -848,11 +848,11 @@ def _build_dir_escape_error(dest_builds_dir: Path, build_id: str) -> str | None:
 
     Containment is rooted at the FIXED ``builds/`` directory: a symlinked
     ``builds/<build_id>`` (or a build_id that resolves outside) would redirect
-    artifact writes outside the data repo (R29/F2). Returns an error string, or
+    artifact writes outside the data repo. Returns an error string, or
     ``None`` when the component is a real directory contained under the root.
     """
     builds_root = Path(dest_builds_dir)
-    # Owned-base tamper check (R29 / §14 boundary): the `builds/` subdir Populus
+    # Owned-base tamper check (§14 boundary): the `builds/` subdir Populus
     # owns and creates must be a real directory, not a symlink swapped in (the
     # configured data_repo root itself is a trusted operator input).
     if builds_root.is_symlink():
@@ -879,7 +879,7 @@ def materialize_from_journal(journal_bytes: bytes, dest_builds_dir: Path) -> str
     Release asset — consumers reach it through the manifest locator, never
     through git.
 
-    Containment (R29/F2): a symlinked ``builds/<build_id>`` is refused, and
+    Containment: a symlinked ``builds/<build_id>`` is refused, and
     every artifact target is resolved from the FIXED ``builds/`` root (not the
     possibly-symlinked build dir), so nothing can be written outside ``builds/``.
     """
@@ -896,7 +896,7 @@ def materialize_from_journal(journal_bytes: bytes, dest_builds_dir: Path) -> str
     return build_id
 
 
-# --- build-id allocation (R31) -----------------------------------------------
+# --- build-id allocation -----------------------------------------------
 
 
 def next_build_id(data_repo: Path | str, today: date, backend: ReleaseBackend) -> str:
@@ -928,7 +928,7 @@ def next_build_id(data_repo: Path | str, today: date, backend: ReleaseBackend) -
     # documented drafts-only cleanup (rollback.md Appendix A) deletes the draft
     # AND the staged build, after which a same-day rebuild would otherwise
     # REALLOCATE the interrupted id — binding one immutable build identity to
-    # two different byte sets (QA-F1, round 7). The mark lives at the
+    # two different byte sets. The mark lives at the
     # DATA-REPOSITORY ROOT, which survives that cleanup, so an allocated id is
     # never handed out twice.
     _consider(f"{date_str}.{_allocation_high_water(data_repo, date_str)}")
@@ -941,7 +941,7 @@ def next_build_id(data_repo: Path | str, today: date, backend: ReleaseBackend) -
 #: the DATA-REPO ROOT — deliberately NOT in `builds/` (which must not exist
 #: before finalize, and whose base is symlink-guarded) and not in `.staging/` or
 #: the release (both erased by the drafts-only cleanup). Build ids are immutable
-#: identities, so an allocated id is never handed out twice (QA-F1, round 7).
+#: identities, so an allocated id is never handed out twice.
 ALLOCATIONS_FILE = ".build-allocations.json"
 
 
@@ -979,7 +979,7 @@ def _record_allocation(data_repo: Path, date_str: str, sequence: int) -> None:
     )
 
 
-# --- reconcile + completion (R25/R35) ----------------------------------------
+# --- reconcile + completion ----------------------------------------
 
 
 @dataclass(frozen=True)
@@ -1048,7 +1048,7 @@ def _committed_build_conflict(
     not just ``manifest.json`` — against what is already committed, and returns
     the first mismatch (or ``None``). Callers run it in preflight, BEFORE any
     draft/upload/publish/materialize, so a conflicting republish refuses with
-    ZERO mutations rather than after the release is already armed (R25/F2).
+    ZERO mutations rather than after the release is already armed.
     """
     build_dir = Path(data_repo) / "builds" / build_id
     if not build_dir.is_dir():
@@ -1069,7 +1069,7 @@ def _committed_build_conflict(
 def require_complete_inst_module(
     aggregate_digest: str | None, serving_digest: str | None
 ) -> None:
-    """R10's compensating control (QA M2-8 M12): both inst databases, or neither.
+    """Compensating control: both inst databases, or neither.
 
     `REQUIRED_INST_ARTIFACTS` deliberately does NOT list `inst_serving.db`. A
     hard entry there would invalidate every pre-M2-8 manifest — including a
@@ -1089,10 +1089,10 @@ def require_complete_inst_module(
     if aggregate_digest is not None and serving_digest is None:
         raise PublishError(
             f"the inst module cleared its gate and produced {INST_DB_ARTIFACT}"
-            f" but not {INST_SERVING_ARTIFACT}. Since RUN M2-8 both are required"
+            f" but not {INST_SERVING_ARTIFACT}. Both are required"
             " of a build that publishes the module — per-filer detail would"
             " otherwise fall back to live EDGAR while the manifest reports the"
-            " module as published (plan R9/R10)."
+            " module as published."
         )
 
 
@@ -1106,20 +1106,20 @@ def _inst_data_present(conn: sqlite3.Connection) -> bool:
     missing table), so the view exists while `inst_filings` does not, and
     probing the view raises rather than answering "absent". Discovered
     rebuilding a published congress.db, which carries the congress module
-    only (RUN M1-B, stage B).
+    only.
 
     The first version caught `sqlite3.OperationalError` around the probe,
     which read EVERY operational fault as "institutional data absent" — a
     malformed view, an incompatible schema, a locked or corrupt database
     could silently publish a congress-only build and drop a real
-    institutional corpus on the floor (code review round 1, F3). So the
+    institutional corpus on the floor. So the
     missing-table case is identified positively, against `sqlite_master`,
     and the probe itself is left UNGUARDED: if the table is there, any
     error querying the view is a genuine fault and propagates out of
-    `run_build` as a visible publication failure (R13/R16/R18).
+    `run_build` as a visible publication failure.
 
     Presence is asked of the RECONCILED population, never of the default
-    view (M2-7, external review F2): the default view excludes
+    view (M2-7): the default view excludes
     cover-conflict filings, so a corpus made entirely of conflicts must
     read as withheld-with-named-exclusions, not as absence.
     """
@@ -1139,12 +1139,12 @@ def _inst_data_present(conn: sqlite3.Connection) -> bool:
 
 
 def _read_inst_source_meta(conn: sqlite3.Connection) -> dict:
-    """The snapshot's own ``inst_source_meta`` row, strictly (R24).
+    """The snapshot's own ``inst_source_meta`` row, strictly.
 
     Written into the snapshot by ``scripts/inst_snapshot.py`` BEFORE the file
     was hashed, so every provenance field stage-build publishes comes from
     inside the hashed bytes — no filename parsing, no filesystem timestamps.
-    Exactly one row; anything else means the snapshot was not cut by the R23
+    Exactly one row; anything else means the snapshot was not cut by the attested
     protocol and is refused.
     """
     remediation = (
@@ -1240,13 +1240,13 @@ def _derive_inst_module_in_materialized_scope(
 ) -> dict:
     """The full inst gate + derivation against *source*, for both input shapes.
 
-    *source* is either the congress build snapshot (the pre-M2-11 path) or the
-    accepted external snapshot's read-only handle (RUN M2-11, R1). Everything
+    *source* is either the congress build snapshot (the legacy path) or the
+    accepted external snapshot's read-only handle. Everything
     here READS *source* and writes only the two derived databases, so the same
     sequence serves both; the read-only enforcement on the external handle is
-    the connection's own ``mode=ro`` (R2), not a property of this function.
+    the connection's own ``mode=ro``, not a property of this function.
 
-    ``end_read_txn`` is the external-snapshot seam (R16): the caller's single
+    ``end_read_txn`` is the external-snapshot seam: the caller's single
     explicit read transaction must span through ``build_serving_projection``,
     but SQLite refuses DETACH inside an open transaction, so the caller hands
     in its commit and it runs after the projection is fully read, before the
@@ -1258,7 +1258,7 @@ def _derive_inst_module_in_materialized_scope(
         ingested_at=created_at,
         _prepared=_prepared,
     )
-    # R13/R23/R24: the curated manager registry must still describe the filers
+    # The curated manager registry must still describe the filers
     # this aggregate actually contains. An `active` row that stopped joining
     # fails the build NAMING its CIK, because the alternative — dropping it
     # silently from typed views — makes a manager's disappearance invisible
@@ -1276,7 +1276,7 @@ def _derive_inst_module_in_materialized_scope(
     # widened by FTD inference. Coverage is never re-keyed off
     # `total IS NULL`.
     coverage = compute_coverage(source)
-    # Per-period figures are REPORTING ONLY (R9/R11): the corpus-wide
+    # Per-period figures are REPORTING ONLY: the corpus-wide
     # gate decision above is unchanged. They ride along on the report and,
     # for a withheld build, name the quarters that carry no list coverage.
     period_coverage = compute_period_coverage(source)
@@ -1319,7 +1319,7 @@ def _derive_inst_module_in_materialized_scope(
             "coverage": coverage.coverage,
             "cover_failed_count": coverage.cover_failed_count,
             "certifiable": coverage.certifiable,
-            # R11: name the uncovered quarters (periods with no covering
+            # Name the uncovered quarters (periods with no covering
             # definitional list). Additive — the typed `reason` set and
             # the 0.95 threshold are unchanged; an uncovered quarter keeps
             # exactly today's FTD-only arithmetic and fails closed.
@@ -1345,7 +1345,7 @@ def _derive_inst_module_in_materialized_scope(
         )
     finally:
         agg_conn.close()
-    # --- RUN M2-8 T8 (R9): the per-filer SERVING artifact ----------
+    # --- the per-filer SERVING artifact ----------------------------
     # The projection reads the composed views (in *source*) AND
     # `agg_qoq_deltas` (in the aggregate just written), so the
     # aggregate is ATTACHed for the duration. ATTACH does not write
@@ -1354,7 +1354,7 @@ def _derive_inst_module_in_materialized_scope(
     inst_serving_periods = publication_periods(source)
     # The watermarks are read HERE — before the single read transaction ends —
     # so they describe the same snapshot state as every derived artifact
-    # (review F5: reading them after the COMMIT let them describe a different
+    # (reading them after the COMMIT let them describe a different
     # source state; only the DETACH may follow the COMMIT).
     inst_watermarks = {
         "latest_period_of_report": source.execute(
@@ -1376,7 +1376,8 @@ def _derive_inst_module_in_materialized_scope(
     else:
         # SQLite refuses DETACH inside an open transaction, so the external
         # snapshot's single read transaction ends here — AFTER every read the
-        # projection performs, which is exactly the span R16 requires.
+        # projection performs, which is exactly the span the single-transaction
+        # rule requires.
         if end_read_txn is not None:
             end_read_txn()
         source.execute("DETACH DATABASE inst_agg")
@@ -1404,21 +1405,21 @@ def _derive_inst_from_snapshot(
     inst_serving_path: Path,
     created_at: str,
 ) -> tuple[dict, dict]:
-    """Derive the inst module from an accepted external snapshot (R1/R2/R16/R24).
+    """Derive the inst module from an accepted external snapshot.
 
-    Returns ``(derived, inst_source_document)``. The sequence is the R16
+    Returns ``(derived, inst_source_document)``. The sequence is the
     identity contract, in order:
 
     1. the snapshot's whole-file SHA-256 is computed BEFORE the file is opened
        — the identity is the bytes on disk, not what a connection sees;
-    2. the file is opened ``mode=ro&immutable=1`` — permitted because the R23
+    2. the file is opened ``mode=ro&immutable=1`` — permitted because the
        protocol finalized it as genuinely immutable (0444, sidecar-free); a
-       write attempt through any derive path is a hard failure (R2);
+       write attempt through any derive path is a hard failure;
     3. ONE explicit read transaction spans view verification, metadata capture,
        the coverage gate, the aggregate build, and the serving projection, so
-       every derived number observed one snapshot state (R16);
+       every derived number observed one snapshot state;
     4. provenance fields come from the ``inst_source_meta`` row INSIDE the
-       hashed file (R24) — provenance cannot drift from identity.
+       hashed file — provenance cannot drift from identity.
     """
     if not inst_db_path.is_file():
         raise PublishError(
@@ -1464,7 +1465,7 @@ def _derive_inst_from_snapshot(
                 }
             _end_read_txn()
         except sqlite3.OperationalError as exc:
-            # R2: the snapshot is read-only in every path. A derive-path write
+            # The snapshot is read-only in every path. A derive-path write
             # attempt surfaces from SQLite as "attempt to write a readonly
             # database" — a publication invariant violation, not an incidental
             # operational fault.
@@ -1472,7 +1473,7 @@ def _derive_inst_from_snapshot(
                 raise PublishError(
                     f"a derivation path attempted to WRITE the read-only inst"
                     f" snapshot {inst_db_path}: {exc} — the snapshot is"
-                    " immutable by contract (R2)"
+                    " immutable by contract"
                 ) from exc
             raise
     finally:
@@ -1505,7 +1506,7 @@ def _complete_extra_module_assets(
     draft: bool,
     scratch: Path | None,
 ) -> None:
-    """Upload/verify every non-congress module's Release DB asset (R3/R12).
+    """Upload/verify every non-congress module's Release DB asset.
 
     The recovery journal is congress-scoped — ``congress.db`` is extracted from
     it — so an additional module's aggregate (``inst_agg.db``) is sourced from
@@ -1520,8 +1521,8 @@ def _complete_extra_module_assets(
     for module_name in sorted(manifest.get("modules", {})):
         if module_name == MODULE:
             continue  # congress.db is sourced from the journal itself
-        # EVERY database artifact for the module, not just the primary one
-        # (RUN M2-8 T8; external review r3 F9). Resolving a single name here is
+        # EVERY database artifact for the module, not just the primary one.
+        # Resolving a single name here is
         # how a second asset gets silently skipped at upload and verification.
         for db_name in module_db_artifacts(module_name):
             entry = find_artifact(manifest, db_name, module=module_name)
@@ -1609,7 +1610,7 @@ def _complete_build(
         raise PublishError(
             f"journal is for {journal['build_id']}, not {build_id}"
         )
-    # F2: refuse a conflicting republish BEFORE any backend mutation — a
+    # Refuse a conflicting republish BEFORE any backend mutation — a
     # committed build that differs from this journal (any artifact, not just
     # manifest.json) means we would overwrite a different committed build.
     # (reconcile_inflight reaches _complete_build without _preflight, so the
@@ -1623,8 +1624,7 @@ def _complete_build(
     # The extra-module asset preflight must run here too: reconciliation reaches
     # this point WITHOUT _preflight, so without it a resumed publish could upload
     # the journal and congress.db before discovering a missing/corrupt staged
-    # inst_agg.db — partially mutating a build that was never publishable
-    # (QA-F1, round 6).
+    # inst_agg.db — partially mutating a build that was never publishable.
     _preflight_module_assets(Path(data_repo), build_id, journal, backend)
     manifest_text: str = journal["artifacts"]["manifest.json"]
     manifest_bytes = manifest_text.encode("utf-8")
@@ -1678,7 +1678,7 @@ def _complete_build(
                         " verification after upload"
                     )
             # After the journal + congress.db (P1 order preserved), upload each
-            # additional module's Release asset from staging, before publish (R3).
+            # additional module's Release asset from staging, before publish.
             _complete_extra_module_assets(
                 data_repo,
                 build_id,
@@ -1713,7 +1713,7 @@ def _complete_build(
             scratch=None,
         )
 
-    # The complete committed-build conflict check ran in preflight above (F2),
+    # The complete committed-build conflict check ran in preflight above,
     # before any mutation; materialize is byte-idempotent for the matching case.
     builds_dir = data_repo / "builds"
     materialize_from_journal(journal_bytes, builds_dir)
@@ -1854,7 +1854,7 @@ def reconcile_inflight(
     return ReconcileReport(tuple(completed), tuple(actions))
 
 
-# --- build assembly (R1/R2/R34/R35) ------------------------------------------
+# --- build assembly ------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -1868,16 +1868,16 @@ class BuildReport:
     adopted: bool
     reconciled: tuple[str, ...]
     # True when an existing valid staged journal / completed in-flight build
-    # was preserved or recovered verbatim rather than assembled fresh (F2).
+    # was preserved or recovered verbatim rather than assembled fresh.
     preserved: bool = False
-    # The inst cross-filer aggregate outcome (R7). When inst data is present but
+    # The inst cross-filer aggregate outcome. When inst data is present but
     # the M2 >=95% gate withholds it, this carries the typed reason (reason ∈
     # {below_threshold, cover_failed, not_measurable} + the coverage numbers);
     # it is None when inst published or no inst data was present.
     inst_withheld: dict | None = None
-    # The inst logical digest when the inst module published (R5); None otherwise.
+    # The inst logical digest when the inst module published; None otherwise.
     inst_logical_digest: str | None = None
-    # Per-period value-coverage breakdown (RUN M2-5, R9): reporting only, present
+    # Per-period value-coverage breakdown: reporting only, present
     # whenever inst data was measured (pass or withheld); None otherwise.
     inst_period_coverage: list[dict] | None = None
     # The M2-7 cover-reconciliation dispositions behind the coverage numbers:
@@ -1904,7 +1904,7 @@ def _report_from_manifest(
         previous_build_id=manifest.get("previous_build_id"),
         logical_digest=db_entry.get("logical_digest", ""),
         # Count EVERY module's artifacts: a preserved two-module build would
-        # otherwise under-report its display-only count (QA-F2 nit, round 5).
+        # otherwise under-report its display-only count.
         artifact_count=sum(
             len(module.get("artifacts", []))
             for module in manifest.get("modules", {}).values()
@@ -1953,7 +1953,7 @@ class StagedBuild:
     ``stage_build`` → data artifacts + a **provisional** manifest → the site
     builds against it → ``finalize_build`` patches the count, discards the
     provisional manifest, re-assembles from the same walk, and only then writes
-    the recovery journal (which must stay LAST, R35).
+    the recovery journal (which must stay LAST).
 
     ``report`` is set when nothing was assembled — a preserved or reconciled
     build. Those are already published and journal-sealed, so ``finalize_build``
@@ -2010,7 +2010,7 @@ def write_stage_state(staged: StagedBuild) -> Path:
             "watermarks": state["watermarks"],
             "db_logical": state["db_logical"],
             "inst_logical": state["inst_logical"],
-            # RUN M2-8's serving substrate crosses the stage/finalize process
+            # The inst serving substrate crosses the stage/finalize process
             # boundary too. `_seal_build` reads it unconditionally whenever
             # `inst_logical` is set, so omitting it here made every build with a
             # populated inst module KeyError at the FINAL seal while the
@@ -2049,8 +2049,8 @@ def _recompute_db_logical(snapshot_path: Path) -> str:
 def _validated_expected_modules(payload: dict) -> list[str] | None:
     """The staged expected-module set, or None for a genuinely legacy sidecar.
 
-    Present-but-unusable is a hard error at LOAD time as well as at seal time
-    (review c2r2-F1): an emptied list is not a legacy shape, it is corruption,
+    Present-but-unusable is a hard error at LOAD time as well as at seal
+    time: an emptied list is not a legacy shape, it is corruption,
     and the difference decides whether the F-26 gate runs at all.
     """
     if "expected_modules" not in payload:
@@ -2092,7 +2092,7 @@ def read_stage_state(
 
     # The build id comes from the DIRECTORY, never from the sidecar.
     #
-    # Trusting `payload["build_id"]` reintroduced the exact failure QA round 7
+    # Trusting `payload["build_id"]` reintroduced exactly the failure this rule
     # exists to prevent: a hand-edited sidecar published real congress.db bytes
     # under a fabricated identity that never passed through `next_build_id`'s
     # durable high-water mark, so one immutable build id could name two
@@ -2153,7 +2153,7 @@ def read_stage_state(
         "adopted": payload["adopted"],
         "reconciled": payload["reconciled"],
     }
-    # Review c2r3-F1: for a genuinely legacy sidecar the key is OMITTED, never
+    # For a genuinely legacy sidecar the key is OMITTED, never
     # set to None — `_seal_build` bypasses the gate on ABSENCE alone, so a
     # present None must stay distinguishable from "this state predates the
     # gate" and remains fatal.
@@ -2232,7 +2232,7 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
         watermarks=state["watermarks"],
         artifacts=entries,
     )
-    # Post-assembly injection of the inst module when it cleared the gate (R3/R7).
+    # Post-assembly injection of the inst module when it cleared the gate.
     # `build_manifest` stays congress-scoped (zero M1 regression); the inst
     # aggregate is a separate Release asset alongside congress.db.
     inst_logical = state["inst_logical"]
@@ -2251,7 +2251,7 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
         inst_serving_logical = state["inst_serving_logical"]
         require_complete_inst_module(inst_logical, inst_serving_logical)
         inst_artifacts = [inst_entry.to_dict()]
-        # The SECOND inst database (RUN M2-8 T8, R9). Enumerated here or it is
+        # The SECOND inst database. Enumerated here or it is
         # not published at all: `_complete_extra_module_assets`,
         # `_preflight_module_assets`, `run_verify`, `run_rollback` and the client
         # installer all iterate `module_db_artifacts` and skip a name the
@@ -2300,7 +2300,7 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
     # closed list (the inst coverage gate's own typed reasons); anything else
     # → publication-fatal. Runs on BOTH seal passes, so an accidentally
     # missing module fails at stage time, before any deploy leg runs.
-    # Review c2r2-F1 → c2r3-F1: the ABSENCE OF THE KEY is the only bypass (a
+    # The ABSENCE OF THE KEY is the only bypass (a
     # legacy sidecar staged before this gate existed; `read_stage_state` omits
     # the key entirely for those). A key that is PRESENT and empty, malformed,
     # or None is a corrupted stage-state — skipping the gate for it would
@@ -2338,7 +2338,7 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
     if provisional:
         return None
 
-    # --- the recovery journal, durably staged LAST (R35) ----------------------
+    # --- the recovery journal, durably staged LAST ----------------------
     staging_dir: Path = state["staging_dir"]
     journal_bytes = build_journal(staging_dir, manifest, snapshot_path)
     atomic_write_bytes(
@@ -2351,7 +2351,7 @@ def _seal_build(state: dict, *, provisional: bool) -> BuildReport | None:
         previous_build_id=state["previous_build_id"],
         logical_digest=state["db_logical"],
         # Every module's artifacts, matching `_report_from_manifest` — a fresh
-        # two-module build must not report only the congress count (QA-F4 nit).
+        # two-module build must not report only the congress count.
         artifact_count=sum(
             len(module.get("artifacts", []))
             for module in manifest.get("modules", {}).values()
@@ -2378,7 +2378,7 @@ def finalize_build(
     optional because the single-phase wrapper has no site to count; when it is
     ``None`` the staged ``stats.json`` keeps the ``null`` ``compute_stats``
     wrote, which is what every non-deploying caller wants. **The deploying path
-    must pass a real count** — R3 puts that assertion in the workflow, not in
+    must pass a real count** — that assertion lives in the workflow, not in
     the schema, precisely so this wrapper cannot satisfy it by accident.
 
     A preserved or reconciled build is returned untouched: it is already sealed.
@@ -2411,7 +2411,7 @@ def finalize_build(
             if not served.is_file():
                 raise PublishError(
                     f"no served stats.json at {served} — the site build did not "
-                    "emit one, so the two copies cannot be made identical (R24)"
+                    "emit one, so the two copies cannot be made identical"
                 )
             served.write_text(rendered, encoding="utf-8")
             # Assert rather than assume: this is the byte-equality §12.1 names,
@@ -2420,7 +2420,7 @@ def finalize_build(
             if served.read_bytes() != canonical:
                 raise PublishError(
                     "the served and canonical stats.json differ after patching — "
-                    "R24's byte-equality does not hold"
+                    "the required byte-equality does not hold"
                 )
 
     report = _seal_build(state, provisional=False)
@@ -2495,22 +2495,22 @@ def stage_build(
     library default {congress} preserves congress-only test builds; the
     production CLI declares {congress, inst}, which is what catches a build
     that silently lost a module. A fresh stage REQUIRES a non-empty declared
-    set — there is no bypass (review F8): a caller wanting fewer modules
+    set — there is no bypass: a caller wanting fewer modules
     declares fewer, visibly. (A LEGACY staged sidecar predating this gate has
     no persisted expectation; only that recovery-reseal path skips it.)
 
-    ``inst_db_path`` (RUN M2-11, R1): the accepted external inst snapshot.
+    ``inst_db_path``: the accepted external inst snapshot.
     When given, institutional presence, coverage, watermarks and both derived
     databases come from THAT file — opened read-only, one read transaction,
     identity captured as its whole-file SHA-256 plus its own
-    ``inst_source_meta`` fields, published as ``inst_source.json`` (R24).
+    ``inst_source_meta`` fields, published as ``inst_source.json``.
     When ``None``, behaviour is byte-identical to before the parameter existed.
 
-    Recovery-first (F1): shared state is reconciled BEFORE the source database
+    Recovery-first: shared state is reconciled BEFORE the source database
     is required or opened, so a fresh runner completes an interrupted publish
     from the data repo + Release backend alone — no source-database input. The
     database is required only when genuinely new artifacts must be assembled.
-    A staged-only build with a valid journal is preserved verbatim (F2), never
+    A staged-only build with a valid journal is preserved verbatim, never
     re-produced from the current database or clock.
 
     Assembly path: snapshot → integrity check → logical digest → stats →
@@ -2527,12 +2527,12 @@ def stage_build(
     if not data_repo.is_dir():
         raise PublishError(f"data repo {data_repo} does not exist")
 
-    # F1: reconcile in-flight state first — needs no source database.
+    # Reconcile in-flight state first — needs no source database.
     reconciled = reconcile_inflight(
         data_repo, now=now, backend=backend, attestation=attestation
     )
 
-    # F2: a staged-only build with a valid journal is preserved verbatim; an
+    # A staged-only build with a valid journal is preserved verbatim; an
     # invalid/partial staged journal for an id with no Release is rebuilt.
     staging_root = data_repo / STAGING_DIR
     staged_candidates: list[str] = []
@@ -2704,7 +2704,7 @@ def stage_build(
             " WHERE ticker IS NOT NULL ORDER BY ticker"
         ):
             if not safe_artifact_name(ticker) or "/" in ticker:
-                # Rows stay in the feed, the DB, and stats (TD-6) — only the
+                # Rows stay in the feed, the DB, and stats — only the
                 # per-ticker slice route is skipped, and counted.
                 skipped_tickers.append(ticker)
                 continue
@@ -2723,7 +2723,7 @@ def stage_build(
                 build_dir, f"congress/tickers/{ticker}.json", _render_json(slice_doc)
             )
 
-        # --- licensing set (R34; §15.1/§17 license gate) ---------------------
+        # --- licensing set (§15.1, §17 license gate) ---------------------
         register = licenses.load_register()
         register_errors = licenses.validate_register(register)
         if register_errors:
@@ -2746,14 +2746,14 @@ def stage_build(
             ],
         }
 
-        # --- inst cross-filer aggregates + the M2 >=95% coverage gate (R1/R7) --
+        # --- inst cross-filer aggregates + the M2 >=95% coverage gate --
         # Guard on inst data: absent → a byte-identical M1 build (no inst module,
         # no inst_agg.db asset). The recovery journal stays congress-scoped
-        # either way (R3); the inst asset is a separate staged Release asset.
+        # either way; the inst asset is a separate staged Release asset.
         inst_agg_path = assets_dir / INST_DB_ARTIFACT
         inst_serving_path = assets_dir / INST_SERVING_ARTIFACT
         if inst_db_path is not None:
-            # RUN M2-11 (R1): the accepted external snapshot is the ONLY inst
+            # The accepted external snapshot is the ONLY inst
             # input — presence, coverage, watermarks and both derived databases
             # come from its read-only handle, never from the congress snapshot.
             derived, inst_source_document = _derive_inst_from_snapshot(
@@ -2772,20 +2772,20 @@ def stage_build(
             # The provenance artifact is an ordinary staged file under
             # `build_dir`, so `_seal_build`'s walk enumerates it and the
             # recovery journal carries it verbatim — the generic installer
-            # then handles it with zero code change (R24).
+            # then handles it with zero code change.
             _write_staged(
                 build_dir,
                 INST_SOURCE_ARTIFACT,
                 _render_json(inst_source_document),
             )
-            # Producer guard (R24): a build given --inst-db that fails to
+            # Producer guard: a build given --inst-db that fails to
             # emit its provenance is refused — "optional" must never be
             # indistinguishable from "absent because nobody wrote it".
             if not (build_dir / INST_SOURCE_ARTIFACT).is_file():
                 raise PublishError(
                     f"stage-build was given --inst-db but did not emit"
                     f" {INST_SOURCE_ARTIFACT} — refusing to publish an inst"
-                    " module whose source identity is unrecorded (R24)"
+                    " module whose source identity is unrecorded"
                 )
         elif _inst_data_present(snapshot):
             derived = _derive_inst_module(
@@ -2847,7 +2847,7 @@ def stage_build(
         "backend": backend,
         "db_logical": db_logical,
         "inst_logical": inst_logical,
-        # RUN M2-8: `_seal_build` enumerates the serving artifact from these.
+        # `_seal_build` enumerates the serving artifact from these.
         "inst_serving_path": inst_serving_path,
         "inst_serving_logical": inst_serving_logical,
         "inst_watermarks": inst_watermarks,
@@ -2861,7 +2861,7 @@ def stage_build(
     }
     # The provisional manifest: written so `data.ts` can read `manifest.modules`
     # and decide which surfaces exist. It is NOT journalled — the journal stays
-    # last, after finalize re-assembles (R35).
+    # last, after finalize re-assembles.
     _seal_build(state, provisional=True)
     return StagedBuild(
         build_id=build_id,
@@ -2871,7 +2871,7 @@ def stage_build(
     )
 
 
-# --- publish (R9/R10/R25/R26/R31/R35) ----------------------------------------
+# --- publish ----------------------------------------
 
 
 @dataclass(frozen=True)
@@ -2891,10 +2891,10 @@ def _preflight_module_assets(
     asset on the release. Without this a dry-run could claim a build would
     publish while its inst_agg.db is missing/corrupt, and a real publish could
     upload the journal and congress.db before refusing — mutating on a build that
-    was never publishable (QA-F6, §5.5 preflight).
+    was never publishable (§5.5 preflight).
 
     Shared by `_preflight` AND the draft-reconciliation path, which reaches
-    `_complete_build` without `_preflight` (QA-F1, round 6).
+    `_complete_build` without `_preflight`.
     """
     manifest_text = journal["artifacts"].get("manifest.json")
     if manifest_text:
@@ -2908,7 +2908,7 @@ def _preflight_module_assets(
                 if module_name == MODULE:
                     continue  # congress.db comes from the journal itself
                 # EVERY database artifact, not just the primary one — the resume/reconcile
-                # path must not silently skip a second asset either (review r3 F9).
+                # path must not silently skip a second asset either.
                 for db_name in module_db_artifacts(module_name):
                     entry = find_artifact(staged_manifest, db_name, module=module_name)
                     if entry is None:
@@ -2947,9 +2947,9 @@ def _preflight(
     journal_bytes: bytes,
     backend: ReleaseBackend,
 ) -> None:
-    """Verify every immutable target BEFORE the first write (R25)."""
-    journal = journal_load(journal_bytes)  # refuses partial builds (R10)
-    # F2: a symlinked builds/<build_id> would redirect materialize writes
+    """Verify every immutable target BEFORE the first write."""
+    journal = journal_load(journal_bytes)  # refuses partial builds
+    # A symlinked builds/<build_id> would redirect materialize writes
     # outside the data repo — refuse here, before any draft/upload/publish.
     escape = _build_dir_escape_error(Path(data_repo) / "builds", build_id)
     if escape is not None:
@@ -3021,7 +3021,7 @@ def _publish_rollback(
 ) -> PublishReport:
     """§13.5 staging rollback: a new, higher pointer targeting an older build.
 
-    Preflight (F4): the target must be a complete, verifiable published build
+    Preflight: the target must be a complete, verifiable published build
     — its committed manifest validates, its build_id matches, and EVERY
     immutable asset the manifest enumerates reconciles (committed ``path``
     files by hash; Release ``url`` assets — the database and journal — through
@@ -3035,8 +3035,8 @@ def _publish_rollback(
             f" builds/{rollback_to}/manifest.json"
         )
     manifest_bytes = manifest_path.read_bytes()
-    # The rollback target's committed metadata is external, corruptible input
-    # (F4): a malformed target manifest must refuse cleanly, never raise an
+    # The rollback target's committed metadata is external, corruptible input:
+    # a malformed target manifest must refuse cleanly, never raise an
     # uncaught JSON exception out of the publish command.
     try:
         manifest = json.loads(manifest_bytes.decode("utf-8"))
@@ -3052,8 +3052,8 @@ def _publish_rollback(
     identity = pointer_manifest_identity_error(manifest, rollback_to)
     if identity is not None:
         raise PublishError(f"rollback target: {identity}")
-    # Verify every enumerated immutable asset of EVERY module before repointing
-    # (R11): a missing/corrupt inst_agg.db refuses the rollback just as a missing
+    # Verify every enumerated immutable asset of EVERY module before repointing:
+    # a missing/corrupt inst_agg.db refuses the rollback just as a missing
     # congress.db does — consumers are never pointed at an unverifiable build.
     for module_name in sorted(manifest["modules"]):
         for entry in manifest["modules"][module_name]["artifacts"]:
@@ -3175,15 +3175,15 @@ def run_publish(
     # Path-safety: the externally-supplied build ids (`--build`/`--rollback-to`)
     # flow into `.staging/<id>/`, `builds/<id>/`, and `data-<id>` joins. Reject
     # anything that is not a well-formed build_id at the boundary, so no path is
-    # derived from an unvalidated traversal string (R29).
+    # derived from an unvalidated traversal string.
     for label, value in (("--build", build_id), ("--rollback-to", rollback_to)):
         if value is not None and _BUILD_ID.match(value) is None:
             raise PublishError(
                 f"{label} {value!r} is not a valid build_id (YYYYMMDD.N)"
             )
     if rollback_to is not None:
-        # F7: resolve in-flight publication state BEFORE mutating the pointer,
-        # exactly as the normal publish path does (R18/R25/R35). A pending
+        # Resolve in-flight publication state BEFORE mutating the pointer,
+        # exactly as the normal publish path does. A pending
         # recoverable draft is completed first so the rollback repoints against
         # a consistent state and cannot be silently undone by the next reconcile
         # (which would otherwise complete the draft and mint a still-higher
@@ -3269,7 +3269,7 @@ def run_publish(
     )
 
 
-# --- verify (R10/R34) --------------------------------------------------------
+# --- verify --------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -3290,10 +3290,10 @@ def _verify_local_db_artifact(
 ) -> list[str]:
     """SQLite integrity + logical-digest checks for a LOCAL database artifact.
 
-    R10 requires ``populus verify`` to validate each published module database's
+    ``populus verify`` must validate each published module database's
     ``PRAGMA integrity_check`` and to recompute its ``logical_digest`` under the
     module's own *projection*, directly from the manifest-resolved artifact —
-    with no ``--db`` supplied (F2). A hash-consistent but corrupt or non-SQLite
+    with no ``--db`` supplied. A hash-consistent but corrupt or non-SQLite
     file, or a manifest whose ``logical_digest`` disagrees with the actual
     database, is a defect here. (``--db`` remains the §13.5 disaster-recovery
     source reconciliation.)
@@ -3368,7 +3368,7 @@ def run_verify(
     if parse_rfc3339z(pointer["expires_at"]) <= moment:
         errors.append(f"pointer expired at {pointer['expires_at']} (stale)")
     # Future-issuance: a pointer issued beyond the same small skew the client's
-    # state machine tolerates (evaluate_pointer) is rejected here too (F4), so
+    # state machine tolerates (evaluate_pointer) is rejected here too, so
     # `verify` and the consumer agree on which pointers are acceptable.
     if parse_rfc3339z(pointer["issued_at"]) > moment + timedelta(
         seconds=ISSUANCE_SKEW_SECONDS
@@ -3403,7 +3403,7 @@ def run_verify(
         errors.append(f"manifest attestation rejected: {verdict.detail}")
     # A digest-consistent manifest can still be malformed (bytes hash to the
     # pointer's manifest_sha256 yet are not valid/structured JSON) — return a
-    # failed report, never a traceback (F2; mirrors the monitor stats guard).
+    # failed report, never a traceback (mirrors the monitor stats guard).
     try:
         manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -3433,7 +3433,7 @@ def run_verify(
             False, build_id, (*errors, identity_error), tuple(notes), 0
         )
 
-    # Recompute EVERY module's artifact hashes and DB logical digest (R4): a
+    # Recompute EVERY module's artifact hashes and DB logical digest: a
     # two-module build re-verifies both congress.db (congress projection) and
     # inst_agg.db (inst projection), each under its own module's allowlist.
     stats_bytes: bytes | None = None
@@ -3441,7 +3441,7 @@ def run_verify(
         # The set of names that must be logical-digest verified for this module.
         # A membership test, not an equality test: with two inst databases an
         # `== db_artifact` comparison verifies the aggregate and silently skips
-        # the serving projection (review r3 F9).
+        # the serving projection.
         db_artifacts = set(module_db_artifacts(module_name))
         for entry in manifest["modules"][module_name]["artifacts"]:
             name = entry["name"]
@@ -3462,7 +3462,7 @@ def run_verify(
                 elif name == "congress/stats.json":
                     stats_bytes = artifact_file.read_bytes()
                 elif name in db_artifacts:
-                    # F2: a LOCAL (path) database artifact is integrity- and
+                    # A LOCAL (path) database artifact is integrity- and
                     # logical-digest-checked here (under its module's own
                     # projection), with no --db required.
                     errors.extend(
@@ -3479,7 +3479,7 @@ def run_verify(
                     " `verify --remote` is P2"
                 )
 
-    # Licensing set (R34): present, enumerated, and byte-consistent with the
+    # Licensing set: present, enumerated, and byte-consistent with the
     # packaged register renders.
     expected_renders = {
         "licenses.json": _render_json(register),
@@ -3489,7 +3489,7 @@ def run_verify(
     for name, expected in expected_renders.items():
         entry = find_artifact(manifest, name)
         if entry is None:
-            errors.append(f"licensing artifact {name} is not enumerated (R34)")
+            errors.append(f"licensing artifact {name} is not enumerated")
             continue
         committed = data_repo / "builds" / build_id / name
         if not committed.is_file():
@@ -3503,7 +3503,7 @@ def run_verify(
     if db_path is not None:
         db_entry = find_artifact(manifest, DB_ARTIFACT)
         # The --db argument and the manifest-listed stats.json are both
-        # external, corruptible inputs (F3): a non-SQLite --db raises
+        # external, corruptible inputs: a non-SQLite --db raises
         # sqlite3.Error, and a digest-consistent malformed stats.json raises
         # JSON/shape errors. Every one is converted to a verify error here,
         # never an uncaught traceback.

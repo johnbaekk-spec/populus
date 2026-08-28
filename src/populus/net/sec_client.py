@@ -2,7 +2,7 @@
 
 One of the modules allowed to import the sanctioned HTTP client. Everything
 that decides *whether and when* a request goes out lives here, in code, with no
-configuration seam (G6): the request-rate floor, the backoff schedule, the
+configuration seam: the request-rate floor, the backoff schedule, the
 circuit-breaker threshold and the per-endpoint-class cache TTLs are module
 constants, and the constructor takes no knob for any of them.
 
@@ -50,7 +50,7 @@ from populus.net import (
     TransportResponse,
 )
 
-# --- politeness policy: in code, never config (G6) ----------------------------
+# --- politeness policy: in code, never config ----------------------------
 
 #: <= 2 req/s, client-wide. SEC publishes this ceiling; Populus sits at it
 #: rather than probing it.
@@ -86,7 +86,7 @@ def _lower_authority(url: str) -> str:
 
     The host guard admits SEC hostnames case-insensitively, so the endpoint-class
     match must too, or an admitted upper-case host (`https://WWW.SEC.GOV/files/…`)
-    falls through to the short default TTL and revalidates needlessly. (QA-F3)
+    falls through to the short default TTL and revalidates needlessly.
     """
     idx = url.find("://")
     if idx == -1:
@@ -134,7 +134,7 @@ class HttpxSecTransport:
         self._transport = transport
 
     def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
-        # R9/LD10: the shared bounded helper streams and counts decoded bytes;
+        # The shared bounded helper streams and counts decoded bytes;
         # a body over the 128 MiB ceiling raises ResponseTooLarge (named
         # failure) instead of buffering without limit. Redirects stay disabled.
         from populus.net.bounded_http import bounded_http_request
@@ -365,7 +365,7 @@ class SecClient:
             # floor must still space the NEXT attempt even if this call raises
             # (an immediate timeout/exception must never let a retry skip the
             # 0.5 s floor). Recording it only on success (the old behavior) let a
-            # failed flight's retry fire with no spacing. (G6)
+            # failed flight's retry fire with no spacing.
             self._last_request = self._monotonic()
             response = self._transport.get(url, headers=headers)
             status = response.status_code
@@ -417,7 +417,7 @@ def _retry_after_seconds(
 ) -> float | None:
     """``Retry-After`` in seconds, honoured only when LONGER than our backoff.
 
-    Accepts BOTH RFC 7231 forms (QA-F3): delay-seconds, or an HTTP-date resolved
+    Accepts BOTH RFC 7231 forms: delay-seconds, or an HTTP-date resolved
     against ``now_utc`` (an injected UTC reference, so this stays deterministic
     and testable). A past-dated or malformed value yields ``None``.
     """

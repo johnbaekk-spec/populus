@@ -3,10 +3,10 @@
    functions the SSR page used, so the re-rendered order can never drift from
    the pre-rendered one. All work happens on this device.
 
-   R48: the header/direction/aria/announcement plumbing now comes from the
+   The header/direction/aria/announcement plumbing now comes from the
    shared `initSortableTable`, which owns NO ordering semantics. Comparison,
    the ranked/unranked split and the tie-break stay here, in the domain — that
-   separation is the whole point (external plan review F2), and it is why this
+   separation is the whole point, and it is why this
    refactor changes no observable behaviour. `inst-index-client.test.ts` pins
    that: it captures this island's output and asserts it is unchanged. */
 
@@ -24,7 +24,7 @@ import {
 } from "../lib/inst-adds.ts";
 import { addsRowsHtml } from "../lib/inst-adds-render.ts";
 
-/* F3: `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
+/* `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
 
    The SSR page rendered the directory body itself and the client rendered it
    again here, and the two disagreed: the client applied ONE compact budget
@@ -54,7 +54,7 @@ export function initInstIndex(): void {
     return; // SSR table stays — the island is a convenience, never load-bearing
   }
 
-  /* F13: ONE state machine for the directory.
+  /* ONE state machine for the directory.
 
      Search, sort, the type chips and the notable chip all feed the same pure
      pipeline and the same single render. They used to be two owners of one
@@ -100,13 +100,13 @@ export function initInstIndex(): void {
   });
 
   function syncDisclosure(total: number, _shown: number): void {
-    // F16: the label and the omission rule are derived from the COMPACT LIMIT,
+    // The label and the omission rule are derived from the COMPACT LIMIT,
     // not from how many rows are rendered right now. Using the shown count made
     // an expanded control promise to keep every row it was about to collapse
     // away.
     const hidden = Math.max(0, total - COMPACT_ROWS);
     if (hidden === 0) expanded = false;
-    /* F6/SL-R10: the sentence and the button commit TOGETHER, in this one pass.
+    /* The sentence and the button commit TOGETHER, in this one pass.
        A chip that drops the directory below the compact bound must retract
        both. The "every filer has its own page" remainder is untouched here:
        it is true at every row count, so no filter can invalidate it. */
@@ -145,9 +145,9 @@ export function initInstIndex(): void {
     });
 }
 
-/** R9/R20/R21 — the closed-period selector and the new-only toggle.
+/** The closed-period selector and the new-only toggle.
 
-    F12: EVERY VISIBLE CLAIM COMMITS TOGETHER, AFTER the payload arrives.
+    EVERY VISIBLE CLAIM COMMITS TOGETHER, AFTER the payload arrives.
     Previously the pressed state changed on click, the rows changed later, the
     caption never changed at all, a note that started empty could not be
     inserted, failures only reached the console, and two overlapping requests
@@ -190,7 +190,7 @@ export function initAddsControls(): void {
     if (statusEl) statusEl.textContent = text;
   }
 
-  /* F27: the SHARED plumbing owns header wiring, direction toggling,
+  /* The SHARED plumbing owns header wiring, direction toggling,
      `aria-sort` and the announcement — the same helper every other sortable
      table on the site uses. Only the ORDERING stays here, in `sortAddsRows`,
      because only this module knows a null value means "undisclosed" rather
@@ -226,10 +226,10 @@ export function initAddsControls(): void {
   }
 
   function syncDisclosure(): void {
-    // F16: derived from the LIMIT, not from the rendered count.
+    // Derived from the LIMIT, not from the rendered count.
     const hidden = Math.max(0, rows.length - COMPACT_ROWS);
     if (hidden === 0) expanded = false;
-    /* F6/SL-R10: the named bound moves with the quarter. Its REMAINDER carries
+    /* The named bound moves with the quarter. Its REMAINDER carries
        the link to THIS period and mode's published payload, so the no-JS route
        the server-rendered view offered is still correct after a selection —
        which is why this one rewrites the remainder as well as the count, and
@@ -266,7 +266,7 @@ export function initAddsControls(): void {
     setStatus(`Loading the quarter ended ${nextPeriod}…`);
     let payload: AddsPayload;
     try {
-      // F14: through `addsPayloadHref`, the SAME builder the section's no-JS
+      // Through `addsPayloadHref`, the SAME builder the section's no-JS
       // links render. This was a hardcoded template while Dev Notes claimed one
       // authority — so the claim was false and a path change could have sent
       // the scripted selector somewhere the published link does not go.
@@ -295,7 +295,7 @@ export function initAddsControls(): void {
     press("mode", mode);
 
     const win = document.getElementById("inst-adds-window");
-    /* SL-R9: same split, same removal. The plan named only `applyRollup`; this
+    /* Same split, same removal as the congress window statement: this
        is the second site doing exactly the same thing for the adds window, and
        leaving it would have re-appended a build id the server no longer
        renders — reconstructing a stamp from an empty capture group. */
@@ -327,14 +327,15 @@ export function initAddsControls(): void {
   syncDisclosure();
 }
 
-/** R7/F2 — the generic compact-disclosure owner for tables whose FULL body is
+/** The generic compact-disclosure owner for tables whose FULL body is
     already in the DOM (the institutional activity feed).
 
     The congress ranking sections and the manager directory re-render their
     rows from data, so they own their own disclosures. This one has no data to
     re-render from: the rows are present and the control simply reveals them.
     Two mechanisms, because the two situations are genuinely different — but
-    every named root now has exactly one owner, which is what R18 asks for. */
+    every named root now has exactly one owner, which the root-scoped
+    re-render rule asks for. */
 export function initDomDisclosures(): void {
   document
     .querySelectorAll<HTMLElement>(".compact-disclosure[data-compact-dom]")
@@ -347,13 +348,13 @@ export function initDomDisclosures(): void {
       const shown = Number(wrap.dataset.compactShown ?? 0);
       const noun = wrap.dataset.compactNoun ?? "rows";
       const hidden = total - shown;
-      if (hidden <= 0) return; // R7's omission rule — nothing to disclose
-      // F2: the SERVER already rendered this collapsed, so this is normally a
+      if (hidden <= 0) return; // the omission rule — nothing to disclose
+      // The SERVER already rendered this collapsed, so this is normally a
       // no-op. It stays because an island that assumes the server did its half
       // acquires a second precondition, and this one is idempotent.
       root.setAttribute("data-collapsed", "true");
       let expanded = false;
-      /* SL-R10: this REVEALS THE BUTTON — it does not reveal the statement,
+      /* This REVEALS THE BUTTON — it does not reveal the statement,
          which the server already published visible. The count clause is what
          moves with the state: expanding puts the rows on screen, so the claim
          that they are held back is retracted, while the publication bound

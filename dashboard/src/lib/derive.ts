@@ -150,7 +150,7 @@ export function sumRangesText(s: SumRanges): string {
   }
 }
 
-/** Count-based undisclosed fraction for hatch captions (R15): rows whose
+/** Count-based undisclosed fraction for hatch captions: rows whose
     amounts did not parse, over all rows in the aggregate. */
 export function undisclosedPctText(s: SumRanges): string | null {
   if (s.kind === "undisclosed") return "100%";
@@ -500,7 +500,7 @@ export function congressTickersRollup(
   return { ...rollup, noTickerRows };
 }
 
-/* ---------- quarterly flow (C1–C7) ---------- */
+/* ---------- quarterly flow ---------- */
 
 export interface QuarterFlow {
   q: string; // "24Q3"
@@ -591,7 +591,7 @@ function monthsBefore(dateIso: string, months: number): string {
   return `${ny}-${String(nm).padStart(2, "0")}-${dateIso.slice(8, 10)}`;
 }
 
-/* ---------- R16: the single congress window-membership authority ----------
+/* ---------- the single congress window-membership authority ----------
 
    ONE rule decides whether a disclosure falls in a date window. Before this,
    two disagreed: the rollups matched on `traded ?? filed` (neither a traded
@@ -652,7 +652,7 @@ export function congressRangeBounds(range: CongressRange, end: string): DateWind
 
 /** Reader-facing labels for a range and a basis. They live beside the rule
     rather than in a renderer because the SSR default view and the client
-    rollup must produce IDENTICAL strings — the R3 parity test compares them
+    rollup must produce IDENTICAL strings — the SSR/client parity test compares them
     byte for byte, and two copies of "12 months" would eventually disagree. */
 export function rangeLabelOf(range: CongressRange): string {
   return range === "12m" ? "12 months" : `${range.slice(0, -1)} days`;
@@ -932,7 +932,7 @@ export interface CommitteeMembership {
 
 /** One member's memberships PLUS the snapshot-wide validity window. The
     window is a property of the SNAPSHOT (all members), not of one member's
-    rows — review F7: a member with zero rows inside a valid snapshot is
+    rows — a member with zero rows inside a valid snapshot is
     KNOWN to sit on no committee, which is [] and not null. */
 export interface MembershipSnapshot {
   memberships: readonly CommitteeMembership[];
@@ -965,8 +965,7 @@ export interface JurisdictionOverlapResult {
   undatable: number;
   /** trades where the member sat on ≥1 committee ABSENT from the (deliberately
       partial) jurisdiction mapping and no mapped committee matched — the
-      question is UNANSWERABLE for them, never a confirmed non-overlap
-      (review F8) */
+      question is UNANSWERABLE for them, never a confirmed non-overlap */
   coverageUnknown: number;
   /** the unmapped committee ids encountered, for the coverage statement */
   unmappedCommittees: string[];
@@ -1064,7 +1063,7 @@ export function notableRecent(
   };
 }
 
-/* ---------- QoQ presentation mapping (Locked #8, spec §1) ---------- */
+/* ---------- QoQ presentation mapping (docs/qoq-presentation.md §1) ---------- */
 
 export interface QoqPresentation {
   chipText: string;
@@ -1130,7 +1129,7 @@ export function qoqPresentation(row: QoqDeltaRow): QoqPresentation {
   };
 }
 
-/* ---------- S7 filing-window state (Locked #17) ---------- */
+/* ---------- S7 filing-window state ---------- */
 
 export interface FilingWindow {
   open: boolean;
@@ -1203,8 +1202,8 @@ export function parseEntityKey(raw: string | null): EntityKey {
     maps to `~`, which no ticker contains — colons are hostile to some
     filesystems/CDNs in static file names. Deterministic and collision-free. */
 export function tickerDataKey(ticker: string): string {
-  // Injective, filename- and route-safe for EVERY ticker (Locked #13 says
-  // every ticker gets a data endpoint, and the Senate corpus contains tickers
+  // Injective, filename- and route-safe for EVERY ticker (every ticker gets a
+  // data endpoint, and the Senate corpus contains tickers
   // with raw whitespace). Safe bytes pass through; anything else — including
   // the legacy ':' and the escape character itself — becomes ~XX per UTF-8
   // byte. Deterministic and collision-free, so the same function computes the
@@ -1281,7 +1280,7 @@ export function classifyResponse(status: number, body: unknown): FetchClassifica
   return { outcome: "ok", payload: p as unknown as EntityPayload };
 }
 
-/* ---------- ticker→issuer mapping (Locked #18, spec §4) ---------- */
+/* ---------- ticker→issuer mapping (docs/qoq-presentation.md §4) ---------- */
 
 export interface TickerMapEntry {
   cik: string; // 10-digit
@@ -1414,7 +1413,7 @@ export function resolveTicker(map: TickerMap | null, ticker: string): TickerReso
   };
 }
 
-/* ---------- search index (R11) ---------- */
+/* ---------- search index ---------- */
 
 /** The exact serialized field allowlist — arrays of fixed-arity tuples, no
     objects, so an accidental field addition fails the shape test. */
@@ -1434,7 +1433,7 @@ export function buildSearchIndex(
     v: 1,
     tickers: tickers.map((t) => [t.ticker, t.name, t.rows]),
     members: members.map((m) => [m.bioguide, m.name, m.aff, m.rows]),
-    // R22: the tier flag rides in the index so a client hit can address the
+    // The tier flag rides in the index so a client hit can address the
     // top/tail target through filerHref — a tail hit must not link to a
     // pre-rendered route that does not exist.
     filers: filers.map((f) => [f.cik.replace(/^0+/, ""), f.name, f.top ? 1 : 0]),
@@ -1494,7 +1493,7 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
       key: cik,
       label: name,
       sub: `CIK ${cik.padStart(10, "0")}`,
-      // ONE href primitive (R22): older indexes without the tier flag resolve
+      // ONE href primitive (filerHref): older indexes without the tier flag resolve
       // as tail — the /e/ shell is prerendered and never 404s.
       href: filerHref(cik, top === 1 ? "top" : "tail"),
     });
@@ -1503,7 +1502,7 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
   return hits;
 }
 
-/* ---------- budget walk (ARCHITECTURE §9.10/§12.1, Locked #13) ---------- */
+/* ---------- budget walk (ARCHITECTURE §9.10/§12.1) ---------- */
 
 /** Headroom under the §9.10 ≤8,500 module-1 page cap (owner decision
     2026-08-01: raised from 4,000 for the 13-year corpus's 3,856-ticker tail):

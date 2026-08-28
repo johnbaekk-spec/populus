@@ -7,8 +7,7 @@ the inst snapshot tools read the published ``inst_agg.db`` (and degrade honestly
 when the inst module is absent), while ``inst_ticker_holders`` federates to SEC
 EDGAR live at question time (§11.4).
 
-**The retained federated boundary (M2-CONTRACT §3.1, RUN M2-8 T9 / plan
-R10+R17).** Per-filer holdings detail used to be Pattern F for *any* period —
+**The retained federated boundary (M2-CONTRACT §3.1).** Per-filer holdings detail used to be Pattern F for *any* period —
 the module published aggregates only, so every position list was a live EDGAR
 fetch. M2-8 publishes the per-filer projection as ``inst_serving.db``, and the
 live path narrows to exactly two cases:
@@ -101,7 +100,7 @@ def _habit_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 #: What `new`/`exit` actually mean. They are trading verbs applied to a SET
 #: DIFFERENCE, and `inst_biggest_moves(side='exit')` is exactly the query an
-#: analyst will ask (QA-VERIFY5-B3).
+#: analyst will ask.
 _FLOW_CAVEAT = (
     "`new` and `exit` mean a position was PRESENT or ABSENT between two"
     " filings — NOT that it was bought or sold. A position also disappears when"
@@ -134,7 +133,7 @@ _FLOW_CAVEAT_QOQ += " full position count."
 # table it never reads.
 #
 # The filing dictionary is a SEPARATE table, not columns repeated on every row:
-# that is the R5 provenance compression (one entry per filing instead of ~600k
+# that is the serving projection's provenance compression (one entry per filing instead of ~600k
 # duplicated strings), and every holding row carries its `filing_key` so the
 # per-record provenance contract still holds.
 _SERVING_HOLDINGS = "serving_filer_rows"
@@ -262,7 +261,7 @@ def _inst_health_caveats(
 
     A `--inst-db` bypass points at an arbitrary local file that never passed the
     M2-3 publish gate, so asserting ">=95% coverage is guaranteed" there would
-    FABRICATE an assurance about unpublished data (QA-F6, LD4).
+    FABRICATE an assurance about unpublished data.
     """
     caveats = [
         "Holdings are quarter-end snapshots of long 13(f) positions, not"
@@ -272,9 +271,8 @@ def _inst_health_caveats(
         # A verified manifest OMITTED this module, but the withdrawal could not
         # be committed, so these bytes are still being served. They did pass the
         # gate when published — but they are NOT what the current build
-        # publishes, and saying nothing would present them as clean current data
-        # (QA-NIT-3; the signal was computed but never reached the server, which
-        # is QA-VERIFY-BLOCKER-2).
+        # publishes, and saying nothing would present them as clean current data (a staleness
+        # signal computed but never surfaced to the server is as good as none).
         caveats.insert(
             0,
             "STALE: the current published snapshot's verified manifest no longer"
@@ -285,7 +283,7 @@ def _inst_health_caveats(
     if absent:
         # Absence is a reasoned state — but WHICH reason is a matter of fact,
         # not assumption. Only a verified manifest that omits the module proves
-        # the gate withheld it (QA-r2-F3).
+        # the gate withheld it.
         caveats.insert(
             0,
             "The module is WITHHELD, not broken: the M2-3 publish gate refuses to"
@@ -352,7 +350,7 @@ def build_server(
     ``inst_from_published_manifest`` records whether the institutional DB was
     resolved through a VERIFIED published manifest. A ``--inst-db`` bypass points
     at an arbitrary local file that never passed the M2-3 publish gate, so no
-    coverage guarantee may be asserted for it (QA-F6).
+    coverage guarantee may be asserted for it.
 
     ``inst_serving_db_path`` is the published per-filer projection
     (``inst_serving.db``) — a SEPARATE artifact from the aggregate, and the
@@ -406,8 +404,8 @@ def build_server(
         # data_note is non-removable precisely so a response lifted out of
         # context carries its caveats. They apply ONLY to snapshot-plane answers
         # — a federated `live_source` response is freshly fetched, so stamping it
-        # "these figures come from a PREVIOUS build" would be false
-        # (QA-VERIFY4-N1), and it never passed through the --inst-db path either.
+        # "these figures come from a PREVIOUS build" would be false,
+        # and it never passed through the --inst-db path either.
         if live_source is None:
             prefix = None
             if inst_stale_withdrawal_pending:
@@ -417,7 +415,7 @@ def build_server(
                     " locally, so these figures come from a PREVIOUS build."
                 )
             elif inst_db_path is not None and not inst_from_published_manifest:
-                # QA-VERIFY4-N3: health said "UNVERIFIED SOURCE … NO coverage
+                # Health alone once said "UNVERIFIED SOURCE … NO coverage
                 # guarantee applies"; the data plane said nothing.
                 prefix = (
                     "UNVERIFIED SOURCE: this institutional database was supplied"
@@ -438,11 +436,11 @@ def build_server(
 
     # The absent-module message states only what the RESOLVER actually
     # observed. Claiming a coverage-gate withholding for a `--db` dev bypass or
-    # a failed refresh would report a decision that never happened (QA-r2-F3).
+    # a failed refresh would report a decision that never happened.
     def _qoq_absence_hint(
         cik: str, requested: str | None, result: dict[str, Any]
     ) -> dict[str, Any]:
-        """Distinguish "no data" from "no change" (QA-VERIFY5-N6).
+        """Distinguish "no data" from "no change".
 
         "no quarter-over-quarter changes on record" reads as "the portfolio did
         not change" — and was returned identically for a nonexistent quarter, a
@@ -468,7 +466,7 @@ def build_server(
         return {}
 
     def _qoq_universe(cik: str, result: dict[str, Any]) -> dict[str, Any]:
-        """The denominator the delta set was computed against (QA-VERIFY5-B3)."""
+        """The denominator the delta set was computed against."""
         period = result.get("curr_period")
         if inst_conn is None or period is None:
             return {}
@@ -484,7 +482,7 @@ def build_server(
         }
 
     def _filed_through() -> dict[str, Any]:
-        """The filing-level date for AGGREGATE responses (G4 / QA-VERIFY-N-i).
+        """The filing-level date for AGGREGATE responses (G4).
 
         The aggregate rolls up many filings and carries no per-row filed date,
         so the honest disclosure is the build's watermark — the latest filed
@@ -495,7 +493,7 @@ def build_server(
         return {"filed_through": (inst_watermarks or {}).get("latest_filed_date")}
 
     def _live_failure(url_hint: str) -> dict[str, Any]:
-        """The provenance stamp for a FAILED federated read (QA-r4-F5).
+        """The provenance stamp for a FAILED federated read.
 
         A live SEC failure is still a federated outcome; returning it through
         the snapshot-default envelope stamped it with the institutional
@@ -515,7 +513,7 @@ def build_server(
         " snapshot"
     )
 
-    # --- the retained federated boundary (M2-CONTRACT §3.1; R10/R17) ---------
+    # --- the retained federated boundary (M2-CONTRACT §3.1) ---------
 
     def _boundary(cik: str, period: str | None) -> dict[str, Any]:
         """Where a per-filer detail request must be answered.
@@ -610,10 +608,10 @@ def build_server(
         amendments and restamping them all with one date would misreport when
         those positions were disclosed (G4).
 
-        QA M2-8 M9: `limit` is capped at 5,000 and there was no cursor, so
+        `limit` is capped at 5,000 and there was no cursor, so
         32,140 of the named 37,140-position filer's rows were permanently
         unreachable through this boundary — while the truncation note advised
-        "Raise `limit` (max 5000)", advice already at its ceiling. R11's
+        "Raise `limit` (max 5000)", advice already at its ceiling. The promised
         "complete position list" was not reachable. The truncation was always
         signalled honestly; what was missing was the recovery path, and the
         house idiom for it (`env.encode_cursor`) already existed on
@@ -912,7 +910,7 @@ def build_server(
                 # This is the documented entry point for every other inst tool;
                 # against the real ~5,000-filer registry a fragment like
                 # "Capital" matches hundreds, and filer #26 was indistinguishable
-                # from not existing (QA-VERIFY5-B4).
+                # from not existing.
                 "ranking_basis": "ordered by total value summed across ALL"
                 " retained periods, so a filer with more retained quarters can"
                 " outrank a larger filer with fewer",
@@ -988,7 +986,7 @@ def build_server(
                              **_boundary_block(decision)},
                     # A federated CONFIGURATION failure is still a federated
                     # outcome; the snapshot-default envelope would stamp it with
-                    # inst_build_id (QA-r5-F2).
+                    # inst_build_id.
                     live_source=_live_failure("(no federated client configured)"),
                 )
             try:
@@ -1014,7 +1012,7 @@ def build_server(
             except Exception as exc:  # noqa: BLE001 — tool boundary
                 # A timeout, connection reset, decode error or malformed SEC
                 # payload must become an HONEST envelope, never a raised
-                # exception out of an MCP call (QA-F3). The message is
+                # exception out of an MCP call. The message is
                 # sanitized to the exception type + text, which carries no
                 # credentials (the client sends none).
                 return _inst_env(
@@ -1029,11 +1027,11 @@ def build_server(
             # Each row is stamped with ITS OWN filing's date, document and
             # ACCESSION — a composed period mixes a base and its amendment, and
             # restamping the base rows with the amendment's provenance would
-            # misreport which document disclosed those positions (G4/QA-F2).
+            # misreport which document disclosed those positions (G4).
             # `source_accession` is the third sibling of the two below and was
             # dropped here while the published plane passed it, so the same
             # client parsing both planes saw a real accession from one and
-            # `null` from the other (QA M2-8 R2 N4).
+            # `null` from the other.
             holdings = [
                 env.shape_holding(
                     h,
@@ -1056,7 +1054,7 @@ def build_server(
                     "parse_status": detail["parse_status"],
                     "last_filing_parse_status": detail["last_filing_parse_status"],
                     # How this period's answer was assembled: the base filing and
-                    # every amendment applied to it, in filed order (QA-F2).
+                    # every amendment applied to it, in filed order.
                     "composition": detail["composition"],
                     "composition_complete": detail["composition_complete"],
                     "history_complete": detail["history_complete"],
@@ -1106,7 +1104,7 @@ def build_server(
                          " inst_filer_lookup, or retry with mode='detail' for a"
                          " live fetch"}
             )
-        # R10: `mode='snapshot'` now serves the published per-filer DETAIL, not
+        # `mode='snapshot'` now serves the published per-filer DETAIL, not
         # only the aggregate profile — that is the half of the reversal that
         # makes the narrowed federated boundary honest. Without it, narrowing
         # `detail` would just remove an answer.
@@ -1157,7 +1155,7 @@ def build_server(
         except SecUrlError as exc:
             return _inst_env(results={"error": f"refusing SEC fetch: {exc}"},
                              live_source=_live_failure(iq.COMPANY_TICKERS_URL))
-        except Exception as exc:  # noqa: BLE001 — tool boundary (QA-F3)
+        except Exception as exc:  # noqa: BLE001 — tool boundary
             return _inst_env(
                 results={
                     "error": "live SEC ticker resolution failed"
@@ -1173,15 +1171,14 @@ def build_server(
             )
         # The published aggregate stores only a top-N slice per issuer/period.
         # Returning it against a `limit` of up to 200 with no disclosure made a
-        # publisher-chosen truncation look like the complete holder list
-        # (QA-VERIFY4-B2).
+        # publisher-chosen truncation look like the complete holder list.
         topn = iq.published_topn(inst_conn)
         holders = iq.issuer_top_holders(
             inst_conn, issuer_key=issuer["issuer_key"], period=period, limit=limit
         )
         # State the cut that ACTUALLY governed. "TRUNCATED regardless of
         # `limit`" is FALSE whenever limit < topn, and a caveat that contradicts
-        # its own payload is worse than none (QA-VERIFY5-B5).
+        # its own payload is worse than none.
         effective = limit if topn is None else min(limit, topn)
         governed_by = (
             "the `limit` you passed" if topn is None or limit < topn
@@ -1288,7 +1285,7 @@ def build_server(
                     "reason": _INST_ABSENT,
                     # The ABSENT state carried no caveats here while
                     # populus_health's did, so the two health tools disagreed
-                    # about the same state (QA-VERIFY-N-h).
+                    # about the same state.
                     "caveats": _inst_health_caveats(
                         False, absent=True,
                         gate_withheld=inst_absent_gate_withheld,
@@ -1357,7 +1354,7 @@ def build_server(
         # `modules` lists only the modules actually present, so the M1 contract
         # (congress-only ⇒ ["congress"]) holds; an additive per-module detail
         # block reports each module's build + freshness without changing the
-        # existing keys (R10/LD6).
+        # existing keys.
         modules = ["congress"]
         module_detail: dict[str, Any] = {
             "congress": {"present": True, "snapshot_build": build_id}
@@ -1366,7 +1363,7 @@ def build_server(
             modules.append("inst")
             watermarks = inst_watermarks or {}
             # The inst detail carries the SAME caveats + provenance inst_health
-            # reports (QA-F7): a caller that only asks the platform-level health
+            # reports: a caller that only asks the platform-level health
             # question must not receive a freshness claim stripped of the
             # quarter-end/lag caveat, nor a coverage assurance it has not earned.
             # Freshness falls back to the aggregate's own latest period when no
@@ -1395,7 +1392,7 @@ def build_server(
                 "reason": _INST_ABSENT,
                 # Only the verified-omission state may be described as a gate
                 # withholding; every other absence gets a neutral caveat that
-                # asserts no gate decision (QA-r2-F3).
+                # asserts no gate decision.
                 "caveats": _inst_health_caveats(
                     False, absent=True, gate_withheld=inst_absent_gate_withheld
                 ),
@@ -1463,8 +1460,7 @@ def _resolve_snapshot() -> dict[str, Any]:
                    help="Local populus-data working tree to resolve the snapshot from.")
     p.add_argument("--cache", default=os.environ.get("POPULUS_CACHE", str(Path.home() / ".cache" / "populus")))
     # No default: an entry point that forgets to choose must fail loudly rather
-    # than inherit a no-op verifier that answers "verified" to everything
-    # (RUN P3-3a R14). The --db dev-bypass path never builds a SnapshotClient,
+    # than inherit a no-op verifier that answers "verified" to everything. The --db dev-bypass path never builds a SnapshotClient,
     # so it is exempt and documented as such.
     p.add_argument(
         "--attestation",
@@ -1482,10 +1478,10 @@ def _resolve_snapshot() -> dict[str, Any]:
         "inst_from_published_manifest": False,
         # The per-filer serving projection is resolved SEPARATELY from the
         # aggregate: one being present proves nothing about the other, and
-        # substituting one for the other is the exact failure R10 forbids.
+        # substituting one for the other is exactly the substitution this boundary forbids.
         "inst_serving_db_path": args.inst_serving_db,
         "inst_serving_absent_reason": None,
-        # Why inst is absent, DECIDED HERE where the facts are (QA-r2-F3).
+        # Why inst is absent, DECIDED HERE where the facts are.
         # `populus_health` may only report what actually happened; it must not
         # assume the coverage gate withheld the module.
         "inst_absent_reason": None,
@@ -1538,7 +1534,7 @@ def _resolve_snapshot() -> dict[str, Any]:
             raise SystemExit(f"cannot use the snapshot cache: {disabled}")
         # Carry the client's own message: a corrupt congress anchor otherwise
         # exited with generic publish advice while the actionable remediation
-        # was thrown away — the same gap QA-VERIFY-N-f closed for inst.
+        # was thrown away — the same gap the inst path below closes.
         detail = getattr(congress_outcome, "message", "") or ""
         raise SystemExit(
             "no current snapshot; run `populus build && populus publish` or"
@@ -1550,7 +1546,7 @@ def _resolve_snapshot() -> dict[str, Any]:
         # A module-level failure must NEVER take down the server (lifecycle
         # spec §7): any unexpected error resolving the OPTIONAL inst module
         # becomes an honest absence, not a traceback that kills congress and the
-        # federated tools with it (QA-BLOCKER-2).
+        # federated tools with it.
         try:
             _resolve_inst_module(args, resolved)
         except Exception as exc:  # noqa: BLE001 — module boundary
@@ -1588,7 +1584,7 @@ def _resolve_inst_module(args, resolved: dict) -> None:
 
     # It may be absent (withheld this build); `refresh` then returns 'withdrawn'
     # with `verified_omission=True` and `db_path()` is None — a legitimate
-    # absent-module signal, not an error (QA-r4-F6).
+    # absent-module signal, not an error.
     inst_client = SnapshotClient(
         args.cache,
         LocalRepoFetcher(args.data_repo),
@@ -1602,11 +1598,11 @@ def _resolve_inst_module(args, resolved: dict) -> None:
     # here; that was a tombstone-era patch, is redundant now that a committed
     # withdrawal always leaves either a null record or an anchor/record
     # mismatch (both absent), and was itself the second-inference pattern this
-    # rewrite deleted (lifecycle spec §4/§6, QA-NIT-1).
+    # rewrite deleted (lifecycle spec §4/§6).
     inst_db = inst_client.db_path()
     if inst_db is None:
         # WHY it is absent still comes from the refresh result: only a VERIFIED
-        # manifest omission may claim the coverage gate withheld it (QA-r3-F2).
+        # manifest omission may claim the coverage gate withheld it.
         verified_omission = bool(getattr(outcome, "verified_omission", False))
         observed = verified_omission or bool(
             getattr(outcome, "observed_omission", False)
@@ -1621,9 +1617,8 @@ def _resolve_inst_module(args, resolved: dict) -> None:
             )
         elif observed:
             # A verified manifest omission WAS read; it just could not be
-            # committed. Saying "no gate decision was observed" here would be
-            # the inverse of QA-r2-F3 — denying a decision we actually saw
-            # (QA-VERIFY-N-g).
+            # committed. Saying "no gate decision was observed" here would
+            # deny a decision we actually saw.
             resolved["inst_absent_reason"] = (
                 "the current published snapshot's verified manifest does not"
                 " include the institutional module, but the withdrawal could"
@@ -1639,7 +1634,7 @@ def _resolve_inst_module(args, resolved: dict) -> None:
                 " no gate decision was observed."
                 # The client's own message carries actionable remediation (e.g.
                 # "Clear <module dir> ..."); discarding it left an operator with
-                # nothing to act on (QA-VERIFY-N-f).
+                # nothing to act on.
                 + (f" {outcome.message}" if getattr(outcome, "message", "") else "")
             )
         # The module is absent, so its serving projection is too — and for the
@@ -1656,10 +1651,10 @@ def _resolve_inst_module(args, resolved: dict) -> None:
     resolved["inst_build_id"] = inst_client.current_build()
     resolved["inst_watermarks"] = _inst_watermarks(inst_client.current_manifest())
     # Resolved through the verified pointer→manifest chain, so the M2-3 publish
-    # gate demonstrably held for these bytes (QA-F6).
+    # gate demonstrably held for these bytes.
     resolved["inst_from_published_manifest"] = True
     # The serving projection is a SECOND artifact of the same module, resolved by
-    # name through the manifest (R10). A build that predates M2-8 publishes none;
+    # name through the manifest. A build that predates M2-8 publishes none;
     # that is a legitimate absence, and the aggregate above is NOT a substitute
     # for it — `serving_db_path()` will not hand one back in its place.
     if args.inst_serving_db is None:
@@ -1695,7 +1690,7 @@ def _resolve_inst_module(args, resolved: dict) -> None:
         # committed, so these bytes — though genuinely published once — are no
         # longer what the current build publishes. Serving them conforms to §4
         # (nothing committed, prior state stands), but reporting them as clean
-        # published data with no signal would hide it (QA-NIT-3).
+        # published data with no signal would hide it.
         resolved["inst_stale_withdrawal_pending"] = True
 
 
@@ -1722,15 +1717,14 @@ def main() -> None:
         inst_db_path=resolved["inst_db_path"],
         inst_build_id=resolved["inst_build_id"],
         inst_watermarks=resolved["inst_watermarks"],
-        # The round-1 F6 fix is INERT unless production forwards this; it was
+        # This fix is INERT unless production forwards this; it was
         # dropped here, so every published snapshot was mislabeled
         # `unverified-local-db` while only direct test construction worked
-        # (QA-r2-F2).
         inst_from_published_manifest=resolved["inst_from_published_manifest"],
         inst_absent_reason=resolved["inst_absent_reason"],
         inst_absent_gate_withheld=resolved["inst_absent_gate_withheld"],
         inst_stale_withdrawal_pending=resolved["inst_stale_withdrawal_pending"],
-        # Same lesson as `inst_from_published_manifest` above (QA-r2-F2): a
+        # Same lesson as `inst_from_published_manifest` above: a
         # resolver value that main() does not forward is inert in production and
         # only ever works under direct test construction.
         inst_serving_db_path=resolved["inst_serving_db_path"],

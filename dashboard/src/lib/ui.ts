@@ -2,9 +2,9 @@
    by the thin .astro page for SSR AND by the generic-route client driver —
    parity is by construction (one function, two callers). No Node APIs, no DOM.
 
-   Honesty grammar: G1–G7 via the canonical format.ts components; charts per
-   C1–C7 (zero-based, gaps stay gaps, no midpoints); NULL-honest institutional
-   integers; the Locked #20 stamp on every 13F table. */
+   Honesty grammar: G1–G7 via the canonical format.ts components; charts
+   zero-based, gaps stay gaps, no midpoints; NULL-honest institutional
+   integers; the as-of time stamp every 13F table carries. */
 
 import {
   type TxnRow,
@@ -105,7 +105,7 @@ export function breadcrumb(parts: { text: string; href?: string }[]): string {
   );
 }
 
-/* SL-R9: the build id is OUT of this stamp. It is not a fact about the window
+/* The build id is OUT of this stamp. It is not a fact about the window
    the panel rendered, it is a fact about the deploy, and `Base.astro`'s footer
    already prints it once per page — `m1-layout.test.ts:52` pins exactly that
    "rendered once, in the footer" rule. Repeating it beside every window
@@ -117,7 +117,7 @@ function asOfNote(stamps: BuildStamps): string {
   return `as of ${esc(stamps.generatedAt)}`;
 }
 
-/** Locked #20: the institutional table time stamp. The published aggregate has
+/** The institutional table time stamp. The published aggregate has
     no per-row filed date, so the honest form pairs the quarter-end with the
     module's build-wide filed-date watermark — never "current holdings". */
 export function instStamp(period: string, latestFiled: string | null): string {
@@ -131,7 +131,7 @@ export function instStamp(period: string, latestFiled: string | null): string {
 export const INST_STAMP_CAVEAT =
   "per-filer filing dates are not in the published aggregate — the filed-date watermark is build-wide, not per row";
 
-/* ---------- flow ribbon (C1–C7) ---------- */
+/* ---------- flow ribbon ---------- */
 
 function ribbonAxisMax(sums: SumRanges[]): number {
   let max = 1;
@@ -172,7 +172,7 @@ function quarterSummary(q: { q: string; buy: SumRanges; sell: SumRanges }): stri
     count-based caption. `twoSided` puts sales below the axis (deep ticker). */
 export function flowRibbon(
   flow: QuarterlyFlowResult,
-  /* SL-R20 / SL-R2b: `notes` is OPTIONAL and only the member page passes one.
+  /* `notes` is OPTIONAL and only the member page passes one.
      The other caller is the deep ticker page (`ui.ts` `tickerUnifiedBody`),
      which this run does not own, so without a scope this renderer emits the
      visible `.rb-caption` byte-for-byte as before. */
@@ -231,7 +231,7 @@ export function flowRibbon(
     `<div class="ribbon${opts.twoSided ? " ribbon-two" : ""}">` +
     `<div class="rb-track">${cols}</div>` +
     `<div class="rb-labels">${labels}</div>` +
-    /* SL-R20: the caption is a DEFINITION — how the chart is drawn, what the
+    /* The caption is a DEFINITION — how the chart is drawn, what the
        hatching means, what is excluded — so it moves into a note anchored on
        the chart, with the marker left visible as its cue (LD3). The
        accessibility summary below is untouched: it is the chart's data, not its
@@ -257,27 +257,27 @@ export function flowCellHtml(s: SumRanges): string {
   return esc(sumRangesText(s));
 }
 
-/* ---------- entity transaction table (real <table>, R16) ---------- */
+/* ---------- entity transaction table (real <table>) ---------- */
 
 export interface EntityTableOpts {
   kind: "member" | "ticker";
   caption: string;
   page: number;
   ctx: RenderCtx;
-  /* SL-R19 / SL-R2b: OPT-IN. This renderer has three call sites — the member
+  /* OPT-IN. This renderer has three call sites — the member
      page (in scope) and two `/tickers/*` bodies (not). Without a scope its
      `<thead>` is byte-identical to the pre-run output, so the ticker pages are
      untouched; with one, the `Side · Owner` header carries the owner-code
      explanation the member page's `.entity-lede` used to print as a paragraph.
 
-     SL-R7b: this is a FIFTH key-less table variant, which no revision of the
+     This is a FIFTH key-less table variant, which no revision of the
      plan enumerated — its `<thead>` is a literal with no sort or data key, so
-     the descriptor is supplied here rather than invented at render time
-     (SL-R26). Recorded as a deviation; the plan named four. */
+     the descriptor is supplied here rather than invented at render time.
+     Recorded as a deviation; the plan named four. */
   notes?: NoteCtx;
 }
 
-/* SL-R19: the owner-code explanation, in ONE place in this module. The full
+/* The owner-code explanation, in ONE place in this module. The full
    text also lives at `/methodology/#owner-codes`, which T1 populated by moving
    it off this page — the note carries it too because a reader looking at an
    `SP` badge inside a table should not have to leave the table to learn what it
@@ -362,7 +362,7 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
   const merged = mergeFeed(txns, []);
   const pageRows = pageSlice(merged, opts.page).filter((i): i is TxnRow => i.kind === "txn");
   const pages = pageCountFor(merged);
-  /* R10 defect #12. Over EVERY row the table can page through, not this page —
+  /* Universal-flag hoisting runs over EVERY row the table can page through, not this page —
      the client re-renders rows on paging, and a per-page set would let page 2
      contradict the note page 1 left above it. The set travels to the client in
      `data-stated-flags` so both sides suppress identically. */
@@ -371,7 +371,7 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
     opts.kind === "member"
       ? ["Filed ▾", "Ticker", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"]
       : ["Filed ▾", "Member", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"];
-  /* SL-R19. Only `Side · Owner` carries a note, and only when a scope is
+  /* Only `Side · Owner` carries a note, and only when a scope is
      passed. Deliberately not every column: this run moves the strings that WERE
      on the page, and inventing an explanation for six columns that never had
      one would be new copy, not a relocation. */
@@ -383,8 +383,8 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
   return (
     universalFlagNote(stated) +
     `<div class="table-scroll"><table class="etable" data-entity-table data-kind="${opts.kind}"` +
-    /* B35: `data-paged` is the ONLY thing that exempts a table from the R10
-       whole-dist gate, and only these two renderers page. A visible page of a
+    /* `data-paged` is the ONLY thing that exempts a table from the
+       whole-distribution hoisting gate, and only these two renderers page. A visible page of a
        paged table can be uniform while its full collection is not, which is the
        one case the gate cannot judge from HTML. */
     `${pages > 1 ? ' data-paged="1"' : ""} data-stated-flags="${esc(stated.join(","))}">` +
@@ -470,7 +470,7 @@ export function memberPaperBlock(m: MemberEntity): string {
   );
 }
 
-/* SL-R7: the single clause `#member-footnotes` published. It is referenced from
+/* The single clause `#member-footnotes` published. It is referenced from
    TWO places on the member page — the Flow range column and the quarterly-flow
    panel's "derived ·§" marker — so it is declared once and both notes read it,
    which is what stops the two channels drifting apart. */
@@ -498,8 +498,8 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     top.length === 0
       ? `<p class="section-note">No tickers disclosed in the trailing 24 months.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Most-disclosed tickers, trailing 24 months</caption>` +
-        /* SL-R7: `member-footnotes` had ONE mark, §, and it qualifies this
-           column. R7b's descriptor rule applies — this `<thead>` is a literal
+        /* `member-footnotes` had ONE mark, §, and it qualifies this
+           column. The descriptor rule applies — this `<thead>` is a literal
            with no sort key, so the plan supplies the column key rather than the
            renderer inventing one. */
         `<thead><tr><th scope="col">Ticker</th><th scope="col">Txns</th>` +
@@ -521,7 +521,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     )}</span> · ${esc(chamberWord)}${
       m.servingSince ? ` · serving since ${esc(m.servingSince)}` : ""
     } · <span class="mono-id">bioguide ${esc(m.bioguide)}</span>` +
-    /* SL-R19: the identity `.entity-lede` paragraph is gone from the page
+    /* The identity `.entity-lede` paragraph is gone from the page
        surface and its two claims are notes on the things they are about.
 
        The RANGES claim is a property of every total on this page, so it
@@ -544,7 +544,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     statTiles(memberStatTiles(m, stamps), {
       label: "Member disclosure statistics",
       compact: true,
-      // SL-R19/SL-R26: the tile LABEL is the key — one tile per label here.
+      // The tile LABEL is the key — one tile per label here.
       notes: { scope: "member-tiles" },
     }) +
     `</header>` +
@@ -553,7 +553,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     `<div class="panel-head"><h2 id="flow-h" class="section-h">Disclosed flow by quarter</h2>` +
     `<span class="panel-note">bar = [min, max] of bucket sums · <span class="src-derived">derived&nbsp;·§</span>` +
     noteFromHtml(MEMBER_FLOW_NOTE, { scope: "member-flow" }, "derived") + `</span></div>` +
-    // SL-R20: the chart's `.rb-caption` becomes a note on the chart.
+    // The chart's `.rb-caption` becomes a note on the chart.
     flowRibbon(flow, {
       twoSided: false,
       sourceLine: "source: House Clerk + Senate eFD",
@@ -573,8 +573,8 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       caption: `All disclosed transactions for ${m.name}`,
       page,
       ctx,
-      // SL-R19: the owner-code half of the deleted `.entity-lede`, on the
-      // column it is about. The two `/tickers/*` callers pass nothing (R2b).
+      // The owner-code half of the deleted `.entity-lede`, on the
+      // column it is about. The two `/tickers/*` callers pass nothing.
       notes: { scope: "member-txns" },
     }) +
     `</section>` +
@@ -645,7 +645,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
   }
   // data
   const holders = inst.holders ?? [];
-  /* R10 #12 applies to EVERY flag-bearing table, not only the entity txn one.
+  /* Universal-flag hoisting applies to EVERY flag-bearing table, not only the entity txn one.
      Measured before wiring these: 1,004 pages carried a table whose every row
      read `security not in mapping`, with no caveat line above it. */
   const statedHolders = universalFlags(holders.map((h) => h.flags));
@@ -653,7 +653,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
     .map(
       (h) =>
         `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
-        // ONE href primitive (R22): the payload carries the top/tail target.
+        // ONE href primitive (filerHref): the payload carries the top/tail target.
         `<td class="c-filer"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
         `<td class="c-num c-strong">${esc(fmtUsd(h.value))}</td>` +
         `<td class="c-num">${fmtInt(h.securities)}</td>` +
@@ -736,7 +736,7 @@ export function tickerUnifiedBody(
         `<tbody>${memberRows}</tbody></table></div>` +
         `<div class="card-foot">buys · sales · flow range — ranges cannot be netted</div>`;
 
-  /* R10 #12: the compact preview is NOT paged, so its five rows ARE the whole
+  /* The compact preview is NOT paged, so its five rows ARE the whole
      set it speaks for — a flag universal among them is universal, full stop.
      This was the fifth flag-bearing renderer and the last one still repeating a
      caveat on every row; the whole-dist assertion in
@@ -910,7 +910,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
 
 /* ---------- 13F holders page body (build-time only) ---------- */
 
-/* SL-R7: the two clauses `#holders-footnotes` published, each moved to the
+/* The two clauses `#holders-footnotes` published, each moved to the
    thing it qualifies — † to the issuer name in the lede (it is about the
    ticker→issuer mapping, not about a column), § to the Src column, which is
    where `srcLinkDerived` prints the marker. */
@@ -999,7 +999,7 @@ export function holdersTableHtml(
     .map(
       (h) =>
         `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
-        // ONE href primitive (R22): tier rides on the row through the SSR call
+        // ONE href primitive (filerHref): tier rides on the row through the SSR call
         // AND the embedded period payload, so both renders link identically.
         `<td class="c-filer"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.filer_name)}</a></td>` +
         `<td class="c-num c-strong">${esc(fmtUsd(h.value_usd))}</td>` +
@@ -1016,13 +1016,13 @@ export function holdersTableHtml(
         `value for the active sort key — listed below in rank order, never treated as zero</td></tr>\n` +
         rowHtml(unranked as (TopHolderRow & { tier?: FilerBudgetState })[])
       : "");
-  /* SL-R5/R7: `HOLDER_COLUMNS.why` was declared REQUIRED for every unsortable
+  /* `HOLDER_COLUMNS.why` was declared REQUIRED for every unsortable
      column and then never rendered by this header — the reason a reader was
      promised existed only in the source. It renders now, as a note, together
      with the § clause that `#holders-footnotes` carried for the Src column.
      This table renders on `/institutional/tickers/[t]/holders/` only, which is
-     in scope, so the scope is fixed here rather than threaded (SL-R2b applies
-     to renderers shared with routes this run does not own). */
+     in scope, so the scope is fixed here rather than threaded (opt-in threading
+     is for renderers shared with routes this run does not own). */
   const holderNote = (c: (typeof HOLDER_COLUMNS)[number]): string => {
     const body = noteBody(c.why, c.label === "Src" ? HOLDERS_DERIVED_NOTE : null);
     return body ? noteFromHtml(body, { scope: "holders-ranked" }, c.key ?? c.label) : "";
@@ -1135,13 +1135,13 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
 
 const QOQ_FN = new Map(QOQ_FOOTNOTES.map((e) => [e.mark, e.html]));
 
-/* SL-R7b/R7c: the position-changes table's `<thead>` is a literal with no sort
+/* The position-changes table's `<thead>` is a literal with no sort
    key, so the plan supplies the column descriptors and the emitter-verified
    mark→column mapping. Read off where each marker is actually RENDERED, not off
    the column names: `qoqPresentation.chipMarkers` prints †v/‡e/n-c on the Change
    chip, `positionMarkers` prints ‡r beside the position key, ‡u withholds the
    share delta, and § is this variant's derivation clause — this table renders no
-   Src column, so it hangs on Δ value (R7c). */
+   Src column, so it hangs on Δ value. */
 const QOQ_COL_NOTES: Record<string, string | undefined> = {
   "position-grain": QOQ_FN.get("‡r"),
   change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c")),
@@ -1201,7 +1201,7 @@ export function changesTableHtml(
       const cell = (v: number | null): string => (v == null ? "—" : esc(fmtUsd(v)));
       const shareCell = (v: number | null): string => (v == null ? "—" : fmtInt(v));
       return (
-        /* R6. Column order is the answer to "added or trimmed?" arriving before
+        /* Column order is the answer to "added or trimmed?" arriving before
            the reader has to scroll for it. The change chip used to be the
            EIGHTH of nine columns, behind six numeric ones, so on any viewport
            under ~1024px the one column the table exists to communicate was the
@@ -1302,7 +1302,7 @@ export function filerPeriodSectionHtml(
         )} — either the first period on record for this filer, or nothing keyable on either side.</p>`
       : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page });
   return (
-    /* SL-R22/SL-R26: the filer tiles' breakdowns become notes, keyed on each
+    /* The filer tiles' breakdowns become notes, keyed on each
        tile's LABEL — unique within a tile group by construction, in both the
        populated and the null-concentration branch. The scope is fixed rather
        than derived from the period: `entity-client.ts` re-renders this whole
@@ -1487,7 +1487,7 @@ export function s7Banner(window: FilingWindow): string {
   );
 }
 
-/* ---------- Home pieces (Locked #14: specimen from a real row) ---------- */
+/* ---------- Home pieces (the specimen comes from a real row) ---------- */
 
 export function pickSpecimen(txns: readonly TxnRow[]): TxnRow | null {
   return (
@@ -1555,10 +1555,10 @@ export function moduleCard(
 
 /** The /congress surface tabs. Feed is the existing index; Leaders and
     Tickers are build-time ranking tables. */
-/* R1: `congressTabs` is DELETED. The sub-tab nav is the navigation the single
+/* `congressTabs` is DELETED. The sub-tab nav is the navigation the single
    /congress/ page exists to remove — comparing the three views was the thing
-   that required leaving the page. Its two retired routes are static stubs
-   (R25), and its CSS is removed with it rather than left as a dead selector. */
+   that required leaving the page. Its two retired routes are static stubs,
+   and its CSS is removed with it rather than left as a dead selector. */
 
 import {
   type CongressBasis,
@@ -1585,11 +1585,11 @@ import {
   RANKING_FOOTNOTES as RANKING_FOOTNOTES_LIST,
 } from "./congress-columns.ts";
 
-/* SL-R6/R7: `footnotesId` is gone from this path. It existed ONLY so the ≈
+/* `footnotesId` is gone from this path. It existed ONLY so the ≈
    marker could point at whichever of /congress/'s two ranking footnote blocks
-   belonged to its section. R7 deletes both blocks and moves their text onto the
+   belonged to its section. Both blocks are deleted and their text moves onto the
    Net column's header note, so there is no id left to thread — and threading a
-   dangling one would be the broken internal link R23's own check forbids. The
+   dangling one would be the broken internal link the link-integrity check forbids. The
    marker itself stays visible (LD3); only its href is gone. */
 function netCellHtml(net: NetInterval, overlapsPrev: boolean): string {
   const dir = netDirection(net);
@@ -1635,20 +1635,20 @@ function rankingRowHtml(
   );
 }
 
-/* SL-R6/R7: `RANKING_FOOTNOTES` moved to `congress-columns.ts`, which is where
+/* `RANKING_FOOTNOTES` moved to `congress-columns.ts`, which is where
    the columns that now carry its text are declared, and is re-exported here so
    no consumer's import path changed. `RANKING_FOOTNOTES_ID` is retired with the
    block it named — the section no longer renders a footnote container. */
 export { RANKING_FOOTNOTES } from "./congress-columns.ts";
 
-/* ---------- R2/R5/R6/R7/R18/R19: the congress ranking sections ------------
+/* ---------- the congress ranking sections ---------------------------------
 
    ONE renderer serves BOTH ranking sections: the ticker momentum section that
    leads /congress/ and the member net-flow section that closes it. They order
    the same `LeaderRow` shape through the same contract, so a second renderer
    would be two copies of one set of honesty rules.
 
-   RENDER ROOTS ARE EXPLICIT AND SINGLY OWNED (R18). Each `tbody` carries an id,
+   RENDER ROOTS ARE EXPLICIT AND SINGLY OWNED. Each `tbody` carries an id,
    one renderer writes it, and a header sort replaces ONLY that `tbody` — never
    the enclosing table, thead, caption, or a sibling root. The member ranking's
    wholly-undisclosed bucket is a SEPARATE table with a SEPARATE root precisely
@@ -1677,7 +1677,7 @@ export interface RankingSectionOpts {
   controls?: boolean;
   /** rows rendered while collapsed */
   compact?: number;
-  /** SL-R14. What the SAME corpus holds on the other basis and at the next
+  /** What the SAME corpus holds on the other basis and at the next
       wider range. Supplied by the caller because only the caller holds the
       full row set — the rollup handed to this renderer is already windowed.
       Absent means "not computed", and the empty-window block then states the
@@ -1704,10 +1704,10 @@ function rankingHeadHtml(
         );
       }
       const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
-      /* SL-R6: a SORTABLE column can carry a note too — the ranking footnotes
+      /* A SORTABLE column can carry a note too — the ranking footnotes
          qualified Txns, Late and the three flow columns, all of which sort. The
-         key is `c.key`, non-null on this branch by the type. R25 keeps the
-         button's click out of the sort handler. */
+         key is `c.key`, non-null on this branch by the type. The note
+         button's click is kept out of the sort handler. */
       return (
         `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-congress-sort="${esc(c.key)}" ` +
         `data-congress-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
@@ -1721,14 +1721,14 @@ function rankingHeadHtml(
 
 /** The ranked rows for one root, at a given sort. Exported because the client
     island renders the SAME function over the SAME rows — that identity is what
-    the R3 parity test compares, and it is why no second row renderer exists. */
+    the SSR/client parity test compares, and it is why no second row renderer exists. */
 export function rankingRowsHtml(
   rows: readonly LeaderRow[],
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
   opts: { numbered?: boolean; startAt?: number } = {},
 ): string {
-  // R18: the incomparability marker is recomputed from THIS order. Carrying a
+  // The incomparability marker is recomputed from THIS order. Carrying a
   // marker over from a previous sort would claim an overlap against a row that
   // is no longer above it.
   const flags = overlapFlags(rows);
@@ -1775,12 +1775,12 @@ export function rankingRootHtml(
   return {
     html:
       rankingRowsHtml(rankedShown, kind, ctx) +
-      // F5: the separator states that rows exist which this column CANNOT
+      // The separator states that rows exist which this column CANNOT
       // rank. That is a stated absence, so it renders whenever the bucket is
       // non-empty — NOT only when a bucket row happens to survive the compact
       // slice. Ten ranked rows followed by unrankable ones used to hide the
       // fact that the unrankable ones existed at all, which is exactly the
-      // omission R19 forbids.
+      // omission the stated-absence rule forbids.
       (unrankable.length > 0
         ? "\n" +
           unrankableSeparatorHtml(unrankable.length, cols.length, activeLabel) +
@@ -1794,7 +1794,7 @@ export function rankingRootHtml(
   };
 }
 
-/** The range and basis control (R2). Both are segmented buttons, matching the
+/** The range and basis control. Both are segmented buttons, matching the
     feed's existing `.seg` control, so there is one interaction idiom on the
     page. With scripting off they are inert, which is why the section states
     the window it actually rendered rather than relying on the control to. */
@@ -1826,7 +1826,7 @@ function rangeControlHtml(range: CongressRange, basis: CongressBasis): string {
 
 /** The exclusion clauses for a rollup. Every clause is a count of rows the
     reader cannot see and why — never a silent shrink. */
-/* SL-R11/R12/LD4. The clauses and their SUMMED ROW TOTAL are produced by ONE
+/* The clauses and their SUMMED ROW TOTAL are produced by ONE
    pass over one list, so the visible suffix and the note body cannot disagree.
    That is the whole point: a stale count inside a hover is worse than one on
    the page, because nobody sees it go wrong. */
@@ -1868,8 +1868,8 @@ export function rankingExclusions(
   return exclusionParts(rollup, kind).map((p) => p.text);
 }
 
-/** SL-R11/LD4: the SUMMED excluded-row magnitude — never a count of categories.
-    Round-1 review objected that "· 3 exclusions" surfaces the number of
+/** The SUMMED excluded-row magnitude — never a count of categories.
+    Review objected that "· 3 exclusions" surfaces the number of
     CATEGORIES while burying the number of ROWS, which is the honesty-bearing
     figure. The owner accepted it. This is that figure. */
 export function rankingExcludedRows(
@@ -1879,7 +1879,7 @@ export function rankingExcludedRows(
   return exclusionParts(rollup, kind).reduce((sum, p) => sum + p.n, 0);
 }
 
-/** SL-R11/R12: the window statement AND its excluded-row suffix AND the note
+/** The window statement AND its excluded-row suffix AND the note
     carrying the per-category clauses — one function, so the server render and
     the client rewrite are the same bytes by construction rather than by two
     call sites remembering to agree. */
@@ -1902,7 +1902,7 @@ export function rankingWindowHtml(
 }
 
 
-/* ------------------------------------------------ SL-R14: the empty window */
+/* ---------------------------------------------------- the empty window -- */
 
 /** The ordered range vocabulary, single-sourced from the control that offers
     it — so "the next wider range" cannot disagree with what is clickable. */
@@ -1915,7 +1915,7 @@ export interface RankingAlternatives {
   wider: { range: CongressRange; n: number } | null;
 }
 
-/** SL-R14. Both alternatives are computed from the rows in hand, by the SAME
+/** Both alternatives are computed from the rows in hand, by the SAME
     rollup functions the view uses, so a stated count cannot disagree with what
     the control paints when the reader presses it. */
 export function rankingAlternatives(
@@ -1929,13 +1929,13 @@ export function rankingAlternatives(
   const other: CongressBasis = basis === "traded" ? "filed" : "traded";
   const i = CONGRESS_RANGES.indexOf(range);
   const widerRange = i >= 0 && i < CONGRESS_RANGES.length - 1 ? CONGRESS_RANGES[i + 1]! : null;
-  /* CODE-REVIEW F2: count the rows that can actually ENTER the ranked table,
+  /* Count the rows that can actually ENTER the ranked table,
      not every row in the rollup. `rankNetRows` moves a wholly-undisclosed row
      into its own bucket with its own root, unreachable by any sort of the
      ranked table — so a rollup of one undisclosed row has `rows.length === 1`
      and `ranked.length === 0`. Counting the former made the empty-window block
      offer "1 by filing date", and activating that control produced another
-     empty ranked table. R14 forbids exactly that: an offer that resolves to
+     empty ranked table. Forbidden exactly because an offer that resolves to
      nothing is worse than stating the window is empty, because it spends the
      reader's trust as well as their click. Same derivation as the section
      itself uses at the `rankNetRows` call above, so the two cannot disagree. */
@@ -1947,7 +1947,7 @@ export function rankingAlternatives(
   };
 }
 
-/** SL-R14 / LD2. `7d` stays offered: an empty window is a true and interesting
+/** `7d` stays offered: an empty window is a true and interesting
     fact about the corpus — the statutory filing lag — so the section STATES it
     instead of the control being hidden or the tbody painting empty with no
     explanation, which is what `rankingRootHtml([])` produced before.
@@ -2004,7 +2004,7 @@ export function congressRankingSection(
   const bounds = congressRangeBounds(rollup.range, stamps.generatedAtDate);
   const windowText = windowStatement(rollup.range, rollup.basis, bounds);
 
-  // R6/R18: the wholly-undisclosed bucket is fixed by the NET interval and
+  // The wholly-undisclosed bucket is fixed by the NET interval and
   // computed ONCE here. It gets its own table and its own root, so it is not
   // reachable by any sort of the ranked table.
   const { ranked, undisclosedBucket } = rankNetRows(
@@ -2028,7 +2028,7 @@ export function congressRankingSection(
     rankingWindowHtml(windowText, rollup, kind, opts.sectionId) +
     `</span></div>` +
     (opts.controls ? rangeControlHtml(rollup.range, rollup.basis) : "") +
-    /* SL-R13/R29: the pending indicator. NOT a queue — `range` and `basis` are
+    /* The pending indicator. NOT a queue — `range` and `basis` are
        module state and `receiveRows` already reapplies them, so a pre-arrival
        click has always been applied. The defect is that `setSeg` paints the
        button pressed at click time, so between the click and the dataset's
@@ -2038,7 +2038,7 @@ export function congressRankingSection(
     (opts.controls
       ? `<p class="section-note pending-note" id="${esc(opts.sectionId)}-pending" role="status" aria-live="polite" hidden></p>`
       : "") +
-    /* SL-R6: the three prose claims this paragraph carried are now notes on the
+    /* The three prose claims this paragraph carried are now notes on the
        columns they are about — interval-ness and the § derivation on the three
        flow columns, the direction rule and the ≈ incomparability rule on Net.
        The paragraph itself is gone; its `<noscript>` is NOT, because that
@@ -2049,10 +2049,10 @@ export function congressRankingSection(
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
     `<thead><tr>${rankingHeadHtml(cols, "net", "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
-    /* SL-R14 / LD2: a zero-rankable window STATES itself. The container ships
+    /* A zero-rankable window STATES itself. The container ships
        in both states so the client can fill it when a range change empties the
        window — an element that was never rendered cannot be filled in later,
-       which is the F16 lesson applied to this block. */
+       which is the render-the-shell lesson applied to this block. */
     `<div id="${esc(opts.sectionId)}-empty">` +
     (main.total === 0
       ? emptyWindowHtml(
@@ -2063,11 +2063,11 @@ export function congressRankingSection(
         )
       : "") +
     `</div>` +
-    /* SL-R10: the bound and its control are ONE element now. The count clause
+    /* The bound and its control are ONE element now. The count clause
        this used to state from a separate `terminusRow` above is emitted by
        `compactDisclosure` itself, VISIBLE from the server — which is what the
        terminus was really for, since the control ships `hidden` and nothing
-       reveals it here until the 22 MB feed lands (F25). The link to the
+       reveals it here until the 22 MB feed lands. The link to the
        published dataset travels as the state-independent remainder: it is true
        whether the table is collapsed or expanded, so expanding retracts the
        count and leaves the link standing. */
@@ -2088,7 +2088,7 @@ export function congressRankingSection(
         `<caption class="visually-hidden">Unrankable ${esc(noun)} — amounts wholly undisclosed</caption>` +
         `<thead><tr>${rankingHeadHtml(cols, "name", "asc", { scope: `undisc-${opts.sectionId}` })}</tr></thead>` +
         `<tbody id="${esc(opts.undisclosedRootId)}">${bucket.html}</tbody></table></div>` +
-        /* SL-R10: the one terminus of the five that was NOTHING but its count,
+        /* The one terminus of the five that was NOTHING but its count,
            so it is deleted outright rather than relocated — the control's own
            server-visible count clause is the same sentence. */
         compactDisclosure({
@@ -2100,8 +2100,8 @@ export function congressRankingSection(
         }) +
         `</div>`
       : "") +
-    /* SL-R11: the visible `.caveat-line` and its `#<sectionId>-caveat` root are
-       DELETED. Unlike R10's terminus rows, nothing is lost to a reader with
+    /* The visible `.caveat-line` and its `#<sectionId>-caveat` root are
+       DELETED. Unlike the terminus rows, nothing is lost to a reader with
        scripting off: the clauses moved into a note, which opens declaratively
        through `popovertarget` with no JavaScript at all, and their SUMMED ROW
        TOTAL stays visible on the window statement at every width (LD4). */
@@ -2109,7 +2109,7 @@ export function congressRankingSection(
   );
 }
 
-/* ---------- R9/R20/R21: the recently-added-issuers leaderboard ---------- */
+/* ---------- the recently-added-issuers leaderboard ---------- */
 
 import { addsRowHtml } from "./inst-adds-render.ts";
 import {
@@ -2146,7 +2146,7 @@ export const ADDS_FOOTNOTES: FootnoteEntry[] = [
 
 const ADDS_FN = new Map(ADDS_FOOTNOTES.map((e) => [e.mark, e.html]));
 
-/** F3: the leaderboard's column contract. Its orders are well-defined — every
+/** The leaderboard's column contract. Its orders are well-defined — every
     column is a scalar, a name, or the same nullable-value ordering the payload
     is already sorted by — so success criterion 2 requires them to be sortable,
     and the one column that is not states why. Comparators stay caller-owned. */
@@ -2163,7 +2163,7 @@ export function addsColumns(): CongressColumn[] {
         "the rank number is produced by the active sort, not held by the row — ordering by it " +
         "would be circular, so it renumbers with every sort instead",
     },
-    /* SL-R7: each mark's text moves onto the column it qualified —
+    /* Each mark's text moves onto the column it qualified —
        § → Issuer, ‡ → Δ value added, † → Top adder — read off ADDS_FOOTNOTES
        rather than retyped, so the two cannot drift. */
     {
@@ -2210,7 +2210,7 @@ function addsHeadHtml(
         );
       }
       const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
-      // SL-R7: same rule as the ranking head — Issuer, Δ value and Top adder
+      // Same rule as the ranking head — Issuer, Δ value and Top adder
       // are sortable AND carry a mark, so the note hangs off the sortable
       // branch as well.
       return (
@@ -2229,7 +2229,7 @@ export interface AddsSectionOpts {
   compact?: number;
   period: string;
   mode: AddsMode;
-  /** every period the selector may offer — closed periods only (R20) */
+  /** every period the selector may offer — closed periods only */
   periods: readonly string[];
   buildId: string;
 }
@@ -2237,7 +2237,7 @@ export interface AddsSectionOpts {
 /** The leaderboard section: closed-period selector, new-only toggle, the note
     composed from BOTH independent omission states, and the bounded table. */
 export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): string {
-  // F10: the payload arrives ALREADY BOUNDED, from the endpoint or from the
+  // The payload arrives ALREADY BOUNDED, from the endpoint or from the
   // page's single `boundAdds` call. Re-bounding here reported `truncated:
   // false` — the omitted rows were already gone, so there was nothing left to
   // notice — which silently erased the truncation notice on the no-JS view.
@@ -2269,7 +2269,7 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     `reporting quarter. The window is a <strong>quarter</strong>, never a rolling day count — ` +
     `quarterly filings cannot support one — and only quarters whose 45-day filing deadline has ` +
     `passed are offered, because an open quarter counts only the managers who filed early.` +
-    /* F5: this sentence used to end "the quarter shown above is rendered in
+    /* This sentence used to end "the quarter shown above is rendered in
        full below", which the renderer directly contradicts — it slices to the
        compact bound like every other table. A reader with scripting off was
        told the table was complete while issuers were being omitted, which is
@@ -2279,7 +2279,7 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     `compact slice of this quarter — not the whole of it. The complete bounded payload for this ` +
     `quarter is published as JSON at <a href="${esc(addsPayloadHref(opts.period, opts.mode))}">` +
     `${esc(addsPayloadHref(opts.period, opts.mode))}</a>.</noscript></p>` +
-    /* SL-R16: two sibling `.mgr-chips` groups STACKED, each with only an
+    /* Two sibling `.mgr-chips` groups STACKED, each with only an
        `aria-label` — so a sighted reader met two unlabelled rows of buttons and
        had to infer which axis each one moved. They become ONE `.control-row`
        with VISIBLE `Quarter` and `Count` labels, reusing `.range-control`'s
@@ -2298,15 +2298,15 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     )}</caption>` +
     `<thead><tr>${addsHeadHtml(cols, "value", "desc", { scope: "inst-adds" })}</tr></thead>` +
     `<tbody id="inst-adds-tbody">${rows}</tbody></table></div>` +
-    /* R19/F6 + SL-R10: the NAMED bound, stated by the control itself and
+    /* The NAMED bound, stated by the control itself and
        VISIBLE from the server. The leaderboard and the directory used to render
        a disclosure control with no statement of what it was holding back; the
        statement then lived in a separate terminus row above, which is the
-       duplication R10 removes. The link to THIS quarter-and-mode's published
+       duplication the merged control removes. The link to THIS quarter-and-mode's published
        JSON is the state-independent remainder — the no-JS route to every row,
        true in both states, so expanding never takes it away.
 
-       R7: the note below reports the ENDPOINT's truncation, which is a
+       The note below reports the ENDPOINT's truncation, which is a
        different fact from this render bound and is stated separately. */
     compactDisclosure({
       rootId: "inst-adds-tbody",
@@ -2319,15 +2319,15 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     }) +
     // The note container ALWAYS renders, even when empty: the client cannot
     // insert a container that was never there, so an initially-absent note
-    // meant a later period's omission could not be stated at all (F12).
+    // meant a later period's omission could not be stated at all.
     (addsNoteHtml(payload) || `<div class="caveat-line" id="inst-adds-note"></div>`) +
-    // F12: the live status node the period/mode control writes into. It was
+    // The live status node the period/mode control writes into. It was
     // targeted by the failure handler but never rendered, so a failed fetch
     // reached the console and nothing else — the reader saw the old quarter
     // with no indication their request had failed. It is `role="status"` so a
     // screen reader is told too, and it renders in EVERY state.
     `<p class="caveat-line" id="inst-adds-status" role="status" aria-live="polite"></p>` +
-    // F2/F3: the bounded rows travel with the page so the island can sort and
+    // The bounded rows travel with the page so the island can sort and
     // expand them WITHOUT a fetch. Without this the compact slice was a
     // one-way door: rows past it were unreachable on the default view.
     `<script type="application/json" id="inst-adds-data">${serializeInlineJson(payload.rows)}</script>` +
@@ -2409,7 +2409,7 @@ export interface MemberV2Deps {
   /** null → committee data not in this build */
   committees: {
     memberships: CommitteeMembership[];
-    /** snapshot-WIDE validity bounds (review F7) */
+    /** snapshot-WIDE validity bounds */
     windowFrom: string;
     windowTo: string;
     jurisdictionByCommittee: ReadonlyMap<string, readonly string[]>;
@@ -2433,8 +2433,8 @@ function absentPanel(title: string, detail: string): string {
   );
 }
 
-/* SL-R7 / CODE-REVIEW F1: the `§` clause for the member net-flow table, taken
-   from the same `RANKING_FOOTNOTES` registry whose block R7 deleted. Scope is
+/* The `§` clause for the member net-flow table, taken
+   from the same `RANKING_FOOTNOTES` registry whose rendered block was deleted. Scope is
    the table, key is the column — both stable, neither derived from a counter. */
 function memberFlowNote(column: string): string {
   const clause = RANKING_FOOTNOTES_LIST.find((f) => f.mark === "§")?.html ?? "";
@@ -2463,8 +2463,8 @@ export function memberV2Sections(
       : `<div class="table-scroll"><table class="etable etable-compact">` +
         `<caption class="visually-hidden">Net disclosed flow by ticker for ${esc(m.name)}</caption>` +
         `<thead><tr><th scope="col">Ticker</th><th scope="col">Purch.</th><th scope="col">Sales</th>` +
-        /* SL-R7 / CODE-REVIEW F1: this table hand-rolls its `<thead>` — it never
-           went through `rankingHeadHtml`, so R7's header conversion missed it while the
+        /* This table hand-rolls its `<thead>` — it never
+           went through `rankingHeadHtml`, so the header conversion missed it while the
            `footnoteBlock(RANKING_FOOTNOTES, …)` explaining its three `·§` markers WAS
            deleted. That left three markers on a reader-facing surface pointing at an
            explanation that no longer existed anywhere. A marker without its clause is
@@ -2481,7 +2481,7 @@ export function memberV2Sections(
             : ""
         }</tbody></table></div>` +
         "";
-  /* SL-R20: the net-flow card's `.card-foot` is a DEFINITION of what the table
+  /* The net-flow card's `.card-foot` is a DEFINITION of what the table
      is and is not, so it becomes a note. It is composed here rather than inside
      the branch above because the panel head that anchors it is assembled below,
      and the string must be identical on both sides — one composition, one
@@ -2567,7 +2567,7 @@ export function memberV2Sections(
       deps.resolveSector === null
         ? null // overlap needs BOTH datasets; with sectors absent the join is unanswerable
         : jurisdictionOverlap(m.txns, snapshot, jurisdictionByCommittee, deps.resolveSector);
-    // Review F8: an unmapped committee makes "no overlap" unanswerable — the
+    // An unmapped committee makes "no overlap" unanswerable — the
     // definitive-absence copy is only usable when mapping coverage is complete
     // for everything this member sat on.
     const coverageNote =
@@ -2626,7 +2626,7 @@ export function memberV2Sections(
     `<div class="entity-grid">` +
     `<section class="panel" aria-label="Net disclosed flow by ticker">` +
     `<div class="panel-head"><h2 class="section-h">Net disclosed flow by ticker</h2>` +
-    // SL-R20: the card-foot's text, anchored on the panel it qualifies.
+    // The card-foot's text, anchored on the panel it qualifies.
     `<span class="panel-note"><span class="src-derived">flows, not holdings&nbsp;·§</span>` +
     note(netFootNote, { scope: "member-netflow" }, "scope") +
     `</span>` +
@@ -2711,11 +2711,11 @@ function withheldHtml(w: WithheldKind, carried: number): string {
 }
 
 export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx): string {
-  // Review F3: tombstones are lifecycle HISTORY — they never sit in the
+  // Tombstones are lifecycle HISTORY — they never sit in the
   // active tables or counts wearing an active face.
   const active = artifact.signals.filter((s) => s.status === "active");
   const superseded = artifact.signals.filter((s) => s.status === "superseded");
-  // Review r3-F3: rows whose kind was WITHHELD this build were not evaluated —
+  // Rows whose kind was WITHHELD this build were not evaluated —
   // they are neither active nor retracted, and are reported with the
   // withholding that caused it.
   const unevaluated = artifact.signals.filter((s) => s.status === "unevaluated");
@@ -2799,7 +2799,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx): string {
 /** Per-entity signal section (D-2): the member page filters the build's
     artifact by bioguide. */
 export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, ctx: RenderCtx): string {
-  // Review F3: only ACTIVE signals in the member table; tombstones are noted
+  // Only ACTIVE signals in the member table; tombstones are noted
   // by count, never listed as if current.
   const all = artifact.signals.filter((s) => s.entities.bioguide === bioguide);
   const mine = all.filter((s) => s.status === "active");
@@ -2810,7 +2810,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, c
     (unevaluated > 0
       ? ` · ${unevaluated} carried forward unevaluated (their rule was withheld this build)`
       : "");
-  // Review r3-F4: branch on ALL lifecycle rows — a member whose last active
+  // Branch on ALL lifecycle rows — a member whose last active
   // signal became a tombstone still has history, and "no signals" would erase
   // exactly the supersession the lifecycle exists to preserve.
   if (all.length === 0) {
@@ -2838,13 +2838,13 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, c
       `. See <a href="/signals/">/signals</a>.</p></section>`
     );
   }
-  // Review F10 / D-2: EVERY surface renders the exact rule — the per-entity
+  // D-2: EVERY surface renders the exact rule — the per-entity
   // section included, in the accessibility tree, not tooltip-only.
   const rows = mine
     .slice(0, 10)
     .map(
       (s) =>
-        /* SL-R20 / SL-R26: the EXACT rule moves from an inline block under the
+        /* The EXACT rule moves from an inline block under the
            kind label into a note on the row's KIND CELL — per row, never one
            note on the shared Kind header, because `signals.ts` composes one
            rule per kind (`computeS1` … ) and this panel renders up to ten rows
@@ -2856,7 +2856,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, c
            the same reason: a kind-keyed id emits duplicate panel ids and
            `aria-describedby` targets that address the wrong rule. The rule is
            not softened, shrunk or lost: it is real DOM, it opens with no
-           JavaScript, and it prints (R4). */
+           JavaScript, and it prints. */
         `<tr><td>${esc(SIGNAL_KIND_LABELS[s.kind])}${note(s.rule, { scope: "member-signals" }, s.id)}</td>` +
         `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
         `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +

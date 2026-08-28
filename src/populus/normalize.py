@@ -1,4 +1,4 @@
-"""Chamber-neutral normalization maps and the locked flag taxonomy (RUN 2+3).
+"""Chamber-neutral normalization maps and the locked flag taxonomy.
 
 Pure functions from raw extracted cell text to normalized column values
 (ARCHITECTURE.md §9 + Appendix C). The raw text always survives in
@@ -48,7 +48,7 @@ SOURCE_FACT_FLAGS = frozenset(
         "amount_spouse_cap",
         "date_anomaly",
         # Every transaction row of a Senate amendment filing carries this
-        # until OQ-13 settles amendment semantics (§9.5 conservative default).
+        # until amendment semantics are settled (§9.5 conservative default).
         "amendment_unresolved",
     }
 )
@@ -170,7 +170,7 @@ def normalize_amount(
     including a wrapped fragment such as ``"$50,001 -"`` — is
     ``amount_unparsed`` with the raw label preserved by the caller. This
     asymmetry is what makes this function the wrapped-cell completion oracle
-    (R24): a fragment does not parse, the rejoined label does. An absent cell
+: a fragment does not parse, the rejoined label does. An absent cell
     returns no flags; ``row_incomplete`` covers absence.
     """
     if raw is None or not raw.strip():
@@ -217,7 +217,7 @@ def date_stats(
 def normalize_dates(
     raw: str | None, filed_date: str
 ) -> tuple[str | None, int | None, int | None, frozenset[str]]:
-    """``(transaction_date_iso, days_to_file, is_late, flags)`` (R10).
+    """``(transaction_date_iso, days_to_file, is_late, flags)``.
 
     Source dates print as non-zero-padded ``M/D/YYYY``; the statistics
     themselves are delegated to :func:`date_stats` so the rules cannot fork
@@ -244,7 +244,7 @@ def normalize_comment(raw: str | None) -> str | None:
 
     The Senate comment column prints the literal ``--`` for "no comment"
     (like its ticker column); House comments are already collapsed at
-    segmentation, so collapsing here is behavior-preserving for RUN 2
+    segmentation, so collapsing here is behavior-preserving for the House corpus
     (proven by the untouched House goldens).
     """
     if raw is None:

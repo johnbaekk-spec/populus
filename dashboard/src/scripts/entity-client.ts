@@ -1,7 +1,7 @@
 import { initSortableTable } from "./table-sort.ts";
 import { holderDefaultDir, holderSortNote, orderRankedHolders, type HolderSortKey } from "../lib/holders-sort.ts";
-/* Entity client: the watchlist v2 store (Locked #16), the generic-route
-   driver (Locked #3 / qoq-presentation.md §3), and the small enhancements the
+/* Entity client: the watchlist v2 store, the generic-route
+   driver (qoq-presentation.md §3), and the small enhancements the
    prerendered entity pages mount (pager, watch stars, period selectors).
 
    The driver is a PURE orchestration over injected seams (fetch, render,
@@ -61,7 +61,7 @@ import { edgarFilerUrl } from "../lib/derive.ts";
 import type { TickerInstSection } from "../lib/data.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "../lib/inst.ts";
 
-/* ---------- watchlist v2 store (Locked #16) ---------- */
+/* ---------- watchlist v2 store ---------- */
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -217,9 +217,9 @@ export interface DriverHandle {
   older: () => void;
   newer: () => void;
   toggleWatch: (kind: "member" | "ticker", key: string) => void;
-  /** R22 filer surface controls — no-ops unless an in-extract filer is loaded */
+  /** filer surface controls — no-ops unless an in-extract filer is loaded */
   holdingsPage: (dir: "prev" | "next") => void;
-  /** M2-12 changes-table pagination (Codex F1: the tail route had none). */
+  /** changes-table pagination (the tail route previously had none). */
   changesPage: (dir: "prev" | "next") => void;
   holdingsView: (view: "current" | "prior" | "diff") => void;
   holdingsPeriod: (period: string) => void;
@@ -234,7 +234,7 @@ interface LoadedEntity {
   stamps: BuildStamps;
 }
 
-/* RUN M2-11 (plan R22): the in-extract filer path. A tail filer resolves
+/* The in-extract filer path. A tail filer resolves
    through the routing index to its shard, is STRICT-validated by
    parseFilerPayload, and renders through the SAME body path the pre-rendered
    pages use (ui.filerBody + holdings.surfaceHtml) — parity by construction.
@@ -307,7 +307,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       return;
     }
     if (parsed.kind === "f") {
-      // R22: top filers are pre-rendered; tail filers resolve index -> shard.
+      // Top filers are pre-rendered; tail filers resolve index -> shard.
       // A CIK the index does not carry is genuinely out-of-extract (S2).
       await loadFiler(parsed.key);
       return;
@@ -463,8 +463,8 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
         p.latestFiled,
         p.topn,
         p.window,
-        /* M2-12: pre-bound total, so a tail filer states its cap exactly as the
-           pre-rendered page does. Codex F2: NO length fallback — the validator
+        /* Pre-bound total, so a tail filer states its cap exactly as the
+           pre-rendered page does. NO length fallback — the validator
            requires this key, and defaulting to the embedded length would make a
            capped period silently claim completeness. */
         {
@@ -849,7 +849,7 @@ export function initEntityPage(): void {
     if (page > max) page = max;
     const items = pageSlice(merged, page).filter((i): i is TxnRow => i.kind === "txn");
     const ctx: RenderCtx = { watched: watch.members, watchedTickers: watch.tickers };
-    /* R10 defect #12: the SSR table hoisted any flag carried by every row to a
+    /* The SSR table hoisted any flag carried by every row to a
        table-level note and suppressed it per row. The client must suppress the
        identical set or paging would re-introduce badges the note above the
        table says were stated once. The set is computed server-side over ALL
@@ -905,7 +905,7 @@ export function initFilerPeriods(): void {
   } catch {
     return; // malformed embed: the SSR period stays — no partial re-render
   }
-  /* Codex F2: a total that is absent, non-integral, negative, or SMALLER than the
+  /* A total that is absent, non-integral, negative, or SMALLER than the
      rows it ships alongside is a contradictory embed. Rendering from it would hide
      real rows behind "no changes" or suppress the truncation terminus, so the whole
      switch stands down and the server-rendered period remains. */
@@ -919,10 +919,10 @@ export function initFilerPeriods(): void {
       return;
     }
   }
-  /* RUN M2-12: the changes table paginates, so the period section carries page
+  /* The changes table paginates, so the period section carries page
      state. Switching period resets it to 0 — a page index from another quarter
      addresses nothing in this one. */
-  /* Codex F1: this started as "" and the pager handler bails on a falsy period,
+  /* This started as "" and the pager handler bails on a falsy period,
      so on FIRST LOAD every pager click was swallowed and rows past the first page
      were unreachable until a chip was clicked. Seed from the chip the SSR marked
      active — that is the period the server rendered. */
@@ -940,7 +940,7 @@ export function initFilerPeriods(): void {
       period,
       data.latestFiled,
       data.topn,
-      // Codex F2: `total` is REQUIRED in the embed. A missing or contradictory
+      // `total` is REQUIRED in the embed. A missing or contradictory
       // total is a corrupt embed, handled above by leaving the SSR section alone
       // — never papered over with the embedded length, which would claim a
       // completeness the server never claimed.
@@ -979,7 +979,7 @@ export function initHoldersPeriods(): void {
   let data: { latestFiled: string | null; topn: number; periods: Record<string, TopHolderRow[]> };
   try {
     const parsed: unknown = JSON.parse(dataEl.textContent ?? "");
-    // Parsing is not validation (code review, cycle 5 F3). `{}` is valid JSON and
+    // Parsing is not validation. `{}` is valid JSON and
     // would crash on `data.periods`, taking the island down instead of leaving
     // the server-rendered table in place. The embed is build-generated, so a
     // shape mismatch means the build changed shape — degrade, never throw.
@@ -992,14 +992,14 @@ export function initHoldersPeriods(): void {
     ) {
       return;
     }
-    // Validating the container is not enough (code review, cycle 5 F3): a period
+    // Validating the container is not enough: a period
     // whose value is not an array passes the check above and then crashes when
     // sorting begins. Every value must be an array before anything is bound.
     const periods = (parsed as { periods: Record<string, unknown> }).periods;
     for (const key of Object.keys(periods)) {
       const list = periods[key];
       if (!Array.isArray(list)) return;
-      // And the rows themselves (code review, cycle 5 F3, third pass): the
+      // And the rows themselves: the
       // renderer reads `filer_name`, `value_usd` and `rank` off every row, so a
       // row that is not an object with those fields crashes at render time.
       // The embed is build-generated; a shape mismatch means the build changed,
@@ -1009,8 +1009,8 @@ export function initHoldersPeriods(): void {
         const r = row as Record<string, unknown>;
         if (typeof r.filer_name !== "string" || typeof r.cik !== "string") return;
         if (typeof r.value_usd !== "number" || typeof r.rank !== "number") return;
-        // Every field the renderer and sorter actually read (code review,
-        // cycle 5 F3, round 3): `holdersTableHtml` formats `security_count`,
+        // Every field the renderer and sorter actually read:
+        // `holdersTableHtml` formats `security_count`,
         // prints `issuer_key_source`, and maps `.flags` over EVERY row before
         // any sort happens, so a row passing the four checks above still
         // crashed at interaction time on a missing or mistyped one of these.
@@ -1031,7 +1031,7 @@ export function initHoldersPeriods(): void {
     return;
   }
   // Bind to the SSR-ACTIVE period, never the first key of the payload object:
-  // that bug (code review F2) let the first sort serve one quarter's rows under
+  // that bug let the first sort serve one quarter's rows under
   // another quarter's label. Refuse to bind rather than guess.
   const activeChip = chips.querySelector<HTMLElement>('[data-period][aria-pressed="true"]')
     ?? chips.querySelector<HTMLElement>("[data-period].chip-active");
@@ -1093,7 +1093,7 @@ export function initHoldersPeriods(): void {
 }
 
 /** /e/ browser entry: the real DOM/fetch/timer seams around the pure driver. */
-/** The generic route's click delegation, EXTRACTED and exported (Codex F5).
+/** The generic route's click delegation, EXTRACTED and exported for testability.
 
     It was an inline listener body, so the only way to test the controls was to
     call `handle.*` directly — which is exactly what my first tail-route pager
@@ -1105,7 +1105,7 @@ export function dispatchEntityClick(el: Element, handle: DriverHandle): void {
       void handle.retry();
       return;
     }
-    // R22 filer surface controls (no-ops unless a filer payload is loaded).
+    // Filer surface controls (no-ops unless a filer payload is loaded).
     const pageBtn = el.closest<HTMLButtonElement>("[data-holdings-page]");
     if (pageBtn) {
       if (pageBtn.getAttribute("aria-disabled") !== "true") {

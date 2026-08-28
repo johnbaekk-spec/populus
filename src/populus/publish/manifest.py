@@ -31,10 +31,10 @@ FEED_ARTIFACT = "congress/feed.json"
 STATS_ARTIFACT = "congress/stats.json"
 JOURNAL_ASSET = "journal.json"
 LICENSING_ARTIFACTS = ("DATA-LICENSE.md", "NOTICE", "licenses.json")
-# The mandatory artifact set every congress build must enumerate (R2/R3/R10):
+# The mandatory artifact set every congress build must enumerate:
 # the database, the feed, the freshness stats, and the full licensing set. A
 # manifest missing any of these is a semantically partial build and is refused
-# by validate_manifest before any consumer dereferences it (F6). Per-member /
+# by validate_manifest before any consumer dereferences it. Per-member /
 # per-ticker slices are data-dependent and therefore not in the fixed set.
 REQUIRED_CONGRESS_ARTIFACTS = (
     DB_ARTIFACT,
@@ -44,13 +44,13 @@ REQUIRED_CONGRESS_ARTIFACTS = (
 )
 WATERMARK_KEYS = ("house_index_last_modified", "senate_max_filed_date")
 
-# --- the institutional 13F module (§5.5; M2-CONTRACT §5.6 — RUN M2-3) ---------
-# The inst module carries TWO database artifacts (RUN M2-8 T8, plan R9):
-#   inst_agg.db      — the derived cross-filer aggregate (M2-3)
-#   inst_serving.db  — the per-filer SERVING projection (M2-8), which the MCP
+# --- the institutional 13F module (§5.5; M2-CONTRACT §5.6) --------------------
+# The inst module carries TWO database artifacts:
+#   inst_agg.db      — the derived cross-filer aggregate
+#   inst_serving.db  — the per-filer SERVING projection, which the MCP
 #                      snapshot path reads for published per-filer detail
-# Until M2-8 the module carried exactly one, and `module_db_artifact()` returned
-# a scalar. External review r3 F9 flagged that a second asset is NOT an ordinary
+# Originally the module carried exactly one, and `module_db_artifact()` returned
+# a scalar. External review flagged that a second asset is NOT an ordinary
 # extra entry: three call sites in publish/build.py resolved that scalar, so a
 # second artifact would have been silently skipped at preflight, verification and
 # rollback. The policy now carries a TUPLE and those sites iterate.
@@ -61,18 +61,18 @@ INST_DB_ARTIFACT = "inst_agg.db"
 INST_SERVING_ARTIFACT = "inst_serving.db"
 INST_SCHEMA_VERSION = "1.1"
 INST_CLIENT_COMPAT = ">=0.0.1,<1"
-# DEVIATION FROM R10, RECORDED (QA M2-8 M12).
+# RECORDED DEVIATION: the serving artifact is producer-enforced, not
+# validator-mandatory.
 #
-# R10 says "the manifest policy requires the new artifact". `inst_serving.db` is
-# NOT in this tuple, and that is deliberate: `validate_manifest` runs over
-# manifests this release did not write — the rollback target, the pointer's
-# current build, the client's cached manifest — and every build that predates
-# RUN M2-8 legitimately has no serving artifact. A hard entry here would make
-# each of those invalid, i.e. it would refuse to roll back to a build that was
+# `inst_serving.db` is NOT in this required tuple, and that is deliberate:
+# `validate_manifest` runs over manifests this release did not write — the
+# rollback target, the pointer's current build, the client's cached manifest —
+# and every build that predates the serving projection legitimately has no
+# serving artifact. A hard entry here would make each of those invalid, i.e. it would refuse to roll back to a build that was
 # correct when it was published.
 #
 # What made that unsafe was not the mechanism but the missing half: nothing
-# failed when a POST-M2-8 build omitted the artifact, so "optional" and "absent
+# failed when a newer build omitted the artifact, so "optional" and "absent
 # because nobody wrote the producer" were indistinguishable — which is exactly
 # the state the increment shipped in. The compensating control lives at the
 # PRODUCER instead (`publish/build.py`, beside the inst manifest assembly): a
@@ -81,12 +81,12 @@ INST_CLIENT_COMPAT = ">=0.0.1,<1"
 #
 # Schema 1.1 now signals the independently reviewed QoQ table→view contract
 # change.  It still does not make the serving artifact validator-mandatory:
-# rollback and cached pre-M2-8 manifests remain valid, while the producer guard
+# rollback and cached earlier manifests remain valid, while the producer guard
 # below remains the compatibility-safe boundary for every newly written build.
 REQUIRED_INST_ARTIFACTS = (INST_DB_ARTIFACT,)
 INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
 
-# --- the inst source-provenance artifact (RUN M2-11, R24) ---------------------
+# --- the inst source-provenance artifact --------------------------------------
 # When a build derives the inst module from an accepted external snapshot
 # (`stage-build --inst-db`), it publishes `inst_source.json`: the snapshot's
 # whole-file SHA-256 plus the metadata fields read from the snapshot's own
@@ -97,7 +97,7 @@ INST_WATERMARK_KEYS = ("latest_period_of_report", "latest_filed_date")
 # drives Release-asset handling through five consumers; a JSON there would be
 # misclassified by every one of them. The generic installer already installs
 # path-backed artifacts with zero code change. It is also NOT in any module's
-# `required` set: every manifest written before RUN M2-11 legitimately has none,
+# `required` set: every manifest written before the external-snapshot path existed legitimately has none,
 # and validation must keep accepting those (rollback targets included). The
 # compensating control is the PRODUCER guard in publish/build.py: a build given
 # --inst-db that fails to emit it raises PublishError.
@@ -114,7 +114,7 @@ _INST_SOURCE_FIELDS = {
 
 
 def validate_inst_source(document: object) -> list[str]:
-    """Strict ``inst_source/v1`` validation; returns every defect (R24).
+    """Strict ``inst_source/v1`` validation; returns every defect.
 
     Exact field set, no extras: the artifact is a published contract, so an
     unknown field is a defect today rather than a compatibility hazard later.
@@ -164,7 +164,7 @@ _MODULE_POLICY: dict[str, dict] = {
         "watermarks": INST_WATERMARK_KEYS,
         "db_artifact": INST_DB_ARTIFACT,
         # Both carry a logical_digest and both must be verified. `inst_serving.db`
-        # is OPTIONAL in REQUIRED_INST_ARTIFACTS (a build predating M2-8 has none)
+        # is OPTIONAL in REQUIRED_INST_ARTIFACTS (a build predating it has none)
         # but when present it is verified exactly like the aggregate.
         "db_artifacts": (INST_DB_ARTIFACT, INST_SERVING_ARTIFACT),
     },
@@ -266,7 +266,7 @@ def module_db_artifact(module: str = MODULE) -> str:
     Retained for callers that genuinely want one name. Anything that VERIFIES,
     uploads, resumes or rolls back must use :func:`module_db_artifacts` instead —
     resolving the scalar here is exactly how a second asset gets silently skipped
-    (external review r3 F9).
+    (external review finding).
     """
     return _MODULE_POLICY[module]["db_artifact"]
 
@@ -275,7 +275,7 @@ def module_db_artifacts(module: str = MODULE) -> tuple[str, ...]:
     """EVERY database artifact for *module*, in deterministic order.
 
     Each carries a `logical_digest` and each must be verified independently. A
-    module may legitimately publish a subset (a pre-M2-8 build has no
+    module may legitimately publish a subset (an older build has no
     `inst_serving.db`), so callers skip a name the manifest does not list — but
     they must never skip a name the manifest DOES list.
     """
@@ -287,7 +287,7 @@ _SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SCHEMA_VERSION = re.compile(r"^\d+\.\d+$")
 # A canonical GitHub Release download URL — host pinned to github.com, path
 # pinned to <owner>/<repo>/releases/download/data-<build_id>/<asset>. This
-# forbids the "any HTTPS host containing the build tag" class (F5): a crafted
+# forbids the "any HTTPS host containing the build tag" class: a crafted
 # manifest cannot point a token-bearing fetch at an arbitrary origin.
 _RELEASE_URL = re.compile(
     r"^https://github\.com/"
@@ -327,7 +327,7 @@ def parse_release_download_url(url: object) -> dict[str, str] | None:
 
 
 def safe_artifact_name(name: object) -> bool:
-    """Whether *name* conforms to the artifact-name grammar (R29).
+    """Whether *name* conforms to the artifact-name grammar.
 
     Slash-separated segments, each starting with an alphanumeric and drawn
     from ``[A-Za-z0-9._-]`` — which structurally excludes absolute paths,
@@ -499,7 +499,7 @@ def _validate_artifact(
         not isinstance(logical, str) or _SHA256.match(logical) is None
     ):
         errors.append(f"{label}: logical_digest must be 64 lowercase hex characters")
-    # RUN M2-11 (R24): the provenance artifact is ordinary, never a database —
+    # The provenance artifact is ordinary, never a database —
     # a logical_digest on it would signal DB semantics to the five consumers
     # that key on that field, so its presence is a defect, not a nicety.
     if entry.get("name") == INST_SOURCE_ARTIFACT and logical is not None:
@@ -571,7 +571,7 @@ def validate_manifest(
             errors.append(f"module {module_name}: not an object")
             continue
         # Only KNOWN modules are admitted: an unknown name has no policy to
-        # validate against, so it is a defect outright (F1) — unknown modules
+        # validate against, so it is a defect outright — unknown modules
         # never pass as well-formed.
         if module_name not in _MODULE_POLICY:
             errors.append(
@@ -611,7 +611,7 @@ def validate_manifest(
         if not isinstance(watermarks, dict):
             errors.append(f"module {module_name}: watermarks must be an object")
         else:
-            # R3/F12: exactly the module's required watermark keys must be
+            # Exactly the module's required watermark keys must be
             # present, so a publication carrying no freshness evidence (an empty
             # map) cannot pass as fresh. Values are a timestamp string or null (a
             # null is a legitimate "no evidence yet" value; an absent key is not).
@@ -643,11 +643,11 @@ def validate_manifest(
                 if name in seen_names:
                     errors.append(f"module {module_name}: duplicate artifact {name!r}")
                 seen_names.add(name)
-        # F6: every KNOWN module must enumerate its full mandatory artifact set
+        # Every KNOWN module must enumerate its full mandatory artifact set
         # — a semantically partial build (congress missing the DB, feed, stats,
         # or any licensing artifact; inst missing inst_agg.db) is refused here,
         # before a consumer persists a higher pointer and makes an incomplete
-        # build current (R2/R3/R8/R10).
+        # build current.
         for required in policy["required"]:
             if required not in seen_names:
                 errors.append(
@@ -662,7 +662,7 @@ def pointer_manifest_identity_error(manifest: object, pointer_build_id: str) -> 
     Centralizes the §5.5 rule that a pointer for build A must authenticate
     build A's manifest — a hash-consistent manifest whose ``build_id`` differs
     would cross-bind identities and defeat cache identity, monitor state, and
-    rollback (R10/R17/R24). Applied identically by the client, monitor, and
+    rollback. Applied identically by the client, monitor, and
     verifier.
     """
     if not isinstance(manifest, dict) or "build_id" not in manifest:

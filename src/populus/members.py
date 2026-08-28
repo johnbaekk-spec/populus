@@ -1,4 +1,4 @@
-"""Member identity: legislators load, aliases, and the §9.7 join (RUN 4).
+"""Member identity: legislators load, aliases, and the §9.7 join.
 
 Loads the congress-legislators seed (CC0 — ``cc0-legislators``) into
 ``members``, maintains the version-controlled ``member_aliases`` table from
@@ -15,7 +15,7 @@ with ``filed_date`` (per-term ``type``, never the denormalized
 ``other_names`` variant applies only inside its own source-declared
 ``start``/``end`` validity window (missing bound = unbounded; both bounds
 inclusive — G14, no identity time travel). Exactly one candidate ⇒ join;
-zero or many ⇒ ``bioguide_id = NULL``, counted, never dropped (G3).
+zero or many ⇒ ``bioguide_id = NULL``, counted, never dropped.
 Alias rows take precedence over automatic matching.
 
 Library code never reads the wall clock; the CLI supplies ``now``/``run_id``.
@@ -99,7 +99,7 @@ def _load_legislators_yaml(path: Path) -> list[dict]:
     return [_jsonable(entry) for entry in entries]
 
 
-# --- members load (R1) --------------------------------------------------------
+# --- members load --------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -143,7 +143,7 @@ def load_members(conn: sqlite3.Connection, legislators_dir: Path | str) -> Membe
     on its current entry. FK-referenced rows are never deleted — this is an
     upsert, not a replace. Entries lacking a bioguide or any term cannot
     satisfy the schema (PK / NOT NULL chamber) and are counted, not dropped
-    silently (G3).
+    silently.
     """
     legislators_dir = Path(legislators_dir)
     historical = _load_legislators_yaml(legislators_dir / "legislators-historical.yaml")
@@ -188,7 +188,7 @@ def load_members(conn: sqlite3.Connection, legislators_dir: Path | str) -> Membe
     )
 
 
-# --- aliases (R3) -------------------------------------------------------------
+# --- aliases -------------------------------------------------------------
 
 
 def default_aliases_text() -> str:
@@ -287,7 +287,7 @@ def alias_overlap_errors(conn: sqlite3.Connection) -> list[str]:
     return errors
 
 
-# --- resolver (R2/R3) ---------------------------------------------------------
+# --- resolver ---------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -393,8 +393,8 @@ class MemberResolver:
         normalized = normalize_filer_name(name_raw)
 
         # Alias precedence: an applicable alias row is a reviewed decision.
-        # Aliases DO NOT bypass the hard state/district constraints (F2/R2/
-        # R4): whenever the filing supplies a state or district hint, an
+        # Aliases DO NOT bypass the hard state/district constraints:
+        # whenever the filing supplies a state or district hint, an
         # applicable alias must carry a MATCHING value. A wildcard (NULL)
         # disambiguator therefore only applies when the corresponding hint
         # is itself absent (e.g. a Senate filing supplies no district). A
@@ -416,13 +416,13 @@ class MemberResolver:
             targets = {row.bioguide_id for row in applicable}
             if len(targets) == 1:
                 return Resolution(applicable[0].bioguide_id, "alias")
-            # Overlapping applicable rows disagreeing on the member: the R3
+            # Overlapping applicable rows disagreeing on the member: an alias-table
             # defect. Fail closed — CI catches the file via
             # alias_overlap_errors; resolution never guesses.
             return Resolution(None, "alias_conflict")
 
-        # District is a HARD constraint whenever a district hint is supplied
-        # (R2/R4): it is never discarded to recover a match. A supplied
+        # District is a HARD constraint whenever a district hint is supplied:
+        # it is never discarded to recover a match. A supplied
         # district that eliminates every candidate yields NULL, not a
         # district-blind guess — conservative identity resolution (a stale or
         # wrong district can never attribute a filing to a non-matching
@@ -491,7 +491,7 @@ def _member_variants(raw: Mapping) -> list[tuple[str, str | None, str | None]]:
             unbounded.add(candidate)
 
     variants = [(v, None, None) for v in sorted(unbounded)]
-    # Alternate names carry their own source-declared validity bounds (G14):
+    # Alternate names carry their own source-declared validity bounds:
     # missing start = unbounded past, missing end = unbounded future, both
     # inclusive. Name parts absent from the alternate entry inherit the base.
     for other in raw.get("other_names") or []:
@@ -548,7 +548,7 @@ def build_resolver(conn: sqlite3.Connection) -> MemberResolver:
     )
 
 
-# --- join hints (R4) ----------------------------------------------------------
+# --- join hints ----------------------------------------------------------
 
 _STATE_DST = re.compile(r"^([A-Z]{2})(\d{2})$")
 _OFFICE_DISTRICT = re.compile(r"([A-Z]{2})-(\d+)\s*$")
@@ -565,7 +565,7 @@ def house_hints_from_index(
     hints: dict[str, tuple[str | None, str | None]] = {}
     for path in xml_paths:
         # Cached bytes of a REMOTE index: parse through the shared hardened
-        # helper (R10/LD11). UnsafeXmlError/XMLSyntaxError propagate as named
+        # helper. UnsafeXmlError/XMLSyntaxError propagate as named
         # failures — a refused index must never yield silent empty hints.
         root = parse_untrusted_xml(Path(path).read_bytes())
         for member in root.iter("Member"):
@@ -584,21 +584,21 @@ def house_hints_from_index(
 def kadoa_hints_from_trades(
     path: Path | str,
 ) -> dict[str, tuple[str | None, str | None]]:
-    """``filing_id → (state, district)`` from the kadoa seed's own fields (R4).
+    """``filing_id → (state, district)`` from the kadoa seed's own fields.
 
     The record's ``state`` is the state hint; a House district is parsed from
     the ``office`` suffix ("U.S. Representative · CT-04"); the ``state`` field
     is backfilled from that same suffix when absent. Senate rows carry no
     district.
 
-    District is a HARD resolver constraint (R2/R4): the parsed district
+    District is a HARD resolver constraint: the parsed district
     stands as given. Some kadoa ``office`` districts are the member's former
     (pre-redistricting) district rather than the filed report's — a
     known-stale source value. Those are corrected **only** by an explicit,
     reviewed alias scoped to the exact stale (source_district, date) in
     ``aliases.yaml`` (a versioned correction mapping); an uncorrected stale
     district resolves to NULL and is listed in stats, never silently dropped
-    (G3) and never attributed to a non-matching member.
+    and never attributed to a non-matching member.
     """
     records = json.loads(Path(path).read_text(encoding="utf-8"))
     hints: dict[str, tuple[str | None, str | None]] = {}
@@ -620,7 +620,7 @@ def kadoa_hints_from_trades(
     return hints
 
 
-# --- join pass (R4) -----------------------------------------------------------
+# --- join pass -----------------------------------------------------------
 
 
 @dataclass
@@ -728,7 +728,7 @@ def run_members_ingest(
     host: str,
 ) -> MembersRunReport:
     """Load members + aliases and run the join pass under one complete
-    ``ingest_runs`` row (R13). Unjoined filings are counted, not failures."""
+    ``ingest_runs`` row. Unjoined filings are counted, not failures."""
     conn.execute(
         "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
         " VALUES (?, 'members', ?, 'running', ?)",

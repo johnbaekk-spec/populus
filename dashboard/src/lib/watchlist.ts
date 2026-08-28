@@ -73,8 +73,8 @@ export function isNewSince(row: Pick<TxnRow, "filed">, cursor: SeenCursor): bool
   return row.filed > cursor.lastSeenFiled;
 }
 
-/** The earliest FILED date this build retains, across BOTH row families
-    (review F6): a paper-only corpus, or paper history older than the
+/** The earliest FILED date this build retains, across BOTH row families:
+    a paper-only corpus, or paper history older than the
     transaction history, must not manufacture a false coverage gap. */
 export function earliestRetainedFiled(
   txns: readonly Pick<TxnRow, "filed">[],

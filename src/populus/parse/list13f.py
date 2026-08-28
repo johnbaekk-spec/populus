@@ -1,20 +1,20 @@
-"""Parser for the SEC Official List of Section 13(f) Securities (RUN M2-5).
+"""Parser for the SEC Official List of Section 13(f) Securities.
 
 Two independent parsers over the SAME definitional publication — a fixed-width
 text variant (published only for the most recent quarter) and a PDF variant
 (every quarter, the only form for historical quarters) — plus the machinery the
-plan's R4/R5/R6 obligations demand:
+definitional role demands:
 
 * ``parse_list13f_text``  — the fixed-width layout, offsets taken from the file
-  itself (see :data:`_TEXT_LAYOUT`), never guessed (R3).
+  itself (see :data:`_TEXT_LAYOUT`), never guessed.
 * ``parse_list13f_pdf`` + ``parse_list13f_legend`` — x-anchored column
   extraction reusing M1's generic ``extract_positioned``/``_column_of``
   primitives (NOT the House-specific segmenter), with flag semantics read from
-  the document's own legend page and asserted present (R4).
+  the document's own legend page and asserted present.
 * ``cusip_check_digit_ok`` — the standard mod-10 double-add-double check,
   applied only to non-option rows (SEC synthetic option CUSIPs do not follow
-  the standard rule — verified against the cached bytes) (R6).
-* ``assert_cross_format_identity`` — the R5 ground-truth gate: the two parsers'
+  the standard rule — verified against the cached bytes).
+* ``assert_cross_format_identity`` — the ground-truth gate: the two parsers'
   raw, cardinality-preserving row sequences must be identical.
 
 Every source row lands in exactly one :class:`Disposition13f` bucket — nothing
@@ -43,11 +43,11 @@ LIST13F_PARSER_VERSION = "list13f-1.0.0"
 #: the CLASS column, NOT the option asterisk: the asterisk marks the UNDERLYING
 #: security that HAS a listed option (verified against 13flist2026q2 — the
 #: asterisk never appears on a CALL/PUT row), while the CALL/PUT legs carry SEC
-#: synthetic CUSIPs that do not satisfy the standard check-digit rule (R6).
+#: synthetic CUSIPs that do not satisfy the standard check-digit rule.
 _OPTION_CLASSES = frozenset({"CALL", "PUT"})
 
 
-# --- the verified fixed-width text layout (R3 — offsets cited, never guessed) --
+# --- the verified fixed-width text layout (offsets cited, never guessed) --
 
 
 class _TextLayout(NamedTuple):
@@ -75,7 +75,7 @@ _TEXT_ROW_WIDTH = 80
 #: The 0-based index of the trailing per-row status letter, uniformly ``E`` across
 #: all 25,333 rows of 13flist2026q2 (verified 2026-07-30). Text-only: the PDF
 #: variant renders no counterpart column (its rightmost content is STATUS), so it
-#: is DOMAIN-VALIDATED here but is NOT part of the cross-format R5 tuple — there is
+#: is DOMAIN-VALIDATED here but is NOT part of the cross-format tuple — there is
 #: nothing on the PDF side to compare it to (see :func:`assert_cross_format_identity`).
 _TEXT_TRAILING = slice(79, 80)
 _TEXT_TRAILING_DOMAIN = frozenset({"E"})
@@ -84,26 +84,26 @@ _TEXT_TRAILING_DOMAIN = frozenset({"E"})
 #: variant prints these as the words ADDED / DELETED instead; both map here.
 _TEXT_STATUS = {"*A*": "ADDED", "*D*": "DELETED"}
 _CANONICAL_FLAGS = ("", "ADDED", "DELETED")
-#: The documented domains of the two other fixed-position text cells (R4/G3): an
+#: The documented domains of the two other fixed-position text cells (G3): an
 #: out-of-domain value is a COUNTED reject (``rejected_bad_field``), never silently
-#: normalized to blank (that silent coercion was finding F9).
+#: normalized to blank (that silent coercion was a past defect).
 _TEXT_OPTION_DOMAIN = frozenset({"*", " "})
 _TEXT_STATUS_DOMAIN = frozenset({"*A*", "*D*", "   "})
 
 
-# --- the R5 substrate and the accepted record --------------------------------
+# --- the comparison substrate and the accepted record --------------------------------
 
 
 class RawRow(NamedTuple):
     """One source line's canonical cross-format tuple.
 
     Emitted once per source data line, PRE-dedup and in file order — the
-    cardinality-preserving substrate the R5 cross-format gate compares. ``cusip``
+    cardinality-preserving substrate the cross-format gate compares. ``cusip``
     is the normalized 9-char value (or the raw joined token when it will not
     normalize, so a malformed row still participates in the comparison).
 
-    Every field is one BOTH formats can express, so the whole tuple is compared
-    (F1): ``status_flag`` is the STATUS column (text ``*A*``/``*D*``; PDF
+    Every field is one BOTH formats can express, so the whole tuple is compared:
+    ``status_flag`` is the STATUS column (text ``*A*``/``*D*``; PDF
     ADDED/DELETED word) and ``has_listed_option`` is the option asterisk on the
     underlying (text column 9; PDF a lone ``*`` in the CUSIP column). The
     text-only trailing status letter is deliberately NOT here — the PDF has no
@@ -141,7 +141,7 @@ class List13fRecord:
     #: fixed-width text line, or the PDF data row reconstructed from its
     #: positioned words in reading order. Persisted onto the seeded fact row so a
     #: published or migrated identity can be audited against its exact source line
-    #: without the gitignored cache (§5.1, round-1 F9).
+    #: without the gitignored cache (§5.1).
     raw_source: str = ""
 
     @property
@@ -170,17 +170,17 @@ class Disposition13f:
       ADDED and DELETED anywhere in the file; neither seeds. Decided file-wide
       over EVERY candidate whose CUSIP normalizes — including a structurally-bad
       companion — so a malformed row can never let a conflicted CUSIP through
-      (F5, Locked Decision 4), and the outcome is order-independent.
+, and the outcome is order-independent.
     * ``rejected_definition_conflict`` — every line of a CUSIP whose seed-worthy
       rows disagree on issuer/class/option; only byte-identical definitions may
-      collapse to one record, so an ambiguous CUSIP seeds neither row (F11/G3).
+      collapse to one record, so an ambiguous CUSIP seeds neither row (G3).
     * ``rejected_malformed`` — the CUSIP will not normalize to 9 ``[0-9A-Z]``.
     * ``rejected_bad_check_digit`` — a NON-option CUSIP fails the check digit.
     * ``rejected_bad_width`` — the source line does not conform to the expected
       layout (text: not 80 chars; pdf: a data-region line that yielded no row).
     * ``rejected_bad_field`` — the line is the right width but a fixed-position
       cell (option asterisk, STATUS, or the trailing status letter) is outside
-      its documented domain. Counted, never silently normalized to blank (F9/G3).
+      its documented domain. Counted, never silently normalized to blank (G3).
     """
 
     rows_read: int = 0
@@ -222,7 +222,7 @@ class Disposition13f:
 
     @property
     def parse_coverage(self) -> float:
-        """Fraction of source rows that were structurally recognized (R6).
+        """Fraction of source rows that were structurally recognized.
 
         A row is "covered" unless it could not be read into well-formed fixed
         cells — a wrong-width line (``rejected_bad_width``) or an out-of-domain
@@ -238,7 +238,7 @@ class Disposition13f:
 
 @dataclass(frozen=True)
 class LegendSemantics:
-    """The flag meanings read from the document's own legend page (R4).
+    """The flag meanings read from the document's own legend page.
 
     The ADDED/DELETED/asterisk sentences are asserted present by
     :func:`parse_list13f_legend`; this object records that they were found and
@@ -267,7 +267,7 @@ class ParsedList13f:
     #: filename-vs-document quarter cross-check. ``None`` for the text variant.
     document_quarter: str | None = None
     #: The SEC's own ``Total Count: NNN`` trailer (PDF, last page only). The ingest
-    #: validates it against ``rows_read`` when present (R6/F4). ``None`` when the
+    #: validates it against ``rows_read`` when present. ``None`` when the
     #: parse did not reach the trailer (e.g. the first-page excerpt or the text
     #: variant, which carries no such line).
     document_total_count: int | None = None
@@ -320,7 +320,7 @@ def quarter_bounds(quarter: str) -> tuple[str, str]:
     return start, next_start
 
 
-# --- CUSIP check digit (R6) ---------------------------------------------------
+# --- CUSIP check digit ---------------------------------------------------
 
 
 def _cusip_char_value(ch: str) -> int | None:
@@ -332,7 +332,7 @@ def _cusip_char_value(ch: str) -> int | None:
 
 
 def cusip_check_digit_ok(cusip: str) -> bool:
-    """The standard mod-10 double-add-double CUSIP check (R6).
+    """The standard mod-10 double-add-double CUSIP check.
 
     Digits are 0-9, letters A-Z are 10-35, and the three SEC fill characters
     ``* @ #`` are 36-38. Every second position (1-indexed even) is doubled; the
@@ -370,9 +370,9 @@ class _Candidate:
     structural_ok: bool         # right width / re-joined CUSIP is 9 chars
     #: Every fixed-position cell (option asterisk, STATUS, trailing letter) is
     #: within its documented domain. False → a COUNTED ``rejected_bad_field``, not
-    #: a silent blank (F9). Defaults True so the PDF mapper opts in explicitly.
+    #: a silent blank. Defaults True so the PDF mapper opts in explicitly.
     field_ok: bool = True
-    #: The verbatim source row this candidate was read from (§5.1 / round-1 F9).
+    #: The verbatim source row this candidate was read from (§5.1).
     source_row: str = ""
 
 
@@ -423,7 +423,7 @@ def _finalize(
     # candidate whose CUSIP normalizes, INCLUDING structurally-imperfect ones, and
     # BEFORE any per-row seed eligibility. A bad-width `*D*` companion must still
     # veto a valid `*A*` on the same CUSIP (Locked Decision 4): moving the decision
-    # ahead of the structural rejection is exactly what closes F5. Fail-closed — a
+    # ahead of the structural rejection is deliberate. Fail-closed — a
     # CUSIP carrying both ADDED and DELETED anywhere seeds nothing.
     normalized_cusips = [normalize_cusip(candidate.cusip_raw) for candidate in candidates]
     status_by_cusip: dict[str, set[str]] = defaultdict(set)
@@ -491,7 +491,7 @@ def _finalize(
         # Status conflicts were already removed file-wide (phase 0), so a group is
         # A/D-consistent here; it is at most continuing + ADDED + DELETED lines.
         seed_worthy = [line for line in group if line.status_flag != "DELETED"]
-        # F11: a duplicate may collapse to one record ONLY when the seed-worthy
+        # A duplicate may collapse to one record ONLY when the seed-worthy
         # rows share one definition (issuer, class, is_option, has_listed_option).
         # If they disagree, the CUSIP's definition is ambiguous — reject the WHOLE
         # CUSIP and seed neither, never silently pick one and count the rest as
@@ -557,11 +557,11 @@ def _finalize(
     )
 
 
-# --- text parser (R3) ---------------------------------------------------------
+# --- text parser ---------------------------------------------------------
 
 
 def parse_list13f_text(data: str, *, quarter: str) -> ParsedList13f:
-    """Parse the fixed-width text variant against the verified offsets (R3).
+    """Parse the fixed-width text variant against the verified offsets.
 
     Blank lines are dropped (they carry no row); every non-blank line is a
     counted candidate. A line that is not exactly 80 characters is
@@ -580,7 +580,7 @@ def parse_list13f_text(data: str, *, quarter: str) -> ParsedList13f:
         status_cell = line[_TEXT_LAYOUT.status]
         trailing_cell = line[_TEXT_TRAILING]
         # Validate every fixed-position cell against its documented domain. An
-        # unknown option/status/trailing value is NOT coerced to blank (F9): the
+        # unknown option/status/trailing value is NOT coerced to blank: the
         # row is a counted ``rejected_bad_field``. Only meaningful on a
         # right-width line — a wrong-width line is already ``rejected_bad_width``.
         field_ok = structural_ok and (
@@ -599,7 +599,7 @@ def parse_list13f_text(data: str, *, quarter: str) -> ParsedList13f:
                 field_ok=field_ok,
                 # The source line VERBATIM (post-NFC, minus only the line
                 # terminator) — the audit substrate persisted onto the fact row
-                # (F9). Not re-derived from the parsed cells: it must be able to
+                #. Not re-derived from the parsed cells: it must be able to
                 # disagree with them if the parse is ever wrong.
                 source_row=line,
             )
@@ -607,7 +607,7 @@ def parse_list13f_text(data: str, *, quarter: str) -> ParsedList13f:
     return _finalize(candidates, quarter=quarter)
 
 
-# --- PDF legend (R4) ----------------------------------------------------------
+# --- PDF legend ----------------------------------------------------------
 
 
 _QUARTER_ENDING_RE = re.compile(
@@ -636,7 +636,7 @@ def parse_list13f_legend(pdf_bytes: bytes) -> LegendSemantics:
 
     Fails loud (``List13fParseError``) if the ADDED, DELETED or option-asterisk
     sentences are absent — a legend drift must stop the run, not be assumed
-    away (R4). Verified against every cached quarter 2025q1-2026q2.
+    away. Verified against every cached quarter 2025q1-2026q2.
     """
     text = _legend_text(pdf_bytes)
     flat = " ".join(text.lower().split())
@@ -667,7 +667,7 @@ def parse_list13f_legend(pdf_bytes: bytes) -> LegendSemantics:
     )
 
 
-# --- PDF data parser (R4) -----------------------------------------------------
+# --- PDF data parser -----------------------------------------------------
 
 #: The repeated column-header line on every data page.
 _PDF_HEADER = ("CUSIP", "NO", "ISSUER", "NAME", "ISSUER", "DESCRIPTION", "STATUS")
@@ -708,7 +708,7 @@ def _list13f_anchors(line: Line) -> list[tuple[float, str]]:
     STATUS`` header line (words already sorted by x0 in :class:`Line`).
 
     Both ``ISSUER`` words are present; the first opens the name column and the
-    second the description column — order, not text, distinguishes them (F10).
+    second the description column — order, not text, distinguishes them.
     """
     words = line.words
     return [
@@ -729,7 +729,7 @@ def _list13f_row_mapper(
     the option asterisk (a lone ``*`` left of the issuer name) sits in the CUSIP
     column and is detected there, and the STATUS column carries the ADDED /
     DELETED words. A line whose re-joined CUSIP is not 9 characters is flagged
-    ``structural_ok=False`` and retained (never dropped — R4/G3).
+    ``structural_ok=False`` and retained (never dropped — G3).
     """
     columns: dict[str, list[str]] = {
         "cusip": [],
@@ -744,7 +744,7 @@ def _list13f_row_mapper(
     cusip_raw = "".join(cusip_tokens)
     status_text = " ".join(columns["status"]).strip().upper()
     # An unrecognized STATUS word is a counted ``rejected_bad_field``, never a
-    # silent "continuing" blank (F9) — the same domain discipline as the text side.
+    # silent "continuing" blank — the same domain discipline as the text side.
     field_ok = status_text == "" or status_text in _PDF_STATUS
     return _Candidate(
         cusip_raw=cusip_raw,
@@ -756,13 +756,13 @@ def _list13f_row_mapper(
         field_ok=field_ok,
         # The PDF has no literal "line" to quote, so the canonical reconstruction
         # is its positioned words re-joined in reading order — the same row a
-        # reader sees on the page (F9). Deterministic for a given page layout.
+        # reader sees on the page. Deterministic for a given page layout.
         source_row=line.text,
     )
 
 
 def parse_list13f_pdf(pdf_bytes: bytes, *, quarter: str) -> ParsedList13f:
-    """Parse a quarter's list PDF via x-anchored column extraction (R4).
+    """Parse a quarter's list PDF via x-anchored column extraction.
 
     Reuses ONLY the generic ``extract_positioned``/``_column_of`` primitives
     plus this module's two 13F-specific helpers; the House segmenter is never
@@ -806,7 +806,7 @@ def parse_list13f_pdf(pdf_bytes: bytes, *, quarter: str) -> ParsedList13f:
     )
 
 
-# --- cross-format ground-truth gate (R5) --------------------------------------
+# --- cross-format ground-truth gate --------------------------------------
 
 
 class CrossFormatMismatchError(List13fParseError):
@@ -816,13 +816,13 @@ class CrossFormatMismatchError(List13fParseError):
 def assert_cross_format_identity(
     text_parsed: ParsedList13f, pdf_parsed: ParsedList13f
 ) -> None:
-    """Require the two formats' raw row sequences to be identical (R5).
+    """Require the two formats' raw row sequences to be identical.
 
     Compares the FULL ``raw_rows`` sequences — count, order, multiplicity and
     every ``(cusip, name, class, status_flag, has_listed_option)`` tuple — BEFORE
     any dedup or seeding. Both the STATUS column and the option asterisk are in
     the tuple, so a PDF parse that drops the underlying's ``*`` or misreads a
-    status now fails HERE, not silently (F1). The one text cell with no PDF
+    status now fails HERE, not silently. The one text cell with no PDF
     counterpart — the trailing status letter — is domain-validated in the text
     parser instead; it cannot be cross-compared because the PDF renders no such
     column. The PDF parser is validated against the text parser's ground truth; a

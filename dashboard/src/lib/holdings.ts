@@ -1,5 +1,4 @@
-/* RUN M2-8 T11/T12 (plan R11, R12, R16) — per-filer reported positions and the
-   as-of-resolved holder list.
+/* Per-filer reported positions and the as-of-resolved holder list.
 
    PURE by construction: no `node:` imports and no DOM. The inline pager inside
    `components/HoldingsTable.astro` imports these same renderers, so the SSR page
@@ -76,8 +75,8 @@ export type FilingDict = Record<string, FilingRef>;
 
 /** Filer projection: one row per REPORTED holding (`v_filer_reported_holdings`),
     so a position an affiliate also reported still appears on its own filer's
-    page (plan §F / R8). Change fields never ride here — `position_key` is a
-    REFERENCE to the `agg_qoq_deltas` record, never a copy of it (R7). */
+    page (plan §F). Change fields never ride here — `position_key` is a
+    REFERENCE to the `agg_qoq_deltas` record, never a copy of it. */
 export interface FilerHoldingRow {
   cik: string;
   period: string;
@@ -109,7 +108,7 @@ export interface FilerHoldingRow {
 
 /** Issuer-holder projection: one row per (issuer, period, FILER). `filer_key` is
     MANDATORY — an issuer bucket holds many filers, so a row without it cannot
-    say who holds what (plan R6). */
+    say who holds what. */
 export interface IssuerHolderRow {
   issuer_key: string;
   issuer_key_source: string | null;
@@ -128,7 +127,7 @@ export interface IssuerHolderRow {
   /** DISTINCT from `value_usd` — the issuer's de-duplicated total across
       affiliated managers. Never summed with the per-filer value. */
   issuer_dedup_total_usd: number | null;
-  /** R22: top/tail budget state for the row's filer link, attached by the
+  /** top/tail budget state for the row's filer link, attached by the
       server-side reader (it is not an artifact column) and carried through the
       embedded payload so the client re-render links identically. Absent means
       unknown, which `filerLinkHtml` treats as tail — the reachable direction. */
@@ -147,9 +146,9 @@ export interface IssuerShard {
   rows: IssuerHolderRow[];
 }
 
-/* ---------- the §5 structural caveat (R16) — non-removable ---------- */
+/* ---------- the §5 structural caveat — non-removable ---------- */
 
-/* MOVED here from `lib/activity.ts` in RUN M2-11 (plan R22): still the ONE
+/* MOVED here from `lib/activity.ts`: still the ONE
    canonical copy — activity.ts re-exports it — but it must live in a
    browser-safe module now, because the `/e/` driver's in-extract filer path
    renders the note on the client and activity.ts imports `node:sqlite`. */
@@ -213,7 +212,7 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
   },
 ];
 
-/** SL-R15/LD8: the load-bearing claim, in the summary, in VISIBLE TEXT.
+/** The load-bearing claim, in the summary, in VISIBLE TEXT.
 
     This string is the honesty channel that replaces the always-open body, and
     it is asserted verbatim by `css-fold.test.ts`. A summary reading `Details`,
@@ -228,7 +227,7 @@ export const INST_DATA_NOTE_SUMMARY =
  * `.caveat-line`, which the fold guard and the print block both protect, and the
  * block carries `data-inst-data-note` so a test can find it on any surface.
  *
- * SL-R15 / LD1 / LD8 — COLLAPSED, NEVER DELETED, AND PAID FOR IN THE OPEN.
+ * COLLAPSED, NEVER DELETED, AND PAID FOR IN THE OPEN.
  *
  * The owner asked for this box's removal. It is the M2-CONTRACT §5 structural
  * caveat, pinned to `populus.normalize_inst.INST_DATA_NOTE` and asserted
@@ -341,7 +340,7 @@ export function parseFilerShard(raw: unknown): FilerShard {
       if (field in r) {
         throw new Error(
           `filer row ${i} carries the change field "${field}" — holding and change ` +
-            `records keep separate grains, joined by position_key (plan Locked #5)`,
+            `records keep separate grains, joined by position_key`,
         );
       }
     }
@@ -377,7 +376,7 @@ export function parseIssuerShard(raw: unknown): IssuerShard {
       if (!filerKey) {
         throw new Error(
           `issuer-holder row ${i} has no filer_key — an issuer bucket holds many ` +
-            `filers, so a row without one cannot say who holds what (plan R6)`,
+            `filers, so a row without one cannot say who holds what`,
         );
       }
       return {
@@ -500,7 +499,7 @@ export function provenanceCellHtml(p: Provenance, stated: readonly string[] = []
           `composed from ${p.filingCount} filings: ${p.accessions.join(", ")}`,
         )}">composed · ${esc(String(p.filingCount))} filings</span>`
       : "";
-  /* B34: hoistable. When every row of a table misses the filing dictionary the
+  /* Hoistable: when every row of a table misses the filing dictionary the
      badge says nothing per row, so the table states it once and this yields. */
   const unknown =
     p.known || stated.includes("filing_not_in_dictionary")
@@ -590,7 +589,7 @@ export const HOLDINGS_EMBED_BYTE_CAP = 2 * 1024 * 1024;
     and slicing proportionally would be an estimate again. */
 /** UTF-8 byte length of an already-serialized row.
 
-    Codex F5: the fill below measured `encoded.length` — UTF-16 CODE UNITS —
+    The fill below once measured `encoded.length` — UTF-16 CODE UNITS —
     while `HOLDINGS_EMBED_BYTE_CAP` is declared and documented as a BYTE
     ceiling. Every non-ASCII character in an issuer name (13F filers hold
     plenty of foreign issuers) costs 2–3 UTF-8 bytes but counts as one unit,
@@ -798,7 +797,7 @@ export interface FoldedPosition {
 
 /** Fold REPORTED ROWS into POSITIONS. A position composed from a base filing
     plus NEW-HOLDINGS amendments occupies several reported rows; the table shows
-    every one of them (completeness, R8) while the diff compares positions. */
+    every one of them (completeness) while the diff compares positions. */
 export function foldPositions(rows: readonly FilerHoldingRow[]): FoldedPosition[] {
   const out = new Map<string, FoldedPosition>();
   let index = 0;
@@ -1049,7 +1048,7 @@ export function coveragePctText(bps: number | null): string {
   return bps == null ? "n/a" : `${(bps / 100).toFixed(2)}%`;
 }
 
-/* ---------- the unqualified-"all" ban (R12) ---------- */
+/* ---------- the unqualified-"all" ban ---------- */
 
 /** Identity coverage is high and NOT 100%, so "all holders" is a false claim on
     every surface built from it. This is the mechanism, not a style note: the
@@ -1118,7 +1117,7 @@ export const HOLDINGS_FOOTNOTES: FootnoteEntry[] = [
 
 const HOLDINGS_FN = new Map(HOLDINGS_FOOTNOTES.map((e) => [e.mark, e.html]));
 
-/* SL-R7/R7b/R7c: `#holdings-footnotes` was appended UNCONDITIONALLY by
+/* `#holdings-footnotes` was appended UNCONDITIONALLY by
    `HoldingsTable.astro`, so it served two pages — the filer page and the
    holders page. Its four marks move onto the columns whose cells actually emit
    them, read off the emitters rather than off the column names:
@@ -1128,7 +1127,7 @@ const HOLDINGS_FN = new Map(HOLDINGS_FOOTNOTES.map((e) => [e.mark, e.html]));
      ‡a  `diffChip`              -> Change         (position-diff only)
      ‡c  DECLARED, NEVER EMITTED -> Issuer         (filer holdings)
 
-   ‡c is the orphan R7c names: it is a footnote with no marker anywhere in the
+   ‡c is an orphan: a footnote with no marker anywhere in the
    tree. Dropping it because nothing pointed at it would silently lose a
    published explanation, so it lands on the column it is about. */
 const HOLDINGS_COLS: readonly (readonly [string, string])[] = [
@@ -1147,7 +1146,7 @@ const HOLDINGS_COL_NOTES: Record<string, string | undefined> = {
 
 /* The position-diff table's own descriptors. Its two period-labelled columns
    use FIXED slugs, never the interpolated period, so the ids survive a period
-   switch (R7b). */
+   switch. */
 const DIFF_COLS: readonly string[] = [
   "issuer",
   "prior-value",
@@ -1160,7 +1159,7 @@ const DIFF_COLS: readonly string[] = [
 ];
 
 /* The holders table is a FIVE-column variant no revision of this plan
-   enumerated; R7b requires its descriptors to be read from the header at
+   enumerated; its descriptors are therefore read from the header at
    implementation and recorded, which is what this is. */
 const HOLDERS_COLS: readonly (readonly [string, string])[] = [
   ["filer", "Filer"],
@@ -1189,7 +1188,7 @@ function sharesCell(shares: number | null, unit: string | null): string {
   return `${fmtInt(shares)}<span class="mono-note">${unitNote}</span>`;
 }
 
-/* ------------------- the filer budget + the ONE href primitive (R22) ------ */
+/* ------------------- the filer budget + the ONE href primitive ----------- */
 
 /** Where a filer's page lives under the LD-7 budget: "top" = one of the 1,500
     pre-rendered pages; "tail" = addressable through the `/e/` driver via the
@@ -1232,7 +1231,7 @@ export function selectTopFilers(
   return ordered.slice(0, budget).map((r) => r.cik);
 }
 
-/** THE filer-href decision primitive (R22): CIK + budget state → the canonical
+/** THE filer-href decision primitive: CIK + budget state → the canonical
     page href (top) or the `/e/` driver href (tail). Every link producer routes
     through here — a sweep test fails any unconditional
     `/institutional/filers/` literal outside this module. The tail href uses
@@ -1253,7 +1252,7 @@ export function filerHref(cik: string, state: FilerBudgetState): string {
     producer writes; this makes the failure mode visible instead of linking into
     nothing. Exported so the activity feed uses the same rule.
 
-    `tier` decides top vs tail through `filerHref` (R22). It defaults to "tail"
+    `tier` decides top vs tail through `filerHref`. It defaults to "tail"
     deliberately: the `/e/` shell is prerendered and never 404s, so an unknown
     tier degrades to a reachable page — the safe direction — while a "top"
     default would dress a 404 as a link for every tail filer. */
@@ -1324,7 +1323,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
      visible page lets the caveat appear on page 0 and vanish on page 1 for the
      same table, which is precisely the contradiction the entity table's version
      was written to avoid; wiring these later, I reintroduced it. */
-  /* B34: over what each row PRESENTS, not just what the producer flagged. The
+  /* Hoisting is over what each row PRESENTS, not just what the producer flagged. The
      provenance miss is a `.flag` badge rendered from `Provenance.known`, so a
      table whose every row misses the dictionary repeated it on every row while
      `universalFlags` never saw it. Provenance is resolved once per row here and
@@ -1394,9 +1393,9 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     )} undisclosed-value ${totals.undisclosedRows === 1 ? "row" : "rows"}</span></div>` +
     emptyNote +
     universalFlagNote(statedHoldings) +
-    /* B35 (cycle 4 F1): `data-paged` means "this HTML shows only PART of the
+    /* `data-paged` means "this HTML shows only PART of the
        collection", not "this renderer supports paging". Set unconditionally it
-       exempted single-page tables — including the exact B34 regressions — so the
+       exempted single-page tables — including the exact hoisting regressions — so the
        gate passed the failures it exists to catch. When the whole collection is
        on the page, the visible rows ARE the collection and there is nothing HTML
        cannot settle. */
@@ -1421,7 +1420,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     pagerHtml({ page: opts.page, pageCount, rangeText, idPrefix: "holdings" }) +
     `<div class="caveat-line">every row this filer reported for the quarter, as it reported ` +
     `it — cross-filer de-duplication is applied to issuer totals elsewhere and never deletes ` +
-    `a row here (plan R8)</div>`
+    `a row here</div>`
   );
 }
 
@@ -1455,7 +1454,7 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
     }
     return esc(`${v > 0 ? "+" : ""}${fmtUsd(v)}`);
   };
-  /* B34: diff notes are free TEXT, not registry keys, so they hoist by the label
+  /* Diff notes are free TEXT, not registry keys, so they hoist by the label
      a reader sees — which is why `universalBadgeNote` exists beside the
      key-shaped `universalFlagNote`. Over `diff.rows`, the full bounded set. */
   const statedNotes = universalBadges(diff.rows.map((r) => r.notes));
@@ -1566,8 +1565,8 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
   const total = opts.totalRows ?? matched;
   const pageRows = holdingsPageSlice(opts.rows, opts.page);
   const pageCount = holdingsPageCount(matched);
-  /* B34: the THIRD consumer of `provenanceCellHtml`, and the one cycle 4 round 2
-     found still repeating the badge. Over the full bounded set, resolved once
+  /* The THIRD consumer of `provenanceCellHtml`, and the one that was still
+     repeating the badge. Over the full bounded set, resolved once
      per row and reused below — the same shape as the positions table. */
   const provOf = new Map(
     opts.rows.map((r) => [r, provenanceOf(r.filing_keys, opts.filings, r.period)] as const),
@@ -1659,7 +1658,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
   );
 }
 
-/** The unresolved counts and coverage that sit BESIDE the holder table (R12).
+/** The unresolved counts and coverage that sit BESIDE the holder table.
     `dedupTotalUsd` is printed in its own labelled line precisely because it must
     never be read as part of the summed column. */
 export function coveragePanelHtml(
@@ -1765,7 +1764,7 @@ export function holdersIntroHtml(issuerName: string, period: string): string {
   );
 }
 
-/* SL-R7: `holdingsFootnotesHtml()` is DELETED, with both of its call sites
+/* `holdingsFootnotesHtml()` is DELETED, with both of its call sites
    (`HoldingsTable.astro`, `entity-client.ts`). Every clause `#holdings-footnotes`
    published renders as a note on the column that emits its mark — see
    HOLDINGS_COL_NOTES above. It is deleted rather than emptied because a block
@@ -1948,8 +1947,8 @@ export function projectionAbsentHtml(kind: "filer" | "holders", edgarUrl: string
 
 /* ---------- quarter-over-quarter changes: one ordering, one bound ----------
 
-   RUN M2-12. The changes surface had neither of the two bounds its sibling
-   above has had since QA M2-8 M8, and the arithmetic is the same: at a measured
+   The changes surface originally had neither of the two bounds its sibling
+   above carries, and the arithmetic is the same: at a measured
    ~373 B/row, the 15,885-row filer embeds 5.9 MiB for ONE period and 20.9 MiB
    across five — 29.1 MiB of page against a 25 MiB provider limit. The only
    tree that ever fitted was hand-edited after the build, with the quarter
@@ -1963,11 +1962,11 @@ export function projectionAbsentHtml(kind: "filer" | "holders", edgarUrl: string
 /** The changes table's canonical ordering: largest current value first, falling
     back to the previous value for an exited position, ties by `position_key` so
     the order is total and a build is reproducible. */
-/** The comparator itself, EXPORTED (Codex F3).
+/** The comparator itself, EXPORTED.
 
     It was inline, so the only way to test it was through `sortQoqDeltas`'s
     output — and a sorted list looks identical whether the tie-break returns 0 or
-    1. Codex demonstrated exactly that: the first version of the F4 regression
+    1. External review demonstrated exactly that: the first version of the regression
     test passed against the non-reflexive comparator it claimed to pin. A
     property this subtle has to be asserted on the comparator, not inferred from
     what it sorted. */
@@ -1975,7 +1974,7 @@ export function compareQoqDeltas(a: QoqDeltaLike, b: QoqDeltaLike): number {
   const av = a.curr_value_usd ?? a.prev_value_usd ?? -1;
   const bv = b.curr_value_usd ?? b.prev_value_usd ?? -1;
   if (bv !== av) return bv - av;
-  /* Codex F4: this returned 1 for EQUAL keys, so the comparator was not
+  /* This returned 1 for EQUAL keys, so the comparator was not
      reflexive and therefore not a total order — the tie-break must return 0
      so the sort is stable and matches the Python reference exactly. */
   if (a.position_key === b.position_key) return 0;

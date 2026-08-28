@@ -1,4 +1,4 @@
-"""§12.1 step 6 / §5.5 R13: the deployment signer, which trusts nothing it is told.
+"""§12.1 step 6 / §5.5: the deployment signer, which trusts nothing it is told.
 
 The deploy job is privileged — it holds the Cloudflare `Pages Edit` token and it
 uploads the bytes. This module runs afterwards, in a *different* workflow with a
@@ -18,11 +18,11 @@ bytes; it proves nothing about whether the emitter checked them. So:
   passes one, is *cross-checked* against that answer — a mismatch is a finding,
   not an input.
 * **The served bytes** are swept inventory-wide by :mod:`populus.deploy.verify`.
-  Marker-only checking is what this run's R15 exists to forbid: a compromised
+  Marker-only checking is what the inventory-wide sweep exists to forbid: a compromised
   deploy job can preserve `build_id`, `code_sha` and `stats.json` exactly while
   replacing every HTML and JS file behind them.
 
-**No non-GET Cloudflare request is issued from this module (R27, §17(h) as
+**No non-GET Cloudflare request is issued from this module (§17(h) as
 amended).** §17(h) used to require the signer to "fail closed on a `Pages
 Write`-scoped token", which is not observable: a `Pages Edit` token succeeds at
 every read performed here, no response field distinguishes it, and the signer
@@ -41,7 +41,7 @@ The property is scoped to **this module**: the deploy job legitimately POSTs
 **Why the raw deployment payload, and not `PagesClient.latest_production_deployment()`.**
 That method returns a typed :class:`~populus.deploy.cloudflare.Deployment` whose
 ``uses_functions`` is ``bool(entry.get("uses_functions"))`` — which turns a
-*missing* provider signal into a confident ``False``. R16's no-Functions check
+*missing* provider signal into a confident ``False``. The no-Functions check
 fails closed on a missing field precisely so an absent signal can never read as
 "there are none", and handing it a reconstructed mapping would delete that
 property while appearing to keep it. The signer therefore reads the same pinned
@@ -49,14 +49,14 @@ endpoint's raw result through the client's own request helper, and passes the
 provider's object through untouched. A test removes ``uses_functions`` from the
 recorded fixture and requires a refusal.
 
-**Two failure kinds, never one** (R17). ``rejected`` means we got answers and
+**Two failure kinds, never one**. ``rejected`` means we got answers and
 they did not line up. ``unavailable`` means we did not get an answer — a
 transport failure, a 429, a 5xx, an attestation-API quota error. A rate limit
 reported as tampering is a false alarm on the loudest channel the project has,
 so the vocabulary is imported from :mod:`populus.publish.attestation` rather
 than re-declared here.
 
-**The subject name is pinned in code, not only in YAML (R25).**
+**The subject name is pinned in code, not only in YAML.**
 ``actions/attest-build-provenance`` names subjects by **basename** when given a
 ``subject-path``, so a generation written to
 ``builds/<id>/deployments/<gen>.json`` would attest as ``<gen>.json`` — and
@@ -82,14 +82,14 @@ it swept, not about which host that was.
 
 **Two entry points, one module** (:data:`SUBCOMMANDS`).
 
-* ``sign`` (R13) is everything above, run by ``record-sign.yml`` after a deploy.
-* ``gate`` (R18) is run by ``publish.yml`` *before* the next publish, and it is
+* ``sign`` is everything above, run by ``record-sign.yml`` after a deploy.
+* ``gate`` is run by ``publish.yml`` *before* the next publish, and it is
   a different program with a different trust posture: it holds **no Cloudflare
   credential** (§14 forbids the publish job one), so its only live read is an
   unauthenticated fetch of the domain's own ``populus:code_sha`` marker. It
   **verifies** the highest deployment generation's attestation against the
   pinned ``record-sign.yml`` identity rather than merely resolving its path —
-  an unsigned file that is present is exactly what R18's revision 1 accepted,
+  an unsigned file that is present is exactly what the gate's first revision accepted,
   and it must fail. See :func:`gate_publish`.
 
 The flat, subcommand-less argv form is ``sign``, because ``record-sign.yml``
@@ -222,7 +222,7 @@ EXIT_MISCONFIGURED = 3
 #: the step identically for both, so the distinction died at the job boundary.
 #: On 2026-08-20 one 502 on a single swept path (run 32342764618) left a
 #: correct deployment unattested and would have blocked every later publish
-#: through R18, because the gate compares live ``code_sha`` against the attested
+#: through the pre-publish gate, because the gate compares live ``code_sha`` against the attested
 #: generation. A rerun of the same command succeeded unchanged.
 #:
 #: ``REJECTED`` is never retried and must never become retryable here: a
@@ -276,7 +276,7 @@ class RecordRefused(Exception):
 
 
 class RecordUnavailable(Exception):
-    """No verdict was reached (R17) — nothing is attested, nothing is accused."""
+    """No verdict was reached — nothing is attested, nothing is accused."""
 
 
 class RecordMisconfigured(Exception):
@@ -293,7 +293,7 @@ class RecordMisconfigured(Exception):
 class ProductionDeployment:
     """The project's current production deployment, as the provider described it.
 
-    ``payload`` is the provider's own object, carried verbatim so R16's
+    ``payload`` is the provider's own object, carried verbatim so the
     no-Functions assertion reads the field's real presence or absence.
     """
 
@@ -305,13 +305,13 @@ class ProductionDeployment:
 class CloudflareReads:
     """The signer's **entire** Cloudflare surface — and every method is a GET.
 
-    One class, two methods, no write verb reachable from here (R27). The class
+    One class, two methods, no write verb reachable from here. The class
     exists so the property is a shape a reader and a test can both check, rather
     than an absence someone has to prove by reading every line of the module.
 
-    :data:`READ_SURFACE` is documentation, not enforcement: a review round
-    correctly called the surface test decoration, because adding a method *and*
-    adding its name to the constant kept the assertion green. Two things carry
+    :data:`READ_SURFACE` is documentation, not enforcement: a surface test
+    that merely re-asserted the constant would be decoration, because adding a method *and*
+    adding its name to the constant keeps such an assertion green. Two things carry
     the property instead. The test now pins the surface to a **literal** set
     written in the test file, so growing the constant is what fails. And every
     request this class issues leaves through :meth:`_get`, which refuses any
@@ -350,7 +350,7 @@ class CloudflareReads:
             raise PagesRejected(
                 f"CloudflareReads was asked to issue {method!r}: this class is "
                 "the signer's entire Cloudflare surface and it is read-only "
-                "(R27, §17(h) as amended)"
+                "(§17(h) as amended)"
             )
         return self._client._request(method, path, params=params)
 
@@ -398,8 +398,8 @@ class CloudflareReads:
         worth a line: the status comparison, the "not attached to this project"
         message and the ``ACTIVE_DOMAIN_STATUS`` constant all live in
         :mod:`populus.deploy.cloudflare`, and re-implementing them here to reach
-        them through the local helper would mean two copies of the one check R11
-        turns on. It is a read either way — the client's own verb guard and the
+        them through the local helper would mean two copies of the one check the domain
+        precondition turns on. It is a read either way — the client's own verb guard and the
         injected transport's assertion both cover it.
         """
         return self._client.assert_custom_domain_active(domain)
@@ -410,7 +410,7 @@ class ArtifactFacts:
     """Everything the signer derived from the artifact it downloaded itself.
 
     ``validated`` is the proof the recomputed inventory passed the FULL
-    exact-v2 validation (LD12/LD12b) — it, not the raw mapping, is what the
+    exact-v2 validation — it, not the raw mapping, is what the
     domain leg's typed entry sweep consumes. A v1-shaped or control-less
     artifact never constructs one of these.
     """
@@ -468,7 +468,7 @@ class Generation:
 
 @dataclass(frozen=True)
 class GateResult:
-    """What the pre-publish gate concluded (R18).
+    """What the pre-publish gate concluded.
 
     ``first_run`` is a separate field rather than an inference from
     ``generation is None``: "the gate passed because nothing has ever been
@@ -494,7 +494,7 @@ class GateResult:
 
 
 def generation_subject_name(generation: int) -> str:
-    """``deployments/<gen>.json`` — the name R25 pins.
+    """``deployments/<gen>.json`` — the name the signer pins in code.
 
     Not the basename. ``resolve_identity("3.json")`` returns ``None``, which
     means *refuse*, so a generation attested under its basename cannot be
@@ -669,7 +669,7 @@ def next_generation(data_repo: Path | str, build_id: str) -> tuple[int, Path]:
     return generation, path
 
 
-# --- the whole signing (R13/R15/R16/R17/R25/R27) -----------------------------
+# --- the whole signing -----------------------------
 
 
 def sign_deployment(
@@ -760,7 +760,7 @@ def sign_deployment(
             ),
         )
     except PagesUnavailable as exc:
-        # R17 again, one layer down: the Pages API not answering is an outage.
+        # The same split one layer down: the Pages API not answering is an outage.
         return SigningResult(outcome=UNAVAILABLE, detail=f"no verdict: {exc}")
 
 
@@ -869,7 +869,7 @@ def _sign(
         raise RecordRefused(
             f"subject name {subject_name!r} does not resolve to the record-signer "
             f"identity ({P2_RECORD_SIGN_IDENTITY}); attesting it would produce a "
-            "generation the shipped verifier refuses (R25)"
+            "generation the shipped verifier refuses"
         )
 
     record = {
@@ -1025,7 +1025,7 @@ def _confirm_domain(
     return sweep.files_verified, domain_controls_total, domain_control_effects
 
 
-# --- the pre-publish gate (R18) ----------------------------------------------
+# --- the pre-publish gate ----------------------------------------------
 
 
 def highest_generation(data_repo: Path | str) -> Generation | None:
@@ -1086,9 +1086,9 @@ def gate_publish(
     marker_path: str = DEFAULT_MARKER_PATH,
     acknowledged_code_sha: str = "",
 ) -> GateResult:
-    """R18: the previous deploy must have left a **verified** generation.
+    """The pre-publish gate: the previous deploy must have left a **verified** generation.
 
-    Revision 1 of R18 said the gate "resolves ``builds/<id>/deployments/``",
+    The gate's first revision said it "resolves ``builds/<id>/deployments/``",
     which an unsigned file satisfies. §13.2 and §12.1 step 6 want something
     stronger and this function is it. In order:
 
@@ -1112,7 +1112,7 @@ def gate_publish(
     unresolvable state fails closed — including "the domain serves nothing but
     seven generations exist" (a rollback nobody recorded) and "the domain serves
     a build but no generation exists" (a deploy whose signer was skipped, which
-    is R20's failure arriving a day late).
+    is the skipped-signer failure arriving a day late).
 
     An outage is never a refusal here either: a 429 from the domain, a transport
     failure or an attestation-API quota error returns ``unavailable``, because
@@ -1165,7 +1165,7 @@ def _gate(
     # A domain with no deployment behind it and a domain whose origin is having
     # an outage are the SAME observation: Cloudflare answers 522 either way,
     # because "no origin" is literally what a Pages project with zero
-    # deployments has. The status code cannot separate them, and R17 is right
+    # deployments has. The status code cannot separate them, and it is right
     # that an outage must never be read as evidence.
     #
     # The separation comes from the predicate's other half, which is independent
@@ -1173,10 +1173,10 @@ def _gate(
     # unreachable domain is therefore allowed to mean "nothing was ever
     # deployed" ONLY when populus-data independently proves nothing was ever
     # deployed. If a generation exists, an unreachable domain is exactly the
-    # outage R17 describes and still refuses to answer.
+    # outage case and still refuses to answer.
     #
     # This is not a widening of the first-run predicate — it is the predicate as
-    # R18 states it ("the domain resolves to no deployment AND the checkout
+    # The rule states it ("the domain resolves to no deployment AND the checkout
     # holds zero generations"), reached in the case where the first half is
     # observed as an outage rather than as a clean answer.
     try:
@@ -1193,7 +1193,7 @@ def _gate(
             detail=(
                 f"first run: {domain} resolves to no deployment and {repo} holds "
                 "zero deployment generations. This is the only state in which "
-                "the gate passes without verifying one (R18/R14)."
+                "the gate passes without verifying one."
             ),
         )
     if found is None:
@@ -1231,7 +1231,7 @@ def _gate(
             f"{domain} serves a deployment (populus:code_sha {served!r}) but "
             f"{repo} holds zero deployment generations. Something went live "
             "unrecorded — the first-run predicate needs BOTH halves, and this "
-            "is the shape R20's skipped signer leaves behind. If this is a "
+            "is the shape a skipped signer leaves behind. If this is a "
             "known incident, re-dispatch with acknowledge_unrecorded_code_sha "
             f"set to {served!r} (see docs/operations/deploy.md, TD-4)"
         )
@@ -1249,7 +1249,7 @@ def _gate(
         raise RecordRefused(
             f"subject name {subject_name!r} does not resolve to the record-signer "
             f"identity ({P2_RECORD_SIGN_IDENTITY}); the gate verifies against the "
-            "identity the signer is pinned to and nothing else (R18/R25)"
+            "identity the signer is pinned to and nothing else"
         )
     # Attestation FIRST. Everything below reads values out of these bytes, and a
     # present-but-unsigned file is exactly what revision 1 of this requirement
@@ -1338,7 +1338,7 @@ def _domain_code_sha(
 
 
 def _gate_fetch(http: HttpGetter, url: str) -> HttpResponse:
-    """One cache-busted, redirect-disabled GET, with R17's split preserved.
+    """One cache-busted, redirect-disabled GET, with the outage/rejection split preserved.
 
     A local copy of :func:`populus.deploy.verify._fetch`'s policy rather than a
     call to it: that function is private, the gate has no inventory to sweep so
@@ -1426,7 +1426,7 @@ def _default_http_client():
     This is the single line in the signer that names a transport library, and it
     is reached only from :func:`main`. Every verification path takes an injected
     client, which is what keeps the suite hermetic (``tests/conftest.py`` blocks
-    real I/O) and what makes the R27 transport fixture possible at all.
+    real I/O) and what makes the GET-only transport fixture possible at all.
     ``follow_redirects`` is False here *as well as* on every call
     :mod:`populus.deploy.verify` makes: belt and braces on the one policy whose
     failure mode is a silent pass.
@@ -1517,7 +1517,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         prog="populus-record",
         description=(
             "The deployment record: sign a generation after a deploy (§12.1 "
-            "step 6), or gate the next publish on the last one (R18)."
+            "step 6), or gate the next publish on the last one."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1538,7 +1538,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             help="refuse to publish unless the last deploy left a verified generation",
             description=(
                 "Require an attestation-verified deployment generation whose "
-                "code_sha matches what the live domain serves (R18). Issues no "
+                "code_sha matches what the live domain serves. Issues no "
                 "Cloudflare request and holds no Cloudflare credential."
             ),
         )
@@ -1560,7 +1560,7 @@ def _build_attestation(choice: str):
 
 
 def _emit_outputs(result: SigningResult) -> None:
-    """Hand the workflow the subject name and digest **the code chose** (R25).
+    """Hand the workflow the subject name and digest **the code chose**.
 
     The attest step reads these, so the YAML cannot name a subject the code did
     not pin — which is exactly how a generation ends up attested under its
@@ -1651,7 +1651,7 @@ def main(
 def _main_gate(
     args: argparse.Namespace, *, http_factory=None, attestation_factory=None
 ) -> int:
-    """R18's entry point. It builds no Pages client and reads no Pages token.
+    """The gate's entry point. It builds no Pages client and reads no Pages token.
 
     That is not an oversight to be tidied up later: §14 forbids the publish job
     a Cloudflare credential, so there is nothing to read, and a gate that grew a

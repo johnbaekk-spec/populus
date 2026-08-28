@@ -1,8 +1,8 @@
 import type { APIRoute } from "astro";
 
-/* Transition tombstone only — RUN M2-12 (Codex F3).
+/* Transition tombstone only.
 
-   M2-12 made `deltaTotalsByPeriod` a REQUIRED key of the filer payload and its
+   A schema revision made `deltaTotalsByPeriod` a REQUIRED key of the filer payload and its
    fragment metadata. That is a breaking change to a cached transport: a client
    holding the pre-change bundle would fetch the new shards and fail its strict
    validator with `bad_payload` (a RETRYABLE defect, so it would retry into the

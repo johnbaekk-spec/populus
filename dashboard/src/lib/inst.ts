@@ -4,10 +4,10 @@
    fabricated zero), canonical sorted JSON flag arrays, and the five tables the
    producer ships. Per M2-CONTRACT §3 the dashboard receives aggregate slices
    only. Per-filer holdings detail is NOT yet read here; M2-CONTRACT §3 was amended
-   2026-08-02 to serve it, and RUN M2-8 adds the serving projection this module
-   will read. Until then this file intentionally reads agg_* only.
+   2026-08-02 to serve it, and the serving projection this module
+   will read is added separately. Until then this file intentionally reads agg_* only.
 
-   Period-correct sourcing (Locked #6): `agg_filer_registry` supplies identity
+   Period-correct sourcing: `agg_filer_registry` supplies identity
    (name, latest_period) — its count/value fields accumulate over ALL retained
    periods (inst_agg.py builds them without a period predicate) and are NOT
    period stats; every period-scoped number comes from
@@ -24,7 +24,7 @@ export interface FilerRegistryRow {
   filer_name: string;
   latest_period: string;
   /** cumulative over ALL retained periods — identity context only, never a
-      quarter's number (Locked #6) */
+      quarter's number */
   position_count: number;
   total_value_usd: number;
   null_value_positions: number;
@@ -88,19 +88,19 @@ export type InstData =
       deltasByCik: Map<string, QoqDeltaRow[]>;
       concentrationByCik: Map<string, ConcentrationRow[]>;
       holdersByIssuer: Map<string, TopHolderRow[]>;
-      /** R21: leaderboard rows keyed `${period}|${mode}` */
+      /** leaderboard rows keyed `${period}|${mode}` */
       addsByPeriodMode: Map<string, AddsRow[]>;
-      /** R21: ambiguous-identity exclusion count keyed `${period}|${mode}` */
+      /** ambiguous-identity exclusion count keyed `${period}|${mode}` */
       addsExclusions: Map<string, number>;
-      /** F15: every reporting period the CORPUS carries, ascending.
+      /** every reporting period the CORPUS carries, ascending.
           Derived from `agg_filer_concentration`, which has a row for every
           filer-period on record — not from `agg_issuer_adds`, which only has
           rows for periods that happened to contain a new or added position.
           A genuinely closed quarter in which nothing was added is still a
           selectable quarter; inferring the list from activity made period
-          CARDINALITY depend on activity, which R20 does not. */
+          CARDINALITY depend on activity, which the closed-quarter rule does not. */
       addsPeriods: string[];
-      /** R11: curated typing for MATCHED filers only, keyed by padded CIK */
+      /** curated typing for MATCHED filers only, keyed by padded CIK */
       typingByCik: Map<string, ManagerTyping>;
     };
 
@@ -282,7 +282,7 @@ export function loadInstitutional(
   }
 }
 
-/** R21: read the leaderboard tables.
+/** Read the leaderboard tables.
 
     They are OPTIONAL at read time: an aggregate produced before this run has
     no `agg_issuer_adds`, and a missing table must degrade to an honestly empty
@@ -310,13 +310,13 @@ function loadAdds(db: DatabaseSync): {
   const addsExclusions = new Map<string, number>();
   const periods = new Set<string>();
 
-  /* F21: a LEGACY SCHEMA and a PARTIAL one are different states.
+  /* A LEGACY SCHEMA and a PARTIAL one are different states.
 
      Both queries used to sit under one `catch`, so an aggregate that HAD
      `agg_issuer_adds` but whose exclusions relation was missing or unreadable
      loaded its leaderboard rows and silently defaulted every exclusion count to
      zero — publishing a bounded, filtered table while suppressing the omission
-     statement R14 requires. That is the precise failure the note exists to
+     statement the reader is owed. That is the precise failure the note exists to
      prevent, arriving through the error path.
 
      So legacy detection happens FIRST, by asking the schema. If the adds
@@ -396,7 +396,7 @@ function tableExists(db: DatabaseSync, name: string): boolean {
   return rows.length > 0;
 }
 
-/** R11: the curated manager typing.
+/** The curated manager typing.
 
     Optional at read time for the same reason the leaderboard tables are: an
     aggregate built before this run has no `agg_manager_registry`, and the
@@ -417,7 +417,7 @@ function loadTyping(db: DatabaseSync): Map<string, ManagerTyping> {
       });
     }
   } catch {
-    // Pre-R11 aggregate: nothing is typed. The directory renders filed names.
+    // Pre-registry aggregate: nothing is typed. The directory renders filed names.
   }
   return out;
 }
@@ -445,7 +445,7 @@ export function addsExclusionCount(inst: InstData, period: string, mode: AddsMod
   if (!inst.present) return 0;
   const n = inst.addsExclusions.get(`${period}|${mode}`);
   if (n === undefined) {
-    // F21: a missing count is UNKNOWN, not zero. Defaulting it published a
+    // A missing count is UNKNOWN, not zero. Defaulting it published a
     // verified "nothing was excluded" for a period nobody had counted — an
     // honesty claim with no measurement behind it. The producer writes an
     // explicit 0 for quiet quarters, so an absence here is a real defect.
@@ -457,7 +457,7 @@ export function addsExclusionCount(inst: InstData, period: string, mode: AddsMod
   return n;
 }
 
-/* ---------- period-correct accessors (Locked #6) ---------- */
+/* ---------- period-correct accessors ---------- */
 
 export function filerPeriods(inst: InstData, cik: string): string[] {
   if (!inst.present) return [];
@@ -493,7 +493,7 @@ export function issuerPeriods(inst: InstData, issuerKey: string): string[] {
 }
 
 /** Issuer keys that are entity-keyed in the aggregate — the ONLY keys a ticker
-    may resolve to (Locked #18): cusip6/name-keyed rows are weaker identity
+    may resolve to: cusip6/name-keyed rows are weaker identity
     claims and are never matched from a present-day ticker mapping. */
 export function entityKeyedIssuers(inst: InstData): Set<string> {
   if (!inst.present) return new Set();
@@ -511,11 +511,11 @@ function isTestFixturePath(p: string): boolean {
   return path.resolve(p).split(path.sep).join("/").includes("/tests/fixtures/");
 }
 
-/** Read the ticker-map snapshot named by POPULUS_TICKER_MAP (Locked #18).
+/** Read the ticker-map snapshot named by POPULUS_TICKER_MAP.
     Dev default: the committed pipeline fixture. A missing file is an explicit
     null — every consumer then renders the honest no-map state.
 
-    CI refuses a fixture-derived map (R1). The refusal rejects the fixture PATH,
+    CI refuses a fixture-derived map. The refusal rejects the fixture PATH,
     not merely an unset variable: no real `company_tickers.json` exists on a
     runner (it reaches this tree only through `populus identity bootstrap
     --from-cache`, and `data-cache/` is not in git), so the fixture is the only

@@ -1,4 +1,4 @@
--- Institutional 13F tables (ARCHITECTURE.md §10.2; M2-CONTRACT §5 — RUN M2-2).
+-- Institutional 13F tables (ARCHITECTURE.md §10.2; M2-CONTRACT §5).
 --
 -- Applied by populus.load.ensure_inst_schema (all IF NOT EXISTS — idempotent),
 -- NOT part of schema.sql, which must stay byte-identical to the §9.4 DDL block
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS inst_filers (
   file_number_norm TEXT,                    -- canonical '028-4545' (normalize_file_number)
   entity_id TEXT REFERENCES entities(entity_id),   -- NULL until the CIK exists in entities
   raw JSON CHECK (raw IS NULL OR (json_valid(raw) AND json_type(raw) = 'object')),
-  flags JSON NOT NULL DEFAULT '[]'          -- e.g. ['submissions_meta_missing'] (R19)
+  flags JSON NOT NULL DEFAULT '[]'          -- e.g. ['submissions_meta_missing']
       CHECK (json_valid(flags) AND json_type(flags) = 'array'),
   -- §5.1 provenance (from submissions.json + the per-CIK submissions-meta.json):
   source TEXT NOT NULL CHECK (source IN ('sec-edgar')),
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS inst_filings (
   accession TEXT NOT NULL UNIQUE,           -- source_record_id (dashed)
   submission_type TEXT NOT NULL
       CHECK (submission_type IN ('13F-HR','13F-HR/A','13F-NT','13F-NT/A')),
-  period_of_report DATE NOT NULL,           -- G4; from cover, or index reportDate on cover failure (R18)
+  period_of_report DATE NOT NULL,           -- G4; from cover, or index reportDate on cover failure
   filed_date       DATE NOT NULL,           -- G4; from index filingDate; drives unit_basis
   form_version TEXT,                         -- schemaVersion; audit-only (LD-5)
   unit_basis TEXT NOT NULL CHECK (unit_basis IN ('thousands','whole')),
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS inst_filings (
   amends TEXT REFERENCES inst_filings(filing_id),   -- lineage only; LD-4 (no lifecycle mutation)
   is_confidential_omitted INTEGER CHECK (is_confidential_omitted IN (0,1)),
   conf_denied_expired     INTEGER CHECK (conf_denied_expired IN (0,1)),
-  filing_manager_raw TEXT NOT NULL,         -- cover name, or submissions name on cover failure (R18)
+  filing_manager_raw TEXT NOT NULL,         -- cover name, or submissions name on cover failure
   form13f_file_number TEXT,
   file_number_norm TEXT,                    -- canonical form (normalize_file_number)
   report_type TEXT,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS inst_filings (
       CHECK (json_valid(other_managers) AND json_type(other_managers) = 'array'),
   table_entry_total INTEGER,
   table_value_total INTEGER,                -- as printed on the cover (era units)
-  table_value_total_usd INTEGER,            -- x multiplier; NULL only on cover failure (value unknown) — R16/R18
+  table_value_total_usd INTEGER,            -- x multiplier; NULL only on cover failure (value unknown)
   row_count INTEGER,
   sum_value_usd INTEGER,
   value_total_delta INTEGER,                -- sum_value_usd - table_value_total_usd (LD-7; reported, not fatal)
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS inst_filings (
       CHECK (json_valid(flags) AND json_type(flags) = 'array'),
   doc_url TEXT NOT NULL,                     -- primary_doc.xml URL
   table_url TEXT,
-  table_filename TEXT,                       -- discovered from index.json (R1), never hardcoded
+  table_filename TEXT,                       -- discovered from index.json, never hardcoded
   -- §5.1 provenance (filing level, from the per-accession fetch-meta.json):
   source TEXT NOT NULL CHECK (source IN ('sec-edgar')),
   source_url TEXT NOT NULL,

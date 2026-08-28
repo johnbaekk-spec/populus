@@ -1,4 +1,4 @@
-"""§12.1 R9/R10/R16: the three production objects the ordered sequence injects.
+"""§12.1: the three production objects the ordered sequence injects.
 
 :mod:`populus.deploy.orchestrator` owns the *order* and injects everything that
 touches the outside world. Until this module existed, the only implementations
@@ -25,15 +25,15 @@ under it (``tests/conftest.py``).
 **wrangler moves bytes; it is not believed about what it did.** Its output is
 human-facing text carrying no deployment id, and "the CLI printed success" is
 not evidence. Every fact the sequence then acts on — the deployment id, the
-environment the bytes really landed in, and the ``uses_functions`` signal R16
-reads — is read back from the pinned Pages API. The URL wrangler printed is used
+environment the bytes really landed in, and the ``uses_functions`` signal the
+no-Functions check reads — is read back from the pinned Pages API. The URL wrangler printed is used
 for exactly one thing: to require that the newest deployment in that environment
 *is* the one this run just published. If it is not, another deploy raced us, and
 every guarantee downstream ("production was never touched", "the same bytes")
 is about a deployment this run did not create — so the upload refuses rather
 than verifying someone else's tree under our name.
 
-**Raw provider payloads, never reconstructions** (R16). Both the upload result
+**Raw provider payloads, never reconstructions**. Both the upload result
 and the rollback result carry the provider's own object verbatim.
 :func:`populus.deploy.verify.check_no_functions` fails **closed** on
 ``uses_functions`` being *absent*, and
@@ -84,7 +84,7 @@ __all__ = [
 ]
 
 #: Where the committed npm lock installs wrangler, relative to the checked-out
-#: repository root. RUN PUBLIC-SECURITY-HARDENING R8/LD9: wrangler is an exact
+#: repository root. Security invariant: wrangler is an exact
 #: `dashboard/package.json` devDependency installed by `npm ci` from
 #: `dashboard/package-lock.json`, and the deploy invokes THAT binary directly.
 #: There is no `npx --yes`, no remote install, no moving tag, and no package or
@@ -103,7 +103,7 @@ def resolve_wrangler_executable(repo_root: Path | None = None) -> Path:
     :class:`UploadFailed` here — before any subprocess is spawned and before
     any step that could reach the network — and the remedy is named: run
     ``npm ci`` in ``dashboard/``. Nothing here ever falls back to a registry
-    fetch (LD9).
+    fetch.
     """
     root = Path.cwd() if repo_root is None else Path(repo_root)
     candidate = root / WRANGLER_RELATIVE_PATH
@@ -111,13 +111,13 @@ def resolve_wrangler_executable(repo_root: Path | None = None) -> Path:
         raise UploadFailed(
             f"the lock-installed wrangler executable is missing at {candidate}. "
             "Run `npm ci` in dashboard/ first; the deploy never installs "
-            "wrangler from the registry (R8/LD9), so nothing was uploaded."
+            "wrangler from the registry, so nothing was uploaded."
         )
     if not os.access(candidate, os.X_OK):
         raise UploadFailed(
             f"{candidate} exists but is not executable. Re-run `npm ci` in "
-            "dashboard/; the deploy never falls back to a registry fetch "
-            "(R8/LD9), so nothing was uploaded."
+            "dashboard/; the deploy never falls back to a registry fetch, "
+            "so nothing was uploaded."
         )
     return candidate
 
@@ -203,7 +203,7 @@ class PagesDeploySurface:
         "assert_production_branch",
         "assert_custom_domain_active",
         "latest_production_deployment",
-        # Grown deliberately (R11d): resolving the rollback anchor needs the
+        # Grown deliberately: resolving the rollback anchor needs the
         # candidate LIST, because "newest by creation" and "currently serving"
         # are different questions and any provider-side rollback separates them.
         "production_deployments",
@@ -280,7 +280,7 @@ class PagesDeploySurface:
     def rollback_payload(self, deployment_id: str) -> Mapping[str, Any]:
         """``POST …/deployments/{id}/rollback``, returning the RAW deployment.
 
-        The re-verification after a rollback runs R16's no-Functions check
+        The re-verification after a rollback runs the no-Functions check
         against this mapping. Handing it a mapping rebuilt from
         :class:`~populus.deploy.cloudflare.Deployment` would set
         ``uses_functions`` to ``bool(...)`` of a possibly-absent field, so a
@@ -319,8 +319,8 @@ class WranglerUploader:
 
         ``argv[0]`` is the lock-installed binary
         :func:`resolve_wrangler_executable` already validated — never ``npx``,
-        never a package spec, so nothing here can reach the npm registry
-        (R8/LD9). ``--commit-dirty=true`` because the runner's checkout is
+        never a package spec, so nothing here can reach the npm registry.
+        ``--commit-dirty=true`` because the runner's checkout is
         dirty by construction (the artifact was downloaded into it) and
         wrangler otherwise stops to ask a question no one is there to answer.
         The credentials are **not** here: ``CLOUDFLARE_API_TOKEN`` and
@@ -419,12 +419,12 @@ class DeploymentVerifier:
     signer too, with no notion of a deploy "stage". The sequence, in contrast,
     injects **one** callable it invokes three times and needs the expectations
     already bound so it cannot vary them between the preview leg and the
-    production leg — which is precisely the substitution R9's amended
-    "inventory-wide on both legs" exists to forbid. Binding them here, once, in
+    production leg — which is precisely the substitution the amended
+    "inventory-wide on both legs" rule exists to forbid. Binding them here, once, in
     a frozen dataclass, is what makes "the same verification ran on both" a
     property of construction rather than of call sites.
 
-    ``stage`` is a label, not a switch: R9 and R11 are deliberately one code
+    ``stage`` is a label, not a switch: the preview and domain checks are deliberately one code
     path differing only in ``base_url``. It is validated rather than ignored, so
     a caller that invents a third stage is a bug that stops here instead of
     quietly verifying something under a name no one defined.

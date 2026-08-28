@@ -1,6 +1,6 @@
-"""Ingest the SEC Official List of Section 13(f) Securities (RUN M2-5, R2/R8).
+"""Ingest the SEC Official List of Section 13(f) Securities.
 
-The fetch path goes exclusively through the RUN-M2-1 ``SecClient`` (politeness in
+The fetch path goes exclusively through the shared ``SecClient`` (politeness in
 code, G6 — no second HTTP client); cache mode reads the same on-disk layout
 offline. Each quarterly file is cached under ``data-cache/13flist/`` with a
 ``.meta.json`` sidecar carrying full §5.1 provenance (source_url, http_status,
@@ -12,7 +12,7 @@ The quarter identity comes from the source URL / filename (Locked Decision 1),
 cross-checked against the PDF's in-document ``Year: YYYY Qtr:N`` marker; the
 legend "current as of" date is parsed but never used to set the interval (it is
 stale boilerplate on some quarters). Where a quarter ships BOTH the text and PDF
-variants (2026Q2), the two parses are held to full row-for-row identity (R5)
+variants (2026Q2), the two parses are held to full row-for-row identity
 before the text variant is seeded.
 
 Seeding itself is performed by ``identity.list13f_seed.bootstrap_13f_list``
@@ -48,20 +48,20 @@ _TXT_URL = "https://www.sec.gov/files/investment/13flist{quarter}-txt.txt"
 
 #: Quarters the SEC publishes in BOTH the PDF and the fixed-width text formats
 #: (verified live 2026-07-25 — historical quarters are PDF-only, their text
-#: variant 404s). For these the R5 cross-format identity gate is NON-NEGOTIABLE:
+#: variant 404s). For these the cross-format identity gate is NON-NEGOTIABLE:
 #: the text is only seedable after it is validated row-for-row against the PDF, so
 #: a text-only cache (or a text-200/PDF-missing fetch) for such a quarter is
-#: REFUSED rather than seeded blind (F2). The live fetcher additionally makes any
+#: REFUSED rather than seeded blind. The live fetcher additionally makes any
 #: PDF non-200 a hard error (below), so the text-200/PDF-fail race cannot seed an
 #: unvalidated text for ANY quarter, present or future.
 _CROSS_FORMAT_REQUIRED_QUARTERS = frozenset({"2026q2"})
 
-#: The ≥99.9% parse-coverage floor (R6): a seed variant below it is refused, so a
-#: data-empty or badly-misparsed file can never be silently seeded (F4).
+#: The ≥99.9% parse-coverage floor: a seed variant below it is refused, so a
+#: data-empty or badly-misparsed file can never be silently seeded.
 PARSE_COVERAGE_FLOOR = 0.999
 
 #: Every §5.1 field a cached list's sidecar MUST carry. In cache mode the sidecar
-#: is mandatory and verified against the raw bytes (F10) — never optional, never
+#: is mandatory and verified against the raw bytes — never optional, never
 #: trusted blind.
 _REQUIRED_SIDECAR_FIELDS = (
     "source_url",
@@ -96,7 +96,7 @@ def _sha256(data: bytes) -> str:
 
 
 class List13fIngestError(RuntimeError):
-    """A quarter's list could not be fetched/read, or failed the R5 gate."""
+    """A quarter's list could not be fetched/read, or failed the cross-format gate."""
 
 
 def _verify_sidecar(
@@ -104,7 +104,7 @@ def _verify_sidecar(
 ) -> None:
     """Schema-check a cached list's sidecar and verify it against the raw bytes.
 
-    In cache mode the §5.1 sidecar is MANDATORY and is not trusted blind (F10):
+    In cache mode the §5.1 sidecar is MANDATORY and is not trusted blind:
     every required field must be present, the recorded sha256/bytes must match the
     file on disk, the status must be 200, and the URL must be the canonical SEC
     endpoint for this quarter/variant. A stale or wrong sidecar — the exact way a
@@ -119,33 +119,33 @@ def _verify_sidecar(
     if missing:
         raise List13fIngestError(
             f"{relpath}: cache sidecar is missing required §5.1 fields {missing}"
-            " — a cached list must carry full provenance, verified (R2/F10)"
+            " — a cached list must carry full provenance, verified"
         )
     actual_sha = _sha256(content)
     if str(meta["sha256"]).lower() != actual_sha:
         raise List13fIngestError(
             f"{relpath}: sidecar sha256 {meta['sha256']} does not match"
             f" sha256(bytes) {actual_sha} — the cache entry does not match its"
-            " recorded content, so corrected-source detection cannot be trusted (F10)"
+            " recorded content, so corrected-source detection cannot be trusted"
         )
     if int(meta["bytes"]) != len(content):
         raise List13fIngestError(
-            f"{relpath}: sidecar bytes {meta['bytes']} != actual {len(content)} (F10)"
+            f"{relpath}: sidecar bytes {meta['bytes']} != actual {len(content)}"
         )
     if int(meta["http_status"]) != 200:
         raise List13fIngestError(
             f"{relpath}: sidecar http_status {meta['http_status']} != 200 — only a"
-            " 200 response is seedable; a 4xx/5xx is not an optional absent variant (F10)"
+            " 200 response is seedable; a 4xx/5xx is not an optional absent variant"
         )
     if str(meta["source_url"]) != expected_url:
         raise List13fIngestError(
             f"{relpath}: sidecar source_url {meta['source_url']!r} != the canonical"
-            f" endpoint {expected_url!r} for this quarter/variant (F10)"
+            f" endpoint {expected_url!r} for this quarter/variant"
         )
 
 
 def _decode_text(data: bytes, relpath: str) -> str:
-    """STRICT-decode the fixed-width text variant (F9).
+    """STRICT-decode the fixed-width text variant.
 
     Invalid bytes are a hard error, never repaired with U+FFFD replacement
     characters that would then be persisted into issuer names (G3).
@@ -155,37 +155,37 @@ def _decode_text(data: bytes, relpath: str) -> str:
     except UnicodeDecodeError as exc:
         raise List13fIngestError(
             f"{relpath}: not valid UTF-8 ({exc}) — a corrupt text variant is a hard"
-            " error, never silently repaired with replacement characters (F9)"
+            " error, never silently repaired with replacement characters"
         ) from exc
 
 
 def _validate_parse(parsed: ParsedList13f, *, quarter: str, variant: str) -> None:
-    """Enforce the R6/F4 parse-coverage gate on a parsed variant before it seeds.
+    """Enforce the parse-coverage gate on a parsed variant before it seeds.
 
     A parse is seedable only when it actually read a data region: at least one
     data row, ≥99.9% of its data lines structurally recognized, and — for the PDF
     — an in-document ``Year:/Qtr:`` marker plus, when the SEC prints its own
     ``Total Count`` trailer, an exact match against the rows parsed. This is what
     stops a cover-and-legend-only PDF (``rows_read=0``) from seeding a quarter
-    empty at ``parse_coverage=1.0`` (F4).
+    empty at ``parse_coverage=1.0``.
     """
     disposition = parsed.disposition
     if disposition.rows_read == 0:
         raise List13fIngestError(
             f"quarter {quarter} {variant}: zero data rows parsed — a file with a"
-            " cover and legend but no data region is not a seedable list (R6/F4)"
+            " cover and legend but no data region is not a seedable list"
         )
     coverage = disposition.parse_coverage
     if coverage < PARSE_COVERAGE_FLOOR:
         raise List13fIngestError(
             f"quarter {quarter} {variant}: parse coverage {coverage:.6f} <"
-            f" {PARSE_COVERAGE_FLOOR} — too many unrecognized data lines to seed (R6/F4)"
+            f" {PARSE_COVERAGE_FLOOR} — too many unrecognized data lines to seed"
         )
     if variant == "pdf":
         if parsed.document_quarter is None:
             raise List13fIngestError(
                 f"quarter {quarter} pdf: no in-document 'Year:/Qtr:' marker found —"
-                " the document does not confirm which quarter it is (R6/F4)"
+                " the document does not confirm which quarter it is"
             )
         if (
             parsed.document_total_count is not None
@@ -194,7 +194,7 @@ def _validate_parse(parsed: ParsedList13f, *, quarter: str, variant: str) -> Non
             raise List13fIngestError(
                 f"quarter {quarter} pdf: the SEC 'Total Count'"
                 f" {parsed.document_total_count} != {disposition.rows_read} data rows"
-                " parsed — the parse dropped or gained rows (R6/F4)"
+                " parsed — the parse dropped or gained rows"
             )
 
 
@@ -205,7 +205,7 @@ class LoadedQuarter:
     ``parsed`` is the variant that will be SEEDED (the text variant where a
     quarter ships one, else the PDF). ``source_meta`` is that variant's sidecar
     plus its cache-relative ``raw_path``. ``cross_format_checked`` records
-    whether the R5 identity gate ran (both formats present).
+    whether the cross-format identity gate ran (both formats present).
     """
 
     quarter: str
@@ -256,30 +256,30 @@ class _CacheSource:
         if not path.exists():
             # A genuinely absent variant (the documented historical text 404) is
             # the ONLY optional case; a present file with a missing/bad sidecar is
-            # a hard error, decided in _verify_sidecar (F10).
+            # a hard error, decided in _verify_sidecar.
             return None
         content = path.read_bytes()
         meta_path = self._root / f"{filename}.meta.json"
         if not meta_path.exists():
             raise List13fIngestError(
                 f"{filename}: present in the cache but its .meta.json sidecar is"
-                " absent — every cached list must carry full §5.1 provenance (R2/F10)"
+                " absent — every cached list must carry full §5.1 provenance"
             )
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             # A corrupt sidecar is a hard, TYPED error like every other provenance
             # failure — not a raw JSONDecodeError leaking out of the ingest layer,
-            # and never a fall-back to an empty metadata object (F5).
+            # and never a fall-back to an empty metadata object.
             raise List13fIngestError(
                 f"{filename}: .meta.json sidecar is not valid JSON ({exc}) — a"
                 " cached list's provenance must be readable and verified, never"
-                " assumed (R2/§5.1)"
+                " assumed (§5.1)"
             ) from exc
         if not isinstance(meta, dict):
             raise List13fIngestError(
                 f"{filename}: .meta.json sidecar is a {type(meta).__name__}, not a"
-                " JSON object carrying the §5.1 provenance fields (R2)"
+                " JSON object carrying the §5.1 provenance fields"
             )
         _verify_sidecar(
             meta, content=content, expected_url=expected_url, relpath=filename
@@ -319,7 +319,7 @@ class _LiveSource:
             # including a PDF 404 or any 403/500 — is a hard error, so a 403/500
             # can never be misreported as an optional absent format, and a live
             # text-200/PDF-fail race aborts the quarter instead of seeding the
-            # text unvalidated (F2/F10).
+            # text unvalidated.
             if optional_404 and response.status_code == 404:
                 return None
             raise List13fIngestError(
@@ -376,22 +376,22 @@ def _load_quarter(
     txt_relpath: str,
     pdf_relpath: str,
 ) -> LoadedQuarter:
-    """Parse a quarter's variant(s), run R5 where both are present, pick the seed
+    """Parse a quarter's variant(s), run the cross-format gate where both are present, pick the seed
     variant (text preferred), and assemble its provenance sidecar."""
     if txt is None and pdf is None:
         raise List13fIngestError(
             f"no cached list for quarter {quarter}"
             f" (looked for {txt_relpath} and {pdf_relpath})"
         )
-    # F2: a quarter the SEC ships in BOTH formats must be present in both and pass
-    # R5 before its text is seedable. A missing side (a text-only cache, or a
+    # A quarter the SEC ships in BOTH formats must be present in both and pass
+    # the cross-format gate before its text is seedable. A missing side (a text-only cache, or a
     # PDF-only cache for the dual-format quarter) is refused, never seeded blind.
     if quarter in _CROSS_FORMAT_REQUIRED_QUARTERS and (txt is None or pdf is None):
         present = "text" if txt is not None else "pdf"
         raise List13fIngestError(
-            f"quarter {quarter} ships in both formats and its R5 cross-format gate"
+            f"quarter {quarter} ships in both formats and its cross-format gate"
             f" is mandatory, but only the {present} variant is available — refusing"
-            " to seed a dual-format quarter without the row-for-row identity check (F2)"
+            " to seed a dual-format quarter without the row-for-row identity check"
         )
     pdf_parsed: ParsedList13f | None = None
     if pdf is not None:
@@ -412,7 +412,7 @@ def _load_quarter(
             # Unreachable given the both-present guard above; asserted so a future
             # refactor cannot resurrect an unvalidated seedable dual-format quarter.
             raise List13fIngestError(
-                f"quarter {quarter}: the mandatory R5 cross-format check did not run (F2)"
+                f"quarter {quarter}: the mandatory cross-format check did not run"
             )
         return LoadedQuarter(
             quarter=quarter,
@@ -434,7 +434,7 @@ def _load_quarter(
     )
 
 
-# --- backfill selection (R8) --------------------------------------------------
+# --- backfill selection --------------------------------------------------
 
 
 def select_backfill_quarters(
@@ -443,7 +443,7 @@ def select_backfill_quarters(
     *,
     start_quarter: str | None = None,
 ) -> list[str]:
-    """The quarters to seed, from those *available* in the source (R8).
+    """The quarters to seed, from those *available* in the source.
 
     With ``start_quarter`` the operator seeds every available quarter at or after
     it (the fresh-database path, where no periods are loaded yet). Otherwise the
@@ -480,7 +480,7 @@ def select_backfill_quarters(
     return covering
 
 
-# --- the prepare step (load + parse + R5), run BEFORE the seed transaction -----
+# --- the prepare step (load + parse + cross-format gate), run BEFORE the seed transaction -----
 
 
 def prepare_list13f_quarters(
@@ -489,7 +489,7 @@ def prepare_list13f_quarters(
 ) -> list[LoadedQuarter]:
     """Load and parse each requested quarter (no DB writes).
 
-    Kept out of the seed transaction on purpose — parsing (and the R5 gate) can
+    Kept out of the seed transaction on purpose — parsing (and the cross-format gate) can
     fail on a corrupt file, and that must not leave a half-open ``BEGIN``, so it
     runs first exactly like ``load_company_tickers`` / ``parse_ftd``.
     """

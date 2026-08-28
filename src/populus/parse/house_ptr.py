@@ -1,20 +1,19 @@
-"""House Clerk PTR parser (ARCHITECTURE.md §9.3; RUN 2).
+"""House Clerk PTR parser (ARCHITECTURE.md §9.3).
 
 Pure functions over PDF bytes, positioned words, or extracted text — no I/O,
-no DB. Two parsing legs share one closed-denominator segmentation contract
-(R7): every table-region line is a proven repeated column header or
+no DB. Two parsing legs share one closed-denominator segmentation contract: every table-region line is a proven repeated column header or
 contributes to exactly one emitted row candidate; incomplete or orphaned
 candidates are emitted flagged, never dropped (G3).
 
 - **Positioned path** (primary): pdfplumber word coordinates, columns
   assigned from the header row's x-anchors, wrap-vs-row decided by the
   observable pitch predicate (LD20).
-- **Text path** (fallback, R22): pypdf layout-mode text — and only pypdf; the
-  classifier's :func:`extract_pages` is never the parser's source (R23) —
+- **Text path** (fallback): pypdf layout-mode text — and only pypdf; the
+  classifier's :func:`extract_pages` is never the parser's source —
   cells split on runs of >= 2 spaces and typed by :data:`COLUMN_SIGNATURES`.
   Every candidate is tagged ``text_fallback``.
 
-Fragment routing (R24/R25, both paths): a fragment carrying another column's
+Fragment routing (both paths): a fragment carrying another column's
 signature is offered only that column's completion test — an amount fragment
 joins the open candidate's amount cell iff the unjoined cell does not parse
 to an Appendix C bucket and the joined string does (the completion oracle is
@@ -66,10 +65,10 @@ class UnreadablePdfError(Exception):
 
 
 class EmptyParseError(Exception):
-    """A readable e-file document produced zero row candidates (R20)."""
+    """A readable e-file document produced zero row candidates."""
 
 
-# --- column signatures (one table, both consumers — R25) ---------------------
+# --- column signatures (one table, both consumers) ---------------------
 
 # The same recognizers assign cells on structural lines and type fragments,
 # so "amount-shaped" cannot drift between the two decisions. Shapes are
@@ -78,7 +77,7 @@ class EmptyParseError(Exception):
 # "$50,001 -", and the Wingdings checkbox glyph runs.
 # "amount" deliberately also matches malformed dollar-led cells ("$100,00X"):
 # a garbled amount fragment must still route to the amount-completion test —
-# never to the asset branch (R25) — where its failed join opens a flagged
+# never to the asset branch — where its failed join opens a flagged
 # orphan carrying it in ``amount_label``.
 COLUMN_SIGNATURES: dict[str, re.Pattern[str]] = {
     "id": re.compile(r"^\d{1,4}$"),
@@ -95,7 +94,7 @@ COLUMN_SIGNATURES: dict[str, re.Pattern[str]] = {
 
 # Columns whose presence on a line makes it structural (opens a candidate).
 # Amount is deliberately absent: no amount-bearing line automatically opens a
-# row (R24) — wrapped amount cells are fragments, on both paths.
+# row — wrapped amount cells are fragments, on both paths.
 _STRUCTURAL_COLUMNS = ("id", "owner", "side", "date", "notification")
 
 # On the positioned path a cell counts as a structural signal only when its
@@ -117,7 +116,7 @@ def _has_typed_cell(cells: dict[str, str]) -> bool:
 
     The row-shaped test for sub-line continuation. Unlike
     :func:`_is_structural_cells` it also counts ``amount`` and ``capgains``:
-    opening a row on an amount alone is forbidden (R24), but a line bearing a
+    opening a row on an amount alone is forbidden, but a line bearing a
     real amount is still transaction-shaped and must never be folded into a
     comment.
     """
@@ -386,7 +385,7 @@ def _extract_pages_pypdf_plain(pdf_bytes: bytes) -> list[str] | None:
 def extract_pages_pypdf_layout(pdf_bytes: bytes) -> list[str]:
     """The fallback parser's text source — pypdf layout mode, and only that.
 
-    Layout mode is mandatory (R23): plain-mode extraction returns this
+    Layout mode is mandatory: plain-mode extraction returns this
     corpus's transaction table as a single concatenated line (verified on
     2020_20013901) and cannot be segmented into rows. No pdfplumber import
     path reaches this function, so pypdf provenance is structural. Raises
@@ -412,7 +411,7 @@ def extract_pages_pypdf_layout(pdf_bytes: bytes) -> list[str]:
     return pages
 
 
-# --- classifier (OQ-3) -------------------------------------------------------
+# --- classifier -------------------------------------------------------
 
 _PAPER_DOCID = re.compile(r"^[89]\d{6}$")
 _EFILE_DOCID = re.compile(r"^20\d{6}$")
@@ -543,7 +542,7 @@ def table_region(
     return region, in_table, ended, anchors
 
 
-# --- segmentation core (shared router — R25) ---------------------------------
+# --- segmentation core (shared router) ---------------------------------
 
 
 class _Segmenter:
@@ -640,7 +639,7 @@ class _Segmenter:
         if text:
             getattr(self.open_candidate, self.open_subline).append(text)
 
-    # -- fragments (typed routing, R24/R25)
+    # -- fragments (typed routing)
 
     def feed_fragment(self, cells: dict[str, str], *, wrap_ok: bool) -> None:
         """Route one fragment line's cells; open at most one orphan.
@@ -651,14 +650,14 @@ class _Segmenter:
         open AND the geometry allows it (*wrap_ok*; always the block state on
         the text path). Any cell that completes nothing lands verbatim in its
         own cell of a single new flagged orphan candidate — never in another
-        column of the open candidate (R25).
+        column of the open candidate.
         """
         # M1-C/M1-E: prose tail of a still-wrapping sub-line. Gated on three
         # conditions together, so this can never swallow row-shaped data: a
         # sub-line must be open (a structural line clears it), the geometry
         # must allow a wrap, and NO cell may match its own column's signature.
         #
-        # That last test is the existing R25 recognizer table, reused rather
+        # That last test is the existing recognizer table, reused rather
         # than re-invented, so "row-shaped" cannot drift between this decision
         # and the structural one. Column position alone is NOT sufficient:
         # wrapped prose spans the full printed width, so its words land in the
@@ -678,7 +677,7 @@ class _Segmenter:
         # cannot complete an already-filled cell, and the orphan it opened
         # then captured the row's real wrap line (asset tail + the second half
         # of a split amount). The orphan is still appended and still flagged —
-        # R25/F4 visibility is untouched — it just no longer steals context
+        # orphan visibility is untouched — it just no longer steals context
         # from a row whose block nothing has closed.
         resume = (
             self.open_candidate
@@ -709,7 +708,7 @@ class _Segmenter:
 
     @staticmethod
     def _complete_cell(candidate: RowCandidate, column: str, value: str) -> bool:
-        """Try to complete *candidate*'s own *column* with *value* (R24)."""
+        """Try to complete *candidate*'s own *column* with *value*."""
         if not candidate.block_open:
             return False
         if column == "amount":
@@ -729,7 +728,7 @@ class _Segmenter:
 
 
 def _amount_parses(label: str) -> bool:
-    """Whether *label* is a complete Appendix C form (the R24 oracle)."""
+    """Whether *label* is a complete Appendix C form (the complete-form oracle)."""
     low, _high, flags = normalize_amount(label)
     return low is not None and "amount_unparsed" not in flags
 
@@ -836,7 +835,7 @@ def _text_cells(line: str) -> dict[str, str]:
         if signature is None:
             signature = "asset"
         # A repeat of an already-seen type stays in that type's cell (joined
-        # in printed order) — it must never leak into the asset cell (R25).
+        # in printed order) — it must never leak into the asset cell.
         grouped.setdefault(signature, []).append(cell)
     return {column: " ".join(parts) for column, parts in grouped.items()}
 
@@ -847,7 +846,7 @@ def segment_text_rows(region_lines: list[str]) -> list[RowCandidate]:
     A structural line carries a side token, date, printed ID, or owner token
     as a whole cell; everything else non-sub-line is a fragment line whose
     cells route through the typed completion tests (an amount-bearing line
-    never automatically opens a row — R24). Every candidate is tagged
+    never automatically opens a row). Every candidate is tagged
     ``text_fallback``.
     """
     segmenter = _Segmenter(text_fallback=True)
@@ -894,8 +893,8 @@ def parse_ptr(pdf_bytes: bytes, *, doc_id: str) -> PtrParse:
     """Parse one e-filed PTR: positioned primary, pypdf-layout text fallback.
 
     Falls back only when positioned extraction raises or yields no words
-    (R22). A readable document from which the chosen path emits zero
-    candidates raises :class:`EmptyParseError` (R20) — zero rows is a typed
+. A readable document from which the chosen path emits zero
+    candidates raises :class:`EmptyParseError` — zero rows is a typed
     failure, never an empty success.
     """
     try:

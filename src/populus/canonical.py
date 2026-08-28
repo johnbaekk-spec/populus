@@ -35,7 +35,7 @@ def nfc(s: str) -> str:
 def canonical_json(raw_row: Mapping[str, Any]) -> bytes:
     """RFC 8785 (JCS) canonical UTF-8 serialization of *raw_row*.
 
-    The seam accepts any ``Mapping`` (R6), but ``rfc8785`` only serializes
+    The seam accepts any ``Mapping``, but ``rfc8785`` only serializes
     plain ``dict``s — a ``MappingProxyType`` or other Mapping raises
     ``CanonicalizationError``. Materialize into a ``dict`` at the boundary; the
     JCS output is identical because canonicalization is key/value-defined, not

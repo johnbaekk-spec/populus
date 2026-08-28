@@ -1,4 +1,4 @@
--- Temporal identity registries (ARCHITECTURE.md §5.4; M2-CONTRACT §4 — RUN M2-1).
+-- Temporal identity registries (ARCHITECTURE.md §5.4; M2-CONTRACT §4).
 --
 -- Applied by populus.identity.registry.ensure_registry (idempotent), NOT part
 -- of schema.sql, which must stay byte-identical to the §9.4 DDL block. Shared
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS security_identifiers (
 CREATE UNIQUE INDEX IF NOT EXISTS security_identifier_no_overlap
   ON security_identifiers (id_type, value, valid_from);
 
--- The DEFINITIONAL identity source (RUN M2-5): the SEC Official List of Section
+-- The DEFINITIONAL identity source: the SEC Official List of Section
 -- 13(f) Securities registers each quarter's CUSIP universe with the interval
 -- EXACTLY that quarter, [quarter_start, next_quarter_start) half-open (G14 — no
 -- extrapolation beyond the observed list). A SEPARATE table from
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS security_list_intervals (
   -- fixed-width text line, or the reconstructed PDF data row (its positioned
   -- words re-joined in reading order). With row_ordinal and raw_path it makes a
   -- published or migrated fact auditable against its exact source line WITHOUT
-  -- retaining the external gitignored cache (§5.1, round-1 F9). Carried verbatim
+  -- retaining the external gitignored cache (§5.1). Carried verbatim
   -- through an authority-revision recut, so every cut piece keeps its origin line
   -- and the recut stays byte-deterministic.
   source_row   TEXT,
@@ -132,7 +132,7 @@ CREATE INDEX IF NOT EXISTS security_list_interval_value
 CREATE INDEX IF NOT EXISTS security_list_interval_security
   ON security_list_intervals (security_id);
 
--- The quarter-level SEED LEDGER (RUN M2-5 / F3-round1 F6): one row per
+-- The quarter-level SEED LEDGER: one row per
 -- (quarter, provenance) recording the source hash and retrieval provenance of
 -- the list that seeded it — written EVEN WHEN THE QUARTER SEEDS ZERO RECORDS
 -- (a DELETED-only list). The replay/replacement decision is driven from HERE,

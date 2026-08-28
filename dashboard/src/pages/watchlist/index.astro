@@ -9,8 +9,8 @@ import { feedHeadHtml } from "../../lib/format";
 import { earliestRetainedFiled } from "../../lib/watchlist";
 
 const build = getBuildData();
-// The exact earliest retained FILED date across BOTH families (txns AND paper
-// — review F6) — the D-1c coverage-gap boundary. Year-granular `filedFrom`
+// The exact earliest retained FILED date across BOTH families (txns AND
+// paper) — the D-1c coverage-gap boundary. Year-granular `filedFrom`
 // would misclassify a cursor inside the earliest year.
 const earliestFiled = earliestRetainedFiled(build.txns, build.paper, build.generatedAtDate);
 const description =
@@ -60,12 +60,12 @@ const description =
 
     <div class="feed">
       <!-- The watched rows render through the SAME `feedItemHtml` the congress
-           feed uses, and that renderer emits real table rows now (R5/R18), so
+           feed uses, and that renderer emits real table rows now, so
            this list is a table too. Two renderers would be two sets of honesty
            rules to keep in step. -->
       <table class="feed-table">
         <caption class="visually-hidden">Filings for the members and tickers watched on this device</caption>
-        <!-- F7: this table had a body and no header row at all. It renders the
+        <!-- This table had a body and no header row at all. It renders the
              same nine cells as the congress feed, through the same
              `feedItemHtml`, so every one of them was reaching a screen reader
              with no column to belong to. It uses the feed's own column

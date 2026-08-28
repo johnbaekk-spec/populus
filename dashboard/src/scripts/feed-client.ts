@@ -92,7 +92,7 @@ export function amountOrder(
   return { ranked, unranked: fTxns.filter((r) => amountSortKey(r) === null) };
 }
 
-/* R17: THE FEED ISLAND IS THE SINGLE FETCH AND DECODE OWNER.
+/* THE FEED ISLAND IS THE SINGLE FETCH AND DECODE OWNER.
 
    The congress dataset is large. Exactly one module downloads it and exactly
    one module decodes it, and this is that module. Other sections of the page
@@ -108,7 +108,7 @@ export function amountOrder(
 export interface FeedOptions {
   /** Receives the one decoded row set. Called once, only on success. */
   onRows?: (rows: readonly TxnRow[]) => void;
-  /* SL-R29. `onSettled` fires on BOTH outcomes, exactly once, AFTER `onRows`
+  /* `onSettled` fires on BOTH outcomes, exactly once, AFTER `onRows`
      on the success path. It exists because a consumer that shows a pending
      state has to clear it on failure too, and `onRows` documents itself as
      firing on success alone — so a pending indicator cleared only there would
@@ -119,16 +119,16 @@ export interface FeedOptions {
 }
 
 export function initFeed(options: FeedOptions = {}): void {
-  /* SL-R29: fired once per LOAD ATTEMPT, on either outcome. A consumer's throw
+  /* Fired once per LOAD ATTEMPT, on either outcome. A consumer's throw
      is contained the same way `onRows`'s is — a broken consumer must not turn a
      successful decode into a failed one.
 
-     CODE-REVIEW F3: this flag is per-attempt, not per-island. It was an
+     This flag is per-attempt, not per-island. It was an
      `initFeed`-lifetime latch, and `loadData()` runs again from the "Try again"
      button and from the filter path — so after ONE failure every later attempt
      was silently unsettleable. A reader who pressed a range control, failed,
      retried and failed again would sit on "Applying …" forever: exactly the
-     false statement about an unpainted view that SL-R29 exists to remove,
+     false statement about an unpainted view that `onSettled` exists to remove,
      reintroduced one layer down. `loadData()` re-arms it. */
   let settled = false;
   function settle(ok: boolean): void {
@@ -143,10 +143,10 @@ export function initFeed(options: FeedOptions = {}): void {
 
   const rootEl = document.getElementById("congress-feed");
   const bodyEl = document.getElementById("feed-tbody");
-  /* F1: this used to require `#feed`, an id the page LOST when the feed became
+  /* This used to require `#feed`, an id the page LOST when the feed became
      a section — so `initFeed` returned before fetching anything and the whole
      island was dead on the real page: no filtering, no paging, no header
-     sorting, and no rows delivered to the momentum section (R17).
+     sorting, and no rows delivered to the momentum section.
 
      It survived every test because the fake DOM hands out every id it is asked
      for, including one the page no longer had. The element is only used to
@@ -168,8 +168,8 @@ export function initFeed(options: FeedOptions = {}): void {
   const amountSel = document.getElementById("filter-amount") as HTMLSelectElement | null;
   const ownerSel = document.getElementById("filter-owner") as HTMLSelectElement | null;
   const lateChk = document.getElementById("filter-late") as HTMLInputElement | null;
-  // A-1: the feed's OWN text filter (ticker prefix + member substring) —
-  // distinct from #site-search, which is site navigation (R11).
+  // The feed's OWN text filter (ticker prefix + member substring) —
+  // distinct from #site-search, which is site navigation.
   const searchInput = document.getElementById("filter-q") as HTMLInputElement | null;
 
   const dateFromInp = document.getElementById("filter-date-from") as HTMLInputElement | null;
@@ -212,14 +212,14 @@ export function initFeed(options: FeedOptions = {}): void {
   let pendingApply = false;
 
   function loadData(): Promise<void> {
-    settled = false; // CODE-REVIEW F3: each attempt settles exactly once.
+    settled = false; // each attempt settles exactly once.
     loadPromise ??= fetch("/congress/data/feed.v1.json")
       .then((r) => {
         if (!r.ok) throw new Error(`dataset fetch failed: ${r.status}`);
         return r.json();
       })
       .then((d) => {
-        // Review F3: a cached v1 body decoded with v2 offsets leaves asset
+        // A cached v1 body decoded with v2 offsets leaves asset
         // fields and txnId undefined — classify before decoding, refuse stale.
         const cls = classifyDataset(d);
         if (cls.outcome !== "ok") {
@@ -252,7 +252,7 @@ export function initFeed(options: FeedOptions = {}): void {
         loadPromise = null;
         loadingEl?.setAttribute("hidden", "");
         console.error("populus: feed dataset failed to load", err);
-        // Review F5: a refused or failed dataset states itself on the page
+        // A refused or failed dataset states itself on the page
         // unconditionally — not only when an interaction was already pending.
         renderLoadFailure();
         settle(false);
@@ -301,7 +301,7 @@ export function initFeed(options: FeedOptions = {}): void {
 
   /** Everything except the amount threshold — so the indeterminate-amount
       population can be counted against the same other filters. */
-  /* R16: the feed no longer owns a window rule. `windowMembership` is the one
+  /* The feed no longer owns a window rule. `windowMembership` is the one
      authority in the tree, and it already encodes exactly what this filter
      needed: an explicit basis, filed dates always well-defined, and on the
      traded basis both the date-anomaly exclusion and the undated exclusion
@@ -366,7 +366,7 @@ export function initFeed(options: FeedOptions = {}): void {
     if (s.chamber !== "all" && p.chamber !== s.chamber) return false;
     if (s.party !== "all" && p.party !== s.party) return false;
     if (s.q && !p.name.toLowerCase().includes(s.q.toLowerCase())) return false;
-    // R16: a paper filing has no trade date and no flags, so it is placed by
+    // A paper filing has no trade date and no flags, so it is placed by
     // the ONE predicate on the filed basis — the only basis it can support.
     if (
       windowMembership(
@@ -682,8 +682,8 @@ export function initFeed(options: FeedOptions = {}): void {
     apply();
   });
 
-  /* R5/R18/F6: sorting goes through the SHARED `initSortableTable` plumbing,
-     which R5 names explicitly. It briefly bound its own click handlers and
+  /* Sorting goes through the SHARED `initSortableTable` plumbing.
+     It briefly bound its own click handlers and
      maintained its own `aria-sort`, which is a second sort state machine beside
      the shared one — free to drift on keyboard behaviour, ARIA, announcements
      and direction defaults, and invisible in review until it did.

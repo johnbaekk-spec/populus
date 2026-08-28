@@ -1,4 +1,4 @@
-"""Federated-client package (ARCHITECTURE.md §11.4 — RUN M2-1).
+"""Federated-client package (ARCHITECTURE.md §11.4).
 
 Pattern F: the client fetches from the source at question time from the user's
 own machine, so this package holds the identity and access policy the agency

@@ -176,7 +176,7 @@ def insert_filing(
     )
 
 
-# --- institutional 13F load path (RUN M2-2) ----------------------------------
+# --- institutional 13F load path ---------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -214,7 +214,7 @@ class InstParsedRow:
 @dataclass(frozen=True)
 class InstFilingRow:
     """One ``inst_filings`` row: every column, with the complete §5.1 provenance
-    contract as physical values (R10). ``amends`` is set later by the amendment-
+    contract as physical values. ``amends`` is set later by the amendment-
     lineage pass; ``lifecycle`` is never mutated for amendments (LD-4)."""
 
     filing_id: str
@@ -293,7 +293,7 @@ _INST_HOLDING_COLUMNS = (
 
 
 def _compact_json(value: object) -> str:
-    """Deterministic sorted/compact JSON for a stored column (R15)."""
+    """Deterministic sorted/compact JSON for a stored column."""
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -317,7 +317,7 @@ def upsert_inst_filer(
 ) -> None:
     """Insert-or-update one ``inst_filers`` row (provenance from the per-CIK
     ``submissions-meta.json``; a missing sidecar → ``retrieved_at`` NULL +
-    ``submissions_meta_missing`` in *flags*, never the wall clock — R19)."""
+    ``submissions_meta_missing`` in *flags*, never the wall clock)."""
     conn.execute(
         """
         INSERT INTO inst_filers (
@@ -368,7 +368,7 @@ def upsert_inst_filing(
     filing: InstFilingRow,
     holdings: Sequence[InstParsedRow],
 ) -> LoadResult:
-    """Insert-or-replace one filing and its holdings in ONE transaction (R10).
+    """Insert-or-replace one filing and its holdings in ONE transaction.
 
     Mirrors :func:`upsert_filing`: a new filing's row and its full holding set
     commit together (crash-consistent), re-running is idempotent (ON CONFLICT +
@@ -655,7 +655,7 @@ def upsert_filing(
 ) -> LoadResult:
     """Insert-or-replace a filing and its transaction set in ONE transaction.
 
-    The crash-consistency seam (R16): a new filing's row and its parsed set
+    The crash-consistency seam: a new filing's row and its parsed set
     commit together, so no interruption can strand a committed filing with
     zero transactions that later DocID diffing would skip. Re-running is
     idempotent (the ``ON CONFLICT`` update plus the DELETE-then-insert row

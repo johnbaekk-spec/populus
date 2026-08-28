@@ -1,18 +1,18 @@
-"""13F normalization + coverage inputs (ARCHITECTURE.md §10.2 — RUN M2-2).
+"""13F normalization + coverage inputs (ARCHITECTURE.md §10.2).
 
 Pure functions from parsed raw fields to normalized column values. No DB import
 (G14, structural): the as-of CUSIP resolver is *injected* as a callable, so a
 resolution can never happen without an as-of date. The raw text always survives
 in ``raw_row``; normalization never mutates it.
 
-Two era-dependent value regimes (R4/LD-5): a 13F filed **on or after
+Two era-dependent value regimes: a 13F filed **on or after
 2023-01-03** reports whole-dollar ``value``; a filing before it reports
 thousands. The discriminator is the **filed date**, not the report period, and
 ``unit_basis`` travels with every value (G5). This module owns the multiplier,
 the disjoint flag taxonomy (parallel to ``normalize.py``'s M1 sets — a shared
 taxonomy would put a 13F flag in an M1 path), and the per-filing reconciliation
 that produces the never-inflated coverage inputs the M2 ≥95% gate consumes at
-M2-3 publish time (R16).
+M2-3 publish time.
 """
 
 from __future__ import annotations
@@ -67,23 +67,23 @@ INST_PARSE_DEFECT_FLAGS = frozenset(
         "ssh_unparsed",
         "voting_unparsed",
         "put_call_unparsed",
-        "other_manager_unparsed",   # non-numeric otherManager component (QA-F3)
+        "other_manager_unparsed",   # non-numeric otherManager component
         "row_incomplete",
     }
 )
 INST_SOURCE_FACT_FLAGS = frozenset(
     {
-        "missing_security",          # valid CUSIP, no mapping covers period_of_report (R9)
-        "confidential_omitted",      # isConfidentialOmitted = true on the cover (R6)
-        "conf_denied_expired",       # confDeniedExpired = true on an amendment (R6)
-        "cover_failed",              # cover unparseable/missing field; persisted failed (R18)
-        "notice_no_table",           # 13F-NT: a notice with no information table (F3)
+        "missing_security",          # valid CUSIP, no mapping covers period_of_report
+        "confidential_omitted",      # isConfidentialOmitted = true on the cover
+        "conf_denied_expired",       # confDeniedExpired = true on an amendment
+        "cover_failed",              # cover unparseable/missing field; persisted failed
+        "notice_no_table",           # 13F-NT: a notice with no information table
         "entry_total_mismatch",      # tableEntryTotal != row_count (LD-7, forces partial)
-        "amendment_unlinked",        # amendment with zero/many candidate bases (R5/F25)
+        "amendment_unlinked",        # amendment with zero/many candidate bases
         "amendment_type_unknown",    # is_amendment but amendmentType absent/unrecognized
-        "affiliated_covered",        # covered by a surviving affiliate; excluded (R7)
-        "affiliated_mutual_coverage",  # mutual affiliated coverage; both excluded (R7)
-        "submissions_meta_missing",  # no submissions-meta.json sidecar (R19)
+        "affiliated_covered",        # covered by a surviving affiliate; excluded
+        "affiliated_mutual_coverage",  # mutual affiliated coverage; both excluded
+        "submissions_meta_missing",  # no submissions-meta.json sidecar
         "retrieved_at_unknown",      # no fetch-meta.json sidecar (retrieved_at NULL)
     }
 )
@@ -124,7 +124,7 @@ def _seqs(raw: str | None) -> tuple[list[int], bool]:
         if not token:
             # An EMPTY component inside a non-empty delimited value (`1,,3`) is
             # malformed input, not an absence: skipping it silently would lose a
-            # component while the row still reported as fully parsed (QA-F2).
+            # component while the row still reported as fully parsed.
             ok = False
             continue
         if token.isdigit():
@@ -132,7 +132,7 @@ def _seqs(raw: str | None) -> tuple[list[int], bool]:
         else:
             # A non-numeric component must NOT be silently discarded: the
             # normalized sequence list would be incomplete while the row still
-            # reported as fully parsed (QA-F3, R3/G3). Report it to the caller.
+            # reported as fully parsed (G3). Report it to the caller.
             ok = False
     return out, ok
 
@@ -174,7 +174,7 @@ def normalize_holding(
     period_of_report: str,
     resolve_security: Callable[[str, str], str | None],
 ) -> NormalizedHolding:
-    """Normalize one info-table row; retain-and-flag, never drop (G3/R3/R9).
+    """Normalize one info-table row; retain-and-flag, never drop (G3).
 
     *resolve_security* is ``(cusip, as_of_date) -> security_id | None`` — the
     only identity path, so a CUSIP is always resolved as-of ``period_of_report``
@@ -210,7 +210,7 @@ def normalize_holding(
     # parsed. Section 13(f) info tables require nameOfIssuer, titleOfClass,
     # cusip, value, shrsOrPrnAmt{sshPrnamt, sshPrnamtType},
     # investmentDiscretion and votingAuthority{Sole,Shared,None}; only putCall
-    # and otherManager are optional. (QA-F2, R3/G3)
+    # and otherManager are optional. (G3)
     ssh, ssh_ok = _to_int(row.ssh_prnamt)
     if not ssh_ok or ssh is None:
         flags.add("ssh_unparsed")
@@ -223,7 +223,7 @@ def normalize_holding(
 
     # EACH votingAuthority member (Sole, Shared, None) is required: one
     # individually missing value is structurally incomplete data, not "partial
-    # but fine" — flag if ANY is absent or non-numeric. (QA-F2)
+    # but fine" — flag if ANY is absent or non-numeric.
     voting_sole, sole_ok = _to_int(row.voting_sole)
     voting_shared, shared_ok = _to_int(row.voting_shared)
     voting_none, none_ok = _to_int(row.voting_none)
@@ -240,7 +240,7 @@ def normalize_holding(
 
     # Remaining required row fields: absent ⇒ the row is structurally incomplete
     # (retained + flagged + filing forced to `partial`, never dropped — G3).
-    # `investmentDiscretion` is required by the info-table contract too. (QA-F1)
+    # `investmentDiscretion` is required by the info-table contract too.
     if (
         row.title_of_class is None
         or row.ssh_prnamt_type is None
@@ -272,7 +272,7 @@ def normalize_holding(
     )
 
 
-# --- per-filing reconciliation + coverage inputs (R16) -----------------------
+# --- per-filing reconciliation + coverage inputs -----------------------
 
 
 @dataclass(frozen=True)
@@ -295,22 +295,22 @@ def filing_reconciliation(
     unit_basis: str,
     holdings: Iterable[NormalizedHolding],
 ) -> FilingReconciliation:
-    """Reconcile a parsed cover against its normalized holdings (R4/R16/LD-7).
+    """Reconcile a parsed cover against its normalized holdings.
 
     ``table_value_total_usd`` is the cover total scaled by the era multiplier —
     the coverage DENOMINATOR contribution. It is populated for an info-table-
     failed filing too (empty *holdings*, non-zero cover total), so that filing
-    drags coverage down rather than vanishing from the denominator (F3). A NULL
+    drags coverage down rather than vanishing from the denominator. A NULL
     total means the value is UNKNOWN — produced by ingest's cover-failed path and,
     defensively, whenever the cover total itself is absent (never coerced to 0,
-    which would inflate coverage — QA-F1). ``value_total_delta`` is reported, not
+    which would inflate coverage). ``value_total_delta`` is reported, not
     fatal; ``entry_total_mismatch`` forces the filing to ``partial``.
     """
     holdings = list(holdings)
     multiplier = UNIT_MULTIPLIER[unit_basis]
     # An UNKNOWN cover total stays NULL — never 0. Coercing it to 0 would let the
     # filing contribute nothing to the coverage denominator without raising
-    # `cover_failed_count`, silently inflating identity coverage (QA-F1, R16).
+    # `cover_failed_count`, silently inflating identity coverage.
     # `parse_cover` already rejects a missing total on a holdings report, so this
     # is the defence-in-depth half of that contract.
     table_value_total_usd = (

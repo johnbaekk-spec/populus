@@ -1,4 +1,4 @@
--- Cross-filer 13F aggregates (ARCHITECTURE.md §10.2; M2-CONTRACT §5.6 — RUN M2-3).
+-- Cross-filer 13F aggregates (ARCHITECTURE.md §10.2; M2-CONTRACT §5.6).
 --
 -- Applied by populus.inst_agg.build_inst_agg into a FRESH inst_agg.db (all
 -- IF NOT EXISTS — idempotent DDL), populated deterministically from
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS agg_filer_registry (
 -- delta_value_usd is NULL when either side's value was undisclosed — a holding
 -- whose prior filing had an unparseable <value> would otherwise difference
 -- against a FABRICATED zero and surface as a multi-billion "add" that never
--- happened, ranked first by inst_biggest_moves (QA-VERIFY5-B2). delta_shares
+-- happened, ranked first by inst_biggest_moves. delta_shares
 -- only when ssh_prnamt_type is
 -- equal in both quarters, else NULL + shares_unit_mismatch (never a fake 0).
 -- Schema 1.1 keeps the public relation byte-for-byte readable while storing its
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
 
 -- Per-filer portfolio concentration.
 --
--- GRAIN NOTE (RUN M2-8 T6, QA-2/QA-3): these rows are computed from
+-- GRAIN NOTE: these rows are computed from
 -- v_filer_reported_holdings, NOT v_default_holdings. Two consequences that are
 -- intended but must not be discovered later:
 --   1. The row population WIDENS — every filer-period in the filer-reported set
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
 --      the inst logical digest change accordingly.
 --   2. topn_value_usd / topn_share_bps / hhi now describe the filer's OWN
 --      reported book, so their VALUES change for any affiliated filer. That is
---      the point (review F5: the flag baseline must not inherit a truncated
+--      the point (the flag baseline must not inherit a truncated
 --      book), but it is a change to an already-published number.
 -- Cross-entity issuer totals keep reading v_default_holdings so an affiliate
 -- relationship is still counted exactly once.
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
 -- HHI, computed ONLY when total_value_usd > 0; when the total is 0 (or every
 -- value is NULL) both are stored NULL + concentration_unavailable — the digest
 -- keeps that NULL distinct from a real 0, and the build never divides by zero.
--- R21: the recently-added-issuers leaderboard, one row per
+-- The recently-added-issuers leaderboard, one row per
 -- (period, mode, issuer). `mode` is a stored dimension rather than a filter
 -- applied later: a static site cannot re-aggregate at request time, and
 -- filtering `all` rows down by new_position_count would still show
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
 -- every contributing delta was undisclosed — never 0, which would assert a
 -- measured no-change. `delta_value_is_partial` says the sum omitted at least
 -- one undisclosed component, so a partial is never presented as a total.
--- R11/R23: the curated manager typing, materialized into the aggregate so the
+-- The curated manager typing, materialized into the aggregate so the
 -- dashboard reads ONE artifact rather than reaching into the Python package at
 -- render time. Only rows that JOIN agg_filer_registry are written: a retired or
 -- unmatched row is excluded from typed views, which is exactly what "excluded"
@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS agg_issuer_adds (
 
 -- The ambiguous-identity exclusion count, per period AND per mode. It is
 -- STORED rather than recomputed because a static site cannot recount after a
--- period or mode toggle, and R14 forbids an unstated omission.
+-- period or mode toggle, and an unstated omission is forbidden.
 CREATE TABLE IF NOT EXISTS agg_issuer_adds_exclusions (
   period_of_report TEXT    NOT NULL,
   mode             TEXT    NOT NULL CHECK (mode IN ('all', 'new')),
@@ -220,13 +220,12 @@ CREATE TABLE IF NOT EXISTS agg_filer_concentration (
   total_value_usd      INTEGER NOT NULL,          -- COALESCE(SUM(value_usd), 0) over non-NULL
   null_value_positions INTEGER NOT NULL,
   topn_value_usd       INTEGER NOT NULL,          -- summed value of the top-N positions
-  topn_share_bps       INTEGER,                   -- topn/total in bps; NULL when total <= 0 (F5)
-  hhi                  INTEGER,                   -- integer HHI in bps; NULL when total <= 0 (F5)
-  -- RUN M2-8 (T6, plan R14): the LARGEST SINGLE position's share, which is what
+  topn_share_bps       INTEGER,                   -- topn/total in bps; NULL when total <= 0
+  hhi                  INTEGER,                   -- integer HHI in bps; NULL when total <= 0
+  -- The LARGEST SINGLE position's share, which is what
   -- the outsized-position flag compares against. topn_share_bps is a COMBINED
   -- top-N share and is a different statistic entirely — a book of five 10%
-  -- positions has topn_share_bps 5000 and max_position_share_bps 1000 (external
-  -- review round 2, F11). NULL on the same condition as the other two.
+  -- positions has topn_share_bps 5000 and max_position_share_bps 1000. NULL on the same condition as the other two.
   max_position_share_bps INTEGER,
   flags                TEXT NOT NULL,             -- canonical sorted JSON array
   ingested_at          TEXT NOT NULL,             -- volatile; excluded from the projection

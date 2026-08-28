@@ -1,5 +1,5 @@
 ---
-/* RUN M2-8 T11/T12 (plan R11, R12, R16) — the holdings/holders surface.
+/* The holdings/holders surface.
 
    This component owns the READ; `lib/holdings.ts` owns every pure decision
    (normalise, fold, diff, paginate, render). The split is deliberate: the
@@ -108,7 +108,7 @@ const db = cache.db;
 let payload: SurfacePayload | null = null;
 
 if (db && props.kind === "filer") {
-  /* RUN M2-11 (plan R22): the SQL and the period/cap/sort logic that lived here
+  /* The SQL and the period/cap/sort logic that lived here
      are EXTRACTED to `lib/filer-payload.assembleFilerPayload` — the ONE
      server-side assembler, shared with the tail shard endpoints so the
      pre-rendered page and a shard-served tail filer cannot assemble
@@ -150,7 +150,7 @@ if (db && props.kind === "filer") {
     )
     .all(props.issuerKey) as Record<string, unknown>[];
   const rows = parseIssuerShard({ filings: cache.filings, rows: raw }).rows;
-  // R22: the top/tail budget state rides on every holder row so the embedded
+  // The top/tail budget state rides on every holder row so the embedded
   // payload's client re-render produces the same href the SSR did (filerHref).
   const tops = topFilerCiks(getBuildData());
   for (const row of rows) row.filer_tier = tops.has(row.filer_key) ? "top" : "tail";
@@ -236,7 +236,7 @@ const bodyHtml =
     : surfaceHtml(payload, { view: "current", page: 0, period: payload.current });
 
 /* `</script>` inside an issuer or filer name would otherwise close the embed;
-   the shared R6 serializer escapes every `<`. */
+   the shared inline-JSON serializer escapes every `<`. */
 const payloadJson = payload == null ? "" : serializeInlineJson(payload);
 ---
 

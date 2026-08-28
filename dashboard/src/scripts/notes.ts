@@ -1,4 +1,4 @@
-/* SL-R2 / SL-R3 / SL-R28: the note binder.
+/* The note binder.
 
    PROGRESSIVE ENHANCEMENT, NOT THE MECHANISM. `note()` emits a button carrying
    `popovertarget`, so show/hide already works with no JavaScript at all. This
@@ -6,7 +6,7 @@
    `.table-scroll` clip, hover-open, Escape, outside-click, re-placement on
    scroll. Its absence degrades a note to click-to-open; never to unreachable.
 
-   DELEGATED, NOT PER-ELEMENT (SL-R2). Five roots replace their contents with
+   DELEGATED, NOT PER-ELEMENT. Five roots replace their contents with
    innerHTML after page setup — table-sort's paint(), and entity-client's txn
    rows, filer period section, holders table and tail render. A per-element
    binder would leave every note created by those inert, and a rebind hook has
@@ -14,7 +14,7 @@
    set on `document` makes the lifecycle question disappear instead of answering
    it repeatedly.
 
-   The sort collision is NOT handled here (SL-R25): a delegated handler runs
+   The sort collision is NOT handled here: a delegated handler runs
    AFTER the <th>'s own listener in the bubble phase — too late to stop a sort —
    and moving it to the capture phase would stop the event before the button
    receives it, breaking popovertarget. The guard lives in table-sort.ts. */
@@ -43,7 +43,7 @@ function place(btn: HTMLElement, pop: HTMLElement): void {
   }
   let left = a.left + a.width / 2 - p.width / 2;
   left = Math.max(gap, Math.min(left, window.innerWidth - p.width - gap));
-  /* Clear the centring translate from the SL-R2b default rule before applying
+  /* Clear the centring translate from the default resting-place rule before applying
      real coordinates, or an anchored panel would be shifted by half its own
      size. Inline styles beat the stylesheet, so this is the only interaction
      between the two positioning paths. */
@@ -72,7 +72,7 @@ function closeAll(except?: Element | null): void {
 
 let bound = false;
 
-/* CODE-REVIEW F4: true between pointerdown and the click that follows it.
+/* True between pointerdown and the click that follows it.
 
    `popovertarget`'s activation behaviour runs LAST and TOGGLES, so it must be
    handed a closed panel or a click closes the note. Retracting on pointerdown
@@ -92,7 +92,7 @@ export function initNotes(): void {
 
   /* Click PINS — the touch and keyboard channel.
 
-     CODE-REVIEW F4, second iteration. Two ordering facts drive this, both
+     Two ordering facts drive this, both
      learned from a real browser and invisible to markup tests:
 
      1. A `popovertarget` button's ACTIVATION BEHAVIOUR runs AFTER the click
@@ -108,7 +108,7 @@ export function initNotes(): void {
      click, read the state the toggle actually settled on and record the pin
      from that. Touch and keyboard never fire the hover path, so they simply
      open and pin. */
-  /* CODE-REVIEW F4: retract a HOVER-opened panel on pointerdown.
+  /* Retract a HOVER-opened panel on pointerdown.
 
      Measured sequence without this, from a real browser:
        pointerover -> beforetoggle closed->open   (this module opened it)
@@ -127,7 +127,7 @@ export function initNotes(): void {
     if (pop && !pop.hasAttribute(PINNED) && pop.matches(":popover-open")) hide(pop);
   });
 
-  /* CODE-REVIEW round 3 F1: release the latch on EVERY terminal pointer path,
+  /* Release the latch on EVERY terminal pointer path,
      not only on a completed note click.
 
      The first version cleared it in the click microtask alone, so a press that
@@ -171,7 +171,7 @@ export function initNotes(): void {
     if (!btn) return;
     const pop = popOf(btn);
     if (!pop || pop.hasAttribute(PINNED) || pointerActive) return;
-    /* CODE-REVIEW F4: hover opens only when the pointer is NOT pressed. A
+    /* Hover opens only when the pointer is NOT pressed. A
        hover-opened panel plus `popovertarget`'s toggle raced every mouse click:
        whichever ran last decided, and the note ended shut. Letting the native
        toggle own the click transition entirely is the only version that agrees

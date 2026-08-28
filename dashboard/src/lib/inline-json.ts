@@ -1,4 +1,4 @@
-/* RUN PUBLIC-SECURITY-HARDENING PR 2 (R6/LD7) — the ONE inline-JSON primitive.
+/* The ONE inline-JSON primitive.
 
    Every `<script type="application/json">` data embed serializes through this
    function and nothing else. An upstream issuer/filer name containing

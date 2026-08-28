@@ -171,7 +171,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* R4: `height` was fixed, so any cluster wider than the shell overflowed and
+  /* `height` was fixed, so any cluster wider than the shell overflowed and
      painted over its neighbour instead of reflowing. A MIN height keeps the
      60px bar identical when everything fits and lets it grow when it does
      not. Overlap is now structurally impossible rather than merely unobserved
@@ -303,7 +303,7 @@ button {
   padding-bottom: 72px;
 }
 .page-head {
-  /* R9, third attempt and the first one that measured the right box. The stat
+  /* Third attempt at the stat-strip overflow, and the first one that measured the right box. The stat
      strip was never too wide on its own — 849px inside an 884px parent. It
      starts at x=315 because it is a flex ITEM of this nowrap row, pushed across
      by the title beside it, and `flex-shrink: 0` stops it compressing. So the
@@ -336,7 +336,7 @@ button {
 .page-lede a {
   font-size: 13px;
 }
-/* R8: `.mobile-meta` is DELETED. It was the stat strip's mobile duplicate, and
+/* `.mobile-meta` is DELETED. It was the stat strip's mobile duplicate, and
    the strip it duplicated is gone — the single `.caveat-line` under the lede
    now carries the as-of date and the statutory qualifier at every width, so
    nothing folds away and nothing is stated twice. */
@@ -348,7 +348,7 @@ button {
   background: var(--rule2);
   border: 1px solid var(--rule2);
   flex-shrink: 0;
-  /* R9, diagnosed against rendered geometry (R35) rather than guessed at: this
+  /* Diagnosed against rendered geometry rather than guessed at: this
      was a non-wrapping flex row of `min-width: 118px` tiles, so the strip took
      whatever width its tile COUNT demanded — measured at 1164px — and pushed
      the whole document sideways. At 964px the page scrolled by 200px, at 1080px
@@ -372,12 +372,12 @@ button {
   background: var(--raised);
   padding: 14px 20px;
   min-width: 118px;
-  /* R9. The strip is a WRAPPING flex row, so content-sized tiles leave a ragged
+  /* The strip is a WRAPPING flex row, so content-sized tiles leave a ragged
      right edge on every row but the last — and because `.tiles` paints
      `var(--rule2)` behind a 1px gap grid, that ragged space renders as a
      visible rule-coloured slab INSIDE the bordered strip. Measured on the real
      tree: 191px of it on row 0 at 720px, 6.5px at 360px. That slab is exactly
-     the "unoccupied trailing area" R9 forbids; it is not a cosmetic tolerance,
+     the "unoccupied trailing area" the geometry gate forbids; it is not a cosmetic tolerance,
      so the tiles grow to consume it rather than the gate learning to accept it. */
   flex: 1 1 auto;
 }
@@ -417,7 +417,7 @@ button {
 /* On desktop the wrapper is transparent: its children are direct flex items of
    .filterbar, exactly as the design lays them out. */
 .filter-controls {
-  /* F1 (codex round 1). This box computed to the full 360px viewport width
+  /* This box computed to the full 360px viewport width
      inside a 328px parent and started at x=29, so it pushed the document
      sideways by 29px at the narrow width even though it already carries
      `overflow-x: auto` — the scroller was scrolling, the BOX was still too
@@ -528,7 +528,7 @@ button {
   border: 1px solid var(--rule2);
   background: var(--raised);
 }
-/* R5/R18: the feed is a real <table> now. `table-layout` and the default
+/* The feed is a real <table> now. `table-layout` and the default
    row/cell display are overridden so the SAME grid the div version used still
    drives the columns — the layout did not change, only the elements did. */
 .feed-table {
@@ -542,13 +542,13 @@ button {
 }
 .feed-grid-cols {
   display: grid;
-  /* R4: star · filed · TICKER · member · side · traded · amount · range · src.
+  /* Column order: star · filed · TICKER · member · side · traded · amount · range · src.
      Ticker moves AHEAD of member and takes the anchor's emphasis — but not the
      flexible track. EMPHASIS IS TYPE, NOT WIDTH: the ticker is heavier, larger
      and accent-coloured (see `.cell-ticker`), while `member` keeps `1fr`
      because it is the column that holds unbounded text. Giving ticker `1fr` and
      member a fixed 150px truncated a 20-character member name by ONE pixel at
-     1440px — R7's exact defect, caught by the geometry lane. The ticker's own
+     1440px — a defect the geometry lane caught. The ticker's own
      fixed track is generous enough for the full asset name it renders when no
      ticker was disclosed. */
   grid-template-columns: 26px 92px 150px 1fr 118px 118px 100px 210px 56px;
@@ -596,7 +596,7 @@ button {
   height: 38px;
   border-bottom: 1px solid var(--rule);
 }
-/* R5/R18: `.row-line1` / `.row-line2` are DELETED. They were wrapper divs
+/* `.row-line1` / `.row-line2` are DELETED. They were wrapper divs
    that existed only to group the mobile fold's two lines, and a table row
    cannot legally contain them. The fold uses grid areas on the row instead, so
    the wrappers have no remaining purpose and no rule may reference them. */
@@ -628,7 +628,7 @@ button {
   color: var(--ink2);
 }
 .cell-member {
-  /* R4: SECONDARY emphasis. Lighter weight and --ink2 against the ticker's
+  /* SECONDARY emphasis. Lighter weight and --ink2 against the ticker's
      accent-coloured mono, so the eye lands on the ticker first. The member is
      not de-emphasised out of legibility — it keeps full contrast text. */
   font: 500 12.5px var(--sans);
@@ -658,9 +658,9 @@ button {
 /* party could not be resolved — deliberately NOT tinted as Independent */
 .aff.unknown { color: var(--ink3); }
 .cell-ticker {
-  /* R4: PRIMARY emphasis — the largest, heaviest type in the row. */
+  /* PRIMARY emphasis — the largest, heaviest type in the row. */
   font: 700 14px var(--mono);
-  /* R5: this is a 66px grid column and it renders the full asset name whenever
+  /* This is a 66px grid column and it renders the full asset name whenever
      no ticker was disclosed. Without containment the text simply painted over
      `.cell-side` and everything after it — `.cell-member` had exactly this
      treatment already and did not overflow, which is what made the omission
@@ -965,7 +965,7 @@ button {
   color: var(--ink3);
 }
 
-/* ================= RUN P3-2 additions ================= */
+/* ================= entity, feed & table surfaces ================= */
 /* ---------- shared component chrome ---------- */
 
 .crumb {
@@ -1003,7 +1003,7 @@ button {
 .flag-raw {
   font-family: var(--mono);
 }
-/* R10 / B33: the unknown-flag disclosure. The warning lives in the summary and
+/* The unknown-flag disclosure. The warning lives in the summary and
    is visible with this shut; only the machine name is behind the interaction. */
 .flag-provenance {
   display: inline-block;
@@ -1198,12 +1198,12 @@ button {
 }
 .nav-shell .badge-soon { margin-left: 2px; }
 
-/* ---------- real tables (R16) ---------- */
+/* ---------- real tables ---------- */
 
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  /* R6 — the scroll cue at EVERY width, not only inside the 720px fold.
+  /* The scroll cue at EVERY width, not only inside the 720px fold.
      A container that scrolls without saying so hides the columns past its
      right edge just as completely as removing them would; the fold already
      understood this and the wider viewports did not, which is where the
@@ -1222,7 +1222,7 @@ button {
   background-repeat: no-repeat;
   background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
 }
-/* R6: the identity column stays put while the numbers scroll, at every width.
+/* The identity column stays put while the numbers scroll, at every width.
    This was fold-only; above 720px a scrolled table lost the row's identity. */
 .etable[data-sticky-first] th:first-child,
 .etable[data-sticky-first] td:first-child {
@@ -1279,10 +1279,10 @@ button {
   text-decoration: none;
   color: var(--ink);
 }
-/* R5: `.c-ticker` joins this group. It renders the same `assetNameCell` as the
+/* `.c-ticker` joins this group. It renders the same `assetNameCell` as the
    feed, so an undisclosed ticker puts a full asset name in a column that had no
    bound at all — in an auto-layout table that widens the column and pushes the
-   decisive columns out of view, which is the R6 defect arriving by another
+   decisive columns out of view, which is the hidden-column defect arriving by another
    route. */
 .etable .c-member,
 .etable .c-filer,
@@ -1322,7 +1322,7 @@ button {
 .unjoined-name { border-bottom: 1.5px dotted var(--ink3); }
 .reconciled { border-bottom: 1.5px dotted var(--ink3); }
 
-/* ---------- flow ribbon (C1–C7) ---------- */
+/* ---------- flow ribbon ---------- */
 
 .ribbon { padding: 8px 16px 12px; }
 .rb-track {
@@ -1428,7 +1428,7 @@ button {
   border-top: 1px solid var(--rule);
 }
 .caveat-inline { color: var(--ink3); }
-/* SL-R17: a readable identity chip in place of a raw key. Quiet, dashed like
+/* A readable identity chip in place of a raw key. Quiet, dashed like
    the flag vocabulary it borrows its wording from — it is a qualifier on the
    name beside it, never a claim of its own. */
 .id-chip {
@@ -1439,15 +1439,15 @@ button {
   margin-left: 4px;
   white-space: nowrap;
 }
-/* SL-R13: the momentum control's pending state. It is a STATEMENT, not a
+/* The momentum control's pending state. It is a STATEMENT, not a
    spinner — a spinner says "wait", this says what the control has and has not
    done yet. Tinted so it reads as a live claim rather than as chrome. */
 .pending-note { color: var(--ink2); }
-/* SL-R14 / LD2: a true empty window states itself here rather than the table
+/* A true empty window states itself here rather than the table
    painting blank. The offers are `.linklike` buttons, matching the rest of the
    page's in-prose controls. */
 .empty-window .linklike { font-weight: 600; }
-/* SL-R1: the /congress/ head's stamp and its four methodology deep links. The
+/* The /congress/ head's stamp and its four methodology deep links. The
    stamp keeps `.caveat-line`'s mono voice — it is the same kind of statement —
    but drops the top rule, because it sits inside the page head rather than
    under a table. The links wrap on narrow viewports instead of scrolling, so
@@ -1464,7 +1464,7 @@ button {
   padding: 6px 0 0;
   font: 400 11px/1.6 var(--mono);
 }
-/* R10 defect #12: a flag carried by EVERY row states itself here instead of on
+/* A flag carried by EVERY row states itself here instead of on
    each row. It sits ABOVE the table it describes and reads as a caveat, not as
    chrome — the border-bottom pairs it with the table rather than the block
    above, which `.caveat-line` alone (border-top) would not do. */
@@ -1667,7 +1667,7 @@ button {
 /* ---------- search overlay ---------- */
 
 .masthead-search-first .site-search { width: 340px; border: 1.5px solid var(--ink); }
-/* R4: 340px is 110px more than the standard box and pushes the cluster to
+/* 340px is 110px more than the standard box and pushes the cluster to
    ~1138px, which does not fit until ~1220px of viewport. Below that the
    emphasis is not worth a collision. */
 @media (max-width: 1220px) {
@@ -2120,7 +2120,7 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
   text-transform: uppercase;
   color: var(--ink3);
 }
-/* SL-R15/LD8: the summary carries the load-bearing claim, so it is a SENTENCE
+/* The summary carries the load-bearing claim, so it is a SENTENCE
    and must read as one — not the uppercase micro-label the head was. It is not
    letter-spaced, not uppercased and not muted, because this is now the honesty
    channel that stands in for the always-open body. */
@@ -2148,7 +2148,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
 
 /* ---------- mobile fold (≤720px, per docs/frontend/design-principles.md §5) ---------- */
 
-/* R4 — the MISSING INTERMEDIATE BREAKPOINT.
+/* The MISSING INTERMEDIATE BREAKPOINT.
    The masthead had exactly two states: the full desktop bar and the 720px
    burger fold. Between them it had neither. The shell is 1360px wide with
    40px of padding, so a 1080px viewport offers 1000px of usable width against
@@ -2191,7 +2191,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   }
 }
 
-/* ---------- R7: the feed row folds to two lines from 1080px down ----------
+/* ---------- the feed row folds to two lines from 1080px down ----------
 
    MEASURED, not guessed. At a 964px viewport the feed has 854px of usable width
    and its nine columns need 1,033px of content:
@@ -2218,7 +2218,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
    tree, flags, the owner/partial qualifier and the provenance link all stay on
    screen; the column headers go, exactly as they already do on mobile. */
 @media (max-width: 1080px) {
-  /* F4: the header is the table's REAL <thead> now, and it carries every column
+  /* The header is the table's REAL <thead> now, and it carries every column
      name plus every stated reason a column is unsortable. `display: none`
      removed all of that from the accessibility tree at these widths — the exact
      honesty deletion the fold gate exists to prevent. It folds through the
@@ -2442,7 +2442,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
      begin with.
 
      The scroll affordance is GONE, and its absence is the honest state: since
-     R9 made the strip wrap, `scrollWidth === clientWidth` at both fold widths
+     the strip was made to wrap, `scrollWidth === clientWidth` at both fold widths
      (measured 326/326 at 360px, 686/686 at 720px), so the mask faded the right
      24px of a strip that cannot scroll. With tiles now filling their row those
      24px carry a headline figure's own padding and digits, which would put a
@@ -2604,7 +2604,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   }
 }
 
-/* ---------- mobile fold, RUN P3-2 surfaces (≤720px) ----------
+/* ---------- mobile fold, entity & feed surfaces (≤720px) ----------
    THE FOLD RULE (SS4, standing deviation): nothing honesty-bearing — dates,
    lag, owner/partial qualifiers, flags, SRC receipts, footnotes, terminus
    rows, as-of stamps — is display:none'd here. Wide tables scroll INSIDE
@@ -2696,7 +2696,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   .feed-footnote,
   .footnotes-stacked,
   .terminus,
-  /* SL-R10: the bound a compact table states about itself. It prints for the
+  /* The bound a compact table states about itself. It prints for the
      same reason the terminus row it replaced did — a reader holding paper
      cannot expand anything, so the statement of what is missing has to be on
      the page. The BUTTON above stays in the no-print list. */
@@ -2707,7 +2707,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
     display: block !important;
   }
   .table-scroll { overflow: visible; mask-image: none; -webkit-mask-image: none; }
-  /* B33: provenance PRINTS. A disclosure the reader must click is no use on
+  /* Provenance PRINTS. A disclosure the reader must click is no use on
      paper, so the machine name is forced visible whether or not they opened it
      before printing.
 
@@ -2724,10 +2724,10 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   .flag-provenance::details-content {
     content-visibility: visible !important;
   }
-  /* SL-R15/LD8 point 2: the §5 box PRINTS OPEN. The paper channel is unchanged
+  /* The §5 box PRINTS OPEN. The paper channel is unchanged
      by the collapse — a reader printing this page gets all six clauses whether
      or not they opened the box first. `open` is forced by the same
-     `::details-content` mechanism B33 measured for `.flag-provenance`; the
+     `::details-content` mechanism measured for `.flag-provenance`; the
      `display` line beside it covers engines that hide the content the older
      way. */
   .caveat-box::details-content {
@@ -2759,7 +2759,7 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
   .chips { flex-wrap: wrap; row-gap: 6px; }
 }
 
-/* R1: the /congress sub-tab nav (.ctabs/.ctab) is DELETED with its markup —
+/* The /congress sub-tab nav (.ctabs/.ctab) is DELETED with its markup —
    a dead selector left behind is how a removed component quietly comes back. */
 
 /* C-4 ranking table pieces */
@@ -2813,14 +2813,14 @@ details[open] > .caveat-box-summary { border-bottom: 1px solid var(--rule); }
 }
 th[data-inst-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
 th[data-inst-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
-/* R48: the same indicator for the generic sortable-table plumbing, driven by
+/* The same indicator for the generic sortable-table plumbing, driven by
    aria-sort so the arrow and the announced state cannot disagree. */
 th[data-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
 th[data-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
 /* A real touch target. Originally scoped to [data-sort] alone to leave the
    shipping [data-inst-sort] surface untouched — but that surface is now an
    ADOPTER of the same helper, so the 44px requirement applies to it too and the
-   original scoping left it failing (code review, cycle 3 F2). Both selectors. */
+   original scoping left it failing, caught in code review. Both selectors. */
 th[data-sort] .th-sort,
 th[data-inst-sort] .th-sort {
   min-height: 44px;
@@ -2875,13 +2875,13 @@ th[data-inst-sort] .th-sort {
 .mix-bucket td { color: var(--ink3); font-style: italic; }
 .non-allegation { font-weight: 600; }
 
-/* D-2 review F10: the exact rule inside per-entity signal rows */
+/* The exact rule inside per-entity signal rows */
 .signal-rule-inline { font: 400 10.5px var(--mono); color: var(--ink3); max-width: 46ch; }
 
 
-/* ---------- RUN ALPHA-SURFACES-V2 ---------- */
+/* ---------- momentum, leaderboard & activity surfaces ---------- */
 
-/* R2: the momentum range/basis control. It reuses `.filter-group` and `.seg`
+/* The momentum range/basis control. It reuses `.filter-group` and `.seg`
    from the feed's filter bar rather than introducing a second control idiom —
    one page, one way to press a segmented button. */
 .range-control {
@@ -2891,7 +2891,7 @@ th[data-inst-sort] .th-sort {
   gap: 14px;
   margin: 10px 0 4px;
 }
-/* SL-R16: the adds control adopts the SAME one-row idiom. Its buttons are
+/* The adds control adopts the SAME one-row idiom. Its buttons are
    `.chip`s rather than a `.seg`, so the chip row keeps its own spacing inside
    the shared layout instead of a second control grammar being invented. */
 .control-row .chips {
@@ -2910,7 +2910,7 @@ th[data-inst-sort] .th-sort {
   margin-right: 8px;
 }
 
-/* R5: the stated reason an unsortable column carries. VISIBLE text, never a
+/* The stated reason an unsortable column carries. VISIBLE text, never a
    title attribute — a tooltip is not a channel a touch device can open, and
    this site does not treat one as published. It is small and quiet, but it is
    on the page at every width. */
@@ -2926,7 +2926,7 @@ th[data-inst-sort] .th-sort {
   white-space: normal;
 }
 
-/* R7/SL-R10: the bound a compact table states about itself, and the control
+/* The bound a compact table states about itself, and the control
    that lifts it. The STATEMENT comes first, so the reader meets the bound
    before the offer to lift it — and it is styled like the `.terminus` row it
    replaced, because it is the same fact in the same voice.
@@ -2954,7 +2954,7 @@ th[data-inst-sort] .th-sort {
   padding: 0 2px;
 }
 
-/* R25: the retired sub-tab stubs' visible link — the channel that works with
+/* The retired sub-tab stubs' visible link — the channel that works with
    both scripting and meta-refresh disabled, so it is sized as a real target. */
 .stub-link {
   display: inline-block;
@@ -2963,7 +2963,7 @@ th[data-inst-sort] .th-sort {
   line-height: 44px;
 }
 
-/* R10: the activity feed's issuer anchor and its secondary filer column. The
+/* The activity feed's issuer anchor and its secondary filer column. The
    emphasis is type, exactly as on the congress feed — the filer keeps full
    contrast, it simply stops being the first thing the eye lands on. */
 .c-issuer {
@@ -2977,7 +2977,7 @@ th[data-inst-sort] .th-sort {
   color: var(--ink2);
 }
 
-/* R11: manager-type filter chips. `Notable` is EDITORIAL and orthogonal to
+/* Manager-type filter chips. `Notable` is EDITORIAL and orthogonal to
    type, so it renders in the same chip row but is visually separated — it is
    not a ninth type and must not read as one. */
 .mgr-chips {
@@ -3009,18 +3009,18 @@ th[data-inst-sort] .th-sort {
 }
 
 
-/* R7/F2: rows beyond the compact slice on a table whose full body is already
+/* Rows beyond the compact slice on a table whose full body is already
    in the DOM. This is the ONE sanctioned use of display:none in this codebase's
    honesty model, and it is narrow by construction: `[data-compact-extra]`
    matches DATA ROWS only — never a caveat, terminus, footnote or stated
-   absence, all of which live outside the tbody. R19 permits exactly this and
+   absence, all of which live outside the tbody. The honesty model permits exactly this and
    nothing else, and `css-fold.test.ts` keeps every honesty selector out of it.
    The rows return the moment the disclosure is activated. */
 tbody[data-collapsed="true"] tr[data-compact-extra] {
   display: none;
 }
 
-/* ==================================================== notes (SL-R2 … SL-R4)
+/* ==================================================== notes
 
    One explanation primitive. The panel uses the TOP LAYER via `popover`,
    because a panel positioned inside `.table-scroll { overflow-x: auto }` is
@@ -3033,7 +3033,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   vertical-align: baseline;
 }
 
-/* >= 44px hit target at every width (SL-R24). The visual dot is smaller than
+/* >= 44px hit target at every width. The visual dot is smaller than
    the tappable box: padding carries the target, so the glyph can stay quiet. */
 .note-btn {
   appearance: none;
@@ -3071,13 +3071,13 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   line-height: 1.45;
   box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
 
-  /* CODE-REVIEW F8: reset the header typography this panel INHERITS.
+  /* Reset the header typography this panel INHERITS.
 
      CSS inheritance follows the DOM tree, not the layout tree, so a panel in
      the top layer still inherits from the `<th>` it is written inside — and
      `.etable th` sets `white-space: nowrap`, `text-transform: uppercase`,
      `letter-spacing: 0.12em` and `text-align: left`. Header notes are the
-     PRIMARY case this run creates (R5, R6, R7), so without this every one of
+     PRIMARY case here, so without this every one of
      them rendered its footnote prose as a single unwrapped uppercase
      letter-spaced line running out of the panel.
 
@@ -3093,7 +3093,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   overflow-wrap: anywhere;
 }
 
-/* SL-R2b: a DEFAULT resting place for a panel nobody positions.
+/* A DEFAULT resting place for a panel nobody positions.
 
    `note()` renders through shared renderers, two of which (`txnRowHtml` via
    `feedItemHtml`) also draw rows on `/watchlist/` and `/e/` — routes this run
@@ -3122,7 +3122,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   }
 }
 
-/* --- the non-supporting-engine fallback (SL-R3), and its test seam (SL-R27).
+/* --- the non-supporting-engine fallback, and its test seam.
 
    The declarations are authored ONCE and emitted into two selectors: the real
    `@supports not` block, and a `:root.force-note-fallback` block a test can
@@ -3162,7 +3162,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   display: block;
 }
 
-/* --- print (SL-R4). Hover-only text must still reach paper: every panel is
+/* --- print. Hover-only text must still reach paper: every panel is
    laid out in NORMAL FLOW beneath its anchor and the button is hidden. This is
    asserted by rendering under emulated print media and measuring a non-zero
    box, not by grepping for this rule. */

@@ -1,7 +1,7 @@
 """Checkpoint-before-bytes resume primitives, shared by every ingest module.
 
-Lifted verbatim out of ``populus.ingest.inst13f`` (RUN M2-6, R13) so the House
-PTR fetch (RUN M1-B, R1/R2) resumes on ONE implementation rather than a second
+Lifted verbatim out of ``populus.ingest.inst13f`` so the House
+PTR fetch resumes on ONE implementation rather than a second
 copy of the same ordering rule. The invariant these three functions encode:
 
     a document's expected sha256 is committed to a durable sidecar BEFORE its
@@ -117,7 +117,7 @@ def commit_checkpoint(
 
 
 def archive_verified(archive: Path, expected_hash: str | None) -> bool:
-    """Whether *archive* exists and re-hashes to *expected_hash* (RUN M1-B, R3).
+    """Whether *archive* exists and re-hashes to *expected_hash*.
 
     The honest durability test for an archived document whose expected hash is
     recorded elsewhere (the House PTR case: ``filings.response_hash``). A full

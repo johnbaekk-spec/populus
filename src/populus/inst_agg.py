@@ -1,4 +1,4 @@
-"""Cross-filer 13F aggregates (ARCHITECTURE.md §10.2; M2-CONTRACT §5.6 — RUN M2-3).
+"""Cross-filer 13F aggregates (ARCHITECTURE.md §10.2; M2-CONTRACT §5.6).
 
 Pure DB→DB: read the default 13F population (``v_default_holdings`` /
 ``v_default_inst_filings``) joined to the §5.4 securities registry from a source
@@ -82,7 +82,7 @@ def _position_key(security_id: str | None, cusip: str | None) -> str | None:
     """``'sid:<id>'`` when resolved, else ``'cusip:<cusip>'``, else ``None``.
 
     A ``None`` key is an UNKEYABLE holding (neither a resolved security nor a
-    reported CUSIP): retained and counted in the filer registry (G3), excluded
+    reported CUSIP): retained and counted in the filer registry, excluded
     from QoQ (which needs a stable cross-quarter handle).
     """
     if security_id is not None:
@@ -100,7 +100,7 @@ def _put_call_bucket(put_call: str | None) -> str:
 def _unit_key(ssh_prnamt_type: str | None) -> str:
     """A non-null grain token for the reported unit: ``'SH'``/``'PRN'``/``'UNKNOWN'``.
 
-    The unit is part of the position GRAIN (QA-F2): shares and principal amounts
+    The unit is part of the position GRAIN: shares and principal amounts
     are different quantities, so merging an SH and a PRN holding of the same
     security would produce a meaningless share count and bogus Δshares.
     """
@@ -142,7 +142,7 @@ class _Position:
     value_usd: int = 0
     #: Whether ANY constituent holding disclosed a parseable value. Without it a
     #: position whose only value was NULL is indistinguishable from a real zero,
-    #: and the QoQ delta fabricates one (QA-VERIFY5-B2).
+    #: and the QoQ delta fabricates one.
     has_disclosed_value: bool = False
     units: set[str] = field(default_factory=set)
     has_null_unit: bool = False
@@ -217,9 +217,9 @@ def _qoq_row(
     reconciled: bool,
     ingested_at: str,
 ) -> tuple:
-    """One ``agg_qoq_deltas`` row tuple, with the F4 unit-guarded Δshares."""
+    """One ``agg_qoq_deltas`` row tuple, with the unit-guarded Δshares."""
     # A position that existed but disclosed NO parseable value must NOT
-    # difference against a fabricated zero (QA-VERIFY5-B2). Absence of the
+    # difference against a fabricated zero. Absence of the
     # position is a real zero; presence with an undisclosed value is not.
     prev_undisclosed = prev is not None and not prev.has_disclosed_value
     curr_undisclosed = curr is not None and not curr.has_disclosed_value
@@ -231,7 +231,7 @@ def _qoq_row(
     )
     prev_shares = prev.shares if prev is not None else None
     curr_shares = curr.shares if curr is not None else None
-    # The grain unit — NOT NULL, because subpositions are unit-distinct (QA-F2).
+    # The grain unit — NOT NULL, because subpositions are unit-distinct.
     ssh_type = unit
     flags: set[str] = set()
     if reconciled:
@@ -306,14 +306,14 @@ def _match_periods(
        position. This is a ``position_key`` (security-id-first) match, so it is
        NOT flagged as CUSIP-reconciled; Δshares stays unit-guarded downstream.
        Without this pass the unit-bearing grain would push a legitimate unit
-       transition into pass 3 (mislabelled) or into exit+new (QA-F2, round 3).
+       transition into pass 3 (mislabelled) or into exit+new.
     3. **Reported-CUSIP reconciliation, ONLY across the resolved↔unresolved
        boundary.** This exists to bridge a registry gap — one quarter resolved to
        a ``sid:`` key, the other still keyed by raw ``cusip:`` — so it requires
        exactly one side to be unresolved and an unambiguous 1:1 pair. Two
        DIFFERENT resolved securities that happen to report the same CUSIP are
-       never collapsed; they stay a genuine exit and a genuine new (QA-F1,
-       round 3). Anything ambiguous stays unmatched — never a guessed bridge.
+       never collapsed; they stay a genuine exit and a genuine new.
+       Anything ambiguous stays unmatched — never a guessed bridge.
     """
     matched: list[tuple] = []
     for key in sorted(set(prev) & set(curr)):
@@ -365,7 +365,7 @@ def _match_periods(
         prev_full_key, prev_pos = prev_cands[0]
         curr_full_key, curr_pos = curr_cands[0]
         # ONLY a resolved↔unresolved bridge. Two distinct RESOLVED securities
-        # sharing a reported CUSIP must not be collapsed (QA-F1).
+        # sharing a reported CUSIP must not be collapsed.
         if _resolved(prev_full_key) == _resolved(curr_full_key):
             continue
         reconciled.append((curr_full_key, prev_pos, curr_pos))
@@ -405,7 +405,7 @@ def refuse_if_dest_aliases_source(
 
     This is a PREFLIGHT: callers must run it before any statement that could
     write to the source — schema application, ``ensure_views``, anything — so a
-    refused command leaves the source byte-identical (external review F4).
+    refused command leaves the source byte-identical.
     """
     resolved_dest = Path(dest_path).resolve()
     for _seq, _name, source_file in source_conn.execute("PRAGMA database_list"):
@@ -908,7 +908,7 @@ def _build_inst_agg_python(
     The alias refusal runs FIRST, before ``ensure_views`` or any other statement
     touches the source: since M2-7 ``ensure_views`` REPLACES a stale view
     definition, and a command that is ultimately refused must leave the source
-    byte-identical (external review F4).
+    byte-identical.
     """
     dest_path = Path(dest_path)
     refuse_if_dest_aliases_source(source_conn, dest_path)
@@ -918,9 +918,9 @@ def _build_inst_agg_python(
 
     # The FILING-LEVEL universe: every (cik, period) that has a default filing,
     # independent of whether it contains keyable holdings. Both the QoQ timeline
-    # (QA-F3) and the concentration rows (QA-F4) derive from this, so a
+    # and the concentration rows derive from this, so a
     # notice-only or all-unkeyable quarter is a REAL period that breaks adjacency
-    # and still gets a concentration row — it never silently disappears (G3).
+    # and still gets a concentration row — it never silently disappears.
     filer_periods: dict[str, list[str]] = defaultdict(list)
     for cik, period in source_conn.execute(
         "SELECT DISTINCT cik, period_of_report FROM v_filer_reported_filings"
@@ -929,12 +929,12 @@ def _build_inst_agg_python(
         filer_periods[cik].append(period)
 
     # --- filer set (a notice-only filer still gets a registry row) -----------
-    # QA-1 (RUN M2-8): seeded from v_filer_reported_filings, NOT the
+    # Seeded from v_filer_reported_filings, NOT the
     # affiliation-suppressed default set. The registry is a PER-FILER identity
     # structure and the dashboard's getStaticPaths iterates it, so seeding it from
     # the suppressed view meant a filer covered by an affiliate had correct
     # holdings and a correct concentration row but NO registry row — and therefore
-    # no page at all. That left the F13 fix delivering nothing end-to-end.
+    # no page at all. That left the earlier fix delivering nothing end-to-end.
     # Cross-entity issuer aggregates still read v_default_holdings below, so an
     # affiliate relationship is still counted exactly once in issuer totals.
     filers: dict[str, dict] = {}
@@ -987,7 +987,7 @@ def _build_inst_agg_python(
         " LEFT JOIN securities s ON s.security_id = h.security_id"
         " ORDER BY h.cik, h.period_of_report, h.holding_id"
     ):
-        # QA-1: registry COUNTS are accumulated in the second pass, over
+        # Registry COUNTS are accumulated in the second pass, over
         # v_filer_reported_holdings, for the same reason as concentration — they
         # describe the filer's own reported book, not the deduplicated one.
         pk = _position_key(security_id, cusip)
@@ -995,7 +995,7 @@ def _build_inst_agg_python(
         if pk is not None:
             # Unit is part of the GRAIN: an SH position and a PRN position of the
             # same security are different things and must never share an
-            # accumulator, or shares/deltas become meaningless (QA-F2).
+            # accumulator, or shares/deltas become meaningless.
             positions[(cik, period)][(pk, put_bucket, _unit_key(ssh_prnamt_type))].add(
                 value_usd, ssh_prnamt, ssh_prnamt_type, cusip
             )
@@ -1006,7 +1006,7 @@ def _build_inst_agg_python(
             entity_id, entity_link_state, cusip, issuer_name_raw
         )
 
-        # F22: the grain -> issuer map is NOT built here. `populate_issuer_adds`
+        # The grain -> issuer map is NOT built here. `populate_issuer_adds`
         # runs after BOTH build paths and derives it once from the same source
         # holdings; building it here too meant the python path paid a
         # high-cardinality traversal and its memory for a structure it then
@@ -1026,18 +1026,18 @@ def _build_inst_agg_python(
         if issuer_name_raw < bucket["issuer_name"]:
             bucket["issuer_name"] = issuer_name_raw
 
-        # NOTE (RUN M2-8 T6): per-filer concentration is NOT accumulated here.
-        # This loop reads v_default_holdings, which suppresses a filer covered by
-        # an affiliate — correct for cross-entity issuer totals, wrong for a
-        # filer's own book, and the flag baseline inherits the error (external
-        # review round 3, F5). Concentration is accumulated in the second pass
-        # below, over v_filer_reported_holdings.
+        # NOTE: per-filer concentration is NOT accumulated here. This loop
+        # reads v_default_holdings, which suppresses a filer covered by an
+        # affiliate — correct for cross-entity issuer totals, wrong for a
+        # filer's own book, and the flag baseline would inherit the error.
+        # Concentration is accumulated in the second pass below, over
+        # v_filer_reported_holdings.
 
     # --- second pass: PER-FILER inputs, from the non-suppressed view ---------
     # v_filer_reported_holdings applies restatement/NEW-HOLDINGS composition and
     # cover reconciliation but NOT cross-filer affiliation suppression, so a
-    # filer's concentration is measured over the book it actually reported
-    # (plan R8/R14; review round 3 F5, round 4 F4). Cross-entity aggregates above
+    # filer's concentration is measured over the book it actually reported.
+    # Cross-entity aggregates above
     # keep reading v_default_holdings so an issuer total counts an affiliate once.
     for (
         cik,
@@ -1107,7 +1107,7 @@ def _build_inst_agg_python(
     for cik in sorted(filer_periods):
         # CONSECUTIVE periods of the filing universe — never a bridge across an
         # intervening quarter that reported no keyable positions, which would
-        # fabricate continuity/additions/trims (QA-F3). A period with no keyable
+        # fabricate continuity/additions/trims. A period with no keyable
         # positions compares as an EMPTY side, so its neighbours read as genuine
         # exits and new positions.
         ordered = sorted(set(filer_periods[cik]))
@@ -1148,7 +1148,7 @@ def _build_inst_agg_python(
     # Every default filer-period gets a concentration row, including a
     # zero-position (notice-only / all-unkeyable) one: total 0 with NULL share
     # and NULL HHI under `concentration_unavailable`, never an omitted row and
-    # never a fabricated zero (QA-F4).
+    # never a fabricated zero.
     for cik, periods in filer_periods.items():
         for period in periods:
             conc[(cik, period)]  # touch the defaultdict to materialize the bucket
@@ -1217,7 +1217,7 @@ def _build_inst_agg_python(
     )
 
 
-# --- R21: the recently-added-issuers leaderboard -----------------------------
+# --- the recently-added-issuers leaderboard -----------------------------
 
 #: Modes are a PATH DIMENSION, not a client filter. The site is static, so a
 #: combined payload cannot be re-aggregated at request time, and filtering
@@ -1430,7 +1430,7 @@ def _concentration_rows(
             topn_value = sum(values[:topn])
             topn_share_bps = topn_value * 10000 // total
             hhi = sum(v * v for v in values) * 10000 // (total * total)
-            # The LARGEST SINGLE position's share (R14) — a different statistic
+            # The LARGEST SINGLE position's share — a different statistic
             # from topn_share_bps, and the one the outsized flag compares against.
             max_position_share_bps = (values[0] * 10000 // total) if values else 0
         else:
@@ -2424,7 +2424,7 @@ def build_inst_agg(
 ) -> InstAggReport:
     """Build the aggregate, using bounded SQL only in the owned materializer.
 
-    R13/R23/R24: the registry join gate runs HERE, at the one point BOTH build
+    The registry join gate runs HERE, at the one point BOTH build
     paths converge. Placing it inside either `_build_inst_agg_python` or
     `_build_inst_agg_bulk` would gate one path and leave the other ungated —
     the twin-code-path defect this repository has been bitten by before.
@@ -2468,7 +2468,7 @@ def build_inst_agg(
 def populate_issuer_adds(
     source_conn: sqlite3.Connection, dest_path: Path | str, *, ingested_at: str
 ) -> None:
-    """R21: derive the leaderboard from a FINISHED aggregate.
+    """Derive the leaderboard from a FINISHED aggregate.
 
     ONE implementation, both build paths. The python builder and the bulk SQL
     builder produce the same `agg_qoq_deltas`, so the leaderboard is derived
@@ -2539,7 +2539,7 @@ def populate_issuer_adds(
         # Every emitted (period, mode) carries an exclusion row, INCLUDING a
         # zero one: an absent row and a zero are different claims, and the
         # section note's truth table branches on the count being known.
-        # F21: the cross-product over every period the CORPUS carries, not only
+        # The cross-product over every period the CORPUS carries, not only
         # the periods that happened to have adds or ambiguity. A quiet quarter
         # is still offered by the selector, and a MISSING count is not zero —
         # it is unknown, and an unknown omission cannot be honestly stated. So
@@ -2564,7 +2564,7 @@ def populate_issuer_adds(
 
 
 def _assert_join_mechanism_intact(conn: sqlite3.Connection) -> None:
-    """F9: prove the JOIN still works, independently of how much it matches.
+    """Prove the JOIN still works, independently of how much it matches.
 
     The hole this closes: a CIK-format or join-target regression yields ZERO
     matches, which looks exactly like a small extract and so used to pass. But
@@ -2602,9 +2602,9 @@ def _assert_join_mechanism_intact(conn: sqlite3.Connection) -> None:
 
 
 def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> None:
-    """R13/R23/R24: fail the build when an `active` seed row stops joining.
+    """Fail the build when an `active` seed row stops joining.
 
-    `publication` is an EXPLICIT build input, not a guess about the data (F9).
+    `publication` is an EXPLICIT build input, not a guess about the data.
 
     A publication build additionally proves the join MECHANISM is intact before
     any coverage reasoning, so a regression that matches nothing can no longer
@@ -2631,7 +2631,7 @@ def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> Non
     finally:
         conn.close()
 
-    # F9: abstention is decided by the seed's DECLARED population floor, never
+    # Abstention is decided by the seed's DECLARED population floor, never
     # by how much happened to match. That is the whole fix: coverage cannot be
     # both the thing being tested and the thing deciding whether to test it, or
     # a wrong join target — which produces zero matches — excuses itself.
@@ -2641,13 +2641,13 @@ def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> Non
     if not filer_count:
         return  # withheld corpus: no filers to type and no join to enforce
 
-    # F26: ENFORCEMENT and MATERIALIZATION are separate decisions.
+    # ENFORCEMENT and MATERIALIZATION are separate decisions.
     #
     # Coverage enforcement asks "is every active row still there?", which only
     # means something against the population. Materialization asks "which rows
     # DID join?", which is answerable at any scale — and skipping it stripped
     # every curated name and type from partial extracts, including the local
-    # data-wired build, defeating R11 on exactly the builds that can be tested.
+    # data-wired build, defeating the gate on exactly the builds that can be tested.
     if filer_count >= registry.population_floor:
         # At or above the declared floor this IS the population: every active
         # row must join, and zero matches is a catastrophic join defect.
@@ -2660,7 +2660,7 @@ def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> Non
         )
 
     # Always materialize the rows that matched AND are active. `typed_ciks`
-    # already excludes retired and unmatched rows (F8).
+    # already excludes retired and unmatched rows.
     _write_manager_typing(dest, registry, report)
 
 

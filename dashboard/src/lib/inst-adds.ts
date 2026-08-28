@@ -1,4 +1,4 @@
-/* R9/R20/R21/R22 — the recently-added-issuers leaderboard: closed-period
+/* The recently-added-issuers leaderboard: closed-period
    selection, the endpoint payload shape, and the section note.
 
    Pure. Shared by the endpoint, the SSR page and the client island, so all
@@ -111,7 +111,7 @@ export function compareAddsRows(a: AddsRow, b: AddsRow): number {
 /** UTF-8 byte length. `String.length` counts UTF-16 code units, which
     UNDERCOUNTS every non-ASCII issuer name — and issuer names are filed text
     that routinely carries accents and non-Latin scripts. A cap measured in
-    code units is not the cap that was declared (F11). */
+    code units is not the cap that was declared. */
 function utf8Bytes(s: string): number {
   return new TextEncoder().encode(s).length;
 }
@@ -136,7 +136,7 @@ export interface BoundedAdds {
     boundary. The boundary is the omitted row's sort tuple, not a row count:
     a count says how many are missing, the tuple says WHERE the cut fell.
 
-    BOUND EXACTLY ONCE (F10). Bounding an already-bounded set reports
+    BOUND EXACTLY ONCE. Bounding an already-bounded set reports
     `truncated: false`, because the omitted rows are no longer there to be
     omitted — which silently erased the truncation notice on the SSR view. The
     renderer therefore consumes a payload rather than re-bounding one, and this
@@ -159,7 +159,7 @@ export function boundAdds(
   /** The payload that keeping exactly `n` rows would actually serialize to —
       including the REAL boundary tuple of the row that would be cut.
 
-      F11: the boundary is part of the response, and its `issuer_key` is
+      The boundary is part of the response, and its `issuer_key` is
       unbounded text. Measuring with a placeholder key under-measured the
       response, so a near-cap dataset passed bounding and then threw at
       serialization instead of simply keeping one fewer row. */
@@ -193,11 +193,11 @@ export function boundAdds(
   };
 }
 
-/* ---------- R14/R21: the section note truth table ---------- */
+/* ---------- the section note truth table ---------- */
 
 /** `truncated` and the exclusion count are INDEPENDENT states, and the note is
     composed from BOTH. A bounded leaderboard can omit rows for either reason,
-    and an unstated omission is exactly what R14 forbids — so a zero exclusion
+    and an unstated omission is exactly what the honesty rules forbid — so a zero exclusion
     count can never suppress an independently required truncation notice.
 
     | truncated | exclusions | note                                   |
@@ -235,7 +235,7 @@ export function addsNoteHtml(payload: Pick<AddsPayload,
 }
 
 
-/* ---------- F3: caller-owned leaderboard comparators ---------- */
+/* ---------- caller-owned leaderboard comparators ---------- */
 
 export type AddsSortKey = "issuer" | "managers" | "new" | "value" | "adder";
 
@@ -273,7 +273,7 @@ export function sortAddsRows(
     if (ka == null && kb == null) return a.issuer_key < b.issuer_key ? -1 : 1;
     if (ka == null) return 1;
     if (kb == null) return -1;
-    // F3: text and numbers need OPPOSITE base directions, and conflating them
+    // Text and numbers need OPPOSITE base directions, and conflating them
     // inverted both string columns — Issuer and Top adder displayed descending
     // under `aria-sort="ascending"`. Numbers: "desc" means largest first.
     // Text: "asc" means A first. Each is written out rather than derived from

@@ -1,6 +1,6 @@
 ---
 // 13F holders deep view (Ticker Holders.dc.html), bound to
-// agg_issuer_top_holders via the Locked #18 ticker→issuer contract: static
+// agg_issuer_top_holders via the ticker→issuer mapping contract: static
 // paths exist ONLY for tickers that resolve through the mapping AND whose
 // issuer is entity-keyed in the aggregate — i.e. as-of-resolved identity, the
 // same standard the full holder list below is served under.
@@ -41,7 +41,7 @@ const inst = build.inst;
 if (!inst.present) throw new Error("holders page built without the inst module");
 const periods = issuerPeriods(inst, issuerKey);
 const period = periods.at(-1)!;
-// R22: the top/tail budget state rides on every holder row — through the SSR
+// The top/tail budget state rides on every holder row — through the SSR
 // body AND the embedded period payload below — so the client period switch
 // re-renders the same filerHref targets the SSR produced.
 const holders = (inst.holdersByIssuer.get(issuerKey) ?? [])
@@ -98,7 +98,7 @@ const description =
     import { initHoldersPeriods } from "../../../../scripts/entity-client";
     import { initNotes } from "../../../../scripts/notes";
     initHoldersPeriods();
-    /* SL-R28: one `initNotes()` per surface that passes a note scope. Binding
+    /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —
        and a second call would be idempotent. It is NOT added to `Base.astro`:

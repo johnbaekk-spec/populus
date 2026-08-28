@@ -1,4 +1,4 @@
--- Default and uncertainty views (ARCHITECTURE.md §9.5 — RUN 4).
+-- Default and uncertainty views (ARCHITECTURE.md §9.5).
 --
 -- Applied by populus.amendments.ensure_views (idempotent), NOT part of
 -- schema.sql, which must stay byte-identical to the §9.4 DDL block.
@@ -40,7 +40,7 @@ SELECT
 FROM filings a
 JOIN filings o ON o.filing_id = a.supersedes;
 
--- Institutional 13F default population (ARCHITECTURE.md §10.2 — RUN M2-2).
+-- Institutional 13F default population (ARCHITECTURE.md §10.2).
 -- Depends on the inst_* tables (populus.load.ensure_inst_schema); applied here
 -- so a database gains both inst views on the same ensure_views call as the M1
 -- views. Harmless (empty) until the inst tables carry rows.
@@ -74,7 +74,7 @@ JOIN filings o ON o.filing_id = a.supersedes;
 --     delta by 1000 promotes to REAL past ~9.2e18 on this signed-64-bit column,
 --     putting floating point back inside the predicate that exists to keep it
 --     out; dividing cannot overflow and is exactly equivalent for integer
---     deltas (§I1, external review F5).
+--     deltas (§I1).
 CREATE VIEW v_inst_reconciled_filings AS
 WITH restatement_survivors AS (
   SELECT f.*
@@ -123,14 +123,14 @@ FROM inst_holdings h
 JOIN v_default_inst_filings f ON f.filing_id = h.filing_id;
 
 -- ---------------------------------------------------------------------------
--- RUN M2-8 (T5, plan R8) — the PER-FILER REPORTED population.
+-- The PER-FILER REPORTED population.
 --
 -- v_default_* answers cross-entity questions, so it drops a survivor whose file
 -- number appears as another survivor's other-manager: an issuer total must count
 -- an affiliate relationship ONCE. That is correct there and WRONG for a filer's
 -- own page, which promises "every position this filer reported". Building that
 -- page on v_default_holdings silently deletes the filer's own rows while the page
--- claims completeness (external review round 2, F13).
+-- claims completeness.
 --
 -- So this chain applies stages 1 and 3 and DELIBERATELY OMITS stage 2:
 --   1. restatement survivors   — identical predicate to v_inst_reconciled_filings
@@ -175,7 +175,7 @@ WHERE s.table_value_total_usd IS NULL          -- unknown total: cover_failed ow
 -- v_filer_reported_holdings: what the filer itself reported, after amendment
 -- composition, with no cross-filer suppression. The filer page and the
 -- per-filer concentration/flag baseline read THIS; issuer totals keep reading
--- v_default_holdings (plan R8, R14; review round 3 F5).
+-- v_default_holdings.
 CREATE VIEW v_filer_reported_holdings AS
 SELECT h.*
 FROM inst_holdings h

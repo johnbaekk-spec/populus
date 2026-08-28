@@ -1,4 +1,4 @@
-/* R21 — the bounded recently-added-issuers endpoint.
+/* The bounded recently-added-issuers endpoint.
 
    PATH: /institutional/data/adds/<period>.<mode>.v1.json
 
@@ -8,7 +8,7 @@
    value, manager counts and top adder under a "new only" label. Both modes are
    therefore prerendered for every offered period.
 
-   Only CLOSED periods are emitted (R20). An open quarter is materially
+   Only CLOSED periods are emitted. An open quarter is materially
    undercounted — it ranks whoever filed early — so it is not published at all
    rather than published with a caveat. */
 
@@ -38,7 +38,7 @@ export const GET: APIRoute = ({ params }) => {
   const period = String(params.period);
   const mode = String(params.mode) as AddsMode;
 
-  // F11: bound against the REAL envelope. Bounding against a placeholder with
+  // Bound against the REAL envelope. Bounding against a placeholder with
   // blank metadata under-measured the response — substituting the actual period,
   // generated-at, truncation flag and boundary pushed a boundary-sized payload
   // twenty bytes over the declared 2 MiB cap. The cap bounds the RESPONSE, so
@@ -58,8 +58,8 @@ export const GET: APIRoute = ({ params }) => {
     truncated: bounded.truncated,
     truncation_boundary: bounded.truncation_boundary,
     // REQUIRED, and it travels in the payload rather than being recomputed:
-    // a static site cannot recount after a period or mode toggle, and R14
-    // forbids an omission the reader is never told about.
+    // a static site cannot recount after a period or mode toggle, and an
+    // omission the reader is never told about is forbidden.
     ambiguous_identity_exclusion_count: envelope.ambiguous_identity_exclusion_count,
   };
   const body = JSON.stringify(payload);

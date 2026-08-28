@@ -1,10 +1,10 @@
 """Populus pipeline CLI (ARCHITECTURE.md §5.3).
 
 Every §5.3 command is implemented: ``db init``, all four ingest jobs
-(``congress-house``/``congress-senate`` RUNs 2–3; ``congress-backfill``/
-``members`` RUN 4), both reparse jobs, ``stats``, the ``backfill-audit``
-gate commands, and the RUN-5 publication pipeline — ``build``/``publish``/
-``verify`` over the §5.5 protocol (staging P1 mode).
+(``congress-house``/``congress-senate``, ``congress-backfill``/``members``),
+both reparse jobs, ``stats``, the ``backfill-audit`` gate commands, and the
+publication pipeline — ``build``/``publish``/``verify`` over the §5.5
+protocol (staging P1 mode).
 
 This layer owns every current-time/identity/randomness value the library
 needs (``now``/``run_id``/``host``/``sleep``/``monotonic``/``jitter``/
@@ -31,7 +31,7 @@ from populus.db import connect, init_db
 from populus.parse_gate import compute_parse_gate
 
 # The eFD submitted-date window options are MM/DD/YYYY, the exact shape the
-# index POST body carries (RUN M1-B, R14).
+# index POST body carries.
 _MDY_OPTION = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 
 INGEST_JOB_OWNERS = {
@@ -331,7 +331,7 @@ def ingest(
         try:
             # Every M2 entrypoint applies the inst schema before the views, so a
             # pre-existing M1/M2-1 database gains the inst tables AND both inst
-            # views on first M2 use (F19/F33).
+            # views on first M2 use.
             ensure_inst_schema(conn)
             ensure_views(conn)
             ensure_subline_columns(conn)
@@ -528,7 +528,7 @@ def identity_group() -> None:
     show_default=True,
     help=(
         "DIR of cached SEC Official 13(f) Lists to seed as definitional CUSIP"
-        " intervals (RUN M2-5). Every available quarter whose interval covers a"
+        " intervals. Every available quarter whose interval covers a"
         " loaded period_of_report is seeded; on a fresh database (no periods"
         " yet) pass --list13f-start-quarter. A missing directory seeds nothing."
     ),
@@ -541,7 +541,7 @@ def identity_group() -> None:
     help=(
         "Explicit 13(f)-list file(s) to seed (repeatable); the quarter is taken"
         " from the filename and its sibling variant in the same directory is used"
-        " for the R5 cross-format check. Overrides the --list13f-cache selection."
+        " for the list-13F cross-format check. Overrides the --list13f-cache selection."
     ),
 )
 @click.option(
@@ -598,7 +598,7 @@ def identity_bootstrap(
     if as_of is not None:
         # Require canonical YYYY-MM-DD: date.fromisoformat also accepts compact
         # (20200101) and week-date forms, which would persist noncanonical into
-        # lexicographically-compared date columns and mis-order intervals (QA-F4).
+        # lexicographically-compared date columns and mis-order intervals.
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of):
             raise click.UsageError(
                 f"--as-of {as_of!r} must be a canonical ISO date (YYYY-MM-DD)"
@@ -609,7 +609,7 @@ def identity_bootstrap(
             raise click.UsageError(f"--as-of {as_of!r} is not a valid date")
     # Default to TODAY IN UTC (not the process-local calendar day): around UTC
     # midnight a local date would open ticker/name intervals on the wrong day and
-    # leave otherwise-applicable FTD symbol links unresolved (G14). (QA-F4)
+    # leave otherwise-applicable FTD symbol links unresolved.
     snapshot_date = (
         as_of
         if as_of is not None
@@ -620,7 +620,7 @@ def identity_bootstrap(
     except (IdentityRegistryError, OSError) as exc:
         raise click.ClickException(str(exc))
 
-    # Resolve the 13(f)-list source (RUN M2-5): explicit --list13f files override
+    # Resolve the 13(f)-list source: explicit --list13f files override
     # the --list13f-cache selection; a missing cache directory seeds nothing.
     list13f_source = None
     list13f_quarters: list[str] | None = None
@@ -629,7 +629,7 @@ def identity_bootstrap(
         if len(parents) > 1:
             raise click.UsageError(
                 "all --list13f files must live in one directory (its siblings are"
-                " used for the R5 cross-format check)"
+                " used for the list-13F cross-format check)"
             )
         source_dir = parents.pop()
         derived = [parse_quarter(Path(path).name) for path in list13f_files]
@@ -655,7 +655,7 @@ def identity_bootstrap(
     try:
         ensure_registry(conn)
         # A pre-inst database must gain the inst tables + views before the
-        # registry reconcile touches inst_holdings (LD-3) — F33.
+        # registry reconcile touches inst_holdings.
         ensure_inst_schema(conn)
         ensure_views(conn)
         report = run_identity_bootstrap(
@@ -787,7 +787,7 @@ _BACKEND_OPTIONS = [
 
 #: Attestation selection is EXPLICIT at the CLI boundary and has no default.
 #: A run that forgets to choose must fail loudly rather than inherit a provider
-#: that answers "verified" to everything (RUN P3-3a R14).
+#: that answers "verified" to everything.
 def _attestation_option(command):
     return click.option(
         "--attestation",
@@ -826,7 +826,7 @@ def _with_backend_options(command):
     return command
 
 
-# --- R42/R44: the corpus loop ------------------------------------------------
+# --- the corpus loop ------------------------------------------------
 
 
 def _split_filing_ids(values: tuple[str, ...]) -> frozenset[str]:
@@ -881,10 +881,10 @@ def seed_corpus(
     seed_db: str | None,
     seed_sha256: str | None,
 ) -> None:
-    """Seed the working store from the previous release, then baseline it (R42).
+    """Seed the working store from the previous release, then baseline it.
 
     Refuses rather than falling back to an empty database: building fresh is
-    what produced B24 and B25.
+    what produced the earlier corpus-loss defects.
     """
     from populus.amendments import ensure_views
     from populus.load import ensure_subline_columns
@@ -982,7 +982,7 @@ def seed_corpus(
     ),
 )
 def corpus_floor(db_path: str, counts_path: str, allow_reparse: tuple[str, ...]) -> None:
-    """Refuse the build if the seed's corpus identities did not survive (R44)."""
+    """Refuse the build if the seed's corpus identities did not survive."""
     from populus.publish import seed as seedmod
 
     authorized = _split_filing_ids(allow_reparse)
@@ -1001,9 +1001,9 @@ def corpus_floor(db_path: str, counts_path: str, allow_reparse: tuple[str, ...])
 
 def _echo_inst_gate_outcome(report) -> None:
     """Print the M2 gate outcome. Shared so the honesty surface does not
-    depend on which command assembled the build (QA-F5).
+    depend on which command assembled the build.
     """
-    # Surface the M2 gate decision for the inst module (R8): a withheld notice
+    # Surface the M2 gate decision for the inst module: a withheld notice
     # (below the >=95% value-coverage gate) is the honest, owner-accepted
     # outcome, not an error — congress still publishes.
     if report.inst_withheld is not None:
@@ -1015,7 +1015,7 @@ def _echo_inst_gate_outcome(report) -> None:
             f" {w['cover_failed_count']} — below the M2 ≥95% gate; congress"
             " publishes normally"
         )
-        # R11: name the quarters with no covering 13(f) list.
+        # Name the quarters with no covering 13(f) list.
         uncovered = w.get("uncovered_quarters") or []
         if uncovered:
             click.echo(
@@ -1029,12 +1029,12 @@ def _echo_inst_gate_outcome(report) -> None:
         )
     # M2-7 §I5: the build's own coverage output states what was tolerated and
     # which filings were EXCLUDED to produce it — on the withheld path and on the
-    # published path alike (external review F3). One shared rendering.
+    # published path alike. One shared rendering.
     if report.inst_cover_dispositions is not None:
         from populus.ingest.inst13f import cover_dispositions_from_mapping
 
         click.echo(f"  {cover_dispositions_from_mapping(report.inst_cover_dispositions)}")
-    # R9: per-period value-coverage figures whenever inst data was measured.
+    # Per-period value-coverage figures whenever inst data was measured.
     for period in report.inst_period_coverage or []:
         ratio = (
             f"{period['coverage'] * 100:.2f}%"
@@ -1048,7 +1048,7 @@ def _echo_inst_gate_outcome(report) -> None:
         )
     # Persist the gate outcome so `publish` can report it truthfully and can
     # DISTINGUISH "withheld by the gate" from "no institutional data ingested"
-    # (QA-F5). This lives in .staging/ — operational state, never a published
+    # — this lives in .staging/ — operational state, never a published
     # artifact, so it touches no manifest, digest or inventory.
 
 
@@ -1112,7 +1112,7 @@ def build(
 
 
 def _refuse_bad_inst_db(inst_db: str) -> None:
-    """Cheap CLI-side refusals for `--inst-db` (RUN M2-11, R2).
+    """Cheap CLI-side refusals for `--inst-db`.
 
     A missing path, a directory, or a snapshot file this process could still
     WRITE is refused before any build work starts — the deep enforcement
@@ -1162,7 +1162,7 @@ def _refuse_bad_inst_db(inst_db: str) -> None:
     "--inst-db",
     "inst_db",
     default=None,
-    help="Accepted institutional source snapshot (RUN M2-11, R1): the"
+    help="Accepted institutional source snapshot: the"
     " finalized, read-only inst-source-v<N>.db cut by scripts/inst_snapshot.py."
     " When given, the inst module derives from it; when absent, the build is"
     " byte-identical to a congress-only build.",
@@ -1195,7 +1195,7 @@ def stage_build_cmd(
     The site build runs between this and ``finalize-build``: it reads
     ``manifest.json`` to decide which surfaces exist, and its file count is what
     ``finalize-build`` patches into ``stats.json``. Nothing is journalled here —
-    the recovery journal stays last (R35).
+    the recovery journal stays last.
 
     Prints the staging directory so the workflow can pass it onward, and the
     build id. Exits non-zero if the build was preserved or reconciled rather
@@ -1277,7 +1277,7 @@ def snapshot_site_cmd(source: str, dest: str) -> None:
     and is never deployed.
 
     The freeze is what makes "the bytes we hashed are the bytes we uploaded"
-    true (R4): everything downstream reads the sealed copy, so the source can
+    true: everything downstream reads the sealed copy, so the source can
     keep changing without moving the digest.
     """
     import shutil
@@ -1331,14 +1331,14 @@ def snapshot_site_cmd(source: str, dest: str) -> None:
     "site_file_count",
     required=True,
     type=int,
-    help="Number of files the site build emitted (R3: never defaulted).",
+    help="Number of files the site build emitted (never defaulted).",
 )
 @click.option(
     "--dist-dir",
     "dist_dir",
     type=click.Path(file_okay=False),
     help="The site build output. Its stats.json is patched with the same bytes "
-         "as the canonical copy and the two are asserted byte-equal (R24, §12.1 "
+         "as the canonical copy and the two are asserted byte-equal (§12.1 "
          "step 2). Omit only when there is no site — the wrapper build path.",
 )
 @_with_backend_options
@@ -1376,7 +1376,7 @@ def finalize_build_cmd(
         )
     except (PublishError, BackendError, DigestError, OSError) as exc:
         raise click.ClickException(str(exc))
-    # QA-F5, restored at the new entry point: `populus build` wrote this record
+    # Restored at the new entry point: `populus build` wrote this record
     # and the two-phase path did not, so a WITHHELD M2 module published as "no
     # build-time gate record — rebuild to record the reason" when the truth was
     # "withheld by the >=95% value-coverage gate". The honesty surface must not
@@ -1387,7 +1387,7 @@ def finalize_build_cmd(
         f"finalized build {report.build_id} ({report.artifact_count} artifacts,"
         f" site_file_count {site_file_count}) at {report.staging_dir}"
     )
-    # R3: the count is asserted here, at the boundary the deploying path crosses,
+    # The count is asserted here, at the boundary the deploying path crosses,
     # rather than trusted. `require_site_file_count` had no production caller at
     # all until this line -- four green tests over dead code.
     require_site_file_count(report.staging_dir)
@@ -1418,11 +1418,11 @@ def publish(
     make_backend = _make_backend(backend, repo_slug)
     # Capture the build-time gate record BEFORE publishing: a successful publish
     # clears .staging/<build_id>, so reading it afterwards would always miss
-    # and the withheld reason would be lost at the publish boundary (QA-F5).
+    # and the withheld reason would be lost at the publish boundary.
     # A ROLLBACK republishes an EXISTING build, so a staged build's gate record
     # would describe a different target entirely — printing "withheld" for a
     # rollback target that was never gated. Capture a record only for a forward
-    # publish; rollback gets a neutral notice (QA-F3, round 6).
+    # publish; rollback gets a neutral notice.
     _gate_record_before_publish = (
         None if rollback_to else _read_inst_gate_record(data_repo, build_id)
     )
@@ -1449,7 +1449,7 @@ def publish(
         else ""
     )
     click.echo(f"published build {report.build_id}{version}")
-    # Note whether the published build carries the inst module (R8): its absence
+    # Note whether the published build carries the inst module: its absence
     # on the FTD-only corpus is the gate withholding it at build time.
     manifest_path = Path(data_repo) / "builds" / report.build_id / "manifest.json"
     if manifest_path.is_file():
@@ -1462,7 +1462,7 @@ def publish(
         else:
             # The module is absent — say WHY, from the build-time gate record.
             # Silence here would hide the owner-accepted fail-closed outcome at
-            # the publication boundary (QA-F5).
+            # the publication boundary.
             if rollback_to:
                 click.echo(
                     "inst module: not present in this build (rollback target —"
@@ -1482,7 +1482,7 @@ def _inst_gate_path(data_repo: str, build_id: str) -> Path:
 
 
 def _write_inst_gate_record(data_repo: str, report) -> None:
-    """Record the inst gate outcome for `publish` to report (QA-F5).
+    """Record the inst gate outcome for `publish` to report.
 
     Three states are distinguishable: `withheld` (measured, below the gate),
     `included`, and `absent` (no institutional data was ingested at all) — so the
@@ -1498,7 +1498,7 @@ def _write_inst_gate_record(data_repo: str, report) -> None:
     # Re-running `build` for an ALREADY-STAGED build reconstructs no gate
     # metadata, so a naive write would overwrite a real `withheld` verdict with
     # `absent` — and the next publish would falsely claim no institutional data
-    # was ingested, concealing the fail-closed decision (QA-F2, round 4). An
+    # was ingested, concealing the fail-closed decision. An
     # "absent" verdict never overwrites a recorded one.
     if record["state"] == "absent":
         existing = _read_inst_gate_record(data_repo, report.build_id)
@@ -1517,17 +1517,17 @@ def _write_inst_gate_record(data_repo: str, report) -> None:
 
 
 def _read_inst_gate_record(data_repo: str, build_id: str | None) -> dict | None:
-    """The build-time gate outcome, read while .staging still exists (QA-F5)."""
+    """The build-time gate outcome, read while .staging still exists."""
     if build_id is None:
         # Mirror the publisher's build selection: build ids are `YYYYMMDD.N`, so
         # LEXICOGRAPHIC ordering puts `.9` after `.10` and could attach the wrong
         # withholding reason to a publication. Sort numerically and ignore any
-        # staging entry that is not a valid build id (QA-F3, round 4).
+        # staging entry that is not a valid build id.
         # Mirror the PUBLISHER's selection exactly: build ids are `YYYYMMDD.N`
         # (so lexicographic ordering would put `.9` after `.10`), and only a
         # build carrying a valid journal is publishable. Without the journal
         # predicate a newer PARTIAL staging directory could supply the verdict
-        # printed for a different publication (QA-F1, round 5).
+        # printed for a different publication.
         staging = Path(data_repo) / ".staging"
         candidates = []
         for entry in staging.glob("*"):
@@ -1569,7 +1569,7 @@ def _inst_absence_notice(
             " — congress published normally"
             # M2-7 §I5: the publish boundary reports the same dispositions the
             # build did; a withheld notice that hides the named exclusions is
-            # exactly the silence the rule forbids (external review F3).
+            # exactly the silence the rule forbids.
             f"\n  {cover_dispositions_from_mapping(record)}"
         )
     if isinstance(record, dict) and record.get("state") == "absent":
@@ -1577,7 +1577,7 @@ def _inst_absence_notice(
     # No record: a staging-less reconcile or an explicit re-publish of an
     # already-published build. Say so plainly — and NEVER reference a variable
     # that no longer exists here, which turned a SUCCESSFUL publish into a
-    # NameError traceback and a non-zero exit (QA-F1).
+    # NameError traceback and a non-zero exit.
     return (
         "inst module: not present in this build (no build-time gate record at"
         f" {_inst_gate_path(data_repo, build_id)} — staging is cleared after a"
@@ -1656,7 +1656,7 @@ def inst_agg(db_path: str, out_path: str) -> None:
         # The alias refusal comes FIRST — before the schema and view passes,
         # both of which write. `ensure_views` replaces a stale view definition
         # since M2-7, so preflighting after it would let a REFUSED command still
-        # alter the source database's bytes (external review F4).
+        # alter the source database's bytes.
         refuse_if_dest_aliases_source(conn, out_path)
         # Every M2 entrypoint applies the inst schema before the views, so a
         # pre-existing M1/M2-1 database resolves the default 13F views.
@@ -1870,7 +1870,7 @@ def backfill_audit_score(
         ctx.exit(1)
 
 
-# --- RUN M2-6: bulk 13F corpus (filer universe + resumable ingest) -----------
+# --- bulk 13F corpus (filer universe + resumable ingest) ----------------------
 
 
 @main.group("inst-bulk")
@@ -1906,7 +1906,7 @@ def _live_bulk_client():
 def inst_bulk_discover(
     filing_quarter: str, report_period: str, out_dir: str, top_n: int
 ) -> None:
-    """Discover + rank the filer universe for one budgeted quarter (R1-R4)."""
+    """Discover + rank the filer universe for one budgeted quarter."""
     from populus.inst_bulk import (
         discover_universe,
         rank_universe,
@@ -1951,7 +1951,7 @@ def inst_bulk_discover(
 def inst_bulk_ingest(
     ctx: click.Context, db_path: str, universe_path: str, raw_root: str, out_dir: str
 ) -> None:
-    """Resumably ingest the ranked universe's complete lineage (R5/R6/R14)."""
+    """Resumably ingest the ranked universe's complete lineage."""
     from populus.amendments import ensure_views
     from populus.inst_bulk import format_bulk_summary, load_universe, run_bulk_ingest
     from populus.load import ensure_inst_schema

@@ -1,4 +1,4 @@
-"""RUN M2-8 T15 (plan R19) — the static-file budget contract for inst shards.
+"""The static-file budget contract for inst shards.
 
 This is the mechanical guarantee behind the DR-8 reversal. The original Pattern-F
 decision protected "Populus infra cost stays ~$0" by refusing to publish per-filer
@@ -6,7 +6,7 @@ detail at all. The reversal keeps that property a different way: the deployed tr
 is bounded by a file count that CI enforces. If the measured tree exceeds its
 maximum, the build fails — it does not quietly grow.
 
-**These are HARD MAXIMA, not defaults** (external review r5 F6, r6 F6). Changing
+**These are HARD MAXIMA, not defaults**. Changing
 any of them is a plan change with a re-proved formula, not a configuration tweak.
 
 Provider limits (recorded verified in ARCHITECTURE.md §12.1): Cloudflare Pages free
@@ -65,7 +65,7 @@ recorded as such at `GLOBAL_FILE_CAP`. The remaining margin to Cloudflare's hard
 20,000 is 2,000 files; the next module that does not fit is a Pages-tier
 decision, not another raise.
 
-**QA M2-8 R2 N1 — the same defect, once more, inside its own fix.** The first
+**The same undercount defect, once more, inside its own fix.** The first
 version of this rewrite MEASURED the 103-file chrome class, gave it the constant
 below, and then referenced it from nowhere: `worst_case_file_count` summed the
 other four terms and reported 16,070, understating the breach by exactly the
@@ -137,7 +137,7 @@ MAX_SHARD_BYTES = 25 * 1024 * 1024    # Cloudflare 25 MiB per file
 #: The M1 footprint as MEASURED on 2026-08-17 against the RESTORED corpus, in
 #: the PRODUCTION configuration (no ticker map — `publish.yml` deliberately
 #: points `POPULUS_TICKER_MAP` at a nonexistent path). Restoring per-stock pages
-#: (TD-7) would add the ticker-tree delta back on top of this.
+#: would add the ticker-tree delta back on top of this.
 #:
 #: 12,901 = `congress/` 9,049 + the top-level `tickers/` tree 3,852, which is
 #: this constant's documented meaning, measured.
@@ -147,14 +147,14 @@ MAX_SHARD_BYTES = 25 * 1024 * 1024    # Cloudflare 25 MiB per file
 #: difference is `institutional/` (4,275), which is BUILT and is accounted for
 #: by the M2/M2-8/M2-11 reservations rather than by a measured term — see
 #: `RESERVED_CLASSES`. An earlier reading of that difference as an
-#: "unaccounted class" produced two assertions that could not both hold; R45
-#: resolved it by asserting COVERAGE and SUFFICIENCY instead of a balancing
+#: "unaccounted class" produced two assertions that could not both hold;
+#: the file-class accounting revision resolved it by asserting COVERAGE and SUFFICIENCY instead of a balancing
 #: sum. Do not "fix" the difference by folding the institutional tree into this
 #: constant: that double-counts it against its own reservation.
 #:
-#: Re-measured for R45 only AFTER the B25 corpus restoration published
+#: Re-measured only AFTER the corpus restoration published
 #: (build 20260817.1) — measuring the shrunken tree would have encoded the
-#: outage as the baseline, which is the error BACKLOG B18 names. The prior
+#: outage as the baseline — measuring a proxy instead of the thing. The prior
 #: value was 12,442, measured 2026-08-05 when House history was missing.
 #:
 #: This constant exists for the PROJECTION only — the enforcing gate counts the
@@ -185,8 +185,8 @@ M3_RESERVED = 2_064                   # M3's committed 2,000 pages + ~64 shards
 #: as "measured zero", which is a different claim from "this does not exist".
 ACTIVITY_SHARDS_MAX = 64
 
-# --- M2-11 filer tail family — RESERVATIONS pending T0 measurement -----------
-#: RUN M2-11 (plan R22/R27, LD-9/LD-10). The long-tail filer delivery adds three
+# --- filer tail family — RESERVATIONS pending baseline measurement -----------
+#: The long-tail filer delivery adds three
 #: NEW file classes (active shards, active index, transition tombstone), and the
 #: C5/N1 defect class this module documents is exactly "a file class the
 #: projection does not sum" — so all three are REAL
@@ -207,7 +207,7 @@ FILER_TAIL_SHARDS_RESERVED = 4_096
 FILER_FRAGMENT_TARGET_BYTES = 768 * 1024
 FILER_FRAGMENT_PARTS_MAX = 64
 FILER_FRAGMENT_SIZING_SENTINEL = 99_999
-#: The routing index (LD-9): one versioned file mapping every published tail
+#: The routing index: one versioned file mapping every published tail
 #: CIK to its shard. Counted because "1" omitted is still an omitted class.
 FILER_ROUTING_INDEX_FILES = 1
 #: Payload-free index tombstones, one per superseded transport version: v1 (from
@@ -227,18 +227,18 @@ FILER_V1_TRANSITION_FILES = 2
 #: ``dashboard/test/post/file-budget.test.ts``.
 FILER_SHARD_BYTE_CEILING = 1024 * 1024
 
-# Pagination (plan R13): ONE byte-aware rule. A page closes at whichever binds
+# Pagination: ONE byte-aware rule. A page closes at whichever binds
 # first. There is no second selection rule — `{500, 1000, 2000}` was a
 # contradictory alternative and is deleted.
 PAGE_RECORD_LIMIT = 2_000
 PAGE_BYTE_LIMIT = 2 * 1024 * 1024     # 2 MiB of SERIALIZED bytes, measured
 
 
-# --- file-class accounting (R45) ---------------------------------------------
+# --- file-class accounting ---------------------------------------------
 #: Every top-level class a real `dist/` emits, mapped to the budget term that
 #: accounts for it.
 #:
-#: R45 replaced an EQUALITY assertion here, and the reason matters.
+#: This ceiling replaced an EQUALITY assertion here, and the reason matters.
 #: `M1_MEASURED_PAGES + SITE_CHROME_FILES == the whole tree` held only while
 #: `institutional/` was not built. Once it was (4,275 files, measured
 #: 2026-08-17 on the restored corpus), that equality and
@@ -256,7 +256,7 @@ PAGE_BYTE_LIMIT = 2 * 1024 * 1024     # 2 MiB of SERIALIZED bytes, measured
 #:   (1) COVERAGE — no top-level class goes unnamed. That is defect C5(a),
 #:       "it omits a whole file class", made mechanical.
 #:   (2) SUFFICIENCY — the projection never forecasts FEWER files than really
-#:       exist. That is defect QA M2-8 R2 N1, an undercount in the unsafe
+#:       exist. That is the QA-found undercount defect in the unsafe
 #:       direction, made mechanical.
 #: Both survive `institutional/` being built; the equality did not.
 MEASURED_M1_CLASSES: frozenset[str] = frozenset({"congress", "tickers"})
@@ -388,7 +388,7 @@ def check_measured_tree(
 ) -> None:
     """The ENFORCING gate: a real tree against the real caps. Raises `BudgetBreach`.
 
-    This is the call site R19 was missing. It is deliberately dumb — two
+    This is the call site the plan's breach check was missing. It is deliberately dumb — two
     comparisons against two provider-derived limits — because the previous
     version's sophistication was what let it compare constants to themselves.
 
@@ -410,7 +410,7 @@ def check_measured_tree(
     if breaches:
         raise BudgetBreach(
             "the built tree breaches its hard maxima — the build must fail rather "
-            "than re-tune (plan R19):\n  " + "\n  ".join(breaches)
+            "than re-tune:\n  " + "\n  ".join(breaches)
         )
 
 
@@ -438,7 +438,7 @@ def check_geometry(
     if breaches:
         raise BudgetBreach(
             "shard geometry breaches its hard maxima — the build must fail rather "
-            "than re-tune (plan R19):\n  " + "\n  ".join(breaches)
+            "than re-tune:\n  " + "\n  ".join(breaches)
         )
 
 
@@ -465,19 +465,18 @@ def worst_case_file_count(
     site_chrome_files` equals the whole measured tree and no file class is
     omitted. It is a separate term rather than folded into `measured_files`
     because the post-build drift gate measures the two classes independently.
-    Omitting it is QA M2-8 R2 N1: a projection 103 files short, in the unsafe
+    Omitting it is the known undercount defect: a projection 103 files short, in the unsafe
     direction, of a tree the module had already measured.
 
-    M3's reservation is included deliberately (review r2 F15): omitting another
+    M3's reservation is included deliberately: omitting another
     module's committed budget produces a number that looks safe and is not,
     because the 18,000 cap is global, not per-module.
 
-    RUN M2-11 (R27): `filer_tail_shards`, `routing_index_files`, and
+    `filer_tail_shards`, `routing_index_files`, and
     `filer_v1_transition_files` are the three file classes the bounded long-tail
     delivery adds. They are parameters — with every prior term retained,
     including M3's committed 2,064 — because both historical defects in this
-    module (C5(a), R2 N1) were a real file class that a constant named and the
-    sum omitted.
+    module were a real file class that a constant named and the sum omitted.
 
     NOT a gate. This is a forecast over modules that are not built; asserting a
     forecast is how the previous version shipped a proof that measured nothing.

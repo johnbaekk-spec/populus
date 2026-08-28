@@ -1,6 +1,6 @@
-"""§9.5 amendment semantics: views, durable flags, pair invariants (RUN 4).
+"""§9.5 amendment semantics: views, durable flags, pair invariants.
 
-The conservative default only (OQ-13 open): pair detection stays where it
+The conservative default only, pending settled amendment semantics: pair detection stays where it
 is (the Senate ingest's ``_link_amendments``); this module owns the pair's
 default-view semantics (``v_default_transactions`` excludes the original of
 an unresolved pair), the uncertainty view (``v_amendment_pairs``), the
@@ -22,7 +22,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-#: Every view the institutional derivation reads (RUN M2-11, R3). The coverage
+#: Every view the institutional derivation reads. The coverage
 #: gate reads the default pair, presence probes read the reconciled population,
 #: and the aggregate/serving builders read the per-filer reported pair — so a
 #: snapshot whose stored SQL for ANY of these differs from the shipped
@@ -166,7 +166,7 @@ class ViewVerificationError(RuntimeError):
     """A database's stored view SQL differs from the shipped ``views.sql``.
 
     Carries the offending view's name in ``view_name`` so a caller can refuse
-    with a message that names it (plan R3)."""
+    with a message that names it."""
 
     def __init__(self, view_name: str, message: str) -> None:
         super().__init__(message)
@@ -178,7 +178,7 @@ def verify_views(
     *,
     views: tuple[str, ...] = INST_DERIVATION_VIEWS,
 ) -> None:
-    """Read-only check that *conn*'s stored view SQL is the packaged DDL (R3).
+    """Read-only check that *conn*'s stored view SQL is the packaged DDL.
 
     The comparison source is ``views.sql`` — THE definition (M2-7) — normalized
     exactly as :func:`ensure_views` normalizes it, so the two functions can
@@ -228,7 +228,7 @@ def packaged_view_digest() -> str:
     """SHA-256 over the normalized packaged view DDL, in file order.
 
     Written into ``inst_source_meta`` by ``scripts/inst_snapshot.py`` and read
-    back by stage-build into ``inst_source.json`` (R24) — provenance for WHICH
+    back by stage-build into ``inst_source.json`` — provenance for WHICH
     view definitions a snapshot was cut with, distinct from ``verify_views``,
     which enforces that they still match at derive time.
     """

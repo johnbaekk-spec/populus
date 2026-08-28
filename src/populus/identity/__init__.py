@@ -1,4 +1,4 @@
-"""Temporal identity registries (ARCHITECTURE.md §5.4 — RUN M2-1).
+"""Temporal identity registries (ARCHITECTURE.md §5.4).
 
 Shared substrate for every module that has to say "which company is this"
 and "which instrument is this" *as of a date*. M2 (13F) and M3 (company

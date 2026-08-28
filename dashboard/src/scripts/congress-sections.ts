@@ -1,7 +1,7 @@
 /* The /congress/ client island for the two RANKING sections: ticker momentum
    and member net-flow.
 
-   IT OWNS NO FETCH AND NO DECODE (R17). The feed island performs the one fetch
+   IT OWNS NO FETCH AND NO DECODE. The feed island performs the one fetch
    and the one decode of the feed dataset and hands the parsed rows here. This
    module must never call `fetch`, `classifyDataset`, `txnFromArray` or
    `paperFromArray` — `test/r17-single-fetch.test.ts` greps this file for
@@ -13,7 +13,7 @@
    server-rendered default view stays exactly where it is, and the controls say
    why they cannot act instead of emptying the page.
 
-   EVERY RE-RENDER IS ROOT-SCOPED (R18). A sort replaces one `tbody`'s
+   EVERY RE-RENDER IS ROOT-SCOPED. A sort replaces one `tbody`'s
    innerHTML and nothing else: never the table, thead, caption, or a sibling
    root. That is what keeps the member ranking's two tables two tables. */
 
@@ -59,9 +59,9 @@ const DEFAULT_SORT: SortState = { key: "net", dir: "desc" };
 const BUCKET_SORT: SortState = { key: "name", dir: "asc" };
 
 export interface CongressSections {
-  /** Called once by the feed island with the single decoded row set (R17). */
+  /** Called once by the feed island with the single decoded row set. */
   receiveRows(rows: readonly TxnRow[]): void;
-  /** SL-R29: called once by the feed island on EITHER outcome, so a pending
+  /** Called once by the feed island on EITHER outcome, so a pending
       indicator clears on the failure path too. `ok` is false when the dataset
       did not load, and the section then says so rather than staying "applying". */
   feedSettled(ok: boolean): void;
@@ -120,9 +120,9 @@ export function initCongressSections(): CongressSections {
         // already there instead, so a click before the dataset lands is inert
         // rather than destructive.
         if (binding.rows.length === 0) return el.innerHTML;
-        /* SL-R7: `footnotesId` is gone. It existed so a re-sorted row's ≈
-           marker addressed THIS section's footnote block; R7 deletes both
-           blocks and moves their text onto the Net column's header note, so
+        /* `footnotesId` is gone. It existed so a re-sorted row's ≈
+           marker addressed THIS section's footnote block; both blocks are
+           deleted and their text moved onto the Net column's header note, so
            the marker no longer carries an href at all and the server and the
            client are identical again by having one fewer thing to agree on. */
         return rankingRootHtml(binding.rows, state.key as CongressSortKey, state.dir, kind, ctx, {
@@ -161,9 +161,9 @@ export function initCongressSections(): CongressSections {
   bindRoot(CONGRESS_ROOTS.membersRanked, "leaders", DEFAULT_SORT);
   bindRoot(CONGRESS_ROOTS.membersUndisclosed, "leaders", BUCKET_SORT);
 
-  /* ---------- expand / collapse (R7) ---------- */
+  /* ---------- expand / collapse ---------- */
 
-  /* F16: the disclosure describes the CURRENT row set, so it is recomputed on
+  /* The disclosure describes the CURRENT row set, so it is recomputed on
      every render rather than read once from the SSR attributes. Changing the
      momentum range from 12m to 7d changes how many tickers exist; the control
      kept saying "show all 833" from the server-rendered twelve-month view, and
@@ -185,7 +185,7 @@ export function initCongressSections(): CongressSections {
       binding.repaint();
       syncDisclosure(binding);
     });
-    // F25: do NOT sync here. At bind time `rows` is empty, so syncing would
+    // Do NOT sync here. At bind time `rows` is empty, so syncing would
     // compute total=0, hide the control AND hide the server-rendered terminus —
     // deleting honesty content the SSR view legitimately published, before any
     // data has arrived to justify it. The first sync happens once rows exist.
@@ -193,7 +193,7 @@ export function initCongressSections(): CongressSections {
 
   /** Rewrite one root's disclosure from its CURRENT rows.
 
-      F16: the COMPACT LIMIT and the CURRENT SHOWN COUNT are different numbers
+      The COMPACT LIMIT and the CURRENT SHOWN COUNT are different numbers
       and are kept separate. Deriving "Show only the first N" from the expanded
       row count made the control promise to keep every row it was about to
       collapse away. And the omission rule is evaluated against the LIMIT, so a
@@ -210,12 +210,12 @@ export function initCongressSections(): CongressSections {
     // composing "ranked …" for all three would relabel the bucket.
     const boundNoun = b.disclosure.dataset?.compactBoundNoun ?? `ranked ${noun}`;
 
-    /* F6/SL-R10: the count clause, the button and the wrapper commit TOGETHER,
+    /* The count clause, the button and the wrapper commit TOGETHER,
        in one call to the shared updater. Three private copies of that contract
        was three chances for one to drift out of step with the renderer; only
        the NOUN differs per table, and that is what stays here.
 
-       R7's omission rule is evaluated against the LIMIT, never against how many
+       The omission rule is evaluated against the LIMIT, never against how many
        rows happen to be rendered right now — a range change that drops the
        total to at-or-below it must retract the control rather than leave one
        that expands to the rows already on screen. */
@@ -229,7 +229,7 @@ export function initCongressSections(): CongressSections {
     });
   }
 
-  /* ---------- range and basis (R2/R3), and SL-R13's honesty ---------- */
+  /* ---------- range and basis, and the pending-control honesty ---------- */
 
   function setSeg(attr: "range" | "basis", value: string): void {
     document.querySelectorAll<HTMLElement>(`#momentum-controls [data-${attr}]`).forEach((b) => {
@@ -237,7 +237,7 @@ export function initCongressSections(): CongressSections {
     });
   }
 
-  /* SL-R13. This adds NO state and NO queue. A pre-arrival click already
+  /* This adds NO state and NO queue. A pre-arrival click already
      applies: `range` and `basis` are module-scoped and `receiveRows` ends by
      calling `recomputeMomentumIfChanged()`. What was wrong is that `setSeg`
      paints the button pressed immediately while the table still shows the
@@ -281,11 +281,11 @@ export function initCongressSections(): CongressSections {
     });
   });
 
-  /* SL-R14: the empty-window block's own controls. They are DELEGATED on the
+  /* The empty-window block's own controls. They are DELEGATED on the
      section, not bound per button, because the block is replaced by
      `innerHTML` on every window change — a per-button binder would leave the
      second empty window's offers inert, which is the same lifecycle problem
-     SL-R2 solved for notes. Pressing one drives the SAME `range`/`basis` state
+     the notes delegation solved. Pressing one drives the SAME `range`/`basis` state
      the segmented control drives; it does not fork a second path. */
   const emptyHost = document.getElementById("momentum-section-empty");
   emptyHost?.addEventListener?.("click", (ev) => {
@@ -305,7 +305,7 @@ export function initCongressSections(): CongressSections {
     recomputeMomentum();
   });
 
-  /* SL-R29: fired by `initFeed` on BOTH outcomes. On success the rows have
+  /* Fired by `initFeed` on BOTH outcomes. On success the rows have
      already been applied by `receiveRows`, so the indicator simply clears. On
      failure there is nothing to clear it later — `onRows` never fires — so the
      section states that the selection could not be applied, and why. */
@@ -341,17 +341,17 @@ export function initCongressSections(): CongressSections {
     syncDisclosure(binding);
 
     const windowEl = document.getElementById(`${sectionId}-window`);
-    /* SL-R9: the `" · build "` split is gone with the stamp it preserved.
+    /* The `" · build "` split is gone with the stamp it preserved.
          It existed only so a re-render did not drop a build id the server had
          put there; the server no longer puts one there, and parsing a suffix
          back out of rendered text to re-append it was the fragile half of that
          arrangement. */
-      /* SL-R12: the window statement, its excluded-row TOTAL and the note body
+      /* The window statement, its excluded-row TOTAL and the note body
          are rewritten in ONE call to the SAME function the server used, so the
          three cannot drift apart on a range or basis change. The separate
-       `#<sectionId>-caveat` element is gone (SL-R11); its clauses are the
+       `#<sectionId>-caveat` element is gone; its clauses are the
        note's body. */
-    /* SL-R14: the empty-window block is rewritten with the rows, through the
+    /* The empty-window block is rewritten with the rows, through the
        SAME renderer the server used and over the SAME row set the control will
        paint if the reader takes one of its offers — so a stated count cannot
        disagree with what pressing it produces. */
@@ -388,7 +388,7 @@ export function initCongressSections(): CongressSections {
     );
   }
 
-  /* ---------- R17: rows arrive from the ONE owner ---------- */
+  /* ---------- rows arrive from the ONE owner ---------- */
 
   function receiveRows(rows: readonly TxnRow[]): void {
     allRows = rows;
@@ -402,7 +402,7 @@ export function initCongressSections(): CongressSections {
 
     // The member section's window is fixed by the page, not by the momentum
     // control — the control belongs to the section that offers it.
-    // F25: seed the MOMENTUM binding for the default range too. It was left
+    // Seed the MOMENTUM binding for the default range too. It was left
     // empty on a successful load, so its headers were enabled while its
     // comparator had no rows — sorting silently did nothing.
     const momentumBinding = bindings.get(CONGRESS_ROOTS.momentum);
@@ -437,7 +437,7 @@ export function initCongressSections(): CongressSections {
     // exact view at this exact sort; repainting would risk a visible flash and
     // would MASK a server/client disagreement instead of leaving it visible.
     recomputeMomentumIfChanged();
-    // SL-R13: the rows are painted, so the control no longer asserts anything
+    // The rows are painted, so the control no longer asserts anything
     // it has not shown. Cleared here as well as in `feedSettled` because this
     // is the moment the claim becomes true.
     setPending(null);

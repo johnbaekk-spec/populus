@@ -1,6 +1,6 @@
 """Bulk 13F corpus: filer-universe discovery, ranking, resumable ingest.
 
-RUN M2-6 (ARCHITECTURE.md §10.2). Gives the merged M2 pipeline its first real
+ARCHITECTURE.md §10.2. Gives the merged M2 pipeline its first real
 institutional corpus for one explicitly budgeted quarter, as CODE only — the
 operational overnight ingest runs post-merge, never in Dev/QA.
 
@@ -75,7 +75,7 @@ _ACCEPTABLE_STATUS = 200
 
 
 class SecStatusError(RuntimeError):
-    """A SEC response that is not a document (F1).
+    """A SEC response that is not a document.
 
     Raised BEFORE any decode or parse, so a transport failure can never be
     mistaken for source truth: a failed index fetch must not become an empty
@@ -95,7 +95,7 @@ class SecStatusError(RuntimeError):
 
 
 def _require_document(response, url: str) -> None:
-    """Assert an acceptable status BEFORE decoding or parsing a response (F1)."""
+    """Assert an acceptable status BEFORE decoding or parsing a response."""
     if response.status_code != _ACCEPTABLE_STATUS:
         raise SecStatusError(url, response.status_code)
 
@@ -110,7 +110,7 @@ def _is_iso_date(value: str) -> bool:
     return True
 
 
-# --- discovery (R1/R2/R12) ---------------------------------------------------
+# --- discovery ---------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -151,7 +151,7 @@ def _form_index_url(filing_quarter: str) -> str:
 
 
 def parse_form_index(text: str) -> tuple[list[FormIndexRef], list[str]]:
-    """Parse an EDGAR ``form.idx`` into 13F-HR/…A references (R2/TD-M2-6-3).
+    """Parse an EDGAR ``form.idx`` into 13F-HR/…A references.
 
     The header is skipped to the dashed rule; each data line is tokenized on
     whitespace with a fixed invariant (``form = tokens[0]``, ``filename =
@@ -163,7 +163,7 @@ def parse_form_index(text: str) -> tuple[list[FormIndexRef], list[str]]:
     The FORM IS IDENTIFIED FIRST, before any structural check: a 13F row too
     short to carry its date and filename columns is a CORRUPT 13F record and
     must be counted in ``rejected``, not silently skipped — a silent skip would
-    delete it from the rejection metrics the run reconciles against (F2). A
+    delete it from the rejection metrics the run reconciles against. A
     non-13F row is out of scope and is dropped without being a reject.
     """
     refs: list[FormIndexRef] = []
@@ -211,10 +211,10 @@ def parse_form_index(text: str) -> tuple[list[FormIndexRef], list[str]]:
 
 
 def discover_universe(client: SecClient, filing_quarter: str) -> DiscoveryResult:
-    """Fetch and parse the quarterly form index through the SecClient (R1).
+    """Fetch and parse the quarterly form index through the SecClient.
 
     A non-200 index response propagates as :class:`SecStatusError` BEFORE the
-    body is decoded (F1): a 403/404/5xx body is not an index, and decoding it
+    body is decoded: a 403/404/5xx body is not an index, and decoding it
     would turn a transient SEC failure into an EMPTY universe — silently
     removing every filer from the run.
     """
@@ -231,7 +231,7 @@ def discover_universe(client: SecClient, filing_quarter: str) -> DiscoveryResult
     )
 
 
-# --- ranking (R3/R2/R4) — matches v_default_inst_filings stage 1 -------------
+# --- ranking — matches v_default_inst_filings stage 1 -------------
 
 
 @dataclass(frozen=True)
@@ -315,7 +315,7 @@ def _restatement_survivors(filings: Sequence[Mapping]) -> list[Mapping]:
 
 def refs_sha256(refs: Sequence[FormIndexRef], report_period: str) -> str:
     """Canonical digest binding the rank journal: the discovered references plus
-    the ranking params, all available at sweep time (R17)."""
+    the ranking params, all available at sweep time."""
     canonical = {
         "report_period": report_period,
         "refs": sorted(
@@ -342,7 +342,7 @@ def _fetch_cover_facts(client: SecClient, ref: FormIndexRef) -> _CoverFacts:
     breaker trip propagates (the sweep must stop, not push harder).
 
     ``cover_failed`` is a statement about the DOCUMENT, so an acceptable status
-    is required before the body is parsed (F1). A 403/404/5xx is a retryable
+    is required before the body is parsed. A 403/404/5xx is a retryable
     transport failure: it raises :class:`SecStatusError`, which propagates out of
     the sweep instead of being journaled — otherwise a transient refusal would
     freeze into a terminal ``cover_failed`` that a resumed run never refetches.
@@ -377,7 +377,7 @@ def rank_universe(
     journal_path: Path | None = None,
     flush_every: int = 25,
 ) -> RankResult:
-    """Rank filers by effective survivor value (R3), resumable via the rank
+    """Rank filers by effective survivor value, resumable via the rank
     journal (bound to ``refs_sha256``).
 
     Each candidate cover is fetched once; covers whose ``period_of_report`` is
@@ -389,7 +389,7 @@ def rank_universe(
     A TRANSPORT failure is not a ranking outcome: a non-200 cover response raises
     :class:`SecStatusError` (and a latched breaker :class:`SecCircuitOpenError`)
     out of this sweep with nothing journaled for that accession, so the resumed
-    sweep refetches it instead of ranking on a frozen ``cover_failed`` (F1).
+    sweep refetches it instead of ranking on a frozen ``cover_failed``.
     """
     digest = refs_sha256(refs, report_period)
     facts: dict[str, _CoverFacts] = {}
@@ -412,7 +412,7 @@ def rank_universe(
             # A transport failure (non-200, or the breaker latching) is NOT a
             # result for this accession — nothing is recorded for it, so a
             # resumed sweep refetches it. Flush the covers that DID parse first,
-            # so the resume keeps that work, then propagate (F1).
+            # so the resume keeps that work, then propagate.
             if journal_path is not None and pending:
                 _write_rank_journal(journal_path, digest, facts)
             raise
@@ -494,7 +494,7 @@ def _write_rank_journal(
     )
 
 
-# --- universe (R2/R17) -------------------------------------------------------
+# --- universe -------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -539,7 +539,7 @@ def select_top_n(
     report_period: str,
     top_n: int,
 ) -> Universe:
-    """Take the top-N ranked filers and bind the universe to its digest (R4)."""
+    """Take the top-N ranked filers and bind the universe to its digest."""
     chosen = rank_result.ranked[:top_n]
     entries = tuple(
         RankedFiler(
@@ -562,7 +562,7 @@ def select_top_n(
 
 
 def write_universe(path: Path, universe: Universe) -> None:
-    """Durably persist the universe with its self-describing digest (R17)."""
+    """Durably persist the universe with its self-describing digest."""
     body = _universe_body(
         universe.filing_quarter,
         universe.report_period,
@@ -620,7 +620,7 @@ def load_universe(path: Path) -> Universe:
     )
 
 
-# --- versioned journals (R17) ------------------------------------------------
+# --- versioned journals ------------------------------------------------
 
 JOURNAL_VERSION = 1
 
@@ -644,7 +644,7 @@ def write_journal(
     entries: Mapping,
     meta: Mapping | None = None,
 ) -> None:
-    """Durably (re)write a versioned journal via ``atomic_write_bytes`` (R17).
+    """Durably (re)write a versioned journal via ``atomic_write_bytes``.
 
     The whole envelope is rewritten each time — there is no bespoke append
     primitive. Entries are stored as an explicit key/value list so a duplicate
@@ -707,11 +707,11 @@ def load_journal(
     return JournalDoc(entries=entries, meta=meta)
 
 
-# --- measured transport (R14) ------------------------------------------------
+# --- measured transport ------------------------------------------------
 
 
 class CountingTransport:
-    """Wraps the sanctioned transport to count real transport (R14/F5).
+    """Wraps the sanctioned transport to count real transport.
 
     ``attempts`` is every request that left this process (retries included);
     ``retries`` are the ones SEC answered 429/5xx (each triggering a backoff);
@@ -768,7 +768,7 @@ def _accumulate_metrics(cumulative: Mapping, session: Mapping) -> dict:
     return {k: (cumulative.get(k, 0) + session.get(k, 0)) for k in keys}
 
 
-# --- coordinator (R5/R6/R14/R16/R17) -----------------------------------------
+# --- coordinator -----------------------------------------
 
 #: Dispositions considered terminal for a filer — a resume run skips them
 #: (``already-done``). ``circuit_open`` / ``pending`` / ``ingest_error`` are
@@ -852,7 +852,7 @@ def _disposition_bucket(disposition: str) -> str:
 
 
 def _classify_disposition(per_accession: Mapping[str, str]) -> str:
-    """The locked completeness rule (R6): ``loaded`` iff every target accession
+    """The locked completeness rule: ``loaded`` iff every target accession
     parsed/partial; else ``failed:<kind>`` where a mixed/incomplete lineage is
     ``partial_lineage`` and an all-failed lineage carries its dominant kind."""
     total = len(per_accession)
@@ -888,7 +888,7 @@ def run_bulk_ingest(
     monotonic: Callable[[], float],
     journal_path: Path | None = None,
 ) -> BulkReport:
-    """Drive the extended M2-2 seam over the ranked universe, resumably (R5/R6).
+    """Drive the extended M2-2 seam over the ranked universe, resumably.
 
     One shared ``SecClient`` (client-wide floor + breaker) over one
     ``CountingTransport``; each filer's complete lineage is loaded through
@@ -1045,7 +1045,7 @@ def run_bulk_ingest(
 
 
 def _per_accession_map(targets: frozenset[str], report) -> dict:
-    """A TOTAL outcome for every target accession (R6): each is ``parsed`` /
+    """A TOTAL outcome for every target accession: each is ``parsed`` /
     ``partial`` / ``failed:<kind>`` / ``period_mismatch`` / ``absent`` — the last
     for a target that never appeared in the filer's submissions history."""
     observed: dict[str, str] = {}
@@ -1107,7 +1107,7 @@ def _persist_ingest_journal(
 
 
 def format_bulk_summary(report: BulkReport) -> str:
-    """One-screen reconciliation + measured metrics the CLI prints (R14)."""
+    """One-screen reconciliation + measured metrics the CLI prints."""
     counts = report.disposition_counts
     lines = [
         "inst-bulk"
@@ -1160,7 +1160,7 @@ def format_bulk_summary(report: BulkReport) -> str:
         )
         # M2-7 §I5: the bulk summary is a coverage-reporting surface, so it
         # states the tolerated rounding and names the excluded conflicts too
-        # (external review F3 — it did not).
+        # (it did not).
         lines.append(f"  {coverage.disposition_line}")
     if report.circuit_open_url is not None:
         lines.append(
