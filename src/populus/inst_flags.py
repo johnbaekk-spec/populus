@@ -1,6 +1,6 @@
 """RUN M2-8 T10 (plan R15) — the outsized-position flag.
 
-Normative spec: ``docs/build/M2-8-outsized-position-spec.md``. That document was
+Normative spec: ``docs/architecture/data-contracts/outsized-positions.md``. That document was
 written and reviewed BEFORE this module existed, and this module implements it
 exactly; where the two disagree, the spec wins and this file is the defect.
 

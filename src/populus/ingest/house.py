@@ -930,7 +930,7 @@ def _checkpoint_is_complete(
 ) -> bool:
     """THE durability predicate for a checkpoint (M1-B provenance-boundary spec).
 
-    ``docs/build/M1-B-provenance-boundary-spec.md`` states the rule once:
+    ``docs/architecture/data-contracts/congress-provenance.md`` states the rule once:
 
         a document is durable iff its checkpoint carries the COMPLETE §5.1
         provenance set — ``response_hash``, ``retrieved_at``, ``source_url`` —

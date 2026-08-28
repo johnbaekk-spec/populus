@@ -518,7 +518,7 @@ export function provenanceCellHtml(p: Provenance, stated: readonly string[] = []
 /* ================================================================ page-level */
 
 /** One page algorithm, two call sites (positions and changes). Deliberately not
-    a second selection rule — `docs/pagination-and-counts.md` records three
+    a second selection rule — `docs/frontend/pagination-and-counts.md` records three
     consecutive defects in this repo's other paginator, every one of them a
     function reasoning about WHERE rows sit from parameters describing only HOW
     MANY exist. The formula is safe here and NOT in the feed because this

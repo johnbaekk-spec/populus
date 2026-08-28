@@ -1546,7 +1546,7 @@ def _complete_extra_module_assets(
                     f" data-{build_id} is neither a verified draft asset nor present"
                     " in staging: the congress-scoped recovery journal cannot"
                     " regenerate it. The release is still a draft and the pointer is"
-                    " unmoved — run the drafts-only cleanup (docs/runbooks/rollback.md"
+                    " unmoved — run the drafts-only cleanup (docs/operations/rollback.md"
                     " Appendix A) and rebuild under a new build_id to regenerate it"
                     " (TD-M2-3-1)."
                 )
@@ -2926,7 +2926,7 @@ def _preflight_module_assets(
                             f"module {module_name!r} asset {db_name} is neither staged"
                             f" at {staged_asset} nor a verified release asset —"
                             " refusing to publish an incomplete multi-module build."
-                            " Run the drafts-only cleanup (docs/runbooks/rollback.md"
+                            " Run the drafts-only cleanup (docs/operations/rollback.md"
                             " Appendix A) and rebuild under a new build_id to"
                             " regenerate it (TD-M2-3-1)."
                         )

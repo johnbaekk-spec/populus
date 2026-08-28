@@ -1867,7 +1867,7 @@ def test_a_sidecar_disagreeing_with_the_stored_hash_is_not_settled(
 
 
 # --- the provenance boundary: complete §5.1 set or fetch-required -----------
-# docs/build/M1-B-provenance-boundary-spec.md. Three review rounds each found a
+# docs/architecture/data-contracts/congress-provenance.md. Three review rounds each found a
 # different boundary enforcing a weaker rule; these tests pin the ONE rule at
 # BOTH boundaries, including the fresh-database path where the settled pre-pass
 # is structurally inert and `_obtain_document` is the only thing deciding.

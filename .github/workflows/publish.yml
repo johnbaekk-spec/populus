@@ -20,7 +20,7 @@ on:
       # blocks every future publish INCLUDING the fix. It must name the exact
       # code_sha the domain is serving, it clears no other refusal, it attests
       # nothing, and it is absent from `schedule:` so a nightly can never carry
-      # one. See docs/runbooks/deploy.md.
+      # one. See docs/operations/deploy.md.
       acknowledge_unrecorded_code_sha:
         description: "TD-4 override: the exact populus:code_sha the live domain serves"
         required: false

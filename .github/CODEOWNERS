@@ -4,7 +4,7 @@
 # Before the main ruleset is activated, the owner must add the accepted
 # independent reviewer's handle alongside @johnbaekk-spec on every line below.
 # A solo owner cannot approve their own change; activation without the second
-# handle leaves R3 BLOCKED (see docs/runbooks/github-security.md).
+# handle leaves R3 BLOCKED (see docs/operations/github-security.md).
 
 # Default: everything.
 *                               @johnbaekk-spec

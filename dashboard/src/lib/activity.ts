@@ -30,7 +30,7 @@
       undisclosed value on one side of the comparison). It renders as *undisclosed*,
       never as 0, and sorts LAST — a null is not a small number.
 
-   Wording ban (R16, `docs/build/M2-8-outsized-position-spec.md` §1.1): a 13F is a
+   Wording ban (R16, `docs/architecture/data-contracts/outsized-positions.md` §1.1): a 13F is a
    quarter-end snapshot filed up to 45 days late, so at render time the position may
    not exist. No present-tense trading verb may appear on this surface. The ban is
    testable — `BANNED_WORDING` + `scanBannedWording()` — and asserted, not trusted.

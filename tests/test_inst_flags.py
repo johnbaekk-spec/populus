@@ -1,6 +1,6 @@
 """RUN M2-8 T10 (plan R15) — the spec's truth table, executed.
 
-`docs/build/M2-8-outsized-position-spec.md` §5 is a 17-row table. Every row is a
+`docs/architecture/data-contracts/outsized-positions.md` §5 is a 17-row table. Every row is a
 case here, by number, so a failure names the spec row it violates. §6's mutation
 list is exercised by `test_inst_flags_mutations.py`-style swaps run manually and
 recorded in the dev notes.
@@ -251,7 +251,7 @@ def test_multiplication_and_division_forms_are_equivalent_for_integer_shares():
     test, it now asserts the true property — equivalence — so a future change that
     DOES introduce a divergence (e.g. `share` becoming a float) fails here loudly.
 
-    See the CORRECTION block in M2-8-outsized-position-spec.md §2.
+    See the CORRECTION block in docs/architecture/data-contracts/outsized-positions.md §2.
     """
     for base in range(0, 400):
         for share in range(0, 800):

@@ -18,7 +18,7 @@ Free-plan attestations are unavailable on a private repo. That premise assumed
 the attesting workflow lived in the private ``populus-data``. It does not — it
 lives in ``populus``, which is public — so attestation is available now and P1
 is attested. The property (nothing is trusted unsigned) is unchanged; only the
-mechanism moved. See the decision record in ``docs/runbooks/attestation.md``.
+mechanism moved. See the decision record in ``docs/operations/attestation.md``.
 
 **Verification pins**, all five required and each independently tested:
 the Sigstore trust configuration, the OIDC issuer :data:`P2_OIDC_ISSUER`, the
@@ -447,7 +447,7 @@ def build_provider(choice: str, *, fetcher=None, trust_config=None):
         if fetcher is None or trust_config is None:
             raise ValueError(
                 "the sigstore provider requires a bundle fetcher and a bundle "
-                "verifier; see docs/runbooks/attestation.md"
+                "verifier; see docs/operations/attestation.md"
             )
         return SigstoreAttestation(fetcher=fetcher, trust_config=trust_config)
     raise ValueError(

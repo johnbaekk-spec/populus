@@ -26,6 +26,16 @@ The full normative sequence is §12.1; this is the operator's map of it.
 | 5 | **Production** upload of provably the same bytes, then live-verified on `publicfilings.org`. The domain is given one 45 s settle **before** the first sweep (R11b — after a promotion the origin answers while individual objects may still be materialising, and a partially written body reads as a hash mismatch, which is never waited out). A failure whose findings are then ALL inventoried paths answering `HTTP 404, expected 200` gets one further 45 s settle and one re-verification of the **full** inventory (R11a — the custom domain can still be resolving individual objects seconds after a promotion); every other failure shape, and a second failure of that same shape, triggers the compensating Cloudflare rollback to the captured prior deployment id | prior build restored — **except on the first run**, §3 |
 | 6 | `record-sign.yml` independently re-derives everything, re-verifies the served tree, and attests `builds/<build_id>/deployments/<gen>.json` | deployment live but **unrecorded** — the next publish is gated (§13.2, §17) until a valid generation exists |
 
+Step 6's signer retries a **no-verdict** attempt and never a **rejection**
+(PR #53): a transport failure or unavailable path during the signing sweep —
+the signer reached no verdict — is retried bounded, because an unattested live
+deployment blocks every later publish through the step-6 gate; a verification
+*rejection* (a body-hash mismatch, a header finding) is a verdict and is never
+retried. On scheduling: the nightly publish cron is nominally 06:17 UTC but in
+practice fires **43–100 minutes late by platform design tolerance** — monitors
+must key off run existence, never off the clock; a run still queued past ~100
+minutes is stuck (see `docs/runbooks/self-hosted-runner.md`), not late.
+
 Step 4's sweep being inventory-wide is a RUN P3-3b amendment to §12.1, recorded
 in `ARCHITECTURE.md`'s revision table. It is not cosmetic: §18.1's TD-8 accepts
 the production-verification window **only** because the same bytes already

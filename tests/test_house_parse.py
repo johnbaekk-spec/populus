@@ -386,7 +386,7 @@ def test_positioned_spouse_cap_amount_reassembles():
 
 
 def test_a_wrapped_comment_tail_continues_its_comment_not_a_new_row():
-    # M1-C (docs/build/M1-C-subline-wrap-decision.md) REVERSES the original
+    # M1-C (docs/architecture/decisions/congress-subline-wrapping.md) REVERSES the original
     # R7/F4 control, which made this prose tail open a flagged orphan. The
     # 13-year backfill measured that mechanism manufacturing 1,761 phantom
     # transaction rows out of wrapped DESCRIPTION lines, dragging 9 of 14

@@ -3,7 +3,7 @@
    of its arguments, so SSR and the generic entity route compute identical
    numbers from identical rows.
 
-   Normative specs: dashboard/docs/qoq-presentation.md (QoQ mapping, typed
+   Normative specs: docs/frontend/qoq-presentation.md (QoQ mapping, typed
    sumRanges, S4 taxonomy, ticker→issuer mapping, institutional time stamp)
    and dashboard/docs/pagination-and-counts.md (reused unchanged). */
 

@@ -1233,7 +1233,7 @@ def _gate(
             "unrecorded — the first-run predicate needs BOTH halves, and this "
             "is the shape R20's skipped signer leaves behind. If this is a "
             "known incident, re-dispatch with acknowledge_unrecorded_code_sha "
-            f"set to {served!r} (see docs/runbooks/deploy.md, TD-4)"
+            f"set to {served!r} (see docs/operations/deploy.md, TD-4)"
         )
     if served is None:
         raise RecordRefused(
@@ -1495,7 +1495,7 @@ def _add_gate_arguments(parser: argparse.ArgumentParser) -> None:
             "TD-4 clearing path: acknowledge a live-but-unrecorded deployment "
             "by naming the EXACT code_sha it serves. Clears only that one "
             "state, for one run, and attests nothing. See "
-            "docs/runbooks/deploy.md."
+            "docs/operations/deploy.md."
         ),
     )
     parser.add_argument(

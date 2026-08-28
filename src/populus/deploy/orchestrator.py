@@ -116,7 +116,7 @@ PREVIEW = "preview"
 PRODUCTION = "production"
 
 #: Where an operator goes when the first run fails production verification.
-RUNBOOK = "docs/runbooks/deploy.md"
+RUNBOOK = "docs/operations/deploy.md"
 
 #: The branch name a preview upload is published under. It must differ from the
 #: project's production branch: Pages decides *environment* from the branch name,
@@ -488,7 +488,7 @@ def _assert_anchor_is_serving(
             "after any dashboard rollback — and rolling back to it would move "
             "the site to a build nobody asked for. Nothing was uploaded; "
             "production is untouched. Roll production forward or back until "
-            "the two agree, then re-run (see docs/runbooks/rollback.md)"
+            "the two agree, then re-run (see docs/operations/rollback.md)"
         )
 
 

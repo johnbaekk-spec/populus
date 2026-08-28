@@ -4,7 +4,8 @@
    every narrow-viewport media block in global.css and fails if any honesty
    selector receives display:none / visibility:hidden / content-visibility:
    hidden. Plus the F2 dead-CSS sweep over this run's new classes and the R13
-   corrected-token assertions. */
+   corrected-token assertions. The fold and token rules asserted here are
+   specified by docs/frontend/design-principles.md (§5 and §6). */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -1269,7 +1270,7 @@ test("T14/R16: no banned trading verb on any institutional surface", () => {
   assert.deepEqual(
     findings,
     [],
-    "M2-8-outsized-position-spec.md §1.1: a 13F is a quarter-end snapshot filed up to 45 days" +
+    "docs/architecture/data-contracts/outsized-positions.md §1.1: a 13F is a quarter-end snapshot filed up to 45 days" +
       " late, so at render time the position may not exist — no trading verb may claim otherwise",
   );
 });

@@ -1,174 +1,173 @@
 # Public Filings
 
-**The open financial-data commons** — finance data that is free to pull from primary
-sources and redistributable under recorded conditions, served as an MCP server and a
-public dashboard. Congressional trading ships first.
+**The open financial-data commons** — US financial-disclosure data pulled only
+from primary government sources, redistributable under recorded conditions,
+and free. Live at **[publicfilings.org](https://publicfilings.org)**.
 
-> **Status: pre-release (P1 build).** The governing specification is
-> [ARCHITECTURE.md](ARCHITECTURE.md) (v2.12, 11 external review rounds).
-> Nothing here is published or supported yet.
+Two consumers of one verified data pipeline:
 
-## Layout
+- a **public static dashboard** — congressional trading and institutional
+  (13F) holdings, with the caveats designed in rather than buried; and
+- an MIT-licensed **MCP server** (`populus-mcp`) serving the same published
+  snapshot over stdio.
 
-- `src/populus/` — pipeline, publication protocol, and MCP server (Python 3.12, `uv`)
-  - `ingest/house.py` — House Clerk PTR ingest (discovery, fetching, archiving,
-    reconciliation, reparse)
-  - `ingest/senate.py` — Senate eFD PTR ingest (agreement handshake, index discovery,
-    page archiving, amendment linkage, reconciliation, reparse)
-  - `ingest/__init__.py` — shared transport identity (contact UA, response shape,
-    archive-path containment); `ingest/` holds the only modules that touch the network
-  - `parse/house_ptr.py` — House PTR parser (pdfplumber positions, pypdf text fallback)
-  - `parse/senate_ptr.py` — Senate eFD PTR page parser (lxml, verified 9-column table)
-  - `normalize.py` — chamber-neutral normalization maps and the flag taxonomy
-  - `members.py` + `aliases.yaml` — §9.7 member identity: legislators load, the
-    version-controlled alias file, and the post-hoc join pass
-  - `backfill.py` — kadoa seed import, primary-source crosswalk, and the §9.6
-    blocking audit gate (deterministic sampler + fail-closed scorer)
-  - `amendments.py` + `views.sql` — §9.5 default/uncertainty views and durable
-    amendment-pair flags
-  - `stats.py` — the §5.2 honesty layer (`stats.json`)
-  - `licenses.py` + `licenses.json` — the §15 conditions register (generates
-    `DATA-LICENSE.md` and `NOTICE`)
-- `scripts/` — CI-able guards and generators (`dep_guard.py`, the §19 paid-SDK
-  denylist check; `render_licenses.py`, the license-document generator)
-- `tests/` — unit tests + golden corpus of real government filings
-- `ARCHITECTURE.md` / `REVIEW-RESPONSE.md` — governing spec + review audit trail;
-  `docs/build/` — build briefs; `docs/runbooks/` — operating procedures
-- `DATA-LICENSE.md` / `NOTICE` — generated from the conditions register; data carries
-  per-source conditions, not one license
-- `.github/workflows/` — publish / record-sign / monitor (files; not yet armed)
+The differentiators are provenance and honesty, not coverage: every row links
+to the government document it came from, amounts render as the statutory
+ranges they are, both the trade date and the filed date always show, and
+coverage/parse imperfection is published rather than hidden.
 
-## Development
+**Status:** deployed. `publicfilings.org` serves attested build `20260826.1`;
+the nightly publish path is live (see Deployment below). Open work is tracked
+in [docs/roadmap.md](docs/roadmap.md).
 
-Python 3.12, [`uv`](https://docs.astral.sh/uv/)-managed. Building and testing the
-substrate needs no network access.
+## Architecture in one paragraph
 
+A Python 3.12 pipeline ingests primary sources (House Clerk PTR PDFs, Senate
+eFD, SEC EDGAR 13F, the CC0 congress-legislators roster), parses or flags —
+never silently drops — into SQLite canonical stores, and publishes immutable,
+content-addressed, attested builds to a separate data repository
+(`populus-data`); published artifacts are the API. The Astro dashboard is
+built publisher-side from one staged verified build and deployed to
+Cloudflare Pages as a fully static site (no backend, no accounts, no cookies,
+no external requests), verified inventory-wide on preview before production,
+and each deployment is independently signed and recorded. The MCP server is a
+thin read layer over the same published snapshot. The governing specification
+is [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Repository map
+
+- `src/populus/` — the pipeline: `ingest/` (the only network-touching
+  modules), `parse/`, normalization, member/security identity registries,
+  `inst_*` (13F aggregation and serving projection), `publish/` (build /
+  manifest / attestation / pointer), `deploy/` (Cloudflare upload,
+  verification, deployment records), `mcp_server/`, and `licenses.py` (the
+  §15 conditions register that generates `DATA-LICENSE.md` / `NOTICE`)
+- `dashboard/` — the Astro static site ([dashboard/README.md](dashboard/README.md))
+- `scripts/` — acceptance gates, fixture generators, guards
+  (`dep_guard.py`), and `scripts/maintenance/` (link and path gates)
+- `tests/` — the Python suite plus a golden corpus of real government filings
+- `docs/architecture/` — durable data contracts and decision records;
+  `docs/operations/` — runbooks; `docs/frontend/` — dashboard contracts and
+  design principles; `docs/roadmap.md` — open work
+- `ops/runner/` — the self-hosted publish runner's controller (host
+  infrastructure; see `docs/runbooks/self-hosted-runner.md`)
+- `.github/workflows/` — `checks.yml` (contributor CI), `publish.yml` (the
+  nightly data publish + site deploy), `record-sign.yml` (the deployment
+  record signer)
+
+## Prerequisites
+
+- Python 3.12 with [`uv`](https://docs.astral.sh/uv/) (version pinned by
+  `.python-version`; dependencies locked in `uv.lock`)
+- Node (pinned by `dashboard/.node-version`) with npm, for dashboard work
+
+## Quickstart
+
+```bash
+uv sync                 # install pinned Python dependencies
+uv run pytest -q        # the Python suite + golden-corpus checks (offline)
+
+cd dashboard
+npm ci
+npx astro check         # types
+npm test                # unit suites (node --test)
 ```
-uv sync                              # install pinned dependencies
-uv run pytest                        # unit tests + golden-corpus checks
-uv run python scripts/dep_guard.py   # G1: no paid/vendor SDKs (ARCHITECTURE.md §19)
-make security                        # dep_guard + pip-audit over the frozen
-                                     # production export + npm audit (high) —
-                                     # the advisory halves need network access
-                                     # to the PyPI/OSV and npm advisory
-                                     # services; an outage fails the gate
-                                     # loudly rather than reporting clean
-uv run populus db init app.db        # create an empty database (full §9.4 schema)
-```
 
-The `populus` CLI covers `db init`, all four ingest jobs (`congress-house` /
-`congress-senate` / `congress-backfill` / `members`), both reparse jobs, `stats`,
-and the `backfill-audit` gate commands. `build` / `publish` / `verify` validate
-their full argument surface and name the build RUN that will implement them (RUN 5).
+The `populus` CLI covers `db init`, the ingest jobs (`congress-house`,
+`congress-senate`, `congress-backfill`, `members`, and the institutional
+jobs), reparse, `stats`, `build`, `publish`, and `verify`. An offline
+end-to-end run from a local cache:
 
-The full offline pipeline, in order:
-
-```
+```bash
 uv run populus db init app.db
-uv run populus ingest congress-house   --db app.db --from-cache data-cache/house
-uv run populus ingest congress-senate  --db app.db --from-cache data-cache/senate
-uv run populus ingest congress-backfill --db app.db --from-cache data-cache/kadoa
-uv run populus ingest members          --db app.db --from-cache data-cache/legislators \
-    --house-index data-cache/house --kadoa-trades data-cache/kadoa/trades.json
+uv run populus ingest congress-house  --db app.db --from-cache data-cache/house
 uv run populus stats --db app.db --out stats.json
 ```
 
-### House PTR pipeline
+## Configuration
 
-```
-# offline — ingest from a local cache laid out like data-cache/house/
-uv run populus ingest congress-house --db app.db --from-cache data-cache/house
+- `POPULUS_CONTACT` — the operator contact address embedded in every
+  outbound User-Agent. This is the single operator-contact setting; the
+  built-in default is a maintainer fallback, not hidden configuration.
+  House/Senate use a parenthesized bot format and SEC uses its verified bare
+  application-plus-contact format; the formats are source-specific and fixed.
+- Dashboard build inputs (`POPULUS_BUILD_DIR`, `POPULUS_DB`,
+  `POPULUS_DATA_REPO`, `POPULUS_INST_DB`, `POPULUS_TICKER_MAP`,
+  `SITE_CODE_SHA`) are documented in
+  [dashboard/README.md](dashboard/README.md).
+- `build` / `publish` / `verify` each require an explicit `--attestation=`
+  choice — see `docs/operations/attestation.md`.
 
-# live — fetch from the House Clerk, archiving raw documents under --raw-root
-uv run populus ingest congress-house --db app.db --raw-root raw/house [--year 2026]
+## The two-tier gate model
 
-# reparse archived documents in place; never re-fetches
-uv run populus reparse congress-house --db app.db --raw-root raw/house \
-    [--filing house:20034916 | --since 2026-01-01 | --parser-version house-ptr-1.0.0]
-```
+Two tiers, honestly separated; neither claims the other's coverage.
 
-Ingest runs discover → fetch → classify → parse → normalize → load per year, each
-invocation recorded as one `ingest_runs` row. Without `--year` it covers the current
-year (plus the previous year through January), and ingest initializes the database
-when `--db` does not exist yet. It prints a per-year reconciliation summary — every
-index PTR DocID accounted for in exactly one `parse_status` (`parsed` / `partial` /
-`needs_ocr` / `failed`) — and exits non-zero unless every year discovered and every
-DocID reconciled. Reparse prints the resulting status counts, listing any filing it
-could not reparse (no archived document, or unknown `--filing`), and exits non-zero
-if there were any.
+**Contributor tier** — runs on a fresh clone and on hosted CI runners:
 
-Live fetching is sequential, identifies itself with a contact UA, spaces requests
-≥ 0.25 s apart, and backs off on 429/5xx.
+- `uv run pytest -q` — the Python suite. Offline; two host-bound suites
+  (the macOS runner controller, the parameterized M2-11 QA bundle) declare
+  their own preconditions and skip where their subject does not exist.
+- `dashboard: npm ci && npx astro check && npm test` — types and unit suites.
+- `make security` — `dep_guard` (offline) plus `pip-audit` over the frozen
+  production export and `npm audit --audit-level=high`. The audit halves are
+  **network-dependent**: they call the PyPI/OSV and npm advisory services, so
+  this gate is *not* hermetic and can go red on an advisory-database change
+  with no local edit — loudly, never as a silent pass.
 
-### Senate PTR pipeline
+CI (`.github/workflows/checks.yml`) runs this tier on `pull_request`
+(fork-safe: hosted runners, `contents: read`, no secret access) and `push`;
+`pull_request_target` and comment-driven execution remain banned.
 
-```
-# offline — ingest from a local cache laid out like data-cache/senate/
-uv run populus ingest congress-senate --db app.db --from-cache data-cache/senate
+**Owner tier** — `make test` / `make check` run the full tree including
+`npm run gates`: the static site build (**32 GiB physical-memory floor**, a
+24 GiB Node heap), the post-build suite (which needs a real
+`POPULUS_BUILD_DIR` and release databases from the **private** data
+checkout), and the Chromium browser-geometry lane. This tier is
+**owner-only** by its host requirements; a green contributor tier does not
+prove it, and CI never runs it.
 
-# live — handshake with the eFD search site, archiving raw pages under --raw-root
-uv run populus ingest congress-senate --db app.db --raw-root raw/senate
+## Dashboard development
 
-# reparse archived pages in place; never re-fetches
-uv run populus reparse congress-senate --db app.db --raw-root raw/senate \
-    [--filing senate:029f67f3-121a-406c-bddf-a9a7e7d6267b \
-     | --since 2026-01-01 | --parser-version senate-ptr-1.0.0]
-```
+See [dashboard/README.md](dashboard/README.md) for the build/data contract,
+the gate chain, and route map. The design contract for all surfaces is
+[docs/frontend/design-principles.md](docs/frontend/design-principles.md).
 
-The Senate index is one continuous submitted-date window rather than per-year files,
-so `--year` is rejected for this job: an empty store backfills from 2012-01-01, and
-later runs re-scan from the newest stored Senate `filed_date` minus 90 days, which is
-what catches late amendments and paper-to-e-file conversions. Paper filings are
-recorded with zero rows and `parse_status='needs_ocr'` — retained and visible, never
-dropped. Amendments link to an original through `supersedes` only when exactly one
-unambiguous candidate exists, and every amendment transaction row carries the
-`amendment_unresolved` flag until amendment semantics are settled (§9.5). The summary
-accounts for every index UUID in exactly one `parse_status`, and the run exits
-non-zero unless discovery succeeded, every index row was accepted, and every UUID
-reconciled into a non-failed status.
+## Deployment
 
-Live Senate fetching adds the §9.1 handshake — CSRF token, then the prohibition
-agreement POST, which must be answered with a redirect (a `200` means the agreement
-was not accepted, so the run fails rather than scraping anonymously). Requests are
-spaced ≥ 2.0 s plus jitter with backoff on 429/5xx, and three consecutive `403`s trip
-a circuit breaker that stops the job — recorded as `status='circuit_open'`, exit 1,
-never retried harder.
+Deployment is **owned by `publish.yml`** and is not a contributor surface.
+The nightly scheduled run executes on a self-hosted macOS publisher runner
+(the institutional module derives from a ~21 GB local store that cannot ship
+to a hosted runner), while the deploy and record-sign jobs stay on hosted
+runners deliberately — they hold the Cloudflare-write and attestation
+authority. Scheduled publishes are gated by the
+`POPULUS_SELFHOSTED_VALIDATED` arming variable; supervised
+`workflow_dispatch` runs are exempt by design. The site is verified
+inventory-wide on preview before production receives bytes, production
+failures roll back to the captured (and serving-verified) prior deployment,
+and `record-sign.yml` attests an append-only deployment record — a live
+deployment without a valid record **gates the next publish** (the R18 gate).
+Operator procedures: `docs/operations/deploy.md`, `rollback.md`, and
+`attestation.md`. The runner runbook stays at
+`docs/runbooks/self-hosted-runner.md` for now — its path is pinned by a
+governance test owned by another active run.
 
-Both chambers' politeness floors live in code, not config. `ingest/house.py` and
-`ingest/senate.py` are the only modules permitted to import `httpx`, which
-`tests/test_dep_guard.py` enforces. The test suite never touches the network.
+## Legal and data provenance
 
-### Backfill, member join, stats, and the audit gate
+Code is MIT ([LICENSE](LICENSE)). Data are US-government public records
+carrying statutory conditions — see [DATA-LICENSE.md](DATA-LICENSE.md) and
+[NOTICE](NOTICE), both **generated** from the machine-readable conditions
+register (`src/populus/licenses.py` / `licenses.json`, ARCHITECTURE §15),
+including the 5 U.S.C. § 13107(c) prohibited-uses notice. Data carries
+per-source conditions, not one license. Not financial advice. Security
+policy: [SECURITY.md](SECURITY.md).
 
-`ingest congress-backfill` imports **congressional rows only** from the kadoa
-seed (`data-cache/kadoa/trades.json`) as one filing per seed row
-(`filing_id='kadoa:<id>'`, `license_id='mit-kadoa-seed'`); OGE/executive rows
-are counted and never imported, and every source row reconciles into exactly
-one outcome. When a parsed primary filing exists for the same source document,
-the kadoa filings for that document are retired with `primary_filing_id`
-lineage — tombstones, never deleted.
+## Documentation policy
 
-`ingest members` loads the congress-legislators seed (CC0) plus the
-version-controlled `aliases.yaml`, then joins filers to members per §9.7:
-normalized name × chamber × term overlap with the filed date (× state/district
-where hints exist), joining only on exactly one candidate. Unjoined filings
-keep a NULL `bioguide_id` and are listed in stats — never dropped. Re-running
-the job re-resolves after any alias edit.
-
-`stats` emits deterministic `stats.json`: every quantitative aggregate reads
-the `v_default_transactions` view (active filings minus the original side of
-each unresolved amendment pair), while archive-inventory totals are separately
-named `*_including_excluded`.
-
-`backfill-audit draw` / `backfill-audit score` implement the §9.6 blocking
-human audit of the kadoa import (pinned sample sizes, sealed draw records,
-independent reconstruction, fail-closed scoring). The operating procedure is
-[docs/runbooks/kadoa-backfill-audit.md](docs/runbooks/kadoa-backfill-audit.md);
-the signed disposition is a P1 gate, not something the tooling auto-passes.
-
-## Legal
-
-Code is MIT. Data are US-government public records carrying statutory conditions —
-see [DATA-LICENSE.md](DATA-LICENSE.md) and [NOTICE](NOTICE), generated from the
-machine-readable conditions register (`src/populus/licenses.json`, §15), including
-the 5 U.S.C. § 13107(c) prohibited-uses notice. Not financial advice.
+Active documentation describes the **present** system: architecture and
+contracts (`ARCHITECTURE.md`, `docs/architecture/`), operations
+(`docs/operations/`), frontend (`docs/frontend/`), and open work
+(`docs/roadmap.md`). Completed delivery process — run briefs, plans, dev
+notes, review transcripts — is deleted from the active tree once its durable
+decisions are extracted; **Git history is the archive**. A document that
+narrates how something was built belongs in history; a document a maintainer
+needs to operate or extend the system belongs here.
