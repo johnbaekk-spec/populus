@@ -1583,6 +1583,29 @@ def _anomaly_files(result) -> set[str]:
     return {k.rsplit(":", 1)[0] for k in _anomalies(result)}
 
 
+def _baseline_sha_available() -> bool:
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{BASELINE_SHA}^{{commit}}"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+# The pinned baseline is deliberately an immutable SHA (see BASELINE_SHA), but a
+# shallow or single-branch CI clone does not carry that object. Absence of the
+# object is a property of the clone, not of the tree under test, so these two
+# tests self-skip there — same pattern as the plan-absent skip above.
+requires_pinned_baseline = pytest.mark.skipif(
+    not _baseline_sha_available(),
+    reason="pinned baseline commit unavailable (shallow or partial clone)",
+)
+
+
+@requires_pinned_baseline
 def test_abs_paths_ground_truth_on_the_pinned_baseline():
     """Exactly five files on the PINNED baseline carry a machine-specific path."""
     r = _run_sh(CHECK_ABS, REPO_ROOT, BASELINE_SHA)
@@ -1659,6 +1682,7 @@ def test_abs_paths_service_allow_table_matches_the_fixtures():
         line for _, line in SERVICE_ACCOUNT_ALLOW_PAIRS]
 
 
+@requires_pinned_baseline
 def test_abs_paths_service_allow_lines_are_live():
     """Every exempted line still exists, verbatim, in the tracked runbook.
 

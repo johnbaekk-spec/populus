@@ -62,6 +62,36 @@ requires_owner_machine = pytest.mark.skipif(
     ),
 )
 
+# Two further host preconditions surfaced by the first hosted-CI run of this
+# suite (it self-skipped wholesale before the QaBundlePaths refactor, so no CI
+# had ever executed these tests). Same self-skip pattern as above: the
+# precondition is declared at the test, never in a CI ignore-list.
+requires_zsh = pytest.mark.skipif(
+    shutil.which("zsh") is None,
+    reason="drives real zsh command lines; the hosted CI image carries no zsh",
+)
+
+
+def _git_object_available(oid: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", oid],
+            cwd=Path(__file__).parents[1],
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+requires_round7_history = pytest.mark.skipif(
+    not _git_object_available("de5068f0da644bd543fc7433d14b1f46ba3f9d3f"),
+    reason=(
+        "needs the round-7 approved tree object in local git history; a "
+        "shallow or partial CI clone does not carry it"
+    ),
+)
+
 
 def make_paths(
     tmp_path: Path,
@@ -2968,6 +2998,7 @@ def test_validate_release_rejects_docs_output_relabel_before_git(tmp_path: Path,
     ]) == 1
 
 
+@requires_round7_history
 def test_release_hygiene_exact_archive_and_thirteen_line_delta() -> None:
     repo = Path(__file__).parents[1]
     BUNDLE.validate_release_hygiene_delta(repo)
@@ -3198,6 +3229,7 @@ def test_release_hygiene_round_eight_transition_is_exact_and_round_nine_refuses(
     assert "must be exactly 8" in capsys.readouterr().err
 
 
+@requires_zsh
 def test_functional_multi_route_selector_is_single_process_and_pipefail_safe() -> None:
     plan = (
         Path(__file__).parents[1]
@@ -3220,6 +3252,7 @@ def test_functional_multi_route_selector_is_single_process_and_pipefail_safe() -
     assert proc.returncode == 0
 
 
+@requires_zsh
 @pytest.mark.parametrize("case_id", sorted(EXPECTED_RELEASE_F1_IDS), ids=str)
 def test_release_hygiene_f1_locked_matrix_case(
     case_id: str,
@@ -4104,6 +4137,7 @@ def _closeout_deploy_env(
     return env
 
 
+@requires_zsh
 def test_closeout_deploy_record_preexisting_and_collision_refuse_without_mutation(
     tmp_path: Path,
 ) -> None:
@@ -4130,6 +4164,7 @@ def test_closeout_deploy_record_preexisting_and_collision_refuse_without_mutatio
     assert not list(tmp_path.glob(".deploy-run.finalization-r10.*"))
 
 
+@requires_zsh
 def test_closeout_deploy_record_partial_failure_and_exact_readback(
     tmp_path: Path,
 ) -> None:
