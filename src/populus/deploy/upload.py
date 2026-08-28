@@ -1,4 +1,4 @@
-"""§12.1 R9/R10/R16: the three production objects the ordered sequence injects.
+"""§12.1: the three production objects the ordered sequence injects.
 
 :mod:`populus.deploy.orchestrator` owns the *order* and injects everything that
 touches the outside world. Until this module existed, the only implementations
@@ -25,8 +25,8 @@ under it (``tests/conftest.py``).
 **wrangler moves bytes; it is not believed about what it did.** Its output is
 human-facing text carrying no deployment id, and "the CLI printed success" is
 not evidence. Every fact the sequence then acts on — the deployment id, the
-environment the bytes really landed in, and the ``uses_functions`` signal R16
-reads — is read back from the pinned Pages API. The URL wrangler printed is used
+environment the bytes really landed in, and the ``uses_functions`` signal the
+no-Functions check reads — is read back from the pinned Pages API. The URL wrangler printed is used
 for exactly one thing: to require that the newest deployment in that environment
 *is* the one this run just published. If it is not, another deploy raced us, and
 every guarantee downstream ("production was never touched", "the same bytes")
@@ -111,13 +111,13 @@ def resolve_wrangler_executable(repo_root: Path | None = None) -> Path:
         raise UploadFailed(
             f"the lock-installed wrangler executable is missing at {candidate}. "
             "Run `npm ci` in dashboard/ first; the deploy never installs "
-            "wrangler from the registry (R8/LD9), so nothing was uploaded."
+            "wrangler from the registry, so nothing was uploaded."
         )
     if not os.access(candidate, os.X_OK):
         raise UploadFailed(
             f"{candidate} exists but is not executable. Re-run `npm ci` in "
-            "dashboard/; the deploy never falls back to a registry fetch "
-            "(R8/LD9), so nothing was uploaded."
+            "dashboard/; the deploy never falls back to a registry fetch, "
+            "so nothing was uploaded."
         )
     return candidate
 
@@ -280,7 +280,7 @@ class PagesDeploySurface:
     def rollback_payload(self, deployment_id: str) -> Mapping[str, Any]:
         """``POST …/deployments/{id}/rollback``, returning the RAW deployment.
 
-        The re-verification after a rollback runs R16's no-Functions check
+        The re-verification after a rollback runs the no-Functions check
         against this mapping. Handing it a mapping rebuilt from
         :class:`~populus.deploy.cloudflare.Deployment` would set
         ``uses_functions`` to ``bool(...)`` of a possibly-absent field, so a
@@ -319,7 +319,8 @@ class WranglerUploader:
 
         ``argv[0]`` is the lock-installed binary
         :func:`resolve_wrangler_executable` already validated — never ``npx``,
-        never a package spec, so nothing here can reach the npm registry. ``--commit-dirty=true`` because the runner's checkout is
+        never a package spec, so nothing here can reach the npm registry.
+        ``--commit-dirty=true`` because the runner's checkout is
         dirty by construction (the artifact was downloaded into it) and
         wrangler otherwise stops to ask a question no one is there to answer.
         The credentials are **not** here: ``CLOUDFLARE_API_TOKEN`` and
@@ -418,12 +419,12 @@ class DeploymentVerifier:
     signer too, with no notion of a deploy "stage". The sequence, in contrast,
     injects **one** callable it invokes three times and needs the expectations
     already bound so it cannot vary them between the preview leg and the
-    production leg — which is precisely the substitution R9's amended
-    "inventory-wide on both legs" exists to forbid. Binding them here, once, in
+    production leg — which is precisely the substitution the amended
+    "inventory-wide on both legs" rule exists to forbid. Binding them here, once, in
     a frozen dataclass, is what makes "the same verification ran on both" a
     property of construction rather than of call sites.
 
-    ``stage`` is a label, not a switch: R9 and R11 are deliberately one code
+    ``stage`` is a label, not a switch: the preview and domain checks are deliberately one code
     path differing only in ``base_url``. It is validated rather than ignored, so
     a caller that invents a third stage is a bug that stops here instead of
     quietly verifying something under a name no one defined.

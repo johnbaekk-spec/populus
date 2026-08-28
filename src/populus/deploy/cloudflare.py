@@ -1,4 +1,4 @@
-"""§12.1 R8/R11/R16: the Cloudflare Pages API, pinned endpoint by endpoint.
+"""§12.1: the Cloudflare Pages API, pinned endpoint by endpoint.
 
 Every call here is pinned because the *obvious* alternative gives a wrong answer,
 an absent answer, or no answer at all. The pins, and what each one is defending
@@ -9,19 +9,19 @@ against:
    **bare strings** (``["publicfilings.pages.dev", "publicfilings.org"]``): a
    domain appears there once it is *attached* to the project, carrying no status
    whatsoever. Reading membership in that array as "the domain is live" is the
-   exact mistake R11 exists to prevent — it would pass while the certificate was
+   exact mistake the domain precondition exists to prevent — it would pass while the certificate was
    still ``initializing`` and the domain served nothing.
 
 2. ``GET …/pages/projects/{project}/domains`` — the **only** endpoint that
    carries per-domain ``status``, one of ``initializing | pending | active |
    deactivated | blocked | error``, plus ``verification_data.status`` and
-   ``validation_data.status``. R11's precondition reads here and nowhere else.
+   ``validation_data.status``. The domain precondition reads here and nowhere else.
    The two are separate methods on purpose: nothing in this module can satisfy a
    status question with the project payload, because the project payload is never
    fetched on that path.
 
 3. ``GET …/deployments?env=production`` — ``id``, ``environment``, ``url`` and
-   ``uses_functions``. The last is what R16's no-Functions check needs, and it is
+   ``uses_functions``. The last is what the no-Functions check needs, and it is
    only on the deployment object.
 
 4. ``POST …/deployments/{id}/rollback`` — the one non-GET call, and the only
@@ -137,7 +137,7 @@ class CustomDomain:
 
 @dataclass(frozen=True)
 class Deployment:
-    """The four deployment fields the deploy path and R16 actually read."""
+    """The four deployment fields the deploy path and the no-Functions check actually read."""
 
     id: str
     environment: str
@@ -247,7 +247,7 @@ class PagesClient:
         return branch
 
     def assert_production_branch(self, expected: str) -> str:
-        """R8: the workflow-locked branch must be the project's production branch.
+        """The workflow-locked branch must be the project's production branch.
 
         Called before any upload. A mismatch means the bytes about to be pushed
         would land somewhere other than the identity the workflow claims, so the
@@ -258,7 +258,7 @@ class PagesClient:
             raise PagesRejected(
                 "production branch mismatch: the workflow is locked to "
                 f"{expected!r} but Cloudflare project {self._project!r} deploys "
-                f"production from {configured!r}. Aborting before any upload (R8)."
+                f"production from {configured!r}. Aborting before any upload."
             )
         return configured
 
@@ -278,7 +278,7 @@ class PagesClient:
         return [_custom_domain(entry) for entry in result]
 
     def assert_custom_domain_active(self, domain: str) -> CustomDomain:
-        """R11: *domain* must be ``active`` on the domains subresource.
+        """*domain* must be ``active`` on the domains subresource.
 
         No polling and no waiting. Activation is a one-time provisioning
         precondition confirmed before the workflow is ever armed (Rollout
@@ -292,7 +292,7 @@ class PagesClient:
             raise PagesRejected(
                 f"custom domain {domain!r} is not attached to project "
                 f"{self._project!r}; the domains subresource lists {sorted(found)}. "
-                "Aborting before the production upload (R11)."
+                "Aborting before the production upload."
             )
         if not entry.active:
             raise PagesRejected(
@@ -301,7 +301,7 @@ class PagesClient:
                 f"{entry.verification_status!r}, validation="
                 f"{entry.validation_status!r}). Activation is a provisioning "
                 "prerequisite, not something this run polls for. Aborting before "
-                "the production upload (R11)."
+                "the production upload."
             )
         return entry
 

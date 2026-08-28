@@ -35,7 +35,7 @@ PARSER_VERSION = "inst-13f-1.0.0"
 
 #: An info-table filename discovered from a remote index must be a bare XML
 #: file name — no path separator, no scheme — before it is joined to a path
-#: (belt-and-braces with ``archive_path`` containment; F4).
+#: (belt-and-braces with ``archive_path`` containment).
 _SAFE_XML_NAME = re.compile(r"[A-Za-z0-9._-]+\.[Xx][Mm][Ll]")
 
 #: form 13F file numbers: strip the state/office padding to a canonical form so

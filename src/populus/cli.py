@@ -541,7 +541,7 @@ def identity_group() -> None:
     help=(
         "Explicit 13(f)-list file(s) to seed (repeatable); the quarter is taken"
         " from the filename and its sibling variant in the same directory is used"
-        " for the R5 cross-format check. Overrides the --list13f-cache selection."
+        " for the list-13F cross-format check. Overrides the --list13f-cache selection."
     ),
 )
 @click.option(
@@ -629,7 +629,7 @@ def identity_bootstrap(
         if len(parents) > 1:
             raise click.UsageError(
                 "all --list13f files must live in one directory (its siblings are"
-                " used for the R5 cross-format check)"
+                " used for the list-13F cross-format check)"
             )
         source_dir = parents.pop()
         derived = [parse_quarter(Path(path).name) for path in list13f_files]
@@ -655,7 +655,7 @@ def identity_bootstrap(
     try:
         ensure_registry(conn)
         # A pre-inst database must gain the inst tables + views before the
-        # registry reconcile touches inst_holdings — F33.
+        # registry reconcile touches inst_holdings.
         ensure_inst_schema(conn)
         ensure_views(conn)
         report = run_identity_bootstrap(
@@ -884,7 +884,7 @@ def seed_corpus(
     """Seed the working store from the previous release, then baseline it.
 
     Refuses rather than falling back to an empty database: building fresh is
-    what produced B24 and B25.
+    what produced the earlier corpus-loss defects.
     """
     from populus.amendments import ensure_views
     from populus.load import ensure_subline_columns
@@ -1015,7 +1015,7 @@ def _echo_inst_gate_outcome(report) -> None:
             f" {w['cover_failed_count']} — below the M2 ≥95% gate; congress"
             " publishes normally"
         )
-        # R11: name the quarters with no covering 13(f) list.
+        # Name the quarters with no covering 13(f) list.
         uncovered = w.get("uncovered_quarters") or []
         if uncovered:
             click.echo(
@@ -1034,7 +1034,7 @@ def _echo_inst_gate_outcome(report) -> None:
         from populus.ingest.inst13f import cover_dispositions_from_mapping
 
         click.echo(f"  {cover_dispositions_from_mapping(report.inst_cover_dispositions)}")
-    # R9: per-period value-coverage figures whenever inst data was measured.
+    # Per-period value-coverage figures whenever inst data was measured.
     for period in report.inst_period_coverage or []:
         ratio = (
             f"{period['coverage'] * 100:.2f}%"
@@ -1331,14 +1331,14 @@ def snapshot_site_cmd(source: str, dest: str) -> None:
     "site_file_count",
     required=True,
     type=int,
-    help="Number of files the site build emitted (R3: never defaulted).",
+    help="Number of files the site build emitted (never defaulted).",
 )
 @click.option(
     "--dist-dir",
     "dist_dir",
     type=click.Path(file_okay=False),
     help="The site build output. Its stats.json is patched with the same bytes "
-         "as the canonical copy and the two are asserted byte-equal (R24, §12.1 "
+         "as the canonical copy and the two are asserted byte-equal (§12.1 "
          "step 2). Omit only when there is no site — the wrapper build path.",
 )
 @_with_backend_options
@@ -1387,7 +1387,7 @@ def finalize_build_cmd(
         f"finalized build {report.build_id} ({report.artifact_count} artifacts,"
         f" site_file_count {site_file_count}) at {report.staging_dir}"
     )
-    # R3: the count is asserted here, at the boundary the deploying path crosses,
+    # The count is asserted here, at the boundary the deploying path crosses,
     # rather than trusted. `require_site_file_count` had no production caller at
     # all until this line -- four green tests over dead code.
     require_site_file_count(report.staging_dir)
@@ -1906,7 +1906,7 @@ def _live_bulk_client():
 def inst_bulk_discover(
     filing_quarter: str, report_period: str, out_dir: str, top_n: int
 ) -> None:
-    """Discover + rank the filer universe for one budgeted quarter (R1-R4)."""
+    """Discover + rank the filer universe for one budgeted quarter."""
     from populus.inst_bulk import (
         discover_universe,
         rank_universe,

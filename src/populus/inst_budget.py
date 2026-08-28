@@ -65,7 +65,7 @@ recorded as such at `GLOBAL_FILE_CAP`. The remaining margin to Cloudflare's hard
 20,000 is 2,000 files; the next module that does not fit is a Pages-tier
 decision, not another raise.
 
-**QA M2-8 R2 N1 — the same defect, once more, inside its own fix.** The first
+**The same undercount defect, once more, inside its own fix.** The first
 version of this rewrite MEASURED the 103-file chrome class, gave it the constant
 below, and then referenced it from nowhere: `worst_case_file_count` summed the
 other four terms and reported 16,070, understating the breach by exactly the
@@ -147,14 +147,14 @@ MAX_SHARD_BYTES = 25 * 1024 * 1024    # Cloudflare 25 MiB per file
 #: difference is `institutional/` (4,275), which is BUILT and is accounted for
 #: by the M2/M2-8/M2-11 reservations rather than by a measured term — see
 #: `RESERVED_CLASSES`. An earlier reading of that difference as an
-#: "unaccounted class" produced two assertions that could not both hold; R45
-#: resolved it by asserting COVERAGE and SUFFICIENCY instead of a balancing
+#: "unaccounted class" produced two assertions that could not both hold;
+#: the file-class accounting revision resolved it by asserting COVERAGE and SUFFICIENCY instead of a balancing
 #: sum. Do not "fix" the difference by folding the institutional tree into this
 #: constant: that double-counts it against its own reservation.
 #:
-#: Re-measured for R45 only AFTER the B25 corpus restoration published
+#: Re-measured only AFTER the corpus restoration published
 #: (build 20260817.1) — measuring the shrunken tree would have encoded the
-#: outage as the baseline, which is the error BACKLOG B18 names. The prior
+#: outage as the baseline — measuring a proxy instead of the thing. The prior
 #: value was 12,442, measured 2026-08-05 when House history was missing.
 #:
 #: This constant exists for the PROJECTION only — the enforcing gate counts the
@@ -238,7 +238,7 @@ PAGE_BYTE_LIMIT = 2 * 1024 * 1024     # 2 MiB of SERIALIZED bytes, measured
 #: Every top-level class a real `dist/` emits, mapped to the budget term that
 #: accounts for it.
 #:
-#: R45 replaced an EQUALITY assertion here, and the reason matters.
+#: This ceiling replaced an EQUALITY assertion here, and the reason matters.
 #: `M1_MEASURED_PAGES + SITE_CHROME_FILES == the whole tree` held only while
 #: `institutional/` was not built. Once it was (4,275 files, measured
 #: 2026-08-17 on the restored corpus), that equality and
@@ -256,7 +256,7 @@ PAGE_BYTE_LIMIT = 2 * 1024 * 1024     # 2 MiB of SERIALIZED bytes, measured
 #:   (1) COVERAGE — no top-level class goes unnamed. That is defect C5(a),
 #:       "it omits a whole file class", made mechanical.
 #:   (2) SUFFICIENCY — the projection never forecasts FEWER files than really
-#:       exist. That is defect QA M2-8 R2 N1, an undercount in the unsafe
+#:       exist. That is the QA-found undercount defect in the unsafe
 #:       direction, made mechanical.
 #: Both survive `institutional/` being built; the equality did not.
 MEASURED_M1_CLASSES: frozenset[str] = frozenset({"congress", "tickers"})
@@ -388,7 +388,7 @@ def check_measured_tree(
 ) -> None:
     """The ENFORCING gate: a real tree against the real caps. Raises `BudgetBreach`.
 
-    This is the call site R19 was missing. It is deliberately dumb — two
+    This is the call site the plan's breach check was missing. It is deliberately dumb — two
     comparisons against two provider-derived limits — because the previous
     version's sophistication was what let it compare constants to themselves.
 
@@ -410,7 +410,7 @@ def check_measured_tree(
     if breaches:
         raise BudgetBreach(
             "the built tree breaches its hard maxima — the build must fail rather "
-            "than re-tune (plan R19):\n  " + "\n  ".join(breaches)
+            "than re-tune:\n  " + "\n  ".join(breaches)
         )
 
 
@@ -438,7 +438,7 @@ def check_geometry(
     if breaches:
         raise BudgetBreach(
             "shard geometry breaches its hard maxima — the build must fail rather "
-            "than re-tune (plan R19):\n  " + "\n  ".join(breaches)
+            "than re-tune:\n  " + "\n  ".join(breaches)
         )
 
 
@@ -465,7 +465,7 @@ def worst_case_file_count(
     site_chrome_files` equals the whole measured tree and no file class is
     omitted. It is a separate term rather than folded into `measured_files`
     because the post-build drift gate measures the two classes independently.
-    Omitting it is QA M2-8 R2 N1: a projection 103 files short, in the unsafe
+    Omitting it is the known undercount defect: a projection 103 files short, in the unsafe
     direction, of a tree the module had already measured.
 
     M3's reservation is included deliberately: omitting another

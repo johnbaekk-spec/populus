@@ -393,8 +393,8 @@ class MemberResolver:
         normalized = normalize_filer_name(name_raw)
 
         # Alias precedence: an applicable alias row is a reviewed decision.
-        # Aliases DO NOT bypass the hard state/district constraints (F2/R2/
-        # R4): whenever the filing supplies a state or district hint, an
+        # Aliases DO NOT bypass the hard state/district constraints:
+        # whenever the filing supplies a state or district hint, an
         # applicable alias must carry a MATCHING value. A wildcard (NULL)
         # disambiguator therefore only applies when the corresponding hint
         # is itself absent (e.g. a Senate filing supplies no district). A
@@ -416,13 +416,13 @@ class MemberResolver:
             targets = {row.bioguide_id for row in applicable}
             if len(targets) == 1:
                 return Resolution(applicable[0].bioguide_id, "alias")
-            # Overlapping applicable rows disagreeing on the member: the R3
+            # Overlapping applicable rows disagreeing on the member: an alias-table
             # defect. Fail closed — CI catches the file via
             # alias_overlap_errors; resolution never guesses.
             return Resolution(None, "alias_conflict")
 
-        # District is a HARD constraint whenever a district hint is supplied
-        #: it is never discarded to recover a match. A supplied
+        # District is a HARD constraint whenever a district hint is supplied:
+        # it is never discarded to recover a match. A supplied
         # district that eliminates every candidate yields NULL, not a
         # district-blind guess — conservative identity resolution (a stale or
         # wrong district can never attribute a filing to a non-matching
@@ -597,7 +597,8 @@ def kadoa_hints_from_trades(
     known-stale source value. Those are corrected **only** by an explicit,
     reviewed alias scoped to the exact stale (source_district, date) in
     ``aliases.yaml`` (a versioned correction mapping); an uncorrected stale
-    district resolves to NULL and is listed in stats, never silently dropped and never attributed to a non-matching member.
+    district resolves to NULL and is listed in stats, never silently dropped
+    and never attributed to a non-matching member.
     """
     records = json.loads(Path(path).read_text(encoding="utf-8"))
     hints: dict[str, tuple[str | None, str | None]] = {}

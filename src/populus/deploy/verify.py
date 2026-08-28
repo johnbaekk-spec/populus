@@ -1,4 +1,4 @@
-"""§12.1 R9/R11/R15/R16/R17/R19: what the live site actually served.
+"""§12.1: what the live site actually served.
 
 A deployment is green only on live proof, and this module is where the proof is
 taken. It answers one question — *are the bytes on the domain the bytes we
@@ -72,7 +72,7 @@ that it is passed explicitly on every call instead. That also keeps the suite
 hermetic (``tests/conftest.py`` forbids real network I/O) and keeps this module
 what it is: verification logic over fetched bytes. The
 same routine runs against a preview origin and against the live custom domain —
-R9 and R11 are one code path with a different ``base_url``, which is why
+The preview and domain checks are one code path with a different ``base_url``, which is why
 neither host appears anywhere below.
 """
 
@@ -176,7 +176,7 @@ LOCKED_CONTENT_SECURITY_POLICY = (
     "upgrade-insecure-requests"
 )
 
-#: HSTS per LD13/R12: one year, deliberately WITHOUT `includeSubDomains` or
+#: HSTS: one year, deliberately WITHOUT `includeSubDomains` or
 #: `preload` — subdomain readiness is unproven and a policy without either
 #: remains reversible by serving `max-age=0` over HTTPS.
 LOCKED_STRICT_TRANSPORT_SECURITY = "max-age=31536000"
@@ -225,7 +225,7 @@ ALLOWED_RESPONSE_HEADERS = frozenset(
         "content-encoding",
         # Required, not merely tolerated — see REQUIRED_RESPONSE_HEADERS. It is
         # listed here as well because the allowlist and the required-set are
-        # independent checks: omitting it here would flag the very header R36
+        # independent checks: omitting it here would flag the very header the HSTS rule
         # exists to ship.
         "content-security-policy",
         "content-language",
@@ -902,7 +902,7 @@ def verify_deployment(
                 )
         findings.extend(control_findings)
     except VerifyUnavailable as exc:
-        # R17: we did not get an answer. Not a divergence, not a finding, and
+        # We did not get an answer. Not a divergence, not a finding, and
         # emphatically not tampering — the caller retries or alarms as an
         # outage, and nothing is attested either way.
         return VerificationResult(
@@ -952,7 +952,7 @@ def verify_deployment(
 
 
 #: The representative response classes on which the control's header effect is
-#: proven (R12/Task 10.4): one of each, always in the sample when present.
+#: proven: one of each, always in the sample when present.
 _REPRESENTATIVE_SUFFIXES = (".html", ".js", ".css", ".json")
 
 

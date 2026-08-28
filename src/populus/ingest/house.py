@@ -5,7 +5,8 @@ Senate sibling ``populus.ingest.senate`` are the only modules allowed to
 import ``httpx``. Owns discovery (conditional-GET index ZIP), polite
 sequential fetching (floors in code, never config — G6), raw archiving,
 classification/parse/normalize orchestration, the single filing-status
-decision point, atomic loads, the per-run ``ingest_runs`` audit lifecycle, completeness reconciliation, and archive-safe reparse.
+decision point, atomic loads, the per-run ``ingest_runs`` audit lifecycle,
+completeness reconciliation, and archive-safe reparse.
 
 Library code never reads the wall clock: ``now``/``run_id``/``host`` and the
 live-path ``sleep``/``monotonic`` are supplied by the CLI layer.
@@ -460,7 +461,7 @@ def discover(
     return result
 
 
-# --- document evaluation (the single status decision point — R21) ------------
+# --- document evaluation (the single status decision point) ------------------
 
 
 @dataclass(frozen=True)
@@ -575,7 +576,7 @@ class Reconciliation:
     year: int
     index_ptr_count: int
     status_counts: Mapping[str, int]
-    failed_fetch: int  # failed with raw_path NULL (re-fetch-eligible, R17)
+    failed_fetch: int  # failed with raw_path NULL (re-fetch-eligible)
     failed_archived: int  # failed with an archived document (reparse-eligible)
     unaccounted: tuple[str, ...]
 
@@ -639,7 +640,7 @@ class YearReport:
     clean_efile_rows: int = 0
     total_efile_rows: int = 0
     text_fallback_rows: int = 0
-    # R3: archived documents whose bytes verified against filings.response_hash
+    # Archived documents whose bytes verified against filings.response_hash
     # (skipped, zero transport) vs those that did not and were re-obtained.
     settled_verified: int = 0
     settled_reobtained: int = 0
@@ -651,7 +652,7 @@ class YearReport:
 class IngestReport:
     run_id: str
     years: list[YearReport] = field(default_factory=list)
-    # R20: what the polite fetcher actually did, and the monotonic wall-clock
+    # What the polite fetcher actually did, and the monotonic wall-clock
     # of the run. `elapsed_s` is None in cache mode, where no clock is injected.
     fetch: FetchMetrics = field(default_factory=FetchMetrics)
     elapsed_s: float | None = None
@@ -688,7 +689,7 @@ class IngestReport:
 
     @property
     def ok(self) -> bool:
-        """LD24 + R1: success means every year discovered, every index DocID
+        """Success means every year discovered, every index DocID
         accepted and reconciled, and none failed.
 
         A year whose discovery failed produces no reconciliation at all, so
@@ -749,7 +750,7 @@ def run_house_ingest(
     )
     report = IngestReport(run_id=run_id)
     fetcher: _PoliteFetcher | None = None
-    # R20: monotonic only — never the wall clock — and only where the CLI
+    # Monotonic only — never the wall clock — and only where the CLI
     # injected one, so cache-mode runs report `elapsed_s = None` rather than
     # a fabricated zero.
     started = monotonic() if monotonic is not None else None
@@ -1067,7 +1068,7 @@ def _process_docid(
     pdf_bytes: bytes | None,
     now: Callable[[], str],
 ) -> _Outcome:
-    """Evaluate and atomically persist one DocID (upsert — R16/R17/R20).
+    """Evaluate and atomically persist one DocID (upsert).
 
     ``lifecycle`` is read back and replayed, never defaulted: ingest records
     only what parsing achieved, while lifecycle records the filing's

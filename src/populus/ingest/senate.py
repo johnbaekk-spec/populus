@@ -136,7 +136,7 @@ class HttpxSenateTransport:
         self._transport = transport
 
     def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
-        # R9/LD10: the shared bounded helper enforces the 128 MiB decoded-body
+        # The shared bounded helper enforces the 128 MiB decoded-body
         # ceiling and preserves multiple Set-Cookie values (newline-joined) for
         # the library-owned jar. ResponseTooLarge propagates as a named
         # failure; transport-level httpx errors keep their TransportFailure
@@ -170,7 +170,7 @@ class HttpxSenateTransport:
 class _CookieJar:
     """Minimal library-owned cookie store: name=value pairs, last write wins.
 
-    Single host, no domain/path/expiry semantics (declared debt TD-R3c) —
+    Single host, no domain/path/expiry semantics (declared debt) —
     eFD sets simple session cookies on one host, and owning the jar here
     keeps session behavior fully testable offline. Multiple ``Set-Cookie``
     values arrive newline-joined from the transport (see
@@ -789,11 +789,11 @@ class SenateIngestReport:
     failure_kinds: Counter = field(default_factory=Counter)
     circuit_open_url: str | None = None
     reconciliation: Reconciliation | None = None
-    # R20: what the polite session actually did, and the monotonic wall-clock
+    # What the polite session actually did, and the monotonic wall-clock
     # of the run. `elapsed_s` is None in cache mode, where no clock is injected.
     fetch: FetchMetrics = field(default_factory=FetchMetrics)
     elapsed_s: float | None = None
-    # R14: the exact window this run requested (None = the derived watermark
+    # The exact window this run requested (None = the derived watermark
     # start / open end), recorded so the operational artifact can state which
     # era the figures describe.
     window: tuple[str, str | None] | None = None
@@ -964,7 +964,7 @@ def _ingest(
     fatal error still finalizes the audit with the true committed counters.
 
     *session_box* receives the constructed session so the caller can read its
-    R20 counters on every exit path, including the tripped-breaker one.
+    transport counters on every exit path, including the tripped-breaker one.
     """
     session: _PoliteSession | None = None
     if cache_dir is None:
@@ -1106,8 +1106,8 @@ def _process_uuid(
 
     ``lifecycle`` is read back and replayed, never defaulted: ingest records
     only what parsing achieved, while lifecycle records the filing's
-    standing (§9.4), and R10/LD9 keeps lifecycle untouched until OQ-13
-    lands. Without this, a fetch-failed retry or a paper-to-e-file
+    standing (§9.4), and lifecycle stays untouched until real lifecycle
+    writes land. Without this, a fetch-failed retry or a paper-to-e-file
     conversion would silently reactivate a ``superseded``/``retired``/
     ``withdrawn`` filing through ``upsert_filing``'s ON CONFLICT update.
     """
@@ -1173,7 +1173,7 @@ def _link_amendments(
 ) -> tuple[int, int]:
     """§9.5 conservative pairing: ``supersedes`` only on an unambiguous
     original; zero or many candidates ⇒ NULL. No supersede automation, no
-    lifecycle writes — that seam stays closed until OQ-13 lands with real
+    lifecycle writes — that seam stays closed until supersede automation lands with real
     amended-filing fixtures (the empirical restate-vs-append study).
 
     An original is sought among (a) current-index non-amendment rows with the
@@ -1182,7 +1182,7 @@ def _link_amendments(
     deduped by filing_id. Documented misses (off-by-one filed dates,
     out-of-window originals) leave the pair unresolved: visible via the
     permanent ``amendment_unresolved`` row flag, never double-counted
-    (TD-R3b).
+    (declared debt).
     """
     amendments = 0
     paired = 0

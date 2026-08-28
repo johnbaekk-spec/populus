@@ -926,7 +926,7 @@ def bootstrap_ftd(
         elif outcome == "cleared":
             mutations.links_cleared += 1
 
-    # R18 — reuse review. The horizon is a REVIEW trigger only: it reads the
+    # Reuse review. The horizon is a REVIEW trigger only: it reads the
     # persisted intervals and never widens one.
     reuse_candidates = 0
     disputed: list[tuple[str, str, str]] = []
@@ -1089,7 +1089,7 @@ def run_identity_bootstrap(
     half-migrated registry under a failed run.
 
     When *list13f_source* is given (a cache or live 13(f)-list source), the
-    selected quarters are loaded, parsed and R5-checked BEFORE the transaction —
+    selected quarters are loaded, parsed and cross-format-checked BEFORE the transaction —
     exactly like the ticker/FTD parses — and seeded inside it, after the FTD
     pass so the definitional intervals sit above the FTD identifiers at
     resolution.

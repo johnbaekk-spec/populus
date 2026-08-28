@@ -934,7 +934,7 @@ def _build_inst_agg_python(
     # structure and the dashboard's getStaticPaths iterates it, so seeding it from
     # the suppressed view meant a filer covered by an affiliate had correct
     # holdings and a correct concentration row but NO registry row — and therefore
-    # no page at all. That left the F13 fix delivering nothing end-to-end.
+    # no page at all. That left the earlier fix delivering nothing end-to-end.
     # Cross-entity issuer aggregates still read v_default_holdings below, so an
     # affiliate relationship is still counted exactly once in issuer totals.
     filers: dict[str, dict] = {}
@@ -1006,7 +1006,7 @@ def _build_inst_agg_python(
             entity_id, entity_link_state, cusip, issuer_name_raw
         )
 
-        # F22: the grain -> issuer map is NOT built here. `populate_issuer_adds`
+        # The grain -> issuer map is NOT built here. `populate_issuer_adds`
         # runs after BOTH build paths and derives it once from the same source
         # holdings; building it here too meant the python path paid a
         # high-cardinality traversal and its memory for a structure it then
@@ -2424,7 +2424,7 @@ def build_inst_agg(
 ) -> InstAggReport:
     """Build the aggregate, using bounded SQL only in the owned materializer.
 
-    R13/R23/R24: the registry join gate runs HERE, at the one point BOTH build
+    The registry join gate runs HERE, at the one point BOTH build
     paths converge. Placing it inside either `_build_inst_agg_python` or
     `_build_inst_agg_bulk` would gate one path and leave the other ungated —
     the twin-code-path defect this repository has been bitten by before.
@@ -2468,7 +2468,7 @@ def build_inst_agg(
 def populate_issuer_adds(
     source_conn: sqlite3.Connection, dest_path: Path | str, *, ingested_at: str
 ) -> None:
-    """R21: derive the leaderboard from a FINISHED aggregate.
+    """Derive the leaderboard from a FINISHED aggregate.
 
     ONE implementation, both build paths. The python builder and the bulk SQL
     builder produce the same `agg_qoq_deltas`, so the leaderboard is derived
@@ -2539,7 +2539,7 @@ def populate_issuer_adds(
         # Every emitted (period, mode) carries an exclusion row, INCLUDING a
         # zero one: an absent row and a zero are different claims, and the
         # section note's truth table branches on the count being known.
-        # F21: the cross-product over every period the CORPUS carries, not only
+        # The cross-product over every period the CORPUS carries, not only
         # the periods that happened to have adds or ambiguity. A quiet quarter
         # is still offered by the selector, and a MISSING count is not zero —
         # it is unknown, and an unknown omission cannot be honestly stated. So
@@ -2564,7 +2564,7 @@ def populate_issuer_adds(
 
 
 def _assert_join_mechanism_intact(conn: sqlite3.Connection) -> None:
-    """F9: prove the JOIN still works, independently of how much it matches.
+    """Prove the JOIN still works, independently of how much it matches.
 
     The hole this closes: a CIK-format or join-target regression yields ZERO
     matches, which looks exactly like a small extract and so used to pass. But
@@ -2602,7 +2602,7 @@ def _assert_join_mechanism_intact(conn: sqlite3.Connection) -> None:
 
 
 def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> None:
-    """R13/R23/R24: fail the build when an `active` seed row stops joining.
+    """Fail the build when an `active` seed row stops joining.
 
     `publication` is an EXPLICIT build input, not a guess about the data.
 
@@ -2631,7 +2631,7 @@ def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> Non
     finally:
         conn.close()
 
-    # F9: abstention is decided by the seed's DECLARED population floor, never
+    # Abstention is decided by the seed's DECLARED population floor, never
     # by how much happened to match. That is the whole fix: coverage cannot be
     # both the thing being tested and the thing deciding whether to test it, or
     # a wrong join target — which produces zero matches — excuses itself.
@@ -2641,13 +2641,13 @@ def gate_manager_registry(dest: Path | str, *, publication: bool = False) -> Non
     if not filer_count:
         return  # withheld corpus: no filers to type and no join to enforce
 
-    # F26: ENFORCEMENT and MATERIALIZATION are separate decisions.
+    # ENFORCEMENT and MATERIALIZATION are separate decisions.
     #
     # Coverage enforcement asks "is every active row still there?", which only
     # means something against the population. Materialization asks "which rows
     # DID join?", which is answerable at any scale — and skipping it stripped
     # every curated name and type from partial extracts, including the local
-    # data-wired build, defeating R11 on exactly the builds that can be tested.
+    # data-wired build, defeating the gate on exactly the builds that can be tested.
     if filer_count >= registry.population_floor:
         # At or above the declared floor this IS the population: every active
         # row must join, and zero matches is a catastrophic join defect.

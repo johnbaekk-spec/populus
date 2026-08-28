@@ -50,7 +50,7 @@ WATERMARK_KEYS = ("house_index_last_modified", "senate_max_filed_date")
 #   inst_serving.db  — the per-filer SERVING projection, which the MCP
 #                      snapshot path reads for published per-filer detail
 # Originally the module carried exactly one, and `module_db_artifact()` returned
-# a scalar. External review r3 F9 flagged that a second asset is NOT an ordinary
+# a scalar. External review flagged that a second asset is NOT an ordinary
 # extra entry: three call sites in publish/build.py resolved that scalar, so a
 # second artifact would have been silently skipped at preflight, verification and
 # rollback. The policy now carries a TUPLE and those sites iterate.
@@ -266,7 +266,7 @@ def module_db_artifact(module: str = MODULE) -> str:
     Retained for callers that genuinely want one name. Anything that VERIFIES,
     uploads, resumes or rolls back must use :func:`module_db_artifacts` instead —
     resolving the scalar here is exactly how a second asset gets silently skipped
-    (external review r3 F9).
+    (external review finding).
     """
     return _MODULE_POLICY[module]["db_artifact"]
 
@@ -611,7 +611,7 @@ def validate_manifest(
         if not isinstance(watermarks, dict):
             errors.append(f"module {module_name}: watermarks must be an object")
         else:
-            # R3/F12: exactly the module's required watermark keys must be
+            # Exactly the module's required watermark keys must be
             # present, so a publication carrying no freshness evidence (an empty
             # map) cannot pass as fresh. Values are a timestamp string or null (a
             # null is a legitimate "no evidence yet" value; an absent key is not).
@@ -643,7 +643,7 @@ def validate_manifest(
                 if name in seen_names:
                     errors.append(f"module {module_name}: duplicate artifact {name!r}")
                 seen_names.add(name)
-        # F6: every KNOWN module must enumerate its full mandatory artifact set
+        # Every KNOWN module must enumerate its full mandatory artifact set
         # — a semantically partial build (congress missing the DB, feed, stats,
         # or any licensing artifact; inst missing inst_agg.db) is refused here,
         # before a consumer persists a higher pointer and makes an incomplete

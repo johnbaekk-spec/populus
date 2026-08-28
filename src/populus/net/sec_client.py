@@ -134,7 +134,7 @@ class HttpxSecTransport:
         self._transport = transport
 
     def get(self, url: str, *, headers: Mapping[str, str]) -> TransportResponse:
-        # R9/LD10: the shared bounded helper streams and counts decoded bytes;
+        # The shared bounded helper streams and counts decoded bytes;
         # a body over the 128 MiB ceiling raises ResponseTooLarge (named
         # failure) instead of buffering without limit. Redirects stay disabled.
         from populus.net.bounded_http import bounded_http_request

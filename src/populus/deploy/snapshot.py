@@ -1,4 +1,4 @@
-"""§12.1 R4: freeze the built tree so hashed bytes and uploaded bytes are one thing.
+"""§12.1: freeze the built tree so hashed bytes and uploaded bytes are one thing.
 
 The threat is mundane, not exotic: the site build writes into ``dist/``, and
 anything else on the runner that touches ``dist/`` between "we hashed it" and
@@ -87,7 +87,8 @@ class UploadSnapshot:
     without a second enumeration of the original ``dist/``.
 
     ``file_count`` keeps its historical meaning — every regular uploaded
-    artifact — which under inventory v2 is ``len(files) + len(controls)``. Served-entry counts are the verifier's ``files_total``, never this.
+    artifact — which under inventory v2 is ``len(files) + len(controls)``.
+    Served-entry counts are the verifier's ``files_total``, never this.
     """
 
     path: Path
