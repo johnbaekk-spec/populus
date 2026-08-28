@@ -246,6 +246,14 @@ HTTPX_ALLOWED = {
     # client, which is what keeps the suite hermetic and what makes R27's
     # verb-asserting transport fixture possible at all.
     "deploy/record.py",
+    # `monitoring/monitor.py` EARNED this when the heartbeat monitor moved into
+    # the package (T3.3/D8): `populus-monitor` runs as its own process on the
+    # monitoring host, and its Discord alarm transport is one function,
+    # `_discord_alert`, reached only from `main()`'s alert wiring. The library
+    # core (`run_monitor`) takes an INJECTED fetcher and alert/report
+    # callables and names no transport, which is what keeps
+    # tests/test_pointer_state.py and tests/test_monitoring.py hermetic.
+    "monitoring/monitor.py",
     # `deploy/verify.py` is deliberately NOT here: it names no transport library
     # at all and takes an injected client, so it needs no permission. An
     # allowlist entry for a module that has not earned one is a small standing
