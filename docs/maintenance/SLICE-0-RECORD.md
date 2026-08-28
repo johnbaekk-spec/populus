@@ -218,3 +218,31 @@ needed — the files are clean and stay.
 - **K7** — `REVIEW.md` still present and still carries the R3 occurrence at
   line 4; R3 is **not closeable yet**.
 - Slice 0 decided nothing; it confirmed the landing conditions above.
+
+## Slice 2 verification (2026-08-27, branch prof/slice-2)
+
+**T2.3 — workflow-governance test (verify-only, not edited).**
+`tests/test_workflow_governance.py` line 49 declares
+`BANNED_TRIGGERS_EVERYWHERE = {"pull_request_target", "issue_comment"}`,
+enforced at lines 112 and 289, with a killing mutation
+(`test_mutation_pull_request_target_is_killed`, line 344).
+`uv run pytest -q tests/test_workflow_governance.py` → **36 passed**, exit 0.
+
+**T2.4 — contributor tier in an isolated clone** (no sibling populus-data;
+`git clone --no-hardlinks -b prof/slice-2` of this worktree into the session
+scratchpad; clone deleted after the run):
+
+1. `uv sync --frozen` → exit 0.
+2. `uv run pytest -q` → exit 0, **4067 passed, 151 skipped** (the skips are
+   the declared host-bound/data-bound preconditions, as documented in
+   `docs/operations/testing.md`).
+3. `cd dashboard && npm ci` → exit 0, 0 vulnerabilities.
+4. `npx astro check` → exit 0 (0 errors, 0 warnings, 1 hint).
+5. `npm test` → exit 0, **651 pass / 0 fail**.
+6. `make security` → exit 0 (network available; pip-audit and both npm
+   audits found 0 vulnerabilities).
+
+**T2.2 sweep.** `git grep -ni "hermetic\|offline" -- README.md
+dashboard/README.md docs ARCHITECTURE.md`: no doc describes `make security`
+as hermetic or offline; the surviving hits describe test fixtures, client
+offline behavior, and historical run plans, and are correct as written.
