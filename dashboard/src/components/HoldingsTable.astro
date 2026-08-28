@@ -29,6 +29,7 @@
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { edgarFilerUrl } from "../lib/derive.ts";
+import { serializeInlineJson } from "../lib/inline-json.ts";
 import { institutionalDataNoteHtml, resolveServingDbPath } from "../lib/activity.ts";
 import { assembleFilerPayload, readServingFilings } from "../lib/filer-payload.ts";
 import { filerAggregateInputs, getBuildData, topFilerCiks } from "../lib/data.ts";
@@ -234,9 +235,9 @@ const bodyHtml =
     ? projectionAbsentHtml(props.kind, edgarUrl)
     : surfaceHtml(payload, { view: "current", page: 0, period: payload.current });
 
-/* `</script>` inside an issuer or filer name would otherwise close the embed. */
-const payloadJson =
-  payload == null ? "" : JSON.stringify(payload).replaceAll("<", "\\u003c");
+/* `</script>` inside an issuer or filer name would otherwise close the embed;
+   the shared R6 serializer escapes every `<`. */
+const payloadJson = payload == null ? "" : serializeInlineJson(payload);
 ---
 
 <section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface={props.kind}>

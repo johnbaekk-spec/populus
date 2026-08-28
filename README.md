@@ -47,6 +47,12 @@ substrate needs no network access.
 uv sync                              # install pinned dependencies
 uv run pytest                        # unit tests + golden-corpus checks
 uv run python scripts/dep_guard.py   # G1: no paid/vendor SDKs (ARCHITECTURE.md §19)
+make security                        # dep_guard + pip-audit over the frozen
+                                     # production export + npm audit (high) —
+                                     # the advisory halves need network access
+                                     # to the PyPI/OSV and npm advisory
+                                     # services; an outage fails the gate
+                                     # loudly rather than reporting clean
 uv run populus db init app.db        # create an empty database (full §9.4 schema)
 ```
 

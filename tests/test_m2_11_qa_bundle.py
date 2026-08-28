@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import importlib.util
 import json
@@ -9,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -16,27 +18,76 @@ import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "build_m2_11_qa_bundle.py"
 
-# `scripts/build_m2_11_qa_bundle.py` pins ABSOLUTE paths on the owner's machine —
-# the orchestrate-tool checkout and the Populus-ops evidence snapshots (see its
-# EXPECTED_ROOT / ORCHESTRATE / EVIDENCE_ROOT). Off that machine the suite fails
-# 121 times on missing files, which says nothing about the bundle builder.
-#
-# Declared as a precondition rather than deleted: on the owner's machine every
-# one of these still runs and still guards the M2-11 evidence bundle. Same shape
-# as test_accept_m2_5's gitignored-cache skip.
-_ORCHESTRATE = Path("/Users/johnbaek/projects/orchestrate-tool/orchestrate.sh")
-_EVIDENCE_ROOT = Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11")
-pytestmark = pytest.mark.skipif(
-    not (_ORCHESTRATE.exists() and _EVIDENCE_ROOT.is_dir()),
-    reason=(
-        "the M2-11 QA-bundle builder is pinned to absolute owner-machine paths "
-        "(orchestrate-tool + Populus-ops evidence snapshots); unavailable here"
-    ),
-)
 SPEC = importlib.util.spec_from_file_location("m2_11_qa_bundle", SCRIPT)
 assert SPEC and SPEC.loader
 BUNDLE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = BUNDLE
 SPEC.loader.exec_module(BUNDLE)
+
+# `scripts/build_m2_11_qa_bundle.py` no longer hardcodes machine paths: the four
+# machine roots arrive through the required --expected-root / --orchestrate /
+# --evidence-root / --snapshot flags and thread through as one QaBundlePaths.
+#
+# Pure path-plumbing tests construct their own QaBundlePaths under tmp_path and
+# run on any machine. Tests that need the real evidence artifacts (real digests,
+# the 23 GB snapshot, the orchestrate checkout) stay host-bound: they run only
+# when the operator's marker file exists. The marker file is JSON at
+# ~/.config/populus/m2-11-qa-owner-paths.json with the four absolute paths:
+# {"expected_root": ..., "orchestrate": ..., "evidence_root": ..., "snapshot": ...}
+_HOST_MARKER = Path.home() / ".config" / "populus" / "m2-11-qa-owner-paths.json"
+
+
+def _load_host_paths() -> Any:
+    try:
+        data = json.loads(_HOST_MARKER.read_text("utf-8"))
+        paths = BUNDLE.QaBundlePaths(
+            expected_root=Path(data["expected_root"]),
+            orchestrate=Path(data["orchestrate"]),
+            evidence_root=Path(data["evidence_root"]),
+            snapshot=Path(data["snapshot"]),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not (paths.orchestrate.exists() and paths.evidence_root.is_dir()):
+        return None
+    return paths
+
+
+OWNER = _load_host_paths()
+requires_owner_machine = pytest.mark.skipif(
+    OWNER is None,
+    reason=(
+        "needs the host machine's real M2-11 evidence artifacts; declare them "
+        "in the ~/.config/populus/m2-11-qa-owner-paths.json marker file"
+    ),
+)
+
+
+def make_paths(
+    tmp_path: Path,
+    *,
+    expected_root: Path | None = None,
+    orchestrate: Path | None = None,
+    evidence_root: Path | None = None,
+    snapshot: Path | None = None,
+) -> Any:
+    """A synthetic QaBundlePaths rooted under tmp_path for hermetic tests."""
+    return BUNDLE.QaBundlePaths(
+        expected_root=expected_root or tmp_path / "worktree",
+        orchestrate=orchestrate or tmp_path / "orchestrate-tool" / "orchestrate.sh",
+        evidence_root=evidence_root or tmp_path / "evidence",
+        snapshot=snapshot or tmp_path / "snapshots" / "inst-source-v1.db",
+    )
+
+
+def paths_argv(paths: Any) -> list[str]:
+    """The four required machine-root flags for BUNDLE.main invocations."""
+    return [
+        "--expected-root", str(paths.expected_root),
+        "--orchestrate", str(paths.orchestrate),
+        "--evidence-root", str(paths.evidence_root),
+        "--snapshot", str(paths.snapshot),
+    ]
 
 
 EXPECTED_ADOPTION_NAMES = (
@@ -393,11 +444,10 @@ def write(path: Path, value: str) -> None:
 def copy_round_three_failed_bundle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> Path:
-    source = Path(
-        "/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11/"
-        "qa-v9-finalization-round-3"
-    )
+) -> tuple[Path, Any]:
+    assert OWNER is not None
+    paths = dataclasses.replace(OWNER, evidence_root=tmp_path)
+    source = OWNER.evidence_root / "qa-v9-finalization-round-3"
     bundle = tmp_path / "qa-v9-finalization-round-3"
     shutil.copytree(source, bundle)
     ledger_path = bundle / "gate-ledger.json"
@@ -405,13 +455,12 @@ def copy_round_three_failed_bundle(
     for entry in ledger["entries"]:
         entry["log_path"] = str((bundle / f"gate-{entry['id']}.log").resolve())
     ledger_path.write_bytes(BUNDLE.canonical_json_bytes(ledger))
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
     monkeypatch.setattr(
         BUNDLE,
         "ROUND3_FAILED_LEDGER_SHA256",
         BUNDLE.sha256_file(ledger_path),
     )
-    return bundle
+    return bundle, paths
 
 
 def seal_docs_fixture(
@@ -423,7 +472,7 @@ def seal_docs_fixture(
     review_verdict: str = "APPROVED",
     bundle_name: str = "bundle",
 ) -> dict[str, Any]:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     bundle = tmp_path / bundle_name
     bundle.mkdir(parents=True)
     adoption = {
@@ -534,7 +583,7 @@ def seal_docs_fixture(
 
     bundle_validations: list[tuple[Path, bool]] = []
 
-    def validate_bundle(bundle_path: Path, live_repo: bool = True) -> None:
+    def validate_bundle(_paths: Any, bundle_path: Path, live_repo: bool = True) -> None:
         bundle_validations.append((bundle_path, live_repo))
 
     monkeypatch.setattr(BUNDLE, "validate_bundle", validate_bundle)
@@ -545,9 +594,10 @@ def seal_docs_fixture(
         return subprocess.CompletedProcess([], 0, b"", b"")
 
     monkeypatch.setattr(BUNDLE, "run_checked", checked)
-    monkeypatch.setattr(BUNDLE, "external_worktree_fingerprint", lambda _repo: "final-docs-fingerprint")
+    monkeypatch.setattr(BUNDLE, "external_worktree_fingerprint", lambda _paths, _repo: "final-docs-fingerprint")
 
     def fixed_state(
+        _paths: Any,
         _repo: Path,
         round_no: int,
         expected_paths: tuple[str, ...],
@@ -570,6 +620,7 @@ def seal_docs_fixture(
     monkeypatch.setattr(BUNDLE, "compute_approved_tree", compute_tree)
     monkeypatch.setattr(BUNDLE, "write_approved_tree", approved_tree)
     return {
+        "paths": paths,
         "bundle": bundle,
         "review": review,
         "review_source": review_source,
@@ -586,6 +637,7 @@ def seal_docs_fixture(
 def run_seal_docs(fixture: dict[str, Any], **overrides: Path) -> int:
     values = {**fixture, **overrides}
     argv = [
+        *paths_argv(values["paths"]),
         "seal-docs",
         "--bundle", str(values["bundle"]),
         "--qa-review", str(values["review"]),
@@ -763,15 +815,15 @@ def release_f1_docs_fixture(
         "resolution_notes": release_resolution,
         "prior_qa_review": prior_qa,
     })
-    monkeypatch.setattr(BUNDLE, "finalization_docs_attempts", lambda: {
+    monkeypatch.setattr(BUNDLE, "finalization_docs_attempts", lambda _paths: {
         1: (7, tmp_path / "docs-v9-finalization-r7-a1"),
         2: (7, prior_docs_dir.resolve()),
     })
-    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda: 3)
+    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda _paths: 3)
     monkeypatch.setattr(
         BUNDLE,
         "validate_release_hygiene_predecessor",
-        lambda value: {
+        lambda _paths, value: {
             "review": value.resolve(),
             "manifest": prior_docs_manifest.resolve(),
             "round": 7,
@@ -783,14 +835,14 @@ def release_f1_docs_fixture(
     monkeypatch.setattr(
         BUNDLE,
         "validate_release_hygiene_f1_predecessor",
-        lambda value: {
+        lambda _paths, value: {
             "review": value.resolve(),
             "manifest": prior_qa_manifest.resolve(),
             "round": 8,
         },
     )
     monkeypatch.setattr(
-        BUNDLE, "validate_release_hygiene_resolution", lambda value: value.resolve()
+        BUNDLE, "validate_release_hygiene_resolution", lambda _paths, value: value.resolve()
     )
     return fixture
 
@@ -812,28 +864,29 @@ PREDECESSOR_BUNDLES = {
 
 
 def retained_predecessor_records(shape: str) -> dict[str, dict[str, Any]]:
+    assert OWNER is not None
     if shape == "finalization-r7":
         return {
             "prior-qa-review": artifact_record(
-                "prior-qa-review", BUNDLE.ROUND6_REVIEW, "review-output-v1"
+                "prior-qa-review", OWNER.round6_review, "review-output-v1"
             ),
             "prior-bundle-adoption": artifact_record(
                 "prior-bundle-adoption",
-                BUNDLE.EVIDENCE_ROOT
+                OWNER.evidence_root
                 / "qa-v9-finalization-round-6/adoption-manifest.json",
                 "adoption-qa-manifest/v1",
             ),
             "resolution-notes": {
                 "name": "resolution-notes",
                 "path": str(
-                    BUNDLE.EVIDENCE_ROOT / "resolution-notes.finalization-r6-qa.md"
+                    OWNER.evidence_root / "resolution-notes.finalization-r6-qa.md"
                 ),
                 "digest": "sha256:" + "0" * 64,
                 "schema": "resolution-notes-v1",
                 "required": True,
             },
         }
-    bundle = BUNDLE.EVIDENCE_ROOT / PREDECESSOR_BUNDLES[shape]
+    bundle = OWNER.evidence_root / PREDECESSOR_BUNDLES[shape]
     adoption = json.loads((bundle / "adoption-manifest.json").read_text("utf-8"))
     prior = adoption["prior_round"]
     if shape in {"recovery-r2", "recovery-r3"}:
@@ -903,6 +956,7 @@ def test_changed_paths_is_nul_safe_sorted_and_rejects_parent(tmp_path: Path) -> 
     assert BUNDLE.changed_paths(repo) == ["space name.txt", "tracked.txt"]
 
 
+@requires_owner_machine
 def test_complete_diff_redacts_credential_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -913,10 +967,8 @@ def test_complete_diff_redacts_credential_values(tmp_path: Path, monkeypatch: py
     git(repo, "add", "config.txt")
     git(repo, "commit", "-qm", "base")
     write(repo / "config.txt", "SAFE=1\nSERVICE_TOKEN=abcdefghijk\n")
-    monkeypatch.setattr(BUNDLE, "ORCHESTRATE", Path("/Users/johnbaek/projects/orchestrate-tool/orchestrate.sh"))
-    monkeypatch.setattr(BUNDLE, "WORKFLOW_ARTIFACTS", Path("/Users/johnbaek/projects/orchestrate-tool/lib/workflow-artifacts.sh"))
     output = tmp_path / "diff.patch"
-    BUNDLE.write_complete_redacted_diff(repo, output)
+    BUNDLE.write_complete_redacted_diff(OWNER, repo, output)
     text = output.read_text()
     assert "abcdefghijk" not in text
     assert "[redacted-credential-value]" in text
@@ -932,7 +984,7 @@ def test_output_collision_refuses_without_overwrite(tmp_path: Path) -> None:
 
 def test_validate_rejects_missing_manifest(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="adoption manifest"):
-        BUNDLE.validate_bundle(tmp_path, live_repo=False)
+        BUNDLE.validate_bundle(make_paths(tmp_path), tmp_path, live_repo=False)
 
 
 def test_validate_rejects_duplicate_json_key(tmp_path: Path) -> None:
@@ -940,22 +992,22 @@ def test_validate_rejects_duplicate_json_key(tmp_path: Path) -> None:
         '{"schema_version":"adoption-qa-manifest/v1","schema_version":"duplicate"}\n'
     )
     with pytest.raises(RuntimeError, match="duplicate JSON key"):
-        BUNDLE.validate_bundle(tmp_path, live_repo=False)
+        BUNDLE.validate_bundle(make_paths(tmp_path), tmp_path, live_repo=False)
 
 
 def test_main_rejects_unpaired_prior_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     message = tmp_path / "final-docs-commit.finalization-r2-a1.md"
     message.write_text("COMMIT_MESSAGE: feat(inst): test\n", encoding="utf-8")
     monkeypatch.setattr(BUNDLE, "run_checked", lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, b"", b""))
-    rc = BUNDLE.main(["run", "--cycle", "finalization", "--round", "2", "--final-docs-commit", str(message), "--prior-review", str(tmp_path / "review.md"), "--output", str(tmp_path / "out")])
+    rc = BUNDLE.main([*paths_argv(paths), "run", "--cycle", "finalization", "--round", "2", "--final-docs-commit", str(message), "--prior-review", str(tmp_path / "review.md"), "--output", str(tmp_path / "out")])
     assert rc == 1
     assert "paired" in capsys.readouterr().err
 
 
 def test_main_rejects_round_outside_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(BUNDLE, "validate_fixed_state", lambda _repo, _round: (_ for _ in ()).throw(RuntimeError("QA round must be 1, 2, or 3")))
-    rc = BUNDLE.main(["run", "--cycle", "finalization", "--round", "4", "--final-docs-commit", str(tmp_path / "final-docs-commit.finalization-r4-a1.md"), "--prior-review", str(tmp_path / "review.md"), "--resolution-notes", str(tmp_path / "notes.md"), "--output", str(tmp_path / "out")])
+    monkeypatch.setattr(BUNDLE, "validate_fixed_state", lambda _paths, _repo, _round: (_ for _ in ()).throw(RuntimeError("QA round must be 1, 2, or 3")))
+    rc = BUNDLE.main([*paths_argv(make_paths(tmp_path)), "run", "--cycle", "finalization", "--round", "4", "--final-docs-commit", str(tmp_path / "final-docs-commit.finalization-r4-a1.md"), "--prior-review", str(tmp_path / "review.md"), "--resolution-notes", str(tmp_path / "notes.md"), "--output", str(tmp_path / "out")])
     assert rc == 1
     assert "QA round" in capsys.readouterr().err
 
@@ -978,7 +1030,7 @@ def test_resolution_notes_match_every_open_blocker_id(tmp_path: Path, ids: list[
     notes = tmp_path / "notes.md"
     write_blocker_review(review, ids)
     notes.write_text("\n".join(f"## {finding}: resolved\n" for finding in ids), encoding="utf-8")
-    BUNDLE.validate_resolution_notes(review, notes)
+    BUNDLE.validate_resolution_notes(make_paths(tmp_path), review, notes)
 
 
 @pytest.mark.parametrize("resolved", [["F1"], ["F1", "F2", "F3"], ["F1", "F9"]])
@@ -988,7 +1040,7 @@ def test_resolution_notes_reject_missing_extra_or_relabelled_ids(tmp_path: Path,
     write_blocker_review(review, ["F1", "F2"])
     notes.write_text("\n".join(f"## {finding}: resolved\n" for finding in resolved), encoding="utf-8")
     with pytest.raises(RuntimeError, match="exactly match"):
-        BUNDLE.validate_resolution_notes(review, notes)
+        BUNDLE.validate_resolution_notes(make_paths(tmp_path), review, notes)
 
 
 def test_resolution_notes_reject_approved_prior_review(tmp_path: Path) -> None:
@@ -997,48 +1049,46 @@ def test_resolution_notes_reject_approved_prior_review(tmp_path: Path) -> None:
     write_blocker_review(review, [], verdict="APPROVED")
     notes.write_text("", encoding="utf-8")
     with pytest.raises(RuntimeError, match="open-blocker"):
-        BUNDLE.validate_resolution_notes(review, notes)
+        BUNDLE.validate_resolution_notes(make_paths(tmp_path), review, notes)
 
 
+@requires_owner_machine
 def test_validator_paths_are_data_and_metacharacters_never_execute(tmp_path: Path) -> None:
-    source = Path(
-        "/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11/"
-        "qa-review.finalization-r1.canonical.md"
-    )
+    source = OWNER.evidence_root / "qa-review.finalization-r1.canonical.md"
     valid = tmp_path / "review; touch injected.md"
     valid.write_bytes(source.read_bytes())
-    BUNDLE.validate_content("review-output-v1", valid, "qa-review", tmp_path)
+    BUNDLE.validate_content(OWNER, "review-output-v1", valid, "qa-review", tmp_path)
     assert not (tmp_path / "injected.md").exists()
     assert not (tmp_path / "qa-review").exists()
 
     invalid = tmp_path / "bad review; touch invalid-injected.md"
     invalid.write_text("not a review\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="command failed"):
-        BUNDLE.validate_content("review-output-v1", invalid, "qa-review", tmp_path)
+        BUNDLE.validate_content(OWNER, "review-output-v1", invalid, "qa-review", tmp_path)
     assert not (tmp_path / "invalid-injected.md").exists()
 
 
-def test_global_docs_attempts_are_unique_gap_free_and_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
-    assert BUNDLE.next_finalization_docs_attempt() == 1
+def test_global_docs_attempts_are_unique_gap_free_and_capped(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
+    assert BUNDLE.next_finalization_docs_attempt(paths) == 1
     (tmp_path / "docs-v9-finalization-r1-a1").mkdir()
-    assert BUNDLE.next_finalization_docs_attempt() == 2
+    assert BUNDLE.next_finalization_docs_attempt(paths) == 2
     (tmp_path / "docs-v9-finalization-r2-a2").mkdir()
-    assert BUNDLE.next_finalization_docs_attempt() == 3
+    assert BUNDLE.next_finalization_docs_attempt(paths) == 3
     (tmp_path / "docs-v9-finalization-r3-a3").mkdir()
     with pytest.raises(RuntimeError, match="cap"):
-        BUNDLE.next_finalization_docs_attempt()
+        BUNDLE.next_finalization_docs_attempt(paths)
 
 
-def test_global_docs_attempts_reject_skip_and_duplicate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+def test_global_docs_attempts_reject_skip_and_duplicate(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     (tmp_path / "docs-v9-finalization-r2-a2").mkdir()
     with pytest.raises(RuntimeError, match="gap-free"):
-        BUNDLE.finalization_docs_attempts()
+        BUNDLE.finalization_docs_attempts(paths)
     (tmp_path / "docs-v9-finalization-r1-a1").mkdir()
     (tmp_path / "docs-v9-finalization-r2-a1").mkdir()
     with pytest.raises(RuntimeError, match="duplicate"):
-        BUNDLE.finalization_docs_attempts()
+        BUNDLE.finalization_docs_attempts(paths)
 
 
 def test_docs_rejection_repo_repair_advances_round_and_attempt_before_output(
@@ -1060,6 +1110,7 @@ def test_docs_rejection_repo_repair_advances_round_and_attempt_before_output(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("STOP AFTER DOCS PREDECESSOR")),
     )
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "run",
         "--cycle", "finalization",
         "--round", "2",
@@ -1072,21 +1123,24 @@ def test_docs_rejection_repo_repair_advances_round_and_attempt_before_output(
     assert not output.exists()
 
 
+@requires_owner_machine
 def test_failed_gate_bundle_and_resolution_are_exact() -> None:
-    root = Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11")
-    failed = BUNDLE.validate_failed_gate_bundle(root / "qa-v9-finalization-round-2", 2)
+    root = OWNER.evidence_root
+    failed = BUNDLE.validate_failed_gate_bundle(OWNER, root / "qa-v9-finalization-round-2", 2)
     assert failed["failed_ids"] == ("recovery-tests",)
     assert len(failed["artifacts"]) == 13
     BUNDLE.validate_gate_resolution_notes(
+        OWNER,
         failed,
         root / "resolution-notes.finalization-r2-gates.v2.md",
     )
 
 
+@requires_owner_machine
 def test_round_three_failed_gate_bundle_matches_all_exact_pins_and_schemas() -> None:
-    root = Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11")
+    root = OWNER.evidence_root
     bundle = root / "qa-v9-finalization-round-3"
-    failed = BUNDLE.validate_failed_gate_bundle(bundle, 3)
+    failed = BUNDLE.validate_failed_gate_bundle(OWNER, bundle, 3)
     assert BUNDLE.sha256_file(bundle / "gate-ledger.json") == BUNDLE.ROUND3_FAILED_LEDGER_SHA256
     assert failed["ledger"]["origin_worktree_fingerprint"] == BUNDLE.ROUND3_FAILED_FINGERPRINT
     assert [entry["id"] for entry in failed["ledger"]["entries"]] == [
@@ -1113,12 +1167,13 @@ def test_round_three_failed_gate_bundle_matches_all_exact_pins_and_schemas() -> 
         "log-digest",
     ],
 )
+@requires_owner_machine
 def test_round_three_failed_gate_identity_mutations_refuse(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mutation: str,
 ) -> None:
-    bundle = copy_round_three_failed_bundle(tmp_path, monkeypatch)
+    bundle, paths = copy_round_three_failed_bundle(tmp_path, monkeypatch)
     ledger_path = bundle / "gate-ledger.json"
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
     if mutation == "fingerprint":
@@ -1146,30 +1201,32 @@ def test_round_three_failed_gate_identity_mutations_refuse(
         BUNDLE.sha256_file(ledger_path),
     )
     with pytest.raises(RuntimeError):
-        BUNDLE.validate_failed_gate_bundle(bundle, 3)
+        BUNDLE.validate_failed_gate_bundle(paths, bundle, 3)
 
 
+@requires_owner_machine
 def test_round_three_failed_gate_ledger_digest_mutation_refuses_before_schema(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bundle = copy_round_three_failed_bundle(tmp_path, monkeypatch)
+    bundle, paths = copy_round_three_failed_bundle(tmp_path, monkeypatch)
     ledger_path = bundle / "gate-ledger.json"
     pinned = BUNDLE.ROUND3_FAILED_LEDGER_SHA256
     ledger_path.write_bytes(ledger_path.read_bytes() + b" ")
     monkeypatch.setattr(BUNDLE, "ROUND3_FAILED_LEDGER_SHA256", pinned)
     with pytest.raises(RuntimeError, match="ledger digest"):
-        BUNDLE.validate_failed_gate_bundle(bundle, 3)
+        BUNDLE.validate_failed_gate_bundle(paths, bundle, 3)
 
 
+@requires_owner_machine
 def test_owner_decision_v1_local_grammar_and_separate_digest_identity(
     tmp_path: Path,
 ) -> None:
     actual = (
-        BUNDLE.EVIDENCE_ROOT
+        OWNER.evidence_root
         / "qa-v9-finalization-round-1/owner-decision.md"
     )
-    BUNDLE.validate_failed_gate_artifact(actual, "owner-decision-v1")
+    BUNDLE.validate_failed_gate_artifact(OWNER, actual, "owner-decision-v1")
     substituted = tmp_path / "owner-decision.md"
     substituted.write_text(
         "# RUN M2-11 — Synthetic Owner Decision\n\n"
@@ -1179,7 +1236,7 @@ def test_owner_decision_v1_local_grammar_and_separate_digest_identity(
         "`docs/build/RUN-M2-11-synthetic-plan.md`.\n",
         encoding="utf-8",
     )
-    BUNDLE.validate_failed_gate_artifact(substituted, "owner-decision-v1")
+    BUNDLE.validate_failed_gate_artifact(OWNER, substituted, "owner-decision-v1")
     assert BUNDLE.sha256_file(substituted) != BUNDLE.PINNED_DIGESTS[
         BUNDLE.FINALIZATION_DECISION
     ]
@@ -1188,9 +1245,9 @@ def test_owner_decision_v1_local_grammar_and_separate_digest_identity(
         Path(__file__).parents[1]
         / BUNDLE.FINALIZATION_RELEASE_HYGIENE_DECISION
     )
-    BUNDLE.validate_failed_gate_artifact(release, "owner-decision-v2")
+    BUNDLE.validate_failed_gate_artifact(OWNER, release, "owner-decision-v2")
     with pytest.raises(RuntimeError, match="owner-decision-v1 heading"):
-        BUNDLE.validate_failed_gate_artifact(release, "owner-decision-v1")
+        BUNDLE.validate_failed_gate_artifact(OWNER, release, "owner-decision-v1")
 
 
 @pytest.mark.parametrize(
@@ -1250,7 +1307,7 @@ def test_owner_decision_v1_malformed_cases_refuse(
     else:
         path.write_text(text + "VERDICT: APPROVED\n", encoding="utf-8")
     with pytest.raises(RuntimeError):
-        BUNDLE.validate_failed_gate_artifact(path, "owner-decision-v1")
+        BUNDLE.validate_failed_gate_artifact(make_paths(tmp_path), path, "owner-decision-v1")
 
 
 @pytest.mark.parametrize(
@@ -1263,6 +1320,7 @@ def test_owner_decision_v1_malformed_cases_refuse(
         ("isolated-feature.json", "isolated-feature-adoption/v1", "wrong-paths"),
     ],
 )
+@requires_owner_machine
 def test_failed_gate_custom_json_schema_mutations_refuse(
     tmp_path: Path,
     file_name: str,
@@ -1270,7 +1328,7 @@ def test_failed_gate_custom_json_schema_mutations_refuse(
     mutation: str,
 ) -> None:
     source = (
-        Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11/")
+        OWNER.evidence_root
         / "qa-v9-finalization-round-3"
         / file_name
     )
@@ -1288,7 +1346,7 @@ def test_failed_gate_custom_json_schema_mutations_refuse(
     target = tmp_path / file_name
     target.write_bytes(BUNDLE.canonical_json_bytes(value))
     with pytest.raises(RuntimeError):
-        BUNDLE.validate_failed_gate_artifact(target, schema)
+        BUNDLE.validate_failed_gate_artifact(OWNER, target, schema)
 
 
 @pytest.mark.parametrize(
@@ -1299,7 +1357,7 @@ def test_gate_log_v1_malformed_text_refuses(tmp_path: Path, content: bytes) -> N
     path = tmp_path / "gate.log"
     path.write_bytes(content)
     with pytest.raises(RuntimeError):
-        BUNDLE.validate_failed_gate_artifact(path, "gate-log/v1")
+        BUNDLE.validate_failed_gate_artifact(make_paths(tmp_path), path, "gate-log/v1")
 
 
 @pytest.mark.parametrize(
@@ -1320,7 +1378,7 @@ def test_resolution_notes_v1_malformed_cases_refuse(
     path = tmp_path / "resolution.md"
     path.write_bytes(content.encode("utf-8"))
     with pytest.raises(RuntimeError):
-        BUNDLE.validate_failed_gate_artifact(path, "resolution-notes-v1")
+        BUNDLE.validate_failed_gate_artifact(make_paths(tmp_path), path, "resolution-notes-v1")
 
 
 def test_recovery_and_finalization_authority_are_distinct() -> None:
@@ -1369,9 +1427,10 @@ def test_cycle_scoped_round_caps_reject_every_unapproved_round_before_output(
     cycle: str,
     round_no: int,
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     output = tmp_path / f"qa-v9-finalization-round-{round_no}"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", cycle,
         "--round", str(round_no),
@@ -1394,7 +1453,7 @@ def test_exception_round_four_inner_transition_is_hermetic_from_existing_outer_b
 
     inner_root = tmp_path / "inner-evidence"
     inner_root.mkdir()
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", inner_root)
+    paths = make_paths(tmp_path, evidence_root=inner_root)
     final_message = inner_root / "final-docs-commit.finalization-r4-a1.md"
     final_message.write_text(
         "Rationale.\n\nCOMMIT_MESSAGE: feat(inst): publish bounded institutional data\n",
@@ -1407,7 +1466,7 @@ def test_exception_round_four_inner_transition_is_hermetic_from_existing_outer_b
     monkeypatch.setattr(
         BUNDLE,
         "validate_failed_gate_bundle",
-        lambda path, expected_round: {
+        lambda _paths, path, expected_round: {
             "bundle": path,
             "round": expected_round,
             "artifacts": [],
@@ -1417,6 +1476,7 @@ def test_exception_round_four_inner_transition_is_hermetic_from_existing_outer_b
     monkeypatch.setattr(BUNDLE, "validate_gate_resolution_notes", lambda *_args: None)
 
     def stop_after_predecessor(
+        _paths: Any,
         _repo: Path,
         round_no: int,
         expected_paths: tuple[str, ...],
@@ -1430,6 +1490,7 @@ def test_exception_round_four_inner_transition_is_hermetic_from_existing_outer_b
     monkeypatch.setattr(BUNDLE, "validate_fixed_state", stop_after_predecessor)
     inner_output = inner_root / "qa-v9-finalization-round-4"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-exception",
         "--round", "4",
@@ -1447,7 +1508,7 @@ def test_exception_round_four_rejects_review_predecessor_before_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     final_message = tmp_path / "final-docs-commit.finalization-r4-a1.md"
     final_message.write_text(
         "Rationale.\n\nCOMMIT_MESSAGE: feat(inst): publish bounded institutional data\n",
@@ -1458,6 +1519,7 @@ def test_exception_round_four_rejects_review_predecessor_before_output(
     monkeypatch.setattr(BUNDLE, "validate_content", lambda *_args, **_kwargs: None)
     output = tmp_path / "qa-v9-finalization-round-4"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-exception",
         "--round", "4",
@@ -1491,6 +1553,7 @@ def test_obsolete_round_five_authority_now_refuses_invalid_decision_before_outpu
     notes.write_text("## F1: resolved\n## F2: resolved\n", encoding="utf-8")
 
     def stop_after_predecessor(
+        _paths: Any,
         _repo: Path,
         round_no: int,
         expected_paths: tuple[str, ...],
@@ -1504,6 +1567,7 @@ def test_obsolete_round_five_authority_now_refuses_invalid_decision_before_outpu
     monkeypatch.setattr(BUNDLE, "validate_fixed_state", stop_after_predecessor)
     output = tmp_path / "qa-v9-finalization-round-5"
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "run",
         "--cycle", "finalization-repair-exception",
         "--round", "5",
@@ -1521,7 +1585,8 @@ def test_f3_round_six_accepts_only_exact_qa_predecessor_before_output(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
+    monkeypatch.setattr(BUNDLE, "validate_content", lambda *_args, **_kwargs: None)
     prior_bundle = tmp_path / "qa-v9-finalization-round-5"
     prior_bundle.mkdir()
     prior_review = prior_bundle / "qa-review.round-5.md"
@@ -1531,7 +1596,7 @@ def test_f3_round_six_accepts_only_exact_qa_predecessor_before_output(
     monkeypatch.setattr(
         BUNDLE,
         "validate_known_invalid_round5_qa_review",
-        lambda review: {
+        lambda _paths, review: {
             "review": review.resolve(),
             "manifest": prior_manifest.resolve(),
             "candidate": {"docs_attempt": 1},
@@ -1547,6 +1612,7 @@ def test_f3_round_six_accepts_only_exact_qa_predecessor_before_output(
     notes.write_text("## F3: resolved\n", encoding="utf-8")
 
     def stop_after_predecessor(
+        _paths: Any,
         _repo: Path,
         round_no: int,
         expected_paths: tuple[str, ...],
@@ -1560,6 +1626,7 @@ def test_f3_round_six_accepts_only_exact_qa_predecessor_before_output(
     monkeypatch.setattr(BUNDLE, "validate_fixed_state", stop_after_predecessor)
     output = tmp_path / "qa-v9-finalization-round-6"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-f3-exception",
         "--round", "6",
@@ -1577,7 +1644,8 @@ def test_f4_f5_round_seven_accepts_only_exact_unsealed_predecessor_before_output
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
+    monkeypatch.setattr(BUNDLE, "validate_content", lambda *_args, **_kwargs: None)
     prior_review = tmp_path / "qa-review.finalization-r6.canonical.md"
     write_blocker_review(prior_review, ["F4", "F5"])
     prior_adoption = tmp_path / "qa-v9-finalization-round-6/adoption-manifest.json"
@@ -1586,7 +1654,7 @@ def test_f4_f5_round_seven_accepts_only_exact_unsealed_predecessor_before_output
     monkeypatch.setattr(
         BUNDLE,
         "validate_rejected_round6_qa_review",
-        lambda review: {
+        lambda _paths, review: {
             "review": review.resolve(),
             "adoption": prior_adoption.resolve(),
             "candidate": {"docs_attempt": 1},
@@ -1602,6 +1670,7 @@ def test_f4_f5_round_seven_accepts_only_exact_unsealed_predecessor_before_output
     notes.write_text("## F4: resolved\n## F5: resolved\n", encoding="utf-8")
 
     def stop_after_predecessor(
+        _paths: Any,
         _repo: Path,
         round_no: int,
         expected_paths: tuple[str, ...],
@@ -1615,6 +1684,7 @@ def test_f4_f5_round_seven_accepts_only_exact_unsealed_predecessor_before_output
     monkeypatch.setattr(BUNDLE, "validate_fixed_state", stop_after_predecessor)
     output = tmp_path / "qa-v9-finalization-round-7"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-f4-f5-exception",
         "--round", "7",
@@ -1629,6 +1699,7 @@ def test_f4_f5_round_seven_accepts_only_exact_unsealed_predecessor_before_output
     assert not output.exists()
 
 
+@requires_owner_machine
 def test_f4_f5_authority_is_round_seven_only_and_round_eight_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1648,13 +1719,14 @@ def test_f4_f5_authority_is_round_seven_only_and_round_eight_refuses(
     )
     assert BUNDLE.PINNED_DIGESTS[BUNDLE.FINALIZATION_F4_F5_DECISION] == (
         BUNDLE.sha256_file(
-            BUNDLE.EVIDENCE_ROOT
+            OWNER.evidence_root
             / "qa-v9-finalization-round-7/owner-decision.md"
         )
     )
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     output = tmp_path / "qa-v9-finalization-round-8"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-f4-f5-exception",
         "--round", "8",
@@ -1671,7 +1743,7 @@ def test_repair_round_five_rejects_non_qa_predecessor_before_output(
     monkeypatch: pytest.MonkeyPatch,
     predecessor: str,
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     final_message = tmp_path / "final-docs-commit.finalization-r5-a1.md"
     final_message.write_text(
         "Rationale.\n\nCOMMIT_MESSAGE: feat(inst): publish bounded institutional data\n",
@@ -1682,6 +1754,7 @@ def test_repair_round_five_rejects_non_qa_predecessor_before_output(
     output = tmp_path / "qa-v9-finalization-round-5"
     flag = "--prior-gate-bundle" if predecessor == "gate" else "--prior-docs-review"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-repair-exception",
         "--round", "5",
@@ -1693,42 +1766,45 @@ def test_repair_round_five_rejects_non_qa_predecessor_before_output(
     assert not output.exists()
 
 
+@requires_owner_machine
 @pytest.mark.parametrize("name", sorted(BUNDLE.HISTORICAL_POLICIES))
 def test_historical_bundle_is_publicly_rejected_and_privately_pinned(name: str) -> None:
-    bundle = BUNDLE.EVIDENCE_ROOT / name
+    bundle = OWNER.evidence_root / name
     with pytest.raises(RuntimeError, match="declared current-artifact schema defects"):
-        BUNDLE.validate_bundle(bundle, live_repo=False)
-    result = BUNDLE.validate_historical_bundle(bundle)
+        BUNDLE.validate_bundle(OWNER, bundle, live_repo=False)
+    result = BUNDLE.validate_historical_bundle(OWNER, bundle)
     assert result["marker"] == BUNDLE.HISTORICAL_POLICIES[name]["marker"]
     assert result["defects"] == BUNDLE.HISTORICAL_POLICIES[name]["defects"]
 
 
+@requires_owner_machine
 def test_round_five_is_publicly_rejected_and_exact_f3_predecessor_validates() -> None:
-    bundle = BUNDLE.EVIDENCE_ROOT / "qa-v9-finalization-round-5"
+    bundle = OWNER.evidence_root / "qa-v9-finalization-round-5"
     expected = tuple(sorted((*BUNDLE.FALSE_CUSTOM_LABEL_DEFECTS, BUNDLE.OWNER_CONTROLLING_DEFECT)))
     with pytest.raises(RuntimeError, match="declared current-artifact schema defects") as exc:
-        BUNDLE.validate_bundle(bundle, live_repo=False)
+        BUNDLE.validate_bundle(OWNER, bundle, live_repo=False)
     assert all(defect in str(exc.value) for defect in expected)
-    result = BUNDLE.validate_known_invalid_round5_bundle(bundle)
+    result = BUNDLE.validate_known_invalid_round5_bundle(OWNER, bundle)
     assert result == {
         "bundle": bundle.resolve(),
         "marker": "known-invalid-round5-f3",
         "defects": expected,
     }
     review = BUNDLE.validate_known_invalid_round5_qa_review(
-        bundle / "qa-review.round-5.md"
+        OWNER, bundle / "qa-review.round-5.md"
     )
     assert review["marker"] == "known-invalid-round5-f3"
     assert BUNDLE.open_blocker_ids(bundle / "qa-review.round-5.md") == ("F3",)
 
 
+@requires_owner_machine
 def test_current_artifact_schema_map_is_exact_all_twenty_three() -> None:
     assert len(BUNDLE.CURRENT_ARTIFACT_SCHEMAS) == 23
     assert set(BUNDLE.CURRENT_ARTIFACT_SCHEMAS) == {
         item["name"]
         for item in json.loads(
             (
-                BUNDLE.EVIDENCE_ROOT
+                OWNER.evidence_root
                 / "qa-v9-finalization-round-5/adoption-manifest.json"
             ).read_text(encoding="utf-8")
         )["artifacts"]
@@ -1828,9 +1904,11 @@ def test_f4_f5_locked_matrix_case(
                 "sha256:" + "f" * 64 if field == "token" else "f" * 64
             )
         monkeypatch.setattr(BUNDLE, "HISTORICAL_POLICIES", policies)
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
         match = "outside" if pin == "namespace" else "pin mismatch"
         with pytest.raises(RuntimeError, match=match):
-            BUNDLE.validate_historical_bundle(BUNDLE.EVIDENCE_ROOT / namespace)
+            BUNDLE.validate_historical_bundle(OWNER, OWNER.evidence_root / namespace)
         return
 
     if family == "defects":
@@ -1936,12 +2014,17 @@ def test_f4_f5_locked_matrix_case(
     happy_kind, name = parts[1:]
     if happy_kind == "adoption":
         assert name == "round6"
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
         BUNDLE.validate_bundle(
-            BUNDLE.EVIDENCE_ROOT / "qa-v9-finalization-round-6",
+            OWNER,
+            OWNER.evidence_root / "qa-v9-finalization-round-6",
             live_repo=False,
         )
     elif happy_kind == "phase":
-        bundle = BUNDLE.EVIDENCE_ROOT / "qa-v9-finalization-round-6"
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
+        bundle = OWNER.evidence_root / "qa-v9-finalization-round-6"
         adoption = BUNDLE.load_canonical_file(bundle / "adoption-manifest.json")
         records = {item["name"]: item for item in adoption["artifacts"]}
         predecessors = retained_predecessor_records("finalization-r6")
@@ -1949,13 +2032,17 @@ def test_f4_f5_locked_matrix_case(
             bundle / name, adoption, records, predecessors
         )
     elif happy_kind == "history":
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
         assert BUNDLE.validate_historical_bundle(
-            BUNDLE.EVIDENCE_ROOT / name
+            OWNER, OWNER.evidence_root / name
         )["marker"].startswith("known-invalid-")
     elif happy_kind == "defects":
         expected = EXPECTED_DEFECT_SETS[name]
         BUNDLE.validate_exact_defect_set(expected, expected)
     elif happy_kind == "predecessor":
+        if name != "finalization-r7" and OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
         expected = (
             synthetic_predecessor_records(name, tmp_path)
             if name == "finalization-r7"
@@ -1968,7 +2055,9 @@ def test_f4_f5_locked_matrix_case(
         )
     elif happy_kind == "review":
         assert name == "round6"
-        assert BUNDLE.validate_rejected_round6_qa_review(BUNDLE.ROUND6_REVIEW)[
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
+        assert BUNDLE.validate_rejected_round6_qa_review(OWNER, OWNER.round6_review)[
             "marker"
         ] == "rejected-round6-f4-f5"
     else:
@@ -1984,6 +2073,7 @@ def test_f4_f5_all_locked_ids_executed() -> None:
     assert EXECUTED_F4_F5_IDS == EXPECTED_ALL_IDS
 
 
+@requires_owner_machine
 def test_historical_policy_pin_mutation_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1992,7 +2082,7 @@ def test_historical_policy_pin_mutation_refuses(
     policies[name]["adoption"] = "f" * 64
     monkeypatch.setattr(BUNDLE, "HISTORICAL_POLICIES", policies)
     with pytest.raises(RuntimeError, match="pin mismatch"):
-        BUNDLE.validate_historical_bundle(BUNDLE.EVIDENCE_ROOT / name)
+        BUNDLE.validate_historical_bundle(OWNER, OWNER.evidence_root / name)
 
 
 def test_qa_inventory_is_exact_unique_and_sorted() -> None:
@@ -2059,11 +2149,12 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    paths = make_paths(tmp_path)
     validations: list[tuple[str, str]] = []
     monkeypatch.setattr(
         BUNDLE,
         "validate_content",
-        lambda schema, _path, phase, *_args: validations.append((schema, phase)),
+        lambda _paths, schema, _path, phase, *_args: validations.append((schema, phase)),
     )
     final_message = tmp_path / "final-message.md"
     final_message.write_text(
@@ -2077,6 +2168,7 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     exception_output.mkdir()
     exception_artifacts = {"dev-notes.md": dev_notes}
     BUNDLE.write_markdown_artifacts(
+        paths,
         {
             "cycle": "finalization-exception",
             "round": 4,
@@ -2097,6 +2189,7 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     repair_output.mkdir()
     repair_artifacts = {"dev-notes.md": dev_notes}
     BUNDLE.write_markdown_artifacts(
+        paths,
         {
             "cycle": "finalization-repair-exception",
             "round": 5,
@@ -2117,6 +2210,7 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     f3_output.mkdir()
     f3_artifacts = {"dev-notes.md": dev_notes}
     BUNDLE.write_markdown_artifacts(
+        paths,
         {
             "cycle": "finalization-f3-exception",
             "round": 6,
@@ -2137,6 +2231,7 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     f4_f5_output.mkdir()
     f4_f5_artifacts = {"dev-notes.md": dev_notes}
     BUNDLE.write_markdown_artifacts(
+        paths,
         {
             "cycle": "finalization-f4-f5-exception",
             "round": 7,
@@ -2157,6 +2252,7 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     release_output.mkdir()
     release_artifacts = {"dev-notes.md": dev_notes}
     BUNDLE.write_markdown_artifacts(
+        paths,
         {
             "cycle": "finalization-release-hygiene-exception",
             "round": 8,
@@ -2178,6 +2274,7 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     closeout_output.mkdir()
     closeout_artifacts = {"dev-notes.md": dev_notes}
     BUNDLE.write_markdown_artifacts(
+        paths,
         {
             "cycle": "finalization-closeout-exception",
             "round": 10,
@@ -2200,6 +2297,7 @@ def test_generated_qa_report_is_cycle_aware_and_preserves_historical_wording(
     historical_output.mkdir()
     historical_artifacts = {"dev-notes.md": dev_notes}
     BUNDLE.write_markdown_artifacts(
+        paths,
         {
             "cycle": "finalization",
             "round": 3,
@@ -2249,6 +2347,7 @@ def test_exception_core_manifests_record_owner_overridden_round_cap(
     token_path.write_bytes(BUNDLE.canonical_json_bytes({"token": "sha256:" + "1" * 64}))
     artifacts[token_path.name] = token_path
     BUNDLE.write_phase_and_adoption_manifests(
+        make_paths(tmp_path),
         {
             "round": 4,
             "run_id": "RUN-M2-11-QA-finalization-exception",
@@ -2311,6 +2410,7 @@ def test_repair_core_manifests_record_owner_overridden_round_five_cap(
     )
     artifacts[token_path.name] = token_path
     BUNDLE.write_phase_and_adoption_manifests(
+        make_paths(tmp_path),
         {
             "round": 5,
             "run_id": "RUN-M2-11-QA-finalization-repair-exception",
@@ -2366,6 +2466,7 @@ def test_f3_manifests_record_round_six_cap_and_honest_custom_labels(
     notes = tmp_path / "resolution.md"
     notes.write_text("## F3: resolved\n", encoding="utf-8")
     BUNDLE.write_phase_and_adoption_manifests(
+        make_paths(tmp_path),
         {
             "round": 6,
             "run_id": "RUN-M2-11-QA-finalization-f3-exception",
@@ -2432,6 +2533,7 @@ def test_f4_f5_manifests_bind_unsealed_round_six_adoption_and_round_seven_cap(
     notes = tmp_path / "resolution-notes.finalization-r6-qa.md"
     notes.write_text("## F4: resolved\n## F5: resolved\n", encoding="utf-8")
     BUNDLE.write_phase_and_adoption_manifests(
+        make_paths(tmp_path),
         {
             "round": 7,
             "run_id": "RUN-M2-11-QA-finalization-f4-f5-exception",
@@ -2507,6 +2609,7 @@ def test_exception_round_four_real_qa_seal_to_docs_a1_binds_same_candidate_tree(
         presealed=False,
     )
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "seal-review",
         "--bundle", str(fixture["bundle"]),
         "--review", str(fixture["review_source"]),
@@ -2564,6 +2667,7 @@ def test_exception_round_four_docs_a1_rejects_substituted_qa_seal(
         presealed=False,
     )
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "seal-review",
         "--bundle", str(fixture["bundle"]),
         "--review", str(fixture["review_source"]),
@@ -2599,6 +2703,7 @@ def test_exception_round_four_qa_seal_collision_is_refusal_atomic(
     occupied.write_text(f"occupied {collision}\n", encoding="utf-8")
     before = occupied.read_bytes()
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "seal-review",
         "--bundle", str(fixture["bundle"]),
         "--review", str(fixture["review_source"]),
@@ -2708,7 +2813,7 @@ def test_docs_attempt_two_binds_exact_same_candidate_predecessor(tmp_path: Path,
     assert run_seal_docs(fixture) == 0
     seal_synthetic_docs_review(fixture, tmp_path, verdict="CHANGES_REQUESTED")
     prior_review = fixture["output"] / "docs-review.attempt-1.md"
-    validated = BUNDLE.validate_sealed_docs_review(prior_review, 1)
+    validated = BUNDLE.validate_sealed_docs_review(fixture["paths"], prior_review, 1)
     assert validated["round"] == 3
     notes = tmp_path / "docs-resolution.md"
     notes.write_text("## F1: resolved\n", encoding="utf-8")
@@ -2745,7 +2850,7 @@ def test_sealed_docs_predecessor_rejects_foreign_graph(
     input_path.write_bytes(BUNDLE.canonical_json_bytes(value))
     seal_synthetic_docs_review(fixture, tmp_path, verdict="CHANGES_REQUESTED")
     with pytest.raises(RuntimeError, match="predecessor graph|incomplete or relabelled"):
-        BUNDLE.validate_sealed_docs_review(fixture["output"] / "docs-review.attempt-1.md", 1)
+        BUNDLE.validate_sealed_docs_review(fixture["paths"], fixture["output"] / "docs-review.attempt-1.md", 1)
 
 
 def seal_synthetic_docs_review(
@@ -2759,6 +2864,7 @@ def seal_synthetic_docs_review(
         findings = "## Findings\n\n#### F1 [BLOCKER]\n\n- Status: open\n\n"
     review.write_text(f"{findings}## Verdict\n\nVERDICT: {verdict}\n", encoding="utf-8")
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "seal-docs-review",
         "--docs-bundle", str(fixture["output"]),
         "--review", str(review),
@@ -2796,6 +2902,7 @@ def test_seal_qa_review_collision_is_refusal_atomic(
         path: path.read_bytes() for path in (target, manifest) if path.exists()
     }
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "seal-review",
         "--bundle", str(fixture["bundle"]),
         "--review", str(fixture["review"]),
@@ -2832,11 +2939,11 @@ def test_validate_release_pre_and_post_stage_and_rejects_unrelated_cached_path(t
         return subprocess.CompletedProcess(argv, 0, out.encode(), b"")
 
     monkeypatch.setattr(BUNDLE, "run_checked", checked)
-    assert BUNDLE.main(["validate-release", "--docs-bundle", str(fixture["output"]), "--mode", "pre-stage"]) == 0
+    assert BUNDLE.main([*paths_argv(fixture["paths"]), "validate-release", "--docs-bundle", str(fixture["output"]), "--mode", "pre-stage"]) == 0
     stage["cached"] = "a"
-    assert BUNDLE.main(["validate-release", "--docs-bundle", str(fixture["output"]), "--mode", "post-stage"]) == 0
+    assert BUNDLE.main([*paths_argv(fixture["paths"]), "validate-release", "--docs-bundle", str(fixture["output"]), "--mode", "post-stage"]) == 0
     stage["cached"] = "b"
-    assert BUNDLE.main(["validate-release", "--docs-bundle", str(fixture["output"]), "--mode", "post-stage"]) == 1
+    assert BUNDLE.main([*paths_argv(fixture["paths"]), "validate-release", "--docs-bundle", str(fixture["output"]), "--mode", "post-stage"]) == 1
 
 
 def test_validate_release_rejects_docs_output_relabel_before_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2854,6 +2961,7 @@ def test_validate_release_rejects_docs_output_relabel_before_git(tmp_path: Path,
     input_path.write_bytes(BUNDLE.canonical_json_bytes(review_input))
     seal_synthetic_docs_review(fixture, tmp_path)
     assert BUNDLE.main([
+        *paths_argv(fixture["paths"]),
         "validate-release",
         "--docs-bundle", str(fixture["output"]),
         "--mode", "pre-stage",
@@ -2882,8 +2990,9 @@ def test_release_hygiene_owner_v2_is_digest_scoped_and_pinned() -> None:
     ]
 
 
+@requires_owner_machine
 def test_release_hygiene_exact_sealed_round_seven_predecessor() -> None:
-    result = BUNDLE.validate_release_hygiene_predecessor(BUNDLE.ROUND7_DOCS_REVIEW)
+    result = BUNDLE.validate_release_hygiene_predecessor(OWNER, OWNER.round7_docs_review)
     assert result["round"] == 7
     assert result["attempt"] == 2
     assert result["input"]["worktree_digest"] == BUNDLE.ROUND7_FINGERPRINT
@@ -2893,16 +3002,16 @@ def test_release_hygiene_resolution_is_exact_and_mutation_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     path = tmp_path / "resolution-notes.finalization-r7-release.md"
     path.write_text(BUNDLE.RELEASE_HYGIENE_RESOLUTION_TEXT, encoding="utf-8")
-    monkeypatch.setattr(BUNDLE, "RELEASE_HYGIENE_RESOLUTION", path)
-    assert BUNDLE.validate_release_hygiene_resolution(path) == path.resolve()
+    assert BUNDLE.validate_release_hygiene_resolution(paths, path) == path.resolve()
     path.write_text(
         BUNDLE.RELEASE_HYGIENE_RESOLUTION_TEXT.replace("13 Markdown", "12 Markdown"),
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="path/content mismatch"):
-        BUNDLE.validate_release_hygiene_resolution(path)
+        BUNDLE.validate_release_hygiene_resolution(paths, path)
 
 
 def test_private_tree_whitespace_refusal_preserves_real_index(
@@ -2963,6 +3072,7 @@ def test_release_hygiene_manifests_bind_v2_owner_round_eight_cap(
     notes = tmp_path / "resolution-notes.finalization-r7-release.md"
     notes.write_text(BUNDLE.RELEASE_HYGIENE_RESOLUTION_TEXT, encoding="utf-8")
     BUNDLE.write_phase_and_adoption_manifests(
+        make_paths(tmp_path),
         {
             "round": 8,
             "run_id": "RUN-M2-11-QA-finalization-release-hygiene-exception",
@@ -3012,7 +3122,12 @@ def test_release_hygiene_round_eight_transition_is_exact_and_round_nine_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(
+        tmp_path,
+        expected_root=Path(__file__).parents[1],
+        evidence_root=tmp_path,
+    )
+    monkeypatch.setattr(BUNDLE, "validate_content", lambda *_args, **_kwargs: None)
     review_dir = tmp_path / "docs-v9-finalization-r7-a2"
     review_dir.mkdir()
     review = review_dir / "docs-review.attempt-2.md"
@@ -3027,16 +3142,16 @@ def test_release_hygiene_round_eight_transition_is_exact_and_round_nine_refuses(
         "COMMIT_MESSAGE: feat(inst): publish bounded institutional data\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda: 3)
+    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda _paths: 3)
     monkeypatch.setattr(
         BUNDLE,
         "finalization_docs_attempts",
-        lambda: {2: (7, review_dir.resolve())},
+        lambda _paths: {2: (7, review_dir.resolve())},
     )
     monkeypatch.setattr(
         BUNDLE,
         "validate_release_hygiene_predecessor",
-        lambda value: {
+        lambda _paths, value: {
             "review": value.resolve(),
             "manifest": manifest.resolve(),
             "round": 7,
@@ -3044,7 +3159,7 @@ def test_release_hygiene_round_eight_transition_is_exact_and_round_nine_refuses(
         },
     )
     monkeypatch.setattr(
-        BUNDLE, "validate_release_hygiene_resolution", lambda value: value.resolve()
+        BUNDLE, "validate_release_hygiene_resolution", lambda _paths, value: value.resolve()
     )
     monkeypatch.setattr(
         BUNDLE,
@@ -3060,6 +3175,7 @@ def test_release_hygiene_round_eight_transition_is_exact_and_round_nine_refuses(
     )
     output = tmp_path / "qa-v9-finalization-round-8"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-release-hygiene-exception",
         "--round", "8",
@@ -3072,6 +3188,7 @@ def test_release_hygiene_round_eight_transition_is_exact_and_round_nine_refuses(
     assert not output.exists()
 
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run",
         "--cycle", "finalization-release-hygiene-exception",
         "--round", "9",
@@ -3179,17 +3296,19 @@ def test_release_hygiene_f1_locked_matrix_case(
             schema = "owner-decision-v1"
         path.write_bytes(text.encode())
         with pytest.raises(RuntimeError):
-            BUNDLE.validate_failed_gate_artifact(path, schema)
+            BUNDLE.validate_failed_gate_artifact(make_paths(tmp_path), path, schema)
         return
 
     if family.startswith("round7"):
-        real_review = BUNDLE.ROUND7_DOCS_REVIEW
-        docs_input = json.loads(BUNDLE.ROUND7_DOCS_INPUT.read_text())
-        docs_manifest = BUNDLE.ROUND7_DOCS_REVIEW_MANIFEST
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
+        real_review = OWNER.round7_docs_review
+        docs_input = json.loads(OWNER.round7_docs_input.read_text())
+        docs_manifest = OWNER.round7_docs_review_manifest
         base_result = {
             "review": real_review,
             "manifest": docs_manifest,
-            "input_manifest": BUNDLE.ROUND7_DOCS_INPUT.resolve(),
+            "input_manifest": OWNER.round7_docs_input.resolve(),
             "input": docs_input,
             "round": 7,
             "attempt": 2,
@@ -3197,7 +3316,7 @@ def test_release_hygiene_f1_locked_matrix_case(
                 item["name"]: item for item in docs_input["inputs"]
             }["adoption-manifest"],
         }
-        qa_result = {"adoption": json.loads(BUNDLE.ROUND7_ADOPTION.read_text())}
+        qa_result = {"adoption": json.loads(OWNER.round7_adoption.read_text())}
         monkeypatch.setattr(
             BUNDLE, "validate_sealed_docs_review", lambda *_args: copy.deepcopy(base_result)
         )
@@ -3207,36 +3326,38 @@ def test_release_hygiene_f1_locked_matrix_case(
         if family == "round7-pin":
             _, name, mutation = parts
             attrs = {
-                "adoption": ("ROUND7_ADOPTION", "ROUND7_ADOPTION_SHA256"),
-                "approved-tree": ("ROUND7_APPROVED_TREE", "ROUND7_APPROVED_TREE_SHA256"),
-                "docs-input": ("ROUND7_DOCS_INPUT", "ROUND7_DOCS_INPUT_SHA256"),
-                "docs-review": ("ROUND7_DOCS_REVIEW", "ROUND7_DOCS_REVIEW_SHA256"),
-                "docs-review-manifest": ("ROUND7_DOCS_REVIEW_MANIFEST", "ROUND7_DOCS_REVIEW_MANIFEST_SHA256"),
-                "qa-review": ("ROUND7_QA_REVIEW", "ROUND7_QA_REVIEW_SHA256"),
-                "qa-review-manifest": ("ROUND7_QA_REVIEW_MANIFEST", "ROUND7_QA_REVIEW_MANIFEST_SHA256"),
-                "token-file": ("ROUND7_TOKEN_FILE", "ROUND7_TOKEN_FILE_SHA256"),
+                "adoption": ("round7_adoption", "ROUND7_ADOPTION_SHA256"),
+                "approved-tree": ("round7_approved_tree", "ROUND7_APPROVED_TREE_SHA256"),
+                "docs-input": ("round7_docs_input", "ROUND7_DOCS_INPUT_SHA256"),
+                "docs-review": ("round7_docs_review", "ROUND7_DOCS_REVIEW_SHA256"),
+                "docs-review-manifest": ("round7_docs_review_manifest", "ROUND7_DOCS_REVIEW_MANIFEST_SHA256"),
+                "qa-review": ("round7_qa_review", "ROUND7_QA_REVIEW_SHA256"),
+                "qa-review-manifest": ("round7_qa_review_manifest", "ROUND7_QA_REVIEW_MANIFEST_SHA256"),
+                "token-file": ("round7_token_file", "ROUND7_TOKEN_FILE_SHA256"),
             }
             path_attr, digest_attr = attrs[name]
             if mutation == "digest":
                 monkeypatch.setattr(BUNDLE, digest_attr, "f" * 64)
             else:
-                source = getattr(BUNDLE, path_attr)
+                source = getattr(OWNER, path_attr)
+                mutated = copy_for_path_mutation(source, tmp_path, name)
                 monkeypatch.setattr(
-                    BUNDLE,
+                    BUNDLE.QaBundlePaths,
                     path_attr,
-                    copy_for_path_mutation(source, tmp_path, name),
+                    property(lambda _self, _mutated=mutated: _mutated),
                 )
         elif family == "round7-final-message":
             mutation = parts[1]
             if mutation == "digest":
                 monkeypatch.setattr(BUNDLE, "ROUND7_FINAL_MESSAGE_SHA256", "f" * 64)
             else:
+                mutated = copy_for_path_mutation(
+                    OWNER.round7_final_message, tmp_path, "final-message"
+                )
                 monkeypatch.setattr(
-                    BUNDLE,
-                    "ROUND7_FINAL_MESSAGE",
-                    copy_for_path_mutation(
-                        BUNDLE.ROUND7_FINAL_MESSAGE, tmp_path, "final-message"
-                    ),
+                    BUNDLE.QaBundlePaths,
+                    "round7_final_message",
+                    property(lambda _self, _mutated=mutated: _mutated),
                 )
         elif family == "round7-record":
             _, name, mutation = parts
@@ -3290,50 +3411,53 @@ def test_release_hygiene_f1_locked_matrix_case(
 
                 def load(path: Path) -> Any:
                     value = copy.deepcopy(original_load(path))
-                    if path.resolve() == BUNDLE.ROUND7_APPROVED_TREE.resolve():
+                    if path.resolve() == OWNER.round7_approved_tree.resolve():
                         if identity == "tree-oid":
                             value["tree_oid"] = "f" * 40
                         elif identity == "path-count":
                             value["expected_paths"] = value["expected_paths"][:-1]
-                    if path.resolve() == BUNDLE.ROUND7_TOKEN_FILE.resolve() and identity == "token":
+                    if path.resolve() == OWNER.round7_token_file.resolve() and identity == "token":
                         value["token"] = "sha256:" + "f" * 64
                     return value
 
                 monkeypatch.setattr(BUNDLE, "load_canonical_file", load)
         with pytest.raises(RuntimeError):
-            BUNDLE.validate_release_hygiene_predecessor(real_review)
+            BUNDLE.validate_release_hygiene_predecessor(OWNER, real_review)
         return
 
     if family.startswith("round8"):
-        real_review = BUNDLE.ROUND8_REVIEW
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
+        real_review = OWNER.round8_review
         monkeypatch.setattr(BUNDLE, "validate_bundle", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(
             BUNDLE,
             "validate_sealed_qa_review",
             lambda *_args: {
                 "review": real_review,
-                "manifest": BUNDLE.ROUND8_REVIEW_MANIFEST,
+                "manifest": OWNER.round8_review_manifest,
             },
         )
         if family == "round8-pin":
             _, name, mutation = parts
             attrs = {
-                "adoption": ("ROUND8_ADOPTION", "ROUND8_ADOPTION_SHA256"),
-                "approved-tree": ("ROUND8_APPROVED_TREE", "ROUND8_APPROVED_TREE_SHA256"),
-                "candidate-state": ("ROUND8_CANDIDATE_STATE", "ROUND8_CANDIDATE_STATE_SHA256"),
-                "qa-review": ("ROUND8_REVIEW", "ROUND8_REVIEW_SHA256"),
-                "qa-review-manifest": ("ROUND8_REVIEW_MANIFEST", "ROUND8_REVIEW_MANIFEST_SHA256"),
-                "token-file": ("ROUND8_TOKEN_FILE", "ROUND8_TOKEN_FILE_SHA256"),
+                "adoption": ("round8_adoption", "ROUND8_ADOPTION_SHA256"),
+                "approved-tree": ("round8_approved_tree", "ROUND8_APPROVED_TREE_SHA256"),
+                "candidate-state": ("round8_candidate_state", "ROUND8_CANDIDATE_STATE_SHA256"),
+                "qa-review": ("round8_review", "ROUND8_REVIEW_SHA256"),
+                "qa-review-manifest": ("round8_review_manifest", "ROUND8_REVIEW_MANIFEST_SHA256"),
+                "token-file": ("round8_token_file", "ROUND8_TOKEN_FILE_SHA256"),
             }
             path_attr, digest_attr = attrs[name]
             if mutation == "digest":
                 monkeypatch.setattr(BUNDLE, digest_attr, "f" * 64)
             else:
-                source = getattr(BUNDLE, path_attr)
+                source = getattr(OWNER, path_attr)
+                mutated = copy_for_path_mutation(source, tmp_path, name)
                 monkeypatch.setattr(
-                    BUNDLE,
+                    BUNDLE.QaBundlePaths,
                     path_attr,
-                    copy_for_path_mutation(source, tmp_path, name),
+                    property(lambda _self, _mutated=mutated: _mutated),
                 )
         elif family == "round8-value":
             identity = parts[1]
@@ -3341,13 +3465,13 @@ def test_release_hygiene_f1_locked_matrix_case(
 
             def load(path: Path) -> Any:
                 value = copy.deepcopy(original_load(path))
-                if identity in {"fingerprint", "round"} and path.resolve() == BUNDLE.ROUND8_ADOPTION.resolve():
+                if identity in {"fingerprint", "round"} and path.resolve() == OWNER.round8_adoption.resolve():
                     value["worktree_digest" if identity == "fingerprint" else "round"] = (
                         "f" * 64 if identity == "fingerprint" else 7
                     )
-                if identity == "token" and path.resolve() == BUNDLE.ROUND8_TOKEN_FILE.resolve():
+                if identity == "token" and path.resolve() == OWNER.round8_token_file.resolve():
                     value["token"] = "sha256:" + "f" * 64
-                if path.resolve() == BUNDLE.ROUND8_APPROVED_TREE.resolve():
+                if path.resolve() == OWNER.round8_approved_tree.resolve():
                     if identity == "tree-oid":
                         value["tree_oid"] = "f" * 40
                     elif identity == "path-count":
@@ -3375,7 +3499,7 @@ def test_release_hygiene_f1_locked_matrix_case(
 
             def load(path: Path) -> Any:
                 value = copy.deepcopy(original_load(path))
-                if path.resolve() == BUNDLE.ROUND8_REVIEW_MANIFEST.resolve():
+                if path.resolve() == OWNER.round8_review_manifest.resolve():
                     value["output"][mutation] = (
                         "sha256:" + "f" * 64
                         if mutation == "digest"
@@ -3391,7 +3515,7 @@ def test_release_hygiene_f1_locked_matrix_case(
 
             def load(path: Path) -> Any:
                 value = copy.deepcopy(original_load(path))
-                if path.resolve() == BUNDLE.ROUND8_ADOPTION.resolve():
+                if path.resolve() == OWNER.round8_adoption.resolve():
                     name = "plan.md" if mutation == "plan-digest" else "owner-decision.md"
                     next(item for item in value["artifacts"] if item["name"] == name)[
                         "digest"
@@ -3400,7 +3524,7 @@ def test_release_hygiene_f1_locked_matrix_case(
 
             monkeypatch.setattr(BUNDLE, "load_canonical_file", load)
         with pytest.raises(RuntimeError):
-            BUNDLE.validate_release_hygiene_f1_predecessor(real_review)
+            BUNDLE.validate_release_hygiene_f1_predecessor(OWNER, real_review)
         return
 
     if family == "docs-a3":
@@ -3415,6 +3539,7 @@ def test_release_hygiene_f1_locked_matrix_case(
             adoption_path.write_bytes(BUNDLE.canonical_json_bytes(adoption))
         if mutation != "unsealed-qa":
             assert BUNDLE.main([
+                *paths_argv(fixture["paths"]),
                 "seal-review",
                 "--bundle", str(fixture["bundle"]),
                 "--review", str(fixture["review_source"]),
@@ -3430,7 +3555,7 @@ def test_release_hygiene_f1_locked_matrix_case(
             monkeypatch.setattr(
                 BUNDLE,
                 "validate_release_hygiene_predecessor",
-                lambda value: {
+                lambda _paths, value: {
                     "review": value.resolve(),
                     "manifest": fixture["prior_docs_manifest"].resolve(),
                     "round": 6,
@@ -3448,7 +3573,7 @@ def test_release_hygiene_f1_locked_matrix_case(
             monkeypatch.setattr(
                 BUNDLE,
                 "validate_release_hygiene_resolution",
-                lambda _value: (_ for _ in ()).throw(RuntimeError("wrong resolution")),
+                lambda _paths, _value: (_ for _ in ()).throw(RuntimeError("wrong resolution")),
             )
         elif mutation == "wrong-round":
             wrong = tmp_path / "final-docs-commit.finalization-r8-a3.md"
@@ -3469,12 +3594,12 @@ def test_release_hygiene_f1_locked_matrix_case(
     if family == "private-release":
         mutation = parts[1]
         if mutation == "fingerprint-drift":
-            monkeypatch.setattr(BUNDLE, "external_worktree_fingerprint", lambda _repo: "drift")
+            monkeypatch.setattr(BUNDLE, "external_worktree_fingerprint", lambda _paths, _repo: "drift")
             with pytest.raises(RuntimeError, match="candidate drift"):
-                BUNDLE.validate_candidate_fingerprint(tmp_path, "expected")
+                BUNDLE.validate_candidate_fingerprint(make_paths(tmp_path), tmp_path, "expected")
             return
         if mutation == "output-before-preflight":
-            monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+            paths = make_paths(tmp_path, evidence_root=tmp_path)
             prior_dir = tmp_path / "qa-v9-finalization-round-8"
             prior_dir.mkdir()
             prior = prior_dir / "qa-review.round-8.md"
@@ -3490,11 +3615,11 @@ def test_release_hygiene_f1_locked_matrix_case(
             )
             monkeypatch.setattr(BUNDLE, "validate_content", lambda *_args, **_kwargs: None)
             monkeypatch.setattr(BUNDLE, "validate_failed_gate_artifact", lambda *_args, **_kwargs: None)
-            monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda: 3)
+            monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda _paths: 3)
             monkeypatch.setattr(
                 BUNDLE,
                 "validate_release_hygiene_f1_predecessor",
-                lambda value: {
+                lambda _paths, value: {
                     "review": value.resolve(),
                     "manifest": manifest.resolve(),
                     "round": 8,
@@ -3502,7 +3627,7 @@ def test_release_hygiene_f1_locked_matrix_case(
                 },
             )
             monkeypatch.setattr(
-                BUNDLE, "validate_release_hygiene_f1_resolution", lambda value: value.resolve()
+                BUNDLE, "validate_release_hygiene_f1_resolution", lambda _paths, value: value.resolve()
             )
             monkeypatch.setattr(
                 BUNDLE,
@@ -3518,6 +3643,7 @@ def test_release_hygiene_f1_locked_matrix_case(
             )
             output = tmp_path / "qa-v9-finalization-round-9"
             assert BUNDLE.main([
+                *paths_argv(paths),
                 "run",
                 "--cycle", "finalization-release-hygiene-f1-exception",
                 "--round", "9",
@@ -3582,23 +3708,29 @@ def test_release_hygiene_f1_locked_matrix_case(
             .replace("release-hygiene-F1-plan.md", "synthetic-plan.md"),
             encoding="utf-8",
         )
-        BUNDLE.validate_failed_gate_artifact(path, "owner-decision-v1")
+        BUNDLE.validate_failed_gate_artifact(make_paths(tmp_path), path, "owner-decision-v1")
     elif name == "owner-v2":
         BUNDLE.validate_failed_gate_artifact(
+            make_paths(tmp_path),
             Path(__file__).parents[1] / BUNDLE.FINALIZATION_RELEASE_HYGIENE_F1_DECISION,
             "owner-decision-v2",
         )
     elif name == "round7-predecessor":
-        assert BUNDLE.validate_release_hygiene_predecessor(BUNDLE.ROUND7_DOCS_REVIEW)[
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
+        assert BUNDLE.validate_release_hygiene_predecessor(OWNER, OWNER.round7_docs_review)[
             "round"
         ] == 7
     elif name == "round8-predecessor":
-        assert BUNDLE.validate_release_hygiene_f1_predecessor(BUNDLE.ROUND8_REVIEW)[
+        if OWNER is None:
+            pytest.skip("needs the host machine's real M2-11 evidence artifacts")
+        assert BUNDLE.validate_release_hygiene_f1_predecessor(OWNER, OWNER.round8_review)[
             "round"
         ] == 8
     elif name == "docs-a3":
         fixture = release_f1_docs_fixture(tmp_path, monkeypatch, presealed=False)
         assert BUNDLE.main([
+            *paths_argv(fixture["paths"]),
             "seal-review",
             "--bundle", str(fixture["bundle"]),
             "--review", str(fixture["review_source"]),
@@ -3674,10 +3806,7 @@ def test_release_hygiene_f1_locked_matrix_case(
         python_stub.chmod(0o755)
         (repo / "scripts").mkdir()
         (repo / "scripts" / "build_m2_11_qa_bundle.py").write_text("# stub\n")
-        restore = restore.replace(
-            "root=/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11",
-            f"root={evidence}",
-        )
+        restore = re.sub(r"(?m)^root=.*$", f"root={evidence}", restore, count=1)
         env = {
             "PATH": f"{stub_bin}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": str(tmp_path),
@@ -3718,7 +3847,7 @@ def test_release_hygiene_f1_round_nine_transition_and_round_ten_refusal(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     prior_dir = tmp_path / "qa-v9-finalization-round-8"
     prior_dir.mkdir()
     prior = prior_dir / "qa-review.round-8.md"
@@ -3734,11 +3863,11 @@ def test_release_hygiene_f1_round_nine_transition_and_round_ten_refusal(
     )
     monkeypatch.setattr(BUNDLE, "validate_content", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(BUNDLE, "validate_failed_gate_artifact", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda: 3)
+    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda _paths: 3)
     monkeypatch.setattr(
         BUNDLE,
         "validate_release_hygiene_f1_predecessor",
-        lambda value: {
+        lambda _paths, value: {
             "review": value.resolve(),
             "manifest": manifest.resolve(),
             "round": 8,
@@ -3746,7 +3875,7 @@ def test_release_hygiene_f1_round_nine_transition_and_round_ten_refusal(
         },
     )
     monkeypatch.setattr(
-        BUNDLE, "validate_release_hygiene_f1_resolution", lambda value: value.resolve()
+        BUNDLE, "validate_release_hygiene_f1_resolution", lambda _paths, value: value.resolve()
     )
     monkeypatch.setattr(
         BUNDLE,
@@ -3760,6 +3889,7 @@ def test_release_hygiene_f1_round_nine_transition_and_round_ten_refusal(
     )
     output = tmp_path / "qa-v9-finalization-round-9"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run", "--cycle", "finalization-release-hygiene-f1-exception",
         "--round", "9", "--final-docs-commit", str(message),
         "--prior-review", str(prior), "--resolution-notes", str(notes),
@@ -3768,6 +3898,7 @@ def test_release_hygiene_f1_round_nine_transition_and_round_ten_refusal(
     assert "ROUND9 PREOUTPUT" in capsys.readouterr().err
     assert not output.exists()
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run", "--cycle", "finalization-release-hygiene-f1-exception",
         "--round", "10", "--final-docs-commit", str(message),
         "--prior-review", str(prior), "--resolution-notes", str(notes),
@@ -3799,7 +3930,9 @@ def test_closeout_authority_inventory_and_exact_round_nine_predecessor() -> None
         str(BUNDLE.FINALIZATION_CLOSEOUT_PLAN),
         str(BUNDLE.FINALIZATION_CLOSEOUT_DECISION),
     }
-    predecessor = BUNDLE.validate_failed_gate_bundle(BUNDLE.ROUND9_BUNDLE, 9)
+    if OWNER is None:
+        pytest.skip("predecessor half needs the host machine's real M2-11 evidence")
+    predecessor = BUNDLE.validate_failed_gate_bundle(OWNER, OWNER.round9_bundle, 9)
     assert predecessor["round"] == 9
     assert len(predecessor["ledger"]["entries"]) == 2
     assert predecessor["ledger"]["entries"][0]["status"] == "pass"
@@ -3810,16 +3943,16 @@ def test_closeout_resolution_is_exact_and_mutation_refuses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     path = tmp_path / "resolution-notes.finalization-r9-gate2.md"
     path.write_text(BUNDLE.FINALIZATION_CLOSEOUT_RESOLUTION_TEXT, encoding="utf-8")
-    monkeypatch.setattr(BUNDLE, "FINALIZATION_CLOSEOUT_RESOLUTION", path)
-    assert BUNDLE.validate_finalization_closeout_resolution(path) == path.resolve()
+    assert BUNDLE.validate_finalization_closeout_resolution(paths, path) == path.resolve()
     path.write_text(
         BUNDLE.FINALIZATION_CLOSEOUT_RESOLUTION_TEXT.replace("round 10", "round 11"),
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="path/content mismatch"):
-        BUNDLE.validate_finalization_closeout_resolution(path)
+        BUNDLE.validate_finalization_closeout_resolution(paths, path)
 
 
 def test_closeout_round_ten_is_single_and_round_eleven_refuses_preoutput(
@@ -3827,7 +3960,7 @@ def test_closeout_round_ten_is_single_and_round_eleven_refuses_preoutput(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(BUNDLE, "EVIDENCE_ROOT", tmp_path)
+    paths = make_paths(tmp_path, evidence_root=tmp_path)
     message = tmp_path / "final-docs-commit.finalization-r10-a3.md"
     message.write_text(
         "First rationale.\n\nSecond rationale.\n\n"
@@ -3842,11 +3975,11 @@ def test_closeout_round_ten_is_single_and_round_eleven_refuses_preoutput(
     monkeypatch.setattr(
         BUNDLE, "validate_failed_gate_artifact", lambda *_args, **_kwargs: None
     )
-    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda: 3)
+    monkeypatch.setattr(BUNDLE, "next_finalization_docs_attempt", lambda _paths: 3)
     monkeypatch.setattr(
         BUNDLE,
         "validate_failed_gate_bundle",
-        lambda value, round_no: {
+        lambda _paths, value, round_no: {
             "bundle": value.resolve(),
             "round": round_no,
             "entries": [{"status": "pass"}, {"status": "fail"}],
@@ -3854,7 +3987,7 @@ def test_closeout_round_ten_is_single_and_round_eleven_refuses_preoutput(
         },
     )
     monkeypatch.setattr(
-        BUNDLE, "validate_finalization_closeout_resolution", lambda value: value.resolve()
+        BUNDLE, "validate_finalization_closeout_resolution", lambda _paths, value: value.resolve()
     )
     monkeypatch.setattr(BUNDLE, "validate_gate_resolution_notes", lambda *_args: None)
     monkeypatch.setattr(
@@ -3871,6 +4004,7 @@ def test_closeout_round_ten_is_single_and_round_eleven_refuses_preoutput(
     )
     output = tmp_path / "qa-v9-finalization-round-10"
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run", "--cycle", "finalization-closeout-exception",
         "--round", "10", "--final-docs-commit", str(message),
         "--prior-gate-bundle", str(prior), "--resolution-notes", str(resolution),
@@ -3879,6 +4013,7 @@ def test_closeout_round_ten_is_single_and_round_eleven_refuses_preoutput(
     assert "ROUND10 PREOUTPUT" in capsys.readouterr().err
     assert not output.exists()
     assert BUNDLE.main([
+        *paths_argv(paths),
         "run", "--cycle", "finalization-closeout-exception",
         "--round", "11", "--final-docs-commit", str(message),
         "--prior-gate-bundle", str(prior), "--resolution-notes", str(resolution),
@@ -3939,6 +4074,14 @@ def _write_closeout_deploy_stubs(stub_bin: Path) -> None:
     gh_stub.chmod(0o755)
 
 
+def _closeout_deploy_snapshot_value() -> str:
+    """The exact snapshot path the closeout plan's dispatch fence pins."""
+    dispatch, _ = _closeout_deploy_scripts()
+    match = re.search(r"(?m)^snapshot=(.+)$", dispatch)
+    assert match is not None
+    return match.group(1)
+
+
 def _closeout_deploy_env(
     tmp_path: Path,
     stub_bin: Path,
@@ -3953,7 +4096,7 @@ def _closeout_deploy_env(
         "MERGE_SHA": "a" * 40,
         "RUN_ID": "123",
         "RUN_URL": "https://github.com/johnbaekk-spec/populus/actions/runs/123",
-        "SNAPSHOT_VALUE": "/Users/johnbaek/projects/Populus-ops/snapshots/inst-source-v1.db",
+        "SNAPSHOT_VALUE": _closeout_deploy_snapshot_value(),
         "LIVE_CONCLUSION": live_conclusion,
     }
     if collision_target is not None:
@@ -3965,10 +4108,7 @@ def test_closeout_deploy_record_preexisting_and_collision_refuse_without_mutatio
     tmp_path: Path,
 ) -> None:
     dispatch, _ = _closeout_deploy_scripts()
-    dispatch = dispatch.replace(
-        "root=/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11",
-        f"root={tmp_path}",
-    )
+    dispatch = re.sub(r"(?m)^root=.*$", f"root={tmp_path}", dispatch, count=1)
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
     _write_closeout_deploy_stubs(stub_bin)
@@ -3994,14 +4134,8 @@ def test_closeout_deploy_record_partial_failure_and_exact_readback(
     tmp_path: Path,
 ) -> None:
     dispatch, verifier = _closeout_deploy_scripts()
-    dispatch = dispatch.replace(
-        "root=/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11",
-        f"root={tmp_path}",
-    )
-    verifier = verifier.replace(
-        "root=/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11",
-        f"root={tmp_path}",
-    )
+    dispatch = re.sub(r"(?m)^root=.*$", f"root={tmp_path}", dispatch, count=1)
+    verifier = re.sub(r"(?m)^root=.*$", f"root={tmp_path}", verifier, count=1)
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
     _write_closeout_deploy_stubs(stub_bin)

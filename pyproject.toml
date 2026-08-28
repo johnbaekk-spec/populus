@@ -25,7 +25,7 @@ populus = "populus.cli:main"
 populus-mcp = "populus.mcp_server.server:main"
 
 [dependency-groups]
-dev = ["pytest", "jsonschema"]
+dev = ["pytest", "jsonschema", "pip-audit==2.10.1"]
 
 [tool.hatch.version]
 path = "src/populus/__init__.py"

@@ -57,11 +57,25 @@ test-python: sync
 dashboard-gates:
 	cd dashboard && npm ci && npm run gates
 
-# dep_guard is a supply-chain gate (the §19 paid-vendor denylist over
-# pyproject, the lockfile, and every owned import root) — the "security"
-# gate kind.
+# The "security" gate kind (RUN PUBLIC-SECURITY-HARDENING PR 2, R7/LD8):
+#   1. dep_guard — the §19 paid-vendor denylist over pyproject, the lockfile,
+#      and every owned import root (unchanged, deterministic/offline).
+#   2. pip-audit over the PRODUCTION lock: `uv export --frozen --no-dev
+#      --no-emit-project` into a private temp dir (cleaned via trap), audited
+#      with `--require-hashes --disable-pip`. ANY known Python advisory is red
+#      (pip-audit exposes no supported severity threshold — LD8). This audits
+#      the shipped lock, not the developer environment.
+#   3. `npm audit --audit-level=high` after `npm ci`, so the audit sees the
+#      committed dashboard lock; high/critical findings are red.
+# Steps 2 and 3 are NETWORK-DEPENDENT (PyPI/OSV and npm advisory services). An
+# advisory-service outage fails this gate with the tool's own named error — a
+# red check, never "no vulnerabilities" (TD-PSH-4). Re-run: `make security`.
 security:
 	uv run python scripts/dep_guard.py
+	tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
+	  uv export --frozen --no-dev --no-emit-project -o "$$tmp/requirements.txt" && \
+	  uv run pip-audit --require-hashes --disable-pip -r "$$tmp/requirements.txt"
+	cd dashboard && npm ci && npm audit --audit-level=high
 
 # RUN M2-5 acceptance (R5/R9/R10): the mandatory synchronous DEV gate. It ERRORS
 # (never skips) when the full 13(f)-list files or the tracked Berkshire corpus

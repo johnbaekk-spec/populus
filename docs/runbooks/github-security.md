@@ -185,9 +185,18 @@ grep -RInE 'uses:\s' .github/workflows/ | grep -vE '@[0-9a-f]{40}( |$|#)' || tru
 curl -sSI http://publicfilings.org/
 curl -sSI https://publicfilings.org/
 curl -sSI https://publicfilings.org/stats.json
+# Dependency advisories (PR 2, R7/LD8): dep_guard, then pip-audit over the
+# frozen no-dev uv export (--require-hashes --disable-pip; ANY Python advisory
+# is red), then `npm ci && npm audit --audit-level=high` in dashboard/.
+make security
 ```
 
 Plus every `jq -e` predicate in §4; any non-zero exit is a finding.
+
+The advisory halves of `make security` are network-dependent (PyPI/OSV and the
+npm advisory service). An advisory-service outage fails the gate with the
+tool's own named error — treat it as a red result to re-run, never as "no
+vulnerabilities" (ARCHITECTURE/plan TD-PSH-4).
 
 ## 6. Full-history secret scan (local, on demand)
 

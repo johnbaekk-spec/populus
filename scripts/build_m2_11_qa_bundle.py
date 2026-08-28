@@ -21,21 +21,156 @@ import sys
 import tarfile
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 
-EXPECTED_ROOT = Path("/Users/johnbaek/projects/Populus-m28/.claude/worktrees/m2-11")
+@dataclass(frozen=True)
+class QaBundlePaths:
+    """The four machine-specific roots, passed explicitly at command entry.
+
+    Every machine-bound location the runner touches derives from these four
+    absolute paths; nothing is read from the environment or hardcoded.
+    """
+
+    expected_root: Path
+    orchestrate: Path
+    evidence_root: Path
+    snapshot: Path
+
+    @property
+    def workflow_artifacts(self) -> Path:
+        return self.orchestrate.parent / "lib" / "workflow-artifacts.sh"
+
+    @property
+    def t0_log(self) -> Path:
+        return self.evidence_root / "T0-v11.log"
+
+    @property
+    def prior_docs_review(self) -> Path:
+        return self.evidence_root / "docs-v9-final" / "docs-review.round-1.canonical.md"
+
+    @property
+    def round7_bundle(self) -> Path:
+        return self.evidence_root / "qa-v9-finalization-round-7"
+
+    @property
+    def round7_docs_bundle(self) -> Path:
+        return self.evidence_root / "docs-v9-finalization-r7-a2"
+
+    @property
+    def round7_docs_review(self) -> Path:
+        return self.round7_docs_bundle / "docs-review.attempt-2.md"
+
+    @property
+    def round7_docs_input(self) -> Path:
+        return self.round7_docs_bundle / "docs-review-input.manifest.json"
+
+    @property
+    def round7_docs_review_manifest(self) -> Path:
+        return self.round7_docs_bundle / "docs-review.manifest.json"
+
+    @property
+    def round7_adoption(self) -> Path:
+        return self.round7_bundle / "adoption-manifest.json"
+
+    @property
+    def round7_token_file(self) -> Path:
+        return self.round7_bundle / "combined-candidate-token.json"
+
+    @property
+    def round7_qa_review(self) -> Path:
+        return self.round7_bundle / "qa-review.round-7.md"
+
+    @property
+    def round7_qa_review_manifest(self) -> Path:
+        return self.round7_bundle / "qa-review.manifest.json"
+
+    @property
+    def round7_approved_tree(self) -> Path:
+        return self.round7_docs_bundle / "approved-tree.json"
+
+    @property
+    def round7_final_message(self) -> Path:
+        return self.evidence_root / "final-docs-commit.finalization-r7-a2.md"
+
+    @property
+    def round8_bundle(self) -> Path:
+        return self.evidence_root / "qa-v9-finalization-round-8"
+
+    @property
+    def round8_review(self) -> Path:
+        return self.round8_bundle / "qa-review.round-8.md"
+
+    @property
+    def round8_review_manifest(self) -> Path:
+        return self.round8_bundle / "qa-review.manifest.json"
+
+    @property
+    def round8_adoption(self) -> Path:
+        return self.round8_bundle / "adoption-manifest.json"
+
+    @property
+    def round8_token_file(self) -> Path:
+        return self.round8_bundle / "combined-candidate-token.json"
+
+    @property
+    def round8_approved_tree(self) -> Path:
+        return self.round8_bundle / "approved-tree.json"
+
+    @property
+    def round8_candidate_state(self) -> Path:
+        return self.round8_bundle / "candidate-state.json"
+
+    @property
+    def round8_gate_ledger(self) -> Path:
+        return self.round8_bundle / "gate-ledger.json"
+
+    @property
+    def round9_bundle(self) -> Path:
+        return self.evidence_root / "qa-v9-finalization-round-9"
+
+    @property
+    def round9_ledger(self) -> Path:
+        return self.round9_bundle / "gate-ledger.json"
+
+    @property
+    def round6_review(self) -> Path:
+        return self.evidence_root / "qa-review.finalization-r6.canonical.md"
+
+    @property
+    def finalization_closeout_resolution(self) -> Path:
+        return self.evidence_root / "resolution-notes.finalization-r9-gate2.md"
+
+    @property
+    def release_hygiene_f1_resolution(self) -> Path:
+        return self.evidence_root / "resolution-notes.finalization-r8-F1.md"
+
+    @property
+    def release_hygiene_resolution(self) -> Path:
+        return self.evidence_root / "resolution-notes.finalization-r7-release.md"
+
+    def pinned_digests(self) -> dict[Path, str]:
+        """The complete pinned-digest graph for this machine's roots."""
+        return {
+            self.orchestrate: ORCHESTRATE_SHA256,
+            self.workflow_artifacts: WORKFLOW_ARTIFACTS_SHA256,
+            **PINNED_DIGESTS,
+            self.prior_docs_review: PRIOR_DOCS_REVIEW_SHA256,
+            self.t0_log: T0_LOG_SHA256,
+            self.snapshot: SNAPSHOT_SHA256,
+        }
+
+
 EXPECTED_BRANCH = "codex/m2-11-t0-finalize"
 EXPECTED_HEAD = "7391d947f72cf408a173f1e7938102608b2269d4"
 EXPECTED_BASE = "21340330a0fad7e9e39c1a9cec67656643621b05"
-ORCHESTRATE = Path("/Users/johnbaek/projects/orchestrate-tool/orchestrate.sh")
-WORKFLOW_ARTIFACTS = Path(
-    "/Users/johnbaek/projects/orchestrate-tool/lib/workflow-artifacts.sh"
-)
-EVIDENCE_ROOT = Path("/Users/johnbaek/projects/Populus-ops/snapshots/evidence/m2-11")
-T0_LOG = EVIDENCE_ROOT / "T0-v11.log"
-SNAPSHOT = Path("/Users/johnbaek/projects/Populus-ops/snapshots/inst-source-v1.db")
+ORCHESTRATE_SHA256 = "22d85ebd01679bd44aa7a238e89bd15cc176bb5012b050c18a25e529f3ce2086"
+WORKFLOW_ARTIFACTS_SHA256 = "afaa608b17b938abe8c2321d3405316a7ecf5e7d6fa2160cb5448f0d05856f97"
+PRIOR_DOCS_REVIEW_SHA256 = "6827a2cacf1a53e582db143a9baa71438ecfab51526eff8f58fb08d40086e5ee"
+T0_LOG_SHA256 = "7078a42934484c9c5ba7f975654476e0788c385dbaf8108c0d429a58ba91a453"
+SNAPSHOT_SHA256 = "977a4d249d92590a4de2961a3e9c7ff8cfa2e4846f0097ec7aa6c07f28124121"
 TAIL_PLAN = Path("docs/build/RUN-M2-11-T0-tail-pagination-delta-plan.md")
 RECOVERY_PLAN = Path("docs/build/RUN-M2-11-QA-origin-recovery-delta-plan.md")
 OWNER_DECISION = Path("docs/build/RUN-M2-11-QA-origin-decision.md")
@@ -83,13 +218,12 @@ FINALIZATION_CLOSEOUT_PLAN = Path(
 FINALIZATION_CLOSEOUT_DECISION = Path(
     "docs/build/RUN-M2-11-QA-finalization-closeout-decision.md"
 )
-PRIOR_DOCS_REVIEW = EVIDENCE_ROOT / "docs-v9-final" / "docs-review.round-1.canonical.md"
 DEV_NOTES = Path("docs/build/RUN-M2-11-devnotes.md")
 FINDINGS = Path("docs/build/RUN-M2-11-T0-findings.md")
 
+# Repository-relative pinned inputs only; the machine-rooted pins live on
+# QaBundlePaths.pinned_digests().
 PINNED_DIGESTS = {
-    ORCHESTRATE: "22d85ebd01679bd44aa7a238e89bd15cc176bb5012b050c18a25e529f3ce2086",
-    WORKFLOW_ARTIFACTS: "afaa608b17b938abe8c2321d3405316a7ecf5e7d6fa2160cb5448f0d05856f97",
     TAIL_PLAN: "068e7fc04edf61e0e3d25e40ff504b003faa0d0ab6d26fa65982a4899e119fad",
     RECOVERY_PLAN: "2df62fa4dd2a54bfac932238e0b8fcd16a6386d3b6c75dabe038eacf714297ba",
     OWNER_DECISION: "9392d3cfeec2badf8caf01f595f25342f7569e30f53396ab9c3fe73b7cee3a07",
@@ -109,10 +243,7 @@ PINNED_DIGESTS = {
     FINALIZATION_RELEASE_HYGIENE_F1_DECISION: "fa564bcafa0b1f9991ee9468fecd6ae57b982ad64e6ec2fee629c8587a246fe6",
     FINALIZATION_CLOSEOUT_PLAN: "27d2e5c67267b2c1cf9081141c61d707fa726c15f1ee98c368427860c61d3b26",
     FINALIZATION_CLOSEOUT_DECISION: "13c7d290e9d11db9cb405e2d8fefb15e774a862ea9f466ff56b4d951eb04f83b",
-    PRIOR_DOCS_REVIEW: "6827a2cacf1a53e582db143a9baa71438ecfab51526eff8f58fb08d40086e5ee",
     FINDINGS: "cf1739a8571f312231e2a842bd0fbe7521e6b2f4a5f522c2089bbd78957579fd",
-    T0_LOG: "7078a42934484c9c5ba7f975654476e0788c385dbaf8108c0d429a58ba91a453",
-    SNAPSHOT: "977a4d249d92590a4de2961a3e9c7ff8cfa2e4846f0097ec7aa6c07f28124121",
 }
 
 EXPECTED_QA_PATHS = tuple(sorted(
@@ -294,17 +425,6 @@ FINALIZATION_CLOSEOUT_EXCEPTION_SCOPE = tuple(sorted((
     "stale-devnotes-command-assertion-only",
 ), key=os.fsencode))
 
-ROUND7_BUNDLE = EVIDENCE_ROOT / "qa-v9-finalization-round-7"
-ROUND7_DOCS_BUNDLE = EVIDENCE_ROOT / "docs-v9-finalization-r7-a2"
-ROUND7_DOCS_REVIEW = ROUND7_DOCS_BUNDLE / "docs-review.attempt-2.md"
-ROUND7_DOCS_INPUT = ROUND7_DOCS_BUNDLE / "docs-review-input.manifest.json"
-ROUND7_DOCS_REVIEW_MANIFEST = ROUND7_DOCS_BUNDLE / "docs-review.manifest.json"
-ROUND7_ADOPTION = ROUND7_BUNDLE / "adoption-manifest.json"
-ROUND7_TOKEN_FILE = ROUND7_BUNDLE / "combined-candidate-token.json"
-ROUND7_QA_REVIEW = ROUND7_BUNDLE / "qa-review.round-7.md"
-ROUND7_QA_REVIEW_MANIFEST = ROUND7_BUNDLE / "qa-review.manifest.json"
-ROUND7_APPROVED_TREE = ROUND7_DOCS_BUNDLE / "approved-tree.json"
-ROUND7_FINAL_MESSAGE = EVIDENCE_ROOT / "final-docs-commit.finalization-r7-a2.md"
 ROUND7_ADOPTION_SHA256 = "39f81b7f1fe9c192c10a97ae4082301663820c18d774ad66b364168dab99b537"
 ROUND7_TOKEN_FILE_SHA256 = "52af42e7d3a0975204a8cb34be40f922b4ab23efed1a05e99168761be8e159b8"
 ROUND7_TOKEN = "sha256:4254a0ef9a7093ee4168fdd210c9128e2c08193f8885ad461270e114bb4c2100"
@@ -319,14 +439,6 @@ ROUND7_ARCHIVE_SHA256 = "b10b85d710dbbc6716b0b9dde0dc6425703816db7c2c841a1112be6
 ROUND7_FINGERPRINT = "68235db92732e15d96acfae48691bee5d418d7cbd618f70552628bf14203883a"
 ROUND7_FINAL_MESSAGE_SHA256 = "ea63c59cf09b2ebdec7c0392236e26ae778c49667591c46c504fd9be31b31ebf"
 
-ROUND8_BUNDLE = EVIDENCE_ROOT / "qa-v9-finalization-round-8"
-ROUND8_REVIEW = ROUND8_BUNDLE / "qa-review.round-8.md"
-ROUND8_REVIEW_MANIFEST = ROUND8_BUNDLE / "qa-review.manifest.json"
-ROUND8_ADOPTION = ROUND8_BUNDLE / "adoption-manifest.json"
-ROUND8_TOKEN_FILE = ROUND8_BUNDLE / "combined-candidate-token.json"
-ROUND8_APPROVED_TREE = ROUND8_BUNDLE / "approved-tree.json"
-ROUND8_CANDIDATE_STATE = ROUND8_BUNDLE / "candidate-state.json"
-ROUND8_GATE_LEDGER = ROUND8_BUNDLE / "gate-ledger.json"
 ROUND8_ADOPTION_SHA256 = "9e4ad77fe14da593094a4964703468280fc1b4a95231cb1a5789505198ea77c7"
 ROUND8_TOKEN_FILE_SHA256 = "12e112e31e25a999055ff7498e9fc743df51438ee4f0e86547a7de6864e11796"
 ROUND8_REVIEW_SHA256 = "622fd3c483958765001b2576946e6f112bd3f4c3a22ff17441dc1374ee54ebce"
@@ -337,8 +449,6 @@ ROUND8_TOKEN = "sha256:55fa7f2c5e939060805992004ce9b157939af348fda11383ad246d695
 ROUND8_FINGERPRINT = "327f0b589f75afd2fcf197d1835eaad22a23da4e1a60109e769a8d396ebceee5"
 ROUND8_APPROVED_TREE_OID = "d697803185c8da0b97658a627fc634fd8d2e536c"
 
-ROUND9_BUNDLE = EVIDENCE_ROOT / "qa-v9-finalization-round-9"
-ROUND9_LEDGER = ROUND9_BUNDLE / "gate-ledger.json"
 ROUND9_FINGERPRINT = "d1e54262f690a499f9e04b2babaf9ac4a374869b99b6b31e46f582f983f4faeb"
 ROUND9_ARTIFACT_SHA256 = {
     "plan.md": "da6f13b9968468c4c49506bcff4ca70e75d87c17b2d39d71fa490373f7c52213",
@@ -359,9 +469,6 @@ ROUND9_FAILED_TEST = (
     "test_devnotes_publish_only_authoritative_release_hygiene_round_eight_command"
 )
 
-FINALIZATION_CLOSEOUT_RESOLUTION = (
-    EVIDENCE_ROOT / "resolution-notes.finalization-r9-gate2.md"
-)
 FINALIZATION_CLOSEOUT_RESOLUTION_TEXT = (
     "# RUN M2-11 — Consolidated Finalization Gate Resolution\n\n"
     "## gate-recovery-tests: resolved\n\n"
@@ -373,9 +480,6 @@ FINALIZATION_CLOSEOUT_RESOLUTION_TEXT = (
     "the owner authorized one final consolidated round 10 with no round 11.\n"
 )
 
-RELEASE_HYGIENE_F1_RESOLUTION = (
-    EVIDENCE_ROOT / "resolution-notes.finalization-r8-F1.md"
-)
 RELEASE_HYGIENE_F1_RESOLUTION_TEXT = (
     "# RUN M2-11 — Release-Hygiene F1 Resolution\n\n"
     "## F1: resolved\n\n"
@@ -388,7 +492,6 @@ RELEASE_HYGIENE_F1_RESOLUTION_TEXT = (
     "binds the exact sealed round-8 rejection, and changes no product or T0 byte.\n"
 )
 
-RELEASE_HYGIENE_RESOLUTION = EVIDENCE_ROOT / "resolution-notes.finalization-r7-release.md"
 RELEASE_HYGIENE_RESOLUTION_TEXT = (
     "# RUN M2-11 — Release Gate Resolution\n\n"
     "## gate-release-diff-check: resolved\n\n"
@@ -466,7 +569,6 @@ ROUND6_ADOPTION_SHA256 = "2185a6052e46e2d585e981945f4e13dc16413fe52bf0d86648c16e
 ROUND6_TOKEN_FILE_SHA256 = "30d26ca00b7c129a8cbf0329a24efa7757fd210217ce00a920dda15a324d382d"
 ROUND6_TOKEN = "sha256:0a1a13d0e8a73f6981c03d4478b6e768b2dbf971809aa9572cbd3d95caf7b0b1"
 ROUND6_DECISION_SHA256 = "148a522d1e4d153744469004c88fd109e4469a30826c344f0fa63ebdf26e72fa"
-ROUND6_REVIEW = EVIDENCE_ROOT / "qa-review.finalization-r6.canonical.md"
 ROUND6_REVIEW_SHA256 = "05e24c59d9dd95bb3a7becf04c33f291d2286363f73b838cffb8cb20a2c34cd3"
 ROUND6_FINGERPRINT = "1225aba74d91d4ab8f7854311233d1d577f26d868787d184ad76d0632a9781b8"
 
@@ -659,11 +761,11 @@ def open_blocker_ids(review: Path) -> tuple[str, ...]:
     return tuple(sorted(open_ids, key=lambda value: int(value[1:])))
 
 
-def validate_resolution_notes(review: Path, notes: Path) -> None:
+def validate_resolution_notes(paths: QaBundlePaths, review: Path, notes: Path) -> None:
     expected = open_blocker_ids(review)
     if not expected:
         raise RuntimeError("delta cycle requires an open-blocker prior review")
-    validate_failed_gate_artifact(notes, "resolution-notes-v1", "qa-review")
+    validate_failed_gate_artifact(paths, notes, "resolution-notes-v1", "qa-review")
     found = re.findall(r"(?m)^## (F[1-9][0-9]*): resolved$", notes.read_text("utf-8"))
     if len(found) != len(set(found)) or set(found) != set(expected):
         raise RuntimeError(
@@ -679,15 +781,16 @@ def run_checked(argv: list[str], cwd: Path, env: dict[str, str] | None = None, a
     return proc
 
 
-def validate_content(schema: str, path: Path, phase: str, cwd: Path = EXPECTED_ROOT) -> None:
+def validate_content(paths: QaBundlePaths, schema: str, path: Path, phase: str, cwd: Path | None = None) -> None:
     """Invoke the shell-owned validator with every value passed as data."""
+    cwd = paths.expected_root if cwd is None else cwd
     run_checked(
         [
             "bash",
             "-c",
             '. "$1"; workflow_validate_content "$2" "$3" "$4"',
             "validate-content",
-            str(WORKFLOW_ARTIFACTS),
+            str(paths.workflow_artifacts),
             schema,
             str(path),
             phase,
@@ -697,6 +800,7 @@ def validate_content(schema: str, path: Path, phase: str, cwd: Path = EXPECTED_R
 
 
 def validate_failed_gate_artifact(
+    paths: QaBundlePaths,
     path: Path,
     schema: str,
     phase: str = "qa-gates",
@@ -723,7 +827,7 @@ def validate_failed_gate_artifact(
         return text
 
     if schema in {"plan-v1", "dev-notes-v1"}:
-        validate_content(schema, path, "plan" if schema == "plan-v1" else "dev")
+        validate_content(paths, schema, path, "plan" if schema == "plan-v1" else "dev")
         return None
     if schema == "redacted-diff-v1":
         env = os.environ.copy()
@@ -734,12 +838,12 @@ def validate_failed_gate_artifact(
                 "-c",
                 '. "$1"; workflow_validate_content "$2" "$3" "$4"',
                 "validate-content",
-                str(WORKFLOW_ARTIFACTS),
+                str(paths.workflow_artifacts),
                 schema,
                 str(path),
                 phase,
             ],
-            EXPECTED_ROOT,
+            paths.expected_root,
             env=env,
         )
         return None
@@ -972,7 +1076,7 @@ def validate_failed_gate_artifact(
             ):
                 raise RuntimeError("gate-results/v1 gate contract mismatch")
     elif schema == "approved-tree/v1":
-        paths = value.get("expected_paths")
+        expected_tree_paths = value.get("expected_paths")
         if (
             set(value) != {
                 "schema_version", "baseline_commit", "tree_oid", "expected_paths",
@@ -982,10 +1086,10 @@ def validate_failed_gate_artifact(
             or value.get("schema_version") != schema
             or re.fullmatch(r"[0-9a-f]{40}", value.get("baseline_commit", "")) is None
             or re.fullmatch(r"[0-9a-f]{40}", value.get("tree_oid", "")) is None
-            or not isinstance(paths, list)
-            or not paths
-            or paths != sorted(set(paths), key=os.fsencode)
-            or any(PurePosixPath(item).is_absolute() or ".." in PurePosixPath(item).parts for item in paths)
+            or not isinstance(expected_tree_paths, list)
+            or not expected_tree_paths
+            or expected_tree_paths != sorted(set(expected_tree_paths), key=os.fsencode)
+            or any(PurePosixPath(item).is_absolute() or ".." in PurePosixPath(item).parts for item in expected_tree_paths)
             or re.fullmatch(r"sha256:[0-9a-f]{64}", value.get("real_index_before_sha256", "")) is None
             or value.get("real_index_after_sha256") != value.get("real_index_before_sha256")
             or value.get("private_object_dir_removed") is not True
@@ -1053,15 +1157,16 @@ def validate_failed_gate_artifact(
     return value
 
 
-def validate_manifest(path: Path, worktree_digest: str, base_ref: str, cwd: Path = EXPECTED_ROOT) -> None:
+def validate_manifest(paths: QaBundlePaths, path: Path, worktree_digest: str, base_ref: str, cwd: Path | None = None) -> None:
     """Invoke manifest validation without interpolating paths into shell syntax."""
+    cwd = paths.expected_root if cwd is None else cwd
     run_checked(
         [
             "bash",
             "-c",
             '. "$1"; workflow_validate_manifest "$2" "$3" "$4"',
             "validate-manifest",
-            str(WORKFLOW_ARTIFACTS),
+            str(paths.workflow_artifacts),
             str(path),
             worktree_digest,
             base_ref,
@@ -1333,6 +1438,7 @@ def validate_phase_manifest(
 
 
 def validate_current_artifact(
+    paths: QaBundlePaths,
     name: str,
     path: Path,
     adoption: dict[str, Any],
@@ -1344,7 +1450,7 @@ def validate_current_artifact(
     schemas = current_artifact_schemas() if schemas is None else schemas
     schema = schemas[name]
     if schema == "workflow-artifacts/v1":
-        validate_manifest(path, adoption["worktree_digest"], adoption["base_ref"])
+        validate_manifest(paths, path, adoption["worktree_digest"], adoption["base_ref"])
         return None
     if schema == "m2-11-phase-manifest/v1":
         return validate_phase_manifest(
@@ -1352,14 +1458,14 @@ def validate_current_artifact(
         )
     if schema in {"docs-commit-v1", "qa-report-v1"}:
         phase = "docs-commit" if schema == "docs-commit-v1" else "qa-synthesis"
-        validate_content(schema, path, phase)
+        validate_content(paths, schema, path, phase)
         return None
-    return validate_failed_gate_artifact(path, schema)
+    return validate_failed_gate_artifact(paths, path, schema)
 
 
-def finalization_docs_attempts(root: Path | None = None) -> dict[int, tuple[int, Path]]:
+def finalization_docs_attempts(paths: QaBundlePaths, root: Path | None = None) -> dict[int, tuple[int, Path]]:
     """Return the unique, gap-free global docs-attempt sequence."""
-    root = EVIDENCE_ROOT if root is None else root
+    root = paths.evidence_root if root is None else root
     root = root.resolve()
     if not root.is_dir() or root.is_symlink():
         raise RuntimeError("finalization evidence root is invalid")
@@ -1379,18 +1485,18 @@ def finalization_docs_attempts(root: Path | None = None) -> dict[int, tuple[int,
     return attempts
 
 
-def next_finalization_docs_attempt(root: Path | None = None) -> int:
-    attempt = len(finalization_docs_attempts(root)) + 1
+def next_finalization_docs_attempt(paths: QaBundlePaths, root: Path | None = None) -> int:
+    attempt = len(finalization_docs_attempts(paths, root)) + 1
     if attempt > 3:
         raise RuntimeError("finalization docs attempt cap is exhausted")
     return attempt
 
 
-def validate_failed_gate_bundle(bundle: Path, expected_round: int) -> dict[str, Any]:
+def validate_failed_gate_bundle(paths: QaBundlePaths, bundle: Path, expected_round: int) -> dict[str, Any]:
     """Validate and inventory one append-only bundle that stopped at a direct gate."""
     bundle = bundle.resolve()
     if (
-        bundle.parent != EVIDENCE_ROOT.resolve()
+        bundle.parent != paths.evidence_root.resolve()
         or bundle.name != f"qa-v9-finalization-round-{expected_round}"
         or not bundle.is_dir()
         or bundle.is_symlink()
@@ -1401,7 +1507,7 @@ def validate_failed_gate_bundle(bundle: Path, expected_round: int) -> dict[str, 
         raise RuntimeError("failed round-3 gate ledger digest mismatch")
     if expected_round == 9 and sha256_file(ledger_path) != ROUND9_ARTIFACT_SHA256["gate-ledger.json"]:
         raise RuntimeError("failed round-9 gate ledger digest mismatch")
-    ledger = validate_failed_gate_artifact(
+    ledger = validate_failed_gate_artifact(paths, 
         ledger_path,
         "m2-11-gate-ledger/v1",
     )
@@ -1491,7 +1597,7 @@ def validate_failed_gate_bundle(bundle: Path, expected_round: int) -> dict[str, 
             raise RuntimeError("failed gate log digest mismatch")
         if entry.get("pre_fingerprint") != fingerprint or entry.get("post_fingerprint") != fingerprint:
             raise RuntimeError("failed gate changed the candidate fingerprint")
-        validate_failed_gate_artifact(expected_log, "gate-log/v1")
+        validate_failed_gate_artifact(paths, expected_log, "gate-log/v1")
         gate_logs.add(expected_log.name)
     origin_names = {
         "plan.md", "owner-decision.md", "dev-notes.md", "changed-files.json",
@@ -1531,7 +1637,7 @@ def validate_failed_gate_bundle(bundle: Path, expected_round: int) -> dict[str, 
     }
     validated: dict[str, Any] = {"gate-ledger.json": ledger}
     for name in sorted(expected_names - gate_logs - {"gate-ledger.json"}, key=os.fsencode):
-        validated[name] = validate_failed_gate_artifact(
+        validated[name] = validate_failed_gate_artifact(paths, 
             bundle / name,
             schemas[name],
         )
@@ -1570,8 +1676,8 @@ def validate_failed_gate_bundle(bundle: Path, expected_round: int) -> dict[str, 
     if (
         source["owner_decision_digest"]
         != "sha256:" + sha256_file(bundle / "owner-decision.md")
-        or source["repo_root"] != str(EXPECTED_ROOT)
-        or source["worktree"] != str(EXPECTED_ROOT)
+        or source["repo_root"] != str(paths.expected_root)
+        or source["worktree"] != str(paths.expected_root)
         or source["branch"] != EXPECTED_BRANCH
         or source["head"] != EXPECTED_HEAD
         or source["fetched_base"] != EXPECTED_BASE
@@ -1581,7 +1687,7 @@ def validate_failed_gate_bundle(bundle: Path, expected_round: int) -> dict[str, 
     if (
         isolated["baseline_commit"] != EXPECTED_HEAD
         or isolated["fetched_base"] != EXPECTED_BASE
-        or isolated["worktree"] != str(EXPECTED_ROOT)
+        or isolated["worktree"] != str(paths.expected_root)
         or isolated["changed_files_digest"]
         != "sha256:" + sha256_file(bundle / "changed-files.json")
         or isolated["baseline_diff_digest"]
@@ -1609,8 +1715,8 @@ def validate_failed_gate_bundle(bundle: Path, expected_round: int) -> dict[str, 
     }
 
 
-def validate_gate_resolution_notes(failed: dict[str, Any], notes: Path) -> None:
-    validate_failed_gate_artifact(notes, "resolution-notes-v1", "qa-gates")
+def validate_gate_resolution_notes(paths: QaBundlePaths, failed: dict[str, Any], notes: Path) -> None:
+    validate_failed_gate_artifact(paths, notes, "resolution-notes-v1", "qa-gates")
     expected = tuple(f"gate-{gate_id}" for gate_id in failed["failed_ids"])
     found = re.findall(r"(?m)^## (gate-[a-z0-9-]+): resolved$", notes.read_text("utf-8"))
     if len(found) != len(set(found)) or tuple(sorted(found)) != tuple(sorted(expected)):
@@ -1618,6 +1724,7 @@ def validate_gate_resolution_notes(failed: dict[str, Any], notes: Path) -> None:
 
 
 def validate_sealed_qa_review(
+    paths: QaBundlePaths,
     review: Path,
     expected_round: int,
     bundle_validator: Any | None = None,
@@ -1625,7 +1732,7 @@ def validate_sealed_qa_review(
     review = review.resolve()
     bundle = review.parent
     if (
-        bundle.parent != EVIDENCE_ROOT.resolve()
+        bundle.parent != paths.evidence_root.resolve()
         or bundle.name != f"qa-v9-finalization-round-{expected_round}"
         or review.name != f"qa-review.round-{expected_round}.md"
         or not review.is_file()
@@ -1633,7 +1740,7 @@ def validate_sealed_qa_review(
     ):
         raise RuntimeError("prior QA review is outside the exact predecessor namespace")
     if bundle_validator is None:
-        validate_bundle(bundle, live_repo=False)
+        validate_bundle(paths, bundle, live_repo=False)
     else:
         bundle_validator(bundle)
     adoption_path = bundle / "adoption-manifest.json"
@@ -1670,7 +1777,7 @@ def validate_sealed_qa_review(
         path = Path(item["path"])
         if not path.is_file() or path.is_symlink() or item["digest"] != "sha256:" + sha256_file(path):
             raise RuntimeError("prior QA review input is missing or stale")
-    validate_content("review-output-v1", review, "qa-review")
+    validate_content(paths, "review-output-v1", review, "qa-review")
     candidate = load_canonical_file(bundle / "candidate-state.json")
     if candidate.get("docs_attempt") is None and adoption["combined_candidate_token"] == LEGACY_FINALIZATION_R1_TOKEN:
         candidate = {**candidate, "docs_attempt": 1}
@@ -1683,12 +1790,12 @@ def validate_sealed_qa_review(
     }
 
 
-def validate_sealed_docs_review(review: Path, expected_attempt: int) -> dict[str, Any]:
+def validate_sealed_docs_review(paths: QaBundlePaths, review: Path, expected_attempt: int) -> dict[str, Any]:
     review = review.resolve()
     bundle = review.parent
     match = re.fullmatch(r"docs-v9-finalization-r(10|[1-9])-a([1-3])", bundle.name)
     if (
-        bundle.parent != EVIDENCE_ROOT.resolve()
+        bundle.parent != paths.evidence_root.resolve()
         or match is None
         or int(match.group(2)) != expected_attempt
         or review.name != f"docs-review.attempt-{expected_attempt}.md"
@@ -1745,7 +1852,7 @@ def validate_sealed_docs_review(review: Path, expected_attempt: int) -> dict[str
         path = Path(item["path"])
         if not path.is_file() or path.is_symlink() or item["digest"] != "sha256:" + sha256_file(path):
             raise RuntimeError("prior docs review input is missing or stale")
-    validate_content("review-output-v1", review, "docs-review")
+    validate_content(paths, "review-output-v1", review, "docs-review")
     return {
         "review": review,
         "manifest": manifest_path,
@@ -1757,70 +1864,70 @@ def validate_sealed_docs_review(review: Path, expected_attempt: int) -> dict[str
     }
 
 
-def validate_release_hygiene_resolution(path: Path) -> Path:
+def validate_release_hygiene_resolution(paths: QaBundlePaths, path: Path) -> Path:
     """Validate the one exact factual resolution of the failed release gate."""
     raw = path
     path = path.resolve()
     if (
         raw.is_symlink()
-        or path != RELEASE_HYGIENE_RESOLUTION.resolve()
+        or path != paths.release_hygiene_resolution.resolve()
         or not path.is_file()
         or path.read_text("utf-8") != RELEASE_HYGIENE_RESOLUTION_TEXT
     ):
         raise RuntimeError("release-hygiene resolution path/content mismatch")
-    validate_failed_gate_artifact(path, "resolution-notes-v1")
+    validate_failed_gate_artifact(paths, path, "resolution-notes-v1")
     return path
 
 
-def validate_release_hygiene_predecessor(review: Path) -> dict[str, Any]:
+def validate_release_hygiene_predecessor(paths: QaBundlePaths, review: Path) -> dict[str, Any]:
     """Validate the exact sealed round-7 QA/docs approval used by round 8."""
     raw = review
     review = review.resolve()
-    if raw.is_symlink() or review != ROUND7_DOCS_REVIEW.resolve():
+    if raw.is_symlink() or review != paths.round7_docs_review.resolve():
         raise RuntimeError("release-hygiene docs predecessor path mismatch")
-    result = validate_sealed_docs_review(review, 2)
+    result = validate_sealed_docs_review(paths, review, 2)
     if (
-        result.get("input_manifest") != ROUND7_DOCS_INPUT.resolve()
+        result.get("input_manifest") != paths.round7_docs_input.resolve()
         or Path(result.get("manifest", "")).resolve()
-        != ROUND7_DOCS_REVIEW_MANIFEST.resolve()
+        != paths.round7_docs_review_manifest.resolve()
     ):
         raise RuntimeError("release-hygiene predecessor manifest path mismatch")
     exact_files = {
-        ROUND7_DOCS_INPUT: ROUND7_DOCS_INPUT_SHA256,
-        ROUND7_DOCS_REVIEW: ROUND7_DOCS_REVIEW_SHA256,
-        ROUND7_DOCS_REVIEW_MANIFEST: ROUND7_DOCS_REVIEW_MANIFEST_SHA256,
-        ROUND7_ADOPTION: ROUND7_ADOPTION_SHA256,
-        ROUND7_TOKEN_FILE: ROUND7_TOKEN_FILE_SHA256,
-        ROUND7_QA_REVIEW: ROUND7_QA_REVIEW_SHA256,
-        ROUND7_QA_REVIEW_MANIFEST: ROUND7_QA_REVIEW_MANIFEST_SHA256,
-        ROUND7_APPROVED_TREE: ROUND7_APPROVED_TREE_SHA256,
+        paths.round7_docs_input: ROUND7_DOCS_INPUT_SHA256,
+        paths.round7_docs_review: ROUND7_DOCS_REVIEW_SHA256,
+        paths.round7_docs_review_manifest: ROUND7_DOCS_REVIEW_MANIFEST_SHA256,
+        paths.round7_adoption: ROUND7_ADOPTION_SHA256,
+        paths.round7_token_file: ROUND7_TOKEN_FILE_SHA256,
+        paths.round7_qa_review: ROUND7_QA_REVIEW_SHA256,
+        paths.round7_qa_review_manifest: ROUND7_QA_REVIEW_MANIFEST_SHA256,
+        paths.round7_approved_tree: ROUND7_APPROVED_TREE_SHA256,
     }
     for path, digest in exact_files.items():
         if not path.is_file() or path.is_symlink() or sha256_file(path) != digest:
             raise RuntimeError(f"release-hygiene predecessor pin mismatch: {path}")
     if review.read_text("utf-8").splitlines()[-1] != "VERDICT: APPROVED":
         raise RuntimeError("release-hygiene predecessor is not APPROVED")
-    qa = validate_sealed_qa_review(
-        ROUND7_QA_REVIEW, 7
+    qa = validate_sealed_qa_review(paths, 
+        paths.round7_qa_review, 7
     )
     input_records = {item["name"]: item for item in result["input"]["inputs"]}
     exact_records = {
         "adoption-manifest": (
-            ROUND7_ADOPTION, ROUND7_ADOPTION_SHA256
+            paths.round7_adoption, ROUND7_ADOPTION_SHA256
         ),
         "combined-candidate-token": (
-            ROUND7_TOKEN_FILE,
+            paths.round7_token_file,
             ROUND7_TOKEN_FILE_SHA256,
         ),
         "qa-review": (
-            ROUND7_QA_REVIEW, ROUND7_QA_REVIEW_SHA256
+            paths.round7_qa_review, ROUND7_QA_REVIEW_SHA256
         ),
         "qa-review-manifest": (
-            ROUND7_QA_REVIEW_MANIFEST,
+            paths.round7_qa_review_manifest,
             ROUND7_QA_REVIEW_MANIFEST_SHA256,
         ),
         "final-docs-tree": (
-            ROUND7_APPROVED_TREE, ROUND7_APPROVED_TREE_SHA256
+            paths.round7_approved_tree, ROUND7_APPROVED_TREE_SHA256
         ),
     }
     for name, (path, digest) in exact_records.items():
@@ -1834,15 +1941,15 @@ def validate_release_hygiene_predecessor(review: Path) -> dict[str, Any]:
                 f"release-hygiene predecessor record mismatch: {name}"
             )
     final_message = input_records.get("final-docs-commit", {})
-    final_message_path = ROUND7_FINAL_MESSAGE
+    final_message_path = paths.round7_final_message
     if (
         Path(final_message.get("path", "")).resolve() != final_message_path.resolve()
         or final_message.get("digest") != "sha256:" + ROUND7_FINAL_MESSAGE_SHA256
         or sha256_file(final_message_path) != ROUND7_FINAL_MESSAGE_SHA256
     ):
         raise RuntimeError("release-hygiene final-message predecessor mismatch")
-    tree = load_canonical_file(ROUND7_APPROVED_TREE)
-    token = load_canonical_file(ROUND7_TOKEN_FILE)
+    tree = load_canonical_file(paths.round7_approved_tree)
+    token = load_canonical_file(paths.round7_token_file)
     if (
         result["round"] != 7
         or result["attempt"] != 2
@@ -1856,75 +1963,75 @@ def validate_release_hygiene_predecessor(review: Path) -> dict[str, Any]:
     return result
 
 
-def validate_release_hygiene_f1_resolution(path: Path) -> Path:
+def validate_release_hygiene_f1_resolution(paths: QaBundlePaths, path: Path) -> Path:
     """Validate the one exact resolution of the sealed round-8 F1 finding."""
     raw = path
     path = path.resolve()
     if (
         raw.is_symlink()
-        or path != RELEASE_HYGIENE_F1_RESOLUTION.resolve()
+        or path != paths.release_hygiene_f1_resolution.resolve()
         or not path.is_file()
         or path.read_text("utf-8") != RELEASE_HYGIENE_F1_RESOLUTION_TEXT
     ):
         raise RuntimeError("release-hygiene F1 resolution path/content mismatch")
-    validate_failed_gate_artifact(path, "resolution-notes-v1")
+    validate_failed_gate_artifact(paths, path, "resolution-notes-v1")
     return path
 
 
-def validate_finalization_closeout_resolution(path: Path) -> Path:
+def validate_finalization_closeout_resolution(paths: QaBundlePaths, path: Path) -> Path:
     """Validate the exact factual resolution of failed round-9 gate 2."""
     raw = path
     path = path.resolve()
     if (
         raw.is_symlink()
-        or path != FINALIZATION_CLOSEOUT_RESOLUTION.resolve()
+        or path != paths.finalization_closeout_resolution.resolve()
         or not path.is_file()
         or path.read_text("utf-8") != FINALIZATION_CLOSEOUT_RESOLUTION_TEXT
     ):
         raise RuntimeError("finalization closeout resolution path/content mismatch")
-    validate_failed_gate_artifact(path, "resolution-notes-v1")
+    validate_failed_gate_artifact(paths, path, "resolution-notes-v1")
     return path
 
 
-def validate_release_hygiene_f1_predecessor(review: Path) -> dict[str, Any]:
+def validate_release_hygiene_f1_predecessor(paths: QaBundlePaths, review: Path) -> dict[str, Any]:
     """Validate the exact sealed round-8 F1-only rejection used by round 9."""
     raw = review
     review = review.resolve()
-    if raw.is_symlink() or review != ROUND8_REVIEW.resolve():
+    if raw.is_symlink() or review != paths.round8_review.resolve():
         raise RuntimeError("release-hygiene F1 QA predecessor path mismatch")
     exact_paths = {
-        ROUND8_ADOPTION: ROUND8_BUNDLE / "adoption-manifest.json",
-        ROUND8_TOKEN_FILE: ROUND8_BUNDLE / "combined-candidate-token.json",
-        ROUND8_REVIEW: ROUND8_BUNDLE / "qa-review.round-8.md",
-        ROUND8_REVIEW_MANIFEST: ROUND8_BUNDLE / "qa-review.manifest.json",
-        ROUND8_APPROVED_TREE: ROUND8_BUNDLE / "approved-tree.json",
-        ROUND8_CANDIDATE_STATE: ROUND8_BUNDLE / "candidate-state.json",
+        paths.round8_adoption: paths.round8_bundle / "adoption-manifest.json",
+        paths.round8_token_file: paths.round8_bundle / "combined-candidate-token.json",
+        paths.round8_review: paths.round8_bundle / "qa-review.round-8.md",
+        paths.round8_review_manifest: paths.round8_bundle / "qa-review.manifest.json",
+        paths.round8_approved_tree: paths.round8_bundle / "approved-tree.json",
+        paths.round8_candidate_state: paths.round8_bundle / "candidate-state.json",
     }
     if any(path.resolve() != expected.resolve() for path, expected in exact_paths.items()):
         raise RuntimeError("release-hygiene F1 predecessor file path mismatch")
-    validate_bundle(ROUND8_BUNDLE, live_repo=False)
-    sealed = validate_sealed_qa_review(review, 8)
+    validate_bundle(paths, paths.round8_bundle, live_repo=False)
+    sealed = validate_sealed_qa_review(paths, review, 8)
     exact_files = {
-        ROUND8_ADOPTION: ROUND8_ADOPTION_SHA256,
-        ROUND8_TOKEN_FILE: ROUND8_TOKEN_FILE_SHA256,
-        ROUND8_REVIEW: ROUND8_REVIEW_SHA256,
-        ROUND8_REVIEW_MANIFEST: ROUND8_REVIEW_MANIFEST_SHA256,
-        ROUND8_APPROVED_TREE: ROUND8_APPROVED_TREE_SHA256,
-        ROUND8_CANDIDATE_STATE: ROUND8_CANDIDATE_STATE_SHA256,
+        paths.round8_adoption: ROUND8_ADOPTION_SHA256,
+        paths.round8_token_file: ROUND8_TOKEN_FILE_SHA256,
+        paths.round8_review: ROUND8_REVIEW_SHA256,
+        paths.round8_review_manifest: ROUND8_REVIEW_MANIFEST_SHA256,
+        paths.round8_approved_tree: ROUND8_APPROVED_TREE_SHA256,
+        paths.round8_candidate_state: ROUND8_CANDIDATE_STATE_SHA256,
     }
     for path, digest in exact_files.items():
         if not path.is_file() or path.is_symlink() or sha256_file(path) != digest:
             raise RuntimeError(f"release-hygiene F1 predecessor pin mismatch: {path}")
-    adoption = load_canonical_file(ROUND8_ADOPTION)
+    adoption = load_canonical_file(paths.round8_adoption)
     records = {item["name"]: item for item in adoption.get("artifacts", [])}
-    token = load_canonical_file(ROUND8_TOKEN_FILE)
-    tree = load_canonical_file(ROUND8_APPROVED_TREE)
-    candidate = load_canonical_file(ROUND8_CANDIDATE_STATE)
-    ledger = load_canonical_file(ROUND8_GATE_LEDGER)
-    review_manifest = load_canonical_file(ROUND8_REVIEW_MANIFEST)
+    token = load_canonical_file(paths.round8_token_file)
+    tree = load_canonical_file(paths.round8_approved_tree)
+    candidate = load_canonical_file(paths.round8_candidate_state)
+    ledger = load_canonical_file(paths.round8_gate_ledger)
+    review_manifest = load_canonical_file(paths.round8_review_manifest)
     expected_output = {
         "name": "qa-review",
-        "path": str(ROUND8_REVIEW.resolve()),
+        "path": str(paths.round8_review.resolve()),
         "digest": "sha256:" + ROUND8_REVIEW_SHA256,
         "schema": "review-output-v1",
         "required": True,
@@ -1968,7 +2075,7 @@ def validate_release_hygiene_f1_predecessor(review: Path) -> dict[str, Any]:
     return {
         **sealed,
         "review": review,
-        "manifest": ROUND8_REVIEW_MANIFEST,
+        "manifest": paths.round8_review_manifest,
         "round": 8,
         "phase": "qa",
     }
@@ -2047,9 +2154,9 @@ def validate_release_hygiene_delta(repo: Path) -> None:
                 raise RuntimeError(f"new release-hygiene artifact existed in round 7: {name}")
 
 
-def validate_finalization_closeout_delta(repo: Path) -> None:
+def validate_finalization_closeout_delta(paths: QaBundlePaths, repo: Path) -> None:
     """Prove the redacted current patch differs from round 9 on only six paths."""
-    patch = ROUND9_BUNDLE / "baseline-diff.redacted.patch"
+    patch = paths.round9_bundle / "baseline-diff.redacted.patch"
     if (
         not patch.is_file()
         or patch.is_symlink()
@@ -2058,7 +2165,7 @@ def validate_finalization_closeout_delta(repo: Path) -> None:
     ):
         raise RuntimeError("failed round-9 baseline diff pin mismatch")
     script = (
-        f"set -o pipefail; ORCH_LIB_ONLY=1; . {ORCHESTRATE}; "
+        f"set -o pipefail; ORCH_LIB_ONLY=1; . {paths.orchestrate}; "
         f"cd {repo}; BASELINE_REF=HEAD; collect_diff | scrub_secret_values"
     )
     current_patch = run_checked(["bash", "-c", script], repo).stdout
@@ -2101,13 +2208,14 @@ def validate_finalization_closeout_delta(repo: Path) -> None:
 
 
 def validate_fixed_state(
+    paths: QaBundlePaths,
     repo: Path,
     round_no: int,
     expected_paths: tuple[str, ...] = EXPECTED_QA_PATHS,
     allowed_rounds: tuple[int, ...] = (1, 2, 3),
 ) -> dict[str, Any]:
     repo = repo.resolve()
-    if repo != EXPECTED_ROOT.resolve():
+    if repo != paths.expected_root.resolve():
         raise RuntimeError(f"wrong dedicated worktree: {repo}")
     if round_no not in allowed_rounds:
         allowed = ", ".join(str(value) for value in allowed_rounds)
@@ -2135,7 +2243,7 @@ def validate_fixed_state(
         FINALIZATION_F3_PLAN,
         FINALIZATION_F4_F5_DECISION,
     }
-    for raw_path, expected in PINNED_DIGESTS.items():
+    for raw_path, expected in paths.pinned_digests().items():
         if round_no in (8, 9, 10) and raw_path in superseded_round8_pins:
             continue
         path = raw_path if raw_path.is_absolute() else repo / raw_path
@@ -2143,9 +2251,9 @@ def validate_fixed_state(
             raise RuntimeError(f"missing/nonregular pinned input: {path}")
         if sha256_file(path) != expected:
             raise RuntimeError(f"pinned digest mismatch: {path}")
-    if T0_LOG.stat().st_size != 63_400 or len(T0_LOG.read_bytes().splitlines()) != 171:
+    if paths.t0_log.stat().st_size != 63_400 or len(paths.t0_log.read_bytes().splitlines()) != 171:
         raise RuntimeError("T0-v11 size/line identity mismatch")
-    t0_text = T0_LOG.read_text("utf-8", errors="strict")
+    t0_text = paths.t0_log.read_text("utf-8", errors="strict")
     for marker in (
         "(i) view gate: PASS",
         '"label": "full"',
@@ -2155,23 +2263,23 @@ def validate_fixed_state(
     ):
         if marker not in t0_text:
             raise RuntimeError(f"T0-v11 success marker absent: {marker}")
-    snap_mode = stat.S_IMODE(SNAPSHOT.stat().st_mode)
-    if SNAPSHOT.stat().st_size != 23_058_628_608 or snap_mode != 0o444:
+    snap_mode = stat.S_IMODE(paths.snapshot.stat().st_mode)
+    if paths.snapshot.stat().st_size != 23_058_628_608 or snap_mode != 0o444:
         raise RuntimeError("snapshot size/mode mismatch")
-    sidecars = [str(Path(str(SNAPSHOT) + suffix)) for suffix in ("-wal", "-shm", "-journal") if Path(str(SNAPSHOT) + suffix).exists()]
+    sidecars = [str(Path(str(paths.snapshot) + suffix)) for suffix in ("-wal", "-shm", "-journal") if Path(str(paths.snapshot) + suffix).exists()]
     if sidecars:
         raise RuntimeError(f"snapshot sidecars present: {sidecars}")
     if round_no in (8, 9, 10):
         validate_release_hygiene_delta(repo)
     if round_no == 10:
-        validate_finalization_closeout_delta(repo)
+        validate_finalization_closeout_delta(paths, repo)
 
-    paths = changed_paths(repo)
-    if tuple(paths) != expected_paths:
-        missing = sorted(set(expected_paths) - set(paths), key=os.fsencode)
-        extra = sorted(set(paths) - set(expected_paths), key=os.fsencode)
+    changed = changed_paths(repo)
+    if tuple(changed) != expected_paths:
+        missing = sorted(set(expected_paths) - set(changed), key=os.fsencode)
+        extra = sorted(set(changed) - set(expected_paths), key=os.fsencode)
         raise RuntimeError(f"candidate inventory mismatch; missing={missing!r} extra={extra!r}")
-    for name in paths:
+    for name in changed:
         posix = PurePosixPath(name)
         if posix.is_absolute() or ".." in posix.parts:
             raise RuntimeError(f"unsafe candidate path: {name}")
@@ -2190,8 +2298,8 @@ def validate_fixed_state(
         "branch": branch,
         "head": head,
         "base": base,
-        "paths": paths,
-        "fingerprint": external_worktree_fingerprint(repo),
+        "paths": changed,
+        "fingerprint": external_worktree_fingerprint(paths, repo),
         "index_path": index_path.resolve(),
         "index_digest": sha256_file(index_path.resolve()),
         "snapshot_mode": format(snap_mode, "04o"),
@@ -2214,8 +2322,8 @@ def changed_paths(repo: Path) -> list[str]:
     return sorted(names, key=os.fsencode)
 
 
-def external_worktree_fingerprint(repo: Path) -> str:
-    script = f"ORCH_LIB_ONLY=1; . {ORCHESTRATE}; cd {repo}; worktree_fingerprint"
+def external_worktree_fingerprint(paths: QaBundlePaths, repo: Path) -> str:
+    script = f"ORCH_LIB_ONLY=1; . {paths.orchestrate}; cd {repo}; worktree_fingerprint"
     proc = run_checked(["bash", "-c", script], repo)
     value = proc.stdout.decode().strip()
     if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
@@ -2223,8 +2331,8 @@ def external_worktree_fingerprint(repo: Path) -> str:
     return value
 
 
-def write_complete_redacted_diff(repo: Path, output: Path) -> str:
-    script = f"set -o pipefail; ORCH_LIB_ONLY=1; . {ORCHESTRATE}; cd {repo}; BASELINE_REF=HEAD; collect_diff | scrub_secret_values"
+def write_complete_redacted_diff(paths: QaBundlePaths, repo: Path, output: Path) -> str:
+    script = f"set -o pipefail; ORCH_LIB_ONLY=1; . {paths.orchestrate}; cd {repo}; BASELINE_REF=HEAD; collect_diff | scrub_secret_values"
     data = run_checked(["bash", "-c", script], repo).stdout
     if not data:
         raise RuntimeError("complete baseline diff is empty")
@@ -2237,14 +2345,14 @@ def write_complete_redacted_diff(repo: Path, output: Path) -> str:
     env = os.environ.copy()
     env["WORKFLOW_MAX_ARTIFACT_BYTES"] = "2097152"
     run_checked(
-        ["bash", "-c", '. "$1"; workflow_validate_content "$2" "$3" "$4"', "validate-content", str(WORKFLOW_ARTIFACTS), "redacted-diff-v1", str(output), "qa-gates"],
+        ["bash", "-c", '. "$1"; workflow_validate_content "$2" "$3" "$4"', "validate-content", str(paths.workflow_artifacts), "redacted-diff-v1", str(output), "qa-gates"],
         repo,
         env=env,
     )
     return "sha256:" + sha256_file(output)
 
 
-def write_origin_artifacts(state: dict[str, Any], output_dir: Path) -> dict[str, Path]:
+def write_origin_artifacts(paths: QaBundlePaths, state: dict[str, Any], output_dir: Path) -> dict[str, Path]:
     repo = state["repo"]
     artifacts: dict[str, Path] = {}
 
@@ -2265,7 +2373,7 @@ def write_origin_artifacts(state: dict[str, Any], output_dir: Path) -> dict[str,
     copy("dev-notes.md", DEV_NOTES)
     changed = write("changed-files.json", canonical_json_bytes({"schema_version": "changed-files/v1", "files": state["paths"]}))
     baseline = output_dir / "baseline-diff.redacted.patch"
-    write_complete_redacted_diff(repo, baseline)
+    write_complete_redacted_diff(paths, repo, baseline)
     artifacts[baseline.name] = baseline
     external_token = "sha256:" + hashlib.sha256(b"populus-m2-11-external-state-v1\0[]\n").hexdigest()
     external_state = {
@@ -2315,9 +2423,9 @@ def write_origin_artifacts(state: dict[str, Any], output_dir: Path) -> dict[str,
     return artifacts
 
 
-def run_gate(entry: tuple[str, str, str, str], state: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+def run_gate(paths: QaBundlePaths, entry: tuple[str, str, str, str], state: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     gate_id, kind, command, scope = entry
-    pre = external_worktree_fingerprint(state["repo"])
+    pre = external_worktree_fingerprint(paths, state["repo"])
     if pre != state["fingerprint"]:
         raise RuntimeError(f"candidate drift before gate {gate_id}")
     started = datetime.now(timezone.utc).replace(microsecond=0)
@@ -2325,7 +2433,7 @@ def run_gate(entry: tuple[str, str, str, str], state: dict[str, Any], output_dir
     proc = subprocess.run(["bash", "-lc", command], cwd=state["repo"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     duration = round(time.monotonic() - begin, 6)
     completed = datetime.now(timezone.utc).replace(microsecond=0)
-    scrub = f"ORCH_LIB_ONLY=1; . {ORCHESTRATE}; scrub_secret_values"
+    scrub = f"ORCH_LIB_ONLY=1; . {paths.orchestrate}; scrub_secret_values"
     clean = subprocess.run(["bash", "-c", scrub], cwd=state["repo"], input=proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if clean.returncode != 0:
         raise RuntimeError(f"could not redact gate output for {gate_id}")
@@ -2333,7 +2441,7 @@ def run_gate(entry: tuple[str, str, str, str], state: dict[str, Any], output_dir
     fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as handle:
         handle.write(clean.stdout)
-    post = external_worktree_fingerprint(state["repo"])
+    post = external_worktree_fingerprint(paths, state["repo"])
     if post != state["fingerprint"]:
         raise RuntimeError(f"candidate drift after gate {gate_id}")
     return {
@@ -2353,7 +2461,7 @@ def run_gate(entry: tuple[str, str, str, str], state: dict[str, Any], output_dir
     }
 
 
-def write_gate_artifacts(records: list[dict[str, Any]], state: dict[str, Any], output_dir: Path) -> dict[str, Path]:
+def write_gate_artifacts(paths: QaBundlePaths, records: list[dict[str, Any]], state: dict[str, Any], output_dir: Path) -> dict[str, Path]:
     def write(path: Path, data: bytes) -> None:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as handle:
@@ -2389,7 +2497,7 @@ def write_gate_artifacts(records: list[dict[str, Any]], state: dict[str, Any], o
     ]
     gate_results = output_dir / "gate-results.json"
     write(gate_results, canonical_json_bytes({"schema_version": "gate-results/v1", "round": state["round"], "worktree_digest": state["fingerprint"], "gates": gates}))
-    validate_content("gate-results-v1", gate_results, "qa-gates", state["repo"])
+    validate_content(paths, "gate-results-v1", gate_results, "qa-gates", state["repo"])
     return {"gate-ledger.json": ledger_path, "gate-results.json": gate_results, "gate-test-aggregate.log": aggregate}
 
 
@@ -2487,9 +2595,9 @@ def build_approved_tree(state: dict[str, Any], output_dir: Path) -> str:
     return write_approved_tree(compute_approved_tree(state), output_dir)
 
 
-def validate_candidate_fingerprint(repo: Path, expected: str) -> None:
+def validate_candidate_fingerprint(paths: QaBundlePaths, repo: Path, expected: str) -> None:
     """Refuse persistence when gate execution changed the approved candidate."""
-    if external_worktree_fingerprint(repo) != expected:
+    if external_worktree_fingerprint(paths, repo) != expected:
         raise RuntimeError("candidate drift after gates")
 
 
@@ -2524,10 +2632,10 @@ def write_candidate_and_token(state: dict[str, Any], artifacts: dict[str, Path],
         "finalization_plan_digest": "sha256:" + state["task_digest"],
         "dev_notes_digest": "sha256:" + sha256_file(artifacts["dev-notes.md"]),
         "findings_digest": "sha256:" + PINNED_DIGESTS[FINDINGS],
-        "t0_log_digest": "sha256:" + PINNED_DIGESTS[T0_LOG],
+        "t0_log_digest": "sha256:" + T0_LOG_SHA256,
         "t0_log_bytes": 63_400,
         "t0_log_lines": 171,
-        "snapshot_digest": "sha256:" + PINNED_DIGESTS[SNAPSHOT],
+        "snapshot_digest": "sha256:" + SNAPSHOT_SHA256,
         "snapshot_bytes": 23_058_628_608,
         "snapshot_mode": state["snapshot_mode"],
         "snapshot_sidecars": state["snapshot_sidecars"],
@@ -2557,7 +2665,7 @@ def write_candidate_and_token(state: dict[str, Any], artifacts: dict[str, Path],
     return {"candidate-state.json": candidate_path, "combined-candidate-token.json": token_path}
 
 
-def write_markdown_artifacts(state: dict[str, Any], artifacts: dict[str, Path], output_dir: Path) -> dict[str, Path]:
+def write_markdown_artifacts(paths: QaBundlePaths, state: dict[str, Any], artifacts: dict[str, Path], output_dir: Path) -> dict[str, Path]:
     def write(name: str, data: bytes) -> Path:
         path = output_dir / name
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -2847,11 +2955,11 @@ PASS
     report = write("qa-report.md", qa)
     checks = (("docs-commit-v1", docs, "docs-commit"), ("dev-notes-v1", artifacts["dev-notes.md"], "dev"), ("qa-report-v1", report, "qa-synthesis"))
     for schema, path, phase in checks:
-        validate_content(schema, path, phase, state["repo"])
+        validate_content(paths, schema, path, phase, state["repo"])
     return {"docs-commit.md": docs, "qa-report.md": report}
 
 
-def write_phase_and_adoption_manifests(state: dict[str, Any], artifacts: dict[str, Path], output_dir: Path) -> dict[str, Path]:
+def write_phase_and_adoption_manifests(paths: QaBundlePaths, state: dict[str, Any], artifacts: dict[str, Path], output_dir: Path) -> dict[str, Path]:
     created: dict[str, Path] = {}
 
     def record(name: str, path: Path, schema: str, required: bool = True) -> dict[str, Any]:
@@ -2903,7 +3011,7 @@ def write_phase_and_adoption_manifests(state: dict[str, Any], artifacts: dict[st
         "qa-synthesis": generic_manifest("qa-synthesis.core.manifest.json", "qa-synthesis", "qa-report.md", "qa-report-v1", [plan_i, dev_i, changed_i, diff_i, gates_i]),
     }
     for path in core.values():
-        validate_manifest(path, state["fingerprint"], state["base"], state["repo"])
+        validate_manifest(paths, path, state["fingerprint"], state["base"], state["repo"])
 
     schemas = current_artifact_schemas("sha256:" + state["task_digest"])
     names = {
@@ -2986,6 +3094,7 @@ def write_phase_and_adoption_manifests(state: dict[str, Any], artifacts: dict[st
 
 
 def validate_bundle(
+    paths: QaBundlePaths,
     bundle_dir: Path,
     live_repo: bool = True,
     _expected_defects: tuple[str, ...] | None = None,
@@ -3040,7 +3149,7 @@ def validate_bundle(
         if records[name]["schema"] != schema
     ]
     try:
-        validate_failed_gate_artifact(
+        validate_failed_gate_artifact(paths, 
             Path(records["owner-decision.md"]["path"]),
             schemas["owner-decision.md"],
         )
@@ -3169,41 +3278,41 @@ def validate_bundle(
     if adoption["round"] not in expected_rounds:
         raise RuntimeError("adoption round is outside its digest-scoped authority")
     if exception_retry and (
-        bundle_dir.parent != EVIDENCE_ROOT.resolve()
+        bundle_dir.parent != paths.evidence_root.resolve()
         or bundle_dir.name != "qa-v9-finalization-round-4"
     ):
         raise RuntimeError("exception bundle is outside the exact round-4 namespace")
     if repair_exception and (
-        bundle_dir.parent != EVIDENCE_ROOT.resolve()
+        bundle_dir.parent != paths.evidence_root.resolve()
         or bundle_dir.name != "qa-v9-finalization-round-5"
     ):
         raise RuntimeError("repair exception bundle is outside the exact round-5 namespace")
     if f3_exception and (
-        bundle_dir.parent != EVIDENCE_ROOT.resolve()
+        bundle_dir.parent != paths.evidence_root.resolve()
         or bundle_dir.name != "qa-v9-finalization-round-6"
     ):
         raise RuntimeError("F3 exception bundle is outside the exact round-6 namespace")
     if f4_f5_exception and (
-        bundle_dir.parent != EVIDENCE_ROOT.resolve()
+        bundle_dir.parent != paths.evidence_root.resolve()
         or bundle_dir.name != "qa-v9-finalization-round-7"
     ):
         raise RuntimeError("F4/F5 exception bundle is outside the exact round-7 namespace")
     if release_hygiene_exception and (
-        bundle_dir.parent != EVIDENCE_ROOT.resolve()
+        bundle_dir.parent != paths.evidence_root.resolve()
         or bundle_dir.name != "qa-v9-finalization-round-8"
     ):
         raise RuntimeError(
             "release-hygiene exception bundle is outside the exact round-8 namespace"
         )
     if release_hygiene_f1_exception and (
-        bundle_dir.parent != EVIDENCE_ROOT.resolve()
+        bundle_dir.parent != paths.evidence_root.resolve()
         or bundle_dir.name != "qa-v9-finalization-round-9"
     ):
         raise RuntimeError(
             "release-hygiene F1 exception bundle is outside the exact round-9 namespace"
         )
     if closeout_exception and (
-        bundle_dir.parent != EVIDENCE_ROOT.resolve()
+        bundle_dir.parent != paths.evidence_root.resolve()
         or bundle_dir.name != "qa-v9-finalization-round-10"
     ):
         raise RuntimeError("closeout exception bundle is outside the exact round-10 namespace")
@@ -3215,7 +3324,7 @@ def validate_bundle(
     for name in sorted(schemas, key=os.fsencode):
         if name == "owner-decision.md" and owner_is_expected_invalid:
             continue
-        validate_current_artifact(
+        validate_current_artifact(paths, 
             name,
             Path(records[name]["path"]),
             adoption,
@@ -3345,10 +3454,10 @@ def validate_bundle(
                 raise RuntimeError("prior-round input is missing, substituted, or stale")
         prior_review_path = Path(prior["prior-review"]["path"])
         resolution_path = Path(prior["resolution-notes"]["path"])
-        validate_content("review-output-v1", prior_review_path, "qa-review")
+        validate_content(paths, "review-output-v1", prior_review_path, "qa-review")
         if prior_review_path.read_text("utf-8").splitlines()[-1] != "VERDICT: CHANGES_REQUESTED":
             raise RuntimeError("delta bundle prior review is not CHANGES_REQUESTED")
-        validate_resolution_notes(prior_review_path, resolution_path)
+        validate_resolution_notes(paths, prior_review_path, resolution_path)
     else:
         if not isinstance(prior, dict):
             raise RuntimeError("finalization delta lacks predecessor provenance")
@@ -3362,7 +3471,7 @@ def validate_bundle(
                 raise RuntimeError(
                     "round-9 release-hygiene F1 predecessor record set is invalid"
                 )
-            predecessor = validate_release_hygiene_f1_predecessor(
+            predecessor = validate_release_hygiene_f1_predecessor(paths, 
                 Path(prior["prior-qa-review"]["path"])
             )
             expected_review = {
@@ -3387,7 +3496,7 @@ def validate_bundle(
                     "round-9 release-hygiene F1 predecessor path/digest graph mismatch"
                 )
             resolution_record = normalized_record(prior["resolution-notes"])
-            resolution_path = validate_release_hygiene_f1_resolution(
+            resolution_path = validate_release_hygiene_f1_resolution(paths, 
                 Path(resolution_record["path"])
             )
             if (
@@ -3410,7 +3519,7 @@ def validate_bundle(
                 raise RuntimeError(
                     "round-8 release-hygiene predecessor record set is invalid"
                 )
-            predecessor = validate_release_hygiene_predecessor(
+            predecessor = validate_release_hygiene_predecessor(paths, 
                 Path(prior["prior-docs-review"]["path"])
             )
             expected_review = {
@@ -3435,7 +3544,7 @@ def validate_bundle(
                     "round-8 release-hygiene predecessor path/digest graph mismatch"
                 )
             resolution_record = normalized_record(prior["resolution-notes"])
-            resolution_path = validate_release_hygiene_resolution(
+            resolution_path = validate_release_hygiene_resolution(paths, 
                 Path(resolution_record["path"])
             )
             if (
@@ -3456,7 +3565,7 @@ def validate_bundle(
             }
             if set(prior) != expected:
                 raise RuntimeError("round-7 predecessor record set is invalid")
-            predecessor = validate_rejected_round6_qa_review(
+            predecessor = validate_rejected_round6_qa_review(paths, 
                 Path(prior["prior-qa-review"]["path"])
             )
             expected_review = {
@@ -3484,7 +3593,7 @@ def validate_bundle(
                 resolution_record["name"] != "resolution-notes"
                 or resolution_record["schema"] != "resolution-notes-v1"
                 or not resolution_path.is_absolute()
-                or resolution_path.parent != EVIDENCE_ROOT.resolve()
+                or resolution_path.parent != paths.evidence_root.resolve()
                 or resolution_path.name != "resolution-notes.finalization-r6-qa.md"
                 or not resolution_path.is_file()
                 or resolution_path.is_symlink()
@@ -3494,7 +3603,7 @@ def validate_bundle(
                 raise RuntimeError("round-7 F4/F5 resolution path/digest mismatch")
             if candidate_docs_attempt != predecessor["candidate"].get("docs_attempt"):
                 raise RuntimeError("round-7 rejection must preserve the global docs attempt")
-            validate_resolution_notes(predecessor["review"], resolution_path)
+            validate_resolution_notes(paths, predecessor["review"], resolution_path)
         elif exception_retry and prior.get("kind") != "gate-failure":
             raise RuntimeError("exception retry requires the exact failed-gate predecessor")
         if repair_exception and prior.get("kind") == "gate-failure":
@@ -3516,12 +3625,12 @@ def validate_bundle(
             ledger_records = [item for item in artifacts if item.get("name") == "prior-gate-gate-ledger.json"]
             if len(ledger_records) != 1:
                 raise RuntimeError("failed-gate predecessor lacks one exact ledger")
-            failed = validate_failed_gate_bundle(Path(ledger_records[0]["path"]).parent, prior["round"])
+            failed = validate_failed_gate_bundle(paths, Path(ledger_records[0]["path"]).parent, prior["round"])
             if artifacts != failed["artifacts"]:
                 raise RuntimeError("failed-gate predecessor artifact graph mismatch")
             if closeout_exception:
-                validate_finalization_closeout_resolution(resolution_path)
-            validate_gate_resolution_notes(failed, resolution_path)
+                validate_finalization_closeout_resolution(paths, resolution_path)
+            validate_gate_resolution_notes(paths, failed, resolution_path)
         else:
             qa_keys = {"prior-qa-review", "prior-review-manifest", "resolution-notes"}
             docs_keys = {"prior-docs-review", "prior-review-manifest", "resolution-notes"}
@@ -3541,16 +3650,16 @@ def validate_bundle(
             resolution_path = Path(prior["resolution-notes"]["path"])
             if review_phase == "qa":
                 if f3_exception:
-                    predecessor = validate_known_invalid_round5_qa_review(
+                    predecessor = validate_known_invalid_round5_qa_review(paths, 
                         prior_review_path
                     )
                 else:
                     historical_validator = (
-                        validate_historical_bundle
+                        (lambda bundle: validate_historical_bundle(paths, bundle))
                         if repair_exception and _expected_defects is not None
                         else None
                     )
-                    predecessor = validate_sealed_qa_review(
+                    predecessor = validate_sealed_qa_review(paths, 
                         prior_review_path,
                         adoption["round"] - 1,
                         bundle_validator=historical_validator,
@@ -3558,14 +3667,14 @@ def validate_bundle(
                 if candidate_docs_attempt != predecessor["candidate"].get("docs_attempt"):
                     raise RuntimeError("QA rejection must preserve the global docs attempt")
             else:
-                predecessor = validate_sealed_docs_review(prior_review_path, candidate_docs_attempt - 1)
+                predecessor = validate_sealed_docs_review(paths, prior_review_path, candidate_docs_attempt - 1)
                 if predecessor["round"] != adoption["round"] - 1:
                     raise RuntimeError("docs-originating repair did not advance exactly one QA round")
             if Path(prior["prior-review-manifest"]["path"]).resolve() != predecessor["manifest"].resolve():
                 raise RuntimeError("finalization predecessor manifest path mismatch")
             if prior_review_path.read_text("utf-8").splitlines()[-1] != "VERDICT: CHANGES_REQUESTED":
                 raise RuntimeError("finalization predecessor is not CHANGES_REQUESTED")
-            validate_resolution_notes(prior_review_path, resolution_path)
+            validate_resolution_notes(paths, prior_review_path, resolution_path)
     token_doc = load(Path(records["combined-candidate-token.json"]["path"]))
     parts = token_doc["parts"]
     expected_token = "sha256:" + hashlib.sha256(b"populus-m2-11-adoption-candidate-v1\0" + canonical_json_bytes(parts)).hexdigest()
@@ -3596,18 +3705,18 @@ def validate_bundle(
         path = Path(records[name]["path"])
         if load(path).get("automated_caps") != expected_caps:
             raise RuntimeError("core manifest QA cap/override contradicts cycle authority")
-        validate_manifest(path, adoption["worktree_digest"], adoption["base_ref"])
-    if live_repo and external_worktree_fingerprint(EXPECTED_ROOT) != adoption["worktree_digest"]:
+        validate_manifest(paths, path, adoption["worktree_digest"], adoption["base_ref"])
+    if live_repo and external_worktree_fingerprint(paths, paths.expected_root) != adoption["worktree_digest"]:
         raise RuntimeError("live candidate fingerprint no longer matches bundle")
 
 
-def validate_historical_bundle(bundle: Path) -> dict[str, Any]:
+def validate_historical_bundle(paths: QaBundlePaths, bundle: Path) -> dict[str, Any]:
     """Validate one exact immutable historical bundle without calling it valid."""
     bundle = bundle.resolve()
     policy = HISTORICAL_POLICIES.get(bundle.name)
     if (
         policy is None
-        or bundle.parent != EVIDENCE_ROOT.resolve()
+        or bundle.parent != paths.evidence_root.resolve()
         or not bundle.is_dir()
         or bundle.is_symlink()
     ):
@@ -3622,7 +3731,7 @@ def validate_historical_bundle(bundle: Path) -> dict[str, Any]:
         or load_canonical_file(token_file).get("token") != policy["token"]
     ):
         raise RuntimeError("immutable historical bundle pin mismatch")
-    validate_bundle(
+    validate_bundle(paths, 
         bundle,
         live_repo=False,
         _expected_defects=policy["defects"],
@@ -3630,11 +3739,11 @@ def validate_historical_bundle(bundle: Path) -> dict[str, Any]:
     return {"bundle": bundle, "marker": policy["marker"], "defects": policy["defects"]}
 
 
-def validate_known_invalid_round5_bundle(bundle: Path) -> dict[str, Any]:
+def validate_known_invalid_round5_bundle(paths: QaBundlePaths, bundle: Path) -> dict[str, Any]:
     """Validate the exact rejected round-5 F3 bundle without relabelling it valid."""
     bundle = bundle.resolve()
     if (
-        bundle.parent != EVIDENCE_ROOT.resolve()
+        bundle.parent != paths.evidence_root.resolve()
         or bundle.name != "qa-v9-finalization-round-5"
         or not bundle.is_dir()
         or bundle.is_symlink()
@@ -3651,7 +3760,7 @@ def validate_known_invalid_round5_bundle(bundle: Path) -> dict[str, Any]:
     ):
         raise RuntimeError("round-5 F3 bundle pin mismatch")
     defects = tuple(sorted((*FALSE_CUSTOM_LABEL_DEFECTS, OWNER_CONTROLLING_DEFECT)))
-    validate_bundle(bundle, live_repo=False, _expected_defects=defects)
+    validate_bundle(paths, bundle, live_repo=False, _expected_defects=defects)
     return {
         "bundle": bundle,
         "marker": "known-invalid-round5-f3",
@@ -3659,7 +3768,7 @@ def validate_known_invalid_round5_bundle(bundle: Path) -> dict[str, Any]:
     }
 
 
-def validate_known_invalid_round5_qa_review(review: Path) -> dict[str, Any]:
+def validate_known_invalid_round5_qa_review(paths: QaBundlePaths, review: Path) -> dict[str, Any]:
     """Validate the exact sealed round-5 rejection used by round 6."""
     review = review.resolve()
     manifest = review.parent / "qa-review.manifest.json"
@@ -3668,12 +3777,12 @@ def validate_known_invalid_round5_qa_review(review: Path) -> dict[str, Any]:
         or sha256_file(manifest) != ROUND5_REVIEW_MANIFEST_SHA256
     ):
         raise RuntimeError("round-5 F3 review pin mismatch")
-    result = validate_sealed_qa_review(
+    result = validate_sealed_qa_review(paths, 
         review,
         5,
-        bundle_validator=validate_known_invalid_round5_bundle,
+        bundle_validator=lambda bundle: validate_known_invalid_round5_bundle(paths, bundle),
     )
-    validate_content("review-output-v1", review, "qa-review")
+    validate_content(paths, "review-output-v1", review, "qa-review")
     if (
         review.read_text("utf-8").splitlines()[-1] != "VERDICT: CHANGES_REQUESTED"
         or open_blocker_ids(review) != ("F3",)
@@ -3712,19 +3821,19 @@ def validate_rejected_review_identity(
     return review
 
 
-def validate_rejected_round6_qa_review(review: Path) -> dict[str, Any]:
+def validate_rejected_round6_qa_review(paths: QaBundlePaths, review: Path) -> dict[str, Any]:
     """Validate the exact unsealed round-6 F4/F5 rejection used by round 7."""
     raw_review = review
     review = review.resolve()
-    bundle = EVIDENCE_ROOT.resolve() / "qa-v9-finalization-round-6"
+    bundle = paths.evidence_root.resolve() / "qa-v9-finalization-round-6"
     adoption = bundle / "adoption-manifest.json"
     token_file = bundle / "combined-candidate-token.json"
     decision = bundle / "owner-decision.md"
     if (
         raw_review.is_symlink()
-        or review != ROUND6_REVIEW.resolve()
+        or review != paths.round6_review.resolve()
         or not review.is_file()
-        or bundle.parent != EVIDENCE_ROOT.resolve()
+        or bundle.parent != paths.evidence_root.resolve()
         or not bundle.is_dir()
         or bundle.is_symlink()
     ):
@@ -3741,14 +3850,14 @@ def validate_rejected_round6_qa_review(review: Path) -> dict[str, Any]:
         or (bundle / "qa-review.round-6.md").exists()
     ):
         raise RuntimeError("round-6 F4/F5 review must remain unsealed")
-    validate_bundle(bundle, live_repo=False)
+    validate_bundle(paths, bundle, live_repo=False)
     adoption_value = load_canonical_file(adoption)
     if adoption_value.get("worktree_digest") != ROUND6_FINGERPRINT:
         raise RuntimeError("round-6 F4/F5 fingerprint mismatch")
-    validate_content("review-output-v1", review, "qa-review")
+    validate_content(paths, "review-output-v1", review, "qa-review")
     validate_rejected_review_identity(
         review,
-        ROUND6_REVIEW,
+        paths.round6_review,
         ROUND6_REVIEW_SHA256,
         ("F4", "F5"),
         ROUND6_TOKEN,
@@ -3764,8 +3873,38 @@ def validate_rejected_round6_qa_review(review: Path) -> dict[str, Any]:
     }
 
 
+def absolute_path(value: str) -> Path:
+    """Parse one CLI path argument to an absolute Path (no symlink resolution)."""
+    path = Path(value)
+    return path if path.is_absolute() else Path(os.path.abspath(value))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--expected-root",
+        type=absolute_path,
+        required=True,
+        help="absolute path of the dedicated M2-11 worktree",
+    )
+    parser.add_argument(
+        "--orchestrate",
+        type=absolute_path,
+        required=True,
+        help="absolute path of the orchestrate.sh entrypoint",
+    )
+    parser.add_argument(
+        "--evidence-root",
+        type=absolute_path,
+        required=True,
+        help="absolute path of the M2-11 evidence root",
+    )
+    parser.add_argument(
+        "--snapshot",
+        type=absolute_path,
+        required=True,
+        help="absolute path of the pinned institutional source snapshot",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     run_p = sub.add_parser("run")
     run_p.add_argument(
@@ -3810,9 +3949,15 @@ def main(argv: list[str] | None = None) -> int:
     release_p.add_argument("--docs-bundle", type=Path, required=True)
     release_p.add_argument("--mode", choices=("pre-stage", "post-stage"), required=True)
     args = parser.parse_args(argv)
+    paths = QaBundlePaths(
+        expected_root=args.expected_root,
+        orchestrate=args.orchestrate,
+        evidence_root=args.evidence_root,
+        snapshot=args.snapshot,
+    )
     try:
         if args.command == "validate":
-            validate_bundle(args.bundle, live_repo=not args.no_live)
+            validate_bundle(paths, args.bundle, live_repo=not args.no_live)
             token = json.loads((args.bundle / "combined-candidate-token.json").read_text())["token"]
             print(f"VALID {token}")
             return 0
@@ -3912,14 +4057,14 @@ def main(argv: list[str] | None = None) -> int:
                 qa_round_cap = 3
                 qa_round_override = False
                 run_id = "RUN-M2-11-QA-finalization"
-            validate_content("plan-v1", EXPECTED_ROOT / cycle_plan, "plan")
+            validate_content(paths, "plan-v1", paths.expected_root / cycle_plan, "plan")
             if release_hygiene_exception or release_hygiene_f1_exception or closeout_exception:
-                validate_failed_gate_artifact(
-                    EXPECTED_ROOT / cycle_decision,
+                validate_failed_gate_artifact(paths, 
+                    paths.expected_root / cycle_decision,
                     "owner-decision-v2",
                 )
-            validate_content("dev-notes-v1", EXPECTED_ROOT / DEV_NOTES, "dev")
-            docs_attempt = next_finalization_docs_attempt()
+            validate_content(paths, "dev-notes-v1", paths.expected_root / DEV_NOTES, "dev")
+            docs_attempt = next_finalization_docs_attempt(paths)
             final_commit_arg = args.final_docs_commit
             final_commit = final_commit_arg.resolve()
             expected_message = re.fullmatch(
@@ -3929,12 +4074,12 @@ def main(argv: list[str] | None = None) -> int:
             if (
                 final_commit_arg.is_symlink()
                 or not final_commit.is_file()
-                or final_commit.parent != EVIDENCE_ROOT.resolve()
+                or final_commit.parent != paths.evidence_root.resolve()
                 or expected_message is None
                 or int(expected_message.group(1)) != docs_attempt
             ):
                 raise RuntimeError("finalization message path/round/global attempt is invalid")
-            validate_content("docs-commit-v1", final_commit, "docs-commit")
+            validate_content(paths, "docs-commit-v1", final_commit, "docs-commit")
             predecessor_count = sum(
                 value is not None
                 for value in (args.prior_review, args.prior_docs_review, args.prior_gate_bundle)
@@ -3998,15 +4143,15 @@ def main(argv: list[str] | None = None) -> int:
             predecessor: dict[str, Any] | None = None
             if args.prior_review:
                 predecessor = (
-                    validate_release_hygiene_f1_predecessor(args.prior_review)
+                    validate_release_hygiene_f1_predecessor(paths, args.prior_review)
                     if release_hygiene_f1_exception
                     else (
-                        validate_rejected_round6_qa_review(args.prior_review)
+                        validate_rejected_round6_qa_review(paths, args.prior_review)
                         if f4_f5_exception
                         else (
-                            validate_known_invalid_round5_qa_review(args.prior_review)
+                            validate_known_invalid_round5_qa_review(paths, args.prior_review)
                             if f3_exception
-                            else validate_sealed_qa_review(args.prior_review, args.round - 1)
+                            else validate_sealed_qa_review(paths, args.prior_review, args.round - 1)
                         )
                     )
                 )
@@ -4017,11 +4162,11 @@ def main(argv: list[str] | None = None) -> int:
             elif args.prior_docs_review:
                 if docs_attempt <= 1:
                     raise RuntimeError("docs predecessor must advance the global docs attempt")
-                attempts = finalization_docs_attempts()
+                attempts = finalization_docs_attempts(paths)
                 predecessor = (
-                    validate_release_hygiene_predecessor(args.prior_docs_review)
+                    validate_release_hygiene_predecessor(paths, args.prior_docs_review)
                     if release_hygiene_exception
-                    else validate_sealed_docs_review(
+                    else validate_sealed_docs_review(paths, 
                         args.prior_docs_review, docs_attempt - 1
                     )
                 )
@@ -4041,7 +4186,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 predecessor["phase"] = "docs"
             elif args.prior_gate_bundle:
-                predecessor = validate_failed_gate_bundle(args.prior_gate_bundle, args.round - 1)
+                predecessor = validate_failed_gate_bundle(paths, args.prior_gate_bundle, args.round - 1)
                 predecessor["phase"] = "gate"
             if predecessor is not None:
                 resolution_arg = args.resolution_notes
@@ -4049,24 +4194,24 @@ def main(argv: list[str] | None = None) -> int:
                 if not resolution_notes.is_file() or resolution_arg.is_symlink():
                     raise RuntimeError("resolution notes are missing/nonregular")
                 if f4_f5_exception and (
-                    resolution_notes.parent != EVIDENCE_ROOT.resolve()
+                    resolution_notes.parent != paths.evidence_root.resolve()
                     or resolution_notes.name
                     != "resolution-notes.finalization-r6-qa.md"
                 ):
                     raise RuntimeError("F4/F5 resolution path is not exact")
                 if release_hygiene_exception:
-                    validate_release_hygiene_resolution(resolution_notes)
+                    validate_release_hygiene_resolution(paths, resolution_notes)
                 elif release_hygiene_f1_exception:
-                    validate_release_hygiene_f1_resolution(resolution_notes)
+                    validate_release_hygiene_f1_resolution(paths, resolution_notes)
                 elif closeout_exception:
-                    validate_finalization_closeout_resolution(resolution_notes)
-                    validate_gate_resolution_notes(predecessor, resolution_notes)
+                    validate_finalization_closeout_resolution(paths, resolution_notes)
+                    validate_gate_resolution_notes(paths, predecessor, resolution_notes)
                 elif predecessor["phase"] == "gate":
-                    validate_gate_resolution_notes(predecessor, resolution_notes)
+                    validate_gate_resolution_notes(paths, predecessor, resolution_notes)
                 else:
-                    validate_resolution_notes(prior_review, resolution_notes)
-            state = validate_fixed_state(
-                EXPECTED_ROOT,
+                    validate_resolution_notes(paths, prior_review, resolution_notes)
+            state = validate_fixed_state(paths, 
+                paths.expected_root,
                 args.round,
                 EXPECTED_QA_PATHS,
                 allowed_rounds,
@@ -4096,38 +4241,38 @@ def main(argv: list[str] | None = None) -> int:
                 state["prior_gate_round"] = predecessor["round"]
                 state["resolution_notes"] = args.resolution_notes.resolve()
             output = args.output.resolve()
-            if output.parent != EVIDENCE_ROOT.resolve() or output.name != f"qa-v9-finalization-round-{args.round}":
+            if output.parent != paths.evidence_root.resolve() or output.name != f"qa-v9-finalization-round-{args.round}":
                 raise RuntimeError("finalization QA output path is not the exact round namespace")
             if not output.parent.is_dir() or output.parent.is_symlink():
                 raise RuntimeError("finalization QA output parent is invalid")
             approved_record = compute_approved_tree(state)
             output.mkdir(mode=0o700)
-            artifacts = write_origin_artifacts(state, output)
+            artifacts = write_origin_artifacts(paths, state, output)
             records: list[dict[str, Any]] = []
             for gate in GATES:
-                record = run_gate(gate, state, output)
+                record = run_gate(paths, gate, state, output)
                 records.append(record)
                 if record["exit_code"] != 0:
-                    write_gate_artifacts(records, state, output)
-            artifacts.update(write_gate_artifacts(records, state, output))
-            validate_candidate_fingerprint(state["repo"], state["fingerprint"])
+                    write_gate_artifacts(paths, records, state, output)
+            artifacts.update(write_gate_artifacts(paths, records, state, output))
+            validate_candidate_fingerprint(paths, state["repo"], state["fingerprint"])
             tree_oid = write_approved_tree(approved_record, output)
             artifacts["approved-tree.json"] = output / "approved-tree.json"
             if not tree_oid:
                 raise RuntimeError("approved tree OID missing")
-            artifacts.update(write_markdown_artifacts(state, artifacts, output))
+            artifacts.update(write_markdown_artifacts(paths, state, artifacts, output))
             artifacts.update(write_candidate_and_token(state, artifacts, output))
-            artifacts.update(write_phase_and_adoption_manifests(state, artifacts, output))
-            validate_bundle(output)
+            artifacts.update(write_phase_and_adoption_manifests(paths, state, artifacts, output))
+            validate_bundle(paths, output)
             token = json.loads(artifacts["combined-candidate-token.json"].read_text())["token"]
             print(f"BUNDLE {output}\nTOKEN {token}")
             return 0
         if args.command == "seal-review":
-            validate_bundle(args.bundle)
+            validate_bundle(paths, args.bundle)
             review = args.review.resolve()
             if not review.is_file() or args.review.is_symlink():
                 raise RuntimeError("QA review is missing/nonregular")
-            validate_content("review-output-v1", review, "qa-review")
+            validate_content(paths, "review-output-v1", review, "qa-review")
             adoption = load_canonical_file(args.bundle / "adoption-manifest.json")
             target = args.bundle / f"qa-review.round-{adoption['round']}.md"
             path = args.bundle / "qa-review.manifest.json"
@@ -4147,7 +4292,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"SEALED {path}")
             return 0
         if args.command == "seal-docs":
-            validate_bundle(args.bundle)
+            validate_bundle(paths, args.bundle)
             review = args.qa_review.resolve()
             adoption = load_canonical_file(args.bundle / "adoption-manifest.json")
             adoption_records = {
@@ -4166,8 +4311,8 @@ def main(argv: list[str] | None = None) -> int:
                 adoption_plan_digest
                 == "sha256:" + PINNED_DIGESTS[FINALIZATION_RELEASE_HYGIENE_PLAN]
             )
-            attempts = finalization_docs_attempts()
-            if args.attempt != next_finalization_docs_attempt():
+            attempts = finalization_docs_attempts(paths)
+            if args.attempt != next_finalization_docs_attempt(paths):
                 raise RuntimeError("docs attempt is not the next global finalization attempt")
             if (args.prior_docs_review is None) != (args.resolution_notes is None):
                 raise RuntimeError("prior docs review and resolution notes must be paired")
@@ -4179,7 +4324,7 @@ def main(argv: list[str] | None = None) -> int:
             sealed_manifest_path = (args.bundle / "qa-review.manifest.json").resolve()
             if review != sealed_review or not sealed_manifest_path.is_file() or sealed_manifest_path.is_symlink():
                 raise RuntimeError("docs seal requires the bundle's candidate-bound sealed QA review and manifest")
-            validate_content("review-output-v1", review, "qa-review")
+            validate_content(paths, "review-output-v1", review, "qa-review")
             if review.read_text().splitlines()[-1] != "VERDICT: APPROVED":
                 raise RuntimeError("docs seal requires approved QA review")
 
@@ -4225,16 +4370,16 @@ def main(argv: list[str] | None = None) -> int:
             if (
                 final_commit_arg.is_symlink()
                 or not final_commit.is_file()
-                or final_commit.parent != EVIDENCE_ROOT.resolve()
+                or final_commit.parent != paths.evidence_root.resolve()
                 or final_commit.name != expected_message_name
             ):
                 raise RuntimeError("final docs-commit path does not match QA round/docs attempt")
-            validate_content("docs-commit-v1", final_commit, "docs-commit")
+            validate_content(paths, "docs-commit-v1", final_commit, "docs-commit")
             output = args.output.resolve()
             expected_output_name = f"docs-v9-finalization-r{adoption['round']}-a{args.attempt}"
             if output.exists() or output.is_symlink():
                 raise RuntimeError("docs output already exists")
-            if output.parent != EVIDENCE_ROOT.resolve() or output.name != expected_output_name:
+            if output.parent != paths.evidence_root.resolve() or output.name != expected_output_name:
                 raise RuntimeError("docs output path does not match QA round/docs attempt")
             if not output.parent.is_dir() or output.parent.is_symlink():
                 raise RuntimeError("docs output parent must already be a regular directory")
@@ -4244,9 +4389,9 @@ def main(argv: list[str] | None = None) -> int:
                 if not resolution_notes.is_file() or resolution_notes.is_symlink():
                     raise RuntimeError("prior docs review/resolution path is invalid")
                 predecessor = (
-                    validate_release_hygiene_predecessor(args.prior_docs_review)
+                    validate_release_hygiene_predecessor(paths, args.prior_docs_review)
                     if release_hygiene_docs
-                    else validate_sealed_docs_review(
+                    else validate_sealed_docs_review(paths, 
                         args.prior_docs_review, args.attempt - 1
                     )
                 )
@@ -4285,10 +4430,10 @@ def main(argv: list[str] | None = None) -> int:
                         ]
                         if len(ledger_records) != 1:
                             raise RuntimeError("closeout candidate lacks exact round-9 ledger")
-                        validate_failed_gate_bundle(
+                        validate_failed_gate_bundle(paths, 
                             Path(ledger_records[0]["path"]).parent, 9
                         )
-                        validate_finalization_closeout_resolution(
+                        validate_finalization_closeout_resolution(paths, 
                             Path(prior["resolution-notes"]["path"])
                         )
                     elif release_hygiene_f1_docs:
@@ -4303,7 +4448,7 @@ def main(argv: list[str] | None = None) -> int:
                             raise RuntimeError(
                                 "prior docs approval is not transitively bound by the F1 QA candidate"
                             )
-                        validate_release_hygiene_f1_predecessor(
+                        validate_release_hygiene_f1_predecessor(paths, 
                             Path(prior["prior-qa-review"]["path"])
                         )
                     elif (
@@ -4325,17 +4470,17 @@ def main(argv: list[str] | None = None) -> int:
                         "next docs attempt predecessor verdict contradicts cycle authority"
                     )
                 if release_hygiene_docs:
-                    validate_release_hygiene_resolution(resolution_notes)
+                    validate_release_hygiene_resolution(paths, resolution_notes)
                 else:
-                    validate_resolution_notes(prior_docs_review, resolution_notes)
+                    validate_resolution_notes(paths, prior_docs_review, resolution_notes)
                 prior_docs_inputs.extend((
                     {"name": "prior-docs-review", "path": str(prior_docs_review), "digest": "sha256:" + sha256_file(prior_docs_review), "schema": "review-output-v1", "required": True},
                     {"name": "docs-resolution-notes", "path": str(resolution_notes), "digest": "sha256:" + sha256_file(resolution_notes), "schema": "resolution-notes-v1", "required": True},
                     {"name": "prior-docs-review-manifest", "path": str(prior_manifest_path.resolve()), "digest": "sha256:" + sha256_file(prior_manifest_path), "schema": "m2-11-phase-manifest/v1", "required": True},
                 ))
             docs_state = dict(
-                validate_fixed_state(
-                    EXPECTED_ROOT,
+                validate_fixed_state(paths, 
+                    paths.expected_root,
                     adoption["round"],
                     EXPECTED_RELEASE_PATHS,
                     (adoption["round"],),
@@ -4366,7 +4511,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "seal-docs-review":
             docs_bundle = args.docs_bundle.resolve()
             match = re.fullmatch(r"docs-v9-finalization-r(10|[1-9])-a([1-3])", docs_bundle.name)
-            if docs_bundle.parent != EVIDENCE_ROOT.resolve() or match is None:
+            if docs_bundle.parent != paths.evidence_root.resolve() or match is None:
                 raise RuntimeError("docs bundle is outside the exact finalization namespace")
             review_input_path = docs_bundle / "docs-review-input.manifest.json"
             review_input = load_canonical_file(review_input_path)
@@ -4375,7 +4520,7 @@ def main(argv: list[str] | None = None) -> int:
                 review_input.get("phase") != "docs-review-input"
                 or review_input.get("round") != round_no
                 or review_input.get("attempt") != attempt
-                or external_worktree_fingerprint(EXPECTED_ROOT) != review_input.get("worktree_digest")
+                or external_worktree_fingerprint(paths, paths.expected_root) != review_input.get("worktree_digest")
             ):
                 raise RuntimeError("docs-review input manifest/live candidate mismatch")
             for item in review_input["inputs"]:
@@ -4385,7 +4530,7 @@ def main(argv: list[str] | None = None) -> int:
             review = args.review.resolve()
             if not review.is_file() or review.is_symlink():
                 raise RuntimeError("docs review is missing/nonregular")
-            validate_content("review-output-v1", review, "docs-review")
+            validate_content(paths, "review-output-v1", review, "docs-review")
             target = docs_bundle / f"docs-review.attempt-{attempt}.md"
             manifest_path = docs_bundle / "docs-review.manifest.json"
             if target.exists() or target.is_symlink() or manifest_path.exists() or manifest_path.is_symlink():
@@ -4425,7 +4570,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "validate-release":
             docs_bundle = args.docs_bundle.resolve()
             match = re.fullmatch(r"docs-v9-finalization-r(10|[1-9])-a([1-3])", docs_bundle.name)
-            if docs_bundle.parent != EVIDENCE_ROOT.resolve() or match is None:
+            if docs_bundle.parent != paths.evidence_root.resolve() or match is None:
                 raise RuntimeError("docs bundle is outside the exact finalization namespace")
             review_input_path = docs_bundle / "docs-review-input.manifest.json"
             review_manifest_path = docs_bundle / "docs-review.manifest.json"
@@ -4462,7 +4607,7 @@ def main(argv: list[str] | None = None) -> int:
             }
             if review_manifest.get("output") != expected_output:
                 raise RuntimeError("sealed docs review output mismatch")
-            validate_content("review-output-v1", review_path, "docs-review")
+            validate_content(paths, "review-output-v1", review_path, "docs-review")
             if review_path.read_text("utf-8").splitlines()[-1] != "VERDICT: APPROVED":
                 raise RuntimeError("release requires an APPROVED sealed docs review")
             input_records = {item["name"]: item for item in review_input["inputs"]}
@@ -4478,7 +4623,7 @@ def main(argv: list[str] | None = None) -> int:
             if review_input.get("output") != input_records["final-docs-tree"]:
                 raise RuntimeError("docs-review output is not the exact bound final docs tree")
             final_commit = Path(input_records["final-docs-commit"]["path"])
-            validate_content("docs-commit-v1", final_commit, "docs-commit")
+            validate_content(paths, "docs-commit-v1", final_commit, "docs-commit")
             approved_tree_path = Path(input_records["final-docs-tree"]["path"])
             approved_tree = load_canonical_file(approved_tree_path)
             if (
@@ -4490,7 +4635,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise RuntimeError("approved final docs tree contract mismatch")
 
             def git_text(*git_args: str) -> str:
-                return run_checked(["git", *git_args], EXPECTED_ROOT).stdout.decode("utf-8").strip()
+                return run_checked(["git", *git_args], paths.expected_root).stdout.decode("utf-8").strip()
 
             if git_text("branch", "--show-current") != EXPECTED_BRANCH or git_text("rev-parse", "HEAD") != EXPECTED_HEAD:
                 raise RuntimeError("release Git branch/HEAD drift")
@@ -4499,9 +4644,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.mode == "pre-stage":
                 if git_text("diff", "--cached", "--name-only"):
                     raise RuntimeError("pre-stage release validation requires an empty index")
-                if tuple(changed_paths(EXPECTED_ROOT)) != EXPECTED_RELEASE_PATHS:
+                if tuple(changed_paths(paths.expected_root)) != EXPECTED_RELEASE_PATHS:
                     raise RuntimeError("pre-stage release inventory drift")
-                if external_worktree_fingerprint(EXPECTED_ROOT) != review_input["worktree_digest"]:
+                if external_worktree_fingerprint(paths, paths.expected_root) != review_input["worktree_digest"]:
                     raise RuntimeError("pre-stage live fingerprint differs from docs approval")
             else:
                 if git_text("diff", "--name-only") or git_text("ls-files", "--others", "--exclude-standard"):
@@ -4511,7 +4656,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise RuntimeError("post-stage cached inventory drift")
                 if git_text("write-tree") != approved_tree["tree_oid"]:
                     raise RuntimeError("post-stage cached tree differs from docs approval")
-                run_checked(["git", "diff", "--cached", "--check"], EXPECTED_ROOT)
+                run_checked(["git", "diff", "--cached", "--check"], paths.expected_root)
             print(f"VALID RELEASE {args.mode} {review_manifest['output']['digest']}")
             return 0
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
