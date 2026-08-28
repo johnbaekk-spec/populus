@@ -1376,6 +1376,14 @@ def test_the_default_uploader_is_the_wrangler_uploader(cli: Cli, monkeypatch) ->
         return cli.upload
 
     monkeypatch.setattr("populus.deploy.upload.WranglerUploader", _uploader)
+    # R8/LD9: the entry point resolves the LOCK-INSTALLED binary before it
+    # builds the uploader. Stubbed here so the test does not depend on this
+    # checkout's node_modules; the resolver's own refusal behavior is covered
+    # in tests/test_deploy_upload.py.
+    resolved = Path("/repo/dashboard/node_modules/.bin/wrangler")
+    monkeypatch.setattr(
+        "populus.deploy.upload.resolve_wrangler_executable", lambda: resolved
+    )
 
     assert (
         main(
@@ -1390,6 +1398,35 @@ def test_the_default_uploader_is_the_wrangler_uploader(cli: Cli, monkeypatch) ->
     )
     assert built["project"] == PROJECT
     assert built["lookup"] is cli.client
+    assert built["executable"] == resolved
+
+
+def test_a_missing_lock_installed_wrangler_is_misconfiguration_before_any_call(
+    cli: Cli, monkeypatch, tmp_path: Path, capsys
+) -> None:
+    """R8/LD9: no dashboard/node_modules/.bin/wrangler → refuse BEFORE anything.
+
+    The working directory is an empty tree, so the resolver finds nothing.
+    The exit is `misconfigured`, the message names the remediation (`npm ci`),
+    and the provider log is empty — no upload, no verification, no read, and
+    certainly no registry fetch.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    result = main(
+        cli.argv(),
+        pages_factory=lambda: cli.client,
+        readiness_factory=lambda: (lambda url, *, stage: None),
+        verifier_factory=lambda: cli.verify,
+        probe_factory=lambda: (lambda url: ANCHOR_SHA),
+        settle_factory=lambda: (lambda seconds: None),
+    )
+
+    assert result == EXIT_MISCONFIGURED
+    err = capsys.readouterr().err
+    assert "wrangler" in err and "npm ci" in err
+    assert cli.log == []
+    assert cli.emitted["outcome"] == "misconfigured"
 
 
 def test_the_default_verifier_is_bound_to_the_artifact(cli: Cli, monkeypatch) -> None:

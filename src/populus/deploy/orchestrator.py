@@ -936,11 +936,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "production branch or the 'preview' is a production deployment"
         ),
     )
-    parser.add_argument(
-        "--wrangler-package",
-        default=None,
-        help="override the pinned wrangler npm spec the uploader invokes",
-    )
+    # RUN PUBLIC-SECURITY-HARDENING R8/LD9: there is deliberately NO
+    # --wrangler-package (or any other wrangler override) flag. The uploader
+    # invokes only the lock-installed dashboard/node_modules/.bin/wrangler, and
+    # a CLI seam that could name a different package would reintroduce the
+    # deploy-time remote-install path this run removed.
     return parser.parse_args(argv)
 
 
@@ -1070,7 +1070,9 @@ def main(
         await_origin,
         DeploymentVerifier,
         PagesDeploySurface,
+        UploadFailed,
         WranglerUploader,
+        resolve_wrangler_executable,
     )
 
     args = _parse_args(argv)
@@ -1113,10 +1115,21 @@ def main(
     if upload_factory is not None:
         upload = upload_factory()
     else:
+        # R8/LD9: resolve the lock-installed binary — and refuse on missing or
+        # non-executable local state — BEFORE any upload, verification, or
+        # provider call. The workflow additionally asserts the binary and its
+        # version before the token-bearing step; this is the Python-side half
+        # of the same fail-closed contract, and it never fetches anything.
+        try:
+            wrangler = resolve_wrangler_executable()
+        except UploadFailed as exc:
+            print(f"deploy: {exc}", file=sys.stderr)
+            _emit_outputs(outcome=OUTCOME_MISCONFIGURED)
+            return EXIT_MISCONFIGURED
         upload = WranglerUploader(
             project=project,
             lookup=pages,
-            **({"package": args.wrangler_package} if args.wrangler_package else {}),
+            executable=wrangler,
         )
     readiness_client = http_factory() if http_factory is not None else _default_http_client()
     if verifier_factory is not None:
