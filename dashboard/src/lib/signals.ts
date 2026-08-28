@@ -66,7 +66,7 @@ export interface Signal {
       `superseded` — was active, the kind WAS evaluated, and it no longer
         appears: amended/superseded filing, or the rule stopped matching.
       `unevaluated` — its kind was WITHHELD this build, so nothing was asked
-        of it. Review r3-F3: withholding means "not evaluated"; stamping these
+        of it. Withholding means "not evaluated"; stamping these
         superseded would record missing inputs as a retraction. */
   status: "active" | "superseded" | "unevaluated";
   /** set on tombstones: the build whose artifact no longer carries the signal */
@@ -114,8 +114,8 @@ const WITHHELD_REASONS: ReadonlySet<string> = new Set([
 ]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Strict schema validation of a PRIOR artifact before it is chained
-    (review r3-F2). `v === 1` alone let a structurally invalid document pass
+/** Strict schema validation of a PRIOR artifact before it is chained.
+    `v === 1` alone let a structurally invalid document pass
     as history — which would silently erase lifecycle continuity while the new
     artifact claimed to have preserved it. Returns every defect; a non-empty
     return means the document is not usable as lifecycle state. */
@@ -145,7 +145,7 @@ export function validateSignalArtifact(doc: unknown): string[] {
     });
   }
   if (!Array.isArray(a.signals)) return errors.concat("signals must be an array");
-  // Review c2-F1: identity must be UNIQUE. Two rows on one id collapse two
+  // Identity must be UNIQUE. Two rows on one id collapse two
   // histories into one — and the chaining loop keys on id, so the collision
   // silently decides which lifecycle survives.
   const seenIds = new Set<string>();
@@ -166,7 +166,7 @@ export function validateSignalArtifact(doc: unknown): string[] {
     if (!SIGNAL_KINDS.has(String(g.kind))) at(`kind is unknown: ${String(g.kind)}`);
     if (!SIGNAL_STATUSES.has(String(g.status))) at(`status is unknown: ${String(g.status)}`);
     if (g.cohort !== "house" && g.cohort !== "senate") at(`cohort must be house|senate (got ${String(g.cohort)})`);
-    /* Review c2-F1: status-specific lifecycle fields. The legal shapes are
+    /* Status-specific lifecycle fields. The legal shapes are
        exactly:
          active       → neither stamp (it is emitted by THIS build)
          unevaluated  → unevaluatedInBuild, and no supersession stamp
@@ -251,7 +251,7 @@ function signalId(kind: SignalKind, identity: string): string {
 
 /* The raw identity a compute function minted this signal from. Symbol-keyed
    so it never serializes into the artifact, and read only by the gate when it
-   re-derives the id from the DECLARED dedupe grammar (review r3-F5). */
+   re-derives the id from the DECLARED dedupe grammar. */
 const RAW_IDENTITY = Symbol("populus.signal.rawIdentity");
 
 function rawIdentityOf(sig: Signal): string {
@@ -357,7 +357,7 @@ function computeS3(txns: readonly TxnRow[], ctx: EmitCtx): Signal[] {
       const start = list[i]!.traded!;
       if (start <= cooldownUntil) continue;
       const end = addDaysIso(start, p.window_days);
-      // R16: even a rolling detection window asks the one membership question.
+      // Even a rolling detection window asks the one membership question.
       // `list` is already anomaly-filtered and trade-dated, so the traded basis
       // returns "in"/"out" here and never an exclusion verdict.
       const window = list.filter((r) => windowMembership(r, { start, end }, "traded") === "in");
@@ -429,7 +429,7 @@ export interface SignalInputs {
   generatedAtDate: string; // YYYY-MM-DD
   generatedAt: string; // display stamp
   /** The PREVIOUS build's published artifact, when the publisher supplies it
-      (D-1c/review F1): first-seen carries forward by id, and signals that left
+      (the D-1c lifecycle contract): first-seen carries forward by id, and signals that left
       the window's view get supersession tombstones instead of silent absence.
       null = cold start, stated in the lifecycle note. */
   priorArtifact?: SignalArtifact | null;
@@ -437,7 +437,7 @@ export interface SignalInputs {
   s5:
     | {
         membershipsByMember: ReadonlyMap<string, CommitteeMembership[]>;
-        /** snapshot-wide validity bounds (review F7) */
+        /** snapshot-wide validity bounds */
         windowFrom: string;
         windowTo: string;
         jurisdictionByCommittee: ReadonlyMap<string, readonly string[]>;
@@ -457,7 +457,7 @@ function volumePer30d(signals: readonly Signal[], coverageFrom: string, coverage
   return (inWindow / days) * 30;
 }
 
-/** Generalized cooldown (review F2): within one dedupe scope (entity or
+/** Generalized cooldown: within one dedupe scope (entity or
     ticker), at most one signal per `days` by filed date. S-3 additionally
     applies its trade-date cooldown inside its own window scan. */
 function applyCooldown(signals: Signal[], days: number, dedupeKey: string): Signal[] {
@@ -495,7 +495,7 @@ function historyDays(from: string, to: string): number {
   return Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000));
 }
 
-/** The dedupe-identity grammar (review F4): the DECLARED `dedupe_key` is what
+/** The dedupe-identity grammar: the DECLARED `dedupe_key` is what
     the gate enforces — a configuration claiming one identity contract while
     the artifact enforces another is exactly the drift D-1b forbids. Unknown
     grammar fails closed (the kind is unshippable, loudly). */
@@ -520,7 +520,7 @@ export function buildSignalArtifact(
   thresholdsOverride?: ThresholdsShape,
 ): SignalArtifact {
   const T = thresholdsOverride ?? (SIGNAL_THRESHOLDS as unknown as ThresholdsShape);
-  // Constraint 9 at the ENGINE boundary (review F6): rows with impossible
+  // Constraint 9 at the ENGINE boundary: rows with impossible
   // trade dates never reach any kind's computation — not only S-3's window.
   const { rows: cleanTxns, excluded: dateAnomaliesExcluded } = excludeDateAnomalies(inputs.txns);
   const retentionDays = T.retention_days;
@@ -599,7 +599,7 @@ export function buildSignalArtifact(
       });
       continue;
     }
-    // Review F2, enforced in ONE gate, every declared field:
+    // Threshold-spec fields are enforced in ONE gate, every declared field:
     // (1) minimum history — a kind needing a baseline cannot fire on a
     // shallow corpus; withheld with its own typed reason.
     if (spec.min_history_days > 0 && historyDays(corpusFrom, coverageTo) < spec.min_history_days) {
@@ -613,7 +613,7 @@ export function buildSignalArtifact(
     // (2) declared cooldown over the DECLARED dedupe scope, generalized
     // beyond S-3's internal window scan.
     const cooled = applyCooldown([...allRaw], spec.cooldown_days, spec.dedupe_key);
-    // (3) dedupe on the DECLARED identity grammar (review F4) — first
+    // (3) dedupe on the DECLARED identity grammar — first
     // occurrence wins deterministically (filed asc, id asc).
     const seenScopes = new Set<string>();
     const all = [...cooled]
@@ -632,7 +632,7 @@ export function buildSignalArtifact(
         seenScopes.add(scope);
         return true;
       })
-      // Review r3-F5: the surviving row's id is REDERIVED from the declared
+      // The surviving row's id is REDERIVED from the declared
       // identity, so it does not depend on WHICH row survived — otherwise
       // dropping one row inside a deduped group would mint a false tombstone
       // and a false first-seen on the next build.
@@ -673,7 +673,7 @@ export function buildSignalArtifact(
     signals.push(...retained);
   }
 
-  /* --- D-1c lifecycle chaining (review F1) --- */
+  /* --- D-1c lifecycle chaining --- */
   const prior = inputs.priorArtifact ?? null;
   if (prior !== null && prior.v === 1) {
     const withheldKinds = new Set(withheld.map((w) => w.kind));
@@ -687,12 +687,12 @@ export function buildSignalArtifact(
       if (currentIds.has(p.id)) continue;
       if (p.occurrence.filedDate < coverageFrom || p.occurrence.filedDate > coverageTo) continue;
       if (p.status === "superseded") {
-        // Review r2-F2: a tombstone is FINAL history — carried verbatim, never
+        // A tombstone is FINAL history — carried verbatim, never
         // re-stamped, or every rebuild would falsify when supersession
         // happened. Compaction (the window filter above) is its only exit.
         signals.push(p);
       } else if (withheldKinds.has(p.kind)) {
-        // Review r3-F3: this kind was NOT EVALUATED this build (missing
+        // This kind was NOT EVALUATED this build (missing
         // inputs, shallow history, calibration failure). Absence under an
         // unevaluated rule is not a disappearance — recording it as
         // supersession would claim an amendment or retraction that no source

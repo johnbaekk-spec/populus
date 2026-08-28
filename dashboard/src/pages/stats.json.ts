@@ -1,7 +1,7 @@
 import type { APIRoute } from "astro";
 import { getBuildData } from "../lib/data";
 
-// The published `stats.json`, served at the site root (R24; ARCHITECTURE §12.1
+// The published `stats.json`, served at the site root (ARCHITECTURE §12.1
 // requires the count to live "in the one stats.json in *both* places
 // identically", and the deploy gate asserts the two copies are byte-equal).
 //

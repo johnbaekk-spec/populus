@@ -1,4 +1,4 @@
-/* R5/R6/R18 — the congress ranking tables' column contract and comparators.
+/* The congress ranking tables' column contract and comparators.
 
    COMPARATORS STAY CALLER-OWNED. `initSortableTable` is plumbing that owns no
    ordering semantics, by a prior review decision that rejected a shared
@@ -33,7 +33,7 @@ export type CongressColumn =
       /** direction applied when the reader switches TO this column */
       defaultDir: "asc" | "desc";
       numeric: boolean;
-      /** SL-R6/R7: the footnote text this column's marker used to resolve to,
+      /** The footnote text this column's marker used to resolve to,
           rendered as a note on the header. Pre-escaped html, because the
           footnote registries publish `<strong>`/`<code>` emphasis. */
       note?: string;
@@ -57,9 +57,9 @@ export type CongressSortKey =
   | "net"
   | "late";
 
-/* SL-R6/R7: the ranking footnote registry lives HERE, not in `ui.ts`.
+/* The ranking footnote registry lives HERE, not in `ui.ts`.
 
-   R7 replaces `footnoteBlock(RANKING_FOOTNOTES, …)` with notes on the columns
+   The `footnoteBlock(RANKING_FOOTNOTES, …)` block was replaced with notes on the columns
    each mark qualified, and the column set is the thing that must carry them.
    `ui.ts` imports this module, so the constant cannot stay there and be read
    from here without a module cycle whose const-initialisation order is a
@@ -89,8 +89,8 @@ export const RANKING_FOOTNOTES: FootnoteEntry[] = [
 
 const RANKING_FN = new Map(RANKING_FOOTNOTES.map((e) => [e.mark, e.html]));
 
-/* SL-R6: the three sentences the ranking sections' `.section-note` paragraph
-   carried. R6 deletes that paragraph and moves each claim onto the column it
+/* The three sentences the ranking sections' `.section-note` paragraph
+   carried. That paragraph is deleted and each claim moved onto the column it
    is about, so nothing is softened — only relocated to its anchor. */
 const INTERVAL_CLAIM =
   `every flow number is an <strong>interval</strong> over statutory bucket bounds — ` +
@@ -152,7 +152,7 @@ export function congressRankingColumns(kind: "leaders" | "tickers"): CongressCol
       label: "Net disclosed flow ·§",
       defaultDir: "desc",
       numeric: true,
-      /* SL-R6: the Net column carries the whole of the deleted paragraph that
+      /* The Net column carries the whole of the deleted paragraph that
          was about ordering, plus both marks that render in this column. */
       note:
         `${INTERVAL_CLAIM} · ${DIRECTION_CLAIM} · ${RANKING_FN.get("§")} · ` +
@@ -194,7 +194,7 @@ function scalarOf(r: LeaderRow, key: CongressSortKey): number {
 
 /** Rows split into those the ACTIVE column can rank and those it cannot.
 
-    This is NOT the wholly-undisclosed bucket (R6/R18): that bucket is fixed by
+    This is NOT the wholly-undisclosed bucket: that bucket is fixed by
     the row's NET interval, computed once, and lives in its own table and its
     own DOM root, where no sort can reach it. This split is narrower — within
     one table, a row whose value in the CURRENTLY SORTED interval column is
@@ -247,8 +247,8 @@ export function sortRankingRows(
   return { ranked, unrankable: [] };
 }
 
-/** The incomparability marker, RECOMPUTED from the order actually rendered
-    (R18). Carrying it over from a previous sort would assert an overlap
+/** The incomparability marker, RECOMPUTED from the order actually rendered.
+    Carrying it over from a previous sort would assert an overlap
     against a row that is no longer above this one — a stale claim about data
     the reader can see is wrong.
 

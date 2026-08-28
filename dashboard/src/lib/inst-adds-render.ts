@@ -1,4 +1,4 @@
-/* R9/R21 — the leaderboard row renderer, extracted so the SSR page and the
+/* The leaderboard row renderer, extracted so the SSR page and the
    client island produce IDENTICAL bytes. It lives apart from `ui.ts` because
    the island imports it dynamically and `ui.ts` pulls in the whole rendering
    surface. */
@@ -15,7 +15,7 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
       : `<span class="none">issuer not named in this build</span>`;
   // The value is the actual sum with its null state. A partial sum carries its
   // marker; an all-null sum renders an em dash, never $0.
-  /* SL-R8 Class B / SL-R26: three tooltip-only explanations become notes.
+  /* Three tooltip-only explanations become notes.
      The key is the row's issuer key JOINED TO ITS RENDERED POSITION, because
      `AddsRow` has no position_key and one issuer may appear under more than
      one `issuer_key_source` — the plan's enumeration was read off
@@ -43,7 +43,7 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
       : esc(r.top_adder_name ?? `CIK ${r.top_adder_cik}`);
   return (
     `<tr><td class="c-num c-muted">${fmtInt(pos)}</td>` +
-    /* SL-R17: the raw issuer key (`cusip6:464287`) stops being visible text.
+    /* The raw issuer key (`cusip6:464287`) stops being visible text.
        The chip says what the key IS; the key itself lives in the note and in
        `data-identity-key`, so nothing is lost and it stays copyable. An
        `entity:` key renders no chip at all — a resolved entity is the ordinary

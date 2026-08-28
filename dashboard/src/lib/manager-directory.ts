@@ -1,7 +1,7 @@
-/* R11/R22 — the manager directory: curated display names, orthogonal filter
+/* The manager directory: curated display names, orthogonal filter
    chips, and the biggest-position-change column.
 
-   R22 IS THE POINT OF THIS MODULE. Change kind is classified from SHARES, not
+   SHARES-BASED CLASSIFICATION IS THE POINT OF THIS MODULE. Change kind is classified from SHARES, not
    value: `src/populus/inst_agg.py` sets add/trim from `delta_shares` whenever
    the units are compatible. A position can therefore be an `add` while its
    dollar delta is NEGATIVE — the manager bought more shares into a falling
@@ -45,7 +45,7 @@ export interface ManagerTyping {
   notable: boolean;
 }
 
-/* ---------- R22: the biggest position change ---------- */
+/* ---------- the biggest position change ---------- */
 
 export interface BiggestChange {
   row: QoqDeltaRow;
@@ -142,7 +142,7 @@ export function biggestChangeCellHtml(result: BiggestChangeResult): string {
   );
 }
 
-/* ---------- R11: filtering ---------- */
+/* ---------- filtering ---------- */
 
 export interface DirectoryFilter {
   /** manager types selected; empty = no type restriction */

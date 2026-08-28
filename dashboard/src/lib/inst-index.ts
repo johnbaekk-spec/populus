@@ -16,7 +16,7 @@
    never given a sentinel. */
 
 import { esc, fmtInt, fmtUsd, note } from "./format.ts";
-// F3: the directory body renderer lives here now and needs the filer href
+// The directory body renderer lives here now and needs the filer href
 // builder the page and the island both used.
 import { filerHref } from "./holdings.ts";
 import {
@@ -43,12 +43,12 @@ export interface InstIndexRow {
   /** why hhi is null, for the cell title; "" when hhi is present */
   hhiNote: string;
   tier: "top" | "tail";
-  /* R11: curated typing, or null when this filer is not in the registry.
+  /* Curated typing, or null when this filer is not in the registry.
      Coverage is a CURATED SUBSET — roughly 8,700 filers exist and the seed
      types 113 — so an untyped filer is the common case and renders its FILED
      name, never a guessed type. */
   typing: ManagerTyping | null;
-  /* R11/R22: the change cell, RENDERED AT BUILD TIME.
+  /* The change cell, RENDERED AT BUILD TIME.
 
      The cell is precomputed rather than carrying its source delta row into the
      page's embedded JSON. The client island re-renders rows on sort and
@@ -110,7 +110,7 @@ export function sortInstIndexRows(
   key: InstSortKey,
   dir: "asc" | "desc",
 ): { ranked: InstIndexRow[]; unranked: InstIndexRow[] } {
-  // F14: `name` orders the DISPLAYED primary identity. The directory renders a
+  // `name` orders the DISPLAYED primary identity. The directory renders a
   // curated display name as the manager's name whenever one exists, so sorting
   // on the filed name ordered the column by text the reader cannot see.
   const keyOf = (r: InstIndexRow): number | string | null =>
@@ -139,7 +139,7 @@ export function displayNameOf(r: InstIndexRow): string {
   return r.typing?.display_name ?? r.name;
 }
 
-/** F14: search every identity the row PRESENTS — curated display name, the
+/** Search every identity the row PRESENTS — curated display name, the
     filed name printed beside it, the person named on the row, and the CIK.
     Searching only the filed name meant typing a curated name, or the name of
     the person the directory prints, returned nothing. */
@@ -157,7 +157,7 @@ export function filterInstIndexRows(rows: readonly InstIndexRow[], q: string): I
   });
 }
 
-/** F13: chips are part of the ROW SET, not a post-render DOM pass.
+/** Chips are part of the ROW SET, not a post-render DOM pass.
 
     They used to be applied by hiding `<tr>`s after render, so any sort or
     search replaced the tbody and silently un-hid every filtered-out manager
@@ -174,8 +174,8 @@ export function applyDirectoryChips(
 }
 
 /** One row of the index table. `filerHrefOf` stays injected so this module
-    remains pure and the R22 top/tail routing has one owner. */
-/** R11: the curated display name when the registry has one, the FILED name
+    remains pure and the top/tail routing has one owner. */
+/** The curated display name when the registry has one, the FILED name
     otherwise. The filed name is never hidden — a curated name is a convenience
     label, and the string the filing actually carries stays beside it so a
     reader can match what they see here against the filing itself. */
@@ -192,7 +192,7 @@ function nameCellHtml(r: InstIndexRow, href: string): string {
 }
 
 export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow) => string): string {
-  /* SL-R8 Class B / SL-R26: four tooltip-only explanations become notes, keyed
+  /* Four tooltip-only explanations become notes, keyed
      on the row's CIK — one row per CIK per rendered table, so it is singular
      by construction. */
   const nctx = { scope: "inst-index-row" };
@@ -276,13 +276,13 @@ export function instIndexBodyHtml(
   },
   compact?: number,
 ): { html: string; note: string; total: number; shown: number } {
-  // F13: chips, search and sort are ONE pipeline. Chips used to hide <tr>s
+  // Chips, search and sort are ONE pipeline. Chips used to hide <tr>s
   // after render, so any sort or search rebuilt the tbody and silently
   // un-hid every filtered-out manager while the chip stayed pressed.
   const filtered = filterInstIndexRows(applyDirectoryChips(rows, chips), q);
   const { ranked, unranked } = sortInstIndexRows(filtered, sortKey, dir);
   const href = (r: InstIndexRow): string => filerHref(r.cik, r.tier);
-  // F20: the separator spans the table's ACTUAL column count, derived from the
+  // The separator spans the table's ACTUAL column count, derived from the
   // one column contract rather than a literal that goes stale when a column is
   // added — which is exactly what happened when the directory grew to eight.
   const span = INST_INDEX_HEADS.length;
@@ -293,8 +293,8 @@ export function instIndexBodyHtml(
   const html =
     rankedShown.map((r) => instIndexRowHtml(r, href)).join("\n") +
     // The stated absence renders whenever the bucket is non-empty, not only
-    // when one of its rows survives the compact slice (the F5 rule, applied
-    // to this table too).
+    // when one of its rows survives the compact slice (the same stated-absence
+    // rule the other tables follow).
     (unranked.length > 0
       ? `<tr class="unranked-sep"><td colspan="${span}">${fmtInt(unranked.length)} filers have no ` +
         `value for the active sort key — listed below in CIK order, never treated as zero</td></tr>` +
