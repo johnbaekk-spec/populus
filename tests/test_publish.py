@@ -2401,16 +2401,36 @@ def test_each_job_references_exactly_its_own_secrets_and_no_others():
 def test_no_workflow_call_secret_declarations_remain():
     """R4: the called signer resolves ENVIRONMENT secrets itself.
 
-    A `workflow_call` secrets block re-opens the caller-passes-repository-
-    secrets path this PR removed; equally, the caller-side `sign` job must not
-    carry a `secrets:` mapping (or `secrets: inherit`).
+    The control that matters is the CALLER: `publish.yml:sign` must carry no
+    `secrets:` mapping and no `secrets: inherit`, so it never holds or forwards
+    either credential. That assertion is unchanged and is asserted below.
+
+    What changed, on evidence: this test used to also forbid record-sign.yml
+    from DECLARING the names under `workflow_call`. That made the workflow
+    unrunnable. An undeclared name is not referenceable from a called
+    workflow's `secrets` context, so `secrets.DATA_REPO_PAT` expanded to the
+    empty string and the signer died on the populus-data checkout — after a
+    real deployment had gone live, leaving it unattested (run 33220453876).
+
+    A declaration is not a second path to the secret. It makes the NAME
+    resolvable; the VALUE still comes only from the `production-record-sign`
+    environment selected on the called job. The path this test exists to keep
+    closed is a caller-side mapping, and that is what it now checks — plus that
+    every declaration stays OPTIONAL, since `required: true` would force a
+    caller to supply a value and re-open exactly that path.
     """
     triggers = _triggers(_load_workflow("record-sign.yml"))
     assert set(triggers) == {"workflow_call"}
-    assert "secrets" not in (triggers["workflow_call"] or {}), (
-        "record-sign.yml declares workflow_call secrets; environment secrets "
-        "are selected by `environment:` on the called job (R4)"
+    declared = (triggers["workflow_call"] or {}).get("secrets") or {}
+    assert set(declared) <= {"DATA_REPO_PAT", "CLOUDFLARE_PAGES_READ_TOKEN"}, (
+        f"record-sign.yml declares unexpected workflow_call secrets: "
+        f"{sorted(set(declared) - {'DATA_REPO_PAT', 'CLOUDFLARE_PAGES_READ_TOKEN'})}"
     )
+    for name, spec in declared.items():
+        assert not (spec or {}).get("required", False), (
+            f"workflow_call secret {name} is declared required; that forces a "
+            "caller-side value and re-opens the path LD5 closes (R4)"
+        )
     sign = _load_workflow("publish.yml")["jobs"]["sign"]
     assert "secrets" not in sign, (
         "the sign caller passes secrets; the called job must resolve its own "
