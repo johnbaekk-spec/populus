@@ -2193,31 +2193,42 @@ def test_publish_job_runs_on_the_exact_self_hosted_label_set():
     ("workflow", "job_id"),
     [
         ("publish.yml", "deploy"),
+        ("publish.yml", "sign"),
         ("publish.yml", "assert-signed"),
         ("record-sign.yml", "record"),
     ],
 )
-def test_the_other_three_jobs_stay_github_hosted(workflow, job_id):
-    """R5: deploy, sign, and assert-signed stay on ubuntu-latest.
+def test_the_other_four_jobs_stay_github_hosted(workflow, job_id):
+    """R5: deploy, dispatch, record, and assert stay on ubuntu-latest.
 
     Not an aesthetic preference — these are the jobs holding Cloudflare write
     authority and the attestation identity, and §14's isolation analysis is
     written against EPHEMERAL hosted runners. Moving any of them onto the Mac
     would silently invalidate that analysis, so it is pinned.
 
-    `sign` is asserted through `record-sign.yml`'s `record` job: the caller-side
-    `sign` job is a reusable-workflow call and carries no `runs-on` of its own,
-    so pinning the caller would assert nothing about where the signer runs.
+    The publish-side `sign` job only dispatches and watches the separately
+    authorized signer; `record-sign.yml`'s `record` job owns the attestation
+    identity and production-record-sign environment.
     """
     assert _load_workflow(workflow)["jobs"][job_id]["runs-on"] == "ubuntu-latest"
 
 
-def test_sign_job_is_a_reusable_call_with_no_runner_of_its_own():
-    # Guards the test above from going vacuous: if `sign` ever grew its own
-    # `runs-on`, the record-job assertion would no longer cover it.
+def test_sign_job_dispatches_and_watches_the_top_level_signer():
+    """The caller holds no production credential or attestation authority.
+
+    A same-run probe proved environment secrets are empty in a reusable called
+    job.  The fix is a top-level workflow_dispatch run whose own job selects
+    the environment; this job may only dispatch and observe that run.
+    """
     sign = _load_workflow("publish.yml")["jobs"]["sign"]
-    assert "runs-on" not in sign
-    assert sign["uses"] == "./.github/workflows/record-sign.yml"
+    assert sign["runs-on"] == "ubuntu-latest"
+    assert sign["permissions"] == {"actions": "write"}
+    assert "environment" not in sign
+    assert "secrets" not in sign
+    rendered = yaml.safe_dump(sign)
+    assert "gh workflow run record-sign.yml --ref main" in rendered
+    assert "gh run watch" in rendered
+    assert "--exit-status" in rendered
 
 
 def _stage_step(job: dict) -> dict:
@@ -2313,14 +2324,25 @@ def test_uv_step_is_os_tolerant_and_asserts_the_pin():
 
 def test_record_sign_workflow_shape():
     workflow = _load_workflow("record-sign.yml")
-    assert set(_triggers(workflow)) == {"workflow_call"}
+    assert set(_triggers(workflow)) == {"workflow_dispatch"}
+    dispatch = _triggers(workflow)["workflow_dispatch"]
+    inputs = dispatch["inputs"]
+    for name in ("request-id", "source-run-id", "artifact-name"):
+        assert inputs[name]["required"] is True
+        assert "default" not in inputs[name]
+    assert "inputs.source-run-id" in workflow["run-name"]
     assert workflow["permissions"] == {
-        "contents": "write",
+        "actions": "read",
+        "contents": "read",
         "id-token": "write",
         "attestations": "write",
     }
     job = workflow["jobs"]["record"]
-    assert "POPULUS_RECORD_SIGN_ARMED" in job["if"]
+    armed = next(step for step in job["steps"] if "armed" in step["name"].lower())
+    assert armed["env"]["RECORD_SIGN_ARMED"] == (
+        "${{ vars.POPULUS_RECORD_SIGN_ARMED }}"
+    )
+    assert "exit 1" in armed["run"]
     step_envs = [step.get("env") or {} for step in job["steps"]]
     assert any("CLOUDFLARE_PAGES_READ_TOKEN" in env for env in step_envs)
 
@@ -2398,23 +2420,19 @@ def test_each_job_references_exactly_its_own_secrets_and_no_others():
         )
 
 
-def test_no_workflow_call_secret_declarations_remain():
-    """R4: the called signer resolves ENVIRONMENT secrets itself.
+def test_signer_is_top_level_and_the_dispatcher_passes_no_secrets():
+    """R4: only the top-level signer resolves its ENVIRONMENT secrets.
 
-    A `workflow_call` secrets block re-opens the caller-passes-repository-
-    secrets path this PR removed; equally, the caller-side `sign` job must not
-    carry a `secrets:` mapping (or `secrets: inherit`).
+    The same-run probe showed that the reusable-workflow topology resolves both
+    environment secrets as empty.  `workflow_dispatch` gives the record job a
+    top-level environment boundary while the caller passes no secret mapping.
     """
     triggers = _triggers(_load_workflow("record-sign.yml"))
-    assert set(triggers) == {"workflow_call"}
-    assert "secrets" not in (triggers["workflow_call"] or {}), (
-        "record-sign.yml declares workflow_call secrets; environment secrets "
-        "are selected by `environment:` on the called job (R4)"
-    )
+    assert set(triggers) == {"workflow_dispatch"}
     sign = _load_workflow("publish.yml")["jobs"]["sign"]
     assert "secrets" not in sign, (
-        "the sign caller passes secrets; the called job must resolve its own "
-        "environment secrets (R4/LD5)"
+        "the dispatcher passes secrets; the separately dispatched signer must "
+        "resolve its own environment secrets (R4/LD5)"
     )
 
 

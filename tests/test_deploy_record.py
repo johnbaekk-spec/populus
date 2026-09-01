@@ -493,6 +493,15 @@ def test_a_claimed_dist_digest_is_cross_checked_not_recorded(tmp_path):
     assert harness.generations == []
 
 
+def test_a_source_run_code_sha_is_cross_checked_not_trusted(tmp_path):
+    harness = _run(tmp_path, claimed_code_sha="0" * 40)
+
+    assert harness.result.outcome == REJECTED
+    assert "source workflow run reports code_sha" in harness.result.detail
+    assert CODE_SHA in harness.result.detail
+    assert harness.generations == []
+
+
 def test_the_build_id_comes_from_the_attested_manifest_not_the_artifact(tmp_path):
     """An artifact built for another build cannot rename the published one.
 
@@ -2344,18 +2353,15 @@ def _publish_gate_step() -> dict:
 
 
 def test_the_signer_resolves_both_secrets_from_its_own_environment():
-    """RUN PUBLIC-SECURITY-HARDENING R4/LD5 — superseding the workflow_call
-    declaration this test used to pin.
+    """RUN PUBLIC-SECURITY-HARDENING R4/LD5 — top-level environment boundary.
 
-    Environment secrets in a reusable workflow are selected by ``environment:``
-    on the CALLED job, never passed through ``workflow_call``: the record job
-    names `production-record-sign`, references exactly its two secrets, and the
-    trigger declares NO secrets block (a caller-passed mapping would be a
-    second, wider path to the same credentials). Until the owner creates the
-    environment, both references resolve empty and the job fails closed.
+    The isolated probe showed that a reusable called job received empty
+    environment secrets while a direct job in the same run received them.  The
+    record job is therefore a separately dispatched top-level job that names
+    `production-record-sign` and references exactly its two secrets.
     """
     triggers = _triggers(_workflow())
-    assert "secrets" not in (triggers["workflow_call"] or {})
+    assert set(triggers) == {"workflow_dispatch"}
     job = _workflow()["jobs"]["record"]
     assert job.get("environment") == "production-record-sign"
     rendered = yaml.safe_dump(job)
@@ -2366,11 +2372,52 @@ def test_the_signer_resolves_both_secrets_from_its_own_environment():
 def test_the_workflow_keeps_its_permissions_and_its_arming_guard():
     workflow = _workflow()
     assert workflow["permissions"] == {
-        "contents": "write",
+        "actions": "read",
+        "contents": "read",
         "id-token": "write",
         "attestations": "write",
     }
-    assert "POPULUS_RECORD_SIGN_ARMED" in workflow["jobs"]["record"]["if"]
+    armed = _step("armed")
+    assert armed["env"]["RECORD_SIGN_ARMED"] == (
+        "${{ vars.POPULUS_RECORD_SIGN_ARMED }}"
+    )
+    assert "exit 1" in armed["run"], "an unarmed signer must fail, not skip green"
+
+
+def test_the_signer_downloads_and_records_the_source_publish_run():
+    """Cross-run signing must preserve the deployed run's provenance."""
+    download = _step("download")
+    assert download["with"]["run-id"] == "${{ inputs.source-run-id }}"
+    assert download["with"]["github-token"] == "${{ github.token }}"
+    assert download["with"]["name"] == "${{ inputs.artifact-name }}"
+    record_step = _step("record")
+    assert record_step["env"]["SOURCE_RUN_ID"] == "${{ inputs.source-run-id }}"
+    assert record_step["env"]["CLAIMED_CODE_SHA"] == (
+        "${{ steps.source.outputs.head_sha }}"
+    )
+    assert '--workflow-run-id "$SOURCE_RUN_ID"' in record_step["run"]
+    assert '--claimed-code-sha "$CLAIMED_CODE_SHA"' in record_step["run"]
+
+
+def test_dispatch_inputs_are_never_interpolated_into_shell_source():
+    for step in _steps():
+        assert "${{ inputs." not in str(step.get("run", "")), (
+            f"{step.get('name')!r} interpolates a dispatch input into shell "
+            "source; pass untrusted inputs through step-scoped env instead"
+        )
+
+
+def test_the_signer_validates_the_source_run_and_executes_main_code():
+    source = _step("Validate the source publish run")
+    assert "gh api" in source["run"]
+    assert ".github/workflows/publish.yml" in source["run"]
+    assert 'source_branch" != "main' in source["run"]
+    assert "head_sha=" in source["run"]
+    checkout = next(step for step in _steps() if step.get("name") == "Check out populus")
+    assert "with" not in checkout or "ref" not in checkout["with"], (
+        "the signer must execute the reviewed main-branch implementation, not "
+        "code selected by a dispatch input"
+    )
 
 
 def test_the_workflow_holds_no_pages_write_credential():

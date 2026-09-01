@@ -529,13 +529,12 @@ def test_every_needs_output_reference_is_declared() -> None:
 
 
 def test_a_skipped_signer_fails_the_run() -> None:
-    """R20 — the asymmetry that makes this necessary.
+    """R20 — the final caller-side failure propagation remains explicit.
 
-    `POPULUS_RECORD_SIGN_ARMED` gates the signer at JOB level. Unset while
-    publishing stays armed, the job is **skipped and reports success**: the
-    deploy completes, no generation is written, and nothing notices until the
-    R18 gate fires a day later. `needs.<job>.result` distinguishes `skipped`
-    from `success`, but only if something actually asserts on it.
+    The top-level signer now fails its first step when unarmed, and the local
+    `sign` job watches that exact run with `--exit-status`. This assertion is
+    still the last line of defence: any local sign failure or future accidental
+    skip after a successful deploy must turn the parent workflow red.
 
     A skipped DEPLOY job is legitimate — it is `needs: publish`, skipped
     whenever publish is skipped, which is the entire unarmed state. Tightening
@@ -632,9 +631,9 @@ def test_every_downloaded_artifact_is_uploaded_somewhere() -> None:
                 elif "actions/download-artifact" in uses:
                     downloaded.append((path.name, _artifact_shape(name)))
     # A name that is ENTIRELY an expression is supplied by the caller, so this
-    # workflow cannot know it. Those are covered by the reusable-workflow input
-    # check below instead: the input must be `required` with no default, so a
-    # caller cannot silently get a wrong one.
+    # workflow cannot know it. Those are covered by the workflow input check
+    # below instead: the input must be `required` with no default, so a caller
+    # or dispatcher cannot silently get a wrong one.
     missing = sorted(
         f"{wf}: downloads {shape!r}"
         for wf, shape in downloaded
@@ -667,7 +666,9 @@ def test_a_caller_supplied_artifact_name_has_no_default() -> None:
     for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         trigger = doc.get("on") or doc.get(True) or {}
-        inputs = ((trigger.get("workflow_call") or {}).get("inputs")) or {}
+        call_inputs = ((trigger.get("workflow_call") or {}).get("inputs")) or {}
+        dispatch_inputs = ((trigger.get("workflow_dispatch") or {}).get("inputs")) or {}
+        inputs = {**call_inputs, **dispatch_inputs}
         # Only inputs actually USED as an artifact name. `dist-artifact-id` and
         # `dist-artifact-expires-at` are optional provenance metadata recorded as
         # null when absent — matching on the word "artifact" swept those in and

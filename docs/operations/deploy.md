@@ -1,11 +1,12 @@
 # Runbook — deploy the dashboard (ARCHITECTURE.md §12.1)
 
-The dashboard is deployed **publisher-side**, by the same workflow run that built
-and published the data. There is no manual `wrangler` path, no bootstrap mode,
-and no first-run exemption: the first deploy runs the identical protocol every
-later deploy runs. What is special about the first run is only that it has **no
-prior deployment to roll back to** — see §3, which is the one part of this
-runbook that stops existing after the first success.
+The dashboard is deployed **publisher-side**, by the workflow run that built and
+published the data. That run dispatches a separate top-level `record-sign.yml`
+run and fails unless the signer succeeds. There is no manual `wrangler` path,
+no bootstrap mode, and no first-run exemption: the first deploy runs the
+identical protocol every later deploy runs. What is special about the first run
+is only that it has **no prior deployment to roll back to** — see §3, which is
+the one part of this runbook that stops existing after the first success.
 
 Companions: [`rollback.md`](rollback.md) (§13.5 — the only supported rollback,
 now including the dashboard), [`attestation.md`](attestation.md) (what is signed
@@ -24,7 +25,7 @@ The full normative sequence is §12.1; this is the operator's map of it.
 | 3 | Isolated deploy job: runs a credential-free `npm ci` in `dashboard/`, asserts `dashboard/node_modules/.bin/wrangler --version` outputs exactly `4.60.0` **before any step holds the Cloudflare token** (a missing or drifted binary fails closed here — never a registry fetch), then downloads the artifact, recomputes `dist_digest`, asserts the workflow-locked branch equals the project's configured `production_branch`, asserts the custom domain is `active`, and (R11c) captures the rollback anchor **and proves it is the deployment the domain actually serves** — `latest_production_deployment()` answers *newest by creation*, which diverges from *currently serving* after any dashboard rollback; a disagreement, or an unreadable marker on either side, refuses here | production untouched |
 | 4 | **Preview** upload, then verified **inventory-wide** (every `inventory.json` path fetched with redirects disabled, decoded body hash + length checked) plus markers and `stats.json` | production untouched, prior build still serving |
 | 5 | **Production** upload of provably the same bytes, then live-verified on `publicfilings.org`. The domain is given one 45 s settle **before** the first sweep (R11b — after a promotion the origin answers while individual objects may still be materialising, and a partially written body reads as a hash mismatch, which is never waited out). A failure whose findings are then ALL inventoried paths answering `HTTP 404, expected 200` gets one further 45 s settle and one re-verification of the **full** inventory (R11a — the custom domain can still be resolving individual objects seconds after a promotion); every other failure shape, and a second failure of that same shape, triggers the compensating Cloudflare rollback to the captured prior deployment id | prior build restored — **except on the first run**, §3 |
-| 6 | `record-sign.yml` independently re-derives everything, re-verifies the served tree, and attests `builds/<build_id>/deployments/<gen>.json` | deployment live but **unrecorded** — the next publish is gated (the R18 gate; §13.2, §17) until a valid generation exists |
+| 6 | An unprivileged `publish.yml:sign` job dispatches the top-level `record-sign.yml` workflow and watches it to completion. The signer independently validates the source publish run, downloads that run's artifact, re-derives everything, re-verifies the served tree, and attests `builds/<build_id>/deployments/<gen>.json` | deployment live but **unrecorded** — the watcher and assertion fail this run, and the next publish is gated (R18; §13.2, §17) until a valid generation exists |
 
 Step 6's signer retries a **no-verdict** attempt and never a **rejection**
 (PR #53): a transport failure or unavailable path during the signing sweep —
@@ -44,7 +45,7 @@ read three marker files.
 
 ---
 
-## 2. Owner prerequisites — four, none of which CI can do
+## 2. Owner prerequisites — five, none of which CI can do
 
 1. **`DATA_REPO_PAT`** — fine-grained on `populus-data`: Contents read/write,
    **plus Administration: read, permanently** (the immutable-releases setting
@@ -90,21 +91,33 @@ read three marker files.
    | `publish.yml:deploy` | `production-pages-deploy` | `CLOUDFLARE_PAGES_EDIT_TOKEN` |
    | `record-sign.yml:record` | `production-record-sign` | `DATA_REPO_PAT`, `CLOUDFLARE_PAGES_READ_TOKEN` |
 
-   Each environment is restricted to selected branch `main` only. The reusable
-   signer declares **no** `workflow_call` secrets and the caller passes none:
-   the called job's `environment:` is what resolves its secrets.
+   Each environment is restricted to selected branch `main` only. The signer is
+   a separately dispatched top-level workflow: its own `record` job selects
+   `production-record-sign`, so the dispatcher passes **no secrets** and holds
+   only `actions: write`. The signer holds `actions: read`, `contents: read`,
+   `id-token: write`, and `attestations: write`; it never holds Pages Write.
+
+   This shape is empirical, not speculative. Isolated probe run `33473559423`
+   bound a direct job and a reusable called job to the same temporary
+   environment and secret. The direct job reported `empty=false`, length 27;
+   the reusable called job reported `empty=true`, length 0. The temporary
+   branch, PR, environment, and secret were then removed. Therefore
+   `environment:` on a reusable called job is not a usable secret boundary in
+   this repository/runtime, while a top-level job is.
 
    **Deployment-safety note.** Merging the PR that adds these `environment:`
    keys while the environments do not yet exist makes all three jobs fail
    **closed** (an absent environment secret resolves to the empty string).
    That is intended: publishing stays DISARMED (`POPULUS_PUBLISH_ARMED`
    unset/false) until the owner has created the environments, entered the
-   secrets, run one supervised `workflow_dispatch` that succeeds end to end
-   (job list and signed deployment generation inspected), deleted the three
-   repository-scope secrets, and run a second supervised dispatch proving
-   there is no repository-scope fallback. Only then is scheduling re-armed
-   (§3 below). Do not weaken the environment binding to avoid the fail-closed
-   window.
+   secrets, and run one supervised `workflow_dispatch` that succeeds end to end
+   (job list and signed deployment generation inspected). Repository-scope
+   copies are an owner-controlled recovery fallback during the current incident:
+   **do not edit or delete them during code recovery.** After the first full
+   supervised run succeeds, the owner may delete those copies and run a second
+   supervised dispatch proving there is no repository-scope fallback. Only then
+   is scheduling re-armed (§3 below). Do not weaken the environment binding to
+   avoid the fail-closed window.
 
 ---
 
@@ -118,17 +131,18 @@ gh variable list --repo johnbaekk-spec/populus
 
 **The order is load-bearing, and the reverse order is the dangerous one.**
 
-- Arming the signer early is **inert**: `record-sign.yml` is `workflow_call`-only,
-  so with no armed caller it never executes. There is no cost to setting it first.
-- Arming the publisher first is **not** inert. `record-sign.yml` gates on
-  `POPULUS_RECORD_SIGN_ARMED` at the **job** level, and a job whose `if:` is false
-  is **skipped — and a skipped job reports success.** A run in that state deploys
-  to production, writes no deployment generation, and shows green. Nothing
-  notices until the next publish is gated a day later.
-- The workflow-side control for this is a caller-side assertion job
-  (`needs: [deploy, sign]`, `if: always()`) that fails unless
-  `needs.sign.result == 'success'`. The arming order is the **provisioning** half
-  of the same property — do both; neither substitutes for the other.
+- Arming the signer first is safe: `record-sign.yml` only runs when explicitly
+  dispatched, and every dispatch independently validates a `main`-branch
+  `publish.yml` source run and its artifact before signing.
+- Arming the publisher first is unsafe: it can deploy production before it asks
+  the signer to run. The signer checks `POPULUS_RECORD_SIGN_ARMED` in a **failing
+  first step**, not a job-level `if`, so an unarmed signer can never skip green;
+  nevertheless, production would be live and unrecorded.
+- `publish.yml:sign` waits on the exact dispatched run and propagates its exit
+  status. The caller-side assertion job (`needs: [deploy, sign]`, `if: always()`)
+  then fails unless `needs.sign.result == 'success'`. The arming order is the
+  provisioning half of the same property — do both; neither substitutes for
+  the other.
 
 Then dispatch, and **watch this run** (§4):
 
@@ -268,6 +282,37 @@ code falls through to a `RecordRefused` with **no override of any kind**, so a
 correct `acknowledge_unrecorded_code_sha` is accepted, ignored, and the run
 fails identically.
 
+### Preferred recovery when signing failed before a verification verdict
+
+If deploy verification succeeded and signing failed for an **operational**
+reason before it reached a content verdict — missing secret propagation,
+startup failure, or an unavailable dependency — do not redeploy first. After
+merging the signer fix, dispatch the top-level signer against the retained
+source artifact. This is not an attestation bypass: the workflow validates that
+the source run is a `main`-branch `publish.yml` run, cross-checks its GitHub API
+head SHA against the artifact's code marker, verifies the attested data pointer,
+re-hashes the artifact, queries Cloudflare with Pages Read, and performs the
+complete live served-tree verification before it writes anything.
+
+For the 2026-08-31 incident, the exact recovery request is:
+
+```bash
+gh workflow run record-sign.yml --repo johnbaekk-spec/populus --ref main \
+  -f request-id=manual-33421701055-1 \
+  -f source-run-id=33421701055 \
+  -f artifact-name=site-20260831.1
+
+gh run list --repo johnbaekk-spec/populus --workflow record-sign.yml \
+  --event workflow_dispatch --limit 10
+gh run watch <record-sign-run-id> --repo johnbaekk-spec/populus --exit-status
+```
+
+On success, verify the appended generation and re-dispatch `publish.yml` with
+no acknowledgement; the gate now has a valid generation matching the live
+site. If the artifact has expired, the source-run metadata does not validate,
+or the signer reaches a **rejection** verdict, do not force it: follow the
+variant-specific forward-fix or rollback procedure below.
+
 ### Variant 1 — zero generations
 
 **Symptom.** The `Gate on prior deployment generation` step refuses:
@@ -282,10 +327,11 @@ refused to attest them. The gate now blocks every publish — including the one
 carrying the fix. This is the deadlock TD-4 predicts, and it is the gate working
 correctly: it will not publish over a state nobody has explained.
 
-**What NOT to do.** Do not attest the live build to clear the gate — that
-records a provenance claim for something you know is wrong, which is the one
-thing this system exists to prevent. Do not try to delete the deployment;
-Cloudflare refuses to delete an active production deployment.
+**What NOT to do.** Do not bypass or weaken the signer merely to clear the gate,
+and never attest bytes that produced a content-rejection verdict. A fresh
+top-level signer run after an operational failure is allowed only because it
+performs the complete verification described above. Do not try to delete the
+deployment; Cloudflare refuses to delete an active production deployment.
 
 **Clearing it.**
 
@@ -329,11 +375,13 @@ zero-generations branch only. Supplying it produces a byte-identical failure and
 wastes a full dispatch. Observed 2026-08-31 on run `33411333091`, where the
 override was set correctly to the live sha and the gate refused anyway.
 
-**What NOT to do.** Do not attest the live build to make the mismatch go away —
-that records a provenance claim for a deployment whose signer already refused it.
-Do not widen the comparison; "compared exactly, never by prefix" is the control.
+**What NOT to do.** Do not bypass the signer or attest a deployment that already
+received a content-rejection verdict. A previous operational failure before any
+verdict may use the fully verifying recovery dispatch above. Do not widen the
+comparison; "compared exactly, never by prefix" is the control.
 
-**Clearing it — restore the domain to the deployment that IS attested.**
+**Clearing it when the verifying recovery dispatch cannot succeed — restore the
+domain to the deployment that IS attested.**
 
 1. Fix the underlying signer defect and merge it, or the next run reproduces the
    incident.

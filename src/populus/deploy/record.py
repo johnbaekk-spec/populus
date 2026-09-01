@@ -686,6 +686,7 @@ def sign_deployment(
     dist_artifact_expires_at: str | None = None,
     claimed_deployment_id: str | None = None,
     claimed_dist_digest: str | None = None,
+    claimed_code_sha: str | None = None,
     marker_path: str = DEFAULT_MARKER_PATH,
     stats_path: str = DEFAULT_STATS_PATH,
 ) -> SigningResult:
@@ -717,6 +718,7 @@ def sign_deployment(
             dist_artifact_expires_at=dist_artifact_expires_at,
             claimed_deployment_id=claimed_deployment_id,
             claimed_dist_digest=claimed_dist_digest,
+            claimed_code_sha=claimed_code_sha,
             marker_path=marker_path,
             stats_path=stats_path,
         )
@@ -778,6 +780,7 @@ def _sign(
     dist_artifact_expires_at: str | None,
     claimed_deployment_id: str | None,
     claimed_dist_digest: str | None,
+    claimed_code_sha: str | None,
     marker_path: str,
     stats_path: str,
 ) -> SigningResult:
@@ -803,6 +806,11 @@ def _sign(
         raise RecordRefused(
             f"the deploy job claims dist_digest {claimed_dist_digest!r}; the "
             f"artifact hashes to {facts.dist_digest!r}"
+        )
+    if claimed_code_sha is not None and claimed_code_sha != facts.code_sha:
+        raise RecordRefused(
+            f"the source workflow run reports code_sha {claimed_code_sha!r}; "
+            f"the artifact reports {facts.code_sha!r}"
         )
 
     deployment = pages.production_deployment()
@@ -1479,6 +1487,11 @@ def _add_sign_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--claimed-dist-digest", default="")
     parser.add_argument(
+        "--claimed-code-sha",
+        default="",
+        help="the source workflow run's head SHA, cross-checked against the artifact",
+    )
+    parser.add_argument(
         "--attestation",
         required=True,
         choices=("sigstore", "staging-noop"),
@@ -1740,6 +1753,7 @@ def _main_sign(
                 dist_artifact_expires_at=args.dist_artifact_expires_at,
                 claimed_deployment_id=args.claimed_deployment_id or None,
                 claimed_dist_digest=args.claimed_dist_digest or None,
+                claimed_code_sha=args.claimed_code_sha or None,
             )
             if result.outcome != UNAVAILABLE:
                 break
