@@ -1,0 +1,10 @@
+name: probe-reusable-environment-secret-caller
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    uses: ./.github/workflows/probe-reusable-env-called.yml

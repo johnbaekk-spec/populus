@@ -1,0 +1,25 @@
+name: probe-reusable-environment-secret-called
+
+on:
+  workflow_call:
+    secrets:
+      DATA_REPO_PAT:
+        required: false
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production-record-sign
+    steps:
+      - name: Report only secret emptiness and length
+        env:
+          PROBE_SECRET: ${{ secrets.DATA_REPO_PAT }}
+        run: |
+          if [ -z "$PROBE_SECRET" ]; then
+            echo "probe_empty=true"
+          else
+            echo "probe_empty=false"
+          fi
+          echo "probe_length=${#PROBE_SECRET}"
