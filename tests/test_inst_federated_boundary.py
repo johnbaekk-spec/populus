@@ -595,13 +595,14 @@ def test_the_consumer_reads_the_tables_the_producer_declares():
     """The producer/consumer seam, pinned.
 
     `publish/digests.py` `ARTIFACT_PROJECTIONS['inst_serving.db']` enumerates the
-    tables the build WRITES and digests; `server._SERVING_REQUIRED_TABLES` names
-    the ones the MCP boundary READS. Nothing else connects the two halves — a
+    tables the build WRITES and digests;
+    `institutional_tools._SERVING_REQUIRED_TABLES` names the ones the MCP
+    boundary READS. Nothing else connects the two halves — a
     rename on either side would leave the boundary permanently "unevaluated" in
     production while every test on both sides still passed, because each half is
     internally consistent with its own fixture.
     """
-    from populus.mcp_server import server as srv
+    from populus.mcp_server import institutional_tools as srv
     from populus.publish.digests import ARTIFACT_PROJECTIONS
 
     declared = set(ARTIFACT_PROJECTIONS[INST_SERVING_ARTIFACT])
@@ -762,7 +763,7 @@ def test_every_column_the_boundary_reads_is_declared_by_the_producer(tmp_path):
 
     Mutation guard: rename any column in `SERVING_SCHEMA` and this fails.
     """
-    from populus.mcp_server.server import _SERVING_DETAIL_SQL
+    from populus.mcp_server.institutional_tools import _SERVING_DETAIL_SQL
 
     path = tmp_path / "columns.db"
     conn = sqlite3.connect(str(path))
@@ -783,7 +784,9 @@ def test_every_column_the_boundary_reads_is_declared_by_the_producer(tmp_path):
 def test_the_producer_declares_every_table_the_boundary_requires(tmp_path):
     """The table half of the same contract, executed rather than asserted from a
     hand-maintained tuple."""
-    from populus.mcp_server.server import _SERVING_REQUIRED_TABLES
+    from populus.mcp_server.institutional_tools import (
+        _SERVING_REQUIRED_TABLES,
+    )
 
     path = tmp_path / "tables.db"
     conn = sqlite3.connect(str(path))

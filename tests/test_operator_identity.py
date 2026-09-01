@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import populus
 from populus.ingest import user_agent as filings_ua
+from populus.ingest.house import _PoliteFetcher
+from populus.net import TransportResponse
+from populus.net.sec_client import SecClient
 from populus.operator_identity import (
     CONTACT_ENV,
     DEFAULT_CONTACT,
@@ -57,3 +60,56 @@ def test_env_change_after_import_affects_later_requests(monkeypatch):
         "late@example.org", populus.__version__
     )
     assert "late@example.org" in sec_user_agent(operator_contact()[0])
+
+
+class _RecordingTransport:
+    """Records the headers each request actually carried. No sockets."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, str]] = []
+
+    def get(self, url, *, headers):
+        self.sent.append(dict(headers))
+        return TransportResponse(200, {}, b"ok")
+
+
+def test_contact_changed_after_construction_reaches_the_next_request(monkeypatch):
+    """D9 at the TRANSPORT, not at a string helper.
+
+    The prior test composed ``sec_user_agent(operator_contact()[0])`` by hand
+    and so stayed green while ``SecClient`` froze its User-Agent at
+    construction — measured 2026-08-28: two requests either side of a
+    POPULUS_CONTACT change both carried the FIRST address. This drives real
+    requests through the supported construction/request path and asserts on the
+    bytes the transport received.
+    """
+    monkeypatch.setenv(CONTACT_ENV, "first@example.org")
+
+    # --- SEC: the bare application-plus-contact form -----------------------
+    sec_transport = _RecordingTransport()
+    client = SecClient(
+        sec_transport, sleep=lambda _s: None, monotonic=lambda: 0.0
+    )
+    client.get("https://www.sec.gov/files/company_tickers.json")
+    monkeypatch.setenv(CONTACT_ENV, "second@example.org")
+    client.get("https://data.sec.gov/submissions/CIK0001067983.json")
+
+    assert [h["User-Agent"] for h in sec_transport.sent] == [
+        "Populus first@example.org",
+        "Populus second@example.org",
+    ]
+
+    # --- House/Senate: the parenthesized bot form --------------------------
+    house_transport = _RecordingTransport()
+    fetcher = _PoliteFetcher(
+        house_transport, sleep=lambda _s: None, monotonic=lambda: 0.0
+    )
+    monkeypatch.setenv(CONTACT_ENV, "third@example.org")
+    fetcher.fetch("https://disclosures-clerk.house.gov/a")
+    monkeypatch.setenv(CONTACT_ENV, "fourth@example.org")
+    fetcher.fetch("https://disclosures-clerk.house.gov/b")
+
+    assert [h["User-Agent"] for h in house_transport.sent] == [
+        filings_user_agent("third@example.org", populus.__version__),
+        filings_user_agent("fourth@example.org", populus.__version__),
+    ]

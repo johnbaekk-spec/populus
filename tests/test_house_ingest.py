@@ -310,6 +310,52 @@ def test_zip_directory_member_is_not_the_xml_member(tmp_path):
     _assert_no_partial_writes(tmp_path)
 
 
+def _typed_zip(name: str, data: bytes, unix_mode: int) -> bytes:
+    """A ZIP whose single member records *unix_mode* as its POSIX st_mode.
+
+    ``create_system=3`` is what makes the high 16 bits of ``external_attr``
+    a Unix mode; without it the file-type bits carry no meaning.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        info = zipfile.ZipInfo(name)
+        info.create_system = 3
+        info.external_attr = unix_mode << 16
+        archive.writestr(info, data)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    "unix_mode,kind",
+    [
+        (0o120777, "a symbolic link"),
+        (0o020600, "a character device"),
+        (0o060600, "a block device"),
+        (0o010600, "a FIFO"),
+        (0o140600, "a UNIX-domain endpoint file"),
+    ],
+)
+def test_non_regular_xml_member_is_a_failure(tmp_path, unix_mode, kind):
+    # The bytes are a VALID index — so only the entry TYPE can refuse it.
+    # Before the type check, ZipInfo.is_dir() was false for every one of
+    # these, the member was opened, and the index was archived as if regular.
+    payload = _typed_zip("2026FD.xml", _index_xml(2026, [WITTMAN]), unix_mode)
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is True
+    assert kind in result.note
+    assert "not a regular XML member" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_unix_regular_mode_xml_member_is_still_accepted(tmp_path):
+    # The type check must refuse non-regular entries only, not every archive
+    # that happens to record a Unix mode.
+    payload = _typed_zip("2026FD.xml", _index_xml(2026, [WITTMAN]), 0o100644)
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is False
+    assert result.docids == ("20034916",)
+
+
 @pytest.mark.parametrize(
     "name", ["../evil.xml", "/abs.xml", "a/../../b.xml", "up\\down.xml"]
 )

@@ -34,8 +34,6 @@ from populus.mcp_server import inst_queries as iq
 from populus.mcp_server import queries as q
 from populus.mcp_server.congress_tools import register_congress_tools
 from populus.mcp_server.institutional_tools import (
-    _SERVING_DETAIL_SQL,  # noqa: F401 — re-exported: contract tests pin it here
-    _SERVING_REQUIRED_TABLES,  # noqa: F401 — re-exported: contract tests pin it here
     inst_health_caveats,
     register_institutional_tools,
 )
@@ -468,10 +466,13 @@ def _build_sec_client() -> SecClient:
 
     from populus.net.sec_client import HttpxSecTransport, sec_contact
 
-    contact, _warning = sec_contact(warn=lambda msg: print(msg, file=sys.stderr))
+    sec_contact(warn=lambda msg: print(msg, file=sys.stderr))
+    # No contact= : this one client serves the whole process, so pinning the
+    # contact here would freeze it for the process lifetime. The client
+    # resolves POPULUS_CONTACT per request (D9); the call above exists only to
+    # emit the unset-contact warning once, at startup.
     return SecClient(
         HttpxSecTransport(),
-        contact=contact,
         sleep=time.sleep,
         monotonic=time.monotonic,
     )

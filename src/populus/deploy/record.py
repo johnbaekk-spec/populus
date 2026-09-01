@@ -784,8 +784,14 @@ def _sign(
     # Keyword, always: `test_attestation_structure.py` flags any production call
     # to an attestation-taking callable that passes it positionally, because a
     # positional argument is one refactor away from being an inherited default.
-    build_id, _manifest = attested_build_id(data_repo, attestation=attestation)
+    # LD12b: the LOCAL artifact is validated FIRST. `attested_build_id` calls
+    # the attestation provider (pointer, then the manifest it names), which is
+    # an I/O boundary — so verifying first meant a v1-shaped or control-less
+    # artifact reached the attestation provider before the inventory refused
+    # it. Only the ORDER changes here; the identity comparison below, and every
+    # message it can produce, is untouched.
     facts = artifact_facts(artifact_dir, marker_path=marker_path, stats_path=stats_path)
+    build_id, _manifest = attested_build_id(data_repo, attestation=attestation)
 
     if facts.build_id != build_id:
         raise RecordRefused(

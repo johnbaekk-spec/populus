@@ -2557,6 +2557,14 @@ def test_a_v1_shaped_artifact_is_refused_before_any_network_or_signing(tmp_path)
     assert harness.origin.seen == [], "the sweep ran over a refused envelope"
     assert harness.pages.verbs == [], "the Pages API was read for a refused envelope"
     assert harness.attestation.attested == [], "a refused envelope was attested"
+    # LD12b killing assertion. `attested` alone passed before the fix: the
+    # signer verified the pointer and the manifest attestations FIRST, so a v1
+    # artifact reached the attestation PROVIDER — an I/O boundary — before the
+    # inventory refused it. `verified` is the collection that records those
+    # calls, and it was ["latest.json", "manifest.json"] here.
+    assert harness.attestation.verified == [], (
+        "a v1 artifact reached the attestation provider before being refused"
+    )
 
 
 def test_an_artifact_whose_tree_lost_its_control_is_refused(tmp_path):
@@ -2567,6 +2575,35 @@ def test_an_artifact_whose_tree_lost_its_control_is_refused(tmp_path):
 
     assert harness.result.outcome == REJECTED
     assert harness.origin.seen == []
+    assert harness.attestation.attested == []
+    assert harness.attestation.verified == [], (
+        "a control-less artifact reached the attestation provider before "
+        "being refused"
+    )
+
+
+@pytest.mark.parametrize("forbidden", ["_redirects", "_worker.js", "functions/api.js"])
+def test_an_artifact_carrying_a_prohibited_control_is_refused_before_any_io(
+    tmp_path, forbidden
+):
+    """LD12 killing test at the SIGNER seam.
+
+    Before the fix `build_inventory` filed `_redirects`, `_worker.js` and
+    Functions artifacts under `files`, so this artifact produced a document that
+    validated cleanly and the signer went on to read Cloudflare, sweep the
+    origin, and attest a generation whose tree carries prohibited provider
+    behaviour.
+    """
+    artifact = _artifact(tmp_path, _site())
+    target = artifact / "site" / forbidden
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"/* /index.html 200\n")
+    harness = _run(tmp_path, artifact=artifact)
+
+    assert harness.result.outcome == REJECTED
+    assert harness.origin.seen == []
+    assert harness.pages.verbs == []
+    assert harness.attestation.verified == []
     assert harness.attestation.attested == []
 
 

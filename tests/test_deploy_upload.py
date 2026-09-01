@@ -47,6 +47,7 @@ from populus.deploy.orchestrator import (
     DeployAborted,
     RollbackSiteObservation,
     PreviewVerificationFailed,
+    ServedIdentity,
     ProductionVerificationFailed,
     Uploader,
     UploadedDeployment,
@@ -80,6 +81,10 @@ BRANCH = "main"
 
 #: R11c: the agreeing code_sha the default rig probe reports.
 ANCHOR_SHA = "a" * 40
+#: F1: the probe answers with the BUILD, not just the commit — `code_sha` alone
+#: cannot separate two deployments cut from one commit against different data.
+ANCHOR_BUILD_ID = "20260801.1"
+ANCHOR_IDENTITY = ServedIdentity(build_id=ANCHOR_BUILD_ID, code_sha=ANCHOR_SHA)
 PREVIEW_BRANCH = "populus-preview"
 PRIOR = "dep-prior"
 PRIOR_URL = "https://dep-prior.populus-site.pages.dev"
@@ -116,7 +121,7 @@ HEADERS_CONTROL = b"/*\n  Content-Security-Policy: default-src 'self'\n"
 OBSERVATION = RollbackSiteObservation(
     body_sha256="c" * 64,
     body_length=99,
-    build_id="20260801.1",
+    build_id=ANCHOR_BUILD_ID,
     code_sha=ANCHOR_SHA,
     headers=tuple(sorted((k, (v,)) for k, v in REQUIRED_RESPONSE_HEADERS.items())),
 )
@@ -354,7 +359,7 @@ class Rig:
             # R11c default: an agreeing probe, so tests that are not ABOUT the
             # anchor keep exercising what they were written to exercise. The
             # disagreement and unreadable cases get explicit overrides.
-            serving_probe=lambda url: ANCHOR_SHA,
+            serving_probe=lambda url: ANCHOR_IDENTITY,
             # LD12a/LD12c default: a coherent observation, identical before the
             # upload and after any rollback.
             observer=lambda url: OBSERVATION,
@@ -572,11 +577,11 @@ def test_a_failing_wrangler_is_an_upload_failure(rig: Rig, tmp_path: Path) -> No
     rig.wrangler.stderr = "✘ [ERROR] Authentication error [code: 10000]"
 
     with pytest.raises(UploadFailed, match="exited 1"):
-        rig.upload(tmp_path, environment=PREVIEW, branch=PREVIEW_BRANCH)
+        rig.upload(rig.source, environment=PREVIEW, branch=PREVIEW_BRANCH)
 
     assert "Authentication error" in str(
         pytest.raises(
-            UploadFailed, rig.upload, tmp_path, environment=PREVIEW, branch=PREVIEW_BRANCH
+            UploadFailed, rig.upload, rig.source, environment=PREVIEW, branch=PREVIEW_BRANCH
         ).value
     )
 
@@ -586,7 +591,7 @@ def test_wrangler_printing_no_url_is_an_upload_failure(rig: Rig, tmp_path: Path)
     rig.wrangler.stdout = "✨ Success! Uploaded 0 files (4 already uploaded)\n"
 
     with pytest.raises(UploadFailed, match="no \\*.pages.dev URL"):
-        rig.upload(tmp_path, environment=PREVIEW, branch=PREVIEW_BRANCH)
+        rig.upload(rig.source, environment=PREVIEW, branch=PREVIEW_BRANCH)
 
 
 def test_a_deployment_that_is_not_the_one_wrangler_made_is_refused(
@@ -603,7 +608,7 @@ def test_a_deployment_that_is_not_the_one_wrangler_made_is_refused(
     rig.api.publish(PREVIEW)
 
     with pytest.raises(UploadFailed, match="Another deployment landed"):
-        rig.upload(tmp_path, environment=PREVIEW, branch=PREVIEW_BRANCH)
+        rig.upload(rig.source, environment=PREVIEW, branch=PREVIEW_BRANCH)
 
 
 def test_the_upload_result_carries_the_raw_provider_payload(
@@ -617,7 +622,7 @@ def test_the_upload_result_carries_the_raw_provider_payload(
     """
     rig.wrangler.uses_functions = OMIT
 
-    uploaded = rig.upload(tmp_path, environment=PREVIEW, branch=PREVIEW_BRANCH)
+    uploaded = rig.upload(rig.source, environment=PREVIEW, branch=PREVIEW_BRANCH)
 
     assert "uses_functions" not in uploaded.payload
     assert dict(uploaded.payload) == rig.api.deployments[0]
@@ -637,7 +642,7 @@ def test_the_reported_environment_comes_from_the_provider(
     """
     rig.wrangler.environment_for = {PREVIEW_BRANCH: PRODUCTION, BRANCH: PRODUCTION}
 
-    uploaded = rig.upload(tmp_path, environment=PRODUCTION, branch=PREVIEW_BRANCH)
+    uploaded = rig.upload(rig.source, environment=PRODUCTION, branch=PREVIEW_BRANCH)
 
     assert uploaded.environment == PRODUCTION
 
@@ -927,3 +932,66 @@ def test_the_orchestrator_aborts_when_the_environment_disagrees(rig: Rig) -> Non
         rig.run()
 
     assert len(rig.wrangler.calls) == 1
+
+
+# --- LD12b: the uploader validates what it is about to upload ----------------
+
+
+def test_the_uploader_refuses_a_control_less_tree_before_the_runner(
+    tmp_path: Path,
+) -> None:
+    """LD12b killing test at the UPLOAD seam.
+
+    Before the fix `WranglerUploader.__call__` built the argv and invoked the
+    runner immediately: a direct caller uploaded any directory at all, and a
+    control-less tree was only caught afterwards, by the post-mutation 404
+    probes, with provider state already changed. The sentinel runner records
+    every invocation, so a single wrangler call fails this.
+    """
+    tree = tmp_path / "control-less"
+    tree.mkdir()
+    (tree / "index.html").write_bytes(SITE["index.html"])
+
+    invoked: list[Any] = []
+    uploader = WranglerUploader(
+        project=PROJECT,
+        lookup=None,
+        executable=WRANGLER_BIN,
+        runner=lambda argv: invoked.append(list(argv)),
+    )
+
+    with pytest.raises(UploadFailed, match="inventory v2"):
+        uploader(tree, environment=PREVIEW, branch=PREVIEW_BRANCH)
+
+    assert invoked == [], "wrangler ran against a tree that is not an exact v2"
+
+
+@pytest.mark.parametrize(
+    "forbidden", ["_redirects", "_worker.js", "functions/api.js"]
+)
+def test_a_tree_carrying_a_prohibited_control_never_reaches_wrangler(
+    rig: Rig, forbidden: str
+) -> None:
+    """LD12: the forbidden provider artifacts make ZERO uploader calls.
+
+    The tree is otherwise perfect — the same one every green test in this file
+    uploads — plus one prohibited artifact. Before the fix that artifact was
+    inventoried as an ordinary served file, the upload ran, and the prohibited
+    behaviour was live on the preview deployment before anything objected.
+    """
+    target = rig.source / forbidden
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"/* /index.html 200\n")
+
+    with pytest.raises(UploadFailed, match="inventory v2"):
+        rig.upload(rig.source, environment=PREVIEW, branch=PREVIEW_BRANCH)
+
+    assert rig.wrangler.calls == [], "a prohibited provider control was uploaded"
+    assert rig.api.deployments == [
+        {
+            "id": PRIOR,
+            "environment": "production",
+            "url": PRIOR_URL,
+            "uses_functions": False,
+        }
+    ], "the provider was mutated by a refused upload"

@@ -239,13 +239,18 @@ class SecClient:
         self,
         transport: SecTransport,
         *,
-        contact: str,
+        contact: str | None = None,
         sleep: Callable[[float], None],
         monotonic: Callable[[], float],
         utcnow: Callable[[], datetime] | None = None,
     ) -> None:
         self._transport = transport
-        self._user_agent = sec_user_agent(contact)
+        # D9: NOT resolved here. A contact frozen at construction cannot be
+        # changed by a later POPULUS_CONTACT, and the live MCP server builds
+        # exactly one client for the whole process lifetime. `contact=None`
+        # (the production spelling) resolves per request; an explicit string
+        # pins one, which is what a test asserting exact bytes wants.
+        self._contact = contact
         self._sleep = sleep
         self._monotonic = monotonic
         # Wall-clock UTC, injectable for tests — needed ONLY to resolve an
@@ -264,7 +269,11 @@ class SecClient:
 
     @property
     def user_agent(self) -> str:
-        return self._user_agent
+        """The bytes the NEXT request will carry — resolved at call time."""
+        contact = self._contact
+        if contact is None:
+            contact = sec_contact()[0]
+        return sec_user_agent(contact)
 
     def get(self, url: str) -> SecResponse:
         """Fetch *url*, honouring every §11.4 condition."""
@@ -355,7 +364,7 @@ class SecClient:
             with self._state:
                 entry = self._cache.get(url)
             headers = {
-                "User-Agent": self._user_agent,
+                "User-Agent": self.user_agent,
                 "Accept-Encoding": ACCEPT_ENCODING,
             }
             if entry is not None and entry.etag:

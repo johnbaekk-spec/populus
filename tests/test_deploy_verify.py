@@ -1177,8 +1177,12 @@ def test_the_probe_reads_the_marker_through_the_provider_rewrite() -> None:
     origin = _Origin({"index.html": MARKED_PAGE})
     probe, client = _probe_against(origin)
 
-    assert probe("https://publicfilings.org") == (
-        "4fd2987857b24045dc9c82ae368343df35ea9a22"
+    from populus.deploy.orchestrator import ServedIdentity
+
+    # F1: BOTH markers. `code_sha` alone names a commit, not a build.
+    assert probe("https://publicfilings.org") == ServedIdentity(
+        build_id="20260814.2",
+        code_sha="4fd2987857b24045dc9c82ae368343df35ea9a22",
     )
     # The literal path would have been a 307; the request must not have used it.
     assert not any(url.endswith("index.html") for url, _ in client.calls), client.calls

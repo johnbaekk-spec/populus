@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -299,6 +300,132 @@ def test_no_v1_parser_union_or_autodetect_exists_in_production_code():
         if _re.search(r"HistoricalInventoryV1|validate_inventory_v1", text):
             offending.append(str(path))
     assert offending == []
+
+
+#: LD12: every provider artifact this deployment is forbidden to ship, with the
+#: relative path a tree would carry it at.
+FORBIDDEN_TREE_PATHS = [
+    "_redirects",
+    "_worker.js",
+    "functions/api.js",
+    "functions/nested/deep/handler.js",
+]
+
+
+@pytest.mark.parametrize("forbidden", FORBIDDEN_TREE_PATHS)
+def test_build_inventory_refuses_a_prohibited_provider_control(tmp_path, forbidden):
+    """LD12 killing test at the BUILDER seam.
+
+    Before the fix `build_inventory` classified only `_headers` as a control and
+    swept every other regular path into `files`, so each of these produced a
+    document that then passed `validate_inventory_v2` and travelled on to a
+    preview upload. This asserts the producer refuses instead.
+    """
+    from populus.publish.inventory import InventoryError
+
+    tree = make_tree(
+        tmp_path,
+        {"index.html": b"<!doctype html>", "_headers": b"/*\n", forbidden: b"x"},
+    )
+    with pytest.raises(InventoryError, match="prohibited|Functions"):
+        build_inventory(tree)
+
+
+@pytest.mark.parametrize("forbidden", FORBIDDEN_TREE_PATHS)
+def test_validate_inventory_v2_refuses_a_prohibited_provider_control(
+    tmp_path, forbidden
+):
+    """LD12 killing test at the VALIDATOR seam, independently of the builder.
+
+    The document is hand-assembled (the builder now refuses to emit one), which
+    is exactly the untrusted shape the validator is the trust boundary for.
+    Before the fix the forbidden entry sat in `files` and every rule the
+    validator applied — key sets, digests, sort, uniqueness, exactly-one-control
+    — was satisfied, so validation returned a `ValidatedInventoryV2`.
+    """
+    from populus.publish.inventory import InventoryError, validate_inventory_v2
+
+    document = _valid_v2(tmp_path)
+    entry = {
+        "path": forbidden,
+        "bytes": 1,
+        "sha256": hashlib.sha256(b"x").hexdigest(),
+    }
+    document["files"] = sorted(
+        [*document["files"], entry], key=lambda e: e["path"].encode("utf-8")
+    )
+    with pytest.raises(InventoryError, match="prohibited|Functions"):
+        validate_inventory_v2(document)
+
+
+@pytest.mark.parametrize("forbidden", FORBIDDEN_TREE_PATHS)
+def test_a_prohibited_control_declared_as_a_control_is_also_refused(
+    tmp_path, forbidden
+):
+    """The forbidden set is not escapable by relabelling the entry.
+
+    Moving a forbidden path into `controls` already collided with the
+    `_headers`-only rule; this pins the refusal on the path itself, so the rule
+    survives any future change to the control cardinality.
+
+    The assertion matches the control-path guard's EXACT diagnostic rather than
+    the bare word "prohibited". That word also appears in the later
+    `_headers`-only message ("`_redirects`, `_worker.js` and Functions remain
+    prohibited"), so a substring match passed with `_require_not_prohibited`
+    deleted and asserted nothing. Anchoring on the full text — including the
+    `controls: ` seam prefix, which only `_require_not_prohibited` emits — makes
+    this test killing for that guard. Measured: with the `controls` call removed
+    the four parameter cases fail; restored, they pass.
+    """
+    from populus.publish.inventory import InventoryError, validate_inventory_v2
+
+    document = _valid_v2(tmp_path)
+    document["controls"] = [
+        {
+            "path": forbidden,
+            "kind": "cloudflare-pages-headers",
+            "bytes": 1,
+            "sha256": hashlib.sha256(b"x").hexdigest(),
+        }
+    ]
+    if forbidden.startswith("functions/"):
+        expected = (
+            f"controls: {forbidden!r} is a Cloudflare Pages Functions artifact "
+            "(prefix 'functions/'); this deployment is static and ships no "
+            "Functions"
+        )
+    else:
+        expected = (
+            f"controls: {forbidden!r} is a prohibited Cloudflare Pages provider "
+            "control; this deployment ships exactly one control, the root "
+            "'_headers'"
+        )
+    with pytest.raises(InventoryError, match=re.escape(expected)):
+        validate_inventory_v2(document)
+
+
+def test_a_nested_worker_or_redirects_file_is_still_an_ordinary_served_asset(tmp_path):
+    """The forbidden match is exact-at-root, not a basename sweep.
+
+    Cloudflare consumes `_redirects`/`_worker.js` only at the tree root; a
+    `docs/_worker.js` is inert bytes served at a URL. Refusing it would reject
+    an honest build, so the rule is deliberately anchored.
+    """
+    tree = make_tree(
+        tmp_path,
+        {
+            "_headers": b"/*\n",
+            "docs/_worker.js": b"x",
+            "docs/_redirects": b"y",
+            "myfunctions/a.js": b"z",
+        },
+    )
+    inventory = build_inventory(tree)
+    assert [entry["path"] for entry in inventory["files"]] == [
+        "docs/_redirects",
+        "docs/_worker.js",
+        "myfunctions/a.js",
+    ]
 
 
 def test_inventory_rejects_non_regular_trees(tmp_path):
