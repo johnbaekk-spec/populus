@@ -135,7 +135,7 @@ jobs:
       # ref sha (96b4a1ef…, the value publish.yml carries) names a tag object
       # rather than the commit e8998f9… below.
       - name: Attest the deployment generation
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ steps.record.outputs.subject_name }}
           subject-digest: ${{ steps.record.outputs.subject_digest }}
