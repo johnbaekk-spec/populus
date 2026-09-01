@@ -1,18 +1,20 @@
 name: probe-reusable-environment-secret-caller
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - codex/probe-reusable-env-secret-20260831
 
 permissions: {}
 
 jobs:
   direct-control:
     runs-on: ubuntu-latest
-    environment: production-record-sign
+    environment: probe-reusable-workflow-secret-20260901
     steps:
       - name: Report only direct secret emptiness and length
         env:
-          PROBE_SECRET: ${{ secrets.DATA_REPO_PAT }}
+          PROBE_SECRET: ${{ secrets.PROBE_VALUE }}
         run: |
           if [ -z "$PROBE_SECRET" ]; then
             echo "direct_empty=true"
