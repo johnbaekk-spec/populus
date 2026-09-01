@@ -6,5 +6,20 @@ on:
 permissions: {}
 
 jobs:
-  probe:
+  direct-control:
+    runs-on: ubuntu-latest
+    environment: production-record-sign
+    steps:
+      - name: Report only direct secret emptiness and length
+        env:
+          PROBE_SECRET: ${{ secrets.DATA_REPO_PAT }}
+        run: |
+          if [ -z "$PROBE_SECRET" ]; then
+            echo "direct_empty=true"
+          else
+            echo "direct_empty=false"
+          fi
+          echo "direct_length=${#PROBE_SECRET}"
+
+  called-probe:
     uses: ./.github/workflows/probe-reusable-env-called.yml
