@@ -130,8 +130,18 @@ Carried open from the M2-5 merge. Full mechanism analysis was recorded in
 
 ## 4. Institutional serving capacity (M2-11 durable measurements)
 
-Extracted from the RUN M2-11 T0 findings and QA report (K2; records now in Git
-history). These are the measured bounds future institutional work inherits:
+Extracted from the RUN M2-11 T0 findings and QA report. These are the measured
+bounds future institutional work inherits, so they survive independently of the
+records they came from.
+
+Those records have **not** been deleted, and this section said they had. Owner
+gate K2 called for removing the `docs/build/RUN-M2-11-*` family once its durable
+content was extracted; the extraction happened, the deletion did not. The 32
+files are still tracked because `tests/test_m2_11_qa_bundle.py` reads them from
+the tree at runtime — that suite was expected to be deleted by RUN
+PUBLIC-SECURITY-HARDENING, which instead kept and parameterized it, and this
+program is forbidden to delete a file another run owns. K2 is therefore open,
+not closed, and it closes when that suite is retired.
 
 - Corpus at snapshot v1 (23,058,628,608 B, SHA-256 `977a4d24…28124121`):
   9,458 filers · 46,081 filings · 16,922,879 holdings · 6 periods.

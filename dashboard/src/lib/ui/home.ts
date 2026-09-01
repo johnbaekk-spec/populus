@@ -6,7 +6,8 @@
    zero-based, gaps stay gaps, no midpoints; NULL-honest institutional
    integers; the as-of time stamp every 13F table carries. */
 
-/* ui/home.ts — Home page pieces (Slice 6 split). */
+/* ui/home.ts — Home page pieces. One of the ui/ domain modules: consumers
+   import from ./index.ts only, never from this file directly. */
 
 import {
   type TxnRow,

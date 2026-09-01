@@ -7,7 +7,8 @@
    integers; the as-of time stamp every 13F table carries. */
 
 /* ui/institutional.ts — 13F holders, filer and adds surfaces plus the
-   homepage notable rail (Slice 6 split). */
+   homepage notable rail. One of the ui/ domain modules: consumers import
+   from ./index.ts only, never from this file directly. */
 
 import {
   type RenderCtx,
