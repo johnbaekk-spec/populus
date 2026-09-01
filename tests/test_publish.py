@@ -2225,10 +2225,30 @@ def test_sign_job_dispatches_and_watches_the_top_level_signer():
     assert sign["permissions"] == {"actions": "write"}
     assert "environment" not in sign
     assert "secrets" not in sign
-    rendered = yaml.safe_dump(sign)
-    assert "gh workflow run record-sign.yml --ref main" in rendered
-    assert "gh run watch" in rendered
-    assert "--exit-status" in rendered
+    run = sign["steps"][0]["run"]
+    assert "gh workflow run record-sign.yml --ref main" in run
+    assert "gh run watch" in run
+    assert "--exit-status" in run
+
+
+def test_checkout_free_sign_dispatcher_scopes_every_gh_command_to_the_repo():
+    """The dispatcher has no checkout, so ``gh`` cannot discover a repo.
+
+    Every GitHub CLI command must carry the explicit repository context.  This
+    pins the production failure from publish run 33476860724 attempt 2, where
+    the first unscoped command died with ``fatal: not a git repository`` before
+    it could dispatch the signer.
+    """
+    sign = _load_workflow("publish.yml")["jobs"]["sign"]
+    run = sign["steps"][0]["run"]
+    gh_commands = [
+        line.strip() for line in run.splitlines() if line.strip().startswith("gh ")
+    ]
+    assert gh_commands, "the signer dispatcher must invoke the GitHub CLI"
+    assert all('--repo "$GITHUB_REPOSITORY"' in line for line in gh_commands), (
+        "a checkout-free job cannot rely on gh's git-based repository discovery: "
+        f"unscoped commands were {[line for line in gh_commands if '--repo' not in line]}"
+    )
 
 
 def _stage_step(job: dict) -> dict:
