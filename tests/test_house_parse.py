@@ -19,8 +19,10 @@ from populus.ingest.house import evaluate_document
 from populus.normalize import KNOWN_FLAGS, normalize_row
 from populus.parse import house_ptr
 from populus.parse.house_ptr import (
+    MAX_PDF_PAGES,
     EmptyParseError,
     Line,
+    PdfTooLargeError,
     UnreadablePdfError,
     Word,
     classify,
@@ -780,3 +782,55 @@ def test_every_emitted_flag_is_known_across_corpus():
     # Synthetic defect cases funnel through normalize_row (see
     # tests/test_normalize.py); here the whole real corpus is swept.
     assert emitted <= KNOWN_FLAGS
+
+
+# --- R2 M3: one page ceiling, every extractor ---------------------------------
+
+
+def _blank_pdf(pages: int) -> bytes:
+    import io
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=612, height=792)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize(
+    "extractor",
+    [
+        house_ptr.extract_pages,
+        house_ptr.extract_pages_pypdf_layout,
+        house_ptr.extract_positioned,
+        lambda b: classify(b, "20034916"),
+    ],
+)
+def test_every_extractor_refuses_a_pdf_over_the_page_cap(extractor):
+    # The bound is one constant applied by every engine and every mode: a cap
+    # on one path and not its fallback is how the property silently vanishes.
+    # PdfTooLargeError is an UnreadablePdfError so existing callers' handling
+    # of an unreadable document still applies.
+    oversized = _blank_pdf(MAX_PDF_PAGES + 1)
+    with pytest.raises(PdfTooLargeError) as info:
+        extractor(oversized)
+    assert isinstance(info.value, UnreadablePdfError)
+    assert str(MAX_PDF_PAGES) in str(info.value)
+
+
+def test_a_pdf_at_the_page_cap_is_still_read():
+    at_cap = _blank_pdf(MAX_PDF_PAGES)
+    assert len(house_ptr.extract_pages(at_cap)) == MAX_PDF_PAGES
+
+
+def test_the_pypdf_fallback_enforces_the_cap_when_pdfplumber_is_unavailable(monkeypatch):
+    # pdfplumber raises first in the parametrized test above, so the fallback
+    # engine's bound was never reached there. Force the fallback path.
+    monkeypatch.setattr(
+        house_ptr, "_extract_pages_pdfplumber", lambda _b: (None, RuntimeError("down"))
+    )
+    with pytest.raises(PdfTooLargeError):
+        house_ptr.extract_pages(_blank_pdf(MAX_PDF_PAGES + 1))

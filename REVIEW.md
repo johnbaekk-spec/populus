@@ -1,7 +1,7 @@
 # Review Brief: RUN P3-3b — Deploy the dashboard, and sign what went live
 
 **Plan:** `PLAN.md` (byte-identical durable copy at `docs/build/RUN-P3-3b-plan.md`), validates as `plan-v1`
-**Branch:** `plan/p3-3-deploy` @ `41b037d`, worktree `/Users/johnbaek/projects/Populus-p3-3`
+**Branch:** `plan/p3-3-deploy` @ `41b037d`, worktree `<owner>/Populus-p3-3`
 **Review round:** 3 of 3 — **revision 3**. Round 2 returned 7 blockers + 9 nits; every one is answered below. Requirements grew from 23 to 26.
 **Transport:** `interactive-disk`. Schema `review-brief-v1`.
 **Reviewer:** Claude (external Codex quota exhausted). Same bar.

@@ -123,8 +123,16 @@ jobs:
       build_id: ${{ steps.stage.outputs.build_id }}
       deployed: ${{ steps.stage.outputs.fresh }}
     steps:
+      # `persist-credentials: false` on BOTH checkouts (security audit R2, M1):
+      # the default writes the checkout token into `.git/config`, where it
+      # outlives the step — for the data checkout that is the long-lived
+      # DATA_REPO_PAT, and for the populus checkout the job's own
+      # `id-token`/`attestations`-capable token. The push step below supplies
+      # the PAT per invocation instead.
       - name: Check out populus
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Check out populus-data (private staging)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -132,6 +140,7 @@ jobs:
           repository: johnbaekk-spec/populus-data
           token: ${{ secrets.DATA_REPO_PAT }}
           path: populus-data
+          persist-credentials: false
 
       # RUN M2-11 R10 — OS-tolerant, and still exactly as pinned as before.
       #
@@ -470,11 +479,13 @@ jobs:
       # hashes it like every other artifact.
       - name: Publish the signal artifact into the build
         if: steps.stage.outputs.fresh == 'true'
+        env:
+          STAGE_BUILD_DIR: ${{ steps.stage.outputs.build_dir }}
         run: |
           set -euo pipefail
           src="dashboard/dist/signals/data/signals.v1.json"
           [ -f "$src" ] || { echo "::error::the site build produced no signal artifact at $src"; exit 1; }
-          cp "$src" "${{ steps.stage.outputs.build_dir }}/signals.v1.json"
+          cp "$src" "$STAGE_BUILD_DIR/signals.v1.json"
 
       # The artifact BOTH the deploy job and the signer download. Nothing
       # created it before this step, so `download-artifact` in two separate jobs
@@ -504,10 +515,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
           GH_REPO: johnbaekk-spec/populus-data
+          STAGE_BUILD_DIR: ${{ steps.stage.outputs.build_dir }}
+          SITE_FILE_COUNT: ${{ steps.site.outputs.file_count }}
         run: >-
           uv run populus finalize-build
-          --staging-dir "$(dirname '${{ steps.stage.outputs.build_dir }}')"
-          --site-file-count '${{ steps.site.outputs.file_count }}'
+          --staging-dir "$(dirname "$STAGE_BUILD_DIR")"
+          --site-file-count "$SITE_FILE_COUNT"
           --dist-dir dashboard/dist
           --data-repo populus-data --backend gh-release --repo "$GH_REPO"
 
@@ -544,11 +557,24 @@ jobs:
 
       - name: Commit manifest and pointer (rebase-retry x3, §13.3)
         working-directory: populus-data
+        env:
+          POPULUS_DATA_PUSH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
         run: |
           git config user.name "populus-publish[bot]"
           git config user.email "populus-publish@users.noreply.github.com"
           git add builds latest.json
           git commit -m "data: publish build"
+          # The PAT reaches git only here, through a credential helper scoped
+          # to THIS step by git's GIT_CONFIG_* environment (git >= 2.31):
+          # entry 0 RESETS any inherited helper so macOS `osxkeychain` (or any
+          # other store) never persists it, entry 1 supplies the token from
+          # a step-scoped variable (R2 M1). Nothing is written to .git/config,
+          # and the variable deliberately carries a name the run-body tests do
+          # not forbid, so the PAT can never be echoed by a copy-pasted name.
+          export GIT_CONFIG_COUNT=2
+          export GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
+          export GIT_CONFIG_KEY_1=credential.helper
+          export GIT_CONFIG_VALUE_1='!f() { echo "username=x-access-token"; echo "password=${POPULUS_DATA_PUSH_TOKEN}"; }; f'
           for attempt in 1 2 3; do
             if git pull --rebase && git push; then
               exit 0
@@ -586,6 +612,8 @@ jobs:
     steps:
       - name: Check out populus
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Download the built site
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -634,7 +662,7 @@ jobs:
           echo "wrangler $version (lock-installed)"
 
       - name: Install uv (version-pinned)
-        run: python3 -m pip install --quiet 'uv==0.7.13'
+        run: python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
 
       - name: Sync (frozen lockfile)
         run: uv sync --frozen

@@ -63,6 +63,10 @@ BACKOFF_SCHEDULE = (1.0, 2.0, 4.0, 8.0)
 #: Consecutive 403s that latch the breaker. A 403 is never retried and the UA
 #: is never varied: sustained refusal means stop and diagnose, not rotate.
 CIRCUIT_403_THRESHOLD = 3
+#: Upper bound on an honoured ``Retry-After`` (seconds). SEC's real values are
+#: single-digit seconds; anything longer is treated as "wait this long, then
+#: try again", never as a command to sleep indefinitely.
+RETRY_AFTER_CAP_S = 300.0
 
 #: Response-cache lifetime by endpoint class. Filing archives are immutable
 #: once published; a filer's submission history changes at most daily.
@@ -396,7 +400,10 @@ class SecClient:
                     return self._to_response(url, response)
                 retry_after = _retry_after_seconds(response.headers, self._utcnow())
                 if retry_after is not None and retry_after > delay:
-                    delay = retry_after
+                    # Clamped: the header is remote input, and an unbounded
+                    # value would park the leader (holding `_gate`) and every
+                    # coalesced flight for as long as the server says (R2 M5).
+                    delay = min(retry_after, RETRY_AFTER_CAP_S)
                 self._sleep(delay)
                 continue
 

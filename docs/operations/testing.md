@@ -64,30 +64,36 @@ Consequences contributors must know:
 ## Hosted CI: `.github/workflows/checks.yml`
 
 `checks.yml` is the **only** contributor-gating workflow. Its trigger set,
-exactly as landed by RUN PUBLIC-SECURITY-HARDENING:
+as amended by security audit R2 (2026-09-01):
 
-- `pull_request` — fork-safe by construction: GitHub-hosted runners only,
+- `push` — every branch, so the owner sees pre-merge signal on topic
+  branches. Fork-safe by construction: GitHub-hosted runners only,
   `permissions: contents: read`, no environment, no secrets-context
-  interpolation, `persist-credentials: false` on every checkout; on a
-  `pull_request` event GitHub additionally hands the job a read-only token
-  and no secrets.
-- `push` to `main`.
+  interpolation, `persist-credentials: false` on every checkout.
 - `workflow_dispatch`.
 
-`pull_request_target` and `issue_comment` (comment-driven execution) remain
-**banned repo-wide**; `tests/test_workflow_governance.py` structurally
-enforces this and the fork-safety properties above, with killing mutations.
-The sole self-hosted job remains `publish.yml:publish`, unreachable from any
-PR-like trigger.
+`pull_request` is **off**, and `tests/test_workflow_governance.py` bans it in
+every workflow while `ops/runner/` exists. On that event GitHub runs the
+*fork's* copy of the workflow file, which can select the repository-level
+self-hosted runner — no test over the committed file can prove a file the
+fork controls (finding C1; `docs/operations/github-security.md` §2a). The
+`dependency review` job left with the trigger (it diffs base..head). Fork
+PRs therefore get no CI in this repository until publishing no longer
+depends on a runner attached to it; contributions are not accepted until
+then. `pull_request_target` and `issue_comment` remain **banned repo-wide**.
 
-The four hosted jobs, and what each proves:
+A separate `security.yml` runs `make security` (advisory sweep) on push,
+weekly, and on demand. It is deliberately **not** a required check: it is
+network-dependent, and an unfixable dev-only advisory must not block
+unrelated merges.
+
+The three hosted jobs, and what each proves:
 
 | Job | What it runs | What a green result proves |
 | --- | --- | --- |
 | `python (pytest)` | `uv sync --frozen` then `uv run pytest -q`, full tree, unfiltered | The Python suite passes on a clean hosted Linux runner with pinned deps. Host-bound suites self-skip, so this proves *less* than `make test` on the owner machine. |
 | `dashboard (typecheck + unit)` | `npm ci`, `npx astro check`, `npm test` (with `uv` synced for the fixture-producing tests) | The dashboard typechecks and its unit suites pass with no data build present. |
-| `gitleaks (all history)` | Gitleaks 8.30.1 from an OCI-digest-pinned container over every ref (`--log-opts="--all"`), repo mounted read-only, 100% redaction; on a PR the scanner policy is materialized from the trusted base SHA so a fork cannot edit the policy in the same PR that hides a secret | No known-pattern secret exists anywhere in the repository's history under the trusted policy. |
-| `dependency review` | `actions/dependency-review-action` (pull_request events only — it diffs base..head manifests) | The PR's dependency changes introduce no known-vulnerable or disallowed dependency. Skips on push/dispatch by design. |
+| `gitleaks (all history)` | Gitleaks 8.30.1 from an OCI-digest-pinned container over every ref (`--log-opts="--all"`), repo mounted read-only, 100% redaction; the trusted-base-SHA policy materialization for `pull_request` events stays wired even though that trigger is off | No known-pattern secret exists anywhere in the repository's history under the trusted policy. |
 
 ### What a green checks run does NOT prove
 
@@ -99,8 +105,9 @@ The four hosted jobs, and what each proves:
 - The Playwright/Chromium browser-geometry lane never runs here.
 - The two host-bound Python suites self-skipped; their subjects were not
   exercised.
-- `make security` is not among the jobs — the advisory gates run locally
-  and in the security-run-owned surfaces, not in `checks.yml`.
+- `make security` is not among the jobs — the advisory sweep runs in
+  `security.yml` (push / weekly / dispatch) and locally via `make check`,
+  and is not a required context.
 
 ## Owner tier
 

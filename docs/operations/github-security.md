@@ -17,16 +17,21 @@ Repository: `johnbaekk-spec/populus` (public). Related runbooks:
 
 ## 1. Required check contexts
 
-The four exact GitHub Actions check contexts required by the `main` ruleset
+The three exact GitHub Actions check contexts required by the `main` ruleset
 (R3), produced by `.github/workflows/checks.yml`:
 
 1. `python (pytest)`
 2. `dashboard (typecheck + unit)`
 3. `gitleaks (all history)`
-4. `dependency review`
 
 These are job `name:` values; renaming a job silently unbinds its required
-check. `tests/test_workflow_governance.py` pins all four names.
+check. `tests/test_workflow_governance.py` pins all three names.
+
+Not required, by design: `security (advisory sweep)` from
+`.github/workflows/security.yml` (push / weekly / dispatch). It depends on
+external advisory services, so it is a finding to triage, never a merge gate.
+The former fourth context, `dependency review`, was removed with the
+`pull_request` trigger (security audit R2, C1 — see §2a).
 
 CodeQL threshold: the ruleset's code-scanning rule blocks alerts of severity
 **high or higher**, for Python and JavaScript/TypeScript, using CodeQL
@@ -35,27 +40,52 @@ both languages.
 
 ## 2. Ruleset activation procedure (operator-only, Task 3)
 
-Prerequisite (R3): a second trusted GitHub account has accepted write access
-and its handle has been added to `.github/CODEOWNERS`. Without it, do NOT
-activate the ruleset — report R3 BLOCKED rather than weakening the approval
-count to zero.
+Two tiers (security audit R2, 2026-09-01):
+
+**Interim ruleset — activate now, solo owner.** Required status checks (the
+three contexts in §1, strict), block force pushes, block deletions, linear
+history, **empty bypass actors**, and NO pull-request review rule. A solo
+owner cannot approve their own PR, so a review rule today would either be
+bypassed (which the empty-bypass predicate forbids) or block every merge.
+The interim tier still closes the two live gaps found twice: force-push to
+`main`, and merging with red or absent checks.
+
+**Full ruleset — R3.** Prerequisite: a second trusted GitHub account has
+accepted write access and its handle has been added to `.github/CODEOWNERS`.
+Only then add the pull-request rule (1 approving review from a non-author,
+dismiss stale approvals, CODEOWNER review, conversation resolution). Do NOT
+weaken the approval count to zero to activate it early — report R3 BLOCKED
+and stay on the interim tier.
+
+### 2a. Why `pull_request` is off (C1)
+
+On a `pull_request` event GitHub runs the fork's copy of the workflow file;
+a fork can therefore select `runs-on: [self-hosted, macOS, populus-ops]`,
+and a repository-level self-hosted runner is registered to this repository.
+`tests/test_workflow_governance.py` bans `pull_request` in every workflow
+while `ops/runner/` exists. Defence in depth, applied 2026-09-01:
+`actions/permissions/fork-pr-contributor-approval` = `all_external_contributors`
+(every fork run needs explicit approval; Dependabot is unaffected). Owner
+rule: never approve a fork workflow run while the runner is attached to this
+repository. The ban lifts only when publishing no longer depends on such a
+runner (hosted publish, or an organisation runner group).
 
 1. Create a disposable base branch `security-ruleset-probe` (plus a probe
    topic branch) from `main`.
 2. Author the ruleset JSON with: target `refs/heads/security-ruleset-probe`,
-   **empty bypass actors**, required pull request, 1 approving review from a
-   non-author, dismiss stale approvals, require CODEOWNER review, require
-   conversation resolution, required status checks (the four contexts above,
-   strict/up-to-date, bound to the GitHub Actions app), block force pushes,
-   block deletions.
+   **empty bypass actors**, required status checks (the three contexts
+   above, strict/up-to-date, bound to the GitHub Actions app), block force
+   pushes, block deletions, required linear history. Full tier only: add
+   the pull-request rule (1 approving review from a non-author, dismiss
+   stale approvals, CODEOWNER review, conversation resolution).
 3. Apply it to the probe branch only:
    `gh api -X POST repos/johnbaekk-spec/populus/rulesets --input ruleset.json`
 4. Negative-test on the probe branch (never on `main` first):
    - attempt a direct push → must be rejected;
    - open a PR with one deliberately failing required check → merge blocked;
-   - prove missing CODEOWNER approval blocks;
-   - approve, push a new commit, prove stale-approval dismissal;
-   - obtain fresh approval and merge.
+   - full tier only: prove missing CODEOWNER approval blocks; approve,
+     push a new commit, prove stale-approval dismissal; obtain fresh
+     approval and merge.
 5. Export the validated JSON
    (`gh api repos/johnbaekk-spec/populus/rulesets/<id>`), change **only** the
    target ref to `refs/heads/main`, apply, then verify every predicate in §4.
@@ -129,18 +159,29 @@ gh api repos/johnbaekk-spec/populus/rulesets/<id> | jq -e '
   .enforcement == "active"
   and (.conditions.ref_name.include | index("refs/heads/main"))
   and ((.bypass_actors // []) | length == 0)
-  and ([.rules[].type] | (index("pull_request") and index("required_status_checks")
-       and index("non_fast_forward") and index("deletion")))
+  and ([.rules[].type] | (index("required_status_checks")
+       and index("non_fast_forward") and index("deletion")
+       and index("required_linear_history")))
+  and ([.rules[] | select(.type == "required_status_checks")][0]
+        .parameters.required_status_checks
+        | [.[].context] | sort
+          == (["dashboard (typecheck + unit)",
+               "gitleaks (all history)","python (pytest)"] | sort))'
+
+# FULL tier only (R3 unblocked — second reviewer handle in CODEOWNERS):
+gh api repos/johnbaekk-spec/populus/rulesets/<id> | jq -e '
+  ([.rules[].type] | index("pull_request"))
   and ([.rules[] | select(.type == "pull_request")][0].parameters
         | .required_approving_review_count >= 1
           and .dismiss_stale_reviews_on_push == true
           and .require_code_owner_review == true
-          and .required_review_thread_resolution == true)
-  and ([.rules[] | select(.type == "required_status_checks")][0]
-        .parameters.required_status_checks
-        | [.[].context] | sort
-          == (["dashboard (typecheck + unit)","dependency review",
-               "gitleaks (all history)","python (pytest)"] | sort))'
+          and .required_review_thread_resolution == true)'
+
+# C1 — fork runs need explicit approval while a repo-level runner exists.
+gh api repos/johnbaekk-spec/populus/actions/permissions/fork-pr-contributor-approval \
+  | jq -e '.approval_policy == "all_external_contributors"'
+# C1 — no workflow carries pull_request (also pinned by the governance test).
+! grep -lE '^\s*pull_request:' .github/workflows/*.yml
 ```
 
 ### R4 — environments (post-PR 4)
@@ -207,6 +248,8 @@ maintenance log:
 gh api repos/johnbaekk-spec/populus/rulesets
 gh api repos/johnbaekk-spec/populus/environments
 gh api repos/johnbaekk-spec/populus/actions/permissions/workflow
+gh api repos/johnbaekk-spec/populus/actions/permissions/fork-pr-contributor-approval
+gh api repos/johnbaekk-spec/populus/actions/runners --jq '.runners[] | {name,status}'
 gh api repos/johnbaekk-spec/populus --jq '{visibility,security_and_analysis}'
 gh secret list --repo johnbaekk-spec/populus
 gh api repos/johnbaekk-spec/populus/code-scanning/default-setup

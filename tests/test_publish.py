@@ -2142,10 +2142,16 @@ def test_publish_workflow_gh_token_step_scoped(tmp_path):
         "populus publish",
         "populus seed-corpus",
     }
+    # R2 M1 AMENDMENT, recorded not silent: the commit step now carries the
+    # PAT as POPULUS_DATA_PUSH_TOKEN (persist-credentials is off, so the push
+    # supplies it per invocation). The selector therefore matches the PAT
+    # under ANY env name — aliasing it onto an unlisted step is exactly what
+    # a GH_TOKEN-only selector would have missed — and the count moves 4 -> 5.
+    pat_bearing.add("git push")
     pat_steps = [
-        step for step in job["steps"] if (step.get("env") or {}).get("GH_TOKEN") == pat
+        step for step in job["steps"] if pat in (step.get("env") or {}).values()
     ]
-    assert len(pat_steps) == 4
+    assert len(pat_steps) == 5
     for step in pat_steps:
         run = step.get("run", "")
         assert any(command in run for command in pat_bearing), (

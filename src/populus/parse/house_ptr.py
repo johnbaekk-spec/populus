@@ -60,8 +60,35 @@ _COLUMN_X_SLACK = 3.0
 _PAPER_YIELD_THRESHOLD = 200
 
 
+#: Ceiling on pages any extractor will walk (security audit R2, M3). PTRs are
+#: a handful of pages; the largest real filing in the corpus is well under
+#: 100. pypdf 6.16 closes the known per-page advisories, but a pathological
+#: PDF still runs in-process, so the bound is structural, not advisory-driven.
+#: ONE constant for every extractor — a bound applied to one engine and not
+#: its fallback is how the property silently disappears.
+MAX_PDF_PAGES = 200
+
+
 class UnreadablePdfError(Exception):
     """Neither extraction engine could open/extract the document (LD12)."""
+
+
+class PdfTooLargeError(UnreadablePdfError):
+    """More pages than :data:`MAX_PDF_PAGES` — refused before extraction."""
+
+
+def _bounded_pages(pages):
+    """The page sequence, or :class:`PdfTooLargeError` above the ceiling.
+
+    ``len()`` is the only thing evaluated. Both engines walk the page tree
+    to count, so the WALK is unbounded (a cheap, structural operation); what
+    the ceiling bounds is extraction and layout — the expensive per-page work
+    and the surface the pypdf advisories concerned.
+    """
+    count = len(pages)
+    if count > MAX_PDF_PAGES:
+        raise PdfTooLargeError(f"PDF has {count} pages, over the {MAX_PDF_PAGES}-page cap")
+    return pages
 
 
 class EmptyParseError(Exception):
@@ -367,7 +394,11 @@ def _extract_pages_pdfplumber(
 
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            return [_clean(page.extract_text() or "") for page in pdf.pages], None
+            return [
+                _clean(page.extract_text() or "") for page in _bounded_pages(pdf.pages)
+            ], None
+    except PdfTooLargeError:
+        raise
     except Exception as exc:  # noqa: BLE001 — any engine error means "try pypdf"
         return None, exc
 
@@ -377,7 +408,9 @@ def _extract_pages_pypdf_plain(pdf_bytes: bytes) -> list[str] | None:
 
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
-        return [_clean(page.extract_text() or "") for page in reader.pages]
+        return [_clean(page.extract_text() or "") for page in _bounded_pages(reader.pages)]
+    except PdfTooLargeError:
+        raise
     except Exception:  # noqa: BLE001
         return None
 
@@ -402,8 +435,10 @@ def extract_pages_pypdf_layout(pdf_bytes: bytes) -> list[str]:
                 )
                 or ""
             )
-            for page in reader.pages
+            for page in _bounded_pages(reader.pages)
         ]
+    except PdfTooLargeError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise UnreadablePdfError(f"pypdf layout extraction failed: {exc}") from exc
     if not any(line.strip() for page in pages for line in page.splitlines()):
@@ -448,7 +483,7 @@ def extract_positioned(pdf_bytes: bytes) -> list[list[Line]]:
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             pages: list[list[Line]] = []
-            for page_no, page in enumerate(pdf.pages):
+            for page_no, page in enumerate(_bounded_pages(pdf.pages)):
                 words = sorted(
                     page.extract_words(), key=lambda w: (w["top"], w["x0"])
                 )
@@ -474,6 +509,8 @@ def extract_positioned(pdf_bytes: bytes) -> list[list[Line]]:
                         )
                 pages.append(page_lines)
             return pages
+    except PdfTooLargeError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise UnreadablePdfError(f"pdfplumber positioned extraction failed: {exc}") from exc
 

@@ -1,0 +1,11 @@
+# Hash-pinned `uv` for every hosted workflow job (security audit R2, M8).
+# `pip install --require-hashes -r` refuses any artifact whose sha256 is not
+# listed, so a compromised index or a republished wheel cannot substitute a
+# different `uv` into a job that goes on to hold an id-token or a secret.
+# Hashes are the PyPI-published digests for 0.7.13 (read from
+# https://pypi.org/pypi/uv/0.7.13/json on 2026-09-01). Bump the version and
+# ALL hashes together; a version-only edit fails closed.
+uv==0.7.13 \
+    --hash=sha256:5786a29e286f2cc3cbda13a357fd9a4dd5bf1d7448a9d3d842b26b4f784a3a86 \
+    --hash=sha256:4f828174e15a557d3bc0f809de76135c3b66bcbf524657f8ced9d22fc978b89c \
+    --hash=sha256:05f3c03c4ea55d294f3da725b6c2c2ff544754c18552da7594def4ec3889dcfb

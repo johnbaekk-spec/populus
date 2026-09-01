@@ -253,9 +253,9 @@ cd "$(mktemp -d)"
 # Recheck the official latest release immediately before provisioning. GitHub
 # stops assigning jobs to runners that fall outside its update window, so a
 # stale bootstrap is a hard stop rather than a warning.
-RUNNER_VERSION=2.336.0
-RUNNER_ARCHIVE=actions-runner-osx-arm64-2.336.0.tar.gz
-RUNNER_SHA256=8e8839c49b7060b6b2154f4931f815df330c27f167d53ef2239ee3dfce28b079
+RUNNER_VERSION=2.337.0
+RUNNER_ARCHIVE=actions-runner-osx-arm64-2.337.0.tar.gz
+RUNNER_SHA256=5a2cd92908a93d7276a194e1de6008099f3e7946f3f8e14aa7a1a7b4a31fdec2
 test "$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest |
   jq -r .tag_name)" = "v${RUNNER_VERSION}"
 curl -fLO "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_ARCHIVE}"

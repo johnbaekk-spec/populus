@@ -9,7 +9,7 @@
 #                       toolchains install from their committed lockfiles first
 #                       (`uv sync --frozen`, `npm ci`), so the gate proves the
 #                       frozen environment on both sides.
-#   - `make security` → the §19 paid-SDK dependency guard (G1 denylist)
+#   - `make security` → dep_guard denylist + pip-audit (prod lock) + npm audit
 #   - `make check`    → both, for local use
 #
 # The orchestration gate runner maps `make test` to the required "test" gate
@@ -27,7 +27,7 @@
 # fallback when `CI` is set) and, for the institutional preview paths,
 # `POPULUS_TICKER_MAP`.
 
-.PHONY: sync test test-python dashboard-gates security check accept-m2-5 accept-m2-6 accept-m2-8 accept-m2-11 accept-m1-b
+.PHONY: sync test test-python dashboard-gates security abs-paths check accept-m2-5 accept-m2-6 accept-m2-8 accept-m2-11 accept-m1-b
 
 sync:
 	uv sync --frozen
@@ -154,4 +154,9 @@ accept-m1-b: sync
 accept-m2-11: sync
 	uv run python scripts/acceptance/institutional_serving.py
 
-check: test security
+# Machine-specific absolute paths are a privacy leak in a public tree; the
+# repository's own gate was red on origin/main and nothing ran it (R2 L8).
+abs-paths:
+	bash scripts/maintenance/check_abs_paths.sh HEAD
+
+check: test security abs-paths

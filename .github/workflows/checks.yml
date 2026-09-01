@@ -8,7 +8,7 @@
 #
 # SCOPE: the suites that need no published data build — the full Python tree,
 # the dashboard typecheck, and the dashboard unit suite, plus two security
-# gates (full-history secret scan and dependency review). The post-build gates
+# gate (the full-history secret scan). The post-build gates
 # (`npm run test:post`) are deliberately NOT here: they require a real
 # `POPULUS_BUILD_DIR` + release DBs, which live in the private data repo, so
 # they stay with the publisher-side workflow that has them.
@@ -28,26 +28,27 @@
 # be authoritative where their subject lives.
 name: checks
 
-# FORK-SAFE `pull_request` POLICY (RUN PUBLIC-SECURITY-HARDENING, LD3/R2):
-# the earlier repo-wide ban on PR-like triggers existed because PR triggers
-# route untrusted content toward runners. Now that the repository is public,
-# a fork PR must run checks BEFORE merge, so `pull_request` is allowed — but
-# only in THIS workflow, and only because every job here is structurally
-# fork-safe: GitHub-hosted runners only, `permissions: contents: read`, no
-# environment, no secrets-context interpolation, no reusable-workflow call,
-# and `persist-credentials: false` on every checkout. (The governance test
-# scans this file's raw text for any secrets-context interpolation, so this
-# comment names the banned expression indirectly rather than spelling it.)
-# On a `pull_request`
-# event GitHub additionally hands the job a read-only token and no secrets.
-# `pull_request_target` and `issue_comment` remain banned repo-wide, and the
-# sole self-hosted job remains `publish.yml:publish`, unreachable from any
-# PR-like trigger. tests/test_workflow_governance.py structurally enforces
-# every one of these properties, with killing mutations.
+# NO `pull_request` TRIGGER — security audit R2, finding C1 (2026-09-01).
+# RUN PUBLIC-SECURITY-HARDENING added `pull_request` here on the reasoning
+# that every job in this file is fork-safe. The file is, but the TRIGGER is
+# not: on a `pull_request` event GitHub runs the FORK's copy of this
+# workflow, and that copy may say `runs-on: [self-hosted, macOS,
+# populus-ops]`. A repository-level self-hosted runner is registered to this
+# repo, so a fork PR would reach the publish Mac with one "Approve and run"
+# click (or none, for a contributor with a prior merged PR). No in-tree test
+# can prove a file the fork controls. `pull_request` therefore stays OFF
+# while `ops/runner/` exists; `tests/test_workflow_governance.py` bans it
+# conditionally on exactly that, and the ban lifts only when publishing no
+# longer depends on a runner attached to this repository.
+#
+# What remains: every push (every branch, so the owner sees pre-merge
+# signal on their own topic branches) and manual dispatch. The jobs keep
+# their fork-safe shape — hosted runners, `contents: read`, no secrets,
+# `persist-credentials: false` — because that shape is still what makes
+# them safe to require in the main ruleset. `pull_request_target` and
+# `issue_comment` remain banned repo-wide.
 on:
-  pull_request:
   push:
-    branches: [main]
   workflow_dispatch:
 
 # Least privilege (§14): read-only, no secrets referenced anywhere in this file.
@@ -79,7 +80,7 @@ jobs:
       # `uv` from PyPI at the version publish.yml pins, so both workflows
       # resolve dependencies the same way. No third-party action.
       - name: Install uv (pinned)
-        run: python3 -m pip install --quiet "uv==0.7.13"
+        run: python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
 
       - name: Sync (frozen lockfile)
         run: uv sync --frozen
@@ -124,7 +125,7 @@ jobs:
           python-version-file: pyproject.toml
 
       - name: Install uv (pinned)
-        run: python3 -m pip install --quiet "uv==0.7.13"
+        run: python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
 
       - name: Sync (frozen lockfile)
         working-directory: .
@@ -143,7 +144,9 @@ jobs:
   # Full-history secret scan (R5). Runs Gitleaks 8.30.1 from an immutable
   # OCI-digest-pinned container over EVERY ref (`--log-opts="--all"`), with the
   # repository mounted read-only, 100% redaction, no banner, and NO report
-  # file/artifact/summary — a finding fails the job and nothing else. On a PR,
+  # file/artifact/summary — a finding fails the job and nothing else. On a
+  # pull_request event (none today — see the trigger note above; the plumbing
+  # stays so re-enabling the trigger cannot forget it),
   # the scanner policy (.gitleaks.toml / .gitleaksignore) is materialized from
   # the TRUSTED base SHA into read-only runner-temp files, so a fork cannot
   # edit the policy in the same PR that hides a secret. On push/dispatch the
@@ -170,7 +173,7 @@ jobs:
             git show "$PR_BASE_SHA:.gitleaks.toml" > "$POLICY_DIR/gitleaks.toml"
             git show "$PR_BASE_SHA:.gitleaksignore" > "$POLICY_DIR/gitleaksignore"
           else
-            # push to main / manual dispatch: the checked-out tree IS trusted.
+            # push / manual dispatch: the checked-out tree IS trusted.
             cp .gitleaks.toml "$POLICY_DIR/gitleaks.toml"
             cp .gitleaksignore "$POLICY_DIR/gitleaksignore"
           fi
@@ -189,18 +192,3 @@ jobs:
             --redact=100 \
             --no-banner \
             --log-opts="--all"
-
-  # Dependency review (R13): flags known-vulnerable or disallowed dependency
-  # changes on the PR diff. Only meaningful on pull_request events (it diffs
-  # base..head manifests); required-check semantics treat the push-event skip
-  # as not-required for that commit context.
-  dependency-review:
-    name: dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-
-      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
