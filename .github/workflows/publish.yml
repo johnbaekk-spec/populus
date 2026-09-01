@@ -658,40 +658,57 @@ jobs:
           --custom-domain publicfilings.org
           --production-branch main
 
-  # R20 — a SKIPPED signer job reports success. If POPULUS_RECORD_SIGN_ARMED
-  # were unset while publishing stayed armed, the deploy would complete, no
-  # generation would be written, and nothing would notice until the R18 gate
-  # fired a day later. `needs.sign.result` is therefore asserted explicitly
-  # below; `skipped` is not `success`.
+  # R20 — dispatch the signer as a separate TOP-LEVEL workflow run. Run
+  # 33473559423 proved that, in this repository, an environment secret resolves
+  # in a direct job but resolves to the empty string in a reusable called job
+  # bound to the same environment. The signer must therefore own its run as
+  # well as its job for `production-record-sign` to supply its two secrets.
+  #
+  # This dispatcher holds no production credential and no attestation or
+  # contents-write authority. It can only start and observe Actions runs. The
+  # unique request id prevents a re-run of this job from mistaking an older
+  # successful signer for the signer it just dispatched.
   sign:
     needs: [publish, deploy]
-    # A called workflow CANNOT escalate beyond the calling job's token. Without
-    # this block the job inherits the workflow-level `contents: read`, while
-    # record-sign.yml declares contents/id-token/attestations write — and GitHub
-    # rejects the escalation at STARTUP, before any job runs. Two dispatches
-    # died as `startup_failure` with no annotation and a valid-per-actionlint
-    # file before this was found.
-    #
-    # These are granted on the CALLING job, not raised workflow-wide, so §14's
-    # per-job least privilege holds: the publish and deploy jobs keep their own
-    # narrower grants. This job mints the deployment attestation and commits the
-    # generation to populus-data, which is what each scope is for.
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    # R4/LD5 — NO `secrets:` mapping. Environment secrets in a reusable
-    # workflow are selected by `environment:` on the CALLED job, not passed by
-    # `workflow_call`: record-sign.yml's `record` job resolves DATA_REPO_PAT
-    # and CLOUDFLARE_PAGES_READ_TOKEN from `production-record-sign` itself, so
-    # the caller holds neither credential.
-    uses: ./.github/workflows/record-sign.yml
-    with:
-      # These names are validated against record-sign.yml's declared inputs at
-      # PARSE time — an undeclared one rejects the whole workflow before any job
-      # starts, including publish.
-      artifact-name: site-${{ needs.publish.outputs.build_id }}
-      cf-production-deployment-id: ${{ needs.deploy.outputs.deployment_id }}
+      actions: write
+    steps:
+      - name: Dispatch and require the deployment signer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          ARTIFACT_NAME: site-${{ needs.publish.outputs.build_id }}
+          CLAIMED_DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id }}
+        run: |
+          title="record-sign request ${REQUEST_ID} for source-run ${SOURCE_RUN_ID}"
+          gh workflow run record-sign.yml --ref main \
+            -f "request-id=${REQUEST_ID}" \
+            -f "source-run-id=${SOURCE_RUN_ID}" \
+            -f "artifact-name=${ARTIFACT_NAME}" \
+            -f "cf-production-deployment-id=${CLAIMED_DEPLOYMENT_ID}"
+
+          record_run_id=""
+          for attempt in $(seq 1 24); do
+            record_run_id="$(
+              gh run list --workflow record-sign.yml \
+                --event workflow_dispatch --branch main --limit 100 \
+                --json databaseId,displayTitle \
+                --jq ".[] | select(.displayTitle == \"${title}\") | .databaseId" \
+                | head -n 1
+            )"
+            if [ -n "$record_run_id" ]; then
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "$record_run_id" ]; then
+            echo "::error::the dispatched record-sign run did not appear."
+            exit 1
+          fi
+          echo "watching record-sign run ${record_run_id}"
+          gh run watch "$record_run_id" --exit-status --interval 10
 
   assert-signed:
     needs: [deploy, sign]

@@ -203,6 +203,29 @@ def gitleaks_job_errors(doc: dict, text: str) -> list[str]:
     return errors
 
 
+def python_baseline_checkout_errors(doc: dict) -> list[str]:
+    """The full Python tree reads ``origin/main`` as its ownership baseline."""
+    job = (doc.get("jobs") or {}).get("python")
+    if job is None:
+        return ["checks.yml: no python job"]
+    checkout = next(
+        (
+            step
+            for step in (job.get("steps") or [])
+            if str(step.get("uses", "")).startswith("actions/checkout@")
+        ),
+        None,
+    )
+    if checkout is None:
+        return ["python job has no checkout"]
+    if (checkout.get("with") or {}).get("fetch-depth") != 0:
+        return [
+            "python checkout must set fetch-depth: 0 so origin/main exists for "
+            "the cross-run ownership tests"
+        ]
+    return []
+
+
 def gitleaksignore_errors(lines: list[str]) -> list[str]:
     """Every non-comment line must be an exact commit:file:rule:line
     fingerprint — a path glob or directory-wide entry is a forbidden broad
@@ -256,6 +279,11 @@ def test_required_check_names_are_pinned():
 def test_gitleaks_job_structure():
     doc, text = _checks()
     assert gitleaks_job_errors(doc, text) == []
+
+
+def test_python_job_fetches_the_origin_main_baseline():
+    doc, _ = _checks()
+    assert python_baseline_checkout_errors(doc) == []
 
 
 def test_gitleaks_policy_files_are_narrow():
@@ -386,6 +414,14 @@ def test_mutation_shallow_gitleaks_checkout_is_killed():
         if str(step.get("uses", "")).startswith("actions/checkout@"):
             step["with"].pop("fetch-depth", None)
     assert gitleaks_job_errors(doc, text)
+
+
+def test_mutation_shallow_python_checkout_is_killed():
+    doc, _ = _mutant()
+    for step in doc["jobs"]["python"]["steps"]:
+        if str(step.get("uses", "")).startswith("actions/checkout@"):
+            step.setdefault("with", {}).pop("fetch-depth", None)
+    assert python_baseline_checkout_errors(doc)
 
 
 def test_mutation_candidate_policy_substitution_is_killed():

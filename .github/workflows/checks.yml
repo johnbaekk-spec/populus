@@ -65,6 +65,11 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          # tests/test_maintenance_tooling.py reads origin/main as the tracked
+          # ownership baseline. The default one-commit PR checkout has no such
+          # ref and turns 191 otherwise-independent tests into the same
+          # ScanError. Checkout documents 0 as all history for all branches.
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0

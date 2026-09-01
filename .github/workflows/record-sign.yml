@@ -1,25 +1,42 @@
-# Reusable record signer (ARCHITECTURE.md §12.1 step 6, §5.5, §14).
+# Top-level record signer (ARCHITECTURE.md §12.1 step 6, §5.5, §14).
 #
-# This is a SEPARATE reusable workflow because GitHub attestations identify a
-# workflow, not a job — `record-sign.yml` is the distinct, pinnable signer
-# identity verifiers pin for deployment generations (§5.5). It holds Pages
-# READ only, never Pages Write, and it trusts NO deploy-job output: `build_id`
-# comes from the attested pointer/manifest, `code_sha`/`dist_digest`/the
-# inventory from the artifact this workflow downloads itself, and the
-# production deployment id from the Cloudflare API read with its own token.
-# Whatever the caller passes about the deployment is a CLAIM, cross-checked.
+# GitHub attestations identify a workflow, not a job — `record-sign.yml` is the
+# distinct, pinnable signer identity verifiers use for deployment generations
+# (§5.5). It is a separately dispatched TOP-LEVEL workflow because probe run
+# 33473559423 proved environment secrets resolve empty in a reusable called job
+# even though a direct job receives the same environment secret. This workflow
+# holds Pages READ only, never Pages Write, and it trusts NO dispatcher output:
+# source-run metadata comes from GitHub's API, `build_id` from the attested
+# pointer/manifest, `code_sha`/`dist_digest`/inventory from the downloaded
+# artifact, and the production deployment id from Cloudflare with its own
+# read-only token. Whatever the dispatcher claims is cross-checked.
 #
-# Still gated on POPULUS_RECORD_SIGN_ARMED at the job level: a run whose signer
-# is unarmed writes nothing, which the caller-side assertion job turns into a
-# failed run rather than a green skip (R20).
+# POPULUS_RECORD_SIGN_ARMED is checked by a FAILING first step, not a job-level
+# `if`: a separately dispatched workflow whose only job skips can conclude
+# successfully. The watcher must receive a non-zero conclusion when unarmed.
 name: record-sign
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
+      # Correlates this exact request with its watcher. A publish job re-run has
+      # the same source run id but a new run attempt, so source-run-id alone is
+      # not unique enough to prevent a stale-success false positive.
+      request-id:
+        description: "Unique dispatcher request id"
+        type: string
+        required: true
+      # The data-publish run that created and uploaded the site artifact. The
+      # signer validates its path, branch, event, status, and head SHA through
+      # GitHub's API before it trusts this only as a locator.
+      source-run-id:
+        description: "Source data-publish workflow run id"
+        type: string
+        required: true
       # The artifact the deploy leg uploaded: `site/**` plus the sibling
       # `inventory.json` (§12.1 envelope). Named, not guessed.
       artifact-name:
+        description: "Exact source-run artifact name"
         type: string
         # REQUIRED, and deliberately with no default. `site` was the default and
         # the publisher uploads `site-<build_id>`, so a caller that omitted this
@@ -43,32 +60,83 @@ on:
       # against the Pages API answer and never substituted for it; a mismatch
       # is a finding that refuses the attestation.
       cf-production-deployment-id:
+        description: "Deploy job's claimed Cloudflare production deployment id"
         type: string
         required: false
         default: ""
-    # RUN PUBLIC-SECURITY-HARDENING R4/LD5 — deliberately NO `secrets:` block.
-    # Environment secrets in a reusable workflow are selected by `environment:`
-    # on the CALLED job, never passed through `workflow_call`: the `record` job
-    # below resolves DATA_REPO_PAT and CLOUDFLARE_PAGES_READ_TOKEN from the
-    # `production-record-sign` environment itself, so the caller holds neither
-    # credential and a caller-side mapping would be a second, wider path to the
-    # same secrets. Until the owner creates the environment and enters both
-    # secrets, they resolve to the empty string and the job fails closed.
+
+run-name: record-sign request ${{ inputs.request-id }} for source-run ${{ inputs.source-run-id }}
 
 permissions:
-  contents: write
+  actions: read
+  contents: read
   id-token: write
   attestations: write
 
 jobs:
   record:
-    if: vars.POPULUS_RECORD_SIGN_ARMED == 'true'
     runs-on: ubuntu-latest
     # R4/LD5 — the signer's two secrets live only in this environment
     # (selected branch `main`): the data PAT and the Pages READ token, plus
     # the attestation permissions granted by the caller. Never Pages Write.
     environment: production-record-sign
     steps:
+      - name: Require the signer to be armed
+        env:
+          RECORD_SIGN_ARMED: ${{ vars.POPULUS_RECORD_SIGN_ARMED }}
+        run: |
+          if [ "$RECORD_SIGN_ARMED" != "true" ]; then
+            echo "::error::POPULUS_RECORD_SIGN_ARMED is not true."
+            exit 1
+          fi
+
+      # The input is only a locator. The API answer must prove that it names a
+      # main-branch data-publish run; its trusted head SHA is cross-checked
+      # against the code marker derived from the artifact below.
+      - name: Validate the source publish run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+        run: |
+          case "$SOURCE_RUN_ID" in
+            ''|*[!0-9]*)
+              echo "::error::source-run-id must contain decimal digits only."
+              exit 1
+              ;;
+          esac
+          endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}"
+          source_path="$(gh api "$endpoint" --jq '.path')"
+          source_branch="$(gh api "$endpoint" --jq '.head_branch')"
+          source_sha="$(gh api "$endpoint" --jq '.head_sha')"
+          source_status="$(gh api "$endpoint" --jq '.status')"
+          source_event="$(gh api "$endpoint" --jq '.event')"
+
+          if [ "$source_path" != ".github/workflows/publish.yml" ]; then
+            echo "::error::source run uses ${source_path}, not publish.yml."
+            exit 1
+          fi
+          if [ "$source_branch" != "main" ]; then
+            echo "::error::source run branch is ${source_branch}, not main."
+            exit 1
+          fi
+          if [ "$source_status" != "in_progress" ] && [ "$source_status" != "completed" ]; then
+            echo "::error::source run status is ${source_status}."
+            exit 1
+          fi
+          if [ "$source_event" != "workflow_dispatch" ] && [ "$source_event" != "schedule" ]; then
+            echo "::error::source run event is ${source_event}."
+            exit 1
+          fi
+          case "$source_sha" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *)
+              echo "::error::source run returned a malformed head SHA."
+              exit 1
+              ;;
+          esac
+          echo "head_sha=${source_sha}" >> "$GITHUB_OUTPUT"
+
       - name: Check out populus
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -85,14 +153,15 @@ jobs:
       - name: Sync (frozen lockfile)
         run: uv sync --frozen
 
-      # The signer locates the immutable artifact through GitHub context — this
-      # run, this artifact name — and downloads it itself (§5.5). No job output
-      # is consulted for its contents; the tree is re-hashed on arrival.
+      # The signer locates the immutable artifact in the validated source run
+      # and downloads it itself (§5.5). The tree is re-hashed on arrival.
       - name: Download the deployed site artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ inputs.artifact-name }}
           path: artifact
+          run-id: ${{ inputs.source-run-id }}
+          github-token: ${{ github.token }}
 
       # Every variable is step-scoped (§14 least privilege). GH_TOKEN is the
       # job's own ephemeral token, present so the pointer/manifest attestation
@@ -109,16 +178,22 @@ jobs:
           CLOUDFLARE_PAGES_READ_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_READ_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+          DIST_ARTIFACT_ID: ${{ inputs.dist-artifact-id }}
+          DIST_ARTIFACT_EXPIRES_AT: ${{ inputs.dist-artifact-expires-at }}
+          CLAIMED_DEPLOYMENT_ID: ${{ inputs.cf-production-deployment-id }}
+          CLAIMED_CODE_SHA: ${{ steps.source.outputs.head_sha }}
         run: >-
           uv run python -m populus.deploy.record
           --data-repo populus-data
           --artifact artifact
           --project publicfilings
           --domain publicfilings.org
-          --workflow-run-id '${{ github.run_id }}'
-          --dist-artifact-id '${{ inputs.dist-artifact-id }}'
-          --dist-artifact-expires-at '${{ inputs.dist-artifact-expires-at }}'
-          --claimed-deployment-id '${{ inputs.cf-production-deployment-id }}'
+          --workflow-run-id "$SOURCE_RUN_ID"
+          --dist-artifact-id "$DIST_ARTIFACT_ID"
+          --dist-artifact-expires-at "$DIST_ARTIFACT_EXPIRES_AT"
+          --claimed-deployment-id "$CLAIMED_DEPLOYMENT_ID"
+          --claimed-code-sha "$CLAIMED_CODE_SHA"
           --attestation sigstore
 
       # R25 — subject-name + subject-digest, NEVER subject-path. With a path the

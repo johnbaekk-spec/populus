@@ -76,10 +76,22 @@ Enter secrets with `gh secret set <NAME> --env <ENV> --repo
 johnbaekk-spec/populus` reading the value from protected stdin or the
 interactive prompt — **never in argv**, shell history, a patch, a
 screenshot, or a review artifact. Repository-scope copies of the three
-secrets are deleted only after the first supervised environment-based
-dispatch succeeds; a second supervised dispatch with repository scope empty
-proves there is no fallback. Publishing (the `POPULUS_PUBLISH_ARMED` switch)
-stays disarmed until both hardened runs pass.
+secrets remain an owner-controlled manual-recovery fallback during the current
+incident: workflows do not reference them, and agents must not edit or delete
+them. They are deleted only after the first complete supervised
+environment-based publish succeeds; a second supervised dispatch with
+repository scope empty proves there is no fallback. Publishing schedules
+(`POPULUS_SELFHOSTED_VALIDATED`) stay disarmed until both hardened runs pass.
+
+`record-sign.yml` is a separately dispatched top-level workflow, not a reusable
+called workflow. Probe run `33473559423` demonstrated why: a direct job received
+the temporary environment secret (`empty=false`, length 27), while a reusable
+called job bound to the same environment received an empty value
+(`empty=true`, length 0). The probe PR, branch, environment, and secret were
+removed afterwards. The publish-side dispatcher holds no environment or
+production secret and only `actions: write`; the signer job itself selects
+`production-record-sign`, holds `actions: read` plus its GitHub
+write/attestation scopes, and never holds Pages Write.
 
 The Task 2 order, end to end:
 
@@ -90,9 +102,11 @@ The Task 2 order, end to end:
 4. Merge PR 4 (the workflow-side `environment:` binding). **Merging PR 4
    before steps 2–3 makes the publish/deploy/record jobs fail closed on empty
    secrets — intended while disarmed; never weaken the binding to avoid it.**
-5. Supervised `workflow_dispatch` on `main`; inspect the job list and the
+5. Supervised `publish.yml` `workflow_dispatch` on `main`; inspect the publish
+   job list, the exact separately dispatched `record-sign.yml` run, and the
    signed deployment generation.
-6. Delete the three repository-scope secrets
+6. After that complete run succeeds, the owner deletes the three
+   repository-scope secrets
    (`gh secret delete <NAME> --repo johnbaekk-spec/populus`).
 7. A second supervised dispatch with repository scope empty — the no-fallback
    proof.
