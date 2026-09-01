@@ -380,16 +380,34 @@ class DeployOutcome:
     rollback_target: str | None
 
 
-class ServingProbe(Protocol):
-    """Reads the ``populus:code_sha`` a base URL is serving right now.
+@dataclass(frozen=True)
+class ServedIdentity:
+    """The BUILD a URL is serving: ``populus:build_id`` AND ``populus:code_sha``.
 
-    Returns the marker value, or ``None`` when it could not be determined —
-    transport failure, a non-200, a missing or duplicated marker. ``None`` is
-    "could not ask", never "no deployment": the caller refuses on it rather
-    than guessing, because this runs before any upload where refusing is free.
+    Code identity alone does not identify a deployment. Two deployments built
+    from the same commit against different data builds carry the same
+    ``code_sha`` and different ``build_id`` — indistinguishable to a code-only
+    comparison, so the anchor resolver would accept the newest match rather
+    than the one actually serving the domain, which is precisely the
+    wrong-build-restore the serving anchor exists to prevent. Both markers are
+    compared, exactly, never by prefix.
     """
 
-    def __call__(self, base_url: str) -> str | None: ...
+    build_id: str
+    code_sha: str
+
+
+class ServingProbe(Protocol):
+    """Reads the :class:`ServedIdentity` a base URL is serving right now.
+
+    Returns both markers, or ``None`` when the identity could not be determined
+    — transport failure, a non-200, a missing, empty or duplicated
+    ``build_id`` or ``code_sha``. ``None`` is "could not ask", never "no
+    deployment": the caller refuses on it rather than guessing, because this
+    runs before any upload where refusing is free.
+    """
+
+    def __call__(self, base_url: str) -> ServedIdentity | None: ...
 
 
 class OriginReadiness(Protocol):
@@ -474,15 +492,16 @@ def _assert_anchor_is_serving(
             f"cannot confirm the rollback anchor: {domain_url} reported "
             f"{served!r} and the captured deployment {prior.id} "
             f"({prior.url}) reported {anchored!r} for "
-            f"{MARKER_CODE_SHA!r}. Nothing was uploaded; production is "
-            "untouched. Re-run once both answer, or fix the deployment that "
-            "does not serve a marker"
+            f"{MARKER_BUILD_ID!r}/{MARKER_CODE_SHA!r}. Nothing was uploaded; "
+            "production is untouched. Re-run once both answer, or fix the "
+            "deployment that does not serve a marker"
         )
     if served != anchored:
         raise RollbackAnchorUnverified(
             f"the rollback anchor is not what {domain_url} serves: the domain "
-            f"serves populus:code_sha {served!r} but the captured deployment "
-            f"{prior.id} ({prior.url}) serves {anchored!r} (compared exactly, "
+            f"serves {served!r} but the captured deployment "
+            f"{prior.id} ({prior.url}) serves {anchored!r} (build_id AND "
+            "code_sha, compared exactly, "
             "never by prefix). `latest_production_deployment()` answers "
             "'newest by creation', which diverges from 'currently serving' "
             "after any dashboard rollback — and rolling back to it would move "
@@ -589,7 +608,8 @@ def capture_rollback_expectation(
     observer: RollbackObserver,
     domain_url: str,
     *,
-    anchor_id: str | None = None,
+    anchor: Any | None = None,
+    probe: ServingProbe | None = None,
 ) -> RollbackExpectation | None:
     """LD12c: the SOLE producer of a :class:`RollbackExpectation`.
 
@@ -600,17 +620,38 @@ def capture_rollback_expectation(
     here, before ``freeze_tree`` or either upload. An empty raw listing is the
     existing first-run uncompensated case and returns ``None``.
 
-    *anchor_id* reconciles the captured rollback evidence with the later serving-anchor fix: when
+    *anchor* reconciles the captured rollback evidence with the serving-anchor
+    fix: when
     the resolved serving anchor is NOT the newest-by-creation deployment (the
     state any provider-side rollback leaves behind), the expectation's identity
     is taken from the anchor's own raw entry — the deployment a compensating
     rollback would actually restore — while the bracketing stability check
     still pins the FIRST entry, which is where a concurrent deploy appears.
 
+    *probe* closes the bracket's real hole. Comparing the provider head across
+    the two raw reads only detects a deploy that lands BETWEEN them; a deploy
+    that lands after the caller verified the anchor but before the first read
+    leaves both reads identical and sails through — and the expectation then
+    pairs an OLD rollback target with the NEW deployment's body and markers,
+    which guarantees that any later rollback fails restoration verification.
+    So the observation is bound to the target *by identity*, inside the
+    bracket: the anchor deployment must itself serve the very
+    ``build_id``/``code_sha`` the observation carries. Observation and target
+    are then provably one deployment, not two reads with a stable head.
+
+    The bracket then CLOSES on the live domain. The anchor comparison cannot
+    see a provider-side rollback that lands after the observation: such a
+    rollback creates no deployment (both raw reads stay identical) and a
+    per-deployment anchor URL is immutable (it always serves its own build).
+    Re-probing ``domain_url`` at the end of the bracket is the only check that
+    sees the domain move — and a move means the expectation would compensate to
+    the anchor rather than to the deployment that was actually serving.
+
     The complete raw mappings are ephemeral: validated fields are copied out
     and the mappings are dropped — never logged, signed, or written into any
     evidence bundle.
     """
+    anchor_id = None if anchor is None else anchor.id
     before = pages.raw_deployments(environment="production")
     if not before:
         return None
@@ -632,6 +673,40 @@ def capture_rollback_expectation(
 
     observation = observer(domain_url)
 
+    # Bind the observation to the target, inside the bracket. The head-stability
+    # check below cannot see a deploy that landed before the first read; this
+    # can, because such a deploy makes the domain serve markers the anchor does
+    # not.
+    observed: ServedIdentity | None = None
+    if anchor is not None:
+        if probe is None:
+            raise DeployAborted(
+                "the rollback expectation cannot be bound to the serving "
+                f"anchor {anchor_id}: no serving probe was supplied, so the "
+                "observation and the rollback target cannot be proven to be "
+                "the same deployment. Nothing was frozen or uploaded"
+            )
+        observed = ServedIdentity(
+            build_id=observation.build_id, code_sha=observation.code_sha
+        )
+        anchored = probe(anchor.url)
+        if anchored is None:
+            raise DeployAborted(
+                f"the rollback expectation cannot be bound to the serving "
+                f"anchor {anchor_id} ({anchor.url}): it did not answer with "
+                "one build_id and one code_sha, so the observation cannot be "
+                "proven to be that deployment. Nothing was frozen or uploaded"
+            )
+        if anchored != observed:
+            raise DeployAborted(
+                f"the rollback observation is not the serving anchor's: "
+                f"{domain_url} served {observed!r} while the anchor "
+                f"{anchor_id} ({anchor.url}) serves {anchored!r}; a deploy "
+                "landed between the anchor proof and this capture, so the "
+                "expectation would pair an old rollback target with the new "
+                "deployment's body and markers. Nothing was frozen or uploaded"
+            )
+
     after = pages.raw_deployments(environment="production")
     head_after = _raw_production_head(after, when="after the observation")
     target_after = _select(after, when="after the observation")
@@ -642,6 +717,36 @@ def capture_rollback_expectation(
             f"target {target_before[0]} → {target_after[0]}); a deploy raced "
             "this run. Nothing was frozen or uploaded"
         )
+
+    # Close the bracket on the LIVE DOMAIN, not on the anchor. A per-deployment
+    # anchor URL is immutable — it always serves its own build — so re-probing
+    # it can never reveal that the DOMAIN moved. A provider-side rollback that
+    # lands after the observation repoints the domain at an older deployment
+    # WITHOUT changing newest-by-creation listing order, so both raw reads and
+    # the anchor comparison above still agree while the observation now
+    # describes a deployment the domain no longer serves. Only a second look at
+    # the domain itself sees that.
+    if anchor is not None and observed is not None:
+        assert probe is not None  # established above with the anchor
+        serving_now = probe(domain_url)
+        if serving_now is None:
+            raise DeployAborted(
+                f"the rollback expectation could not be closed: {domain_url} "
+                "did not answer with one build_id and one code_sha at the end "
+                f"of the capture bracket, so the observation of anchor "
+                f"{anchor_id} cannot be proven still current. Nothing was "
+                "frozen or uploaded"
+            )
+        if serving_now != observed:
+            raise DeployAborted(
+                f"the live domain changed while the rollback expectation was "
+                f"being captured: {domain_url} served {observed!r} at the "
+                f"observation and {serving_now!r} at the close of the bracket. "
+                "A provider-side rollback landed under this run, so the "
+                f"expectation would compensate to {anchor_id} rather than to "
+                "the deployment that was actually serving. Nothing was frozen "
+                "or uploaded"
+            )
 
     identifier, environment, uses_functions = target_after
     return RollbackExpectation(
@@ -746,7 +851,12 @@ def _resolve_serving_anchor(
     — a divergence the previous run's own compensating rollback had created.
 
     So resolve it instead: walk production deployments newest-first and take the
-    first one that answers with the marker the domain answers with. That IS the
+    first one whose FULL served identity — `populus:build_id` AND
+    `populus:code_sha` — equals the domain's. Both, because a code-only match is
+    not a build match: two deployments cut from one commit against different
+    data builds are indistinguishable by `code_sha`, so a code-only walk takes
+    the newest of them rather than the one serving, and a later compensating
+    rollback restores a build nobody asked for. That IS the
     anchor by definition — the deployment currently serving. The caller still
     runs `_assert_anchor_is_serving` afterwards, so a wrong answer here fails
     closed rather than compensating onto the wrong build.
@@ -755,7 +865,8 @@ def _resolve_serving_anchor(
     if served is None:
         raise RollbackAnchorUnverified(
             f"cannot resolve the rollback anchor: {domain_url} did not answer "
-            f"with {MARKER_CODE_SHA!r}. Nothing was uploaded; production is "
+            f"with one {MARKER_BUILD_ID!r} and one {MARKER_CODE_SHA!r}. "
+            "Nothing was uploaded; production is "
             "untouched. Re-run once the domain answers"
         )
     examined: list[str] = []
@@ -845,7 +956,8 @@ def run_deployment(
             client,
             observer,
             _domain_url(custom_domain),
-            anchor_id=prior.id,
+            anchor=prior,
+            probe=serving_probe,
         )
         if expectation is None:
             raise DeployAborted(
@@ -1307,16 +1419,18 @@ def _default_http_client():
 
 
 def serving_probe(client: Any, *, marker_path: str = DEFAULT_MARKER_PATH) -> ServingProbe:
-    """The real :class:`ServingProbe`: fetch the marker page, read its code_sha.
+    """The real :class:`ServingProbe`: fetch the marker page, read its identity.
 
     Cache-busted like every other served-tree read in this codebase — a cached
     answer would defeat the whole point of asking what is live NOW. Anything
-    other than a clean 200 carrying exactly one `populus:code_sha` marker is
+    other than a clean 200 carrying exactly one non-empty `populus:build_id`
+    AND exactly one non-empty `populus:code_sha` is
     reported as ``None`` ("could not ask"), never guessed at, because the caller
     treats a confident wrong answer as licence to roll back to the wrong build.
+    Both markers, because `code_sha` alone names a COMMIT, not a build.
     """
 
-    def _probe(base_url: str) -> str | None:
+    def _probe(base_url: str) -> ServedIdentity | None:
         # Request the path the PROVIDER answers 200 on, not the
         # inventory path. `served_path("index.html")` is "" — Pages redirects
         # /index.html to / with a 307 (the status a live origin returns, and
@@ -1347,13 +1461,19 @@ def serving_probe(client: Any, *, marker_path: str = DEFAULT_MARKER_PATH) -> Ser
             return None
         if getattr(response, "status_code", None) != 200:
             return None
-        values = read_markers(response.content).get(MARKER_CODE_SHA, [])
-        if len(values) != 1:
-            return None
-        # An EMPTY marker is not a value. Two empty strings compare
-        # equal, which would have read as "the anchor is serving" — the exact
-        # bypass this check exists to prevent. Matches `_one_marker`'s contract.
-        return values[0] if values[0].strip() else None
+        markers = read_markers(response.content)
+        found: dict[str, str] = {}
+        for name in (MARKER_BUILD_ID, MARKER_CODE_SHA):
+            values = markers.get(name, [])
+            # An EMPTY marker is not a value. Two empty strings compare
+            # equal, which would have read as "the anchor is serving" — the
+            # exact bypass this check exists to prevent. Matches `_one_marker`.
+            if len(values) != 1 or not values[0].strip():
+                return None
+            found[name] = values[0]
+        return ServedIdentity(
+            build_id=found[MARKER_BUILD_ID], code_sha=found[MARKER_CODE_SHA]
+        )
 
     return _probe
 

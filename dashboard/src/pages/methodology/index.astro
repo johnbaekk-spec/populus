@@ -1,9 +1,13 @@
 ---
-// /methodology (Methodology.dc.html): the ledger of imperfections. Every tile
+// /methodology — a first-class product surface and the launch anchor, not a
+// footer link (docs/frontend/design-principles.md §7): the ledger of
+// imperfections. Every tile
 // derives from a stats.json key that exists (methodologyM1Tiles names them and
 // tests assert the mapping); M2 renders honest absence when the module is not
 // in the build; the publication block carries the REAL build id + manifest sha.
-// Mockup numbers with no live source are dropped/reworded — register entries.
+// Mock numbers never ship: every tile derives from stats.json or the module's
+// own manifest watermarks, or states absence — a claim with no live source is
+// dropped or reworded, and cadence claims are replaced by the build stamp.
 import Base from "../../layouts/Base.astro";
 import { getBuildData, methodologyM1Tiles } from "../../lib/data";
 import { fmtInt } from "../../lib/format";

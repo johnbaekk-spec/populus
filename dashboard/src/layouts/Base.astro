@@ -1,6 +1,9 @@
 ---
-// Shared shell: masthead + notice footer, exactly per the design system
-// (Congress Feed.dc.html masthead/footer; Mobile.dc.html fold).
+// Shared shell: masthead + notice footer. One shell for every surface, varied
+// by props — never a second copy. The masthead's 721–1080px intermediate state
+// and the ≤720px fold are specified by docs/frontend/design-principles.md §5:
+// nothing honesty-bearing may be media-query-hidden, and folded elements use
+// the clip pattern so they stay in the accessibility tree.
 import "@fontsource/source-serif-4/600.css";
 import "@fontsource/source-serif-4/700.css";
 import "@fontsource/public-sans/400.css";
@@ -10,12 +13,17 @@ import "@fontsource/public-sans/700.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
-/* The nine stylesheet regions, split from global.css by REPOSITORY-
-   PROFESSIONALIZATION Slice 6 (T6.4). IMPORT ORDER IS THE CASCADE: the
-   concatenation in this exact order is byte-identical to the pre-split
-   global.css, and late-additions.css MUST stay last — its chronological
-   regions override selectors across every earlier file. css-fold.test.ts
-   reads the files in this order. */
+/* The nine stylesheet regions. IMPORT ORDER IS THE CASCADE, and this list is
+   the single source of that order: concatenating these files in exactly this
+   sequence is byte-identical to the former single global.css, so the shipped
+   cascade is unchanged by the split. late-additions.css MUST stay last — its
+   chronological regions override selectors across every earlier file.
+   dashboard/test/lib/styles.ts parses THIS block to rebuild the whole-tree
+   stylesheet, and dashboard/test/css-fold.test.ts asserts against it, so a
+   reordered or added import moves the tests with the cascade rather than
+   desyncing from it. Trailing blank lines in these files are region
+   separators from the pre-split file and are load-bearing for that byte
+   parity — do not strip them. */
 import "../styles/foundation.css";
 import "../styles/layout.css";
 import "../styles/congress-feed.css";

@@ -251,6 +251,25 @@ preview-verify-then-production protocol and writes a **new appended generation**
 
 ## TD-4 incident: a deployment went live and could not be attested
 
+**There are TWO refusals with this shape, and only ONE of them the
+acknowledgement can clear.** Read the message before reaching for the override —
+choosing wrong costs a full dispatch. This distinction was missing here until
+2026-08-31, when it sent an operator to the wrong recovery twice.
+
+| The message says | Meaning | Recovery |
+|---|---|---|
+| `…but populus-data holds **zero deployment generations**` | Nothing was ever attested | The acknowledgement below |
+| `…the **attested generation N for build X records** '<other-sha>'` | A generation exists and the live site is a DIFFERENT deployment | **The acknowledgement does nothing.** Go to "Live site mismatches an attested generation" |
+
+`gate_publish` only reaches the acknowledgement branch inside the
+zero-generations case; its own comment says it "clears exactly this state (live
+deployment, zero generations) and no other refusal". In the mismatch case the
+code falls through to a `RecordRefused` with **no override of any kind**, so a
+correct `acknowledge_unrecorded_code_sha` is accepted, ignored, and the run
+fails identically.
+
+### Variant 1 — zero generations
+
 **Symptom.** The `Gate on prior deployment generation` step refuses:
 
 ```
@@ -290,6 +309,50 @@ human overrode a gate and which deployment they overrode.
 
 4. That run deploys the fixed build and writes the first real generation. The
    override is never needed again; the next run has a generation to verify.
+
+### Variant 2 — the live site mismatches an attested generation
+
+**Symptom.**
+
+```
+<domain> serves populus:code_sha '<live-sha>'; the attested generation N for
+build <X> records '<other-sha>' (compared exactly, never by prefix). The live
+site is not the deployment that was signed
+```
+
+**What happened.** A deploy put bytes on the domain and its signer did not
+attest them, but earlier generations already exist. The gate compares the live
+`code_sha` against the newest attested generation, they differ, and it refuses.
+
+**`acknowledge_unrecorded_code_sha` DOES NOT CLEAR THIS.** It is consumed by the
+zero-generations branch only. Supplying it produces a byte-identical failure and
+wastes a full dispatch. Observed 2026-08-31 on run `33411333091`, where the
+override was set correctly to the live sha and the gate refused anyway.
+
+**What NOT to do.** Do not attest the live build to make the mismatch go away —
+that records a provenance claim for a deployment whose signer already refused it.
+Do not widen the comparison; "compared exactly, never by prefix" is the control.
+
+**Clearing it — restore the domain to the deployment that IS attested.**
+
+1. Fix the underlying signer defect and merge it, or the next run reproduces the
+   incident.
+2. Read the newest attested generation's `code_sha` and
+   `cf_production_deployment_id` from
+   `populus-data/builds/<build>/deployments/<gen>.json`, after verifying its
+   attestation (`rollback.md` §6b).
+3. Roll production back to that deployment id — `rollback.md` §6c Path A. That is
+   the **only** step needing the `Pages:Edit` token; export it for the one
+   command and unset it after.
+4. Confirm the domain now serves the attested sha:
+   `curl -s https://<domain>/ | grep -o 'populus:code_sha" content="[^"]*"'`
+5. Re-dispatch `publish.yml` with **no** override. The gate now matches, the run
+   deploys the fixed build forward, and the repaired signer writes the next
+   generation.
+
+The site serves the older build for the duration of that run. That is the
+intended cost: the gate is refusing to publish over a state nobody has
+explained, and the explanation is a rollback to something that was signed.
 
 ## Inventory v2 and the attested `_headers` control (PR 5, R12)
 

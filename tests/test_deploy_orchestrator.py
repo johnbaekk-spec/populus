@@ -88,6 +88,21 @@ PRIOR = "dep-prior"
 #: domain and the captured anchor, i.e. "they agree".
 ANCHOR_SHA = "a" * 40
 
+#: F1: a probe answers with the BUILD, not just the commit. Two deployments cut
+#: from one commit against different data builds share `ANCHOR_SHA` and differ
+#: only here, so `code_sha` alone cannot tell them apart.
+ANCHOR_BUILD_ID = "20260801.1"
+
+
+def _identity(code_sha: str = ANCHOR_SHA, build_id: str = ANCHOR_BUILD_ID):
+    return orchestrator.ServedIdentity(build_id=build_id, code_sha=code_sha)
+
+
+#: What the default harness probe answers for BOTH the live domain and the
+#: captured anchor — and, by construction, the identity `OBSERVATION` carries,
+#: because F2 binds the observation to the target by that identity.
+ANCHOR_IDENTITY = _identity()
+
 SITE = {
     "index.html": (
         b'<!doctype html><meta name="populus:build_id" content="20260805.1">'
@@ -106,7 +121,7 @@ SITE = {
 OBSERVATION = RollbackSiteObservation(
     body_sha256="c" * 64,
     body_length=1234,
-    build_id="20260801.1",
+    build_id=ANCHOR_BUILD_ID,
     code_sha=ANCHOR_SHA,
     headers=(
         ("content-security-policy", ("default-src 'self'",)),
@@ -411,7 +426,7 @@ class Harness:
             # R11c default: an agreeing probe, so tests that are not ABOUT the
             # anchor keep exercising what they were written to exercise. The
             # disagreement and unreadable cases get explicit overrides.
-            serving_probe=lambda url: ANCHOR_SHA,
+            serving_probe=lambda url: ANCHOR_IDENTITY,
             # LD12a/LD12c default: a coherent observation, identical before the
             # upload and after a rollback, so tests that are not ABOUT rollback
             # evidence keep exercising what they were written to exercise.
@@ -1149,7 +1164,7 @@ class Cli:
             "readiness_factory": lambda: (lambda url, *, stage: None),
             # R11c: an agreeing probe, and R11b: no real sleeps. Tests that are
             # ABOUT either seam override these.
-            "probe_factory": lambda: (lambda url: ANCHOR_SHA),
+            "probe_factory": lambda: (lambda url: ANCHOR_IDENTITY),
             # LD12a/LD12c: a coherent, stable observation by default.
             "observer_factory": lambda: (lambda url: OBSERVATION),
             "settle_factory": lambda: (lambda seconds: None),
@@ -1485,7 +1500,7 @@ def test_the_default_uploader_is_the_wrangler_uploader(cli: Cli, monkeypatch) ->
             pages_factory=lambda: cli.client,
             readiness_factory=lambda: (lambda url, *, stage: None),
             verifier_factory=lambda: cli.verify,
-            probe_factory=lambda: (lambda url: ANCHOR_SHA),
+            probe_factory=lambda: (lambda url: ANCHOR_IDENTITY),
             observer_factory=lambda: (lambda url: OBSERVATION),
             settle_factory=lambda: (lambda seconds: None),
         )
@@ -1513,7 +1528,7 @@ def test_a_missing_lock_installed_wrangler_is_misconfiguration_before_any_call(
         pages_factory=lambda: cli.client,
         readiness_factory=lambda: (lambda url, *, stage: None),
         verifier_factory=lambda: cli.verify,
-        probe_factory=lambda: (lambda url: ANCHOR_SHA),
+        probe_factory=lambda: (lambda url: ANCHOR_IDENTITY),
         settle_factory=lambda: (lambda seconds: None),
     )
 
@@ -1547,7 +1562,7 @@ def test_the_default_verifier_is_bound_to_the_artifact(cli: Cli, monkeypatch) ->
             readiness_factory=lambda: (lambda url, *, stage: None),
             upload_factory=lambda: cli.upload,
             http_factory=lambda: sentinel,
-            probe_factory=lambda: (lambda url: ANCHOR_SHA),
+            probe_factory=lambda: (lambda url: ANCHOR_IDENTITY),
             observer_factory=lambda: (lambda url: OBSERVATION),
             settle_factory=lambda: (lambda seconds: None),
         )
@@ -1891,8 +1906,8 @@ def test_an_anchor_that_is_not_serving_aborts_before_any_upload(
     NO candidate serving what the domain serves, there is no anchor to resolve
     and the refusal must land BEFORE the freeze so production is untouched.
     """
-    def disagreeing(url: str) -> str:
-        return "d823597b" if "publicfilings.org" in url else "7967b560"
+    def disagreeing(url: str):
+        return _identity("d823597b") if "publicfilings.org" in url else _identity("7967b560")
 
     with pytest.raises(RollbackAnchorUnverified) as raised:
         harness.run(serving_probe=disagreeing)
@@ -1920,12 +1935,12 @@ def test_the_anchor_resolves_to_the_serving_deployment_not_the_newest(
     """
     harness.client.production_ids = ("dep-newest", "dep-serving", "dep-older")
 
-    def probe(url: str) -> str:
+    def probe(url: str):
         if "publicfilings.org" in url:
-            return "d823597b"          # the domain, after a dashboard rollback
+            return ANCHOR_IDENTITY     # the domain, after a dashboard rollback
         if "dep-serving" in url:
-            return "d823597b"          # the deployment that actually serves it
-        return "4fd29878"              # newest-by-creation, never promoted
+            return ANCHOR_IDENTITY     # the deployment that actually serves it
+        return _identity("4fd29878")   # newest-by-creation, never promoted
 
     outcome = harness.run(serving_probe=probe)
 
@@ -1942,24 +1957,28 @@ def test_the_anchor_search_stops_at_the_first_match(harness: Harness) -> None:
     per deployment on every deploy, and the bound would be the only thing
     keeping that finite.
 
-    The winner is probed TWICE by design: once to resolve it, once by
+    The winner is probed THREE times by design: once to resolve it, once by
     `_assert_anchor_is_serving`, which re-reads rather than trusting the value
-    the resolver already has. That is what makes the proof independent of the
-    thing it is proving, so it is asserted here rather than optimised away.
+    the resolver already has, and once inside the rollback-evidence bracket to
+    bind the observation to the target (F2). Each re-reads rather than trusting
+    an earlier value, which is what makes each proof independent of the thing it
+    is proving, so this is asserted here rather than optimised away.
     """
     harness.client.production_ids = (PRIOR, "dep-older", "dep-oldest")
     probed: list[str] = []
 
-    def probe(url: str) -> str:
+    def probe(url: str):
         probed.append(url)
-        return "d823597b"
+        return ANCHOR_IDENTITY
 
     harness.run(serving_probe=probe)
     candidates = [u for u in probed if "publicfilings.org" not in u]
     assert all(PRIOR in u for u in candidates), (
         f"the search walked past the first match: {candidates}"
     )
-    assert len(candidates) == 2, "resolve once, then prove once, independently"
+    assert len(candidates) == 3, (
+        "resolve, prove, then bind the observation — each independently"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1967,11 +1986,11 @@ def test_the_anchor_search_stops_at_the_first_match(harness: Harness) -> None:
     [
         (lambda url: None, "neither side readable"),
         (
-            lambda url: None if "publicfilings.org" in url else "7967b560",
+            lambda url: None if "publicfilings.org" in url else _identity("7967b560"),
             "the live domain unreadable",
         ),
         (
-            lambda url: "d823597b" if "publicfilings.org" in url else None,
+            lambda url: _identity("d823597b") if "publicfilings.org" in url else None,
             "the anchor unreadable",
         ),
     ],
@@ -1985,7 +2004,7 @@ def test_an_unreadable_anchor_also_aborts(harness: Harness, probe, why: str) -> 
 
 def test_an_agreeing_anchor_proceeds_normally(harness: Harness) -> None:
     """The check must not become a blanket refusal."""
-    outcome = harness.run(serving_probe=lambda url: "d823597b")
+    outcome = harness.run(serving_probe=lambda url: ANCHOR_IDENTITY)
     assert outcome.rollback_target == PRIOR
     assert harness.upload.environments == [PREVIEW, PRODUCTION]
 
@@ -1997,9 +2016,9 @@ def test_the_first_run_never_probes_because_there_is_no_anchor(
     harness.client.latest_id = None
     probed: list[str] = []
 
-    def counting(url: str) -> str:
+    def counting(url: str):
         probed.append(url)
-        return "d823597b"
+        return ANCHOR_IDENTITY
 
     harness.run(serving_probe=counting)
     assert probed == [], "with no anchor there is no question to ask"
@@ -2092,10 +2111,10 @@ def test_the_capture_uses_the_serving_anchors_raw_entry_not_newest_by_creation(
 
     # The domain serves ANCHOR_SHA; the newest deployment serves something else,
     # so the anchor resolver lands on PRIOR.
-    def probe(url: str) -> str:
+    def probe(url: str):
         if newest in url:
-            return "f" * 40
-        return ANCHOR_SHA
+            return _identity("f" * 40)
+        return ANCHOR_IDENTITY
 
     harness.with_verifier(plan=[True, False])
     with pytest.raises(ProductionVerificationFailed) as raised:
@@ -2103,6 +2122,168 @@ def test_the_capture_uses_the_serving_anchors_raw_entry_not_newest_by_creation(
 
     assert raised.value.rolled_back_to == PRIOR
     assert harness.client.rollbacks == [PRIOR]
+
+
+# --- F1/F2: the serving anchor is a BUILD, and the observation is bound to it
+
+
+def test_the_anchor_is_resolved_by_build_id_not_by_code_sha_alone(
+    harness: Harness,
+) -> None:
+    """F1: one commit, two data builds — `code_sha` cannot tell them apart.
+
+    `dep-newest` and `dep-serving` were cut from the SAME commit against
+    DIFFERENT data builds, so they carry one `code_sha` and two `build_id`s,
+    and they serve different bodies. A resolver that compares only `code_sha`
+    matches `dep-newest` first (newest by creation) and anchors there — the
+    wrong-build restore the serving anchor exists to prevent. Comparing the
+    full identity lands on `dep-serving`, which is what the domain answers
+    with, and the compensating rollback then restores the site people are
+    actually looking at.
+    """
+    harness.client.production_ids = ("dep-newest", "dep-serving", "dep-older")
+    shared_sha = "9" * 40
+    serving = _identity(shared_sha, build_id="20260826.2")
+    newest = _identity(shared_sha, build_id="20260827.1")  # same commit, new data
+
+    def probe(url: str):
+        if "publicfilings.org" in url:
+            return serving
+        if "dep-serving" in url:
+            return serving
+        return newest
+
+    served = RollbackSiteObservation(
+        body_sha256="d" * 64,
+        body_length=999,
+        build_id=serving.build_id,
+        code_sha=serving.code_sha,
+        headers=OBSERVATION.headers,
+    )
+    harness.with_verifier(plan=[True, False])
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(serving_probe=probe, observer=lambda url: served)
+
+    assert raised.value.rolled_back_to == "dep-serving", (
+        "code_sha alone matched dep-newest first; only build_id separates them"
+    )
+    assert harness.client.rollbacks == ["dep-serving"]
+
+
+def test_a_build_id_only_divergence_aborts_rather_than_picking_one(
+    harness: Harness,
+) -> None:
+    """F1, the other half: no candidate serves the domain's BUILD.
+
+    Every deployment answers with the domain's `code_sha`, so a code-only
+    comparison accepts the first one it walks — silently, and wrongly. With
+    `build_id` in the comparison nothing matches, and the resolver refuses
+    before the freeze instead of choosing.
+    """
+    harness.client.production_ids = ("dep-newest", "dep-older")
+    shared_sha = "9" * 40
+
+    def probe(url: str):
+        if "publicfilings.org" in url:
+            return _identity(shared_sha, build_id="20260826.2")
+        return _identity(shared_sha, build_id="20260827.1")
+
+    with pytest.raises(RollbackAnchorUnverified) as raised:
+        harness.run(serving_probe=probe)
+
+    assert "no production deployment serves" in str(raised.value)
+    _no_uploads(harness)
+
+
+def test_a_deploy_landing_before_the_first_raw_read_aborts_pre_freeze(
+    harness: Harness,
+) -> None:
+    """F2: the bracket must bind the observation to the target, not just the head.
+
+    A deploy that lands AFTER the anchor proof but BEFORE the capture's first
+    raw read leaves both raw reads identical — the head/target stability check
+    sees nothing. The domain, however, is now serving the new build, so the
+    expectation would pair the OLD rollback target with the NEW deployment's
+    body and markers, and every later rollback would fail restoration
+    verification. Binding the observation to the anchor by identity catches it.
+
+    The race is modelled where it happens: the observer is the first thing the
+    capture calls after its raw read, and here it answers with the new build's
+    markers, exactly as the live domain would.
+    """
+    landed = RollbackSiteObservation(
+        body_sha256="b" * 64,
+        body_length=4321,
+        build_id="20260827.9",  # the deploy that landed; the anchor is 20260801.1
+        code_sha=ANCHOR_SHA,
+        headers=OBSERVATION.headers,
+    )
+    probes: list[str] = []
+
+    def probe(url: str):
+        probes.append(url)
+        return ANCHOR_IDENTITY
+
+    with pytest.raises(DeployAborted) as raised:
+        harness.run(serving_probe=probe, observer=lambda url: landed)
+
+    assert "not the serving anchor's" in str(raised.value)
+    assert "20260827.9" in str(raised.value)
+    _no_uploads(harness)
+    assert ("raw-list", "production") in harness.log, (
+        "the abort must land INSIDE the capture, not before it"
+    )
+    assert probes, "the binding probe must actually have been asked"
+
+
+def test_a_provider_rollback_landing_after_the_observation_aborts_pre_freeze(
+    harness: Harness,
+) -> None:
+    """F1: the closing side of the bracket must look at the DOMAIN, not the anchor.
+
+    A provider-side rollback that lands AFTER the domain observation repoints
+    the custom domain at an older deployment. It creates nothing, so the
+    newest-by-creation raw listing is byte-identical across both reads; and a
+    per-deployment anchor URL is immutable, so the anchor still serves its own
+    build and the F2 identity binding still agrees. Every pre-fix check passes,
+    while the captured expectation now names a deployment the domain is no
+    longer serving — a later failure would compensate to the wrong build.
+
+    Only a second look at the live domain sees it.
+    """
+    older = "dep-older"
+    older_identity = _identity(build_id="20260701.1")
+    harness.client.production_ids = (PRIOR, older)
+    rolled_back = False
+
+    def observer(url: str) -> RollbackSiteObservation:
+        nonlocal rolled_back
+        rolled_back = True  # the provider rollback lands right here
+        return OBSERVATION
+
+    probes: list[str] = []
+
+    def probe(url: str):
+        probes.append(url)
+        if url == DOMAIN_URL:
+            return older_identity if rolled_back else ANCHOR_IDENTITY
+        return ANCHOR_IDENTITY if PRIOR in url else older_identity
+
+    with pytest.raises(DeployAborted) as raised:
+        harness.run(serving_probe=probe, observer=observer)
+
+    message = str(raised.value)
+    assert "the live domain changed" in message
+    assert "20260701.1" in message
+    _no_uploads(harness)
+    assert ("raw-list", "production") in harness.log, (
+        "the abort must land INSIDE the capture, not before it"
+    )
+    assert probes.count(DOMAIN_URL) >= 2, (
+        "the bracket must re-read the DOMAIN; the anchor URL is immutable and "
+        "cannot reveal that the domain moved"
+    )
 
 
 def test_capture_rollback_expectation_returns_none_on_an_empty_listing(
@@ -2120,7 +2301,11 @@ def test_the_expectation_carries_the_raw_identity_and_the_one_observation(
     harness: Harness,
 ) -> None:
     expectation = capture_rollback_expectation(
-        harness.client, lambda url: OBSERVATION, DOMAIN_URL, anchor_id=PRIOR
+        harness.client,
+        lambda url: OBSERVATION,
+        DOMAIN_URL,
+        anchor=_deployment(PRIOR),
+        probe=lambda url: ANCHOR_IDENTITY,
     )
     assert expectation == RollbackExpectation(
         deployment_id=PRIOR,
@@ -2155,7 +2340,12 @@ def test_a_v1_prior_site_rolls_back_by_observation_not_inventory(
     harness.with_verifier(plan=[True, False])
 
     with pytest.raises(ProductionVerificationFailed) as raised:
-        harness.run(observer=lambda url: v1_observation)
+        harness.run(
+            observer=lambda url: v1_observation,
+            # F2 binds the observation to the anchor by identity, so the v1
+            # site's own build_id is what both must answer with.
+            serving_probe=lambda url: _identity(build_id="20260701.1"),
+        )
 
     assert raised.value.rollback_verified is True
     assert "matches the pre-upload expectation" in str(raised.value)

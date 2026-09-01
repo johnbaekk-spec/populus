@@ -6,10 +6,12 @@
    zero-based, gaps stay gaps, no midpoints; NULL-honest institutional
    integers; the as-of time stamp every 13F table carries. */
 
-/* ui/index.ts — the single consumer entry point for the ui/ domain modules
-   (REPOSITORY-PROFESSIONALIZATION Slice 6, T6.2). It re-exports exactly the
-   61-symbol public surface the monolithic ui.ts exported — nothing more —
-   and consumers import ONLY from here, never from a domain module. */
+/* ui/index.ts — the single consumer entry point for the ui/ domain modules.
+   It re-exports exactly the 61-symbol public surface the former monolithic
+   ui.ts exported — nothing more — and consumers import ONLY from here, never
+   from a domain module. The exact export set is pinned by
+   dashboard/test/ui-exports.test.ts, so adding or dropping a symbol here is a
+   deliberate, tested change to the module's public API. */
 
 export { type BuildStamps, breadcrumb } from "./shared.ts";
 export {

@@ -6,7 +6,8 @@
    zero-based, gaps stay gaps, no midpoints; NULL-honest institutional
    integers; the as-of time stamp every 13F table carries. */
 
-/* ui/states.ts — the S1/S2/S4/S7 state blocks (Slice 6 split). */
+/* ui/states.ts — the S1/S2/S4/S7 state blocks. One of the ui/ domain modules:
+   consumers import from ./index.ts only, never from this file directly. */
 
 import { esc } from "../format.ts";
 import {

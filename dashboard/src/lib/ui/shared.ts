@@ -6,7 +6,7 @@
    zero-based, gaps stay gaps, no midpoints; NULL-honest institutional
    integers; the as-of time stamp every 13F table carries. */
 
-/* ui/shared.ts — pieces shared across the ui/ domain modules (Slice 6 split).
+/* ui/shared.ts — pieces shared across the ui/ domain modules.
    `asOfNote` and `netCellHtml` are SHARED-PRIVATE: exported here for the
    sibling domain modules only, deliberately NOT re-exported by ui/index.ts. */
 

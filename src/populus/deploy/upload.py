@@ -72,6 +72,12 @@ from populus.deploy.orchestrator import (
     UploadedDeployment,
 )
 from populus.deploy.verify import HttpGetter, VerificationResult, verify_deployment
+from populus.publish.digests import DigestError
+from populus.publish.inventory import (
+    InventoryError,
+    build_inventory,
+    validate_inventory_v2,
+)
 
 __all__ = [
     "WRANGLER_RELATIVE_PATH",
@@ -341,6 +347,7 @@ class WranglerUploader:
     def __call__(
         self, path: Path, *, environment: str, branch: str
     ) -> UploadedDeployment:
+        self._require_uploadable(path, environment=environment)
         argv = self.command(path, branch=branch)
         code, out, err = self.runner(argv)
         if code != 0:
@@ -356,6 +363,34 @@ class WranglerUploader:
                 "refusing to guess"
             )
         return self._confirm(environment, printed)
+
+    def _require_uploadable(self, path: Path, *, environment: str) -> None:
+        """LD12b: this seam validates what it is about to upload, or refuses.
+
+        The uploader is an EXTERNAL entry point — the orchestrator is one caller
+        of it, not a gate in front of it — so "the sequence already validated
+        this tree" is a property of one call site, not of this object. A direct
+        caller previously handed :class:`WranglerUploader` any directory and it
+        was uploaded; a control-less, v1-era or Functions-carrying tree only
+        failed afterwards, at the post-mutation 404 probes, with provider state
+        already changed.
+
+        Validation is the existing one, not a second implementation:
+        :func:`~populus.publish.inventory.build_inventory` recomputes every size
+        and hash from the real bytes of *path*, and
+        :func:`~populus.publish.inventory.validate_inventory_v2` then applies the
+        exact LD12 contract to the document this seam itself derived. Nothing
+        here spawns a process or touches the network, so a refusal happens
+        before both.
+        """
+        try:
+            validate_inventory_v2(build_inventory(path))
+        except (InventoryError, DigestError) as exc:
+            raise UploadFailed(
+                f"the tree at {path} is not an exact inventory v2, so the "
+                f"{environment} upload was refused before wrangler ran and "
+                f"nothing was uploaded: {exc}"
+            ) from exc
 
     def _confirm(
         self, environment: str, printed: frozenset[str]

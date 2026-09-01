@@ -6,8 +6,8 @@ the UX-overhaul and surfaces-legibility design decisions, and the mobile-fold
 rules previously carried by the design mockups (`docs/design/handoff/*.dc.html`)
 — all of which now live in Git history. **This document is the stated authority
 those artifacts used to hold**: the stylesheets under `dashboard/src/styles/` (nine region files
-imported by `Base.astro` in cascade order; split from the former
-`global.css` by REPOSITORY-PROFESSIONALIZATION Slice 6) and
+imported by `Base.astro`, whose import list is the single source of cascade
+order) and
 `dashboard/test/css-fold.test.ts` cite it as the spec source for the fold and
 token rules below. Future module surfaces are critiqued against this page.
 

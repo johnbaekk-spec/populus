@@ -78,6 +78,56 @@ CONTROL_KIND = "cloudflare-pages-headers"
 #: and `_worker.js` are probed as must-be-absent though the build emits neither.
 CONTROL_FILE_PATHS = frozenset({"_headers"})
 
+#: Provider controls this deployment is FORBIDDEN to ship, at any seam. LD12:
+#: "`_redirects`, `_worker.js`, Functions … is malformed". They are prohibited
+#: rather than merely unused: each one is provider *behaviour* — a rewrite
+#: table, an edge worker, a Functions runtime — and a static commons that can
+#: be rewritten or intercepted at the edge is no longer the tree its record was
+#: signed over. Classifying them as "just another served file" is what let one
+#: reach a preview upload and be caught only by the post-mutation 404 probes.
+#:
+#: Matched as EXACT normalized relative POSIX root paths, because that is the
+#: only place Cloudflare consumes them: a nested ``docs/_worker.js`` is an inert
+#: served asset, not a control, and refusing it would reject an honest build.
+#: ``./_redirects`` is not a separate case — :func:`_require_path` already
+#: refuses a ``.`` segment, and ``_walk_regular`` emits normalized paths only.
+FORBIDDEN_CONTROL_PATHS = frozenset({"_redirects", "_worker.js"})
+
+#: The Cloudflare Pages Functions directory. Anything under it — at any depth —
+#: is a Functions artifact, so this is a PREFIX rule rather than an exact one.
+FORBIDDEN_PATH_PREFIXES = ("functions/",)
+
+
+def _prohibited_reason(path: str) -> str | None:
+    """Why *path* is a forbidden provider control, or ``None``.
+
+    *path* must already be normalized (see :func:`_require_path`); this function
+    does no normalization of its own, deliberately — a matcher that normalizes
+    is a second, drifting implementation of the path rules.
+    """
+    if path in FORBIDDEN_CONTROL_PATHS:
+        return (
+            f"{path!r} is a prohibited Cloudflare Pages provider control; this "
+            "deployment ships exactly one control, the root '_headers'"
+        )
+    for prefix in FORBIDDEN_PATH_PREFIXES:
+        if path.startswith(prefix):
+            return (
+                f"{path!r} is a Cloudflare Pages Functions artifact "
+                f"(prefix {prefix!r}); this deployment is static and ships no "
+                "Functions"
+            )
+    return None
+
+
+def _require_not_prohibited(paths: Sequence[str], *, where: str) -> None:
+    """Refuse any forbidden provider control among *paths*."""
+    for path in paths:
+        reason = _prohibited_reason(path)
+        if reason is not None:
+            raise InventoryError(f"{where}: {reason}")
+
+
 _TOP_LEVEL_KEYS = frozenset(
     {"inventory_version", "dist_digest_version", "dist_digest", "files", "controls"}
 )
@@ -309,6 +359,12 @@ def validate_inventory_v2(document: object) -> ValidatedInventoryV2:
 
     _require_sorted_unique([entry.path for entry in files], key="files")
     _require_sorted_unique([entry.path for entry in controls], key="controls")
+    # LD12: prohibited provider controls are malformed WHEREVER they appear —
+    # `files` included. Without this, `_redirects`/`_worker.js`/a Functions path
+    # simply looked like another served asset and passed validation; the
+    # exactly-one-control rule below never saw them.
+    _require_not_prohibited([entry.path for entry in files], where="files")
+    _require_not_prohibited([entry.path for entry in controls], where="controls")
     overlap = {entry.path for entry in files} & {entry.path for entry in controls}
     if overlap:
         raise InventoryError(
@@ -362,6 +418,14 @@ def build_inventory(tree: Path | str) -> dict:
     files: list[dict] = []
     controls: list[dict] = []
     for relpath, path in _walk_regular(tree):
+        # LD12: a prohibited provider control is refused at the PRODUCER seam
+        # too, not only when the validator sees the finished document. The
+        # builder previously swept every non-`_headers` path into `files`, so a
+        # `_redirects`, `_worker.js` or `functions/` artifact was emitted as an
+        # ordinary served file and travelled on to a preview upload.
+        reason = _prohibited_reason(relpath)
+        if reason is not None:
+            raise InventoryError(f"{tree}: {reason}")
         if relpath in CONTROL_FILE_PATHS:
             controls.append(
                 {

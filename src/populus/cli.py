@@ -347,12 +347,13 @@ def ingest(
                     conn, cache_dir=from_cache, **common
                 )
             else:
-                contact, warning = sec_contact()
+                _contact, warning = sec_contact()
                 if warning is not None:
                     click.echo(warning, err=True)
+                # No contact= : the client resolves POPULUS_CONTACT per
+                # request (D9). sec_contact() here is only for the warning.
                 client = SecClient(
                     HttpxSecTransport(),
-                    contact=contact,
                     sleep=time.sleep,
                     monotonic=time.monotonic,
                 )
@@ -1884,12 +1885,13 @@ def _live_bulk_client():
     from populus.inst_bulk import CountingTransport
     from populus.net.sec_client import HttpxSecTransport, SecClient, sec_contact
 
-    contact, warning = sec_contact()
+    _contact, warning = sec_contact()
     if warning is not None:
         click.echo(warning, err=True)
     transport = CountingTransport(HttpxSecTransport())
+    # No contact= : resolved per request (D9).
     client = SecClient(
-        transport, contact=contact, sleep=time.sleep, monotonic=time.monotonic
+        transport, sleep=time.sleep, monotonic=time.monotonic
     )
     return client, transport
 

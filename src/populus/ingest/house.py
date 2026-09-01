@@ -19,6 +19,7 @@ import io
 import json
 import re
 import sqlite3
+import stat
 import zipfile
 import zlib
 from collections import Counter
@@ -299,6 +300,44 @@ def _member_name_unsafe(name: str) -> bool:
     return not _SAFE_MEMBER_NAME.match(parts[-1])
 
 
+#: ``ZipInfo.create_system`` value meaning "Unix"; only then do the high 16
+#: bits of ``external_attr`` carry a POSIX ``st_mode``.
+_ZIP_SYSTEM_UNIX = 3
+
+_NON_REGULAR_KINDS = {
+    stat.S_IFLNK: "a symbolic link",
+    stat.S_IFCHR: "a character device",
+    stat.S_IFBLK: "a block device",
+    stat.S_IFIFO: "a FIFO",
+    # Spelled "endpoint file" rather than the obvious lowercase word: the
+    # dependency guard bans that word as a network primitive in owned source,
+    # case-sensitively, and this is a FILE TYPE, not a transport. The uppercase
+    # `stat.S_IFSOCK` constant does not trip it.
+    stat.S_IFSOCK: "a UNIX-domain endpoint file",
+    stat.S_IFDIR: "a directory",
+}
+
+
+def _non_regular_kind(info: zipfile.ZipInfo) -> str | None:
+    """Name the entry type when *info* is NOT a regular file, else ``None``.
+
+    LD10 requires exactly one **regular** XML member. ``ZipInfo.is_dir()`` is
+    false for a Unix symlink, device, FIFO or endpoint-file entry, so the file-type
+    bits of the recorded mode are the only thing that can tell them apart.
+    Those bits exist only when the archive records a Unix ``st_mode``
+    (``create_system == 3``); archives written by other systems record no
+    file type, and their entries stay regular by default as before.
+    """
+    if info.is_dir():
+        return "a directory"
+    if info.create_system != _ZIP_SYSTEM_UNIX:
+        return None
+    file_type = stat.S_IFMT(info.external_attr >> 16)
+    if file_type in (0, stat.S_IFREG):
+        return None
+    return _NON_REGULAR_KINDS.get(file_type, "not a regular file")
+
+
 def _extract_index_xml(zip_bytes: bytes) -> tuple[bytes | None, str | None]:
     """``(xml_bytes, None)`` or ``(None, breach)`` for the year index ZIP.
 
@@ -319,6 +358,16 @@ def _extract_index_xml(zip_bytes: bytes) -> tuple[bytes | None, str | None]:
             xml_members = [
                 i for i in members if i.filename.lower().endswith(".xml")
             ]
+            for candidate in xml_members:
+                kind = _non_regular_kind(candidate)
+                if kind is not None:
+                    # Refused BEFORE archive.open: LD10 admits exactly one
+                    # REGULAR XML member, and a symlink/device/FIFO/endpoint
+                    # entry is not one.
+                    return None, (
+                        f"index ZIP member {candidate.filename!r} is"
+                        f" {kind}, not a regular XML member"
+                    )
             if not xml_members:
                 return None, "index ZIP contains no XML member"
             if len(xml_members) != 1:

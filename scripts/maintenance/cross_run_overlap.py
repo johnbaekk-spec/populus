@@ -318,6 +318,12 @@ IGNORE = {
     "scripts/accept_m2_11.py":
         "moved by PROF Slice 3 (#65) to scripts/acceptance/institutional_serving.py; "
         "the make accept-m2-11 target name is unchanged (D12)",
+    "dashboard/src/lib/ui.ts":
+        "split by PROF Slice 6 (#84) into dashboard/src/lib/ui/ (nine domain "
+        "modules plus index.ts, 61-symbol surface preserved); both plans cite the "
+        "pre-split file — the security run at TD-PSH-3 and I-2 across its render "
+        "surface. Slice 6's own plan predicted this ('the file Slice 6 deletes "
+        "outright'), so the citation is stale by design, not by accident",
 }
 
 

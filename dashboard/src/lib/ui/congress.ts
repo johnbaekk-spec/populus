@@ -7,7 +7,8 @@
    integers; the as-of time stamp every 13F table carries. */
 
 /* ui/congress.ts — congressional member/ticker bodies, the entity transaction
-   table, and the member-v2 sections (Slice 6 split). */
+   table, and the member-v2 sections. One of the ui/ domain modules: consumers
+   import from ./index.ts only, never from this file directly. */
 
 import {
   type TxnRow,

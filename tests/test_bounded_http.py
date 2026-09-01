@@ -8,6 +8,8 @@ the helper and keep their own hermetic suites.
 
 from __future__ import annotations
 
+import gzip
+
 import httpx
 import pytest
 
@@ -146,6 +148,78 @@ def test_redirects_are_not_followed():
     )
     assert response.status_code == 302
     assert calls == [URL]
+
+
+# --- decode expansion cannot bypass the cap (LD10) ----------------------------
+#
+# The cap counts DECODED bytes. A gzip body whose WIRE size is far below the
+# ceiling can decode to far above it, so every test below keeps the declared
+# Content-Length (the wire size) comfortably under the limit: only the
+# decoded stream count can refuse it. A regression from ``iter_bytes()`` to
+# raw iteration accepts all of these.
+
+
+def _gzip_transport(decoded: bytes, *, declare_length=True):
+    """MockTransport serving *decoded* gzipped, with the WIRE Content-Length."""
+    wire = gzip.compress(decoded)
+    headers = [("content-encoding", "gzip")]
+    if declare_length:
+        headers.append(("content-length", str(len(wire))))
+    transport, stream = _transport_for(chunks=[wire], headers=headers)
+    return transport, stream, len(wire)
+
+
+def test_production_body_cap_is_the_contract_value():
+    # The decode tests below shrink the cap via `limit=` for speed; this pins
+    # the real ceiling so a shrunken test cap can never hide a changed one.
+    assert HTTP_BODY_CAP == 128 * 1024 * 1024
+
+
+def test_gzip_body_decoding_over_the_cap_is_refused():
+    transport, stream, wire = _gzip_transport(b"a" * 5000)
+    assert wire < 100, "the wire body must sit well under the cap"
+    with pytest.raises(ResponseTooLarge) as excinfo:
+        bounded_http_request("GET", URL, headers={}, limit=100, transport=transport)
+    err = excinfo.value
+    assert err.declared == wire and err.declared <= 100
+    assert err.observed > 100, "the DECODED size must be what breaches the cap"
+    assert stream.closed, "the response must be closed on abort"
+
+
+def test_gzip_body_over_the_cap_without_content_length_is_refused():
+    transport, stream, _wire = _gzip_transport(b"b" * 5000, declare_length=False)
+    with pytest.raises(ResponseTooLarge) as excinfo:
+        bounded_http_request("GET", URL, headers={}, limit=100, transport=transport)
+    assert excinfo.value.declared is None
+    assert excinfo.value.observed > 100
+    assert stream.closed
+
+
+def test_gzip_body_decoding_to_exactly_the_cap_is_accepted():
+    body = b"c" * 100
+    transport, _stream, wire = _gzip_transport(body)
+    assert wire < 100
+    response = bounded_http_request(
+        "GET", URL, headers={}, limit=100, transport=transport
+    )
+    assert response.content == body
+    assert len(response.content) == 100
+
+
+def test_a_house_document_fetch_cannot_be_gzip_bombed():
+    # The same property through a REAL transport, not just the helper.
+    decoded = b"d" * (HTTP_BODY_CAP + 1)
+    wire = gzip.compress(decoded)
+    assert len(wire) < HTTP_BODY_CAP
+    transport, stream = _transport_for(
+        chunks=[wire],
+        headers=[("content-encoding", "gzip"), ("content-length", str(len(wire)))],
+    )
+    with pytest.raises(ResponseTooLarge) as excinfo:
+        HttpxTransport(transport=transport).get(URL, headers={})
+    assert excinfo.value.declared == len(wire) < HTTP_BODY_CAP
+    assert excinfo.value.observed > HTTP_BODY_CAP
+    assert stream.closed
 
 
 # --- the three real transports are wired through the cap ----------------------
