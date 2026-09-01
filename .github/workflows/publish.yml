@@ -682,8 +682,11 @@ jobs:
           ARTIFACT_NAME: site-${{ needs.publish.outputs.build_id }}
           CLAIMED_DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id }}
         run: |
+          # This job intentionally has no checkout.  Keep every gh invocation
+          # explicitly repository-scoped: without --repo, gh falls back to
+          # git discovery and dies before dispatch with "not a git repository".
           title="record-sign request ${REQUEST_ID} for source-run ${SOURCE_RUN_ID}"
-          gh workflow run record-sign.yml --ref main \
+          gh workflow run record-sign.yml --ref main --repo "$GITHUB_REPOSITORY" \
             -f "request-id=${REQUEST_ID}" \
             -f "source-run-id=${SOURCE_RUN_ID}" \
             -f "artifact-name=${ARTIFACT_NAME}" \
@@ -692,7 +695,7 @@ jobs:
           record_run_id=""
           for attempt in $(seq 1 24); do
             record_run_id="$(
-              gh run list --workflow record-sign.yml \
+              gh run list --repo "$GITHUB_REPOSITORY" --workflow record-sign.yml \
                 --event workflow_dispatch --branch main --limit 100 \
                 --json databaseId,displayTitle \
                 --jq ".[] | select(.displayTitle == \"${title}\") | .databaseId" \
@@ -708,7 +711,7 @@ jobs:
             exit 1
           fi
           echo "watching record-sign run ${record_run_id}"
-          gh run watch "$record_run_id" --exit-status --interval 10
+          gh run watch "$record_run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 10
 
   assert-signed:
     needs: [deploy, sign]
