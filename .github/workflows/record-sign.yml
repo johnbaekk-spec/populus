@@ -46,35 +46,14 @@ on:
         type: string
         required: false
         default: ""
-    # RUN PUBLIC-SECURITY-HARDENING R4/LD5, CORRECTED 2026-08-29 by a failed
-    # supervised run. The VALUE of each secret still comes from the
-    # `production-record-sign` environment selected by `environment:` on the
-    # `record` job below, and the caller still passes nothing — that part of
-    # LD5 is unchanged and is what keeps the caller from holding either
-    # credential.
-    #
-    # What was wrong: the block was removed entirely, and an UNDECLARED name is
-    # not referenceable from the `secrets` context of a CALLED workflow. With no
-    # declaration, `secrets.DATA_REPO_PAT` expanded to the empty string and the
-    # populus-data checkout died with "Input required and not supplied: token"
-    # — after publish and deploy had already succeeded, leaving a live
-    # deployment with no attested generation.
-    #
-    # Measured on run 33220453876: the environment DID bind (a
-    # `production-record-sign` deployment record exists, so the branch policy
-    # passed), and both secrets were present under their exact names since
-    # before the run started. Declaration is what makes the name resolvable;
-    # `environment:` is what supplies the value.
-    #
-    # `required: false` is load-bearing. `required: true` would force every
-    # caller to pass a value, which is precisely the caller-side path LD5
-    # removes. Declared-but-optional and never mapped by the caller means there
-    # is still exactly ONE source for these values: the environment.
-    secrets:
-      DATA_REPO_PAT:
-        required: false
-      CLOUDFLARE_PAGES_READ_TOKEN:
-        required: false
+    # RUN PUBLIC-SECURITY-HARDENING R4/LD5 — deliberately NO `secrets:` block.
+    # Environment secrets in a reusable workflow are selected by `environment:`
+    # on the CALLED job, never passed through `workflow_call`: the `record` job
+    # below resolves DATA_REPO_PAT and CLOUDFLARE_PAGES_READ_TOKEN from the
+    # `production-record-sign` environment itself, so the caller holds neither
+    # credential and a caller-side mapping would be a second, wider path to the
+    # same secrets. Until the owner creates the environment and enters both
+    # secrets, they resolve to the empty string and the job fails closed.
 
 permissions:
   contents: write
