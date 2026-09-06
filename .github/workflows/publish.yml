@@ -171,7 +171,7 @@ jobs:
           UV_PIN: "0.7.13"
         run: |
           if ! command -v uv >/dev/null 2>&1; then
-            python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
+            python3 -m pip install --quiet --require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"
           fi
           have="$(uv --version 2>/dev/null | awk '{print $2}')"
           if [ "$have" != "$UV_PIN" ]; then
@@ -677,7 +677,7 @@ jobs:
           echo "wrangler $version (lock-installed)"
 
       - name: Install uv (version-pinned)
-        run: python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
+        run: python3 -m pip install --quiet --require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"
 
       - name: Sync (frozen lockfile)
         run: uv sync --frozen

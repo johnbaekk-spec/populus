@@ -80,7 +80,7 @@ jobs:
       # `uv` from PyPI at the version publish.yml pins, so both workflows
       # resolve dependencies the same way. No third-party action.
       - name: Install uv (pinned)
-        run: python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
+        run: python3 -m pip install --quiet --require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"
 
       - name: Sync (frozen lockfile)
         run: uv sync --frozen
@@ -125,7 +125,7 @@ jobs:
           python-version-file: pyproject.toml
 
       - name: Install uv (pinned)
-        run: python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
+        run: python3 -m pip install --quiet --require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"
 
       - name: Sync (frozen lockfile)
         working-directory: .

@@ -2352,7 +2352,9 @@ def test_uv_step_is_os_tolerant_and_asserts_the_pin():
     # that number. It now installs from the same `--require-hashes` file the
     # hosted jobs use, and that file must name the SAME version as UV_PIN —
     # otherwise the fallback installs one uv and the assertion demands another.
-    assert "--require-hashes -r .github/ci/uv-requirements.txt" in run, (
+    assert (
+        '--require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"' in run
+    ), (
         "the pip fallback must install from the hash-pinned requirements file"
     )
     assert "uv==" not in run, "no version-only pin may survive alongside the hashes"
@@ -2362,7 +2364,7 @@ def test_uv_step_is_os_tolerant_and_asserts_the_pin():
     assert (
         "if ! command -v uv >/dev/null 2>&1; then\n"
         "  python3 -m pip install --quiet --require-hashes"
-        " -r .github/ci/uv-requirements.txt\n"
+        ' -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"\n'
         "fi\n"
     ) in run, "the fallback conditional drifted from `absent uv -> hash-pinned pip`"
     requirements = (WORKFLOWS.parent / "ci" / "uv-requirements.txt").read_text(
@@ -2397,9 +2399,13 @@ def test_the_uv_fallback_runs_pip_exactly_when_uv_is_absent(tmp_path, uv_present
     if uv_present:
         (shims / "uv").write_text("#!/bin/sh\nexit 0\n")
         (shims / "uv").chmod(0o755)
+    # GITHUB_WORKSPACE is set to a KNOWN value so the assertion below pins the
+    # expanded path exactly. With it unset the variable expands to empty and a
+    # misspelled name would still end in the right suffix — a false pass.
+    workspace = str(tmp_path / "ws")
     result = subprocess.run(  # nosec B603 — fixed argv, the workflow's own snippet
         ["/bin/sh", "-c", _uv_fallback_block(step["run"])],
-        env={"PATH": str(shims)},
+        env={"PATH": str(shims), "GITHUB_WORKSPACE": workspace},
         capture_output=True,
         text=True,
         check=False,
@@ -2411,7 +2417,47 @@ def test_the_uv_fallback_runs_pip_exactly_when_uv_is_absent(tmp_path, uv_present
         argv = log.read_text().splitlines()
         assert argv[:2] == ["-m", "pip"], argv
         assert "--require-hashes" in argv and "-r" in argv, argv
-        assert argv[argv.index("-r") + 1] == ".github/ci/uv-requirements.txt", argv
+        assert (
+            argv[argv.index("-r") + 1]
+            == f"{workspace}/.github/ci/uv-requirements.txt"
+        ), argv
+
+
+def test_every_repo_rooted_path_in_a_run_body_survives_a_working_directory_default():
+    """CI 2026-09-06: the hash-pinned uv install used the repo-relative path
+    `.github/ci/uv-requirements.txt`, and `checks.yml`'s dashboard job sets a
+    job-level `defaults.run.working-directory: dashboard`. The step therefore
+    looked for `dashboard/.github/ci/...` and the job failed — while the python
+    and security jobs, which set no default, passed. The text pins in this file
+    all matched, because they pinned the STRING and never asked where it
+    resolves FROM.
+
+    The property: a `run:` body may only name a repo-root path when the path is
+    rooted at `$GITHUB_WORKSPACE`, OR the step is in a job with no
+    working-directory default AND sets none itself. Anything else is a path
+    whose meaning depends on a job default some future edit can add.
+    """
+    offenders = []
+    for path in WORKFLOWS.glob("*.yml"):
+        doc = yaml.safe_load(path.read_text())
+        for job_id, job in (doc.get("jobs") or {}).items():
+            job_wd = ((job.get("defaults") or {}).get("run") or {}).get(
+                "working-directory"
+            )
+            for step in job.get("steps") or []:
+                run = step.get("run") or ""
+                wd = step.get("working-directory", job_wd)
+                if wd in (None, ".", ""):
+                    continue
+                for match in re.findall(r"(?<![\w$/\"'])\.github/[\w./-]+", run):
+                    offenders.append(
+                        f"{path.name}:{job_id}:{step.get('name')!r} resolves "
+                        f"{match!r} from working-directory {wd!r}"
+                    )
+    assert offenders == [], (
+        "repo-root path in a run body under a working-directory default; root "
+        f"it at $GITHUB_WORKSPACE: {offenders}"
+    )
 
 
 def _git_version_guard(run: str) -> str:

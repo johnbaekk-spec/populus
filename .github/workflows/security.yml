@@ -48,7 +48,7 @@ jobs:
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Install uv (hash-pinned)
-        run: python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
+        run: python3 -m pip install --quiet --require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"
 
       - name: Sync (frozen lockfile)
         run: uv sync --frozen
