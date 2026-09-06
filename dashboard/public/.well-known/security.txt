@@ -1,0 +1,6 @@
+# RFC 9116 security contact for publicfilings.org. The policy itself lives
+# in the repository's SECURITY.md; this file only points at it.
+Contact: https://github.com/johnbaekk-spec/populus/blob/main/SECURITY.md
+Expires: 2027-09-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://publicfilings.org/.well-known/security.txt

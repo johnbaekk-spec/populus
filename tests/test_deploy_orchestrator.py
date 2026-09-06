@@ -125,6 +125,7 @@ OBSERVATION = RollbackSiteObservation(
     code_sha=ANCHOR_SHA,
     headers=(
         ("content-security-policy", ("default-src 'self'",)),
+        ("permissions-policy", ("camera=(), microphone=(), geolocation=(), payment=(), usb=()",)),
         ("referrer-policy", ("strict-origin-when-cross-origin",)),
         ("strict-transport-security", ("max-age=31536000",)),
         ("x-content-type-options", ("nosniff",)),
@@ -2367,6 +2368,7 @@ def test_a_v1_prior_site_rolls_back_by_observation_not_inventory(
         code_sha=ANCHOR_SHA,
         headers=(
             ("content-security-policy", ()),
+            ("permissions-policy", ()),
             ("referrer-policy", ()),
             ("strict-transport-security", ()),
             ("x-content-type-options", ()),

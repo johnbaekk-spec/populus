@@ -172,7 +172,7 @@ class _Origin:
         self.overrides = dict(overrides or {})
         self.extra_headers = dict(extra_headers or {})
         # A real Pages deployment applies the `/*` rule in `_headers` to every
-        # served asset, so the faithful default is "all four security headers
+        # served asset, so the faithful default is "all five security headers
         # present on every 200". `drop_security_headers` models a deployment
         # that lost the control; a `security_headers` dict models one whose
         # policy was altered.
@@ -1266,8 +1266,32 @@ def test_the_locked_constant_equals_the_shipped_headers_file() -> None:
     match = re.search(r"^\s+Content-Security-Policy:\s*(.+)$", shipped, re.M)
     assert match is not None, "no Content-Security-Policy line in _headers"
     assert match.group(1) == LOCKED_CONTENT_SECURITY_POLICY
-    # A single `/*` block, per the plan's lock.
-    assert shipped.splitlines()[0] == "/*"
+    # R2 L12: the same drift surface for every other required header, in BOTH
+    # directions. Inclusion alone (every required header is in the file) would
+    # let the file grow a header the verifier merely ALLOWS — say
+    # `Cross-Origin-Opener-Policy` — with no exact value pinned anywhere, so
+    # the shipped block must be EXACTLY the required map: same names, each
+    # exactly once, each with the locked value.
+    lines = shipped.splitlines()
+    # A single `/*` block, per the plan's lock: line 0 is the rule, every other
+    # line is an indented `Name: value` pair, and no second rule appears.
+    assert lines[0] == "/*"
+    assert not any(line.startswith("/") for line in lines[1:]), (
+        "one `/*` block; no per-path rule"
+    )
+    shipped_headers: dict[str, list[str]] = {}
+    for line in lines[1:]:
+        parsed = re.fullmatch(r"\s+([A-Za-z0-9-]+):\s*(.+?)\s*", line)
+        assert parsed is not None, f"unparseable _headers line: {line!r}"
+        shipped_headers.setdefault(parsed.group(1).lower(), []).append(parsed.group(2))
+    assert set(shipped_headers) == set(REQUIRED_RESPONSE_HEADERS), (
+        f"shipped {sorted(shipped_headers)} vs required "
+        f"{sorted(REQUIRED_RESPONSE_HEADERS)}: a header in one and not the other"
+    )
+    for header, want in REQUIRED_RESPONSE_HEADERS.items():
+        assert shipped_headers[header] == [want], (
+            f"{header}: shipped {shipped_headers[header]!r}, verifier wants {want!r}"
+        )
 
 
 def test_the_policy_is_the_ld13_shape_with_zero_inline_hashes() -> None:
@@ -1308,6 +1332,15 @@ def test_hsts_is_one_year_without_subdomains_or_preload() -> None:
         REQUIRED_RESPONSE_HEADERS["referrer-policy"]
         == "strict-origin-when-cross-origin"
     )
+
+
+def test_permissions_policy_denies_every_named_feature_to_every_origin() -> None:
+    """R2 L12: each locked feature is an empty allowlist — `name=()` — never
+    `self` or `*`; the site uses none of them, so nothing may be granted."""
+    policy = REQUIRED_RESPONSE_HEADERS["permissions-policy"]
+    directives = dict(part.strip().split("=", 1) for part in policy.split(","))
+    assert set(directives) == {"camera", "microphone", "geolocation", "payment", "usb"}
+    assert all(value == "()" for value in directives.values()), directives
 
 
 def test_a_deployment_serving_no_policy_is_rejected(tmp_path) -> None:
@@ -1452,6 +1485,7 @@ def test_normalize_security_header_multimap_reports_every_occurrence():
     assert normalized["x-content-type-options"] == ("nosniff",)
     assert normalized["strict-transport-security"] == ()
     assert normalized["referrer-policy"] == ()
+    assert normalized["permissions-policy"] == ()
 
 
 def test_a_duplicated_policy_header_is_refused_not_collapsed(tmp_path):
@@ -1498,7 +1532,13 @@ def test_header_effects_are_proven_on_representative_types(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "name", ["strict-transport-security", "x-content-type-options", "referrer-policy"]
+    "name",
+    [
+        "strict-transport-security",
+        "x-content-type-options",
+        "referrer-policy",
+        "permissions-policy",
+    ],
 )
 def test_each_missing_security_header_fails_verification(tmp_path, name):
     site = _site()

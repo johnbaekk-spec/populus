@@ -245,6 +245,18 @@ jobs:
           # a step-scoped variable (R2 M1). Nothing is written to .git/config,
           # and the variable deliberately carries a name the run-body tests do
           # not forbid, so the PAT can never be echoed by a copy-pasted name.
+          # Fail closed if git predates GIT_CONFIG_COUNT (git 2.31): an older
+          # git ignores the variables SILENTLY, so the push would run with
+          # whatever helper the machine keeps and the reset above would never
+          # happen — exactly the persistence this scoping exists to prevent.
+          # Named here rather than assumed, because nothing else asserts it.
+          git_version="$(git version | awk '{print $3}')"
+          case "$git_version" in
+            [01].*|2.[0-9].*|2.[12][0-9].*|2.30.*)
+              echo "::error::git ${git_version} predates GIT_CONFIG_COUNT (needs git >= 2.31); refusing to push with an unscoped credential helper."
+              exit 1
+              ;;
+          esac
           export GIT_CONFIG_COUNT=2
           export GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
           export GIT_CONFIG_KEY_1=credential.helper

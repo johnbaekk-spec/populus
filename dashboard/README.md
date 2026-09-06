@@ -123,8 +123,15 @@ need `CI` cleared in their child environment. Neither is a shipping build.
 (LD13): the locked CSP (`script-src 'self'` plus only the R28 analytics beacon
 origins — no inline hashes, no `unsafe-eval`), HSTS `max-age=31536000`
 (deliberately without `includeSubDomains`/`preload`, so `max-age=0` remains an
-emergency rollback), `X-Content-Type-Options: nosniff`, and
-`Referrer-Policy: strict-origin-when-cross-origin`.
+emergency rollback), `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`, and (security audit R2,
+L12) `Permissions-Policy: camera=(), microphone=(), geolocation=(),
+payment=(), usb=()`. The deploy verifier locks every one of these values
+exactly (`REQUIRED_RESPONSE_HEADERS` in `src/populus/deploy/verify.py`), so a
+change here is a change there, and to the tests that pin both. The same
+audit added `public/.well-known/security.txt` (RFC 9116), which points at the
+repository's `SECURITY.md` and carries a one-year `Expires` that the
+post-build suite refuses once past.
 
 Because `script-src` carries no hashes, **no executable inline script may exist
 anywhere in the built tree**. Two mechanisms keep that true:
