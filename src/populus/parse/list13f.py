@@ -34,7 +34,7 @@ from typing import NamedTuple
 
 from populus.canonical import nfc
 from populus.identity.registry import normalize_cusip
-from populus.parse.house_ptr import Line, _column_of, extract_positioned
+from populus.parse.house_ptr import MAX_PDF_PAGES, Line, _column_of, extract_positioned
 
 #: Version stamped onto every seeded fact row (§5.1 transformation provenance).
 LIST13F_PARSER_VERSION = "list13f-1.0.0"
@@ -620,6 +620,11 @@ def _legend_text(pdf_bytes: bytes) -> str:
 
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            if len(pdf.pages) > MAX_PDF_PAGES:
+                raise List13fParseError(
+                    f"13(f) list PDF has {len(pdf.pages)} pages, over the"
+                    f" {MAX_PDF_PAGES}-page cap"
+                )
             if len(pdf.pages) < 2:
                 raise List13fParseError(
                     "13(f) list PDF has no legend page (fewer than 2 pages)"

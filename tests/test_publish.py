@@ -17,6 +17,7 @@ import json
 import re
 import shutil
 import subprocess  # nosec B404 — bash -n over runbook snippets, argv only
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -2142,10 +2143,16 @@ def test_publish_workflow_gh_token_step_scoped(tmp_path):
         "populus publish",
         "populus seed-corpus",
     }
+    # R2 M1 AMENDMENT, recorded not silent: the commit step now carries the
+    # PAT as POPULUS_DATA_PUSH_TOKEN (persist-credentials is off, so the push
+    # supplies it per invocation). The selector therefore matches the PAT
+    # under ANY env name — aliasing it onto an unlisted step is exactly what
+    # a GH_TOKEN-only selector would have missed — and the count moves 4 -> 5.
+    pat_bearing.add("git push")
     pat_steps = [
-        step for step in job["steps"] if (step.get("env") or {}).get("GH_TOKEN") == pat
+        step for step in job["steps"] if pat in (step.get("env") or {}).values()
     ]
-    assert len(pat_steps) == 4
+    assert len(pat_steps) == 5
     for step in pat_steps:
         run = step.get("run", "")
         assert any(command in run for command in pat_bearing), (
@@ -2340,6 +2347,219 @@ def test_uv_step_is_os_tolerant_and_asserts_the_pin():
     assert "uv --version" in run, "the pin must be asserted against the machine"
     assert "exit 1" in run, "a drifted toolchain must fail closed"
     assert "self-hosted-runner.md" in run, "fail closed WITH a remediation line"
+    # R2 M8 follow-up: the fallback used to be `pip install "uv==${UV_PIN}"`,
+    # a version-only pin that would accept whatever the index served under
+    # that number. It now installs from the same `--require-hashes` file the
+    # hosted jobs use, and that file must name the SAME version as UV_PIN —
+    # otherwise the fallback installs one uv and the assertion demands another.
+    assert (
+        '--require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"' in run
+    ), (
+        "the pip fallback must install from the hash-pinned requirements file"
+    )
+    assert "uv==" not in run, "no version-only pin may survive alongside the hashes"
+    # The whole conditional, not its parts: substring checks on `command -v uv`
+    # and the pip line both survive dropping the `!` (which would install ONLY
+    # when uv is already present and skip the runner that has none).
+    assert (
+        "if ! command -v uv >/dev/null 2>&1; then\n"
+        "  python3 -m pip install --quiet --require-hashes"
+        ' -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"\n'
+        "fi\n"
+    ) in run, "the fallback conditional drifted from `absent uv -> hash-pinned pip`"
+    requirements = (WORKFLOWS.parent / "ci" / "uv-requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    assert f"uv=={pin_value} " in requirements, (
+        "UV_PIN and .github/ci/uv-requirements.txt name different uv versions"
+    )
+
+
+def _uv_fallback_block(run: str) -> str:
+    """The `if ! command -v uv ...; then ... fi` block of the uv step, verbatim."""
+    start = run.index("if ! command -v uv")
+    end = run.index("fi\n", start) + len("fi\n")
+    return run[start:end]
+
+
+@pytest.mark.parametrize("uv_present", [False, True], ids=["uv-absent", "uv-present"])
+def test_the_uv_fallback_runs_pip_exactly_when_uv_is_absent(tmp_path, uv_present):
+    """Behavioural twin of the structural pin above: the fallback block is
+    executed under `sh` with a shim PATH — a `python3` that records its argv
+    and, in one leg, a `uv` that exists — so reversing the conditional or
+    dropping the pip line fails here even if the text pins are edited to match.
+    """
+    run = _load_workflow("publish.yml")["jobs"]["publish"]["steps"]
+    step = next(s for s in run if s.get("name") == "Install uv (version-pinned)")
+    shims = tmp_path / "bin"
+    shims.mkdir()
+    log = tmp_path / "python3.argv"
+    (shims / "python3").write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$@" > "{log}"\n')
+    (shims / "python3").chmod(0o755)
+    if uv_present:
+        (shims / "uv").write_text("#!/bin/sh\nexit 0\n")
+        (shims / "uv").chmod(0o755)
+    # GITHUB_WORKSPACE is set to a KNOWN value so the assertion below pins the
+    # expanded path exactly. With it unset the variable expands to empty and a
+    # misspelled name would still end in the right suffix — a false pass.
+    workspace = str(tmp_path / "ws")
+    result = subprocess.run(  # nosec B603 — fixed argv, the workflow's own snippet
+        ["/bin/sh", "-c", _uv_fallback_block(step["run"])],
+        env={"PATH": str(shims), "GITHUB_WORKSPACE": workspace},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    if uv_present:
+        assert not log.exists(), "uv was on PATH but pip was still invoked"
+    else:
+        argv = log.read_text().splitlines()
+        assert argv[:2] == ["-m", "pip"], argv
+        assert "--require-hashes" in argv and "-r" in argv, argv
+        assert (
+            argv[argv.index("-r") + 1]
+            == f"{workspace}/.github/ci/uv-requirements.txt"
+        ), argv
+
+
+def test_every_repo_rooted_path_in_a_run_body_survives_a_working_directory_default():
+    """CI 2026-09-06: the hash-pinned uv install used the repo-relative path
+    `.github/ci/uv-requirements.txt`, and `checks.yml`'s dashboard job sets a
+    job-level `defaults.run.working-directory: dashboard`. The step therefore
+    looked for `dashboard/.github/ci/...` and the job failed — while the python
+    and security jobs, which set no default, passed. The text pins in this file
+    all matched, because they pinned the STRING and never asked where it
+    resolves FROM.
+
+    The property: a `run:` body may only name a repo-root path when the path is
+    rooted at `$GITHUB_WORKSPACE`, OR the step is in a job with no
+    working-directory default AND sets none itself. Anything else is a path
+    whose meaning depends on a job default some future edit can add.
+    """
+    offenders = []
+    for path in WORKFLOWS.glob("*.yml"):
+        doc = yaml.safe_load(path.read_text())
+        for job_id, job in (doc.get("jobs") or {}).items():
+            job_wd = ((job.get("defaults") or {}).get("run") or {}).get(
+                "working-directory"
+            )
+            for step in job.get("steps") or []:
+                run = step.get("run") or ""
+                wd = step.get("working-directory", job_wd)
+                if wd in (None, ".", ""):
+                    continue
+                for match in re.findall(r"(?<![\w$/\"'])\.github/[\w./-]+", run):
+                    offenders.append(
+                        f"{path.name}:{job_id}:{step.get('name')!r} resolves "
+                        f"{match!r} from working-directory {wd!r}"
+                    )
+    assert offenders == [], (
+        "repo-root path in a run body under a working-directory default; root "
+        f"it at $GITHUB_WORKSPACE: {offenders}"
+    )
+
+
+def _git_version_guard(run: str) -> str:
+    """The whole guard of a push step, verbatim: the EXTRACTOR that reads the
+    machine's git version and the `case ... esac` that judges it.
+
+    The slice deliberately starts at the `git_version=` assignment rather than
+    at `case`. A slice that began at `case` let the test preset `git_version`
+    itself, which pinned the patterns while leaving the extractor unmeasured —
+    and `awk '{print $3}'` -> `awk '{print $0}'` then hands the case block the
+    whole `git version 2.30.9` line, which matches no pattern and admits a git
+    that predates GIT_CONFIG_COUNT.
+    """
+    start = run.index('git_version="$(')
+    end = run.index("esac\n", start) + len("esac\n")
+    return run[start:end]
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job_id"),
+    [("publish.yml", "publish"), ("record-sign.yml", "record")],
+)
+@pytest.mark.parametrize(
+    ("version", "refused"),
+    [
+        ("0.99.9", True),
+        ("1.9.5", True),
+        ("2.0.0", True),
+        ("2.9.5", True),
+        ("2.10.0", True),
+        ("2.29.3", True),
+        ("2.30.9", True),
+        ("2.31.0", False),
+        ("2.39.5", False),
+        ("2.99.0", False),
+        ("3.0.0", False),
+    ],
+)
+def test_the_git_version_guard_refuses_exactly_the_versions_below_2_31(
+    tmp_path, workflow, job_id, version, refused
+):
+    """The guard's SEMANTICS, executed end to end: the step's own extractor AND
+    `case` block run under `sh` against a `git` shim, so narrowing the pattern
+    (say, to `2.30.*` alone) OR breaking the extractor (`awk \'{print $3}\'` ->
+    `{print $0}`, which feeds the whole line to the patterns and admits 2.30.9)
+    fails here even though the comments and error text still say 2.31.
+    Representative inputs straddle every pattern boundary: 0.x, 1.x, 2.0, 2.9,
+    2.10, 2.29, 2.30 refused; 2.31, 2.39, 2.99 and 3.x admitted.
+    """
+    job = _load_workflow(workflow)["jobs"][job_id]
+    step = next(s for s in job["steps"] if "git push" in s.get("run", ""))
+    # The version reaches the guard the way it does on a runner: through a
+    # `git` shim on PATH emitting a realistic `git version X.Y.Z (vendor)`
+    # line, which the step's own extractor must parse. Presetting
+    # `git_version` instead would leave the extractor unmeasured.
+    shims = tmp_path / "bin"
+    shims.mkdir()
+    (shims / "git").write_text(
+        f'#!/bin/sh\n[ "$1" = version ] || exit 2\n'
+        f'echo "git version {version} (Apple Git-154)"\n'
+    )
+    (shims / "git").chmod(0o755)
+    result = subprocess.run(  # nosec B603 — fixed argv, the workflow's own snippet
+        ["/bin/sh", "-c", _git_version_guard(step["run"])],
+        env={"PATH": f"{shims}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode != 0) is refused, (
+        f"git {version}: rc={result.returncode}, stdout={result.stdout!r}"
+    )
+    if refused:
+        assert "::error::" in result.stdout and "2.31" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job_id"),
+    [("publish.yml", "publish"), ("record-sign.yml", "record")],
+)
+def test_the_push_step_refuses_a_git_without_config_env_scoping(workflow, job_id):
+    """R2 M1 follow-up: the step-scoped credential helper is an env-only
+    construct (`GIT_CONFIG_COUNT`/`KEY`/`VALUE`, git >= 2.31). A git that
+    predates it does not fail — it silently IGNORES the variables, so the push
+    would run against whatever helper the machine keeps and the reset entry
+    would never happen. The requirement is therefore asserted in the step
+    itself, before the variables are exported, and fails closed with a
+    `::error::` that names the version floor."""
+    job = _load_workflow(workflow)["jobs"][job_id]
+    step = next(s for s in job["steps"] if "git push" in s.get("run", ""))
+    run = step["run"]
+    guard = run.index("git version")
+    assert guard < run.index("export GIT_CONFIG_COUNT=2"), (
+        "the git version guard must run BEFORE the credential helper is exported"
+    )
+    assert "2.31" in run, "the guard must name the version floor"
+    assert "::error::" in run[guard:] and "exit 1" in run[guard:], (
+        "an older git must fail closed, loudly"
+    )
+    # The scoping itself: entry 0 resets, entry 1 supplies, nothing persists.
+    assert "GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=" in run
+    assert "git config credential" not in run, "the helper is never written to disk"
 
 
 def test_record_sign_workflow_shape():
@@ -2365,6 +2585,363 @@ def test_record_sign_workflow_shape():
     assert "exit 1" in armed["run"]
     step_envs = [step.get("env") or {} for step in job["steps"]]
     assert any("CLOUDFLARE_PAGES_READ_TOKEN" in env for env in step_envs)
+
+
+def test_record_sign_data_pat_is_step_scoped_to_the_populus_data_transactions():
+    """R2 follow-up: the record job's PAT pinned per STEP, not only per job.
+
+    `test_each_job_references_exactly_its_own_secrets_and_no_others` proves the
+    record job references the data PAT and nothing else — a JOB-level
+    equality. It says nothing about WHICH steps hold it, so the PAT could be
+    aliased onto the attest step or the Cloudflare verification step without
+    a test noticing. This is `test_publish_workflow_gh_token_step_scoped`'s
+    selector applied to the signer: the PAT may reach exactly the two steps
+    that transact with populus-data — the private checkout (`with.token`,
+    the only place a checkout can take a credential) and the generation push
+    (`env`, under any name, because the helper reads it from the step's
+    environment) — enumerated exactly, never loosened to a prefix match.
+    """
+    _assert_record_pat_step_scoped(_load_workflow("record-sign.yml")["jobs"]["record"])
+
+
+def _assert_record_pat_step_scoped(job: dict) -> None:
+    """The record job's PAT scope, as one reusable assertion so the negative
+    test below can prove it bites. The selector walks each whole step's PARSED
+    values (`_secret_names_in` — never reserialized text, which corrupts
+    expressions before the recognizer sees them) and looks for a reference to
+    the secret NAME anywhere in it, in every spelling GitHub honors — a
+    substring test on `secrets.NAME` would
+    not count `LEAK: "${{ secrets['DATA_REPO_PAT'] }}"`, and an equality test on
+    env values would not count `LEAK: "prefix-${{ secrets.DATA_REPO_PAT }}"`,
+    both of which widen the PAT's scope just the same."""
+    pat = "${{ secrets.DATA_REPO_PAT }}"
+    pat_steps = [
+        step
+        for step in job["steps"]
+        # The label names the offending STEP when the guard fires: a bulk or
+        # dynamic `secrets` consumption raises out of this comprehension.
+        if "DATA_REPO_PAT"
+        in _secret_names_in(step, f"step {step.get('name')!r}")
+    ]
+    assert len(pat_steps) == 2, [step.get("name") for step in pat_steps]
+    checkout, push = pat_steps
+    # The checkout: the PAT is EXACTLY the `with.token` value and nothing else.
+    assert checkout["with"]["repository"] == "johnbaekk-spec/populus-data"
+    assert checkout["with"]["token"] == pat
+    assert checkout["with"]["persist-credentials"] is False, (
+        "the checkout must not write the PAT into .git/config (R2 M1)"
+    )
+    assert "env" not in checkout
+    assert _secret_names_in(checkout).count("DATA_REPO_PAT") == 1
+    # The push: the PAT is EXACTLY one env value, under the helper's name.
+    assert "git push" in push.get("run", ""), (
+        f"a step holds the data-repo PAT but does not push: {push.get('name')!r}"
+    )
+    assert "with" not in push
+    assert push["env"]["POPULUS_DATA_PUSH_TOKEN"] == pat
+    assert _secret_names_in(push).count("DATA_REPO_PAT") == 1
+    # Never in a run body, never echoed (R33) — the same clause publish.yml pins.
+    for step in job["steps"]:
+        run = step.get("run", "")
+        assert "DATA_REPO_PAT" not in run
+        token = (step.get("env") or {}).get("GH_TOKEN")
+        assert token in (None, "${{ github.token }}"), (
+            f"step {step.get('name')!r} sets GH_TOKEN to {token!r}: the signer's "
+            "GH_TOKEN is only ever the job's own ephemeral token"
+        )
+    # Round-6 blocker F2: the two step pins above cover `job["steps"]` and
+    # NOTHING ELSE, so a PAT reference at a non-step position — `container.env`
+    # (which GitHub evaluates and hands to the job CONTAINER, reaching every
+    # containerized step), the job's own `env`, a `services.<id>.env` — was
+    # rejected by nothing. Counting the
+    # occurrences over the WHOLE parsed job closes the placement question
+    # exhaustively rather than enumerating the positions GitHub happens to
+    # evaluate today: exactly two references exist in the job, and the pins
+    # above say which two steps they are, so any third reference anywhere, and
+    # any relocation of one of the two out of its step, fails.
+    #
+    # This count is also the ONLY guard that catches a same-secret RELOCATION.
+    # `_assert_job_secrets_exact` compares the job's secret SET, which does not
+    # change when DATA_REPO_PAT — a secret this job legitimately holds — moves
+    # or is duplicated within the job; only a name the job may NOT hold, or a
+    # bulk `toJSON(secrets)`, moves that set. The count is what makes placement
+    # itself enforceable.
+    occurrences = _secret_names_in(job, "job 'record'").count("DATA_REPO_PAT")
+    assert occurrences == 2, (
+        f"the record job holds {occurrences} DATA_REPO_PAT references; exactly "
+        "two are allowed and both are pinned to steps above, so the extra one "
+        "sits at a non-step position — container.env, the job's env or a "
+        "services.<id>.env all resolve the secrets context and reach the job's "
+        "steps (R2 M1)"
+    )
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "${{ secrets.DATA_REPO_PAT }}",
+        "prefix-${{ secrets.DATA_REPO_PAT }}",
+        "${{ format('{0}', secrets.DATA_REPO_PAT) }}",
+        "${{ secrets['DATA_REPO_PAT'] }}",
+        '${{ secrets["DATA_REPO_PAT"] }}',
+        "${{ secrets[ 'DATA_REPO_PAT' ] }}",
+        "${{ toJSON(secrets) }}",
+        "${{ secrets[format('DATA_{0}', 'REPO_PAT')] }}",
+        "${{ secrets[github.event.inputs.which] }}",
+        "${{ secrets }}",
+        "${{ format('{{{0}}}', secrets.DATA_REPO_PAT) }}",
+        "${{ format('}}', secrets.DATA_REPO_PAT) }}",
+        "${{ format('it''s }}', toJSON(secrets)) }}",
+        # Round-5 blocker F1: harmless as a raw string, but `yaml.safe_dump`
+        # renders it as a single-quoted scalar and DOUBLES the inner quotes,
+        # which truncated the expression span to `" format(''"` and hid the
+        # reference. Only a guard reading the PARSED value catches it.
+        "[${{ format('}}{0}', secrets.DATA_REPO_PAT) }}]",
+        # Round-6 blocker F1: GitHub's expression parser resolves the context
+        # name case-insensitively, and secret names are case-insensitive too,
+        # so each of these hands the attest step the identical credential.
+        # Both evaded the case-sensitive recognizer entirely.
+        "${{ SeCrEtS.DATA_REPO_PAT }}",
+        "${{ secrets.data_repo_pat }}",
+        "${{ SECRETS['Data_Repo_Pat'] }}",
+    ],
+    ids=[
+        "bare",
+        "interpolated",
+        "format-expression",
+        "bracket-single-quoted",
+        "bracket-double-quoted",
+        "bracket-padded",
+        "tojson-bulk",
+        "dynamic-index-format",
+        "dynamic-index-input",
+        "bare-context",
+        "doubled-brace-format",
+        "quoted-terminator",
+        "escaped-quote-before-a-terminator",
+        "quoted-scalar-terminator",
+        "mixed-case-context",
+        "lower-case-name",
+        "mixed-case-bracket-name",
+    ],
+)
+def test_record_sign_pat_scope_check_bites_when_the_pat_is_aliased(leak):
+    """NEGATIVE: widening the PAT onto an unrelated record step — bare, or
+    wrapped in a string or expression so a value-equality selector would not
+    count it — must fail the scope assertion.
+
+    The last four leaks never name the secret at all: `toJSON(secrets)` and
+    dynamic indexing hand the step the whole secrets object, DATA_REPO_PAT
+    included, so a name-only recognizer sees nothing and both scope checks
+    stay green while the PAT reaches an unrelated action."""
+    job = _load_workflow("record-sign.yml")["jobs"]["record"]
+    attest = next(step for step in job["steps"] if "attest" in step.get("name", "").lower())
+    attest["env"] = {"LEAK": leak}
+    with pytest.raises(AssertionError):
+        _assert_record_pat_step_scoped(job)
+
+
+#: Round-5: the guards read the parsed job RECURSIVELY, so the leak is caught
+#: wherever a string can hide — not only in the two keys a flat scan would
+#: enumerate. Each entry mutates a step in place at a different depth.
+def _leak_into_env(step: dict, leak: str) -> None:
+    step["env"] = {"LEAK": leak}
+
+
+def _leak_into_with(step: dict, leak: str) -> None:
+    # `with:` values are evaluated exactly like `env:` values, and an action
+    # input is where a leak looks most like ordinary configuration.
+    step.setdefault("with", {})["subject-name"] = leak
+
+
+def _leak_into_a_nested_list_item(step: dict, leak: str) -> None:
+    # A list nested under a mapping under the step: two container hops from the
+    # step itself, which is the depth a non-recursive scan stops short of.
+    step.setdefault("with", {})["args"] = ["--subject", {"value": [leak]}]
+
+
+def _leak_into_a_key(step: dict, leak: str) -> None:
+    # Keys are traversed too: enumerating "keys that can carry an expression"
+    # is the same decaying allow-list the dot-only name matcher already was.
+    step.setdefault("env", {})[leak] = "x"
+
+
+@pytest.mark.parametrize(
+    "place",
+    [
+        _leak_into_env,
+        _leak_into_with,
+        _leak_into_a_nested_list_item,
+        _leak_into_a_key,
+    ],
+    ids=["env-value", "with-value", "nested-list-item", "mapping-key"],
+)
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "${{ secrets.DATA_REPO_PAT }}",
+        "[${{ format('}}{0}', secrets.DATA_REPO_PAT) }}]",
+    ],
+    ids=["plain", "quoted-scalar-terminator"],
+)
+def test_the_pat_scope_check_reaches_every_depth_a_string_can_hide_at(place, leak):
+    """NEGATIVE, round-5: the recursion is the point of the fix, so pin the
+    PLACES it must reach. `env` is the one the old serializing selector
+    happened to cover; `with`, a doubly nested list item, and a mapping KEY are
+    the ones a hand-enumerated flat scan would silently miss."""
+    job = _load_workflow("record-sign.yml")["jobs"]["record"]
+    attest = next(step for step in job["steps"] if "attest" in step.get("name", "").lower())
+    place(attest, leak)
+    with pytest.raises(AssertionError):
+        _assert_record_pat_step_scoped(job)
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "[${{ format('}}{0}', secrets.CLOUDFLARE_PAGES_EDIT_TOKEN) }}]",
+        "[${{ format('}}{0}', toJSON(secrets)) }}]",
+        # Round-6 F1 driven through the JOB assertion. Per the note above, the
+        # job-level control must use a secret this job may NOT hold (or a bulk
+        # consumption) — a mixed-case DATA_REPO_PAT leaves the job's secret SET
+        # unchanged and is caught by the whole-job COUNT instead.
+        "${{ SeCrEtS.CLOUDFLARE_PAGES_EDIT_TOKEN }}",
+        "${{ secrets.cloudflare_pages_edit_token }}",
+        "${{ toJSON(SeCrEtS) }}",
+    ],
+    ids=[
+        "quoted-scalar-terminator",
+        "quoted-scalar-terminator-bulk",
+        "mixed-case-context",
+        "lower-case-name",
+        "mixed-case-bulk",
+    ],
+)
+@pytest.mark.parametrize(
+    "place",
+    [_leak_into_env, _leak_into_with, _leak_into_a_nested_list_item],
+    ids=["env-value", "with-value", "nested-list-item"],
+)
+def test_the_job_secret_equality_bites_through_a_quoted_scalar(leak, place):
+    """NEGATIVE, round-5: the same control at the JOB guard.
+
+    The step guard's own quoted-scalar case cannot exercise this one — the
+    record job legitimately holds DATA_REPO_PAT, so an equality on the job's
+    secret SET is unchanged by moving it between that job's steps. The
+    job-level regression is a name the job may NOT hold, or a bulk
+    consumption; both are hidden by exactly the same `yaml.safe_dump`
+    quote-doubling this round removed."""
+    jobs = _all_production_jobs()
+    job = jobs[("record-sign.yml", "record")]
+    attest = next(step for step in job["steps"] if "attest" in step.get("name", "").lower())
+    place(attest, leak)
+    with pytest.raises(AssertionError):
+        _assert_job_secrets_exact(jobs)
+
+
+#: Round-6 blocker F2: the PAT placed OUTSIDE `job["steps"]`, at positions
+#: GitHub's context-availability table still evaluates. Each function mutates
+#: the parsed record job in place.
+def _leak_into_container_env(job: dict, leak: str) -> None:
+    # Codex's own case: `container.env` becomes an environment variable of the
+    # JOB CONTAINER, so the PAT reaches every containerized step — including
+    # the third-party actions the step pins exist to keep it away from.
+    job["container"] = {"image": "alpine:3.20", "env": {"LEAK": leak}}
+
+
+def _leak_into_job_env(job: dict, leak: str) -> None:
+    # Job-wide `env` is inherited by every step in the job: the broadest
+    # possible widening, and the one a steps-only traversal is blindest to.
+    job.setdefault("env", {})["LEAK"] = leak
+
+
+def _leak_into_a_service_env(job: dict, leak: str) -> None:
+    # A service container is a sibling of the job container, evaluated the same
+    # way, and reachable over the network from every step.
+    job["services"] = {"cache": {"image": "redis:7", "env": {"LEAK": leak}}}
+
+
+# The two below are FAIL-CLOSED PROBES, not reachable leaks: GitHub does not
+# make the `secrets` context available in `strategy` or `defaults.run` (context
+# availability table), so an expression there does not resolve to the PAT. They
+# are kept deliberately — the whole-job count must not start reasoning about
+# WHICH positions GitHub evaluates, because that reasoning is exactly the
+# enumeration that let `container.env` through in round 6. Counting every
+# occurrence, reachable or not, is what makes the guard robust to a context
+# table we have misread or that GitHub later widens.
+def _leak_into_a_strategy_matrix(job: dict, leak: str) -> None:
+    job["strategy"] = {"matrix": {"token": [leak]}}
+
+
+def _leak_into_job_defaults(job: dict, leak: str) -> None:
+    job.setdefault("defaults", {}).setdefault("run", {})["working-directory"] = leak
+
+
+@pytest.mark.parametrize(
+    "place",
+    [
+        _leak_into_container_env,
+        _leak_into_job_env,
+        _leak_into_a_service_env,
+        _leak_into_a_strategy_matrix,
+        _leak_into_job_defaults,
+    ],
+    ids=[
+        # Reachable: GitHub evaluates `secrets` at all three.
+        "container-env",
+        "job-env",
+        "service-env",
+        # Fail-closed probes: GitHub does NOT evaluate `secrets` here (see the
+        # note above the two helpers). The reachable cases above are what prove
+        # the fix; these prove the count stays position-agnostic.
+        "strategy-matrix-invalid-context",
+        "job-defaults-invalid-context",
+    ],
+)
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "${{ secrets.DATA_REPO_PAT }}",
+        "${{ SeCrEtS.data_repo_pat }}",
+        "[${{ format('}}{0}', secrets.DATA_REPO_PAT) }}]",
+    ],
+    ids=["plain", "mixed-case", "quoted-scalar-terminator"],
+)
+def test_the_pat_scope_check_bites_at_non_step_placements(place, leak):
+    """NEGATIVE, round-6 blocker F2: placement, not just presence.
+
+    The two step pins traverse `job["steps"]`; every position here is OUTSIDE
+    that list. GitHub evaluates the `secrets` context at the container, job and
+    service `env` placements; the `strategy` and `defaults.run` ids are
+    fail-closed probes where it does NOT (see the helpers' note) — the three
+    reachable ones are what prove the fix. The
+    whole-job occurrence COUNT is what rejects them — and it is the only guard
+    that can, because `_assert_job_secrets_exact` compares the job's secret SET
+    and DATA_REPO_PAT is a secret this job legitimately holds, so relocating or
+    duplicating it inside the job leaves that set identical. Placement is only
+    enforceable by counting.
+    """
+    job = _load_workflow("record-sign.yml")["jobs"]["record"]
+    place(job, leak)
+    with pytest.raises(AssertionError):
+        _assert_record_pat_step_scoped(job)
+
+
+def test_the_job_secret_set_is_deliberately_blind_to_a_same_secret_relocation():
+    """The legitimate-green nuance the count exists to cover, pinned so the
+    division of labour cannot be misread as a redundant assertion.
+
+    Moving DATA_REPO_PAT to the record job's `container.env` leaves the job's
+    secret SET exactly `{DATA_REPO_PAT, CLOUDFLARE_PAGES_READ_TOKEN}` — it is
+    the same secret the job already holds — so the job-level equality PASSES
+    and is right to. Only the whole-job count sees the extra occurrence.
+    """
+    jobs = _all_production_jobs()
+    job = jobs[("record-sign.yml", "record")]
+    _leak_into_container_env(job, "${{ secrets.DATA_REPO_PAT }}")
+    _assert_job_secrets_exact(jobs)  # correctly unchanged: same secret, more places
+    with pytest.raises(AssertionError, match="non-step position"):
+        _assert_record_pat_step_scoped(job)
 
 
 # --- RUN PUBLIC-SECURITY-HARDENING PR 4 (R4/R8, LD5/LD9): environments and ---
@@ -2393,7 +2970,302 @@ SECRETS_BY_JOB: dict[tuple[str, str], set[str]] = {
     ("record-sign.yml", "record"): {"DATA_REPO_PAT", "CLOUDFLARE_PAGES_READ_TOKEN"},
 }
 
-_SECRET_REF = re.compile(r"\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+#: Every spelling GitHub honors for a secret reference. The expression syntax
+#: accepts property access AND index access — `secrets.NAME`,
+#: `secrets['NAME']`, `secrets["NAME"]` — with arbitrary whitespace around the
+#: parts, and the index forms work anywhere the dot form does (including inside
+#: `format(...)`). A dot-only matcher therefore reads as an exhaustive
+#: allow-list check while a one-character edit walks a token straight past it.
+#: Deliberately NOT anchored to the enclosing `${{ ... }}`: the accepted
+#: spellings are a property of the NAME access itself, and `_expression_spans`
+#: has already established that the access sits inside a live expression.
+#: Case-insensitive on BOTH halves. GitHub's expression parser resolves named
+#: contexts case-INsensitively (actions/runner
+#: `src/Sdk/DTExpressions2/Expressions2/ExpressionParser.cs`), and secret NAMES
+#: are likewise not case-sensitive, so `${{ SeCrEtS.data_repo_pat }}` resolves
+#: exactly the same credential as `${{ secrets.DATA_REPO_PAT }}`. A
+#: case-sensitive matcher therefore reads as an exhaustive allow-list while a
+#: shift-key edit walks the token straight past it (round-6 blocker F1).
+#: `_secret_names` normalizes every captured name to UPPERCASE so the two
+#: spellings collapse to one canonical name and the job-level SET EQUALITY
+#: still holds.
+_SECRET_REF = re.compile(
+    r"(?i:secrets)\s*(?:"
+    r"\.\s*([A-Za-z_][A-Za-z0-9_]*)"
+    r"|\[\s*'([A-Za-z_][A-Za-z0-9_]*)'\s*\]"
+    r"|\[\s*\"([A-Za-z_][A-Za-z0-9_]*)\"\s*\]"
+    r")"
+)
+
+#: The opener of a GitHub expression. `secrets` is only a context — and only
+#: resolves to real credentials — inside `${{ ... }}`; the same word in a
+#: comment or in prose is inert, so the enclosing expression still has to be
+#: located. There is deliberately no closing-delimiter REGEX: a non-greedy
+#: `\}\}` stops at the first textual `}}`, and GitHub's `format()` spells a
+#: literal brace by doubling it, so `${{ format('{{{0}}}', secrets.X) }}` ended
+#: one character-pair early and put the secret reference OUTSIDE the captured
+#: expression. `_expression_spans` scans for the terminator instead.
+_EXPRESSION_OPEN = "${{"
+
+#: An occurrence of the `secrets` CONTEXT itself, however it is then consumed.
+#: The lookbehind keeps `github.secrets` or `my_secrets` from matching; what
+#: remains is every real entry point into the secrets object.
+_SECRET_CONTEXT = re.compile(r"(?<![A-Za-z0-9_.])(?i:secrets)\b")
+
+
+def _expression_spans(text: str) -> list[str]:
+    """The body of every `${{ ... }}` expression in `text`, in order.
+
+    Quote-aware, because a closing delimiter can only be recognized by knowing
+    whether it is inside a string. GitHub expression strings are SINGLE-quoted
+    and escape a quote by doubling it (`'it''s'`), and `format()` escapes a
+    literal brace the same way — by doubling it — so `'{{{0}}}'` contains a
+    textual `}}` that is not a terminator. The scanner therefore tracks quote
+    state and only ends a span on a `}}` seen OUTSIDE a string.
+
+    Fail-closed: an expression with no terminator (an unbalanced `${{`, or an
+    unterminated string that swallows the rest of the text) yields everything
+    from the opener to end-of-text as one span, so an unparsable construct is
+    inspected rather than skipped. Under-reporting is the failure mode that
+    made three earlier evasions pass silently.
+    """
+    spans: list[str] = []
+    index = 0
+    length = len(text)
+    while True:
+        start = text.find(_EXPRESSION_OPEN, index)
+        if start == -1:
+            return spans
+        cursor = start + len(_EXPRESSION_OPEN)
+        in_string = False
+        while cursor < length:
+            char = text[cursor]
+            if in_string:
+                if char == "'":
+                    # `''` is an escaped quote, not the end of the string.
+                    if text.startswith("''", cursor):
+                        cursor += 2
+                        continue
+                    in_string = False
+                cursor += 1
+                continue
+            if char == "'":
+                in_string = True
+                cursor += 1
+                continue
+            if text.startswith("}}", cursor):
+                break
+            cursor += 1
+        else:
+            spans.append(text[start + len(_EXPRESSION_OPEN) :])
+            return spans
+        spans.append(text[start + len(_EXPRESSION_OPEN) : cursor])
+        index = cursor + 2
+
+
+def _secret_names(text: str, label: str = "") -> list[str]:
+    """Every secret name referenced in `text`, in order, one entry per
+    reference — a list, not a set, so callers can COUNT occurrences.
+
+    This is an ALLOW-LIST, and it raises rather than under-reporting: every
+    occurrence of the `secrets` context inside a `${{ ... }}` expression must
+    be fully consumed as an approved LITERAL-NAME reference. Anything else —
+    `toJSON(secrets)`, `secrets[format('DATA_{0}', 'REPO_PAT')]`,
+    `secrets[github.event.inputs.x]`, a bare `secrets` handed to any function —
+    resolves the WHOLE secrets object, so a caller's exhaustive
+    name-to-job/step check would return an unchanged, and entirely wrong, set.
+    Enumerating the bulk forms instead (blocking `toJSON`) would fail exactly
+    the way a dot-only name matcher already failed twice: the next spelling
+    walks past it.
+    """
+    names: list[str] = []
+    for expression in _expression_spans(text):
+        # SUBTRACTIVE, not positional: delete every APPROVED reference from the
+        # expression and require that no `secrets` token survives in what is
+        # left. Matching each occurrence at its own offset asked the same
+        # question, but only of occurrences the extractor had already located —
+        # so any mis-parse upstream silently dropped the check. Subtraction has
+        # nothing left to mis-locate: whatever is not an approved reference is
+        # still there to be seen.
+        residue = _SECRET_REF.sub(" ", expression)
+        if _SECRET_CONTEXT.search(residue):
+            raise AssertionError(
+                f"{label or 'this workflow text'}: the `secrets` context "
+                "is consumed as something other than an approved "
+                "literal-name reference, which resolves EVERY secret: "
+                + repr(" ".join(expression.split()))
+            )
+        names.extend(
+            # UPPERCASE: secret names are case-insensitive to GitHub, so
+            # `secrets.data_repo_pat` and `secrets.DATA_REPO_PAT` are ONE
+            # secret. Canonicalizing here is what lets both the occurrence
+            # COUNT and the job-level set equality treat them as the same
+            # name instead of two unrelated ones.
+            next(name for name in match.groups() if name).upper()
+            for match in _SECRET_REF.finditer(expression)
+        )
+    return names
+
+
+def _strings_in(node: object) -> Iterator[str]:
+    """Every string that a parsed YAML node contains, recursively.
+
+    Dict KEYS as well as values (a key is a string GitHub evaluates in a few
+    positions, and enumerating "the keys that could carry an expression" is
+    exactly the kind of allow-list that decays), list items, and any nesting of
+    the two. Non-strings — ints, bools, None, the `on:`/`True` key PyYAML
+    produces — carry no expression and are skipped.
+    """
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            yield from _strings_in(key)
+            yield from _strings_in(value)
+    elif isinstance(node, (list, tuple)):
+        for item in node:
+            yield from _strings_in(item)
+
+
+def _secret_names_in(node: object, label: str = "") -> list[str]:
+    """`_secret_names` over the PARSED structure, not over `yaml.safe_dump`.
+
+    This is the round-5 blocker's fix, and it removes a whole evasion class
+    rather than patching its fifth instance. Four consecutive review rounds
+    found expressions that the recognizer handles correctly but that never
+    reached it intact, because the callers scanned RESERIALIZED text: PyYAML
+    picks its own scalar style, and a single-quoted scalar DOUBLES every inner
+    quote. `"[${{ format('}}{0}', secrets.DATA_REPO_PAT) }}]"` dumps as
+    `'[${{ format(''}}{0}'', secrets.DATA_REPO_PAT) }}]'`, whose doubled `''`
+    closes the expression string one quote early, so the span truncates to
+    `" format(''"` and the secret reference is never seen. Every earlier fix
+    hardened the scanner; none of them could help, because the corruption
+    happened BEFORE the scanner ran.
+
+    The parsed values are byte-for-byte what GitHub itself evaluates, so no
+    serialization layer sits between the workflow and the guard. The
+    quote-aware span scanner is unchanged and still required — a single string
+    value can hold several expressions and any amount of quoting; only its
+    INPUT changes.
+    """
+    names: list[str] = []
+    for text in _strings_in(node):
+        names.extend(_secret_names(text, label))
+    return names
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ("${{ secrets.DATA_REPO_PAT }}", ["DATA_REPO_PAT"]),
+        ("${{secrets.DATA_REPO_PAT}}", ["DATA_REPO_PAT"]),
+        ("${{ secrets['DATA_REPO_PAT'] }}", ["DATA_REPO_PAT"]),
+        ('${{ secrets["DATA_REPO_PAT"] }}', ["DATA_REPO_PAT"]),
+        ("${{ secrets [ 'DATA_REPO_PAT' ] }}", ["DATA_REPO_PAT"]),
+        ("prefix-${{ secrets['DATA_REPO_PAT'] }}", ["DATA_REPO_PAT"]),
+        ("${{ format('{0}', secrets['DATA_REPO_PAT']) }}", ["DATA_REPO_PAT"]),
+        # A `}}` inside a single-quoted string is NOT the terminator: `format`
+        # spells a literal brace by doubling it, and the reference sits after
+        # the string. A closing-delimiter regex ended the expression here and
+        # never saw the secret at all (round-4 blocker F1).
+        ("${{ format('{{{0}}}', secrets.DATA_REPO_PAT) }}", ["DATA_REPO_PAT"]),
+        ("${{ format('}}', secrets.DATA_REPO_PAT) }}", ["DATA_REPO_PAT"]),
+        # `''` is an escaped quote, so the string does not end at it and the
+        # `}}` that follows is still inside the string.
+        ("${{ format('it''s }}', secrets.DATA_REPO_PAT) }}", ["DATA_REPO_PAT"]),
+        (
+            "${{ format('{{{0}}}', secrets.A) }} ${{ secrets['B'] }}",
+            ["A", "B"],
+        ),
+        (
+            "${{ secrets.A }} ${{ secrets['B'] }}",
+            ["A", "B"],
+        ),
+        # Round-6 blocker F1: GitHub resolves the CONTEXT name and the SECRET
+        # name case-insensitively, so each of these is the very same
+        # credential as `${{ secrets.DATA_REPO_PAT }}` and must canonicalize
+        # to the same uppercase name — otherwise a shift-key edit walks past
+        # every allow-list built on this recognizer.
+        ("${{ SeCrEtS.DATA_REPO_PAT }}", ["DATA_REPO_PAT"]),
+        ("${{ secrets.data_repo_pat }}", ["DATA_REPO_PAT"]),
+        ("${{ SECRETS['Data_Repo_Pat'] }}", ["DATA_REPO_PAT"]),
+        ('${{ Secrets["dAtA_rEpO_pAt"] }}', ["DATA_REPO_PAT"]),
+        ("${{ format('{0}', SeCrEtS.data_repo_pat) }}", ["DATA_REPO_PAT"]),
+        ("a `secrets.` mention in prose", []),
+        ("${{ vars.POPULUS_RECORD_SIGN_ARMED }}", []),
+    ],
+)
+def test_the_secret_reference_recognizer_covers_every_spelling(expression, expected):
+    """The recognizer both allow-list checks lean on. GitHub's expression
+    syntax accepts index access as well as property access, so a dot-only
+    matcher lets `secrets['X']` walk past an exhaustive check silently."""
+    assert _secret_names(expression) == expected
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "${{ toJSON(secrets) }}",
+        "${{ toJson(secrets) }}",
+        # Round-6 F1 at the allow-list half: the bulk forms must stay rejected
+        # in every casing too, or the residue scan is bypassed the same way.
+        "${{ toJSON(SeCrEtS) }}",
+        "${{ SECRETS[matrix.name] }}",
+        "${{ secrets[format('DATA_{0}', 'REPO_PAT')] }}",
+        "${{ secrets[github.event.inputs.which] }}",
+        "${{ secrets[matrix.name] }}",
+        "${{ secrets }}",
+        "${{ fromJSON(toJSON(secrets)).DATA_REPO_PAT }}",
+        "env: ${{ secrets.OK }} and ${{ toJSON(secrets) }}",
+        "${{ format('{{{0}}}', toJSON(secrets)) }}",
+        "${{ format('}}', secrets[matrix.name]) }}",
+        "${{ format('it''s }}', toJSON(secrets)) }}",
+        "${{ toJSON(secrets)",
+        "${{ format('unterminated, toJSON(secrets)) }}",
+    ],
+    ids=[
+        "tojson",
+        "tojson-lowercase-s",
+        "tojson-mixed-case-context",
+        "dynamic-index-upper-case-context",
+        "dynamic-index-format",
+        "dynamic-index-input",
+        "dynamic-index-matrix",
+        "bare-context",
+        "round-tripped",
+        "mixed-with-an-approved-reference",
+        "bulk-behind-a-doubled-brace",
+        "bulk-behind-a-quoted-terminator",
+        "bulk-behind-an-escaped-quote",
+        "unterminated-expression",
+        "unterminated-string",
+    ],
+)
+def test_the_secret_reference_recognizer_rejects_bulk_and_dynamic_consumption(expression):
+    """The allow-list half: a `secrets` occurrence that is NOT fully consumed
+    as a literal name resolves the whole object, so it must raise rather than
+    return a name list that silently omits it. Enumerating `toJSON` as a
+    forbidden token would be a blocklist and would miss the next spelling;
+    the check is that the consumption MATCHES the approved form."""
+    with pytest.raises(AssertionError, match="literal-name"):
+        _secret_names(expression)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "# a comment mentioning toJSON(secrets) and nothing live",
+        "run: echo 'no secrets here'",
+        "name: rotate the secrets",
+    ],
+    ids=["comment", "prose-in-a-run-body", "prose-in-a-name"],
+)
+def test_the_secret_recognizer_ignores_secrets_outside_an_expression(text):
+    """`secrets` only resolves inside `${{ ... }}`. Rejecting the word itself
+    would make the guard fire on comments and step names — a guard that cries
+    wolf gets loosened, which is how the real check dies."""
+    assert _secret_names(text) == []
+
 
 PRODUCTION_WORKFLOWS = ("publish.yml", "record-sign.yml")
 
@@ -2426,18 +3298,25 @@ def test_the_three_production_environments_are_bound_to_exactly_their_jobs():
     assert set(ENVIRONMENT_BY_JOB) <= set(jobs)
 
 
-def test_each_job_references_exactly_its_own_secrets_and_no_others():
-    """LD5: the secret-to-job mapping is an equality, in both directions."""
-    jobs = _all_production_jobs()
+def _assert_job_secrets_exact(jobs: dict[tuple[str, str], dict]) -> None:
+    """The job-level half of the enforcement, as one reusable assertion so the
+    negative test below can prove it bites — the same shape
+    `_assert_record_pat_step_scoped` has for the step-level half. Reads the
+    PARSED job (`_secret_names_in`), never `yaml.safe_dump` output."""
     assert set(SECRETS_BY_JOB) == set(jobs), (
         "a production job appeared or vanished without updating SECRETS_BY_JOB"
     )
     for key, job in jobs.items():
-        found = set(_SECRET_REF.findall(yaml.safe_dump(job)))
+        found = set(_secret_names_in(job, f"{key[0]}:{key[1]}"))
         assert found == SECRETS_BY_JOB[key], (
             f"{key[0]}:{key[1]} references secrets {sorted(found)}, "
             f"allowed exactly {sorted(SECRETS_BY_JOB[key])} (LD5)"
         )
+
+
+def test_each_job_references_exactly_its_own_secrets_and_no_others():
+    """LD5: the secret-to-job mapping is an equality, in both directions."""
+    _assert_job_secrets_exact(_all_production_jobs())
 
 
 def test_signer_is_top_level_and_the_dispatcher_passes_no_secrets():

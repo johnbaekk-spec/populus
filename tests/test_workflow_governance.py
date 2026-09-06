@@ -1,15 +1,22 @@
 """Workflow governance sweep — RUN PUBLIC-SECURITY-HARDENING PR 1 (R2/R3/R5,
-LD3), superseding the RUN M2-11 R7e blanket PR-trigger ban, plus the retained
+LD3), amended by security audit R2 (2026-09-01, finding C1), plus the retained
 T13 absence checks for the withdrawn refresh scope (R14/R15).
 
-The repository is now PUBLIC, so fork PRs must run checks before merge. LD3
-allows `pull_request` narrowly: ONLY `.github/workflows/checks.yml` may carry
-it, and that workflow must be structurally fork-safe — every job on a
-GitHub-hosted runner, `permissions: contents: read` and nothing wider, no
-job-level `uses:` (reusable workflow), no `environment:`, no `${{ secrets.* }}`
-reference anywhere in the file, and `persist-credentials: false` on every
-checkout. `pull_request_target` and `issue_comment` remain banned repo-wide,
-and the self-hosted label set appears in exactly the allowlisted jobs
+`pull_request` is BANNED in every workflow while `ops/runner/` exists. LD3
+allowed it in `checks.yml` on the reasoning that the file is fork-safe — it
+is, but the trigger is not: GitHub runs the FORK's copy of the workflow on a
+`pull_request` event, and that copy can select the repository-level
+self-hosted runner. No test over the committed file can prove a file the
+fork controls, so the allowlist is empty and conditional on the runner
+directory (the ban lifts only when publishing no longer depends on a runner
+attached to this repository). `checks.yml` keeps its fork-safe SHAPE — every
+job on a GitHub-hosted runner, `permissions: contents: read` and nothing
+wider, no job-level `uses:`, no `environment:`, no `${{ secrets.* }}`
+reference, `persist-credentials: false` on every checkout — because that
+shape is what makes it safe to require in the main ruleset.
+`pull_request_target` and `issue_comment` remain banned repo-wide; every
+`actions/checkout` in EVERY workflow sets `persist-credentials: false` (R2
+M1); and the self-hosted label set appears in exactly the allowlisted jobs
 (`publish.yml:publish` — the comparison is an equality in both directions).
 
 The checks are written as pure functions over (filename, parsed-doc, raw-text)
@@ -37,25 +44,37 @@ DASHBOARD_PACKAGE = REPO_ROOT / "dashboard" / "package.json"
 ENTITY_POST_TEST = REPO_ROOT / "dashboard" / "test" / "post" / "entity-orchestration.test.ts"
 GITLEAKS_TOML = REPO_ROOT / ".gitleaks.toml"
 GITLEAKS_IGNORE = REPO_ROOT / ".gitleaksignore"
-CURRENT_RUNNER_VERSION = "2.336.0"
+CURRENT_RUNNER_VERSION = "2.337.0"
 CURRENT_RUNNER_MACOS_ARM64_SHA256 = (
-    "8e8839c49b7060b6b2154f4931f815df330c27f167d53ef2239ee3dfce28b079"
+    "5a2cd92908a93d7276a194e1de6008099f3e7946f3f8e14aa7a1a7b4a31fdec2"
 )
+RUNNER_DIR = REPO_ROOT / "ops" / "runner"
 
-#: The only workflow allowed to respond to `pull_request` (LD3).
-PR_TRIGGER_ALLOWED_WORKFLOWS = {"checks.yml"}
+#: Workflows allowed to respond to `pull_request`. EMPTY while a repository-
+#: level self-hosted runner exists (R2 C1): the fork's workflow file runs on
+#: that event, so no committed file can be proven fork-safe. The condition
+#: is asserted by test_no_workflow_carries_pull_request_while_the_runner_is_attached,
+#: whose first line fails loudly the day `ops/runner/` moves, so re-allowing
+#: the trigger is a visible decision rather than a silent default.
+PR_TRIGGER_ALLOWED_WORKFLOWS: set[str] = set()
+
+#: The workflow that must keep the fork-safe SHAPE regardless of trigger,
+#: because the main ruleset requires its contexts.
+GATING_WORKFLOW = "checks.yml"
 
 #: Privileged / content-driven trigger classes banned in EVERY workflow.
 BANNED_TRIGGERS_EVERYWHERE = {"pull_request_target", "issue_comment"}
 
-#: The four exact required-check contexts the main ruleset binds (R3). These
+#: The three exact required-check contexts the main ruleset binds (R3). These
 #: are job `name:` values in checks.yml; renaming one silently unbinds a
-#: required check, so the names are pinned literally.
+#: required check, so the names are pinned literally. `dependency review`
+#: left with the `pull_request` trigger (it diffs base..head and cannot run
+#: without one); the advisory sweep in security.yml is deliberately NOT
+#: required (network-dependent — see docs/operations/github-security.md §1).
 REQUIRED_CHECK_NAMES = {
     "python (pytest)",
     "dashboard (typecheck + unit)",
     "gitleaks (all history)",
-    "dependency review",
 }
 
 #: (workflow filename, job id) pairs allowed to run self-hosted. The publish
@@ -153,8 +172,19 @@ def pr_workflow_structure_errors(name: str, doc: dict, text: str) -> list[str]:
             label = str(label)
             if "self-hosted" in label or not label.startswith(("ubuntu-", "macos-", "windows-")):
                 errors.append(f"{name}:{job_id}: non-hosted runner label {label!r}")
+    errors += checkout_persist_errors(name, doc)
+    return errors
+
+
+def checkout_persist_errors(name: str, doc: dict) -> list[str]:
+    """R2 M1: every `actions/checkout` in every workflow sets
+    `persist-credentials: false`. The default writes the step's token into
+    `.git/config`, where it outlives the step — the data PAT on the publish
+    Mac, the attestation-capable job token elsewhere."""
+    errors = []
+    for job_id, job in (doc.get("jobs") or {}).items():
         for step in job.get("steps") or []:
-            uses = step.get("uses") or ""
+            uses = str(step.get("uses") or "")
             if uses.startswith("actions/checkout@"):
                 if (step.get("with") or {}).get("persist-credentials") is not False:
                     errors.append(
@@ -255,10 +285,21 @@ def test_trigger_policy_repo_wide():
         assert trigger_errors(path.name, load_workflow(path)) == []
 
 
-def test_only_checks_yml_actually_carries_pull_request():
-    # The allowlist must not be vacuous: checks.yml really is PR-triggered.
-    doc, _ = _checks()
-    assert "pull_request" in triggers_of(doc, "checks.yml")
+def test_no_workflow_carries_pull_request_while_the_runner_is_attached():
+    # R2 C1. Not vacuous: the runner directory exists, so the allowlist is
+    # empty and the trigger is banned everywhere.
+    assert RUNNER_DIR.is_dir(), "ops/runner/ moved — revisit PR_TRIGGER_ALLOWED_WORKFLOWS"
+    assert PR_TRIGGER_ALLOWED_WORKFLOWS == set()
+    for path in workflow_files():
+        assert "pull_request" not in triggers_of(load_workflow(path), path.name), (
+            f"{path.name}: pull_request runs the FORK's workflow file, which can "
+            "select the repository-level self-hosted runner (R2 C1)"
+        )
+
+
+def test_every_checkout_in_every_workflow_drops_credentials():
+    for path in workflow_files():
+        assert checkout_persist_errors(path.name, load_workflow(path)) == []
 
 
 def test_pr_workflow_is_structurally_fork_safe():
@@ -382,6 +423,18 @@ def test_mutation_pull_request_on_production_workflow_is_killed():
     on = publish.get("on", publish.get(True))
     on["pull_request"] = None
     assert trigger_errors("publish.yml", publish)
+
+
+def test_mutation_persisting_checkout_in_a_production_workflow_is_killed():
+    path = WORKFLOWS_DIR / "publish.yml"
+    doc = copy.deepcopy(load_workflow(path))
+    for job in doc["jobs"].values():
+        for step in job.get("steps") or []:
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                step.setdefault("with", {}).pop("persist-credentials", None)
+                assert checkout_persist_errors("publish.yml", doc)
+                return
+    raise AssertionError("publish.yml has no checkout to mutate")
 
 
 def test_mutation_persist_credentials_removed_is_killed():
@@ -639,6 +692,39 @@ def test_the_corpus_bootstrap_inputs_cannot_reach_a_scheduled_run():
     dispatch_inputs = triggers["workflow_dispatch"]["inputs"]
     assert "senate_era_backfill" in dispatch_inputs
     assert "corpus_floor_allow_reparse" in dispatch_inputs
+
+
+_RUN_BODY_INTERPOLATION = re.compile(
+    r"\$\{\{[^}]*\b(inputs\.|steps\.|github\.event\.)"
+)
+
+
+def test_no_untrusted_or_self_produced_value_is_interpolated_into_any_run_body():
+    """R2 L5 — the publish-job `inputs.` sweep below, widened to every workflow,
+    every job, and the other two families that reach `run:` as script text
+    before the shell parses: `steps.*.outputs` (self-produced, but shaped
+    only where the producer remembered to — see orchestrator.py's
+    GITHUB_OUTPUT guard) and `github.event.*` (attacker-titled). `if:` and
+    `env:` are value contexts and are exempt; `run:` is not.
+    """
+    offenders = []
+    for path in workflow_files():
+        doc = load_workflow(path)
+        for job_id, job in (doc.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                run = step.get("run") or ""
+                if _RUN_BODY_INTERPOLATION.search(run):
+                    offenders.append(f"{path.name}:{job_id}:{step.get('name')}")
+    assert offenders == [], (
+        "expression interpolated directly into a run: body "
+        f"(pass it via env: instead): {offenders}"
+    )
+
+
+def test_mutation_steps_output_in_run_body_is_caught():
+    assert _RUN_BODY_INTERPOLATION.search('echo "${{ steps.x.outputs.y }}"')
+    assert _RUN_BODY_INTERPOLATION.search("cp ${{ github.event.head_commit.message }}")
+    assert not _RUN_BODY_INTERPOLATION.search('echo "$STAGE_BUILD_DIR"')
 
 
 def test_no_dispatch_input_is_interpolated_into_a_shell_script_body():

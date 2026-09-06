@@ -112,6 +112,7 @@ __all__ = [
     "VerifyInputError",
     "VerifyUnavailable",
     "LOCKED_CONTENT_SECURITY_POLICY",
+    "LOCKED_PERMISSIONS_POLICY",
     "REQUIRED_RESPONSE_HEADERS",
     "check_headers",
     "check_markers",
@@ -181,8 +182,18 @@ LOCKED_CONTENT_SECURITY_POLICY = (
 #: remains reversible by serving `max-age=0` over HTTPS.
 LOCKED_STRICT_TRANSPORT_SECURITY = "max-age=31536000"
 
+#: Permissions-Policy (security audit R2, L12): the site uses none of these
+#: browser features, so each is denied to every origin — a script that reaches
+#: the page through some future CSP gap still cannot prompt for the camera,
+#: microphone, location, a payment handler or USB. Deny-list of named features
+#: rather than a blanket policy: an unknown feature name is ignored by
+#: browsers, so only names with cross-browser meaning are locked.
+LOCKED_PERMISSIONS_POLICY = (
+    "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+)
+
 #: Response headers that must be present exactly once AND equal to the given
-#: value — the four security headers the shipped `_headers` control sets.
+#: value — the five security headers the shipped `_headers` control sets.
 #: Checked on inventory-sampled assets that served 200 — the control-path
 #: probes in :func:`probe_control_paths` are untouched, because a 404 carries
 #: no `_headers` rule and asserting one there would fail the deploy for a
@@ -193,6 +204,7 @@ REQUIRED_RESPONSE_HEADERS = {
     "strict-transport-security": LOCKED_STRICT_TRANSPORT_SECURITY,
     "x-content-type-options": "nosniff",
     "referrer-policy": "strict-origin-when-cross-origin",
+    "permissions-policy": LOCKED_PERMISSIONS_POLICY,
 }
 
 #: The security-header names one shared normalization covers, everywhere a
@@ -240,6 +252,8 @@ ALLOWED_RESPONSE_HEADERS = frozenset(
         "keep-alive",
         "last-modified",
         "nel",
+        # Required since R2 L12 — see REQUIRED_RESPONSE_HEADERS; listed here
+        # for the same reason content-security-policy is.
         "permissions-policy",
         # Preview deployments carry `x-robots-tag: noindex` — Cloudflare adds it
         # so preview URLs are not indexed. Allowed rather than required: it is

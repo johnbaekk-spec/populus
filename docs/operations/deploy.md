@@ -425,7 +425,7 @@ successful sign requires all four to be exactly 1 and carries the exact
 canonical `controls` identity.
 
 Verification now also proves the control's **effect**: exact
-CSP/HSTS/nosniff/referrer values on representative HTML, JS, CSS and JSON
+CSP/HSTS/nosniff/referrer/permissions-policy values on representative HTML, JS, CSS and JSON
 paths (missing, weakened, duplicated/conflicting, or unexpected headers all
 fail), while `/_headers` must still 404. A header or control finding is never
 a "propagation lag": only a rejection whose EVERY finding is an inventoried

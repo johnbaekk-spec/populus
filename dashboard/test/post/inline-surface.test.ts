@@ -153,6 +153,53 @@ test("_headers ships in dist byte-identical, with the LD13 policy set", () => {
   assert.ok(!shipped.includes("includeSubDomains") && !shipped.includes("preload"));
   assert.match(shipped, /X-Content-Type-Options: nosniff$/m);
   assert.match(shipped, /Referrer-Policy: strict-origin-when-cross-origin$/m);
+  // R2 L12: every named feature denied to every origin. The verifier locks
+  // the exact value (tests/test_deploy_verify.py pins it against this file).
+  assert.match(
+    shipped,
+    /Permissions-Policy: camera=\(\), microphone=\(\), geolocation=\(\), payment=\(\), usb=\(\)$/m,
+  );
+});
+
+test("R2 L12: /.well-known/security.txt ships in dist, byte-identical and unexpired", () => {
+  // Astro copies `public/` verbatim, dot-directories included — but that is
+  // the property this test exists to prove, not assume: a silently dropped
+  // dotfile would be an inventory entry the domain can never serve.
+  const rel = path.join(".well-known", "security.txt");
+  const shipped = readFileSync(path.join(DIST, rel), "utf8");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../public", rel), "utf8");
+  assert.equal(shipped, source, "dist/.well-known/security.txt drifted from public/");
+  // RFC 9116 §2.5: Contact and Expires are REQUIRED; Expires MUST appear
+  // exactly once (§2.5.5), MUST be an RFC 3339 date-time, SHOULD be less than
+  // a year out, and the file is invalid once it passes. `Date.parse` alone
+  // would accept "September 1, 2027" and a 2099 date, so the syntax is a
+  // strict regex and the horizon is bounded above as well as below. The
+  // lower bound goes red on 2027-09-01 by design — re-date the file, not the
+  // test.
+  assert.match(shipped, /^Contact: https:\/\/github\.com\/johnbaekk-spec\/populus\/blob\/main\/SECURITY\.md$/m);
+  // RFC 9116 §2.4: field names are case-INSENSITIVE, so `expires:` is the same
+  // field as `Expires:`. A case-sensitive collector would count only the
+  // canonical spelling and let a second, differently-cased line slip past the
+  // "exactly one Expires" assertion below — the duplicate §2.5.5 forbids.
+  const fields = (name: string) => {
+    const prefix = `${name.toLowerCase()}:`;
+    return shipped
+      .split(/\r?\n/)
+      .filter((l) => l.toLowerCase().startsWith(prefix))
+      .map((l) => l.slice(prefix.length).trim());
+  };
+  const expires = fields("Expires");
+  assert.equal(expires.length, 1, `security.txt must carry exactly one Expires, found ${expires.length}`);
+  const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  assert.match(expires[0], RFC3339, `Expires is not RFC 3339: ${expires[0]}`);
+  const when = Date.parse(expires[0]);
+  assert.ok(Number.isFinite(when), `Expires does not parse: ${expires[0]}`);
+  const now = Date.now();
+  assert.ok(when > now, `security.txt expired on ${expires[0]}; re-date it`);
+  assert.ok(when - now <= 366 * 24 * 60 * 60 * 1000, `Expires is more than a year out: ${expires[0]}`);
+  assert.equal(fields("Preferred-Languages").length, 1, "exactly one Preferred-Languages");
+  assert.deepEqual(fields("Preferred-Languages"), ["en"]);
+  assert.match(shipped, /^Canonical: https:\/\/publicfilings\.org\/\.well-known\/security\.txt$/m);
 });
 
 test("R28: the beacon is on every built page, and adds no inline surface", () => {

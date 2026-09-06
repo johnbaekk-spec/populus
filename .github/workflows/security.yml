@@ -1,0 +1,57 @@
+# Advisory sweep (security audit R2, M6). `make security` — the paid-vendor
+# denylist, pip-audit over the frozen production lock, and `npm audit` over
+# the committed dashboard lock — used to run only on the owner's machine via
+# `make check`, so a new advisory against an UNCHANGED lock was caught only
+# when someone happened to run it. This runs it on every push, weekly, and on
+# demand.
+#
+# Deliberately NOT a required ruleset context: two of its three parts depend
+# on PyPI/OSV and the npm advisory service, and an unfixable advisory in a
+# dev-only dependency must not block unrelated merges. A red run here is a
+# finding to triage (docs/operations/testing.md), not a merge gate.
+#
+# Fork-safe shape, same as checks.yml: hosted runner, `contents: read`, no
+# secrets, `persist-credentials: false`. No PR-like trigger (see checks.yml
+# for why; tests/test_workflow_governance.py enforces it).
+name: security
+
+on:
+  push:
+  schedule:
+    - cron: "23 7 * * 1"   # Mondays 07:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  advisories:
+    name: security (advisory sweep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version-file: pyproject.toml
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version-file: dashboard/.node-version
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install uv (hash-pinned)
+        run: python3 -m pip install --quiet --require-hashes -r "$GITHUB_WORKSPACE/.github/ci/uv-requirements.txt"
+
+      - name: Sync (frozen lockfile)
+        run: uv sync --frozen
+
+      - name: make security
+        run: make security

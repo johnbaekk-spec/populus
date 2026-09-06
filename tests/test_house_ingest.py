@@ -310,6 +310,32 @@ def test_zip_directory_member_is_not_the_xml_member(tmp_path):
     _assert_no_partial_writes(tmp_path)
 
 
+@pytest.mark.parametrize("method", [zipfile.ZIP_LZMA, zipfile.ZIP_BZIP2])
+def test_zip_member_with_non_streamable_compression_is_a_failure(tmp_path, method):
+    # R2 M4: the streamed counters only bound DEFLATE output; the stdlib
+    # decompresses a BZIP2/LZMA read's whole input at once, so a lying central
+    # directory would produce a GiB-scale transient before any counter ran.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", method) as archive:
+        archive.writestr("2026FD.xml", _index_xml(2026, [WITTMAN]))
+    result, _t, _c = _discover_live(tmp_path, _resp(200, buffer.getvalue()))
+    assert result.failed is True
+    assert "compression method" in result.note
+    _assert_no_partial_writes(tmp_path)
+
+
+def test_malformed_filing_date_rejects_the_row_not_the_year(tmp_path):
+    # R2 L1: the index is remote input. A malformed <FilingDate> used to raise
+    # out of _index_entries and fail the whole year's discovery; the Senate
+    # index rejects the same case per row, and so does this now.
+    bad = dict(WITTMAN, docid="20034917", filed="13/45/2026")
+    payload = _index_zip(2026, [WITTMAN, bad])
+    result, _t, _c = _discover_live(tmp_path, _resp(200, payload))
+    assert result.failed is False
+    assert "20034917" in result.rejected_docids
+    assert list(result.entries) == ["20034916"]
+
+
 def _typed_zip(name: str, data: bytes, unix_mode: int) -> bytes:
     """A ZIP whose single member records *unix_mode* as its POSIX st_mode.
 

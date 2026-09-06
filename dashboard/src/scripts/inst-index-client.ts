@@ -11,7 +11,7 @@
    that: it captures this island's output and asserts it is unchanged. */
 
 import { type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCount, esc, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
   addsNoteHtml,
@@ -243,7 +243,7 @@ export function initAddsControls(): void {
       extra: {
         html:
           `Every issuer in this quarter's bounded payload remains in ` +
-          `<a href="${addsPayloadHref(period, mode)}">the published JSON</a>.`,
+          `<a href="${esc(addsPayloadHref(period, mode))}">the published JSON</a>.`,
       },
     });
   }

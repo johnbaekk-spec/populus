@@ -64,6 +64,13 @@ BACKOFF_SCHEDULE = (2.0, 4.0, 8.0)
 CIRCUIT_403_THRESHOLD = 3
 
 PAGE_LENGTH = 100
+#: Discovery ceilings (security audit R2, M2). The paginator's exit used to be
+#: governed entirely by the server's `recordsTotal` and page length, so a
+#: hostile or broken index could page forever and accumulate rows unbounded.
+#: Both caps are far above any real window (the largest real year is a few
+#: thousand rows) and are named discovery failures, never partial results.
+MAX_INDEX_PAGES = 200
+MAX_INDEX_ROWS = MAX_INDEX_PAGES * PAGE_LENGTH
 
 #: Synthetic status for "the transport itself failed". Inside the 5xx band so
 #: the retry ladder treats it as a server-side non-answer, and 599 is not a
@@ -568,7 +575,14 @@ def discover(
     rows: list = []
     records_total = 0
     start = 0
+    pages = 0
     while True:
+        if pages >= MAX_INDEX_PAGES:
+            return _discovery_failure(
+                f"index paginator exceeded {MAX_INDEX_PAGES} pages"
+                f" ({len(rows)} rows, server recordsTotal={records_total})"
+            )
+        pages += 1
         response = session.post(
             DATA_URL,
             data=_index_post_body(
@@ -593,6 +607,11 @@ def discover(
         page_rows = payload.get("data")
         if not isinstance(page_rows, list):
             return _discovery_failure("index response lacks a data array")
+        if len(rows) + len(page_rows) > MAX_INDEX_ROWS:
+            return _discovery_failure(
+                f"index paginator exceeded {MAX_INDEX_ROWS} rows"
+                f" at start={start} (server recordsTotal={records_total})"
+            )
         rows.extend(page_rows)
         if len(page_rows) < PAGE_LENGTH or len(rows) >= records_total:
             break

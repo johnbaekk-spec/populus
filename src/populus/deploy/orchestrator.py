@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -1478,6 +1479,11 @@ def serving_probe(client: Any, *, marker_path: str = DEFAULT_MARKER_PATH) -> Ser
     return _probe
 
 
+
+#: Everything a Cloudflare/GitHub identifier or a hex digest may contain, and
+#: nothing that can terminate a `$GITHUB_OUTPUT` line or start a heredoc.
+_GITHUB_OUTPUT_VALUE_RE = re.compile(r"[A-Za-z0-9._:/=+-]*")
+
 def _emit_outputs(
     *,
     outcome: str,
@@ -1498,13 +1504,22 @@ def _emit_outputs(
     destination = os.environ.get("GITHUB_OUTPUT")
     if not destination:
         return
-    lines = [
-        f"outcome={outcome}",
-        f"deployment_id={deployment_id}",
-        f"preview_deployment_id={preview_deployment_id}",
-        f"dist_digest={dist_digest_value}",
-        f"rolled_back_to={rolled_back_to}",
-    ]
+    values = {
+        "outcome": outcome,
+        "deployment_id": deployment_id,
+        "preview_deployment_id": preview_deployment_id,
+        "dist_digest": dist_digest_value,
+        "rolled_back_to": rolled_back_to,
+    }
+    # `$GITHUB_OUTPUT` is line-delimited: a value carrying a newline would
+    # define a second, attacker-named output. The ids are provider-returned
+    # strings, so they are shaped here, at the only place they become
+    # workflow state (security audit R2, L4).
+    for key, value in values.items():
+        text = "" if value is None else str(value)
+        if not _GITHUB_OUTPUT_VALUE_RE.fullmatch(text):
+            raise ValueError(f"refusing to write GITHUB_OUTPUT {key}: unsafe value {text!r}")
+    lines = [f"{key}={'' if value is None else value}" for key, value in values.items()]
     with open(destination, "a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 

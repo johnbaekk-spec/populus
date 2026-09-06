@@ -40,7 +40,11 @@ test("r3-F1: a pointer whose build lacks the artifact FAILS without a declared b
 });
 
 test("r3-F1: each build publishes its own artifact so the chain continues", () => {
-  assert.match(WORKFLOW, /cp "\$src" "\$\{\{ steps\.stage\.outputs\.build_dir \}\}\/signals\.v1\.json"/);
+  // The build dir reaches the shell through env (R2 L5: no `${{ }}` in run
+  // bodies), so the property is asserted in two halves: the env binding and
+  // the copy into it.
+  assert.match(WORKFLOW, /STAGE_BUILD_DIR: \$\{\{ steps\.stage\.outputs\.build_dir \}\}/);
+  assert.match(WORKFLOW, /cp "\$src" "\$STAGE_BUILD_DIR\/signals\.v1\.json"/);
   // …and it must be copied BEFORE finalize-build, whose walk hashes it.
   assert.ok(
     WORKFLOW.indexOf("Publish the signal artifact into the build") < WORKFLOW.indexOf("- name: Finalize build"),

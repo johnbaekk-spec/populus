@@ -557,6 +557,45 @@ def test_live_discovery_failures_are_explicit(tmp_path, initialized_db, setup):
     assert _audit_row(initialized_db)[0] == "partial"
 
 
+def test_endless_index_pagination_is_a_bounded_failure(tmp_path, initialized_db):
+    # R2 M2: the paginator's exit used to rest on the server's recordsTotal and
+    # page length alone. A page that is always full, under a recordsTotal the
+    # run can never reach, paged forever and accumulated rows unbounded.
+    # The property: discovery TERMINATES in a named failure with a bounded
+    # row count. Asserting a page count would pin an end state instead.
+    from populus.ingest.senate import MAX_INDEX_PAGES, MAX_INDEX_ROWS, PAGE_LENGTH
+
+    transport = FakeSenateTransport()
+    _route_handshake(transport)
+    full_page = [_index_row(_u(n)) for n in range(PAGE_LENGTH)]
+    transport.route(
+        "POST", DATA_URL, _resp(200, _index_json(full_page, total=10**9))
+    )
+    clock = FakeClock()
+    report = _run_live(initialized_db, transport, clock, raw_root=tmp_path / "raw")
+    assert report.discovery_failed is True
+    assert "exceeded" in report.note
+    posts = [u for u in transport.urls() if u == DATA_URL]
+    assert len(posts) <= MAX_INDEX_PAGES + 1
+    assert MAX_INDEX_ROWS == MAX_INDEX_PAGES * PAGE_LENGTH
+    assert _audit_row(initialized_db)[0] == "partial"
+
+
+def test_an_oversized_index_page_trips_the_row_cap(tmp_path, initialized_db):
+    # The page cap cannot be reached by a server that over-fills a single
+    # page; the row cap is what bounds THAT shape. Removing the row check
+    # lets this run accept MAX_INDEX_ROWS + 1 rows from one response.
+    from populus.ingest.senate import MAX_INDEX_ROWS
+
+    transport = FakeSenateTransport()
+    _route_handshake(transport)
+    huge = [_index_row(_u(n)) for n in range(MAX_INDEX_ROWS + 1)]
+    transport.route("POST", DATA_URL, _resp(200, _index_json(huge)))
+    report = _run_live(initialized_db, transport, FakeClock(), raw_root=tmp_path / "raw")
+    assert report.discovery_failed is True
+    assert f"exceeded {MAX_INDEX_ROWS} rows" in report.note
+
+
 def test_cache_without_index_is_a_failure_not_a_skip(tmp_path, initialized_db):
     # LD11: one index, no reconciliation without it (unlike the House
     # per-year cache skip).

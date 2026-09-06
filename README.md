@@ -112,10 +112,13 @@ and `make security`. The security target's audit halves are
 hermetic and can go red on an advisory-database change with no local edit —
 loudly, never as a silent pass.
 
-CI (`.github/workflows/checks.yml`) runs this tier on `pull_request`
-(fork-safe: hosted runners, `contents: read`, no secret access), `push`, and
-`workflow_dispatch`; `pull_request_target` and comment-driven execution
-remain banned.
+CI (`.github/workflows/checks.yml`) runs this tier on `push` and
+`workflow_dispatch` (hosted runners, `contents: read`, no secret access).
+`pull_request` is deliberately off while a repository-level self-hosted
+runner exists — on that event GitHub runs the *fork's* workflow file — so
+fork PRs receive no CI here and external contributions are not yet accepted
+(`docs/operations/github-security.md` §2a). `pull_request_target` and
+comment-driven execution remain banned.
 
 **Owner tier** — `make test` / `make check` run the full tree including
 `npm run gates`: the static site build (**32 GiB physical-memory floor**, a

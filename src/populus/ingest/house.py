@@ -262,11 +262,19 @@ def _index_entries(xml_bytes: bytes, year: int) -> DiscoverResult:
         first = (member.findtext("First") or "").strip()
         suffix = (member.findtext("Suffix") or "").strip()
         name = f"{last}, {first}" + (f" {suffix}" if suffix else "")
+        try:
+            filed_date = _filing_date_iso(member.findtext("FilingDate") or "")
+        except ValueError:
+            # Remote input: a malformed date rejects THIS row (the Senate
+            # index handles the same case per-row) rather than crashing the
+            # whole year's discovery (R2 L1).
+            rejected.append(doc_id)
+            continue
         entries[doc_id] = IndexEntry(
             doc_id=doc_id,
             year=year,
             filer_name_raw=name,
-            filed_date=_filing_date_iso(member.findtext("FilingDate") or ""),
+            filed_date=filed_date,
             state_dst=(member.findtext("StateDst") or "").strip() or None,
         )
         docids.append(doc_id)
@@ -303,6 +311,8 @@ def _member_name_unsafe(name: str) -> bool:
 #: ``ZipInfo.create_system`` value meaning "Unix"; only then do the high 16
 #: bits of ``external_attr`` carry a POSIX ``st_mode``.
 _ZIP_SYSTEM_UNIX = 3
+#: The only ZIP methods whose stdlib reader bounds each read's output size.
+_ZIP_STREAMABLE_METHODS = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 
 _NON_REGULAR_KINDS = {
     stat.S_IFLNK: "a symbolic link",
@@ -376,6 +386,15 @@ def _extract_index_xml(zip_bytes: bytes) -> tuple[bytes | None, str | None]:
                     f" found {len(xml_members)}"
                 )
             info = xml_members[0]
+            if info.compress_type not in _ZIP_STREAMABLE_METHODS:
+                # The streamed counters below only bound DEFLATE: the stdlib
+                # decompresses a BZIP2/LZMA read call's whole input at once,
+                # so a lying central directory would yield a GiB-scale
+                # transient before the counter saw a byte (R2 M4).
+                return None, (
+                    f"index XML member uses compression method"
+                    f" {info.compress_type}, not stored/deflated"
+                )
             if _member_name_unsafe(info.filename):
                 return None, (
                     f"index ZIP member name {info.filename!r} is not a safe"

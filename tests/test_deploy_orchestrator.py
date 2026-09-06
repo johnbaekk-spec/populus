@@ -125,6 +125,7 @@ OBSERVATION = RollbackSiteObservation(
     code_sha=ANCHOR_SHA,
     headers=(
         ("content-security-policy", ("default-src 'self'",)),
+        ("permissions-policy", ("camera=(), microphone=(), geolocation=(), payment=(), usb=()",)),
         ("referrer-policy", ("strict-origin-when-cross-origin",)),
         ("strict-transport-security", ("max-age=31536000",)),
         ("x-content-type-options", ("nosniff",)),
@@ -1395,6 +1396,41 @@ def test_the_outputs_are_appended_in_the_key_equals_value_form(cli: Cli) -> None
     assert all("=" in line for line in lines)
 
 
+def test_a_provider_id_that_could_frame_a_second_output_is_refused(tmp_path, monkeypatch):
+    """R2 L4: `$GITHUB_OUTPUT` is line-oriented — a newline in a value defines
+    a second, attacker-named output. The ids are provider-returned strings, so
+    the guard sits at the ONE place they become workflow state. The property:
+    nothing is written, and the refusal is typed. Removing the shaping in
+    `_emit_outputs` makes the injected line land as `rolled_back_to=...`.
+    """
+    from populus.deploy import orchestrator
+
+    output = tmp_path / "github_output"
+    output.write_text("earlier_step=kept\n", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    with pytest.raises(ValueError, match="deployment_id"):
+        orchestrator._emit_outputs(
+            outcome="deployed",
+            deployment_id="dep-1\nrolled_back_to=attacker",
+            dist_digest_value="ab",
+        )
+    assert output.read_text(encoding="utf-8") == "earlier_step=kept\n"
+
+
+@pytest.mark.parametrize(
+    "value", ["dep-production", "8f3be7f0-1a2b-4c3d-9e8f-0a1b2c3d4e5f", "sha256:" + "0" * 64, ""]
+)
+def test_every_legitimate_output_shape_is_written(tmp_path, monkeypatch, value):
+    # Cloudflare deployment ids (UUIDs), build ids, `sha256:<hex>` digests and
+    # the empty "nothing to claim" value are all admitted by the shape.
+    from populus.deploy import orchestrator
+
+    output = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    orchestrator._emit_outputs(outcome="deployed", deployment_id=value, dist_digest_value=value)
+    assert f"deployment_id={value}" in output.read_text(encoding="utf-8").splitlines()
+
+
 # --- what the artifact says about itself, checked before any upload -----------
 
 
@@ -2332,6 +2368,7 @@ def test_a_v1_prior_site_rolls_back_by_observation_not_inventory(
         code_sha=ANCHOR_SHA,
         headers=(
             ("content-security-policy", ()),
+            ("permissions-policy", ()),
             ("referrer-policy", ()),
             ("strict-transport-security", ()),
             ("x-content-type-options", ()),

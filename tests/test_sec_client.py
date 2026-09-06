@@ -218,6 +218,29 @@ def test_retry_after_accepts_seconds_and_http_date():
     assert _retry_after_seconds({}, now) is None
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["31536000", "1e12", "Fri, 24 Jul 2036 12:00:00 GMT"],
+)
+def test_retry_after_never_sleeps_longer_than_the_cap(value):
+    # R2 M5: Retry-After is remote input. Whatever it says, in either RFC 7231
+    # form, the client sleeps at most RETRY_AFTER_CAP_S. Removing the clamp in
+    # `get()` makes every case here sleep for the raw header value.
+    from populus.net.sec_client import RETRY_AFTER_CAP_S
+
+    transport = RecordingTransport(
+        [
+            TransportResponse(429, {"Retry-After": value}, b""),
+            TransportResponse(200, {}, b"ok"),
+        ]
+    )
+    client, clock = make_client(transport)
+    client.get(BOOTSTRAP_URL)
+    assert len(transport.sent) == 2
+    assert max(clock.slept) <= RETRY_AFTER_CAP_S
+    assert max(clock.slept) == RETRY_AFTER_CAP_S  # the header WAS honoured, up to the cap
+
+
 def test_endpoint_class_normalizes_host_case_but_not_path():
     # QA-F3: the host guard admits SEC hostnames case-insensitively, so endpoint
     # classification (which selects the cache TTL) must too — an upper-case host
