@@ -2423,6 +2423,41 @@ def test_the_uv_fallback_runs_pip_exactly_when_uv_is_absent(tmp_path, uv_present
         ), argv
 
 
+def test_hidden_served_paths_survive_the_artifact_round_trip():
+    """Deploy run 34067400099: the site ships `.well-known/security.txt`, and
+    `actions/upload-artifact` has defaulted `include-hidden-files: false` since
+    v4.4 — so the dot-directory was dropped from the artifact silently, with no
+    warning and no failed step. The inventory is written BEFORE packaging, so
+    it listed a path the downloaded tree no longer had and the deploy refused
+    on the inventory/tree byte mismatch (correctly, before any upload).
+
+    The property, tied to the tree rather than to a remembered filename: if the
+    published tree contains ANY hidden path, every upload-artifact step that
+    packages it must set `include-hidden-files: true`. Adding a second hidden
+    file later cannot silently reintroduce this.
+    """
+    public = REPO_ROOT / "dashboard" / "public"
+    hidden = sorted(p.name for p in public.iterdir() if p.name.startswith("."))
+    assert hidden, (
+        "no hidden path is served any more — delete this test and the "
+        "include-hidden-files setting together, or it becomes decoration"
+    )
+    doc = _load_workflow("publish.yml")
+    uploads = [
+        step
+        for job in doc["jobs"].values()
+        for step in job.get("steps") or []
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert uploads, "publish.yml uploads no artifact; the site would not reach deploy"
+    for step in uploads:
+        assert (step.get("with") or {}).get("include-hidden-files") is True, (
+            f"step {step.get('name')!r} packages the served tree, which contains "
+            f"{hidden}, but upload-artifact defaults include-hidden-files to false "
+            "and would drop them — the inventory would then not match the tree"
+        )
+
+
 def test_every_repo_rooted_path_in_a_run_body_survives_a_working_directory_default():
     """CI 2026-09-06: the hash-pinned uv install used the repo-relative path
     `.github/ci/uv-requirements.txt`, and `checks.yml`'s dashboard job sets a

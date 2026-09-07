@@ -512,6 +512,14 @@ jobs:
           path: site-artifact
           retention-days: 7
           if-no-files-found: error
+          # The served tree contains `.well-known/security.txt`, and
+          # upload-artifact has defaulted `include-hidden-files: false` since
+          # v4.4 — so it silently dropped the whole dot-directory. The
+          # inventory is built BEFORE packaging and therefore listed a file the
+          # downloaded tree no longer had, and the deploy refused (correctly,
+          # and before any upload) on the inventory/tree byte mismatch. Any
+          # hidden path we serve has to survive this round trip.
+          include-hidden-files: true
 
       - name: Finalize build
         if: steps.stage.outputs.fresh == 'true'
