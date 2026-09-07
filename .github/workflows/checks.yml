@@ -18,8 +18,6 @@
 # fix belongs in the tests rather than in a CI ignore-list:
 #   * tests/test_runner_controller.py — executes a macOS-only script (BSD
 #     `stat -f`); skips on non-Darwin.
-#   * tests/test_m2_11_qa_bundle.py — drives a builder pinned to absolute
-#     owner-machine paths; skips when they are absent.
 # It also caught one REAL portability defect: SQL using the digit separator
 # `9_000_000`, which SQLite rejects before 3.46.
 #

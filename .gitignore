@@ -32,6 +32,22 @@ credentials.yml
 *.db-journal
 *.db-wal
 *.db-shm
+# Build-run process records. Plans, dev notes, QA reports and findings --
+# archaeology of HOW a run was built. Durable output lives elsewhere: data
+# contracts and decisions in docs/architecture/, the dashboard contract in
+# docs/frontend/, open work in docs/roadmap.md. These records serve no
+# reader outside this checkout and were the largest low-value surface the
+# public tree carried.
+#
+# `dir/*`, never `dir/` -- git does not descend into an excluded directory,
+# so a negation under a directory-form exclude is silently inert.
+#
+# Exception: the M2-12 stub is the record that R14/R15 scope was WITHDRAWN,
+# not lost, and carries the LD-8/TD-7 retention obligation. It is pinned by
+# test_refresh_stub_exists_and_carries_retention_obligation -- the document
+# is the control, so untracking it would turn that gate green by deletion.
+docs/build/*
+!docs/build/RUN-M2-12-inst-refresh-stub.md
 # Operator runbooks. Deploy, attestation, GitHub security, data maintenance,
 # the Kadoa backfill audit and the gate-tier description describe this
 # deployment's live infrastructure in operational detail. They contain no
