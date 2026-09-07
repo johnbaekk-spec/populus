@@ -47,8 +47,9 @@ is [ARCHITECTURE.md](ARCHITECTURE.md).
   (`scripts/maintenance/dependency_guard.py`), and `scripts/maintenance/` (link and path gates)
 - `tests/` — the Python suite plus a golden corpus of real government filings
 - `docs/architecture/` — durable data contracts and decision records;
-  `docs/operations/` — runbooks; `docs/frontend/` — dashboard contracts and
-  design principles; `docs/roadmap.md` — open work
+  `docs/frontend/` — dashboard contracts and design principles;
+  `docs/roadmap.md` — open work. Most operator runbooks are maintained
+  outside this repository (see **Operations** below)
 - `ops/runner/` — the self-hosted publish runner's controller (host
   infrastructure; see `docs/runbooks/self-hosted-runner.md`)
 - `.github/workflows/` — `checks.yml` (contributor CI), `publish.yml` (the
@@ -96,14 +97,15 @@ uv run populus stats --db app.db --out stats.json
   `SITE_CODE_SHA`) are documented in
   [dashboard/README.md](dashboard/README.md).
 - `build` / `publish` / `verify` each require an explicit `--attestation=`
-  choice — see `docs/operations/attestation.md`.
+  choice; there is no default. The accepted values and what each asserts
+  are documented in `--help` for each subcommand.
 
 ## The two-tier gate model
 
 Two tiers, honestly separated; neither claims the other's coverage. The full
 description — every CI job, what a green run does and does not prove, and
-the `make security` caveats — is
-[docs/operations/testing.md](docs/operations/testing.md).
+the `make security` caveats — is summarised below; `.github/workflows/checks.yml`
+is the authority on what actually runs.
 
 **Contributor tier** — runs on a fresh clone and on hosted CI runners:
 `uv run pytest -q`; `cd dashboard && npm ci && npx astro check && npm test`;
@@ -117,7 +119,8 @@ CI (`.github/workflows/checks.yml`) runs this tier on `push` and
 `pull_request` is deliberately off while a repository-level self-hosted
 runner exists — on that event GitHub runs the *fork's* workflow file — so
 fork PRs receive no CI here and external contributions are not yet accepted
-(`docs/operations/github-security.md` §2a). `pull_request_target` and
+(recorded in the unpublished GitHub-security runbook, §2a).
+`pull_request_target` and
 comment-driven execution remain banned.
 
 **Owner tier** — `make test` / `make check` run the full tree including
@@ -148,10 +151,19 @@ inventory-wide on preview before production receives bytes, production
 failures roll back to the captured (and serving-verified) prior deployment,
 and `record-sign.yml` attests an append-only deployment record — a live
 deployment without a valid record **gates the next publish** (the R18 gate).
-Operator procedures: `docs/operations/deploy.md`, `rollback.md`, and
-`attestation.md`. The runner runbook stays at
-`docs/runbooks/self-hosted-runner.md` for now — its path is pinned by a
-governance test owned by another active run.
+Most operator procedures — deploy, attestation, GitHub security, data
+maintenance, the Kadoa backfill audit and the gate-tier description —
+describe live infrastructure in operational detail and are **not published**.
+Everything needed to build, test and verify this project from a clean clone
+is in the repository; the withheld documents cover running *this* deployment,
+not reproducing it.
+
+Three stay in-tree, because a gate asserts a property *through* the document
+and withholding one would retire a live control rather than hide it:
+`docs/operations/rollback.md` and `docs/operations/disaster-recovery.md` (the
+R18 gate checks they exist and that their executable snippets are gated), and
+`docs/runbooks/self-hosted-runner.md`, which carries the runner's pinned
+version and SHA-256 and the assertion that the withdrawn v2.321.0 is gone.
 
 ## Legal and data provenance
 
@@ -167,7 +179,7 @@ policy: [SECURITY.md](SECURITY.md).
 
 Active documentation describes the **present** system: architecture and
 contracts (`ARCHITECTURE.md`, `docs/architecture/`), operations
-(`docs/operations/`), frontend (`docs/frontend/`), and open work
+frontend (`docs/frontend/`), and open work
 (`docs/roadmap.md`). Completed delivery process — run briefs, plans, dev
 notes, review transcripts — is deleted from the active tree once its durable
 decisions are extracted; **Git history is the archive**. A document that

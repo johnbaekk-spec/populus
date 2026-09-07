@@ -92,7 +92,7 @@ cat "$GEN_FILE"
 
 The generation is signed by the **record signer**, a different workflow identity
 from the publisher, and it is attested under the explicit subject name
-`deployments/<gen>.json` (see [`attestation.md`](attestation.md)). An unattested
+`deployments/<gen>.json` (see the attestation runbook, unpublished). An unattested
 or wrong-identity generation is **not** a rollback target — stop and treat it as
 an incident of its own:
 

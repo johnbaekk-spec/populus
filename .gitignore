@@ -32,6 +32,23 @@ credentials.yml
 *.db-journal
 *.db-wal
 *.db-shm
+# Operator runbooks. Deploy, attestation, GitHub security, data maintenance,
+# the Kadoa backfill audit and the gate-tier description describe this
+# deployment's live infrastructure in operational detail. They contain no
+# secrets, but they are free reconnaissance on a public repository, so they
+# are maintained outside the published tree. Earlier revisions remain in Git
+# history.
+#
+# `dir/*`, never `dir/` -- git does not descend into an excluded directory,
+# so a negation under a directory-form exclude is silently inert.
+#
+# Exceptions: the R18 gate asserts that these two exist and that their
+# executable snippets are gated (test_publish.py::test_runbook_exists_with_
+# gated_executable_snippets). The document is the control, so untracking it
+# would retire the gate rather than hide it.
+docs/operations/*
+!docs/operations/rollback.md
+!docs/operations/disaster-recovery.md
 # Tool-local state and review outputs.
 .claude/settings.local.json
 .claude/worktrees/

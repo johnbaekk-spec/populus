@@ -8,7 +8,7 @@
 # Deliberately NOT a required ruleset context: two of its three parts depend
 # on PyPI/OSV and the npm advisory service, and an unfixable advisory in a
 # dev-only dependency must not block unrelated merges. A red run here is a
-# finding to triage (docs/operations/testing.md), not a merge gate.
+# finding to triage (see the unpublished gate-tier runbook), not a merge gate.
 #
 # Fork-safe shape, same as checks.yml: hosted runner, `contents: read`, no
 # secrets, `persist-credentials: false`. No PR-like trigger (see checks.yml
