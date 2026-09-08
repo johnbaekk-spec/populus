@@ -252,7 +252,64 @@ not closed, and it closes when that suite is retired.
 - **B13 — M4, macro.**
 - **B14 — remaining P3 dashboard surfaces** beyond the shipped set.
 
-## 9. Optional process follow-ups
+## 9. Security and supply chain (security audit R2, 2026-09-07)
+
+The R2 audit and its remediation are closed: the fork-to-runner exposure, the
+data PAT's on-disk lifetime, the missing ingest ceilings, the response
+headers, and eleven secret-scope evasion classes all landed on `main` and were
+validated by a supervised production publish. What remains is the residue.
+
+- **B39 — Dependabot #95 (`uv` 0.7.13 -> 0.11.15) cannot merge as opened.**
+  `.github/ci/uv-requirements.txt` is `--require-hashes`, so the version and
+  all three sha256 digests (manylinux_2_17 x86_64, macOS arm64, sdist) must
+  move together, and `publish.yml`'s `UV_PIN` assertion plus
+  `tests/test_publish.py` fail on a version-only bump. The failing checks are
+  the guard working, not a broken PR. Same applies to every future uv bump.
+- **B40 — four other Dependabot PRs open** (astro, mcp, click, the npm-dev
+  group). Routine review; no known blocker.
+- **B41 — R3 is BLOCKED, and the `main` ruleset is the interim tier.**
+  Active today: required status checks (the three `checks.yml` contexts,
+  strict), block force-push, block deletion, required linear history, zero
+  bypass actors. Absent: the pull-request review rule, because a solo owner
+  cannot approve their own change and weakening the count to zero would be
+  worse than not having it. Unblocks when a second trusted GitHub account
+  accepts write access and its handle is added to `.github/CODEOWNERS`; the
+  upgrade procedure and its `jq -e` predicate are in the (unpublished)
+  GitHub-security runbook, section 2.
+  *Consequence to remember:* `required_linear_history` means merge commits are
+  rejected on `main` — squash or rebase only.
+- **B42 — two secret-scanning sub-settings silently no-op.**
+  `secret_scanning_validity_checks` and `secret_scanning_non_provider_patterns`
+  accept a `PATCH` with HTTP 200 and stay `disabled`: they are Advanced
+  Security features a free public repository does not have. Core secret
+  scanning and push protection ARE enabled. The runbook's R5 postcondition
+  asserts all four, so it reports red for a reason no action can clear — fix
+  the predicate, or record the exemption in it.
+- **B43 — fork PRs cannot merge, by construction.** `checks.yml` carries no
+  `pull_request` trigger while a repository-level self-hosted runner exists
+  (audit finding C1), so a fork PR's head never reports the three required
+  contexts and the ruleset blocks the merge. This is the intended state while
+  contributions are closed. Reopening contributions means first moving the
+  publish job off a runner attached to this repository — hosted publish, or an
+  organisation runner group — not re-adding the trigger.
+- **B44 — the runner stays registered while idle (accepted debt, TD-4).**
+  The controller wipes and reconstructs its root before every registration, so
+  a job lands in a pristine tree; what reconstruction cannot close is
+  same-UID persistence outside that root, and the runner being continuously
+  available. Window-scoped registration was designed and rejected as
+  insufficient on its own: a queued job takes the runner the instant it
+  registers, so it only helps while fork runs need approval AND none is
+  approved. The durable fix is the same as B43's.
+- **B45 — the secret-scope guard is not proven exhaustive.**
+  `tests/test_publish.py` kills eleven known evasion classes (dot and bracket
+  notation, `toJSON` bulk, dynamic indexing, three `format()` brace/quote
+  boundaries, a PyYAML quoted-scalar re-serialization, mixed-case context and
+  name, and placement at `container.env` / job `env` / `services.*.env`). It
+  is defence-in-depth against a future regression, NOT the control that keeps
+  the PAT scoped — that is the workflow structure itself. Seven review rounds
+  found seven distinct evasions; assume a twelfth exists.
+
+## 10. Optional process follow-ups
 
 - **B7 — re-run RUN 6 (MCP server) through the orchestrated loop** for
   process parity; the code is merged and green, so this only re-establishes
