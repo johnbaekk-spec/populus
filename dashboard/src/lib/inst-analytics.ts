@@ -256,3 +256,66 @@ export function chamberBenchmark(
     selfOwnedShare: round2(pick((s) => s.selfOwnedShare)),
   };
 }
+
+/* ---------- crowding: where one issuer sits among every issuer the aggregate ranks ---------- */
+
+export interface TickerCrowding {
+  period: string;
+  /** distinct issuers with top-holder rows for the period — the percentile population */
+  issuers: number;
+  /** this issuer's ranked holder count and its percentile rank (0–100) */
+  holderCount: { value: number; pct: number };
+  /** mean weight of the issuer in its ranked holders' complete books, in bps, and its percentile;
+      null when no ranked holder has a complete book for the period */
+  avgWeightBps: { value: number; pct: number; holdersWithBook: number } | null;
+  /** mean of the available percentiles */
+  compositePct: number;
+}
+
+/** Percentile rank = share of the population strictly below the value, 0–100. */
+function percentile(values: readonly number[], v: number): number {
+  if (values.length === 0) return 0;
+  let below = 0;
+  for (const x of values) if (x < v) below++;
+  return Math.round((below / values.length) * 100);
+}
+
+/** Crowding for one issuer key over the aggregate's top-holder slices. Holder
+    count is exact for the slice (bounded at top-N by the producer); average
+    weight is over holders whose period book is complete and fully valued — the
+    same rule every weight on the site applies. The percentile population is
+    every issuer with holder rows for the period, and is stated. */
+export function tickerCrowding(inst: InstData, issuerKey: string, period: string): TickerCrowding | null {
+  if (!inst.present) return null;
+  const own = (inst.holdersByIssuer.get(issuerKey) ?? []).filter((h) => h.period_of_report === period);
+  if (own.length === 0) return null;
+  const totalOf = (cik: string): number | null => {
+    const c = (inst.concentrationByCik.get(cik) ?? []).find((r) => r.period_of_report === period);
+    return c && c.null_value_positions === 0 && c.total_value_usd > 0 ? c.total_value_usd : null;
+  };
+  const counts: number[] = [];
+  const weights: number[] = [];
+  let ownWeight: { value: number; holders: number } | null = null;
+  for (const [key, rows] of inst.holdersByIssuer) {
+    const inPeriod = rows.filter((h) => h.period_of_report === period);
+    if (inPeriod.length === 0) continue;
+    counts.push(inPeriod.length);
+    let sum = 0;
+    let n = 0;
+    for (const h of inPeriod) {
+      const total = totalOf(h.cik);
+      if (total === null) continue;
+      sum += (h.value_usd / total) * 10_000;
+      n++;
+    }
+    if (n > 0) {
+      const w = sum / n;
+      weights.push(w);
+      if (key === issuerKey) ownWeight = { value: Math.round(w), holders: n };
+    }
+  }
+  const holderCount = { value: own.length, pct: percentile(counts, own.length) };
+  const avgWeightBps = ownWeight === null ? null : { value: ownWeight.value, pct: percentile(weights, ownWeight.value), holdersWithBook: ownWeight.holders };
+  const parts = [holderCount.pct, ...(avgWeightBps ? [avgWeightBps.pct] : [])];
+  return { period, issuers: counts.length, holderCount, avgWeightBps, compositePct: Math.round(parts.reduce((a, b) => a + b, 0) / parts.length) };
+}

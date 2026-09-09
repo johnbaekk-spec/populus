@@ -44,7 +44,7 @@ export {
   congressRankingSection,
 } from "./rankings.ts";
 export { type SignalsPageDeps, signalRowHtml, signalsBody, memberSignalsPanel } from "./signals.ts";
-export { type TickerHeaderInfo, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
+export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {
   type AddsSortKey,
   type AddsSectionOpts,
