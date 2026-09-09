@@ -67,6 +67,8 @@ def test_both_source_files_are_fetched_with_floors_that_a_stub_cannot_clear():
     assert set(FETCH.FILES) == {
         "legislators-current.yaml",
         "legislators-historical.yaml",
+        "committees-current.yaml",
+        "committee-membership-current.yaml",
     }
     assert all(floor > 0 for floor in FETCH.FILES.values())
 
@@ -112,3 +114,34 @@ def test_an_unsafe_ref_is_refused_before_any_request_is_built(tmp_path):
     for bad in ("../main", "a/b", ".hidden", ""):
         with pytest.raises(FETCH.FetchError, match="unsafe ref"):
             FETCH.fetch(tmp_path, bad, "ops@example.org")
+
+
+def _committees(count: int, *, with_id: bool = True) -> bytes:
+    return "".join(
+        (f"- thomas_id: HS{i:02d}\n  type: house\n  name: C{i}\n" if with_id else f"- type: house\n  name: C{i}\n")
+        for i in range(count)
+    ).encode("utf-8")
+
+
+def _membership(count: int, *, with_bioguide: bool = True) -> bytes:
+    body = ""
+    for i in range(count):
+        body += f"HS{i:02d}:\n"
+        body += f"- name: N{i}\n" + ("  bioguide: X{:06d}\n".format(i) if with_bioguide else "")
+    return body.encode("utf-8")
+
+
+def test_committee_documents_are_shape_checked_on_their_own_keys():
+    """B-6: `populus committees` keys committees on thomas_id and memberships on
+    bioguide; a document of the right YAML type but hollow entries would ingest
+    an empty roster exactly as a truncated one would."""
+    assert FETCH.validate_yaml("committees-current.yaml", _committees(45), 30) == 45
+    with pytest.raises(FETCH.FetchError, match="carry a thomas_id"):
+        FETCH.validate_yaml("committees-current.yaml", _committees(45, with_id=False), 30)
+    with pytest.raises(FETCH.FetchError, match="expected a YAML list of committees"):
+        FETCH.validate_yaml("committees-current.yaml", b"HSAG: []\n", 30)
+    assert FETCH.validate_yaml("committee-membership-current.yaml", _membership(80), 60) == 80
+    with pytest.raises(FETCH.FetchError, match="carry members with a bioguide"):
+        FETCH.validate_yaml("committee-membership-current.yaml", _membership(80, with_bioguide=False), 60)
+    with pytest.raises(FETCH.FetchError, match="expected a YAML mapping"):
+        FETCH.validate_yaml("committee-membership-current.yaml", b"- HSAG\n", 60)
