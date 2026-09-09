@@ -775,7 +775,7 @@ test("SL-R18: the curated-typing caveat is a Type-column note carrying its N of 
   // …and its text, WITH the live count, is the Type column's note.
   assert.match(page, /const typeNote =[\s\S]{0,400}curated registry covering/);
   assert.match(page, /fmtInt\(typedCount\)\} of \$\{fmtInt\(indexRows\.length\)\}/, "the N of M count travels with it");
-  assert.match(page, /h\.label === "Type" \? typeNote : null/, "anchored on the column it is about");
+  assert.match(page, /h\.label === "Filer" \? typeNote : null/, "anchored on the column it is about");
   // the `<noscript>` stays VISIBLE: it is about scripting, not about a column
   assert.match(page, /<noscript>Filtering by chip needs JavaScript/);
 });

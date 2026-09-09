@@ -1,3 +1,4 @@
+import { briefingCards, unavailableDesignPanel } from "./shared.ts";
 /* Pure page/section renderers. Every entity body is a string function called
    by the thin .astro page for SSR AND by the generic-route client driver —
    parity is by construction (one function, two callers). No Node APIs, no DOM.
@@ -147,6 +148,11 @@ export function holdersBody(
     (window?.open
       ? s7Banner(window)
       : "") +
+    briefingCards([
+      { tag: "Reported positions", title: "Quarter-end holdings as filed", body: "Explore the full published position list and its source filing. This record excludes the manager’s cash, shorts and non-13(f) assets." },
+      { tag: "Share changes", title: "Compare consecutive quarters", body: "Position changes retain the producer’s classification and comparability flags. Share counts and reported values describe different changes." },
+      { tag: "Coverage", title: "A snapshot, not current holdings", body: "Use the quarter selector to inspect available periods. Unknown values stay unknown and each table states its coverage." },
+    ]) +
     `<div class="period-row"><span class="period-label">Period</span><div class="chips" data-period-chips>${chips}</div>` +
     `<span class="period-note">quarter-end snapshots — positions may have changed since</span>` +
     `<noscript><span class="period-note">period switching needs JavaScript; showing ${esc(period)}</span></noscript></div>` +
@@ -458,6 +464,26 @@ function changesPagerHtml(
   );
 }
 
+/** Period-driven concentration panel shared by static and fallback filer views. */
+function filerBookShape(conc: ConcentrationRow | null, topn: number, period: string, total: number): string {
+  const metric = (label: string, value: number | null, text: string): string =>
+    `<div class="book-metric"><dt>${esc(label)}</dt><dd>` +
+    `<span class="book-track" aria-hidden="true">${value === null ? "" : `<span style="width:${Math.max(0, Math.min(100, value))}%"></span>`}</span>` +
+    `<span>${esc(text)}</span></dd></div>`;
+  const share = conc?.topn_share_bps == null ? null : conc.topn_share_bps / 100;
+  const hhi = conc?.null_value_positions === 0 ? conc.hhi : null;
+  const known = conc && conc.position_count > 0
+    ? (conc.position_count - conc.null_value_positions) / conc.position_count * 100 : null;
+  return `<section class="panel design-book-shape" aria-label="Book shape">` +
+    `<div class="panel-head"><h2 class="section-h">Book shape</h2><span class="panel-note">${esc(period)} · disclosed positions</span></div>` +
+    `<dl>${metric(`Top-${topn} concentration`, share, share === null ? "—" : `${share.toFixed(1)}%`)}` +
+    `${metric("Concentration index", hhi === null ? null : hhi / 100, hhi === null ? "—" : `${fmtInt(hhi)} bps`)}` +
+    `${metric("Positions with value", known, known === null ? "—" : `${conc!.position_count - conc!.null_value_positions} / ${conc!.position_count}`)}</dl>` +
+    `<p class="section-note">Concentration uses reported 13F long value, not total assets. ` +
+    `The index is withheld when any position lacks a value. No tracked-median comparison is published here.</p>` +
+    `<p class="section-note book-source">${filerTiles(conc, total).slice(2).map(tile => `${esc(tile.label)}: ${esc(tile.value)}${tile.title ? noteFromHtml(esc(tile.title), { scope: "filer-tiles" }, tile.label) : ""}`).join(" · ")}</p>` + unavailableDesignPanel("Sector rotation", "QUARTER-OVER-QUARTER", ["Sector", "Change", "Reported weight"], "Sector weights and comparable quarter changes are not published in this build.") + `</section>`;
+}
+
 export function filerPeriodSectionHtml(
   conc: ConcentrationRow | null,
   deltas: QoqDeltaRow[],
@@ -484,12 +510,17 @@ export function filerPeriodSectionHtml(
        section on a period change, and an id that moved with the period would
        make the server's bytes and the client's differ for the same row set
        (Constraint 5). */
-    statTiles(filerTiles(conc, total), {
+    statTiles([
+      ...filerTiles(conc, total).slice(0, 2),
+      { value: topn === 5 && conc?.topn_share_bps != null ? `${(conc.topn_share_bps / 100).toFixed(1)}%` : "—", label: "Top-5 share", title: "Top-five concentration is only shown when the published aggregate provides that exact slice." },
+      { value: "—", label: "Congress overlap", title: "The member-to-institutional positions join is not published in this build." },
+    ], {
       label: `Period statistics for ${period}`,
       compact: true,
       notes: { scope: "filer-tiles" },
     }) +
-    `<section class="panel panel-wide" aria-label="Position changes">` +
+    filerBookShape(conc, topn, period, total) +
+    `<details class="panel panel-wide design-supplement" aria-label="Position changes"><summary>Position changes · inspect the quarter-over-quarter record</summary>` +
     `<div class="panel-head"><h2 class="section-h">Position changes — into ${esc(period)}</h2>` +
     `<span class="panel-note">producer-classified (change_kind) · grain: position × put/call × unit</span></div>` +
     changes +
@@ -497,19 +528,19 @@ export function filerPeriodSectionHtml(
       author: "populus",
       html: `Changes derive from the aggregate's top-${fmtInt(topn)} slices and keyable positions only; unkeyable holdings are counted in the registry, not differenced. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
-    `</section>`
+    `</details>`
   );
 }
 
 export function filerEdgarBlock(cik: string, filerName: string): string {
   return (
-    `<section class="edgar-block" aria-label="Full holdings on EDGAR">` +
+    `<details class="edgar-block design-supplement" aria-label="Full holdings on EDGAR"><summary>Complete source filings on SEC EDGAR</summary>` +
     `<h2 class="section-h">The complete filing on EDGAR.</h2>` +
     `<p>The position list above is served from the published Public Filings build — every position this filer reported for the selected quarter, as it reported it. This block is <strong>provenance, not a substitute</strong>: the filing itself is the record, and it is one click away. Serving this list is <a href="/methodology/">M2-CONTRACT §3</a>, amended 2026-08-02; §3.1 keeps live EDGAR for filings newer than this build.</p>`+
     `<a class="cta" href="${esc(edgarFilerUrl(cik))}" rel="noopener" target="_blank">Open ${esc(
       filerName,
     )}'s 13F filings on SEC EDGAR ↗</a>` +
-    `</section>`
+    `</details>`
   );
 }
 
@@ -558,11 +589,19 @@ export function filerBody(
     `</div>` +
     `</header>` +
     (window?.open ? s7Banner(window) : "") +
+    briefingCards([
+      { tag: "Reported positions", title: "Quarter-end holdings as filed", body: "Explore the full published position list and its source filing. This record excludes the manager’s cash, shorts and non-13(f) assets." },
+      { tag: "Share changes", title: "Compare consecutive quarters", body: "Position changes retain the producer’s classification and comparability flags. Share counts and reported values describe different changes." },
+      { tag: "Coverage", title: "A snapshot, not current holdings", body: "Use the quarter selector to inspect available periods. Unknown values stay unknown and each table states its coverage." },
+    ]) +
     `<div class="period-row"><span class="period-label">Period</span><div class="chips" data-period-chips>${chips}</div>` +
     `<noscript><span class="period-note">period switching needs JavaScript; showing ${esc(period)}</span></noscript></div>` +
     `<div data-filer-root>` +
     filerPeriodSectionHtml(conc, deltas, period, latestFiled, topn, opts) +
     `</div>` +
+    `<div class="design-band design-triptych"><section class="panel"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">AVAILABLE QUARTERS</span></div><div class="table-scroll design-history"><table class="etable"><caption class="visually-hidden">Available filing periods</caption><thead><tr><th>Period</th><th>Source</th></tr></thead><tbody>${periods.map(p => `<tr><td>${esc(p)}</td><td><a href="${esc(edgarFilerUrl(filer.cik))}" rel="noopener" target="_blank">EDGAR ↗</a></td></tr>`).join("")}</tbody></table></div></section>` +
+    unavailableDesignPanel("Congress overlap", "CROSS-MODULE", ["Ticker", "Members", "Disclosed flow"], "The congressional disclosure join is not published in this build.") +
+    unavailableDesignPanel("Signals for this filer", "13F DISCLOSURE RECORD", ["Signal", "Evidence"], "No filer signal evidence is published in this build.") + `</div>` +
     filerEdgarBlock(filer.cik, filer.name)
   );
 }

@@ -141,7 +141,7 @@ test("memberBody: honesty invariants — dual dates, star, § resolves, S5 block
   assert.ok(html.includes("retained and counted"), "S5 paper block present");
   assert.ok(html.includes("LATE·51d"));
   // R12a: fold-mode honesty content present in markup — both dates + combined string
-  assert.ok(html.includes('class="mobile-dates"'));
+  assert.ok(html.includes('class="design-dates"'));
   assert.ok(html.includes("visually-hidden"));
   assert.ok(html.includes("· partial · JT") || html.includes("· JT"), "owner qualifier present");
   assert.ok(html.includes("cell-src"), "SRC receipt present");

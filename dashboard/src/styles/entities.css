@@ -249,8 +249,8 @@
   background:
     linear-gradient(to right, var(--raised) 30%, rgba(0, 0, 0, 0)) left center local,
     linear-gradient(to left, var(--raised) 30%, rgba(0, 0, 0, 0)) right center local,
-    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) left center scroll,
-    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0)) right center scroll;
+    radial-gradient(farthest-side at 0 50%, var(--scroll-shadow, rgba(0, 0, 0, 0.16)), rgba(0, 0, 0, 0)) left center scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--scroll-shadow, rgba(0, 0, 0, 0.16)), rgba(0, 0, 0, 0)) right center scroll;
   background-repeat: no-repeat;
   background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
 }

@@ -2,7 +2,7 @@
   "name": "populus-dashboard",
   "version": "0.0.1",
   "private": true,
-  "description": "Public Filings public dashboard \u2014 Astro static site built from the published data build (ARCHITECTURE \u00a712).",
+  "description": "Public Filings public dashboard — Astro static site built from the published data build (ARCHITECTURE §12).",
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -23,9 +23,6 @@
     "fixture:holders-page": "bash test/fixtures/holders-preview.sh"
   },
   "dependencies": {
-    "@fontsource/ibm-plex-mono": "^5.2.5",
-    "@fontsource/public-sans": "^5.2.5",
-    "@fontsource/source-serif-4": "^5.2.5",
     "astro": "^7.1.6"
   },
   "devDependencies": {

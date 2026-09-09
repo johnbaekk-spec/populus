@@ -1,7 +1,9 @@
 ---
 import Base from "../../layouts/Base.astro";
-import { getBuildData } from "../../lib/data";
+import { getBuildData, coverageSummary } from "../../lib/data";
 import {
+  amountText,
+  DESIGN_FEED_PAGE_SIZE,
   pageSlice,
   pageCountFor,
   feedCountText,
@@ -12,9 +14,24 @@ import {
   type RenderCtx,
 } from "../../lib/format";
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
-import { congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
+import { briefingCards, disclosureLedger, congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
 
 const build = getBuildData();
+const coverage = coverageSummary(build.stats);
+const largest = build.txns.reduce<(typeof build.txns)[number] | null>((best, row) =>
+  row.low !== null && (best === null || row.low > best.low!) ? row : best, null);
+const latestLate = build.txns.find(row => row.late === 1);
+const ledgerHtml = disclosureLedger([
+  { label: "Transactions", value: fmtInt(build.txnCount), detail: `filed since ${build.filedFrom}` },
+  { label: "House parse", value: `${coverage.housePct}%`, detail: `${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)} e-filed` },
+  { label: "Senate parse", value: `${coverage.senatePct}%`, detail: `${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)} e-filed` },
+  { label: "Paper", value: fmtInt(coverage.needsOcr), detail: "counted · needs OCR" },
+]);
+const briefingHtml = briefingCards([
+  { tag: "Largest disclosed lower bound", title: largest ? `${largest.ticker ?? largest.asset ?? "Undisclosed asset"} · ${amountText(largest)}` : "No comparable amounts disclosed", body: largest ? `${largest.name} · traded ${largest.traded ?? "date not disclosed"} → filed ${largest.filed}. Ranked over this build by disclosed lower bound, not a point estimate.` : "The published records contain no usable lower bound to rank." },
+  { tag: "Late filing", title: latestLate ? `${latestLate.lag ?? "—"} days from trade to filing` : "No late disclosures in this build", body: latestLate ? `${latestLate.name} · traded ${latestLate.traded ?? "—"} → filed ${latestLate.filed}. A filing delay describes the record, not its intent.` : "Computed over the published transaction records; unknown trade dates remain unknown." },
+  { tag: "Known gaps", title: `${fmtInt(coverage.needsOcr)} paper filings need OCR`, body: "Paper reports remain counted in coverage. Amounts are statutory ranges; every transaction retains its receipt and both dates." },
+]);
 
 /* The momentum section's SSR view is AUTHORITATIVE, not a placeholder.
    It is rendered here at the locked defaults — a trailing 12 months on the
@@ -32,13 +49,15 @@ const stamps: BuildStamps = {
 
 // SSR page 1 through the same renderer the client island uses.
 const ssrCtx: RenderCtx = {
+  referenceFeed: true,
   watched: new Set(),
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };
-const pageOne = pageSlice(build.merged, 0);
+const pageOne = pageSlice(build.merged, 0, DESIGN_FEED_PAGE_SIZE);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
 const sectionCtx: RenderCtx = {
+  referenceRankings: true,
   watched: new Set(),
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
@@ -54,9 +73,10 @@ const momentumHtml = congressRankingSection(
   sectionCtx,
   {
     rootId: CONGRESS_ROOTS.momentum,
-    heading: "Ticker momentum — net disclosed flow",
+    heading: "Tickers · most disclosed",
     sectionId: "momentum-section",
     controls: true,
+    compact: 5,
     /* Computed here because only this page holds the full row set —
        the rollup above is already windowed. The client recomputes the same
        thing from the same rows through the same function when the reader
@@ -79,8 +99,9 @@ const membersHtml = congressRankingSection(
   {
     rootId: CONGRESS_ROOTS.membersRanked,
     undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed,
-    heading: "Member net disclosed flow",
+    heading: "Leaders · net disclosed flow",
     sectionId: "members-section",
+    compact: 5,
   },
 );
 const footnoteHtml = footnoteBlock(
@@ -101,6 +122,7 @@ const footnoteHtml = footnoteBlock(
 // pre-rendered and re-rendered counts cannot drift.
 const rangeText = feedCountText({
   page: 0,
+  pageSize: DESIGN_FEED_PAGE_SIZE,
   txnMatched: build.txnCount,
   paperMatched: build.paperCount,
   txnOnPage: pageOne.filter((i) => i.kind === "txn").length,
@@ -110,7 +132,7 @@ const rangeText = feedCountText({
 });
 // Whether a second page exists is a property of this build, not an assumption:
 // a reduced extract must not pre-render an "older →" that goes nowhere.
-const hasOlderPage = pageCountFor(build.merged) > 1;
+const hasOlderPage = pageCountFor(build.merged, DESIGN_FEED_PAGE_SIZE) > 1;
 
 const description =
   "Congressional stock trading from primary sources — House Clerk PTRs and Senate eFD. " +
@@ -119,54 +141,48 @@ const description =
 
 <Base title="Congressional trading — Public Filings" description={description} active="congress">
   <main
-    class="shell page"
+    class="shell page design-page"
     id="congress-page"
     data-txn-count={build.txnCount}
     data-generated-at-date={build.generatedAtDate}
+    data-compact-limit="5"
     data-range={MOMENTUM_RANGE}
     data-basis={MOMENTUM_BASIS}
   >
     <!-- page header -->
     <div class="page-head">
       <div class="page-head-copy">
-        <div class="kicker">/congress</div>
-        <h1 class="page-title">Congressional trading</h1>
+        <div class="kicker">Public record / Congress · periodic transaction reports</div>
+        <h1 class="page-title">Congress</h1>
         <p class="page-lede">
-          Periodic Transaction Reports from the House Clerk and Senate eFD. Amounts
-          are disclosed in statutory ranges and filed up to 45 days after the trade
-          — what you read here is what was filed; nothing more current exists in the
-          public record. <a href="/methodology/">How this data is made ↗</a>
+          Who disclosed what, in which statutory range, and when it was filed · House Clerk + Senate eFD.
         </p>
-        {/* The `.caveat-line` is replaced by a STAMP plus four deep
-            methodology links. Nothing is softened: every claim the line made
-            still ships, at its authoritative source rather than as a compressed
-            restatement above the fold. "amounts are statutory ranges" is
-            `#amount-ranges`; "filed up to 45 days after the trade" is
-            `#filing-lag` — and both of those sentences are ALSO still in the
-            lede paragraph directly above, verbatim, so neither claim depends on
-            a reader following a link. The two links the page never had are
-            `#owner-codes` (SP/DC/JT, which no surface explained) and
-            `#coverage`, whose id did not exist until T1 — the old link
-            resolved to the top of the methodology page. */}
+      </div>
+      <Fragment set:html={ledgerHtml} />
+    </div>
+    <div class="design-provenance">
+      Filed up to 45 days after the trade · amounts are statutory ranges, never point estimates
         <div class="stamp-line" id="congress-stamp">
           {fmtInt(build.txnCount)} rows · filed since {build.filedFrom} · as of {build.generatedAt}
         </div>
-        <div class="method-links" id="congress-method-links">
+        <details class="method-links" id="congress-method-links"><summary>Methodology §</summary><div>
+          <a href="/methodology/#defaults">Default view · active filings minus superseded originals ↗</a>
           <a href="/methodology/#coverage">parse coverage, in full ↗</a>
           <a href="/methodology/#amount-ranges">why amounts are ranges ↗</a>
           <a href="/methodology/#filing-lag">the 45-day filing lag ↗</a>
           <a href="/methodology/#owner-codes">whose trade is it — SP · DC · JT ↗</a>
-        </div>
-      </div>
+        </div></details>
     </div>
-
-    <Fragment set:html={momentumHtml} />
+    <Fragment set:html={briefingHtml} />
 
     <!-- filter bar. The controls live in their own wrapper so they can become a
          horizontal scroll strip on mobile WITHOUT taking the count line — which
          carries the indeterminate-amount disclosure, the privacy statement and
          the reset control — out of view with them. `display: contents` keeps
          the desktop layout exactly as designed. -->
+    <section class="panel panel-wide" id="feed-section" aria-label="Disclosure feed">
+      <div class="panel-head"><h2 class="section-h">Disclosure feed</h2>
+        <span class="panel-note">{fmtInt(build.txnCount)} rows · sorted filed ↓</span></div>
     <div class="filterbar" id="filterbar">
       <div class="filter-controls">
       <div class="filter-group" role="group" aria-label="Chamber">
@@ -186,6 +202,7 @@ const description =
           <button data-group="party" data-value="I" class="tint-ind" aria-pressed="false" aria-label="Independent">I</button>
         </div>
       </div>
+      <details class="advanced-filters"><summary>More filters</summary><div class="advanced-filter-body">
       <div class="filter-group" role="group" aria-label="Side">
         <span class="filter-label" aria-hidden="true">Side</span>
         <div class="seg">
@@ -249,6 +266,7 @@ const description =
         <span aria-hidden="true">–</span>
         <input class="filter-select" type="date" id="filter-date-to" aria-label="to date" />
       </div>
+      </div></details>
       </div>
       <div class="filter-count">
         <span id="filter-count-line">{rangeText}</span>{" · filtered on this device"}<span
@@ -261,9 +279,6 @@ const description =
     <!-- Section two: the disclosure feed. Ticker sits before Member and
          carries the primary emphasis; the default order remains newest filed
          (owner decision) — the visual anchor changed, the ordering did not. -->
-    <section class="panel panel-wide" id="feed-section" aria-label="Disclosure feed">
-      <div class="panel-head"><h2 class="section-h">Disclosure feed</h2>
-        <span class="panel-note">newest filed first · {fmtInt(build.txnCount)} rows</span></div>
     <div class="feed" id="congress-feed" data-txn-count={build.txnCount}>
 
       <div class="feed-loading" id="feed-loading" hidden aria-hidden="true">
@@ -279,7 +294,8 @@ const description =
         <div class="suggestions" id="feed-empty-suggestions"></div>
       </div>
 
-      <table class="feed-table">
+      <div class="reference-feed-scroll" tabindex="0" role="region" aria-label="Disclosure feed · scroll for more rows">
+      <table class="feed-table reference-feed">
         <caption class="visually-hidden">
           Disclosed congressional transactions, newest filed first. Sort by clicking a column
           header; amounts sort on their disclosed lower bound and wholly-undisclosed rows are
@@ -289,11 +305,12 @@ const description =
              shows the same nine cells through the same `feedItemHtml`. The
              watchlist had no <thead> at all; a second hand-written copy here
              would be the drift that caused it. -->
-        <Fragment set:html={feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } })} />
+        <Fragment set:html={feedHeadHtml({ referenceFeed: true, sortable: true, activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } })} />
 
 
         <tbody id="feed-tbody" set:html={rowsHtml} />
       </table>
+      </div>
 
       <Fragment set:html={footnoteHtml} />
       <!-- The feed's compact bound is its PAGE, and the pager below is
@@ -301,17 +318,13 @@ const description =
            50-row page of ~46,000 rows would be a control that cannot honour
            its own label; the pager states the bound and moves through it. -->
       <div class="feed-foot">
-        <div class="view-note">
-          v_default_transactions — active filings minus superseded amendment
-          originals · <a href="/methodology/#defaults">what's excluded ↗</a>
-        </div>
         <div class="pager">
           <span class="pager-range" id="pager-range" tabindex="-1">{rangeText}</span>
-          <button class="pager-btn is-unavailable" id="pager-newer" aria-disabled="true">← newer</button>
+          <button class="pager-btn is-unavailable" id="pager-newer" aria-disabled="true">← Prev</button>
           <button
             class:list={["pager-btn", { "is-unavailable": !hasOlderPage }]}
             id="pager-older"
-            aria-disabled={hasOlderPage ? "false" : "true"}>older →</button
+            aria-disabled={hasOlderPage ? "false" : "true"}>Next →</button
           >
         </div>
       </div>
@@ -322,7 +335,7 @@ const description =
     </section>
 
     <!-- Section three: member net-flow, two render roots. -->
-    <Fragment set:html={membersHtml} />
+    <div class="design-rankings"><Fragment set:html={membersHtml} /><Fragment set:html={momentumHtml} /></div>
   </main>
 
   <script>

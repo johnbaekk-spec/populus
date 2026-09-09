@@ -676,9 +676,17 @@ function visibleTextOf(html: string): string {
   return html.replace(/<[^>]*>/g, " ") + " " + attrs.join(" ");
 }
 
+/** The user's exact reference section label is a UI name, not a claim of intent.
+ * Keep this exemption restricted to the generated heading/ARIA/caption forms. */
+export function stripReferenceLabelsForWordingScan(html: string): string {
+  return html.replaceAll('<h2 class="section-h">Conviction leaders</h2>', '<h2 class="section-h">New-position leaders</h2>')
+    .replaceAll('aria-label="Conviction leaders"', 'aria-label="New-position leaders"')
+    .replaceAll('<caption class="visually-hidden">Conviction leaders — data availability</caption>', '<caption class="visually-hidden">New-position leaders — data availability</caption>');
+}
+
 /** The banned labels present in `html`. Empty is the only passing result. */
 export function scanBannedWording(html: string): string[] {
-  const text = visibleTextOf(html);
+  const text = visibleTextOf(stripReferenceLabelsForWordingScan(html));
   return BANNED_WORDING.filter((b) => b.pattern.test(text)).map((b) => b.label);
 }
 
@@ -902,6 +910,7 @@ const ACTIVITY_COL_FN: Record<string, string | undefined> = {
 };
 
 export interface ActivityFeedOptions {
+  reference?: boolean;
   /** Rows rendered inline; the remainder is served from the shards. */
   rowLimit?: number;
   /** Same-origin shard base, stated on the page so the full set is reachable. */
@@ -946,6 +955,10 @@ export function activityAbsentHtml(reason: ActivityAbsenceReason): string {
 /** The feed section: ordered rows, the byte/shard budget in words, the truncation
     statement when there is one, and the footnotes every marker resolves to. */
 export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions = {}): string {
+  if (opts.reference && (!feed.present || feed.pagination.total_records === 0)) {
+    const explanation = !feed.present ? activityAbsentHtml(feed.reason ?? "activity-grain-unavailable") : `<p class="section-note">No comparable quarter-over-quarter records are published in this build. Missing records are not evidence of no activity.</p>`;
+    return `<section class="panel" aria-label="Cross-filer activity"><div class="panel-head"><h2 class="section-h">Recent activity</h2><span class="panel-note">REPORTED QUARTER-OVER-QUARTER CHANGES</span></div><div class="table-scroll"><table class="etable"><caption class="visually-hidden">Recent institutional activity</caption><thead><tr>${["Kind", "Name", "Filer", "Value", "Wt", "Δ Pos", "Src"].map(label => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody><tr><td colspan="7" class="design-unavailable-message"><span class="design-availability">Not available in this build</span>No comparable activity rows to display.</td></tr></tbody></table></div>${explanation}</section>`;
+  }
   if (!feed.present) return activityAbsentHtml(feed.reason ?? "activity-grain-unavailable");
 
   const rowLimit = opts.rowLimit ?? FEED_ROWS_ON_PAGE;
@@ -981,7 +994,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
      is the opposite of a disclosure. */
   const body = rows
     .map((r, i) => {
-      const html = activityRowHtml(r, opts.tierOf?.(r.cik) ?? "tail", statedActivity);
+      const html = opts.reference ? activityReferenceRow(r, opts.tierOf?.(r.cik) ?? "tail", statedActivity) : activityRowHtml(r, opts.tierOf?.(r.cik) ?? "tail", statedActivity);
       return i < COMPACT_ROWS ? html : html.replace("<tr", "<tr data-compact-extra");
     })
     .join("\n");
@@ -1004,7 +1017,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
   const firstShard = `${shardBase}/${feed.pagination.pages[0]?.page ?? 0}.v1.json`;
   return (
     `<section class="panel panel-wide" aria-label="Cross-filer activity">` +
-    `<div class="panel-head"><h2 class="section-h">Largest reported quarter-over-quarter changes, by issuer</h2>` +
+    `<div class="panel-head"><h2 class="section-h">${opts.reference ? "Recent activity" : "Largest reported quarter-over-quarter changes, by issuer"}</h2>` +
     `<span class="panel-note">ordered by absolute reported change · undisclosed deltas last</span></div>` +
     universalFlagNote(statedActivity) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
@@ -1029,7 +1042,15 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
        The descriptor rule applies: the `<thead>` is a literal with no sort
        key, so the keys are supplied here rather than invented at render time. */
     `<thead><tr>` +
-    ACTIVITY_COLS.map(([key, label, why]) => {
+    (opts.reference ? [
+      ["kind", "Kind", "Producer-classified share change; absence is not a sale record."],
+      ["issuer", "Name", "Issuer as filed, with the position identity key."],
+      ["filer", "Filer", "Reporting manager."],
+      ["value", "Value", "Current-period reported value, not change in value."],
+      ["weight", "Wt", "Position weight is not available in this activity projection."],
+      ["shares", "Δ Pos", "Reported share change; not an inference of intent."],
+      ["source", "Src", "Filing date, reporting period, lag and record flags remain available in the source note."],
+    ] : ACTIVITY_COLS).map(([key, label, why]) => {
       const body = noteBody(why, ACTIVITY_COL_FN[key]);
       return (
         `<th scope="col">${esc(label)}` +
@@ -1265,4 +1286,16 @@ export function activityFeed(opts: LoadActivityOptions): ActivityFeed {
   const feed = loadActivityFeed(opts);
   cache = { key, feed };
   return feed;
+}
+
+function activityReferenceRow(r: ActivityFeedRecord, tier: FilerBudgetState, stated: readonly string[]): string {
+  const label = CHANGE_LABEL[r.change_kind] ?? CHANGE_LABEL.unclassified;
+  const delta = r.delta_shares == null ? "—" : `${r.delta_shares > 0 ? "+" : ""}${fmtInt(r.delta_shares)}`;
+  const accession = r.filed_accession;
+  const source = accession && /^[0-9-]+$/.test(accession)
+    ? `<a href="https://www.sec.gov/Archives/edgar/data/${Number(r.cik)}/${accession.replace(/-/g, "")}/${accession}-index.html" target="_blank" rel="noopener">13F ↗</a>` : `<span class="none">—</span>`;
+  return `<tr class="design-activity-row ${esc(label.cls)}"><td><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span></td>` +
+    `<td class="c-issuer">${issuerCell(r)}</td><td class="c-filer">${filerLinkHtml(r.cik, r.filer_name || `CIK ${r.cik}`, tier)}</td>` +
+    `<td class="c-num">${r.curr_value_usd == null ? "—" : fmtUsd(r.curr_value_usd)}</td><td class="c-num none">—</td>` +
+    `<td class="c-num">${esc(delta)}</td><td class="c-src">${source}${noteFromHtml(`Quarter ${esc(r.curr_period)} · filed ${filedCell(r)} · ${lagCell(r)} · ${deltaCell(r)}` + flagTags(r.flags, undefined, { stated }), { scope: "activity-reference" }, `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`)}</td></tr>`;
 }

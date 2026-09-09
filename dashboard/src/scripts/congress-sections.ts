@@ -79,7 +79,8 @@ export function initCongressSections(): CongressSections {
   // the closures below read these rather than re-reading a nullable element.
   const ssrRange: CongressRange = (page.dataset.range as CongressRange) || "12m";
   const ssrBasis: CongressBasis = (page.dataset.basis as CongressBasis) || "traded";
-  const ctx: RenderCtx = { watched: new Set() };
+  const ctx: RenderCtx = { watched: new Set(), referenceRankings: true };
+  const compactLimit = Number(page.dataset.compactLimit) || COMPACT_ROWS;
 
   const bindings = new Map<string, RootBinding>();
   let allRows: readonly TxnRow[] | null = null;
@@ -126,7 +127,7 @@ export function initCongressSections(): CongressSections {
            the marker no longer carries an href at all and the server and the
            client are identical again by having one fewer thing to agree on. */
         return rankingRootHtml(binding.rows, state.key as CongressSortKey, state.dir, kind, ctx, {
-          compact: binding.expanded ? undefined : COMPACT_ROWS,
+          compact: binding.expanded ? undefined : compactLimit,
         }).html;
       },
       announce: (state) => {
@@ -202,7 +203,7 @@ export function initCongressSections(): CongressSections {
   function syncDisclosure(b: RootBinding): void {
     if (!b.disclosure) return;
     const total = b.rows.length;
-    const limit = COMPACT_ROWS;
+    const limit = compactLimit;
     const hidden = Math.max(0, total - limit);
     const noun = b.noun ?? "rows";
     // The bound noun is the SERVER's, read back off the element: this one

@@ -15,6 +15,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { stripReferenceLabelsForWordingScan } from "../../src/lib/activity.ts";
 
 /* The M2-8 spec §1.1 banned list, as word-boundary patterns. Present-tense
    trading verbs are banned because a filing is a delayed snapshot — at render
@@ -69,7 +70,7 @@ export function redactFiledNames(text: string): string {
     new RegExp(`<span class="${FILED_NAME_MARKER}">[\\s\\S]*?</span>`, "g"),
     `<span class="${FILED_NAME_MARKER}"><filed></span>`,
   );
-  return out;
+  return stripReferenceLabelsForWordingScan(out);
 }
 
 export interface ScanHit {

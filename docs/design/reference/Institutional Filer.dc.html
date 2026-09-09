@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+@font-face { font-family:"IBM Plex Sans"; font-weight:400; src:url("fonts/IBMPlexSans-Regular.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-weight:500; src:url("fonts/IBMPlexSans-Medium.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-weight:600; src:url("fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-weight:700; src:url("fonts/IBMPlexSans-Bold.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:400; src:url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:500; src:url("fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:600; src:url("fonts/JetBrainsMono-SemiBold.woff2") format("woff2"); }
+body { margin:0; background:#03050A; color:#E9F0F7; font:400 13px/1.5 "IBM Plex Sans",-apple-system,sans-serif; -webkit-font-smoothing:antialiased; }
+a { color:#A9D2F2; text-decoration:none; } a:hover { color:#EAF4FC; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+</style>
+</helmet>
+<section style="padding:40px; display:flex; flex-direction:column; gap:12px; align-items:flex-start">
+  <div style="font:600 11px/1 'JetBrains Mono'; color:#64748A; letter-spacing:.14em"><a href="Institutional.dc.html">INSTITUTIONAL</a> › FILER · <span style="color:#FFD100">ILLUSTRATIVE VALUES — REAL 13F POPULATES AT BUILD</span></div>
+  <div data-screen-label="Institutional filer 1440" style="width:1440px; background:#04070D; outline:1px solid #16202E; overflow:hidden">
+    <header style="display:flex; align-items:center; gap:24px; height:52px; padding:0 32px; border-bottom:1px solid #16202E">
+      <span style="display:inline-flex; align-items:center; gap:10px"><svg width="18" height="18" viewBox="0 0 24 24" style="display:block"><path d="M12 4 H20 V20 H4 V12" fill="none" stroke="#EAF4FC" stroke-width="2.6"></path><rect x="1" y="1" width="8" height="8" fill="#2774AE"></rect></svg><span style="font:700 14px/1 'IBM Plex Sans'; letter-spacing:.22em; color:#EAF4FC">PUBLIC FILINGS</span></span>
+      <nav style="display:flex; align-items:center; gap:2px; font:500 12.5px/1 'IBM Plex Sans'">
+        <a href="Congress.dc.html" style="padding:6px 10px; color:#8FA0B3">Congress</a>
+        <a href="Institutional.dc.html" style="padding:6px 10px; color:#EAF4FC; position:relative">Institutional<span style="position:absolute; left:10px; right:10px; bottom:-1px; height:2px; background:#69B4EC"></span></a>
+        <a href="Signals.dc.html" style="padding:6px 10px; color:#8FA0B3">Signals</a>
+      </nav>
+      <span style="display:inline-flex; align-items:center; gap:10px; margin-left:auto; width:380px; border:1px solid #1B2735; border-radius:2px; padding:8px 12px; color:#75879B; font:400 12.5px/1 'IBM Plex Sans'"><span style="color:#2774AE">⌕</span><span style="flex:1">Jump to a filer, ticker or CIK</span><span style="font:500 10px/1 'JetBrains Mono'; color:#51617A">⌘K</span></span>
+      <span style="display:inline-flex; align-items:center; gap:8px; font:500 11px/1 'JetBrains Mono'; color:#8FA0B3"><span style="width:5px; height:5px; border-radius:50%; background:#FFD100; animation:pulse 2s ease-in-out infinite"></span>Q1 2026 · 13F</span>
+    </header>
+
+    <div style="display:flex; align-items:flex-end; gap:32px; padding:28px 32px 0">
+      <div style="min-width:0">
+        <div style="font:500 10px/1 'JetBrains Mono'; letter-spacing:.18em; color:#2774AE; margin-bottom:8px"><a href="Institutional.dc.html" style="color:#2774AE">INSTITUTIONAL</a> / FILERS / CIK 1135730</div>
+        <div style="display:flex; align-items:center; gap:14px">
+          <h1 style="margin:0; font:650 26px/1.1 'IBM Plex Sans'; letter-spacing:-.02em; color:#FCFDFE">Coatue Management</h1>
+          <span style="font:500 10px/1 'JetBrains Mono'; letter-spacing:.1em; border:1px solid #1B2735; color:#75879B; padding:5px 9px">TECH L/S · 13F-HR</span>
+          <span style="font:500 10px/1 'JetBrains Mono'; letter-spacing:.1em; border:1px solid #FFD100; color:#FFD100; padding:5px 9px">◆ WATCH</span>
+        </div>
+        <p style="margin:6px 0 0; max-width:560px; font:400 13px/1.5 'IBM Plex Sans'; color:#8FA0B3">Q1 2026 filed 05-14 · 48 positions · what changed, what's concentrated, and which of these names Congress is also trading</p>
+      </div>
+      <div style="margin-left:auto; display:flex; gap:40px; padding-bottom:4px; flex-shrink:0; white-space:nowrap">
+        <sc-for list="{{ ledger }}" as="l" hint-placeholder-count="4">
+          <div><div style="font:500 10px/1 'JetBrains Mono'; letter-spacing:.14em; color:#64748A; margin-bottom:6px">{{ l.k }}</div><div style="font:600 26px/1 'JetBrains Mono'; font-variant-numeric:tabular-nums; color:{{ l.color }}; letter-spacing:-.02em">{{ l.v }}</div><div style="font:500 10.5px/1.6 'JetBrains Mono'; color:#64748A">{{ l.sub }}</div></div>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:18px; padding:14px 32px 0; font:500 10.5px/1 'JetBrains Mono'; color:#75879B">
+      <span>13F-HR as filed · long positions only · values in USD as reported</span><span style="color:#22303F">·</span>
+      <span style="color:#3FD6A4">filed 2026-05-14 · 44 days after quarter-end</span><span style="color:#22303F">·</span>
+      <span>Δ POS compares share counts Q4 → Q1; value Δ includes price — read shares for intent <a href="#">§</a></span>
+    </div>
+    <div style="height:1px; background:linear-gradient(90deg,#2774AE 0,#16202E 240px,#16202E 100%); margin:20px 0 0"></div>
+
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); border-bottom:1px solid #16202E">
+      <sc-for list="{{ stories }}" as="s" hint-placeholder-count="3">
+        <div style="padding:18px 28px 20px; border-right:1px solid #10161F">
+          <div style="font:500 9.5px/1 'JetBrains Mono'; letter-spacing:.14em; color:{{ s.tagColor }}; margin-bottom:8px">{{ s.tag }}</div>
+          <div style="font:600 13.5px/1.4 'IBM Plex Sans'; color:#FCFDFE">{{ s.title }}</div>
+          <div style="margin-top:4px; font:400 12px/1.55 'IBM Plex Sans'; color:#8FA0B3">{{ s.body }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1.7fr 1fr">
+      <div style="border-right:1px solid #10161F; padding:22px 0 10px">
+        <div style="padding:0 32px 4px; display:flex; align-items:baseline; gap:10px">
+          <span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC">Holdings</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">48 POSITIONS · SORTED BY WEIGHT ↓</span>
+          <span style="margin-left:auto; display:inline-flex; border:1px solid #1B2735; border-radius:2px; overflow:hidden; font:500 10.5px/1 'JetBrains Mono'"><span style="padding:5px 12px; background:#0F1B2A; color:#EAF4FC">All</span><span style="padding:5px 12px; color:#75879B; border-left:1px solid #1B2735">Changed</span><span style="padding:5px 12px; color:#75879B; border-left:1px solid #1B2735">New</span><span style="padding:5px 12px; color:#FFD100; border-left:1px solid #1B2735">Congress overlap</span></span>
+        </div>
+        <div style="display:grid; grid-template-columns:58px 60px 96px 1fr 84px 70px 60px 56px 64px; gap:0 12px; padding:8px 32px 6px; font:600 9.5px/1 'JetBrains Mono'; letter-spacing:.12em; color:#51617A; border-bottom:1px solid #10161F"><span>KIND</span><span>TICKER</span><span>ISSUER</span><span>WEIGHT</span><span style="text-align:right">VALUE</span><span style="text-align:right">SHARES</span><span style="text-align:right">Δ POS</span><span style="text-align:right">WT</span><span style="text-align:right">CONGRESS</span></div>
+        <sc-for list="{{ holdings }}" as="h" hint-placeholder-count="10">
+          <div style="display:grid; grid-template-columns:58px 60px 96px 1fr 84px 70px 60px 56px 64px; gap:0 12px; align-items:center; padding:7.5px 32px 7.5px 29px; border-left:3px solid {{ h.edge }}; border-bottom:1px solid #0A101A; font:500 11.5px/1.2 'JetBrains Mono'; font-variant-numeric:tabular-nums; cursor:pointer" style-hover="background:#0A101A">
+            <span style="color:{{ h.kColor }}; font-weight:600; font-size:10px; letter-spacing:.08em">{{ h.kind }}</span>
+            <a href="Ticker.dc.html" style="color:#FCFDFE; font-weight:600">{{ h.tk }}</a>
+            <span style="font:400 11px 'IBM Plex Sans'; color:#64748A; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">{{ h.issuer }}</span><span style="position:relative; height:3px; background:#10161F"><span style="position:absolute; inset:0 auto 0 0; width:{{ h.w }}; background:#2774AE"></span></span>
+            <span style="text-align:right; color:#E9F0F7">{{ h.val }}</span>
+            <span style="text-align:right; color:#8FA0B3">{{ h.sh }}</span>
+            <span style="text-align:right; color:{{ h.dColor }}">{{ h.d }}</span>
+            <span style="text-align:right; color:#E9F0F7">{{ h.wt }}</span>
+            <span style="text-align:right; color:{{ h.cgColor }}; font-size:10.5px">{{ h.congress }}</span>
+          </div>
+        </sc-for>
+        <div style="padding:12px 32px 8px; font:400 11px/1.6 'IBM Plex Sans'; color:#64748A">Showing 10 of 48 · CONGRESS = members who disclosed this ticker in the same quarter (cross-module, gold) · HOLD = no share change.</div>
+      </div>
+      <div style="padding:22px 0 10px">
+        <div style="padding:0 32px 4px; display:flex; align-items:baseline; gap:10px"><span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC">Book shape</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">CONCENTRATION · TURNOVER · VS TRACKED MEDIAN</span></div>
+        <sc-for list="{{ shape }}" as="b" hint-placeholder-count="5">
+          <div style="display:grid; grid-template-columns:140px 1fr 70px 110px; gap:14px; align-items:center; padding:8px 32px; border-bottom:1px solid #0A101A; font:500 11.5px/1 'JetBrains Mono'">
+            <span style="color:#8FA0B3; text-align:right; font-family:'IBM Plex Sans'; font-size:12px">{{ b.k }}</span>
+            <span style="position:relative; height:3px; background:#10161F"><span style="position:absolute; left:{{ b.med }}; top:-4px; bottom:-4px; width:1px; background:#FFD100; opacity:.7"></span><span style="position:absolute; inset:0 auto 0 0; width:{{ b.w }}; background:#2774AE"></span></span>
+            <span style="color:#E9F0F7; text-align:right; font-variant-numeric:tabular-nums">{{ b.v }}</span>
+            <span style="color:{{ b.nColor }}; font-size:10.5px">{{ b.note }}</span>
+          </div>
+        </sc-for>
+        <div style="padding:14px 32px 4px; display:flex; align-items:baseline; gap:10px"><span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC">Sector rotation</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">PP Q/Q</span></div>
+        <sc-for list="{{ sectors }}" as="r" hint-placeholder-count="5">
+          <div style="display:grid; grid-template-columns:140px 1fr 70px; gap:14px; align-items:center; padding:6px 32px; font:500 11.5px/1 'JetBrains Mono'">
+            <span style="color:#8FA0B3; text-align:right; font-family:'IBM Plex Sans'; font-size:12px">{{ r.k }}</span>
+            <span style="position:relative; height:3px; background:#10161F"><span style="position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:#22303F"></span><span style="position:absolute; top:0; bottom:0; {{ r.side }}:50%; width:{{ r.w }}; background:{{ r.fill }}"></span></span>
+            <span style="text-align:right; color:{{ r.vColor }}; font-variant-numeric:tabular-nums">{{ r.v }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#16202E"></div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; padding:22px 0 30px">
+      <div style="padding:0 28px 0 32px">
+        <div style="display:flex; align-items:baseline; gap:8px; padding-bottom:8px; border-bottom:1px solid #16202E"><span style="font:600 12px/1 'IBM Plex Sans'; color:#EAF4FC">Filing history</span><span style="font:500 9.5px/1 'JetBrains Mono'; color:#64748A; letter-spacing:.1em">NET $Δ · LAG</span></div>
+        <sc-for list="{{ filings }}" as="f" hint-placeholder-count="4">
+          <div style="display:grid; grid-template-columns:52px 1fr 56px 40px; gap:12px; align-items:center; height:47px; border-bottom:1px solid #0A101A">
+            <span style="font:500 10.5px/1 'JetBrains Mono'; color:#64748A">{{ f.q }}</span>
+            <span style="font:400 11.5px/1.4 'IBM Plex Sans'; color:#A9D2F2; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">{{ f.note }}</span>
+            <span style="text-align:right; font:500 11px/1 'JetBrains Mono'; color:{{ f.dColor }}">{{ f.d }}</span>
+            <span style="text-align:right; font:500 10px/1 'JetBrains Mono'; color:#51617A">{{ f.lag }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding:0 28px; border-left:1px solid #10161F">
+        <div style="display:flex; align-items:baseline; gap:8px; padding-bottom:8px; border-bottom:1px solid #16202E"><span style="font:600 12px/1 'IBM Plex Sans'; color:#EAF4FC">Congress overlap</span><span style="font:500 9.5px/1 'JetBrains Mono'; color:#64748A; letter-spacing:.1em">SAME NAMES · SAME QUARTER · <span style="color:#FFD100">44%</span></span></div>
+        <sc-for list="{{ overlap }}" as="o" hint-placeholder-count="4">
+          <div style="display:grid; grid-template-columns:56px 1fr 90px; gap:12px; align-items:center; height:47px; border-bottom:1px solid #0A101A; font:500 11.5px/1 'JetBrains Mono'">
+            <a href="Ticker.dc.html" style="color:#FCFDFE; font-weight:600">{{ o.tk }}</a>
+            <span style="font:400 11.5px/1.4 'IBM Plex Sans'; color:#A9D2F2; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">{{ o.note }}</span>
+            <span style="text-align:right; color:{{ o.color }}; font-size:10px; font-weight:600">{{ o.v }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding:0 32px 0 28px; border-left:1px solid #10161F">
+        <div style="display:flex; align-items:baseline; gap:8px; padding-bottom:8px; border-bottom:1px solid #16202E"><span style="font:600 12px/1 'IBM Plex Sans'; color:#EAF4FC">Signals on this filer</span><span style="font:500 9.5px/1 'JetBrains Mono'; color:#64748A; letter-spacing:.1em">Q1 2026</span></div>
+        <sc-for list="{{ signals }}" as="f" hint-placeholder-count="4">
+          <div style="display:grid; grid-template-columns:90px 1fr 56px; gap:12px; align-items:center; height:47px; border-bottom:1px solid #0A101A">
+            <span style="font:600 10px/1 'JetBrains Mono'; letter-spacing:.08em; color:{{ f.color }}">{{ f.kind }}</span>
+            <span style="font:400 11.5px/1.4 'IBM Plex Sans'; color:#A9D2F2; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">{{ f.note }}</span>
+            <span style="text-align:right; font:500 11px/1 'JetBrains Mono'; color:{{ f.color }}">{{ f.v }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const UP = "#3FD6A4", DOWN = "#F07A66", BUY = "#A9D2F2", GOLD = "#FFD100";
+    const ledger = [
+      { k: "REPORTED VALUE", v: "$54.2B", sub: "+8.1% Q/Q", color: "#FCFDFE" },
+      { k: "POSITIONS", v: "48", sub: "5 new · 3 exits", color: "#FCFDFE" },
+      { k: "TOP-5 CONC", v: "51%", sub: "tracked median 38%", color: BUY },
+      { k: "CONGRESS OVERLAP", v: "44%", sub: "11 shared names · largest NVDA", color: GOLD },
+    ];
+    const stories = [
+      { tag: "CONVICTION", tagColor: BUY, title: "NVDA is now 9.4% of the book after a +34% share add.", body: "The largest single-name add this quarter across tracked filers. Value Δ includes price; the share count is the intent signal." },
+      { tag: "CONVERGENCE", tagColor: UP, title: "Six members of Congress disclosed NVDA trades in the same quarter.", body: "Five buys, one sale — Congress net direction matches the filer. Two independent filing regimes, same name, same quarter." },
+      { tag: "ROTATION", tagColor: GOLD, title: "Software trimmed −18% while AI infra and semis were added.", body: "MSFT trimmed from 7.6% to 6.2%; VRT initiated at 3.8%. A within-tech rotation, not a de-risking." },
+    ];
+    const K = { NEW: [UP, UP], ADD: [BUY, "#2774AE"], TRIM: ["#EFC363", "#7A5A20"], HOLD: ["#51617A", "#16202E"], EXIT: [DOWN, DOWN] };
+    const h = (kind, tk, issuer, val, sh, d, wt, congress) => ({ kind, tk, issuer, val, sh, d, wt: wt.toFixed(1) + "%", w: Math.min(wt * 10, 100) + "%", kColor: K[kind][0], edge: K[kind][1], dColor: d.startsWith("+") ? UP : d.startsWith("−") ? DOWN : "#75879B", congress: congress ? congress + " mbrs" : "—", cgColor: congress ? GOLD : "#51617A" });
+    const holdings = [h("ADD", "NVDA", "NVIDIA", "$5.1B", "38.2M", "+34%", 9.4, 6), h("HOLD", "META", "Meta Platforms", "$4.2B", "7.1M", "±0%", 7.8, 2), h("TRIM", "MSFT", "Microsoft", "$3.4B", "8.0M", "−18%", 6.2, 4), h("ADD", "TSM", "TSMC", "$3.0B", "18.4M", "+12%", 5.6, 3), h("HOLD", "AMZN", "Amazon", "$2.8B", "14.1M", "±0%", 5.1, 1), h("NEW", "VRT", "Vertiv", "$2.1B", "22.0M", "+100%", 3.8, 2), h("ADD", "CEG", "Constellation", "$1.7B", "6.9M", "+41%", 3.2, 2), h("HOLD", "GOOGL", "Alphabet A", "$1.6B", "9.4M", "±0%", 3.0, 1), h("NEW", "ALAB", "Astera Labs", "$1.1B", "11.2M", "+100%", 2.0, 0), h("TRIM", "SNOW", "Snowflake", "$0.7B", "4.3M", "−42%", 1.3, 0)];
+    const shape = [
+      { k: "Top-5 concentration", v: "51%", w: "51%", med: "38%", note: "above median", nColor: GOLD },
+      { k: "Top-10 concentration", v: "73%", w: "73%", med: "58%", note: "concentrated book", nColor: GOLD },
+      { k: "Quarterly turnover", v: "38%", w: "38%", med: "44%", note: "below median", nColor: BUY },
+      { k: "New positions / total", v: "10%", w: "10%", med: "12%", note: "≈ median", nColor: "#75879B" },
+      { k: "Names shared w/ Congress", v: "44%", w: "44%", med: "31%", note: "high overlap", nColor: GOLD },
+    ];
+    const sr = (k, v) => ({ k, side: v >= 0 ? "left" : "right", w: Math.min(Math.abs(v) / 5 * 50, 50) + "%", fill: v >= 0 ? "#2774AE" : "#5A2E28", v: (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "pp", vColor: v >= 0 ? BUY : DOWN });
+    const sectors = [sr("AI infra", 4.6), sr("Semis", 2.1), sr("Software", -2.4), sr("Consumer", -3.1), sr("Comm svcs", -0.8)];
+    const filings = [
+      { q: "Q1 '26", note: "ADD NVDA +34% · NEW VRT · TRIM MSFT", d: "+$4.1B", dColor: UP, lag: "44d" },
+      { q: "Q4 '25", note: "NEW TSM · ADD META", d: "+$2.2B", dColor: UP, lag: "45d" },
+      { q: "Q3 '25", note: "EXIT SNOW partial · TRIM AMZN", d: "−$1.6B", dColor: DOWN, lag: "43d" },
+      { q: "Q2 '25", note: "ADD NVDA +18%", d: "+$1.1B", dColor: UP, lag: "45d" },
+    ];
+    const overlap = [
+      { tk: "NVDA", note: "6 members · 5 buy / 1 sell · same direction", v: "CONVERGE", color: UP },
+      { tk: "MSFT", note: "4 members · 3 buy / 1 sell · filer trimmed", v: "DIVERGE", color: GOLD },
+      { tk: "TSM", note: "3 members · 3 buy · filer added", v: "CONVERGE", color: UP },
+      { tk: "CEG", note: "2 members · 2 buy · filer added", v: "CONVERGE", color: UP },
+    ];
+    const signals = [
+      { kind: "CONVICTION", note: "VRT new at 3.8% of book (≥2% rule)", v: "1 hit", color: BUY },
+      { kind: "CROWDED", note: "NVDA 92nd pct crowding across tracked filers", v: "1 hit", color: GOLD },
+      { kind: "CONVERGENCE", note: "3 names where Congress net matches filer", v: "3 hits", color: UP },
+      { kind: "DIVERGENCE", note: "MSFT — filer trims, Congress net buys", v: "1 hit", color: GOLD },
+    ];
+    return { ledger, stories, holdings, shape, sectors, filings, overlap, signals };
+  }
+}
+</script>
+</body>
+</html>

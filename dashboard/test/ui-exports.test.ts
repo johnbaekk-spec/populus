@@ -1,6 +1,6 @@
 /* T6.1 (REPOSITORY-PROFESSIONALIZATION Slice 6): export-parity for the ui entry.
 
-   The reconciled public surface is exactly 61 exports: 51 runtime values
+   The reconciled public surface is exactly 64 exports: 54 runtime values
    (RANKING_FOOTNOTES among them — a re-export from congress-columns.ts, the
    61st symbol the plan calls out by name) and 10 type-only exports, which do
    not exist at runtime and are asserted against the entry file's source text.
@@ -25,6 +25,9 @@ const VALUE_EXPORTS = [
   "addsColumns",
   "addsSectionHtml",
   "breadcrumb",
+  "briefingCards",
+  "disclosureLedger",
+  "unavailableDesignPanel",
   "changesTableHtml",
   "congressRankingSection",
   "congressTickerBody",
@@ -81,15 +84,15 @@ const TYPE_EXPORTS = [
   "TickerHeaderInfo",
 ] as const;
 
-test("ui entry exports exactly the 51 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 54 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
-  assert.deepEqual(actual, [...VALUE_EXPORTS]);
+  assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
 });
 
-test("ui entry exports the 10 reconciled type-only symbols (61 total)", () => {
+test("ui entry exports the 10 reconciled type-only symbols (64 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -101,5 +104,5 @@ test("ui entry exports the 10 reconciled type-only symbols (61 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 61, "the reconciled surface is 61");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 64, "the reconciled surface is 64");
 });

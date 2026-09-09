@@ -346,6 +346,7 @@ export interface LeaderRow {
   state: string | null;
   district: string | null;
   chamber: "house" | "senate";
+  memberCount?: number; // distinct joined members; unjoined filers are not inferred
   txns: number; // ALL rows in window, incl. exchange/other — exact count
   buys: number;
   sells: number;
@@ -394,6 +395,7 @@ function rollupRows(
     const sales = sumRanges(sellRows);
     rows.push({
       ...idOf(key, first),
+      memberCount: new Set(list.flatMap(r => r.bioguide ? [r.bioguide] : [])).size,
       txns: list.length,
       buys: buysRows.length,
       sells: sellRows.length,

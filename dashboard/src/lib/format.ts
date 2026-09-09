@@ -756,6 +756,7 @@ export function amountVerdict(
 /* ---------- merge + pagination (shared so SSR page 1 === client page 1) ---- */
 
 export const PAGE_SIZE = 50;
+export const DESIGN_FEED_PAGE_SIZE = 8;
 
 /** Merge transactions with paper filings by filed date (desc); transactions
     first within a date. Both inputs must already be sorted filed-desc. */
@@ -782,16 +783,16 @@ export function mergeFeed(txns: TxnRow[], paper: PaperRow[]): FeedItem[] {
     transaction precedes (a paper-only result set, or a build whose newest
     filing arrived unparsed). Dropping those was a real defect: the rows are
     "retained and counted" per §5.2 and must be reachable. */
-function itemPage(txnSeenBefore: number): number {
-  return Math.floor(txnSeenBefore / PAGE_SIZE);
+function itemPage(txnSeenBefore: number, pageSize = PAGE_SIZE): number {
+  return Math.floor(txnSeenBefore / pageSize);
 }
 
 /** Slice a merged feed into page `page` (0-based). */
-export function pageSlice(merged: FeedItem[], page: number): FeedItem[] {
+export function pageSlice(merged: FeedItem[], page: number, pageSize = PAGE_SIZE): FeedItem[] {
   const out: FeedItem[] = [];
   let txnSeen = 0;
   for (const item of merged) {
-    const p = itemPage(txnSeen);
+    const p = itemPage(txnSeen, pageSize);
     if (p > page) break;
     if (p === page) out.push(item);
     if (item.kind === "txn") txnSeen++;
@@ -808,12 +809,12 @@ export function pageSlice(merged: FeedItem[], page: number): FeedItem[] {
     blank page that the caller's empty-state guard turns into a false
     "no disclosures match". Anything that drops a row here is a §5.2 violation:
     the count line asserts the filing exists, so a page must reach it. */
-export function pageCountFor(merged: readonly FeedItem[]): number {
+export function pageCountFor(merged: readonly FeedItem[], pageSize = PAGE_SIZE): number {
   if (merged.length === 0) return 0;
   let txnSeen = 0;
   let max = 0;
   for (const item of merged) {
-    const p = itemPage(txnSeen);
+    const p = itemPage(txnSeen, pageSize);
     if (p > max) max = p;
     if (item.kind === "txn") txnSeen++;
   }
@@ -829,6 +830,7 @@ export function pageCountFor(merged: readonly FeedItem[]): number {
    produced "51–50 of 50 transactions" on a page holding only paper rows. */
 
 export interface CountInputs {
+  pageSize?: number;
   page: number;
   /** transactions matching the current filters (whole result set) */
   txnMatched: number;
@@ -853,7 +855,7 @@ export function feedCountText(i: CountInputs): string {
     // would have to invert to describe it.
     txnPart = `no transactions on this page of ${fmtInt(i.txnMatched)}`;
   } else {
-    const lo = i.page * PAGE_SIZE + 1;
+    const lo = i.page * (i.pageSize ?? PAGE_SIZE) + 1;
     const hi = Math.min(lo + i.txnOnPage - 1, i.txnMatched);
     txnPart = `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(i.txnMatched)} transactions`;
   }
@@ -870,6 +872,9 @@ export function feedCountText(i: CountInputs): string {
 /* ---------- row renderers (single source for SSR + client) ---------- */
 
 export interface RenderCtx {
+  /** Eight-column reference composition; shared by Congress SSR and filtering. */
+  referenceFeed?: boolean;
+  referenceRankings?: boolean;
   /** bioguide ids watched in this browser; SSR passes an empty set. */
   watched: ReadonlySet<string>;
   /** tickers watched in this browser (watchlist v2); optional for old callers. */
@@ -1035,7 +1040,8 @@ export function rangeBand(r: Pick<TxnRow, "low" | "high">): string {
 /** DualDate (G2): traded + filed + lag, one cell. Both dates stay in the
     accessibility tree at every viewport; the mobile fold shows the combined
     "traded → filed" string instead of removing either date. */
-export function dualDate(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">): string {
+export function dualDate(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">, complete = false): string {
+  if (complete) return `<span class="design-dates"><span class="visually-hidden">Traded </span>${r.traded ? `<time datetime="${esc(r.traded)}" aria-label="${esc(r.traded)}"><span class="design-date-year">${esc(r.traded.slice(0, 5))}</span>${esc(r.traded.slice(5))}</time>` : "Unknown"} → <span class="visually-hidden">Filed </span><time datetime="${esc(r.filed)}" aria-label="${esc(r.filed)}"><span class="design-date-year">${esc(r.filed.slice(0, 5))}</span>${esc(r.filed.slice(5))}</time></span> ${lagHtml(r)}`;
   const traded = tradedText(r);
   return `<span class="visually-hidden">Traded </span><span class="traded-date">${esc(traded)}</span><span class="mobile-dates" aria-hidden="true">${esc(traded)} → ${esc(r.filed.slice(5))}</span> ${lagHtml(r)}`;
 }
@@ -1096,6 +1102,16 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
     : assetNameCell(r);
   const amountSpoken = amountUnknown ? "not disclosed in a parseable range" : amount;
 
+  if (ctx.referenceFeed) {
+    return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}${rowClass ? " " + esc(rowClass) : ""}">` +
+      `<td class="cell cell-side ${esc(side.cls)}">${r.late === 1 ? "LATE" : side.cls === "buy" ? "BUY" : side.cls === "sell" ? "SELL" : esc(side.text)}<span class="reference-watch">${starHtml(r.bioguide, r.name, ctx)}</span></td>` +
+      `<td class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
+      `<td class="cell cell-ticker">${r.ticker ? tickerHtml : '<span class="none">—</span>'}</td>` +
+      `<td class="cell cell-asset">${esc(r.asset || "Asset not named")} ${owner ? `<span class="owner-note">· ${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>` : ""}</td>` +
+      `<td class="cell cell-amount${amountUnknown ? " unknown" : ""}">${esc(amount)}${spouseCapDagger}</td>` +
+      `<td class="cell cell-range">${rangeBand(r)}<span class="reference-flags">${flagTags(r.flags, r) ? noteFromHtml(flagTags(r.flags, r), {scope:"feed-flags"}, r.txnId) : ""}</span></td>` +
+      `<td class="cell cell-traded">${dualDate(r, true)}</td>` + srcLinkCell(r.doc) + `</tr>`;
+  }
   return `<tr class="feed-row feed-grid-cols${rowClass ? " " + esc(rowClass) : ""}">
 <td class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</td>
 <td class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>
@@ -1114,6 +1130,12 @@ ${srcLinkCell(r.doc)}
 }
 
 export function paperRowHtml(r: PaperRow, ctx: RenderCtx, rowClass = ""): string {
+  if (ctx.referenceFeed) {
+    return `<tr class="feed-row paper reference-paper"><td>Paper</td><td>${starHtml(r.bioguide,r.name,ctx)}${memberCellHtml(r,ctx)}</td>` +
+      `<td colspan="4" class="paper-main">Paper filing · needs OCR · no machine-readable transactions</td>` +
+      `<td class="cell-filed">${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
+  }
+
   // A paper filing discloses no ticker, side, amount, dates or flags, so its
   // main cell SPANS those columns rather than rendering five empty cells that
   // would read as five disclosed blanks.
@@ -1198,6 +1220,7 @@ export const FEED_COLUMNS: readonly FeedColumn[] = [
 ];
 
 export interface FeedHeadOpts {
+  referenceFeed?: boolean;
   /** Opt-in. Present -> column explanations render as notes. Absent ->
       `.col-why` exactly as today, which is what `/watchlist/` relies on. */
   notes?: NoteCtx;
@@ -1211,7 +1234,17 @@ export interface FeedHeadOpts {
 }
 
 export function feedHeadHtml(opts: FeedHeadOpts): string {
-  const cells = FEED_COLUMNS.map((c) => {
+  const referenceColumns: readonly FeedColumn[] = [
+    { label: "Kind", why: "Purchase, sale or exchange as disclosed; watch controls save locally." },
+    { label: "Member", why: "Member and affiliation as recorded in the filing." },
+    { label: "Ticker", why: "An em dash means no ticker was disclosed; the asset remains named alongside it." },
+    { label: "Asset · Owner", why: "Asset and ownership as filed; partial-sale qualifiers are retained." },
+    { label: "Range", sortKey: "amount", cls: "num" },
+    { label: "Interval · log $1K–$50M+", why: "The statutory interval on a fixed log scale; hatching identifies open or unknown bounds.", cls: "range" },
+    { label: "Traded → Filed", sortKey: "filed" },
+    { label: "Rcpt", why: "Each link opens the original disclosure.", cls: "src" },
+  ];
+  const cells = (opts.referenceFeed ? referenceColumns : FEED_COLUMNS).map((c) => {
     const cls = c.cls ? ` class="${c.cls}"` : "";
     if (c.srLabel !== undefined) {
       return `<th scope="col"${cls}><span class="visually-hidden">${esc(c.srLabel)}</span></th>`;
@@ -1237,7 +1270,7 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
       `</th>`
     );
   }).join("");
-  return `<thead><tr class="feed-head feed-grid-cols">${cells}</tr></thead>`;
+  return `<thead><tr class="feed-head feed-grid-cols${opts.referenceFeed ? " reference-head" : ""}">${cells}</tr></thead>`;
 }
 
 export function feedItemHtml(item: FeedItem, ctx: RenderCtx, rowClass = ""): string {

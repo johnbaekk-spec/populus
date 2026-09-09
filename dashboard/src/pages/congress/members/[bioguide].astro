@@ -7,7 +7,7 @@
 // (the budget-cut rule); cut members stay reachable at /e/?k=m:… with their endpoint.
 import Base from "../../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact, sectorResolver } from "../../../lib/data";
-import { memberBody, memberSignalsPanel, memberV2Sections, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
+import { memberBody, memberSignalsPanel, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
 
 export function getStaticPaths() {
@@ -50,9 +50,7 @@ const v2Deps: MemberV2Deps = {
     : null,
 };
 const bodyHtml =
-  memberBody(member, stamps, ssrCtx) +
-  memberV2Sections(member, stamps, ssrCtx, v2Deps) +
-  memberSignalsPanel(getSignalArtifact(), member.bioguide, ssrCtx);
+  memberBody(member, stamps, ssrCtx, 0, v2Deps, memberSignalsPanel(getSignalArtifact(), member.bioguide, ssrCtx));
 const description =
   `Congressional financial disclosures for ${member.name}: every transaction as filed, ` +
   `statutory amount ranges, dual dates, provenance links — from primary government sources.`;

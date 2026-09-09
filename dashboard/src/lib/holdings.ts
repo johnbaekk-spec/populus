@@ -1301,6 +1301,7 @@ function positionCell(row: {
 }
 
 export interface HoldingsTableOpts {
+  reference?: boolean;
   cik: string;
   filerName: string;
   period: string;
@@ -1341,11 +1342,18 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     ]),
   );
   const body = pageRows
-    .map((row) => {
+    .map((row, rowIndex) => {
       const prov = provOf.get(row) ?? provenanceOf([row.filing_key], opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
         : srcLinkDerived(null, edgarFilerUrl(opts.cik));
+      if (opts.reference) {
+        const weight = total === matched && totals.undisclosedRows === 0 && totals.disclosedUsd > 0 && row.value_usd != null ? row.value_usd / totals.disclosedUsd * 100 : null;
+        return `<tr class="design-holding-row"><td class="c-kind">—</td><td class="c-ticker">—</td>` +
+          `<td class="c-pos"><span class="design-holding-name"><span class="filed-name">${esc(row.issuer_name || "Issuer unnamed")}</span></span> ${src}${noteFromHtml(positionCell(row) + `<br>` + provenanceCellHtml(prov, statedHoldings), { scope: "filer-position-record" }, `${opts.page}-${rowIndex}`)}${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
+          `<td><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0,Math.min(100,weight))}%"></span>`}</span></td>` +
+          `<td class="c-num c-strong">${valueCell(row.value_usd)}</td><td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td><td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`;
+      }
       return (
         `<tr>` +
         `<td class="c-pos">${positionCell(row)}</td>` +
@@ -1399,15 +1407,24 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
        gate passed the failures it exists to catch. When the whole collection is
        on the page, the visible rows ARE the collection and there is nothing HTML
        cannot settle. */
-    `<div class="table-scroll"><table class="etable" data-sticky-first${
+    `<div class="table-scroll"><table class="etable" ${opts.reference ? "data-sticky-issuer" : "data-sticky-first"}${
       pageCount > 1 ? ' data-paged="1"' : ""
     } data-stated-flags="${esc(statedHoldings.join(","))}">` +
     `<caption class="visually-hidden">Positions ${esc(opts.filerName)} reported for the quarter ended ${esc(
       opts.period,
     )}, as that filer reported them</caption>` +
     `<thead><tr>` +
-    HOLDINGS_COLS.map(([key, label]) => {
-      const body = HOLDINGS_COL_NOTES[key];
+    (opts.reference ? [
+      ["kind", "Kind"], ["ticker", "Ticker"], ["issuer", "Issuer"], ["weight", "Weight"], ["value", "Value"], ["shares-unit", "Shares"], ["delta", "Δ Pos"], ["wt", "Wt"], ["overlap", "Congress"],
+    ] : HOLDINGS_COLS).map(([key, label]) => {
+      const explanation: Record<string, string> = {
+        kind: "Classification is not joined into this reported-position view. Use the changed-positions view to compare the two published quarters.",
+        ticker: "This projection contains reported issuer names and security identities, without a dated ticker mapping. Symbols are not inferred from names.",
+        weight: "Share of total reported value, calculated only when the full position list has disclosed values. This is 13F long value, not total assets.",
+        delta: "Share change is available in the separate comparison view; it is not joined into this position list.",
+        overlap: "The congressional transaction join is unavailable in this build.",
+      };
+      const body = key === "issuer" && opts.reference ? `${HOLDINGS_COL_NOTES.issuer ?? ""} ${HOLDINGS_COL_NOTES.src ?? ""}` : HOLDINGS_COL_NOTES[key] ?? explanation[key];
       return (
         `<th scope="col">${esc(label)}` +
         (body ? noteFromHtml(body, { scope: "filer-holdings" }, key) : "") +
@@ -1879,6 +1896,7 @@ export function surfaceHtml(payload: SurfacePayload, state: SurfaceState): strin
     return (
       viewChips(payload, state) +
       holdingsTableHtml({
+        reference: true,
         cik: payload.cik,
         filerName: payload.filerName,
         period,
