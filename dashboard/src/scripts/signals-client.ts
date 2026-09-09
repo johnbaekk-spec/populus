@@ -21,6 +21,8 @@ const SHORT: Record<string, string> = {
 };
 
 const BIOGUIDE_RE = /^[A-Z]\d{6}$/;
+/** rows the watch band renders; the summary line states the bound */
+const WATCH_RENDER_CAP = 50;
 
 type Row = [string, string, string | null, string, string | null, number | null, number | null, string | null, string, string];
 
@@ -117,7 +119,7 @@ function initWatchBand(): void {
       body.append(tr);
       return;
     }
-    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt] of hits) {
+    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt] of hits.slice(0, WATCH_RENDER_CAP)) {
       const tr = document.createElement("tr");
       tr.className = "si-hit";
       tr.dataset.signalId = id;
@@ -161,6 +163,7 @@ function initWatchBand(): void {
     summary.textContent =
       `${fmtInt(hits.length)} ${hits.length === 1 ? "hit" : "hits"} on ${fmtInt(watchedMembers.size + watchedTickers.size)} watched ${watchedMembers.size + watchedTickers.size === 1 ? "subject" : "subjects"}` +
       (payload.total > payload.cap ? ` · joined against the newest ${fmtInt(payload.cap)} of ${fmtInt(payload.total)} hits` : "") +
+      (hits.length > WATCH_RENDER_CAP ? ` · the newest ${fmtInt(WATCH_RENDER_CAP)} rendered here — a render bound, not a data bound; the hits table above carries the rest` : "") +
       `.${gap} `;
     note.prepend(summary);
   }
