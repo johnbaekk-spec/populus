@@ -306,14 +306,36 @@ jobs:
       # CURRENT membership only, so the snapshot date is today and the validity
       # window starts with the sitting Congress (119th, convened 2025-01-03).
       # The member page's committee panel and the ticker page's committee
-      # column read these tables; the S-5 jurisdiction signal still needs the
-      # sector join and stays withheld until a SIC snapshot ships.
-      - name: Ingest committees (dated roster)
+      # column read these tables; with the SIC snapshot below, the S-5
+      # jurisdiction signal has both of its inputs. (Step name avoids the word
+      # "committee": test_attestation_structure looks steps up by the fragment
+      # "commit", and an ambiguous match would blind its ordering assertions.)
+      - name: Ingest congressional panel roster (dated)
         run: |
           uv run populus committees --db populus.db \
             --from-cache data-cache/legislators \
             --snapshot-date "$(date -u +%F)" \
             --valid-from 2025-01-03
+
+      # B-5 — the EDGAR SIC snapshot for every issuer the corpus names: each
+      # distinct default-view ticker is resolved through the registry fetched
+      # above and its submissions.json (the document the 13F ingest already
+      # reads, under the same SEC access conditions, paced under 10 req/s)
+      # supplies the SIC. The script refuses to write below a 90% fetch
+      # coverage floor, because `populus sectors` FULL-REPLACES issuer_sic and
+      # a hollow snapshot would wipe a good table. With committees above, the
+      # S-5 jurisdiction signal has both of its inputs.
+      - name: Fetch the SIC snapshot (paced, floor-checked)
+        env:
+          POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
+        run: >-
+          uv run python scripts/fetch_sic_snapshot.py --db populus.db
+          --registry data-cache/registry/company_tickers.json --dest data-cache/sic
+
+      - name: Ingest sectors (issuer SIC → owned taxonomy)
+        run: >-
+          uv run populus sectors --db populus.db
+          --snapshot data-cache/sic/sic-snapshot.json --as-of "$(date -u +%F)"
 
       # R44 — the corpus floor, AFTER the join and BEFORE the build, because it
       # checks join identities as well as filing identities.
