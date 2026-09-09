@@ -7,7 +7,7 @@
       watch-v2 store (members + tickers) and the last-seen cursor, all of which
       live in this browser only. Nothing leaves the device. */
 
-import { esc, fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLink } from "../lib/format.ts";
+import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
 import { classifyCursor, readCursor, writeCursor } from "../lib/watchlist.ts";
 
@@ -20,6 +20,8 @@ const SHORT: Record<string, string> = {
   "s6-late-large": "LATE",
 };
 
+const BIOGUIDE_RE = /^[A-Z]\d{6}$/;
+
 type Row = [string, string, string | null, string, string | null, number | null, number | null, string | null, string, string];
 
 function magnitude(low: number | null, high: number | null): string {
@@ -28,6 +30,20 @@ function magnitude(low: number | null, high: number | null): string {
   if (low == null) return `Under ${fmtUsd(high!)}`;
   return `${fmtUsd(low)}–${fmtUsd(high!)}`;
 }
+
+const cell = (cls: string, ...children: (Node | string)[]): HTMLTableCellElement => {
+  const td = document.createElement("td");
+  if (cls) td.className = cls;
+  for (const c of children) td.append(c);
+  return td;
+};
+const link = (href: string, text: string, cls = ""): HTMLAnchorElement => {
+  const a = document.createElement("a");
+  a.href = href;
+  a.textContent = text;
+  if (cls) a.className = cls;
+  return a;
+};
 
 function initHitFilter(): void {
   const seg = document.querySelector<HTMLElement>(".si-hit-filter");
@@ -75,11 +91,10 @@ function initWatchBand(): void {
   const watchedMembers = store.members;
   const watchedTickers = store.tickers;
   const nothing = watchedMembers.size === 0 && watchedTickers.size === 0;
-  chips.innerHTML =
-    [...watchedMembers].map((m) => `<a class="chip" href="${memberHref(m)}">${esc(m)}</a>`).join("") +
-    [...watchedTickers]
-      .map((t) => `<a class="chip" href="${pathSafeTicker(t) ? tickerHref(t) : genericEntityHref("t", t)}">${esc(t)}</a>`)
-      .join("");
+  chips.replaceChildren(
+    ...[...watchedMembers].filter((m) => BIOGUIDE_RE.test(m)).map((m) => link(memberHref(m), m, "chip")),
+    ...[...watchedTickers].map((t) => link(pathSafeTicker(t) ? tickerHref(t) : genericEntityHref("t", t), t, "chip")),
+  );
   if (nothing) return;
 
   const hits = payload.rows.filter(
@@ -87,40 +102,67 @@ function initWatchBand(): void {
   );
   const state = classifyCursor(cursor, coverageFrom);
   const isNew = (filed: string): boolean => state.kind === "current" && filed > state.cursor.lastSeenFiled;
+  /* DOM construction, not innerHTML: the payload came out of the document, so
+     a string path back into markup is exactly the taint CodeQL flags. Every
+     value lands through textContent; every href is validated then set as a
+     property; receipts must be https. */
   const render = (): void => {
+    body.replaceChildren();
     if (hits.length === 0) {
-      body.innerHTML = `<tr><td colspan="7" class="si-empty">No signal hits on watched subjects in the retained window — a computed answer, not missing coverage.</td></tr>`;
+      const tr = document.createElement("tr");
+      const td = cell("si-empty");
+      td.colSpan = 7;
+      td.textContent = "No signal hits on watched subjects in the retained window — a computed answer, not missing coverage.";
+      tr.append(td);
+      body.append(tr);
       return;
     }
-    body.innerHTML = hits
-      .map(([id, kind, bioguide, name, ticker, low, high, traded, filed, receipt]) => {
-        const subject = bioguide ? `<a href="${memberHref(bioguide)}">${esc(name)}</a>` : esc(name);
-        const tk = ticker ? ` <a class="si-ticker" href="${pathSafeTicker(ticker) ? tickerHref(ticker) : genericEntityHref("t", ticker)}">${esc(ticker)}</a>` : "";
-        const fresh = isNew(filed);
-        return (
-          `<tr class="si-hit" data-signal-id="${esc(id)}">` +
-          `<td class="si-kind">${esc(SHORT[kind] ?? kind)}</td>` +
-          `<td class="si-subject">${subject}${tk}<span class="si-gold" aria-hidden="true"> ◆</span></td>` +
-          `<td class="si-evidence">${esc(SHORT[kind] ?? kind)} rule matched · <a href="#signal-rulebook">rule book</a></td>` +
-          `<td class="c-num si-mag">${esc(magnitude(low, high))}</td>` +
-          `<td class="c-filed si-when">${esc(traded ? traded.slice(5) : "—")} → ${esc(filed.slice(5))}</td>` +
-          `<td class="c-num ${fresh ? "si-new" : "c-muted"}">${fresh ? "NEW" : state.kind === "none" ? "—" : "seen"}</td>` +
-          `<td class="c-src">${receipt ? srcLink(receipt) : "—"}</td></tr>`
-        );
-      })
-      .join("");
+    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt] of hits) {
+      const tr = document.createElement("tr");
+      tr.className = "si-hit";
+      tr.dataset.signalId = id;
+      const short = SHORT[kind] ?? kind;
+      tr.append(cell("si-kind", short));
+      const subject = cell("si-subject");
+      subject.append(bioguide && BIOGUIDE_RE.test(bioguide) ? link(memberHref(bioguide), name) : name);
+      if (ticker) {
+        subject.append(" ", link(pathSafeTicker(ticker) ? tickerHref(ticker) : genericEntityHref("t", ticker), ticker, "si-ticker"));
+      }
+      const gold = document.createElement("span");
+      gold.className = "si-gold";
+      gold.setAttribute("aria-hidden", "true");
+      gold.textContent = " ◆";
+      subject.append(gold);
+      tr.append(subject);
+      const evidence = cell("si-evidence", `${short} rule matched · `);
+      evidence.append(link("#signal-rulebook", "rule book"));
+      tr.append(evidence);
+      tr.append(cell("c-num si-mag", magnitude(low, high)));
+      tr.append(cell("c-filed si-when", `${traded ? traded.slice(5) : "—"} → ${filed.slice(5)}`));
+      const fresh = isNew(filed);
+      tr.append(cell(`c-num ${fresh ? "si-new" : "c-muted"}`, fresh ? "NEW" : state.kind === "none" ? "—" : "seen"));
+      const rcpt = cell("c-src");
+      if (typeof receipt === "string" && receipt.startsWith("https://")) {
+        const a = link(receipt, `${srcLabel(receipt)} ↗`);
+        a.rel = "noopener";
+        a.target = "_blank";
+        rcpt.append(a);
+      } else rcpt.textContent = "—";
+      tr.append(rcpt);
+      body.append(tr);
+    }
   };
   render();
   if (note) {
     const gap = state.kind === "gap"
-      ? ` Your last-seen marker (${esc(state.cursor.lastSeenFiled)}) predates this window's start (${esc(coverageFrom)}) — "new" cannot be stated until you mark all seen.`
+      ? ` Your last-seen marker (${state.cursor.lastSeenFiled}) predates this window's start (${coverageFrom}) — "new" cannot be stated until you mark all seen.`
       : "";
-    note.insertAdjacentHTML(
-      "afterbegin",
-      `<span>${fmtInt(hits.length)} ${hits.length === 1 ? "hit" : "hits"} on ${fmtInt(watchedMembers.size + watchedTickers.size)} watched ${watchedMembers.size + watchedTickers.size === 1 ? "subject" : "subjects"}` +
-        (payload.total > payload.cap ? ` · joined against the newest ${fmtInt(payload.cap)} of ${fmtInt(payload.total)} hits` : "") +
-        `.${gap}</span> `,
-    );
+    const summary = document.createElement("span");
+    summary.textContent =
+      `${fmtInt(hits.length)} ${hits.length === 1 ? "hit" : "hits"} on ${fmtInt(watchedMembers.size + watchedTickers.size)} watched ${watchedMembers.size + watchedTickers.size === 1 ? "subject" : "subjects"}` +
+      (payload.total > payload.cap ? ` · joined against the newest ${fmtInt(payload.cap)} of ${fmtInt(payload.total)} hits` : "") +
+      `.${gap} `;
+    note.prepend(summary);
   }
   if (seenBtn) {
     seenBtn.disabled = false;
