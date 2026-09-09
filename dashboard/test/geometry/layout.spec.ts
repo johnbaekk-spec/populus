@@ -249,7 +249,7 @@ for (const width of WIDTHS) {
       /* F6 (codex round 1): this was pinned at 964px and so tested one width of
          the five it is specified against. It lives in the width loop now. */
       await page.goto("/institutional/filers/1067983/");
-      const scroller = page.locator(".table-scroll").first();
+      const scroller = page.locator("[data-holdings-surface] .table-scroll").first();
       /* No early `return`s here, deliberately. Three of them used to guard this
          test — missing scroller, not-scrollable, missing sticky cell — and each
          was a silent PASS that would read as coverage.
@@ -270,6 +270,7 @@ for (const width of WIDTHS) {
          no copy change can turn this red. */
       expect(await scroller.count(), "the filer page renders a scroll container").toBeGreaterThan(0);
       await page.addStyleTag({ content: FORCE_TABLE_OVERFLOW });
+      await scroller.scrollIntoViewIfNeeded();
 
       const box = (await scroller.boundingBox())!;
       const state = await scroller.evaluate((el) => {
@@ -316,8 +317,8 @@ for (const width of WIDTHS) {
           `nothing at the container's right edge — it renders identically with and without it`,
       ).toBe(false);
 
-      const firstCell = page.locator(".etable[data-sticky-first] td:first-child").first();
-      expect(await firstCell.count(), "the changes table pins an identity column").toBeGreaterThan(0);
+      const firstCell = page.locator("[data-holdings-surface] .design-holding-row .c-pos").first();
+      expect(await firstCell.count(), "the holdings table pins its issuer identity column").toBeGreaterThan(0);
       expect(
         await firstCell.evaluate((el) => getComputedStyle(el).position),
         `at ${width}px the identity column scrolls away with the data it identifies`,

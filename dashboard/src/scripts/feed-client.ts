@@ -10,7 +10,7 @@ import {
   mergeFeed,
   pageSlice,
   pageCountFor,
-  PAGE_SIZE,
+  DESIGN_FEED_PAGE_SIZE as PAGE_SIZE,
   feedCountText,
   feedItemHtml,
   fmtInt,
@@ -504,7 +504,7 @@ export function initFeed(options: FeedOptions = {}): void {
         ? txns.filter((r) => matchDate(r, state) === "anomaly").length
         : 0;
 
-    const ctx: RenderCtx = { watched };
+    const ctx: RenderCtx = { watched, referenceFeed: true };
     let items: (TxnRow | PaperRow)[];
     let maxPage: number;
     let unrankedStart = -1; // index into the FULL combined list, amount sorts only
@@ -515,9 +515,9 @@ export function initFeed(options: FeedOptions = {}): void {
       const merged = mergeFeed(fTxns, fPaper);
       // Oldest-first is the SAME order reversed, never a second merge rule.
       if (state.sort === "filed-asc") merged.reverse();
-      maxPage = Math.max(0, pageCountFor(merged) - 1);
+      maxPage = Math.max(0, pageCountFor(merged, PAGE_SIZE) - 1);
       if (state.page > maxPage) state.page = maxPage;
-      items = pageSlice(merged, state.page);
+      items = pageSlice(merged, state.page, PAGE_SIZE);
     } else {
       // F-16 amount ordering: ranked rows on the lower-bound key; wholly
       // unknown rows (and paper filings, which disclose no amount) go to a
@@ -551,7 +551,7 @@ export function initFeed(options: FeedOptions = {}): void {
           // A separator INSIDE a tbody must be a row, or the browser hoists it
           // out of the table and the label detaches from the rows it labels.
           parts.push(
-            `<tr class="unranked-sep"><td colspan="9">Not rankable by amount — ` +
+            `<tr class="unranked-sep"><td colspan="8">Not rankable by amount — ` +
               `wholly undisclosed or paper (${fmtInt(nUnrankable)} ` +
               `${nUnrankable === 1 ? "row" : "rows"}) · listed after every ranked row, never coerced to $0</td></tr>`,
           );
@@ -565,6 +565,7 @@ export function initFeed(options: FeedOptions = {}): void {
     // and not others (the indeterminate-amount disclosure previously reached
     // only a desktop-visible element and a visually-hidden live region).
     const range = feedCountText({
+      pageSize: PAGE_SIZE,
       page: state.page,
       txnMatched: fTxns.length,
       paperMatched: fPaper.length,

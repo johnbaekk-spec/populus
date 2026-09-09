@@ -23,7 +23,7 @@ const CONGRESS = "/congress/";
 const HOLDERS_HINT = "/institutional/";
 
 async function firstNote(page: Page) {
-  const btn = page.locator(".note-btn").first();
+  const btn = page.locator(".note-btn:visible").first();
   await expect(btn, "the page under test must render at least one note").toBeVisible();
   return btn;
 }
@@ -54,7 +54,7 @@ test.describe("SL-R2/R3: the panel opens, and opens WITHOUT JavaScript", () => {
     const ctx = await browser.newContext({ javaScriptEnabled: false });
     const page = await ctx.newPage();
     await page.goto(CONGRESS);
-    const btn = page.locator(".note-btn").first();
+    const btn = page.locator(".note-btn:visible").first();
     await expect(btn).toBeVisible();
     const id = await btn.getAttribute("popovertarget");
     await btn.click();
@@ -136,7 +136,7 @@ for (const surface of [CONGRESS, HOLDERS_HINT] as const) {
     for (const w of WIDTHS) {
       await page.setViewportSize({ width: w, height: 900 });
       await page.goto(surface);
-      const btn = page.locator(".note-btn").first();
+      const btn = page.locator(".note-btn:visible").first();
       expect(await btn.count(), `${surface} must render a note anchor to measure`).toBeGreaterThan(0);
       const box = (await btn.boundingBox())!;
       expect(Math.min(box.width, box.height), `44px target at ${w}px on ${surface}`).toBeGreaterThanOrEqual(44);
@@ -150,7 +150,7 @@ test("SL-R24: under 720px the panel takes the width it needs and is never clippe
   // a panel that fits are different claims.
   await page.setViewportSize({ width: 360, height: 900 });
   await page.goto(CONGRESS);
-  const btn = page.locator(".note-btn").first();
+  const btn = page.locator(".design-rankings .note-btn").first();
   await btn.click();
   const pop = page.locator(`#${await btn.getAttribute("popovertarget")}`);
   await expect(pop).toBeVisible();
@@ -168,7 +168,7 @@ test("SL-R28: a note created by a LATER innerHTML replacement still opens", asyn
   const th = page.locator("th [data-congress-sort], th.th-sort, th button.th-sort").first();
   if ((await th.count()) === 0) test.skip(true, "no sortable header on this surface");
   await th.click(); // repaints the tbody, and any notes inside it
-  const btn = page.locator(".note-btn").first();
+  const btn = page.locator(".note-btn:visible").first();
   const id = await btn.getAttribute("popovertarget");
   await btn.click();
   await expect(page.locator(`#${id}`), "a note must still open after its root was replaced").toBeVisible();
@@ -176,7 +176,7 @@ test("SL-R28: a note created by a LATER innerHTML replacement still opens", asyn
 
 test("SL-R28: /institutional/ initialises notes too — placement works on a built page", async ({ page }) => {
   await page.goto(HOLDERS_HINT);
-  const btn = page.locator(".note-btn").first();
+  const btn = page.locator(".note-btn:visible").first();
   if ((await btn.count()) === 0) test.skip(true, "no note on this surface");
   const id = await btn.getAttribute("popovertarget");
   await btn.click();
@@ -249,6 +249,18 @@ test("SL-R10: with JavaScript disabled the bound is STATED and the button is inv
     }
     asserted++;
 
+    // A small fixture may contain fewer rows than the compact limit. Verify
+    // that case explicitly: it must not claim that any rows were withheld.
+    let withheld = false;
+    for (let i = 0; i < n; i++) {
+      const control = controls.nth(i);
+      const total = Number(await control.getAttribute("data-compact-total"));
+      const shown = Number(await control.getAttribute("data-compact-shown"));
+      expect(Number.isFinite(total) && Number.isFinite(shown)).toBe(true);
+      if (total > shown) withheld = true;
+      else await expect(control.locator(".compact-bound-count")).toBeHidden();
+    }
+
     // Not one expand button may be visible: with no script running it cannot
     // work, and a control that cannot work must not be presented as one.
     for (let i = 0; i < (await page.locator(".compact-toggle").count()); i++) {
@@ -261,6 +273,11 @@ test("SL-R10: with JavaScript disabled the bound is STATED and the button is inv
     // …and the bound is on the page anyway, in real text, rendered by the
     // server. This is the assertion the deletion had to earn.
     const stated = page.locator(".compact-bound-count:not([hidden])");
+    if (!withheld) {
+      expect(url, "Congress must exercise the nonempty withheld-row branch").not.toBe(CONGRESS);
+      await expect(stated).toHaveCount(0);
+      continue;
+    }
     expect(
       await stated.count(),
       `${url}: no bound is stated to a reader with scripting off — this is the ` +
@@ -314,7 +331,7 @@ test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every wi
   for (const w of WIDTHS) {
     await page.setViewportSize({ width: w, height: 900 });
     await page.goto(CONGRESS);
-    const btn = page.locator("th .note-btn").first();
+    const btn = page.locator(".design-rankings th .note-btn").first();
     if ((await btn.count()) === 0) continue;
     const id = await btn.getAttribute("popovertarget");
     await btn.click();
@@ -395,7 +412,7 @@ test("CODE-REVIEW F9: REAL member and filer renderer output meets 44px at every 
       html: memberV2Sections(
         {
           name: "Test Member", bioguide: "T000001", party: "R", state: "OK",
-          district: "1", chamber: "house", servingSince: "2019-01-03",
+          district: "1", chamber: "house", servingSince: "2019-01-03", filingCount: 1, paper: [],
           txns: [{
             txnId: "T-1", bioguide: "T000001", name: "Test Member", party: "R", state: "OK",
             district: "1", chamber: "house", ticker: "AGRO", asset: "Agro Corp", assetType: "ST",

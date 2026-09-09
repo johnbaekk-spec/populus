@@ -25,6 +25,7 @@ import {
   type NoteCtx,
   esc,
   fmtInt,
+  fmtUsd,
   note,
   noteFromHtml,
   colWhyHtml,
@@ -35,6 +36,8 @@ import {
   COMPACT_ROWS,
 } from "../format.ts";
 import {
+  type NetInterval,
+  netIntervalText,
   type CongressBasis,
   type CongressRange,
   type CongressRollup,
@@ -56,6 +59,24 @@ import {
 import { type BuildStamps, netCellHtml } from "./shared.ts";
 import { flowCellHtml } from "./congress.ts";
 
+/** The reference displays a provable bound, never a fabricated point estimate. */
+function referenceNetHtml(net: NetInterval, overlaps: boolean): string {
+  // Rounding away from zero would overstate a guaranteed bound. Truncate at
+  // the display formatter's precision, preserving a conservative guarantee.
+  const boundText = (value: number): string => {
+    const magnitude = Math.abs(value);
+    const unit = [1e12, 1e9, 1e6, 1e3].find(unit => magnitude >= unit) ?? 1;
+    const step = unit === 1 ? 1 : unit * (magnitude / unit >= 100 ? 1 : 0.1);
+    return fmtUsd(Math.trunc(value / step) * step);
+  };
+  let bound: string | null = null;
+  if ((net.kind === "finite" || net.kind === "upper-open") && net.low > 0) bound = `≥ ${boundText(net.low)}`;
+  else if ((net.kind === "finite" || net.kind === "lower-open") && net.high < 0) bound = `≤ ${boundText(net.high)}`;
+  if (bound === null) return netCellHtml(net, overlaps);
+  return `<span class="reference-net-bound ${bound.startsWith("≥") ? "positive" : "negative"}" aria-hidden="true">${esc(bound)}</span><span class="visually-hidden">${esc(netIntervalText(net))}</span>` +
+    (overlaps ? `<span class="fn-ref">≈</span>` : "");
+}
+
 function rankingRowHtml(
   r: LeaderRow,
   pos: number | null,
@@ -71,6 +92,13 @@ function rankingRowHtml(
             affTextOf(r),
           )}</span>`
         : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;
+  if (kind === "tickers" && ctx.referenceRankings) {
+    const scale = Math.max(r.buys, r.sells, 1);
+    return `<tr><td class="c-num c-muted">${pos ?? ""}</td><td class="c-member">${who}</td>` +
+      `<td><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${r.buys / scale * 50}%"></span><span class="sale" style="left:50%;width:${r.sells / scale * 50}%"></span></span><span class="visually-hidden">${fmtInt(r.buys)} buys; ${fmtInt(r.sells)} sells</span></td>` +
+      `<td class="c-num">${fmtInt(r.txns)}</td><td class="c-num">${r.memberCount == null ? "—" : fmtInt(r.memberCount)}</td>` +
+      `<td class="c-num c-net">${ctx.referenceRankings ? referenceNetHtml(r.net, overlapsPrev) : netCellHtml(r.net, overlapsPrev)}</td></tr>`;
+  }
   const lateCell =
     r.lateDenom === 0
       ? `<span class="none">—</span>`
@@ -83,7 +111,7 @@ function rankingRowHtml(
     `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
     `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
     `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
-    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td>` +
+    `<td class="c-num c-net">${ctx.referenceRankings ? referenceNetHtml(r.net, overlapsPrev) : netCellHtml(r.net, overlapsPrev)}</td>` +
     `<td class="c-num">${lateCell}</td></tr>`
   );
 }
@@ -130,6 +158,17 @@ export interface RankingSectionOpts {
       Absent means "not computed", and the empty-window block then states the
       lag without offering a switch it cannot price. */
   alternatives?: RankingAlternatives;
+}
+
+function visualColumns(kind: "leaders" | "tickers", reference = false): CongressColumn[] {
+  const columns = congressRankingColumns(kind);
+  if (!reference) return columns;
+  if (kind === "tickers") return [columns[0]!, columns[1]!,
+    { sortable: false, key: null, label: "Buy ◂ ▸ Sell · count", numeric: false, why: "Bars show transaction counts: purchases left, sales right; each row uses the larger count as its scale." },
+    columns[2]!, { sortable: false, key: null, label: "Members", numeric: true, why: "Distinct joined members in the stated window. Unjoined filers are not inferred to be members." },
+    { ...columns[7]!, label: "Net flow" }];
+  const labels = ["#", "Member", "Txns†", "Buy", "Sell", "Gross purch ·§", "Gross sales ·§", "Net flow", "Late†"];
+  return columns.map((c, i) => ({ ...c, label: labels[i]! }));
 }
 
 /** The sortable header row. A sortable column carries its key and a real
@@ -208,7 +247,7 @@ export function rankingRootHtml(
   ctx: RenderCtx,
   opts: { compact?: number } = {},
 ): { html: string; total: number; shown: number } {
-  const cols = congressRankingColumns(kind);
+  const cols = visualColumns(kind, ctx.referenceRankings);
   const { ranked, unrankable } = sortRankingRows(rows, key, dir);
   const total = ranked.length + unrankable.length;
   const limit = opts.compact ?? total;
@@ -446,7 +485,7 @@ export function congressRankingSection(
   ctx: RenderCtx,
   opts: RankingSectionOpts,
 ): string {
-  const cols = congressRankingColumns(kind);
+  const cols = visualColumns(kind, ctx.referenceRankings);
   const compact = opts.compact ?? COMPACT_ROWS;
   const bounds = congressRangeBounds(rollup.range, stamps.generatedAtDate);
   const windowText = windowStatement(rollup.range, rollup.basis, bounds);
@@ -469,12 +508,12 @@ export function congressRankingSection(
       : `Tickers ranked by net disclosed flow, ${windowText}`;
   const noun = kind === "leaders" ? "members" : "tickers";
   return (
-    `<section class="panel panel-wide" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
+    `<section class="panel panel-wide${ctx.referenceRankings ? " reference-ranking" : ""}" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
     `<div class="panel-head"><h2 class="section-h">${esc(opts.heading)}</h2>` +
     `<span class="panel-note" id="${esc(opts.sectionId)}-window">` +
     rankingWindowHtml(windowText, rollup, kind, opts.sectionId) +
     `</span></div>` +
-    (opts.controls ? rangeControlHtml(rollup.range, rollup.basis) : "") +
+    (opts.controls ? (ctx.referenceRankings ? `<details class="ranking-options"><summary>Window & dates</summary>${rangeControlHtml(rollup.range, rollup.basis)}</details>` : rangeControlHtml(rollup.range, rollup.basis)) : "") +
     /* The pending indicator. NOT a queue — `range` and `basis` are
        module state and `receiveRows` already reapplies them, so a pre-arrival
        click has always been applied. The defect is that `setSeg` paints the
@@ -527,7 +566,7 @@ export function congressRankingSection(
       bound: `Every row remains in the <a href="/congress/data/feed.v1.json">published dataset</a>.`,
     }) +
     (undisclosedBucket.length > 0 && opts.undisclosedRootId
-      ? `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>` +
+      ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} not rankable · amounts wholly undisclosed</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +
         `<p class="section-note">These rows include at least one side whose every amount failed to parse. ` +
         `They have no endpoints, so they hold no position in the ranking — listed after it, never sorted ` +
         `to the bottom as if small, and never merged into it by any sort.</p>` +
@@ -545,7 +584,7 @@ export function congressRankingSection(
           noun,
           boundNoun: `wholly-undisclosed ${noun}`,
         }) +
-        `</div>`
+        (ctx.referenceRankings ? `</details>` : `</div>`)
       : "") +
     /* The visible `.caveat-line` and its `#<sectionId>-caveat` root are
        DELETED. Unlike the terminus rows, nothing is lost to a reader with

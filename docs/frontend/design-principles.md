@@ -135,7 +135,26 @@ Previously specified by `Mobile.dc.html`; this section is now the authority
   sink receives the same string — a disclosure that reaches only a
   desktop-visible element is the fold failure this section exists to prevent.
 
-## 6. Tokens — deviations from the original mockups, locked
+## 6. Tokens — current reference and accessibility corrections
+
+The September four-screen overhaul uses `docs/design/reference/*.dc.html` and
+its hash manifest as the visual source of truth for development and QA. Its
+near-black canvas (#04070D), IBM Plex Sans, JetBrains Mono, blue links and
+thin section rules supersede the prior parchment/serif appearance. The default
+is dark; an explicit light preference remains available. Shared page chrome
+uses the same system across routes.
+
+Muted dark text uses #8FA0B3 and hatch stripes use #75879B for legibility.
+The reference's smaller, darker labels are not copied where they would lose
+contrast. The rules in §§1–5 still apply: source data, both dates, uncertainty
+and keyboard/touch access survive visual changes. Prototype sample figures
+and predictive commentary are not production data or product rules.
+
+### Historical palette corrections
+
+The following records the previous palette's corrections; its dark token
+hex values are superseded by the current reference above.
+
 
 The mockup token sheet (`Populus Design System.dc.html`, in Git history) is
 the origin of the palette and type ramp; these corrections supersede it and

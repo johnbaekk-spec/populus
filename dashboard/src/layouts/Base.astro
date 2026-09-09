@@ -4,15 +4,6 @@
 // and the ≤720px fold are specified by docs/frontend/design-principles.md §5:
 // nothing honesty-bearing may be media-query-hidden, and folded elements use
 // the clip pattern so they stay in the accessibility tree.
-import "@fontsource/source-serif-4/600.css";
-import "@fontsource/source-serif-4/700.css";
-import "@fontsource/public-sans/400.css";
-import "@fontsource/public-sans/500.css";
-import "@fontsource/public-sans/600.css";
-import "@fontsource/public-sans/700.css";
-import "@fontsource/ibm-plex-mono/400.css";
-import "@fontsource/ibm-plex-mono/500.css";
-import "@fontsource/ibm-plex-mono/600.css";
 /* The nine stylesheet regions. IMPORT ORDER IS THE CASCADE, and this list is
    the single source of that order: concatenating these files in exactly this
    sequence is byte-identical to the former single global.css, so the shipped
@@ -89,9 +80,7 @@ const build = getBuildData();
           <nav class="site-nav" id="site-nav" aria-label="Modules">
             <a href="/congress/" aria-current={active === "congress" ? "page" : undefined}>Congress</a>
             <a href="/institutional/" aria-current={active === "institutional" ? "page" : undefined}>Institutional</a>
-            <a class="nav-shell" href="/financials/" aria-current={active === "financials" ? "page" : undefined}>Financials <span class="badge-soon">SOON</span></a>
-            <a class="nav-shell" href="/macro/" aria-current={active === "macro" ? "page" : undefined}>Macro <span class="badge-soon">SOON</span></a>
-            <a href="/methodology/" aria-current={active === "methodology" ? "page" : undefined}>Methodology</a>
+            <a href="/signals/">Signals</a>
           </nav>
         </div>
         <div class="masthead-right">
@@ -101,7 +90,7 @@ const build = getBuildData();
             <input
               type="search"
               id="site-search"
-              placeholder="ticker · member · filer"
+              placeholder="Jump to a member, ticker or filer"
               autocomplete="off"
               role="combobox"
               aria-expanded="false"
@@ -115,7 +104,7 @@ const build = getBuildData();
               <div class="search-panel-foot">free text never leaves this device — the index ships with the build</div>
             </div>
           </div>
-          <button class="theme-toggle" aria-label="Switch color theme" hidden>theme</button>
+
           <button class="nav-burger" aria-label="Menu" aria-expanded="false" aria-controls="site-nav">☰</button>
         </div>
       </div>
@@ -152,6 +141,12 @@ const build = getBuildData();
             checked it would be told the build is corrupt. The build id names
             the release; `populus verify --build <id>` resolves the manifest
             from it. The <meta> markers above are the machine-readable copy. */}
+        <nav class="footer-nav" aria-label="More pages">
+            <a class="nav-shell" href="/financials/" aria-current={active === "financials" ? "page" : undefined}>Financials <span class="badge-soon">SOON</span></a>
+            <a class="nav-shell" href="/macro/" aria-current={active === "macro" ? "page" : undefined}>Macro <span class="badge-soon">SOON</span></a>
+            <a href="/methodology/" aria-current={active === "methodology" ? "page" : undefined}>Methodology</a>
+        </nav>
+          <button class="theme-toggle" aria-label="Switch color theme" hidden>theme</button>
         <div class="footer-build">
           build {build.buildId} · code {build.codeSha}<br />
           no cookies · no account required · no cross-site tracking
@@ -168,7 +163,7 @@ const build = getBuildData();
       function effectiveTheme(): "light" | "dark" {
         const attr = root.getAttribute("data-theme");
         if (attr === "light" || attr === "dark") return attr;
-        return media.matches ? "dark" : "light";
+        return "dark";
       }
       function paintThemeButton(): void {
         if (!themeBtn) return;

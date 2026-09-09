@@ -199,7 +199,7 @@ test("CODE-REVIEW F1: the net-flow table's ·§ markers still carry their clause
     },
   };
   const html = memberV2Sections(member([txn({ ticker: "AGRO" })]), stamps, ctx, deps);
-  assert.ok(html.includes("Gross purchases"), "fixture renders the net-flow table");
+  assert.ok(html.includes("Buy ◂ ▸ Sell"), "fixture renders the net-flow table");
   assert.ok(html.includes(clause), "the § clause is reachable from the columns that carry the mark");
   assert.match(html, /class="note-pop"/, "and it lives in the note channel");
   assert.ok(!html.includes('href="#member-footnotes"'), "no link into the deleted footnote block survives");

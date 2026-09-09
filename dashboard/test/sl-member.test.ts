@@ -237,7 +237,7 @@ test("SL-R20: the two ABSENT panels and NON_ALLEGATION_CAVEAT stay VISIBLE, verb
      non-allegation caveat is a legal statement, not a definition. Neither is a
      hover candidate at any width. */
   const absent = memberV2Sections(MEMBER, STAMPS, CTX, V2_DEPS);
-  assert.match(absent, /aria-label="Sector mix"/, "the absent Sector mix panel is on the page");
+  assert.match(absent, /aria-label="Sector rotation"/, "the absent Sector mix panel is on the page");
   assert.match(absent, /Sector data is not in this build/, "…stating its absence in visible text");
   assert.match(absent, /Committee/, "as is the Committees panel");
 

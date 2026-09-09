@@ -126,7 +126,7 @@ test("R5: the sort <select> is gone and the two orderable columns are headers", 
   // renders the same nine cells. The page must still be the thing that renders
   // it — asserting only on the library would prove nothing about this page,
   // which is exactly how the missing `#feed` id survived every test (F1).
-  assert.match(page, /feedHeadHtml\(\{ sortable: true/, "the page renders the shared head");
+  assert.match(page, /feedHeadHtml\(\{ referenceFeed: true, sortable: true/, "the page renders the shared head");
   const head = feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc" });
   assert.match(head, /data-feed-sort="filed"[^>]*aria-sort="descending"/);
   assert.match(head, /data-feed-sort="amount"[^>]*aria-sort="none"/);
@@ -207,7 +207,7 @@ test("R18: the table's direct children are only caption, thead and tbody", () =>
 
 /** The `<table class="feed-table">` … `</table>` slice of a page source. */
 function tableSegment(src: string): string {
-  const i = src.indexOf('<table class="feed-table">');
+  const i = src.search(/<table class="feed-table(?: reference-feed)?">/);
   assert.ok(i >= 0, "the page renders a feed table");
   return src.slice(i, src.indexOf("</table>", i));
 }

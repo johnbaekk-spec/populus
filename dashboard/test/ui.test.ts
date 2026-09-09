@@ -148,10 +148,10 @@ test("entityTxnTable: real table semantics — caption, th scope, honesty cells"
   });
   assert.ok(html.includes("<caption"), "caption present");
   assert.ok(html.includes('<th scope="col">'), "th scope present");
-  assert.ok(html.includes("Traded · Lag"));
+  assert.ok(html.includes("Traded → Filed"));
   assert.ok(html.includes("LATE·55d"), "LATE chip past 45d");
   assert.ok(html.includes("visually-hidden"), "dual dates keep the a11y-tree text");
-  assert.ok(html.includes("mobile-dates"), "fold string present in markup at every viewport");
+  assert.ok(html.includes("design-dates"), "complete dual dates present at every viewport");
   assert.ok(html.includes("v_default_transactions"), "exclusions footnote names the view");
   assert.ok(html.includes("aria-live"), "count changes announce");
 });
@@ -449,4 +449,16 @@ test("hostile strings escape everywhere they can appear", () => {
   assert.ok(!holderHtml.includes("<img"));
   const s2 = s2OutOfExtract("t", "AAPL");
   assert.ok(!s2.includes("<script"));
+});
+
+test("design briefing and ledger escape source text and retain visible metric context", async () => {
+  const { briefingCards, disclosureLedger } = await import("../src/lib/ui/index.ts");
+  const briefing = briefingCards([{ tag: "<coverage>", title: 'A & B', body: '<img src=x onerror=alert(1)>' }]);
+  assert.ok(briefing.includes('class="design-briefing"'));
+  assert.ok(briefing.includes('&lt;coverage&gt;'));
+  assert.ok(briefing.includes('A &amp; B'));
+  assert.ok(!briefing.includes('<img'));
+  const ledger = disclosureLedger([{ label: 'Parse coverage', value: '—', detail: '0 of 0 e-filed · no denominator' }]);
+  assert.ok(ledger.includes('<dd>—</dd>'));
+  assert.ok(ledger.includes('<small>0 of 0 e-filed · no denominator</small>'));
 });

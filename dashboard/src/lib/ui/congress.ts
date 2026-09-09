@@ -1,3 +1,4 @@
+import { briefingCards, disclosureLedger, unavailableDesignPanel } from "./shared.ts";
 /* Pure page/section renderers. Every entity body is a string function called
    by the thin .astro page for SSR AND by the generic-route client driver —
    parity is by construction (one function, two callers). No Node APIs, no DOM.
@@ -61,6 +62,7 @@ import {
   affTextOf,
   partyLabel,
   netOverlaps,
+  netDirection,
   rankNetRows,
   memberNetByTicker,
   sectorMix,
@@ -241,16 +243,13 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
     ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
     : assetNameCell(r);
   return (
-    `<td class="c-filed">${esc(r.filed)}</td>` +
-    `<td class="c-ticker">${tickerCell}</td>` +
-    `<td class="c-side ${side.cls}">${esc(side.text)}${
-      owner
-        ? ` <span class="owner-note">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
-        : ""
-    }</td>` +
-    `<td class="c-traded">${dualDate(r)}</td>` +
+    `<td class="c-side ${side.cls}">${esc(side.text)}</td>` +
+    `<td class="c-ticker">${r.ticker ? tickerCell : "—"}</td>` +
+    `<td class="c-asset">${esc(r.asset || "Asset not named")}</td>` +
+    `<td class="c-owner">${owner ? `${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span>` : "—"}</td>` +
     `<td class="c-amount${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
     `<td class="c-range">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
+    `<td class="c-traded">${dualDate(r, true)}</td>` +
     `<td class="c-src">${srcLink(r.doc)}</td>`
   );
 }
@@ -313,14 +312,14 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
   const stated = universalFlags(txns.map(effectiveFlagKeys));
   const heads =
     opts.kind === "member"
-      ? ["Filed ▾", "Ticker", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"]
+      ? ["Kind", "Ticker", "Asset", "Owner", "Range", "Interval · log $1K–$50M+", "Traded → Filed", "Rcpt"]
       : ["Filed ▾", "Member", "Side · Owner", "Traded · Lag", "Amount", "Range · Flags", "Src"];
   /* Only `Side · Owner` carries a note, and only when a scope is
      passed. Deliberately not every column: this run moves the strings that WERE
      on the page, and inventing an explanation for six columns that never had
      one would be new copy, not a relocation. */
   const headNote = (label: string): string =>
-    opts.notes && label === "Side · Owner"
+    opts.notes && (label === "Side · Owner" || label === "Owner")
       ? noteFromHtml(OWNER_CODE_NOTE, opts.notes, "side-owner")
       : "";
   const count = entityTableCountText(opts.page, pageRows.length, txns.length);
@@ -422,7 +421,7 @@ const MEMBER_FLOW_NOTE =
   `flow range = sum of statutory bucket bounds — an interval, not an estimate of value; ` +
   `derived by Public Filings from the disclosed ranges`;
 
-export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx, page = 0): string {
+export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx, page = 0, deps: MemberV2Deps = { resolveSector: null, sectorMeta: null, committees: null }, signalsHtml = ""): string {
   const watched = ctx.watched.has(m.bioguide);
   const flow = quarterlyFlow(m.txns, stamps.generatedAtDate, 8);
   const top = topTickers(m.txns, stamps.generatedAtDate, 24, 6);
@@ -485,13 +484,42 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     ) +
     `</div>` +
     `</div>` +
-    statTiles(memberStatTiles(m, stamps), {
-      label: "Member disclosure statistics",
-      compact: true,
-      // The tile LABEL is the key — one tile per label here.
-      notes: { scope: "member-tiles" },
-    }) +
+    disclosureLedger([
+      { label: "Transactions", value: fmtInt(m.txns.length), detail: "reported PTR rows" },
+      { label: "Filings", value: fmtInt(m.filingCount), detail: `${fmtInt(m.paper.length)} paper · retained` },
+      { label: "Holdings · 12/31", value: "—", detail: "annual records unavailable" },
+      { label: "13F overlap", value: "—", detail: "join unavailable" },
+    ]) +
     `</header>` +
+    `<div class="design-provenance">Flows from periodic transaction reports · House Clerk + Senate eFD · statutory ranges · every row retains its receipt</div>` +
+    briefingCards([
+      { tag: "Disclosed transactions", title: `${fmtInt(m.txns.length)} reported transactions`, body: "Amounts are the ranges in the filing. Purchases and sales are disclosures, not a statement of current holdings." },
+      { tag: "Reporting window", title: `Published ${stamps.generatedAtDate}`, body: "Trade date and filing date are retained separately. Late and unparseable records stay identified in the data." },
+      { tag: "Holdings coverage", title: "Annual holdings are not in this view", body: "Periodic transaction reports do not establish a portfolio. Annual holdings and reconciliation require annual financial-disclosure records." },
+    ]) +
+    `<div class="design-band design-member-band design-holdings-band">` +
+    unavailableDesignPanel("Holdings from annual disclosure", "SCHEDULE A · YEAR-END SNAPSHOT", ["Kind", "Ticker", "Asset", "Owner", "Value range", "Income", "13F", "Src"], "Annual financial-disclosure holdings are not included in this build. PTR flows cannot establish year-end holdings.") +
+    `<div>` + unavailableDesignPanel("Reconciliation", "ANNUAL HOLDINGS vs PTRs", ["Ticker", "Record comparison", "Status"], "Requires annual holdings and the same year's transaction reports.") +
+    `<section class="panel design-reconciliation"><div class="panel-head"><h2 class="section-h">Reconciliation summary</h2></div><dl>${["Matched records", "Holding without PTR", "PTR without holding", "Unresolved"].map(label => `<div class="book-metric"><dt>${label}</dt><dd><span class="book-track" aria-hidden="true"></span><span>—</span></dd></div>`).join("")}</dl><p class="section-note">Comparison unavailable. Missing inputs do not indicate a discrepancy.</p></section></div></div>` +
+    memberV2Sections(m, stamps, ctx, deps) +
+    `<section class="panel panel-wide" aria-labelledby="txns-h">` +
+    `<div class="panel-head"><h2 id="txns-h" class="section-h">All disclosed transactions</h2>` +
+    `<span class="panel-note">${fmtInt(m.txns.length)} rows · filed date desc · ${asOfNote(stamps)}</span></div>` +
+    entityTxnTable(m.txns, {
+      kind: "member",
+      caption: `All disclosed transactions for ${m.name}`,
+      page,
+      ctx,
+      // The owner-code half of the deleted `.entity-lede`, on the
+      // column it is about. The two `/tickers/*` callers pass nothing.
+      notes: { scope: "member-txns" },
+    }) +
+    `</section>` +
+    `<div class="design-band design-triptych">` +
+    `<section class="panel"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">SOURCE REPORTS · FILED ↓</span></div><div class="table-scroll design-history"><table class="etable"><caption class="visually-hidden">Filing history</caption><thead><tr><th>Filed</th><th>Rows</th><th>Receipt</th></tr></thead><tbody>${Array.from(m.txns.reduce((map, row) => { const key = row.doc; const old = map.get(key); map.set(key, { filed: row.filed, doc: row.doc, count: (old?.count ?? 0) + 1 }); return map; }, new Map<string, { filed: string; doc: string; count: number }>()).values()).sort((a,b) => b.filed.localeCompare(a.filed)).map(row => `<tr><td>${esc(row.filed)}</td><td>${fmtInt(row.count)}</td><td>${srcLink(row.doc)}</td></tr>`).join("")}</tbody></table></div></section>` +
+    unavailableDesignPanel("Institutional overlap", "TRACKED 13F FILERS", ["Ticker", "Filers", "Reported value"], "The member-to-institutional positions join is not published in this build.") +
+    (signalsHtml || unavailableDesignPanel("Signals for this member", "DISCLOSURE RECORD", ["Signal", "Evidence"], "Signal evidence is not available in this view.")) +
+    `</div><details class="design-supplement"><summary>Additional disclosure analysis</summary>` +
     `<div class="entity-grid">` +
     `<section class="panel" aria-labelledby="flow-h">` +
     `<div class="panel-head"><h2 id="flow-h" class="section-h">Disclosed flow by quarter</h2>` +
@@ -509,19 +537,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     topTable +
     `</section>` +
     `</div>` +
-    `<section class="panel panel-wide" aria-labelledby="txns-h">` +
-    `<div class="panel-head"><h2 id="txns-h" class="section-h">All disclosed transactions</h2>` +
-    `<span class="panel-note">${fmtInt(m.txns.length)} rows · filed date desc · ${asOfNote(stamps)}</span></div>` +
-    entityTxnTable(m.txns, {
-      kind: "member",
-      caption: `All disclosed transactions for ${m.name}`,
-      page,
-      ctx,
-      // The owner-code half of the deleted `.entity-lede`, on the
-      // column it is about. The two `/tickers/*` callers pass nothing.
-      notes: { scope: "member-txns" },
-    }) +
-    `</section>` +
+    `</details>` +
     memberPaperBlock(m)
   );
 }
@@ -670,33 +686,35 @@ export function memberV2Sections(
   /* --- net disclosed flow by ticker (F-10: flows, never holdings) --- */
   const { rows: netRows, noTickerRows } = memberNetByTicker(m.txns);
   const { ranked, undisclosedBucket } = rankNetRows(netRows, (r) => r.net, (r) => r.ticker);
-  const netRowHtml = (r: (typeof netRows)[number], overlapsPrev: boolean): string =>
-    `<tr><td class="c-ticker"><a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a></td>` +
-    `<td class="c-num c-buy">${fmtInt(r.buys)}</td>` +
-    `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
-    `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
-    `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
-    `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td></tr>`;
+  const lower = (sum: SumRanges): number => sum.kind === "closed" || sum.kind === "open" ? sum.low : 0;
+  const scale = Math.max(1, ...netRows.flatMap(row => [lower(row.purchases), lower(row.sales)]));
+  const identities = new Map<string, { asset: string; last: string }>();
+  for (const row of m.txns) if (row.ticker) {
+    const previous = identities.get(row.ticker);
+    const date = row.traded ?? "";
+    if (!previous || date > previous.last) identities.set(row.ticker, { asset: row.asset ?? "—", last: date });
+  }
+  const netRowHtml = (r: (typeof netRows)[number], overlapsPrev: boolean): string => {
+    const direction = netDirection(r.net);
+    return `<tr class="design-net-row"><td class="${direction === "accumulation" ? "c-buy" : direction === "disposal" ? "c-sell" : "c-muted"}">${direction === "accumulation" ? "BUY" : direction === "disposal" ? "SELL" : "MIXED"}</td>` +
+      `<td class="c-ticker"><a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a></td>` +
+      `<td class="design-issuer">${esc(identities.get(r.ticker)?.asset ?? "—")}</td>` +
+      `<td><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${lower(r.purchases) / scale * 50}%"></span><span class="sale" style="left:50%;width:${lower(r.sales) / scale * 50}%"></span></span><span class="visually-hidden">Purchases ${flowCellHtml(r.purchases)}; sales ${flowCellHtml(r.sales)}</span></td>` +
+      `<td class="c-num c-buy">${fmtInt(r.buys)}</td><td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
+      `<td class="c-num c-net">${netCellHtml(r.net, overlapsPrev)}</td>` +
+      `<td class="c-filed">${esc(identities.get(r.ticker)?.last || "—")}</td><td class="c-num">—</td></tr>`;
+  };
   const netTable =
     netRows.length === 0
       ? `<p class="section-note">No ticker-keyed disclosures on record.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact">` +
         `<caption class="visually-hidden">Net disclosed flow by ticker for ${esc(m.name)}</caption>` +
-        `<thead><tr><th scope="col">Ticker</th><th scope="col">Purch.</th><th scope="col">Sales</th>` +
-        /* This table hand-rolls its `<thead>` — it never
-           went through `rankingHeadHtml`, so the header conversion missed it while the
-           `footnoteBlock(RANKING_FOOTNOTES, …)` explaining its three `·§` markers WAS
-           deleted. That left three markers on a reader-facing surface pointing at an
-           explanation that no longer existed anywhere. A marker without its clause is
-           the §7 failure this run exists to prevent, not a cosmetic gap. */
-        `<th scope="col">Gross purchases ${fnMark("·§")}${memberFlowNote("gross-purchases")}</th>` +
-        `<th scope="col">Gross sales ${fnMark("·§")}${memberFlowNote("gross-sales")}</th>` +
-        `<th scope="col">Net disclosed flow ${fnMark("·§")}${memberFlowNote("net")}</th></tr></thead>` +
+        `<thead><tr><th scope="col">Net</th><th scope="col">Ticker</th><th scope="col">Issuer</th><th scope="col">Buy ◂ ▸ Sell${memberFlowNote("gross-purchases")}${memberFlowNote("gross-sales")}</th><th scope="col">Buys</th><th scope="col">Sells</th><th scope="col">Net range ${fnMark("·§")}${memberFlowNote("net")}</th><th scope="col">Last traded</th><th scope="col">13F${note("Institutional overlap is not available in this build.", {scope:"member-netflow"}, "overlap")}</th></tr></thead>` +
         `<tbody>${ranked
           .map((r, i) => netRowHtml(r, i > 0 ? netOverlaps(r.net, ranked[i - 1]!.net) === true : false))
           .join("\n")}${
           undisclosedBucket.length > 0
-            ? `<tr class="unranked-sep"><td colspan="6">${fmtInt(undisclosedBucket.length)} tickers carry a wholly-undisclosed side — no endpoints, listed last, never zero</td></tr>` +
+            ? `<tr class="unranked-sep"><td colspan="9">${fmtInt(undisclosedBucket.length)} tickers carry a wholly-undisclosed side — no endpoints, listed last, never zero</td></tr>` +
               undisclosedBucket.map((r) => netRowHtml(r, false)).join("\n")
             : ""
         }</tbody></table></div>` +
@@ -745,10 +763,7 @@ export function memberV2Sections(
   /* --- sector mix (B-5) --- */
   let sectorPanel: string;
   if (deps.resolveSector === null || deps.sectorMeta === null) {
-    sectorPanel = absentPanel(
-      "Sector mix",
-      "Sector data is not in this build. It lands with the first build after the issuer-SIC ingest (B-5) — absence is stated, never estimated.",
-    );
+    sectorPanel = unavailableDesignPanel("Sector rotation", "NET DISCLOSED FLOW", ["Sector", "Flow range", "Rows"], "Sector data is not in this build. The issuer-SIC join is required to calculate these rows.");
   } else {
     const mix = sectorMix(m.txns, deps.resolveSector);
     const mixRows = mix
@@ -843,25 +858,18 @@ export function memberV2Sections(
   }
 
   return (
-    `<div class="entity-grid">` +
+    `<div class="design-band design-member-band design-flow-band">` +
     `<section class="panel" aria-label="Net disclosed flow by ticker">` +
     `<div class="panel-head"><h2 class="section-h">Net disclosed flow by ticker</h2>` +
     // The card-foot's text, anchored on the panel it qualifies.
     `<span class="panel-note"><span class="src-derived">flows, not holdings&nbsp;·§</span>` +
     note(netFootNote, { scope: "member-netflow" }, "scope") +
     `</span>` +
-    `<span class="panel-note">interval subtraction · open bounds propagate</span></div>` +
+    `<span class="panel-note">ALL DISCLOSED HISTORY · interval subtraction · open bounds propagate</span></div>` +
     netTable +
     `</section>` +
-    `<section class="panel" aria-label="Largest recent disclosures">` +
-    `<div class="panel-head"><h2 class="section-h">Largest recent disclosures</h2>` +
-    `<span class="panel-note">trailing 90d · lower bound</span></div>` +
-    recentPanel +
-    `</section>` +
-    `</div>` +
-    `<div class="entity-grid">` +
-    sectorPanel +
-    committeePanel +
-    `</div>`
+    `<div><section class="panel design-trading-profile"><div class="panel-head"><h2 class="section-h">Trading profile</h2><span class="panel-note">DISCLOSED RECORD · NO MEDIAN BENCHMARK</span></div><dl>${memberStatTiles(m, stamps).map(tile => `<div class="book-metric"><dt>${esc(tile.label)}${tile.title ? note(tile.title, { scope: "member-tiles" }, tile.label) : ""}</dt><dd><span class="book-track" aria-hidden="true"></span><span>${esc(tile.value)}</span></dd></div>`).join("")}</dl></section>` +
+    sectorPanel + `</div></div>` +
+    `<details class="design-supplement"><summary>Recent disclosures and committee context</summary><div class="entity-grid"><section class="panel" aria-label="Largest recent disclosures"><div class="panel-head"><h2 class="section-h">Largest recent disclosures</h2><span class="panel-note">trailing 90d · lower bound</span></div>` + recentPanel + `</section>` + committeePanel + `</div></details>`
   );
 }

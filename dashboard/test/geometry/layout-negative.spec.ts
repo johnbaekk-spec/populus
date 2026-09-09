@@ -63,10 +63,11 @@ test("removing the R6 scroll cue is DETECTED", async ({ page }) => {
      The overlap half was covered; this is the other half. */
   await page.setViewportSize({ width: 964, height: 900 });
   await page.goto("/institutional/filers/1067983/");
-  const scroller = page.locator(".table-scroll").first();
+  const scroller = page.locator("[data-holdings-surface] .table-scroll").first();
   /* Same instrument as the suite, so the control cannot pass against an easier
      condition than the assertion it protects. */
   await page.addStyleTag({ content: FORCE_TABLE_OVERFLOW });
+      await scroller.scrollIntoViewIfNeeded();
 
   const clean = await scroller.evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(clean, "baseline must carry the cue, or this control proves nothing").toContain("gradient");
@@ -124,9 +125,9 @@ test("reintroducing the single-line feed grid is DETECTED as a truncated member 
      defect the control was always actually about. */
   await page.addStyleTag({
     content:
-      ".feed-row{display:grid;grid-template-areas:none;" +
+      ".reference-feed .reference-row{display:grid;grid-template-areas:none;" +
       "grid-template-columns:26px 92px 1fr 66px 118px 118px 100px 210px 56px}" +
-      ".feed-row > *{grid-area:auto}",
+      ".reference-feed .reference-row > .cell{grid-area:auto}",
   });
 
   const broken = await cell.evaluate((el) => el.clientWidth);
