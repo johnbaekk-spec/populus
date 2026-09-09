@@ -295,7 +295,10 @@ export function tickerCrowding(inst: InstData, issuerKey: string, period: string
   };
   const counts: number[] = [];
   const weights: number[] = [];
-  let ownWeight: { value: number; holders: number } | null = null;
+  // The subject's mean is kept UNROUNDED for ranking — rounding it before the
+  // strictly-below comparison ranked 10.6 above a population at 10.7 (Codex
+  // F1); the integer bps value is for display only.
+  let ownWeight: { value: number; exact: number; holders: number } | null = null;
   for (const [key, rows] of inst.holdersByIssuer) {
     const inPeriod = rows.filter((h) => h.period_of_report === period);
     if (inPeriod.length === 0) continue;
@@ -311,11 +314,11 @@ export function tickerCrowding(inst: InstData, issuerKey: string, period: string
     if (n > 0) {
       const w = sum / n;
       weights.push(w);
-      if (key === issuerKey) ownWeight = { value: Math.round(w), holders: n };
+      if (key === issuerKey) ownWeight = { value: Math.round(w), exact: w, holders: n };
     }
   }
   const holderCount = { value: own.length, pct: percentile(counts, own.length) };
-  const avgWeightBps = ownWeight === null ? null : { value: ownWeight.value, pct: percentile(weights, ownWeight.value), holdersWithBook: ownWeight.holders };
+  const avgWeightBps = ownWeight === null ? null : { value: ownWeight.value, pct: percentile(weights, ownWeight.exact), holdersWithBook: ownWeight.holders };
   const parts = [holderCount.pct, ...(avgWeightBps ? [avgWeightBps.pct] : [])];
   return { period, issuers: counts.length, holderCount, avgWeightBps, compositePct: Math.round(parts.reduce((a, b) => a + b, 0) / parts.length) };
 }

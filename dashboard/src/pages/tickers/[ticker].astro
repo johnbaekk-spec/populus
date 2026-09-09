@@ -45,8 +45,10 @@ const crowding =
   resolved.state === "resolved" && inst.state === "data" && inst.period
     ? tickerCrowding(build.inst, resolved.issuerKey, inst.period)
     : null;
+const artifact = getSignalArtifact();
 const deps: TickerPageDeps = {
-  signals: getSignalArtifact().signals.filter((s) => s.status === "active" && s.entities.ticker === entity.ticker),
+  signals: artifact.signals.filter((s) => s.status === "active" && s.entities.ticker === entity.ticker),
+  withheld: artifact.withheld,
   crowding,
   committees: build.committeeData
     ? { byMember: build.committeeData.byMember, windowFrom: build.committeeData.windowFrom, windowTo: build.committeeData.windowTo, snapshotDate: build.committeeData.snapshotDate }

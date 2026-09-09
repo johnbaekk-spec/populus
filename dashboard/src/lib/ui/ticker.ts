@@ -169,6 +169,9 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
 export interface TickerPageDeps {
   /** active signals whose subject ticker is this one */
   signals: readonly Signal[];
+  /** kinds the artifact WITHHELD this build — a withheld rule was not
+      evaluated, so a zero-hit statement must never cover it (Codex F2) */
+  withheld?: readonly { kind: Signal["kind"]; reason: string; detail: string }[];
   /** crowding percentiles when the ticker resolves to an issuer with holder rows */
   crowding: TickerCrowding | null;
   /** committee memberships keyed by bioguide (dating contract applied per trade) */
@@ -327,7 +330,7 @@ export function tickerUnifiedBody(
     /* BAND 4 — agreement + signals */
     `<div class="design-band design-ticker-band design-ticker-agree">` +
     agreementHtml(t, stamps, inst) +
-    tickerSignalsHtml(t.ticker, deps?.signals ?? null) +
+    tickerSignalsHtml(t.ticker, deps?.signals ?? null, deps?.withheld ?? []) +
     `</div>` +
     `<details class="design-supplement"><summary>Planned modules for ${esc(t.ticker)} · financials and macro</summary>` +
     `<section class="page-section planned-grid" aria-label="Planned sections">` +
@@ -362,7 +365,7 @@ function instAbsenceReason(inst: TickerInstSection, consequence: string, whenDat
     case "data":
       return whenData;
     case "resolved-no-data":
-      return `The ticker resolves to ${inst.name ?? "an issuer"} (CIK ${inst.cik ?? "?"}), but this build's aggregate holds no entity-keyed holder rows for it — its 13F securities are provisional identities without a CUSIP→issuer bridge — so ${consequence}.`;
+      return `The ticker resolves to ${esc(inst.name ?? "an issuer")} (CIK ${esc(inst.cik ?? "?")}), but this build's aggregate holds no entity-keyed holder rows for it — its 13F securities are provisional identities without a CUSIP→issuer bridge — so ${consequence}.`;
     case "module-absent":
       return `This build does not include the institutional module, so ${consequence}.`;
     case "no-map":
@@ -515,7 +518,7 @@ function agreementHtml(t: TickerEntity, stamps: BuildStamps, inst: TickerInstSec
   );
 }
 
-function tickerSignalsHtml(ticker: string, signals: readonly Signal[] | null): string {
+function tickerSignalsHtml(ticker: string, signals: readonly Signal[] | null, withheld: readonly { kind: Signal["kind"]; reason: string; detail: string }[]): string {
   if (signals === null) {
     return `<section class="panel design-ticker-signals" aria-label="Signals"><div class="panel-head"><h2 class="section-h">Signals on ${esc(ticker)}</h2><span class="panel-note">RETAINED WINDOW</span></div><p class="section-note">Signals are joined on the server; this view carries none. <a href="/signals/">Every rule, with its definition →</a></p></section>`;
   }
@@ -525,12 +528,17 @@ function tickerSignalsHtml(ticker: string, signals: readonly Signal[] | null): s
   const rows = [...kinds.entries()]
     .map(([kind, list]) => `<tr><td class="si-kind">${esc(labels[kind])}</td><td class="si-evidence">${esc(list[0]!.rule)}</td><td class="c-num">${fmtInt(list.length)} ${list.length === 1 ? "hit" : "hits"}</td></tr>`)
     .join("\n");
+  const withheldRows = withheld
+    .map((w) => `<tr class="si-withheld"><td class="si-kind">${esc(labels[w.kind] ?? w.kind)}</td><td class="si-evidence">withheld (${esc(w.reason)}): ${esc(w.detail)}</td><td class="c-num si-status-withheld">not evaluated</td></tr>`)
+    .join("\n");
+  const evaluated = withheld.length === 0 ? "every rule" : `every evaluated rule (${fmtInt(withheld.length)} withheld, listed)`;
   return (
     `<section class="panel design-ticker-signals" aria-label="Signals">` +
-    `<div class="panel-head"><h2 class="section-h">Signals on ${esc(ticker)}</h2><span class="panel-note">RETAINED WINDOW · ACTIVE HITS</span></div>` +
-    (signals.length === 0
+    `<div class="panel-head"><h2 class="section-h">Signals on ${esc(ticker)}</h2><span class="panel-note">RETAINED WINDOW · ACTIVE HITS${withheld.length > 0 ? ` · ${fmtInt(withheld.length)} WITHHELD` : ""}</span></div>` +
+    (signals.length === 0 && withheld.length === 0
       ? `<p class="section-note">Zero hits on ${esc(ticker)} in the retained window — a computed answer over every rule, not missing coverage.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact si-table"><caption class="visually-hidden">Signal hits naming ${esc(ticker)}</caption><thead><tr><th scope="col">Kind</th><th scope="col">Rule</th><th scope="col" class="num">Hits</th></tr></thead><tbody>${rows}</tbody></table></div>`) +
+      : `<div class="table-scroll"><table class="etable etable-compact si-table"><caption class="visually-hidden">Signal hits naming ${esc(ticker)}</caption><thead><tr><th scope="col">Kind</th><th scope="col">Rule</th><th scope="col" class="num">Hits</th></tr></thead><tbody>${rows}${rows && withheldRows ? "\n" : ""}${withheldRows}</tbody></table></div>` +
+        (signals.length === 0 ? `<p class="section-note">Zero hits on ${esc(ticker)} in the retained window over ${evaluated} — a computed answer for those rules; a withheld rule states its reason above and is not a zero.</p>` : "")) +
     `<p class="section-note"><a href="/signals/">Every rule, with its definition →</a></p>` +
     `</section>`
   );

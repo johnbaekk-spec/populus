@@ -160,3 +160,21 @@ test("chamber medians stay fractional for an even population — two members at 
   ]), P)!;
   assert.equal(b.topnShareBps!.median, 3000.5);
 });
+
+test("crowding ranks the subject's UNROUNDED mean weight; ties and fractional weights rank strictly below (Codex F1)", async () => {
+  const { tickerCrowding } = await import("../src/lib/inst-analytics.ts");
+  const holders = (key: string, name: string, cik: string, value: number) => ({ issuer_key: key, period_of_report: P, rank: 1, cik, filer_name: "F", issuer_name: name, issuer_key_source: "entity" as const, value_usd: value, security_count: 1, flags: [] });
+  // filer 1 book 1,000,000: issuer A weight 10.6 bps (1,060), issuer B 10.7 bps (1,070), issuer C 10.7 bps
+  const data = inst([{ cik: "1", conc: [conc("1", 1_000_000)], deltas: [] }]);
+  data.holdersByIssuer = new Map([
+    ["entity:A", [holders("entity:A", "A", "1", 1060)]],
+    ["entity:B", [holders("entity:B", "B", "1", 1070)]],
+    ["entity:C", [holders("entity:C", "C", "1", 1070)]],
+  ]);
+  const a = tickerCrowding(data, "entity:A", P)!;
+  assert.equal(a.avgWeightBps!.pct, 0, "10.6 is below both 10.7s — rounding to 11 must not rank it above them");
+  assert.equal(a.avgWeightBps!.value, 11, "the displayed value is the rounded bps");
+  const b = tickerCrowding(data, "entity:B", P)!;
+  assert.equal(b.avgWeightBps!.pct, 33, "one of three strictly below; the tie at 10.7 does not count");
+  assert.equal(tickerCrowding(data, "entity:Z", P), null);
+});
