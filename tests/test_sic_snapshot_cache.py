@@ -126,3 +126,39 @@ def test_transient_statuses_are_retried_with_backoff_then_counted_failed(monkeyp
 def test_no_resolvable_ticker_is_a_refusal_not_an_empty_snapshot(monkeypatch, tmp_path):
     with pytest.raises(FETCH.FetchError, match="no corpus ticker resolves"):
         FETCH.run(tmp_path / "out", _registry(tmp_path), _db(tmp_path, ["ZZZZ"]), "ops@example.org", sleep=lambda _s: None)
+
+
+def _wide_registry(tmp_path: Path, n: int) -> Path:
+    p = tmp_path / "wide_registry.json"
+    p.write_text(json.dumps({str(i): {"cik_str": 1000 + i, "ticker": f"T{i}", "title": f"Issuer {i}"} for i in range(n)}))
+    return p
+
+
+def _coverage_run(monkeypatch, tmp_path: Path, n: int, failing: int, out: Path):
+    """n resolvable tickers; the first `failing` CIKs get a hard 403, the rest a SIC."""
+    reg = _wide_registry(tmp_path, n)
+    db = _db(tmp_path, [f"T{i}" for i in range(n)])
+    failing_ciks = {str(1000 + i).zfill(10) for i in range(failing)}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cik = request.url.path.split("CIK")[1].split(".")[0]
+        return httpx.Response(403, content=b"blocked") if cik in failing_ciks else httpx.Response(200, json={"sic": "3571"})
+
+    _mock(monkeypatch, handler)
+    return FETCH.run(out, reg, db, "ops@example.org", sleep=lambda _s: None)
+
+
+def test_the_floor_is_the_actual_90_percent_boundary_and_a_refusal_keeps_the_old_snapshot(monkeypatch, tmp_path):
+    """Codex F4: a floor test that only exercises total failure would pass with the
+    floor replaced by `fetched == 0`. Pin the boundary from both sides: 89/100 refuses
+    (and leaves an existing snapshot byte-identical), 90/100 writes."""
+    out = tmp_path / "out"
+    out.mkdir()
+    prior = b'{"0000000001": "9999"}\n'
+    (out / FETCH.FILE_NAME).write_bytes(prior)
+    with pytest.raises(FETCH.FetchError, match=r"only 89 of 100 .*below the 90% floor"):
+        _coverage_run(monkeypatch, tmp_path, 100, 11, out)
+    assert (out / FETCH.FILE_NAME).read_bytes() == prior, "refusal must not touch the existing snapshot"
+    prov = _coverage_run(monkeypatch, tmp_path, 100, 10, out)
+    assert prov["fetched"] == 90 and prov["http_failed"] == 10
+    assert len(json.loads((out / FETCH.FILE_NAME).read_text())) == 90
