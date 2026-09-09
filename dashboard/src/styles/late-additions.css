@@ -1004,3 +1004,29 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
 .book-metric dd .visually-hidden, .si-lag-val .visually-hidden, .si-rate-val .visually-hidden, .design-newpositions td .visually-hidden, .design-clusters td .visually-hidden, .si-table td .visually-hidden { left: 0; top: 0; }
 .book-compare { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .book-metric dd > span { min-width: 0; }
+/* ---------- /tickers (Ticker.dc.html bands) ---------- */
+.design-ticker-band { margin-top: 0; }
+.design-ticker-time, .design-ticker-agree { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.design-ticker-congress, .design-ticker-holders { grid-template-columns: minmax(0,1.8fr) minmax(0,1fr); }
+.design-ticker-congress .panel-head, .design-ticker-holders .section-head { flex-wrap: wrap; }
+.design-ticker-holders .page-section { margin: 0; padding: 0; }
+.design-ticker-holders .section-h2 { font: 600 13px/1.5 var(--sans); }
+.tl-plot { position: relative; height: 120px; margin: 14px 0 0; border-bottom: 1px solid var(--rule2); }
+.tl-mid { position: absolute; left: 0; right: 0; bottom: 50%; height: 1px; background: repeating-linear-gradient(90deg, var(--rule) 0 4px, transparent 4px 8px); }
+.tl-mark { position: absolute; width: 8px; height: 8px; margin-left: -4px; transform: rotate(45deg); background: #2774AE; }
+.tl-sell { background: var(--sell); }
+.tl-other { background: var(--ink3); }
+.tl-axis { display: flex; justify-content: space-between; padding: 6px 0 0; font: 500 9.5px/1 var(--mono); color: var(--ink3); }
+.design-members-active .c-amber, .c-amber { color: var(--amber); }
+.book-track > .book-hot { background: #7A5A20; }
+.agree-row { display: grid; grid-template-columns: 150px minmax(0,1fr) 130px; gap: 14px; align-items: center; height: 40px; border-bottom: 1px solid var(--rule); font: 500 11.5px/1 var(--mono); }
+.agree-k { color: var(--ink2); font: 400 12px var(--sans); }
+.agree-v { text-align: right; font-weight: 600; }
+.agree-unavailable .design-diverging { opacity: .35; }
+.design-ticker-signals .si-evidence { max-width: none; }
+@media (max-width: 1080px) {
+  .design-ticker-time, .design-ticker-agree, .design-ticker-congress, .design-ticker-holders { grid-template-columns: minmax(0,1fr); }
+}
+@media (max-width: 720px) {
+  .agree-row { grid-template-columns: 110px minmax(0,1fr) 100px; }
+}

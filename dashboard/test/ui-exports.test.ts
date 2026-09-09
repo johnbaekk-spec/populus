@@ -85,6 +85,7 @@ const TYPE_EXPORTS = [
   "S4ErrorKind",
   "TickerHeaderInfo",
   "SignalsPageDeps",
+  "TickerPageDeps",
 ] as const;
 
 test("ui entry exports exactly the 56 reconciled runtime symbols", async () => {
@@ -95,7 +96,7 @@ test("ui entry exports exactly the 56 reconciled runtime symbols", async () => {
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
 });
 
-test("ui entry exports the 11 reconciled type-only symbols (67 total)", () => {
+test("ui entry exports the 12 reconciled type-only symbols (68 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -107,5 +108,5 @@ test("ui entry exports the 11 reconciled type-only symbols (67 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 67, "the reconciled surface is 67");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 68, "the reconciled surface is 68");
 });

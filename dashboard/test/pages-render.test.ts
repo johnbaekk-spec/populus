@@ -488,3 +488,19 @@ test("unified ticker: ledger totals count the full 12-month population, not the 
   const empty = tickerUnifiedBody({ ticker: "T", txns: [] }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
   assert.match(empty, /No rows on record/);
 });
+
+test("unified ticker: withheld signal kinds render as withheld, never inside a zero-hit claim; registry names are escaped (Codex F2, F3)", async () => {
+  const { tickerUnifiedBody } = await import("../src/lib/ui/index.ts");
+  const stamps = { buildId: "b", generatedAt: "2026-08-02 07:27 UTC", generatedAtDate: "2026-08-02" };
+  const ctx = { watched: new Set<string>(), watchedTickers: new Set<string>() };
+  const t = { ticker: "T", txns: [] } as any;
+  const withheld = tickerUnifiedBody(t, { state: "no-map" }, stamps, ctx, { fullTable: false }, { signals: [], withheld: [{ kind: "s5-jurisdiction", reason: "inputs-not-in-build", detail: "committee data absent" }], crowding: null, committees: null });
+  assert.match(withheld, /withheld \(inputs-not-in-build\): committee data absent/);
+  assert.match(withheld, /every evaluated rule \(1 withheld, listed\)/);
+  assert.doesNotMatch(withheld, /a computed answer over every rule, not missing coverage/);
+  const clean = tickerUnifiedBody(t, { state: "no-map" }, stamps, ctx, { fullTable: false }, { signals: [], withheld: [], crowding: null, committees: null });
+  assert.match(clean, /a computed answer over every rule, not missing coverage/);
+  const hostile = tickerUnifiedBody(t, { state: "resolved-no-data", name: "Example <b>Issuer</b>", cik: "0000000001" }, stamps, ctx, { fullTable: false }, { signals: [], withheld: [], crowding: null, committees: null });
+  assert.doesNotMatch(hostile, /<b>Issuer<\/b>/);
+  assert.match(hostile, /Example &lt;b&gt;Issuer&lt;\/b&gt;/);
+});
