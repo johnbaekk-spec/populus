@@ -119,3 +119,26 @@ export function latestFiledByKey(
   }
   return latest;
 }
+
+/* ---------- the /signals watch band (device-local) ---------- */
+
+/** The SEEN column for a watch-band row. Only a CURRENT cursor can classify a
+    hit as new or seen; a first visit has nothing to diff against, and a cursor
+    that predates the retained window (gap) cannot say either — both render the
+    unknown marker rather than a false "seen" (Codex round 1, F6). */
+export function watchSeenLabel(state: CursorState, filed: string): "NEW" | "seen" | "—" {
+  if (state.kind !== "current") return "—";
+  return filed > state.cursor.lastSeenFiled ? "NEW" : "seen";
+}
+
+/** The empty-result sentence for the watch band. The band joins against a
+    BOUNDED embed (the newest `cap` of `total` hits), so with a bound in force
+    "no match" is a statement about the slice, never about the window
+    (Codex round 1, F5). */
+export function watchBandEmptyText(matches: number, total: number, cap: number): string {
+  if (matches > 0) return "";
+  if (total > cap) {
+    return `No signal hits on watched subjects among the newest ${cap.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} hits embedded here — older hits in the window are not searched on this page; the complete artifact at /signals/data/signals.v1.json is.`;
+  }
+  return "No signal hits on watched subjects in the retained window — a computed answer over every hit in the window, not missing coverage.";
+}

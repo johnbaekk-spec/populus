@@ -472,3 +472,19 @@ test("parity: decode(encode(rows)) renders byte-identical bodies", async () => {
     tickerUnifiedBody(TICKER, { state: "module-absent" }, STAMPS, CTX, { fullTable: true }),
   );
 });
+
+test("unified ticker: ledger totals count the full 12-month population, not the five-row display slice; timeliness has an unknown state", async () => {
+  const { tickerUnifiedBody } = await import("../src/lib/ui/index.ts");
+  const base = { kind: "txn", txnId: "x", name: "M", party: "R", state: "TX", district: null, chamber: "house", ticker: "T", asset: "T", assetType: null, side: "purchase", owner: null, low: 1001, high: 15000, traded: "2026-07-01", filed: "2026-07-20", lag: 19, late: 0, flags: [], doc: "d" } as any;
+  const txns = Array.from({ length: 6 }, (_, i) => ({ ...base, txnId: `t${i}`, bioguide: `A00000${i}`, name: `Member ${i}` }));
+  const stamps = { buildId: "b", generatedAt: "2026-08-02 07:27 UTC", generatedAtDate: "2026-08-02" };
+  const html = tickerUnifiedBody({ ticker: "T", txns }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
+  assert.match(html, /<dt>Members · 12m<\/dt><dd>6<\/dd>/, "six members, not the five displayed");
+  assert.match(html, /6 buys · 0 sells/);
+  assert.match(html, /Every row filed inside the 45-day window/);
+  const unknown = tickerUnifiedBody({ ticker: "T", txns: [...txns, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
+  assert.doesNotMatch(unknown, /Every row filed inside the 45-day window/);
+  assert.match(unknown, /1 of 7 carry no trade date/);
+  const empty = tickerUnifiedBody({ ticker: "T", txns: [] }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
+  assert.match(empty, /No rows on record/);
+});

@@ -177,6 +177,20 @@ company are one template), **instrument** (ticker/series), **methodology**
 Plus the macro dashboard archetype (chart-heavy small multiples) at M4.
 Later modules ship as forward-looking shells until their data exists.
 
+The September overhaul fixes the shared **page composition** every archetype
+now follows, in the reference's order: masthead → identity block with the
+four-figure ledger on the right → provenance strip → three data-derived
+summary cards → dense content bands that share one-pixel seams → footer.
+`/signals` is a feed-archetype page with three bands of its own: the rule
+book (every kind, its exact rule, hits, status — withheld kinds included),
+hits beside the lag distribution and per-family hit rate, and the
+device-local watchlist band. Two deliberate deviations from the exports are
+recorded here so they are not re-litigated by accident: the masthead carries
+no build pill (R4 pins the build watermark to the footer, once), and every
+analytics panel whose inputs are not in the build renders the same
+"Not available in this build" surface with its named reason — the exports'
+illustrative rows are never reproduced.
+
 ## 8. Hard constraints
 
 - Astro, static, Cloudflare Pages. No backend, no accounts, no cookies, no

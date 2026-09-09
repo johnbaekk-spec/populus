@@ -12,7 +12,6 @@
 
 import {
   type RenderCtx,
-  type StatTile,
   esc,
   fmtInt,
   fmtUsd,
@@ -23,11 +22,11 @@ import {
   srcLinkDerived,
   terminusRow,
   footnoteBlock,
-  statTiles,
   watchStarHtml,
   memberHrefFor,
   congressTickerHref,
   partyClass,
+  sideLabel,
 } from "../format.ts";
 import {
   type TickerEntity,
@@ -38,7 +37,7 @@ import {
 } from "../derive.ts";
 import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
-import { type BuildStamps, asOfNote } from "./shared.ts";
+import { type BuildStamps, asOfNote, briefingCards, disclosureLedger } from "./shared.ts";
 import { flowCellHtml, entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
 import { instStamp, INST_STAMP_CAVEAT } from "./institutional.ts";
 
@@ -165,14 +164,6 @@ export function tickerUnifiedBody(
   const watched = ctx.watchedTickers?.has(t.ticker) ?? false;
   const disclosing = membersDisclosing(t.txns, stamps.generatedAtDate, 12, 5);
   const latestFiled = t.txns[0]?.filed ?? null;
-  const tiles: StatTile[] = [
-    { value: fmtInt(t.txns.length), label: "congress txns" },
-    {
-      value: latestFiled ? latestFiled.slice(5) : "—",
-      label: "latest PTR filing",
-      title: latestFiled ? `latest filing mentioning ${t.ticker}: ${latestFiled}` : undefined,
-    },
-  ];
   const memberRows = disclosing
     .map(
       (m) =>
@@ -220,17 +211,84 @@ export function tickerUnifiedBody(
         t.ticker,
       )}">all ${fmtInt(t.txns.length)} ↗</a></div>`;
 
+  /* Ticker.dc.html: kicker → mono ticker + mapped name + watch → lede, with the
+     four-figure ledger on the right, then the provenance strip and three
+     data-derived summaries. Every figure below is computed from this page's
+     own rows; the reference's illustrative 13F-side values are not reproduced. */
+  // Totals are over the FULL qualifying population; `disclosing` is the
+  // five-row display slice and must never be the population a total describes
+  // (Codex round 1, F2).
+  const population = membersDisclosing(t.txns, stamps.generatedAtDate, 12, Number.MAX_SAFE_INTEGER);
+  const members12 = population.length;
+  const buys12 = population.reduce((n, m) => n + m.buys, 0);
+  const sells12 = population.reduce((n, m) => n + m.sells, 0);
+  const largest = t.txns.filter((r) => r.low != null).sort((a, b) => (b.low ?? 0) - (a.low ?? 0))[0];
+  // Timeliness has THREE states: late, inside the window, and unknown (no
+  // trade date, so no lag). The universal statement is reserved for a
+  // non-empty population whose timeliness is fully known (Codex round 1, F4).
+  const late = t.txns.filter((r) => r.late === 1).length;
+  const unknownTimeliness = t.txns.filter((r) => r.lag == null).length;
+  const timelyKnown = t.txns.length > 0 && unknownTimeliness === 0;
+  const holders = inst.state === "data" ? inst.holders?.length ?? 0 : null;
+  const ledger = disclosureLedger([
+    { label: "Congress txns", value: fmtInt(t.txns.length), detail: `all PTR rows naming ${t.ticker}` },
+    { label: "Members · 12m", value: fmtInt(members12), detail: `${fmtInt(buys12)} buys · ${fmtInt(sells12)} sells · by trade date` },
+    { label: "Latest PTR", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ? `filed ${latestFiled}` : "no filing on record" },
+    {
+      label: "13F holders",
+      value: holders === null ? "—" : fmtInt(holders),
+      detail:
+        inst.state === "data"
+          ? `top-${fmtInt(inst.topn ?? 25)} slice · ${inst.period ?? ""}`
+          : inst.state === "module-absent"
+            ? "13F module not in build"
+            : "ticker not resolved to an issuer",
+    },
+  ]);
+  const stories = briefingCards([
+    {
+      tag: "Largest disclosed lower bound",
+      title: largest ? `${largest.name} · ${largest.low != null ? fmtUsd(largest.low) : "—"}${largest.high != null ? `–${fmtUsd(largest.high)}` : "+"}` : "No row discloses a lower bound",
+      body: largest
+        ? `${sideLabel(largest.side, largest.flags).text} · traded ${largest.traded ?? "date not disclosed"} → filed ${largest.filed}. Ranked over every ${t.ticker} row by the provable lower bound, never a point estimate.`
+        : `Every ${t.ticker} row is a range with no usable floor; nothing can be ranked.`,
+    },
+    {
+      tag: "Congress · trailing 12 months",
+      title: disclosing.length === 0 ? `No member disclosed ${t.ticker} in the trailing 12 months` : `${fmtInt(members12)} ${members12 === 1 ? "member" : "members"} · ${fmtInt(buys12)} buys / ${fmtInt(sells12)} sells`,
+      body: "Counts of disclosures by trade date, not dollars — ranges cannot be netted across members. Flow ranges per member are in the table below.",
+    },
+    {
+      tag: late > 0 ? "Late filings" : "Timeliness",
+      title: late > 0
+        ? `${fmtInt(late)} ${late === 1 ? "row" : "rows"} filed past the 45-day window`
+        : timelyKnown
+          ? "Every row filed inside the 45-day window"
+          : t.txns.length === 0
+            ? "No rows on record"
+            : `No row is flagged late · ${fmtInt(unknownTimeliness)} of ${fmtInt(t.txns.length)} carry no trade date, so their timeliness is unknown`,
+      body:
+        (unknownTimeliness > 0
+          ? `${fmtInt(unknownTimeliness)} ${unknownTimeliness === 1 ? "row discloses" : "rows disclose"} no trade date; lag is unknown there, not zero. `
+          : "") +
+        "Late disclosure is stated on the row, never editorialised. Both dates and the receipt stay on every row.",
+    },
+  ]);
   return (
-    `<div class="crumb">/tickers/${esc(t.ticker)} — one security, every public record we hold</div>` +
-    `<header class="entity-head">` +
-    `<div class="entity-head-copy">` +
+    `<div class="page-head">` +
+    `<div class="page-head-copy">` +
+    `<div class="kicker">Public record / Tickers / ${esc(t.ticker)}</div>` +
     `<h1 class="entity-title">${tickerTitleHtml(info)} ${watchStarHtml("ticker", t.ticker, t.ticker, watched)}</h1>` +
-    `<p class="entity-lede">Everything below is disclosure, not market data: what Congress filed about ${esc(
+    `<p class="entity-lede">Both disclosure regimes on one name: who in Congress filed about ${esc(
       t.ticker,
-    )} and which institutions reported holding it. Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots.</p>` +
+    )}, which institutions reported holding it. Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots.</p>` +
     `</div>` +
-    statTiles(tiles, { label: "Ticker disclosure statistics", compact: true }) +
-    `</header>` +
+    ledger +
+    `</div>` +
+    `<div class="design-provenance"><span>Congress = transactions in statutory ranges, 45-day lag · Institutions = quarter-end positions, 45-day lag</span>` +
+    `<span class="stamp-line">${asOfNote(stamps)}</span>` +
+    `<span>no price data — a disclosure record, not a chart</span></div>` +
+    stories +
     `<nav class="section-index" aria-label="Sections">` +
     `<a href="#congress" class="si-active">Congress <span class="si-n">${fmtInt(t.txns.length)}</span></a>` +
     `<a href="#institutional">Institutional${

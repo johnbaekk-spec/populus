@@ -10,6 +10,7 @@ const references = [
   ["Institutional.dc.html", "/institutional/"],
   ["Congress Member.dc.html", "/congress/members/M001193/"],
   ["Institutional Filer.dc.html", "/institutional/filers/1067983/"],
+  ["Signals.dc.html", "/signals/"],
 ] as const;
 
 for (const [file, route] of references) {
@@ -46,6 +47,32 @@ for (const [file, route] of references) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
         await expect(page.locator('[data-entity-table] thead th')).toHaveCount(8);
+      }
+      if (route === '/signals/') {
+        for (const title of ['Rule book', 'Hits', 'Lag distribution', 'Hit rate by family', 'Watchlist']) {
+          await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
+        }
+        await expect(page.locator('#signal-rulebook tbody tr')).toHaveCount(7);
+        await expect(page.locator('#signal-hits thead th')).toHaveCount(7);
+        // the family filter hides rows without fetching; the status line announces the count
+        const all = await page.locator('#signal-hits-body tr.si-hit').count();
+        const families = page.locator('.si-hit-filter button[data-family]');
+        if (await families.count() > 1) {
+          await families.nth(1).click();
+          const fam = await families.nth(1).getAttribute('data-family');
+          const visible = await page.locator(`#signal-hits-body tr.si-hit[data-family="${fam}"]`).count();
+          await expect(page.locator('#signal-hits-body tr.si-hit:visible')).toHaveCount(visible);
+          expect(visible).toBeLessThanOrEqual(all);
+          await families.first().click();
+          await expect(page.locator('#signal-hits-body tr.si-hit:visible')).toHaveCount(all);
+        }
+        // every rendered hit carries its receipt link
+        expect(await page.locator('#signal-hits-body tr.si-hit td.c-src a').count()).toBe(all);
+        if (width === 1440) {
+          const hits = await page.locator('#signal-hits').boundingBox();
+          const lag = await page.locator('.si-lagband').boundingBox();
+          expect(Math.abs(hits!.y - lag!.y), 'hits and lag distribution share a band').toBeLessThanOrEqual(2);
+        }
       }
       if (route === '/congress/') {
         await expect(page.locator('.reference-feed thead th')).toHaveCount(8);

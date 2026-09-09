@@ -1,4 +1,5 @@
 import { briefingCards, disclosureLedger, unavailableDesignPanel } from "./shared.ts";
+import { memberProfileStats, type ChamberBenchmark } from "../inst-analytics.ts";
 /* Pure page/section renderers. Every entity body is a string function called
    by the thin .astro page for SSR AND by the generic-route client driver —
    parity is by construction (one function, two callers). No Node APIs, no DOM.
@@ -652,6 +653,9 @@ export interface MemberV2Deps {
     mappingVersion: string;
     snapshotDate: string;
   } | null;
+  /** the chamber's per-member medians the trading profile is compared against;
+      null → "no median benchmark" (the generic /e/ route, older callers) */
+  chamber?: ChamberBenchmark | null;
 }
 
 /** The S-5 caveat. NON-REMOVABLE: rendered beside every overlap row set, and
@@ -675,6 +679,73 @@ function absentPanel(title: string, detail: string): string {
 function memberFlowNote(column: string): string {
   const clause = RANKING_FOOTNOTES_LIST.find((f) => f.mark === "§")?.html ?? "";
   return clause ? noteFromHtml(clause, { scope: "member-netflow" }, column) : "";
+}
+
+/* ---------- the trading profile (Congress Member.dc.html, right of flows) ---------- */
+
+/** Five per-member statistics on a 0–100 track with the chamber's per-member
+    MEDIAN as a gold tick — "vs House median" in the reference. Every number is
+    computed from this member's rows; the median is over the chamber's members
+    (one observation each), supplied by the page or null for callers without
+    the corpus, in which case the panel says "no median benchmark". */
+function tradingProfileHtml(m: MemberEntityT, stamps: BuildStamps, bench: ChamberBenchmark | null): string {
+  const st = memberProfileStats(m.txns);
+  const chamberWord = m.chamber === "senate" ? "Senate" : "House";
+  type Metric = { label: string; value: number | null; text: string; scale: number; median: number | null; medText: (v: number) => string; compare: ((v: number, med: number) => string) | null; title: string };
+  const pct = (v: number | null): string => (v == null ? "—" : `${Math.round(v * 100)}%`);
+  const metrics: Metric[] = [
+    {
+      label: "Filing lag (median)", value: st.medianLag, text: st.medianLag == null ? "—" : `+${fmtInt(st.medianLag)}d`, scale: 112,
+      median: bench?.medianLag ?? null, medText: (v) => `median +${fmtInt(v)}d`,
+      compare: (v, med) => (v < med ? "faster than chamber" : v > med ? "slower than chamber" : "at chamber median"),
+      title: "median days between trade date and filing date, over rows that disclose both",
+    },
+    {
+      label: "Rows per filing", value: st.rowsPerFiling, text: st.rowsPerFiling == null ? "—" : st.rowsPerFiling >= 10 ? fmtInt(Math.round(st.rowsPerFiling)) : st.rowsPerFiling.toFixed(1), scale: 100,
+      median: bench?.rowsPerFiling ?? null, medText: (v) => `median ${v >= 10 ? fmtInt(Math.round(v)) : v.toFixed(1)}`,
+      compare: (v, med) => (v > med * 3 ? "far above median" : v > med ? "above median" : v < med ? "below median" : "at median"),
+      title: "machine-readable transaction rows per distinct source filing",
+    },
+    {
+      label: "Share ≤ $15K bracket", value: st.shareSmallBracket == null ? null : st.shareSmallBracket * 100, text: pct(st.shareSmallBracket), scale: 100,
+      median: bench?.shareSmallBracket == null ? null : bench.shareSmallBracket * 100, medText: (v) => `median ${Math.round(v)}%`,
+      compare: (v, med) => (v > med ? "small-lot profile" : v < med ? "larger lots" : "at median"),
+      title: "rows whose disclosed bracket tops out at $15,000",
+    },
+    {
+      label: "Buy share of rows", value: st.buyShare == null ? null : st.buyShare * 100, text: pct(st.buyShare), scale: 100,
+      median: bench?.buyShare == null ? null : bench.buyShare * 100, medText: (v) => `median ${Math.round(v)}%`,
+      compare: (v, med) => (Math.abs(v - med) < 5 ? "≈ chamber" : v > med ? "above median" : "below median"),
+      title: "purchases as a share of all disclosed rows — a count of disclosures, not of dollars",
+    },
+    {
+      label: "Self-owned share", value: st.selfOwnedShare == null ? null : st.selfOwnedShare * 100, text: pct(st.selfOwnedShare), scale: 100,
+      median: bench?.selfOwnedShare == null ? null : bench.selfOwnedShare * 100, medText: (v) => `median ${Math.round(v)}%`,
+      compare: (v, med) => (v < med ? "family accounts" : v > med ? "mostly self-owned" : "at median"),
+      title: "rows with no spouse (SP), dependent-child (DC) or joint (JT) owner code",
+    },
+  ];
+  const row = (x: Metric): string => {
+    const w = x.value == null ? null : Math.max(0, Math.min(100, (x.value / x.scale) * 100));
+    const tick = x.median == null ? null : Math.max(0, Math.min(100, (x.median / x.scale) * 100));
+    const cmp = x.value != null && x.median != null && x.compare ? x.compare(x.value, x.median) : x.median != null ? x.medText(x.median) : "";
+    const cls = x.value != null && x.median != null ? (x.value > x.median ? " book-above" : x.value < x.median ? " book-below" : "") : "";
+    return `<div class="book-metric"><dt>${esc(x.label)}${note(x.title, { scope: "member-tiles" }, x.label)}</dt><dd>` +
+      `<span class="book-track" aria-hidden="true">${tick == null ? "" : `<i class="book-median" style="left:${tick.toFixed(1)}%"></i>`}${w == null ? "" : `<span style="width:${w.toFixed(1)}%"></span>`}</span>` +
+      `<span>${esc(x.text)}</span><span class="book-compare${cls}">${esc(cmp)}${x.median != null && cmp !== x.medText(x.median) ? `<span class="visually-hidden"> — ${esc(x.medText(x.median))}</span>` : ""}</span></dd></div>`;
+  };
+  const tiles = memberStatTiles(m, stamps);
+  return (
+    `<section class="panel design-trading-profile" aria-label="Trading profile">` +
+    `<div class="panel-head"><h2 class="section-h">Trading profile</h2>` +
+    `<span class="panel-note">${bench ? `VS ${chamberWord.toUpperCase()} MEDIAN · GOLD TICK · ${fmtInt(bench.members)} MEMBERS` : "DISCLOSED RECORD · NO MEDIAN BENCHMARK"}</span></div>` +
+    `<dl>${metrics.map(row).join("")}</dl>` +
+    `<p class="section-note book-source">${tiles.map((t) => `${esc(t.label)}: ${esc(t.value)}${t.title ? note(t.title, { scope: "member-tiles" }, t.label) : ""}`).join(" · ")}</p>` +
+    (bench
+      ? `<p class="section-note">Medians are per member across the ${fmtInt(bench.members)} ${chamberWord} members with disclosed rows in this build — one observation each, so a high-volume filer does not become the chamber. Statistics describe the filing record, never intent.</p>`
+      : "") +
+    `</section>`
+  );
 }
 
 export function memberV2Sections(
@@ -868,7 +939,7 @@ export function memberV2Sections(
     `<span class="panel-note">ALL DISCLOSED HISTORY · interval subtraction · open bounds propagate</span></div>` +
     netTable +
     `</section>` +
-    `<div><section class="panel design-trading-profile"><div class="panel-head"><h2 class="section-h">Trading profile</h2><span class="panel-note">DISCLOSED RECORD · NO MEDIAN BENCHMARK</span></div><dl>${memberStatTiles(m, stamps).map(tile => `<div class="book-metric"><dt>${esc(tile.label)}${tile.title ? note(tile.title, { scope: "member-tiles" }, tile.label) : ""}</dt><dd><span class="book-track" aria-hidden="true"></span><span>${esc(tile.value)}</span></dd></div>`).join("")}</dl></section>` +
+    `<div>` + tradingProfileHtml(m, stamps, deps.chamber ?? null) +
     sectorPanel + `</div></div>` +
     `<details class="design-supplement"><summary>Recent disclosures and committee context</summary><div class="entity-grid"><section class="panel" aria-label="Largest recent disclosures"><div class="panel-head"><h2 class="section-h">Largest recent disclosures</h2><span class="panel-note">trailing 90d · lower bound</span></div>` + recentPanel + `</section>` + committeePanel + `</div></details>`
   );

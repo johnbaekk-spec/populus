@@ -12,6 +12,7 @@
 */
 
 import { execFileSync } from "node:child_process";
+import { chamberBenchmark, type ChamberBenchmark } from "./inst-analytics.ts";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
@@ -1394,4 +1395,16 @@ export function methodologyM1Tiles(stats: Record<string, any>, filedFrom: string
       statsKeys: ["default.late_filing.overall.median_days_to_file", "default.late_filing.overall.late_count"],
     },
   ];
+}
+
+/* ---------- the chamber benchmark, computed once per build process ---------- */
+
+const chamberCache = new Map<string, ChamberBenchmark | null>();
+
+/** Per-member medians for a chamber — the trading profile's "vs House median".
+    Memoized: every member page in a build reads the same benchmark. */
+export function chamberBenchmarkFor(build: BuildData, chamber: "house" | "senate"): ChamberBenchmark | null {
+  const key = `${build.buildId}|${chamber}`;
+  if (!chamberCache.has(key)) chamberCache.set(key, chamberBenchmark(build.members, chamber));
+  return chamberCache.get(key) ?? null;
 }
