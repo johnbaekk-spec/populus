@@ -47,6 +47,22 @@ const link = (href: string, text: string, cls = ""): HTMLAnchorElement => {
   return a;
 };
 
+/** A receipt is re-assembled from its parsed parts under a constant `https://`
+    prefix — never assigned as the string that came out of the document — so a
+    non-https or malformed receipt renders as "—" and nothing else can reach
+    the href. */
+function safeReceiptHref(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" || !u.hostname) return null;
+  return "https://" + u.hostname + u.pathname + u.search;
+}
+
 function initHitFilter(): void {
   const seg = document.querySelector<HTMLElement>(".si-hit-filter");
   const body = document.getElementById("signal-hits-body");
@@ -144,8 +160,9 @@ function initWatchBand(): void {
       const fresh = isNew(filed);
       tr.append(cell(`c-num ${fresh ? "si-new" : "c-muted"}`, fresh ? "NEW" : state.kind === "none" ? "—" : "seen"));
       const rcpt = cell("c-src");
-      if (typeof receipt === "string" && receipt.startsWith("https://")) {
-        const a = link(receipt, `${srcLabel(receipt)} ↗`);
+      const safe = safeReceiptHref(receipt);
+      if (safe) {
+        const a = link(safe, `${srcLabel(safe)} ↗`);
         a.rel = "noopener";
         a.target = "_blank";
         rcpt.append(a);
