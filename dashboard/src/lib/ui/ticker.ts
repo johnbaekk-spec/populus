@@ -304,7 +304,7 @@ export function tickerUnifiedBody(
     /* BAND 1 — the two regimes over time */
     `<div class="design-band design-ticker-band design-ticker-time">` +
     timelineHtml(t, stamps) +
-    unavailableDesignPanel("Institutions · holder flow", "TRACKED FILERS · 6Q · NEW+ADD ▲ · TRIM+EXIT ▼", ["Quarter", "New + add", "Trim + exit"], inst.state === "data" ? "Per-issuer quarter-over-quarter holder actions need the issuer-keyed activity join, which this build's aggregate does not publish." : "The ticker does not resolve to an issuer in this build, so no holder flow can be grouped.", "design-holderflow") +
+    unavailableDesignPanel("Institutions · holder flow", "TRACKED FILERS · 6Q · NEW+ADD ▲ · TRIM+EXIT ▼", ["Quarter", "New + add", "Trim + exit"], instAbsenceReason(inst, "no holder flow can be grouped", "Per-issuer quarter-over-quarter holder actions need the issuer-keyed activity join, which this build's aggregate does not publish."), "design-holderflow") +
     `</div>` +
     /* BAND 2 — Congress rows (wide) + members active */
     `<section class="page-section" id="congress">` +
@@ -354,6 +354,25 @@ export function tickerUnifiedBody(
 
 
 /* ---------- Ticker.dc.html bands ---------- */
+
+/** The institutional side has FOUR distinct absence states and each band must
+    name the one that applies rather than collapsing them into "not resolved". */
+function instAbsenceReason(inst: TickerInstSection, consequence: string, whenData: string): string {
+  switch (inst.state) {
+    case "data":
+      return whenData;
+    case "resolved-no-data":
+      return `The ticker resolves to ${inst.name ?? "an issuer"} (CIK ${inst.cik ?? "?"}), but this build's aggregate holds no entity-keyed holder rows for it — its 13F securities are provisional identities without a CUSIP→issuer bridge — so ${consequence}.`;
+    case "module-absent":
+      return `This build does not include the institutional module, so ${consequence}.`;
+    case "no-map":
+      return `This build carries no ticker→issuer mapping input, so ${consequence}.`;
+    case "ambiguous":
+      return `This ticker names more than one issuer in the SEC's present-day ticker file, so ${consequence}.`;
+    default:
+      return `This ticker is not in the SEC's present-day ticker file, so ${consequence}.`;
+  }
+}
 
 const LOG_LO = 3;
 const LOG_HI = Math.log10(50_000_000);
@@ -452,7 +471,7 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
 
 function crowdingHtml(c: TickerCrowding | null, inst: TickerInstSection): string {
   if (c === null) {
-    return unavailableDesignPanel("Crowding", "PCT-RANK VS TRACKED NAMES", ["Measure", "Percentile"], inst.state === "data" ? "No holder rows for the selected period, so no percentile can be ranked." : "The ticker does not resolve to an issuer in this build, so it cannot be ranked among tracked names.", "design-crowding");
+    return unavailableDesignPanel("Crowding", "PCT-RANK VS TRACKED NAMES", ["Measure", "Percentile"], instAbsenceReason(inst, "it cannot be ranked among tracked names", "No holder rows for the selected period, so no percentile can be ranked."), "design-crowding");
   }
   const bar = (label: string, pct: number, text: string, hint: string): string =>
     `<div class="book-metric"><dt>${esc(label)}${note(hint, { scope: "ticker-crowding" }, label)}</dt><dd>` +
@@ -491,7 +510,7 @@ function agreementHtml(t: TickerEntity, stamps: BuildStamps, inst: TickerInstSec
     row("Congress net ($ bound)", dir === "accumulation" ? 1 : 0, dir === "disposal" ? 1 : 0, netIntervalText(net), dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted") +
     `<div class="agree-row agree-unavailable"><span class="agree-k">Filers net (actions)</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not in build</span></div>` +
     `<div class="agree-row agree-unavailable"><span class="agree-k">Filers net ($ Q/Q)</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not in build</span></div>` +
-    `<p class="section-note">${inst.state === "data" ? "The filer side needs per-issuer quarter-over-quarter actions, which the published aggregate does not carry for this issuer." : "The ticker does not resolve to an issuer in this build, so the filer side cannot be computed."} Convergence and divergence are stated only when both sides are computed.</p>` +
+    `<p class="section-note">${instAbsenceReason(inst, "the filer side cannot be computed", "The filer side needs per-issuer quarter-over-quarter actions, which the published aggregate does not carry for this issuer.")} Convergence and divergence are stated only when both sides are computed.</p>` +
     `</section>`
   );
 }
