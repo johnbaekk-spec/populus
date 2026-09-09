@@ -40,6 +40,7 @@ def _registry(tmp_path: Path) -> Path:
 
 def _db(tmp_path: Path, tickers: list[str | None]) -> Path:
     p = tmp_path / "populus.db"
+    p.unlink(missing_ok=True)
     conn = sqlite3.connect(p)
     conn.execute("CREATE TABLE v_default_transactions (ticker TEXT)")
     conn.executemany("INSERT INTO v_default_transactions VALUES (?)", [(t,) for t in tickers])
