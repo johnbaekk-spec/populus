@@ -49,9 +49,13 @@ def _db(tmp_path: Path, tickers: list[str | None]) -> Path:
     return p
 
 
+_REAL_CLIENT = httpx.Client
+
+
 def _mock(monkeypatch, handler):
-    real = httpx.Client
-    monkeypatch.setattr(FETCH.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    # Always wrap the ORIGINAL client: a second _mock in one test must not wrap
+    # the first wrapper (which would pass `transport` twice).
+    monkeypatch.setattr(FETCH.httpx, "Client", lambda **kw: _REAL_CLIENT(transport=httpx.MockTransport(handler), **kw))
 
 
 def test_resolution_skips_unmapped_and_ambiguous_tickers_and_dedupes_ciks(tmp_path):
