@@ -1,10 +1,12 @@
 ---
 // D-2 (ALPHA-UX): /signals — every signal renders its exact rule, magnitude
 // interval, receipts, and the lag caveat; withheld kinds render as withheld
-// with their typed reason.
+// with their typed reason. Composition follows the Signals reference export:
+// rule book, hits beside the lag distribution and hit rate, and the
+// device-local watchlist band.
 import Base from "../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact } from "../../lib/data";
-import { signalsBody } from "../../lib/ui/index.ts";
+import { signalsBody, type SignalsPageDeps } from "../../lib/ui/index.ts";
 import type { RenderCtx } from "../../lib/format";
 
 const build = getBuildData();
@@ -14,28 +16,32 @@ const ctx: RenderCtx = {
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };
-const body = signalsBody(artifact, ctx);
+// The hit-rate denominator: rows FILED inside the artifact's own coverage
+// window — the same population every rule was evaluated over. Counted here
+// because only the page holds the full row set; the artifact carries the
+// window bounds it was computed against.
+const rowsEvaluated = build.txns.filter(
+  (t) => t.filed >= artifact.coverageFrom && t.filed <= artifact.coverageTo,
+).length;
+// The latest filed batch: every transaction sharing the newest filed date.
+// `build.txns` is sorted filed-desc, so the first row names the date.
+const latestFiled = build.txns[0]?.filed ?? null;
+const latestBatch = latestFiled ? build.txns.filter((t) => t.filed === latestFiled) : [];
+const deps: SignalsPageDeps = { rowsEvaluated, latestBatch, latestBatchFiled: latestFiled };
+const body = signalsBody(artifact, ctx, deps);
 const description =
   "Congressional disclosure signals with their exact rules, interval magnitudes, and receipts — " +
   "calibrated thresholds only; uncalibrated or out-of-envelope kinds are withheld and say so.";
 ---
 
-<Base title="Signals — Public Filings" description={description} active="congress">
-  <main class="shell page">
-    <div class="page-head">
-      <div class="page-head-copy">
-        <div class="kicker">/signals</div>
-        <h1 class="page-title">Signals</h1>
-        <p class="page-lede">
-          Rule-generated observations over the congressional disclosure corpus.
-          Every signal states its own formula and links to the filings it came
-          from; magnitudes are statutory-range intervals, never point
-          estimates. Institutional signals wait on closed 13F periods and are
-          not simulated. The raw artifact:
-          <a href="/signals/data/signals.v1.json">signals.v1.json</a>
-        </p>
-      </div>
-    </div>
+<Base title="Signals — Public Filings" description={description} active="signals">
+  <main class="shell page design-page" id="signals-page">
     <Fragment set:html={body} />
   </main>
+  <script>
+    import { initSignalsPage } from "../../scripts/signals-client";
+    import { initNotes } from "../../scripts/notes";
+    initSignalsPage();
+    initNotes();
+  </script>
 </Base>

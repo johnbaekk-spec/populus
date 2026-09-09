@@ -36,6 +36,8 @@ const VALUE_EXPORTS = [
   "entityTxnRowsHtml",
   "entityTxnTable",
   "filerBody",
+  "clusterBoardHtml",
+  "newPositionLeadersHtml",
   "filerEdgarBlock",
   "filerPeriodSectionHtml",
   "filerTiles",
@@ -82,9 +84,10 @@ const TYPE_EXPORTS = [
   "RankingSectionOpts",
   "S4ErrorKind",
   "TickerHeaderInfo",
+  "SignalsPageDeps",
 ] as const;
 
-test("ui entry exports exactly the 54 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 56 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
@@ -92,7 +95,7 @@ test("ui entry exports exactly the 54 reconciled runtime symbols", async () => {
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
 });
 
-test("ui entry exports the 10 reconciled type-only symbols (64 total)", () => {
+test("ui entry exports the 11 reconciled type-only symbols (67 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -104,5 +107,5 @@ test("ui entry exports the 10 reconciled type-only symbols (64 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 64, "the reconciled surface is 64");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 67, "the reconciled surface is 67");
 });

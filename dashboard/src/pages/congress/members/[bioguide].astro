@@ -6,7 +6,7 @@
 // construction. Static paths: every member in the extract minus budget cuts
 // (the budget-cut rule); cut members stay reachable at /e/?k=m:… with their endpoint.
 import Base from "../../../layouts/Base.astro";
-import { getBuildData, getSignalArtifact, sectorResolver } from "../../../lib/data";
+import { getBuildData, getSignalArtifact, sectorResolver, chamberBenchmarkFor } from "../../../lib/data";
 import { memberBody, memberSignalsPanel, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
 
@@ -48,6 +48,7 @@ const v2Deps: MemberV2Deps = {
         snapshotDate: build.committeeData.snapshotDate,
       }
     : null,
+  chamber: chamberBenchmarkFor(build, member.chamber),
 };
 const bodyHtml =
   memberBody(member, stamps, ssrCtx, 0, v2Deps, memberSignalsPanel(getSignalArtifact(), member.bioguide, ssrCtx));

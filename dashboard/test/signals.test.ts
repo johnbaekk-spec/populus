@@ -167,7 +167,8 @@ test("S-2 rule states the era scope; S-6 requires late AND large", () => {
 test("D-2 body: rules, receipts, lag caveat, and withheld kinds all render", () => {
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
   const html = signalsBody(art, { watched: new Set() });
-  assert.match(html, /Rule:/);
+  assert.match(html, /Rule book/);
+  assert.match(html, /amount lower bound ≥ \$250K/);
   assert.match(html, /eFD&nbsp;↗/);
   assert.ok(html.includes("WITHHELD"), "withheld kinds render as withheld");
   assert.ok(html.includes(LAG_CAVEAT.slice(0, 40)));
@@ -256,7 +257,8 @@ test("review r2-F3: tombstones never render as active — separate section, sepa
   assert.match(html, /Superseded in build/);
   // The active S-1 count excludes the tombstone: actives in window minus one.
   const activeS1 = b.signals.filter((s) => s.kind === "s1-large" && s.status === "active").length;
-  assert.match(html, new RegExp(`${activeS1} in window`));
+  // The rule book's HITS cell counts actives only.
+  assert.match(html, new RegExp(`<td class="c-num si-hits">${activeS1}</td>`));
   const member = panel(b, "T000001", { watched: new Set() });
   assert.match(member, /superseded in the window/);
 });

@@ -30,7 +30,7 @@ import Mark from "../components/Mark.astro";
 interface Props {
   title: string;
   description: string;
-  active?: "home" | "congress" | "institutional" | "financials" | "macro" | "methodology";
+  active?: "home" | "congress" | "institutional" | "signals" | "financials" | "macro" | "methodology";
   /** search-first masthead emphasis (Ticker Unified) — one shell, variant props */
   searchEmphasis?: boolean;
   /** footer variant: the two 13F pages swap the §13107(c) block for the 13F
@@ -80,7 +80,7 @@ const build = getBuildData();
           <nav class="site-nav" id="site-nav" aria-label="Modules">
             <a href="/congress/" aria-current={active === "congress" ? "page" : undefined}>Congress</a>
             <a href="/institutional/" aria-current={active === "institutional" ? "page" : undefined}>Institutional</a>
-            <a href="/signals/">Signals</a>
+            <a href="/signals/" aria-current={active === "signals" ? "page" : undefined}>Signals</a>
           </nav>
         </div>
         <div class="masthead-right">

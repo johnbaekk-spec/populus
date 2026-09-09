@@ -5,7 +5,9 @@
 // cumulative registry counts are labeled as all-period values).
 import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
-import { briefingCards, disclosureLedger, unavailableDesignPanel, s1ModuleAbsent, s7Banner, addsSectionHtml } from "../../lib/ui/index.ts";
+import { briefingCards, disclosureLedger, unavailableDesignPanel, s1ModuleAbsent, s7Banner, addsSectionHtml, clusterBoardHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
+import { newPositionLeaders, trackedValueFor } from "../../lib/inst-analytics";
+import { clusterBoard } from "../../lib/activity";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { concentrationFor, deltasFor, typingFor, addsFor, addsExclusionCount } from "../../lib/inst";
@@ -14,6 +16,7 @@ import { biggestChange, MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/
 import {
   footnoteBlock,
   fmtInt,
+  fmtUsd,
   esc,
   compactDisclosure,
   noteBody,
@@ -150,15 +153,25 @@ if (!inst.present) {
        it is about scripting rather than about a column and no column note is
        the right home for it. */
     `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
+  /* The analytics bands are bound to ONE closed quarter — the newest whose
+     45-day filing window has passed — never each filer's latest period folded
+     into a falsely uniform total. `addsPeriods` is the corpus period list. */
+  const analyticsPeriod = addsPeriod;
+  const tracked = analyticsPeriod === null ? null : trackedValueFor(inst, analyticsPeriod);
+  const leaders = analyticsPeriod === null ? null : newPositionLeaders(inst, analyticsPeriod, { limit: 5 });
+  const clusters = analyticsPeriod === null
+    ? ({ present: false, reason: "no-rows-for-period" } as const)
+    : clusterBoard({ instPresent: true, period: analyticsPeriod, limit: 9 });
+  const consensus = clusters.present ? clusters.board.rows[0] ?? null : null;
   bodyHtml =
     `<header class="entity-head"><div class="entity-head-copy">` +
     `<div class="kicker">Public record / Institutional · Form 13F</div><h1 class="entity-title">Institutional</h1>` +
     `<p class="entity-lede">13F position discovery across tracked filers · reported positions, concentration, and changes between quarters.</p>` +
     `</div>` + disclosureLedger([
-      { label: "Filers tracked", value: fmtInt(inst.filers.length), detail: "published registry" },
-      { label: "Tracked value", value: "—", detail: "common-quarter total unavailable" },
-      { label: "Consensus add", value: "—", detail: "cluster analysis unavailable" },
-      { label: "Congress overlap", value: "—", detail: "cross-module coverage unavailable" },
+      { label: "Filers tracked", value: fmtInt(inst.filers.length), detail: tracked ? `${fmtInt(tracked.filers)} filed ${tracked.period}` : "published registry" },
+      { label: "Tracked value", value: tracked ? fmtUsd(tracked.totalValueUsd) : "—", detail: tracked ? `13F long only · ${tracked.period}${tracked.partialBooks > 0 ? ` · ≥ (${fmtInt(tracked.partialBooks)} partial books)` : ""}` : "no closed quarter yet" },
+      { label: "Consensus add", value: consensus ? consensus.issuerName.length > 14 ? `${consensus.issuerName.slice(0, 13)}…` : consensus.issuerName : "—", detail: consensus ? `${fmtInt(consensus.newPositions)} filers opened it · ${analyticsPeriod}` : analyticsPeriod ? `no ≥3-filer cluster in ${analyticsPeriod}` : "no closed quarter yet" },
+      { label: "Congress overlap", value: "—", detail: "cross-module join not published" },
     ]) + `</header>` +
     `<div class="design-provenance">13F universe · quarterly, 45-day lag · not current holdings <span>Latest quarter-end ${esc(inst.watermarks.latest_period_of_report ?? "unavailable")}</span> <a href="#inst-data-note">Long positions only · coverage §</a></div>` +
     briefingCards([
@@ -167,10 +180,10 @@ if (!inst.present) {
       { tag: "Reported changes", title: "New positions, increases and decreases", body: "Changes are classified from comparable reported positions. A missing position is not proof of a sale; value changes also include price changes." },
     ]) +
     `<div class="design-band design-institutional-band">` +
-    unavailableDesignPanel("Cluster board", "≥3 filers moved the same name · Q/Q", ["Ticker", "Add / Trim", "Filers", "Net $Δ", "Avg wt", "Crowd", "Congress"], "Cluster, crowding and Congress overlap aggregates are not published in this build. Individual reported changes remain available alongside.", "design-clusters") +
+    clusterBoardHtml(clusters, analyticsPeriod) +
     `<div class="design-activity">` + activitySectionHtml(feed, { reference: true, tierOf: (cik) => filerTier(build, cik) }) + `</div></div>` +
     `<div class="design-band design-institutional-band">` +
-    unavailableDesignPanel("Conviction leaders", "NEW STAKES ≥2% OF BOOK", ["Filer", "New weight", "New positions"], "New-position weights across the complete comparable book are not published in this build.", "design-newpositions") +
+    newPositionLeadersHtml(leaders, (cik) => filerTier(build, cik), analyticsPeriod) +
     unavailableDesignPanel("Sector rotation", "Tracked filers Q/Q · value-weighted pp", ["Sector", "Change", "PP Q/Q", "Congress direction"], "A period-aligned sector rotation and Congress comparison is not available in this build.", "design-rotation") + `</div>` +
     `<details class="design-supplement"><summary>Recently added issuers · explore published changes</summary>` + addsHtml + `</details>` +
     `<section class="panel panel-wide" id="inst-managers-section" aria-label="Manager directory">` +

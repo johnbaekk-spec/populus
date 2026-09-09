@@ -890,3 +890,117 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
 .reference-net-bound.positive { color:var(--buy); }
 .reference-net-bound.negative { color:var(--sell); }
+
+/* ---------- /signals (Signals.dc.html): rule book, hits, lag, rates, watchlist ---------- */
+#signals-page .page-head { align-items: center; }
+#signals-page .page-head-copy { flex: 1 1 42%; }
+#signals-page .design-ledger { flex: 1 1 50%; margin: 0; }
+#signals-page .stamp-line { color: var(--buy); }
+.si-rulebook { margin-top: 0; border-top: 0; }
+.si-table { font-size: 11.5px; }
+.si-table td { padding: 8px 6px; vertical-align: middle; }
+.si-table .si-family { font: 500 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; }
+.si-table .si-kind { font: 600 10px var(--mono); letter-spacing: .08em; white-space: nowrap; }
+.si-family-behaviour .si-kind, .si-family-structure .si-kind { color: var(--accent); }
+.si-family-novelty .si-kind { color: var(--buy); }
+.si-family-compliance .si-kind, .si-family-context .si-kind { color: var(--amber); }
+.si-withheld .si-kind, .si-family-withheld .si-kind { color: var(--sell); }
+tr.si-rule, tr.si-hit { border-left: 3px solid transparent; }
+tr.si-rule > td:first-child, tr.si-hit > td:first-child { box-shadow: inset 3px 0 0 var(--rule); }
+tr.si-family-behaviour > td:first-child, tr.si-family-structure > td:first-child { box-shadow: inset 3px 0 0 #2774AE; }
+tr.si-family-novelty > td:first-child { box-shadow: inset 3px 0 0 var(--buy); }
+tr.si-family-compliance > td:first-child, tr.si-family-context > td:first-child { box-shadow: inset 3px 0 0 #7A5A20; }
+tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
+.si-rule-text { font: 400 11.5px/1.4 var(--sans); color: var(--ink); max-width: 420px; }
+.si-why { font: 400 11.5px/1.4 var(--sans); color: var(--ink2); max-width: 380px; }
+.si-hits { font-weight: 600; font-family: var(--mono); }
+.si-status { font: 500 10px var(--mono); letter-spacing: .06em; white-space: nowrap; }
+.si-status-active { color: var(--buy); }
+.si-status-withheld { color: var(--sell); }
+.si-status .note-btn { margin-left: 2px; }
+.design-signals-band { grid-template-columns: minmax(0,1.8fr) minmax(0,1fr); }
+.design-signals-band > div { padding-top: 0; }
+.design-signals-band .panel-head { flex-wrap: wrap; }
+.si-hits .panel-head .seg { margin-left: auto; }
+.si-hits-scroll { max-height: 420px; overflow: auto; }
+.si-hits-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.si-subject { font: 400 12px var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.si-subject a { color: var(--accent); }
+.si-ticker { font: 600 11px var(--mono); color: var(--ink); margin-left: 4px; }
+.si-evidence { font: 400 11px/1.4 var(--sans); color: var(--ink2); max-width: 300px; }
+.si-stamp { font: 600 9px var(--mono); letter-spacing: .06em; color: var(--buy); }
+.si-mag { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.si-when { font-family: var(--mono); color: var(--ink2); white-space: nowrap; }
+.si-lag { color: var(--ink3); }
+.si-late { color: var(--amber); font-weight: 600; }
+.si-new { color: var(--amber); font: 600 10px var(--mono); }
+.si-gold { color: var(--amber); }
+.si-empty { white-space: normal; color: var(--ink3); font: 400 11px/1.6 var(--sans); padding: 22px 6px !important; }
+.si-lags { list-style: none; margin: 4px 0 0; padding: 0; }
+.si-lags li { display: grid; grid-template-columns: 150px minmax(0,1fr) 52px; gap: 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--rule); }
+.si-lag-name { font: 500 12px/1.3 var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.si-party { font: 500 9.5px var(--mono); }
+.c-dem { color: var(--dem); }
+.si-bar { position: relative; display: block; height: 3px; background: var(--raised); }
+.si-bar-fill { position: absolute; inset: 0 auto 0 0; background: #2774AE; }
+.si-bar-late { background: #7A5A20; }
+.si-bar-tick { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--amber); opacity: .6; }
+.si-fill-novelty { background: var(--buy); }
+.si-fill-compliance, .si-fill-context { background: #7A5A20; }
+.si-lag-val { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.si-rates { margin: 6px 0 0; }
+.si-rate { display: grid; grid-template-columns: 120px minmax(0,1fr) 70px; gap: 14px; align-items: center; padding: 7px 0; }
+.si-rate dt { font: 400 12px var(--sans); color: var(--ink2); text-align: right; }
+.si-rate dd { display: contents; margin: 0; }
+.si-rate-val { font: 500 11.5px var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
+.si-rate.si-withheld .si-rate-val { color: var(--sell); }
+.si-watchband .panel-head { flex-wrap: wrap; }
+.si-watch-controls { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
+.si-watch-chips { border: 0; gap: 8px; }
+.si-watch-chips .chip { border: 1px solid var(--rule2); border-radius: 2px; font: 500 10.5px var(--mono); color: var(--ink); text-decoration: none; }
+.si-watch-chips .chip + .chip { border-left: 1px solid var(--rule2); }
+.si-watchband .pager-btn { font: 500 10.5px var(--mono); }
+.site-nav a[aria-current="page"] { position: relative; }
+@media (max-width: 1080px) {
+  .design-signals-band { grid-template-columns: minmax(0,1fr); }
+  .si-hits .panel-head .seg { margin-left: 0; }
+  .si-rule-text, .si-why { max-width: none; }
+}
+@media (max-width: 720px) {
+  #signals-page .page-head-copy, #signals-page .design-ledger { flex-basis: 100%; }
+  .si-lags li { grid-template-columns: 110px minmax(0,1fr) 48px; }
+  .si-rate { grid-template-columns: 90px minmax(0,1fr) 60px; }
+  .si-table { min-width: 720px; }
+  .si-watch-controls { margin-left: 0; flex-wrap: wrap; }
+}
+.si-lag-n { font: 500 9.5px var(--mono); color: var(--ink3); }
+/* cluster board + new-position leaders + benchmarked book shape */
+.design-cluster-bar:after { display: none; }
+.design-cluster-bar > span { left: 0; }
+.design-cluster-bar > .sale { left: auto; right: 0; }
+.design-clusters .c-issuer { font: 400 11.5px var(--sans); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.design-weight-bar { display: block; position: relative; height: 3px; min-width: 90px; background: var(--rule); }
+.design-weight-bar > span { position: absolute; inset: 0 auto 0 0; background: #2774AE; }
+.design-newpositions .c-rank { font: 600 11px var(--mono); color: var(--ink3); width: 14px; }
+.design-newpositions .c-accent { color: var(--accent); font-weight: 600; }
+.book-track { position: relative; }
+.book-median { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--amber); opacity: .7; }
+.book-metric dd { grid-template-columns: minmax(0,1fr) 70px minmax(0,110px); }
+.book-compare { font: 400 10px var(--mono); color: var(--ink3); white-space: nowrap; }
+.book-above { color: var(--amber); }
+.book-below { color: var(--accent); }
+.design-trading-profile .book-metric dd { grid-template-columns: 40px minmax(0,1fr) minmax(0,120px); }
+/* compact reference rows in the institutional band */
+.design-activity-row > td { white-space: nowrap; }
+.design-activity-row > td:nth-child(2), .design-activity-row > td:nth-child(3) { white-space: nowrap; max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.design-activity .id-chip { font-size: 8px; padding: 0 3px; }
+.design-activity .etable td { padding-top: 7px; padding-bottom: 7px; }
+.design-newpositions td, .design-clusters td { white-space: nowrap; }
+.design-holdings-band > .design-unavailable .table-scroll { min-height: 200px; }
+.design-institutional-band .design-unavailable .table-scroll { min-height: 150px; }
+.design-institutional-band .design-newpositions .table-scroll, .design-institutional-band .design-rotation .table-scroll { min-height: 120px; }
+/* Accessibility text inside right-aligned cells is absolutely positioned; anchor it to the cell so it never extends the document past the right edge. */
+.book-metric dd > span, .si-lag-val, .si-rate-val, .design-newpositions td, .design-clusters td, .si-table td { position: relative; }
+.book-metric dd .visually-hidden, .si-lag-val .visually-hidden, .si-rate-val .visually-hidden, .design-newpositions td .visually-hidden, .design-clusters td .visually-hidden, .si-table td .visually-hidden { left: 0; top: 0; }
+.book-compare { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.book-metric dd > span { min-width: 0; }

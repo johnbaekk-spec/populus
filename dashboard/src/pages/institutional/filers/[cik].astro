@@ -15,6 +15,7 @@ import { filerPeriods } from "../../../lib/inst";
 import { filerBody } from "../../../lib/ui/index.ts";
 import { filingWindow } from "../../../lib/derive";
 import { serializeInlineJson } from "../../../lib/inline-json";
+import { concentrationBenchmark } from "../../../lib/inst-analytics";
 
 export function getStaticPaths() {
   // Pre-render ONLY the top 1,500 by descending
@@ -53,6 +54,9 @@ const agg = filerAggregateInputs(build, cik10);
 const conc = agg.concByPeriod[period] ?? null;
 const deltas = agg.deltasByPeriod[period] ?? [];
 const deltaTotal = agg.deltaTotalsByPeriod[period] ?? 0;
+// The tracked-population medians the book-shape band compares against, per
+// period, computed once here and embedded for the period switch.
+const benchmarks = Object.fromEntries(periods.map((p) => [p, concentrationBenchmark(inst, p)]));
 
 const bodyHtml = filerBody(
   { cik: cik10, name: filer.filer_name, latestPeriod: filer.latest_period },
@@ -63,7 +67,7 @@ const bodyHtml = filerBody(
   latestFiled,
   inst.topn,
   window,
-  { total: deltaTotal },
+  { total: deltaTotal, benchmark: benchmarks[period] ?? null },
 );
 
 // Every period's data, embedded for the client-side period selector: the switch
@@ -73,6 +77,7 @@ const bodyHtml = filerBody(
 const periodData = serializeInlineJson({
   latestFiled,
   topn: inst.topn,
+  benchmarks,
   periods: Object.fromEntries(
     periods.map((p) => [
       p,

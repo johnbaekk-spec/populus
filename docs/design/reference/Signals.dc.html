@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+@font-face { font-family:"IBM Plex Sans"; font-weight:400; src:url("fonts/IBMPlexSans-Regular.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-weight:500; src:url("fonts/IBMPlexSans-Medium.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-weight:600; src:url("fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-weight:700; src:url("fonts/IBMPlexSans-Bold.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:400; src:url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:500; src:url("fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:600; src:url("fonts/JetBrainsMono-SemiBold.woff2") format("woff2"); }
+body { margin:0; background:#03050A; color:#E9F0F7; font:400 13px/1.5 "IBM Plex Sans",-apple-system,sans-serif; -webkit-font-smoothing:antialiased; }
+a { color:#A9D2F2; text-decoration:none; } a:hover { color:#EAF4FC; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+</style>
+</helmet>
+<section style="padding:40px; display:flex; flex-direction:column; gap:12px; align-items:flex-start">
+  <div style="font:600 11px/1 'JetBrains Mono'; color:#64748A; letter-spacing:.14em">SIGNALS · INDEX · RULES ARE REAL DEFINITIONS · PRE-EVENT + COMMITTEE NEED THE EVENTS / ROSTER JOINS · HITS MIX REAL BUILD ROWS (STAMPED) AND <span style="color:#FFD100">ILLUSTRATIVE</span> 13F-SIDE EXAMPLES</div>
+  <div data-screen-label="Signals 1440" style="width:1440px; background:#04070D; outline:1px solid #16202E; overflow:hidden">
+    <header style="display:flex; align-items:center; gap:24px; height:52px; padding:0 32px; border-bottom:1px solid #16202E">
+      <span style="display:inline-flex; align-items:center; gap:10px"><svg width="18" height="18" viewBox="0 0 24 24" style="display:block"><path d="M12 4 H20 V20 H4 V12" fill="none" stroke="#EAF4FC" stroke-width="2.6"></path><rect x="1" y="1" width="8" height="8" fill="#2774AE"></rect></svg><span style="font:700 14px/1 'IBM Plex Sans'; letter-spacing:.22em; color:#EAF4FC">PUBLIC FILINGS</span></span>
+      <nav style="display:flex; align-items:center; gap:2px; font:500 12.5px/1 'IBM Plex Sans'">
+        <a href="Congress.dc.html" style="padding:6px 10px; color:#8FA0B3">Congress</a>
+        <a href="Institutional.dc.html" style="padding:6px 10px; color:#8FA0B3">Institutional</a>
+        <a href="Signals.dc.html" style="padding:6px 10px; color:#EAF4FC; position:relative">Signals<span style="position:absolute; left:10px; right:10px; bottom:-1px; height:2px; background:#69B4EC"></span></a>
+      </nav>
+      <span style="display:inline-flex; align-items:center; gap:10px; margin-left:auto; width:380px; border:1px solid #1B2735; border-radius:2px; padding:8px 12px; color:#75879B; font:400 12.5px/1 'IBM Plex Sans'"><span style="color:#2774AE">⌕</span><span style="flex:1">Jump to a member, ticker or filer</span><span style="font:500 10px/1 'JetBrains Mono'; color:#51617A">⌘K</span></span>
+      <span style="display:inline-flex; align-items:center; gap:8px; font:500 11px/1 'JetBrains Mono'; color:#8FA0B3"><span style="width:5px; height:5px; border-radius:50%; background:#FFD100; animation:pulse 2s ease-in-out infinite"></span>BUILD 20260802.2</span>
+    </header>
+
+    <div style="display:flex; align-items:flex-end; gap:32px; padding:28px 32px 0">
+      <div style="min-width:0">
+        <div style="font:500 10px/1 'JetBrains Mono'; letter-spacing:.18em; color:#2774AE; margin-bottom:8px">PUBLIC RECORD / SIGNALS · RULE-BASED · NO PRICE DATA</div>
+        <h1 style="margin:0; font:650 26px/1.1 'IBM Plex Sans'; letter-spacing:-.02em; color:#FCFDFE">Signals</h1>
+        <p style="margin:6px 0 0; max-width:560px; font:400 13px/1.5 'IBM Plex Sans'; color:#8FA0B3">Behaviour that is unusual for the filer, novel for the record, or agreed on by two independent filing regimes — each with its exact rule and every receipt</p>
+      </div>
+      <div style="margin-left:auto; display:flex; gap:40px; padding-bottom:4px; flex-shrink:0; white-space:nowrap">
+        <sc-for list="{{ ledger }}" as="l" hint-placeholder-count="4">
+          <div><div style="font:500 10px/1 'JetBrains Mono'; letter-spacing:.14em; color:#64748A; margin-bottom:6px">{{ l.k }}</div><div style="font:600 26px/1 'JetBrains Mono'; font-variant-numeric:tabular-nums; color:{{ l.color }}; letter-spacing:-.02em">{{ l.v }}</div><div style="font:500 10.5px/1.6 'JetBrains Mono'; color:#64748A">{{ l.sub }}</div></div>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:18px; padding:14px 32px 0; font:500 10.5px/1 'JetBrains Mono'; color:#75879B; white-space:nowrap">
+      <span>a signal is a fact about a filing, not a forecast — no returns computed</span><span style="color:#22303F">·</span>
+      <span style="color:#3FD6A4">recomputed every build from the same rows you can audit</span><span style="color:#22303F">·</span>
+      <span>zero hits is a computed answer, not missing coverage <a href="#">§</a></span>
+    </div>
+    <div style="height:1px; background:linear-gradient(90deg,#2774AE 0,#16202E 240px,#16202E 100%); margin:20px 0 0"></div>
+
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); border-bottom:1px solid #16202E">
+      <sc-for list="{{ stories }}" as="s" hint-placeholder-count="3">
+        <div style="padding:18px 28px 20px; border-right:1px solid #10161F">
+          <div style="font:500 9.5px/1 'JetBrains Mono'; letter-spacing:.14em; color:{{ s.tagColor }}; margin-bottom:8px">{{ s.tag }}</div>
+          <div style="font:600 13.5px/1.4 'IBM Plex Sans'; color:#FCFDFE">{{ s.title }}</div>
+          <div style="margin-top:4px; font:400 12px/1.55 'IBM Plex Sans'; color:#8FA0B3">{{ s.body }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- RULE BOOK: the whole rule set, grouped by what makes it alpha -->
+    <div style="padding:22px 0 10px">
+      <div style="padding:0 32px 4px; display:flex; align-items:baseline; gap:10px"><span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC">Rule book</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">EVERY KIND · ITS EXACT RULE · WHY IT CARRIES INFORMATION · HITS THIS BUILD · STATUS</span></div>
+      <div style="display:grid; grid-template-columns:110px 96px 1.1fr 1fr 56px 100px; gap:0 14px; padding:8px 32px 6px; font:600 9.5px/1 'JetBrains Mono'; letter-spacing:.12em; color:#51617A; border-bottom:1px solid #10161F"><span>FAMILY</span><span>KIND</span><span>RULE</span><span>WHY IT'S INFORMATIVE</span><span style="text-align:right">HITS</span><span style="text-align:right">STATUS</span></div>
+      <sc-for list="{{ rules }}" as="r" hint-placeholder-count="13">
+        <div style="display:grid; grid-template-columns:110px 96px 1.1fr 1fr 56px 100px; gap:0 14px; align-items:center; padding:8px 32px 8px 29px; border-left:3px solid {{ r.edge }}; border-bottom:1px solid #0A101A; font:500 11.5px/1.3 'JetBrains Mono'; cursor:pointer" style-hover="background:#0A101A">
+          <span style="font:500 10px/1 'JetBrains Mono'; letter-spacing:.1em; color:#64748A">{{ r.family }}</span>
+          <span style="color:{{ r.kColor }}; font-weight:600; font-size:10px; letter-spacing:.08em">{{ r.kind }}</span>
+          <span style="font:400 11.5px/1.4 'IBM Plex Sans'; color:#E9F0F7">{{ r.rule }}</span>
+          <span style="font:400 11.5px/1.4 'IBM Plex Sans'; color:#8FA0B3">{{ r.why }}</span>
+          <span style="text-align:right; color:{{ r.hColor }}; font-weight:600">{{ r.hits }}</span>
+          <span style="text-align:right; color:{{ r.sColor }}; font-size:10px">{{ r.status }}</span>
+        </div>
+      </sc-for>
+      <div style="padding:12px 32px 8px; font:400 11px/1.6 'IBM Plex Sans'; color:#64748A">Thresholds are per-filer where marked "own median" — a $50K trade is a non-event for one member and a 10× outlier for another. Absolute thresholds only where the statute makes them meaningful. <span style="color:#F07A66">WITHHELD</span> kinds are named so nobody assumes they were forgotten.</div>
+    </div>
+
+    <div style="height:1px; background:#16202E"></div>
+
+    <!-- HITS + LAG -->
+    <div style="display:grid; grid-template-columns:1.8fr 1fr">
+      <div style="border-right:1px solid #10161F; padding:22px 0 10px">
+        <div style="padding:0 32px 4px; display:flex; align-items:baseline; gap:10px">
+          <span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC">Hits</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">RETAINED WINDOW · NEWEST FIRST · EVERY HIT CARRIES ITS RECEIPT</span>
+          <span style="margin-left:auto; display:inline-flex; border:1px solid #1B2735; border-radius:2px; overflow:hidden; font:500 10.5px/1 'JetBrains Mono'"><span style="padding:5px 12px; background:#0F1B2A; color:#EAF4FC">All</span><span style="padding:5px 12px; color:#75879B; border-left:1px solid #1B2735">Congress</span><span style="padding:5px 12px; color:#75879B; border-left:1px solid #1B2735">13F</span><span style="padding:5px 12px; color:#3FD6A4; border-left:1px solid #1B2735">Cross</span></span>
+        </div>
+        <div style="display:grid; grid-template-columns:86px 1fr 1.5fr 48px 100px 104px 50px; gap:0 12px; padding:8px 32px 6px; font:600 9.5px/1 'JetBrains Mono'; letter-spacing:.12em; color:#51617A; border-bottom:1px solid #10161F"><span>KIND</span><span>SUBJECT</span><span>EVIDENCE</span><span>SRC</span><span style="text-align:right">MAGNITUDE</span><span style="text-align:right">WHEN</span><span style="text-align:right">RCPT</span></div>
+        <sc-for list="{{ hits }}" as="e" hint-placeholder-count="8">
+          <div style="display:grid; grid-template-columns:86px 1fr 1.5fr 48px 100px 104px 50px; gap:0 12px; align-items:center; padding:7.5px 32px 7.5px 29px; border-left:3px solid {{ e.edge }}; border-bottom:1px solid #0A101A; font:500 11.5px/1.2 'JetBrains Mono'; font-variant-numeric:tabular-nums; cursor:pointer" style-hover="background:#0A101A">
+            <span style="color:{{ e.kColor }}; font-weight:600; font-size:10px; letter-spacing:.08em">{{ e.kind }}</span>
+            <a href="{{ e.href }}" style="color:#A9D2F2; font-family:'IBM Plex Sans'; font-size:12px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">{{ e.subject }}</a>
+            <span style="font:400 11px 'IBM Plex Sans'; color:#8FA0B3; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">{{ e.evidence }}</span><span style="color:{{ e.stampColor }}; font:600 9px 'JetBrains Mono'; letter-spacing:.06em">{{ e.stamp }}</span>
+            <span style="text-align:right; color:#E9F0F7">{{ e.mag }}</span>
+            <span style="text-align:right; color:#8FA0B3">{{ e.when }}</span>
+            <span style="text-align:right; color:#A9D2F2; font-size:10.5px">{{ e.rcpt }} ↗</span>
+          </div>
+        </sc-for>
+        <div style="padding:12px 32px 8px; font:400 11px/1.6 'IBM Plex Sans'; color:#64748A"><span style="color:#3FD6A4">REAL</span> = row exists in build 20260802.2 · <span style="color:#FFD100">ILLUS.</span> = illustrative until the 13F join lands · magnitudes are the underlying row's statutory range, never narrowed.</div>
+      </div>
+      <div style="padding:22px 0 10px">
+        <div style="padding:0 32px 4px; display:flex; align-items:baseline; gap:10px"><span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC">Lag distribution</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">TRADE → FILING · THIS BATCH · GOLD = 45D</span></div>
+        <sc-for list="{{ lags }}" as="l" hint-placeholder-count="4">
+          <div style="display:flex; align-items:center; gap:14px; padding:9px 32px; border-bottom:1px solid #0A101A">
+            <a href="Congress Member.dc.html" style="font:500 12.5px/1.3 'IBM Plex Sans'; color:#FCFDFE; flex:0 0 150px">{{ l.name }} <span style="font:500 9.5px 'JetBrains Mono'; color:#F07A66">{{ l.party }}</span></a>
+            <span style="position:relative; flex:1; height:3px; background:#10161F"><span style="position:absolute; left:40%; top:-4px; bottom:-4px; width:1px; background:#FFD100; opacity:.6"></span><span style="position:absolute; inset:0 auto 0 0; width:{{ l.w }}; background:{{ l.fill }}"></span></span>
+            <span style="font:600 12px 'JetBrains Mono'; font-variant-numeric:tabular-nums; color:{{ l.color }}; flex:0 0 46px; text-align:right">{{ l.lag }}</span>
+          </div>
+        </sc-for>
+        <div style="padding:16px 32px 4px; display:flex; align-items:baseline; gap:10px"><span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC">Hit rate by family</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">HITS PER 1,000 ROWS EVALUATED · RARER = MORE INFORMATIVE</span></div>
+        <sc-for list="{{ rates }}" as="b" hint-placeholder-count="6">
+          <div style="display:grid; grid-template-columns:120px 1fr 70px; gap:14px; align-items:center; padding:7px 32px; font:500 11.5px/1 'JetBrains Mono'">
+            <span style="color:#8FA0B3; text-align:right; font-family:'IBM Plex Sans'; font-size:12px">{{ b.k }}</span>
+            <span style="position:relative; height:3px; background:#10161F"><span style="position:absolute; inset:0 auto 0 0; width:{{ b.w }}; background:{{ b.fill }}"></span></span>
+            <span style="color:{{ b.color }}; text-align:right; font-variant-numeric:tabular-nums">{{ b.v }}</span>
+          </div>
+        </sc-for>
+        <div style="padding:12px 32px 0; font:400 11px/1.6 'IBM Plex Sans'; color:#64748A">A rule that fires on 5% of rows is a filter. One that fires on 0.1% is a signal. Rates are published so you can calibrate what "unusual" means.</div>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#16202E"></div>
+
+    <!-- WATCHLIST -->
+    <div style="padding:22px 0 26px">
+      <div style="padding:0 32px 4px; display:flex; align-items:center; gap:12px">
+        <span style="font:600 13px/1 'IBM Plex Sans'; color:#EAF4FC"><span style="color:#FFD100">◆</span> Watchlist</span><span style="font:500 10px/1 'JetBrains Mono'; color:#64748A">THIS BROWSER ONLY · NO ACCOUNT · NEW-SINCE-LAST-LOOK · SIGNALS ON WATCHED SUBJECTS SURFACE FIRST</span>
+        <span style="margin-left:auto; display:inline-flex; gap:8px"><sc-for list="{{ watch }}" as="c" hint-placeholder-count="3"><span style="padding:5px 6px 5px 12px; border:1px solid #1B2735; border-radius:2px; font:500 10.5px/1 'JetBrains Mono'; color:#EAF4FC; display:inline-flex; align-items:center; gap:8px">{{ c.t }} <span style="color:#51617A">×</span></span></sc-for><span style="padding:5px 12px; border:1px solid #1B2735; border-radius:2px; font:500 10.5px/1 'JetBrains Mono'; color:#75879B">Mark all seen</span></span>
+      </div>
+      <div style="display:grid; grid-template-columns:96px 1fr 1.2fr 100px 120px 70px 56px; gap:0 14px; padding:8px 32px 6px; font:600 9.5px/1 'JetBrains Mono'; letter-spacing:.12em; color:#51617A; border-bottom:1px solid #10161F"><span>KIND</span><span>WATCHED SUBJECT</span><span>WHAT HAPPENED</span><span style="text-align:right">MAGNITUDE</span><span style="text-align:right">WHEN</span><span style="text-align:right">SEEN</span><span style="text-align:right">RCPT</span></div>
+      <sc-for list="{{ watchRows }}" as="e" hint-placeholder-count="3">
+        <div style="display:grid; grid-template-columns:96px 1fr 1.2fr 100px 120px 70px 56px; gap:0 14px; align-items:center; padding:8px 32px 8px 29px; border-left:3px solid {{ e.edge }}; border-bottom:1px solid #0A101A; font:500 11.5px/1.2 'JetBrains Mono'; font-variant-numeric:tabular-nums; cursor:pointer" style-hover="background:#0A101A">
+          <span style="color:{{ e.kColor }}; font-weight:600; font-size:10px; letter-spacing:.08em">{{ e.kind }}</span>
+          <a href="{{ e.href }}" style="color:#FCFDFE; font-family:'IBM Plex Sans'; font-size:12.5px; font-weight:500">{{ e.subject }}<span style="color:#FFD100; margin-left:4px">◆</span></a>
+          <span style="font:400 11px 'IBM Plex Sans'; color:#8FA0B3">{{ e.evidence }}</span>
+          <span style="text-align:right; color:#E9F0F7">{{ e.mag }}</span>
+          <span style="text-align:right; color:#8FA0B3">{{ e.when }}</span>
+          <span style="text-align:right; color:{{ e.seenColor }}; font-size:10px; font-weight:600">{{ e.seen }}</span>
+          <span style="text-align:right; color:#A9D2F2; font-size:10.5px">PTR ↗</span>
+        </div>
+      </sc-for>
+      <div style="padding:12px 32px 0; font:400 11px/1.6 'IBM Plex Sans'; color:#64748A">Watch state lives in this browser's storage. Watching a member, ticker or filer pins their signal hits to the top of this page.</div>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const UP = "#3FD6A4", DOWN = "#F07A66", BUY = "#A9D2F2", GOLD = "#FFD100", AMB = "#EFC363", MUTE = "#51617A";
+    const ledger = [
+      { k: "ACTIVE KINDS", v: "12", sub: "1 withheld by design", color: "#FCFDFE" },
+      { k: "HITS · CONGRESS", v: "5", sub: "3 real · 2 illustrative (committee)", color: UP },
+      { k: "HITS · 13F", v: "6", sub: "illustrative until join", color: GOLD },
+      { k: "CROSS-REGIME", v: "4", sub: "convergence + divergence", color: BUY },
+    ];
+    const stories = [
+      { tag: "MOST INFORMATIVE THIS BUILD", tagColor: GOLD, title: "OUTSIZED: a member whose median trade is $1K–$15K sold WMB in the $5M–$25M bracket.", body: "Armstrong (R-OK). Per-filer thresholds catch what absolute ones miss: this row is 3 statutory brackets above his own median lower bound. Receipted, filed inside the window." },
+      { tag: "CROSS-REGIME", tagColor: UP, title: "Institutions and Congress bought the same names in Q1 — and disagreed on one.", body: "NVDA, TSM, CEG: tracked filers net-added and members net-bought. MSFT: filers trimmed while 4 members bought. Two independent disclosure regimes rarely line up; when they diverge, someone is wrong." },
+      { tag: "RAREST · HIGHEST SIGNAL", tagColor: DOWN, title: "PRE-EVENT SELL and OPTIONS are the two kinds that almost never fire — and mean the most when they do.", body: "Selling ahead of bad news is the legally riskiest trade, so it is rare and historically the cleanest case. Options are rare on PTRs and almost never idle. Zero hits this build is the computed answer, and the rules stay published." },
+    ];
+    const F = { BEHAVIOUR: "#2774AE", NOVELTY: UP, CROSS: UP, COMPLIANCE: "#7A5A20", STRUCTURE: "#2774AE", WITHHELD: DOWN, PLANNED: "#16202E" };
+    const rl = (family, kind, rule, why, hits, status) => ({ family, kind, rule, why, hits, status,
+      edge: status === "withheld" ? DOWN : status === "planned" ? "#16202E" : F[family],
+      kColor: status === "withheld" ? DOWN : status === "planned" ? MUTE : family === "COMPLIANCE" ? GOLD : family === "CROSS" || family === "NOVELTY" ? UP : BUY,
+      hColor: hits === 0 || hits === "—" ? MUTE : "#FCFDFE", sColor: status === "active" ? UP : status === "withheld" ? DOWN : MUTE });
+    const rules = [
+      rl("BEHAVIOUR", "PRE-EVENT SELL", "≥2 members sell the same ticker within 21 days before an 8-K item 2.02/8.01, guidance cut, or ≥10% single-day drop", "Legally the riskiest trade to make and therefore the rarest — historically the cleanest cases. Needs the corporate-events join; fires only when the event is on the record.", 0, "active"),
+      rl("BEHAVIOUR", "COMMITTEE", "member sits on a committee with jurisdiction over the issuer's sector (SIC → committee map)", "Information asymmetry is structural here. A Banking Committee member in regional banks is a different fact than a rank-and-file member in the same names.", 2, "active"),
+      rl("BEHAVIOUR", "OUTSIZED", "row lower bound ≥ 10× the filer's own median lower bound, or first-ever row ≥ $1M (≥20 prior rows)", "Ranges are coarse, but a first $1M+ trade from a habitual $1K–$15K filer is loud. Per-filer, not absolute.", 1, "active"),
+      rl("BEHAVIOUR", "OPTIONS", "asset type is call, put or other derivative on the PTR", "Options are rare in disclosures and almost never idle — a leveraged, dated view. Strike and expiry printed when filed.", 0, "active"),
+      rl("STRUCTURE", "CLUSTER", "≥3 members buy the same ticker, same side, within 7 days (trade date)", "Uncoordinated coincidence at that density is unlikely. Tightened from 30d to one calendar week.", 0, "active"),
+      rl("BEHAVIOUR", "REVERSAL", "same filer flips side on the same ticker within 90 days", "Round-trips are rare in disclosed accounts; a fast flip is an opinion change worth reading.", 0, "active"),
+      rl("NOVELTY", "FIRST FILING", "ticker appears in a PTR or tracked 13F for the first time since 2014", "Purest new information in the record — a name nobody in either regime had touched.", 1, "active"),
+      rl("BEHAVIOUR", "CONVICTION", "13F new position ≥ 2% of the filer's total reported value", "A filer betting 2%+ of the book on day one is telling you something a 0.2% toe-hold isn't.", 4, "active"),
+      rl("CROSS", "CONVERGENCE", "tracked-filer net direction and Congress net direction agree on a ticker in the same quarter", "Two independent disclosure regimes agreeing is rarer than either alone.", 3, "active"),
+      rl("CROSS", "DIVERGENCE", "…and disagree", "When institutions and Congress take opposite sides, one side's read is wrong — worth knowing which names.", 1, "active"),
+      rl("STRUCTURE", "CROWDED", "13F composite crowding ≥ 85th percentile among tracked names", "Not a call on the stock — a sizing warning. Crowded names exit together.", 1, "active"),
+      rl("COMPLIANCE", "LATE", "filed_date − trade_date > 45 days (STOCK Act window)", "Late disclosure is itself information about the filer, and it is the one rule with a statutory line.", 1, "active"),
+      rl("WITHHELD", "RETURN", "not computed — a point return from a range-bounded disclosure would be invented", "Every 'congress-trading tracker' that publishes returns is guessing. We name the refusal.", "—", "withheld"),
+    ];
+    const K = { "PRE-EVENT SELL": [DOWN, DOWN], COMMITTEE: [GOLD, "#7A5A20"], OPTIONS: ["#EFC363", "#7A5A20"], CLUSTER: [BUY, "#2774AE"], OUTSIZED: [BUY, "#2774AE"], LATE: [GOLD, "#7A5A20"], CONVICTION: [BUY, "#2774AE"], "FIRST FILING": [UP, UP], "NEW ENTRANT": [UP, UP], CONVERGENCE: [UP, UP], DIVERGENCE: [GOLD, "#7A5A20"], CROWDED: [GOLD, "#7A5A20"] };
+    const hit = (kind, subject, href, evidence, mag, when, rcpt, real) => ({ kind, subject, href, evidence, mag, when, rcpt, kColor: K[kind][0], edge: K[kind][1], stamp: real ? "REAL" : "ILLUS.", stampColor: real ? UP : GOLD });
+    const hits = [
+      hit("OUTSIZED", "Alan Armstrong · R-OK", "Congress Member.dc.html", "WMB sale ≥ 3 brackets above own median ($1K–$15K)", "$5M–$25M", "06-24 → 07-21", "PTR", true),
+      hit("LATE", "Alan Armstrong · R-OK", "Congress Member.dc.html", "no-ticker purchase filed 112d after trade (67d over)", "$1K–$15K", "03-31 → 07-21", "PTR", true),
+      hit("OUTSIZED", "Thomas MacArthur · R-NJ-3", "Congress Member.dc.html", "no-ticker buy 4× own median lower bound", "$50K–$100K", "11-21 → 12-06", "PTR", true),
+      hit("COMMITTEE", "Member X · Financial Services", "Congress Member.dc.html", "regional-bank buys while sitting on the committee of jurisdiction", "$15K–$50K", "Q1 2026", "PTR"),
+      hit("COMMITTEE", "Member Y · Energy & Commerce", "Congress Member.dc.html", "midstream purchase; committee holds sector jurisdiction", "$50K–$100K", "Q1 2026", "PTR"),
+      hit("DIVERGENCE", "MSFT", "Ticker.dc.html", "Coatue + 2 filers trim · 4 members net buy", "−18% / 4 buys", "Q1 2026", "13F"),
+      hit("CONVERGENCE", "NVDA", "Ticker.dc.html", "23 of 41 holders add · Congress 5 buy / 1 sell", "+$4.8B / ≥$1.1M", "Q1 2026", "13F"),
+      hit("CONVICTION", "Lone Pine → VRT", "Institutional Filer.dc.html", "new position at 2.6% of book on initiation", "$688M", "Q1 2026", "13F"),
+      hit("NEW ENTRANT", "Point72 → MOD", "Institutional Filer.dc.html", "no other tracked filer holds Modine", "$188M · 0.9%", "Q1 2026", "13F"),
+      hit("FIRST FILING", "ALAB · Astera Labs", "Ticker.dc.html", "first appearance in any PTR or tracked 13F", "$412M", "Q1 2026", "13F"),
+    ];
+    const lg = (name, party, lag, d) => ({ name, party, lag, w: Math.min(d / 112 * 100, 100) + "%", fill: d > 45 ? "#7A5A20" : "#2774AE", color: d > 45 ? GOLD : "#FCFDFE" });
+    const lags = [lg("Alan Armstrong", "R-OK", "+112d", 112), lg("Jerry Moran", "R-KS", "+28d", 28), lg("Jerry Moran", "R-KS", "+28d", 28), lg("Alan Armstrong", "R-OK", "+27d", 27)];
+    const rates = [
+      { k: "Compliance", v: "31 ‰", w: "62%", fill: "#7A5A20", color: GOLD }, { k: "Committee", v: "6.1 ‰", w: "31%", fill: "#7A5A20", color: GOLD }, { k: "Behaviour", v: "4.2 ‰", w: "21%", fill: "#2774AE", color: BUY },
+      { k: "Structure", v: "1.8 ‰", w: "9%", fill: "#2774AE", color: BUY }, { k: "Cross-regime", v: "0.6 ‰", w: "3%", fill: UP, color: UP }, { k: "Pre-event / options", v: "<0.1 ‰", w: "1%", fill: DOWN, color: DOWN },
+    ];
+    const watch = [{ t: "Alan Armstrong" }, { t: "WMB" }, { t: "Coatue Management" }];
+    const watchRows = [
+      { kind: "OUTSIZED", subject: "Alan Armstrong", href: "Congress Member.dc.html", evidence: "WMB sale in the $5M–$25M bracket", mag: "$5M–$25M", when: "06-24 → 07-21", seen: "NEW", seenColor: GOLD, kColor: BUY, edge: "#2774AE" },
+      { kind: "DIVERGENCE", subject: "Coatue Management", href: "Institutional Filer.dc.html", evidence: "trimmed MSFT −18% while Congress net-bought", mag: "−18%", when: "Q1 2026", seen: "NEW", seenColor: GOLD, kColor: GOLD, edge: "#7A5A20" },
+      { kind: "LATE", subject: "Alan Armstrong", href: "Congress Member.dc.html", evidence: "112-day filing lag on a no-ticker purchase", mag: "$1K–$15K", when: "03-31 → 07-21", seen: "seen", seenColor: MUTE, kColor: GOLD, edge: "#7A5A20" },
+    ];
+    return { ledger, stories, rules, hits, lags, rates, watch, watchRows };
+  }
+}
+</script>
+</body>
+</html>

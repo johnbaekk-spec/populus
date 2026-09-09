@@ -895,6 +895,7 @@ export function initFilerPeriods(): void {
   let data: {
     latestFiled: string | null;
     topn: number;
+    benchmarks?: Record<string, import("../lib/inst-analytics.ts").ConcentrationBenchmark | null>;
     periods: Record<
       string,
       { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number }
@@ -944,7 +945,7 @@ export function initFilerPeriods(): void {
       // total is a corrupt embed, handled above by leaving the SSR section alone
       // — never papered over with the embedded length, which would claim a
       // completeness the server never claimed.
-      { total: slice.total!, page },
+      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null },
     );
   };
   chips.addEventListener("click", (ev) => {

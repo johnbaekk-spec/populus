@@ -49,6 +49,7 @@ import {
 } from "../derive.ts";
 import {
   filerHref,
+  filerLinkHtml,
   holdingsPageCount,
   holdingsPageSlice,
   holdingsRangeText,
@@ -57,6 +58,8 @@ import {
 } from "../holdings.ts";
 import { serializeInlineJson } from "../inline-json.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "../inst.ts";
+import type { ClusterBoardResult, ClusterRow } from "../activity.ts";
+import type { ConcentrationBenchmark, NewPositionLeaders } from "../inst-analytics.ts";
 import { HOLDER_COLUMNS, HOLDER_ZERO_CAVEAT, holderSortNote, orderRankedHolders, type HolderSortKey } from "../holders-sort.ts";
 import { addsRowHtml } from "../inst-adds-render.ts";
 import {
@@ -465,22 +468,46 @@ function changesPagerHtml(
 }
 
 /** Period-driven concentration panel shared by static and fallback filer views. */
-function filerBookShape(conc: ConcentrationRow | null, topn: number, period: string, total: number): string {
-  const metric = (label: string, value: number | null, text: string): string =>
+function filerBookShape(
+  conc: ConcentrationRow | null,
+  topn: number,
+  period: string,
+  total: number,
+  benchmark: ConcentrationBenchmark | null = null,
+): string {
+  /* Each metric is a bar over a fixed 0–100 scale with the tracked-population
+     MEDIAN as a gold tick — the design's "vs tracked median". The tick is only
+     drawn when the benchmark carries that statistic for THIS period; the
+     comparison note names the population it was measured over. */
+  const metric = (label: string, value: number | null, text: string, med: number | null, medText: string | null): string =>
     `<div class="book-metric"><dt>${esc(label)}</dt><dd>` +
-    `<span class="book-track" aria-hidden="true">${value === null ? "" : `<span style="width:${Math.max(0, Math.min(100, value))}%"></span>`}</span>` +
-    `<span>${esc(text)}</span></dd></div>`;
+    `<span class="book-track" aria-hidden="true">${med === null ? "" : `<i class="book-median" style="left:${Math.max(0, Math.min(100, med))}%"></i>`}${value === null ? "" : `<span style="width:${Math.max(0, Math.min(100, value))}%"></span>`}</span>` +
+    `<span>${esc(text)}</span>` +
+    `<span class="book-compare${value !== null && med !== null ? (value > med ? " book-above" : value < med ? " book-below" : "") : ""}">${medText === null ? "" : esc(medText)}</span></dd></div>`;
   const share = conc?.topn_share_bps == null ? null : conc.topn_share_bps / 100;
   const hhi = conc?.null_value_positions === 0 ? conc.hhi : null;
   const known = conc && conc.position_count > 0
     ? (conc.position_count - conc.null_value_positions) / conc.position_count * 100 : null;
+  const b = benchmark && benchmark.period === period ? benchmark : null;
+  const medShare = b?.topnShareBps ? b.topnShareBps.median / 100 : null;
+  const medHhi = b?.hhi ? b.hhi.median : null;
+  const compare = (v: number | null, m: number | null, unit: string): string | null => {
+    if (m === null) return null;
+    if (v === null) return `median ${m.toFixed(unit === "%" ? 1 : 0)}${unit}`;
+    const word = v > m ? "above" : v < m ? "below" : "at";
+    return `${word} median ${m.toFixed(unit === "%" ? 1 : 0)}${unit}`;
+  };
   return `<section class="panel design-book-shape" aria-label="Book shape">` +
-    `<div class="panel-head"><h2 class="section-h">Book shape</h2><span class="panel-note">${esc(period)} · disclosed positions</span></div>` +
-    `<dl>${metric(`Top-${topn} concentration`, share, share === null ? "—" : `${share.toFixed(1)}%`)}` +
-    `${metric("Concentration index", hhi === null ? null : hhi / 100, hhi === null ? "—" : `${fmtInt(hhi)} bps`)}` +
-    `${metric("Positions with value", known, known === null ? "—" : `${conc!.position_count - conc!.null_value_positions} / ${conc!.position_count}`)}</dl>` +
+    `<div class="panel-head"><h2 class="section-h">Book shape</h2><span class="panel-note">${esc(period)} · concentration · ${b ? `vs tracked median · gold tick` : "no tracked median"}</span></div>` +
+    `<dl>${metric(`Top-${topn} concentration`, share, share === null ? "—" : `${share.toFixed(1)}%`, medShare, compare(share, medShare, "%"))}` +
+    `${metric("Concentration index", hhi === null ? null : hhi / 100, hhi === null ? "—" : `${fmtInt(hhi)} bps`, medHhi === null ? null : medHhi / 100, compare(hhi, medHhi, " bps"))}` +
+    `${metric("Positions with value", known, known === null ? "—" : `${conc!.position_count - conc!.null_value_positions} / ${conc!.position_count}`, null, b?.positions ? `median book ${fmtInt(b.positions.median)} positions` : null)}</dl>` +
     `<p class="section-note">Concentration uses reported 13F long value, not total assets. ` +
-    `The index is withheld when any position lacks a value. No tracked-median comparison is published here.</p>` +
+    `The index is withheld when any position lacks a value. ` +
+    (b
+      ? `Medians are over the ${fmtInt(b.population)} tracked filers with a ${esc(period)} book` +
+        (b.hhi ? `; the index median over the ${fmtInt(b.hhi.n)} with a complete book` : "") + `.`
+      : `No tracked-median comparison is published for ${esc(period)}.`) + `</p>` +
     `<p class="section-note book-source">${filerTiles(conc, total).slice(2).map(tile => `${esc(tile.label)}: ${esc(tile.value)}${tile.title ? noteFromHtml(esc(tile.title), { scope: "filer-tiles" }, tile.label) : ""}`).join(" · ")}</p>` + unavailableDesignPanel("Sector rotation", "QUARTER-OVER-QUARTER", ["Sector", "Change", "Reported weight"], "Sector weights and comparable quarter changes are not published in this build.") + `</section>`;
 }
 
@@ -490,7 +517,7 @@ export function filerPeriodSectionHtml(
   period: string,
   latestFiled: string | null,
   topn: number,
-  opts: { total?: number; page?: number } = {},
+  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null } = {},
 ): string {
   /* `total` is the count before the embed bound. The tile MUST report it: a
      capped page that tiled `deltas.length` would state a smaller number of
@@ -519,7 +546,7 @@ export function filerPeriodSectionHtml(
       compact: true,
       notes: { scope: "filer-tiles" },
     }) +
-    filerBookShape(conc, topn, period, total) +
+    filerBookShape(conc, topn, period, total, opts.benchmark ?? null) +
     `<details class="panel panel-wide design-supplement" aria-label="Position changes"><summary>Position changes · inspect the quarter-over-quarter record</summary>` +
     `<div class="panel-head"><h2 class="section-h">Position changes — into ${esc(period)}</h2>` +
     `<span class="panel-note">producer-classified (change_kind) · grain: position × put/call × unit</span></div>` +
@@ -553,7 +580,7 @@ export function filerBody(
   latestFiled: string | null,
   topn: number,
   window: FilingWindow | null,
-  opts: { total?: number; page?: number } = {},
+  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null } = {},
 ): string {
   const chips = periods
     .map(
@@ -603,6 +630,105 @@ export function filerBody(
     unavailableDesignPanel("Congress overlap", "CROSS-MODULE", ["Ticker", "Members", "Disclosed flow"], "The congressional disclosure join is not published in this build.") +
     unavailableDesignPanel("Signals for this filer", "13F DISCLOSURE RECORD", ["Signal", "Evidence"], "No filer signal evidence is published in this build.") + `</div>` +
     filerEdgarBlock(filer.cik, filer.name)
+  );
+}
+
+/* ---------- the cluster board (Institutional.dc.html, left of activity) ---------- */
+
+function clusterRowHtml(r: ClusterRow, max: number): string {
+  const total = Math.max(1, r.adders + r.cutters);
+  const aw = (r.adders / total) * 100;
+  const cw = (r.cutters / total) * 100;
+  const delta =
+    r.netDeltaUsd == null
+      ? `<span class="none">—</span>`
+      : `<span class="${r.netDeltaUsd >= 0 ? "c-buy" : "c-sell"}">${r.netDeltaUsd >= 0 ? "+" : "−"}${fmtUsd(Math.abs(r.netDeltaUsd))}</span>${r.netDeltaPartial ? fnMark("≈") : ""}`;
+  return (
+    `<tr class="design-cluster-row">` +
+    `<td class="c-issuer"><span class="filed-name">${esc(r.issuerName)}</span></td>` +
+    `<td><span class="design-diverging design-cluster-bar" aria-hidden="true"><span style="width:${aw.toFixed(1)}%"></span><span class="sale" style="width:${cw.toFixed(1)}%"></span></span>` +
+    `<span class="visually-hidden">${fmtInt(r.adders)} filers added, ${fmtInt(r.cutters)} trimmed or exited</span></td>` +
+    `<td class="c-num">${fmtInt(r.filers)}</td>` +
+    `<td class="c-num c-buy">${fmtInt(r.newPositions)}</td>` +
+    `<td class="c-num">${delta}</td>` +
+    `<td class="c-num c-muted"><span class="visually-hidden">share of the board's largest count </span>${Math.round((r.newPositions / Math.max(1, max)) * 100)}%</td>` +
+    `</tr>`
+  );
+}
+
+/** The cluster board: issuers that at least `minFilers` tracked filers changed
+    in the same closed quarter, ranked by filers opening a NEW position. Named
+    from the serving artifact, never from the aggregate's opaque keys. */
+export function clusterBoardHtml(result: ClusterBoardResult, period: string | null): string {
+  const columns = ["Issuer", "Add ◂ ▸ Trim", "Filers", "New", "Net $Δ", "vs top"];
+  if (!result.present) {
+    const reason: Record<typeof result.reason, string> = {
+      "module-absent": "This build does not include the institutional module.",
+      "serving-artifact-unlocatable": "No serving artifact is addressable in this environment, so no cross-filer grouping can be published.",
+      "serving-artifact-missing": "This build declares the institutional module, but its serving artifact is not present here.",
+      "activity-grain-unavailable": "The serving artifact could not supply the activity projection this board groups over.",
+      "no-rows-for-period": period
+        ? `No issuer was changed by three or more filers in ${period} — or the activity grain carries no rows for that quarter. Absence is stated, never simulated.`
+        : "No closed quarter is available to group over yet.",
+    };
+    return unavailableDesignPanel("Cluster board", period ? `≥3 filers changed the same name · ${period}` : "≥3 filers changed the same name", columns, reason[result.reason], "design-clusters");
+  }
+  const b = result.board;
+  const max = Math.max(1, ...b.rows.map((r) => r.newPositions));
+  return (
+    `<section class="panel design-clusters" aria-label="Cluster board">` +
+    `<div class="panel-head"><h2 class="section-h">Cluster board</h2>` +
+    `<span class="panel-note">≥${fmtInt(b.minFilers)} FILERS CHANGED THE SAME NAME · ${esc(b.period)} · RANKED BY NEW POSITIONS</span></div>` +
+    `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Issuers changed by ${fmtInt(b.minFilers)} or more filers in ${esc(b.period)}</caption>` +
+    `<thead><tr>${columns.map((c, i) => `<th scope="col"${i > 1 ? ' class="num"' : ""}>${esc(c)}${i === 4 ? fnMark("≈") : ""}</th>`).join("")}</tr></thead>` +
+    `<tbody>${b.rows.map((r) => clusterRowHtml(r, max)).join("\n")}</tbody></table></div>` +
+    `<p class="section-note">${fmtInt(b.rows.length)} of ${fmtInt(b.qualifying)} qualifying issuers rendered — a render bound, not a data bound · ` +
+    `bars = filers adding vs trimming or exiting · NEW = filers with no position last quarter · ` +
+    `${fnMark("≈")} = a contributing row disclosed no value, so the sum is partial` +
+    (b.unkeyedRows > 0 ? ` · ${fmtInt(b.unkeyedRows)} change rows carry no issuer identity and are outside this board` : "") +
+    ` · EXIT is inferred from absence, not a sale record.</p>` +
+    `</section>`
+  );
+}
+
+/* ---------- new-position leaders (the design's fixed "Conviction leaders" heading) ---------- */
+
+export function newPositionLeadersHtml(
+  leaders: NewPositionLeaders | null,
+  tierOf: (cik: string) => FilerBudgetState,
+  period: string | null,
+): string {
+  const context = `NEW STAKES ≥${leaders ? (leaders.thresholdBps / 100).toFixed(0) : "2"}% OF BOOK${period ? ` · ${period}` : ""}`;
+  if (leaders === null || leaders.rows.length === 0) {
+    const reason = leaders === null
+      ? "New-position weights need the institutional module and a closed quarter."
+      : `No filer opened a position at ${(leaders.thresholdBps / 100).toFixed(0)}% or more of a complete, fully valued book in ${leaders.period}` +
+        (leaders.incompleteBooks > 0 ? ` · ${fmtInt(leaders.incompleteBooks)} filers with new positions were not rankable because a position in their book lacks a value` : "") +
+        `. Zero is the computed answer.`;
+    return unavailableDesignPanel("Conviction leaders", context, ["Filer", "New weight", "New positions"], reason, "design-newpositions");
+  }
+  const max = Math.max(1, ...leaders.rows.map((r) => r.maxWeightBps));
+  const rows = leaders.rows
+    .map(
+      (r, i) =>
+        `<tr><td class="c-rank">${i + 1}</td>` +
+        `<td class="c-filer">${filerLinkHtml(r.cik, r.filerName, tierOf(r.cik))}</td>` +
+        `<td><span class="design-weight-bar" aria-hidden="true"><span style="width:${((r.maxWeightBps / max) * 100).toFixed(1)}%"></span></span></td>` +
+        `<td class="c-num c-accent">${(r.maxWeightBps / 100).toFixed(1)}%</td>` +
+        `<td class="c-num c-muted">${fmtInt(r.atThreshold)}<span class="visually-hidden"> at or above threshold</span> / ${fmtInt(r.newPositions)}<span class="visually-hidden"> new positions</span></td></tr>`,
+    )
+    .join("\n");
+  return (
+    `<section class="panel design-newpositions" aria-label="Conviction leaders">` +
+    `<div class="panel-head"><h2 class="section-h">Conviction leaders</h2><span class="panel-note">${esc(context)}</span></div>` +
+    `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Filers ranked by the weight of their largest new position in ${esc(leaders.period)}</caption>` +
+    `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col"><span class="visually-hidden">Largest new weight, relative</span></th><th scope="col" class="num">Largest new</th><th scope="col" class="num">≥2% / new</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table></div>` +
+    `<p class="section-note">Weight = a new position's reported value over the filer's complete reported 13F long book for the same quarter — ranked only over books where every position carries a value. ` +
+    `${fmtInt(leaders.evaluated)} filers opened positions in ${esc(leaders.period)}` +
+    (leaders.incompleteBooks > 0 ? `; ${fmtInt(leaders.incompleteBooks)} were not rankable because a position lacks a value` : "") +
+    `. No returns are computed.</p>` +
+    `</section>`
   );
 }
 

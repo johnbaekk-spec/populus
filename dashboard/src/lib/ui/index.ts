@@ -43,7 +43,7 @@ export {
   emptyWindowHtml,
   congressRankingSection,
 } from "./rankings.ts";
-export { signalRowHtml, signalsBody, memberSignalsPanel } from "./signals.ts";
+export { type SignalsPageDeps, signalRowHtml, signalsBody, memberSignalsPanel } from "./signals.ts";
 export { type TickerHeaderInfo, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {
   type AddsSortKey,
@@ -59,6 +59,8 @@ export {
   filerPeriodSectionHtml,
   filerEdgarBlock,
   filerBody,
+  clusterBoardHtml,
+  newPositionLeadersHtml,
   ADDS_FOOTNOTES,
   addsColumns,
   addsSectionHtml,

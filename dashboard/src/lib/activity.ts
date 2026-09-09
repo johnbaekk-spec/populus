@@ -1299,3 +1299,126 @@ function activityReferenceRow(r: ActivityFeedRecord, tier: FilerBudgetState, sta
     `<td class="c-num">${r.curr_value_usd == null ? "—" : fmtUsd(r.curr_value_usd)}</td><td class="c-num none">—</td>` +
     `<td class="c-num">${esc(delta)}</td><td class="c-src">${source}${noteFromHtml(`Quarter ${esc(r.curr_period)} · filed ${filedCell(r)} · ${lagCell(r)} · ${deltaCell(r)}` + flagTags(r.flags, undefined, { stated }), { scope: "activity-reference" }, `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`)}</td></tr>`;
 }
+
+/* ---------- the cluster board: issuers several filers changed in one quarter ---------- */
+
+/** One issuer row on the Institutional cluster board — a GROUP BY over the
+    serving activity grain for ONE closed period. Every count is distinct
+    filers; the dollar delta is a sum of DISCLOSED deltas and is flagged partial
+    whenever a contributing row carried an undisclosed side. */
+export interface ClusterRow {
+  issuerKey: string;
+  issuerName: string;
+  /** distinct filers with any classified change in the name */
+  filers: number;
+  /** distinct filers whose change was new or add */
+  adders: number;
+  /** distinct filers whose change was trim or exit */
+  cutters: number;
+  /** distinct filers whose change was NEW (position absent last quarter) */
+  newPositions: number;
+  /** sum of disclosed delta_value_usd; null when NO contributing row disclosed one */
+  netDeltaUsd: number | null;
+  /** at least one contributing row had an undisclosed side */
+  netDeltaPartial: boolean;
+}
+
+export interface ClusterBoard {
+  period: string;
+  /** minimum distinct filers for a row to qualify */
+  minFilers: number;
+  rows: ClusterRow[];
+  /** rows whose issuer_key is NULL (unkeyable) — counted, never listed as a name */
+  unkeyedRows: number;
+  /** distinct issuers meeting the bar; `rows` is a bounded slice of them */
+  qualifying: number;
+  ordering: "new-positions" | "filers";
+}
+
+export type ClusterBoardResult =
+  | { present: true; board: ClusterBoard }
+  | { present: false; reason: ActivityAbsenceReason | "no-rows-for-period" };
+
+/** Read the cluster board for one period from the serving artifact.
+
+    The bar is `minFilers` DISTINCT filers with a classified change in the same
+    issuer; rows rank by distinct filers opening a NEW position (the design's
+    "consensus add"), then by total filers. Bounded to `limit` rows; the number
+    of qualifying issuers is stated so the bound is visible. */
+export function loadClusterBoard(
+  opts: LoadActivityOptions & { period: string; minFilers?: number; limit?: number },
+): ClusterBoardResult {
+  if (!opts.instPresent) return { present: false, reason: "module-absent" };
+  const dbPath = opts.dbPath ?? resolveServingDbPath();
+  if (!dbPath) return { present: false, reason: "serving-artifact-unlocatable" };
+  if (!existsSync(dbPath)) return { present: false, reason: "serving-artifact-missing" };
+  const minFilers = opts.minFilers ?? 3;
+  const limit = opts.limit ?? 9;
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+  } catch {
+    return { present: false, reason: "serving-artifact-missing" };
+  }
+  try {
+    const unkeyed = db
+      .prepare(`SELECT COUNT(*) AS n FROM ${ACTIVITY_TABLE} WHERE curr_period = ? AND issuer_key IS NULL`)
+      .get(opts.period) as { n: number };
+    const grouped = db
+      .prepare(
+        `SELECT issuer_key, MIN(issuer_name) AS issuer_name,
+                COUNT(DISTINCT cik) AS filers,
+                COUNT(DISTINCT CASE WHEN change_kind IN ('new','add') THEN cik END) AS adders,
+                COUNT(DISTINCT CASE WHEN change_kind IN ('trim','exit') THEN cik END) AS cutters,
+                COUNT(DISTINCT CASE WHEN change_kind = 'new' THEN cik END) AS new_positions,
+                SUM(delta_value_usd) AS net_delta,
+                SUM(CASE WHEN delta_value_usd IS NULL THEN 1 ELSE 0 END) AS undisclosed
+           FROM ${ACTIVITY_TABLE}
+          WHERE curr_period = ? AND issuer_key IS NOT NULL
+            AND change_kind IN ('new','add','trim','exit')
+          GROUP BY issuer_key
+         HAVING filers >= ?`,
+      )
+      .all(opts.period, minFilers) as Record<string, unknown>[];
+    if (grouped.length === 0) return { present: false, reason: "no-rows-for-period" };
+    const rows: ClusterRow[] = grouped.map((r) => ({
+      issuerKey: String(r.issuer_key),
+      issuerName: String(r.issuer_name ?? r.issuer_key),
+      filers: Number(r.filers),
+      adders: Number(r.adders),
+      cutters: Number(r.cutters),
+      newPositions: Number(r.new_positions),
+      netDeltaUsd: r.net_delta == null ? null : Number(r.net_delta),
+      netDeltaPartial: Number(r.undisclosed) > 0,
+    }));
+    rows.sort((a, b) => b.newPositions - a.newPositions || b.filers - a.filers || (a.issuerKey < b.issuerKey ? -1 : 1));
+    return {
+      present: true,
+      board: {
+        period: opts.period,
+        minFilers,
+        rows: rows.slice(0, limit),
+        unkeyedRows: Number(unkeyed.n),
+        qualifying: rows.length,
+        ordering: "new-positions",
+      },
+    };
+  } catch {
+    return { present: false, reason: "activity-grain-unavailable" };
+  } finally {
+    db.close();
+  }
+}
+
+let clusterCache: { key: string; result: ClusterBoardResult } | null = null;
+
+/** Memoized per (path, period, bounds) — one GROUP BY per build process. */
+export function clusterBoard(
+  opts: LoadActivityOptions & { period: string; minFilers?: number; limit?: number },
+): ClusterBoardResult {
+  const key = JSON.stringify([opts.instPresent, opts.dbPath ?? resolveServingDbPath(), opts.period, opts.minFilers ?? null, opts.limit ?? null]);
+  if (clusterCache && clusterCache.key === key) return clusterCache.result;
+  const result = loadClusterBoard(opts);
+  clusterCache = { key, result };
+  return result;
+}
