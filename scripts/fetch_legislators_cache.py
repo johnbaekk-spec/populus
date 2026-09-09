@@ -59,6 +59,14 @@ DEFAULT_CONTACT = "johnbaekk@gmail.com"
 FILES: dict[str, int] = {
     "legislators-current.yaml": 400,
     "legislators-historical.yaml": 10_000,
+    # B-6: the committee roster `populus committees` reads from the same cache
+    # DIR. `committees-current.yaml` is a list of committees carrying a
+    # `thomas_id`; `committee-membership-current.yaml` is a mapping of committee
+    # id → member list whose entries carry a `bioguide`. Floors sit well below
+    # the real documents (~50 committees incl. joint; ~200 membership keys incl.
+    # subcommittees) so churn never trips them.
+    "committees-current.yaml": 30,
+    "committee-membership-current.yaml": 60,
 }
 
 #: Courtesy delay between the two requests.
@@ -103,11 +111,34 @@ def validate_yaml(name: str, body: bytes, minimum: int) -> int:
     failing, so a document that parsed but carried none would ingest as an empty
     roster and re-create exactly the outage this script exists to end. The
     bioguide count, not the entry count, is therefore what must clear the floor.
+
+    The two committee documents have their own shapes and are checked the same
+    way: committees by `thomas_id` (what `populus committees` keys on), the
+    membership mapping by keys whose member lists carry a `bioguide`.
     """
     try:
         parsed = yaml.safe_load(body.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise FetchError(f"{name}: body is not valid UTF-8 YAML ({exc})") from exc
+    if name == "committees-current.yaml":
+        if not isinstance(parsed, list):
+            raise FetchError(f"{name}: expected a YAML list of committees, got {type(parsed).__name__}")
+        with_id = sum(1 for e in parsed if isinstance(e, dict) and str(e.get("thomas_id") or "").strip())
+        if with_id < minimum:
+            raise FetchError(f"{name}: only {with_id} committees carry a thomas_id, below the {minimum} floor — refusing to write a truncated roster")
+        return with_id
+    if name == "committee-membership-current.yaml":
+        if not isinstance(parsed, dict):
+            raise FetchError(f"{name}: expected a YAML mapping of committee id → members, got {type(parsed).__name__}")
+        with_members = sum(
+            1
+            for people in parsed.values()
+            if isinstance(people, list)
+            and any(isinstance(p, dict) and str(p.get("bioguide") or "").strip() for p in people)
+        )
+        if with_members < minimum:
+            raise FetchError(f"{name}: only {with_members} committees carry members with a bioguide id, below the {minimum} floor — refusing to write a truncated roster")
+        return with_members
     if not isinstance(parsed, list):
         raise FetchError(
             f"{name}: expected a YAML list of legislators, got {type(parsed).__name__}"

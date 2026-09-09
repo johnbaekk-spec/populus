@@ -222,6 +222,18 @@ jobs:
           POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
         run: uv run python scripts/fetch_legislators_cache.py --dest data-cache/legislators
 
+      # B15 / TD-7 — the SEC ticker registry the site build maps tickers
+      # through. Fetched here, fail-fast, from www.sec.gov under the
+      # SEC-accepted `<app name> <contact>` User-Agent (the same access
+      # conditions the identity bootstrap and the MCP server read it under),
+      # then handed to the build as POPULUS_TICKER_MAP. Before this step the
+      # variable pointed at a deliberately absent path and every ticker
+      # surface shipped the honest no-map state.
+      - name: Fetch the SEC ticker registry (fail fast)
+        env:
+          POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
+        run: uv run python scripts/fetch_ticker_registry.py --dest data-cache/registry
+
       # R42 — SEED FORWARD. Before this step the runner built populus.db from
       # nothing every run, and House `default_years` fetches the current year
       # only, so a decade of House history could never come back (B25). The
@@ -287,6 +299,43 @@ jobs:
         run: |
           uv run populus ingest members --db populus.db \
             --from-cache data-cache/legislators
+
+      # B-6 — the dated committee roster from the same cc0-legislators cache
+      # (committees-current.yaml + committee-membership-current.yaml, fetched
+      # and floor-checked above). Full-replace by design: the source publishes
+      # CURRENT membership only, so the snapshot date is today and the validity
+      # window starts with the sitting Congress (119th, convened 2025-01-03).
+      # The member page's committee panel and the ticker page's committee
+      # column read these tables; with the SIC snapshot below, the S-5
+      # jurisdiction signal has both of its inputs. (Step name avoids the word
+      # "committee": test_attestation_structure looks steps up by the fragment
+      # "commit", and an ambiguous match would blind its ordering assertions.)
+      - name: Ingest congressional panel roster (dated)
+        run: |
+          uv run populus committees --db populus.db \
+            --from-cache data-cache/legislators \
+            --snapshot-date "$(date -u +%F)" \
+            --valid-from 2025-01-03
+
+      # B-5 — the EDGAR SIC snapshot for every issuer the corpus names: each
+      # distinct default-view ticker is resolved through the registry fetched
+      # above and its submissions.json (the document the 13F ingest already
+      # reads, under the same SEC access conditions, paced under 10 req/s)
+      # supplies the SIC. The script refuses to write below a 90% fetch
+      # coverage floor, because `populus sectors` FULL-REPLACES issuer_sic and
+      # a hollow snapshot would wipe a good table. With committees above, the
+      # S-5 jurisdiction signal has both of its inputs.
+      - name: Fetch the SIC snapshot (paced, floor-checked)
+        env:
+          POPULUS_CONTACT: ${{ vars.POPULUS_CONTACT }}
+        run: >-
+          uv run python scripts/fetch_sic_snapshot.py --db populus.db
+          --registry data-cache/registry/company_tickers.json --dest data-cache/sic
+
+      - name: Ingest sectors (issuer SIC → owned taxonomy)
+        run: >-
+          uv run populus sectors --db populus.db
+          --snapshot data-cache/sic/sic-snapshot.json --as-of "$(date -u +%F)"
 
       # R44 — the corpus floor, AFTER the join and BEFORE the build, because it
       # checks join identities as well as filing identities.
@@ -400,12 +449,11 @@ jobs:
 
       # Every variable is step-scoped: tests/test_publish.py asserts there is no
       # workflow-level or job-level `env:` block at all (§14 least privilege).
-      # POPULUS_TICKER_MAP is set to a path that does not exist on purpose —
-      # there is no real ticker registry on a runner, and the dashboard refuses
-      # a tests/fixtures path under CI, so the site renders the honest no-map
-      # state rather than serving fixture-derived tickers as production data
-      # (RUN P3-3b TD-7). SITE_CODE_SHA is the FULL sha; the verifier compares
-      # the populus:code_sha marker exactly, never by prefix.
+      # POPULUS_TICKER_MAP is the SEC registry fetched above (B15 / TD-7
+      # closed): the dashboard still refuses a tests/fixtures path under CI, so
+      # fixture-derived tickers can never ship as production data. SITE_CODE_SHA
+      # is the FULL sha; the verifier compares the populus:code_sha marker
+      # exactly, never by prefix.
       # D-1c signal-lifecycle chaining (ALPHA-UX reviews F1 → r3-F1).
       #
       # The prior artifact is DURABLE, not fetched from the live site: each
@@ -462,7 +510,7 @@ jobs:
           POPULUS_SIGNALS_BOOTSTRAP: ${{ steps.prior.outputs.bootstrap }}
           POPULUS_BUILD_DIR: ${{ github.workspace }}/${{ steps.stage.outputs.build_dir }}
           POPULUS_DB: ${{ github.workspace }}/populus.db
-          POPULUS_TICKER_MAP: ${{ github.workspace }}/no-ticker-registry.json
+          POPULUS_TICKER_MAP: ${{ github.workspace }}/data-cache/registry/company_tickers.json
           # Without this the site renders "this build withheld the institutional
           # module — deliberately" for a MISCONFIGURATION: inst.ts looks for
           # inst_agg.db under the build dir while build.py stages it under
