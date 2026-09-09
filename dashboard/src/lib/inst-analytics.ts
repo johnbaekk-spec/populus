@@ -18,6 +18,20 @@
 import type { ConcentrationRow, InstData, QoqDeltaRow } from "./inst.ts";
 import type { TxnRow } from "./format.ts";
 
+/* ---------- the corpus periods, from the table that has a row for every filer-period ---------- */
+
+/** Every reporting period the aggregate carries, ascending — derived from
+    `agg_filer_concentration`, which has a row for every filer-period, NOT from
+    the adds leaderboard's period list: an aggregate without `agg_issuer_adds`
+    (production 20260812.1) reports an EMPTY adds period list, and the analytics
+    bands must not go dark because an optional table is absent. */
+export function concentrationPeriods(inst: InstData): string[] {
+  if (!inst.present) return [];
+  const out = new Set<string>();
+  for (const rows of inst.concentrationByCik.values()) for (const r of rows) out.add(r.period_of_report);
+  return [...out].sort();
+}
+
 /* ---------- one closed period, one total ---------- */
 
 export interface TrackedValue {
@@ -135,11 +149,15 @@ export interface ConcentrationBenchmark {
   positions: { median: number; n: number } | null;
 }
 
+/** Exact median: the mean of the two middle values for an even population,
+    never rounded here — rounding is a presentation decision, and rounding a
+    0.5 share to 1 turned two members at 50% into a chamber "median" of 100%
+    (Codex round 1, F1). */
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const s = [...values].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
-  return s.length % 2 === 1 ? s[mid]! : Math.round((s[mid - 1]! + s[mid]!) / 2);
+  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
 export function concentrationBenchmark(inst: InstData, period: string): ConcentrationBenchmark | null {

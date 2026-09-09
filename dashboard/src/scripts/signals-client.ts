@@ -9,7 +9,7 @@
 
 import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
-import { classifyCursor, readCursor, writeCursor } from "../lib/watchlist.ts";
+import { classifyCursor, readCursor, writeCursor, watchBandEmptyText, watchSeenLabel } from "../lib/watchlist.ts";
 
 const SHORT: Record<string, string> = {
   "s1-large": "LARGE",
@@ -119,7 +119,6 @@ function initWatchBand(): void {
     ([, , bioguide, , ticker]) => (bioguide && watchedMembers.has(bioguide)) || (ticker && watchedTickers.has(ticker)),
   );
   const state = classifyCursor(cursor, coverageFrom);
-  const isNew = (filed: string): boolean => state.kind === "current" && filed > state.cursor.lastSeenFiled;
   /* DOM construction, not innerHTML: the payload came out of the document, so
      a string path back into markup is exactly the taint CodeQL flags. Every
      value lands through textContent; every href is validated then set as a
@@ -130,7 +129,7 @@ function initWatchBand(): void {
       const tr = document.createElement("tr");
       const td = cell("si-empty");
       td.colSpan = 7;
-      td.textContent = "No signal hits on watched subjects in the retained window — a computed answer, not missing coverage.";
+      td.textContent = watchBandEmptyText(0, payload.total, payload.cap);
       tr.append(td);
       body.append(tr);
       return;
@@ -157,8 +156,8 @@ function initWatchBand(): void {
       tr.append(evidence);
       tr.append(cell("c-num si-mag", magnitude(low, high)));
       tr.append(cell("c-filed si-when", `${traded ? traded.slice(5) : "—"} → ${filed.slice(5)}`));
-      const fresh = isNew(filed);
-      tr.append(cell(`c-num ${fresh ? "si-new" : "c-muted"}`, fresh ? "NEW" : state.kind === "none" ? "—" : "seen"));
+      const seen = watchSeenLabel(state, filed);
+      tr.append(cell(`c-num ${seen === "NEW" ? "si-new" : "c-muted"}`, seen));
       const rcpt = cell("c-src");
       const safe = safeReceiptHref(receipt);
       if (safe) {

@@ -98,3 +98,17 @@ test("review r3-F6: the watchlist PAGE wires the helper with both families", asy
   assert.match(src, /earliestRetainedFiled\(build\.txns, build\.paper/);
   assert.match(src, /data-filed-from=\{earliestFiled\}/);
 });
+
+test("signals watch band: seen label is unknown for a first visit AND a coverage gap; only a current cursor classifies", async () => {
+  const { watchSeenLabel, watchBandEmptyText, classifyCursor } = await import("../src/lib/watchlist.ts");
+  const cursor = { v: 1 as const, lastSeenFiled: "2026-06-01", buildId: "b", at: "x" };
+  assert.equal(watchSeenLabel(classifyCursor(null, "2026-05-01"), "2026-07-01"), "—");
+  assert.equal(watchSeenLabel(classifyCursor(cursor, "2026-06-15"), "2026-07-01"), "—", "gap: freshness cannot be established, so no row claims prior viewing");
+  assert.equal(watchSeenLabel(classifyCursor(cursor, "2026-05-01"), "2026-07-01"), "NEW");
+  assert.equal(watchSeenLabel(classifyCursor(cursor, "2026-05-01"), "2026-05-20"), "seen");
+  // a bounded embed cannot assert window-wide absence
+  assert.match(watchBandEmptyText(0, 693, 400), /among the newest 400 of 693 hits/);
+  assert.doesNotMatch(watchBandEmptyText(0, 693, 400), /in the retained window/);
+  assert.match(watchBandEmptyText(0, 120, 400), /in the retained window/);
+  assert.equal(watchBandEmptyText(3, 693, 400), "");
+});

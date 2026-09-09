@@ -8,6 +8,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   chamberBenchmark,
+  concentrationPeriods,
   concentrationBenchmark,
   memberProfileStats,
   newPositionLeaders,
@@ -134,4 +135,28 @@ test("cluster board: grouped over the serving activity grain, distinct filers, p
   assert.match(clusterBoardHtml(loadClusterBoard({ instPresent: true, dbPath, period: "2030-03-31" }), "2030-03-31"), /Not available in this build/);
   assert.match(clusterBoardHtml(loadClusterBoard({ instPresent: false, dbPath, period: P }), P), /institutional module/);
   writeFileSync(path.join(dir, "keep"), "");
+});
+
+test("analytics periods come from the concentration table, so an aggregate without the adds table still has a closed quarter", () => {
+  const data = inst([
+    { cik: "1", conc: [conc("1", 100), { ...conc("1", 90), period_of_report: "2025-12-31" }], deltas: [] },
+    { cik: "2", conc: [{ ...conc("2", 50), period_of_report: "2025-09-30" }], deltas: [] },
+  ]);
+  assert.deepEqual(data.addsPeriods.length === 1 ? concentrationPeriods({ ...data, addsPeriods: [] }) : [], ["2025-09-30", "2025-12-31", P]);
+});
+
+test("chamber medians stay fractional for an even population — two members at 50% is a 50% median, not 100%", () => {
+  const half = (bioguide: string) => ({ chamber: "house" as const, txns: [txn({ bioguide, side: "purchase", owner: null, high: 15000, lag: 10 }), txn({ bioguide, side: "sale", owner: "spouse", high: 50000, lag: 20, doc: "d2" })] });
+  const bench = chamberBenchmark([half("A"), half("B")], "house")!;
+  assert.equal(bench.buyShare, 0.5);
+  assert.equal(bench.shareSmallBracket, 0.5);
+  assert.equal(bench.selfOwnedShare, 0.5);
+  assert.equal(bench.medianLag, 15, "median of two members each at median lag 15");
+  const uneven = chamberBenchmark([half("A"), { chamber: "house", txns: [txn({ lag: 11 })] }], "house")!;
+  assert.equal(uneven.medianLag, 13, "mean of the two middle values (15 and 11), not a rounded neighbour");
+  const b = concentrationBenchmark(inst([
+    { cik: "1", conc: [conc("1", 100, 0, 3000, 900)], deltas: [] },
+    { cik: "2", conc: [conc("2", 100, 0, 3001, 901)], deltas: [] },
+  ]), P)!;
+  assert.equal(b.topnShareBps!.median, 3000.5);
 });

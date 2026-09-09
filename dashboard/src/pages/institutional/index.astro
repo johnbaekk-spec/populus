@@ -6,7 +6,7 @@
 import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
 import { briefingCards, disclosureLedger, unavailableDesignPanel, s1ModuleAbsent, s7Banner, addsSectionHtml, clusterBoardHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
-import { newPositionLeaders, trackedValueFor } from "../../lib/inst-analytics";
+import { concentrationPeriods, newPositionLeaders, trackedValueFor } from "../../lib/inst-analytics";
 import { clusterBoard } from "../../lib/activity";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
@@ -155,8 +155,10 @@ if (!inst.present) {
     `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
   /* The analytics bands are bound to ONE closed quarter — the newest whose
      45-day filing window has passed — never each filer's latest period folded
-     into a falsely uniform total. `addsPeriods` is the corpus period list. */
-  const analyticsPeriod = addsPeriod;
+     into a falsely uniform total. The period comes from the concentration
+     table (a row per filer-period), not the adds leaderboard's list, which is
+     empty on an aggregate without the optional adds table. */
+  const analyticsPeriod = closedPeriods(concentrationPeriods(inst), build.generatedAtDate)[0] ?? null;
   const tracked = analyticsPeriod === null ? null : trackedValueFor(inst, analyticsPeriod);
   const leaders = analyticsPeriod === null ? null : newPositionLeaders(inst, analyticsPeriod, { limit: 5 });
   const clusters = analyticsPeriod === null

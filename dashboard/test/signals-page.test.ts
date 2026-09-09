@@ -82,3 +82,15 @@ test("the watch band embeds a </script>-safe payload and the whole page passes t
   assert.match(html, /id="signal-watch-data"/);
   assert.deepEqual(scanBannedWording(signalsBody(ART, CTX, { rowsEvaluated: 100, latestBatch: [], latestBatchFiled: null })), []);
 });
+
+test("a withheld LATE kind renders as unevaluated in the compliance summary, never as a computed zero", () => {
+  const withheld: SignalArtifact = { ...ART, signals: ART.signals.filter((s) => s.kind !== "s6-late-large"), withheld: [...ART.withheld, { kind: "s6-late-large", reason: "volume-out-of-bounds", detail: "measured volume outside its declared bounds" }] };
+  const html = signalsBody(withheld, CTX);
+  assert.match(html, /LATE rule was withheld this build/);
+  assert.match(html, /volume-out-of-bounds/);
+  assert.doesNotMatch(html, /No late-and-large disclosures in the window/);
+  assert.doesNotMatch(html, /Zero hits is the computed answer for the LATE rule/);
+  // the non-withheld artifact with zero LATE hits still states the computed zero
+  const zero = signalsBody({ ...ART, signals: ART.signals.filter((s) => s.kind !== "s6-late-large") }, CTX);
+  assert.match(zero, /No late-and-large disclosures in the window/);
+});

@@ -487,6 +487,8 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     .sort((a, b) => (b.magnitude.low ?? 0) - (a.magnitude.low ?? 0))[0];
   const late = active.filter((s) => s.kind === "s6-late-large");
   const lateMax = late.map((s) => lagDays(s) ?? 0).reduce((m, v) => Math.max(m, v), 0);
+  // A withheld LATE kind is an UNEVALUATED state, never a computed zero (Codex round 1, F3).
+  const lateWithheld = artifact.withheld.find((w) => w.kind === "s6-late-large") ?? null;
   const rarest = RULE_BOOK.filter((r) => !artifact.withheld.some((w) => w.kind === r.kind))
     .map((r) => ({ r, n: active.filter((s) => s.kind === r.kind).length }))
     .sort((a, b) => a.n - b.n)[0];
@@ -502,12 +504,16 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     },
     {
       tag: "Compliance",
-      title: late.length === 0
-        ? "No late-and-large disclosures in the window"
-        : `${fmtInt(late.length)} ${late.length === 1 ? "disclosure" : "disclosures"} filed past the 45-day window with a lower bound ≥ $100K`,
-      body: late.length === 0
-        ? "Zero hits is the computed answer for the LATE rule, and the rule stays published."
-        : `The longest ran +${fmtInt(lateMax)} days from trade to filing — ${fmtInt(Math.max(0, lateMax - 45))} over the STOCK Act window. Late disclosure is stated, not editorialised.`,
+      title: lateWithheld
+        ? "The LATE rule was withheld this build — not evaluated"
+        : late.length === 0
+          ? "No late-and-large disclosures in the window"
+          : `${fmtInt(late.length)} ${late.length === 1 ? "disclosure" : "disclosures"} filed past the 45-day window with a lower bound ≥ $100K`,
+      body: lateWithheld
+        ? `Withheld (${lateWithheld.reason}): ${lateWithheld.detail} No count is stated for a rule that did not run.`
+        : late.length === 0
+          ? "Zero hits is the computed answer for the LATE rule, and the rule stays published."
+          : `The longest ran +${fmtInt(lateMax)} days from trade to filing — ${fmtInt(Math.max(0, lateMax - 45))} over the STOCK Act window. Late disclosure is stated, not editorialised.`,
     },
     {
       tag: "Rarest · highest signal",
