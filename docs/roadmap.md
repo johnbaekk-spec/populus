@@ -68,16 +68,17 @@ Carried open from the M2-5 merge. Full mechanism analysis was recorded in
   seed the runner from the published corpus before ingest (the accumulated
   store becomes an input), or re-run the backfill under CI. A smaller corpus
   is indistinguishable from a quiet week to every gate that exists today.
-- **B15 / TD-7 — ticker names are missing site-wide (the honest no-map
-  state).** `POPULUS_TICKER_MAP` points at a deliberately absent path on CI
-  because `company_tickers.json` exists only on a workstation; the deployed
-  site renders `no-map` on ticker surfaces. Chosen, not overlooked — the
-  fixture-fallback alternative would ship test data as production truth, which
-  the served-tree sweep cannot detect. To close: give the pipeline a real
-  registry source (an ingest step under the existing SEC UA policy — **the SEC
-  UA must never change** — or a copy committed to `populus-data` and staged as
-  a manifest-listed artifact), then point `POPULUS_TICKER_MAP` at it and
-  delete the absent-path placeholder in `publish.yml`.
+- **B15 / TD-7 — CLOSED in the pipeline (PR #106, 2026-09-09).**
+  `scripts/fetch_ticker_registry.py` fetches `company_tickers.json` from
+  www.sec.gov at build time under the existing SEC UA policy (fail-fast,
+  floor-checked, atomic, provenance recorded) and `publish.yml` points
+  `POPULUS_TICKER_MAP` at it; the absent-path placeholder is gone. The same PR
+  runs `populus committees` (B-6) from the cc0-legislators cache and
+  `populus sectors` (B-5) from an EDGAR `submissions.json` SIC snapshot
+  (`scripts/fetch_sic_snapshot.py`, paced under 10 req/s, 90% coverage floor
+  because the ingest full-replaces `issuer_sic`). First production evidence
+  lands with the next nightly publish; the dashboard's CI refusal of fixture
+  ticker maps stays in force.
 - **Holders-table dormancy is not TD-7 alone.** Measured on the 21 GB
   institutional store: 0 of 26,158 securities are entity-resolved and none has
   ever had a candidate proposed — 13F securities are provisional
