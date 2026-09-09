@@ -81,7 +81,15 @@ export const SIGNAL_THRESHOLDS = {
       "dedupe_key": "txnId",
       "cooldown_days": 0,
       "min_history_days": 0,
-      "calibration": null
+      "calibration": {
+        "backtest_from": "2025-01-03",
+        "backtest_to": "2026-08-02",
+        "measured": "1,251 overlap rows over the roster window (membership valid from 2025-01-03, the 119th Congress; current-membership source, so the backtest cannot reach earlier) on the 20260802.2 corpus with the 2026-09-09 SIC snapshot (1,855 issuers) and jurisdiction mapping v1; 37-91/30d all, 31-90/30d House, 0-10/30d Senate over the trailing 6 months; 47 distinct members; sectors: manufacturing 712, finance-insurance-realestate 394, transport-utilities 107. A CONTEXT kind that fires on ~8% of dated rows in window - published as a filter-grade rate, never dressed as rare",
+        "volume_bounds": {
+          "max_per_30d": 120,
+          "min_total_backtest": 100
+        }
+      }
     },
     "s6-late-large": {
       "params": {
