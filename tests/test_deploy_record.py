@@ -31,6 +31,7 @@ import hashlib
 import json
 import re
 import shlex
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1239,6 +1240,60 @@ def test_the_gate_fetch_policy_matches_the_sweep_fetch_policy():
     """
     assert record._GATE_NO_ANSWER_STATUSES == verify_module._NO_ANSWER_STATUSES
     assert record._GATE_REQUEST_HEADERS == verify_module._REQUEST_HEADERS
+    assert record._GATE_RETRY_BACKOFF_SECONDS == verify_module.TRANSPORT_RETRY_BACKOFF_SECONDS
+
+
+class _GateHttp:
+    """A gate transport that fails the first *stalls* requests, then answers."""
+
+    def __init__(self, stalls: int, *, status: int = 200) -> None:
+        self.stalls = stalls
+        self.status = status
+        self.calls = 0
+
+    def get(self, url, *, headers, follow_redirects):
+        self.calls += 1
+        if self.calls <= self.stalls:
+            raise TimeoutError("The read operation timed out")
+        return types.SimpleNamespace(status_code=self.status, content=b"ok", headers={})
+
+
+def test_the_gate_reasks_a_fetch_that_got_no_answer(monkeypatch):
+    """Twin of the sweep's re-ask: one stall, then the same URL answers."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(record, "_gate_sleep", sleeps.append)
+    http = _GateHttp(stalls=1)
+
+    response = record._gate_fetch(http, "https://example.test/")
+
+    assert response.status_code == 200
+    assert http.calls == 2
+    assert sleeps == [record._GATE_RETRY_BACKOFF_SECONDS[0]]
+
+
+def test_the_gate_still_reports_an_outage_that_outlasts_the_bound(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(record, "_gate_sleep", sleeps.append)
+    http = _GateHttp(stalls=99)
+
+    with pytest.raises(record.RecordUnavailable, match="transport error"):
+        record._gate_fetch(http, "https://example.test/")
+
+    assert http.calls == len(record._GATE_RETRY_BACKOFF_SECONDS) + 1
+    assert sleeps == list(record._GATE_RETRY_BACKOFF_SECONDS)
+
+
+def test_the_gate_never_reasks_a_response_that_arrived(monkeypatch):
+    """A 404 is an answer: returned from its one fetch, never retried."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(record, "_gate_sleep", sleeps.append)
+    http = _GateHttp(stalls=0, status=404)
+
+    response = record._gate_fetch(http, "https://example.test/")
+
+    assert response.status_code == 404
+    assert http.calls == 1
+    assert sleeps == []
 
 
 def test_an_outage_that_reaches_the_top_level_is_unavailable_not_rejected(tmp_path):

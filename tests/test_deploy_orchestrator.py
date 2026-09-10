@@ -47,9 +47,11 @@ from populus.deploy.orchestrator import (
     EXIT_UNCOMPENSATED,
     OUTCOME_DEPLOYED,
     POST_PROMOTION_SETTLE_SECONDS,
+    POST_ROLLBACK_SETTLE_SECONDS,
     PREVIEW,
     PRODUCTION,
     PROJECT_ENV,
+    ROLLBACK_OBSERVATION_ATTEMPTS,
     RUNBOOK,
     ArtifactRefused,
     DeployAborted,
@@ -751,6 +753,11 @@ def test_a_rollback_that_does_not_restore_exactly_says_so(harness: Harness) -> N
 
     The post-rollback observation drifts on the body hash and one header;
     ``rollback_verified`` must be False and the drifted fields named.
+
+    Updated 2026-09-10 with the bounded re-observation: the drift now persists
+    through EVERY allowed observation (a real mismatch does not heal by waiting),
+    and the test asserts all of them were spent — before, the list held exactly
+    one post-rollback answer because only one observation was ever taken.
     """
     drifted = RollbackSiteObservation(
         body_sha256="d" * 64,
@@ -759,16 +766,94 @@ def test_a_rollback_that_does_not_restore_exactly_says_so(harness: Harness) -> N
         code_sha=OBSERVATION.code_sha,
         headers=OBSERVATION.headers[1:],
     )
-    answers = [OBSERVATION, drifted]
+    answers = [OBSERVATION] + [drifted] * ROLLBACK_OBSERVATION_ATTEMPTS
 
     harness.with_verifier(plan=[True, False])
 
     with pytest.raises(ProductionVerificationFailed) as raised:
         harness.run(observer=lambda url: answers.pop(0))
 
+    assert answers == []
     assert raised.value.rollback_verified is False
     assert "did NOT verify" in str(raised.value)
     assert "body_sha256" in str(raised.value)
+
+
+
+#: What the domain shows while a rollback is still propagating: the attempted
+#: (failed) build, not the captured pre-upload one.
+ATTEMPTED = RollbackSiteObservation(
+    body_sha256="a" * 64,
+    body_length=OBSERVATION.body_length + 80,
+    build_id="20260910.1",
+    code_sha="4f4769d8cd811b463aee3a7103b21ad425d86fc1",
+    headers=OBSERVATION.headers,
+)
+
+
+def test_a_rollback_observed_before_it_propagates_is_observed_again(
+    harness: Harness,
+) -> None:
+    """Run 34409063045: the rollback worked, the one immediate look said it had not.
+
+    The domain still serves the attempted build on the first post-rollback look
+    and the restored one on the second; with a settle before each look the run
+    must report the rollback as VERIFIED. Order is pinned: every post-rollback
+    observation is preceded by a settle of POST_ROLLBACK_SETTLE_SECONDS.
+    """
+    answers = [OBSERVATION, ATTEMPTED, OBSERVATION]
+
+    def observer(url: str) -> RollbackSiteObservation:
+        harness.log.append(("observe", url))
+        return answers.pop(0)
+
+    def settle(seconds: float) -> None:
+        harness.log.append(("settle", seconds))
+
+    harness.with_verifier(plan=[True, False])
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(observer=observer, settle=settle)
+
+    assert answers == []
+    assert raised.value.rollback_verified is True
+    after = harness.log[harness.log.index(("rollback", PRIOR)) + 1 :]
+    assert after == [
+        ("settle", POST_ROLLBACK_SETTLE_SECONDS),
+        ("observe", DOMAIN_URL),
+        ("settle", POST_ROLLBACK_SETTLE_SECONDS),
+        ("observe", DOMAIN_URL),
+    ]
+
+
+
+def test_the_rollback_settle_is_distinguishable_from_the_promotion_settles() -> None:
+    """Every settle-sequence assertion in this file identifies a wait by its
+    VALUE. If the rollback settle equalled a promotion settle, a mutant that
+    dropped the rollback settle and wrongly fired a propagation settle would
+    record the same sequence and pass. Distinct values are what make those
+    sequences mean something."""
+    assert POST_ROLLBACK_SETTLE_SECONDS not in {
+        POST_PROMOTION_SETTLE_SECONDS,
+        PROPAGATION_SETTLE_SECONDS,
+    }
+
+def test_post_rollback_observation_is_bounded(harness: Harness) -> None:
+    """A rollback that never restores is reported after the bound, not waited on."""
+    calls: list[str] = []
+
+    def observer(url: str) -> RollbackSiteObservation:
+        calls.append(url)
+        return OBSERVATION if len(calls) == 1 else ATTEMPTED
+
+    harness.with_verifier(plan=[True, False])
+
+    with pytest.raises(ProductionVerificationFailed) as raised:
+        harness.run(observer=observer)
+
+    assert len(calls) == 1 + ROLLBACK_OBSERVATION_ATTEMPTS
+    assert raised.value.rollback_verified is False
+    assert "build_id" in str(raised.value)
 
 
 def test_an_unavailable_post_rollback_observation_is_not_restored(
@@ -1703,7 +1788,11 @@ def test_the_propagation_retry_is_bounded_and_then_rolls_back(
         harness.run(settle=settle)
 
     # One pre-sweep settle plus exactly PROPAGATION_RETRIES retry settles.
-    assert len(settle.waits) == 1 + PROPAGATION_RETRIES
+    assert settle.waits == (
+        [POST_PROMOTION_SETTLE_SECONDS]
+        + [PROPAGATION_SETTLE_SECONDS] * PROPAGATION_RETRIES
+        + [POST_ROLLBACK_SETTLE_SECONDS]
+    )
     assert harness.client.rollbacks == [PRIOR]
     assert raised.value.rolled_back_to == PRIOR
 
@@ -1749,7 +1838,7 @@ def test_only_a_pure_404_rejection_is_ever_settled(
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
 
-    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], why
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, POST_ROLLBACK_SETTLE_SECONDS], why
     assert harness.client.rollbacks == [PRIOR]
     # Preview and the rejected production pass — no retry of the production
     # check itself, and (LD12a) NO third verify: restoration is judged against
@@ -1767,7 +1856,7 @@ def test_an_unavailable_production_verification_is_never_settled(
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
 
-    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS]
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, POST_ROLLBACK_SETTLE_SECONDS]
 
 
 def test_the_predicate_refuses_a_rejection_carrying_no_divergences() -> None:
@@ -1812,7 +1901,7 @@ def test_an_unavailable_outcome_carrying_404_divergences_still_fails_closed(
     settle = RecordingSettle()
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
-    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], (
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, POST_ROLLBACK_SETTLE_SECONDS], (
         "an unavailable verdict must never trigger the RETRY settle"
     )
     assert harness.client.rollbacks == [PRIOR]
@@ -1925,7 +2014,7 @@ def test_a_truncated_body_is_never_waited_out(harness: Harness) -> None:
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
 
-    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], "no RETRY settle"
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, POST_ROLLBACK_SETTLE_SECONDS], "no RETRY settle"
     assert harness.client.rollbacks == [PRIOR]
 
 
@@ -2403,7 +2492,9 @@ def test_a_v2_to_v2_rollback_restores_the_captured_headers_exactly(
             for name, values in OBSERVATION.headers
         ),
     )
-    answers = [OBSERVATION, lost_header]
+    # A lost header is a real mismatch: it persists through every allowed
+    # post-rollback observation (bounded re-observation, 2026-09-10).
+    answers = [OBSERVATION] + [lost_header] * ROLLBACK_OBSERVATION_ATTEMPTS
     harness.with_verifier(plan=[True, False])
 
     with pytest.raises(ProductionVerificationFailed) as raised:
@@ -2478,7 +2569,7 @@ def test_a_header_or_control_finding_never_qualifies_for_the_settle(
     with pytest.raises(ProductionVerificationFailed):
         harness.run(settle=settle)
 
-    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS], why
+    assert settle.waits == [POST_PROMOTION_SETTLE_SECONDS, POST_ROLLBACK_SETTLE_SECONDS], why
     assert harness.client.rollbacks == [PRIOR]
     assert harness.verify.stages == [PREVIEW, PRODUCTION]
 

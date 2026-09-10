@@ -1565,3 +1565,126 @@ def test_a_weakened_hsts_fails_verification(tmp_path):
         "strict-transport-security" in f and "does not equal the locked policy" in f
         for f in result.findings
     )
+
+
+# --- a fetch that got no answer is re-asked; an answer never is ---------------
+
+
+def _flaky_client(origin: _Origin, path: str, failures: list) -> tuple["_RecordingClient", list]:
+    """*origin*, except requests for *path* consume *failures* first.
+
+    Each item is an exception to raise or an ``httpx.Response`` to return; once
+    the list is empty the real origin answers. Returns the client and a list
+    that records every URL path requested, in order.
+    """
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.path)
+        if request.url.path == f"/{path}" and failures:
+            failure = failures.pop(0)
+            if isinstance(failure, BaseException):
+                raise failure
+            return failure
+        return origin.handler(request)
+
+    return _RecordingClient(httpx.Client(transport=httpx.MockTransport(handler))), requested
+
+
+@pytest.fixture
+def sleeps(monkeypatch) -> list[float]:
+    recorded: list[float] = []
+    monkeypatch.setattr(verify_module, "_sleep", recorded.append)
+    return recorded
+
+
+def _requests_for(path: str, requested: list[str]) -> int:
+    return sum(1 for seen in requested if seen == f"/{path}")
+
+
+def test_one_stalled_fetch_is_reasked_and_the_sweep_verifies(tmp_path, sleeps):
+    """Run 34409063045: one 30 s read timeout out of thousands killed a deploy."""
+    site = _site()
+    inventory = _inventory(tmp_path, site)
+    origin = _Origin(site)
+    clean_client, clean = _flaky_client(origin, "assets/app.js", [])
+    assert _run(origin, inventory, client=clean_client).ok
+    client, requested = _flaky_client(
+        origin, "assets/app.js", [httpx.ReadTimeout("The read operation timed out")]
+    )
+
+    result = _run(origin, inventory, client=client)
+
+    assert result.ok is True
+    assert result.outcome == attestation.VERIFIED
+    assert _requests_for("assets/app.js", requested) == _requests_for("assets/app.js", clean) + 1
+    assert sleeps == [verify_module.TRANSPORT_RETRY_BACKOFF_SECONDS[0]]
+
+
+def test_a_no_answer_status_is_reasked(tmp_path, sleeps):
+    site = _site()
+    origin = _Origin(site)
+    client, _ = _flaky_client(origin, "assets/app.js", [httpx.Response(503, content=b"busy")])
+
+    result = _run(origin, _inventory(tmp_path, site), client=client)
+
+    assert result.ok is True
+    assert len(sleeps) == 1
+
+
+def test_an_outage_that_outlasts_the_bound_is_still_unavailable(tmp_path, sleeps):
+    """The re-ask is bounded: a dead origin still ends UNAVAILABLE, not hung."""
+    site = _site()
+    origin = _Origin(site)
+    bound = len(verify_module.TRANSPORT_RETRY_BACKOFF_SECONDS) + 1
+    stalls = [httpx.ReadTimeout("stalled") for _ in range(bound + 5)]
+    client, requested = _flaky_client(origin, "assets/app.js", stalls)
+
+    result = _run(origin, _inventory(tmp_path, site), client=client)
+
+    assert result.outcome == attestation.UNAVAILABLE
+    assert _requests_for("assets/app.js", requested) == bound
+    assert sleeps == list(verify_module.TRANSPORT_RETRY_BACKOFF_SECONDS)
+
+
+def test_a_wrong_body_is_judged_once_and_never_reasked(tmp_path, sleeps):
+    """An answer that arrived is a verdict. Re-asking a digest mismatch until it
+    agrees would be exactly the softening the settle rule forbids."""
+    site = _site()
+    origin = _Origin(site)
+    tampered = httpx.Response(200, content=b"export const pwned = true;\n")
+    clean_client, clean = _flaky_client(origin, "assets/app.js", [])
+    _run(origin, _inventory(tmp_path, site), client=clean_client)
+    client, requested = _flaky_client(origin, "assets/app.js", [tampered, tampered])
+
+    result = _run(origin, _inventory(tmp_path, site), client=client)
+
+    assert result.outcome == attestation.REJECTED
+    assert _requests_for("assets/app.js", requested) == _requests_for("assets/app.js", clean)
+    assert sleeps == []
+
+
+def test_a_404_is_an_answer_not_an_outage(tmp_path, sleeps):
+    site = _site()
+    origin = _Origin(site)
+    missing = httpx.Response(404, content=b"<title>404</title>")
+    client, _ = _flaky_client(origin, "assets/app.js", [missing, missing, missing])
+
+    result = _run(origin, _inventory(tmp_path, site), client=client)
+
+    assert result.outcome == attestation.REJECTED
+    assert sleeps == []
+
+
+def test_the_no_network_guard_is_never_reasked(tmp_path, sleeps):
+    site = _site()
+    origin = _Origin(site)
+    client, requested = _flaky_client(
+        origin, "assets/app.js", [AssertionError("network blocked in tests")]
+    )
+
+    with pytest.raises(AssertionError, match="network blocked"):
+        _run(origin, _inventory(tmp_path, site), client=client)
+
+    assert _requests_for("assets/app.js", requested) == 1
+    assert sleeps == []

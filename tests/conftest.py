@@ -12,6 +12,22 @@ from populus.load import ParsedRow, insert_filing, load_filing
 
 
 @pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch):
+    """Deploy fetches back off with real sleeps in production; never in the suite.
+
+    ``verify._fetch`` and ``record._gate_fetch`` re-ask a fetch that got no
+    answer after a real delay. Several tests make EVERY request fail on purpose,
+    so without this each would sleep through the whole backoff schedule. Tests
+    that assert the schedule patch these again with a recorder.
+    """
+    import populus.deploy.record as record_module
+    import populus.deploy.verify as verify_module
+
+    monkeypatch.setattr(verify_module, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(record_module, "_gate_sleep", lambda seconds: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_network(monkeypatch):
     """RUN-1 code and tests must never touch the network (brief line 20).
 

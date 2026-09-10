@@ -80,6 +80,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from html import unescape
@@ -286,6 +288,19 @@ _REQUEST_HEADERS = {"cache-control": "no-cache", "pragma": "no-cache"}
 #: Statuses that mean *we did not get an answer*, mirroring the
 #: attestation fetcher's treatment of 403/429. Everything >= 500 joins them.
 _NO_ANSWER_STATUSES = frozenset({403, 408, 425, 429})
+
+#: Backoff before each re-ask of ONE fetch that got no answer — a transport
+#: failure, a no-answer status, or a 5xx. Added 2026-09-10: publish run
+#: 34409063045 lost two deploys in a row to a single 30 s read timeout, each on
+#: an asset that served in 0.2 s when probed minutes later — one stalled
+#: connection out of thousands turned the whole sweep UNAVAILABLE, and nothing
+#: above this function re-asks an UNAVAILABLE sweep. Re-asking a question that
+#: got no answer is delaying the question, which is safe. A response that DID
+#: arrive — a 404, a redirect, a wrong body — is an answer and is never re-asked.
+TRANSPORT_RETRY_BACKOFF_SECONDS = (2.0, 8.0)
+
+#: The sleep the re-ask uses; a module attribute so the suite never really waits.
+_sleep = time.sleep
 
 #: Both are **inventory** paths, not URLs, and stay that way: they index the
 #: envelope, name the file inside the downloaded artifact
@@ -1057,6 +1072,31 @@ def _url(base_url: str, path: str, cache_bust: str) -> str:
 
 
 def _fetch(client: HttpGetter, url: str) -> HttpResponse:
+    """One cache-busted fetch with redirects disabled, re-asked only on no answer.
+
+    **No answer is re-asked; an answer never is.** When :func:`_fetch_once`
+    reports an outage (:class:`VerifyUnavailable`), the same URL is asked again
+    after each delay in :data:`TRANSPORT_RETRY_BACKOFF_SECONDS`, and every re-ask
+    says so on stderr — a silent retry would turn a broken origin into a slow
+    one. When the bound runs out, the last outage propagates unchanged, so a
+    genuinely unreachable origin is still UNAVAILABLE.
+
+    Any response that clears :func:`_fetch_once` is returned from its own
+    complete fetch, so every path's verdict still comes from one whole response,
+    never a composite of attempts, and a wrong body is judged exactly once.
+    ``AssertionError`` (the suite's no-network guard) is not an outage and is
+    never re-asked.
+    """
+    for delay in TRANSPORT_RETRY_BACKOFF_SECONDS:
+        try:
+            return _fetch_once(client, url)
+        except VerifyUnavailable as exc:
+            print(f"verify: no answer ({exc}); asking again in {delay:g}s", file=sys.stderr)
+            _sleep(delay)
+    return _fetch_once(client, url)
+
+
+def _fetch_once(client: HttpGetter, url: str) -> HttpResponse:
     """One cache-busted fetch with redirects disabled.
 
     Anything the client raises is an outage, not a verdict — except
