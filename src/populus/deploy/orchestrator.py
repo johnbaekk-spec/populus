@@ -165,6 +165,22 @@ POST_PROMOTION_SETTLE_SECONDS = 45.0
 PROPAGATION_SETTLE_SECONDS = 45.0
 PROPAGATION_RETRIES = 1
 
+#: How long to let the custom domain settle after a rollback, before EACH
+#: post-rollback observation, and how many observations are allowed. Added
+#: 2026-09-10: run 34409063045 rolled back correctly, but its one immediate
+#: observation still saw the attempted build (20260910.1) and reported "the
+#: restored deployment did NOT verify" — minutes later the domain served the
+#: restored build on every path. Same rule as the promotion settle: delaying the
+#: question is safe. Acceptance is unchanged — only an EXACT match to the
+#: pre-upload observation verifies — so re-observing can turn a premature "no"
+#: into a correct "yes", but can never soften a real mismatch. Shorter than the
+#: promotion settles: a rollback re-points production at a deployment whose
+#: objects the edge has already served, so there is nothing to materialise —
+#: and a distinct value keeps a recorded settle sequence unambiguous about
+#: which wait was which.
+POST_ROLLBACK_SETTLE_SECONDS = 30.0
+ROLLBACK_OBSERVATION_ATTEMPTS = 3
+
 #: Exit codes, deliberately distinguishable — these are four different pages at
 #: 3am. ``EXIT_UNCOMPENSATED`` is TD-4 and nothing else: unverified bytes are
 #: serving and only an owner action can replace them.
@@ -1052,6 +1068,7 @@ def run_deployment(
             _fail_production(
                 client=client,
                 observer=observer,
+                settle=settle,
                 domain_url=domain_url,
                 expectation=expectation,
                 result=production_result,
@@ -1129,6 +1146,7 @@ def _fail_production(
     *,
     client: PagesSurface,
     observer: RollbackObserver,
+    settle: Callable[[float], None],
     domain_url: str,
     expectation: RollbackExpectation | None,
     result: VerificationOutcome,
@@ -1172,17 +1190,38 @@ def _fail_production(
             f"{restored.get('uses_functions', '<absent>')!r})"
         )
     if not problems:
-        try:
-            fresh = observer(domain_url)
-        except DeployAborted as exc:
-            problems.append(f"the post-rollback observation was unavailable: {exc}")
-        else:
-            if fresh != expectation.observation:
-                problems.append(
+        # Settle BEFORE every observation, then accept only an exact match. A
+        # rollback propagates to the edge like a promotion does, so the first
+        # look can still see the attempted build; asking again after a settle
+        # is bounded by ROLLBACK_OBSERVATION_ATTEMPTS and said out loud.
+        observation_problem = ""
+        for attempt in range(1, ROLLBACK_OBSERVATION_ATTEMPTS + 1):
+            settle(POST_ROLLBACK_SETTLE_SECONDS)
+            try:
+                fresh = observer(domain_url)
+            except DeployAborted as exc:
+                observation_problem = (
+                    f"the post-rollback observation was unavailable: {exc}"
+                )
+            else:
+                if fresh == expectation.observation:
+                    observation_problem = ""
+                    break
+                observation_problem = (
                     "the post-rollback observation does not match the captured "
                     "one exactly: "
                     + _observation_drift(expectation.observation, fresh)
                 )
+            if attempt < ROLLBACK_OBSERVATION_ATTEMPTS:
+                print(
+                    f"deploy: post-rollback observation {attempt}/"
+                    f"{ROLLBACK_OBSERVATION_ATTEMPTS} not yet restored "
+                    f"({observation_problem}); settling "
+                    f"{POST_ROLLBACK_SETTLE_SECONDS:g}s and observing again",
+                    file=sys.stderr,
+                )
+        if observation_problem:
+            problems.append(observation_problem)
 
     restored_state = (
         "the restored deployment matches the pre-upload expectation exactly "

@@ -1351,10 +1351,37 @@ def _domain_code_sha(
     return _one_marker(read_markers(response.content), MARKER_CODE_SHA, marker_path)
 
 
+#: The gate's copy of :data:`populus.deploy.verify.TRANSPORT_RETRY_BACKOFF_SECONDS`
+#: — pinned equal by ``tests/test_deploy_record.py`` so "no answer is re-asked"
+#: cannot become true on the sweep and false on the gate.
+_GATE_RETRY_BACKOFF_SECONDS = (2.0, 8.0)
+
+#: The sleep the gate's re-ask uses; a module attribute so the suite never waits.
+_gate_sleep = time.sleep
+
+
 def _gate_fetch(http: HttpGetter, url: str) -> HttpResponse:
+    """One cache-busted, redirect-disabled GET, re-asked only on no answer.
+
+    The same policy as :func:`populus.deploy.verify._fetch`: an outage
+    (:class:`RecordUnavailable` from :func:`_gate_fetch_once`) is asked again
+    after each delay in :data:`_GATE_RETRY_BACKOFF_SECONDS`, loudly, and the last
+    outage propagates when the bound runs out. A response that arrived is an
+    answer and is returned from its own complete fetch, never re-asked.
+    """
+    for delay in _GATE_RETRY_BACKOFF_SECONDS:
+        try:
+            return _gate_fetch_once(http, url)
+        except RecordUnavailable as exc:
+            print(f"record: no answer ({exc}); asking again in {delay:g}s", file=sys.stderr)
+            _gate_sleep(delay)
+    return _gate_fetch_once(http, url)
+
+
+def _gate_fetch_once(http: HttpGetter, url: str) -> HttpResponse:
     """One cache-busted, redirect-disabled GET, with the outage/rejection split preserved.
 
-    A local copy of :func:`populus.deploy.verify._fetch`'s policy rather than a
+    A local copy of :func:`populus.deploy.verify._fetch_once`'s policy rather than a
     call to it: that function is private, the gate has no inventory to sweep so
     ``sweep_inventory`` does not fit, and binding another module's private name
     is the coupling that let a reload in one test file break an ``except``
