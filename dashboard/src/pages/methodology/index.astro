@@ -83,7 +83,7 @@ const description =
             </div>
             <div class="source-row">
               <div><div class="source-name">congress-legislators</div><div class="mono-note">cc0 · member identity</div></div>
-              <div class="source-cond">CC0 seed for bioguide IDs, parties, terms. Joins are conservative: unique-candidate only, publicly versioned aliases.</div>
+              <div class="source-cond">CC0 seed for congressional member IDs, parties, terms. Joins are conservative: unique-candidate only, publicly versioned aliases.</div>
             </div>
             <div class="source-row">
               <div><div class="source-name">kadoa congress-trading seed</div><div class="mono-note">mit-kadoa-seed · backfill</div></div>
@@ -142,7 +142,7 @@ const description =
           <div class="mtile">
             <div class="tile-value">{inst.watermarks.latest_period_of_report ?? "—"}</div>
             <div class="tile-label">latest period</div>
-            <div class="mtile-sub">manifest watermark</div>
+            <div class="mtile-sub">newest filing received</div>
           </div>
           <div class="mtile">
             <div class="tile-value">{fmtInt(inst.topn)}</div>
@@ -169,7 +169,7 @@ const description =
       )}
       <h3 class="section-h">What our 13F derivations do — and refuse to do</h3>
       <div class="gaps-block cols-2">
-        <div>· Amendments are typed: a restatement supersedes; new-holdings merges. Originals are tombstoned, never deleted.</div>
+        <div>· Amendments are typed: a restatement supersedes; new-holdings merges. Originals are kept and marked superseded, never deleted.</div>
         <div>· A change with an undisclosed side is <strong>n/c</strong> — never coerced into add or trim.</div>
         <div>· "Exit" is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
         <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Public Filings build parameter.</div>
@@ -232,7 +232,7 @@ const description =
       <p class="metho-body" id="published-dataset">
         <strong>The published dataset.</strong> Every row remains in the published dataset: the
         congressional feed is served in full at <a href="/congress/data/feed.v1.json">feed.v1.json</a>
-        (and in byte-bounded per-year parts for paging), the institutional aggregate as its shards, and
+        (and in byte-bounded per-year parts for paging), the institutional aggregate as paged files, and
         the signals as <a href="/signals/data/signals.v1.json">signals.v1.json</a>. A table that shows
         fewer rows than it holds says so; nothing is withheld from the data.
       </p>
@@ -249,9 +249,9 @@ const description =
         a missing position is not proof of a sale, and a value change alone is not a position change.
       </p>
       <p class="metho-body" id="position-grain">
-        <strong>Position grain.</strong> A position is one issuer security × put/call × unit as the
+        <strong>What counts as one position.</strong> A position is one issuer security × put/call × unit as the
         filer reported it; the producer classifies each change (new · add · trim · exit · no change)
-        from the share delta between consecutive quarters, at that grain.
+        from the share delta between consecutive quarters, at that level.
       </p>
       <p class="metho-body" id="ticker-mapping">
         <strong>Ticker mapping.</strong> A 13F row shows a ticker only where a reviewed, name-and-class

@@ -78,14 +78,12 @@ export function disclosureLedger(items: readonly { label: string; value: string;
   ).join("")}</dl>`;
 }
 
-/** Designed analytics surface with an explicit unavailable data state.
- * Columns remain visible; absence must not remove a whole design band. */
-export function unavailableDesignPanel(title: string, context: string, columns: readonly string[], reason: string, cls = ""): string {
-  return `<section class="panel design-unavailable ${esc(cls)}" aria-label="${esc(title)}">` +
-    `<div class="panel-head"><h2 class="section-h">${esc(title)}</h2><span class="panel-note">${esc(context)}</span></div>` +
-    `<div class="table-scroll"><table class="etable"><caption class="visually-hidden">${esc(title)} — data availability</caption>` +
-    `<thead><tr>${columns.map(c => `<th scope="col">${esc(c)}</th>`).join("")}</tr></thead>` +
-    `<tbody><tr><td colspan="${columns.length}"><div class="design-unavailable-message"><span class="design-availability">Not available in this build</span><p>${esc(reason)}</p></div></td></tr></tbody></table></div></section>`;
+/** R24: a surface with no data in this build renders ONE line — its name and
+    the reason — never an empty frame with a table skeleton. The reason is
+    kept verbatim (absence is stated, never simulated); `context` and
+    `columns` are still accepted from callers but no longer drawn. */
+export function unavailableDesignPanel(title: string, _context: string, _columns: readonly string[], reason: string, cls = ""): string {
+  return `<p class="design-unavailable-line ${esc(cls)}"><strong>${esc(title)}</strong> — not available in this build. ${esc(reason)}</p>`;
 }
 
 /** R24: the ONE "Planned:" line a page carries in place of empty panels — a

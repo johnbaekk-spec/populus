@@ -637,7 +637,7 @@ test("member happy path over real dist-cut bytes (cut member)", async () => {
   await handle.done;
   assert.equal(handle.state(), "body");
   const html = h.renders.at(-1)!;
-  assert.ok(html.includes("bioguide"), "member body renders");
+  assert.ok(html.includes("member ID"), "member body renders");
   assert.ok(html.includes("<caption"), "same real-table renderer as SSR");
   assert.equal(pages.size, 10, "exactly the budgeted member pages were emitted");
 });

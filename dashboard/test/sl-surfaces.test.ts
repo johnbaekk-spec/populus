@@ -250,7 +250,7 @@ test("SL-R10: the five deleted termini took NOTHING with them — every clause s
   const surfaces = new Map((await boundedSurfaces()).map((s) => [s.name, s.html]));
 
   const ranking = surfaces.get("congress ranking (tickers)")!;
-  assert.match(ranking, /Every row remains in the <a href="\/congress\/data\/feed\.v1\.json">published dataset<\/a>\./);
+  assert.match(ranking, /All rows are in the <a href="\/congress\/data\/feed\.v1\.json">published dataset<\/a>\./);
 
   const adds = surfaces.get("institutional adds leaderboard")!;
   assert.match(adds, /Every issuer in this quarter's bounded payload remains in /);
@@ -258,7 +258,7 @@ test("SL-R10: the five deleted termini took NOTHING with them — every clause s
 
   const feed = surfaces.get("institutional activity feed")!;
   assert.match(feed, /ordered change records published in this build/, "the publication bound");
-  assert.match(feed, /same-origin shard/, "…its shard count");
+  assert.match(feed, /same-origin file/, "…its file count");
   assert.match(feed, /institutional\/data\/activity\/&lt;page&gt;\.v1\.json/, "…the shard base path");
   assert.match(feed, /records or [\d,]+ bytes of serialized JSON/, "…and the per-shard limits");
 

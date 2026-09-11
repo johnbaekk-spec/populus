@@ -561,7 +561,7 @@ test("F2: the activity feed's COLLAPSED state is server-rendered, not JS-only", 
      clause into the control's state-independent remainder, so it now survives
      an EXPANSION too — the strictly stronger property. The assertion follows
      it, and reads the emitted markup rather than the source template. */
-  assert.match(src, /<a href="\$\{esc\(firstShard\)\}">Read the first shard<\/a>/);
+  assert.match(src, /<a href="\$\{esc\(firstShard\)\}">Open the first file<\/a>/);
   const feedHtml = activityFeedHtml(activityFixture(), { rowLimit: 50 });
   const boundP = feedHtml.slice(feedHtml.indexOf('<p class="compact-bound">'));
   const extra = boundP.slice(boundP.indexOf('<span class="compact-bound-extra">'), boundP.indexOf("</p>"));

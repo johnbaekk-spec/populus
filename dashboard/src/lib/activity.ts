@@ -63,6 +63,7 @@ import {
   terminusRow,
   COMPACT_ROWS,
   compactDisclosure,
+  thLabelHtml,
 } from "./format.ts";
 export { reportingLagDays };
 
@@ -885,7 +886,7 @@ export function truncationNoticeHtml(t: ActivityTruncation | null, shards: numbe
   return terminusRow({
     author: "populus",
     html:
-      `The ordered set does not fit in this build's ${fmtInt(shards)}-shard budget: ` +
+      `The ordered set does not fit in this build's ${fmtInt(shards)}-file publication limit: ` +
       `<strong>${fmtInt(t.dropped_records)}</strong> further records are not published here. ` +
       /* The boundary's `position_key` may be a provisional
          `sid:sec:prov:<hash>`, and this prose is VISIBLE on /institutional/ —
@@ -898,7 +899,7 @@ export function truncationNoticeHtml(t: ActivityTruncation | null, shards: numbe
       `The cut falls at ${boundary} — filer CIK ${esc(k.cik)}, position ` +
       `${identityChipHtml(k.position_key, { scope: "activity-cut" }, "boundary")}, ` +
       `${esc(k.put_call)} · ${esc(k.ssh_prnamt_type)}. Everything below that boundary is absent ` +
-      `from these shards and remains in the filings on EDGAR.`,
+      `from these published files and remains in the filings on EDGAR.`,
   });
 }
 
@@ -933,8 +934,8 @@ const ACTIVITY_FN = new Map(ACTIVITY_FOOTNOTES.map((e) => [e.mark, e.html]));
 /** The activity table's column descriptors — key, label, and the
     stated non-sortability reason that used to render as visible `.col-why`. */
 const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
-  ["issuer-position", "Issuer · position", "this view is the largest reported changes, cut at a shard bound — re-ordering the slice by issuer would present a partial list as a complete one"],
-  ["filer", "Filer", "same bound: the managers leading a filer ordering may be in shards this page never loaded. The manager directory below sorts its complete set"],
+  ["issuer-position", "Issuer · position", "this view is the largest reported changes, cut at a publication bound — re-ordering the slice by issuer would present a partial list as a complete one"],
+  ["filer", "Filer", "same bound: the managers leading a filer ordering may be in files this page never loaded. The manager directory below sorts its complete set"],
   ["change", "Change ·§", "change kind is a category, not an order — the filters above select one"],
   ["delta-value", "Δ value ·‡", "the rows are ALREADY ordered by absolute reported change; that is the ordering this slice was cut on"],
   ["quarter-ended", "Quarter ended", "every row here shares the reporting period the feed was built for"],
@@ -983,7 +984,7 @@ export function activityAbsentHtml(reason: ActivityAbsenceReason): string {
       // unaffected", which the code cannot support: those surfaces read the SAME
       // artifact, so whatever broke this read may well have broken them. Stating
       // an unknown as an unknown is the whole point of this block.
-      "This build's serving artifact could not supply the activity projection, so the ordered" +
+      "This build's serving artifact could not supply the activity records, so the ordered" +
       " feed cannot be built from it. Whether the per-filer and per-issuer surfaces are affected" +
       " depends on the cause, which is not knowable from here — check them directly.",
   };
@@ -1002,7 +1003,7 @@ export function activityAbsentHtml(reason: ActivityAbsenceReason): string {
 export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions = {}): string {
   if (opts.reference && (!feed.present || feed.pagination.total_records === 0)) {
     const explanation = !feed.present ? activityAbsentHtml(feed.reason ?? "activity-grain-unavailable") : `<p class="section-note">No comparable quarter-over-quarter records are published in this build. Missing records are not evidence of no activity.</p>`;
-    return `<section class="panel" aria-label="Cross-filer activity"><div class="panel-head"><h2 class="section-h">Recent activity</h2><span class="panel-note">REPORTED QUARTER-OVER-QUARTER CHANGES</span></div><div class="table-scroll"><table class="etable"><caption class="visually-hidden">Recent institutional activity</caption><thead><tr>${["Kind", "Name", "Filer", "Value", "Wt", "Δ Pos", "Src"].map(label => `<th scope="col">${label}</th>`).join("")}</tr></thead><tbody><tr><td colspan="7" class="design-unavailable-message"><span class="design-availability">Not available in this build</span>No comparable activity rows to display.</td></tr></tbody></table></div>${explanation}</section>`;
+    return `<section class="panel" aria-label="Cross-filer activity"><div class="panel-head"><h2 class="section-h">Recent activity</h2><span class="panel-note">REPORTED QUARTER-OVER-QUARTER CHANGES</span></div><div class="table-scroll"><table class="etable"><caption class="visually-hidden">Recent institutional activity</caption><thead><tr>${["Kind", "Name", "Filer", "Value", "Wt", "Position change", "Src"].map(label => `<th scope="col">${thLabelHtml(label)}</th>`).join("")}</tr></thead><tbody><tr><td colspan="7" class="design-unavailable-message"><span class="design-availability">Not available in this build</span>No comparable activity rows to display.</td></tr></tbody></table></div>${explanation}</section>`;
   }
   if (!feed.present) return activityAbsentHtml(feed.reason ?? "activity-grain-unavailable");
 
@@ -1089,17 +1090,17 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
        key, so the keys are supplied here rather than invented at render time. */
     `<thead><tr>` +
     (opts.reference ? [
-      ["kind", "Kind", "Producer-classified share change; absence is not a sale record."],
+      ["kind", "Kind", "Share change as classified from the filings; absence is not a sale record."],
       ["issuer", "Name", "Issuer as filed, with the position identity key."],
       ["filer", "Filer", "Reporting manager."],
       ["value", "Δ value", "Signed change in reported value between the two quarters; an undisclosed side is stated, never zero."],
-      ["weight", "Wt", "Position weight is not available in this activity projection."],
-      ["shares", "Δ Pos", "Reported share change; not an inference of intent."],
+      ["weight", "Wt", "Position weight is not available in this activity list."],
+      ["shares", "Position change", "Reported share change; not an inference of intent."],
       ["source", "Src", "Filing date, reporting period, lag and record flags remain available in the source note."],
     ] : ACTIVITY_COLS).map(([key, label, why]) => {
       const body = noteBody(why, ACTIVITY_COL_FN[key]);
       return (
-        `<th scope="col">${esc(label)}` +
+        `<th scope="col">${thLabelHtml(label)}` +
         (body ? noteFromHtml(body, { scope: "inst-activity" }, key) : "") +
         `</th>`
       );
@@ -1144,13 +1145,13 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
         `These rows are the largest of ${fmtInt(emitted)} ordered change records` +
         ` published in this build${
           emitted === total ? "" : ` (of ${fmtInt(total)} in the ordered set)`
-        }. The complete ordered set is served as ${fmtInt(feed.pagination.pages.length)} same-origin shard${
+        }. The complete ordered set is served as ${fmtInt(feed.pagination.pages.length)} same-origin file${
           feed.pagination.pages.length === 1 ? "" : "s"
         } under <span class="mono-note">${esc(shardBase)}/&lt;page&gt;.v1.json</span>,` +
         ` each closed at whichever binds first — ${fmtInt(
           feed.pagination.limits.recordLimit,
         )} records or ${fmtInt(feed.pagination.limits.byteLimit)} bytes of serialized JSON.` +
-        ` <a href="${esc(firstShard)}">Read the first shard</a> to reach every record` +
+        ` <a href="${esc(firstShard)}">Open the first file</a> to reach every record` +
         ` directly, with or without scripting.`,
     }) +
     truncationNoticeHtml(feed.pagination.truncation, feed.pagination.limits.shardLimit) +

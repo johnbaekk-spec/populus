@@ -40,6 +40,7 @@ import {
   memberHrefFor,
   tickerHrefFor,
   partyClass,
+  cardFoot,
 } from "../format.ts";
 import {
   type FilingWindow,
@@ -79,15 +80,18 @@ import { s7Banner } from "./states.ts";
     no per-row filed date, so the honest form pairs the quarter-end with the
     module's build-wide filed-date watermark — never "current holdings". */
 export function instStamp(period: string, latestFiled: string | null): string {
-  const filed =
-    latestFiled == null
-      ? `latest filing date not recorded in this build's watermarks`
-      : `latest filing in build filed ${esc(latestFiled)}`;
-  return `<span class="inst-stamp">quarter-end ${esc(period)} · ${filed}</span>`;
+  // SRC §5: "Quarter ended {period}"; the newest-filing date moves to the ⓘ
+  // (`instFiledNote`) beside the table it qualifies.
+  return `<span class="inst-stamp"${latestFiled ? ` data-latest-filed="${esc(latestFiled)}"` : ""}>Quarter ended ${esc(period)}</span>`;
+}
+
+/** SRC §5: the ⓘ text for the quarter stamp. */
+export function instFiledNote(latestFiled: string | null): string {
+  return `${latestFiled ? `Newest filing in this build: ${latestFiled}. ` : ""}Per-row filing dates are on each receipt.`;
 }
 
 export const INST_STAMP_CAVEAT =
-  "per-filer filing dates are not in the published aggregate — the filed-date watermark is build-wide, not per row";
+  "Per-row filing dates are on each receipt; the newest-filing date covers the whole build, not each row.";
 
 /* ---------- 13F holders page body (build-time only) ---------- */
 
@@ -233,7 +237,7 @@ export function holdersTableHtml(
       author: "populus",
       html: `The aggregate publishes the top ${fmtInt(topn)} holders per issuer — a build parameter of the Public Filings aggregation. Rows beyond it exist in individual filings on EDGAR but are not ranked here. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
-    `<div class="caveat-line">${esc(INST_STAMP_CAVEAT)}</div>` +
+    cardFoot({ short: "Quarter-end positions", full: INST_STAMP_CAVEAT, scope: "holders-foot", key: "stamp" }) +
     `<div class="caveat-line">${esc(HOLDER_ZERO_CAVEAT)}</div>` +
     `</div>`
   );
@@ -311,7 +315,7 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
   {
     mark: "n/c",
-    html: `change not classifiable: value undisclosed on one side of the quarter pair, or neither shares nor value can classify it <code>value_undisclosed_one_side</code> <code>change_kind_undeterminable</code>`,
+    html: `change not classifiable: value undisclosed on one side of the quarter pair, or neither shares nor value can classify it`,
   },
   {
     mark: "§",
@@ -504,9 +508,7 @@ export function changesTableHtml(
             `<a href="/methodology/#m2">methodology §13F ↗</a>`,
         })
       : "") +
-    `<div class="panel-note table-stamp">${instStamp(period, latestFiled)} · <span class="caveat-inline">${esc(
-      INST_STAMP_CAVEAT,
-    )}</span></div>`
+    cardFoot({ short: `Quarter ended ${period}`, full: instFiledNote(latestFiled), scope: "filer-changes-foot", key: "stamp" })
   );
 }
 
@@ -565,7 +567,7 @@ function filerBookShape(
     return `${word} median ${m.toFixed(unit === "%" ? 1 : 0)}${unit}`;
   };
   return `<section class="panel design-book-shape" aria-label="Book shape">` +
-    `<div class="panel-head"><h2 class="section-h">Book shape</h2><span class="panel-note">${esc(period)} · concentration · ${b ? `vs tracked median · gold tick` : "no tracked median"}</span></div>` +
+    `<div class="panel-head"><h2 class="section-h">Book shape</h2><span class="panel-note">${esc(period)} · concentration · ${b ? `vs tracked median · tick = median` : "no tracked median"}</span></div>` +
     `<dl>${metric(`Top-${topn} concentration`, share, share === null ? "—" : `${share.toFixed(1)}%`, medShare, compare(share, medShare, "%"))}` +
     `${metric("Concentration index", hhi === null ? null : hhi / 100, hhi === null ? "—" : `${fmtInt(hhi)} bps`, medHhi === null ? null : medHhi / 100, compare(hhi, medHhi, " bps"))}` +
     `${metric("Positions with value", known, known === null ? "—" : `${conc!.position_count - conc!.null_value_positions} / ${conc!.position_count}`, null, b?.positions ? `median book ${fmtInt(b.positions.median)} positions` : null)}</dl>` +
@@ -1152,7 +1154,7 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     `<div class="table-scroll"><table class="etable" data-sticky-first><caption class="visually-hidden">13F holders of ${esc(i.ticker)} ranked by reported value</caption>` +
     `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col" class="num">Reported value</th><th scope="col" class="num">Shares</th><th scope="col" class="num">Δ shares</th><th scope="col">Change</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
-    `<div class="panel-note table-stamp">${instStamp(t.period_of_report, i.latestFiled)} · <span class="caveat-inline">${esc(INST_STAMP_CAVEAT)}</span></div>` +
+    cardFoot({ short: `Quarter ended ${t.period_of_report}`, full: instFiledNote(i.latestFiled), scope: "ticker-holders-foot", key: "stamp" }) +
     `</section>` +
     i.overlapHtml +
     (i.congress ? `<p class="section-note"><a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} of Congress disclosed ${esc(i.ticker)} — the congressional view ↗</a></p>` : "")

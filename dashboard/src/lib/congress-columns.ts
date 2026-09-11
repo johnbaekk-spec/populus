@@ -69,7 +69,7 @@ export const RANKING_FOOTNOTES: FootnoteEntry[] = [
     mark: "§",
     html:
       `net disclosed flow = sum of purchase bucket bounds minus sum of sale bucket bounds, ` +
-      `as interval subtraction <code>net = [pL−sU, pU−sL]</code>. A side with no rows has summed ` +
+      `as a net range <code>net = [pL−sU, pU−sL]</code>. A side with no rows has summed ` +
       `<strong>zero</strong> — a fact, not an absence. A row with any wholly-undisclosed amount on ` +
       `either side is <strong>not rankable</strong> and sits in the labeled bucket below the ranked rows, ` +
       `never coerced to zero`,
@@ -127,8 +127,8 @@ export function congressRankingColumns(kind: "leaders" | "tickers"): CongressCol
       defaultDir: "asc",
       numeric: false,
     },
-    { sortable: true, key: "txns", label: "Txns †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
-    { sortable: true, key: "buys", label: "Purch. †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
+    { sortable: true, key: "txns", label: "Trades †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
+    { sortable: true, key: "buys", label: "Purchases †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
     { sortable: true, key: "sells", label: "Sales †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
     {
       sortable: true,

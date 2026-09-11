@@ -251,7 +251,11 @@ def test_combined_holding_pass_matches_independent_legacy_queries(tmp_path):
             }
         )
 
-    assert projection.filer_rows == expected_filer_rows
+    # R25 added `issuer_key` to each filer row; the legacy queries predate it,
+    # so it is compared separately (test_r25_filer_rows_carry_the_issuer_key).
+    assert [
+        {k: v for k, v in r.items() if k != "issuer_key"} for r in projection.filer_rows
+    ] == expected_filer_rows
     assert projection.issuer_holder_rows == expected_issuer_rows
 
 
@@ -1622,3 +1626,36 @@ def test_r6_book_discontinuity_reaches_the_activity_rows_as_a_flag(tmp_path):
     rows = [r for r in proj.activity_rows if r["cik"] == cik]
     assert len(rows) == 2 and all(r["change_kind"] == "exit" for r in rows)
     assert all("book_discontinuity" in r["flags"] for r in rows)
+
+
+def test_r25_filer_rows_carry_the_issuer_key(tmp_path):
+    """R25: every `serving_filer_rows` row carries the SAME `issuer_key` its
+    issuer-holder row uses, so two share classes of one issuer group together on
+    the filer page, and the column reaches the written artifact."""
+    conn = _fresh(tmp_path, "r25.db")
+    APPLE_B = "037833200"
+    sid_a = _security(conn, f"sec:{APPLE}")
+    sid_b = _security(conn, f"sec:{APPLE_B}")
+    _filer_fn(conn, "0000000009", "028-00009", "Two Classes")
+    _load_fn(
+        conn, fid="inst:R25", cik="0000000009", period="2026-03-31",
+        filed="2026-04-15", file_number_norm="028-00009",
+        holds=[
+            _hold(ordinal=1, issuer="SAME ISSUER", cusip=APPLE, value=100, security_id=sid_a),
+            _hold(ordinal=2, issuer="SAME ISSUER", cusip=APPLE_B, value=200, security_id=sid_b),
+            _hold(ordinal=3, issuer="OTHER CO", cusip=MSFT, value=50),
+        ],
+    )
+    conn.commit()
+    proj = build_serving_projection(conn, periods=("2026-03-31",))
+    rows = [r for r in proj.filer_rows if r["cik"] == "0000000009"]
+    assert len(rows) == 3
+    assert all(r["issuer_key"] for r in rows), "every filer row names its issuer bucket"
+    by_name = {}
+    for r in rows:
+        by_name.setdefault(r["issuer_name"], set()).add(r["issuer_key"])
+    assert len(by_name["SAME ISSUER"]) == 1, "two classes of one issuer share one key"
+    assert by_name["SAME ISSUER"] != by_name["OTHER CO"]
+    holder_keys = {r["issuer_key"] for r in proj.issuer_holder_rows if r["filer_key"] == "0000000009"}
+    assert {k for ks in by_name.values() for k in ks} == holder_keys, "the same key the issuer-holder rows use"
+

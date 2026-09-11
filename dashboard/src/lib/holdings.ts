@@ -53,6 +53,7 @@ import {
   srcLinkDerived,
   type FootnoteEntry,
   type StatTile,
+  thLabelHtml,
 } from "./format.ts";
 export { reportingLagDays };
 import { edgarFilerUrl } from "./derive.ts";
@@ -109,6 +110,56 @@ export interface FilerHoldingRow {
       Absent/undefined = no reviewed row; the cell renders "—". */
   ticker?: string;
   ticker_verified_date?: string;
+  /** R25: the producer's issuer bucket (`serving_filer_rows.issuer_key`, the
+      same key the issuer-holder rows use). Absent in older artifacts or when
+      NULL — the holdings table then groups by position alone. */
+  issuer_key?: string;
+}
+
+/** R25: the producer's issuer bucket for a filer row, exactly as
+    `inst_agg._issuer_key` assigns it — a resolved entity, else the CUSIP-6
+    block, else the normalized name. The wire omits the key whenever it equals
+    the CUSIP-6 derivation below (almost every row), so the payload does not
+    grow; this reconstructs it. `null` = no key and no CUSIP to derive one
+    from (an older artifact) — the caller groups by position alone. */
+export function derivedIssuerKey(cusip: string | null): string | null {
+  return cusip != null && cusip.length >= 6 ? `cusip6:${cusip.slice(0, 6)}` : null;
+}
+
+export function issuerKeyOf(row: Pick<FilerHoldingRow, "issuer_key" | "cusip">): string | null {
+  return row.issuer_key ?? derivedIssuerKey(row.cusip);
+}
+
+/** R25: the filer page's issuer groups. Reported rows are keyed by their
+    issuer bucket (`issuerKeyOf`); a row with no key stands alone under its
+    position identity, so nothing is ever merged on a guess. Groups keep the
+    assembler's display order (first appearance). Value is NULL when any row's
+    value is undisclosed (a partial sum would read as the whole holding); shares
+    are summed only when every row states them in one unit. */
+export interface IssuerHoldingGroup {
+  key: string;
+  rows: FilerHoldingRow[];
+  value_usd: number | null;
+  shares: number | null;
+  ssh_type: string | null;
+}
+
+export function groupHoldingsByIssuer(rows: readonly FilerHoldingRow[]): IssuerHoldingGroup[] {
+  const byKey = new Map<string, IssuerHoldingGroup>();
+  rows.forEach((row, i) => {
+    const key = issuerKeyOf(row) ?? `position:${positionIdentity(row, i)}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = { key, rows: [], value_usd: 0, shares: 0, ssh_type: row.ssh_type };
+      byKey.set(key, g);
+    }
+    g.rows.push(row);
+    g.value_usd = g.value_usd == null || row.value_usd == null ? null : g.value_usd + row.value_usd;
+    const sameUnit = g.ssh_type === row.ssh_type;
+    g.shares = g.shares == null || row.shares == null || !sameUnit ? null : g.shares + row.shares;
+    if (!sameUnit) g.ssh_type = null;
+  });
+  return [...byKey.values()];
 }
 
 /** Issuer-holder projection: one row per (issuer, period, FILER). `filer_key` is
@@ -370,6 +421,7 @@ export function parseFilerShard(raw: unknown): FilerShard {
       flags: flagsOf(r.flags),
       ...(typeof r.ticker === "string" && r.ticker !== "" ? { ticker: r.ticker } : {}),
       ...(typeof r.ticker_verified_date === "string" ? { ticker_verified_date: r.ticker_verified_date } : {}),
+      ...(typeof r.issuer_key === "string" && r.issuer_key !== "" ? { issuer_key: r.issuer_key } : {}),
     };
   });
   return { filings: filingsOf(obj.filings), rows };
@@ -1101,8 +1153,8 @@ export const HOLDINGS_FOOTNOTES: FootnoteEntry[] = [
   {
     mark: "§",
     html:
-      `served from this build's published holdings projection (derived from the filer's own ` +
-      `reported rows); every row resolves to a filing through the shard's filing dictionary`,
+      `served from this build's published holdings (derived from the filer's own ` +
+      `reported rows); every row resolves to its filing`,
   },
   {
     mark: "†u",
@@ -1324,8 +1376,13 @@ export interface HoldingsTableOpts {
 export function holdingsTableHtml(opts: HoldingsTableOpts): string {
   const matched = opts.rows.length;
   const total = opts.totalRows ?? matched;
-  const pageRows = holdingsPageSlice(opts.rows, opts.page);
-  const pageCount = holdingsPageCount(matched);
+  // R25: the filer page (reference mode) shows ONE row per issuer, paged by
+  // issuer; the expand keeps every reported row. Other callers are unchanged.
+  const groups = opts.reference ? groupHoldingsByIssuer(opts.rows) : null;
+  const unitCount = groups ? groups.length : matched;
+  const pageRows = groups ? [] : holdingsPageSlice(opts.rows, opts.page);
+  const pageGroups = groups ? holdingsPageSlice(groups, opts.page) : [];
+  const pageCount = holdingsPageCount(unitCount);
   const totals = sumDisclosedValue(opts.rows);
   /* Over `opts.rows` — the FULL bounded set — not `pageRows`. Computing from the
      visible page lets the caveat appear on page 0 and vanish on page 1 for the
@@ -1348,8 +1405,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
       ...(provOf.get(r)!.known ? [] : ["filing_not_in_dictionary"]),
     ]),
   );
-  const body = pageRows
-    .map((row, rowIndex) => {
+  const renderRow = (row: FilerHoldingRow, rowIndex: number): string => {
       const prov = provOf.get(row) ?? provenanceOf([row.filing_key], opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
@@ -1382,13 +1438,69 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         `<td class="c-src">${src}</td>` +
         `</tr>`
       );
-    })
-    .join("\n");
+  };
+  /* R25: an issuer the filer reported on several rows (share classes, options,
+     amendment rows) is one summary row; its expand lists the rows as the filer
+     reported them. `foldPositions` gives the position count in the summary. */
+  const groupRowHtml = (g: IssuerHoldingGroup, gi: number): string => {
+    const first = g.rows[0]!;
+    const weight =
+      total === matched && totals.undisclosedRows === 0 && totals.disclosedUsd > 0 && g.value_usd != null
+        ? (g.value_usd / totals.disclosedUsd) * 100
+        : null;
+    const tickered = [...new Map(g.rows.filter((r) => r.ticker).map((r) => [r.ticker!, r] as const)).values()];
+    const tickerCell = tickered.length
+      ? tickered
+          .map(
+            (r, ti) =>
+              `<span class="mono-ticker">${esc(r.ticker!)}</span>` +
+              noteFromHtml(
+                `verified against the SEC company list on ${esc(r.ticker_verified_date || "the recorded date")} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
+                { scope: "filer-ticker" },
+                `${opts.page}-g${gi}-${ti}`,
+              ),
+          )
+          .join(" ")
+      : "—";
+    const positions = foldPositions(g.rows).length;
+    const raw = g.rows
+      .map((row) => {
+        const prov = provOf.get(row) ?? provenanceOf([row.filing_key], opts.filings, row.period);
+        const src = prov.docUrl ? srcLink(prov.docUrl) : srcLinkDerived(null, edgarFilerUrl(opts.cik));
+        return (
+          `<tr><td class="c-pos">${positionCell(row)} ${src}</td>` +
+          `<td class="c-num">${valueCell(row.value_usd)}</td>` +
+          `<td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td></tr>`
+        );
+      })
+      .join("");
+    const flags = [...new Set(g.rows.flatMap((r) => r.flags))];
+    return (
+      `<tr class="design-holding-row design-holding-group"><td class="c-kind">—</td><td class="c-ticker">${tickerCell}</td>` +
+      `<td class="c-pos"><span class="design-holding-name"><span class="filed-name">${esc(first.issuer_name || "Issuer unnamed")}</span></span>` +
+      `<details class="holding-group-rows"><summary>${fmtInt(positions)} ${positions === 1 ? "position" : "positions"} · ${fmtInt(g.rows.length)} reported rows</summary>` +
+      `<table class="etable etable-compact"><caption class="visually-hidden">Rows ${esc(opts.filerName)} reported for ${esc(first.issuer_name || "this issuer")}, as it reported them</caption>` +
+      `<tbody>${raw}</tbody></table></details>` +
+      `${flagTags(flags, undefined, { stated: statedHoldings })}</td>` +
+      `<td><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0, Math.min(100, weight))}%"></span>`}</span></td>` +
+      `<td class="c-num c-strong">${valueCell(g.value_usd)}</td><td class="c-num">${sharesCell(g.shares, g.ssh_type)}</td>` +
+      `<td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`
+    );
+  };
+  const body = groups
+    ? pageGroups.map((g, gi) => (g.rows.length === 1 ? renderRow(g.rows[0]!, gi) : groupRowHtml(g, gi))).join("\n")
+    : pageRows.map(renderRow).join("\n");
 
-  const rangeText = holdingsRangeText({ page: opts.page, rowsOnPage: pageRows.length, matched });
+  const folded = groups != null && groups.length !== matched;
+  const rangeText = holdingsRangeText({
+    page: opts.page,
+    rowsOnPage: groups ? pageGroups.length : pageRows.length,
+    matched: unitCount,
+    ...(folded ? { noun: "issuers" } : {}),
+  });
   const emptyNote =
     matched === 0
-      ? `<p class="section-note">This build's holdings projection carries no reported rows for ` +
+      ? `<p class="section-note">This build carries no reported rows for ` +
         `${esc(opts.period)}. That is a statement about this build, not about the filer.</p>`
       : "";
   const truncation =
@@ -1398,7 +1510,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
           html:
             `${fmtInt(total - matched)} of this filer's ${fmtInt(total)} reported rows for ` +
             `${esc(opts.period)} are not embedded in this page — the page byte budget caps the ` +
-            `embed. The rows exist in the published projection and in the filer's own filings; ` +
+            `embed. The rows exist in this build's published data and in the filer's own filings; ` +
             `the EDGAR link beside each row opens the source document.`,
         })
       : "";
@@ -1433,18 +1545,18 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     )}, as that filer reported them</caption>` +
     `<thead><tr>` +
     (opts.reference ? [
-      ["kind", "Kind"], ["ticker", "Ticker"], ["issuer", "Issuer"], ["weight", "Weight"], ["value", "Value"], ["shares-unit", "Shares"], ["delta", "Δ Pos"], ["wt", "Wt"], ["overlap", "Congress"],
+      ["kind", "Kind"], ["ticker", "Ticker"], ["issuer", "Issuer"], ["weight", "Weight"], ["value", "Value"], ["shares-unit", "Shares"], ["delta", "Position change"], ["wt", "Wt"], ["overlap", "Congress"],
     ] : HOLDINGS_COLS).map(([key, label]) => {
       const explanation: Record<string, string> = {
         kind: "Classification is not joined into this reported-position view. Use the changed-positions view to compare the two published quarters.",
-        ticker: "This projection contains reported issuer names and security identities, without a dated ticker mapping. Symbols are not inferred from names.",
+        ticker: "This list carries reported issuer names and security identities, without a dated ticker mapping. Symbols are not inferred from names.",
         weight: "Share of total reported value, calculated only when the full position list has disclosed values. This is 13F long value, not total assets.",
         delta: "Share change is available in the separate comparison view; it is not joined into this position list.",
         overlap: "The congressional transaction join is unavailable in this build.",
       };
       const body = key === "issuer" && opts.reference ? `${HOLDINGS_COL_NOTES.issuer ?? ""} ${HOLDINGS_COL_NOTES.src ?? ""}` : HOLDINGS_COL_NOTES[key] ?? explanation[key];
       return (
-        `<th scope="col">${esc(label)}` +
+        `<th scope="col">${thLabelHtml(label)}` +
         (body ? noteFromHtml(body, { scope: "filer-holdings" }, key) : "") +
         `</th>`
       );
@@ -1532,7 +1644,7 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
       diff.counts.unclassified,
     )} not classifiable</span></div>` +
     (matched === 0
-      ? `<p class="section-note">No positions to compare: this build's projection carries rows ` +
+      ? `<p class="section-note">No positions to compare: this build carries rows ` +
         `for at most one of the two quarters.</p>`
       : universalBadgeNote(statedNotes) +
         `<div class="table-scroll"><table class="etable" data-sticky-first${
@@ -1657,7 +1769,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
           html:
             `${fmtInt(total - matched)} of the ${fmtInt(total)} as-of-resolved holder rows for ` +
             `this quarter are not embedded in this page — the page byte budget caps the embed. ` +
-            `They exist in the published projection.`,
+            `They exist in this build's published data.`,
         })
       : "";
   return (
@@ -1665,7 +1777,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
     `<h2 class="section-h">As-of-resolved holders — ${esc(opts.period)}</h2>` +
     `<span class="panel-note">${esc(rangeText)}</span></div>` +
     (matched === 0
-      ? `<p class="section-note">This build's projection carries no resolved holder rows for ` +
+      ? `<p class="section-note">This build carries no resolved holder rows for ` +
         `${esc(opts.ticker)} in ${esc(opts.period)}.</p>`
       : universalFlagNote(statedHolders) +
         `<div class="table-scroll"><table class="etable" data-sticky-first${
@@ -1858,10 +1970,13 @@ function viewChips(payload: SurfacePayload, state: SurfaceState): string {
   const prior = payload.prior;
   const hasPrior = prior != null && payload.rowsByPeriod[prior] != null;
   const note = hasPrior
-    ? `<span class="period-note">the projection publishes the selected quarter and the one ` +
+    ? `<span class="period-note">this build publishes the selected quarter and the one ` +
       `before it, so a displayed change can be inspected on both sides</span>`
-    : `<span class="period-note">only ${esc(payload.current)} is in this build's projection for ` +
-      `this filer, so there is no prior quarter to browse or compare against</span>`;
+    : `<span class="period-note">Prior quarter not yet available${noteFromHtml(
+        esc(`This build carries one quarter for this manager: ${payload.current}. Notable managers carry four published quarters, others two.`),
+        { scope: "filer-period" },
+        "prior",
+      )}</span>`;
   return (
     `<div class="period-row"><span class="period-label">View</span><div class="chips" data-holdings-views>` +
     chip("current", `positions ${payload.current}`) +
@@ -1877,8 +1992,8 @@ function periodUnavailableHtml(payload: SurfacePayload, period: string): string 
   const published = payload.periods.length === 0 ? "no quarters" : payload.periods.join(", ");
   return (
     `<div class="panel-head"><h2 class="section-h">Positions — ${esc(period)}</h2>` +
-    `<span class="panel-note">not in this build's holdings projection</span></div>` +
-    `<p class="section-note">This build's holdings projection publishes ${esc(published)}. ` +
+    `<span class="panel-note">not in this build's holdings</span></div>` +
+    `<p class="section-note">This build's holdings list covers ${esc(published)}. ` +
     `The aggregate tiles above cover more quarters than the position list does; rather than ` +
     `show one quarter's positions under another quarter's heading, the list stops here.</p>`
   );
@@ -1898,7 +2013,7 @@ export function surfaceHtml(payload: SurfacePayload, state: SurfaceState): strin
           viewChips(payload, state) +
           `<div class="panel-head"><h2 class="section-h">Added · absent · changed</h2>` +
           `<span class="panel-note">needs two published quarters</span></div>` +
-          `<p class="section-note">This build's projection carries one quarter for this filer, ` +
+          `<p class="section-note">This build carries one quarter for this filer, ` +
           `so there is nothing to compare it against. A comparison needs both sides.</p>`
         );
       }
@@ -1969,7 +2084,7 @@ export function projectionAbsentHtml(kind: "filer" | "holders", edgarUrl: string
     `<div class="panel-head"><h2 class="section-h">${
       kind === "filer" ? "Reported positions" : "Resolved holders"
     }</h2><span class="panel-note">not published in this build</span></div>` +
-    `<p class="section-note">This build does not ship the holdings projection, so ${what} is ` +
+    `<p class="section-note">This build does not ship the holdings list, so ${what} is ` +
     `not served here. M2-CONTRACT §3 was amended on 2026-08-02 to serve it; a build that has ` +
     `not published it says so rather than rendering an empty table. The primary source is the ` +
     `filing itself:</p>` +

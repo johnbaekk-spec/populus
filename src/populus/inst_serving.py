@@ -456,6 +456,7 @@ def build_serving_projection(
             continue  # R5: an older period is kept for notable filers only
         ref = out.filings.get(filing_id)
         position_key = _position_key(security_id, cusip)
+        issuer_key, source = _issuer_key(entity_id, entity_link_state, cusip, issuer_name)
         out.filer_rows.append(
             {
                 "cik": cik,
@@ -474,10 +475,10 @@ def build_serving_projection(
                 "put_call_bucket": _put_call_bucket(put_call),
                 "unit_key": _unit_key(ssh_prnamt_type),
                 "flags": flags,
+                "issuer_key": issuer_key,
             }
         )
 
-        issuer_key, source = _issuer_key(entity_id, entity_link_state, cusip, issuer_name)
         key = (issuer_key, period, cik)
         bucket = reported.setdefault(
             key,
@@ -619,7 +620,11 @@ CREATE TABLE IF NOT EXISTS serving_filer_rows (
   position_key    TEXT,              -- REFERENCE into agg_qoq_deltas, not a copy
   put_call_bucket TEXT NOT NULL,
   unit_key        TEXT NOT NULL,
-  flags           TEXT NOT NULL
+  flags           TEXT NOT NULL,
+  -- R25 (refinement 20260910): the issuer bucket this row belongs to — the SAME
+  -- `_issuer_key` the issuer-holder rows use — so the filer page can fold
+  -- positions and group them one row per issuer. NULL in older artifacts.
+  issuer_key      TEXT
 );
 -- The boundary resolves (cik, period) on every request; at full-universe scale
 -- that is ~7M rows without this index.
@@ -737,15 +742,15 @@ def write_serving_db(
         conn.executemany(
             "INSERT INTO serving_filer_rows (row_id, cik, period, filing_key, security_id,"
             " cusip, issuer_name, title_of_class, value_usd, shares, ssh_type,"
-            " put_call, position_key, put_call_bucket, unit_key, flags)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " put_call, position_key, put_call_bucket, unit_key, flags, issuer_key)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     i, r["cik"], r["period"], r["filing_key"], r["security_id"],
                     r["cusip"], r["issuer_name"], r["title_of_class"],
                     r["value_usd"], r["shares"], r["ssh_type"], r["put_call"],
                     r["position_key"], r["put_call_bucket"], r["unit_key"],
-                    r["flags"],
+                    r["flags"], r.get("issuer_key"),
                 )
                 for i, r in enumerate(projection.filer_rows)
             ],

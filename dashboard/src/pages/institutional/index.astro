@@ -5,7 +5,8 @@
 // cumulative registry counts are labeled as all-period values).
 import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
-import { disclosureLedger, unavailableDesignPanel, s1ModuleAbsent, s7Banner, addsSectionHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
+import { disclosureLedger, s1ModuleAbsent, s7Banner, addsSectionHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
+import { plannedLine } from "../../lib/ui/shared.ts";
 import { concentrationPeriods, newPositionLeaders, trackedValueFor } from "../../lib/inst-analytics";
 import { notableMovesFor, notableMovesPeriods } from "../../lib/data";
 import { consensusBoard, consensusBoardHtml, notableMovesBandHtml } from "../../lib/notable-moves";
@@ -182,7 +183,7 @@ if (!inst.present) {
   bodyHtml =
     `<header class="entity-head"><div class="entity-head-copy">` +
     `<div class="kicker">Public record / Institutional · Form 13F</div><h1 class="entity-title">Institutional</h1>` +
-    `<p class="entity-lede">13F position discovery across tracked filers · reported positions, concentration, and changes between quarters.</p>` +
+    `<p class="entity-lede">What tracked 13F filers reported each quarter, and what changed between quarters.</p>` +
     `</div>` + disclosureLedger([
       { label: "Filers tracked", value: fmtInt(inst.filers.length), detail: tracked ? `${fmtInt(tracked.filers)} filed ${tracked.period}` : "published registry" },
       { label: "Tracked value", value: tracked ? fmtUsd(tracked.totalValueUsd) : "—", detail: tracked ? `13F long only · ${tracked.period}${tracked.partialBooks > 0 ? ` · ≥ (${fmtInt(tracked.partialBooks)} partial books)` : ""}` : "no closed quarter yet" },
@@ -255,7 +256,7 @@ if (!inst.present) {
     `</div>` +
     `<div class="design-band design-institutional-band design-activity-band"><div class="design-activity">` +
     activitySectionHtml(feed, { reference: true, tierOf: (cik) => filerTier(build, cik), notableCiks: notableCiks }) + `</div>` +
-    unavailableDesignPanel("Sector rotation", "Tracked filers Q/Q · value-weighted pp", ["Sector", "Change", "PP Q/Q", "Congress direction"], "A period-aligned sector rotation and Congress comparison is not available in this build.", "design-rotation") + `</div>` +
+    plannedLine(["sector rotation and its Congress comparison"]) + `</div>` +
     `<details class="design-supplement"><summary>Recently added issuers · explore published changes</summary>` + addsHtml + `</details>` +
     `<p class="section-note inst-method-foot">Quarter-end positions, disclosed up to 45 days later; never current holdings, never a complete portfolio. ` +
     `Changes are classified from comparable reported positions; a missing position is not proof of a sale. <a href="/methodology/#13f-method">How 13F data is read ↗</a></p>`;

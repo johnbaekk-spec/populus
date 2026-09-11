@@ -132,7 +132,7 @@ test("cluster board: grouped over the serving activity grain, distinct filers, p
   assert.match(html, /1 change rows carry no issuer identity/);
   assert.match(html, /≈/);
   // absence states are typed, never a blank table
-  assert.match(clusterBoardHtml(loadClusterBoard({ instPresent: true, dbPath, period: "2030-03-31" }), "2030-03-31"), /Not available in this build/);
+  assert.match(clusterBoardHtml(loadClusterBoard({ instPresent: true, dbPath, period: "2030-03-31" }), "2030-03-31"), /not available in this build/i);
   assert.match(clusterBoardHtml(loadClusterBoard({ instPresent: false, dbPath, period: P }), P), /institutional module/);
   writeFileSync(path.join(dir, "keep"), "");
 });

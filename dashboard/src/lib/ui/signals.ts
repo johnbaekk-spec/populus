@@ -27,6 +27,7 @@ import {
   srcLink,
   memberHrefFor,
   tickerHrefFor,
+  cardFoot,
 } from "../format.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
 import { briefingCards, disclosureLedger } from "./shared.ts";
@@ -161,7 +162,7 @@ function evidenceText(s: Signal): string {
     case "s1-large":
       return `disclosed lower bound ${s.magnitude.low == null ? "—" : fmtUsd(s.magnitude.low)} · ≥ $250K rule`;
     case "s2-first":
-      return `first disclosure of ${s.entities.ticker ?? "this ticker"} by this member in the corpus`;
+      return `First ${s.entities.ticker ?? "ticker"} disclosure by this member`;
     case "s3-cooccurrence":
       return `${s.receipts.length} filings · same ticker, same side, 14-day trade window`;
     case "s4-infrequent":
@@ -402,7 +403,7 @@ function lagBandHtml(deps: SignalsPageDeps): string {
   return (
     `<section class="panel si-lagband" aria-label="Lag distribution">` +
     `<div class="panel-head"><h2 class="section-h">Lag distribution</h2>` +
-    `<span class="panel-note">TRADE → FILING · LATEST BATCH${deps.latestBatchFiled ? ` FILED ${esc(deps.latestBatchFiled)}` : ""} · GOLD TICK = 45D</span></div>` +
+    `<span class="panel-note">TRADE → FILING · LATEST BATCH${deps.latestBatchFiled ? ` FILED ${esc(deps.latestBatchFiled)}` : ""} · TICK = 45 DAYS</span></div>` +
     body +
     `</section>`
   );
@@ -474,7 +475,7 @@ function watchBandHtml(active: Signal[], artifact: SignalArtifact): string {
     `<button type="button" class="pager-btn" id="signal-watch-seen" disabled>Mark all seen</button></span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact si-table" id="signal-watch-table">` +
     `<caption class="visually-hidden">Signal hits on watched members and tickers</caption>` +
-    `<thead><tr><th scope="col">Kind</th><th scope="col">Watched subject</th><th scope="col">What happened</th><th scope="col" class="num">Magnitude</th><th scope="col" class="num">When</th><th scope="col" class="num">Seen</th><th scope="col" class="num">Rcpt</th></tr></thead>` +
+    `<thead><tr><th scope="col">Kind</th><th scope="col">Watched subject</th><th scope="col">What happened</th><th scope="col" class="num">Magnitude</th><th scope="col" class="num">When</th><th scope="col" class="num">Seen</th><th scope="col" class="num">Source</th></tr></thead>` +
     `<tbody id="signal-watch-body"><tr><td colspan="7" class="si-empty" id="signal-watch-empty">Nothing watched on this device yet. Star a member on <a href="/congress/">the feed</a> or a ticker on its page; hits on watched subjects appear here.</td></tr></tbody></table></div>` +
     `<p class="section-note" id="signal-watch-note">Watch state lives in this browser's storage. Watching a member or ticker pins their signal hits here, and the last-seen marker separates what is new. ` +
     `<noscript>Reading the watchlist needs JavaScript; nothing is stored or sent without it.</noscript></p>` +
@@ -654,7 +655,9 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
            `aria-describedby` targets that address the wrong rule. The rule is
            not softened, shrunk or lost: it is real DOM, it opens with no
            JavaScript, and it prints. */
-        `<tr><td>${esc(SIGNAL_KIND_LABELS[s.kind])}${note(s.rule, { scope: "member-signals" }, s.id)}</td>` +
+        // R26: ticker first — the reader's question is "which stock".
+        `<tr><td class="c-ticker">${s.entities.ticker ? `<span class="mono-ticker">${esc(s.entities.ticker)}</span>` : "—"}</td>` +
+        `<td>${esc(SIGNAL_KIND_LABELS[s.kind])}${note(s.rule, { scope: "member-signals" }, s.id)}</td>` +
         `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
         `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
         `<td class="c-src">${srcLink(s.receipts[0] ?? "")}</td></tr>`,
@@ -666,9 +669,10 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
     `<span class="panel-note"><a href="/signals/">all signals ↗</a></span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact">` +
     `<caption class="visually-hidden">Signals for this member</caption>` +
-    `<thead><tr><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Magnitude</th><th scope="col">Src</th></tr></thead>` +
+    `<thead><tr><th scope="col">Ticker</th><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Size</th><th scope="col">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
-    `<div class="card-foot">${esc(artifact.lagCaveat)}${esc(lifecycleNote)}</div></section>`
+    cardFoot({ short: "Filed dates lag the trades", full: `${artifact.lagCaveat}${lifecycleNote}`, scope: "member-signals-foot", key: "lag" }) +
+    `</section>`
   );
 }
 

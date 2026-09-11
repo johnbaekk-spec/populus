@@ -493,7 +493,8 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
      a worse failure than the raw slug this requirement set out to remove.
      Wording follows each producer's own definition, cited. */
   // normalize_inst.py:76 — valid CUSIP, no mapping covers period_of_report
-  missing_security: { label: "security not in mapping", cls: "dashed" },
+  // SRC §5: the chip reads "ticker not yet mapped" (methodology #ticker-mapping).
+  missing_security: { label: "ticker not yet mapped", cls: "dashed" },
   // normalize_inst.py:70 — non-numeric otherManager component
   other_manager_unparsed: { label: "other-manager unparsed", cls: "dashed" },
   // normalize.py:32 — the owner field did not parse
@@ -1246,9 +1247,9 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
     { label: "Ticker", why: "An em dash means no ticker was disclosed; the asset remains named alongside it." },
     { label: "Asset · Owner", why: "Asset and ownership as filed; partial-sale qualifiers are retained." },
     { label: "Range", sortKey: "amount", cls: "num" },
-    { label: "Interval · log $1K–$50M+", why: "The statutory interval on a fixed log scale; hatching identifies open or unknown bounds.", cls: "range" },
+    { label: "Amount range", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range" },
     { label: "Traded → Filed", sortKey: "filed" },
-    { label: "Rcpt", why: "Each link opens the original disclosure.", cls: "src" },
+    { label: "Source", why: "Each link opens the original disclosure.", cls: "src" },
   ];
   const cells = (opts.referenceFeed ? referenceColumns : FEED_COLUMNS).map((c) => {
     const cls = c.cls ? ` class="${c.cls}"` : "";
@@ -1264,14 +1265,14 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
           : "none";
       return (
         `<th scope="col"${cls} data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
-        `aria-sort="${dir}"><button class="th-sort" type="button">${esc(c.label)}</button></th>`
+        `aria-sort="${dir}"><button class="th-sort" type="button">${thLabelHtml(c.label)}</button></th>`
       );
     }
     // Either a column with no defined order anywhere, or an orderable column on
     // a surface that offers no control. Both state a reason; neither is mute.
     const why = c.sortKey ? (opts.whyUnsorted ?? "") : (c.why ?? "");
     return (
-      `<th scope="col"${cls}>${esc(c.label)}` +
+      `<th scope="col"${cls}>${thLabelHtml(c.label)}` +
       colWhyHtml(why, opts.notes, c.sortKey ?? c.label) +
       `</th>`
     );
@@ -1937,3 +1938,41 @@ export function normalizeTicker13f(ticker: string): string {
 export function tierCKey(issuerName: string, titleOfClass: string | null | undefined): string {
   return `${normalizeIssuerName13f(issuerName)}|${normalizeClass13f(titleOfClass)}`;
 }
+
+/* ---------- R21 / R22 (refinement 20260910) ---------- */
+
+/** R21: one table footer shape. A short line, with the full text behind an ⓘ;
+    when the full text has more than two clauses it sits in a "How this is
+    computed" disclosure instead. The full text is always in the DOM — it moves,
+    it is never dropped. `short`/`full` are plain text; `extraHtml` is
+    pre-escaped markup (a link) kept after the line. */
+export function cardFoot(o: { short: string; full: string; scope: string; key: string; extraHtml?: string }): string {
+  const clauses = o.full.split(/\s+[·—;]\s+|;\s+/).filter((c) => c.trim() !== "").length;
+  const more =
+    clauses > 2
+      ? `<details class="card-foot-more"><summary>How this is computed</summary><p>${esc(o.full)}</p></details>`
+      : note(o.full, { scope: o.scope }, o.key);
+  return `<div class="card-foot"><span>${esc(o.short)}</span>${more}${o.extraHtml ?? ""}</div>`;
+}
+
+/** R22: column headers read in full words at ≥900 px. The old abbreviation is
+    kept only below 900 px (CSS `.th-abbr`), hidden from assistive technology,
+    which always reads the full word. */
+export const HEADER_ABBREVIATIONS: Readonly<Record<string, string>> = {
+  "Source": "Rcpt",
+  "Trades": "Txns",
+  "Trades †": "Txns †",
+  "Trades†": "Txns†",
+  "Purchases †": "Purch. †",
+  "Position change": "Δ Pos",
+  "Amount range": "Interval",
+  "Gross bought ·§": "Gross purch ·§",
+};
+
+export function thLabelHtml(label: string): string {
+  const abbr = HEADER_ABBREVIATIONS[label];
+  return abbr
+    ? `<span class="th-full">${esc(label)}</span><span class="th-abbr" aria-hidden="true">${esc(abbr)}</span>`
+    : esc(label);
+}
+

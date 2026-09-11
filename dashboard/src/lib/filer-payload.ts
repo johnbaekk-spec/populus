@@ -27,6 +27,7 @@ import {
   type FilerHoldingRow,
   type FilingDict,
   type FilingRef,
+  derivedIssuerKey,
 } from "./holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow } from "./inst.ts";
 import type { FilingWindow } from "./derive.ts";
@@ -168,20 +169,35 @@ export function readServingFilings(db: DatabaseSync): FilingDict {
  * as it treated zero rows before the extraction.
  */
 export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs): FilerPayloadV1 {
+  // R25: `issuer_key` exists only in artifacts built after R25; a baseline
+  // artifact (the T31 rollback case) reads it as NULL, and NULL keys are
+  // omitted from the row, so the payload bytes of such an artifact are unchanged.
+  const hasIssuerKey =
+    db.prepare(`SELECT 1 FROM pragma_table_info('serving_filer_rows') WHERE name = 'issuer_key'`).get() !== undefined;
+  // The literal stays whole and valid against any serving DDL (a test prepares
+  // every shipped query against the producer's schema); the real column is
+  // swapped in only when the artifact has it.
+  const filerRowsSql = `SELECT cik, period, filing_key, security_id, cusip, issuer_name, title_of_class,
+              value_usd, shares, ssh_type, put_call, position_key,
+              put_call_bucket, unit_key, flags, NULL AS issuer_key
+         FROM serving_filer_rows WHERE cik = ? ORDER BY period, rowid`;
   const raw = db
     .prepare(
       // `put_call_bucket` / `unit_key` are the PRODUCER's grain discriminators —
       // read rather than recomputed (see the component's original comment).
-      `SELECT cik, period, filing_key, security_id, cusip, issuer_name, title_of_class,
-              value_usd, shares, ssh_type, put_call, position_key,
-              put_call_bucket, unit_key, flags
-         FROM serving_filer_rows WHERE cik = ? ORDER BY period, rowid`,
+      hasIssuerKey ? filerRowsSql.replace("NULL AS issuer_key", "issuer_key") : filerRowsSql,
     )
     .all(args.cik) as Record<string, unknown>[];
   // Same normaliser and same hard-failure guards as a JSON shard would get.
   // The dictionary is passed separately — parsing the full build dictionary
   // once per filer would be quadratic over the corpus.
   const rows = parseFilerShard({ filings: {}, rows: raw }).rows;
+  // R25: ship the key only where the client cannot derive it from the row's
+  // own CUSIP (entity- and name-keyed rows). Every fragment shard and page
+  // embed stays the size it was; `issuerKeyOf` restores the key exactly.
+  for (const row of rows) {
+    if (row.issuer_key !== undefined && row.issuer_key === derivedIssuerKey(row.cusip)) delete row.issuer_key;
+  }
   if (args.tickerFor) {
     for (const row of rows) {
       const ref = args.tickerFor(row.issuer_name, row.title_of_class);
@@ -313,6 +329,8 @@ const HOLDING_ROW_KEYS = [
   "cik", "period", "filing_key", "security_id", "cusip", "issuer_name", "title_of_class",
   "value_usd", "shares", "ssh_type", "put_call", "position_key", "put_call_bucket",
   "unit_key", "flags",
+  // R25: optional — present only when the artifact carries a non-null key.
+  "issuer_key",
   "change_kind", "delta_value_usd", "delta_shares", "prev_value_usd", "curr_value_usd",
 ] as const;
 

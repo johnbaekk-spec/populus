@@ -607,7 +607,7 @@ test("flagTags: registry chips + FAIL-VISIBLE unknown flags, never a raw slug", 
      the producer states precisely is worse than the raw slug this requirement
      removed, so every shipped flag must take the KNOWN path. */
   for (const [slug, copy] of [
-    ["missing_security", "security not in mapping"],
+    ["missing_security", "ticker not yet mapped"],
     ["other_manager_unparsed", "other-manager unparsed"],
     ["owner_unparsed", "owner unparsed"],
     ["exit_not_assertable", "exit not assertable"],

@@ -1082,3 +1082,16 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
 #signal-hits .si-hits-scroll { overflow-x: auto; max-width: 100%; }
 #signal-hits .si-expand summary { cursor: pointer; }
 #signal-hits .si-expand-body { font-size: 11px; margin: 4px 0 0; }
+
+/* R22: full-word headers at >=900px; the abbreviation only below. The full word
+   stays in the accessibility tree at every width (clipped, never display:none). */
+.th-abbr { display: none; }
+@media (max-width: 899px) {
+  .th-abbr { display: inline; }
+  .th-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+/* R24: an unavailable surface is one line, not an empty frame. */
+.design-unavailable-line { margin: 8px 0; font-size: 12px; color: var(--muted, #555); }
+/* R21 */
+.card-foot-more summary { cursor: pointer; }
+

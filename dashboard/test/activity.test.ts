@@ -340,7 +340,7 @@ test("truncation is STATED on the page — never a silent cut", () => {
   assert.match(html, /Truncated by Public Filings\./);
   assert.match(html, /6<\/strong> further records are not published here/);
   assert.match(html, /The cut falls at/);
-  assert.match(html, /64-shard budget/);
+  assert.match(html, /64-file publication limit/);
 });
 
 /* ---------- 5. every row carries issuer, period, filed date, lag ---------- */

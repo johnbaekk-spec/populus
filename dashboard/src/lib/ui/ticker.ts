@@ -28,6 +28,7 @@ import {
   congressTickerHref,
   partyClass,
   sideLabel,
+  cardFoot,
 } from "../format.ts";
 import {
   type TickerEntity,
@@ -47,13 +48,13 @@ import {
 } from "../derive.ts";
 import type { Signal } from "../signals.ts";
 import type { TickerCrowding } from "../inst-analytics.ts";
-import { unavailableDesignPanel } from "./shared.ts";
+import { plannedLine, unavailableDesignPanel } from "./shared.ts";
 import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
 import { type BuildStamps, asOfNote, briefingCards, disclosureLedger } from "./shared.ts";
 import { note } from "../format.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
-import { instStamp, INST_STAMP_CAVEAT } from "./institutional.ts";
+import { instStamp, instFiledNote } from "./institutional.ts";
 
 /* ---------- unified ticker page body ---------- */
 
@@ -160,7 +161,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
           mark: "§",
           html: `derived by Public Filings from the published aggregate (agg_issuer_top_holders); per-filer filed dates, share counts and document links are not in the published aggregate — the EDGAR link opens the filer's 13F list`,
         },
-        { mark: "n/c", html: `${esc(INST_STAMP_CAVEAT)}` },
+        { mark: "n/c", html: esc(instFiledNote(inst.latestFiled ?? null)) },
       ],
       { id: "ticker-inst-footnotes" },
     ) +
@@ -219,9 +220,13 @@ export function tickerUnifiedBody(
       )}</caption>` +
       `<thead><tr><th scope="col">Filed ▾</th><th scope="col">Member</th><th scope="col">Side · Owner</th><th scope="col">Traded · Lag</th><th scope="col">Amount</th><th scope="col">Range · Flags</th><th scope="col">Src</th></tr></thead>` +
       `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview)}</tbody></table></div>` +
-      `<div class="card-foot"><span>traded → filed dual dates on every row</span><a href="${congressTickerHref(
-        t.ticker,
-      )}">all ${fmtInt(t.txns.length)} ↗</a></div>`;
+      cardFoot({
+        short: "Traded → filed dates on every row",
+        full: "Each row shows the trade date and the filing date; the gap between them is the disclosure lag.",
+        scope: "ticker-congress-foot",
+        key: "dates",
+        extraHtml: `<a href="${congressTickerHref(t.ticker)}">all ${fmtInt(t.txns.length)} ↗</a>`,
+      });
 
   /* Ticker.dc.html: kicker → mono ticker + mapped name + watch → lede, with the
      four-figure ledger on the right, then the provenance strip and three
@@ -313,7 +318,8 @@ export function tickerUnifiedBody(
     /* BAND 1 — the two regimes over time */
     `<div class="design-band design-ticker-band design-ticker-time">` +
     timelineHtml(t, stamps) +
-    unavailableDesignPanel("Institutions · holder flow", "TRACKED FILERS · 6Q · NEW+ADD ▲ · TRIM+EXIT ▼", ["Quarter", "New + add", "Trim + exit"], instAbsenceReason(inst, "no holder flow can be grouped", "Per-issuer quarter-over-quarter holder actions need the issuer-keyed activity join, which this build's aggregate does not publish."), "design-holderflow") +
+    // R24: the holder-flow frame never had data in any build; one Planned line.
+    plannedLine(["institutional holder flow by quarter"]) +
     `</div>` +
     /* BAND 2 — Congress rows (wide) + members active */
     `<section class="page-section" id="congress">` +
@@ -473,7 +479,7 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
     (members.length === 0
       ? `<p class="section-note">No member disclosed ${esc(t.ticker)} in the trailing 12 months.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Members disclosing ${esc(t.ticker)} in the trailing 12 months</caption>` +
-        `<thead><tr><th scope="col">Member</th><th scope="col" class="num">Rows</th><th scope="col" class="num">Net${note("Net disclosed flow for this ticker: purchases minus sales as interval subtraction; open bounds propagate. A lower bound is provable, never a point.", { scope: "ticker-members" }, "net")}</th><th scope="col" class="num">Committees${note(deps?.committees ? "Number of committees the member sat on as of their latest trade date in the window, from the cc0-legislators roster snapshot. Context, never an allegation; jurisdiction overlap needs the sector join." : "Committee membership data is not in this build; the column states absence rather than guessing from current rosters.", { scope: "ticker-members" }, "committees")}</th></tr></thead>` +
+        `<thead><tr><th scope="col">Member</th><th scope="col" class="num">Rows</th><th scope="col" class="num">Net${note("Net disclosed flow for this ticker: purchases minus sales, computed as a net range on the disclosed amounts. A lower bound is provable, never a point.", { scope: "ticker-members" }, "net")}</th><th scope="col" class="num">Committees${note(deps?.committees ? "Number of committees the member sat on as of their latest trade date in the window, from the cc0-legislators roster snapshot. Context, never an allegation; jurisdiction overlap needs the sector join." : "Committee membership data is not in this build; the column states absence rather than guessing from current rosters.", { scope: "ticker-members" }, "committees")}</th></tr></thead>` +
         `<tbody>${rowsHtml}</tbody></table></div>` +
         `<p class="section-note">${fmtInt(byMember.size)} members in the window${byMember.size > members.length ? `; the ${fmtInt(members.length)} most active shown` : ""} · counts of disclosures, not dollars.</p>`) +
     `</section>`

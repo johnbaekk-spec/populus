@@ -48,6 +48,7 @@ import {
   paginateByBytes,
 } from "../src/lib/shards.ts";
 import { FILER_TAIL_SHARDS_MAX, filerTailShards } from "../src/lib/data.ts";
+import { issuerKeyOf } from "../src/lib/holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow } from "../src/lib/inst.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..");
@@ -1107,6 +1108,49 @@ test("M2-12/F2: a total BELOW the rows it ships with is a contradiction, rejecte
         err instanceof FilerPayloadError && /below the .* embedded delta rows/.test(err.message),
       "total 0 beside a real row renders 'no changes' OVER rows that exist",
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("R25: the payload carries issuer_key only where the CUSIP cannot derive it; NULL columns emit nothing", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(SCHEMA);
+    db.prepare(
+      `INSERT INTO serving_filings (filing_key, accession, submission_type, period_of_report,
+         filed_date, doc_url, source) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(1, "0000000000-26-000001", "13F-HR", "2026-03-31", "2026-05-15", null, "sec-edgar");
+    const row = db.prepare(
+      `INSERT INTO serving_filer_rows (cik, period, filing_key, security_id, cusip, issuer_name,
+         title_of_class, value_usd, shares, ssh_type, put_call, position_key,
+         put_call_bucket, unit_key, flags, issuer_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    row.run("0000000077", "2026-03-31", 1, null, "02079K305", "ALPHABET INC", "CAP STK CL A", 300, 3, "SH", "LONG", "cusip:02079K305", "LONG", "SH", "[]", "cusip6:02079K");
+    row.run("0000000077", "2026-03-31", 1, null, "02079K107", "ALPHABET INC", "CAP STK CL C", 200, 2, "SH", "LONG", "cusip:02079K107", "LONG", "SH", "[]", "cusip6:02079K");
+    row.run("0000000077", "2026-03-31", 1, null, null, "NO CUSIP CO", "COM", 50, 1, "SH", "LONG", null, "LONG", "SH", "[]", "name:NO CUSIP CO");
+    row.run("0000000077", "2026-03-31", 1, null, "594918104", "MICROSOFT CORP", "COM", 90, 1, "SH", "LONG", "cusip:594918104", "LONG", "SH", "[]", null);
+    const p = assembleFilerPayload(db, {
+      cik: "0000000077",
+      filerName: "R25 CAPITAL",
+      latestPeriod: "2026-03-31",
+      requestedPeriod: "2026-03-31",
+      filings: readServingFilings(db),
+      agg: { concByPeriod: {}, deltasByPeriod: {}, deltaTotalsByPeriod: {}, latestFiled: null, topn: 25, window: null },
+    });
+    const rows = p.rowsByPeriod["2026-03-31"]!;
+    const byName = (n: string) => rows.filter((r) => r.issuer_name === n);
+    assert.ok(byName("ALPHABET INC").every((r) => !("issuer_key" in r)), "a CUSIP-derivable key is not shipped");
+    assert.equal(byName("NO CUSIP CO")[0]!.issuer_key, "name:NO CUSIP CO", "a key the CUSIP cannot give is shipped");
+    assert.ok(!("issuer_key" in byName("MICROSOFT CORP")[0]!), "a NULL column emits no key");
+    // the client restores the producer's key exactly
+    assert.deepEqual(
+      [...new Set(rows.map((r) => issuerKeyOf(r)))].sort(),
+      ["cusip6:02079K", "cusip6:594918", "name:NO CUSIP CO"],
+    );
+    // and the strict client validator accepts the shipped key
+    assert.doesNotThrow(() => parseFilerPayload(JSON.parse(JSON.stringify(p))));
   } finally {
     db.close();
   }

@@ -39,3 +39,15 @@ test("§0: no banned wording on any built surface; coverage enumerated and non-t
     `banned wording on ${result.hits.length} surface(s):\n${report}`,
   );
 });
+
+import { scanVisibleRule3 } from "../lib/banned-scan.ts";
+
+test("R27: no pipeline vocabulary (SRC §1 rule 3) in any page's visible text; coverage enumerated", () => {
+  assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
+  const result = scanVisibleRule3(DIST);
+  assert.ok(result.covered.length >= 50, `only ${result.covered.length} pages covered — the gate is not seeing the site`);
+  const byPattern = new Map<string, number>();
+  for (const h of result.hits) byPattern.set(h.pattern, (byPattern.get(h.pattern) ?? 0) + 1);
+  const report = result.hits.slice(0, 15).map((h) => `${h.file}: [${h.pattern}] …${h.excerpt}…`).join("\n");
+  assert.equal(result.hits.length, 0, `rule-3 vocabulary on ${result.hits.length} page(s) ${JSON.stringify(Object.fromEntries(byPattern))}:\n${report}`);
+});

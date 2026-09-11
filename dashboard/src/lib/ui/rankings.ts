@@ -35,6 +35,7 @@ import {
   compactDisclosure,
   COMPACT_ROWS,
   COMPACT_STEP,
+  thLabelHtml,
 } from "../format.ts";
 import {
   type NetInterval,
@@ -168,7 +169,7 @@ function visualColumns(kind: "leaders" | "tickers", reference = false): Congress
     { sortable: false, key: null, label: "Buy ◂ ▸ Sell · count", numeric: false, why: "Bars show transaction counts: purchases left, sales right; each row uses the larger count as its scale." },
     columns[2]!, { sortable: false, key: null, label: "Members", numeric: true, why: "Distinct joined members in the stated window. Unjoined filers are not inferred to be members." },
     { ...columns[7]!, label: "Net flow" }];
-  const labels = ["#", "Member", "Txns†", "Buy", "Sell", "Gross purch ·§", "Gross sales ·§", "Net flow", "Late†"];
+  const labels = ["#", "Member", "Trades†", "Buy", "Sell", "Gross bought ·§", "Gross sales ·§", "Net flow", "Late†"];
   return columns.map((c, i) => ({ ...c, label: labels[i]! }));
 }
 
@@ -186,7 +187,7 @@ function rankingHeadHtml(
     .map((c) => {
       if (!c.sortable) {
         return (
-          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${esc(c.label)}` +
+          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${thLabelHtml(c.label)}` +
           colWhyHtml(c.why, notes, c.key ?? c.label) + `</th>`
         );
       }
@@ -198,7 +199,7 @@ function rankingHeadHtml(
       return (
         `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-congress-sort="${esc(c.key)}" ` +
         `data-congress-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
-        `<button class="th-sort" type="button">${esc(c.label)}</button>` +
+        `<button class="th-sort" type="button">${thLabelHtml(c.label)}</button>` +
         (c.note ? noteFromHtml(c.note, notes, c.key) : "") +
         `</th>`
       );
@@ -574,7 +575,8 @@ export function congressRankingSection(
       shown: main.shown,
       noun,
       boundNoun: `ranked ${noun}`,
-      bound: `Every row remains in the <a href="/congress/data/feed.v1.json">published dataset</a>.`,
+      // SRC §5: the sentence moved to /methodology/#published-dataset; the link stays.
+      bound: `All rows are in the <a href="/congress/data/feed.v1.json">published dataset</a>.`,
     }) +
     (undisclosedBucket.length > 0 && opts.undisclosedRootId
       ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} not rankable · amounts wholly undisclosed</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +

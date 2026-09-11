@@ -27,8 +27,8 @@ import {
   flowCellHtml,
   breadcrumb,
   QOQ_FOOTNOTES,
-  type BuildStamps,
-} from "../src/lib/ui/index.ts";
+  type BuildStamps } from "../src/lib/ui/index.ts";
+import { instFiledNote } from "../src/lib/ui/institutional.ts";
 import { quarterlyFlow, sumRanges } from "../src/lib/derive.ts";
 import type { MemberEntity } from "../src/lib/derive.ts";
 import type { QoqDeltaRow, TopHolderRow } from "../src/lib/inst.ts";
@@ -152,7 +152,7 @@ test("entityTxnTable: real table semantics — caption, th scope, honesty cells"
   assert.ok(html.includes("LATE·55d"), "LATE chip past 45d");
   assert.ok(html.includes("visually-hidden"), "dual dates keep the a11y-tree text");
   assert.ok(html.includes("design-dates"), "complete dual dates present at every viewport");
-  assert.ok(html.includes("v_default_transactions"), "exclusions footnote names the view");
+  assert.ok(html.includes("Amended filings show the latest version") && html.includes("/methodology/#defaults"), "the amendment rule is stated; the exclusions are one click away");
   assert.ok(html.includes("aria-live"), "count changes announce");
 });
 
@@ -218,14 +218,15 @@ test("memberPaperBlock (S5): retained-and-counted copy + table semantics; absent
 
 /* ---------- institutional stamp (Locked #20) ---------- */
 
-test("instStamp: quarter-end + build filed-date watermark; caveat text is fixed", () => {
+test("instStamp: 'Quarter ended …' (SRC §5); the newest filing travels with it and its ⓘ; caveat text is plain", () => {
   const html = instStamp("2026-03-31", "2026-05-15");
-  assert.ok(html.includes("quarter-end 2026-03-31"));
-  assert.ok(html.includes("latest filing in build filed 2026-05-15"));
+  assert.ok(html.includes("Quarter ended 2026-03-31"));
+  assert.ok(html.includes('data-latest-filed="2026-05-15"'));
   assert.ok(!html.toLowerCase().includes("current holdings"));
-  const noWm = instStamp("2026-03-31", null);
-  assert.ok(noWm.includes("not recorded"), "a null watermark states itself");
-  assert.ok(INST_STAMP_CAVEAT.includes("not in the published aggregate"));
+  assert.ok(!instStamp("2026-03-31", null).includes("data-latest-filed"), "no date is invented");
+  assert.equal(instFiledNote("2026-05-15"), "Newest filing in this build: 2026-05-15. Per-row filing dates are on each receipt.");
+  assert.equal(instFiledNote(null), "Per-row filing dates are on each receipt.");
+  assert.ok(!/watermark|published aggregate/.test(INST_STAMP_CAVEAT));
 });
 
 /* ---------- holders table (R6) ---------- */
@@ -279,7 +280,7 @@ test("holdersTableHtml: exactly the published columns — no Shares/Filed/Lag/do
   assert.ok(html.includes("derived&nbsp;·§"), "aggregate rows carry the derived receipt");
   assert.ok(html.includes("EDGAR"), "and the real primary-source link");
   assert.ok(html.includes('data-terminus-author="populus"'), "top-N cut attributed to Public Filings");
-  assert.ok(html.includes("quarter-end 2026-03-31"));
+  assert.ok(html.includes("Quarter ended 2026-03-31"));
   assert.ok(html.includes(INST_STAMP_CAVEAT));
   assert.ok(html.includes(">entity<"), "issuer_key_source disclosed per row");
   assert.ok(html.includes("/institutional/filers/1067983/"), "filer links use the unpadded CIK route");
@@ -314,7 +315,7 @@ test("changesTableHtml: NULL renders em-dash never 0; undisclosed side renders h
   assert.ok(html.includes(">0</td>"), "a disclosed zero prints 0");
   assert.ok(html.includes("value undisclosed one side"), "producer flag renders as a tag");
   assert.ok(html.includes("<caption"));
-  assert.ok(html.includes(INST_STAMP_CAVEAT));
+  assert.ok(html.includes("Per-row filing dates are on each receipt."), "the stamp's ⓘ (SRC §5)");
 });
 
 test("qoqChipHtml: markers link to the footnote block; every marker has a printed line", () => {

@@ -122,7 +122,7 @@ const HOLDERS: TopHolderRow[] = [
 
 test("memberBody: honesty invariants — dual dates, star, § resolves, S5 block, caption", () => {
   const html = memberBody(MEMBER, STAMPS, CTX);
-  assert.ok(html.includes("bioguide T000001"));
+  assert.ok(html.includes("member ID T000001"));
   assert.ok(html.includes("serving since 1999"));
   assert.ok(html.includes("spouse (SP), dependent children (DC), and joint accounts (JT)"));
   assert.ok(html.includes('data-watch-kind="member"'), "watch star wired to the v2 store");
@@ -214,8 +214,8 @@ test("unified ticker: data state — published columns only, stamp, terminus, �
   assert.ok(html.includes("Fixture Corp"));
   assert.ok(html.includes("†"), "present-day mapping is G14-labeled");
   assert.ok(html.includes("present-day mapping, not the name as of each filing"));
-  assert.ok(html.includes("quarter-end 2026-03-31"));
-  assert.ok(html.includes("latest filing in build filed 2026-05-15"));
+  assert.ok(html.includes("Quarter ended 2026-03-31"));
+  assert.ok(html.includes("Newest filing in this build: 2026-05-15"), "the newest-filing date stays on the page (SRC §5 ⓘ)");
   assert.ok(!html.includes(">Shares<"), "unpublished columns stay out");
   assert.ok(html.includes('data-terminus-author="populus"'));
   assert.ok(html.includes("derived&nbsp;·§"));
@@ -296,7 +296,7 @@ test("congressTickerBody: two-sided ribbon, exclusions footnote, netting caveat"
   const html = congressTickerBody(TICKER, STAMPS, CTX);
   assert.ok(html.includes("ribbon-two"));
   assert.ok(html.includes("purchases above axis, sales below"));
-  assert.ok(html.includes("v_default_transactions"));
+  assert.ok(html.includes("Amended filings show the latest version"));
   assert.ok(html.includes("ranges cannot be netted"));
   assert.ok(html.includes("members · ever"));
   // R2: the holders link renders ONLY when the holders page was built for

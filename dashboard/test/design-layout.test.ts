@@ -37,13 +37,12 @@ test('reference feed keeps eight matching columns, unknown amount, owner and bot
   assert.doesNotMatch(html,/\$0/);
 });
 
-test('unavailable panels retain table semantics and escape all supplied content', () => {
+test('R24: an unavailable surface is one stated line (no empty frame) and escapes all supplied content', () => {
   const html = unavailableDesignPanel('<Title>', '<period>', ['<Column>', 'Value'], '<Missing>');
   assert.match(html, /&lt;Title&gt;/);
-  assert.match(html, /&lt;Missing&gt;/);
-  assert.match(html, /colspan="2"/);
-  assert.match(html, /Not available in this build/);
-  assert.doesNotMatch(html, /<Missing>|<Column>/);
+  assert.match(html, /&lt;Missing&gt;/, 'the reason is still stated');
+  assert.match(html, /not available in this build/);
+  assert.doesNotMatch(html, /<Missing>|<Column>|<table/);
 });
 
 test('filer weight requires a complete, fully valued book', async () => {

@@ -234,9 +234,8 @@ export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow)
       `<td class="c-num mono-id">${esc(r.cik)}</td>` +
       `<td class="c-num c-strong">${valueCell}${nullNote}${note(`Reporting period ${r.period}. HHI ${r.hhi == null ? r.hhiNote : fmtInt(r.hhi) + " bps"}.`, nctx, `${r.cik}-period`)}</td>` +
       `<td class="c-num">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
-      `<td class="c-num none">—</td>` +
       `<td class="c-num">${r.top5Share == null ? "—" : (r.top5Share / 100).toFixed(1) + "%"}</td>` +
-      `<td class="c-num none">—</td><td>${r.changeHtml ?? "—"}</td></tr>`;
+      `<td>${r.changeHtml ?? "—"}</td></tr>`;
   }
   return (
     `<tr data-mgr-type="${esc(typing?.manager_type ?? "")}" data-mgr-notable="${
@@ -331,8 +330,6 @@ export const DESIGN_INST_INDEX_HEADS: typeof INST_INDEX_HEADS = [
   { key: null, label: "CIK", why: "SEC filer identifier." },
   { key: "value", label: "Value" },
   { key: "positions", label: "Pos" },
-  { key: null, label: "Turnover", why: "Turnover is not published in this build." },
   { key: null, label: "Top-5", why: "Reported top-five share, available only when the source concentration slice contains five positions." },
-  { key: null, label: "Congress overlap", why: "Period-aligned ownership overlap is not published in this build." },
   { key: null, label: "Latest notable", why: "Largest reported change within each filer's latest quarter. It is not a cross-filer ranking." },
 ];

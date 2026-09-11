@@ -234,3 +234,78 @@ test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → ch
     assert.match(methodology, new RegExp(`id="${anchor}"`), `methodology anchor #${anchor}`);
   }
 });
+
+/* ---------- M3 (R23): the SRC §5 copy table, applied ---------- */
+
+import { visibleText } from "../lib/banned-scan.ts";
+
+/** The observed strings of SRC §5, as the source plan quotes them. Two have a
+    methodology anchor as their declared new home, so they may remain on
+    /methodology/ and nowhere else. */
+const SRC5_OBSERVED: { s: string; home?: "methodology"; ci?: boolean }[] = [
+  { s: "a render bound, not a data bound" },
+  { s: "further hits are in the artifact but not rendered here" },
+  { s: "Every row remains in the published dataset", home: "methodology" },
+  { s: "v_default_transactions — active filings minus superseded amendment originals" },
+  { s: "per-filer filing dates are not in the published aggregate" },
+  { s: "is in this build's projection for this filer" },
+  { s: "HOUSE PARSE" },
+  { s: "Position discovery" },
+  { s: "statutory lower bound" },
+  { s: "interval subtraction" },
+  { s: "open bounds propagate" },
+  { s: "classified by value" },
+  { s: "producer-classified", ci: true },
+  { s: "grain: position" },
+  { s: "security not in mapping" },
+  { s: "shard budget" },
+  { s: "Superseded — no longer in the current view" },
+  { s: "gold tick", ci: true },
+  { s: "coverage bucket", ci: true },
+  { s: "bioguide_id=null" },
+  { s: "Jump to a member, ticker or filer" },
+  { s: "by this member in the corpus" },
+  { s: "The people's financial data, returned to the people", home: "methodology" },
+];
+
+function walkHtml(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const p = path.join(dir, name);
+    if (statSync(p).isDirectory()) walkHtml(p, out);
+    else if (name.endsWith(".html")) out.push(p);
+  }
+  return out;
+}
+
+test("POST-BUILD R23: every SRC §5 observed string returns 0 in dist's visible text (outside its declared methodology home)", () => {
+  assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
+  const counts = new Map<string, { n: number; at: string }>();
+  let pages = 0;
+  for (const file of walkHtml(DIST)) {
+    pages++;
+    const rel = path.relative(DIST, file);
+    const text = visibleText(readFileSync(file, "utf-8"));
+    const lower = text.toLowerCase();
+    for (const o of SRC5_OBSERVED) {
+      if (o.home === "methodology" && rel === path.join("methodology", "index.html")) continue;
+      const hit = o.ci ? lower.includes(o.s.toLowerCase()) : text.includes(o.s);
+      if (hit) {
+        const c = counts.get(o.s) ?? { n: 0, at: rel };
+        c.n++;
+        counts.set(o.s, c);
+      }
+    }
+  }
+  assert.ok(pages >= 50, `only ${pages} pages scanned`);
+  const left = [...counts].map(([s, c]) => `${JSON.stringify(s)} on ${c.n} page(s), e.g. ${c.at}`);
+  assert.deepEqual(left, [], `SRC §5 strings still visible:\n${left.join("\n")}`);
+});
+
+test("POST-BUILD R23: every methodology anchor the copy pass points at exists", () => {
+  const page = path.join(DIST, "methodology", "index.html");
+  assert.ok(existsSync(page), "the methodology page is built");
+  const html = readFileSync(page, "utf-8");
+  for (const id of ["published-dataset", "coverage", "13f-method", "ranges", "position-grain", "ticker-mapping", "site-weight", "principles"]) {
+    assert.ok(html.includes(`id="${id}"`), `/methodology/ lacks #${id}`);
+  }
+});
