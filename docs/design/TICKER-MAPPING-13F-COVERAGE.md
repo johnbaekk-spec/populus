@@ -80,3 +80,13 @@ Generated 2026-09-11 06:29 UTC by `scripts/draft_ticker_mapping_13f.py promote` 
 ## What verification meant here
 
 RULE-BASED, not row-by-row: every shipped row was ACCEPTED BY AN AUTOMATED RULE and its `method` names that rule. `exact-name`: the normalized filed issuer name matches exactly one issuer (one CIK) in the pinned SEC company list, that issuer lists one ticker, and the class is a common-equity (or ADR) class. `class-resolved`: a multi-ticker issuer where one un-hyphenated line sits beside preferred-series listings, or a recorded issuer/class rule in `scripts/draft_ticker_mapping_13f.py` names the line. No row was reviewed individually by this step; `manual` is reserved for the per-row review pass. Anything else ships no ticker. The owner's spot check over `src/populus/ticker_mapping_13f.sample.json` is the pre-merge human step.
+
+## Per-row review pass (after the rule-based promote)
+
+Updated 2026-09-11 08:24 UTC. Rows judged one at a time by the developer agent, in descending value order over the unmapped target rows: issuer identity and share class checked against the SEC company list title for the named CIK. `method: manual` marks these rows; `rejected:` in the mapping file records the keys judged to have no reviewed listing.
+
+| Verified rows total (exact-name / class-resolved / manual) | 2,852 (1,421 / 110 / 1,321) |
+|---|---|
+| Rows rejected in review | 938 ($7,171,235,828,931) |
+| Target rows still unreviewed | 2,469 |
+| Verified target value | $52,138,460,519,543 of $59,317,769,474,420 (**87.9%**) |
