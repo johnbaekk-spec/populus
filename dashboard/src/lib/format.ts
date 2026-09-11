@@ -885,6 +885,10 @@ export interface RenderCtx {
       every budget — so behavior is unchanged unless a cut actually happened. */
   cutMembers?: ReadonlySet<string>;
   cutTickers?: ReadonlySet<string>;
+  /** R2: true only when a 13F holders page was BUILT for this ticker
+      (`tickerInstSection(build, t).state === "data"`). The congress ticker
+      body renders the holders link only then — never a dressed 404. */
+  holdersPage?: boolean;
 }
 
 export function memberHref(bioguide: string): string {
@@ -1828,4 +1832,102 @@ export function latestFiling<T extends FiledDateCandidate>(refs: readonly T[]): 
     }
   }
   return best;
+}
+
+/* ---------- R9 (refinement 20260910): ONE issuer display-name rule ---------- */
+
+/** The TypeScript half of `populus.inst_agg.display_issuer_name`, mirrored
+    token for token; `tests/fixtures/refinement/display_issuer_name_cases.json`
+    pins both runtimes on the same cases.
+
+    Modal candidate over the whitespace-collapsed, upper-cased names (weighted
+    when `weights` is given); a pure-numeric candidate, then a candidate of
+    three characters or fewer, then a digit-leading candidate are dropped ONLY
+    while another candidate survives; ties go to the more frequent, then the
+    longer, then codepoint order; the token `TR` folds to `TRUST`; every token
+    is title-cased. Null only when every contributor is null. */
+export function displayIssuerName(
+  names: readonly (string | null | undefined)[],
+  weights?: readonly number[],
+): string | null {
+  const counts = new Map<string, number>();
+  names.forEach((raw, index) => {
+    if (raw == null) return;
+    const name = String(raw).split(/\s+/).filter((t) => t !== "").join(" ");
+    if (name === "") return;
+    const weight = weights ? Math.trunc(weights[index] ?? 1) : 1;
+    const key = name.toUpperCase();
+    counts.set(key, (counts.get(key) ?? 0) + weight);
+  });
+  if (counts.size === 0) return null;
+  let candidates = [...counts.keys()];
+  const drops: ((n: string) => boolean)[] = [
+    (n) => /^[0-9]+$/.test(n),
+    (n) => n.length <= 3,
+    (n) => /^[0-9]/.test(n),
+  ];
+  for (const drop of drops) {
+    const kept = candidates.filter((c) => !drop(c));
+    if (kept.length > 0) candidates = kept;
+  }
+  candidates.sort((a, b) => {
+    const ca = counts.get(a)!;
+    const cb = counts.get(b)!;
+    if (ca !== cb) return cb - ca;
+    if (a.length !== b.length) return b.length - a.length;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const best = candidates[0]!;
+  return best
+    .split(" ")
+    .map((t) => (t === "TR" ? "TRUST" : t))
+    .map((t) => t.slice(0, 1).toUpperCase() + t.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/* ---------- R3 (refinement 20260910): Tier C key normalizers ---------- */
+/* Mirrors `populus.ticker_mapping_13f.normalize_issuer_name` / `normalize_class`
+   token for token — the reviewed mapping is keyed on these, so the row-level
+   TICKER cell resolves a filed (issuer_name, title_of_class) pair by the SAME
+   rule the pipeline used. Pinned by tests/fixtures/refinement/tier-c-keys.json
+   in both runtimes. */
+
+const TIER_C_SUFFIX_FOLD: Record<string, string> = {
+  INCORPORATED: "INC",
+  CORPORATION: "CORP",
+  COMPANY: "CO",
+  LIMITED: "LTD",
+};
+const TIER_C_SUFFIXES = new Set(["INC", "CORP", "CO", "LTD", "PLC", "TR", "TRUST", "NEW", "DEL", "DE"]);
+
+export function normalizeIssuerName13f(name: string): string {
+  const text = String(name).toUpperCase().replace(/&/g, " AND ").replace(/[^A-Z0-9 ]+/g, " ");
+  const tokens = text
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t !== "")
+    .map((t) => TIER_C_SUFFIX_FOLD[t] ?? t);
+  while (tokens.length > 1 && TIER_C_SUFFIXES.has(tokens[tokens.length - 1]!)) tokens.pop();
+  return tokens.join(" ");
+}
+
+export function normalizeClass13f(titleOfClass: string | null | undefined): string {
+  if (titleOfClass == null) return "";
+  return String(titleOfClass)
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t !== "")
+    .join(" ");
+}
+
+/** SEC spells a class-share ticker with a hyphen (`BRK-B`); Congress filers
+    write a dot (`BRK.B`). ONE comparison form. */
+export function normalizeTicker13f(ticker: string): string {
+  return String(ticker).trim().toUpperCase().replace(/\./g, "-");
+}
+
+export function tierCKey(issuerName: string, titleOfClass: string | null | undefined): string {
+  return `${normalizeIssuerName13f(issuerName)}|${normalizeClass13f(titleOfClass)}`;
 }

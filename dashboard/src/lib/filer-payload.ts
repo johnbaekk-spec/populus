@@ -126,6 +126,9 @@ interface AssembleFilerArgs {
       the included rows reference (referenced-only). */
   filings: FilingDict;
   agg: FilerAggregateInputs;
+  /** R3: the reviewed Tier C ticker for a filed (issuer name, class) pair, or
+      null. Omitted → no row carries a ticker (G14: never inferred here). */
+  tickerFor?: (issuerName: string, titleOfClass: string | null) => { ticker: string; verified_date: string } | null;
 }
 
 /** Read the `serving_filings` dictionary once per artifact — shared by the
@@ -179,6 +182,15 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
   // The dictionary is passed separately — parsing the full build dictionary
   // once per filer would be quadratic over the corpus.
   const rows = parseFilerShard({ filings: {}, rows: raw }).rows;
+  if (args.tickerFor) {
+    for (const row of rows) {
+      const ref = args.tickerFor(row.issuer_name, row.title_of_class);
+      if (ref) {
+        row.ticker = ref.ticker;
+        row.ticker_verified_date = ref.verified_date;
+      }
+    }
+  }
 
   const periods = [...new Set(rows.map((r) => r.period))].sort();
   // OD-5: the selected quarter and the one before it, both browsable.
@@ -194,7 +206,9 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
   const rowsByPeriod: Record<string, FilerHoldingRow[]> = {};
   const totalsByPeriod: Record<string, number> = {};
   if (periods.length > 0) {
-    for (const period of prior ? [prior, current] : [current]) {
+    // R5 (LD3 §4): EVERY published period of this filer, each under the same
+    // per-period embed cap — four for a notable filer, two for the rest.
+    for (const period of periods) {
       const capped = capRows(sortHoldingRows(rows.filter((r) => r.period === period)));
       rowsByPeriod[period] = capped.rows;
       totalsByPeriod[period] = capped.total;
@@ -285,6 +299,8 @@ const DELTA_KEYS = [
   "cik", "position_key", "put_call", "curr_period", "prev_period", "change_kind",
   "prev_value_usd", "curr_value_usd", "delta_value_usd", "prev_shares", "curr_shares",
   "delta_shares", "ssh_prnamt_type", "flags",
+  // R1 display enrichment — optional, nullable, never monetary.
+  "issuer_name", "title_of_class", "issuer_key",
 ] as const;
 
 const WINDOW_KEYS = ["open", "quarterEnd", "deadline"] as const;
@@ -376,7 +392,7 @@ function concentrationOf(v: unknown, field: string): ConcentrationRow | null {
 }
 
 const PUT_CALLS = new Set(["LONG", "PUT", "CALL"]);
-const CHANGE_KINDS = new Set(["new", "add", "trim", "exit", "unclassified"]);
+const CHANGE_KINDS = new Set(["new", "add", "trim", "exit", "held", "unclassified"]);
 const UNIT_TYPES = new Set(["SH", "PRN", "UNKNOWN"]);
 
 function deltaOf(v: unknown, field: string): QoqDeltaRow {
@@ -403,6 +419,10 @@ function deltaOf(v: unknown, field: string): QoqDeltaRow {
     delta_shares: numberOrNull(v.delta_shares, `${field}.delta_shares`),
     ssh_prnamt_type: unit as QoqDeltaRow["ssh_prnamt_type"],
     flags: stringArray(v.flags, `${field}.flags`),
+    // R1 display enrichment: optional on the wire, null-honest when absent.
+    ...(v.issuer_name !== undefined ? { issuer_name: stringOrNull(v.issuer_name, `${field}.issuer_name`) } : {}),
+    ...(v.title_of_class !== undefined ? { title_of_class: stringOrNull(v.title_of_class, `${field}.title_of_class`) } : {}),
+    ...(v.issuer_key !== undefined ? { issuer_key: stringOrNull(v.issuer_key, `${field}.issuer_key`) } : {}),
   };
 }
 

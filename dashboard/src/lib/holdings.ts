@@ -104,6 +104,11 @@ export interface FilerHoldingRow {
   put_call_bucket: string | null;
   unit_key: string | null;
   flags: string[];
+  /** R3: the REVIEWED Tier C ticker for this row's (issuer name, class), set
+      by the server-side assembler from the mapping — never inferred here.
+      Absent/undefined = no reviewed row; the cell renders "—". */
+  ticker?: string;
+  ticker_verified_date?: string;
 }
 
 /** Issuer-holder projection: one row per (issuer, period, FILER). `filer_key` is
@@ -363,6 +368,8 @@ export function parseFilerShard(raw: unknown): FilerShard {
       put_call_bucket: strOrNull(r.put_call_bucket),
       unit_key: strOrNull(r.unit_key),
       flags: flagsOf(r.flags),
+      ...(typeof r.ticker === "string" && r.ticker !== "" ? { ticker: r.ticker } : {}),
+      ...(typeof r.ticker_verified_date === "string" ? { ticker_verified_date: r.ticker_verified_date } : {}),
     };
   });
   return { filings: filingsOf(obj.filings), rows };
@@ -1349,7 +1356,18 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         : srcLinkDerived(null, edgarFilerUrl(opts.cik));
       if (opts.reference) {
         const weight = total === matched && totals.undisclosedRows === 0 && totals.disclosedUsd > 0 && row.value_usd != null ? row.value_usd / totals.disclosedUsd * 100 : null;
-        return `<tr class="design-holding-row"><td class="c-kind">—</td><td class="c-ticker">—</td>` +
+        /* R3: the TICKER cell resolves per row from the reviewed mapping, and
+           every ticker carries its verification ⓘ (LD6). "—" is the honest
+           state for an unmapped class, never a guess. */
+        const tickerCell = row.ticker
+          ? `<span class="mono-ticker">${esc(row.ticker)}</span>` +
+            noteFromHtml(
+              `verified against the SEC company list on ${esc(row.ticker_verified_date || "the recorded date")} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
+              { scope: "filer-ticker" },
+              `${opts.page}-${rowIndex}`,
+            )
+          : "—";
+        return `<tr class="design-holding-row"><td class="c-kind">—</td><td class="c-ticker">${tickerCell}</td>` +
           `<td class="c-pos"><span class="design-holding-name"><span class="filed-name">${esc(row.issuer_name || "Issuer unnamed")}</span></span> ${src}${noteFromHtml(positionCell(row) + `<br>` + provenanceCellHtml(prov, statedHoldings), { scope: "filer-position-record" }, `${opts.page}-${rowIndex}`)}${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
           `<td><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0,Math.min(100,weight))}%"></span>`}</span></td>` +
           `<td class="c-num c-strong">${valueCell(row.value_usd)}</td><td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td><td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`;

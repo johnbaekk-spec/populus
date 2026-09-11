@@ -1,0 +1,18 @@
+{
+  "rule": "R9 (refinement 20260910): modal candidate; drop pure-numeric, then <=3-char, then digit-leading candidates whenever another candidate survives; ties by count -> longer -> codepoint order; token TR -> TRUST; title-case each token. Shared by tests/test_inst_agg.py and dashboard/test/format.test.ts.",
+  "cases": [
+    { "names": ["APPLE INC", "APPLE INC", "Apple Inc."], "expect": "Apple Inc" },
+    { "names": ["NVIDIA CORP"], "expect": "Nvidia Corp" },
+    { "names": ["1ISHARES TR", "ISHARES TR"], "expect": "Ishares Trust" },
+    { "names": ["438516106", "HONEYWELL INTERNATIONAL INC"], "expect": "Honeywell International Inc" },
+    { "names": ["HON", "HONEYWELL INTL INC"], "expect": "Honeywell Intl Inc" },
+    { "names": ["438516106"], "expect": "438516106" },
+    { "names": ["HONA"], "expect": "Hona" },
+    { "names": ["1ISHARES TR"], "expect": "1ishares Trust" },
+    { "names": ["B", "A", "A", null], "expect": "A" },
+    { "names": ["ALPHABET INC", "ALPHABET INC CL A"], "expect": "Alphabet Inc Cl A" },
+    { "names": ["  microsoft   corp ", "MICROSOFT CORP"], "expect": "Microsoft Corp" },
+    { "names": [null, null], "expect": null },
+    { "names": [], "expect": null }
+  ]
+}

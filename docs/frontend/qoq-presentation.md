@@ -25,6 +25,7 @@ values itself, and never resolves a producer "unclassified" into a direction.
 | `trim` | `trim` | `qoq-trim` (sell tint) | |
 | `exit` | `exit ‡e` | `qoq-exit` (outlined, sell tint) | `‡e` resolves to the exit-semantics footnote line |
 | `unclassified` | `n/c` | `qoq-nc` (hatched) | fail-closed |
+| `held` | `no change` | `qoq-held` (neutral outline) | R8: Δshares == 0 — mark-to-market only; rendered once in the collapsed "Mark-to-market only (no share change)" group below the paged changes table, excluded from every landing / notable feed, never a direction |
 | *anything else* | `n/c` | `qoq-nc` (hatched) | **fail-closed**: an unknown kind is presented as not-classifiable, never guessed |
 
 ### Flag mapping (producer flags → presentation)
@@ -33,7 +34,7 @@ values itself, and never resolves a producer "unclassified" into a direction.
 |---|---|
 | `value_undisclosed_one_side` | the **value delta cell** renders a hatched `n/c` (never a number, never `$0`); the flag also renders as a dashed tag |
 | `shares_unit_mismatch` | the **shares delta cell** renders an em-dash `—` and the chip carries the `‡u` marker; dashed tag |
-| `classified_by_value` | the chip carries the `†v` marker (direction taken from reported value, not shares); dashed tag |
+| `classified_by_value` | **retired by R8 (refinement 20260910)** — no new build sets it (a value-only change is now `held`); the `†v` marker and dashed tag are kept only so an older aggregate still decodes |
 | `change_kind_undeterminable` | accompanies `unclassified`; dashed tag (the chip is already `n/c`) |
 | `identity_reconciled_by_cusip` | the position cell carries the `‡r` marker (dotted underline); dashed tag |
 | *unknown flag* | **fail-visible**: rendered as a raw dashed tag with the machine name verbatim — never dropped |

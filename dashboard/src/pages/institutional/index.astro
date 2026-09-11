@@ -11,7 +11,7 @@ import { clusterBoard } from "../../lib/activity";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { concentrationFor, deltasFor, typingFor, addsFor, addsExclusionCount } from "../../lib/inst";
-import { boundAdds, closedPeriods, type AddsMode } from "../../lib/inst-adds";
+import { corpusAsOf, boundAdds, closedPeriods, type AddsMode } from "../../lib/inst-adds";
 import { biggestChange, MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/manager-directory";
 import {
   footnoteBlock,
@@ -38,6 +38,10 @@ const window = inst.present ? filingWindow(build.generatedAtDate) : null;
 // The §5 data_note ships with it by construction (activitySectionHtml) — the
 // feed cannot be rendered without its structural caveat.
 const feed = activityFeed({ instPresent: inst.present });
+// R7: the landing feed is restricted to the registry's `notable` managers.
+const notableCiks = new Set<string>(
+  inst.present ? [...inst.typingByCik.values()].filter((t) => t.notable).map((t) => t.cik) : [],
+);
 
 let bodyHtml: string;
 if (!inst.present) {
@@ -112,7 +116,8 @@ if (!inst.present) {
   /* The leaderboard leads the page. Only CLOSED quarters are offered,
      and the newest is the default view — an open quarter counts only the
      managers who happened to file early, so it is not offered at all. */
-  const addsPeriods = closedPeriods(inst.addsPeriods, build.generatedAtDate);
+  const asOf = corpusAsOf(build.generatedAtDate, inst.watermarks.latest_filed_date);
+  const addsPeriods = closedPeriods(inst.addsPeriods, asOf);
   const addsPeriod = addsPeriods[0] ?? null;
   const addsMode: AddsMode = "all";
   const addsHtml =
@@ -158,7 +163,7 @@ if (!inst.present) {
      into a falsely uniform total. The period comes from the concentration
      table (a row per filer-period), not the adds leaderboard's list, which is
      empty on an aggregate without the optional adds table. */
-  const analyticsPeriod = closedPeriods(concentrationPeriods(inst), build.generatedAtDate)[0] ?? null;
+  const analyticsPeriod = closedPeriods(concentrationPeriods(inst), asOf)[0] ?? null;
   const tracked = analyticsPeriod === null ? null : trackedValueFor(inst, analyticsPeriod);
   const leaders = analyticsPeriod === null ? null : newPositionLeaders(inst, analyticsPeriod, { limit: 5 });
   const clusters = analyticsPeriod === null
@@ -175,15 +180,20 @@ if (!inst.present) {
       { label: "Consensus add", value: consensus ? consensus.issuerName.length > 14 ? `${consensus.issuerName.slice(0, 13)}…` : consensus.issuerName : "—", detail: consensus ? `${fmtInt(consensus.newPositions)} filers opened it · ${analyticsPeriod}` : analyticsPeriod ? `no ≥3-filer cluster in ${analyticsPeriod}` : "no closed quarter yet" },
       { label: "Congress overlap", value: "—", detail: "cross-module join not published" },
     ]) + `</header>` +
-    `<div class="design-provenance">13F universe · quarterly, 45-day lag · not current holdings <span>Latest quarter-end ${esc(inst.watermarks.latest_period_of_report ?? "unavailable")}</span> <a href="#inst-data-note">Long positions only · coverage §</a></div>` +
+    /* R4: ONE source for the quarter. The header names the CLOSED analytics
+       period and its filer count from the same table the tiles use; the
+       manifest watermark (the newest period ANY filer has reported into, an
+       open one) moves to the footnote below as the newest filing received. */
+    `<div class="design-provenance">13F universe · quarterly, 45-day lag · not current holdings <span>Closed quarter ${esc(analyticsPeriod ?? "unavailable")}${tracked ? ` · ${fmtInt(tracked.filers)} filers reported` : ""}</span> <a href="#inst-data-note">Long positions only · coverage §</a></div>` +
+    `<p class="section-note inst-watermark-foot">newest filing received: ${esc(inst.watermarks.latest_filed_date ?? "unavailable")}${inst.watermarks.latest_period_of_report && inst.watermarks.latest_period_of_report !== analyticsPeriod ? ` · filings for ${esc(inst.watermarks.latest_period_of_report)} are still arriving (window open)` : ""}</p>` +
     briefingCards([
       { tag: "Position discovery", title: `${fmtInt(inst.filers.length)} filers in the published record`, body: "Explore reported long positions, concentration and changes between quarters. Each filer retains its own reporting period." },
-      { tag: "Quarterly record", title: inst.watermarks.latest_period_of_report ?? "No reporting period available", body: "Quarter-end positions are disclosed up to 45 days later. They do not represent current holdings or the manager’s complete portfolio." },
+      { tag: "Quarterly record", title: analyticsPeriod ?? "No closed reporting period yet", body: "Quarter-end positions are disclosed up to 45 days later. They do not represent current holdings or the manager’s complete portfolio." },
       { tag: "Reported changes", title: "New positions, increases and decreases", body: "Changes are classified from comparable reported positions. A missing position is not proof of a sale; value changes also include price changes." },
     ]) +
     `<div class="design-band design-institutional-band">` +
     clusterBoardHtml(clusters, analyticsPeriod) +
-    `<div class="design-activity">` + activitySectionHtml(feed, { reference: true, tierOf: (cik) => filerTier(build, cik) }) + `</div></div>` +
+    `<div class="design-activity">` + activitySectionHtml(feed, { reference: true, tierOf: (cik) => filerTier(build, cik), notableCiks: notableCiks }) + `</div></div>` +
     `<div class="design-band design-institutional-band">` +
     newPositionLeadersHtml(leaders, (cik) => filerTier(build, cik), analyticsPeriod) +
     unavailableDesignPanel("Sector rotation", "Tracked filers Q/Q · value-weighted pp", ["Sector", "Change", "PP Q/Q", "Congress direction"], "A period-aligned sector rotation and Congress comparison is not available in this build.", "design-rotation") + `</div>` +

@@ -594,9 +594,14 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
     `<h1 class="entity-title"><span class="mono-ticker">${esc(t.ticker)}</span></h1>` +
     `<p class="entity-lede">Congressional disclosures mentioning this ticker. This page reports what members <em>filed</em>, on the STOCK Act's 45-day clock — it says nothing about ${esc(
       t.ticker,
-    )} itself, and disclosed ranges cannot be netted into a position. <a href="/institutional/tickers/${esc(
-      encodeURIComponent(t.ticker),
-    )}/holders/">13F institutional holders of ${esc(t.ticker)} ↗</a></p>` +
+    )} itself, and disclosed ranges cannot be netted into a position.${
+      /* R2: the holders link renders ONLY when that page was built for this
+         ticker (ctx.holdersPage). An unconditional link was a dressed 404 on
+         every ticker whose issuer the 13F side could not resolve. */
+      ctx.holdersPage
+        ? ` <a href="/institutional/tickers/${esc(encodeURIComponent(t.ticker))}/holders/">13F institutional holders of ${esc(t.ticker)} ↗</a>`
+        : ""
+    }</p>` +
     `</div>` +
     statTiles(tiles, { label: "Ticker disclosure statistics", compact: true }) +
     `</header>` +

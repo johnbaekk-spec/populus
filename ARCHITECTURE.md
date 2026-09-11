@@ -256,7 +256,7 @@ Identity is modeled to be historically safe (review F8). Two separate identity f
 - **`members`** — Congress members, **bioguide ID** canonical (from congress-legislators, CC0), with dated terms.
 - **`series`** — macro series catalog: agency, series ID, units, frequency, seasonal adjustment, revision policy, `license_id`.
 
-Join rules: historical records join **as-of their own date** (transaction date, report period); mapping rows used outside their validity interval are a defect. **Silent chaining CUSIP → current ticker → CIK for historical data is prohibited (G14).** Unresolved identifiers surface as name-only rows with a flag — never dropped, never guessed. Bootstrap sources: SEC `company_tickers.json` (current tickers; verified) seeded as current-interval rows; CUSIP mappings from free primary candidates (SEC fails-to-deliver pairs — OQ-8) with per-row provenance and review state. Registry edits beyond automated ingest are version-controlled commits.
+Join rules: historical records join **as-of their own date** (transaction date, report period); mapping rows used outside their validity interval are a defect. **Silent chaining CUSIP → current ticker → CIK for historical data is prohibited (G14), and symbols are never inferred automatically — only reviewed rows of the Tier C mapping (`ticker_mapping_13f.yaml`, name + class keyed, CUSIP-free) supply a 13F ticker.** Unresolved identifiers surface as name-only rows with a flag — never dropped, never guessed. Bootstrap sources: SEC `company_tickers.json` (current tickers; verified) seeded as current-interval rows; CUSIP mappings from free primary candidates (SEC fails-to-deliver pairs — OQ-8) with per-row provenance and review state. Registry edits beyond automated ingest are version-controlled commits.
 
 ### 5.5 Artifact publication protocol *(normative)*
 
@@ -949,7 +949,7 @@ Open questions are unknowns; these are *known* compromises accepted deliberately
 11. **G11 — The conditions-register entry precedes ingestion.** "It's on the internet" is not a determination.
 12. **G12 — One module at a time.** No M(n+1) work — including "just the schema" — before M(n)'s gates are green.
 13. **G13 — Data is never behind a paywall.** A paid tier may charge for convenience only; any design gating data access is a defect.
-14. **G14 — No identity time travel.** Historical records join identity mappings as-of their own dates; silent CUSIP→current-ticker→CIK chaining is a defect (§5.4).
+14. **G14 — No identity time travel; no inferred symbols.** Historical records join identity mappings as-of their own dates; silent CUSIP→current-ticker→CIK chaining is a defect (§5.4). **Symbols are never inferred automatically; only reviewed mapping rows supply a 13F ticker** — the Tier C file `src/populus/ticker_mapping_13f.yaml`, keyed on the normalized filed issuer name plus title of class (never a CUSIP), each row carrying `verified_date` / `verified_by` / `method`. An unverified security ships no ticker (refinement 20260910, R3).
 15. **G15 — No identified user tracking; no silent telemetry; no login wall on free surfaces.** Analytics are aggregate and cookieless (§12.3); the MCP server never transmits usage from a user's machine; no M1–M4 read surface may require login or collect identity. A login requirement to read public data, any client→home telemetry, or any per-user profile before opt-in P-Ω accounts is a defect.
 
 ---

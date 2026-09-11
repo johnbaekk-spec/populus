@@ -110,7 +110,7 @@ asserted on both sides in tests:
 - `securities(security_id PK, class, …)` surrogate-keyed.
 - `security_identifiers(security_id, id_type ∈ {cusip,…}, value, valid_from, valid_to, provenance, confidence, review_state)`.
 - `entity_tickers(entity_id, ticker, valid_from, valid_to, provenance, confidence, review_state)`.
-- As-of resolution helpers; **G14: no CUSIP→current-ticker→CIK time-travel**; unmapped ⇒ name-only + flag, never dropped/guessed.
+- As-of resolution helpers; **G14: no CUSIP→current-ticker→CIK time-travel, and no inferred symbols — only reviewed rows of the Tier C mapping (`src/populus/ticker_mapping_13f.yaml`, keyed on normalized issuer name + title of class, never a CUSIP, every row with `verified_date` / `verified_by` / `method`) supply a 13F ticker; `agg_ticker_holders` / `agg_ticker_holder_totals` are built class-grain from source holdings on that key**; unmapped ⇒ name-only + flag, never dropped/guessed.
 
 **M2 data (new):**
 - `inst_filers(cik, name_raw, form13f_file_number, …)` — 13F managers.

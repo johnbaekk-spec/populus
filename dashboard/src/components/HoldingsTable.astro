@@ -33,6 +33,7 @@ import { serializeInlineJson } from "../lib/inline-json.ts";
 import { institutionalDataNoteHtml, resolveServingDbPath } from "../lib/activity.ts";
 import { assembleFilerPayload, readServingFilings } from "../lib/filer-payload.ts";
 import { filerAggregateInputs, getBuildData, topFilerCiks } from "../lib/data.ts";
+import { tickerFor } from "../lib/inst.ts";
 import {
   capRows,
   coverageFromCounters,
@@ -126,6 +127,8 @@ if (db && props.kind === "filer") {
     requestedPeriod: props.period,
     filings: cache.filings,
     agg: filerAggregateInputs(build, props.cik),
+    // R3: reviewed tickers only — the aggregate's mapping tables, or nothing.
+    tickerFor: (name, cls) => tickerFor(build.inst, name, cls),
   });
   if (full.periods.length > 0) {
     payload = {

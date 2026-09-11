@@ -57,6 +57,8 @@ __all__ = [
     "build_filing_dictionary",
     "build_serving_projection",
     "publication_periods",
+    "PUBLISHED_PERIODS",
+    "PUBLISHED_PERIODS_NOTABLE",
     "write_serving_db",
     "SERVING_SCHEMA",
 ]
@@ -66,6 +68,12 @@ __all__ = [
 #: budget without anyone noticing, so the width is a named constant, not a
 #: default argument buried in a call site.
 PUBLISHED_PERIODS = 2
+
+#: R5 (refinement 20260910, owner decision): the 37 `notable` managers publish
+#: FOUR periods of `serving_filer_rows`; everyone else keeps PUBLISHED_PERIODS.
+#: The activity grain and its shards stay on the newest PUBLISHED_PERIODS
+#: (behaviour unchanged) — this widens browsable history, not the feed.
+PUBLISHED_PERIODS_NOTABLE = 4
 
 
 # --- filing dictionary ---------------------------------------------------
@@ -368,16 +376,27 @@ class ServingProjection:
     issuer_holder_rows: list[dict] = field(default_factory=list)
     activity_rows: list[dict] = field(default_factory=list)
     filer_names: dict[str, str] = field(default_factory=dict)
+    #: R1: ONE display row per (cik, period, position_key) — the deduplicated
+    #: relation the dashboard enriches `agg_qoq_deltas` from by key lookup.
+    position_display_rows: list[dict] = field(default_factory=list)
 
 
 def build_serving_projection(
-    conn: sqlite3.Connection, *, periods: tuple[str, ...]
+    conn: sqlite3.Connection,
+    *,
+    periods: tuple[str, ...],
+    notable_ciks: frozenset[str] = frozenset(),
+    activity_periods: tuple[str, ...] | None = None,
 ) -> ServingProjection:
     """Derive the filer and issuer-holder projections for `periods`.
 
-    `periods` is explicit rather than "everything": OD-5 publishes the current and
-    prior period only, and a projection that silently widened to the whole corpus
-    would blow the shard budget without anyone noticing.
+    `periods` is explicit rather than "everything": a projection that silently
+    widened to the whole corpus would blow the shard budget without anyone
+    noticing. R5 (LD3): `periods` are the CANDIDATE periods, oldest first;
+    a filer in `notable_ciks` keeps every candidate period, every other filer
+    keeps only the newest `PUBLISHED_PERIODS` of them. `activity_periods`
+    (default: the newest `PUBLISHED_PERIODS`) bounds the activity grain
+    independently, so widening history never widens the feed.
     """
     out = ServingProjection(filings=build_filing_dictionary(conn))
     for cik, name in conn.execute("SELECT cik, name_raw FROM inst_filers ORDER BY cik"):
@@ -385,6 +404,14 @@ def build_serving_projection(
 
     if not periods:
         return out
+
+    periods = tuple(sorted(periods))
+    if activity_periods is None:
+        activity_periods = periods[-PUBLISHED_PERIODS:]
+    default_periods = frozenset(periods[-PUBLISHED_PERIODS:])
+
+    def _retained(cik: str, period: str) -> bool:
+        return period in default_periods or cik in notable_ciks
 
     placeholders = ",".join("?" for _ in periods)
 
@@ -396,7 +423,7 @@ def build_serving_projection(
     reported: dict[tuple, dict] = {}
     dedup_total: dict[tuple[str, str], int] = defaultdict(int)
     dedup_undisclosed: set[tuple[str, str]] = set()
-    display: dict[tuple[str, str, str], tuple[str, str]] = {}
+    display: dict[tuple[str, str, str], tuple[str, str, str | None]] = {}
     for (
         cik,
         period,
@@ -425,6 +452,8 @@ def build_serving_projection(
         " ORDER BY h.cik,h.period_of_report,h.holding_id",
         periods,
     ):
+        if not _retained(cik, period):
+            continue  # R5: an older period is kept for notable filers only
         ref = out.filings.get(filing_id)
         position_key = _position_key(security_id, cusip)
         out.filer_rows.append(
@@ -498,9 +527,25 @@ def build_serving_projection(
                 issuer_name is not None
                 and (previous[1] is None or issuer_name < previous[1])
             ):
-                display[display_key] = (issuer_key, issuer_name)
+                display[display_key] = (issuer_key, issuer_name, title_of_class)
 
-    _build_activity_rows(conn, out, periods, display)
+    # R1: persist the display lookup — exactly one row per key, by
+    # construction of the dict above — so the dashboard never has to join
+    # `serving_filer_rows` (not unique on this key) to name a QoQ row.
+    for (cik, period, position_key) in sorted(display):
+        issuer_key, issuer_name, title_of_class = display[(cik, period, position_key)]
+        out.position_display_rows.append(
+            {
+                "cik": cik,
+                "period": period,
+                "position_key": position_key,
+                "issuer_key": issuer_key,
+                "issuer_name": issuer_name,
+                "title_of_class": title_of_class,
+            }
+        )
+
+    _build_activity_rows(conn, out, activity_periods, display)
 
     for key in sorted(reported):
         bucket = reported[key]
@@ -597,6 +642,20 @@ CREATE TABLE IF NOT EXISTS serving_issuer_holder_rows (
 );
 CREATE INDEX IF NOT EXISTS serving_issuer_holder_rows_by_issuer
   ON serving_issuer_holder_rows (issuer_key, period);
+-- R1 (refinement 20260910): the deduplicated DISPLAY relation — exactly one
+-- row per (cik, period, position_key). The dashboard names each
+-- `agg_qoq_deltas` row by key lookup here (current period first, prior
+-- period for an exit), never by a join on `serving_filer_rows`, which is
+-- not unique on that key (every holding row is appended).
+CREATE TABLE IF NOT EXISTS serving_position_display (
+  cik            TEXT NOT NULL,
+  period         TEXT NOT NULL,
+  position_key   TEXT NOT NULL,
+  issuer_key     TEXT,
+  issuer_name    TEXT NOT NULL,
+  title_of_class TEXT,
+  PRIMARY KEY (cik, period, position_key)
+) WITHOUT ROWID;
 -- The ACTIVITY grain: one row per QoQ position change. Column names are the
 -- contract the dashboard loader (dashboard/src/lib/activity.ts) queries.
 CREATE TABLE IF NOT EXISTS serving_activity (
@@ -710,6 +769,17 @@ def write_serving_db(
             ],
         )
         conn.executemany(
+            "INSERT INTO serving_position_display (cik, period, position_key,"
+            " issuer_key, issuer_name, title_of_class) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    r["cik"], r["period"], r["position_key"], r["issuer_key"],
+                    r["issuer_name"], r["title_of_class"],
+                )
+                for r in projection.position_display_rows
+            ],
+        )
+        conn.executemany(
             "INSERT INTO serving_activity (row_id, cik, filer_name, issuer_key, issuer_name,"
             " position_key, put_call, ssh_prnamt_type, change_kind, curr_period,"
             " prev_period, prev_value_usd, curr_value_usd, delta_value_usd,"
@@ -740,7 +810,7 @@ def _build_activity_rows(
     conn: sqlite3.Connection,
     out: ServingProjection,
     periods: tuple[str, ...],
-    display: dict[tuple[str, str, str], tuple[str, str]],
+    display: dict[tuple[str, str, str], tuple[str, str, str | None]],
 ) -> None:
     """The ACTIVITY grain: one row per QoQ position change.
 
@@ -769,6 +839,7 @@ def _build_activity_rows(
         composition[(ref.cik, ref.period_of_report)].append(ref.filing_key)
 
     authoritative = authoritative_full_periods(conn)
+    discontinuity = _book_discontinuity_set(conn, schema=qoq_schema)
 
     compact_rows = compact_qoq_rows(conn, schema=qoq_schema, periods=periods)
     if compact_rows is None:
@@ -795,11 +866,11 @@ def _build_activity_rows(
         # lookup always misses for exactly the rows that most need a name. Falling
         # back to the prior period is what lets the feed say WHAT was exited; the
         # prior period's rows are already in scope because `periods` carries it.
-        issuer_key, issuer_name = display.get(
+        issuer_key, issuer_name, _title = display.get(
             (cik, curr_period, position_key),
-            display.get((cik, prev_period, position_key), (None, None))
+            display.get((cik, prev_period, position_key), (None, None, None))
             if prev_period
-            else (None, None),
+            else (None, None, None),
         )
         current_keys = composition.get((cik, curr_period), [])
         prior_keys = composition.get((cik, prev_period), []) if prev_period else []
@@ -809,6 +880,11 @@ def _build_activity_rows(
             # Absence is not assertable from this composition.
             change_kind = "unclassified"
             row_flags = sorted({*row_flags, "exit_not_assertable"})
+        if (cik, curr_period) in discontinuity:
+            # R6: the whole book reads as exits with no successor — an
+            # artifact of the filing record, kept here and named, excluded
+            # from the landing feeds downstream.
+            row_flags = sorted({*row_flags, "book_discontinuity"})
 
         out.activity_rows.append(
             {
@@ -834,6 +910,26 @@ def _build_activity_rows(
                 "flags": row_flags,
             }
         )
+
+
+def _book_discontinuity_set(
+    conn: sqlite3.Connection, *, schema: str
+) -> frozenset[tuple[str, str]]:
+    """`(cik, period)` pairs the aggregate flagged as book discontinuities (R6);
+    empty when the aggregate predates the table."""
+    quoted_schema = _quote_sqlite_identifier(schema)
+    present = conn.execute(
+        f"SELECT 1 FROM {quoted_schema}.sqlite_master"
+        " WHERE type='table' AND name='agg_book_discontinuity'"
+    ).fetchone()
+    if present is None:
+        return frozenset()
+    return frozenset(
+        (str(cik), str(period))
+        for cik, period in conn.execute(
+            f"SELECT cik, period_of_report FROM {quoted_schema}.agg_book_discontinuity"
+        )
+    )
 
 
 def _qoq_deltas_schema(conn: sqlite3.Connection) -> str | None:

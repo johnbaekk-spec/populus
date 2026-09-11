@@ -11,6 +11,11 @@
 .qoq-trim { background: color-mix(in oklab, var(--sell) 14%, var(--raised)); color: var(--sell); }
 .qoq-new { border: 1px solid var(--buy); color: var(--buy); }
 .qoq-exit { border: 1px solid var(--sell); color: var(--sell); }
+/* R8: `held` — share count unchanged, value moved with price. Neutral ink, no
+   buy/sell colour, because it is not a direction. */
+.qoq-held { border: 1px solid var(--rule2); color: var(--ink2); }
+.qoq-held-group { margin-top: 8px; }
+.qoq-held-group > summary { cursor: pointer; font: 600 12px var(--sans); color: var(--ink2); }
 .qoq-nc {
   border: 1px solid var(--rule2);
   background-image: var(--hatch);

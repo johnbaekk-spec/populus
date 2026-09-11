@@ -1000,3 +1000,40 @@ test("B34: badges rendered OUTSIDE the flag list hoist too", async () => {
     "labels are escaped",
   );
 });
+
+/* ---------- R9 (refinement 20260910): displayIssuerName parity ---------- */
+
+import { readFileSync as readFixture } from "node:fs";
+import { displayIssuerName } from "../src/lib/format.ts";
+
+test("R9: displayIssuerName matches the shared Python fixture case for case", () => {
+  const fixture = JSON.parse(
+    readFixture(new URL("../../tests/fixtures/refinement/display_issuer_name_cases.json", import.meta.url), "utf-8"),
+  ) as { cases: { names: (string | null)[]; expect: string | null }[] };
+  assert.ok(fixture.cases.length >= 10);
+  for (const c of fixture.cases) {
+    assert.equal(displayIssuerName(c.names), c.expect, JSON.stringify(c));
+  }
+});
+
+test("R9: weights are honoured and a lone numeric name is still returned", () => {
+  assert.equal(displayIssuerName(["A CO", "B CO"], [1, 3]), "B Co");
+  assert.equal(displayIssuerName(["438516106"]), "438516106");
+});
+
+/* ---------- R3 (refinement 20260910): Tier C key normalizers parity ---------- */
+
+import { normalizeClass13f, normalizeIssuerName13f, normalizeTicker13f, tierCKey } from "../src/lib/format.ts";
+
+test("R3: Tier C key normalizers match the shared Python fixture case for case", () => {
+  const fixture = JSON.parse(
+    readFixture(new URL("../../tests/fixtures/refinement/tier_c_keys.json", import.meta.url), "utf-8"),
+  ) as { cases: { name: string; cls: string | null; name_key: string; class_key: string }[] };
+  assert.ok(fixture.cases.length >= 8);
+  for (const c of fixture.cases) {
+    assert.equal(normalizeIssuerName13f(c.name), c.name_key, JSON.stringify(c));
+    assert.equal(normalizeClass13f(c.cls), c.class_key, JSON.stringify(c));
+    assert.equal(tierCKey(c.name, c.cls), `${c.name_key}|${c.class_key}`);
+  }
+  assert.equal(normalizeTicker13f("brk.b"), "BRK-B");
+});

@@ -34,6 +34,7 @@ from populus.manager_registry import (  # noqa: E402
     join_manager_registry,
     load_manager_registry,
     stale_rows,
+    succession_map,
 )
 
 
@@ -94,6 +95,17 @@ def main() -> int:
             print(f"  {r.cik:>10}  {r.display_name}  last verified {r.verified_date} ({age}d ago)")
     else:
         print(f"\nEvery row re-verified within {VERIFICATION_MAX_AGE_DAYS} days.")
+
+    # R6: declared CIK successions. Reported, never inferred — a link here is
+    # what lets the aggregate bridge a predecessor's last book; a wrong link
+    # would fabricate continuity, so each one is worth a human's eye.
+    links = succession_map(registry)
+    if links:
+        print("\nDECLARED SUCCESSIONS (predecessor → successor; the aggregate bridges the prior book):")
+        for successor, preds in sorted(links.items()):
+            name = next(r.display_name for r in registry.rows if r.cik_padded == successor)
+            for pred in preds:
+                print(f"  {pred} → {successor}  {name}")
 
     try:
         enforce_manager_registry_join(report)

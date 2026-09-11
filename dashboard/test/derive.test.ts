@@ -437,16 +437,17 @@ test("buildSearchIndex: exact tuple-arity allowlist; searchIndexValid guards sha
   assert.equal(index.v, 1);
   assert.deepEqual(index.tickers, [["NVDA", "NVIDIA Corp", 35]]);
   assert.deepEqual(index.members, [["P000197", "Test Person", "D–CA-11", 12]]);
-  // R22: the third scalar is the top/tail tier flag — a client hit must know
-  // whether the pre-rendered route exists for this filer.
-  assert.deepEqual(index.filers, [["1067983", "BERKSHIRE HATHAWAY INC", 1]], "CIK serialized unpadded");
+  // R22: the LAST scalar is the top/tail tier flag — a client hit must know
+  // whether the pre-rendered route exists for this filer. R10 (refinement
+  // 20260910) adds the principal ("" when none) and the notable flag.
+  assert.deepEqual(index.filers, [["1067983", "BERKSHIRE HATHAWAY INC", "", 0, 1]], "CIK serialized unpadded");
   assert.ok(searchIndexValid(index));
   assert.ok(!searchIndexValid({ v: 2 }));
   // The allowlist is the tuple arity itself: every entry is exactly the
   // documented scalars, nothing extra can ride along unnoticed.
   for (const t of index.tickers) assert.equal(t.length, 3);
   for (const m of index.members) assert.equal(m.length, 4);
-  for (const f of index.filers) assert.equal(f.length, 3);
+  for (const f of index.filers) assert.equal(f.length, 5);
 });
 
 test("searchQuery: ticker prefix, name substring, grouped, capped", () => {

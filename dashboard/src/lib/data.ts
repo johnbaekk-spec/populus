@@ -910,11 +910,22 @@ export function getBuildData(): BuildData {
       inst.present
         ? // Search hits must carry the top/tail target too — a tail
           // filer hit linking to the pre-rendered route is a dressed 404.
-          inst.filers.map((f) => ({
-            cik: f.cik,
-            name: f.filer_name,
-            top: instTopFilerCiks(inst).has(f.cik),
-          }))
+          // R10: the curated display name and principal (the 113 registry
+          // `person` values) ride along with the notable flag; filers are
+          // ordered by position count so the client's stable sort ranks
+          // notable first, then by row count.
+          [...inst.filers]
+            .sort((a, b) => b.position_count - a.position_count || (a.cik < b.cik ? -1 : 1))
+            .map((f) => {
+              const typing = inst.typingByCik.get(f.cik);
+              return {
+                cik: f.cik,
+                name: typing?.display_name ?? f.filer_name,
+                principal: typing?.person ?? "",
+                notable: typing?.notable ?? false,
+                top: instTopFilerCiks(inst).has(f.cik),
+              };
+            })
         : [],
     ),
   );
@@ -1060,6 +1071,48 @@ export function filerTier(build: BuildData, cik: string): FilerBudgetState {
 /** The aggregate half of a FilerPayloadV1 — exactly the `ui.filerBody` inputs
     the pre-rendered `[cik].astro` page uses, computed by ONE function so the
     page, the component, and the shard planner cannot drift. */
+/** R4 / LD3 §5: the periods `serving_filer_rows` actually carries for one filer,
+    ascending, or null when no serving artifact is reachable. Read once per
+    build and memoised on globalThis (the same pattern HoldingsTable uses): one
+    grouped query over the (cik, period) index, ~20k rows, never per page. */
+export function servedPeriods(build: BuildData, cik: string): string[] | null {
+  if (!build.inst.present) return null;
+  const holder = globalThis as unknown as { __populusServedPeriods?: Map<string, Map<string, string[]> | null> };
+  holder.__populusServedPeriods ??= new Map();
+  const dbPath = resolveServingDbPath();
+  const key = dbPath ?? "(unresolvable)";
+  if (!holder.__populusServedPeriods.has(key)) {
+    let map: Map<string, string[]> | null = null;
+    if (dbPath && existsSync(dbPath)) {
+      try {
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        try {
+          map = new Map();
+          for (const r of db
+            .prepare(`SELECT cik, period FROM serving_filer_rows GROUP BY cik, period ORDER BY cik, period`)
+            .all() as Record<string, unknown>[]) {
+            const c = String(r.cik);
+            let list = map.get(c);
+            if (!list) {
+              list = [];
+              map.set(c, list);
+            }
+            list.push(String(r.period));
+          }
+        } finally {
+          db.close();
+        }
+      } catch {
+        map = null;
+      }
+    }
+    holder.__populusServedPeriods.set(key, map);
+  }
+  const map = holder.__populusServedPeriods.get(key) ?? null;
+  if (map === null) return null;
+  return map.get(cik) ?? [];
+}
+
 export function filerAggregateInputs(build: BuildData, cik: string): FilerAggregateInputs {
   const inst = build.inst;
   if (!inst.present) {

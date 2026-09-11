@@ -1069,7 +1069,7 @@ export function notableRecent(
 
 export interface QoqPresentation {
   chipText: string;
-  chipCls: "qoq-new" | "qoq-add" | "qoq-trim" | "qoq-exit" | "qoq-nc";
+  chipCls: "qoq-new" | "qoq-add" | "qoq-trim" | "qoq-exit" | "qoq-held" | "qoq-nc";
   /** page-scoped markers the chip carries (each resolves to a footnote line) */
   chipMarkers: string[];
   /** ‡r on the position cell when identity was producer-reconciled */
@@ -1086,6 +1086,8 @@ const CHIP: Record<string, { text: string; cls: QoqPresentation["chipCls"] }> = 
   add: { text: "add", cls: "qoq-add" },
   trim: { text: "trim", cls: "qoq-trim" },
   exit: { text: "exit", cls: "qoq-exit" },
+  // R8: Δshares == 0 — mark-to-market only. Never a direction.
+  held: { text: "no change", cls: "qoq-held" },
   unclassified: { text: "n/c", cls: "qoq-nc" },
 };
 
@@ -1423,22 +1425,38 @@ export interface SearchIndex {
   v: 1;
   tickers: [string, string, number][]; // [ticker, mapped issuer name or "", txn count]
   members: [string, string, string, number][]; // [bioguide, name, affiliation, row count]
-  filers: [string, string, 0 | 1][]; // [cik (unpadded), filer name, 1 = top-1500 pre-rendered]
+  /** [cik (unpadded), display name, principal or "", 1 = notable, 1 = top-1500 pre-rendered] (R10) */
+  filers: [string, string, string, 0 | 1, 0 | 1][];
 }
+
+/** R10: a ticker key must be a clean symbol — trimmed, upper-cased, and of the
+    shape the SEC list uses (`BRK-B`) or Congress filers write (`BRK.B`). */
+export const SEARCH_TICKER_KEY_RE = /^[A-Z.\-]{1,6}$/;
 
 export function buildSearchIndex(
   members: readonly { bioguide: string; name: string; aff: string; rows: number }[],
   tickers: readonly { ticker: string; name: string; rows: number }[],
-  filers: readonly { cik: string; name: string; top: boolean }[],
+  filers: readonly { cik: string; name: string; top: boolean; principal?: string | null; notable?: boolean }[],
 ): SearchIndex {
   return {
     v: 1,
-    tickers: tickers.map((t) => [t.ticker, t.name, t.rows]),
+    // R10: keys are trimmed/normalized at build; a key that is not a clean
+    // symbol never enters the index (it could never be typed as a prefix).
+    tickers: tickers
+      .map((t) => [t.ticker.trim().toUpperCase(), t.name, t.rows] as [string, string, number])
+      .filter((t) => SEARCH_TICKER_KEY_RE.test(t[0])),
     members: members.map((m) => [m.bioguide, m.name, m.aff, m.rows]),
     // The tier flag rides in the index so a client hit can address the
     // top/tail target through filerHref — a tail hit must not link to a
-    // pre-rendered route that does not exist.
-    filers: filers.map((f) => [f.cik.replace(/^0+/, ""), f.name, f.top ? 1 : 0]),
+    // pre-rendered route that does not exist. R10 adds the registry principal
+    // (matched like the name) and the notable flag (ranked first).
+    filers: filers.map((f) => [
+      f.cik.replace(/^0+/, ""),
+      f.name,
+      (f.principal ?? "").trim(),
+      f.notable ? 1 : 0,
+      f.top ? 1 : 0,
+    ]),
   };
 }
 
@@ -1488,12 +1506,18 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
     if (++count >= limit) break;
   }
   count = 0;
-  for (const [cik, name, top] of index.filers) {
-    if (!name.toLowerCase().includes(lower)) continue;
+  /* R10: match the display name OR the registry principal ("Druckenmiller"
+     finds Duquesne Family Office); notable managers rank first, then the
+     index's own order (filers are indexed by position count, largest first). */
+  const filerHits = index.filers.filter(
+    ([, name, principal]) => name.toLowerCase().includes(lower) || principal.toLowerCase().includes(lower),
+  );
+  filerHits.sort((a, b) => b[3] - a[3]);
+  for (const [cik, name, principal, , top] of filerHits) {
     hits.push({
       kind: "filer",
       key: cik,
-      label: name,
+      label: principal ? `${name} · ${principal}` : name,
       sub: `CIK ${cik.padStart(10, "0")}`,
       // ONE href primitive (filerHref): older indexes without the tier flag resolve
       // as tail — the /e/ shell is prerendered and never 404s.

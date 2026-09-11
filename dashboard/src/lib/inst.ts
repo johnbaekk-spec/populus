@@ -37,7 +37,7 @@ export interface QoqDeltaRow {
   put_call: "LONG" | "PUT" | "CALL";
   curr_period: string;
   prev_period: string;
-  change_kind: "new" | "add" | "trim" | "exit" | "unclassified";
+  change_kind: "new" | "add" | "trim" | "exit" | "held" | "unclassified"; // held = Δshares 0 (R8)
   prev_value_usd: number | null;
   curr_value_usd: number | null;
   delta_value_usd: number | null;
@@ -46,6 +46,13 @@ export interface QoqDeltaRow {
   delta_shares: number | null;
   ssh_prnamt_type: "SH" | "PRN" | "UNKNOWN";
   flags: string[];
+  /** R1: display fields enriched by key lookup from `serving_position_display`
+      (current period first, prior period for an exit). Null when the serving
+      artifact predates the table or the key is absent — the renderer then
+      shows the position key, never an invented name. */
+  issuer_name?: string | null;
+  title_of_class?: string | null;
+  issuer_key?: string | null;
 }
 
 export interface TopHolderRow {
@@ -102,7 +109,53 @@ export type InstData =
       addsPeriods: string[];
       /** curated typing for MATCHED filers only, keyed by padded CIK */
       typingByCik: Map<string, ManagerTyping>;
+      /** R6: filer-periods the producer flagged as book discontinuities
+          (`agg_book_discontinuity`); empty on an older aggregate. */
+      bookDiscontinuityByCik: Map<string, Set<string>>;
+      /** R3: class-grain holders per REVIEWED ticker (`agg_ticker_holders`),
+          SEC-spelled ticker → rows ranked by value; empty on an older aggregate. */
+      tickerHoldersByTicker: Map<string, TickerHolderRow[]>;
+      /** R3: one row per mapped ticker with the TRUE holder count and the
+          mapping row's canonical (issuer name, class). */
+      tickerTotals: Map<string, TickerTotalsRow>;
+      /** R3: `tierCKey(issuer_name, title_of_class)` → the reviewed ticker, for
+          the row-level TICKER cell. Built from `tickerTotals`. */
+      tickerByKey: Map<string, TickerRef>;
     };
+
+export interface TickerHolderRow {
+  ticker: string;
+  period_of_report: string;
+  rank: number;
+  cik: string;
+  filer_name: string;
+  value_usd: number | null;
+  shares: number | null;
+  prev_shares: number | null;
+  delta_shares: number | null;
+  change_kind: QoqDeltaRow["change_kind"];
+  method: string;
+  verified_date: string;
+}
+
+export interface TickerTotalsRow {
+  ticker: string;
+  period_of_report: string;
+  prev_period: string | null;
+  issuer_name: string;
+  title_of_class: string;
+  holder_count: number;
+  value_usd: number;
+  adds: number;
+  exits: number;
+}
+
+/** What a resolved Tier C row asserts, for the TICKER cell and its ⓘ. */
+export interface TickerRef {
+  ticker: string;
+  verified_date: string;
+  method: string;
+}
 
 function parseFlags(raw: unknown): string[] {
   try {
@@ -119,6 +172,8 @@ import {
   type AddsRow,
 } from "./inst-adds.ts";
 import type { ManagerTyping } from "./manager-directory.ts";
+import { resolveServingDbPath } from "./activity.ts";
+import { normalizeTicker13f, tierCKey } from "./format.ts";
 
 function intOrNull(v: unknown): number | null {
   return v == null ? null : Number(v);
@@ -200,6 +255,7 @@ export function loadInstitutional(
       }
       list.push(row);
     }
+    enrichDeltasWithDisplay(deltasByCik);
 
     const concentrationByCik = new Map<string, ConcentrationRow[]>();
     for (const r of db
@@ -276,10 +332,122 @@ export function loadInstitutional(
       holdersByIssuer,
       ...loadAdds(db),
       typingByCik: loadTyping(db),
+      bookDiscontinuityByCik: loadBookDiscontinuity(db),
+      ...loadTickerHolders(db),
     };
   } finally {
     db.close();
   }
+}
+
+/** R6: `agg_book_discontinuity`, optional at read time (older aggregates). */
+function loadBookDiscontinuity(db: DatabaseSync): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  if (!tableExists(db, "agg_book_discontinuity")) return out;
+  for (const r of db.prepare(`SELECT cik, period_of_report FROM agg_book_discontinuity`).all() as Record<string, unknown>[]) {
+    const cik = String(r.cik);
+    let set = out.get(cik);
+    if (!set) {
+      set = new Set<string>();
+      out.set(cik, set);
+    }
+    set.add(String(r.period_of_report));
+  }
+  return out;
+}
+
+/** R3: the class-grain ticker tables, optional at read time (older aggregates
+    and the rollback smoke test carry none → no tickers anywhere, G14). */
+function loadTickerHolders(db: DatabaseSync): {
+  tickerHoldersByTicker: Map<string, TickerHolderRow[]>;
+  tickerTotals: Map<string, TickerTotalsRow>;
+  tickerByKey: Map<string, TickerRef>;
+} {
+  const tickerHoldersByTicker = new Map<string, TickerHolderRow[]>();
+  const tickerTotals = new Map<string, TickerTotalsRow>();
+  const tickerByKey = new Map<string, TickerRef>();
+  if (!tableExists(db, "agg_ticker_holders") || !tableExists(db, "agg_ticker_holder_totals")) {
+    return { tickerHoldersByTicker, tickerTotals, tickerByKey };
+  }
+  for (const r of db
+    .prepare(
+      `SELECT ticker, period_of_report, prev_period, issuer_name, title_of_class,
+              holder_count, value_usd, adds, exits FROM agg_ticker_holder_totals ORDER BY ticker`,
+    )
+    .all() as Record<string, unknown>[]) {
+    const row: TickerTotalsRow = {
+      ticker: String(r.ticker),
+      period_of_report: String(r.period_of_report),
+      prev_period: r.prev_period == null ? null : String(r.prev_period),
+      issuer_name: String(r.issuer_name),
+      title_of_class: String(r.title_of_class),
+      holder_count: Number(r.holder_count),
+      value_usd: Number(r.value_usd),
+      adds: Number(r.adds),
+      exits: Number(r.exits),
+    };
+    tickerTotals.set(row.ticker, row);
+  }
+  for (const r of db
+    .prepare(
+      `SELECT ticker, period_of_report, rank, cik, filer_name, value_usd, shares, prev_shares,
+              delta_shares, change_kind, method, verified_date
+         FROM agg_ticker_holders ORDER BY ticker, period_of_report, rank`,
+    )
+    .all() as Record<string, unknown>[]) {
+    const row: TickerHolderRow = {
+      ticker: String(r.ticker),
+      period_of_report: String(r.period_of_report),
+      rank: Number(r.rank),
+      cik: String(r.cik),
+      filer_name: String(r.filer_name),
+      value_usd: intOrNull(r.value_usd),
+      shares: intOrNull(r.shares),
+      prev_shares: intOrNull(r.prev_shares),
+      delta_shares: intOrNull(r.delta_shares),
+      change_kind: String(r.change_kind) as QoqDeltaRow["change_kind"],
+      method: String(r.method),
+      verified_date: String(r.verified_date),
+    };
+    let list = tickerHoldersByTicker.get(row.ticker);
+    if (!list) {
+      list = [];
+      tickerHoldersByTicker.set(row.ticker, list);
+    }
+    list.push(row);
+    const total = tickerTotals.get(row.ticker);
+    if (total && !tickerByKey.has(tierCKey(total.issuer_name, total.title_of_class))) {
+      tickerByKey.set(tierCKey(total.issuer_name, total.title_of_class), {
+        ticker: row.ticker,
+        verified_date: row.verified_date,
+        method: row.method,
+      });
+    }
+  }
+  // A mapped ticker with a totals row but no holder rows (no holder in the
+  // closed quarter) still resolves the cell — the mapping is the claim.
+  for (const total of tickerTotals.values()) {
+    const key = tierCKey(total.issuer_name, total.title_of_class);
+    if (!tickerByKey.has(key)) tickerByKey.set(key, { ticker: total.ticker, verified_date: "", method: "" });
+  }
+  return { tickerHoldersByTicker, tickerTotals, tickerByKey };
+}
+
+/** R3: the reviewed ticker for a filed (issuer name, class) pair, or null. */
+export function tickerFor(inst: InstData, issuerName: string, titleOfClass: string | null): TickerRef | null {
+  if (!inst.present) return null;
+  return inst.tickerByKey.get(tierCKey(issuerName, titleOfClass)) ?? null;
+}
+
+/** R3: SEC spelling first (`BRK-B`), then the Congress spelling (`BRK.B`). */
+export function tickerHoldersFor(inst: InstData, ticker: string): TickerHolderRow[] {
+  if (!inst.present) return [];
+  return inst.tickerHoldersByTicker.get(normalizeTicker13f(ticker)) ?? [];
+}
+
+export function tickerTotalsFor(inst: InstData, ticker: string): TickerTotalsRow | null {
+  if (!inst.present) return null;
+  return inst.tickerTotals.get(normalizeTicker13f(ticker)) ?? null;
 }
 
 /** Read the leaderboard tables.
@@ -394,6 +562,49 @@ function tableExists(db: DatabaseSync, name: string): boolean {
     "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
   ).all(name) as unknown[];
   return rows.length > 0;
+}
+
+/** R1: name every QoQ row from the serving artifact's deduplicated display
+    relation — ONE row per (cik, period, position_key) — by Map lookup, never
+    by a join on `serving_filer_rows`. Enrichment changes no row count, no
+    identity and no monetary field. A serving artifact without the table (a
+    build older than this run, or the rollback smoke test) leaves every row
+    unnamed rather than failing the build. */
+function enrichDeltasWithDisplay(deltasByCik: Map<string, QoqDeltaRow[]>): void {
+  const servingPath = resolveServingDbPath();
+  if (!servingPath || !existsSync(servingPath)) return;
+  let serving: DatabaseSync;
+  try {
+    serving = new DatabaseSync(servingPath, { readOnly: true });
+  } catch {
+    return;
+  }
+  try {
+    if (!tableExists(serving, "serving_position_display")) return;
+    const display = new Map<string, { issuer_key: string | null; issuer_name: string; title_of_class: string | null }>();
+    for (const r of serving
+      .prepare(`SELECT cik, period, position_key, issuer_key, issuer_name, title_of_class FROM serving_position_display`)
+      .all() as Record<string, unknown>[]) {
+      display.set(`${String(r.cik)}|${String(r.period)}|${String(r.position_key)}`, {
+        issuer_key: r.issuer_key == null ? null : String(r.issuer_key),
+        issuer_name: String(r.issuer_name),
+        title_of_class: r.title_of_class == null ? null : String(r.title_of_class),
+      });
+    }
+    for (const rows of deltasByCik.values()) {
+      for (const d of rows) {
+        const hit =
+          display.get(`${d.cik}|${d.curr_period}|${d.position_key}`) ??
+          display.get(`${d.cik}|${d.prev_period}|${d.position_key}`);
+        if (!hit) continue;
+        d.issuer_name = hit.issuer_name;
+        d.title_of_class = hit.title_of_class;
+        d.issuer_key = hit.issuer_key;
+      }
+    }
+  } finally {
+    serving.close();
+  }
 }
 
 /** The curated manager typing.

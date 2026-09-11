@@ -226,7 +226,9 @@ test("R6: the decisive column is asserted, and it comes before the raw levels", 
   assert.deepEqual(
     headers,
     [
-      "Position · grain",
+      // R1 (refinement 20260910): the issuer name leads the cell; the grain
+      // note stays on the row, so the header is simply "Position".
+      "Position",
       "Change",
       "Δ value",
       "Δ shares",

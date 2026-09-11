@@ -445,7 +445,12 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
   }
 
   function filerHtml(p: FilerPayloadV1): string {
-    const aggPeriods = Object.keys(p.concByPeriod).sort();
+    /* LD3 §5: the selector lists exactly the periods the projection carries
+       rows for (`p.periods`); the aggregate periods stand only when the
+       projection carries none. */
+    const concPeriods = Object.keys(p.concByPeriod).sort();
+    const served = p.periods.filter((x) => x in p.concByPeriod);
+    const aggPeriods = served.length > 0 ? served : concPeriods;
     const aggPeriod = aggPeriods.includes(filerAggPeriod)
       ? filerAggPeriod
       : (aggPeriods[aggPeriods.length - 1] ?? p.latestPeriod);
@@ -898,7 +903,7 @@ export function initFilerPeriods(): void {
     benchmarks?: Record<string, import("../lib/inst-analytics.ts").ConcentrationBenchmark | null>;
     periods: Record<
       string,
-      { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number }
+      { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number; discontinuity?: boolean }
     >;
   };
   try {
@@ -945,7 +950,7 @@ export function initFilerPeriods(): void {
       // total is a corrupt embed, handled above by leaving the SSR section alone
       // — never papered over with the embedded length, which would claim a
       // completeness the server never claimed.
-      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null },
+      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true },
     );
   };
   chips.addEventListener("click", (ev) => {

@@ -886,7 +886,7 @@ def test_genuine_legacy_public_table_matches_version_2_activity(tmp_path):
             "contradictory version metadata",
         ),
         ("DROP TABLE _agg_qoq_periods", "partial"),
-        ("UPDATE _agg_qoq_deltas SET flags_mask=32", "invalid compact QoQ"),
+        ("UPDATE _agg_qoq_deltas SET flags_mask=64", "invalid compact QoQ"),
     ],
 )
 def test_corrupt_version_2_storage_fails_closed_before_activity(
@@ -1454,4 +1454,171 @@ def test_activity_rows_survive_the_artifact_round_trip(tmp_path):
         assert row["issuer_key"], "issuer_key was lost in serialization"
         assert row["filing_keys"].startswith("["), "filing_keys is not a JSON array"
     kinds = {row["change_kind"] for row in rows}
-    assert "exit" in kinds and "add" in kinds, f"unexpected change kinds: {kinds}"
+    # The fixture keeps the continuing position's share count flat, so under
+    # R8 it is `held`; the exit is the other grain the round trip must keep.
+    assert "exit" in kinds and "held" in kinds, f"unexpected change kinds: {kinds}"
+
+
+# --- R1 / R5 (refinement 20260910) -------------------------------------------
+
+
+def _seed_four_periods(conn, cik, file_number, name):
+    """One filer over four consecutive quarters holding APPLE, with the share
+    count moving every quarter so every adjacent pair is a real change."""
+    sid_a = _security(conn, f"sec:{APPLE}")
+    _filer_fn(conn, cik, file_number, name)
+    for index, (period, filed) in enumerate(
+        (
+            ("2025-06-30", "2025-08-14"),
+            ("2025-09-30", "2025-11-14"),
+            ("2025-12-31", "2026-02-13"),
+            ("2026-03-31", "2026-05-15"),
+        )
+    ):
+        _load_fn(
+            conn, fid=f"inst:{cik}-{index}", cik=cik, period=period, filed=filed,
+            file_number_norm=file_number,
+            holds=[_hold(ordinal=1, issuer="APPLE INC", cusip=APPLE,
+                         value=1000 + 100 * index, shares=100 + 10 * index,
+                         security_id=sid_a)],
+        )
+    conn.commit()
+
+
+def _project_four(conn, tmp_path, *, notable_ciks=frozenset()):
+    from populus.inst_agg import build_inst_agg
+    from populus.inst_serving import PUBLISHED_PERIODS_NOTABLE, publication_periods
+
+    agg_path = tmp_path / "agg4.db"
+    build_inst_agg(conn, agg_path, ingested_at="2026-07-24T12:00:00Z")
+    conn.execute("ATTACH DATABASE ? AS inst_agg", (str(agg_path),))
+    try:
+        periods = publication_periods(conn, width=PUBLISHED_PERIODS_NOTABLE)
+        assert len(periods) == 4
+        return build_serving_projection(conn, periods=periods, notable_ciks=notable_ciks)
+    finally:
+        conn.execute("DETACH DATABASE inst_agg")
+
+
+def test_r5_notable_filers_keep_four_periods_and_others_exactly_two(tmp_path):
+    """LD3: candidates are the newest four periods; a `notable` CIK keeps all of
+    them in `serving_filer_rows`, every other filer keeps exactly two, and the
+    activity grain covers only the newest two periods for BOTH."""
+    conn = _fresh(tmp_path, "r5.db")
+    _seed_four_periods(conn, "0000000071", "028-00071", "Notable Co")
+    _seed_four_periods(conn, "0000000072", "028-00072", "Ordinary Co")
+    proj = _project_four(conn, tmp_path, notable_ciks=frozenset({"0000000071"}))
+
+    by_cik = {}
+    for row in proj.filer_rows:
+        by_cik.setdefault(row["cik"], set()).add(row["period"])
+    assert by_cik["0000000071"] == {"2025-06-30", "2025-09-30", "2025-12-31", "2026-03-31"}
+    assert by_cik["0000000072"] == {"2025-12-31", "2026-03-31"}
+
+    activity = {}
+    for row in proj.activity_rows:
+        activity.setdefault(row["cik"], set()).add(row["curr_period"])
+    # The activity window is the newest two CURRENT periods — exactly what the
+    # two-period projection published before R5 — for notable and ordinary
+    # filers alike; the two older pairs are history, not feed.
+    assert activity["0000000071"] == {"2025-12-31", "2026-03-31"}
+    assert activity["0000000072"] == {"2025-12-31", "2026-03-31"}
+
+    # The display relation follows the same retention.
+    display = {}
+    for row in proj.position_display_rows:
+        display.setdefault(row["cik"], set()).add(row["period"])
+    assert display["0000000071"] == by_cik["0000000071"]
+    assert display["0000000072"] == by_cik["0000000072"]
+
+
+def test_r5_default_projection_is_unchanged_without_notables(tmp_path):
+    """With no notable set and the default two-period candidates, the
+    projection is exactly what it was before R5 (mutation guard for the
+    retention rule's default branch)."""
+    conn = _fresh(tmp_path, "r5-default.db")
+    _seed_two_periods(conn)
+    proj, periods = _project_with_aggregate(conn, tmp_path)
+    assert periods == ("2025-12-31", "2026-03-31")
+    assert {r["period"] for r in proj.filer_rows} == set(periods)
+
+
+def test_r1_position_display_has_exactly_one_row_per_key_and_names_every_change(tmp_path):
+    """R1: `serving_position_display` is keyed (cik, period, position_key) with
+    no duplicates even when one position is reported on several rows of one
+    period (a base plus a subdivision), and every activity row — including the
+    exit, through the prior period — resolves a non-empty issuer name."""
+    import sqlite3
+
+    from populus.inst_serving import write_serving_db
+
+    conn = _fresh(tmp_path, "r1.db")
+    sid_a = _security(conn, f"sec:{APPLE}")
+    sid_m = _security(conn, f"sec:{MSFT}")
+    cik = "0000000081"
+    _filer_fn(conn, cik, "028-00081", "Split Rows Co")
+    # BOTH periods report APPLE on two rows (two reporting subdivisions).
+    _load_fn(conn, fid="inst:S1", cik=cik, period="2025-12-31", filed="2026-01-15",
+             file_number_norm="028-00081",
+             holds=[_hold(ordinal=1, issuer="APPLE INC", cusip=APPLE, value=600, shares=60, security_id=sid_a),
+                    _hold(ordinal=2, issuer="APPLE INC", cusip=APPLE, value=400, shares=40, security_id=sid_a),
+                    _hold(ordinal=3, issuer="MICROSOFT CORP", cusip=MSFT, value=500, security_id=sid_m)])
+    _load_fn(conn, fid="inst:S2", cik=cik, period="2026-03-31", filed="2026-04-15",
+             file_number_norm="028-00081",
+             holds=[_hold(ordinal=1, issuer="APPLE INC", cusip=APPLE, value=900, shares=90, security_id=sid_a),
+                    _hold(ordinal=2, issuer="APPLE INC", cusip=APPLE, value=600, shares=60, security_id=sid_a)])
+    conn.commit()
+    proj, _periods = _project_with_aggregate(conn, tmp_path, name="r1-agg.db")
+
+    keys = [(r["cik"], r["period"], r["position_key"]) for r in proj.position_display_rows]
+    assert len(keys) == len(set(keys)), "display relation is not unique on its key"
+    assert (cik, "2025-12-31", f"sid:sec:{APPLE}") in keys
+    assert (cik, "2026-03-31", f"sid:sec:{APPLE}") in keys
+    assert (cik, "2025-12-31", f"sid:sec:{MSFT}") in keys
+    assert (cik, "2026-03-31", f"sid:sec:{MSFT}") not in keys  # exited: no current row
+    # `serving_filer_rows` is NOT unique on that key — that is why R1 exists.
+    filer_keys = [(r["cik"], r["period"], r["position_key"]) for r in proj.filer_rows]
+    assert len(filer_keys) != len(set(filer_keys))
+
+    # Enrichment by key lookup names every change: the exit through the prior
+    # period, the continuing position through the current one.
+    display = {(r["cik"], r["period"], r["position_key"]): r for r in proj.position_display_rows}
+    assert len(proj.activity_rows) == 2
+    for row in proj.activity_rows:
+        hit = display.get((row["cik"], row["curr_period"], row["position_key"])) or display.get(
+            (row["cik"], row["prev_period"], row["position_key"]))
+        assert hit is not None and hit["issuer_name"], row
+        assert hit["title_of_class"] == "COM"
+        assert row["issuer_name"] == hit["issuer_name"]
+
+    # Persisted with the triple as PRIMARY KEY.
+    dest = tmp_path / "r1-serving.db"
+    write_serving_db(proj, str(dest), source_conn=conn)
+    out = sqlite3.connect(str(dest))
+    cols = out.execute("PRAGMA table_info(serving_position_display)").fetchall()
+    assert [c[1] for c in cols if c[5]] == ["cik", "period", "position_key"]
+    (n,) = out.execute("SELECT COUNT(*) FROM serving_position_display").fetchone()
+    assert n == len(proj.position_display_rows) == 3
+    out.close()
+
+
+def test_r6_book_discontinuity_reaches_the_activity_rows_as_a_flag(tmp_path):
+    """The serving projection names the aggregate's discontinuity on every
+    activity row of that filer-period, so the landing feed can exclude it
+    without reaching into `inst_agg.db`."""
+    conn = _fresh(tmp_path, "r6.db")
+    sid_a = _security(conn, f"sec:{APPLE}")
+    sid_m = _security(conn, f"sec:{MSFT}")
+    cik = "0000000091"
+    _filer_fn(conn, cik, "028-00091", "Gone Co")
+    _load_fn(conn, fid="inst:G1", cik=cik, period="2025-12-31", filed="2026-01-15",
+             file_number_norm="028-00091",
+             holds=[_hold(ordinal=1, issuer="APPLE INC", cusip=APPLE, value=1000, security_id=sid_a),
+                    _hold(ordinal=2, issuer="MICROSOFT CORP", cusip=MSFT, value=500, security_id=sid_m)])
+    _load_fn(conn, fid="inst:G2", cik=cik, period="2026-03-31", filed="2026-04-15",
+             file_number_norm="028-00091", holds=[])
+    conn.commit()
+    proj, _periods = _project_with_aggregate(conn, tmp_path, name="r6-agg.db")
+    rows = [r for r in proj.activity_rows if r["cik"] == cik]
+    assert len(rows) == 2 and all(r["change_kind"] == "exit" for r in rows)
+    assert all("book_discontinuity" in r["flags"] for r in rows)

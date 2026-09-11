@@ -124,11 +124,16 @@ test("SH→PRN unit transition: Δshares NULL + shares_unit_mismatch, mapped to 
   const row = bond[0]!;
   assert.equal(row.delta_shares, null, "the producer withholds a cross-unit share delta");
   assert.ok(row.flags.includes("shares_unit_mismatch"));
-  assert.ok(row.flags.includes("classified_by_value"), "direction fell back to value");
+  // R8: the value fallthrough is retired — a NULL Δshares is `unclassified`,
+  // never a direction read off the value sign.
+  assert.equal(row.change_kind, "unclassified");
+  assert.ok(!row.flags.includes("classified_by_value"), "R8 retired the value fallthrough");
+  assert.ok(row.flags.includes("change_kind_undeterminable"));
   const p = qoqPresentation(row);
   assert.equal(p.sharesDeltaText, "—");
+  assert.equal(p.chipText, "n/c");
   assert.ok(p.chipMarkers.includes("‡u"));
-  assert.ok(p.chipMarkers.includes("†v"));
+  assert.ok(!p.chipMarkers.includes("†v"));
 });
 
 test("holders: entity-keyed AAPL issuer ranks by summed value; bond issuer is name-keyed", () => {

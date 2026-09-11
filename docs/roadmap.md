@@ -86,6 +86,16 @@ Carried open from the M2-5 merge. Full mechanism analysis was recorded in
   match. Closing this needs a CUSIP→issuer bridge, which is gated by the
   `cusip-redistribution` counsel question, not by a build input. Fixing TD-7
   alone leaves the per-filer holdings table empty.
+- **Tier C (refinement 20260910, R3) supplies 13F tickers without a CUSIP
+  bridge:** `src/populus/ticker_mapping_13f.yaml` maps the normalized filed
+  (issuer name, title of class) to a reviewed ticker — 1,531 verified rows
+  drafted from the closed quarter 2026-03-31, 63.1% of the target set's value
+  (top 2,000 keys ∪ everything the 37 notable managers hold), every row
+  carrying `verified_date` / `verified_by` / `method`, none inferred. The
+  residue and the verification rules are in
+  `docs/design/TICKER-MAPPING-13F-COVERAGE.md`; the owner's 50-row spot check
+  re-derives from `ticker_mapping_13f.sample.json`. Class-grain holders per
+  ticker live in `agg_ticker_holders`.
 - **Residual Senate name variants:** ~5.7% of senate rows are name-variant
   filings (`Hagerty, IV, William F`, …) the packaged `aliases.yaml` does not
   cover. Counted and published in `unresolved_names`, never dropped — a

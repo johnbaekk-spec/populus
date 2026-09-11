@@ -4,7 +4,7 @@ import { pathSafeTicker } from "../../../lib/derive.ts";
 // docs/frontend/design-principles.md §7: two-sided quarterly ribbon,
 // members-disclosing table, full paginated disclosures.
 import Base from "../../../layouts/Base.astro";
-import { getBuildData } from "../../../lib/data";
+import { tickerInstSection, getBuildData } from "../../../lib/data";
 import { congressTickerBody, type BuildStamps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
 
@@ -30,6 +30,8 @@ const ssrCtx: RenderCtx = {
   watched: new Set(),
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
+  // R2: link the 13F holders page only when it exists for this ticker.
+  holdersPage: tickerInstSection(build, entity.ticker).state === "data",
 };
 const bodyHtml = congressTickerBody(entity, stamps, ssrCtx);
 const description =

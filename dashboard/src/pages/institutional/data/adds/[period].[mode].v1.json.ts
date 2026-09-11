@@ -15,7 +15,7 @@
 import type { APIRoute } from "astro";
 import { getBuildData } from "../../../../lib/data";
 import { addsFor, addsExclusionCount } from "../../../../lib/inst";
-import {
+import { corpusAsOf,
   ADDS_BYTE_LIMIT,
   ADDS_MODES,
   boundAdds,
@@ -27,7 +27,7 @@ import {
 export function getStaticPaths(): { params: { period: string; mode: string } }[] {
   const build = getBuildData();
   if (!build.inst.present) return [];
-  const periods = closedPeriods(build.inst.addsPeriods, build.generatedAtDate);
+  const periods = closedPeriods(build.inst.addsPeriods, corpusAsOf(build.generatedAtDate, build.inst.watermarks.latest_filed_date));
   return periods.flatMap((period) =>
     ADDS_MODES.map((mode) => ({ params: { period, mode } })),
   );

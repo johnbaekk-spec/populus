@@ -355,7 +355,9 @@ def test_the_module_digest_version_covers_every_artifact_projection_it_publishes
         LOGICAL_PROJECTIONS,
     )
 
-    assert LOGICAL_PROJECTION_VERSIONS[INST_MODULE] == "1"
+    # "2" since refinement 20260910 (R1): the serving envelope gained
+    # `serving_position_display`, so the version moved with it.
+    assert LOGICAL_PROJECTION_VERSIONS[INST_MODULE] == "2"
     assert set(LOGICAL_PROJECTIONS[INST_MODULE]) == {
         "agg_filer_registry",
         "agg_qoq_deltas",
@@ -367,6 +369,7 @@ def test_the_module_digest_version_covers_every_artifact_projection_it_publishes
         "serving_filer_rows",
         "serving_issuer_holder_rows",
         "serving_activity",
+        "serving_position_display",
     }
     # Every serving table is projected WHOLE — the artifact is derived and
     # carries no ingest timestamp, so there is nothing volatile to exclude.

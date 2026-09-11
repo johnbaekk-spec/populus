@@ -315,6 +315,10 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
     mark: "§",
     html: `derived by Public Filings from the published aggregate; NULL means the source did not disclose a usable value — never zero`,
   },
+  {
+    mark: "held",
+    html: `"no change" = the share count is identical in both quarters; the value moved only with price, so the row is mark-to-market and never an add or a trim (Add / New / Trim / Exit / No change)`,
+  },
 ];
 
 const QOQ_FN = new Map(QOQ_FOOTNOTES.map((e) => [e.mark, e.html]));
@@ -328,12 +332,12 @@ const QOQ_FN = new Map(QOQ_FOOTNOTES.map((e) => [e.mark, e.html]));
    Src column, so it hangs on Δ value. */
 const QOQ_COL_NOTES: Record<string, string | undefined> = {
   "position-grain": QOQ_FN.get("‡r"),
-  change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c")),
+  change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c"), QOQ_FN.get("held")),
   "delta-value": QOQ_FN.get("§"),
   "delta-shares": QOQ_FN.get("‡u"),
 };
 const QOQ_COLS: readonly (readonly [string, string])[] = [
-  ["position-grain", "Position · grain"],
+  ["position-grain", "Position"],
   ["change", "Change"],
   ["delta-value", "Δ value"],
   ["delta-shares", "Δ shares"],
@@ -361,18 +365,43 @@ export function changesTableHtml(
      that hands it a raw list. `total` is the count BEFORE the bound — it is
      what every printed count uses, so a capped page never understates the
      filer's activity while looking complete. */
-  const ordered = sortQoqDeltas(deltas);
-  const total = opts.total ?? ordered.length;
+  const orderedAll = sortQoqDeltas(deltas);
+  /* R8: `held` rows (Δshares 0 — mark-to-market only) are not position
+     changes. They leave the paged table and render once, below it, in a
+     collapsed group, so a value-only row never reads as an add or a trim. */
+  const held = orderedAll.filter((d) => d.change_kind === "held");
+  const ordered = orderedAll.filter((d) => d.change_kind !== "held");
+  const total = opts.total ?? orderedAll.length;
   const page = opts.page ?? 0;
-  const embedded = ordered.length;
+  const embedded = orderedAll.length;
   const pageRows = holdingsPageSlice(ordered, page);
-  const pageCount = holdingsPageCount(embedded);
-  /* Over `ordered` — every row this table can page through — not `pageRows`.
-     See the note in `holdings.ts`: a per-page set makes the caveat flicker
-     between pages of one table. */
+  const pageCount = holdingsPageCount(ordered.length);
+  /* Over every row of EACH table — the paged changes table and the held
+     group are two tables with two stated sets (R10 #12: a flag every row of a
+     table repeats is hoisted once for THAT table) — never `pageRows`. See the
+     note in `holdings.ts`: a per-page set makes the caveat flicker between
+     pages of one table. */
   const statedDeltas = universalFlags(ordered.map((d) => d.flags));
-  const rows = pageRows
-    .map((d) => {
+  const statedHeld = universalFlags(held.map((d) => d.flags));
+  let rowSeq = 0;
+  const rowHtml = (d: QoqDeltaRow, stated: readonly string[] = statedDeltas): string => {
+    /* R1: the issuer NAME leads the row; the class is secondary ink; the raw
+       position key (sid:/cusip:) moves inside the row's ⓘ. A row the serving
+       artifact could not name (an older artifact, an unkeyed position) still
+       shows its key — never an invented name. */
+    const noteId = `${page}-${rowSeq++}`;
+    const keyNote = noteFromHtml(
+      `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
+      { scope: "filer-change-key" },
+      noteId,
+    );
+    const identity = d.issuer_name
+      ? `<span class="filed-name">${esc(d.issuer_name)}</span>` +
+        // The class is FILED text (a fund can be named "BULLISH FD"): it rides
+        // inside the filed-name marker the banned-wording scan exempts.
+        (d.title_of_class ? ` <span class="mono-note c-secondary"><span class="filed-name">${esc(d.title_of_class)}</span></span>` : "") +
+        keyNote
+      : `<span class="mono-note">${esc(d.position_key)}</span>`;
       const p = qoqPresentation(d);
       const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
       const posMarkers = p.positionMarkers.map((m) => fnMark(m)).join("");
@@ -392,7 +421,7 @@ export function changesTableHtml(
            one off-screen. Identity, then the verdict, then the two deltas that
            justify it; the four raw prev/curr levels are the supporting detail
            and follow. Nothing is removed — the order changed. */
-        `<tr><td class="c-pos"><span class="mono-note${posMarkers ? " reconciled" : ""}">${esc(d.position_key)}</span>${posMarkers}${grain}</td>` +
+        `<tr><td class="c-pos${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
         `<td class="c-chip">${qoqChipHtml(d)}</td>` +
         `<td class="c-num">${valueDelta}</td>` +
         `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
@@ -400,16 +429,11 @@ export function changesTableHtml(
         `<td class="c-num">${cell(d.curr_value_usd)}</td>` +
         `<td class="c-num">${shareCell(d.prev_shares)}</td>` +
         `<td class="c-num">${shareCell(d.curr_shares)}</td>` +
-        `<td class="c-flags">${flagTags(d.flags, undefined, { stated: statedDeltas })}</td></tr>`
+        `<td class="c-flags">${flagTags(d.flags, undefined, { stated })}</td></tr>`
       );
-    })
-    .join("\n");
-  return (
-    universalFlagNote(statedDeltas) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first${
-      pageCount > 1 ? ' data-paged="1"' : ""
-    } data-stated-flags="${esc(statedDeltas.join(","))}">` +
-    `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
+  };
+  const rows = pageRows.map((d) => rowHtml(d)).join("\n");
+  const headHtml =
     `<thead><tr>` +
     QOQ_COLS.map(([key, label]) => {
       const body = QOQ_COL_NOTES[key];
@@ -419,9 +443,27 @@ export function changesTableHtml(
         `</th>`
       );
     }).join("") +
-    `</tr></thead>` +
+    `</tr></thead>`;
+  const heldGroup =
+    held.length === 0
+      ? ""
+      : `<details class="qoq-held-group" data-qoq-held><summary>Mark-to-market only (no share change) · ${fmtInt(held.length)}</summary>` +
+        `<p class="section-note">Positions whose share count is identical in both quarters; the value changed with price, not with a decision.</p>` +
+        universalFlagNote(statedHeld) +
+        `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHeld.join(","))}">` +
+        `<caption class="visually-hidden">Positions held with no share change into quarter ${esc(period)}</caption>` +
+        headHtml.replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-held-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-held-').replace(/ id="n-filer-changes-/g, ' id="n-filer-held-') +
+        `<tbody>${held.map((d) => rowHtml(d, statedHeld)).join("\n")}</tbody></table></div></details>`;
+  return (
+    universalFlagNote(statedDeltas) +
+    `<div class="table-scroll"><table class="etable" data-sticky-first${
+      pageCount > 1 ? ' data-paged="1"' : ""
+    } data-stated-flags="${esc(statedDeltas.join(","))}">` +
+    `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
+    headHtml +
     `<tbody>${rows}</tbody></table></div>` +
-    changesPagerHtml(page, pageRows.length, embedded, pageCount) +
+    changesPagerHtml(page, pageRows.length, ordered.length, pageCount) +
+    heldGroup +
     /* The bound names itself, with the TRUE total — the grammar the holdings
        surface below already uses (G3). An uncapped period must render nothing
        here: a terminus on a complete list would claim a withholding that never
@@ -517,8 +559,14 @@ export function filerPeriodSectionHtml(
   period: string,
   latestFiled: string | null,
   topn: number,
-  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null } = {},
+  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null; discontinuity?: boolean } = {},
 ): string {
+  /* R6: the producer flagged this filer-period as a BOOK DISCONTINUITY —
+     ≥95% of its changes read as exits with no registry successor. It is kept
+     on the page and named; the landing feeds exclude it. */
+  const discontinuityBanner = opts.discontinuity
+    ? `<div class="s7-banner" role="note" data-book-discontinuity><span class="s7-chip">BOOK DISCONTINUITY</span><div class="s7-copy">Into <strong>${esc(period)}</strong> almost this entire book reads as <strong>exit</strong>. That pattern is a filing-record artifact — a manager that stopped filing under this CIK, a notice-only quarter, or a registry gap — not a wave of selling. These rows are kept here and excluded from the landing feeds.</div></div>`
+    : "";
   /* `total` is the count before the embed bound. The tile MUST report it: a
      capped page that tiled `deltas.length` would state a smaller number of
      moves than the filer actually made, with nothing on the page saying so. */
@@ -537,6 +585,7 @@ export function filerPeriodSectionHtml(
        section on a period change, and an id that moved with the period would
        make the server's bytes and the client's differ for the same row set
        (Constraint 5). */
+    discontinuityBanner +
     statTiles([
       ...filerTiles(conc, total).slice(0, 2),
       { value: topn === 5 && conc?.topn_share_bps != null ? `${(conc.topn_share_bps / 100).toFixed(1)}%` : "—", label: "Top-5 share", title: "Top-five concentration is only shown when the published aggregate provides that exact slice." },
@@ -580,7 +629,7 @@ export function filerBody(
   latestFiled: string | null,
   topn: number,
   window: FilingWindow | null,
-  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null } = {},
+  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null; discontinuity?: boolean } = {},
 ): string {
   const chips = periods
     .map(

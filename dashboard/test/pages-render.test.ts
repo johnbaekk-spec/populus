@@ -283,7 +283,12 @@ test("congressTickerBody: two-sided ribbon, exclusions footnote, netting caveat"
   assert.ok(html.includes("v_default_transactions"));
   assert.ok(html.includes("ranges cannot be netted"));
   assert.ok(html.includes("members · ever"));
-  assert.ok(html.includes("13F institutional holders"));
+  // R2: the holders link renders ONLY when the holders page was built for
+  // this ticker (ctx.holdersPage) — never an unconditional, dressed 404.
+  assert.ok(!html.includes("13F institutional holders"));
+  assert.ok(!html.includes("/institutional/tickers/"));
+  const gated = congressTickerBody(TICKER, STAMPS, { ...CTX, holdersPage: true });
+  assert.ok(gated.includes(`/institutional/tickers/${encodeURIComponent(TICKER.ticker)}/holders/`));
 });
 
 /* ---------- holders + filer bodies ---------- */

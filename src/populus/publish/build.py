@@ -48,10 +48,12 @@ from populus.inst_agg import (
     prepared_materialized_inst_aggregate,
 )
 from populus.inst_serving import (
+    PUBLISHED_PERIODS_NOTABLE,
     build_serving_projection,
     publication_periods,
     write_serving_db,
 )
+from populus.manager_registry import load_manager_registry
 from populus.normalize_inst import NORMALIZATION_VERSION as INST_NORMALIZATION_VERSION
 from populus.publish import atomic_write_bytes
 from populus.publish.attestation import AttestationProvider, StagingNoop
@@ -1351,7 +1353,18 @@ def _derive_inst_module_in_materialized_scope(
     # aggregate is ATTACHed for the duration. ATTACH does not write
     # to *source*, and the DETACH is unconditional, so the source's
     # bytes are untouched either way.
-    inst_serving_periods = publication_periods(source)
+    # R5 (LD3): candidates are the newest PUBLISHED_PERIODS_NOTABLE periods;
+    # the projection keeps all of them for `notable` registry filers and only
+    # the newest PUBLISHED_PERIODS for everyone else. The activity grain stays
+    # on the newest PUBLISHED_PERIODS (the projection's default).
+    inst_serving_periods = publication_periods(
+        source, width=PUBLISHED_PERIODS_NOTABLE
+    )
+    notable_ciks = frozenset(
+        r.cik_padded
+        for r in load_manager_registry().rows
+        if r.notable and r.status == "active"
+    )
     # The watermarks are read HERE — before the single read transaction ends —
     # so they describe the same snapshot state as every derived artifact
     # (reading them after the COMMIT let them describe a different
@@ -1367,7 +1380,7 @@ def _derive_inst_module_in_materialized_scope(
     source.execute("ATTACH DATABASE ? AS inst_agg", (str(inst_agg_path),))
     try:
         serving_projection = build_serving_projection(
-            source, periods=inst_serving_periods
+            source, periods=inst_serving_periods, notable_ciks=notable_ciks
         )
     except BaseException:
         # The owner catches this outside the prepared context, rolls back its

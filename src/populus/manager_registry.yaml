@@ -772,6 +772,11 @@ managers:
     status: active
     verified_channel: C
     verified_date: 2026-08-21
+    # R6: succeeded BlackRock Finance, Inc. (last 13F-HR 2024-08-13; see
+    # `excluded` below). The aggregate bridges its last book as this CIK's
+    # prior side so the first BlackRock, Inc. quarter is not a wall of `new`
+    # and the old CIK's book is not a wall of `exit`.
+    predecessor_ciks: [1364742]
   - cik: 102909
     display_name: "Vanguard Group"
     person: "index"

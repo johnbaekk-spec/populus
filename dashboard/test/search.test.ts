@@ -144,3 +144,49 @@ test("valid v2 round-trips untouched; has()/toggle() agree", () => {
   assert.equal(store.toggle("ticker", "ZZZZ"), false);
   assert.ok(!storage.data.has(WATCH_QUARANTINE_KEY));
 });
+
+/* ---------- R10 (refinement 20260910): principals, notable-first, clean keys ---------- */
+
+const R10_INDEX = buildSearchIndex(
+  [],
+  [
+    { ticker: " nvda ", name: "NVIDIA Corp", rows: 35 },
+    { ticker: "BRK.B", name: "Berkshire Hathaway Inc", rows: 9 },
+    { ticker: "BAD TICKER", name: "", rows: 1 },
+    { ticker: "TOOLONGX", name: "", rows: 1 },
+  ],
+  [
+    // Indexed by row count, largest first — exactly how data.ts orders them.
+    { cik: "0001423053", name: "Citadel Advisors", principal: "Ken Griffin", notable: false, top: true },
+    { cik: "0001067983", name: "Berkshire Hathaway", principal: "Warren Buffett", notable: true, top: true },
+    { cik: "0000000005", name: "Berkshire Partners LLC", principal: "", notable: false, top: false },
+    { cik: "0001536411", name: "Duquesne Family Office", principal: "Stanley Druckenmiller", notable: true, top: true },
+  ],
+);
+
+test("R10: 'Druckenmiller' resolves to Duquesne Family Office first, as one result", () => {
+  const hits = searchQuery(R10_INDEX, "Druckenmiller").filter((h) => h.kind === "filer");
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]!.label, "Duquesne Family Office · Stanley Druckenmiller");
+  assert.equal(hits[0]!.key, "1536411");
+});
+
+test("R10: 'Berkshire' ranks the notable manager first and names Warren Buffett", () => {
+  const hits = searchQuery(R10_INDEX, "Berkshire").filter((h) => h.kind === "filer");
+  assert.equal(hits[0]!.label, "Berkshire Hathaway · Warren Buffett");
+  assert.equal(hits[1]!.label, "Berkshire Partners LLC");
+});
+
+test("R10: a principal renders with its manager as ONE result, never a second entry", () => {
+  const hits = searchQuery(R10_INDEX, "griffin").filter((h) => h.kind === "filer");
+  assert.deepEqual(hits.map((h) => h.label), ["Citadel Advisors · Ken Griffin"]);
+});
+
+test("R10: ticker keys are trimmed/normalized and every key matches /^[A-Z.\\-]{1,6}$/; no key carries whitespace", () => {
+  const keys = R10_INDEX.tickers.map((t) => t[0]);
+  assert.deepEqual(keys, ["NVDA", "BRK.B"]);
+  for (const k of keys) assert.match(k, /^[A-Z.\-]{1,6}$/);
+  for (const row of [...R10_INDEX.tickers, ...R10_INDEX.filers]) {
+    for (const cell of row) if (typeof cell === "string") assert.ok(!/^\s|\s$/.test(cell), JSON.stringify(cell));
+  }
+});
