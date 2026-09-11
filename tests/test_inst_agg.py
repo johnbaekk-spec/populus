@@ -2102,3 +2102,72 @@ def test_d1_ticker_keys_carry_every_reviewed_spelling(tmp_path, monkeypatch):
     assert len(_rows(agg, "SELECT * FROM agg_ticker_holder_totals WHERE ticker='GOOGL'")) == 1
     agg.close()
     conn.close()
+
+
+# --- Codex code review round 1 (refinement 20260910): F6 / F7 / F8 -------------
+
+
+def test_review_f6_f8_holder_count_excludes_exits_and_rows_carry_filed_date(tmp_path, monkeypatch):
+    """R20: `holder_count` counts filers holding the class NOW — an exit is a
+    former holder, counted under `exits` only. R19/T20: every holder row
+    carries its current-quarter 13F filed date; a holder with no current
+    filing on record carries NULL."""
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    # An exiter: held Class C in the prior quarter and filed NOTHING for the current one.
+    _filer(conn, "0000000016", "Exiter")
+    c_row = _hold(ordinal=1, issuer="ALPHABET INC", cusip="02079K107", value=60, shares=6, security_id="sec:goog1")
+    c_row = c_row.__class__(**{**c_row.__dict__, "title_of_class": "CL C"})
+    _load(conn, fid="inst:X-p", cik="0000000016", period="2025-12-31", filed="2026-01-15", holds=[c_row])
+    agg = _agg(conn, tmp_path)
+    by = {(r["ticker"], r["cik"]): r for r in _rows(agg, "SELECT * FROM agg_ticker_holders")}
+    assert by[("GOOG", "0000000016")]["change_kind"] == "exit"
+    assert by[("GOOG", "0000000016")]["filed_date"] is None
+    assert by[("GOOGL", "0000000011")]["filed_date"] == "2026-05-16"
+    totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
+    # C Holder and Both Holder hold GOOG now; the exiter does not.
+    assert totals["GOOG"]["holder_count"] == 2
+    assert totals["GOOG"]["exits"] == 1
+    agg.close()
+    conn.close()
+
+
+def test_review_f7_notable_manager_past_the_rank_cap_is_kept(tmp_path, monkeypatch):
+    """R19: the overlap band's notable population must not be cut by the display
+    cap. A notable manager ranked past `TICKER_HOLDERS_RANK_CAP` keeps its row
+    at its TRUE rank; a non-notable holder past the cap is still dropped."""
+    import populus.inst_agg as m
+    from populus.manager_registry import ManagerRegistry, ManagerRow
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    monkeypatch.setattr(m, "TICKER_HOLDERS_RANK_CAP", 1)
+    notable = ManagerRow(
+        cik=13, display_name="Both Holder", sec_name="BOTH HOLDER", manager_type="hedge_fund",
+        notable=True, status="active", verified_channel="test", verified_date="2026-09-10",
+        person=None,
+    )
+    registry = ManagerRegistry(version=1, rows=(notable,), excluded=(), population_floor=10**9)
+    monkeypatch.setattr(m, "load_manager_registry", lambda *a, **k: registry)
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    # A small, non-notable Class A holder ranked third by value.
+    _filer(conn, "0000000015", "Small Holder")
+    a_row = _hold(ordinal=1, issuer="ALPHABET INC", cusip="02079K305", value=50, shares=5, security_id="sec:goog0")
+    a_row = a_row.__class__(**{**a_row.__dict__, "title_of_class": "CL A"})
+    _load(conn, fid="inst:S15-p", cik="0000000015", period="2025-12-31", filed="2026-01-15", holds=[a_row])
+    _load(conn, fid="inst:S15-c", cik="0000000015", period="2026-03-31", filed="2026-05-16", holds=[a_row])
+    agg = _agg(conn, tmp_path)
+    googl = [
+        (r["rank"], r["cik"])
+        for r in _rows(agg, "SELECT * FROM agg_ticker_holders ORDER BY ticker, rank")
+        if r["ticker"] == "GOOGL"
+    ]
+    # Rank 1 is inside the cap; rank 2 is the notable manager past it; rank 3 is dropped.
+    assert googl == [(1, "0000000011"), (2, "0000000013")]
+    totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
+    assert totals["GOOGL"]["holder_count"] == 3, "the true count still states every holder"
+    agg.close()
+    conn.close()

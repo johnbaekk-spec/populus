@@ -35,6 +35,8 @@ export interface OverlapManager {
   kind: TickerHolderRow["change_kind"];
   value_usd: number | null;
   delta_shares: number | null;
+  /** the manager's current-quarter 13F filed date; null = none on record */
+  filed_date: string | null;
 }
 
 export interface OverlapTimelineRow {
@@ -116,6 +118,7 @@ export function overlapBand(i: OverlapInputs): OverlapBand {
       kind: h.change_kind,
       value_usd: h.value_usd,
       delta_shares: h.delta_shares,
+      filed_date: h.filed_date ?? null,
     });
     const adding = rows.filter((h) => h.change_kind === "new" || h.change_kind === "add").map(toMgr);
     const trimming = rows.filter((h) => h.change_kind === "trim" || h.change_kind === "exit").map(toMgr);
@@ -147,8 +150,13 @@ export function overlapBand(i: OverlapInputs): OverlapBand {
   }
   if (inst) {
     for (const m of [...inst.adding, ...inst.trimming]) {
+      /* T20: the timeline orders by FILED date — when the move became public —
+         never by quarter end, which is weeks earlier. A manager with no
+         current-quarter filing on record has no such date and stays out of the
+         timeline (it is still listed in the band above). */
+      if (m.filed_date == null) continue;
       timeline.push({
-        date: inst.period,
+        date: m.filed_date,
         actor: m.name,
         href: i.filerHref(m.cik),
         move: m.kind,

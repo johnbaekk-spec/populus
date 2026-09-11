@@ -16,7 +16,7 @@
 import Base from "../../../../layouts/Base.astro";
 import HoldingsTable from "../../../../components/HoldingsTable.astro";
 import { getBuildData, filerTier, notableMovesPeriods, holdersPageTickers } from "../../../../lib/data";
-import { holdersFor, issuerPeriods, tickerHoldersFor, tickerTotalsFor } from "../../../../lib/inst";
+import { holdersFor, issuerPeriods, rankedTickerHolders, tickerTotalsFor } from "../../../../lib/inst";
 import { holdersBody, tickerHoldersBody } from "../../../../lib/ui/index.ts";
 import { filingWindow, resolveTicker } from "../../../../lib/derive";
 import { serializeInlineJson } from "../../../../lib/inline-json";
@@ -67,7 +67,7 @@ let entityProps: { issuerKey: string; name: string; period: string } | null = nu
 if (props.mode === "mapped") {
   const totals = tickerTotalsFor(inst, props.ticker)!;
   const period = totals.period_of_report;
-  const holders = tickerHoldersFor(inst, props.ticker).filter((h) => h.period_of_report === period);
+  const holders = rankedTickerHolders(inst, props.ticker, period);
   const congressEntity = build.tickersByKey.get(props.ticker) ?? null;
   const overlapHtml = overlapBandHtml(
     overlapBand({

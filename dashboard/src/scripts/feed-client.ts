@@ -595,6 +595,10 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
       applyFromParts(partsIndex);
       return;
     }
+    /* R12: a full-corpus view supersedes any part render still in flight — a
+       part response resolving after this point must not overwrite the filtered
+       rows and counts. */
+    partsApplySeq++;
     if (!txns || !paper) {
       // Do NOT clear the server-rendered rows: if the dataset never arrives,
       // page 1 stays readable instead of leaving a blank table under a count

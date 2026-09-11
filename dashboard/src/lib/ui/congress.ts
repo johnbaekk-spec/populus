@@ -66,6 +66,8 @@ import {
   partyLabel,
   netOverlaps,
   netDirection,
+  netFlow,
+  netIntervalText,
   rankNetRows,
   memberNetByTicker,
   sectorMix,
@@ -428,11 +430,15 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
   const watched = ctx.watched.has(m.bioguide);
   const flow = quarterlyFlow(m.txns, stamps.generatedAtDate, 8);
   const top = topTickers(m.txns, stamps.generatedAtDate, 24, 6);
-  // R16 stats: the SAME derivations the tiles use (one rule, one number).
-  const flow12 = sumRanges(
-    excludeDateAnomalies(m.txns).rows.filter(
-      (t) => windowMembership(t, legacyTrailingMonthsBounds(stamps.generatedAtDate, 12), "traded_or_filed") === "in",
-    ),
+  // R16 stats: net flow = purchases minus sales over the trailing 12 months,
+  // through the ONE net arithmetic (`netFlow`, net = [pL−sU, pU−sL]) the
+  // net-by-ticker table uses — never a gross sum of both sides.
+  const rows12 = excludeDateAnomalies(m.txns).rows.filter(
+    (t) => windowMembership(t, legacyTrailingMonthsBounds(stamps.generatedAtDate, 12), "traded_or_filed") === "in",
+  );
+  const net12 = netFlow(
+    sumRanges(rows12.filter((t) => t.side === "purchase")),
+    sumRanges(rows12.filter((t) => t.side === "sale" || t.side === "sale_partial")),
   );
   const distinctTickers = new Set(m.txns.map((t) => t.ticker).filter((t): t is string => t != null)).size;
   const lateTotal = lateCount(m.txns);
@@ -505,7 +511,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
        planned line below. */
     disclosureLedger([
       { label: "Disclosures", value: fmtInt(m.txns.length), detail: `${fmtInt(m.filingCount)} filings · ${fmtInt(m.paper.length)} paper · retained` },
-      { label: "Net flow · 12m", value: flow12.kind === "empty" ? "—" : sumRangesText(flow12), detail: "sum of statutory ranges · an interval, not a value" },
+      { label: "Net flow · 12m", value: rows12.length === 0 ? "—" : netIntervalText(net12), detail: "purchases minus sales · statutory ranges, an interval" },
       { label: "Distinct tickers", value: fmtInt(distinctTickers), detail: "across every disclosed row" },
       { label: "Late filings", value: fmtInt(lateTotal), detail: "filed past the 45-day window" },
     ]) +

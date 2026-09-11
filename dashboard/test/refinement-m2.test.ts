@@ -539,7 +539,7 @@ import { tickerUnifiedBody } from "../src/lib/ui/ticker.ts";
 import type { TickerHolderRow } from "../src/lib/inst.ts";
 
 function holder(over: Partial<TickerHolderRow> = {}): TickerHolderRow {
-  return { ticker: "NVDA", period_of_report: "2026-03-31", rank: 1, cik: "0000000001", filer_name: "BERKSHIRE HATHAWAY INC", value_usd: 1_000_000, shares: 100, prev_shares: 50, delta_shares: 50, change_kind: "add", method: "exact-name", verified_date: "2026-09-10", ...over };
+  return { ticker: "NVDA", period_of_report: "2026-03-31", rank: 1, cik: "0000000001", filer_name: "BERKSHIRE HATHAWAY INC", value_usd: 1_000_000, shares: 100, prev_shares: 50, delta_shares: 50, change_kind: "add", method: "exact-name", verified_date: "2026-09-10", filed_date: "2026-05-15", ...over };
 }
 
 function overlapInst(): Extract<InstData, { present: true }> {

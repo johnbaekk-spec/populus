@@ -138,6 +138,10 @@ export interface TickerHolderRow {
   change_kind: QoqDeltaRow["change_kind"];
   method: string;
   verified_date: string;
+  /** R19/T20: the holder's current-quarter 13F filed date — what the overlap
+      timeline orders by. null = no current-quarter filing on record, or an
+      aggregate that predates the column. */
+  filed_date: string | null;
 }
 
 export interface TickerTotalsRow {
@@ -390,10 +394,14 @@ export function loadTickerHolders(db: DatabaseSync): {
     };
     tickerTotals.set(row.ticker, row);
   }
+  // The filed-date column is newer than the table: an older aggregate reads null.
+  const hasFiled = (db.prepare("PRAGMA table_info(agg_ticker_holders)").all() as { name: string }[]).some(
+    (c) => c.name === "filed_date",
+  );
   for (const r of db
     .prepare(
       `SELECT ticker, period_of_report, rank, cik, filer_name, value_usd, shares, prev_shares,
-              delta_shares, change_kind, method, verified_date
+              delta_shares, change_kind, method, verified_date${hasFiled ? ", filed_date" : ""}
          FROM agg_ticker_holders ORDER BY ticker, period_of_report, rank`,
     )
     .all() as Record<string, unknown>[]) {
@@ -410,6 +418,7 @@ export function loadTickerHolders(db: DatabaseSync): {
       change_kind: String(r.change_kind) as QoqDeltaRow["change_kind"],
       method: String(r.method),
       verified_date: String(r.verified_date),
+      filed_date: r.filed_date == null ? null : String(r.filed_date),
     };
     let list = tickerHoldersByTicker.get(row.ticker);
     if (!list) {
@@ -458,6 +467,23 @@ export function tickerFor(inst: InstData, issuerName: string, titleOfClass: stri
 export function tickerHoldersFor(inst: InstData, ticker: string): TickerHolderRow[] {
   if (!inst.present) return [];
   return inst.tickerHoldersByTicker.get(normalizeTicker13f(ticker)) ?? [];
+}
+
+/** R3/R20: rows `agg_ticker_holders` ranks for display per (ticker, period).
+    MIRRORS `src/populus/inst_agg.py::TICKER_HOLDERS_RANK_CAP` — pinned equal
+    by a test that reads the Python source, so there is no second source. */
+export const TICKER_HOLDERS_RANK_CAP = 500;
+
+/** R20: the RANKED holder list for one period — ranks 1..cap, the producer's
+    display population. The producer also keeps each notable manager past the
+    cap at its TRUE rank (R19's overlap population); those rows are outside
+    this list whatever their rank (a notable at rank cap+1 is contiguous, so
+    rank continuity is no test of membership — the cap is). The list's
+    completeness claim rests on `holder_count`. */
+export function rankedTickerHolders(inst: InstData, ticker: string, period: string): TickerHolderRow[] {
+  return tickerHoldersFor(inst, ticker).filter(
+    (h) => h.period_of_report === period && h.rank <= TICKER_HOLDERS_RANK_CAP,
+  );
 }
 
 export function tickerTotalsFor(inst: InstData, ticker: string): TickerTotalsRow | null {

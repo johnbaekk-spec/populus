@@ -73,7 +73,7 @@ import { planFeedParts, type FeedPartsPlan } from "./feed-parts.ts";
 import { pathSafeTicker } from "./format.ts";
 import { notableMoves, offeredMovePeriods } from "./notable-moves-derive.ts";
 import type { NotableMove } from "./notable-moves.ts";
-import { tickerHoldersFor, tickerTotalsFor } from "./inst.ts";
+import { rankedTickerHolders, tickerFor, tickerTotalsFor, typingFor } from "./inst.ts";
 import { activityFeed } from "./activity.ts";
 import { concentrationPeriods } from "./inst-analytics.ts";
 import { closedPeriods, corpusAsOf } from "./inst-adds.ts";
@@ -1060,7 +1060,7 @@ function mappedInstSection(build: BuildData, ticker: string, name: string | null
   const totals = tickerTotalsFor(build.inst, ticker);
   if (!totals) return null;
   const period = totals.period_of_report;
-  const holders = tickerHoldersFor(build.inst, ticker).filter((h) => h.period_of_report === period);
+  const holders = rankedTickerHolders(build.inst, ticker, period);
   return {
     state: "data",
     holdersPage: holdersPageBuilt(build, ticker),
@@ -1179,6 +1179,9 @@ export function filerAggregateInputs(build: BuildData, cik: string): FilerAggreg
       latestFiled: null,
       topn: 25,
       window: null,
+      kindsByPeriod: {},
+      discontinuityPeriods: [],
+      typing: null,
     };
   }
   const periods = filerPeriods(inst, cik);
@@ -1187,7 +1190,9 @@ export function filerAggregateInputs(build: BuildData, cik: string): FilerAggreg
      and the tail filer served through the shard family. Bounding in either
      renderer instead would leave the other unbounded and let the two drift,
      which is exactly the shape of the defect this replaces. */
-  const bounded = periods.map((p) => [p, boundQoqDeltas(deltasFor(inst, cik, p))] as const);
+  const full = periods.map((p) => [p, deltasFor(inst, cik, p)] as const);
+  const bounded = full.map(([p, all]) => [p, boundQoqDeltas(all)] as const);
+  const flagged = inst.bookDiscontinuityByCik.get(cik);
   return {
     concByPeriod: Object.fromEntries(periods.map((p) => [p, concentrationFor(inst, cik, p)])),
     deltasByPeriod: Object.fromEntries(bounded.map(([p, b]) => [p, b.rows])),
@@ -1195,7 +1200,28 @@ export function filerAggregateInputs(build: BuildData, cik: string): FilerAggreg
     latestFiled: inst.watermarks.latest_filed_date,
     topn: inst.topn,
     window: filingWindow(build.generatedAtDate),
+    /* R15: counted over the WHOLE period's changes, never the bounded slice —
+       here, so the pre-rendered page and the tail payload read one number. */
+    kindsByPeriod: Object.fromEntries(
+      full.map(([p, all]) => [
+        p,
+        { new: all.filter((d) => d.change_kind === "new").length, exit: all.filter((d) => d.change_kind === "exit").length },
+      ]),
+    ),
+    discontinuityPeriods: periods.filter((p) => flagged?.has(p) ?? false),
+    typing: typingFor(inst, cik),
   };
+}
+
+/** R4/T4: the quarter a filer page opens on — the newest of the filer's
+    periods whose filing window the CORPUS has closed (the landing's
+    closed-quarter rule: `corpusAsOf` + `closedPeriods`), else its newest
+    period when none is closed yet. Both filer routes read this. */
+export function filerDefaultPeriod(build: BuildData, periods: readonly string[]): string | null {
+  const newest = periods.length > 0 ? [...periods].sort().at(-1)! : null;
+  if (!build.inst.present || newest === null) return newest;
+  const asOf = corpusAsOf(build.generatedAtDate, build.inst.watermarks.latest_filed_date);
+  return closedPeriods(periods, asOf, periods.length)[0] ?? newest;
 }
 
 interface FilerShardFile {
@@ -1291,9 +1317,12 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
             cik: f.cik,
             filerName: f.filer_name,
             latestPeriod: f.latest_period,
-            requestedPeriod: f.latest_period,
+            // R4/T4: the same closed-quarter default as the pre-rendered page.
+            requestedPeriod: filerDefaultPeriod(build, filerPeriods(inst, f.cik)) ?? f.latest_period,
             filings,
             agg: filerAggregateInputs(build, f.cik),
+            // R3/D1: the SAME reviewed-ticker lookup the pre-rendered page uses.
+            tickerFor: (name, cls) => tickerFor(build.inst, name, cls),
           });
           const fragments = fragmentFilerPayload(payload);
           expectedParts.set(f.cik, fragments.length);

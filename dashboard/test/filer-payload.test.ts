@@ -240,6 +240,9 @@ function assemble(db: DatabaseSync, cik = "0001067983"): FilerPayloadV1 {
       latestFiled: "2026-05-15",
       topn: 25,
       window: { open: false, quarterEnd: "2026-06-30", deadline: "2026-08-14" },
+      kindsByPeriod: { "2026-03-31": { new: 0, exit: 0 }, "2025-12-31": { new: 0, exit: 0 } },
+      discontinuityPeriods: [],
+      typing: null,
     },
   });
 }
@@ -379,6 +382,9 @@ test("a filer with no serving rows still assembles (empty periods, honest absenc
         latestFiled: null,
         topn: 25,
         window: null,
+        kindsByPeriod: {},
+        discontinuityPeriods: [],
+        typing: null,
       },
     });
     assert.deepEqual(p.periods, []);
@@ -623,8 +629,8 @@ test("the shard constants MIRROR src/populus/inst_budget.py — no second source
 });
 
 test("the routing-index and shard paths agree between producer and driver", () => {
-  assert.equal(FILER_INDEX_PATH, "/institutional/data/filers/index.v3.json");
-  assert.equal(filerShardPath(0), "/institutional/data/filers/0.v3.json");
+  assert.equal(FILER_INDEX_PATH, "/institutional/data/filers/index.v4.json");
+  assert.equal(filerShardPath(0), "/institutional/data/filers/0.v4.json");
 });
 
 /* ---------- STRICT: unknown fields reject at every level (Codex F6) ---------- */
@@ -795,6 +801,9 @@ test("LD-7 parity: selectTopFilers matches the shared Python interchange fixture
     whose `deltasByPeriod` is the raw accessor output both runtimes start from. */
 function boundParityAgg(agg: ParityCase["agg"]): ParityCase["agg"] & {
   deltaTotalsByPeriod: Record<string, number>;
+  kindsByPeriod: Record<string, { new: number; exit: number }>;
+  discontinuityPeriods: string[];
+  typing: null;
 } {
   const bounded = Object.entries(agg.deltasByPeriod).map(
     ([period, deltas]) => [period, boundQoqDeltas(deltas)] as const,
@@ -803,6 +812,16 @@ function boundParityAgg(agg: ParityCase["agg"]): ParityCase["agg"] & {
     ...agg,
     deltasByPeriod: Object.fromEntries(bounded.map(([p, b]) => [p, b.rows])),
     deltaTotalsByPeriod: Object.fromEntries(bounded.map(([p, b]) => [p, b.total])),
+    // R15 (Codex review F3): counted over the RAW deltas, before the bound —
+    // exactly as data.ts and the Python reference do.
+    kindsByPeriod: Object.fromEntries(
+      Object.entries(agg.deltasByPeriod).map(([p, deltas]) => [
+        p,
+        { new: deltas.filter((d) => d.change_kind === "new").length, exit: deltas.filter((d) => d.change_kind === "exit").length },
+      ]),
+    ),
+    discontinuityPeriods: [],
+    typing: null,
   };
 }
 
@@ -1137,7 +1156,7 @@ test("R25: the payload carries issuer_key only where the CUSIP cannot derive it;
       latestPeriod: "2026-03-31",
       requestedPeriod: "2026-03-31",
       filings: readServingFilings(db),
-      agg: { concByPeriod: {}, deltasByPeriod: {}, deltaTotalsByPeriod: {}, latestFiled: null, topn: 25, window: null },
+      agg: { concByPeriod: {}, deltasByPeriod: {}, deltaTotalsByPeriod: {}, latestFiled: null, topn: 25, window: null, kindsByPeriod: {}, discontinuityPeriods: [], typing: null },
     });
     const rows = p.rowsByPeriod["2026-03-31"]!;
     const byName = (n: string) => rows.filter((r) => r.issuer_name === n);

@@ -19,6 +19,7 @@
    fabricated zero is a claim, not a repair. */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { ManagerTyping } from "./manager-directory.ts";
 import {
   capRows,
   utf8ByteLength as utf8Bytes,
@@ -39,10 +40,10 @@ const FILER_PAYLOAD_VERSION = 1;
 /** The routing index the `/e/` driver resolves tail CIKs through (LD-9).
     Defined here — the browser-safe module — because the driver ships these to
     the client while the shard planner (`data.ts`, server-only) emits them. */
-export const FILER_INDEX_PATH = "/institutional/data/filers/index.v3.json";
+export const FILER_INDEX_PATH = "/institutional/data/filers/index.v4.json";
 
 export function filerShardPath(shard: number): string {
-  return `/institutional/data/filers/${encodeURIComponent(String(shard))}.v3.json`;
+  return `/institutional/data/filers/${encodeURIComponent(String(shard))}.v4.json`;
 }
 
 /** Cross-runtime transport budget mirrors. Python `inst_budget.py` remains the
@@ -95,6 +96,19 @@ export interface FilerPayloadV1 {
   latestFiled: string | null;
   topn: number;                           // the N of top-N — SEPARATE from topn_share_bps
   window: FilingWindow | null;            // { open, quarterEnd, deadline }
+  /** R15: new-stake / exit counts per delta period over the WHOLE period's
+      changes (before the embed bound) — the filer stats on both routes. */
+  kindsByPeriod: Record<string, FilerKindCounts>;
+  /** R6: periods the producer flagged as book discontinuities (bannered). */
+  discontinuityPeriods: string[];
+  /** R15: curated identity (principal, type) for a registry-matched filer. */
+  typing: ManagerTyping | null;
+}
+
+/** R15: the filer page's new-stake and exit stat inputs. */
+export interface FilerKindCounts {
+  new: number;
+  exit: number;
 }
 
 /* ================================================================ assembler */
@@ -114,6 +128,12 @@ export interface FilerAggregateInputs {
   latestFiled: string | null;
   topn: number;
   window: FilingWindow | null;
+  /** R15: counts over the UNBOUNDED period changes, keyed like deltasByPeriod. */
+  kindsByPeriod: Record<string, FilerKindCounts>;
+  /** R6: the producer's book-discontinuity periods for this filer. */
+  discontinuityPeriods: string[];
+  /** R15: curated typing, or null for an unmatched filer. */
+  typing: ManagerTyping | null;
 }
 
 interface AssembleFilerArgs {
@@ -261,6 +281,9 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
     latestFiled: args.agg.latestFiled,
     topn: args.agg.topn,
     window: args.agg.window,
+    kindsByPeriod: args.agg.kindsByPeriod,
+    discontinuityPeriods: args.agg.discontinuityPeriods,
+    typing: args.agg.typing,
   };
 }
 
@@ -299,8 +322,29 @@ const PAYLOAD_KEYS = [
   "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
   "filings", "rowsByPeriod", "totalsByPeriod", "concByPeriod", "deltasByPeriod",
   "deltaTotalsByPeriod",
-  "latestFiled", "topn", "window",
+  "latestFiled", "topn", "window", "kindsByPeriod", "discontinuityPeriods", "typing",
 ] as const;
+
+const TYPING_KEYS = ["cik", "display_name", "person", "manager_type", "notable"] as const;
+
+/** R15: curated typing on the wire — null, or exactly the ManagerTyping
+    fields, for THIS payload's filer. */
+function typingOf(v: unknown, cik: string): ManagerTyping | null {
+  if (v === undefined) missing("typing");
+  if (v === null) return null;
+  if (!isRecord(v)) bad("typing is neither an object nor null");
+  onlyKeys(v, TYPING_KEYS, "typing");
+  const tcik = reqString(v.cik, "typing.cik");
+  if (tcik !== cik) bad(`typing.cik ${tcik} != payload cik ${cik}`);
+  if (typeof v.notable !== "boolean") bad("typing.notable is not a boolean");
+  return {
+    cik: tcik,
+    display_name: reqString(v.display_name, "typing.display_name"),
+    person: stringOrNull(v.person, "typing.person"),
+    manager_type: reqString(v.manager_type, "typing.manager_type") as ManagerTyping["manager_type"],
+    notable: v.notable,
+  };
+}
 
 const FILING_REF_KEYS = [
   "accession", "submission_type", "period_of_report", "filed_date", "doc_url", "source",
@@ -331,6 +375,8 @@ const HOLDING_ROW_KEYS = [
   "unit_key", "flags",
   // R25: optional — present only when the artifact carries a non-null key.
   "issuer_key",
+  // R3/D1: optional — present only on a row a reviewed mapping row names.
+  "ticker", "ticker_verified_date",
   "change_kind", "delta_value_usd", "delta_shares", "prev_value_usd", "curr_value_usd",
 ] as const;
 
@@ -606,6 +652,25 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
      back to a length, and a total with no rows is an orphan claim. */
   requireSameKeySet(raw.deltaTotalsByPeriod, Object.keys(deltasByPeriod), "deltaTotalsByPeriod");
 
+  // R15: the stat counts ride per delta period; each is bounded by the true total.
+  if (!isRecord(raw.kindsByPeriod)) bad("kindsByPeriod is not an object");
+  const kindsByPeriod: Record<string, FilerKindCounts> = {};
+  for (const [period, value] of Object.entries(raw.kindsByPeriod)) {
+    const path = `kindsByPeriod[${JSON.stringify(period)}]`;
+    if (!isRecord(value)) bad(`${path} is not an object`);
+    onlyKeys(value, ["new", "exit"], path);
+    const counts = { new: value.new, exit: value.exit };
+    for (const [k, c] of Object.entries(counts)) {
+      if (!Number.isSafeInteger(c) || (c as number) < 0) bad(`${path}.${k} is not a non-negative integer`);
+    }
+    if ((counts.new as number) + (counts.exit as number) > (deltaTotalsByPeriod[period] ?? 0)) {
+      bad(`${path} counts more changes than deltaTotalsByPeriod states`);
+    }
+    kindsByPeriod[period] = counts as FilerKindCounts;
+  }
+  requireSameKeySet(raw.kindsByPeriod, Object.keys(deltasByPeriod), "kindsByPeriod");
+  const discontinuityPeriods = uniqueStrings(raw.discontinuityPeriods, "discontinuityPeriods");
+
   // Every nested cik must agree with the payload's own — a shard whose row,
   // concentration, or delta rows carry another filer's CIK is corrupt, and
   // rendering it would attribute one manager's positions to another.
@@ -687,6 +752,9 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     topn: reqNumber(raw.topn, "topn"),
     // `undefined` (field missing) fails inside windowOf; null is a valid state.
     window: windowOf("window" in raw ? raw.window : bad("window is missing — pass null explicitly")),
+    kindsByPeriod,
+    discontinuityPeriods,
+    typing: typingOf(raw.typing, cik),
   };
 }
 
@@ -699,7 +767,8 @@ const FRAGMENT_KEYS = [
 const FRAGMENT_META_KEYS = [
   "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
   "filingKeys", "rowPeriods", "deltaPeriods", "totalsByPeriod", "concByPeriod",
-  "deltaTotalsByPeriod", "latestFiled", "topn", "window",
+  "deltaTotalsByPeriod", "latestFiled", "topn", "window", "kindsByPeriod",
+  "discontinuityPeriods", "typing",
 ] as const;
 
 interface FragmentDescriptor {
@@ -795,6 +864,9 @@ export function fragmentFilerPayload(payload: FilerPayloadV1): FilerFragmentV2[]
     latestFiled: payload.latestFiled,
     topn: payload.topn,
     window: payload.window,
+    kindsByPeriod: payload.kindsByPeriod,
+    discontinuityPeriods: payload.discontinuityPeriods,
+    typing: payload.typing,
   };
   const descriptors: FragmentDescriptor[] = [
     { section: "meta", period: null, start: 0, data: meta },
@@ -953,6 +1025,7 @@ export function reassembleFilerFragments(
     deltaPeriods,
     "fragment.data.deltaTotalsByPeriod",
   );
+  requireExactObjectKeys(meta.kindsByPeriod, deltaPeriods, "fragment.data.kindsByPeriod");
 
   const filings: Record<string, unknown> = {};
   const rowsByPeriod: Record<string, unknown[]> = Object.fromEntries(
@@ -1017,5 +1090,8 @@ export function reassembleFilerFragments(
     latestFiled: meta.latestFiled,
     topn: meta.topn,
     window: meta.window,
+    kindsByPeriod: meta.kindsByPeriod,
+    discontinuityPeriods: meta.discontinuityPeriods,
+    typing: meta.typing,
   });
 }

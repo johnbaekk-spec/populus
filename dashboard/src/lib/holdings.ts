@@ -1974,6 +1974,25 @@ export interface SurfaceState {
   view: SurfaceView;
   page: number;
   period: string;
+  /** LD3 §5: the quarter the reader SELECTED (filer surface). The prior view
+      and the comparison both read "the selected quarter and its immediate
+      predecessor in `periods`". Absent = the payload's `current`. */
+  selected?: string;
+}
+
+/** LD3 §5: the immediate predecessor of `period` among the published periods
+    (ascending), or null when it is the earliest. */
+export function priorPeriodOf(periods: readonly string[], period: string): string | null {
+  let out: string | null = null;
+  for (const p of periods) if (p < period && (out === null || p > out)) out = p;
+  return out;
+}
+
+/** The selected quarter of a filer surface and its comparison quarter. */
+function selectedPair(payload: FilerSurfacePayload, state: SurfaceState): { selected: string; prior: string | null } {
+  const selected =
+    state.selected !== undefined && payload.rowsByPeriod[state.selected] != null ? state.selected : payload.current;
+  return { selected, prior: selected === payload.current ? payload.prior : priorPeriodOf(payload.periods, selected) };
 }
 
 function viewChips(payload: SurfacePayload, state: SurfaceState): string {
@@ -1981,7 +2000,7 @@ function viewChips(payload: SurfacePayload, state: SurfaceState): string {
   const chip = (view: SurfaceView, label: string): string =>
     `<button class="chip${state.view === view ? " chip-active" : ""}"` +
     ` data-holdings-view="${view}" aria-pressed="${state.view === view}">${esc(label)}</button>`;
-  const prior = payload.prior;
+  const { selected, prior } = selectedPair(payload, state);
   const hasPrior = prior != null && payload.rowsByPeriod[prior] != null;
   const note = hasPrior
     ? `<span class="period-note">this build publishes the selected quarter and the one ` +
@@ -1993,7 +2012,7 @@ function viewChips(payload: SurfacePayload, state: SurfaceState): string {
       )}</span>`;
   return (
     `<div class="period-row"><span class="period-label">View</span><div class="chips" data-holdings-views>` +
-    chip("current", `positions ${payload.current}`) +
+    chip("current", `positions ${selected}`) +
     (hasPrior ? chip("prior", `positions ${prior}`) + chip("diff", "added · absent · changed") : "") +
     `</div>` +
     note +
@@ -2019,9 +2038,9 @@ function periodUnavailableHtml(payload: SurfacePayload, period: string): string 
 export function surfaceHtml(payload: SurfacePayload, state: SurfaceState): string {
   if (payload.kind === "filer") {
     if (state.view === "diff") {
-      const prior = payload.prior;
+      const { selected, prior } = selectedPair(payload, state);
       const priorRows = prior == null ? null : payload.rowsByPeriod[prior];
-      const currentRows = payload.rowsByPeriod[payload.current];
+      const currentRows = payload.rowsByPeriod[selected];
       if (prior == null || priorRows == null || currentRows == null) {
         return (
           viewChips(payload, state) +
@@ -2032,12 +2051,13 @@ export function surfaceHtml(payload: SurfacePayload, state: SurfaceState): strin
         );
       }
       const diff = diffPeriods(currentRows, priorRows, {
-        current: payload.current,
+        current: selected,
         prior,
       });
       return viewChips(payload, state) + positionDiffHtml(diff, state.page);
     }
-    const period = state.view === "prior" && payload.prior ? payload.prior : state.period;
+    const pair = selectedPair(payload, state);
+    const period = state.view === "prior" && pair.prior ? pair.prior : state.period;
     const rows = payload.rowsByPeriod[period];
     if (rows == null) return viewChips(payload, state) + periodUnavailableHtml(payload, period);
     return (

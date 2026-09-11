@@ -254,7 +254,7 @@ const payloadJson = payload == null ? "" : serializeInlineJson(payload);
 }
 
 <script>
-  import { surfaceHtml, type SurfacePayload, type SurfaceState } from "../lib/holdings.ts";
+  import { priorPeriodOf, surfaceHtml, type SurfacePayload, type SurfaceState } from "../lib/holdings.ts";
 
   /* The pager and the view switch re-render through the SAME surfaceHtml the
      SSR used — parity by construction, not by convention. Without JS the page
@@ -290,8 +290,11 @@ const payloadJson = payload == null ? "" : serializeInlineJson(payload);
           state.view = viewBtn.dataset.holdingsView as SurfaceState["view"];
           state.page = 0; // a page index from another view means nothing here
           if (payload!.kind === "filer") {
-            state.period =
-              state.view === "prior" && payload!.prior ? payload!.prior : payload!.current;
+            // LD3 §5: the selected quarter and ITS predecessor, not the pair
+            // the page loaded with.
+            const selected = state.selected ?? payload!.current;
+            const prior = priorPeriodOf(payload!.periods, selected);
+            state.period = state.view === "prior" && prior ? prior : selected;
           }
           draw();
         }
@@ -305,6 +308,7 @@ const payloadJson = payload == null ? "" : serializeInlineJson(payload);
         const period = chip.dataset.period;
         if (!period) return;
         state.period = period;
+        state.selected = period;
         state.page = 0;
         state.view = "current";
         draw();

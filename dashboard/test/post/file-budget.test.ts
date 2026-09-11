@@ -218,7 +218,7 @@ test("R22 GATE (measured): the filer shard family in the built tree", () => {
   const FILER_SHARD_CEILING = pyInt(BUDGET, "FILER_SHARD_BYTE_CEILING");
   const FILER_SHARDS_MAX = pyInt(BUDGET, "FILER_TAIL_SHARDS_RESERVED");
   const FILER_PARTS_MAX = pyInt(BUDGET, "FILER_FRAGMENT_PARTS_MAX");
-  assert.equal(pyInt(BUDGET, "FILER_V1_TRANSITION_FILES"), 2);
+  assert.equal(pyInt(BUDGET, "FILER_V1_TRANSITION_FILES"), 3);
   const pagesDir = path.join(DIST, "institutional", "filers");
   const dataDir = path.join(DIST, "institutional", "data", "filers");
   const modulePresent =
@@ -258,7 +258,18 @@ test("R22 GATE (measured): the filer shard family in the built tree", () => {
     "the superseded v2 shard route must not be emitted",
   );
 
-  const indexFile = path.join(dataDir, "index.v3.json");
+  /* Refinement review F3: three more REQUIRED payload keys moved the data to
+     `.v4.json`; `index.v3.json` is now the third tombstone. */
+  const v3Tombstone = path.join(dataDir, "index.v3.json");
+  assert.ok(existsSync(v3Tombstone), "cached v3 clients need the version-mismatch tombstone during rollout");
+  assert.equal(readFileSync(v3Tombstone, "utf-8"), '{"v":4,"kind":"filer-index-upgrade-required"}');
+  assert.deepEqual(
+    readdirSync(dataDir).filter((f) => /^\d+\.v3\.json$/.test(f)),
+    [],
+    "the superseded v3 shard route must not be emitted",
+  );
+
+  const indexFile = path.join(dataDir, "index.v4.json");
   assert.ok(existsSync(indexFile), "the active routing index must be emitted in every build");
   const index = JSON.parse(readFileSync(indexFile, "utf-8")) as {
     v: number;
@@ -270,7 +281,7 @@ test("R22 GATE (measured): the filer shard family in the built tree", () => {
   assert.equal(index.v, 2);
   assert.equal(index.kind, "filer-index");
   const shardFiles = readdirSync(dataDir)
-    .filter((f) => /^\d+\.v3\.json$/.test(f))
+    .filter((f) => /^\d+\.v4\.json$/.test(f))
     .sort((a, b) => Number.parseInt(a) - Number.parseInt(b));
   assert.ok(
     shardFiles.length <= FILER_SHARDS_MAX,
@@ -288,7 +299,7 @@ test("R22 GATE (measured): the filer shard family in the built tree", () => {
   const allFragmentKeys = new Set<string>();
   const shardBodies = new Map<number, Record<string, unknown>>();
   for (const [expectedShard, f] of shardFiles.entries()) {
-    assert.equal(f, `${expectedShard}.v3.json`, "active shard names are contiguous from zero");
+    assert.equal(f, `${expectedShard}.v4.json`, "active shard names are contiguous from zero");
     const size = statSync(path.join(dataDir, f)).size;
     assert.ok(
       size <= FILER_SHARD_CEILING,
@@ -356,7 +367,7 @@ test("R22 GATE (F7): routing-index cardinality == publishedFilers − prerendere
   const publishedFilers = build.inst.present ? build.inst.filers.length : 0;
   const prerenderedFilers = topFilerCiks(build).size;
   const index = JSON.parse(
-    readFileSync(path.join(DIST, "institutional", "data", "filers", "index.v3.json"), "utf-8"),
+    readFileSync(path.join(DIST, "institutional", "data", "filers", "index.v4.json"), "utf-8"),
   ) as { routes: Record<string, FilerRouteV2> };
   assert.equal(
     Object.keys(index.routes).length,

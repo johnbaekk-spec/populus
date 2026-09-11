@@ -1074,10 +1074,10 @@ def build_filer_payload(
     # serializes in that order, and filing keys are numeric strings.
     filings = {k: filings[k] for k in _js_key_order(filings)}
     filer_periods = sorted(agg["conc_by_filer"].get(cik, {}))
-    bounded_deltas = {
-        p: _bound_qoq_deltas(agg["deltas_by_filer"].get(cik, {}).get(p, []))
-        for p in filer_periods
+    raw_deltas = {
+        p: agg["deltas_by_filer"].get(cik, {}).get(p, []) for p in filer_periods
     }
+    bounded_deltas = {p: _bound_qoq_deltas(raw_deltas[p]) for p in filer_periods}
     return {
         "v": 1,
         "kind": "filer",
@@ -1098,6 +1098,20 @@ def build_filer_payload(
         "latestFiled": latest_filed,
         "topn": agg["topn"],
         "window": window,
+        # R15 (Codex review F3): counted over the RAW, unbounded changes —
+        # `data.ts::filerAggregateInputs` counts before `boundQoqDeltas` too.
+        "kindsByPeriod": {
+            p: {
+                "new": sum(1 for d in raw_deltas[p] if d.get("change_kind") == "new"),
+                "exit": sum(1 for d in raw_deltas[p] if d.get("change_kind") == "exit"),
+            }
+            for p in filer_periods
+        },
+        "discontinuityPeriods": [
+            p for p in filer_periods
+            if p in set(agg.get("discontinuity_by_filer", {}).get(cik, ()))
+        ],
+        "typing": agg.get("typing_by_filer", {}).get(cik),
     }
 
 
@@ -1183,6 +1197,9 @@ def fragment_filer_payload(payload: dict) -> list[dict]:
         "latestFiled": payload["latestFiled"],
         "topn": payload["topn"],
         "window": payload["window"],
+        "kindsByPeriod": payload["kindsByPeriod"],
+        "discontinuityPeriods": payload["discontinuityPeriods"],
+        "typing": payload["typing"],
     }
     descriptors: list[tuple] = [("meta", None, 0, meta)]
     descriptors.extend(_chunk_fragment_records(
@@ -1272,6 +1289,9 @@ def reassemble_filer_fragments(fragments: list[dict]) -> dict:
         "latestFiled": meta["latestFiled"],
         "topn": meta["topn"],
         "window": meta["window"],
+        "kindsByPeriod": meta["kindsByPeriod"],
+        "discontinuityPeriods": meta["discontinuityPeriods"],
+        "typing": meta["typing"],
     }
 
 

@@ -42,6 +42,7 @@ import {
 } from "../lib/ui/index.ts";
 import {
   institutionalDataNoteHtml,
+  priorPeriodOf,
   projectionAbsentHtml,
   surfaceHtml,
   type FilerSurfacePayload,
@@ -457,9 +458,13 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
     const concPeriods = Object.keys(p.concByPeriod).sort();
     const served = p.periods.filter((x) => x in p.concByPeriod);
     const aggPeriods = served.length > 0 ? served : concPeriods;
+    /* R4/T4: before any chip click the page opens on the payload's current
+       quarter — the producer's closed-quarter default, as on the pre-rendered page. */
     const aggPeriod = aggPeriods.includes(filerAggPeriod)
       ? filerAggPeriod
-      : (aggPeriods[aggPeriods.length - 1] ?? p.latestPeriod);
+      : aggPeriods.includes(p.current)
+        ? p.current
+        : (aggPeriods[aggPeriods.length - 1] ?? p.latestPeriod);
     const surface =
       p.periods.length > 0
         ? surfaceHtml(filerSurfaceOf(p), filerState)
@@ -482,6 +487,10 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
           total: p.deltaTotalsByPeriod[aggPeriod]!,
           page: filerChangesPage,
           kind: filerChangesKind,
+          // R6/R15: the same stat, banner and identity inputs as the pre-rendered page.
+          discontinuity: p.discontinuityPeriods.includes(aggPeriod),
+          kinds: p.kindsByPeriod[aggPeriod] ?? null,
+          typing: p.typing,
         },
       ) +
       `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
@@ -497,6 +506,13 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
     try {
       deps.render(filerHtml(p));
       state = "body";
+      /* R15: the rendered Position changes carry a DOM-backed "Show more"
+         disclosure; its binder (initDomDisclosures, wired on /e/) re-binds the
+         fresh nodes on this event — the same contract the pre-rendered page's
+         period switch uses. */
+      if (typeof document !== "undefined" && typeof document.dispatchEvent === "function") {
+        document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "filer" } }));
+      }
     } catch {
       state = "render_error";
       deps.render(
@@ -773,14 +789,17 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       if (!loadedFiler) return;
       filerState.view = view;
       filerState.page = 0; // a page index from another view means nothing here
-      filerState.period =
-        view === "prior" && loadedFiler.prior ? loadedFiler.prior : loadedFiler.current;
+      // LD3 §5: the selected quarter and ITS predecessor, never the load-time pair.
+      const selected = filerState.selected ?? loadedFiler.current;
+      const prior = priorPeriodOf(loadedFiler.periods, selected);
+      filerState.period = view === "prior" && prior ? prior : selected;
       renderFiler();
     },
     holdingsPeriod: (period) => {
       if (!loadedFiler) return;
       filerAggPeriod = period;
       filerState.period = period;
+      filerState.selected = period;
       filerState.page = 0;
       filerChangesPage = 0;
       filerState.view = "current";

@@ -232,6 +232,7 @@ CREATE TABLE IF NOT EXISTS agg_ticker_holders (
   change_kind      TEXT NOT NULL CHECK (change_kind IN ('new','add','trim','exit','held','unclassified','no_prior')),
   method           TEXT NOT NULL,                -- mapping row's method
   verified_date    TEXT NOT NULL,                -- mapping row's verified_date
+  filed_date       TEXT,                         -- the holder's current-quarter 13F filed date; NULL = none on record
   PRIMARY KEY (ticker, period_of_report, rank)
 );
 -- D1 (refinement 20260910 fix): EVERY reviewed (issuer name, class) row of the

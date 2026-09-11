@@ -10,8 +10,8 @@
 // Route param is the UNPADDED CIK (/institutional/filers/1067983/).
 import Base from "../../../layouts/Base.astro";
 import HoldingsTable from "../../../components/HoldingsTable.astro";
-import { filerAggregateInputs, getBuildData, servedPeriods, topFilerCiks } from "../../../lib/data";
-import { filerPeriods, deltasFor, typingFor } from "../../../lib/inst";
+import { filerAggregateInputs, filerDefaultPeriod, getBuildData, servedPeriods, topFilerCiks } from "../../../lib/data";
+import { filerPeriods } from "../../../lib/inst";
 import { filerBody } from "../../../lib/ui/index.ts";
 import { filingWindow } from "../../../lib/derive";
 import { serializeInlineJson } from "../../../lib/inline-json";
@@ -47,9 +47,10 @@ const filer = inst.filers.find((f) => f.cik === cik10)!;
 const served = servedPeriods(build, cik10);
 const aggPeriods = filerPeriods(inst, cik10);
 const periods = served && served.length > 0 ? aggPeriods.filter((p) => served.includes(p)) : aggPeriods;
-const period = periods.at(-1) ?? filer.latest_period;
+// R4/T4: the landing's closed-quarter rule picks the default, not the newest period.
+const period = filerDefaultPeriod(build, periods) ?? filer.latest_period;
 // R6: the producer's book-discontinuity flag per period (kept, bannered).
-const discontinuityFor = (p: string): boolean => inst.bookDiscontinuityByCik.get(cik10)?.has(p) ?? false;
+const discontinuityFor = (p: string): boolean => agg.discontinuityPeriods.includes(p);
 const window = filingWindow(build.generatedAtDate);
 const latestFiled = inst.watermarks.latest_filed_date;
 
@@ -67,11 +68,9 @@ const deltaTotal = agg.deltaTotalsByPeriod[period] ?? 0;
 const benchmarks = Object.fromEntries(periods.map((p) => [p, concentrationBenchmark(inst, p)]));
 /* R15: the new-stake and exit counts are over the WHOLE period's changes
    (`deltasFor`), never the embedded, byte-bounded slice. */
-const kindsFor = (p: string): { new: number; exit: number } => {
-  const all = deltasFor(inst, cik10, p);
-  return { new: all.filter((d) => d.change_kind === "new").length, exit: all.filter((d) => d.change_kind === "exit").length };
-};
-const typing = typingFor(inst, cik10);
+const kindsFor = (p: string): { new: number; exit: number } | null => agg.kindsByPeriod[p] ?? null;
+// One producer (filerAggregateInputs) for both routes — the tail payload carries the same.
+const typing = agg.typing;
 
 const bodyHtml = filerBody(
   { cik: cik10, name: filer.filer_name, latestPeriod: filer.latest_period },

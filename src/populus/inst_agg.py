@@ -2809,6 +2809,22 @@ def populate_ticker_holders(
                 )
             }
         )
+        # R19/T20: the date each holder's current-quarter 13F became public —
+        # the overlap timeline orders by FILED date, never by quarter end. NULL
+        # = no current-quarter filing on record.
+        filed_current: dict[str, str] = {
+            r[0]: r[1]
+            for r in source_conn.execute(
+                "SELECT cik, MAX(filed_date) FROM v_filer_reported_filings"
+                " WHERE period_of_report = ? GROUP BY cik",
+                (current,),
+            )
+            if r[1] is not None
+        }
+        # R19: the registry's notable managers keep their row past the rank cap,
+        # so the overlap band's population is complete however far down the
+        # value ranking (or among the exits, which rank last) they sit.
+        notable_ciks = {r.cik_padded for r in load_manager_registry().rows if r.notable}
 
         # (ticker, cik, period) -> {value, value_undisclosed, shares, unit}
         acc: dict[tuple[str, str, str], dict] = {}
@@ -2876,7 +2892,9 @@ def populate_ticker_holders(
                 else:
                     kind, delta = "unclassified", None
                 value = None if cur is None or cur["undisclosed"] else cur["value"]
-                holders[ticker].append((cik, value, cur_shares, prv_shares, delta, kind))
+                holders[ticker].append(
+                    (cik, value, cur_shares, prv_shares, delta, kind, filed_current.get(cik))
+                )
 
         holder_rows: list[tuple] = []
         total_rows: list[tuple] = []
@@ -2889,25 +2907,31 @@ def populate_ticker_holders(
             total_rows.append(
                 (
                     ticker, current, prior, mrow.issuer_name_canonical, mrow.title_of_class,
-                    len(ranked),
+                    # R20: holders = filers holding the class NOW; an exit is a
+                    # former holder, counted under `exits` only.
+                    sum(1 for h in ranked if h[5] != "exit"),
                     sum(h[1] for h in ranked if h[1] is not None),
                     sum(1 for h in ranked if h[5] in ("new", "add")),
                     sum(1 for h in ranked if h[5] == "exit"),
                 )
             )
-            for rank, (cik, value, cur_shares, prv_shares, delta, kind) in enumerate(
-                ranked[:TICKER_HOLDERS_RANK_CAP], start=1
+            for rank, (cik, value, cur_shares, prv_shares, delta, kind, filed) in enumerate(
+                ranked, start=1
             ):
+                # The cap bounds the ranked list; a notable manager past it is
+                # kept at its TRUE rank (R19's population must be complete).
+                if rank > TICKER_HOLDERS_RANK_CAP and cik not in notable_ciks:
+                    continue
                 holder_rows.append(
                     (
                         ticker, current, rank, cik, names.get(cik, cik), value, cur_shares,
-                        prv_shares, delta, kind, mrow.method, mrow.verified_date,
+                        prv_shares, delta, kind, mrow.method, mrow.verified_date, filed,
                     )
                 )
         dest.executemany(
             "INSERT INTO agg_ticker_holders (ticker, period_of_report, rank, cik, filer_name,"
-            " value_usd, shares, prev_shares, delta_shares, change_kind, method, verified_date)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " value_usd, shares, prev_shares, delta_shares, change_kind, method, verified_date,"
+            " filed_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             holder_rows,
         )
         dest.executemany(
