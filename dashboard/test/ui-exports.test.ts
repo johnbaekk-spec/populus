@@ -29,8 +29,12 @@ const VALUE_EXPORTS = [
   "disclosureLedger",
   "unavailableDesignPanel",
   "changesTableHtml",
+  // refinement 20260910 fix, D5: the Position changes kind chips
+  "changesKindChipsHtml",
   "congressRankingSection",
   "congressTickerBody",
+  // refinement 20260910 fix, D4: one default-sort source for server and client
+  "defaultRankingSortKey",
   "emptyWindowHtml",
   "entityTableCountText",
   "entityTxnRowsHtml",
@@ -92,6 +96,8 @@ const TYPE_EXPORTS = [
   "MemberV2Deps",
   "ModuleCardStats",
   "RankingAlternatives",
+  // refinement 20260910 fix, D5
+  "ChangesKindFilter",
   "RankingSectionOpts",
   "S4ErrorKind",
   "TickerHeaderInfo",
@@ -99,7 +105,7 @@ const TYPE_EXPORTS = [
   "TickerPageDeps",
 ] as const;
 
-test("ui entry exports exactly the 67 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 69 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
@@ -107,7 +113,7 @@ test("ui entry exports exactly the 67 reconciled runtime symbols", async () => {
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
 });
 
-test("ui entry exports the 12 reconciled type-only symbols (79 total)", () => {
+test("ui entry exports the 13 reconciled type-only symbols (82 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -119,5 +125,5 @@ test("ui entry exports the 12 reconciled type-only symbols (79 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 79, "the reconciled surface is 79");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 82, "the reconciled surface is 82");
 });

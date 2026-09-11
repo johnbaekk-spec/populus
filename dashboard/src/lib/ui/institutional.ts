@@ -325,6 +325,10 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
     mark: "held",
     html: `"no change" = the share count is identical in both quarters; the value moved only with price, so the row is mark-to-market and never an add or a trim (Add / New / Trim / Exit / No change)`,
   },
+  {
+    mark: "np",
+    html: `"no prior" = this filer has no comparable holdings list for the previous quarter on record — a first filing under this registration, or a quarter reported inside an affiliated manager's filing — so the position is not called a new stake`,
+  },
 ];
 
 const QOQ_FN = new Map(QOQ_FOOTNOTES.map((e) => [e.mark, e.html]));
@@ -338,7 +342,7 @@ const QOQ_FN = new Map(QOQ_FOOTNOTES.map((e) => [e.mark, e.html]));
    Src column, so it hangs on Δ value. */
 const QOQ_COL_NOTES: Record<string, string | undefined> = {
   "position-grain": QOQ_FN.get("‡r"),
-  change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c"), QOQ_FN.get("held")),
+  change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c"), QOQ_FN.get("held"), QOQ_FN.get("np")),
   "delta-value": QOQ_FN.get("§"),
   "delta-shares": QOQ_FN.get("‡u"),
 };
@@ -363,11 +367,33 @@ export function qoqChipHtml(row: QoqDeltaRow): string {
 /** R15: rows of the changes table shown before "Show more". */
 export const CHANGES_COMPACT_ROWS = 20;
 
+/** D5: the filer page's Position changes filter — the landing band's chip
+    pattern (`mgr-chip`, `aria-pressed`), one kind at a time, "All" clears it. */
+export type ChangesKindFilter = "new" | "add" | "trim" | "exit";
+const CHANGES_KIND_CHIPS: readonly (readonly [ChangesKindFilter | null, string])[] = [
+  [null, "All"],
+  ["new", "New stakes"],
+  ["add", "Adds"],
+  ["trim", "Trims"],
+  ["exit", "Exits"],
+];
+
+export function changesKindChipsHtml(active: ChangesKindFilter | null): string {
+  return (
+    `<div class="chips changes-kind-chips" role="group" aria-label="Filter position changes by kind" data-changes-kinds>` +
+    CHANGES_KIND_CHIPS.map(
+      ([k, label]) =>
+        `<button type="button" class="mgr-chip" data-changes-kind="${k ?? "all"}" aria-pressed="${(active ?? null) === k}">${esc(label)}</button>`,
+    ).join("") +
+    `</div>`
+  );
+}
+
 export function changesTableHtml(
   deltas: QoqDeltaRow[],
   period: string,
   latestFiled: string | null,
-  opts: { total?: number; page?: number; compact?: number } = {},
+  opts: { total?: number; page?: number; compact?: number; kind?: ChangesKindFilter | null } = {},
 ): string {
   /* `deltas` arrives already ordered and bounded by `holdings.boundQoqDeltas`;
      re-ordering here is idempotent and keeps this function correct for a caller
@@ -379,7 +405,14 @@ export function changesTableHtml(
      changes. They leave the paged table and render once, below it, in a
      collapsed group, so a value-only row never reads as an add or a trim. */
   const held = orderedAll.filter((d) => d.change_kind === "held");
-  const ordered = orderedAll.filter((d) => d.change_kind !== "held");
+  /* D2: `no_prior` rows (no comparable prior-quarter list) are not position
+     changes either — they would otherwise read as a wall of new stakes. They
+     render once, below the table, in their own collapsed group. */
+  const noPrior = orderedAll.filter((d) => d.change_kind === "no_prior");
+  const kindFilter = opts.kind ?? null;
+  const ordered = orderedAll.filter(
+    (d) => d.change_kind !== "held" && d.change_kind !== "no_prior" && (kindFilter === null || d.change_kind === kindFilter),
+  );
   const total = opts.total ?? orderedAll.length;
   const page = opts.page ?? 0;
   const embedded = orderedAll.length;
@@ -392,6 +425,7 @@ export function changesTableHtml(
      pages of one table. */
   const statedDeltas = universalFlags(ordered.map((d) => d.flags));
   const statedHeld = universalFlags(held.map((d) => d.flags));
+  const statedNoPrior = universalFlags(noPrior.map((d) => d.flags));
   let rowSeq = 0;
   const rowHtml = (d: QoqDeltaRow, stated: readonly string[] = statedDeltas): string => {
     /* R1: the issuer NAME leads the row; the class is secondary ink; the raw
@@ -474,7 +508,22 @@ export function changesTableHtml(
         `<caption class="visually-hidden">Positions held with no share change into quarter ${esc(period)}</caption>` +
         headHtml.replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-held-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-held-').replace(/ id="n-filer-changes-/g, ' id="n-filer-held-') +
         `<tbody>${held.map((d) => rowHtml(d, statedHeld)).join("\n")}</tbody></table></div></details>`;
+  const noPriorGroup =
+    noPrior.length === 0
+      ? ""
+      : `<details class="qoq-held-group" data-qoq-no-prior><summary>No prior quarter to compare · ${fmtInt(noPrior.length)}</summary>` +
+        `<p class="section-note">This filer has no comparable holdings list for the previous quarter on record — a first filing under this registration, or a quarter reported inside an affiliated manager's filing. These positions are not new stakes; there is nothing to compare them against.</p>` +
+        universalFlagNote(statedNoPrior) +
+        `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedNoPrior.join(","))}">` +
+        `<caption class="visually-hidden">Positions with no prior quarter to compare into quarter ${esc(period)}</caption>` +
+        headHtml.replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-noprior-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-noprior-').replace(/ id="n-filer-changes-/g, ' id="n-filer-noprior-') +
+        `<tbody>${noPrior.map((d) => rowHtml(d, statedNoPrior)).join("\n")}</tbody></table></div></details>`;
+  const kindLabel = CHANGES_KIND_CHIPS.find(([k]) => k === kindFilter)?.[1] ?? "";
   return (
+    changesKindChipsHtml(kindFilter) +
+    (kindFilter !== null && ordered.length === 0
+      ? `<p class="section-note" data-changes-kind-empty>No ${esc(kindLabel.toLowerCase())} among this page's embedded changes for ${esc(period)}.</p>`
+      : "") +
     universalFlagNote(statedDeltas) +
     `<div class="table-scroll"><table class="etable" data-sticky-first${
       pageCount > 1 ? ' data-paged="1"' : ""
@@ -493,6 +542,7 @@ export function changesTableHtml(
       : "") +
     changesPagerHtml(page, pageRows.length, ordered.length, pageCount) +
     heldGroup +
+    noPriorGroup +
     /* The bound names itself, with the TRUE total — the grammar the holdings
        surface below already uses (G3). An uncapped period must render nothing
        here: a terminus on a complete list would claim a withholding that never
@@ -603,7 +653,7 @@ export function filerPeriodSectionHtml(
       ? `<p class="section-note">No quarter-over-quarter rows land in ${esc(
           period,
         )} — either the first period on record for this filer, or nothing keyable on either side.</p>`
-      : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page });
+      : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page, kind: opts.kind ?? null });
   return (
     /* The filer tiles' breakdowns become notes, keyed on each
        tile's LABEL — unique within a tile group by construction, in both the
@@ -646,6 +696,8 @@ export interface FilerPeriodOpts {
   discontinuity?: boolean;
   /** R15: kind counts over the WHOLE period's changes */
   kinds?: { new: number; exit: number } | null;
+  /** D5: the Position changes kind filter (null = all kinds) */
+  kind?: ChangesKindFilter | null;
 }
 
 export function filerEdgarBlock(cik: string, filerName: string): string {
@@ -1128,7 +1180,7 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
         `<td class="c-num">${h.value_usd == null ? "—" : esc(fmtUsd(h.value_usd))}</td>` +
         `<td class="c-num">${h.shares == null ? "—" : fmtInt(h.shares)}</td>` +
         `<td class="c-num ${h.delta_shares == null ? "c-muted" : h.delta_shares < 0 ? "c-sell" : h.delta_shares > 0 ? "c-buy" : ""}">${h.delta_shares == null ? "—" : `${h.delta_shares < 0 ? "−" : h.delta_shares > 0 ? "+" : ""}${fmtInt(Math.abs(h.delta_shares))}`}</td>` +
-        `<td class="c-chip"><span class="qoq-chip qoq-${esc(h.change_kind)}">${esc(h.change_kind === "held" ? "no change" : h.change_kind)}</span></td></tr>`,
+        `<td class="c-chip"><span class="qoq-chip qoq-${esc(h.change_kind)}">${esc(h.change_kind === "held" ? "no change" : h.change_kind === "no_prior" ? "no prior" : h.change_kind)}</span></td></tr>`,
     )
     .join("\n");
   return (

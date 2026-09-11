@@ -31,6 +31,7 @@ import {
 import type { TxnRow, RenderCtx } from "../lib/format.ts";
 import {
   CONGRESS_ROOTS,
+  defaultRankingSortKey,
   emptyWindowHtml,
   rankingAlternatives,
   rankingRootHtml,
@@ -184,7 +185,9 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     return table ? [...table.querySelectorAll<HTMLElement>("thead th[data-congress-sort]")] : [];
   }
 
-  bindRoot(CONGRESS_ROOTS.momentum, "tickers", DEFAULT_SORT);
+  // D4: the tickers section defaults to disclosure count — the SAME key the
+  // server rendered (`defaultRankingSortKey`), so the two cannot disagree.
+  bindRoot(CONGRESS_ROOTS.momentum, "tickers", { key: defaultRankingSortKey("tickers"), dir: "desc" });
   bindRoot(CONGRESS_ROOTS.membersRanked, "leaders", DEFAULT_SORT);
   bindRoot(CONGRESS_ROOTS.membersUndisclosed, "leaders", BUCKET_SORT);
 

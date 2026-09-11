@@ -487,6 +487,13 @@ export function emptyWindowHtml(
   return `<p class="section-note empty-window">${body}</p>`;
 }
 
+/** D4: the default sort of a ranking section — disclosure count for tickers
+    ("most disclosed"), net disclosed flow for members. ONE source, read by the
+    server render and the client binding so the two cannot disagree. */
+export function defaultRankingSortKey(kind: "leaders" | "tickers"): CongressSortKey {
+  return kind === "tickers" ? "txns" : "net";
+}
+
 /** One ranking section — used for BOTH the ticker momentum section and the
     member net-flow section. SSR renders the authoritative default view; the
     client re-renders only the roots. */
@@ -511,13 +518,17 @@ export function congressRankingSection(
     (r) => r.id,
   );
 
-  const main = rankingRootHtml(ranked, "net", "desc", kind, ctx, { compact, prefetch: COMPACT_STEP });
+  /* D4: "Tickers · most disclosed" ranks by the NUMBER of disclosures (the
+     section's name and SRC §2); net disclosed flow stays one header click
+     away. The member section keeps net flow. */
+  const defaultKey: CongressSortKey = defaultRankingSortKey(kind);
+  const main = rankingRootHtml(ranked, defaultKey, "desc", kind, ctx, { compact, prefetch: COMPACT_STEP });
   const bucket = rankingRootHtml(undisclosedBucket, "name", "asc", kind, ctx, { compact });
 
   const caption =
     kind === "leaders"
       ? `Members ranked by net disclosed flow, ${windowText}`
-      : `Tickers ranked by net disclosed flow, ${windowText}`;
+      : `Tickers ranked by number of disclosures, ${windowText}`;
   const noun = kind === "leaders" ? "members" : "tickers";
   return (
     `<section class="panel panel-wide${ctx.referenceRankings ? " reference-ranking" : ""}" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
@@ -542,10 +553,10 @@ export function congressRankingSection(
        The paragraph itself is gone; its `<noscript>` is NOT, because that
        sentence is about scripting rather than about a column, so no column note
        is the right home for it and a no-JavaScript reader must still get it. */
-    `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by net disclosed flow, largest first.</noscript></p>` +
+    `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by ${kind === "tickers" ? "number of disclosures" : "net disclosed flow"}, largest first.</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${rankingHeadHtml(cols, "net", "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
+    `<thead><tr>${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
     /* A zero-rankable window STATES itself. The container ships
        in both states so the client can fill it when a range change empties the

@@ -38,6 +38,7 @@ import {
   filerPeriodSectionHtml,
   holdersTableHtml,
   type BuildStamps,
+  type ChangesKindFilter,
 } from "../lib/ui/index.ts";
 import {
   institutionalDataNoteHtml,
@@ -221,6 +222,8 @@ export interface DriverHandle {
   holdingsPage: (dir: "prev" | "next") => void;
   /** changes-table pagination (the tail route previously had none). */
   changesPage: (dir: "prev" | "next") => void;
+  /** D5: the Position changes kind filter (null = all kinds). */
+  changesKind: (kind: ChangesKindFilter | null) => void;
   holdingsView: (view: "current" | "prior" | "diff") => void;
   holdingsPeriod: (period: string) => void;
   done: Promise<void>;
@@ -429,6 +432,9 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
   /** Changes-table page index, reset whenever the selected period changes: a page
       index from another quarter addresses nothing in this one. */
   let filerChangesPage = 0;
+  /** D5: the Position changes kind filter — the same state the pre-rendered
+      page's island keeps, so both routes filter identically. */
+  let filerChangesKind: ChangesKindFilter | null = null;
 
   function filerSurfaceOf(p: FilerPayloadV1): FilerSurfacePayload {
     return {
@@ -475,6 +481,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
         {
           total: p.deltaTotalsByPeriod[aggPeriod]!,
           page: filerChangesPage,
+          kind: filerChangesKind,
         },
       ) +
       `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
@@ -751,6 +758,12 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       filerState.page = Math.max(0, filerState.page + (dir === "next" ? 1 : -1));
       renderFiler();
     },
+    changesKind: (kind) => {
+      if (!loadedFiler) return;
+      filerChangesKind = kind;
+      filerChangesPage = 0; // a page index under another filter addresses nothing here
+      renderFiler();
+    },
     changesPage: (dir) => {
       if (!loadedFiler) return;
       filerChangesPage = Math.max(0, filerChangesPage + (dir === "next" ? 1 : -1));
@@ -937,6 +950,9 @@ export function initFilerPeriods(): void {
     chips.querySelector<HTMLElement>("[data-period]")?.dataset.period ??
     "";
   let page = 0;
+  /* D5: the Position changes kind filter; kept across period switches (the
+     reader asked for one kind), while the page resets as it always has. */
+  let kind: ChangesKindFilter | null = null;
   const draw = (): void => {
     const slice = data.periods[period];
     if (!slice) return;
@@ -950,7 +966,7 @@ export function initFilerPeriods(): void {
       // total is a corrupt embed, handled above by leaving the SSR section alone
       // — never papered over with the embedded length, which would claim a
       // completeness the server never claimed.
-      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null },
+      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
     );
     // R15: a re-rendered section carries fresh DOM-backed disclosures; the
     // owner of those controls re-binds on this event.
@@ -971,6 +987,15 @@ export function initFilerPeriods(): void {
   });
   // Delegated on the root because `draw()` replaces the pager's own subtree.
   root.addEventListener("click", (ev) => {
+    const kindBtn = (ev.target as Element).closest<HTMLButtonElement>("[data-changes-kind]");
+    if (kindBtn && period) {
+      const k = kindBtn.dataset.changesKind;
+      kind = k === "new" || k === "add" || k === "trim" || k === "exit" ? k : null;
+      page = 0; // a page index under another filter addresses nothing here
+      draw();
+      root.querySelector<HTMLElement>(`[data-changes-kind="${kind ?? "all"}"]`)?.focus();
+      return;
+    }
     const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-changes-page]");
     if (!btn || btn.getAttribute("aria-disabled") === "true" || !period) return;
     page = Math.max(0, page + (btn.dataset.changesPage === "next" ? 1 : -1));
@@ -1120,6 +1145,12 @@ export function dispatchEntityClick(el: Element, handle: DriverHandle): void {
       if (pageBtn.getAttribute("aria-disabled") !== "true") {
         handle.holdingsPage(pageBtn.dataset.holdingsPage === "next" ? "next" : "prev");
       }
+      return;
+    }
+    const kindBtn = el.closest<HTMLButtonElement>("[data-changes-kind]");
+    if (kindBtn) {
+      const k = kindBtn.dataset.changesKind;
+      handle.changesKind(k === "new" || k === "add" || k === "trim" || k === "exit" ? k : null);
       return;
     }
     const changesBtn = el.closest<HTMLButtonElement>("[data-changes-page]");

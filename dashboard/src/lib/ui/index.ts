@@ -40,6 +40,7 @@ export {
   rankingWindowHtml,
   CONGRESS_RANGES,
   rankingAlternatives,
+  defaultRankingSortKey,
   emptyWindowHtml,
   congressRankingSection,
 } from "./rankings.ts";
@@ -66,6 +67,8 @@ export {
   QOQ_FOOTNOTES,
   qoqChipHtml,
   changesTableHtml,
+  changesKindChipsHtml,
+  type ChangesKindFilter,
   filerPeriodSectionHtml,
   filerEdgarBlock,
   filerBody,

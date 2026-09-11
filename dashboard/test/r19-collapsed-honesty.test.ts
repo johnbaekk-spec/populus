@@ -16,6 +16,7 @@ import { congressTickersRollup, leadersRollup, rankNetRows } from "../src/lib/de
 import {
   CONGRESS_ROOTS,
   congressRankingSection,
+  defaultRankingSortKey,
   rankingRootHtml,
   type BuildStamps,
 } from "../src/lib/ui/index.ts";
@@ -270,7 +271,9 @@ test("R3: the client's default view is byte-identical to the server's", () => {
   // The island derives this id from the enclosing section, exactly as the
   // server does — passing a different one is precisely the drift this test
   // exists to catch, and it did catch it.
-  const clientBody = rankingRootHtml(ranked, "net", "desc", "tickers", ctx, {
+  // D4: the default key is `defaultRankingSortKey` — the ONE source the server
+  // section and the island binding both read (disclosure count for tickers).
+  const clientBody = rankingRootHtml(ranked, defaultRankingSortKey("tickers"), "desc", "tickers", ctx, {
     compact: COMPACT_ROWS,
     prefetch: COMPACT_STEP,
     footnotesId: "momentum-section-footnotes",

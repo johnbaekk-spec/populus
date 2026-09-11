@@ -132,8 +132,8 @@ export function issuerKeyOf(row: Pick<FilerHoldingRow, "issuer_key" | "cusip">):
 
 /** R25: the filer page's issuer groups. Reported rows are keyed by their
     issuer bucket (`issuerKeyOf`); a row with no key stands alone under its
-    position identity, so nothing is ever merged on a guess. Groups keep the
-    assembler's display order (first appearance). Value is NULL when any row's
+    position identity, so nothing is ever merged on a guess. Groups are ordered
+    by group total, largest first (D3), ties by first appearance. Value is NULL when any row's
     value is undisclosed (a partial sum would read as the whole holding); shares
     are summed only when every row states them in one unit. */
 export interface IssuerHoldingGroup {
@@ -159,7 +159,21 @@ export function groupHoldingsByIssuer(rows: readonly FilerHoldingRow[]): IssuerH
     g.shares = g.shares == null || row.shares == null || !sameUnit ? null : g.shares + row.shares;
     if (!sameUnit) g.ssh_type = null;
   });
-  return [...byKey.values()];
+  /* D3: groups rank by the GROUP total, largest first — a filer's biggest
+     issuer leads even when its first reported row is small. A group whose total
+     is undisclosed (NULL) sorts after every stated total, never as a zero; ties
+     keep first-appearance order, so the order is total and reproducible. */
+  const groups = [...byKey.values()];
+  const firstSeen = new Map(groups.map((g, i) => [g.key, i]));
+  return groups.sort((a, b) => {
+    if (a.value_usd == null || b.value_usd == null) {
+      if (a.value_usd != null) return -1;
+      if (b.value_usd != null) return 1;
+    } else if (a.value_usd !== b.value_usd) {
+      return b.value_usd - a.value_usd;
+    }
+    return firstSeen.get(a.key)! - firstSeen.get(b.key)!;
+  });
 }
 
 /** Issuer-holder projection: one row per (issuer, period, FILER). `filer_key` is
