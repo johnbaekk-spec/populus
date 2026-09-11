@@ -37,7 +37,7 @@ export interface QoqDeltaRow {
   put_call: "LONG" | "PUT" | "CALL";
   curr_period: string;
   prev_period: string;
-  change_kind: "new" | "add" | "trim" | "exit" | "held" | "unclassified"; // held = Δshares 0 (R8)
+  change_kind: "new" | "add" | "trim" | "exit" | "held" | "unclassified" | "no_prior"; // held = Δshares 0 (R8); no_prior = no comparable prior book (D2)
   prev_value_usd: number | null;
   curr_value_usd: number | null;
   delta_value_usd: number | null;
@@ -119,7 +119,9 @@ export type InstData =
           mapping row's canonical (issuer name, class). */
       tickerTotals: Map<string, TickerTotalsRow>;
       /** R3: `tierCKey(issuer_name, title_of_class)` → the reviewed ticker, for
-          the row-level TICKER cell. Built from `tickerTotals`. */
+          the row-level TICKER cell. D1: built from `agg_ticker_keys` — EVERY
+          reviewed spelling of the mapping file — and, on an older aggregate
+          without that table, from `tickerTotals` (one spelling per ticker). */
       tickerByKey: Map<string, TickerRef>;
     };
 
@@ -358,7 +360,7 @@ function loadBookDiscontinuity(db: DatabaseSync): Map<string, Set<string>> {
 
 /** R3: the class-grain ticker tables, optional at read time (older aggregates
     and the rollback smoke test carry none → no tickers anywhere, G14). */
-function loadTickerHolders(db: DatabaseSync): {
+export function loadTickerHolders(db: DatabaseSync): {
   tickerHoldersByTicker: Map<string, TickerHolderRow[]>;
   tickerTotals: Map<string, TickerTotalsRow>;
   tickerByKey: Map<string, TickerRef>;
@@ -422,6 +424,19 @@ function loadTickerHolders(db: DatabaseSync): {
         verified_date: row.verified_date,
         method: row.method,
       });
+    }
+  }
+  // D1: every reviewed (issuer name, class) row of the mapping file resolves
+  // the cell, not only the one spelling each totals row keeps ("APPLE INC" /
+  // "COM" as well as "APPLE INC" / "CMN"). The mapping is the claim (G14).
+  if (tableExists(db, "agg_ticker_keys")) {
+    for (const r of db
+      .prepare(`SELECT issuer_name, title_of_class, ticker, method, verified_date FROM agg_ticker_keys ORDER BY ticker, issuer_name, title_of_class`)
+      .all() as Record<string, unknown>[]) {
+      const key = tierCKey(String(r.issuer_name), String(r.title_of_class));
+      if (!tickerByKey.has(key)) {
+        tickerByKey.set(key, { ticker: String(r.ticker), verified_date: String(r.verified_date), method: String(r.method) });
+      }
     }
   }
   // A mapped ticker with a totals row but no holder rows (no holder in the

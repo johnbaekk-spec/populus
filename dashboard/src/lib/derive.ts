@@ -1089,6 +1089,9 @@ const CHIP: Record<string, { text: string; cls: QoqPresentation["chipCls"] }> = 
   // R8: Δshares == 0 — mark-to-market only. Never a direction.
   held: { text: "no change", cls: "qoq-held" },
   unclassified: { text: "n/c", cls: "qoq-nc" },
+  // D2: no comparable prior book — a first filing under this registration or a
+  // prior quarter reported inside an affiliate's filing. Never a new stake.
+  no_prior: { text: "no prior", cls: "qoq-nc" },
 };
 
 export function qoqPresentation(row: QoqDeltaRow): QoqPresentation {

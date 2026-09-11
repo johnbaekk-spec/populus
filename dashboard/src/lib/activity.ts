@@ -111,7 +111,7 @@ export const FILINGS_TABLE = "serving_filings";
 
 /** `held` (R8): the share count did not move — mark-to-market only. It is
     excluded from every landing / notable feed and never reads as add or trim. */
-export type ChangeKind = "new" | "add" | "trim" | "exit" | "held" | "unclassified";
+export type ChangeKind = "new" | "add" | "trim" | "exit" | "held" | "unclassified" | "no_prior";
 
 /** One entry of a shard's filing dictionary — mirrors `FilingRef.as_dict()` in
     `src/populus/inst_serving.py`. One per FILING, not per row. */
@@ -751,6 +751,8 @@ const CHANGE_LABEL: Record<ChangeKind, { chip: string; cls: string; spoken: stri
   exit: { chip: "exit", cls: "qoq-exit", spoken: "no longer reported this quarter" },
   held: { chip: "no change", cls: "qoq-held", spoken: "share count unchanged; only the reported value moved" },
   unclassified: { chip: "n/c", cls: "qoq-nc", spoken: "not classifiable from the filings" },
+  // D2: the filer has no comparable book for the prior quarter — never a new stake.
+  no_prior: { chip: "no prior", cls: "qoq-nc", spoken: "no prior quarter on record to compare against; not a new stake" },
 };
 
 /** Δ value cell. A null delta is UNDISCLOSED, never 0 and never an em-dash that
@@ -1185,7 +1187,7 @@ function strOrNull(v: unknown): string | null {
   return v == null ? null : String(v);
 }
 
-const CHANGE_KINDS = new Set<string>(["new", "add", "trim", "exit", "held", "unclassified"]);
+const CHANGE_KINDS = new Set<string>(["new", "add", "trim", "exit", "held", "unclassified", "no_prior"]);
 
 /**
  * Where the serving artifact lives. `POPULUS_INST_SERVING_DB` wins; otherwise it

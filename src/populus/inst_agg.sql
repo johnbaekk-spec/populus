@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS _agg_qoq_deltas (
   put_call_code     INTEGER NOT NULL CHECK (put_call_code BETWEEN 0 AND 2),
   curr_period_id    INTEGER NOT NULL,
   prev_period_id    INTEGER NOT NULL,
-  change_kind_code  INTEGER NOT NULL CHECK (change_kind_code BETWEEN 0 AND 5),  -- 5 = held (R8)
+  change_kind_code  INTEGER NOT NULL CHECK (change_kind_code BETWEEN 0 AND 6),  -- 5 = held (R8); 6 = no_prior
   prev_value_usd    INTEGER,
   curr_value_usd    INTEGER,
   delta_value_usd   INTEGER,
@@ -92,6 +92,7 @@ SELECT
     WHEN 2 THEN 'trim'
     WHEN 3 THEN 'exit'
     WHEN 5 THEN 'held'
+    WHEN 6 THEN 'no_prior'
     ELSE 'unclassified'
   END AS change_kind,
   q.prev_value_usd,
@@ -228,10 +229,22 @@ CREATE TABLE IF NOT EXISTS agg_ticker_holders (
   shares           INTEGER,
   prev_shares      INTEGER,
   delta_shares     INTEGER,
-  change_kind      TEXT NOT NULL CHECK (change_kind IN ('new','add','trim','exit','held','unclassified')),
+  change_kind      TEXT NOT NULL CHECK (change_kind IN ('new','add','trim','exit','held','unclassified','no_prior')),
   method           TEXT NOT NULL,                -- mapping row's method
   verified_date    TEXT NOT NULL,                -- mapping row's verified_date
   PRIMARY KEY (ticker, period_of_report, rank)
+);
+-- D1 (refinement 20260910 fix): EVERY reviewed (issuer name, class) row of the
+-- mapping file, so a filed row resolves under any reviewed spelling of its
+-- issuer and class, not only the one spelling `agg_ticker_holder_totals` keeps.
+-- Straight from `ticker_mapping_13f.yaml`; nothing here is inferred (G14).
+CREATE TABLE IF NOT EXISTS agg_ticker_keys (
+  issuer_name      TEXT NOT NULL,                 -- mapping row's canonical filed name
+  title_of_class   TEXT NOT NULL,
+  ticker           TEXT NOT NULL,                 -- SEC spelling (BRK-B)
+  method           TEXT NOT NULL,
+  verified_date    TEXT NOT NULL,
+  PRIMARY KEY (issuer_name, title_of_class)
 );
 CREATE TABLE IF NOT EXISTS agg_ticker_holder_totals (
   ticker           TEXT NOT NULL,

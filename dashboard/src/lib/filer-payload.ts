@@ -410,7 +410,7 @@ function concentrationOf(v: unknown, field: string): ConcentrationRow | null {
 }
 
 const PUT_CALLS = new Set(["LONG", "PUT", "CALL"]);
-const CHANGE_KINDS = new Set(["new", "add", "trim", "exit", "held", "unclassified"]);
+const CHANGE_KINDS = new Set(["new", "add", "trim", "exit", "held", "unclassified", "no_prior"]);
 const UNIT_TYPES = new Set(["SH", "PRN", "UNKNOWN"]);
 
 function deltaOf(v: unknown, field: string): QoqDeltaRow {

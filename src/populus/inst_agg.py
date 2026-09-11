@@ -219,8 +219,17 @@ def _qoq_row(
     reconciled: bool,
     ingested_at: str,
     migrated: bool = False,
+    prior_book: bool = True,
 ) -> tuple:
     """One ``agg_qoq_deltas`` row tuple, with the unit-guarded Δshares.
+
+    ``prior_book`` (D2, refinement 20260910 fix): whether the prior side HAS a
+    comparable book — at least one keyable default position for that filer and
+    period. A position is ``new`` only when the filer's prior book exists and
+    omits it. With no prior book (a first filing under this registration, or a
+    prior quarter whose book is reported inside an affiliate's filing and so is
+    not in the default set) the position is ``no_prior``: no prior value, no
+    Δ, and never a new stake.
 
     ``migrated`` (R6): the prior side is a registry-declared PREDECESSOR CIK's
     last book, not this CIK's own; every row of such a pair carries
@@ -230,7 +239,10 @@ def _qoq_row(
     # position is a real zero; presence with an undisclosed value is not.
     prev_undisclosed = prev is not None and not prev.has_disclosed_value
     curr_undisclosed = curr is not None and not curr.has_disclosed_value
-    prev_value = None if prev_undisclosed else (prev.value_usd if prev else 0)
+    no_prior = prev is None and not prior_book
+    prev_value = (
+        None if prev_undisclosed or no_prior else (prev.value_usd if prev else 0)
+    )
     curr_value = None if curr_undisclosed else (curr.value_usd if curr else 0)
     delta_value = (
         None if prev_value is None or curr_value is None
@@ -249,8 +261,12 @@ def _qoq_row(
         flags.add("value_undisclosed_one_side")
 
     if prev is None:
-        change_kind = "new"
-        delta_shares = curr_shares
+        if prior_book:
+            change_kind = "new"
+            delta_shares = curr_shares
+        else:
+            change_kind = "no_prior"
+            delta_shares = None
     elif curr is None:
         change_kind = "exit"
         delta_shares = -prev_shares if prev_shares is not None else None
@@ -785,6 +801,18 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
             )
         ],
     )
+    # D2: whether the PRIOR side has a comparable book (any keyable default
+    # position). Same rule as the python path's `prior_book=bool(prev)`.
+    conn.execute(
+        "ALTER TABLE _populus_inst_agg_periods"
+        " ADD COLUMN prev_has_book INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute(
+        "UPDATE _populus_inst_agg_periods SET prev_has_book = EXISTS ("
+        " SELECT 1 FROM _populus_inst_agg_positions a"
+        " WHERE a.cik=_populus_inst_agg_periods.prev_cik"
+        " AND a.period_of_report=_populus_inst_agg_periods.prev_period)"
+    )
     conn.execute(
         "CREATE TEMP TABLE _populus_inst_agg_matches ("
         " cik TEXT NOT NULL, curr_period TEXT NOT NULL, prev_period TEXT NOT NULL,"
@@ -870,12 +898,13 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
 _QOQ_SOURCE_SQL = """
 WITH pairs AS (
  SELECT m.cik,m.curr_period,m.prev_period,b.position_key,b.put_call,
-        b.grain_unit,m.reconciled,m.migrated,m.prev_id,m.curr_id
+        b.grain_unit,m.reconciled,m.migrated,m.prev_id,m.curr_id,
+        1 AS prev_has_book
  FROM _populus_inst_agg_matches m
  JOIN _populus_inst_agg_positions b ON b.rowid=m.curr_id
  UNION ALL
  SELECT p.cik,p.curr_period,p.prev_period,b.position_key,b.put_call,
-        b.grain_unit,0,(p.prev_cik<>p.cik),NULL,b.rowid
+        b.grain_unit,0,(p.prev_cik<>p.cik),NULL,b.rowid,p.prev_has_book
  FROM _populus_inst_agg_periods p
  JOIN _populus_inst_agg_positions b
   ON b.cik=p.cik AND b.period_of_report=p.curr_period
@@ -883,7 +912,7 @@ WITH pairs AS (
  WHERE m.curr_id IS NULL
  UNION ALL
  SELECT p.cik,p.curr_period,p.prev_period,a.position_key,a.put_call,
-        a.grain_unit,0,(p.prev_cik<>p.cik),a.rowid,NULL
+        a.grain_unit,0,(p.prev_cik<>p.cik),a.rowid,NULL,1
  FROM _populus_inst_agg_periods p
  JOIN _populus_inst_agg_positions a
   ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period
@@ -891,7 +920,8 @@ WITH pairs AS (
  WHERE m.prev_id IS NULL
 ), sides AS (
  SELECT q.*,
-   CASE WHEN q.prev_id IS NULL THEN 0 WHEN a.has_disclosed_value=0 THEN NULL ELSE a.value_usd END AS prev_value,
+   CASE WHEN q.prev_id IS NULL THEN CASE WHEN q.prev_has_book THEN 0 ELSE NULL END
+        WHEN a.has_disclosed_value=0 THEN NULL ELSE a.value_usd END AS prev_value,
    CASE WHEN q.curr_id IS NULL THEN 0 WHEN b.has_disclosed_value=0 THEN NULL ELSE b.value_usd END AS curr_value,
    a.shares AS prev_shares,b.shares AS curr_shares,
    (a.clean_unit IS NOT NULL AND b.clean_unit IS NOT NULL
@@ -904,12 +934,14 @@ WITH pairs AS (
 ), deltas AS (
  SELECT *,CASE WHEN prev_value IS NULL OR curr_value IS NULL THEN NULL
                ELSE curr_value-prev_value END AS delta_value,
-   CASE WHEN prev_id IS NULL THEN curr_shares
+   CASE WHEN prev_id IS NULL THEN CASE WHEN prev_has_book THEN curr_shares ELSE NULL END
         WHEN curr_id IS NULL THEN -prev_shares
         WHEN units_ok THEN curr_shares-prev_shares ELSE NULL END AS delta_shares
  FROM sides
 ), classified AS (
- SELECT *,CASE WHEN prev_id IS NULL THEN 'new' WHEN curr_id IS NULL THEN 'exit'
+ SELECT *,CASE WHEN prev_id IS NULL
+          THEN CASE WHEN prev_has_book THEN 'new' ELSE 'no_prior' END
+        WHEN curr_id IS NULL THEN 'exit'
         WHEN delta_shares IS NOT NULL AND delta_shares<>0
           THEN CASE WHEN delta_shares>0 THEN 'add' ELSE 'trim' END
         WHEN delta_shares=0 THEN 'held'
@@ -1216,7 +1248,7 @@ def _build_inst_agg_python(
                         prev=None if kind == "new" else pos,
                         curr=pos if kind == "new" else None,
                         reconciled=False, ingested_at=ingested_at,
-                        migrated=migrated,
+                        migrated=migrated, prior_book=bool(prev),
                     )
                 )
 
@@ -1610,6 +1642,8 @@ _QOQ_CHANGE_KIND_CODES = {
     "unclassified": 4,
     # R8: Δshares == 0 — mark-to-market only, no share change.
     "held": 5,
+    # D2: the prior side has no comparable book — never a new stake.
+    "no_prior": 6,
 }
 _QOQ_UNIT_CODES = {"SH": 0, "PRN": 1, "UNKNOWN": 2}
 _QOQ_FLAG_BITS = {
@@ -1840,7 +1874,7 @@ def _validate_compact_qoq_schema(
         " WHERE f.filer_id IS NULL OR cp.period_id IS NULL"
         " OR pp.period_id IS NULL"
         " OR q.put_call_code NOT BETWEEN 0 AND 2"
-        " OR q.change_kind_code NOT BETWEEN 0 AND 5"
+        " OR q.change_kind_code NOT BETWEEN 0 AND 6"
         " OR q.unit_code NOT BETWEEN 0 AND 2"
         " OR q.flags_mask NOT BETWEEN 0 AND 63 LIMIT 1"
     ).fetchone()
@@ -2723,6 +2757,17 @@ def populate_ticker_holders(
     try:
         dest.execute("DELETE FROM agg_ticker_holders")
         dest.execute("DELETE FROM agg_ticker_holder_totals")
+        dest.execute("DELETE FROM agg_ticker_keys")
+        # D1: every reviewed (issuer name, class) row, so a filed row resolves
+        # under ANY reviewed spelling — `agg_ticker_holder_totals` keeps one.
+        dest.executemany(
+            "INSERT INTO agg_ticker_keys (issuer_name, title_of_class, ticker,"
+            " method, verified_date) VALUES (?, ?, ?, ?, ?)",
+            [
+                (r.issuer_name_canonical, r.title_of_class, r.ticker, r.method, r.verified_date)
+                for r in mapping.rows
+            ],
+        )
         if not by_key:
             dest.commit()
             return
@@ -2749,6 +2794,21 @@ def populate_ticker_holders(
         periods = (current,) if prior is None else (prior, current)
         placeholders = ",".join("?" for _ in periods)
         names = dict(source_conn.execute("SELECT cik, name_raw FROM inst_filers"))
+        # D2: `new` needs a prior-quarter filing that OMITS the position. A
+        # holder with no filing at all for the prior quarter (a first filing
+        # under this registration) is `no_prior`, never a new stake.
+        filed_prior: set[str] = (
+            set()
+            if prior is None
+            else {
+                r[0]
+                for r in source_conn.execute(
+                    "SELECT DISTINCT cik FROM v_filer_reported_filings"
+                    " WHERE period_of_report = ?",
+                    (prior,),
+                )
+            }
+        )
 
         # (ticker, cik, period) -> {value, value_undisclosed, shares, unit}
         acc: dict[tuple[str, str, str], dict] = {}
@@ -2804,7 +2864,10 @@ def populate_ticker_holders(
                     and cur_shares is not None and prv_shares is not None
                 )
                 if prv is None:
-                    kind, delta = "new", cur_shares
+                    if cik in filed_prior:
+                        kind, delta = "new", cur_shares
+                    else:
+                        kind, delta = "no_prior", None
                 elif cur is None:
                     kind, delta = "exit", (-prv_shares if prv_shares is not None else None)
                 elif units_ok:
