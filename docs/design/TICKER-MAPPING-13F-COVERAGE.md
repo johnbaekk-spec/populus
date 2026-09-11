@@ -83,10 +83,10 @@ RULE-BASED, not row-by-row: every shipped row was ACCEPTED BY AN AUTOMATED RULE 
 
 ## Per-row review pass (after the rule-based promote)
 
-Updated 2026-09-11 08:21 UTC. Rows judged one at a time by the developer agent, in descending value order over the unmapped target rows: issuer identity and share class checked against the SEC company list title for the named CIK. `method: manual` marks these rows; `rejected:` in the mapping file records the keys judged to have no reviewed listing.
+Updated 2026-09-11 08:24 UTC. Rows judged one at a time by the developer agent, in descending value order over the unmapped target rows: issuer identity and share class checked against the SEC company list title for the named CIK. `method: manual` marks these rows; `rejected:` in the mapping file records the keys judged to have no reviewed listing.
 
-| Verified rows total (exact-name / class-resolved / manual) | 2,735 (1,421 / 110 / 1,204) |
+| Verified rows total (exact-name / class-resolved / manual) | 2,852 (1,421 / 110 / 1,321) |
 |---|---|
-| Rows rejected in review | 855 ($7,016,536,851,296) |
-| Target rows still unreviewed | 2,669 |
-| Verified target value | $52,120,507,291,717 of $59,317,769,474,420 (**87.9%**) |
+| Rows rejected in review | 938 ($7,171,235,828,931) |
+| Target rows still unreviewed | 2,469 |
+| Verified target value | $52,138,460,519,543 of $59,317,769,474,420 (**87.9%**) |

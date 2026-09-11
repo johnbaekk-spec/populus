@@ -2,7 +2,7 @@
  "schema": "ticker-mapping-13f-sample/v1",
  "seed": 20260910,
  "size": 50,
- "mapping_sha256": "79320f0224f56db34de7e955fc39f51a1142011ebc0c1f410942dcf63acd45ac",
+ "mapping_sha256": "7d797b612a6d504a126fc6f0eea27c803ddab08653da0ce1152ef4a8b072da85",
  "how_to_rederive": "populus.ticker_mapping_13f.derive_sample(load_ticker_mapping(), seed=seed)",
  "rows": [
   {
@@ -12,298 +12,298 @@
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "Agnc Investment Corp - US REIT",
-   "title_of_class": "Equity",
-   "ticker": "AGNC",
+   "issuer_name_canonical": "AGILENT TECHNOLOGIES INC",
+   "title_of_class": "COM",
+   "ticker": "A",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "ARMSTRONG WORLD INDS INC NEW",
+   "title_of_class": "COM",
+   "ticker": "AWI",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "ASHLAND INC",
+   "issuer_name_canonical": "AXALTA COATING SYS LTD",
    "title_of_class": "COM",
-   "ticker": "ASH",
+   "ticker": "AXTA",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "BELDEN INC",
+   "title_of_class": "COM",
+   "ticker": "BDC",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "BANC OF CALIFORNIA INC",
+   "issuer_name_canonical": "BENCHMARK ELECTRS INC",
    "title_of_class": "COM",
-   "ticker": "BANC",
-   "method": "class-resolved"
+   "ticker": "BHE",
+   "method": "manual"
   },
   {
-   "issuer_name_canonical": "BIOCRYST PHARMACEUTICALS INC",
+   "issuer_name_canonical": "BROADCOM INC",
    "title_of_class": "COM",
-   "ticker": "BCRX",
+   "ticker": "AVGO",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "Biohaven Ltd",
-   "title_of_class": "Equity",
-   "ticker": "BHVN",
-   "method": "exact-name"
+   "issuer_name_canonical": "BROOKFIELD ASSET MANAGMT LTD",
+   "title_of_class": "CL A LMT VTG SHS",
+   "ticker": "BAM",
+   "method": "manual"
   },
   {
-   "issuer_name_canonical": "BUILD-A-BEAR WORKSHOP INC",
+   "issuer_name_canonical": "CANADIAN IMPERIAL BANK OF CO",
    "title_of_class": "COM",
-   "ticker": "BBW",
+   "ticker": "CM",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "CELANESE CORP DEL",
+   "title_of_class": "COM",
+   "ticker": "CE",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "CACI INTL INC",
+   "issuer_name_canonical": "CNX RES CORP",
+   "title_of_class": "COM",
+   "ticker": "CNX",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "COMCAST CORP NEW",
    "title_of_class": "CL A",
-   "ticker": "CACI",
+   "ticker": "CMCSA",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "CARMAX INC",
+   "issuer_name_canonical": "CONSTELLATION ENERGY CORP",
    "title_of_class": "COM",
-   "ticker": "KMX",
+   "ticker": "CEG",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "CHECK POINT SOFTWARE TECH LT",
-   "title_of_class": "ORD",
-   "ticker": "CHKP",
+   "issuer_name_canonical": "Crown Holdings Inc - US",
+   "title_of_class": "Equity",
+   "ticker": "CCK",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "CLEAR SECURE INC",
+   "issuer_name_canonical": "DREAM FINDERS HOMES INC",
    "title_of_class": "COM CL A",
-   "ticker": "YOU",
+   "ticker": "DFH",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "COMMVAULT SYS INC",
+   "issuer_name_canonical": "EGH ACQUISITION CORP.",
+   "title_of_class": "SHS CL A",
+   "ticker": "EGHA",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "FACTSET RESH SYS INC",
    "title_of_class": "COM",
-   "ticker": "CVLT",
+   "ticker": "FDS",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "CORE SCIENTIFIC INC",
-   "title_of_class": "Common Stock",
-   "ticker": "CORZ",
-   "method": "manual"
+   "issuer_name_canonical": "FEDERAL SIGNAL CORP",
+   "title_of_class": "COM",
+   "ticker": "FSS",
+   "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "CRANE COMPANY",
+   "issuer_name_canonical": "FEDEX CORP",
+   "title_of_class": "COM",
+   "ticker": "FDX",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "G III APPAREL GROUP LTD",
+   "title_of_class": "COM",
+   "ticker": "GIII",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "GE HEALTHCARE TECHNOLOGIES I",
    "title_of_class": "COMMON STOCK",
-   "ticker": "CR",
-   "method": "exact-name"
+   "ticker": "GEHC",
+   "method": "manual"
   },
   {
-   "issuer_name_canonical": "DAUCH CORP",
-   "title_of_class": "COM",
-   "ticker": "DCH",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "ELANCO ANIMAL HEALTH INC",
-   "title_of_class": "COM",
-   "ticker": "ELAN",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "Emerson Electric Co",
-   "title_of_class": "COM",
-   "ticker": "EMR",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "ENPRO INC",
-   "title_of_class": "COM",
-   "ticker": "NPO",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "FLOWERS FOODS INC",
-   "title_of_class": "COM",
-   "ticker": "FLO",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "Fnb Corp/Pa - US",
+   "issuer_name_canonical": "Huntsman Corp - US",
    "title_of_class": "Equity",
-   "ticker": "FNB",
+   "ticker": "HUN",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "FORGENT POWER SOLUTIONS INC",
-   "title_of_class": "COM SHS CL A",
-   "ticker": "FPS",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "FRANKLIN RESOURCES INC",
-   "title_of_class": "COM",
-   "ticker": "BEN",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "GIBRALTAR INDS INC",
-   "title_of_class": "COM",
-   "ticker": "ROCK",
+   "issuer_name_canonical": "Invesco QQQ Trust Series 1",
+   "title_of_class": "ETF",
+   "ticker": "QQQ",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "GOLDMAN SACHS GROUP INC",
-   "title_of_class": "COMMON",
-   "ticker": "GS",
-   "method": "manual"
-  },
-  {
-   "issuer_name_canonical": "INTEL CORP",
+   "issuer_name_canonical": "IVANHOE ELECTRIC INC",
    "title_of_class": "COM",
-   "ticker": "INTC",
+   "ticker": "IE",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "JPMORGAN CHASE & CO",
-   "title_of_class": "Common Stock",
-   "ticker": "JPM",
-   "method": "manual"
-  },
-  {
-   "issuer_name_canonical": "KIRBY CORP",
+   "issuer_name_canonical": "KILROY REALTY CORP",
    "title_of_class": "COM",
-   "ticker": "KEX",
+   "ticker": "KRC",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "LEGENCE CORP",
-   "title_of_class": "CL A",
-   "ticker": "LGN",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "LEMONADE INC",
+   "issuer_name_canonical": "KINDER MORGAN INC DEL",
    "title_of_class": "COM",
-   "ticker": "LMND",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "LULULEMON ATHLETICA INC",
-   "title_of_class": "COM",
-   "ticker": "LULU",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "MERCURY GENL CORP NEW",
-   "title_of_class": "COM",
-   "ticker": "MCY",
-   "method": "manual"
-  },
-  {
-   "issuer_name_canonical": "NEWS CORP NEW",
-   "title_of_class": "CL A",
-   "ticker": "NWSA",
+   "ticker": "KMI",
    "method": "class-resolved"
   },
   {
-   "issuer_name_canonical": "NORTHERN OIL & GAS INC",
-   "title_of_class": "COM",
-   "ticker": "NOG",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "NVIDIA CORPORATION",
-   "title_of_class": "COMMON",
-   "ticker": "NVDA",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "PJT PARTNERS INC",
-   "title_of_class": "COM CL A",
-   "ticker": "PJT",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "PRICE T ROWE GROUP INC",
-   "title_of_class": "COM",
-   "ticker": "TROW",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "PRUDENTIAL FINL INC",
-   "title_of_class": "COM",
-   "ticker": "PRU",
+   "issuer_name_canonical": "LATAM AIRLINES GROUP SA",
+   "title_of_class": "SPONSORED ADR",
+   "ticker": "LTM",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "REPLIGEN CORP",
+   "issuer_name_canonical": "MADDEN STEVEN LTD",
    "title_of_class": "COM",
-   "ticker": "RGEN",
+   "ticker": "SHOO",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "MUELLER INDS INC",
+   "title_of_class": "COM",
+   "ticker": "MLI",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "NEPTUNE INS HLDGS INC",
+   "title_of_class": "CL A",
+   "ticker": "NP",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "OXLEY BRIDGE ACQ LTD",
+   "title_of_class": "USD CL A ORD SHS",
+   "ticker": "OBA",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "PAYONEER GLOBAL INC",
+   "title_of_class": "COM",
+   "ticker": "PAYO",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "Royalty Pharma Plc - US",
+   "issuer_name_canonical": "PEPSICO INC",
+   "title_of_class": "COM",
+   "ticker": "PEP",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "POWELL INDS INC",
+   "title_of_class": "COM",
+   "ticker": "POWL",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "QUALCOMM INC",
+   "title_of_class": "COM",
+   "ticker": "QCOM",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "ROYAL CARIBBEAN GROUP",
+   "title_of_class": "COM",
+   "ticker": "RCL",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "Sba Communications Corp - US REIT",
    "title_of_class": "Equity",
-   "ticker": "RPRX",
+   "ticker": "SBAC",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "SIGNET JEWELERS LIMITED",
+   "issuer_name_canonical": "SIX FLAGS ENTERTAINMENT CORP",
+   "title_of_class": "COM",
+   "ticker": "FUN",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "SIZZLE ACQUISITION CORP. II",
+   "title_of_class": "USD CL A ORD SHS",
+   "ticker": "SZZL",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "ST JOE CO",
+   "title_of_class": "COM",
+   "ticker": "JOE",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "SUNOCO LP/SUNOCO FIN CORP",
+   "title_of_class": "COM UT REP LP",
+   "ticker": "SUN",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "TESLA INC",
+   "title_of_class": "Equity",
+   "ticker": "TSLA",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "TRANSALTA CORP",
+   "title_of_class": "COM",
+   "ticker": "TAC",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "TRAVEL PLUS LEISURE CO",
+   "title_of_class": "COM",
+   "ticker": "TNL",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "TRAVELERS COS INC/THE",
+   "title_of_class": "COM",
+   "ticker": "TRV",
+   "method": "manual"
+  },
+  {
+   "issuer_name_canonical": "UBS GROUP AG",
    "title_of_class": "SHS",
-   "ticker": "SIG",
+   "ticker": "UBS",
    "method": "exact-name"
   },
   {
-   "issuer_name_canonical": "Solaredge Technologies Inc - US",
+   "issuer_name_canonical": "WATERS CORP",
+   "title_of_class": "COM",
+   "ticker": "WAT",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "WAVE LIFE SCIENCES LTD",
+   "title_of_class": "SHS",
+   "ticker": "WVE",
+   "method": "exact-name"
+  },
+  {
+   "issuer_name_canonical": "West Pharmaceutical Services Inc - US",
    "title_of_class": "Equity",
-   "ticker": "SEDG",
+   "ticker": "WST",
    "method": "manual"
   },
   {
-   "issuer_name_canonical": "STIFEL FINL CORP",
-   "title_of_class": "COM",
-   "ticker": "SF",
-   "method": "manual"
-  },
-  {
-   "issuer_name_canonical": "STITCH FIX INC",
-   "title_of_class": "COM CL A",
-   "ticker": "SFIX",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "TENET HEALTHCARE CORP",
-   "title_of_class": "COM NEW",
-   "ticker": "THC",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "TOLL BROTHERS INC",
-   "title_of_class": "COM",
-   "ticker": "TOL",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "UNILEVER PLC",
-   "title_of_class": "SPON ADR NEW",
-   "ticker": "UL",
-   "method": "manual"
-  },
-  {
-   "issuer_name_canonical": "VALVOLINE INC",
-   "title_of_class": "COM",
-   "ticker": "VVV",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "VERICEL CORP",
-   "title_of_class": "COM",
-   "ticker": "VCEL",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "VERISK ANALYTICS INC",
-   "title_of_class": "COM",
-   "ticker": "VRSK",
-   "method": "exact-name"
-  },
-  {
-   "issuer_name_canonical": "VISA INC-CLASS A SHARES",
-   "title_of_class": "COM CL A",
-   "ticker": "V",
-   "method": "manual"
+   "issuer_name_canonical": "ZILLOW GROUP INC",
+   "title_of_class": "CL A",
+   "ticker": "ZG",
+   "method": "class-resolved"
   }
  ]
 }
