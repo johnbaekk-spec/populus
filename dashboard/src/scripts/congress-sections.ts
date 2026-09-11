@@ -36,7 +36,7 @@ import {
   rankingRootHtml,
   rankingWindowHtml,
 } from "../lib/ui/index.ts";
-import { COMPACT_ROWS, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, COMPACT_STEP, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
 import type { CongressSortKey } from "../lib/congress-columns.ts";
 import { congressRankingColumns } from "../lib/congress-columns.ts";
@@ -67,9 +67,24 @@ export interface CongressSections {
   feedSettled(ok: boolean): void;
 }
 
-export function initCongressSections(): CongressSections {
+export interface CongressSectionsOptions {
+  /** R12: the full dataset is no longer downloaded at load. A control that
+      needs every row — a range or basis change, a sort, expanding past the
+      server-rendered rows — asks the feed island for it through this hook;
+      the rows still arrive through `receiveRows` from the ONE owner. */
+  requestRows?: () => void;
+}
+
+export function initCongressSections(options: CongressSectionsOptions = {}): CongressSections {
   const page = document.getElementById("congress-page");
   if (!page) return { receiveRows: () => {}, feedSettled: () => {} };
+  const requestRows = (): void => {
+    try {
+      options.requestRows?.();
+    } catch (err) {
+      console.error("populus: requesting the dataset failed", err);
+    }
+  };
   // The build's generated-at date is the window's `end`. It is read from the
   // document rather than the clock: a client that used its own "today" would
   // compute a different window from the server and silently disagree with the
@@ -83,6 +98,9 @@ export function initCongressSections(): CongressSections {
   const compactLimit = Number(page.dataset.compactLimit) || COMPACT_ROWS;
 
   const bindings = new Map<string, RootBinding>();
+  /* R12: roots whose reader pressed a sort before the rows landed. The press
+     asked for the rows; the sort paints when they arrive (see receiveRows). */
+  const sortPending = new Set<string>();
   let allRows: readonly TxnRow[] | null = null;
   let range: CongressRange = ssrRange;
   let basis: CongressBasis = ssrBasis;
@@ -119,8 +137,12 @@ export function initCongressSections(): CongressSections {
         binding.state = state;
         // Sorting with no rows would blank the server view. Return what is
         // already there instead, so a click before the dataset lands is inert
-        // rather than destructive.
-        if (binding.rows.length === 0) return el.innerHTML;
+        // rather than destructive — and ask for the rows it needs.
+        if (binding.rows.length === 0) {
+          sortPending.add(rootId);
+          requestRows();
+          return el.innerHTML;
+        }
         /* `footnotesId` is gone. It existed so a re-sorted row's ≈
            marker addressed THIS section's footnote block; both blocks are
            deleted and their text moved onto the Net column's header note, so
@@ -128,6 +150,7 @@ export function initCongressSections(): CongressSections {
            client are identical again by having one fewer thing to agree on. */
         return rankingRootHtml(binding.rows, state.key as CongressSortKey, state.dir, kind, ctx, {
           compact: binding.expanded ? undefined : compactLimit,
+          prefetch: COMPACT_STEP,
         }).html;
       },
       announce: (state) => {
@@ -139,7 +162,10 @@ export function initCongressSections(): CongressSections {
     });
     binding.repaint = repaint;
     bindings.set(rootId, binding);
-    setHeadersAvailable(headers, false);
+    /* R12: with a `requestRows` hook a press is usable before the dataset
+       exists — it asks for the rows and the sort paints on delivery. Without
+       one, nothing can bring the rows, so the headers wait for them. */
+    setHeadersAvailable(headers, Boolean(options.requestRows));
   }
 
   /** Header buttons are not offered as usable before the data that backs them
@@ -183,7 +209,19 @@ export function initCongressSections(): CongressSections {
     binding.noun = wrap.dataset.compactNoun ?? "rows";
     btn?.addEventListener("click", () => {
       binding.expanded = !binding.expanded;
-      binding.repaint();
+      if (binding.rows.length === 0) {
+        /* R13: before the dataset arrives the server-rendered rows past the
+           compact slice are already in the DOM, hidden. Revealing them is the
+           whole "Show 50 more"; nothing is downloaded for it. Rows beyond the
+           prefetched fifty need the dataset, which is requested here so a
+           reader who keeps going is not left at a dead control. */
+        binding.el.querySelectorAll<HTMLElement>("tr[data-compact-hidden]").forEach((tr) => {
+          tr.hidden = !binding.expanded;
+        });
+        if (binding.expanded) requestRows();
+      } else {
+        binding.repaint();
+      }
       syncDisclosure(binding);
     });
     // Do NOT sync here. At bind time `rows` is empty, so syncing would
@@ -202,7 +240,8 @@ export function initCongressSections(): CongressSections {
       instead of leaving one that expands to the rows already on screen. */
   function syncDisclosure(b: RootBinding): void {
     if (!b.disclosure) return;
-    const total = b.rows.length;
+    // Before the dataset arrives the server's own total is the truth.
+    const total = b.rows.length || Number(b.disclosure.dataset?.compactTotal ?? 0);
     const limit = compactLimit;
     const hidden = Math.max(0, total - limit);
     const noun = b.noun ?? "rows";
@@ -260,7 +299,7 @@ export function initCongressSections(): CongressSections {
     if (allRows) return;
     setPending(
       `Applying ${windowStatement(range, basis, congressRangeBounds(range, generatedAtDate))} — ` +
-        `the full dataset is still downloading. The table below is still the window the page was ` +
+        `the full dataset is downloading. The table below is still the window the page was ` +
         `built with, and it is real published data.`,
     );
   }
@@ -270,6 +309,7 @@ export function initCongressSections(): CongressSections {
       range = btn.dataset.range as CongressRange;
       setSeg("range", range);
       markPendingIfUnpainted();
+      if (!allRows) requestRows();
       recomputeMomentum();
     });
   });
@@ -278,6 +318,7 @@ export function initCongressSections(): CongressSections {
       basis = btn.dataset.basis as CongressBasis;
       setSeg("basis", basis);
       markPendingIfUnpainted();
+      if (!allRows) requestRows();
       recomputeMomentum();
     });
   });
@@ -303,6 +344,7 @@ export function initCongressSections(): CongressSections {
       return;
     }
     markPendingIfUnpainted();
+    if (!allRows) requestRows();
     recomputeMomentum();
   });
 
@@ -437,6 +479,10 @@ export function initCongressSections(): CongressSections {
     // Do NOT repaint the ranked roots here. The server already rendered this
     // exact view at this exact sort; repainting would risk a visible flash and
     // would MASK a server/client disagreement instead of leaving it visible.
+    // A sort pressed before delivery was recorded but could not paint; it
+    // paints now, over the delivered rows.
+    for (const rootId of sortPending) bindings.get(rootId)?.repaint();
+    sortPending.clear();
     recomputeMomentumIfChanged();
     // The rows are painted, so the control no longer asserts anything
     // it has not shown. Cleared here as well as in `feedSettled` because this

@@ -34,6 +34,7 @@ import {
   partyClass,
   compactDisclosure,
   COMPACT_ROWS,
+  COMPACT_STEP,
 } from "../format.ts";
 import {
   type NetInterval,
@@ -212,7 +213,7 @@ export function rankingRowsHtml(
   rows: readonly LeaderRow[],
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { numbered?: boolean; startAt?: number } = {},
+  opts: { numbered?: boolean; startAt?: number; hiddenFrom?: number } = {},
 ): string {
   // The incomparability marker is recomputed from THIS order. Carrying a
   // marker over from a previous sort would claim an overlap against a row that
@@ -220,8 +221,14 @@ export function rankingRowsHtml(
   const flags = overlapFlags(rows);
   const numbered = opts.numbered ?? true;
   const start = opts.startAt ?? 1;
+  /* R13: rows at or past `hiddenFrom` ship in the server bytes but start
+     `hidden` — the "Show 50 more" control reveals them without any download. */
+  const hiddenFrom = opts.hiddenFrom ?? Number.MAX_SAFE_INTEGER;
   return rows
-    .map((r, i) => rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx))
+    .map((r, i) => {
+      const html = rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx);
+      return i >= hiddenFrom ? html.replace(/^<tr\b/, "<tr hidden data-compact-hidden") : html;
+    })
     .join("\n");
 }
 
@@ -245,13 +252,17 @@ export function rankingRootHtml(
   dir: "asc" | "desc",
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { compact?: number } = {},
+  opts: { compact?: number; prefetch?: number } = {},
 ): { html: string; total: number; shown: number } {
   const cols = visualColumns(kind, ctx.referenceRankings);
   const { ranked, unrankable } = sortRankingRows(rows, key, dir);
   const total = ranked.length + unrankable.length;
   const limit = opts.compact ?? total;
-  const rankedShown = ranked.slice(0, limit);
+  /* R13: `prefetch` more ranked rows ride along HIDDEN past the compact slice,
+     so the expand control has real rows to reveal before (or without) the
+     full dataset download. They are not counted as shown. */
+  const prefetch = opts.compact === undefined ? 0 : (opts.prefetch ?? 0);
+  const rankedShown = ranked.slice(0, limit + prefetch);
   // The compact slice is a bound on the WHOLE table, so it consumes the ranked
   // rows first and only then the unrankable tail — otherwise collapsing could
   // drop every ranked row and show only the tail.
@@ -260,7 +271,7 @@ export function rankingRootHtml(
     cols.find((c) => c.sortable && c.key === key)?.label ?? key;
   return {
     html:
-      rankingRowsHtml(rankedShown, kind, ctx) +
+      rankingRowsHtml(rankedShown, kind, ctx, { hiddenFrom: limit }) +
       // The separator states that rows exist which this column CANNOT
       // rank. That is a stated absence, so it renders whenever the bucket is
       // non-empty — NOT only when a bucket row happens to survive the compact
@@ -276,7 +287,7 @@ export function rankingRootHtml(
             : "")
         : ""),
     total,
-    shown: rankedShown.length + unrankableShown.length,
+    shown: Math.min(rankedShown.length, limit) + unrankableShown.length,
   };
 }
 
@@ -499,7 +510,7 @@ export function congressRankingSection(
     (r) => r.id,
   );
 
-  const main = rankingRootHtml(ranked, "net", "desc", kind, ctx, { compact });
+  const main = rankingRootHtml(ranked, "net", "desc", kind, ctx, { compact, prefetch: COMPACT_STEP });
   const bucket = rankingRootHtml(undisclosedBucket, "name", "asc", kind, ctx, { compact });
 
   const caption =

@@ -5,7 +5,9 @@ import { pathSafeTicker } from "../../lib/format.ts";
 // search-first masthead, congress cards, the mapping-gated institutional
 // section (gated on the ticker→issuer mapping contract, spec §4), planned-section placeholders.
 import Base from "../../layouts/Base.astro";
-import { getBuildData, tickerInstSection, getSignalArtifact } from "../../lib/data";
+import { getBuildData, tickerInstSection, getSignalArtifact, notableMovesPeriods, filerTier } from "../../lib/data";
+import { overlapBand, overlapBandHtml } from "../../lib/overlap";
+import { filerHref } from "../../lib/holdings";
 import { resolveTicker } from "../../lib/derive";
 import { tickerCrowding } from "../../lib/inst-analytics";
 import { tickerUnifiedBody, type BuildStamps, type TickerPageDeps } from "../../lib/ui/index.ts";
@@ -46,7 +48,27 @@ const crowding =
     ? tickerCrowding(build.inst, resolved.issuerKey, inst.period)
     : null;
 const artifact = getSignalArtifact();
+/* R19: the Congress ↔ notable-managers overlap band — the Congress half from
+   this ticker's own rows (last 90 days by filed date), the 13F half from the
+   class-grain holders of the closed quarter, or a Planned badge when the
+   reviewed mapping does not name this ticker. */
+const hrefOf = (cik: string): string => filerHref(cik, filerTier(build, cik));
+const overlapHtml = overlapBandHtml(
+  overlapBand({
+    ticker: entity.ticker,
+    txns: entity.txns,
+    generatedAtDate: build.generatedAtDate,
+    inst: build.inst,
+    typingByCik: build.inst.present ? build.inst.typingByCik : new Map(),
+    period: notableMovesPeriods(build)[0] ?? null,
+    ctx: ssrCtx,
+    filerHref: hrefOf,
+  }),
+  ssrCtx,
+  hrefOf,
+);
 const deps: TickerPageDeps = {
+  overlap: overlapHtml,
   signals: artifact.signals.filter((s) => s.status === "active" && s.entities.ticker === entity.ticker),
   withheld: artifact.withheld,
   crowding,

@@ -140,7 +140,11 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
       inst.period!,
       inst.latestFiled ?? null,
     )} · longs only</span></h2>` +
-    `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">full holders view ↗</a></div>` +
+    // R2: link the holders view only when that page is built — never a dressed 404.
+    (inst.holdersPage
+      ? `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">full holders view ↗</a>`
+      : "") +
+    `</div>` +
     universalFlagNote(statedHolders) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHolders.join(","))}">` +
     `<caption class="visually-hidden">Top institutional holders of ${esc(ticker)} for quarter ${esc(inst.period!)}</caption>` +
@@ -176,6 +180,8 @@ export interface TickerPageDeps {
   crowding: TickerCrowding | null;
   /** committee memberships keyed by bioguide (dating contract applied per trade) */
   committees: { byMember: ReadonlyMap<string, CommitteeMembership[]>; windowFrom: string; windowTo: string; snapshotDate: string } | null;
+  /** R19: the rendered Congress ↔ notable-managers overlap band (server only) */
+  overlap?: string;
 }
 
 export function tickerUnifiedBody(
@@ -322,6 +328,8 @@ export function tickerUnifiedBody(
     membersActiveHtml(t, stamps, ctx, deps) +
     `</div>` +
     `</section>` +
+    /* R19 — the overlap band, between the Congress rows and the holders */
+    (deps?.overlap ?? "") +
     /* BAND 3 — who holds (wide) + crowding */
     `<div class="design-band design-ticker-band design-ticker-holders">` +
     `<div>` + tickerInstSectionHtml(inst, t.ticker) + `</div>` +
@@ -467,7 +475,7 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Members disclosing ${esc(t.ticker)} in the trailing 12 months</caption>` +
         `<thead><tr><th scope="col">Member</th><th scope="col" class="num">Rows</th><th scope="col" class="num">Net${note("Net disclosed flow for this ticker: purchases minus sales as interval subtraction; open bounds propagate. A lower bound is provable, never a point.", { scope: "ticker-members" }, "net")}</th><th scope="col" class="num">Committees${note(deps?.committees ? "Number of committees the member sat on as of their latest trade date in the window, from the cc0-legislators roster snapshot. Context, never an allegation; jurisdiction overlap needs the sector join." : "Committee membership data is not in this build; the column states absence rather than guessing from current rosters.", { scope: "ticker-members" }, "committees")}</th></tr></thead>` +
         `<tbody>${rowsHtml}</tbody></table></div>` +
-        `<p class="section-note">${fmtInt(byMember.size)} members in the window${byMember.size > members.length ? `; ${fmtInt(members.length)} rendered — a render bound` : ""} · counts of disclosures, not dollars.</p>`) +
+        `<p class="section-note">${fmtInt(byMember.size)} members in the window${byMember.size > members.length ? `; the ${fmtInt(members.length)} most active shown` : ""} · counts of disclosures, not dollars.</p>`) +
     `</section>`
   );
 }

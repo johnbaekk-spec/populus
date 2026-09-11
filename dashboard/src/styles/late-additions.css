@@ -819,7 +819,11 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
  #feed-section .seg button { min-height:22px; padding:4px 10px; font:500 10px/1 var(--mono); }
  #feed-section .filter-group { gap:0; }
  #feed-section .advanced-filters > summary { padding:4px; font-size:10px; }
- #feed-section .advanced-filter-body { position:absolute; right:0; top:24px; width:500px; z-index:6; background:var(--paper); border:1px solid var(--rule); padding:16px; }
+ /* R12: the "More filters" body is IN FLOW — it opens as a row inside the
+    control strip and pushes the table down; it never overlays table rows. */
+ #feed-section .filter-controls { flex-wrap:wrap; }
+ #feed-section .advanced-filters { flex-basis:100%; }
+ #feed-section .advanced-filter-body { position:static; display:flex; flex-wrap:wrap; gap:8px 14px; width:auto; max-width:560px; margin-left:auto; background:var(--paper); border:1px solid var(--rule); padding:12px; }
  #feed-section .advanced-filter-body .filter-label { display:inline; }
  #feed-section .filter-count { grid-row:3; grid-column:1; padding:12px 0 8px 32px; font:400 10px/1.6 var(--sans); align-self:center; }
  #feed-section .reference-feed-scroll { grid-row:2; grid-column:1/-1; max-height:none; border-top:1px solid var(--rule); padding-top:18px; }
@@ -1030,3 +1034,51 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
 @media (max-width: 720px) {
   .agree-row { grid-template-columns: 110px minmax(0,1fr) 100px; }
 }
+
+/* R11: Leaders and Tickers each take the full width, one above the other. */
+.design-rankings-single { grid-template-columns:minmax(0,1fr); }
+.coverage-strip { margin:0; font:400 10px/1.6 var(--mono); color:var(--ink3); align-self:center; }
+#congress-notes { margin-top:18px; }
+#congress-notes .design-briefing { margin-top:12px; border-top:0; }
+
+/* R15: filer page order — identity → stats → changes → [holdings | book shape]
+   → filing history → planned line → EDGAR → notes. */
+.entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-changes { order: 3; grid-column: 1 / -1; }
+.entity-page:has([data-holdings-surface="filer"]) > .planned-line { order: 7; }
+.entity-page:has([data-holdings-surface="filer"]) > .filer-notes { order: 8; }
+.design-triptych-single { grid-template-columns: minmax(0,1fr); }
+.planned-line { margin: 12px 0 0; font: 400 11px/1.6 var(--sans); color: var(--ink3); }
+.planned-line .badge-planned { margin-right: 6px; }
+.design-consensus .compact-disclosure { padding: 8px 0 0; }
+.design-notable-moves .table-scroll { max-height: none; }
+.design-activity-band { grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); }
+
+/* R18: home — one claim, three live tiles. */
+.hero-claim { grid-template-columns: minmax(0,1fr); }
+.home-tiles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 24px; margin: 24px 0 32px; }
+.home-tiles > .home-tile { min-width: 0; margin: 0; }
+.home-tile .table-scroll { max-height: none; }
+.home-tile .etable td, .home-tile .etable th { white-space: nowrap; }
+@media (max-width: 1080px) { .home-tiles { grid-template-columns: minmax(0,1fr); } }
+.metho-section#principles .commitments { margin-top: 18px; }
+
+/* R19: the overlap band — two halves, then the merged timeline. */
+.design-overlap .overlap-halves { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 24px; margin: 8px 0 12px; }
+.design-overlap .overlap-half { min-width: 0; }
+.design-overlap .overlap-half > .section-h { font-size: 12px; margin: 0 0 6px; }
+.overlap-rows { margin: 0; }
+.overlap-rows > div { display: grid; grid-template-columns: 64px minmax(0,1fr); gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 12px; }
+.overlap-rows dt { color: var(--ink3); font: 500 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+.overlap-rows dd { margin: 0; }
+.overlap-n { display: inline-block; min-width: 1.6em; font: 600 13px var(--mono); margin-right: 4px; }
+.overlap-total { display: block; font: 500 10.5px var(--mono); color: var(--ink3); margin-top: 2px; }
+.overlap-planned .badge-planned { margin-left: 6px; }
+@media (max-width: 720px) { .design-overlap .overlap-halves { grid-template-columns: minmax(0,1fr); } }
+
+/* R17: the hits table scrolls inside its panel; nothing widens the page. */
+#signal-hits { min-width: 0; }
+#signal-hits .panel-head { flex-wrap: wrap; gap: 8px; }
+#signal-hits .si-hit-filter { flex-wrap: wrap; }
+#signal-hits .si-hits-scroll { overflow-x: auto; max-width: 100%; }
+#signal-hits .si-expand summary { cursor: pointer; }
+#signal-hits .si-expand-body { font-size: 11px; margin: 4px 0 0; }

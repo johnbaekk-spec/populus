@@ -603,7 +603,7 @@ test("F3: the SSR page renders the directory through that one renderer", () => {
     path.resolve(import.meta.dirname, "..", "src", "pages", "institutional", "index.astro"),
     "latin1",
   );
-  assert.match(page, /instIndexBodyHtml\(indexRows, "", "value", "desc", undefined, COMPACT_ROWS\)/);
+  assert.match(page, /instIndexBodyHtml\(indexRows, "", "value", "desc", \{ types: DEFAULT_TYPES, notableOnly: false \}, COMPACT_ROWS\)/);
   assert.ok(
     !/ranked\.slice\(0, COMPACT_ROWS\)/.test(page),
     "a second budget on this page is the defect itself",
@@ -656,8 +656,7 @@ test("F6: the leaderboard and the directory carry a NAMED terminus beside the co
      the server where the row's duplicate of it was. The author is named by the
      sentence ("a Public Filings render bound"), not by a `data-terminus-author`
      wrapper, so the assertion follows the text. */
-  assert.match(html, /15 further issuers are not rendered above/);
-  assert.match(html, /a Public Filings render bound, not a data bound/);
+  assert.match(html, /15 more issuers below/);
   // it precedes the button, which is what puts the STATED bound in front of the
   // reader before the offer to lift it
   assert.ok(

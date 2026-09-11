@@ -11,7 +11,7 @@
 import Base from "../../../layouts/Base.astro";
 import HoldingsTable from "../../../components/HoldingsTable.astro";
 import { filerAggregateInputs, getBuildData, servedPeriods, topFilerCiks } from "../../../lib/data";
-import { filerPeriods } from "../../../lib/inst";
+import { filerPeriods, deltasFor, typingFor } from "../../../lib/inst";
 import { filerBody } from "../../../lib/ui/index.ts";
 import { filingWindow } from "../../../lib/derive";
 import { serializeInlineJson } from "../../../lib/inline-json";
@@ -65,6 +65,13 @@ const deltaTotal = agg.deltaTotalsByPeriod[period] ?? 0;
 // The tracked-population medians the book-shape band compares against, per
 // period, computed once here and embedded for the period switch.
 const benchmarks = Object.fromEntries(periods.map((p) => [p, concentrationBenchmark(inst, p)]));
+/* R15: the new-stake and exit counts are over the WHOLE period's changes
+   (`deltasFor`), never the embedded, byte-bounded slice. */
+const kindsFor = (p: string): { new: number; exit: number } => {
+  const all = deltasFor(inst, cik10, p);
+  return { new: all.filter((d) => d.change_kind === "new").length, exit: all.filter((d) => d.change_kind === "exit").length };
+};
+const typing = typingFor(inst, cik10);
 
 const bodyHtml = filerBody(
   { cik: cik10, name: filer.filer_name, latestPeriod: filer.latest_period },
@@ -75,7 +82,7 @@ const bodyHtml = filerBody(
   latestFiled,
   inst.topn,
   window,
-  { total: deltaTotal, benchmark: benchmarks[period] ?? null, discontinuity: discontinuityFor(period) },
+  { total: deltaTotal, benchmark: benchmarks[period] ?? null, discontinuity: discontinuityFor(period), kinds: kindsFor(period), typing },
 );
 
 // Every period's data, embedded for the client-side period selector: the switch
@@ -94,6 +101,7 @@ const periodData = serializeInlineJson({
         deltas: agg.deltasByPeriod[p] ?? [],
         total: agg.deltaTotalsByPeriod[p] ?? 0,
         discontinuity: discontinuityFor(p),
+        kinds: kindsFor(p),
       },
     ]),
   ),
@@ -116,8 +124,13 @@ const description =
   </main>
   <script>
     import { initFilerPeriods } from "../../../scripts/entity-client";
+    import { initDomDisclosures } from "../../../scripts/inst-index-client";
     import { initNotes } from "../../../scripts/notes";
     initFilerPeriods();
+    /* R15: the changes table's "Show more" is a DOM-backed disclosure; it is
+       re-bound after every period re-render through the `populus:rerender`
+       event the period switch dispatches. */
+    initDomDisclosures();
     /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —

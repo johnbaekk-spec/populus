@@ -108,7 +108,7 @@ test("M2-12: the stat tile reports the true total while the table shows a page",
 test("M2-12: the changes table paginates at the shared page size", () => {
   const rows = Array.from({ length: 250 }, (_, i) => delta(i, 5_000 - i));
   const page0 = changesTableHtml(rows, "2026-03-31", "2026-05-15", { total: 250, page: 0 });
-  const rowCount = (html: string): number => (html.match(/<tr><td class="c-pos"/g) ?? []).length;
+  const rowCount = (html: string): number => (html.match(/<tr(?: data-compact-extra)?(?: id="pos-[^"]*")?><td class="c-pos"/g) ?? []).length;
   assert.equal(rowCount(page0), HOLDINGS_PAGE_SIZE, "page 0 holds exactly one page of rows");
   assert.ok(page0.includes("data-changes-pager"), "a multi-page table renders its pager");
 

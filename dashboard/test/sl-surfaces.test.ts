@@ -214,7 +214,7 @@ test("SL-R10 (b): every bounded surface STATES its bound in server bytes, with n
   assert.doesNotMatch(live, /class="compact-disclosure"[^>]*\shidden>/, "the wrapper is NOT hidden");
   assert.match(
     live,
-    /<span class="compact-bound-count">15 further rows are not rendered above/,
+    /<span class="compact-bound-count">15 more rows below/,
     "the count is real text, reachable with scripting off",
   );
   assert.match(live, /class="linklike compact-toggle"[^>]*\shidden>/, "the BUTTON is what waits for a script");
@@ -323,7 +323,7 @@ test("SL-R10 (c): the ranking bound is stated BEFORE the 22 MB feed arrives, scr
       "…and the bound is stated regardless. A bound that lived on the button was " +
         "stated to nobody for the whole duration of a 22 MB download.",
     );
-    assert.match(bound.textContent, /further ranked members are not rendered above/);
+    assert.match(bound.textContent, /more ranked members below/);
     assert.match(control!.textContent, /published dataset/, "and the route to the withheld rows");
   } finally {
     restore();
@@ -366,7 +366,7 @@ test("SL-R10 (c): `initDomDisclosures` reveals only DOM-backed BUTTONS — never
     for (const wrap of [plain, dom]) {
       assert.equal(wrap.hidden, false);
       assert.equal(wrap.querySelector(".compact-bound-count")!.hidden, false);
-      assert.match(wrap.querySelector(".compact-bound-count")!.textContent, /are not rendered above/);
+      assert.match(wrap.querySelector(".compact-bound-count")!.textContent, /below/);
     }
   } finally {
     restore();
@@ -393,7 +393,7 @@ test("SL-R10 (d): an island that returns early cannot take the bound with it", a
     const bound = doc.querySelector(".compact-bound-count");
     assert.ok(bound, "the statement is in the server's bytes, not produced by the island");
     assert.equal(bound!.hidden, false, "an island that never ran cannot retract it");
-    assert.match(bound!.textContent, /further ranked members are not rendered above/);
+    assert.match(bound!.textContent, /more ranked members below/);
   } finally {
     restore();
   }
@@ -407,8 +407,9 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
   // Slice 6 split ui.ts into src/lib/ui/*.ts — the five ui call sites now live
   // in ticker.ts (2: inst section + holders cap), institutional.ts (2: changes
   // bound + filer period terminus) and signals.ts (1: render bound).
+  // R17 retired the signals hits terminus (a real pager replaced the cap).
   const files = {
-    "ui-modules": 5,
+    "ui-modules": 4,
     "../src/lib/activity.ts": 1,
     "../src/lib/holdings.ts": 2,
     "../src/pages/institutional/index.astro": 0,
@@ -421,7 +422,7 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
     total += calls;
     assert.ok(!/syncTerminusFor/.test(src.replace(/\/\*[\s\S]*?\*\//g, "")), `${f} still calls syncTerminusFor`);
   }
-  assert.equal(total, 8, "eight standalone terminus rows are KEPT — R10 deletes only the five duplicates");
+  assert.equal(total, 7, "seven standalone terminus rows are KEPT — R10 deleted the five duplicates, R17 the signals cap");
 
   const fmt = readFileSync(new URL("../src/lib/format.ts", import.meta.url), "utf8");
   assert.match(fmt, /export function terminusRow\(/, "the primitive itself stays");
@@ -851,10 +852,12 @@ async function mountFeedAndSections() {
 
   const restore = dom.install(null, { fetchOk: false });
   const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
-  const sections = initCongressSections();
+  // R12: the dataset loads on demand — the sections ask the feed island.
+  let feed: { loadAll(): Promise<void> } | null = null;
+  const sections = initCongressSections({ requestRows: () => void feed?.loadAll() });
   const settlements: boolean[] = [];
   const { initFeed } = await import("../src/scripts/feed-client.ts");
-  initFeed({
+  feed = initFeed({
     onRows: sections.receiveRows,
     onSettled: (ok) => {
       settlements.push(ok);
@@ -942,10 +945,11 @@ test("CODE-REVIEW F3: on the SUCCESS path the indicator is cleared outright, not
   });
   try {
     const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
-    const sections = initCongressSections();
+    let feed: { loadAll(): Promise<void> } | null = null;
+    const sections = initCongressSections({ requestRows: () => void feed?.loadAll() });
     const settlements: boolean[] = [];
     const { initFeed } = await import("../src/scripts/feed-client.ts");
-    initFeed({
+    feed = initFeed({
       onRows: sections.receiveRows,
       onSettled: (ok) => {
         settlements.push(ok);

@@ -903,7 +903,7 @@ export function initFilerPeriods(): void {
     benchmarks?: Record<string, import("../lib/inst-analytics.ts").ConcentrationBenchmark | null>;
     periods: Record<
       string,
-      { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number; discontinuity?: boolean }
+      { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number; discontinuity?: boolean; kinds?: { new: number; exit: number } | null }
     >;
   };
   try {
@@ -950,8 +950,11 @@ export function initFilerPeriods(): void {
       // total is a corrupt embed, handled above by leaving the SSR section alone
       // — never papered over with the embedded length, which would claim a
       // completeness the server never claimed.
-      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true },
+      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null },
     );
+    // R15: a re-rendered section carries fresh DOM-backed disclosures; the
+    // owner of those controls re-binds on this event.
+    document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "filer-period" } }));
   };
   chips.addEventListener("click", (ev) => {
     const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-period]");

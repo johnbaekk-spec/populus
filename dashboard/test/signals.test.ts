@@ -253,8 +253,11 @@ test("review r2-F3: tombstones never render as active — separate section, sepa
   const a = buildSignalArtifact({ ...inputs([...s1Pad(), row, dies]), buildId: "A" });
   const b = buildSignalArtifact({ ...inputs([...s1Pad(), row]), buildId: "B", priorArtifact: a });
   const html = body(b, { watched: new Set() });
-  assert.match(html, /Superseded — no longer in the current view/);
-  assert.match(html, /Superseded in build/);
+  // R17: the tombstone table left the page; the footnote names the count and
+  // links the artifact, and no tombstone wears an active face.
+  assert.doesNotMatch(html, /Superseded — no longer in the current view/);
+  assert.match(html, /1 signal from an earlier build left the retained view/);
+  assert.match(html, /changes since last build/);
   // The active S-1 count excludes the tombstone: actives in window minus one.
   const activeS1 = b.signals.filter((s) => s.kind === "s1-large" && s.status === "active").length;
   // The rule book's HITS cell counts actives only.

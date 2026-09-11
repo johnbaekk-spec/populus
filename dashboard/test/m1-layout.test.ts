@@ -244,7 +244,7 @@ test("R6: the decisive column is asserted, and it comes before the raw levels", 
   assert.ok(headers.indexOf("Change") <= 1, "the verdict sits beside the identity");
 
   /* the body's cell classes must line up with those headers, in that order */
-  const row = /<tr><td class="c-pos">[\s\S]*?<\/tr>/.exec(html);
+  const row = /<tr(?: id="pos-[^"]*")?><td class="c-pos">[\s\S]*?<\/tr>/.exec(html);
   assert.ok(row, "a data row rendered");
   const classes = [...row![0]!.matchAll(/<td class="(c-[a-z]+)[^"]*"/g)].map((m) => m[1]!);
   assert.deepEqual(

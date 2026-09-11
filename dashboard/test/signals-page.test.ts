@@ -46,18 +46,36 @@ test("rule book lists every kind with its exact rule, active hit counts and the 
   assert.match(html, /<td class="c-num si-hits c-muted">0<\/td>/, "a zero is printed, never blank");
   assert.match(html, /si-status-withheld">WITHHELD/);
   assert.match(html, /BY DESIGN/);
-  assert.match(html, /Superseded in build/);
+  // R17: the tombstone table left the page; the footnote links the artifact.
+  assert.doesNotMatch(html, /Superseded in build/);
+  assert.match(html, /id="signal-changes-foot"[^>]*>1 signal from an earlier build left the retained view/);
+  assert.match(html, /<a href="\/signals\/data\/signals\.v1\.json">changes since last build<\/a>/);
+  // the rule book sits BELOW the hits, collapsed
+  assert.ok(html.indexOf('id="signal-hits"') < html.indexOf('id="signal-rulebook"'), "hits first, rule book after");
+  assert.match(html, /<details class="design-supplement" id="signal-rulebook-wrap">/);
 });
 
-test("hits carry evidence, source regime, magnitude range, both dates, lag and receipt; the render bound is stated", () => {
+test("R17: hits are Ticker · Who · What · Filed · Size · Src, paged 50 with a real pager; evidence is one line with the full text in the row expand", () => {
   const html = signalsBody(ART, CTX, { rowsEvaluated: 1000, latestBatch: [], latestBatchFiled: null, renderCap: 2 });
   assert.match(html, /Test &lt;Member&gt;/);
   assert.match(html, /\$250K–\$500K/);
   assert.match(html, /datetime="2026-01-01"/);
   assert.match(html, /\+151d/);
   assert.match(html, /si-stamp">eFD/);
-  assert.match(html, /1 further hits are in the artifact but not rendered here/);
+  assert.match(html, /<thead><tr><th scope="col">Ticker<\/th><th scope="col">Who<\/th><th scope="col">What<\/th><th scope="col">Filed<\/th><th scope="col" class="num">Size<\/th><th scope="col">Src<\/th><\/tr><\/thead>/);
+  assert.match(html, /<td class="si-ticker-cell"><a class="si-ticker mono-ticker" href="\/tickers\/ABC\/">ABC<\/a><\/td>/, "the ticker is the first cell");
+  assert.match(html, /id="signal-hits-range"[^>]*>Showing 1–2 of 3</, "the pager states the page");
+  assert.match(html, /id="signal-hits-next" aria-disabled="false"/);
   assert.match(html, /data-family="COMPLIANCE"/);
+  assert.match(html, /<details class="si-expand"><summary>disclosed lower bound \$250K · ≥ \$250K rule<\/summary>/, "one-line evidence");
+  assert.match(html, /<strong>Rule:<\/strong> rule text/, "full text in the expand");
+  assert.doesNotMatch(html, /render bound/);
+  const full = signalsBody(ART, CTX, { rowsEvaluated: 1000, latestBatch: [], latestBatchFiled: null });
+  assert.match(full, /data-page-size="50"/);
+  assert.match(full, /Showing 1–3 of 3/);
+  assert.match(full, /id="signal-hits-next" aria-disabled="true"/);
+  assert.match(full, /button" data-kind="s1-large"/, "filter by rule");
+  assert.match(full, /id="signal-watched-only"/, "filter by watchlist");
 });
 
 test("hit rate is per 1,000 rows filed in the window and withheld without a denominator", () => {

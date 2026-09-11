@@ -1,4 +1,4 @@
-import { briefingCards, disclosureLedger, unavailableDesignPanel } from "./shared.ts";
+import { briefingCards, disclosureLedger, plannedLine, unavailableDesignPanel } from "./shared.ts";
 import { memberProfileStats, type ChamberBenchmark } from "../inst-analytics.ts";
 /* Pure page/section renderers. Every entity body is a string function called
    by the thin .astro page for SSR AND by the generic-route client driver —
@@ -426,6 +426,18 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
   const watched = ctx.watched.has(m.bioguide);
   const flow = quarterlyFlow(m.txns, stamps.generatedAtDate, 8);
   const top = topTickers(m.txns, stamps.generatedAtDate, 24, 6);
+  // R16 stats: the SAME derivations the tiles use (one rule, one number).
+  const flow12 = sumRanges(
+    excludeDateAnomalies(m.txns).rows.filter(
+      (t) => windowMembership(t, legacyTrailingMonthsBounds(stamps.generatedAtDate, 12), "traded_or_filed") === "in",
+    ),
+  );
+  const distinctTickers = new Set(m.txns.map((t) => t.ticker).filter((t): t is string => t != null)).size;
+  const lateTotal = lateCount(m.txns);
+  // Committees the member currently sits on, when the build carries the roster.
+  const committeesNow = deps.committees
+    ? (membershipAsOf({ memberships: deps.committees.memberships, windowFrom: deps.committees.windowFrom, windowTo: deps.committees.windowTo }, deps.committees.snapshotDate) ?? [])
+    : null;
   const aff = affTextOf(m);
   const partyWord = partyLabel(m.party);
   const chamberWord = m.chamber === "senate" ? "U.S. Senate" : "U.S. House";
@@ -464,7 +476,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       partyWord ? `${partyWord} — ${aff}` : aff,
     )}</span> · ${esc(chamberWord)}${
       m.servingSince ? ` · serving since ${esc(m.servingSince)}` : ""
-    } · <span class="mono-id">bioguide ${esc(m.bioguide)}</span>` +
+    }${committeesNow && committeesNow.length > 0 ? ` · ${committeesNow.map((c) => esc(c.name)).join(", ")}` : ""} · <span class="mono-id">bioguide ${esc(m.bioguide)}</span>` +
     /* The identity `.entity-lede` paragraph is gone from the page
        surface and its two claims are notes on the things they are about.
 
@@ -485,23 +497,29 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     ) +
     `</div>` +
     `</div>` +
+    /* R16: four stats — disclosures · net flow range (12m) · distinct tickers ·
+       late filings. The `—` tiles for the annual-holdings and 13F joins are
+       gone with the empty panels they fed; the joins are named ONCE in the
+       planned line below. */
     disclosureLedger([
-      { label: "Transactions", value: fmtInt(m.txns.length), detail: "reported PTR rows" },
-      { label: "Filings", value: fmtInt(m.filingCount), detail: `${fmtInt(m.paper.length)} paper · retained` },
-      { label: "Holdings · 12/31", value: "—", detail: "annual records unavailable" },
-      { label: "13F overlap", value: "—", detail: "join unavailable" },
+      { label: "Disclosures", value: fmtInt(m.txns.length), detail: `${fmtInt(m.filingCount)} filings · ${fmtInt(m.paper.length)} paper · retained` },
+      { label: "Net flow · 12m", value: flow12.kind === "empty" ? "—" : sumRangesText(flow12), detail: "sum of statutory ranges · an interval, not a value" },
+      { label: "Distinct tickers", value: fmtInt(distinctTickers), detail: "across every disclosed row" },
+      { label: "Late filings", value: fmtInt(lateTotal), detail: "filed past the 45-day window" },
     ]) +
     `</header>` +
     `<div class="design-provenance">Flows from periodic transaction reports · House Clerk + Senate eFD · statutory ranges · every row retains its receipt</div>` +
-    briefingCards([
-      { tag: "Disclosed transactions", title: `${fmtInt(m.txns.length)} reported transactions`, body: "Amounts are the ranges in the filing. Purchases and sales are disclosures, not a statement of current holdings." },
-      { tag: "Reporting window", title: `Published ${stamps.generatedAtDate}`, body: "Trade date and filing date are retained separately. Late and unparseable records stay identified in the data." },
-      { tag: "Holdings coverage", title: "Annual holdings are not in this view", body: "Periodic transaction reports do not establish a portfolio. Annual holdings and reconciliation require annual financial-disclosure records." },
-    ]) +
-    `<div class="design-band design-member-band design-holdings-band">` +
-    unavailableDesignPanel("Holdings from annual disclosure", "SCHEDULE A · YEAR-END SNAPSHOT", ["Kind", "Ticker", "Asset", "Owner", "Value range", "Income", "13F", "Src"], "Annual financial-disclosure holdings are not included in this build. PTR flows cannot establish year-end holdings.") +
-    `<div>` + unavailableDesignPanel("Reconciliation", "ANNUAL HOLDINGS vs PTRs", ["Ticker", "Record comparison", "Status"], "Requires annual holdings and the same year's transaction reports.") +
-    `<section class="panel design-reconciliation"><div class="panel-head"><h2 class="section-h">Reconciliation summary</h2></div><dl>${["Matched records", "Holding without PTR", "PTR without holding", "Unresolved"].map(label => `<div class="book-metric"><dt>${label}</dt><dd><span class="book-track" aria-hidden="true"></span><span>—</span></dd></div>`).join("")}</dl><p class="section-note">Comparison unavailable. Missing inputs do not indicate a discrepancy.</p></section></div></div>` +
+    /* R16: the quarterly buy/sell chart leads, as on the ticker page. */
+    `<section class="panel panel-wide design-member-chart" aria-labelledby="flow-h">` +
+    `<div class="panel-head"><h2 id="flow-h" class="section-h">Disclosed flow by quarter</h2>` +
+    `<span class="panel-note">bar = [min, max] of bucket sums · <span class="src-derived">derived&nbsp;·§</span>` +
+    noteFromHtml(MEMBER_FLOW_NOTE, { scope: "member-flow" }, "derived") + `</span></div>` +
+    flowRibbon(flow, {
+      twoSided: false,
+      sourceLine: "source: House Clerk + Senate eFD",
+      notes: { scope: "member-chart" },
+    }) +
+    `</section>` +
     memberV2Sections(m, stamps, ctx, deps) +
     `<section class="panel panel-wide" aria-labelledby="txns-h">` +
     `<div class="panel-head"><h2 id="txns-h" class="section-h">All disclosed transactions</h2>` +
@@ -516,27 +534,24 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
       notes: { scope: "member-txns" },
     }) +
     `</section>` +
-    `<div class="design-band design-triptych">` +
+    `<div class="design-band design-triptych design-triptych-pair">` +
     `<section class="panel"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">SOURCE REPORTS · FILED ↓</span></div><div class="table-scroll design-history"><table class="etable"><caption class="visually-hidden">Filing history</caption><thead><tr><th>Filed</th><th>Rows</th><th>Receipt</th></tr></thead><tbody>${Array.from(m.txns.reduce((map, row) => { const key = row.doc; const old = map.get(key); map.set(key, { filed: row.filed, doc: row.doc, count: (old?.count ?? 0) + 1 }); return map; }, new Map<string, { filed: string; doc: string; count: number }>()).values()).sort((a,b) => b.filed.localeCompare(a.filed)).map(row => `<tr><td>${esc(row.filed)}</td><td>${fmtInt(row.count)}</td><td>${srcLink(row.doc)}</td></tr>`).join("")}</tbody></table></div></section>` +
-    unavailableDesignPanel("Institutional overlap", "TRACKED 13F FILERS", ["Ticker", "Filers", "Reported value"], "The member-to-institutional positions join is not published in this build.") +
-    (signalsHtml || unavailableDesignPanel("Signals for this member", "DISCLOSURE RECORD", ["Signal", "Evidence"], "Signal evidence is not available in this view.")) +
-    `</div><details class="design-supplement"><summary>Additional disclosure analysis</summary>` +
+    (signalsHtml || `<section class="panel" aria-label="Signals"><div class="panel-head"><h2 class="section-h">Signals</h2></div><p class="section-note">Signals are joined on the server; this view carries none. <a href="/signals/">Every rule, with its definition →</a></p></section>`) +
+    `</div>` +
+    /* R16: annual holdings, reconciliation and the 13F overlap are ONE
+       planned line — never an empty frame with a paragraph in it. */
+    plannedLine(["annual holdings", "13F overlap"]) +
+    `<details class="design-supplement"><summary>Additional disclosure analysis</summary>` +
     `<div class="entity-grid">` +
-    `<section class="panel" aria-labelledby="flow-h">` +
-    `<div class="panel-head"><h2 id="flow-h" class="section-h">Disclosed flow by quarter</h2>` +
-    `<span class="panel-note">bar = [min, max] of bucket sums · <span class="src-derived">derived&nbsp;·§</span>` +
-    noteFromHtml(MEMBER_FLOW_NOTE, { scope: "member-flow" }, "derived") + `</span></div>` +
-    // The chart's `.rb-caption` becomes a note on the chart.
-    flowRibbon(flow, {
-      twoSided: false,
-      sourceLine: "source: House Clerk + Senate eFD",
-      notes: { scope: "member-chart" },
-    }) +
-    `</section>` +
     `<section class="panel" aria-labelledby="top-h">` +
     `<div class="panel-head"><h2 id="top-h" class="section-h">Most-disclosed tickers</h2><span class="panel-note">trailing 24m</span></div>` +
     topTable +
     `</section>` +
+    briefingCards([
+      { tag: "Disclosed transactions", title: `${fmtInt(m.txns.length)} reported transactions`, body: "Amounts are the ranges in the filing. Purchases and sales are disclosures, not a statement of current holdings." },
+      { tag: "Reporting window", title: `Published ${stamps.generatedAtDate}`, body: "Trade date and filing date are retained separately. Late and unparseable records stay identified in the data." },
+      { tag: "Holdings coverage", title: "Annual holdings are not in this view", body: "Periodic transaction reports do not establish a portfolio. Annual holdings and reconciliation require annual financial-disclosure records." },
+    ]) +
     `</div>` +
     `</details>` +
     memberPaperBlock(m)

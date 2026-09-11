@@ -149,10 +149,13 @@ export function makeDom(ids: string[], selectors: Record<string, FakeElement[]> 
       g.window = { requestIdleCallback: (fn: () => void) => fn() };
       g.fetch = (url?: unknown) => {
         fetchCalls.push(String(url ?? ""));
+        // R12: a function body serves per-URL responses (feed parts vs the
+        // full dataset); a plain value answers every URL, as before.
+        const body = typeof fetchBody === "function" ? (fetchBody as (u: string) => unknown)(String(url ?? "")) : fetchBody;
         return Promise.resolve({
           ok: opts.fetchOk ?? true,
           status: opts.fetchOk === false ? 500 : 200,
-          json: () => Promise.resolve(fetchBody),
+          json: () => Promise.resolve(body),
         });
       };
       return () => {

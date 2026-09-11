@@ -1139,7 +1139,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
       domBacked: true,
       boundCount:
         `Showing the first ${fmtInt(COMPACT_ROWS)} of the ${fmtInt(rows.length)} rows` +
-        ` rendered here — a Public Filings render bound, not a data bound.`,
+        ` on this page.`,
       bound:
         `These rows are the largest of ${fmtInt(emitted)} ordered change records` +
         ` published in this build${

@@ -66,14 +66,17 @@ const FEED_IDS = [
   "pager-newer", "pager-older",
 ];
 
-test("R17: a load that feeds BOTH sections performs exactly ONE fetch", async () => {
+test("R17/R12: load fetches NOTHING; the first request for rows is exactly ONE fetch of the dataset", async () => {
   const dom = makeDom(FEED_IDS);
   dom.elements.get("congress-feed")!.dataset = { txnCount: "1" };
   const restore = dom.install(dataset([txn()]));
   try {
     const { initFeed } = await import("../src/scripts/feed-client.ts");
     let received: readonly TxnRow[] | null = null;
-    initFeed({ onRows: (rows) => { received = rows; } });
+    const feed = initFeed({ onRows: (rows) => { received = rows; } });
+    await dom.flush();
+    assert.equal(dom.fetchCalls.length, 0, `page 1 is server-rendered; nothing downloads at load, saw ${dom.fetchCalls.join(", ")}`);
+    await feed.loadAll();
     await dom.flush();
     assert.equal(dom.fetchCalls.length, 1, `expected one fetch, saw ${dom.fetchCalls.join(", ")}`);
     assert.equal(dom.fetchCalls[0], "/congress/data/feed.v1.json");
@@ -84,18 +87,65 @@ test("R17: a load that feeds BOTH sections performs exactly ONE fetch", async ()
   }
 });
 
-test("R17: onRows fires EXACTLY once — one decode, not one per consumer", async () => {
+test("R17: onRows fires EXACTLY once — one decode, not one per consumer or per request", async () => {
   const dom = makeDom(FEED_IDS);
   dom.elements.get("congress-feed")!.dataset = { txnCount: "2" };
   const restore = dom.install(dataset([txn(), txn({ txnId: "t-2", ticker: "AAPL" })]));
   try {
     const { initFeed } = await import("../src/scripts/feed-client.ts");
     let calls = 0;
-    initFeed({ onRows: () => { calls++; } });
+    const feed = initFeed({ onRows: () => { calls++; } });
+    await Promise.all([feed.loadAll(), feed.loadAll()]);
     await dom.flush();
+    await feed.loadAll();
     await dom.flush();
     assert.equal(calls, 1, "a second call would mean a second decode of the same bytes");
+    assert.equal(dom.fetchCalls.length, 1, "three requests, one download");
   } finally {
+    restore();
+  }
+});
+
+test("R12/LD7: page 2 costs exactly ONE part fetch and never the full dataset", async () => {
+  const { planFeedParts, feedPartHref } = await import("../src/lib/feed-parts.ts");
+  const { mergeFeed } = await import("../src/lib/format.ts");
+  // One filed date: the feed order is then the load order, so page 2 is
+  // rows 50–99 exactly.
+  const rows = Array.from({ length: 120 }, (_, i) => txn({ txnId: `t-${i}`, ticker: `T${i}X`, filed: "2026-08-01" }));
+  const plan = planFeedParts(mergeFeed(rows, []), { build_id: "b", generated_at: null });
+  const dom = makeDom([...FEED_IDS, "feed-parts-index"]);
+  dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
+  dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(plan.index);
+  const restore = dom.install((url: string) => {
+    const m = /\/congress\/data\/feed\/(.+)\.v1\.json$/.exec(url);
+    if (m) return JSON.parse(plan.bodies.get(decodeURIComponent(m[1]!))!);
+    return dataset(rows);
+  });
+  // The pager's focus handling narrows with `instanceof HTMLElement`, which
+  // node does not define; a bare class stands in so the click path runs.
+  const g = globalThis as Record<string, unknown>;
+  const priorEls = { HTMLElement: g.HTMLElement, HTMLButtonElement: g.HTMLButtonElement };
+  g.HTMLElement = class {};
+  g.HTMLButtonElement = class {};
+  try {
+    const { initFeed } = await import("../src/scripts/feed-client.ts");
+    let received = false;
+    initFeed({ onRows: () => { received = true; } });
+    dom.elements.get("pager-older")!.click();
+    await dom.flush();
+    await dom.flush();
+    assert.deepEqual(dom.fetchCalls, [feedPartHref(plan.index.parts[0]!.part)], "one part, and only a part");
+    assert.equal(received, false, "paging never decodes the full dataset");
+    const body = dom.elements.get("feed-tbody")!.innerHTML;
+    assert.equal((body.match(/<tr\b/g) ?? []).length, 50, "page 2 holds the next fifty rows");
+    assert.match(body, />T50X</);
+    assert.match(body, />T99X</);
+    assert.doesNotMatch(body, />T49X</);
+    assert.doesNotMatch(body, />T100X</);
+    assert.match(dom.elements.get("pager-range")!.textContent, /^51–100 of 120 transactions/);
+  } finally {
+    g.HTMLElement = priorEls.HTMLElement;
+    g.HTMLButtonElement = priorEls.HTMLButtonElement;
     restore();
   }
 });

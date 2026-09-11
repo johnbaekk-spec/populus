@@ -220,6 +220,10 @@ test("the island queries EXACTLY the specified sort selector, not a near-miss", 
     "[data-inst-sort]",
     '.compact-disclosure[data-compact-for="inst-managers-tbody"]',
     "#mgr-chips [data-mgr-type],#mgr-chips [data-mgr-notable]",
+    // R14: the island starts from the server's pressed default (Hedge funds)
+    // and clears it for a visitor with a watchlist on this device.
+    '#mgr-chips [data-mgr-type][aria-pressed="true"]',
+    "#mgr-chips [data-mgr-type]",
   ]);
   assert.ok(
     asked.includes("[data-inst-sort]"),

@@ -69,6 +69,14 @@ import {
 } from "./filer-payload.ts";
 import { paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
 import { buildSignalArtifact, validateSignalArtifact } from "./signals.ts";
+import { planFeedParts, type FeedPartsPlan } from "./feed-parts.ts";
+import { pathSafeTicker } from "./format.ts";
+import { notableMoves, offeredMovePeriods } from "./notable-moves-derive.ts";
+import type { NotableMove } from "./notable-moves.ts";
+import { tickerHoldersFor, tickerTotalsFor } from "./inst.ts";
+import { activityFeed } from "./activity.ts";
+import { concentrationPeriods } from "./inst-analytics.ts";
+import { closedPeriods, corpusAsOf } from "./inst-adds.ts";
 
 export type { StatTile, MemberEntity, TickerEntity };
 
@@ -975,6 +983,12 @@ export interface TickerInstSection {
   period?: string;
   latestFiled?: string | null;
   topn?: number;
+  /** R3/R20: set when the section resolved through the reviewed mapping
+      (class-grain holders) rather than the entity-keyed aggregate. */
+  mapped?: { issuer: string; titleOfClass: string; holderCount: number };
+  /** R2: whether `/institutional/tickers/{ticker}/holders/` is built
+      (`holdersPageBuilt`) — the section links to it only then. */
+  holdersPage?: boolean;
   holders?: {
     rank: number;
     cik: string;
@@ -993,6 +1007,13 @@ export interface TickerInstSection {
 export function tickerInstSection(build: BuildData, ticker: string): TickerInstSection {
   if (!build.inst.present) return { state: "module-absent" };
   const res = resolveTicker(build.tickerMap, ticker);
+  /* R3 / LD2: a ticker the reviewed name-and-class mapping names resolves
+     through the class-grain `agg_ticker_holders`, whatever the present-day
+     entity mapping says about it. Entity-keyed resolution stays as-is. */
+  if (res.state !== "resolved") {
+    const mapped = mappedInstSection(build, ticker, null, null);
+    if (mapped) return mapped;
+  }
   if (res.state === "no-map") return { state: "no-map" };
   if (res.state === "unmapped") return { state: "unmapped" };
   if (res.state === "ambiguous") return { state: "ambiguous" };
@@ -1001,12 +1022,15 @@ export function tickerInstSection(build: BuildData, ticker: string): TickerInstS
   // issuer is never joined from a present-day ticker mapping.
   const entityRows = rows.filter((r) => r.issuer_key_source === "entity");
   if (entityRows.length === 0) {
+    const mapped = mappedInstSection(build, ticker, res.name, res.cik);
+    if (mapped) return mapped;
     return { state: "resolved-no-data", name: res.name, cik: res.cik };
   }
   const periods = [...new Set(entityRows.map((r) => r.period_of_report))].sort();
   const period = periods.at(-1)!;
   return {
     state: "data",
+    holdersPage: holdersPageBuilt(build, ticker),
     name: res.name,
     cik: res.cik,
     period,
@@ -1024,6 +1048,38 @@ export function tickerInstSection(build: BuildData, ticker: string): TickerInstS
         flags: r.flags,
         tier: filerTier(build, r.cik),
       })),
+  };
+}
+
+/** The `data` state from the Tier C class-grain tables (R3/R20), or null
+    when the reviewed mapping does not name this ticker. */
+function mappedInstSection(build: BuildData, ticker: string, name: string | null, cik: string | null): TickerInstSection | null {
+  // A test double may present the module without the Tier C tables; an older
+  // aggregate has them empty. Either way: no mapping, no mapped section.
+  if (!build.inst.present || !(build.inst.tickerTotals instanceof Map)) return null;
+  const totals = tickerTotalsFor(build.inst, ticker);
+  if (!totals) return null;
+  const period = totals.period_of_report;
+  const holders = tickerHoldersFor(build.inst, ticker).filter((h) => h.period_of_report === period);
+  return {
+    state: "data",
+    holdersPage: holdersPageBuilt(build, ticker),
+    name: name ?? totals.issuer_name,
+    cik: cik ?? undefined,
+    period,
+    latestFiled: build.inst.watermarks.latest_filed_date,
+    topn: holders.length,
+    mapped: { issuer: totals.issuer_name, titleOfClass: totals.title_of_class, holderCount: totals.holder_count },
+    holders: holders.map((h) => ({
+      rank: h.rank,
+      cik: h.cik,
+      name: h.filer_name,
+      value: h.value_usd ?? 0,
+      securities: 1,
+      keySource: "mapped",
+      flags: [],
+      tier: filerTier(build, h.cik),
+    })),
   };
 }
 
@@ -1460,4 +1516,95 @@ export function chamberBenchmarkFor(build: BuildData, chamber: "house" | "senate
   const key = `${build.buildId}|${chamber}`;
   if (!chamberCache.has(key)) chamberCache.set(key, chamberBenchmark(build.members, chamber));
   return chamberCache.get(key) ?? null;
+}
+
+/* ---------- R12 / LD7: the byte-bounded feed parts ---------- */
+
+const feedPartsCache = new WeakMap<object, FeedPartsPlan>();
+
+/** The ONE part plan per build object — the two JSON routes and the /congress/
+    page's inline index all read this, so a part named in the index is a part
+    that was emitted. */
+export function feedPartsPlan(build: BuildData): FeedPartsPlan {
+  let plan = feedPartsCache.get(build);
+  if (!plan) {
+    plan = planFeedParts(build.merged, {
+      build_id: build.buildId,
+      generated_at: build.stats.generated_at ?? null,
+    });
+    feedPartsCache.set(build, plan);
+  }
+  return plan;
+}
+
+/* ---------- R14: notable-manager moves, memoized per build and period ---------- */
+
+const notableMovesCache = new WeakMap<object, Map<string, NotableMove[]>>();
+
+/** The closed quarters the landing offers (newest first) — the concentration
+    table's periods, judged closed against the corpus watermark (R4). */
+export function notableMovesPeriods(build: BuildData): string[] {
+  if (!build.inst.present) return [];
+  const closed = closedPeriods(concentrationPeriods(build.inst), corpusAsOf(build.generatedAtDate, build.inst.watermarks.latest_filed_date));
+  return offeredMovePeriods(closed, (p) => notableMovesFor(build, p).length);
+}
+
+/** The ONE derivation the page, the shard route and the consensus board share. */
+export function notableMovesFor(build: BuildData, period: string): NotableMove[] {
+  let byPeriod = notableMovesCache.get(build);
+  if (!byPeriod) {
+    byPeriod = new Map();
+    notableMovesCache.set(build, byPeriod);
+  }
+  let rows = byPeriod.get(period);
+  if (!rows) {
+    rows = notableMoves({ feed: activityFeed({ instPresent: build.inst.present }), inst: build.inst, period });
+    byPeriod.set(period, rows);
+  }
+  return rows;
+}
+
+/* ---------- R20: the holders-page set, bounded by the R19 file self-cap ---------- */
+
+/** How many reviewed-ticker holders pages a build may emit. The 2026-08-17
+    tree holds 17,387 files against the 18,000 self-cap (`inst_budget.py`
+    GLOBAL_FILE_CAP); M2 adds ~30 feed parts and 3 notable-moves shards, so
+    the room left for holders pages is ~580. The pages go to the reviewed
+    tickers the Congress corpus discloses MOST, so the plan's acceptance set
+    (the top-50 Congress tickers) is covered first. A larger set is a
+    Pages-tier decision for the owner, not a re-tune here. */
+export const HOLDERS_PAGES_BUDGET = 520;
+
+const holdersPagesCache = new WeakMap<object, Map<string, string>>();
+
+/** Congress-spelled ticker → the reviewed (SEC-spelled) ticker, for every
+    ticker that gets a holders page. Memoized: `getStaticPaths`, the Congress
+    ticker page's holders link and the post-build resolver must agree. */
+export function holdersPageTickers(build: BuildData): Map<string, string> {
+  let set = holdersPagesCache.get(build);
+  if (set) return set;
+  set = new Map();
+  holdersPagesCache.set(build, set);
+  if (!build.inst.present || !(build.inst.tickerTotals instanceof Map)) return set;
+  const ranked = build.tickers
+    .filter((t) => pathSafeTicker(t.ticker) && tickerTotalsFor(build.inst, t.ticker) !== null)
+    .sort((a, b) => b.txns.length - a.txns.length || (a.ticker < b.ticker ? -1 : 1));
+  for (const t of ranked.slice(0, HOLDERS_PAGES_BUDGET)) {
+    set.set(t.ticker, tickerTotalsFor(build.inst, t.ticker)!.ticker);
+  }
+  return set;
+}
+
+/** Whether `/institutional/tickers/{ticker}/holders/` is BUILT for this ticker
+    — the entity-keyed page (unchanged rule) or a reviewed-ticker page inside
+    the budget. The Congress ticker page renders its holders link only when
+    this is true (R2: never a dressed 404). */
+export function holdersPageBuilt(build: BuildData, ticker: string): boolean {
+  if (!build.inst.present || !pathSafeTicker(ticker)) return false;
+  const res = resolveTicker(build.tickerMap, ticker);
+  if (res.state === "resolved") {
+    const rows = build.inst.holdersByIssuer.get(res.issuerKey) ?? [];
+    if (rows.some((r) => r.issuer_key_source === "entity")) return true;
+  }
+  return holdersPageTickers(build).has(ticker);
 }

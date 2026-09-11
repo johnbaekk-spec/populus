@@ -5,9 +5,11 @@
 // cumulative registry counts are labeled as all-period values).
 import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
-import { briefingCards, disclosureLedger, unavailableDesignPanel, s1ModuleAbsent, s7Banner, addsSectionHtml, clusterBoardHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
+import { disclosureLedger, unavailableDesignPanel, s1ModuleAbsent, s7Banner, addsSectionHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
 import { concentrationPeriods, newPositionLeaders, trackedValueFor } from "../../lib/inst-analytics";
-import { clusterBoard } from "../../lib/activity";
+import { notableMovesFor, notableMovesPeriods } from "../../lib/data";
+import { consensusBoard, consensusBoardHtml, notableMovesBandHtml } from "../../lib/notable-moves";
+import { filerHref } from "../../lib/holdings";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { concentrationFor, deltasFor, typingFor, addsFor, addsExclusionCount } from "../../lib/inst";
@@ -78,7 +80,11 @@ if (!inst.present) {
     const concentration = concentrationFor(inst, row.cik, row.period);
     row.top5Share = inst.topn === 5 ? (concentration?.topn_share_bps ?? null) : null;
   }
-  const directory = instIndexBodyHtml(indexRows, "", "value", "desc", undefined, COMPACT_ROWS);
+  /* R14: *Hedge funds* is selected by default. The client keeps the chip
+     unless the visitor has a watchlist on this device, in which case it clears
+     the default — the server cannot know, so it renders the common case. */
+  const DEFAULT_TYPES = new Set<string>(["hedge_fund"]);
+  const directory = instIndexBodyHtml(indexRows, "", "value", "desc", { types: DEFAULT_TYPES, notableOnly: false }, COMPACT_ROWS);
   const rows = directory.html;
   /* A column with no well-defined order still STATES why — the channel
      changed, not the text. It was a `.col-why` sub-label under every unsortable
@@ -146,7 +152,7 @@ if (!inst.present) {
     (Object.keys(MANAGER_TYPE_LABELS) as ManagerType[])
       .map(
         (t) =>
-          `<button type="button" class="mgr-chip" data-mgr-type="${esc(t)}" aria-pressed="false">${esc(
+          `<button type="button" class="mgr-chip" data-mgr-type="${esc(t)}" aria-pressed="${DEFAULT_TYPES.has(t)}">${esc(
             MANAGER_TYPE_LABELS[t],
           )}</button>`,
       )
@@ -166,10 +172,13 @@ if (!inst.present) {
   const analyticsPeriod = closedPeriods(concentrationPeriods(inst), asOf)[0] ?? null;
   const tracked = analyticsPeriod === null ? null : trackedValueFor(inst, analyticsPeriod);
   const leaders = analyticsPeriod === null ? null : newPositionLeaders(inst, analyticsPeriod, { limit: 5 });
-  const clusters = analyticsPeriod === null
-    ? ({ present: false, reason: "no-rows-for-period" } as const)
-    : clusterBoard({ instPresent: true, period: analyticsPeriod, limit: 9 });
-  const consensus = clusters.present ? clusters.board.rows[0] ?? null : null;
+  /* R14: the notable-manager moves for the closed quarter feed the band, the
+     consensus board (notable filers only, ≥3 distinct) and the hero tile. */
+  const movesPeriods = notableMovesPeriods(build);
+  const moves = analyticsPeriod === null ? [] : notableMovesFor(build, analyticsPeriod);
+  const board = analyticsPeriod === null ? null : consensusBoard(analyticsPeriod, moves, { minFilers: 3, limit: 50 });
+  const consensus = board?.rows[0] ?? null;
+  const hrefOf = (cik: string): string => filerHref(cik, filerTier(build, cik));
   bodyHtml =
     `<header class="entity-head"><div class="entity-head-copy">` +
     `<div class="kicker">Public record / Institutional · Form 13F</div><h1 class="entity-title">Institutional</h1>` +
@@ -177,8 +186,8 @@ if (!inst.present) {
     `</div>` + disclosureLedger([
       { label: "Filers tracked", value: fmtInt(inst.filers.length), detail: tracked ? `${fmtInt(tracked.filers)} filed ${tracked.period}` : "published registry" },
       { label: "Tracked value", value: tracked ? fmtUsd(tracked.totalValueUsd) : "—", detail: tracked ? `13F long only · ${tracked.period}${tracked.partialBooks > 0 ? ` · ≥ (${fmtInt(tracked.partialBooks)} partial books)` : ""}` : "no closed quarter yet" },
-      { label: "Consensus add", value: consensus ? consensus.issuerName.length > 14 ? `${consensus.issuerName.slice(0, 13)}…` : consensus.issuerName : "—", detail: consensus ? `${fmtInt(consensus.newPositions)} filers opened it · ${analyticsPeriod}` : analyticsPeriod ? `no ≥3-filer cluster in ${analyticsPeriod}` : "no closed quarter yet" },
-      { label: "Congress overlap", value: "—", detail: "cross-module join not published" },
+      { label: "Consensus add", value: consensus ? (consensus.ticker ?? (consensus.issuer.length > 14 ? `${consensus.issuer.slice(0, 13)}…` : consensus.issuer)) : "—", detail: consensus ? `${fmtInt(consensus.newStakes)} notable managers opened it · ${analyticsPeriod}` : analyticsPeriod ? `no name moved by ≥3 notable managers in ${analyticsPeriod}` : "no closed quarter yet" },
+      { label: "Notable managers", value: fmtInt(notableCiks.size), detail: analyticsPeriod ? `${fmtInt(moves.length)} named moves · ${analyticsPeriod}` : "curated registry" },
     ]) + `</header>` +
     /* R4: ONE source for the quarter. The header names the CLOSED analytics
        period and its filer count from the same table the tiles use; the
@@ -186,18 +195,10 @@ if (!inst.present) {
        open one) moves to the footnote below as the newest filing received. */
     `<div class="design-provenance">13F universe · quarterly, 45-day lag · not current holdings <span>Closed quarter ${esc(analyticsPeriod ?? "unavailable")}${tracked ? ` · ${fmtInt(tracked.filers)} filers reported` : ""}</span> <a href="#inst-data-note">Long positions only · coverage §</a></div>` +
     `<p class="section-note inst-watermark-foot">newest filing received: ${esc(inst.watermarks.latest_filed_date ?? "unavailable")}${inst.watermarks.latest_period_of_report && inst.watermarks.latest_period_of_report !== analyticsPeriod ? ` · filings for ${esc(inst.watermarks.latest_period_of_report)} are still arriving (window open)` : ""}</p>` +
-    briefingCards([
-      { tag: "Position discovery", title: `${fmtInt(inst.filers.length)} filers in the published record`, body: "Explore reported long positions, concentration and changes between quarters. Each filer retains its own reporting period." },
-      { tag: "Quarterly record", title: analyticsPeriod ?? "No closed reporting period yet", body: "Quarter-end positions are disclosed up to 45 days later. They do not represent current holdings or the manager’s complete portfolio." },
-      { tag: "Reported changes", title: "New positions, increases and decreases", body: "Changes are classified from comparable reported positions. A missing position is not proof of a sale; value changes also include price changes." },
-    ]) +
-    `<div class="design-band design-institutional-band">` +
-    clusterBoardHtml(clusters, analyticsPeriod) +
-    `<div class="design-activity">` + activitySectionHtml(feed, { reference: true, tierOf: (cik) => filerTier(build, cik), notableCiks: notableCiks }) + `</div></div>` +
-    `<div class="design-band design-institutional-band">` +
-    newPositionLeadersHtml(leaders, (cik) => filerTier(build, cik), analyticsPeriod) +
-    unavailableDesignPanel("Sector rotation", "Tracked filers Q/Q · value-weighted pp", ["Sector", "Change", "PP Q/Q", "Congress direction"], "A period-aligned sector rotation and Congress comparison is not available in this build.", "design-rotation") + `</div>` +
-    `<details class="design-supplement"><summary>Recently added issuers · explore published changes</summary>` + addsHtml + `</details>` +
+    /* R14 order: the named moves first (data), then the directory, then the
+       consensus board; the recent-activity feed sits below the fold. The three
+       explainer cards are one footnote line into the methodology page. */
+    notableMovesBandHtml(moves, { periods: movesPeriods, period: analyticsPeriod, filerHref: hrefOf }) +
     `<section class="panel panel-wide" id="inst-managers-section" aria-label="Manager directory">` +
     `<div class="panel-head"><h2 class="section-h">Filer directory</h2>` +
     `<span class="panel-note"><input class="filter-select filter-text" type="search" id="inst-index-q" ` +
@@ -247,7 +248,17 @@ if (!inst.present) {
     }) +
     `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
     `<script type="application/json" id="inst-index-data">${serializeInlineJson(indexRows)}</script>` +
-    `</section>`;
+    `</section>` +
+    `<div class="design-band design-institutional-band">` +
+    consensusBoardHtml(board, { filerHref: hrefOf }) +
+    newPositionLeadersHtml(leaders, (cik) => filerTier(build, cik), analyticsPeriod) +
+    `</div>` +
+    `<div class="design-band design-institutional-band design-activity-band"><div class="design-activity">` +
+    activitySectionHtml(feed, { reference: true, tierOf: (cik) => filerTier(build, cik), notableCiks: notableCiks }) + `</div>` +
+    unavailableDesignPanel("Sector rotation", "Tracked filers Q/Q · value-weighted pp", ["Sector", "Change", "PP Q/Q", "Congress direction"], "A period-aligned sector rotation and Congress comparison is not available in this build.", "design-rotation") + `</div>` +
+    `<details class="design-supplement"><summary>Recently added issuers · explore published changes</summary>` + addsHtml + `</details>` +
+    `<p class="section-note inst-method-foot">Quarter-end positions, disclosed up to 45 days later; never current holdings, never a complete portfolio. ` +
+    `Changes are classified from comparable reported positions; a missing position is not proof of a sale. <a href="/methodology/#13f-method">How 13F data is read ↗</a></p>`;
 }
 const description = build.inst.present
   ? "Institutional 13F module: filers, holders, quarter-over-quarter moves from the published Public Filings aggregate."
@@ -269,11 +280,13 @@ const description = build.inst.present
       initInstIndex,
       initAddsControls,
       initDomDisclosures,
+      initNotableMoves,
     } from "../../scripts/inst-index-client";
     import { initNotes } from "../../scripts/notes";
     initInstIndex();
     initAddsControls();
     initDomDisclosures();
+    initNotableMoves();
     /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —

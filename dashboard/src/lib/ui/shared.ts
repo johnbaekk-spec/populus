@@ -87,3 +87,10 @@ export function unavailableDesignPanel(title: string, context: string, columns: 
     `<thead><tr>${columns.map(c => `<th scope="col">${esc(c)}</th>`).join("")}</tr></thead>` +
     `<tbody><tr><td colspan="${columns.length}"><div class="design-unavailable-message"><span class="design-availability">Not available in this build</span><p>${esc(reason)}</p></div></td></tr></tbody></table></div></section>`;
 }
+
+/** R24: the ONE "Planned:" line a page carries in place of empty panels — a
+    frame with nothing but a paragraph in it is removed, and what it would have
+    held is named here once. */
+export function plannedLine(items: readonly string[]): string {
+  return `<p class="planned-line"><span class="badge-planned">PLANNED</span> ${items.map((i) => esc(i)).join(" · ")}</p>`;
+}

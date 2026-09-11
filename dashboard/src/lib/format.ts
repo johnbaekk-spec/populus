@@ -756,7 +756,9 @@ export function amountVerdict(
 /* ---------- merge + pagination (shared so SSR page 1 === client page 1) ---- */
 
 export const PAGE_SIZE = 50;
-export const DESIGN_FEED_PAGE_SIZE = 8;
+/** R12: the Congress feed pages 50 rows; page 1 is server-rendered from the
+    same slice the client pages through the byte-bounded feed parts. */
+export const DESIGN_FEED_PAGE_SIZE = 50;
 
 /** Merge transactions with paper filings by filed date (desc); transactions
     first within a date. Both inputs must already be sorted filed-desc. */
@@ -1373,11 +1375,12 @@ export interface CompactDisclosureOpts {
 /** The count clause, composed in ONE place so the server's first render and
     every client that later restates it cannot drift into two wordings. */
 export function compactBoundCount(hidden: number, noun: string): string {
-  return (
-    `${fmtInt(hidden)} further ${esc(noun)} are not rendered above — ` +
-    `a Public Filings render bound, not a data bound.`
-  );
+  // R13: plain words — "more below", never pipeline vocabulary.
+  return `${fmtInt(hidden)} more ${esc(noun)} below.`;
 }
+
+/** R13: how many rows one press of the expand control reveals. */
+export const COMPACT_STEP = 50;
 
 /** The bound statement plus its expand control.
 
@@ -1437,7 +1440,7 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
     // The button carries the TOTAL, never the held-back count: the sentence
     // above it already states that count, and one bound stated twice, two
     // elements apart, is exactly the duplication this control removes.
-    btn(`Show all ${fmtInt(o.total)} ${esc(o.noun)}`) +
+    btn(compactExpandLabel(o.total, o.noun, o.shown)) +
     `</div>`
   );
 }
@@ -1448,8 +1451,11 @@ export function compactCollapseLabel(noun: string): string {
   return `Show only the first ${fmtInt(COMPACT_ROWS)} ${noun}`;
 }
 
-export function compactExpandLabel(total: number, noun: string): string {
-  return `Show all ${fmtInt(total)} ${noun}`;
+/** R13: "Show 50 more" while more than one step is held back, else the whole
+    remainder. `shown` defaults to the compact slice. */
+export function compactExpandLabel(total: number, noun: string, shown = COMPACT_ROWS): string {
+  const hidden = Math.max(0, total - shown);
+  return hidden > COMPACT_STEP ? `Show ${fmtInt(COMPACT_STEP)} more` : `Show all ${fmtInt(total)} ${esc(noun)}`;
 }
 
 /** The client-side counterpart of `compactDisclosure`, kept BESIDE it

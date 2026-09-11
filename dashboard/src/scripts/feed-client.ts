@@ -18,9 +18,18 @@ import {
   amountVerdict,
   type TxnRow,
   type PaperRow,
+  type FeedItem,
   type RenderCtx,
 } from "../lib/format.ts";
 import { windowMembership, type WindowVerdict } from "../lib/derive.ts";
+import {
+  classifyFeedPartsIndex,
+  decodeFeedPart,
+  feedPartHref,
+  pageSliceFrom,
+  partsForPage,
+  type FeedPartsIndex,
+} from "../lib/feed-parts.ts";
 import { initSortableTable } from "./table-sort.ts";
 import { loadWatchStore } from "./entity-client.ts";
 
@@ -118,7 +127,16 @@ export interface FeedOptions {
   onSettled?: (ok: boolean) => void;
 }
 
-export function initFeed(options: FeedOptions = {}): void {
+/** R12: what the feed island hands back — the ONE way another island on the
+    page can ask for the full dataset. */
+export interface FeedHandle {
+  /** Download and decode the full `feed.v1.json` once (idempotent); rows
+      reach `onRows`. Resolves on either outcome. */
+  loadAll(): Promise<void>;
+}
+
+export function initFeed(options: FeedOptions = {}): FeedHandle {
+  const noop: FeedHandle = { loadAll: () => Promise.resolve() };
   /* Fired once per LOAD ATTEMPT, on either outcome. A consumer's throw
      is contained the same way `onRows`'s is — a broken consumer must not turn a
      successful decode into a failed one.
@@ -177,9 +195,21 @@ export function initFeed(options: FeedOptions = {}): void {
   const dateBasisSel = document.getElementById("filter-date-basis") as HTMLSelectElement | null;
   // `feedEl` is deliberately NOT in this guard: it is a scroll target, not a
   // prerequisite, and requiring it is what killed the island.
-  if (!rootEl || !bodyEl || !countEl || !rangeEl) return;
+  if (!rootEl || !bodyEl || !countEl || !rangeEl) return noop;
 
   const totalAll = Number(rootEl.dataset.txnCount ?? 0);
+  /* R12 / LD7: the part index ships INLINE with the page (a few kilobytes),
+     so paging the unfiltered feed costs exactly the part or parts that hold
+     the page — never the 20 MB dataset and never a second round trip for the
+     index. Absent (an older page, a test double), paging falls back to the
+     full dataset. */
+  let partsIndex: FeedPartsIndex | null = null;
+  try {
+    const raw = document.getElementById("feed-parts-index")?.textContent;
+    partsIndex = raw ? classifyFeedPartsIndex(JSON.parse(raw)) : null;
+  } catch {
+    partsIndex = null;
+  }
   const state: State = { ...DEFAULTS };
   resetWrap?.removeAttribute("hidden");
 
@@ -266,9 +296,8 @@ export function initFeed(options: FeedOptions = {}): void {
     if (!emptyEl || !emptyDetailEl || !emptySuggestEl) return;
     setHeading("Couldn't load the full dataset.");
     emptyDetailEl.textContent =
-      "Filtering, search and paging need the full dataset, which failed to " +
-      "download. The first page above is still the real published data — " +
-      "nothing here is stale or invented.";
+      "The rows for this view failed to download. The page above is still " +
+      "the real published data — nothing here is stale or invented.";
     emptySuggestEl.innerHTML = "";
     const retry = document.createElement("button");
     retry.textContent = "Try again";
@@ -294,8 +323,87 @@ export function initFeed(options: FeedOptions = {}): void {
     const h = emptyEl?.querySelector("h2");
     if (h) h.textContent = text;
   }
-  const idle = (window as any).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
-  idle(() => loadData());
+  /* R12: nothing is downloaded at load. Page 1 is the server-rendered
+     slice; paging fetches parts; the first FILTER, sort or ranking-window
+     change loads the full dataset — and only then. */
+
+  /* ---------- the byte-bounded parts (unfiltered paging) ---------- */
+
+  const partCache = new Map<string, Promise<FeedItem[]>>();
+  function loadPart(part: string): Promise<FeedItem[]> {
+    let p = partCache.get(part);
+    if (!p) {
+      p = fetch(feedPartHref(part))
+        .then((r) => {
+          if (!r.ok) throw new Error(`feed part fetch failed: ${r.status}`);
+          return r.json();
+        })
+        .then((body) => {
+          const decoded = decodeFeedPart(body);
+          if (!decoded) throw new Error(`feed part rejected: ${part}`);
+          return decoded.items;
+        });
+      p.catch(() => partCache.delete(part));
+      partCache.set(part, p);
+    }
+    return p;
+  }
+
+  /** The unfiltered, newest-first view pages through the parts. Anything
+      else needs the whole corpus. */
+  function pagesFromParts(s: State): boolean {
+    return (
+      partsIndex !== null &&
+      s.sort === "filed" &&
+      s.chamber === "all" &&
+      s.party === "all" &&
+      s.side === "all" &&
+      s.amountMin === 0 &&
+      s.owner === "all" &&
+      !s.late &&
+      !s.watchedOnly &&
+      s.q === "" &&
+      s.dateFrom === "" &&
+      s.dateTo === ""
+    );
+  }
+
+  let partsApplySeq = 0;
+  function applyFromParts(index: FeedPartsIndex): void {
+    const maxPage = Math.max(0, index.page_count - 1);
+    if (state.page > maxPage) state.page = maxPage;
+    const parts = partsForPage(index, state.page, PAGE_SIZE);
+    const seq = ++partsApplySeq;
+    emptyEl?.setAttribute("hidden", "");
+    Promise.all(parts.map((p) => loadPart(p.part)))
+      .then((lists) => {
+        if (seq !== partsApplySeq) return; // a later page change superseded this one
+        loadingEl?.setAttribute("hidden", "");
+        const items = pageSliceFrom(lists.flat(), parts[0]?.txn_offset ?? 0, state.page, PAGE_SIZE);
+        const ctx: RenderCtx = { watched, referenceFeed: true };
+        bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
+        setCounts(
+          feedCountText({
+            pageSize: PAGE_SIZE,
+            page: state.page,
+            txnMatched: index.txn_total,
+            paperMatched: index.paper_total,
+            txnOnPage: items.filter((it) => it.kind === "txn").length,
+            paperOnPage: items.filter((it) => it.kind === "paper").length,
+            txnTotal: totalAll,
+            indeterminate: 0,
+          }),
+        );
+        setPagerState(newerBtn, state.page === 0);
+        setPagerState(olderBtn, state.page >= maxPage);
+      })
+      .catch((err) => {
+        if (seq !== partsApplySeq) return;
+        loadingEl?.setAttribute("hidden", "");
+        console.error("populus: a feed part failed to load", err);
+        renderLoadFailure();
+      });
+  }
 
   /* ---------- filtering ---------- */
 
@@ -483,6 +591,10 @@ export function initFeed(options: FeedOptions = {}): void {
   /* ---------- rendering ---------- */
 
   function apply(): void {
+    if (pagesFromParts(state) && partsIndex) {
+      applyFromParts(partsIndex);
+      return;
+    }
     if (!txns || !paper) {
       // Do NOT clear the server-rendered rows: if the dataset never arrives,
       // page 1 stays readable instead of leaving a blank table under a count
@@ -752,4 +864,6 @@ export function initFeed(options: FeedOptions = {}): void {
       (active instanceof HTMLButtonElement && active.getAttribute("aria-disabled") === "true");
     if (lost && rangeEl instanceof HTMLElement) rangeEl.focus();
   }
+
+  return { loadAll: () => loadData() };
 }

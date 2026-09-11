@@ -27,7 +27,6 @@ import {
   srcLink,
   memberHrefFor,
   tickerHrefFor,
-  terminusRow,
 } from "../format.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
 import { briefingCards, disclosureLedger } from "./shared.ts";
@@ -197,31 +196,58 @@ export function signalRowHtml(s: Signal, ctx: RenderCtx): string {
   );
 }
 
-/* ---------- the reference HIT row: kind · subject · evidence · src · magnitude · when · rcpt ---------- */
+/* ---------- R17: the HIT row — Ticker · Who · What · Filed · Size · Src ---------- */
 
-function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = ""): string {
+/** Hits per page; the pager runs over the complete artifact. */
+export const SIGNAL_HITS_PAGE_SIZE = 50;
+export const SIGNAL_HIT_COLUMNS = ["Ticker", "Who", "What", "Filed", "Size", "Src"] as const;
+
+/** Newest filed first, then the larger lower bound — the ONE order the server
+    page and the client pager share. */
+export function sortHits(active: readonly Signal[]): Signal[] {
+  return [...active].sort((a, b) =>
+    a.occurrence.filedDate === b.occurrence.filedDate
+      ? (b.magnitude.low ?? -1) - (a.magnitude.low ?? -1)
+      : a.occurrence.filedDate < b.occurrence.filedDate ? 1 : -1,
+  );
+}
+
+export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = ""): string {
   const family = familyOf(s.kind);
   const subject = s.entities.bioguide
     ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>`
     : esc(s.entities.memberName);
   const ticker = s.entities.ticker
-    ? ` <a class="si-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>`
-    : "";
+    ? `<a class="si-ticker mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>`
+    : `<span class="none">—</span>`;
   const receipt = s.receipts[0] ?? "";
   const lag = lagDays(s);
+  /* The evidence is ONE line; the row expand carries the full text — the
+     exact rule and every receipt — so nothing is deleted, only folded. */
+  const expand =
+    `<details class="si-expand"><summary>${esc(evidenceText(s))}</summary>` +
+    `<div class="si-expand-body"><p><strong>Rule:</strong> ${esc(s.rule)}</p>` +
+    `<p><strong>Receipts:</strong> ${s.receipts.map((r) => srcLink(r)).join(" ") || "—"}</p>` +
+    `<p class="mono-note">${esc(SIGNAL_KIND_LABELS[s.kind])} · thresholds v${esc(String(s.thresholdVersion ?? ""))} · computed ${esc(String(s.computedAt ?? ""))}</p></div></details>`;
   return (
     `<tr class="si-hit si-family-${family.toLowerCase()} si-kind-${esc(s.kind)}" data-signal-id="${esc(s.id)}" data-family="${family}"` +
     ` data-kind="${esc(s.kind)}" data-bioguide="${esc(s.entities.bioguide ?? "")}" data-ticker="${esc(s.entities.ticker ?? "")}"` +
     ` data-filed="${esc(s.occurrence.filedDate)}"${extraAttrs}>` +
-    `<td class="si-kind">${esc(shortOf(s.kind))}${note(s.rule, { scope: "signal-hits" }, s.id)}</td>` +
-    `<td class="si-subject">${subject}${ticker}</td>` +
-    `<td class="si-evidence">${esc(evidenceText(s))}</td>` +
-    `<td class="si-src"><span class="si-stamp">${esc(s.cohort === "senate" ? "eFD" : "PTR")}</span></td>` +
-    `<td class="c-num si-mag">${esc(magnitudeText(s.magnitude))}</td>` +
+    `<td class="si-ticker-cell">${ticker}</td>` +
+    `<td class="si-subject">${subject}</td>` +
+    `<td class="si-what"><span class="si-kind">${esc(shortOf(s.kind))}${note(s.rule, { scope: "signal-hits" }, s.id)}</span>${expand}</td>` +
     `<td class="c-filed si-when">${whenText(s)}${lag != null ? ` <span class="${lag > 45 ? "si-late" : "si-lag"}">+${fmtInt(lag)}d</span>` : ""}</td>` +
-    `<td class="c-src">${receipt ? srcLink(receipt) : "—"}${s.receipts.length > 1 ? `<span class="mono-note"> +${fmtInt(s.receipts.length - 1)}</span>` : ""}</td>` +
+    `<td class="c-num si-mag">${esc(magnitudeText(s.magnitude))}</td>` +
+    `<td class="c-src"><span class="si-stamp">${esc(s.cohort === "senate" ? "eFD" : "PTR")}</span> ${receipt ? srcLink(receipt) : "—"}${s.receipts.length > 1 ? `<span class="mono-note"> +${fmtInt(s.receipts.length - 1)}</span>` : ""}</td>` +
     `</tr>`
   );
+}
+
+/** "Showing 1–50 of N" — the ONE range string the server and the pager share. */
+export function hitsRangeText(page: number, onPage: number, total: number, pageSize = SIGNAL_HITS_PAGE_SIZE): string {
+  if (total === 0) return "0 hits";
+  const lo = page * pageSize + 1;
+  return `Showing ${fmtInt(lo)}–${fmtInt(lo + onPage - 1)} of ${fmtInt(total)}`;
 }
 
 function withheldHtml(w: WithheldKind, carried: number): string {
@@ -252,11 +278,10 @@ export interface SignalsPageDeps {
   latestBatch: readonly Pick<TxnRow, "name" | "bioguide" | "party" | "traded" | "filed" | "lag" | "late">[];
   /** the batch's filed date, printed as the band's period label */
   latestBatchFiled: string | null;
-  /** how many hits to render on the server; the artifact link carries the rest */
+  /** hits per page (defaults to SIGNAL_HITS_PAGE_SIZE); the pager covers the rest */
   renderCap?: number;
 }
 
-const HITS_RENDER_CAP = 60;
 /** the device-local watchlist band reads this many newest active hits */
 const WATCH_EMBED_CAP = 400;
 
@@ -306,42 +331,43 @@ function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
   );
 }
 
-function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, cap: number): string {
-  const sorted = [...active].sort((a, b) =>
-    a.occurrence.filedDate === b.occurrence.filedDate
-      ? (b.magnitude.low ?? -1) - (a.magnitude.low ?? -1)
-      : a.occurrence.filedDate < b.occurrence.filedDate ? 1 : -1,
-  );
-  const shown = sorted.slice(0, cap);
-  const families = FAMILY_ORDER.filter((f) => active.some((s) => familyOf(s.kind) === f));
+function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pageSize: number): string {
+  const sorted = sortHits(active);
+  const shown = sorted.slice(0, pageSize);
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const kinds = RULE_BOOK.filter((r) => active.some((s) => s.kind === r.kind));
+  /* R17: filter by RULE (kind) and by the device-local watchlist; the family
+     stays on the row as data so a family view can still be composed. */
   const seg =
-    `<div class="seg si-hit-filter" role="group" aria-label="Filter hits by family">` +
-    `<button type="button" data-family="all" aria-pressed="true">All</button>` +
-    families.map((f) => `<button type="button" data-family="${f}" aria-pressed="false">${esc(FAMILY_LABEL[f])}</button>`).join("") +
-    `</div>`;
+    `<div class="seg si-hit-filter" role="group" aria-label="Filter hits by rule">` +
+    `<button type="button" data-kind="all" aria-pressed="true">All</button>` +
+    kinds.map((r) => `<button type="button" data-kind="${esc(r.kind)}" aria-pressed="false">${esc(r.short)}</button>`).join("") +
+    `</div>` +
+    `<label class="filter-check" for="signal-watched-only"><input type="checkbox" id="signal-watched-only" aria-label="watched members and tickers only — stored in this browser" /> watched only</label>`;
   const body = shown.length === 0
-    ? `<tr><td colspan="7" class="si-empty">Zero hits in the retained window — a computed answer over every rule above, not missing coverage.</td></tr>`
+    ? `<tr><td colspan="${SIGNAL_HIT_COLUMNS.length}" class="si-empty">Zero hits in the retained window — a computed answer over every rule, not missing coverage.</td></tr>`
     : shown.map((s) => hitRowHtml(s, ctx)).join("\n");
+  const range = hitsRangeText(0, shown.length, sorted.length, pageSize);
   return (
-    `<section class="panel si-hits" id="signal-hits" aria-label="Hits">` +
+    `<section class="panel panel-wide si-hits" id="signal-hits" aria-label="Hits" data-page-size="${pageSize}" data-total="${sorted.length}">` +
     `<div class="panel-head"><h2 class="section-h">Hits</h2>` +
     `<span class="panel-note">RETAINED WINDOW ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} · NEWEST FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
     seg + `</div>` +
     `<div class="table-scroll si-hits-scroll" tabindex="0" role="region" aria-label="Signal hits · scroll for more rows"><table class="etable etable-compact si-table">` +
     `<caption class="visually-hidden">Signal hits, newest filed first</caption>` +
-    `<thead><tr><th scope="col">Kind</th><th scope="col">Subject</th><th scope="col">Evidence</th><th scope="col">Src</th><th scope="col" class="num">Magnitude</th><th scope="col" class="num">When</th><th scope="col" class="num">Rcpt</th></tr></thead>` +
+    `<thead><tr>${SIGNAL_HIT_COLUMNS.map((c) => `<th scope="col"${c === "Size" ? ' class="num"' : ""}>${esc(c)}</th>`).join("")}</tr></thead>` +
     `<tbody id="signal-hits-body">${body}</tbody></table></div>` +
+    `<div class="feed-foot"><div class="pager">` +
+    `<span class="pager-range" id="signal-hits-range" tabindex="-1">${esc(range)}</span>` +
+    `<button class="pager-btn is-unavailable" id="signal-hits-prev" aria-disabled="true">← Prev</button>` +
+    `<button class="pager-btn${pageCount > 1 ? "" : " is-unavailable"}" id="signal-hits-next" aria-disabled="${pageCount > 1 ? "false" : "true"}">Next →</button>` +
+    `</div></div>` +
     `<p class="section-note" id="signal-hits-count" data-total="${active.length}" data-shown="${shown.length}">` +
     `<span class="si-stamp">PTR</span> / <span class="si-stamp">eFD</span> = the source regime of the underlying row · ` +
-    `magnitudes are the row's statutory range, never narrowed · ${fmtInt(active.length)} ${active.length === 1 ? "hit" : "hits"} in the window.</p>` +
-    (active.length > shown.length
-      ? terminusRow({
-          author: "populus",
-          html: `${fmtInt(active.length - shown.length)} further hits are in the artifact but not rendered here — a render bound, not a data bound; the artifact at <a href="/signals/data/signals.v1.json">signals.v1.json</a> is complete for the window.`,
-        })
-      : "") +
+    `magnitudes are the row's statutory range, never narrowed · ${fmtInt(active.length)} ${active.length === 1 ? "hit" : "hits"} in the window · ` +
+    `the complete artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
     `<p class="visually-hidden" id="signal-hits-status" role="status" aria-live="polite"></p>` +
-    `<noscript><p class="section-note">Family filtering needs JavaScript; every rendered hit is listed above regardless.</p></noscript>` +
+    `<noscript><p class="section-note">Paging and filtering need JavaScript; the first ${fmtInt(pageSize)} hits are listed above regardless, and the artifact holds every hit.</p></noscript>` +
     `</section>`
   );
 }
@@ -531,30 +557,13 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   const withheld = artifact.withheld
     .map((w) => withheldHtml(w, unevaluated.filter((s) => s.kind === w.kind).length))
     .join("\n");
-  const supersededSection =
+  /* R17: the superseded rows leave the page. They stay in the artifact and
+     are linked from the footnote as the changes since the last build. */
+  const supersededFoot =
     superseded.length === 0
       ? ""
-      : `<section class="panel panel-wide" aria-label="Superseded signals">` +
-        `<div class="panel-head"><h2 class="section-h">Superseded — no longer in the current view</h2>` +
-        `<span class="panel-note">${fmtInt(superseded.length)} tombstones in window</span></div>` +
-        `<p class="section-note">These signals appeared in an earlier build's artifact and left the ` +
-        `retained view — their underlying filing was amended or superseded, or the rule no longer ` +
-        `matches. The tombstone preserves when: each names the build that dropped it.</p>` +
-        `<div class="table-scroll"><table class="etable etable-compact">` +
-        `<caption class="visually-hidden">Superseded signals</caption>` +
-        `<thead><tr><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Member</th>` +
-        `<th scope="col">Superseded in build</th><th scope="col">Src</th></tr></thead>` +
-        `<tbody>${superseded
-          .slice(0, 50)
-          .map(
-            (s) =>
-              `<tr class="signal-superseded"><td>${esc(SIGNAL_KIND_LABELS[s.kind])}</td>` +
-              `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
-              `<td>${esc(s.entities.memberName)}</td>` +
-              `<td class="mono-id">${esc(s.supersededInBuild ?? "—")}</td>` +
-              `<td class="c-src">${srcLink(s.receipts[0] ?? "")}</td></tr>`,
-          )
-          .join("\n")}</tbody></table></div></section>`;
+      : `<p class="section-note" id="signal-changes-foot">${fmtInt(superseded.length)} ${superseded.length === 1 ? "signal" : "signals"} from an earlier build left the retained view ` +
+        `(amended away or no longer matching) — <a href="/signals/data/signals.v1.json">changes since last build</a>, in the artifact.</p>`;
 
   return (
     `<div class="page-head">` +
@@ -570,13 +579,16 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     `<span>zero hits is a computed answer, not missing coverage ${note(artifact.lagCaveat + " " + artifact.lifecycleNote, { scope: "signals-meta" }, "lag")}</span>` +
     `</div>` +
     stories +
-    ruleBookHtml(artifact, active) +
+    /* R17 order: the hits table first (data), the rule book collapsed below it. */
+    hitsHtml(artifact, active, ctx, d.renderCap ?? SIGNAL_HITS_PAGE_SIZE) +
     `<div class="design-band design-signals-band">` +
-    hitsHtml(artifact, active, ctx, d.renderCap ?? HITS_RENDER_CAP) +
-    `<div>` + lagBandHtml(d) + rateBandHtml(d, active, artifact) + `</div>` +
+    lagBandHtml(d) + rateBandHtml(d, active, artifact) +
     `</div>` +
+    `<details class="design-supplement" id="signal-rulebook-wrap"><summary>Rule book · every kind, its exact rule, why it carries information</summary>` +
+    ruleBookHtml(artifact, active) +
+    `</details>` +
     watchBandHtml(active, artifact) +
-    supersededSection +
+    supersededFoot +
     withheld
   );
 }

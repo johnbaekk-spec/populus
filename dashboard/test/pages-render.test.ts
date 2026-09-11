@@ -193,6 +193,7 @@ test("unified ticker: resolved-no-data names the mapped issuer and stops", () =>
 test("unified ticker: data state — published columns only, stamp, terminus, † mapping label", () => {
   const html = unified({
     state: "data",
+    holdersPage: true,
     name: "Fixture Corp",
     cik: "0000320193",
     period: "2026-03-31",
@@ -220,6 +221,21 @@ test("unified ticker: data state — published columns only, stamp, terminus, �
   assert.ok(html.includes("derived&nbsp;·§"));
   assert.ok(html.includes("full holders view ↗"));
   assert.ok(!html.toLowerCase().includes("current holdings"));
+});
+
+test("R2: the unified ticker's holders link renders only when that page is built", () => {
+  const html = unified({
+    state: "data",
+    holdersPage: false,
+    name: "Fixture Corp",
+    cik: "0000320193",
+    period: "2026-03-31",
+    latestFiled: "2026-05-15",
+    topn: 25,
+    holders: [],
+  });
+  assert.ok(html.includes("Institutional holders"), "the section still renders");
+  assert.ok(!html.includes("/holders/"), "no link to an unbuilt holders page");
 });
 
 test("unified ticker: section index, planned placeholders, own-clock lede", () => {

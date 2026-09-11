@@ -19,7 +19,7 @@ import {
   rankingRootHtml,
   type BuildStamps,
 } from "../src/lib/ui/index.ts";
-import { COMPACT_ROWS, type TxnRow, type RenderCtx } from "../src/lib/format.ts";
+import { COMPACT_ROWS, COMPACT_STEP, type TxnRow, type RenderCtx } from "../src/lib/format.ts";
 
 const NOW = "2026-08-12";
 const stamps: BuildStamps = {
@@ -134,8 +134,7 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
      child now, and — the property that made the deletion honest — they are
      emitted VISIBLE, while the button beside them waits for a script. The
      assertions follow the text, and pin the visibility the row used to supply. */
-  assert.match(html, /<span class="compact-bound-count">\d+ further ranked members are not rendered above/);
-  assert.match(html, /a Public Filings render bound, not a data bound/);
+  assert.match(html, /<span class="compact-bound-count">\d+ more ranked members below/);
   assert.match(html, /published dataset<\/a>/, "and the route to the rows it holds back");
   // footnote markers AND their printed lines
   /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R6/R7 (LD6). The section's
@@ -240,8 +239,7 @@ test("R7: the omission rule holds at the boundary — equal to the slice renders
 
   const overLimit = [...atLimit, txn({ txnId: "extra", ticker: "ZZZ", low: 1, high: 2 })];
   assert.match(sectionFor(overLimit), /compact-toggle/);
-  assert.match(sectionFor(overLimit), /1 further ranked tickers are not rendered above/);
-  assert.match(sectionFor(overLimit), /a Public Filings render bound, not a data bound/);
+  assert.match(sectionFor(overLimit), /1 more ranked tickers below/);
 });
 
 /* ---------- R3 parity ---------- */
@@ -274,6 +272,7 @@ test("R3: the client's default view is byte-identical to the server's", () => {
   // exists to catch, and it did catch it.
   const clientBody = rankingRootHtml(ranked, "net", "desc", "tickers", ctx, {
     compact: COMPACT_ROWS,
+    prefetch: COMPACT_STEP,
     footnotesId: "momentum-section-footnotes",
   }).html;
 
