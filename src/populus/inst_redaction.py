@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,7 +47,9 @@ __all__ = [
     "WITHHELD_ISSUER_PREFIX",
     "WITHHELD_POSITION_PREFIX",
     "RedactionPlan",
+    "WithheldClosure",
     "apply_cusip_redaction",
+    "close_withheld_cusips",
     "plan_cusip_redaction",
 ]
 
@@ -105,6 +107,87 @@ class RedactionPlan:
         }
 
 
+@dataclass(frozen=True)
+class WithheldClosure:
+    """The closed withheld set, plus the ticker each member is joinable to.
+
+    ONE implementation of the closure, because there were two and they did not
+    agree. `scripts/cusip_join_probe.py` re-derived "what to look for" with a
+    single hop — a mapped CUSIP and its CUSIP-6 siblings — while the producer
+    closes over the shared-``security_id`` edge as well. A CUSIP reachable only
+    through a security-id edge (and the further block that CUSIP then carries)
+    was therefore outside the probe's truth set: the producer withheld it, but
+    had it LEAKED the probe would have reported zero pairs and the release's
+    "0 published pairs" measurement would have been vacuous for that population.
+    A verifier that cannot see part of what it verifies is not a verifier, so
+    both callers now close over the same edges here.
+
+    ``tickers`` labels every member with the ticker(s) it is joinable to, found
+    by walking the same edges out from the mapped rows; a member reached only
+    through a security-id edge inherits the label of the row that reached it.
+    """
+
+    mapped: frozenset[str]
+    cusips: frozenset[str]
+    security_ids: frozenset[str]
+    blocks: frozenset[str]
+    tickers: dict[str, frozenset[str]]
+
+
+def close_withheld_cusips(
+    rows: Iterable[tuple[str | None, str | None, str, str | None]],
+    mapping: TickerMapping | None = None,
+) -> WithheldClosure:
+    """Close the withheld set over ``(issuer_name, class, cusip, security_id)`` rows.
+
+    Two edges, applied to a fixpoint: a CUSIP-6 block (a sibling's full CUSIP
+    carries the block, and the block joins to the ticker through the shared
+    issuer key or the issuer name) and a shared ``security_id`` (a CUSIP change
+    inside one registry class). The seed for both is a row whose (issuer name,
+    class) is in the reviewed mapping.
+    """
+    by_key = (mapping or load_ticker_mapping()).by_key()
+    cusip_sids: dict[str, set[str]] = defaultdict(set)
+    sid_cusips: dict[str, set[str]] = defaultdict(set)
+    block_cusips: dict[str, set[str]] = defaultdict(set)
+    mapped: set[str] = set()
+    labels: dict[str, set[str]] = defaultdict(set)
+    for name, klass, cusip, security_id in rows:
+        if cusip is None:
+            continue
+        block_cusips[cusip[:6]].add(cusip)
+        if security_id is not None:
+            cusip_sids[cusip].add(security_id)
+            sid_cusips[security_id].add(cusip)
+        if name is not None and mapping_key(name, klass) in by_key:
+            mapped.add(cusip)
+            labels[cusip].add(by_key[mapping_key(name, klass)].ticker)
+
+    withheld: set[str] = set()
+    frontier = set(mapped)
+    while frontier:
+        withheld |= frontier
+        grown: set[str] = set()
+        for cusip in frontier:
+            reached = set(block_cusips.get(cusip[:6], ()))
+            for sid in cusip_sids.get(cusip, ()):
+                reached |= sid_cusips.get(sid, set())
+            # The label travels the edge it was reached by, so a member with no
+            # mapping row of its own still names the ticker it is joinable to.
+            for other in reached:
+                labels[other] |= labels[cusip]
+            grown |= reached
+        frontier = grown - withheld
+
+    return WithheldClosure(
+        mapped=frozenset(mapped),
+        cusips=frozenset(withheld),
+        security_ids=frozenset(sid for c in withheld for sid in cusip_sids.get(c, ())),
+        blocks=frozenset(c[:6] for c in withheld),
+        tickers={c: frozenset(labels.get(c, ())) for c in withheld},
+    )
+
+
 def plan_cusip_redaction(
     source: sqlite3.Connection, mapping: TickerMapping | None = None
 ) -> RedactionPlan:
@@ -114,36 +197,16 @@ def plan_cusip_redaction(
     further back than the serving projection). One grouped pass; the mapping is
     applied in Python because its key normalization lives there.
     """
-    by_key = (mapping or load_ticker_mapping()).by_key()
-    cusip_sids: dict[str, set[str]] = defaultdict(set)
-    sid_cusips: dict[str, set[str]] = defaultdict(set)
-    block_cusips: dict[str, set[str]] = defaultdict(set)
-    mapped: set[str] = set()
-    for name, klass, cusip, security_id in source.execute(
-        "SELECT issuer_name_raw, title_of_class, cusip, security_id"
-        " FROM main.inst_holdings WHERE cusip IS NOT NULL"
-        " GROUP BY issuer_name_raw, title_of_class, cusip, security_id"
-    ):
-        block_cusips[cusip[:6]].add(cusip)
-        if security_id is not None:
-            cusip_sids[cusip].add(security_id)
-            sid_cusips[security_id].add(cusip)
-        if name is not None and mapping_key(name, klass) in by_key:
-            mapped.add(cusip)
-
-    withheld: set[str] = set()
-    frontier = set(mapped)
-    while frontier:
-        withheld |= frontier
-        grown: set[str] = set()
-        for cusip in frontier:
-            grown |= block_cusips.get(cusip[:6], set())
-            for sid in cusip_sids.get(cusip, ()):
-                grown |= sid_cusips.get(sid, set())
-        frontier = grown - withheld
-
-    sids = {sid for c in withheld for sid in cusip_sids.get(c, ())}
-    blocks = {c[:6] for c in withheld}
+    closure = close_withheld_cusips(
+        source.execute(
+            "SELECT issuer_name_raw, title_of_class, cusip, security_id"
+            " FROM main.inst_holdings WHERE cusip IS NOT NULL"
+            " GROUP BY issuer_name_raw, title_of_class, cusip, security_id"
+        ),
+        mapping,
+    )
+    mapped, withheld = closure.mapped, closure.cusips
+    sids, blocks = closure.security_ids, closure.blocks
     # Deterministic ordinals over the ORIGINAL key text. The ordinal reveals no
     # CUSIP: recovering one would need the withheld keys, which are not published.
     originals = sorted({f"sid:{s}" for s in sids} | {f"cusip:{c}" for c in withheld})
@@ -335,6 +398,24 @@ _SECURITY_ID_TABLES = (
 )
 
 
+def _next_withheld_ordinal(
+    prior: Collection[tuple[str, str | None, str | None, str | None]],
+) -> int:
+    """One past the highest ordinal already withheld in this table.
+
+    An unparseable suffix contributes nothing rather than raising: the ordinal
+    only has to be FREE, and a value this function did not write is not an
+    ordinal it must respect. Returns 1 when nothing was withheld before, so a
+    first-ever pass numbers from 1 exactly as it always did.
+    """
+    highest = 0
+    for value, *_rest in prior:
+        suffix = value[len(WITHHELD_LIST_VALUE_PREFIX) :]
+        if suffix.isdigit():
+            highest = max(highest, int(suffix))
+    return highest + 1
+
+
 def plan_registry_redaction(
     conn: sqlite3.Connection,
     mapping: TickerMapping | None = None,
@@ -358,20 +439,44 @@ def plan_registry_redaction(
         "SELECT value, security_id, issuer_name, security_class"
         " FROM security_list_intervals WHERE id_type = 'cusip'"
     ).fetchall()
+    # IDEMPOTENCE IS A CORRECTNESS REQUIREMENT, not a nicety. The published
+    # `congress.db` is what seeds the NEXT build (`populus seed-corpus`,
+    # publish/seed.py, and publish.yml "Seed the corpus from the previous
+    # release (R42)"), so on every run after the first this table already
+    # carries rows this function withheld last time: `value` is
+    # `withheld:<n>`, `id_type` is still 'cusip', and `issuer_name` still
+    # matches the reviewed mapping.
+    #
+    # Left in the population, such a row is corrupting twice over. Its first
+    # six characters are "withhe", which is not an issuer block but WOULD be
+    # admitted as one, dragging every previously withheld row back into the
+    # renumbered set. And the renumbering collides: `sorted()` is
+    # lexicographic, so `withheld:10` precedes `withheld:2` and is handed
+    # ordinal 2 — a value the table already holds — so the in-place UPDATE
+    # violates PRIMARY KEY (value, valid_from) in registry.sql. Eleven
+    # withheld values is enough to reach it; the measured artifact has 9,690.
+    #
+    # So an already-withheld row is EXCLUDED from the plan: its identity is
+    # preserved untouched, and a newly withheld CUSIP is allocated above the
+    # highest ordinal already in use rather than from 1. Ordinals are stable
+    # across releases as a result, which is also what makes them joinable.
+    prior = [r for r in rows if r[0].startswith(WITHHELD_LIST_VALUE_PREFIX)]
+    fresh = [r for r in rows if not r[0].startswith(WITHHELD_LIST_VALUE_PREFIX)]
     blocks = {
         value[:6]
-        for value, _sid, name, klass in rows
+        for value, _sid, name, klass in fresh
         if name is not None and mapping_key(name, klass) in by_key
     }
     blocks |= {c[:6] for c in filed_cusips}
-    withheld = sorted({value for value, _s, _n, _c in rows if value[:6] in blocks})
+    withheld = sorted({value for value, _s, _n, _c in fresh if value[:6] in blocks})
+    start = _next_withheld_ordinal(prior)
     values = {
         value: f"{WITHHELD_LIST_VALUE_PREFIX}{n}"
-        for n, value in enumerate(withheld, start=1)
+        for n, value in enumerate(withheld, start=start)
     }
     sids = {
         sid: f"{WITHHELD_SECURITY_ID_PREFIX}{values[value][len(WITHHELD_LIST_VALUE_PREFIX):]}"
-        for value, sid, _n, _c in rows
+        for value, sid, _n, _c in fresh
         if value in values and sid is not None
     }
     return values, sids
@@ -418,6 +523,31 @@ def apply_registry_redaction(
         ).fetchone():
             return {"security_list_intervals.absent": 0}
         conn.execute("PRAGMA secure_delete = ON")
+        # FAIL CLOSED ON A REPLAY WITH NO CUSIP-BEARING SOURCE. A previous pass
+        # replaced the CUSIPs of the reviewed blocks with opaque ordinals, so
+        # the artifact can no longer say WHICH blocks were withheld — that is
+        # the point of withholding them. The block set therefore has to come
+        # from a source that still holds real CUSIPs: `filed_cusips` (what the
+        # inst derive computed from the FILINGS, which is what publish passes)
+        # or `inst_source`. Without one, this pass would withhold only the rows
+        # the list's OWN naming still matches, and a newly listed sibling class
+        # in an already-withheld block would be published with its CUSIP while
+        # its issuer name still pairs it to the reviewed ticker. Refusing is the
+        # only safe answer: a silent under-withholding looks exactly like a
+        # clean run.
+        replayed = conn.execute(
+            "SELECT 1 FROM security_list_intervals"
+            " WHERE id_type = 'cusip' AND value LIKE ? || '%' LIMIT 1",
+            (WITHHELD_LIST_VALUE_PREFIX,),
+        ).fetchone()
+        if replayed and not filed:
+            raise ValueError(
+                "this congress.db already carries withheld list values, so it is a"
+                " seeded artifact: pass filed_cusips (or inst_source) so the"
+                " withheld CUSIP-6 blocks can be recomputed from a source that"
+                " still holds the CUSIPs. Re-running without one would publish a"
+                " newly listed class in an already-withheld block."
+            )
         values, sids = plan_registry_redaction(conn, filed_cusips=filed)
         counts["withheld_cusips"] = len(values)
         counts["withheld_security_ids"] = len(sids)
