@@ -103,6 +103,12 @@ export interface FilerPayloadV1 {
   discontinuityPeriods: string[];
   /** R15: curated identity (principal, type) for a registry-matched filer. */
   typing: ManagerTyping | null;
+  /** C3 (refinement 20260910): `ticker -> verified_date`, carried ONCE per
+      payload instead of on every row — the date is a property of the reviewed
+      mapping row, not of the holding. Absent when no row carries a ticker.
+      Optional on the wire: an older payload's per-row `ticker_verified_date`
+      still parses and still renders. */
+  tickerDates?: Record<string, string>;
 }
 
 /** R15: the filer page's new-stake and exit stat inputs. */
@@ -218,12 +224,16 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
   for (const row of rows) {
     if (row.issuer_key !== undefined && row.issuer_key === derivedIssuerKey(row.cusip)) delete row.issuer_key;
   }
+  const tickerDates: Record<string, string> = {};
   if (args.tickerFor) {
     for (const row of rows) {
       const ref = args.tickerFor(row.issuer_name, row.title_of_class);
       if (ref) {
         row.ticker = ref.ticker;
-        row.ticker_verified_date = ref.verified_date;
+        // C3: the verified date rides on the payload's `tickerDates` map, not
+        // on the row — one mapping row's date repeated per holding was 68% of
+        // the recent shard growth.
+        tickerDates[ref.ticker] = ref.verified_date;
       }
     }
   }
@@ -284,6 +294,7 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
     kindsByPeriod: args.agg.kindsByPeriod,
     discontinuityPeriods: args.agg.discontinuityPeriods,
     typing: args.agg.typing,
+    ...(Object.keys(tickerDates).length > 0 ? { tickerDates } : {}),
   };
 }
 
@@ -323,6 +334,8 @@ const PAYLOAD_KEYS = [
   "filings", "rowsByPeriod", "totalsByPeriod", "concByPeriod", "deltasByPeriod",
   "deltaTotalsByPeriod",
   "latestFiled", "topn", "window", "kindsByPeriod", "discontinuityPeriods", "typing",
+  // C3: optional — present when any row carries a reviewed ticker.
+  "tickerDates",
 ] as const;
 
 const TYPING_KEYS = ["cik", "display_name", "person", "manager_type", "notable"] as const;
@@ -608,6 +621,17 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     }
   }
 
+  // C3: optional `ticker -> verified_date`. Absent is valid (no row carries a
+  // ticker, or an older payload puts the date on the row instead).
+  let tickerDates: Record<string, string> | undefined;
+  if (raw.tickerDates !== undefined) {
+    if (!isRecord(raw.tickerDates)) bad("tickerDates is not an object");
+    tickerDates = {};
+    for (const [ticker, value] of Object.entries(raw.tickerDates)) {
+      tickerDates[ticker] = reqString(value, `tickerDates[${JSON.stringify(ticker)}]`);
+    }
+  }
+
   if (!isRecord(raw.totalsByPeriod)) bad("totalsByPeriod is not an object");
   const totalsByPeriod: Record<string, number> = {};
   for (const [period, value] of Object.entries(raw.totalsByPeriod)) {
@@ -755,6 +779,7 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     kindsByPeriod,
     discontinuityPeriods,
     typing: typingOf(raw.typing, cik),
+    ...(tickerDates ? { tickerDates } : {}),
   };
 }
 
@@ -768,7 +793,7 @@ const FRAGMENT_META_KEYS = [
   "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
   "filingKeys", "rowPeriods", "deltaPeriods", "totalsByPeriod", "concByPeriod",
   "deltaTotalsByPeriod", "latestFiled", "topn", "window", "kindsByPeriod",
-  "discontinuityPeriods", "typing",
+  "discontinuityPeriods", "typing", "tickerDates",
 ] as const;
 
 interface FragmentDescriptor {
@@ -867,6 +892,9 @@ export function fragmentFilerPayload(payload: FilerPayloadV1): FilerFragmentV2[]
     kindsByPeriod: payload.kindsByPeriod,
     discontinuityPeriods: payload.discontinuityPeriods,
     typing: payload.typing,
+    // C3: one entry per reviewed ticker in this payload, carried in the meta
+    // fragment so every `rows` fragment stays free of the repeated date.
+    ...(payload.tickerDates ? { tickerDates: payload.tickerDates } : {}),
   };
   const descriptors: FragmentDescriptor[] = [
     { section: "meta", period: null, start: 0, data: meta },
@@ -1087,6 +1115,7 @@ export function reassembleFilerFragments(
     concByPeriod: meta.concByPeriod,
     deltasByPeriod,
     deltaTotalsByPeriod: meta.deltaTotalsByPeriod,
+    ...(meta.tickerDates !== undefined ? { tickerDates: meta.tickerDates } : {}),
     latestFiled: meta.latestFiled,
     topn: meta.topn,
     window: meta.window,

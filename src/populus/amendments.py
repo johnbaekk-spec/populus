@@ -60,7 +60,8 @@ _MATERIALIZED_INST_OBJECTS = (
 # and connection-local publish materialization.  Keep main-qualified table names:
 # caller TEMP state must never redirect the reviewed persistent population.
 _INST_RESTATEMENT_SURVIVORS_SQL = """
-SELECT f.filing_id, f.period_of_report, f.file_number_norm, f.other_managers
+SELECT f.filing_id, f.period_of_report, f.file_number_norm, f.other_managers,
+       f.submission_type
 FROM main.inst_filings f
 WHERE f.lifecycle = 'active'
   AND NOT EXISTS (
@@ -93,7 +94,8 @@ CREATE TEMP TABLE v_inst_reconciled_filings AS
 SELECT f.*
 FROM main.inst_filings f
 JOIN temp._populus_inst_affiliation_sources s ON s.filing_id = f.filing_id
-WHERE NOT EXISTS (
+WHERE f.submission_type NOT IN ('13F-NT','13F-NT/A')
+   OR NOT EXISTS (
   SELECT 1
   FROM temp._populus_inst_affiliation_edges AS a
        INDEXED BY _populus_inst_affiliation_edges_lookup
@@ -114,7 +116,8 @@ _MATERIALIZED_DEFAULT_INST_FILINGS_SQL = """
 CREATE TEMP TABLE v_default_inst_filings AS
 SELECT p.*
 FROM temp.v_filer_reported_filings p
-WHERE NOT EXISTS (
+WHERE p.submission_type NOT IN ('13F-NT','13F-NT/A')
+   OR NOT EXISTS (
   SELECT 1
   FROM temp._populus_inst_affiliation_edges AS a
        INDEXED BY _populus_inst_affiliation_edges_lookup

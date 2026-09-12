@@ -486,6 +486,9 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   issuer_from_cusip6: { label: "issuer from CUSIP-6", cls: "dashed" },
   issuer_from_name: { label: "issuer from name", cls: "dashed" },
   concentration_unavailable: { label: "concentration unavailable", cls: "dashed" },
+  // inst_agg.py SHARED_DISCRETION_FLAG (C2) — named as an other included manager
+  // on another manager's report that quarter; its own book is still counted.
+  affiliated_shared_discretion: { label: "shared discretion", cls: "dashed" },
   /* Found by measuring the built tree rather than by reading the registry:
      these four SHIP and were absent here, so the generic-warning path swallowed
      them — 87,099 occurrences of `missing_security` alone. Rendering "a
@@ -1572,13 +1575,17 @@ export function fnMark(mark: string): string {
 
 /** How strong an issuer/position identity actually is, read off the key's own
     prefix. The producer publishes these prefixes; this only names them. */
-export type IdentityStrength = "entity" | "cusip6" | "name" | "provisional" | "unknown";
+export type IdentityStrength = "entity" | "cusip6" | "name" | "provisional" | "withheld" | "unknown";
 
 export function identityStrengthOf(key: string): IdentityStrength {
   if (key.startsWith("entity:")) return "entity";
   if (key.startsWith("cusip6:")) return "cusip6";
   if (key.startsWith("name:")) return "name";
   if (key.startsWith("sid:sec:prov:")) return "provisional";
+  // C1 (refinement 20260910, inst_redaction.py): a security with a reviewed
+  // ticker publishes no CUSIP and no CUSIP-derived key — `pos:`/`iss:` are
+  // opaque ordinals the producer substitutes.
+  if (key.startsWith("pos:") || key.startsWith("iss:")) return "withheld";
   return "unknown";
 }
 
@@ -1605,6 +1612,12 @@ const IDENTITY_CHIP: Record<Exclude<IdentityStrength, "entity">, { label: string
       "a provisional per-position identifier the producer assigns when a reported row resolves to " +
       "no security and carries no usable CUSIP — it identifies the ROW, and asserts nothing about " +
       "what was held",
+  },
+  withheld: {
+    label: "CUSIP withheld",
+    why:
+      "this security has a reviewed ticker, so Public Filings publishes neither its CUSIP nor any " +
+      "key computed from it; the key shown is an opaque reference that only links this build's own files",
   },
   unknown: {
     label: "unrecognized key",

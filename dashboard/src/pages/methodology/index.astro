@@ -173,6 +173,7 @@ const description =
         <div>· A change with an undisclosed side is <strong>n/c</strong> — never coerced into add or trim.</div>
         <div>· "Exit" is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
         <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Public Filings build parameter.</div>
+        <div id="13f-affiliates">· A manager that files its own 13F holdings report keeps its whole book, even when another manager's combination report names it: under the Form 13F instructions a holdings report carries all of that manager's holdings, and a position whose discretion is shared is reported by one manager only. Only a 13F notice — holdings reported entirely by someone else — is left out. Such pairs are marked <span class="mono-id">shared discretion</span> and are not netted against each other.</div>
         <div>· Concentration is computed only when the denominator is disclosed; otherwise the stat prints "n/a" with its reason <span class="mono-id">concentration_unavailable</span>.</div>
         <div id="13f-identity">· Ticker→issuer joins use the SEC's present-day ticker file against entity-keyed issuers only — never a name match, never a guessed identity.</div>
       </div>

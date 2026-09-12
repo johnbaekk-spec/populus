@@ -90,3 +90,20 @@ Updated 2026-09-11 08:24 UTC. Rows judged one at a time by the developer agent, 
 | Rows rejected in review | 938 ($7,171,235,828,931) |
 | Target rows still unreviewed | 2,469 |
 | Verified target value | $52,138,460,519,543 of $59,317,769,474,420 (**87.9%**) |
+
+## Owner acceptance of the 50-row spot check
+
+**2026-09-11, owner: the 50-row spot check over `src/populus/ticker_mapping_13f.sample.json`
+is ACCEPTED.** That is the pre-merge human step named above, and it is now complete: the
+reviewed mapping ships as the basis for every published ticker.
+
+What the acceptance does and does not cover, stated so it is not read as more than it is:
+the sample is 50 rows drawn from `derive_sample` over the 2,852 shipped rows, so it is a
+spot check of the rule-based and per-row passes, not a row-by-row human review of all of
+them. Every shipped row still carries its own `method` and `verified_by`, which name who
+or what accepted it; nothing in this acceptance rewrites those.
+
+Consequent to the same decision (2026-09-11, owner): a security whose (issuer name, class)
+resolves to a reviewed ticker publishes NO CUSIP and no CUSIP-derived key — see
+`docs/architecture/data-contracts/institutional-13f.md` §9.1 for the published contract and
+`scripts/cusip_join_probe.py` for the gate that measures it.

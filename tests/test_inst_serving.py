@@ -340,9 +340,16 @@ def test_issuer_grain_is_one_row_per_issuer_period_filer(tmp_path):
 
 def test_membership_and_dedup_total_are_distinct_fields_never_summed(tmp_path):
     """Review r4 F4: holder MEMBERSHIP comes from the non-suppressed view so every
-    reporter renders; the issuer's DEDUPLICATED total comes from the suppressed one
-    so the relationship counts once. Storing one number would force a choice between
-    dropping a reporter and double-counting."""
+    reporter renders; the issuer TOTAL is computed over the default set, which is a
+    different question from any one filer's value. Storing one number would force a
+    choice between dropping a reporter and misstating the issuer total.
+
+    C2 (refinement 20260910) moved what the default set contains, NOT what the two
+    fields mean: a filer that files its own 13F-HR is no longer suppressed, so both
+    reports count in the issuer total (Form 13F General Instruction 2 has a
+    shared-discretion position reported by ONE manager — the two books are distinct
+    positions, not a double count). The fields stay separate: every holder row still
+    carries its own value beside an issuer total that is neither of them."""
     conn = _fresh(tmp_path, "t7e.db")
     _seed_affiliate_pair(conn)
     conn.commit()
@@ -352,11 +359,13 @@ def test_membership_and_dedup_total_are_distinct_fields_never_summed(tmp_path):
     assert per_filer == {"0000000001": 700, "0000000002": 300}, "a reporter was lost"
 
     dedup = {r["issuer_dedup_total_usd"] for r in proj.issuer_holder_rows}
-    assert dedup == {700}, "dedup total must count the affiliate relationship once"
+    assert dedup == {1000}, "the issuer total counts each manager's own holdings report"
     assert sum(per_filer.values()) == 1000
-    assert sum(per_filer.values()) != next(iter(dedup)), (
-        "per-filer sum and dedup total must differ here — if they are equal the two "
-        "fields have been conflated"
+    # The two fields remain DISTINCT: one issuer total, stated identically on
+    # every holder row, is not any filer's own value.
+    assert len(dedup) == 1 and next(iter(dedup)) not in per_filer.values(), (
+        "the issuer total collapsed into a per-filer value — the two fields have "
+        "been conflated"
     )
 
 

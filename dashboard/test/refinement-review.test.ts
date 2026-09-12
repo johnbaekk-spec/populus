@@ -165,7 +165,10 @@ test("F2: a reviewed ticker survives fragmenting, reassembly and strict validati
   const rows = back.rowsByPeriod["2026-03-31"]!;
   const apple = rows.find((r) => r.issuer_name === "APPLE INC")!;
   assert.equal(apple.ticker, "AAPL");
-  assert.equal(apple.ticker_verified_date, "2026-09-10", "the ⓘ keeps its verification date");
+  // C3 (refinement 20260910): the verification date is carried ONCE per payload
+  // instead of on every row. The ⓘ still states it — from `tickerDates`.
+  assert.equal(apple.ticker_verified_date, undefined, "the date is no longer repeated per row");
+  assert.equal(back.tickerDates?.AAPL, "2026-09-10", "the ⓘ keeps its verification date");
   assert.equal(rows.find((r) => r.issuer_name === "MICROSOFT CORP")!.ticker, undefined, "an unreviewed row ships no ticker");
   assert.deepEqual(parseFilerPayload(JSON.parse(JSON.stringify(payload))), back, "the JSON path agrees");
 });

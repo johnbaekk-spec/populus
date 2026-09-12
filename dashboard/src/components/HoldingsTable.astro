@@ -141,6 +141,8 @@ if (db && props.kind === "filer") {
       filings: full.filings,
       rowsByPeriod: full.rowsByPeriod,
       totalsByPeriod: full.totalsByPeriod,
+      // C3: the reviewed-ticker dates, once per payload.
+      ...(full.tickerDates ? { tickerDates: full.tickerDates } : {}),
     } satisfies FilerSurfacePayload;
   }
 } else if (db && props.kind === "holders") {

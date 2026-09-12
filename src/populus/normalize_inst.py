@@ -81,8 +81,9 @@ INST_SOURCE_FACT_FLAGS = frozenset(
         "entry_total_mismatch",      # tableEntryTotal != row_count (LD-7, forces partial)
         "amendment_unlinked",        # amendment with zero/many candidate bases
         "amendment_type_unknown",    # is_amendment but amendmentType absent/unrecognized
-        "affiliated_covered",        # covered by a surviving affiliate; excluded
-        "affiliated_mutual_coverage",  # mutual affiliated coverage; both excluded
+        "affiliated_covered",        # 13F-NT covered by a surviving affiliate; excluded
+        "affiliated_mutual_coverage",  # mutual coverage of 13F-NT notices; both excluded
+        "affiliated_shared_discretion",  # 13F-HR named on another survivor's report; kept
         "submissions_meta_missing",  # no submissions-meta.json sidecar
         "retrieved_at_unknown",      # no fetch-meta.json sidecar (retrieved_at NULL)
     }

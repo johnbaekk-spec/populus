@@ -448,6 +448,9 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       filings: p.filings,
       rowsByPeriod: p.rowsByPeriod,
       totalsByPeriod: p.totalsByPeriod,
+      // C3: the payload's reviewed-ticker dates travel with the surface so the
+      // /e/ route's ⓘ states the same date the pre-rendered page does.
+      ...(p.tickerDates ? { tickerDates: p.tickerDates } : {}),
     };
   }
 

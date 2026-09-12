@@ -1,8 +1,8 @@
 """RUN M2-8 T5 (plan R8) — the per-filer reported population.
 
-`v_default_*` suppresses a survivor whose file number appears as another
-survivor's other-manager, so a cross-entity issuer total counts an affiliate
-relationship once. Correct there; **wrong** for a filer's own page, which
+`v_default_*` suppresses a 13F NOTICE survivor whose file number appears as
+another survivor's other-manager (since refinement 20260910 C2 a covered
+HOLDINGS report is kept: Form 13F Special Instruction 5). Correct there; **wrong** for a filer's own page, which
 promises "every position this filer reported". External review round 2 (F13)
 established that building the filer page on `v_default_holdings` would silently
 delete that filer's own rows while the page claimed completeness.
@@ -102,24 +102,31 @@ def _load_fn(conn, *, fid, cik, period, filed, holds, file_number_norm,
     upsert_inst_filing(conn, filing=filing, holdings=holds)
 
 
-def _seed_affiliate_pair(conn, period="2026-03-31"):
-    """COVERED (028-00002) reports its own book AND is named as an other-manager
-    by COVERER (028-00001) — so `v_default_*` suppresses COVERED to keep the
-    issuer total honest."""
+def _seed_affiliate_pair(conn, period="2026-03-31", *, covered_type="13F-HR",
+                         covered_value=300, covered_shares=100, filed="2026-04-15"):
+    """COVERED (028-00002) is named as an other-manager by COVERER (028-00001).
+
+    ``covered_type="13F-HR"``: COVERED filed its own HOLDINGS report — its whole
+    book (Form 13F Special Instruction 5) — so it stays in the default set (C2).
+    ``covered_type="13F-NT"``: COVERED filed a NOTICE (no holdings; all reported
+    by another manager) — the only case `v_default_*` still suppresses."""
     sid = _security(conn, f"sec:{APPLE}")
     _filer_fn(conn, "0000000001", "028-00001", "Coverer")
     _filer_fn(conn, "0000000002", "028-00002", "Covered")
     _load_fn(
-        conn, fid="inst:COVERER", cik="0000000001", period=period, filed="2026-04-15",
+        conn, fid=f"inst:COVERER-{period}", cik="0000000001", period=period, filed=filed,
         file_number_norm="028-00001", other_managers=("028-00002",),
         holds=[_hold(ordinal=1, issuer="APPLE INC", cusip=APPLE, value=700,
                      security_id=sid)],
     )
+    notice = covered_type.startswith("13F-NT")
     _load_fn(
-        conn, fid="inst:COVERED", cik="0000000002", period=period, filed="2026-04-15",
-        file_number_norm="028-00002", other_managers=(),
-        holds=[_hold(ordinal=1, issuer="APPLE INC", cusip=APPLE, value=300,
-                     security_id=sid)],
+        conn, fid="inst:COVERED" if period == "2026-03-31" else f"inst:COVERED-{period}",
+        cik="0000000002", period=period, filed=filed,
+        file_number_norm="028-00002", other_managers=(), submission_type=covered_type,
+        holds=[] if notice else [_hold(ordinal=1, issuer="APPLE INC", cusip=APPLE,
+                                       value=covered_value, shares=covered_shares,
+                                       security_id=sid)],
     )
     return sid
 
@@ -131,19 +138,18 @@ def _ids(conn, view):
 # --- 1. the F13 regression -------------------------------------------------
 
 
-def test_affiliate_suppressed_filer_keeps_its_own_book_on_the_filer_view(tmp_path):
-    """The exact defect review F13 identified: a filer covered by an affiliate
-    disappears from the default view. Its own page must still show its position,
-    while the issuer total still counts the relationship once."""
+def test_covered_holdings_report_keeps_its_book_in_the_default_view(tmp_path):
+    """C2 (refinement 20260910) regression: a filer named on another filer's
+    combination report but filing its OWN 13F-HR keeps its whole book in the
+    default set. Mutation guard: dropping the notice-only condition from
+    views.sql stage 2 (or from the TEMP twin) suppresses COVERED again."""
     conn = _fresh(tmp_path)
     _seed_affiliate_pair(conn)
 
-    # The default (cross-entity) chain suppresses COVERED — that is correct there.
-    assert "inst:COVERED" not in _ids(conn, "v_default_inst_filings")
-    assert "inst:COVERER" in _ids(conn, "v_default_inst_filings")
-
-    # The per-filer chain keeps BOTH: each filer reported its own book.
-    assert _ids(conn, "v_filer_reported_filings") == {"inst:COVERER", "inst:COVERED"}
+    assert "inst:COVERED" in _ids(conn, "v_default_inst_filings")
+    assert "inst:COVERER-2026-03-31" in _ids(conn, "v_default_inst_filings")
+    assert "inst:COVERED" in _ids(conn, "v_inst_reconciled_filings")
+    assert _ids(conn, "v_filer_reported_filings") == {"inst:COVERER-2026-03-31", "inst:COVERED"}
 
     # COVERED's own page shows its own position — the regression.
     covered_rows = conn.execute(
@@ -152,21 +158,54 @@ def test_affiliate_suppressed_filer_keeps_its_own_book_on_the_filer_view(tmp_pat
     ).fetchone()
     assert covered_rows == (1, 300), "the covered filer lost its own reported book"
 
-    # ...while the issuer total over the DEFAULT view still counts it once.
+    # The issuer total over the DEFAULT view counts both reports: Form 13F
+    # General Instruction 2 has a shared-discretion position reported by ONE
+    # manager, so the two books are distinct positions, not a double count.
     issuer_total = conn.execute(
         "SELECT COALESCE(SUM(value_usd), 0) FROM v_default_holdings"
         " WHERE cusip = ?", (APPLE,)
     ).fetchone()[0]
-    assert issuer_total == 700, "issuer total must not double-count the affiliate"
+    assert issuer_total == 1000
 
-    # And the per-filer view deliberately sums to MORE than the issuer total —
-    # that is the whole point, and why the two must never be summed together.
-    filer_total = conn.execute(
-        "SELECT COALESCE(SUM(value_usd), 0) FROM v_filer_reported_holdings"
-        " WHERE cusip = ?", (APPLE,)
-    ).fetchone()[0]
-    assert filer_total == 1000
-    assert filer_total > issuer_total
+
+def test_covered_notice_stays_excluded_from_the_default_view(tmp_path):
+    """C2: a 13F-NT whose holdings are all reported by another manager stays out
+    of the default set. Mutation guard: removing stage 2 entirely admits it."""
+    conn = _fresh(tmp_path)
+    _seed_affiliate_pair(conn, covered_type="13F-NT")
+    assert "inst:COVERED" not in _ids(conn, "v_default_inst_filings")
+    assert "inst:COVERED" not in _ids(conn, "v_inst_reconciled_filings")
+    assert "inst:COVERED" in _ids(conn, "v_filer_reported_filings")
+    assert "inst:COVERER-2026-03-31" in _ids(conn, "v_default_inst_filings")
+
+
+def test_covered_holdings_report_compares_against_its_own_prior_book(tmp_path):
+    """C2 on the aggregate: a covered 13F-HR prior quarter is a real prior book,
+    so the current quarter's position classifies as add — never `no_prior`
+    (the Dodge & Cox wall) — and its issuer rows carry the shared-discretion flag."""
+    from populus.inst_agg import build_inst_agg
+    import json
+    import sqlite3
+
+    conn = _fresh(tmp_path, "c2_prior.db")
+    _seed_affiliate_pair(conn, period="2025-12-31", filed="2026-02-10",
+                         covered_value=300, covered_shares=100)
+    _seed_affiliate_pair(conn, period="2026-03-31", filed="2026-04-15",
+                         covered_value=450, covered_shares=150)
+    conn.commit()
+    out = tmp_path / "agg_c2.db"
+    build_inst_agg(conn, str(out), topn=5, ingested_at=AT)
+    agg = sqlite3.connect(str(out))
+    kinds = agg.execute(
+        "SELECT change_kind FROM agg_qoq_deltas WHERE cik = '0000000002'"
+        " AND curr_period = '2026-03-31'"
+    ).fetchall()
+    assert kinds == [("add",)], kinds
+    flags = dict(agg.execute(
+        "SELECT cik, flags FROM agg_issuer_top_holders WHERE period_of_report = '2026-03-31'"
+    ).fetchall())
+    assert "affiliated_shared_discretion" in json.loads(flags["0000000002"])
+    assert "affiliated_shared_discretion" not in json.loads(flags["0000000001"])
 
 
 # --- 2. anti-drift between the two restated survivor predicates ------------
@@ -176,7 +215,7 @@ def test_filer_chain_equals_default_chain_plus_only_affiliation_suppressed(tmp_p
     """`views.sql` restates stage 1 rather than sharing a CTE. This asserts the
     exact set relationship, so editing one predicate without the other fails."""
     conn = _fresh(tmp_path)
-    _seed_affiliate_pair(conn)
+    _seed_affiliate_pair(conn, covered_type="13F-NT")
     # A third, wholly unaffiliated filer must be in BOTH chains.
     sid = _security(conn, f"sec:{MSFT}")
     _filer_fn(conn, "0000000003", "028-00003", "Independent")
@@ -334,11 +373,11 @@ def test_concentration_measured_on_the_filers_own_book_not_the_suppressed_one(tm
     assert covered is not None, "affiliate-suppressed filer lost its concentration row"
     assert covered == (1, 300, 10_000), "book must be the filer's OWN reported one"
 
-    # The issuer-level aggregate still counts the relationship once.
+    # C2: a covered HOLDINGS report is part of the issuer aggregate too.
     issuer_total = agg.execute(
         "SELECT COALESCE(SUM(value_usd), 0) FROM agg_issuer_top_holders"
     ).fetchone()[0]
-    assert issuer_total == 700, "issuer aggregate must stay deduplicated"
+    assert issuer_total == 1000
 
 
 # --- 4. QA-1: the registry must not exclude affiliate-suppressed filers -----
@@ -392,7 +431,7 @@ def test_registry_includes_affiliate_suppressed_filer_so_it_gets_a_page(tmp_path
     conc_ciks = {r[0] for r in agg.execute("SELECT DISTINCT cik FROM agg_filer_concentration")}
     assert conc_ciks <= ciks, f"concentration rows with no registry row: {conc_ciks - ciks}"
 
-    # Cross-entity issuer totals stay deduplicated — the relationship counts once.
+    # C2: both holdings reports count in the cross-entity issuer total.
     assert agg.execute(
         "SELECT COALESCE(SUM(value_usd), 0) FROM agg_issuer_top_holders"
-    ).fetchone()[0] == 700
+    ).fetchone()[0] == 1000

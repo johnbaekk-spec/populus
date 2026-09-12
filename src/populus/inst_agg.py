@@ -227,8 +227,8 @@ def _qoq_row(
     comparable book — at least one keyable default position for that filer and
     period. A position is ``new`` only when the filer's prior book exists and
     omits it. With no prior book (a first filing under this registration, or a
-    prior quarter whose book is reported inside an affiliate's filing and so is
-    not in the default set) the position is ``no_prior``: no prior value, no
+    prior quarter that is a 13F NOTICE, its book reported inside an affiliate's
+    filing) the position is ``no_prior``: no prior value, no
     Δ, and never a new stake.
 
     ``migrated`` (R6): the prior side is a registry-declared PREDECESSOR CIK's
@@ -2685,6 +2685,7 @@ def build_inst_agg(
         populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
         populate_book_discontinuity(dest)
         populate_ticker_holders(source_conn, dest, ingested_at=ingested_at)
+        populate_shared_discretion_flags(source_conn, dest)
         return bulk
     ensure_views(source_conn)
     if _materialized_agg_namespace_available(source_conn):
@@ -2699,6 +2700,7 @@ def build_inst_agg(
         populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
         populate_book_discontinuity(dest)
         populate_ticker_holders(source_conn, dest, ingested_at=ingested_at)
+        populate_shared_discretion_flags(source_conn, dest)
         return bulk
     report = _build_inst_agg_python(
         source_conn, dest, ingested_at=ingested_at, topn=topn
@@ -2706,6 +2708,7 @@ def build_inst_agg(
     populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
     populate_book_discontinuity(dest)
     populate_ticker_holders(source_conn, dest, ingested_at=ingested_at)
+    populate_shared_discretion_flags(source_conn, dest)
     return report
 
 
@@ -2943,6 +2946,69 @@ def populate_ticker_holders(
         dest.commit()
     finally:
         dest.close()
+
+
+#: The flag a cross-filer issuer row carries when its filer is named as an
+#: other included manager on ANOTHER surviving report for that quarter.
+SHARED_DISCRETION_FLAG = "affiliated_shared_discretion"
+
+
+def shared_discretion_filer_periods(
+    source_conn: sqlite3.Connection,
+) -> set[tuple[str, str]]:
+    """``(cik, period)`` of every filer another survivor names as an other
+    included manager for that quarter (C2, refinement 20260910).
+
+    Since C2 such a filer's own 13F HOLDINGS report stays in the default set:
+    Form 13F Special Instruction 5 has a manager file a Holdings Report only
+    when all its holdings are in it, and General Instruction 2 has a
+    shared-discretion position reported by ONE manager. Positions are therefore
+    not de-duplicated across the pair; this set only DISCLOSES that the pair
+    shares discretion over some positions, so a cross-filer total can say so.
+    """
+    rows = source_conn.execute(
+        "SELECT cik, period_of_report, file_number_norm, other_managers"
+        " FROM v_filer_reported_filings"
+    ).fetchall()
+    owners: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for cik, period, fnn, _others in rows:
+        if fnn:
+            owners[(period, fnn)].add(cik)
+    named: set[tuple[str, str]] = set()
+    for cik, period, _fnn, others in rows:
+        try:
+            entries = json.loads(others or "[]")
+        except (TypeError, ValueError):
+            continue
+        for entry in entries if isinstance(entries, list) else ():
+            fn = entry.get("file_number_norm") if isinstance(entry, dict) else None
+            for other in owners.get((period, fn), ()) if fn else ():
+                if other != cik:
+                    named.add((other, period))
+    return named
+
+
+def populate_shared_discretion_flags(
+    source_conn: sqlite3.Connection, dest_path: Path | str
+) -> None:
+    """Stamp :data:`SHARED_DISCRETION_FLAG` on `agg_issuer_top_holders` rows of
+    a named filer — ONE implementation after both build paths."""
+    named = sorted(shared_discretion_filer_periods(source_conn))
+    if not named:
+        return
+    conn = sqlite3.connect(str(dest_path))
+    try:
+        conn.executemany(
+            "UPDATE agg_issuer_top_holders SET flags = ("
+            "  SELECT json_group_array(value) FROM ("
+            "    SELECT value FROM json_each(agg_issuer_top_holders.flags)"
+            "    UNION SELECT ? ORDER BY 1))"
+            " WHERE cik = ? AND period_of_report = ?",
+            [(SHARED_DISCRETION_FLAG, cik, period) for cik, period in named],
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 #: R6 artifact suppressor threshold: a filer-period whose exits are at least

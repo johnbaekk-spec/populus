@@ -23,7 +23,9 @@
       disclose a value. It renders as "undisclosed" and is excluded from sums,
       never as 0 and never silently dropped from a count.
    2. **`issuer_dedup_total_usd` is a different question.** It is the issuer's
-      de-duplicated total across affiliated managers; the per-filer `value_usd`
+      total over the default filing set (a covered 13F notice excluded; since C2
+      every holdings report counted, Form 13F reporting shared discretion once);
+      the per-filer `value_usd`
       is what one filer reported. Adding them would double-count by
       construction, so no function here sums across the two.
    3. **Nothing honesty-bearing is optional.** The dual dates + reporting lag on
@@ -1384,10 +1386,17 @@ export interface HoldingsTableOpts {
   /** total reported rows for the period BEFORE any embed cap, so a capped page
       still states the true total (G3) */
   totalRows?: number;
+  /** C3: the payload's `ticker -> verified_date` map. The ⓘ reads it here
+      instead of from a date repeated on every row; a row that still carries its
+      own date (an older payload) keeps winning. */
+  tickerDates?: Record<string, string>;
 }
 
 /** The filer's reported position list for one period, paginated. */
 export function holdingsTableHtml(opts: HoldingsTableOpts): string {
+  const verifiedDateOf = (row: FilerHoldingRow): string =>
+    row.ticker_verified_date || (row.ticker ? opts.tickerDates?.[row.ticker] ?? "" : "") ||
+    "the recorded date";
   const matched = opts.rows.length;
   const total = opts.totalRows ?? matched;
   // R25: the filer page (reference mode) shows ONE row per issuer, paged by
@@ -1432,7 +1441,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         const tickerCell = row.ticker
           ? `<span class="mono-ticker">${esc(row.ticker)}</span>` +
             noteFromHtml(
-              `verified against the SEC company list on ${esc(row.ticker_verified_date || "the recorded date")} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
+              `verified against the SEC company list on ${esc(verifiedDateOf(row))} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
               { scope: "filer-ticker" },
               `${opts.page}-${rowIndex}`,
             )
@@ -1469,7 +1478,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
             (r, ti) =>
               `<span class="mono-ticker">${esc(r.ticker!)}</span>` +
               noteFromHtml(
-                `verified against the SEC company list on ${esc(r.ticker_verified_date || "the recorded date")} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
+                `verified against the SEC company list on ${esc(verifiedDateOf(r))} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
                 { scope: "filer-ticker" },
                 `${opts.page}-g${gi}-${ti}`,
               ),
@@ -1873,9 +1882,12 @@ export function coveragePanelHtml(
         `<strong>not available</strong> — at least one component value is undisclosed, so no ` +
         `total is asserted rather than a partial sum presented as one.</p>`
       : `<p class="section-note">De-duplicated issuer total for ${esc(coverage.period)}: ` +
-        `<strong>${esc(fmtUsd(opts.dedupTotalUsd))}</strong> — the issuer's value counted ONCE ` +
-        `across affiliated managers. It answers a different question from the per-filer column ` +
-        `beside it, and the two are never added together.</p>`;
+        `<strong>${esc(fmtUsd(opts.dedupTotalUsd))}</strong> — each manager's own holdings ` +
+        `report counted once; a 13F notice whose holdings sit in another manager's report adds ` +
+        `nothing. Form 13F has a position whose investment discretion is shared reported by one ` +
+        `manager only, so affiliated reports are not netted against each other. It answers a ` +
+        `different question from the per-filer column beside it, and the two are never added ` +
+        `together.</p>`;
   return (
     `<div class="panel-head"><h2 class="section-h">What this list leaves out</h2>` +
     `<span class="panel-note">stated beside the table, not behind it</span></div>` +
@@ -1949,6 +1961,8 @@ export interface FilerSurfacePayload {
   rowsByPeriod: Record<string, FilerHoldingRow[]>;
   /** pre-cap totals, so a capped page still states the true number */
   totalsByPeriod: Record<string, number>;
+  /** C3: `ticker -> verified_date` for this filer's rows, carried once. */
+  tickerDates?: Record<string, string>;
 }
 
 export interface HoldersSurfacePayload {
@@ -2071,6 +2085,7 @@ export function surfaceHtml(payload: SurfacePayload, state: SurfaceState): strin
         filings: payload.filings,
         page: state.page,
         totalRows: payload.totalsByPeriod[period] ?? rows.length,
+        tickerDates: payload.tickerDates,
       })
     );
   }
