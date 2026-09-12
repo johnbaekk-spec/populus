@@ -57,48 +57,60 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from populus.identity.registry import anchor, provisional_security_id  # noqa: E402
-from populus.ticker_mapping_13f import load_ticker_mapping, mapping_key  # noqa: E402
+from populus.inst_redaction import close_withheld_cusips  # noqa: E402
 
 CUSIP_RE = re.compile(rb"(?<![0-9A-Za-z])[0-9A-Z]{9}(?![0-9A-Za-z])")
+#: An ISIN carries the CUSIP as its middle nine characters ("US0378331005"), so
+#: the token-bounded CUSIP_RE above cannot see it — the nine characters are
+#: flanked by alphanumerics and both lookarounds reject the match. The PRODUCER
+#: extracts it (`inst_redaction._ISIN_RE`), so a probe that does not would
+#: report zero on a published ISIN that pairs perfectly well.
+ISIN_RE = re.compile(rb"(?<![0-9A-Za-z])[A-Z]{2}([0-9A-Z]{9})[0-9](?![0-9A-Za-z])")
 HEX32_RE = re.compile(rb"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])")
 BLOCK_KEY_RE = re.compile(rb"cusip6:([0-9A-Z]{6})")
 
 
 def truth_pairs(truth_db: Path) -> tuple[dict[str, str], dict[str, set[str]]]:
-    """``(cusip -> ticker, block -> tickers)`` for every reviewed-ticker security,
-    plus the sibling CUSIPs of those blocks.
+    """``(cusip -> ticker, block -> tickers)`` over the PRODUCER's closed
+    withheld set — every CUSIP the producer withholds, not a subset of it.
 
     The truth source is INTERNAL data (the source snapshot, or a pre-change
     serving database): the probe must know what to look for even after the
     published files stop carrying it.
+
+    The closure comes from `inst_redaction.close_withheld_cusips`, the same
+    function the producer plans with. It used to be re-derived here with ONE
+    hop — a mapped CUSIP plus its CUSIP-6 siblings — which silently omitted the
+    shared-``security_id`` edge and everything reachable through it. That made
+    the probe's population NARROWER than the producer's, so a token leaked
+    through a security-id edge would have been published while the probe
+    reported zero pairs. The probe is the release's evidence for the
+    withholding property; it has to look for all of it.
     """
     import sqlite3
 
-    by_key = load_ticker_mapping().by_key()
     conn = sqlite3.connect(f"file:{truth_db}?mode=ro", uri=True)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "serving_filer_rows" in tables:
-        sql = ("SELECT issuer_name, title_of_class, cusip FROM serving_filer_rows"
-               " WHERE cusip IS NOT NULL GROUP BY 1,2,3")
+        sql = ("SELECT issuer_name, title_of_class, cusip, security_id"
+               " FROM serving_filer_rows WHERE cusip IS NOT NULL GROUP BY 1,2,3,4")
     elif "inst_holdings" in tables:
-        sql = ("SELECT issuer_name_raw, title_of_class, cusip FROM inst_holdings"
-               " WHERE cusip IS NOT NULL GROUP BY 1,2,3")
+        sql = ("SELECT issuer_name_raw, title_of_class, cusip, security_id"
+               " FROM inst_holdings WHERE cusip IS NOT NULL GROUP BY 1,2,3,4")
     else:
         raise SystemExit(f"{truth_db} carries neither serving_filer_rows nor inst_holdings")
-    mapped: dict[str, str] = {}
-    all_cusips: set[str] = set()
-    for name, klass, cusip in conn.execute(sql):
-        all_cusips.add(cusip)
-        if name is not None and mapping_key(name, klass) in by_key:
-            mapped.setdefault(cusip, by_key[mapping_key(name, klass)].ticker)
+    closure = close_withheld_cusips(conn.execute(sql))
     conn.close()
     blocks: dict[str, set[str]] = defaultdict(set)
-    for cusip, ticker in mapped.items():
-        blocks[cusip[:6]].add(ticker)
-    # A sibling CUSIP in a withheld block exposes the block.
-    siblings = {c for c in all_cusips if c[:6] in blocks and c not in mapped}
-    for c in siblings:
-        mapped.setdefault(c, sorted(blocks[c[:6]])[0])
+    for cusip, tickers in closure.tickers.items():
+        blocks[cusip[:6]] |= set(tickers)
+    # Every member of the closed set is reportable. A member reached only by an
+    # edge carries the label that reached it; one with no label at all still
+    # has to be LOOKED FOR, so it is reported against its block.
+    mapped: dict[str, str] = {}
+    for cusip, tickers in closure.tickers.items():
+        label = sorted(tickers) or sorted(blocks.get(cusip[:6], ()))
+        mapped[cusip] = label[0] if label else f"cusip6:{cusip[:6]}"
     return mapped, blocks
 
 
@@ -106,11 +118,12 @@ def scan(data: bytes, cusips: dict[str, str], sids: dict[str, str],
          blocks: dict[str, set[str]]) -> dict[str, set[str]]:
     """Pairs recovered from one byte stream: ``cusip-or-block -> {tickers}``."""
     found: dict[str, set[str]] = defaultdict(set)
-    for m in CUSIP_RE.finditer(data):
-        value = m.group(0).decode("ascii")
-        ticker = cusips.get(value)
-        if ticker is not None:
-            found[value].add(ticker)
+    for regex, group in ((CUSIP_RE, 0), (ISIN_RE, 1)):
+        for m in regex.finditer(data):
+            value = m.group(group).decode("ascii")
+            ticker = cusips.get(value)
+            if ticker is not None:
+                found[value].add(ticker)
     for m in HEX32_RE.finditer(data):
         cusip = sids.get(m.group(0).decode("ascii"))
         if cusip is not None:

@@ -233,7 +233,17 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
         // C3: the verified date rides on the payload's `tickerDates` map, not
         // on the row — one mapping row's date repeated per holding was 68% of
         // the recent shard growth.
-        tickerDates[ref.ticker] = ref.verified_date;
+        //
+        // The map is keyed by TICKER while the date is a property of a mapping
+        // ROW, and two reviewed rows can name one ticker with different dates
+        // (the two Agilent rows do). A plain assignment would let whichever row
+        // came last in this payload decide, so the date would depend on row
+        // order. Keep the EARLIEST: the ⓘ then never claims a review more
+        // recent than the oldest row contributing to it. (Measured: 0 such
+        // collisions across 528,492 filer/ticker keys in the shipped dist, so
+        // this is determinism, not a correction.)
+        const seen = tickerDates[ref.ticker];
+        if (seen === undefined || ref.verified_date < seen) tickerDates[ref.ticker] = ref.verified_date;
       }
     }
   }

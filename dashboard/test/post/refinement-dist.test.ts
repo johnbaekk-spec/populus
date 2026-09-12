@@ -37,7 +37,31 @@ function cells(html: string, cls: string): string[] {
   return out;
 }
 
-const text = (s: string): string => s.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+/* Visible text of an HTML fragment. Scans character by character rather than
+   stripping `<[^>]+>` in one regex pass: a single pass can SPLICE a new tag
+   out of its neighbours — `<<td>x<td>>` leaves a stray `>` and, in the general
+   case, a whole reconstructed tag — so a one-pass strip is an incomplete
+   sanitization (CodeQL js/incomplete-multi-character-sanitization). The scan
+   below is a fixpoint by construction: no `<` or `>` can survive it, because
+   every one of them is consumed as tag punctuation. A `<` seen while already
+   inside a tag restarts the tag, which is the conservative reading for a
+   banned-wording scan — it can only remove more markup, never leak it. */
+const text = (s: string): string => {
+  let out = "";
+  let inTag = false;
+  for (const ch of s) {
+    if (ch === "<") {
+      inTag = true;
+      continue;
+    }
+    if (ch === ">") {
+      inTag = false;
+      continue;
+    }
+    if (!inTag) out += ch;
+  }
+  return out.replace(/\s+/g, " ").trim();
+};
 
 test("POST-BUILD R2: every /institutional/tickers/… href resolves to a built file", () => {
   assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
