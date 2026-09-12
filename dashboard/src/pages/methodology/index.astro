@@ -83,7 +83,7 @@ const description =
             </div>
             <div class="source-row">
               <div><div class="source-name">congress-legislators</div><div class="mono-note">cc0 · member identity</div></div>
-              <div class="source-cond">CC0 seed for bioguide IDs, parties, terms. Joins are conservative: unique-candidate only, publicly versioned aliases.</div>
+              <div class="source-cond">CC0 seed for congressional member IDs, parties, terms. Joins are conservative: unique-candidate only, publicly versioned aliases.</div>
             </div>
             <div class="source-row">
               <div><div class="source-name">kadoa congress-trading seed</div><div class="mono-note">mit-kadoa-seed · backfill</div></div>
@@ -142,7 +142,7 @@ const description =
           <div class="mtile">
             <div class="tile-value">{inst.watermarks.latest_period_of_report ?? "—"}</div>
             <div class="tile-label">latest period</div>
-            <div class="mtile-sub">manifest watermark</div>
+            <div class="mtile-sub">newest filing received</div>
           </div>
           <div class="mtile">
             <div class="tile-value">{fmtInt(inst.topn)}</div>
@@ -169,10 +169,11 @@ const description =
       )}
       <h3 class="section-h">What our 13F derivations do — and refuse to do</h3>
       <div class="gaps-block cols-2">
-        <div>· Amendments are typed: a restatement supersedes; new-holdings merges. Originals are tombstoned, never deleted.</div>
+        <div>· Amendments are typed: a restatement supersedes; new-holdings merges. Originals are kept and marked superseded, never deleted.</div>
         <div>· A change with an undisclosed side is <strong>n/c</strong> — never coerced into add or trim.</div>
         <div>· "Exit" is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
         <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Public Filings build parameter.</div>
+        <div id="13f-affiliates">· A manager that files its own 13F holdings report keeps its whole book, even when another manager's combination report names it: under the Form 13F instructions a holdings report carries all of that manager's holdings, and a position whose discretion is shared is reported by one manager only. Only a 13F notice — holdings reported entirely by someone else — is left out. Such pairs are marked <span class="mono-id">shared discretion</span> and are not netted against each other.</div>
         <div>· Concentration is computed only when the denominator is disclosed; otherwise the stat prints "n/a" with its reason <span class="mono-id">concentration_unavailable</span>.</div>
         <div id="13f-identity">· Ticker→issuer joins use the SEC's present-day ticker file against entity-keyed issuers only — never a name match, never a guessed identity.</div>
       </div>
@@ -200,6 +201,71 @@ const description =
           </p>
         </div>
       </div>
+    </section>
+
+    <section class="metho-section" id="principles">
+      <h2 class="section-h2">Principles — what this site is for</h2>
+      <p class="metho-body">
+        The people's financial data, returned to the people. US financial-disclosure data —
+        congressional trades, institutional holdings — pulled only from primary government
+        sources, republished with its receipts. Others sell this free layer back at $30–200/month;
+        here the public record itself is free forever. Convenience layers (alerts, integrations)
+        may someday be paid — the data never will be.
+      </p>
+      <p class="metho-body">
+        The differentiator isn't coverage — anyone can scrape these filings. It's that every number
+        here tells you exactly how stale it is, what it excludes, and how it was derived.
+      </p>
+      <div class="commitments">
+        <div class="commit">
+          <div class="commit-h">The data is free forever</div>
+          <div class="commit-body">MIT-licensed code, per-source data conditions recorded and honored. Every row links to the government document it came from; every build is verifiable by hash.</div>
+        </div>
+        <div class="commit">
+          <div class="commit-h">Honest about its own gaps</div>
+          <div class="commit-body">Parse coverage, unjoined names, paper filings awaiting OCR — published on this page, which is a product surface here, not a footer link.</div>
+        </div>
+        <div class="commit">
+          <div class="commit-h">No cookies, no account required</div>
+          <div class="commit-body">No cookies, no profiles, nothing gated behind sign-up. Watchlists stay in your browser. Page traffic is measured in aggregate and without cookies — the privacy section below names the provider, the fields, and the retention. Also available as an MIT-licensed MCP server for analysts working inside an LLM client.</div>
+        </div>
+      </div>
+      <p class="metho-body" id="published-dataset">
+        <strong>The published dataset.</strong> Every row remains in the published dataset: the
+        congressional feed is served in full at <a href="/congress/data/feed.v1.json">feed.v1.json</a>
+        (and in byte-bounded per-year parts for paging), the institutional aggregate as paged files, and
+        the signals as <a href="/signals/data/signals.v1.json">signals.v1.json</a>. A table that shows
+        fewer rows than it holds says so; nothing is withheld from the data.
+      </p>
+      <p class="metho-body" id="ranges">
+        <strong>Ranges.</strong> Congressional amounts are disclosed as statutory ranges, never exact
+        figures; totals over ranges are computed by interval arithmetic — a net range is the
+        purchases interval minus the sales interval, and an open-ended bound propagates as open-ended.
+        "At least $X" is the low end of the disclosed range.
+      </p>
+      <p class="metho-body" id="13f-method">
+        <strong>How 13F data is read.</strong> Quarter-end positions are disclosed up to 45 days later;
+        they are never current holdings and never a complete portfolio (cash, shorts and non-13(f)
+        assets are absent). Changes are classified from comparable reported positions by share count;
+        a missing position is not proof of a sale, and a value change alone is not a position change.
+      </p>
+      <p class="metho-body" id="position-grain">
+        <strong>What counts as one position.</strong> A position is one issuer security × put/call × unit as the
+        filer reported it; the producer classifies each change (new · add · trim · exit · no change)
+        from the share delta between consecutive quarters, at that level.
+      </p>
+      <p class="metho-body" id="ticker-mapping">
+        <strong>Ticker mapping.</strong> A 13F row shows a ticker only where a reviewed, name-and-class
+        keyed mapping row supplies one — verified against the SEC company list on the date the row
+        states. Symbols are never inferred automatically; an unmapped security shows "Ticker not yet
+        mapped".
+      </p>
+      <p class="metho-body" id="site-weight">
+        <strong>Site weight.</strong> Every page and data file is byte-bounded: no served file exceeds
+        the 1 MiB client-response ceiling for paged data, and the whole site stays under the hosting
+        file-count and per-file caps. A table whose complete set is larger than a page states how many
+        rows it shows and links the full published file.
+      </p>
     </section>
 
     <section class="metho-section" id="publication">

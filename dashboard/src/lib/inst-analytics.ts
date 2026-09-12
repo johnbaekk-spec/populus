@@ -183,7 +183,7 @@ export function concentrationBenchmark(inst: InstData, period: string): Concentr
 /** Deltas for one filer and period, split by kind — the counts the filer
     ledger prints beside its position count. */
 export function deltaKindCounts(deltas: readonly QoqDeltaRow[], period: string): Record<QoqDeltaRow["change_kind"], number> {
-  const out: Record<QoqDeltaRow["change_kind"], number> = { new: 0, add: 0, trim: 0, exit: 0, unclassified: 0 };
+  const out: Record<QoqDeltaRow["change_kind"], number> = { new: 0, add: 0, trim: 0, exit: 0, held: 0, unclassified: 0, no_prior: 0 };
   for (const d of deltas) if (d.curr_period === period) out[d.change_kind]++;
   return out;
 }

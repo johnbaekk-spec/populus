@@ -7,8 +7,10 @@
       watch-v2 store (members + tickers) and the last-seen cursor, all of which
       live in this browser only. Nothing leaves the device. */
 
-import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel } from "../lib/format.ts";
+import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel, type RenderCtx } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
+import { hitRowHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE } from "../lib/ui/index.ts";
+import type { Signal, SignalArtifact } from "../lib/signals.ts";
 import { classifyCursor, readCursor, writeCursor, watchBandEmptyText, watchSeenLabel } from "../lib/watchlist.ts";
 
 const SHORT: Record<string, string> = {
@@ -63,26 +65,106 @@ function safeReceiptHref(raw: unknown): string | null {
   return "https://" + u.hostname + u.pathname + u.search;
 }
 
-function initHitFilter(): void {
+/* R17: a REAL pager over the complete artifact. The server rendered page 1;
+   the first page change or filter fetches `signals.v1.json` once (it is
+   complete for the window) and every later view renders from it through the
+   SAME row renderer the server used. */
+const ARTIFACT_HREF = "/signals/data/signals.v1.json";
+
+function initHitPager(): void {
+  const section = document.getElementById("signal-hits");
   const seg = document.querySelector<HTMLElement>(".si-hit-filter");
   const body = document.getElementById("signal-hits-body");
-  const count = document.getElementById("signal-hits-count");
-  if (!seg || !body) return;
-  seg.addEventListener("click", (ev) => {
-    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-family]");
+  const rangeEl = document.getElementById("signal-hits-range");
+  const prev = document.getElementById("signal-hits-prev") as HTMLButtonElement | null;
+  const next = document.getElementById("signal-hits-next") as HTMLButtonElement | null;
+  const watchedChk = document.getElementById("signal-watched-only") as HTMLInputElement | null;
+  const status = document.getElementById("signal-hits-status");
+  if (!section || !seg || !body || !rangeEl) return;
+  const pageSize = Number(section.dataset.pageSize) || SIGNAL_HITS_PAGE_SIZE;
+  const store = loadWatchStore(localStorage);
+  const ctx: RenderCtx = { watched: store.members, watchedTickers: store.tickers };
+  let page = 0;
+  let kind = "all";
+  let watchedOnly = false;
+  let all: Promise<Signal[]> | null = null;
+  let token = 0;
+
+  function loadAll(): Promise<Signal[]> {
+    all ??= fetch(ARTIFACT_HREF)
+      .then((r) => {
+        if (!r.ok) throw new Error(`signals artifact ${r.status}`);
+        return r.json() as Promise<SignalArtifact>;
+      })
+      .then((a) => sortHits((a.signals ?? []).filter((s) => s.status === "active")))
+      .catch((err) => {
+        all = null;
+        throw err;
+      });
+    return all;
+  }
+
+  function matches(s: Signal): boolean {
+    if (kind !== "all" && s.kind !== kind) return false;
+    if (watchedOnly && !((s.entities.bioguide && store.members.has(s.entities.bioguide)) || (s.entities.ticker && store.tickers.has(s.entities.ticker)))) return false;
+    return true;
+  }
+
+  function setPager(btn: HTMLButtonElement | null, unavailable: boolean): void {
     if (!btn) return;
-    const fam = btn.dataset.family ?? "all";
-    for (const b of seg.querySelectorAll<HTMLButtonElement>("button[data-family]"))
-      b.setAttribute("aria-pressed", String(b === btn));
-    let shown = 0;
-    for (const tr of body.querySelectorAll<HTMLTableRowElement>("tr.si-hit")) {
-      const on = fam === "all" || tr.dataset.family === fam;
-      tr.hidden = !on;
-      if (on) shown++;
+    btn.setAttribute("aria-disabled", String(unavailable));
+    btn.classList.toggle("is-unavailable", unavailable);
+  }
+
+  async function paint(): Promise<void> {
+    const mine = ++token;
+    let hits: Signal[];
+    try {
+      hits = await loadAll();
+    } catch (err) {
+      if (mine !== token) return;
+      console.error("populus: signals artifact failed", err);
+      if (status) status.textContent = "Couldn't load the signals artifact; the hits shown are unchanged.";
+      return;
     }
-    const status = document.getElementById("signal-hits-status");
-    if (status) status.textContent = `${fmtInt(shown)} rendered ${shown === 1 ? "hit" : "hits"} match the ${fam === "all" ? "unfiltered" : fam.toLowerCase()} view.`;
-    count?.setAttribute("data-visible", String(shown));
+    if (mine !== token) return;
+    const filtered = hits.filter(matches);
+    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (page > pageCount - 1) page = pageCount - 1;
+    const slice = filtered.slice(page * pageSize, (page + 1) * pageSize);
+    body!.innerHTML =
+      slice.length === 0
+        ? `<tr><td colspan="6" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
+        : slice.map((s) => hitRowHtml(s, ctx)).join("\n");
+    const range = hitsRangeText(page, slice.length, filtered.length, pageSize);
+    rangeEl!.textContent = range;
+    if (status) status.textContent = `${range} hits${kind === "all" ? "" : ` · rule ${kind}`}${watchedOnly ? " · watched only" : ""}.`;
+    setPager(prev, page === 0);
+    setPager(next, page >= pageCount - 1);
+  }
+
+  seg.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-kind]");
+    if (!btn) return;
+    kind = btn.dataset.kind ?? "all";
+    for (const b of seg.querySelectorAll<HTMLButtonElement>("button[data-kind]")) b.setAttribute("aria-pressed", String(b === btn));
+    page = 0;
+    void paint();
+  });
+  watchedChk?.addEventListener("change", () => {
+    watchedOnly = watchedChk.checked;
+    page = 0;
+    void paint();
+  });
+  prev?.addEventListener("click", () => {
+    if (prev.getAttribute("aria-disabled") === "true" || page === 0) return;
+    page--;
+    void paint();
+  });
+  next?.addEventListener("click", () => {
+    if (next.getAttribute("aria-disabled") === "true") return;
+    page++;
+    void paint();
   });
 }
 
@@ -179,7 +261,7 @@ function initWatchBand(): void {
     summary.textContent =
       `${fmtInt(hits.length)} ${hits.length === 1 ? "hit" : "hits"} on ${fmtInt(watchedMembers.size + watchedTickers.size)} watched ${watchedMembers.size + watchedTickers.size === 1 ? "subject" : "subjects"}` +
       (payload.total > payload.cap ? ` · joined against the newest ${fmtInt(payload.cap)} of ${fmtInt(payload.total)} hits` : "") +
-      (hits.length > WATCH_RENDER_CAP ? ` · the newest ${fmtInt(WATCH_RENDER_CAP)} rendered here — a render bound, not a data bound; the hits table above carries the rest` : "") +
+      (hits.length > WATCH_RENDER_CAP ? ` · the newest ${fmtInt(WATCH_RENDER_CAP)} shown here; the hits table above carries the rest` : "") +
       `.${gap} `;
     note.prepend(summary);
   }
@@ -196,6 +278,6 @@ function initWatchBand(): void {
 }
 
 export function initSignalsPage(): void {
-  initHitFilter();
+  initHitPager();
   initWatchBand();
 }

@@ -38,9 +38,11 @@ import {
   filerPeriodSectionHtml,
   holdersTableHtml,
   type BuildStamps,
+  type ChangesKindFilter,
 } from "../lib/ui/index.ts";
 import {
   institutionalDataNoteHtml,
+  priorPeriodOf,
   projectionAbsentHtml,
   surfaceHtml,
   type FilerSurfacePayload,
@@ -221,6 +223,8 @@ export interface DriverHandle {
   holdingsPage: (dir: "prev" | "next") => void;
   /** changes-table pagination (the tail route previously had none). */
   changesPage: (dir: "prev" | "next") => void;
+  /** D5: the Position changes kind filter (null = all kinds). */
+  changesKind: (kind: ChangesKindFilter | null) => void;
   holdingsView: (view: "current" | "prior" | "diff") => void;
   holdingsPeriod: (period: string) => void;
   done: Promise<void>;
@@ -429,6 +433,9 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
   /** Changes-table page index, reset whenever the selected period changes: a page
       index from another quarter addresses nothing in this one. */
   let filerChangesPage = 0;
+  /** D5: the Position changes kind filter — the same state the pre-rendered
+      page's island keeps, so both routes filter identically. */
+  let filerChangesKind: ChangesKindFilter | null = null;
 
   function filerSurfaceOf(p: FilerPayloadV1): FilerSurfacePayload {
     return {
@@ -441,14 +448,26 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       filings: p.filings,
       rowsByPeriod: p.rowsByPeriod,
       totalsByPeriod: p.totalsByPeriod,
+      // C3: the payload's reviewed-ticker dates travel with the surface so the
+      // /e/ route's ⓘ states the same date the pre-rendered page does.
+      ...(p.tickerDates ? { tickerDates: p.tickerDates } : {}),
     };
   }
 
   function filerHtml(p: FilerPayloadV1): string {
-    const aggPeriods = Object.keys(p.concByPeriod).sort();
+    /* LD3 §5: the selector lists exactly the periods the projection carries
+       rows for (`p.periods`); the aggregate periods stand only when the
+       projection carries none. */
+    const concPeriods = Object.keys(p.concByPeriod).sort();
+    const served = p.periods.filter((x) => x in p.concByPeriod);
+    const aggPeriods = served.length > 0 ? served : concPeriods;
+    /* R4/T4: before any chip click the page opens on the payload's current
+       quarter — the producer's closed-quarter default, as on the pre-rendered page. */
     const aggPeriod = aggPeriods.includes(filerAggPeriod)
       ? filerAggPeriod
-      : (aggPeriods[aggPeriods.length - 1] ?? p.latestPeriod);
+      : aggPeriods.includes(p.current)
+        ? p.current
+        : (aggPeriods[aggPeriods.length - 1] ?? p.latestPeriod);
     const surface =
       p.periods.length > 0
         ? surfaceHtml(filerSurfaceOf(p), filerState)
@@ -470,6 +489,11 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
         {
           total: p.deltaTotalsByPeriod[aggPeriod]!,
           page: filerChangesPage,
+          kind: filerChangesKind,
+          // R6/R15: the same stat, banner and identity inputs as the pre-rendered page.
+          discontinuity: p.discontinuityPeriods.includes(aggPeriod),
+          kinds: p.kindsByPeriod[aggPeriod] ?? null,
+          typing: p.typing,
         },
       ) +
       `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
@@ -485,6 +509,13 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
     try {
       deps.render(filerHtml(p));
       state = "body";
+      /* R15: the rendered Position changes carry a DOM-backed "Show more"
+         disclosure; its binder (initDomDisclosures, wired on /e/) re-binds the
+         fresh nodes on this event — the same contract the pre-rendered page's
+         period switch uses. */
+      if (typeof document !== "undefined" && typeof document.dispatchEvent === "function") {
+        document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "filer" } }));
+      }
     } catch {
       state = "render_error";
       deps.render(
@@ -746,6 +777,12 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       filerState.page = Math.max(0, filerState.page + (dir === "next" ? 1 : -1));
       renderFiler();
     },
+    changesKind: (kind) => {
+      if (!loadedFiler) return;
+      filerChangesKind = kind;
+      filerChangesPage = 0; // a page index under another filter addresses nothing here
+      renderFiler();
+    },
     changesPage: (dir) => {
       if (!loadedFiler) return;
       filerChangesPage = Math.max(0, filerChangesPage + (dir === "next" ? 1 : -1));
@@ -755,14 +792,17 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       if (!loadedFiler) return;
       filerState.view = view;
       filerState.page = 0; // a page index from another view means nothing here
-      filerState.period =
-        view === "prior" && loadedFiler.prior ? loadedFiler.prior : loadedFiler.current;
+      // LD3 §5: the selected quarter and ITS predecessor, never the load-time pair.
+      const selected = filerState.selected ?? loadedFiler.current;
+      const prior = priorPeriodOf(loadedFiler.periods, selected);
+      filerState.period = view === "prior" && prior ? prior : selected;
       renderFiler();
     },
     holdingsPeriod: (period) => {
       if (!loadedFiler) return;
       filerAggPeriod = period;
       filerState.period = period;
+      filerState.selected = period;
       filerState.page = 0;
       filerChangesPage = 0;
       filerState.view = "current";
@@ -898,7 +938,7 @@ export function initFilerPeriods(): void {
     benchmarks?: Record<string, import("../lib/inst-analytics.ts").ConcentrationBenchmark | null>;
     periods: Record<
       string,
-      { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number }
+      { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number; discontinuity?: boolean; kinds?: { new: number; exit: number } | null }
     >;
   };
   try {
@@ -932,6 +972,9 @@ export function initFilerPeriods(): void {
     chips.querySelector<HTMLElement>("[data-period]")?.dataset.period ??
     "";
   let page = 0;
+  /* D5: the Position changes kind filter; kept across period switches (the
+     reader asked for one kind), while the page resets as it always has. */
+  let kind: ChangesKindFilter | null = null;
   const draw = (): void => {
     const slice = data.periods[period];
     if (!slice) return;
@@ -945,8 +988,11 @@ export function initFilerPeriods(): void {
       // total is a corrupt embed, handled above by leaving the SSR section alone
       // — never papered over with the embedded length, which would claim a
       // completeness the server never claimed.
-      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null },
+      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
     );
+    // R15: a re-rendered section carries fresh DOM-backed disclosures; the
+    // owner of those controls re-binds on this event.
+    document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "filer-period" } }));
   };
   chips.addEventListener("click", (ev) => {
     const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-period]");
@@ -963,6 +1009,15 @@ export function initFilerPeriods(): void {
   });
   // Delegated on the root because `draw()` replaces the pager's own subtree.
   root.addEventListener("click", (ev) => {
+    const kindBtn = (ev.target as Element).closest<HTMLButtonElement>("[data-changes-kind]");
+    if (kindBtn && period) {
+      const k = kindBtn.dataset.changesKind;
+      kind = k === "new" || k === "add" || k === "trim" || k === "exit" ? k : null;
+      page = 0; // a page index under another filter addresses nothing here
+      draw();
+      root.querySelector<HTMLElement>(`[data-changes-kind="${kind ?? "all"}"]`)?.focus();
+      return;
+    }
     const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-changes-page]");
     if (!btn || btn.getAttribute("aria-disabled") === "true" || !period) return;
     page = Math.max(0, page + (btn.dataset.changesPage === "next" ? 1 : -1));
@@ -1112,6 +1167,12 @@ export function dispatchEntityClick(el: Element, handle: DriverHandle): void {
       if (pageBtn.getAttribute("aria-disabled") !== "true") {
         handle.holdingsPage(pageBtn.dataset.holdingsPage === "next" ? "next" : "prev");
       }
+      return;
+    }
+    const kindBtn = el.closest<HTMLButtonElement>("[data-changes-kind]");
+    if (kindBtn) {
+      const k = kindBtn.dataset.changesKind;
+      handle.changesKind(k === "new" || k === "add" || k === "trim" || k === "exit" ? k : null);
       return;
     }
     const changesBtn = el.closest<HTMLButtonElement>("[data-changes-page]");

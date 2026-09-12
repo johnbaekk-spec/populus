@@ -368,8 +368,10 @@ def test_the_m2_11_measured_projection_fits_with_recorded_headroom():
     # M2-12 (Codex F3) added the v2 index tombstone: one more file, so the
     # projection moves 15,935 -> 15,936 and headroom 2,065 -> 2,064. Restated
     # together with FILER_V1_TRANSITION_FILES, exactly as this message demands.
-    assert (projected, GLOBAL_FILE_CAP - projected) == (15_940, 2_060), (
-        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 2,060 this suite"
+    # The refinement review's F3 added the v3 tombstone: 15,940 -> 15,941 and
+    # headroom 2,060 -> 2,059, restated here together with the constant.
+    assert (projected, GLOBAL_FILE_CAP - projected) == (15_941, 2_059), (
+        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 2,059 this suite"
         " records. Restate the constants and this test together or they will"
         " disagree again"
     )
@@ -439,10 +441,11 @@ def test_the_v1_transition_term_is_a_load_bearing_parameter():
     without = worst_case_file_count(
         measured_files=M1_MEASURED_PAGES, filer_v1_transition_files=0
     )
-    # M2-12 added the v2 tombstone beside v1 (Codex F3), so the term is 2. The
-    # property under test is that the term is LOAD-BEARING — zeroing it must move
-    # the projection by exactly its own size — not that it equals any one number.
-    assert with_term - without == FILER_V1_TRANSITION_FILES == 2
+    # M2-12 added the v2 tombstone beside v1 (Codex F3); the refinement review's
+    # F3 added the v3 tombstone, so the term is 3. The property under test is that
+    # the term is LOAD-BEARING — zeroing it must move the projection by exactly
+    # its own size — not that it equals any one number.
+    assert with_term - without == FILER_V1_TRANSITION_FILES == 3
 
 
 def test_fragment_geometry_constants_are_exact():

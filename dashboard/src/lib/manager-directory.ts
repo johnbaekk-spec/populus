@@ -136,7 +136,11 @@ export function biggestChangeCellHtml(result: BiggestChangeResult): string {
   const basis = classifiedByValue
     ? ` <span class="mono-note" title="share units were not comparable, so the producer classified this change from VALUE">by value ·†v</span>`
     : "";
+  // R14: the "Latest notable" cell NAMES the issuer (R1 display relation);
+  // an unnamed row shows nothing extra rather than an invented name.
+  const issuer = row.issuer_name ? `<span class="filed-name">${esc(row.issuer_name)}</span> ` : "";
   return (
+    issuer +
     `<span class="qoq-chip qoq-${esc(row.change_kind)}">${esc(row.change_kind)}</span> ` +
     `<span class="${dirCls}">${esc(signed)}</span>${basis}`
   );

@@ -19,6 +19,7 @@
    fabricated zero is a claim, not a repair. */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { ManagerTyping } from "./manager-directory.ts";
 import {
   capRows,
   utf8ByteLength as utf8Bytes,
@@ -27,6 +28,7 @@ import {
   type FilerHoldingRow,
   type FilingDict,
   type FilingRef,
+  derivedIssuerKey,
 } from "./holdings.ts";
 import type { ConcentrationRow, QoqDeltaRow } from "./inst.ts";
 import type { FilingWindow } from "./derive.ts";
@@ -38,10 +40,10 @@ const FILER_PAYLOAD_VERSION = 1;
 /** The routing index the `/e/` driver resolves tail CIKs through (LD-9).
     Defined here — the browser-safe module — because the driver ships these to
     the client while the shard planner (`data.ts`, server-only) emits them. */
-export const FILER_INDEX_PATH = "/institutional/data/filers/index.v3.json";
+export const FILER_INDEX_PATH = "/institutional/data/filers/index.v4.json";
 
 export function filerShardPath(shard: number): string {
-  return `/institutional/data/filers/${encodeURIComponent(String(shard))}.v3.json`;
+  return `/institutional/data/filers/${encodeURIComponent(String(shard))}.v4.json`;
 }
 
 /** Cross-runtime transport budget mirrors. Python `inst_budget.py` remains the
@@ -94,6 +96,25 @@ export interface FilerPayloadV1 {
   latestFiled: string | null;
   topn: number;                           // the N of top-N — SEPARATE from topn_share_bps
   window: FilingWindow | null;            // { open, quarterEnd, deadline }
+  /** R15: new-stake / exit counts per delta period over the WHOLE period's
+      changes (before the embed bound) — the filer stats on both routes. */
+  kindsByPeriod: Record<string, FilerKindCounts>;
+  /** R6: periods the producer flagged as book discontinuities (bannered). */
+  discontinuityPeriods: string[];
+  /** R15: curated identity (principal, type) for a registry-matched filer. */
+  typing: ManagerTyping | null;
+  /** C3 (refinement 20260910): `ticker -> verified_date`, carried ONCE per
+      payload instead of on every row — the date is a property of the reviewed
+      mapping row, not of the holding. Absent when no row carries a ticker.
+      Optional on the wire: an older payload's per-row `ticker_verified_date`
+      still parses and still renders. */
+  tickerDates?: Record<string, string>;
+}
+
+/** R15: the filer page's new-stake and exit stat inputs. */
+export interface FilerKindCounts {
+  new: number;
+  exit: number;
 }
 
 /* ================================================================ assembler */
@@ -113,6 +134,12 @@ export interface FilerAggregateInputs {
   latestFiled: string | null;
   topn: number;
   window: FilingWindow | null;
+  /** R15: counts over the UNBOUNDED period changes, keyed like deltasByPeriod. */
+  kindsByPeriod: Record<string, FilerKindCounts>;
+  /** R6: the producer's book-discontinuity periods for this filer. */
+  discontinuityPeriods: string[];
+  /** R15: curated typing, or null for an unmatched filer. */
+  typing: ManagerTyping | null;
 }
 
 interface AssembleFilerArgs {
@@ -126,6 +153,9 @@ interface AssembleFilerArgs {
       the included rows reference (referenced-only). */
   filings: FilingDict;
   agg: FilerAggregateInputs;
+  /** R3: the reviewed Tier C ticker for a filed (issuer name, class) pair, or
+      null. Omitted → no row carries a ticker (G14: never inferred here). */
+  tickerFor?: (issuerName: string, titleOfClass: string | null) => { ticker: string; verified_date: string } | null;
 }
 
 /** Read the `serving_filings` dictionary once per artifact — shared by the
@@ -165,20 +195,48 @@ export function readServingFilings(db: DatabaseSync): FilingDict {
  * as it treated zero rows before the extraction.
  */
 export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs): FilerPayloadV1 {
+  // R25: `issuer_key` exists only in artifacts built after R25; a baseline
+  // artifact (the T31 rollback case) reads it as NULL, and NULL keys are
+  // omitted from the row, so the payload bytes of such an artifact are unchanged.
+  const hasIssuerKey =
+    db.prepare(`SELECT 1 FROM pragma_table_info('serving_filer_rows') WHERE name = 'issuer_key'`).get() !== undefined;
+  // The literal stays whole and valid against any serving DDL (a test prepares
+  // every shipped query against the producer's schema); the real column is
+  // swapped in only when the artifact has it.
+  const filerRowsSql = `SELECT cik, period, filing_key, security_id, cusip, issuer_name, title_of_class,
+              value_usd, shares, ssh_type, put_call, position_key,
+              put_call_bucket, unit_key, flags, NULL AS issuer_key
+         FROM serving_filer_rows WHERE cik = ? ORDER BY period, rowid`;
   const raw = db
     .prepare(
       // `put_call_bucket` / `unit_key` are the PRODUCER's grain discriminators —
       // read rather than recomputed (see the component's original comment).
-      `SELECT cik, period, filing_key, security_id, cusip, issuer_name, title_of_class,
-              value_usd, shares, ssh_type, put_call, position_key,
-              put_call_bucket, unit_key, flags
-         FROM serving_filer_rows WHERE cik = ? ORDER BY period, rowid`,
+      hasIssuerKey ? filerRowsSql.replace("NULL AS issuer_key", "issuer_key") : filerRowsSql,
     )
     .all(args.cik) as Record<string, unknown>[];
   // Same normaliser and same hard-failure guards as a JSON shard would get.
   // The dictionary is passed separately — parsing the full build dictionary
   // once per filer would be quadratic over the corpus.
   const rows = parseFilerShard({ filings: {}, rows: raw }).rows;
+  // R25: ship the key only where the client cannot derive it from the row's
+  // own CUSIP (entity- and name-keyed rows). Every fragment shard and page
+  // embed stays the size it was; `issuerKeyOf` restores the key exactly.
+  for (const row of rows) {
+    if (row.issuer_key !== undefined && row.issuer_key === derivedIssuerKey(row.cusip)) delete row.issuer_key;
+  }
+  const tickerDates: Record<string, string> = {};
+  if (args.tickerFor) {
+    for (const row of rows) {
+      const ref = args.tickerFor(row.issuer_name, row.title_of_class);
+      if (ref) {
+        row.ticker = ref.ticker;
+        // C3: the verified date rides on the payload's `tickerDates` map, not
+        // on the row — one mapping row's date repeated per holding was 68% of
+        // the recent shard growth.
+        tickerDates[ref.ticker] = ref.verified_date;
+      }
+    }
+  }
 
   const periods = [...new Set(rows.map((r) => r.period))].sort();
   // OD-5: the selected quarter and the one before it, both browsable.
@@ -194,7 +252,9 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
   const rowsByPeriod: Record<string, FilerHoldingRow[]> = {};
   const totalsByPeriod: Record<string, number> = {};
   if (periods.length > 0) {
-    for (const period of prior ? [prior, current] : [current]) {
+    // R5 (LD3 §4): EVERY published period of this filer, each under the same
+    // per-period embed cap — four for a notable filer, two for the rest.
+    for (const period of periods) {
       const capped = capRows(sortHoldingRows(rows.filter((r) => r.period === period)));
       rowsByPeriod[period] = capped.rows;
       totalsByPeriod[period] = capped.total;
@@ -231,6 +291,10 @@ export function assembleFilerPayload(db: DatabaseSync, args: AssembleFilerArgs):
     latestFiled: args.agg.latestFiled,
     topn: args.agg.topn,
     window: args.agg.window,
+    kindsByPeriod: args.agg.kindsByPeriod,
+    discontinuityPeriods: args.agg.discontinuityPeriods,
+    typing: args.agg.typing,
+    ...(Object.keys(tickerDates).length > 0 ? { tickerDates } : {}),
   };
 }
 
@@ -269,8 +333,31 @@ const PAYLOAD_KEYS = [
   "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
   "filings", "rowsByPeriod", "totalsByPeriod", "concByPeriod", "deltasByPeriod",
   "deltaTotalsByPeriod",
-  "latestFiled", "topn", "window",
+  "latestFiled", "topn", "window", "kindsByPeriod", "discontinuityPeriods", "typing",
+  // C3: optional — present when any row carries a reviewed ticker.
+  "tickerDates",
 ] as const;
+
+const TYPING_KEYS = ["cik", "display_name", "person", "manager_type", "notable"] as const;
+
+/** R15: curated typing on the wire — null, or exactly the ManagerTyping
+    fields, for THIS payload's filer. */
+function typingOf(v: unknown, cik: string): ManagerTyping | null {
+  if (v === undefined) missing("typing");
+  if (v === null) return null;
+  if (!isRecord(v)) bad("typing is neither an object nor null");
+  onlyKeys(v, TYPING_KEYS, "typing");
+  const tcik = reqString(v.cik, "typing.cik");
+  if (tcik !== cik) bad(`typing.cik ${tcik} != payload cik ${cik}`);
+  if (typeof v.notable !== "boolean") bad("typing.notable is not a boolean");
+  return {
+    cik: tcik,
+    display_name: reqString(v.display_name, "typing.display_name"),
+    person: stringOrNull(v.person, "typing.person"),
+    manager_type: reqString(v.manager_type, "typing.manager_type") as ManagerTyping["manager_type"],
+    notable: v.notable,
+  };
+}
 
 const FILING_REF_KEYS = [
   "accession", "submission_type", "period_of_report", "filed_date", "doc_url", "source",
@@ -285,6 +372,8 @@ const DELTA_KEYS = [
   "cik", "position_key", "put_call", "curr_period", "prev_period", "change_kind",
   "prev_value_usd", "curr_value_usd", "delta_value_usd", "prev_shares", "curr_shares",
   "delta_shares", "ssh_prnamt_type", "flags",
+  // R1 display enrichment — optional, nullable, never monetary.
+  "issuer_name", "title_of_class", "issuer_key",
 ] as const;
 
 const WINDOW_KEYS = ["open", "quarterEnd", "deadline"] as const;
@@ -297,6 +386,10 @@ const HOLDING_ROW_KEYS = [
   "cik", "period", "filing_key", "security_id", "cusip", "issuer_name", "title_of_class",
   "value_usd", "shares", "ssh_type", "put_call", "position_key", "put_call_bucket",
   "unit_key", "flags",
+  // R25: optional — present only when the artifact carries a non-null key.
+  "issuer_key",
+  // R3/D1: optional — present only on a row a reviewed mapping row names.
+  "ticker", "ticker_verified_date",
   "change_kind", "delta_value_usd", "delta_shares", "prev_value_usd", "curr_value_usd",
 ] as const;
 
@@ -376,7 +469,7 @@ function concentrationOf(v: unknown, field: string): ConcentrationRow | null {
 }
 
 const PUT_CALLS = new Set(["LONG", "PUT", "CALL"]);
-const CHANGE_KINDS = new Set(["new", "add", "trim", "exit", "unclassified"]);
+const CHANGE_KINDS = new Set(["new", "add", "trim", "exit", "held", "unclassified", "no_prior"]);
 const UNIT_TYPES = new Set(["SH", "PRN", "UNKNOWN"]);
 
 function deltaOf(v: unknown, field: string): QoqDeltaRow {
@@ -403,6 +496,10 @@ function deltaOf(v: unknown, field: string): QoqDeltaRow {
     delta_shares: numberOrNull(v.delta_shares, `${field}.delta_shares`),
     ssh_prnamt_type: unit as QoqDeltaRow["ssh_prnamt_type"],
     flags: stringArray(v.flags, `${field}.flags`),
+    // R1 display enrichment: optional on the wire, null-honest when absent.
+    ...(v.issuer_name !== undefined ? { issuer_name: stringOrNull(v.issuer_name, `${field}.issuer_name`) } : {}),
+    ...(v.title_of_class !== undefined ? { title_of_class: stringOrNull(v.title_of_class, `${field}.title_of_class`) } : {}),
+    ...(v.issuer_key !== undefined ? { issuer_key: stringOrNull(v.issuer_key, `${field}.issuer_key`) } : {}),
   };
 }
 
@@ -524,6 +621,17 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     }
   }
 
+  // C3: optional `ticker -> verified_date`. Absent is valid (no row carries a
+  // ticker, or an older payload puts the date on the row instead).
+  let tickerDates: Record<string, string> | undefined;
+  if (raw.tickerDates !== undefined) {
+    if (!isRecord(raw.tickerDates)) bad("tickerDates is not an object");
+    tickerDates = {};
+    for (const [ticker, value] of Object.entries(raw.tickerDates)) {
+      tickerDates[ticker] = reqString(value, `tickerDates[${JSON.stringify(ticker)}]`);
+    }
+  }
+
   if (!isRecord(raw.totalsByPeriod)) bad("totalsByPeriod is not an object");
   const totalsByPeriod: Record<string, number> = {};
   for (const [period, value] of Object.entries(raw.totalsByPeriod)) {
@@ -567,6 +675,25 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
   /* The key sets must agree exactly: a period with rows but no total would fall
      back to a length, and a total with no rows is an orphan claim. */
   requireSameKeySet(raw.deltaTotalsByPeriod, Object.keys(deltasByPeriod), "deltaTotalsByPeriod");
+
+  // R15: the stat counts ride per delta period; each is bounded by the true total.
+  if (!isRecord(raw.kindsByPeriod)) bad("kindsByPeriod is not an object");
+  const kindsByPeriod: Record<string, FilerKindCounts> = {};
+  for (const [period, value] of Object.entries(raw.kindsByPeriod)) {
+    const path = `kindsByPeriod[${JSON.stringify(period)}]`;
+    if (!isRecord(value)) bad(`${path} is not an object`);
+    onlyKeys(value, ["new", "exit"], path);
+    const counts = { new: value.new, exit: value.exit };
+    for (const [k, c] of Object.entries(counts)) {
+      if (!Number.isSafeInteger(c) || (c as number) < 0) bad(`${path}.${k} is not a non-negative integer`);
+    }
+    if ((counts.new as number) + (counts.exit as number) > (deltaTotalsByPeriod[period] ?? 0)) {
+      bad(`${path} counts more changes than deltaTotalsByPeriod states`);
+    }
+    kindsByPeriod[period] = counts as FilerKindCounts;
+  }
+  requireSameKeySet(raw.kindsByPeriod, Object.keys(deltasByPeriod), "kindsByPeriod");
+  const discontinuityPeriods = uniqueStrings(raw.discontinuityPeriods, "discontinuityPeriods");
 
   // Every nested cik must agree with the payload's own — a shard whose row,
   // concentration, or delta rows carry another filer's CIK is corrupt, and
@@ -649,6 +776,10 @@ export function parseFilerPayload(raw: unknown): FilerPayloadV1 {
     topn: reqNumber(raw.topn, "topn"),
     // `undefined` (field missing) fails inside windowOf; null is a valid state.
     window: windowOf("window" in raw ? raw.window : bad("window is missing — pass null explicitly")),
+    kindsByPeriod,
+    discontinuityPeriods,
+    typing: typingOf(raw.typing, cik),
+    ...(tickerDates ? { tickerDates } : {}),
   };
 }
 
@@ -661,7 +792,8 @@ const FRAGMENT_KEYS = [
 const FRAGMENT_META_KEYS = [
   "v", "kind", "cik", "filerName", "latestPeriod", "periods", "current", "prior",
   "filingKeys", "rowPeriods", "deltaPeriods", "totalsByPeriod", "concByPeriod",
-  "deltaTotalsByPeriod", "latestFiled", "topn", "window",
+  "deltaTotalsByPeriod", "latestFiled", "topn", "window", "kindsByPeriod",
+  "discontinuityPeriods", "typing", "tickerDates",
 ] as const;
 
 interface FragmentDescriptor {
@@ -757,6 +889,12 @@ export function fragmentFilerPayload(payload: FilerPayloadV1): FilerFragmentV2[]
     latestFiled: payload.latestFiled,
     topn: payload.topn,
     window: payload.window,
+    kindsByPeriod: payload.kindsByPeriod,
+    discontinuityPeriods: payload.discontinuityPeriods,
+    typing: payload.typing,
+    // C3: one entry per reviewed ticker in this payload, carried in the meta
+    // fragment so every `rows` fragment stays free of the repeated date.
+    ...(payload.tickerDates ? { tickerDates: payload.tickerDates } : {}),
   };
   const descriptors: FragmentDescriptor[] = [
     { section: "meta", period: null, start: 0, data: meta },
@@ -915,6 +1053,7 @@ export function reassembleFilerFragments(
     deltaPeriods,
     "fragment.data.deltaTotalsByPeriod",
   );
+  requireExactObjectKeys(meta.kindsByPeriod, deltaPeriods, "fragment.data.kindsByPeriod");
 
   const filings: Record<string, unknown> = {};
   const rowsByPeriod: Record<string, unknown[]> = Object.fromEntries(
@@ -976,8 +1115,12 @@ export function reassembleFilerFragments(
     concByPeriod: meta.concByPeriod,
     deltasByPeriod,
     deltaTotalsByPeriod: meta.deltaTotalsByPeriod,
+    ...(meta.tickerDates !== undefined ? { tickerDates: meta.tickerDates } : {}),
     latestFiled: meta.latestFiled,
     topn: meta.topn,
     window: meta.window,
+    kindsByPeriod: meta.kindsByPeriod,
+    discontinuityPeriods: meta.discontinuityPeriods,
+    typing: meta.typing,
   });
 }

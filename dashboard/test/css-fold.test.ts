@@ -924,6 +924,10 @@ const HONESTY_CLASSES = new Set<string>(
 const DECLARED_DROPPABLE_CHROME = new Set<string>([
   "site-nav", "masthead-meta", "site-search", "search-panel", "filter-label",
   "filter-controls", "feed-head", "pager", "s4-actions", "watch-btn", "star-btn",
+  // R22: the narrow-width header abbreviation. It duplicates the full header
+  // word, which stays visible at >=900px and in the accessibility tree at every
+  // width, so hiding the abbreviation drops nothing.
+  "th-abbr",
 ]);
 
 /* ---------- the three institutional surfaces ---------- */

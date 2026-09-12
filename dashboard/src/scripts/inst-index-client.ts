@@ -11,7 +11,7 @@
    that: it captures this island's output and asserts it is unchanged. */
 
 import { type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, compactBoundCount, esc, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCount, esc, fmtInt, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
   addsNoteHtml,
@@ -23,6 +23,18 @@ import {
   type AddsSortKey,
 } from "../lib/inst-adds.ts";
 import { addsRowsHtml } from "../lib/inst-adds-render.ts";
+import {
+  classifyNotableMovesShard,
+  notableMoveRowHtml,
+  notableMovesHref,
+  NOTABLE_MOVES_SSR_ROWS,
+  NOTABLE_MOVES_STEP,
+  type MoveKind,
+  type NotableMove,
+  type NotableMovesShard,
+} from "../lib/notable-moves.ts";
+import { filerHref } from "../lib/holdings.ts";
+import { loadWatchStore } from "./entity-client.ts";
 
 /* `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
 
@@ -63,9 +75,27 @@ export function initInstIndex(): void {
      chips had filtered out while the chip stayed pressed. */
   let q = "";
   let lastNote = "";
-  const types = new Set<string>();
+  /* R14: the server pressed *Hedge funds* by default; the island starts from
+     the pressed chips so its first render equals the server's. A visitor with
+     a watchlist on this device gets the unfiltered directory instead. */
+  const types = new Set<string>(
+    Array.from(document.querySelectorAll<HTMLElement>('#mgr-chips [data-mgr-type][aria-pressed="true"]'))
+      .map((b) => b.dataset.mgrType ?? "")
+      .filter((t) => t !== ""),
+  );
   let notableOnly = false;
   let expanded = false;
+  let hasWatchlist = false;
+  try {
+    const store = loadWatchStore(localStorage);
+    hasWatchlist = store.members.size > 0 || store.tickers.size > 0;
+  } catch {
+    hasWatchlist = false;
+  }
+  if (hasWatchlist && types.size > 0) {
+    types.clear();
+    document.querySelectorAll<HTMLElement>("#mgr-chips [data-mgr-type]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+  }
 
   const disclosure = document.querySelector<HTMLElement>(
     '.compact-disclosure[data-compact-for="inst-managers-tbody"]',
@@ -98,6 +128,8 @@ export function initInstIndex(): void {
     announce: () => lastNote,
     statusEl,
   });
+
+  if (hasWatchlist) queueMicrotask(() => rerender());
 
   function syncDisclosure(total: number, _shown: number): void {
     // The label and the omission rule are derived from the COMPACT LIMIT,
@@ -337,9 +369,21 @@ export function initAddsControls(): void {
     every named root now has exactly one owner, which the root-scoped
     re-render rule asks for. */
 export function initDomDisclosures(): void {
+  bindDomDisclosures();
+  /* R15: a period switch replaces the filer section's markup, including its
+     disclosure; bind again for the new nodes (an already-bound wrapper is
+     marked and skipped, so this is idempotent). */
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("populus:rerender", () => bindDomDisclosures());
+  }
+}
+
+function bindDomDisclosures(): void {
   document
     .querySelectorAll<HTMLElement>(".compact-disclosure[data-compact-dom]")
     .forEach((wrap) => {
+      if (wrap.getAttribute("data-compact-bound") === "1") return;
+      wrap.setAttribute("data-compact-bound", "1");
       const rootId = wrap.dataset.compactFor ?? "";
       const root = document.getElementById(rootId);
       const btn = wrap.querySelector("button");
@@ -369,4 +413,110 @@ export function initDomDisclosures(): void {
         sync();
       });
     });
+}
+
+/* ---------- R14: the notable-manager moves band ---------- */
+
+/** Period, kind and type chips plus "Show 50 more", all over the per-period
+    shard. The server rendered the first fifteen rows of the newest closed
+    quarter; the shard is fetched on the FIRST interaction and never before.
+    Every visible claim commits together, after the shard arrives — the same
+    rule the adds selector follows. */
+export function initNotableMoves(): void {
+  const section = document.getElementById("inst-notable-moves");
+  const tbody = document.getElementById("inst-notable-moves-tbody");
+  const countEl = document.getElementById("inst-notable-moves-count");
+  const statusEl = document.getElementById("inst-notable-moves-status");
+  const windowEl = document.getElementById("inst-notable-moves-window");
+  if (!section || !tbody) return;
+
+  let period = section.dataset.movesPeriod ?? "";
+  const kinds = new Set<MoveKind>();
+  const mgrTypes = new Set<string>();
+  let limit = NOTABLE_MOVES_SSR_ROWS;
+  let token = 0;
+  const shards = new Map<string, Promise<NotableMovesShard>>();
+
+  function loadShard(p: string): Promise<NotableMovesShard> {
+    let pr = shards.get(p);
+    if (!pr) {
+      pr = fetch(notableMovesHref(p))
+        .then((r) => {
+          if (!r.ok) throw new Error(`notable moves ${r.status}`);
+          return r.json();
+        })
+        .then((body) => {
+          const shard = classifyNotableMovesShard(body);
+          if (!shard) throw new Error("notable moves: unrecognised shard");
+          return shard;
+        });
+      pr.catch(() => shards.delete(p));
+      shards.set(p, pr);
+    }
+    return pr;
+  }
+
+  function matches(m: NotableMove): boolean {
+    if (kinds.size > 0 && !kinds.has(m.kind)) return false;
+    if (mgrTypes.size > 0 && !mgrTypes.has(m.type)) return false;
+    return true;
+  }
+
+  function setStatus(text: string): void {
+    if (statusEl) statusEl.textContent = text;
+  }
+
+  async function paint(): Promise<void> {
+    const mine = ++token;
+    let shard: NotableMovesShard;
+    try {
+      shard = await loadShard(period);
+    } catch (err) {
+      if (mine !== token) return;
+      console.error("populus: notable moves failed", err);
+      setStatus(`Couldn't load the moves for the quarter ended ${period}. The rows shown are unchanged.`);
+      return;
+    }
+    if (mine !== token) return;
+    const rows = shard.rows.filter(matches);
+    const shown = rows.slice(0, limit);
+    tbody!.innerHTML =
+      shown.length === 0
+        ? `<tr><td colspan="8" class="design-unavailable-message">No moves match — a computed answer over every notable manager's changes this quarter.</td></tr>`
+        : shown.map((m) => notableMoveRowHtml(m, { filerHref: (cik) => filerHref(cik, "top") })).join("\n");
+    if (windowEl) windowEl.textContent = `quarter ended ${shard.period} · by shares · largest $ change first within New › Exit › Add › Trim`;
+    if (countEl) {
+      const more = rows.length > shown.length;
+      countEl.innerHTML =
+        `Showing ${fmtInt(shown.length)} of ${fmtInt(rows.length)} moves` +
+        (shard.truncated ? ` (the ${fmtInt(shard.rows.length)} largest of ${fmtInt(shard.total)} are in the published file)` : "") +
+        (more ? ` · <button type="button" class="linklike" id="inst-notable-moves-more">Show ${fmtInt(NOTABLE_MOVES_STEP)} more</button>` : "") +
+        ` · <a href="${esc(notableMovesHref(shard.period))}">every row for this quarter (JSON)</a>`;
+    }
+    setStatus(`Showing ${fmtInt(shown.length)} of ${fmtInt(rows.length)} moves for the quarter ended ${shard.period}.`);
+  }
+
+  section.addEventListener("click", (ev) => {
+    const t = (ev.target as Element | null)?.closest?.<HTMLElement>("[data-moves-period],[data-moves-kind],[data-moves-type],#inst-notable-moves-more") ?? null;
+    if (!t) return;
+    if (t.id === "inst-notable-moves-more") {
+      limit += NOTABLE_MOVES_STEP;
+    } else if (t.dataset.movesPeriod) {
+      period = t.dataset.movesPeriod;
+      limit = NOTABLE_MOVES_SSR_ROWS;
+      section.querySelectorAll<HTMLElement>("[data-moves-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.movesPeriod === period)));
+      section.dataset.movesPeriod = period;
+    } else if (t.dataset.movesKind) {
+      const k = t.dataset.movesKind as MoveKind;
+      if (kinds.has(k)) kinds.delete(k); else kinds.add(k);
+      t.setAttribute("aria-pressed", String(kinds.has(k)));
+      limit = NOTABLE_MOVES_SSR_ROWS;
+    } else if (t.dataset.movesType) {
+      const ty = t.dataset.movesType;
+      if (mgrTypes.has(ty)) mgrTypes.delete(ty); else mgrTypes.add(ty);
+      t.setAttribute("aria-pressed", String(mgrTypes.has(ty)));
+      limit = NOTABLE_MOVES_SSR_ROWS;
+    }
+    void paint();
+  });
 }

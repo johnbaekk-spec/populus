@@ -490,7 +490,8 @@ test("one published quarter offers no prior-quarter view and says why", () => {
   });
   const html = surfaceHtml(only, { view: "current", page: 0, period: "2026-03-31" });
   assert.ok(!html.includes('data-holdings-view="prior"'));
-  assert.ok(html.includes("no prior quarter to browse or compare against"));
+  assert.ok(html.includes("Prior quarter not yet available"));
+  assert.ok(html.includes("This build carries one quarter for this manager"), "the ⓘ says why");
   const diff = surfaceHtml(only, { view: "diff", page: 0, period: "2026-03-31" });
   assert.ok(diff.includes("nothing to compare it against"), "a comparison needs both sides");
 });
@@ -499,7 +500,7 @@ test("a quarter the projection does not publish is named, never silently substit
   const payload = filerPayload();
   const html = surfaceHtml(payload, { view: "current", page: 0, period: "2024-06-30" });
   assert.ok(html.includes("Positions — 2024-06-30"));
-  assert.ok(html.includes("not in this build's holdings projection"));
+  assert.ok(html.includes("not in this build's holdings"));
   assert.ok(html.includes("2025-12-31, 2026-03-31"), "it names what IS published");
   assert.ok(!html.includes("<tbody>"), "no table is drawn under the wrong quarter's heading");
 });
@@ -1192,4 +1193,52 @@ test("both comparators are antisymmetric across every ordered pair of a mixed se
       );
     }
   }
+});
+
+/* ---------- R25: one row per issuer on the filer page ---------- */
+
+import { groupHoldingsByIssuer, issuerKeyOf, type FilerHoldingRow as R25Row } from "../src/lib/holdings.ts";
+
+function r25(over: Partial<R25Row>): R25Row {
+  return {
+    cik: "0001067983", period: "2026-03-31", filing_key: "1", security_id: null, cusip: "037833100",
+    issuer_name: "APPLE INC", title_of_class: "COM", value_usd: 100, shares: 10, ssh_type: "SH",
+    put_call: null, position_key: "cusip:037833100", put_call_bucket: "LONG", unit_key: "SH", flags: [],
+    ...over,
+  };
+}
+
+test("R25: two classes of one issuer fold into one row; the expand keeps each reported row", () => {
+  const rows = [
+    r25({ cusip: "02079K305", issuer_name: "ALPHABET INC", title_of_class: "CAP STK CL A", position_key: "cusip:02079K305", value_usd: 300, shares: 3, ticker: "GOOGL", ticker_verified_date: "2026-09-10" }),
+    r25({ cusip: "02079K107", issuer_name: "ALPHABET INC", title_of_class: "CAP STK CL C", position_key: "cusip:02079K107", value_usd: 200, shares: 2, ticker: "GOOG", ticker_verified_date: "2026-09-10" }),
+    r25({}),
+  ];
+  const groups = groupHoldingsByIssuer(rows);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0]!.key, "cusip6:02079K");
+  assert.equal(groups[0]!.value_usd, 500);
+  assert.equal(groups[0]!.shares, 5);
+  const html = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0 });
+  const bodyRows = html.slice(html.indexOf("<tbody>")).match(/<tr class="design-holding-row/g) ?? [];
+  assert.equal(bodyRows.length, 2, "one table row per issuer");
+  assert.ok(html.includes("2 positions · 2 reported rows"), "the expand says what it folds");
+  assert.ok(html.includes("CAP STK CL A") && html.includes("CAP STK CL C"), "every reported row stays in the expand");
+  assert.ok(html.includes(">GOOGL<") && html.includes(">GOOG<"), "each class keeps its own verified ticker");
+  assert.ok(html.includes("of 2 issuers"), "the range line counts issuers once rows fold");
+});
+
+test("R25: a lone row renders as before; a keyless row never merges; value is NULL-honest", () => {
+  const lone = [r25({})];
+  const same = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows: lone, filings: FILINGS, page: 0 });
+  assert.ok(!same.includes("reported rows</summary>"), "no expand for an issuer reported once");
+  const keyless = [
+    r25({ cusip: null, position_key: null, issuer_name: "X" }),
+    r25({ cusip: null, position_key: null, issuer_name: "X" }),
+  ];
+  assert.equal(issuerKeyOf(keyless[0]!), null);
+  assert.equal(groupHoldingsByIssuer(keyless).length, 2, "no key, no CUSIP: nothing is merged on a guess");
+  const partial = groupHoldingsByIssuer([r25({}), r25({ value_usd: null, position_key: "cusip:037833200", cusip: "037833200" })]);
+  assert.equal(partial.length, 1);
+  assert.equal(partial[0]!.value_usd, null, "a partial sum is never shown as the whole holding");
 });

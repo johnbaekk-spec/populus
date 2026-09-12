@@ -486,6 +486,9 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   issuer_from_cusip6: { label: "issuer from CUSIP-6", cls: "dashed" },
   issuer_from_name: { label: "issuer from name", cls: "dashed" },
   concentration_unavailable: { label: "concentration unavailable", cls: "dashed" },
+  // inst_agg.py SHARED_DISCRETION_FLAG (C2) — named as an other included manager
+  // on another manager's report that quarter; its own book is still counted.
+  affiliated_shared_discretion: { label: "shared discretion", cls: "dashed" },
   /* Found by measuring the built tree rather than by reading the registry:
      these four SHIP and were absent here, so the generic-warning path swallowed
      them — 87,099 occurrences of `missing_security` alone. Rendering "a
@@ -493,7 +496,8 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
      a worse failure than the raw slug this requirement set out to remove.
      Wording follows each producer's own definition, cited. */
   // normalize_inst.py:76 — valid CUSIP, no mapping covers period_of_report
-  missing_security: { label: "security not in mapping", cls: "dashed" },
+  // SRC §5: the chip reads "ticker not yet mapped" (methodology #ticker-mapping).
+  missing_security: { label: "ticker not yet mapped", cls: "dashed" },
   // normalize_inst.py:70 — non-numeric otherManager component
   other_manager_unparsed: { label: "other-manager unparsed", cls: "dashed" },
   // normalize.py:32 — the owner field did not parse
@@ -756,7 +760,9 @@ export function amountVerdict(
 /* ---------- merge + pagination (shared so SSR page 1 === client page 1) ---- */
 
 export const PAGE_SIZE = 50;
-export const DESIGN_FEED_PAGE_SIZE = 8;
+/** R12: the Congress feed pages 50 rows; page 1 is server-rendered from the
+    same slice the client pages through the byte-bounded feed parts. */
+export const DESIGN_FEED_PAGE_SIZE = 50;
 
 /** Merge transactions with paper filings by filed date (desc); transactions
     first within a date. Both inputs must already be sorted filed-desc. */
@@ -885,6 +891,10 @@ export interface RenderCtx {
       every budget — so behavior is unchanged unless a cut actually happened. */
   cutMembers?: ReadonlySet<string>;
   cutTickers?: ReadonlySet<string>;
+  /** R2: true only when a 13F holders page was BUILT for this ticker
+      (`tickerInstSection(build, t).state === "data"`). The congress ticker
+      body renders the holders link only then — never a dressed 404. */
+  holdersPage?: boolean;
 }
 
 export function memberHref(bioguide: string): string {
@@ -1240,9 +1250,9 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
     { label: "Ticker", why: "An em dash means no ticker was disclosed; the asset remains named alongside it." },
     { label: "Asset · Owner", why: "Asset and ownership as filed; partial-sale qualifiers are retained." },
     { label: "Range", sortKey: "amount", cls: "num" },
-    { label: "Interval · log $1K–$50M+", why: "The statutory interval on a fixed log scale; hatching identifies open or unknown bounds.", cls: "range" },
+    { label: "Amount range", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range" },
     { label: "Traded → Filed", sortKey: "filed" },
-    { label: "Rcpt", why: "Each link opens the original disclosure.", cls: "src" },
+    { label: "Source", why: "Each link opens the original disclosure.", cls: "src" },
   ];
   const cells = (opts.referenceFeed ? referenceColumns : FEED_COLUMNS).map((c) => {
     const cls = c.cls ? ` class="${c.cls}"` : "";
@@ -1258,14 +1268,14 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
           : "none";
       return (
         `<th scope="col"${cls} data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
-        `aria-sort="${dir}"><button class="th-sort" type="button">${esc(c.label)}</button></th>`
+        `aria-sort="${dir}"><button class="th-sort" type="button">${thLabelHtml(c.label)}</button></th>`
       );
     }
     // Either a column with no defined order anywhere, or an orderable column on
     // a surface that offers no control. Both state a reason; neither is mute.
     const why = c.sortKey ? (opts.whyUnsorted ?? "") : (c.why ?? "");
     return (
-      `<th scope="col"${cls}>${esc(c.label)}` +
+      `<th scope="col"${cls}>${thLabelHtml(c.label)}` +
       colWhyHtml(why, opts.notes, c.sortKey ?? c.label) +
       `</th>`
     );
@@ -1369,11 +1379,12 @@ export interface CompactDisclosureOpts {
 /** The count clause, composed in ONE place so the server's first render and
     every client that later restates it cannot drift into two wordings. */
 export function compactBoundCount(hidden: number, noun: string): string {
-  return (
-    `${fmtInt(hidden)} further ${esc(noun)} are not rendered above — ` +
-    `a Public Filings render bound, not a data bound.`
-  );
+  // R13: plain words — "more below", never pipeline vocabulary.
+  return `${fmtInt(hidden)} more ${esc(noun)} below.`;
 }
+
+/** R13: how many rows one press of the expand control reveals. */
+export const COMPACT_STEP = 50;
 
 /** The bound statement plus its expand control.
 
@@ -1433,7 +1444,7 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
     // The button carries the TOTAL, never the held-back count: the sentence
     // above it already states that count, and one bound stated twice, two
     // elements apart, is exactly the duplication this control removes.
-    btn(`Show all ${fmtInt(o.total)} ${esc(o.noun)}`) +
+    btn(compactExpandLabel(o.total, o.noun, o.shown)) +
     `</div>`
   );
 }
@@ -1444,8 +1455,11 @@ export function compactCollapseLabel(noun: string): string {
   return `Show only the first ${fmtInt(COMPACT_ROWS)} ${noun}`;
 }
 
-export function compactExpandLabel(total: number, noun: string): string {
-  return `Show all ${fmtInt(total)} ${noun}`;
+/** R13: "Show 50 more" while more than one step is held back, else the whole
+    remainder. `shown` defaults to the compact slice. */
+export function compactExpandLabel(total: number, noun: string, shown = COMPACT_ROWS): string {
+  const hidden = Math.max(0, total - shown);
+  return hidden > COMPACT_STEP ? `Show ${fmtInt(COMPACT_STEP)} more` : `Show all ${fmtInt(total)} ${esc(noun)}`;
 }
 
 /** The client-side counterpart of `compactDisclosure`, kept BESIDE it
@@ -1561,13 +1575,17 @@ export function fnMark(mark: string): string {
 
 /** How strong an issuer/position identity actually is, read off the key's own
     prefix. The producer publishes these prefixes; this only names them. */
-export type IdentityStrength = "entity" | "cusip6" | "name" | "provisional" | "unknown";
+export type IdentityStrength = "entity" | "cusip6" | "name" | "provisional" | "withheld" | "unknown";
 
 export function identityStrengthOf(key: string): IdentityStrength {
   if (key.startsWith("entity:")) return "entity";
   if (key.startsWith("cusip6:")) return "cusip6";
   if (key.startsWith("name:")) return "name";
   if (key.startsWith("sid:sec:prov:")) return "provisional";
+  // C1 (refinement 20260910, inst_redaction.py): a security with a reviewed
+  // ticker publishes no CUSIP and no CUSIP-derived key — `pos:`/`iss:` are
+  // opaque ordinals the producer substitutes.
+  if (key.startsWith("pos:") || key.startsWith("iss:")) return "withheld";
   return "unknown";
 }
 
@@ -1594,6 +1612,12 @@ const IDENTITY_CHIP: Record<Exclude<IdentityStrength, "entity">, { label: string
       "a provisional per-position identifier the producer assigns when a reported row resolves to " +
       "no security and carries no usable CUSIP — it identifies the ROW, and asserts nothing about " +
       "what was held",
+  },
+  withheld: {
+    label: "CUSIP withheld",
+    why:
+      "this security has a reviewed ticker, so Public Filings publishes neither its CUSIP nor any " +
+      "key computed from it; the key shown is an opaque reference that only links this build's own files",
   },
   unknown: {
     label: "unrecognized key",
@@ -1829,3 +1853,139 @@ export function latestFiling<T extends FiledDateCandidate>(refs: readonly T[]): 
   }
   return best;
 }
+
+/* ---------- R9 (refinement 20260910): ONE issuer display-name rule ---------- */
+
+/** The TypeScript half of `populus.inst_agg.display_issuer_name`, mirrored
+    token for token; `tests/fixtures/refinement/display_issuer_name_cases.json`
+    pins both runtimes on the same cases.
+
+    Modal candidate over the whitespace-collapsed, upper-cased names (weighted
+    when `weights` is given); a pure-numeric candidate, then a candidate of
+    three characters or fewer, then a digit-leading candidate are dropped ONLY
+    while another candidate survives; ties go to the more frequent, then the
+    longer, then codepoint order; the token `TR` folds to `TRUST`; every token
+    is title-cased. Null only when every contributor is null. */
+export function displayIssuerName(
+  names: readonly (string | null | undefined)[],
+  weights?: readonly number[],
+): string | null {
+  const counts = new Map<string, number>();
+  names.forEach((raw, index) => {
+    if (raw == null) return;
+    const name = String(raw).split(/\s+/).filter((t) => t !== "").join(" ");
+    if (name === "") return;
+    const weight = weights ? Math.trunc(weights[index] ?? 1) : 1;
+    const key = name.toUpperCase();
+    counts.set(key, (counts.get(key) ?? 0) + weight);
+  });
+  if (counts.size === 0) return null;
+  let candidates = [...counts.keys()];
+  const drops: ((n: string) => boolean)[] = [
+    (n) => /^[0-9]+$/.test(n),
+    (n) => n.length <= 3,
+    (n) => /^[0-9]/.test(n),
+  ];
+  for (const drop of drops) {
+    const kept = candidates.filter((c) => !drop(c));
+    if (kept.length > 0) candidates = kept;
+  }
+  candidates.sort((a, b) => {
+    const ca = counts.get(a)!;
+    const cb = counts.get(b)!;
+    if (ca !== cb) return cb - ca;
+    if (a.length !== b.length) return b.length - a.length;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const best = candidates[0]!;
+  return best
+    .split(" ")
+    .map((t) => (t === "TR" ? "TRUST" : t))
+    .map((t) => t.slice(0, 1).toUpperCase() + t.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/* ---------- R3 (refinement 20260910): Tier C key normalizers ---------- */
+/* Mirrors `populus.ticker_mapping_13f.normalize_issuer_name` / `normalize_class`
+   token for token — the reviewed mapping is keyed on these, so the row-level
+   TICKER cell resolves a filed (issuer_name, title_of_class) pair by the SAME
+   rule the pipeline used. Pinned by tests/fixtures/refinement/tier-c-keys.json
+   in both runtimes. */
+
+const TIER_C_SUFFIX_FOLD: Record<string, string> = {
+  INCORPORATED: "INC",
+  CORPORATION: "CORP",
+  COMPANY: "CO",
+  LIMITED: "LTD",
+};
+const TIER_C_SUFFIXES = new Set(["INC", "CORP", "CO", "LTD", "PLC", "TR", "TRUST", "NEW", "DEL", "DE"]);
+
+export function normalizeIssuerName13f(name: string): string {
+  const text = String(name).toUpperCase().replace(/&/g, " AND ").replace(/[^A-Z0-9 ]+/g, " ");
+  const tokens = text
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t !== "")
+    .map((t) => TIER_C_SUFFIX_FOLD[t] ?? t);
+  while (tokens.length > 1 && TIER_C_SUFFIXES.has(tokens[tokens.length - 1]!)) tokens.pop();
+  return tokens.join(" ");
+}
+
+export function normalizeClass13f(titleOfClass: string | null | undefined): string {
+  if (titleOfClass == null) return "";
+  return String(titleOfClass)
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t !== "")
+    .join(" ");
+}
+
+/** SEC spells a class-share ticker with a hyphen (`BRK-B`); Congress filers
+    write a dot (`BRK.B`). ONE comparison form. */
+export function normalizeTicker13f(ticker: string): string {
+  return String(ticker).trim().toUpperCase().replace(/\./g, "-");
+}
+
+export function tierCKey(issuerName: string, titleOfClass: string | null | undefined): string {
+  return `${normalizeIssuerName13f(issuerName)}|${normalizeClass13f(titleOfClass)}`;
+}
+
+/* ---------- R21 / R22 (refinement 20260910) ---------- */
+
+/** R21: one table footer shape. A short line, with the full text behind an ⓘ;
+    when the full text has more than two clauses it sits in a "How this is
+    computed" disclosure instead. The full text is always in the DOM — it moves,
+    it is never dropped. `short`/`full` are plain text; `extraHtml` is
+    pre-escaped markup (a link) kept after the line. */
+export function cardFoot(o: { short: string; full: string; scope: string; key: string; extraHtml?: string }): string {
+  const clauses = o.full.split(/\s+[·—;]\s+|;\s+/).filter((c) => c.trim() !== "").length;
+  const more =
+    clauses > 2
+      ? `<details class="card-foot-more"><summary>How this is computed</summary><p>${esc(o.full)}</p></details>`
+      : note(o.full, { scope: o.scope }, o.key);
+  return `<div class="card-foot"><span>${esc(o.short)}</span>${more}${o.extraHtml ?? ""}</div>`;
+}
+
+/** R22: column headers read in full words at ≥900 px. The old abbreviation is
+    kept only below 900 px (CSS `.th-abbr`), hidden from assistive technology,
+    which always reads the full word. */
+export const HEADER_ABBREVIATIONS: Readonly<Record<string, string>> = {
+  "Source": "Rcpt",
+  "Trades": "Txns",
+  "Trades †": "Txns †",
+  "Trades†": "Txns†",
+  "Purchases †": "Purch. †",
+  "Position change": "Δ Pos",
+  "Amount range": "Interval",
+  "Gross bought ·§": "Gross purch ·§",
+};
+
+export function thLabelHtml(label: string): string {
+  const abbr = HEADER_ABBREVIATIONS[label];
+  return abbr
+    ? `<span class="th-full">${esc(label)}</span><span class="th-abbr" aria-hidden="true">${esc(abbr)}</span>`
+    : esc(label);
+}
+

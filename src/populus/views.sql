@@ -56,10 +56,17 @@ JOIN filings o ON o.filing_id = a.supersedes;
 --     later filed_date, then higher amendment_no, then larger accession. A
 --     NEW_HOLDINGS amendment is NOT a supersede, so the original and the
 --     amendment both survive — their union IS the merge (§10.2).
---  2. affiliation — over the survivor set on BOTH sides: drop a survivor whose
---     own normalized file number appears as an other-manager of ANOTHER
---     surviving filing for the same period (so a superseded original's stale
---     other_managers can neither suppress an affiliate nor be suppressed).
+--  2. affiliation — over the survivor set on BOTH sides: drop a 13F NOTICE
+--     survivor (13F-NT / 13F-NT/A) whose own normalized file number appears as
+--     an other-manager of ANOTHER surviving filing for the same period (so a
+--     superseded original's stale other_managers can neither suppress an
+--     affiliate nor be suppressed). A HOLDINGS report (13F-HR / 13F-HR/A) is
+--     never dropped here: Form 13F Special Instruction 5 has a manager file a
+--     13F Holdings Report only when all of its holdings are in that report,
+--     and General Instruction 2 has a shared-discretion position reported by
+--     ONE manager only — so a combination report that names this filer carries
+--     the shared positions, not this filer's own book (refinement 20260910 C2;
+--     sec.gov/files/form13f.pdf, fetched 2026-09-11).
 --     Stages 1+2 are v_inst_reconciled_filings — the population BEFORE the
 --     cover reconciliation, which the disposition report reads so an excluded
 --     filing can still be named (M2-7 §I5).
@@ -95,7 +102,8 @@ WITH restatement_survivors AS (
 )
 SELECT s.*
 FROM restatement_survivors s
-WHERE NOT EXISTS (                          -- affiliation, over SURVIVORS only
+WHERE s.submission_type NOT IN ('13F-NT','13F-NT/A')  -- a holdings report is never covered
+   OR NOT EXISTS (                          -- affiliation, over SURVIVORS only
   SELECT 1 FROM restatement_survivors c, json_each(c.other_managers) m
   WHERE c.filing_id <> s.filing_id
     AND c.period_of_report = s.period_of_report
@@ -125,9 +133,10 @@ JOIN v_default_inst_filings f ON f.filing_id = h.filing_id;
 -- ---------------------------------------------------------------------------
 -- The PER-FILER REPORTED population.
 --
--- v_default_* answers cross-entity questions, so it drops a survivor whose file
--- number appears as another survivor's other-manager: an issuer total must count
--- an affiliate relationship ONCE. That is correct there and WRONG for a filer's
+-- v_default_* answers cross-entity questions, so it drops a NOTICE survivor whose
+-- file number appears as another survivor's other-manager (its holdings are all
+-- in the covering report). Since refinement 20260910 C2 a covered HOLDINGS
+-- report stays in the default set — see stage 2 above. That is correct there and WRONG for a filer's
 -- own page, which promises "every position this filer reported". Building that
 -- page on v_default_holdings silently deletes the filer's own rows while the page
 -- claims completeness.

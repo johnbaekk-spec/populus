@@ -1,0 +1,15 @@
+{
+  "rule": "R3 Tier C key normalization shared by populus.ticker_mapping_13f (Python) and dashboard/src/lib/format.ts (TS): upper-case, & -> AND, punctuation stripped, whitespace collapsed, long corporate forms folded, trailing INC/CORP/CO/LTD/PLC/TR/TRUST/NEW/DEL/DE dropped; class: upper-case, punctuation stripped, whitespace collapsed.",
+  "cases": [
+    { "name": "Apple Inc.", "cls": "COM", "name_key": "APPLE", "class_key": "COM" },
+    { "name": "NVIDIA CORPORATION", "cls": " Com ", "name_key": "NVIDIA", "class_key": "COM" },
+    { "name": "AT&T INC", "cls": null, "name_key": "AT AND T", "class_key": "" },
+    { "name": "BERKSHIRE HATHAWAY INC DEL", "cls": "CL B NEW", "name_key": "BERKSHIRE HATHAWAY", "class_key": "CL B NEW" },
+    { "name": "COSTCO WHOLESALE CORP /NEW", "cls": "COM", "name_key": "COSTCO WHOLESALE", "class_key": "COM" },
+    { "name": "BANK OF AMERICA CORP /DE/", "cls": "COM", "name_key": "BANK OF AMERICA", "class_key": "COM" },
+    { "name": "ISHARES TR", "cls": "CORE S&P500 ETF", "name_key": "ISHARES", "class_key": "CORE S P500 ETF" },
+    { "name": "TRUST", "cls": "TR UNIT", "name_key": "TRUST", "class_key": "TR UNIT" },
+    { "name": "Alphabet Inc.", "cls": "CAP STK CL A", "name_key": "ALPHABET", "class_key": "CAP STK CL A" },
+    { "name": "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD", "cls": "SPONSORED ADS", "name_key": "TAIWAN SEMICONDUCTOR MANUFACTURING", "class_key": "SPONSORED ADS" }
+  ]
+}

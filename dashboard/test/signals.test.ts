@@ -234,6 +234,19 @@ test("review F10: the per-entity signal section renders each signal's exact rule
   assert.ok(html.includes(mine.rule.slice(0, 40)), "the verbatim rule must reach the member page");
 });
 
+test("R26: member signal cards lead with the ticker — Ticker · Kind · Filed · Size · Src", async () => {
+  const { memberSignalsPanel } = await import("../src/lib/ui/index.ts");
+  const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
+  const html = memberSignalsPanel(art, "T000001", { watched: new Set() });
+  assert.ok(
+    html.includes('<thead><tr><th scope="col">Ticker</th><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Size</th><th scope="col">Src</th></tr></thead>'),
+    "the card's first column is the ticker",
+  );
+  const mine = art.signals.find((s) => s.entities.bioguide === "T000001" && s.status === "active")!;
+  const first = mine.entities.ticker ? `<span class="mono-ticker">${mine.entities.ticker}</span>` : "—";
+  assert.ok(html.includes(`<tr><td class="c-ticker">${first}</td>`), "every row names its ticker first");
+});
+
 test("review r2-F2: a tombstone is preserved VERBATIM across later builds", () => {
   const row = txn({ txnId: "keeps", low: 500001, high: 1000000, filed: "2026-08-01" });
   const dies = txn({ txnId: "leaves", low: 500001, high: 1000000, filed: "2026-07-15" });
@@ -253,8 +266,11 @@ test("review r2-F3: tombstones never render as active — separate section, sepa
   const a = buildSignalArtifact({ ...inputs([...s1Pad(), row, dies]), buildId: "A" });
   const b = buildSignalArtifact({ ...inputs([...s1Pad(), row]), buildId: "B", priorArtifact: a });
   const html = body(b, { watched: new Set() });
-  assert.match(html, /Superseded — no longer in the current view/);
-  assert.match(html, /Superseded in build/);
+  // R17: the tombstone table left the page; the footnote names the count and
+  // links the artifact, and no tombstone wears an active face.
+  assert.doesNotMatch(html, /Superseded — no longer in the current view/);
+  assert.match(html, /1 signal from an earlier build left the retained view/);
+  assert.match(html, /changes since last build/);
   // The active S-1 count excludes the tombstone: actives in window minus one.
   const activeS1 = b.signals.filter((s) => s.kind === "s1-large" && s.status === "active").length;
   // The rule book's HITS cell counts actives only.

@@ -110,7 +110,7 @@ asserted on both sides in tests:
 - `securities(security_id PK, class, …)` surrogate-keyed.
 - `security_identifiers(security_id, id_type ∈ {cusip,…}, value, valid_from, valid_to, provenance, confidence, review_state)`.
 - `entity_tickers(entity_id, ticker, valid_from, valid_to, provenance, confidence, review_state)`.
-- As-of resolution helpers; **G14: no CUSIP→current-ticker→CIK time-travel**; unmapped ⇒ name-only + flag, never dropped/guessed.
+- As-of resolution helpers; **G14: no CUSIP→current-ticker→CIK time-travel, and no inferred symbols — only reviewed rows of the Tier C mapping (`src/populus/ticker_mapping_13f.yaml`, keyed on normalized issuer name + title of class, never a CUSIP, every row with `verified_date` / `verified_by` / `method`) supply a 13F ticker; `agg_ticker_holders` / `agg_ticker_holder_totals` are built class-grain from source holdings on that key**; unmapped ⇒ name-only + flag, never dropped/guessed.
 
 **M2 data (new):**
 - `inst_filers(cik, name_raw, form13f_file_number, …)` — 13F managers.
@@ -166,3 +166,124 @@ from published aggregate JSON. No browser calls to SEC (G7).
 
 Each run: Opus doer (`CLAUDE_MODEL=claude-opus-4-8`, no Fable), Codex sol reviewer, full
 plan→review→dev→QA→review loop, merged before the next (G12).
+
+## 9. Refinement 20260910 — final round (C1 · C2 · C3), normative
+
+Added 2026-09-11 on owner decisions of the same date. Each item states the
+published contract, not the implementation.
+
+### 9.1 C1 — a reviewed-ticker security publishes no CUSIP
+
+**Property.** For every security whose `(issuer_name, title_of_class)` resolves
+to a reviewed ticker (`ticker_mapping_13f.yaml`), no published artifact exposes
+its CUSIP, or any key derived from its CUSIP, in a way that can be joined to
+that ticker. Hiding the one cell that shows a ticker is NOT the contract: a join
+across published files must not recover the pair either.
+
+CUSIP-derived, and therefore withheld: `cusip`; `cusip:<cusip>` position keys;
+`cusip6:<block>` issuer keys; and `sec:prov:<hex32>` security ids, which are
+`sha256({"id_type":"cusip","value":<cusip>})[:32]` — unsalted, so anyone with a
+CUSIP list can recompute them.
+
+The withheld set is closed over the CUSIP-6 issuer block (a sibling class's full
+CUSIP carries the block) and over shared `security_id`s (a CUSIP change inside
+one registry class). Withheld keys are replaced, in `inst_agg.db` and
+`inst_serving.db` together and through ONE map, by opaque ordinals `pos:<n>` /
+`iss:<n>`, so every cross-file join (`position_key`, `issuer_key`) still holds
+and issuer aggregation keeps its grain. A security with no reviewed ticker keeps
+today's behaviour. The pipeline still uses CUSIPs internally; only published
+outputs change. Producer: `populus/inst_redaction.py`, applied in
+`publish/build.py` after both databases are written and before their logical
+digests. Probe: `scripts/cusip_join_probe.py` (a withheld token found anywhere
+in any published byte stream, live row or freed page, is a failure).
+
+A withheld CUSIP is removed from EVERY published column, not only the identifier
+columns — including where a filer wrote it into free text. Managers describe
+corporate actions in the issuer-name field ("EXXON MOBIL CORP COM EXCHANGED FOR
+CUSIP 30233Q108"; "HONEYWELL INTL INC R/S EFF 06/29/26 1 NEW CU 438516205 …"),
+file an issuer name that IS a CUSIP ("438516106", class "Stock"), or carry it
+inside an ISIN ("ISIN#BMG2004J1036"). Those rows share an opaque position key
+with the properly-named rows that carry the ticker, so an embedded CUSIP is as
+joinable as the column was. The occurrence becomes "(CUSIP withheld)" and the
+filer's surrounding words are kept.
+
+**The published `congress.db` list is covered too.** `security_list_intervals`
+is the SEC Official 13F List as published inside `congress.db` (`DB_ARTIFACT`):
+CUSIP + issuer name + class. Publishing CUSIPs alone is pre-existing and
+accepted; the exposure C1 closes is the PAIRING, which needs Public Filings'
+own reviewed (name, class) → ticker mapping — measured, the congress.db-alone
+join through `securities` → `entity_tickers` yields zero pairs, because
+`securities.entity_id` is NULL for all 22,521 rows.
+
+Not publishing the table was considered first and is NOT available: the release
+artifact IS the seed-forward path — `populus seed-corpus` restores the next
+run's corpus from the previous release's `congress.db` (`publish/seed.py`;
+`.github/workflows/publish.yml`, "Seed the corpus from the previous release
+(R42)") — so a table withheld from the artifact is a table the next build starts
+without. Instead every row is kept and the CUSIP is withheld from it: `value` is
+NOT NULL and half of `PRIMARY KEY (value, valid_from)` (`registry.sql`), so each
+withheld CUSIP becomes one opaque `withheld:<n>` token; `raw` and `source_row`,
+which echo the CUSIP verbatim, are cleared; and the derived `sec:prov:` id is
+replaced in `securities` as well, so the foreign key still resolves. Issuer name,
+class, quarter and provenance are untouched, so the list keeps its meaning as a
+corpus.
+
+The withheld set comes from the FILED names via the same `plan_cusip_redaction`
+the inst artifacts use — not from this table's own spelling. That distinction is
+load-bearing and was measured: the mapping is keyed on the name a manager filed,
+the list carries the SEC's own spelling, and matching on the list alone left 69
+issuer blocks (506 CUSIPs) published, "BANK OF AMER CORP" against the filed
+"BANK OF AMERICA CORP". Both rules are unioned.
+
+`entity_tickers` is left as it is: it is the SEC's own ticker registry and pairs
+with no CUSIP in the published file.
+
+**The one residual that stays, named.** After the redaction the probe finds
+exactly three pairs in `congress.db`, and none of them is the SEC list: they are
+CONGRESSIONAL DISCLOSURE TEXT, in `transactions.comment` and its verbatim
+`raw_row` copy — five rows, three CUSIPs (`134429BP3`, `26875P101`,
+`907818108`). In two of them the member states both identifiers in one sentence:
+"11/3/23 Buy 247 shares of EOG Resources, Inc, cusip 26875P101, ticker EOG, at a
+price of $125.6342/share." The pairing there is the FILER'S OWN, published by
+them in the source document; Public Filings is republishing a disclosure
+verbatim, which is that dataset's contract (§5.1 — the raw row is what makes a
+published fact auditable against its source line). Removing it would edit the
+congressional record rather than withhold a derived key, so C1 does not touch
+it. It is independent of the ticker mapping: the member published the CUSIP and
+the ticker together, and would have done so whether or not this site mapped
+anything.
+
+### 9.2 C2 — coverage means a notice, never a holdings report
+
+`v_default_inst_filings` stage 2 (affiliation) excludes a covered survivor ONLY
+when it is a 13F NOTICE (`13F-NT` / `13F-NT/A`). A manager filing its own
+`13F-HR` keeps its whole book in the default set.
+
+Primary source, Form 13F General Instructions (sec.gov/files/form13f.pdf,
+fetched 2026-09-11, saved under the run's `edgar/`): Special Instruction 5 has a
+manager check "13F HOLDINGS REPORT" when all of the securities it has discretion
+over are reported in that report, "13F NOTICE" when all of them are reported by
+another manager, and "13F COMBINATION REPORT" when only part are. General
+Instruction 2 ("Rules to Prevent Duplicative Reporting") has a shared-discretion
+position reported by one manager only. So a combination report that names
+another manager carries the SHARED positions, not that manager's whole book —
+any double count would sit on the covering report's rows, never on the covered
+manager's book.
+
+Consequently rows are NOT de-duplicated across such a pair: removing either side
+would delete positions the instructions say are reported once. Instead the
+relationship is DISCLOSED — `agg_issuer_top_holders.flags` carries
+`affiliated_shared_discretion` for a filer another survivor names that quarter
+(`inst_agg.populate_shared_discretion_flags`), the ingest stamps the same flag
+on the filing (`affiliated_covered` now means an excluded notice only), and the
+methodology page states the rule.
+
+### 9.3 C3 — the ticker verification date is payload-scoped
+
+`ticker_verified_date` is a property of the reviewed mapping row, not of a
+holding. The filer payload carries `tickerDates` (`ticker -> verified_date`)
+once per payload — in the meta fragment on the `/e/` route, in the embedded
+surface payload on the pre-rendered page — and no longer repeats the date on
+every row. Optional on the wire and additive: a payload that still carries a
+per-row `ticker_verified_date` parses and renders unchanged, so no transport
+version bump (the M2-12 / v4 precedent applies only to a REQUIRED key change).

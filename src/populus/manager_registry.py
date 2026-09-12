@@ -90,6 +90,12 @@ class ManagerRow:
     verified_channel: str
     verified_date: str
     person: str | None
+    #: R6 (refinement 20260910): CIKs this filer SUCCEEDED. When this CIK has
+    #: no filing before its first period and a predecessor does, the aggregate
+    #: bridges the predecessor's last book as the prior side (rows flagged
+    #: `filer_migrated`). Curated, never inferred: a wrong link would fabricate
+    #: continuity between two unrelated books.
+    predecessor_ciks: tuple[int, ...] = ()
 
     @property
     def cik_padded(self) -> str:
@@ -191,6 +197,29 @@ def load_manager_registry(path: Path | str | None = None) -> ManagerRegistry:
                 " hedge fund is both, and must appear under both filters."
             )
 
+        raw_predecessors = entry.get("predecessor_ciks")
+        predecessors: tuple[int, ...] = ()
+        if raw_predecessors is not None:
+            if not isinstance(raw_predecessors, list) or not raw_predecessors:
+                raise ManagerRegistryError(
+                    f"manager registry: CIK {cik} has a non-list or empty"
+                    " `predecessor_ciks`; omit the field when there is no predecessor"
+                )
+            for pred in raw_predecessors:
+                if not isinstance(pred, int) or pred <= 0:
+                    raise ManagerRegistryError(
+                        f"manager registry: CIK {cik} has a non-integer predecessor CIK {pred!r}"
+                    )
+                if pred == cik:
+                    raise ManagerRegistryError(
+                        f"manager registry: CIK {cik} lists itself as its own predecessor"
+                    )
+            if len(set(raw_predecessors)) != len(raw_predecessors):
+                raise ManagerRegistryError(
+                    f"manager registry: CIK {cik} repeats a predecessor CIK"
+                )
+            predecessors = tuple(int(p) for p in raw_predecessors)
+
         rows.append(
             ManagerRow(
                 cik=cik,
@@ -202,8 +231,21 @@ def load_manager_registry(path: Path | str | None = None) -> ManagerRegistry:
                 verified_channel=str(entry["verified_channel"]),
                 verified_date=str(entry["verified_date"]),
                 person=str(entry["person"]) if entry.get("person") else None,
+                predecessor_ciks=predecessors,
             )
         )
+
+    # A predecessor must not itself be a live row: two active rows for one
+    # book would double-count it, and a succession link to a still-filing
+    # CIK is a curation error, not a merger.
+    for row_entry in rows:
+        for pred in row_entry.predecessor_ciks:
+            if pred in seen:
+                raise ManagerRegistryError(
+                    f"manager registry: CIK {row_entry.cik} names predecessor {pred},"
+                    f" which is itself a registry row ({seen[pred]}) — a succeeded"
+                    " CIK belongs under `excluded`, not `managers`"
+                )
 
     excluded = tuple(data.get("excluded") or ())
     floor = data.get("population_floor")
@@ -352,3 +394,15 @@ def stale_rows(registry: ManagerRegistry, today: date) -> tuple[ManagerRow, ...]
         if (today - verified).days > VERIFICATION_MAX_AGE_DAYS:
             out.append(row)
     return tuple(out)
+
+
+def succession_map(registry: ManagerRegistry | None = None) -> dict[str, tuple[str, ...]]:
+    """`successor cik (10-char padded) -> predecessor ciks (padded)` for every
+    row that declares `predecessor_ciks`, active or retired. The aggregate's
+    QoQ bridge (R6) reads this; nothing infers succession from names."""
+    registry = registry or load_manager_registry()
+    return {
+        r.cik_padded: tuple(f"{p:010d}" for p in r.predecessor_ciks)
+        for r in registry.rows
+        if r.predecessor_ciks
+    }

@@ -122,7 +122,7 @@ const HOLDERS: TopHolderRow[] = [
 
 test("memberBody: honesty invariants — dual dates, star, § resolves, S5 block, caption", () => {
   const html = memberBody(MEMBER, STAMPS, CTX);
-  assert.ok(html.includes("bioguide T000001"));
+  assert.ok(html.includes("member ID T000001"));
   assert.ok(html.includes("serving since 1999"));
   assert.ok(html.includes("spouse (SP), dependent children (DC), and joint accounts (JT)"));
   assert.ok(html.includes('data-watch-kind="member"'), "watch star wired to the v2 store");
@@ -193,6 +193,7 @@ test("unified ticker: resolved-no-data names the mapped issuer and stops", () =>
 test("unified ticker: data state — published columns only, stamp, terminus, † mapping label", () => {
   const html = unified({
     state: "data",
+    holdersPage: true,
     name: "Fixture Corp",
     cik: "0000320193",
     period: "2026-03-31",
@@ -213,13 +214,28 @@ test("unified ticker: data state — published columns only, stamp, terminus, �
   assert.ok(html.includes("Fixture Corp"));
   assert.ok(html.includes("†"), "present-day mapping is G14-labeled");
   assert.ok(html.includes("present-day mapping, not the name as of each filing"));
-  assert.ok(html.includes("quarter-end 2026-03-31"));
-  assert.ok(html.includes("latest filing in build filed 2026-05-15"));
+  assert.ok(html.includes("Quarter ended 2026-03-31"));
+  assert.ok(html.includes("Newest filing in this build: 2026-05-15"), "the newest-filing date stays on the page (SRC §5 ⓘ)");
   assert.ok(!html.includes(">Shares<"), "unpublished columns stay out");
   assert.ok(html.includes('data-terminus-author="populus"'));
   assert.ok(html.includes("derived&nbsp;·§"));
   assert.ok(html.includes("full holders view ↗"));
   assert.ok(!html.toLowerCase().includes("current holdings"));
+});
+
+test("R2: the unified ticker's holders link renders only when that page is built", () => {
+  const html = unified({
+    state: "data",
+    holdersPage: false,
+    name: "Fixture Corp",
+    cik: "0000320193",
+    period: "2026-03-31",
+    latestFiled: "2026-05-15",
+    topn: 25,
+    holders: [],
+  });
+  assert.ok(html.includes("Institutional holders"), "the section still renders");
+  assert.ok(!html.includes("/holders/"), "no link to an unbuilt holders page");
 });
 
 test("unified ticker: section index, planned placeholders, own-clock lede", () => {
@@ -280,10 +296,15 @@ test("congressTickerBody: two-sided ribbon, exclusions footnote, netting caveat"
   const html = congressTickerBody(TICKER, STAMPS, CTX);
   assert.ok(html.includes("ribbon-two"));
   assert.ok(html.includes("purchases above axis, sales below"));
-  assert.ok(html.includes("v_default_transactions"));
+  assert.ok(html.includes("Amended filings show the latest version"));
   assert.ok(html.includes("ranges cannot be netted"));
   assert.ok(html.includes("members · ever"));
-  assert.ok(html.includes("13F institutional holders"));
+  // R2: the holders link renders ONLY when the holders page was built for
+  // this ticker (ctx.holdersPage) — never an unconditional, dressed 404.
+  assert.ok(!html.includes("13F institutional holders"));
+  assert.ok(!html.includes("/institutional/tickers/"));
+  const gated = congressTickerBody(TICKER, STAMPS, { ...CTX, holdersPage: true });
+  assert.ok(gated.includes(`/institutional/tickers/${encodeURIComponent(TICKER.ticker)}/holders/`));
 });
 
 /* ---------- holders + filer bodies ---------- */

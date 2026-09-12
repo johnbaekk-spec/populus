@@ -30,7 +30,7 @@ import Mark from "../components/Mark.astro";
 interface Props {
   title: string;
   description: string;
-  active?: "home" | "congress" | "institutional" | "signals" | "financials" | "macro" | "methodology";
+  active?: "home" | "congress" | "institutional" | "signals" | "watchlist" | "financials" | "macro" | "methodology";
   /** search-first masthead emphasis (Ticker Unified) — one shell, variant props */
   searchEmphasis?: boolean;
   /** footer variant: the two 13F pages swap the §13107(c) block for the 13F
@@ -81,6 +81,7 @@ const build = getBuildData();
             <a href="/congress/" aria-current={active === "congress" ? "page" : undefined}>Congress</a>
             <a href="/institutional/" aria-current={active === "institutional" ? "page" : undefined}>Institutional</a>
             <a href="/signals/" aria-current={active === "signals" ? "page" : undefined}>Signals</a>
+            <a href="/watchlist/" aria-current={active === "watchlist" ? "page" : undefined}>Watchlist</a>
           </nav>
         </div>
         <div class="masthead-right">
@@ -90,7 +91,7 @@ const build = getBuildData();
             <input
               type="search"
               id="site-search"
-              placeholder="Jump to a member, ticker or filer"
+              placeholder="Search members, tickers, managers"
               autocomplete="off"
               role="combobox"
               aria-expanded="false"

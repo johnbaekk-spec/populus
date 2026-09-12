@@ -284,8 +284,9 @@ test("SL-R10: with JavaScript disabled the bound is STATED and the button is inv
         `omission the deleted terminus rows existed to prevent`,
     ).toBeGreaterThan(0);
     await expect(stated.first()).toBeVisible();
-    await expect(stated.first()).toContainText(/not rendered above|Showing the first/);
-    await expect(stated.first()).toContainText(/Public Filings render bound/);
+    await expect(stated.first()).toContainText(/more .* below|Showing the first/);
+    // R13: the bound is stated in plain words; pipeline vocabulary never reaches the reader.
+    await expect(stated.first()).not.toContainText(/render bound/);
   }
   expect(asserted, "at least one in-scope surface was actually measured").toBeGreaterThan(0);
 
@@ -309,7 +310,7 @@ test("SL-R10: with JavaScript ON, the bound stands BEFORE the feed arrives", asy
     stated,
     "scripting is on, the island has run, the dataset has not arrived — and the reader is still told",
   ).toBeVisible();
-  await expect(stated).toContainText(/further ranked .* are not rendered above/);
+  await expect(stated).toContainText(/more ranked .* below/);
 
   // The button is what waits, and it is still waiting.
   await expect(

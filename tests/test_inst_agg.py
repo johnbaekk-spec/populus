@@ -334,7 +334,118 @@ def test_qoq_ssh_prnamt_unit_change_nulls_delta_shares(tmp_path):
     assert row["delta_value_usd"] == 200         # Δvalue always computed
     assert row["delta_shares"] is None           # NULL, not 0 or 50-100
     flags = json.loads(row["flags"])
-    assert "shares_unit_mismatch" in flags and "classified_by_value" in flags
+    assert "shares_unit_mismatch" in flags
+    # R8: with Δshares NULL the row is NOT classified from value any more.
+    assert row["change_kind"] == "unclassified"
+    assert "change_kind_undeterminable" in flags
+    assert "classified_by_value" not in flags
+    agg.close()
+    conn.close()
+
+
+# --- R8 (refinement 20260910): value-only rows are `held`, never add/trim ------
+
+
+def test_r8_zero_share_change_is_held_not_add_or_trim(tmp_path):
+    """Δshares == 0 with a value move is `held` (code 5) — a price move is not
+    a decision. Mutation guard: restoring the retired value fallthrough turns
+    this row into an `add` and fails here."""
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001")
+    _security(conn, "sec:x")
+    _load(conn, fid="inst:A-1", cik="0000000001", period="2025-12-31",
+          filed="2026-01-15",
+          holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111", value=1000,
+                       shares=100, unit="SH", security_id="sec:x")])
+    _load(conn, fid="inst:A-2", cik="0000000001", period="2026-03-31",
+          filed="2026-04-15",
+          holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111", value=1300,
+                       shares=100, unit="SH", security_id="sec:x")])
+    agg = _agg(conn, tmp_path)
+    (row,) = _rows(agg, "SELECT * FROM agg_qoq_deltas")
+    assert row["change_kind"] == "held"
+    assert row["delta_shares"] == 0
+    assert row["delta_value_usd"] == 300
+    flags = json.loads(row["flags"])
+    assert "classified_by_value" not in flags
+    assert "change_kind_undeterminable" not in flags
+    (code,) = agg.execute("SELECT change_kind_code FROM _agg_qoq_deltas").fetchone()
+    assert code == 5
+    agg.close()
+    conn.close()
+
+
+def test_r8_null_shares_with_matching_units_is_unclassified(tmp_path):
+    """Δshares NULL (one side has no share count) never falls through to the
+    value sign: the row stays `unclassified` + `change_kind_undeterminable`."""
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001")
+    _security(conn, "sec:x")
+    _load(conn, fid="inst:A-1", cik="0000000001", period="2025-12-31",
+          filed="2026-01-15",
+          holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111", value=1000,
+                       shares=None, unit="SH", security_id="sec:x")])
+    _load(conn, fid="inst:A-2", cik="0000000001", period="2026-03-31",
+          filed="2026-04-15",
+          holds=[_hold(ordinal=1, issuer="X CO", cusip="111111111", value=900,
+                       shares=100, unit="SH", security_id="sec:x")])
+    agg = _agg(conn, tmp_path)
+    (row,) = _rows(agg, "SELECT * FROM agg_qoq_deltas")
+    assert row["change_kind"] == "unclassified"
+    assert row["delta_shares"] is None
+    flags = json.loads(row["flags"])
+    assert "change_kind_undeterminable" in flags
+    assert "classified_by_value" not in flags
+    agg.close()
+    conn.close()
+
+
+def test_r8_no_new_build_sets_the_retired_by_value_flag():
+    """The retired flag bit must not be reachable from either build path."""
+    import inspect
+
+    import populus.inst_agg as m
+
+    assert 'flags.add("classified_by_value")' not in inspect.getsource(m._qoq_row)
+    assert '"classified_by_value"' not in m._QOQ_SOURCE_SQL
+    # ... but the bit stays in the codec so an OLD aggregate still decodes.
+    assert m._QOQ_FLAG_BITS["classified_by_value"] == 2
+    assert m._QOQ_CHANGE_KIND_CODES["held"] == 5
+
+
+# --- R9 (refinement 20260910): one issuer display-name rule -------------------
+
+
+def test_r9_display_issuer_name_matches_the_shared_fixture():
+    """The Python half of `displayIssuerName`; the node half reads the SAME
+    fixture (dashboard/test/format.test.ts), so the two runtimes cannot drift."""
+    from populus.inst_agg import display_issuer_name
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "refinement"
+         / "display_issuer_name_cases.json").read_text()
+    )
+    assert len(fixture["cases"]) >= 10
+    for case in fixture["cases"]:
+        assert display_issuer_name(case["names"]) == case["expect"], case
+
+
+def test_r9_both_build_paths_pick_the_same_display_name(tmp_path):
+    """A CUSIP filed as the issuer name and a real name for the same issuer:
+    the aggregate's holder rows carry the real name, title-cased, on BOTH
+    build paths (`_agg` asserts python == bulk row for row)."""
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001")
+    _security(conn, "sec:x")
+    _load(conn, fid="inst:A-1", cik="0000000001", period="2026-03-31",
+          filed="2026-04-15",
+          holds=[_hold(ordinal=1, issuer="438516106", cusip="438516106", value=100,
+                       security_id="sec:x"),
+                 _hold(ordinal=2, issuer="HONEYWELL INTERNATIONAL INC", cusip="438516106",
+                       value=100, security_id="sec:x")])
+    agg = _agg(conn, tmp_path)
+    (row,) = _rows(agg, "SELECT issuer_name FROM agg_issuer_top_holders")
+    assert row["issuer_name"] == "Honeywell International Inc"
     agg.close()
     conn.close()
 
@@ -633,8 +744,10 @@ def test_real_berkshire_qoq_matches_independent_recompute(real_agg):
             kind = "exit"
         elif expected_delta_shares is not None and expected_delta_shares != 0:
             kind = "add" if expected_delta_shares > 0 else "trim"
+        elif expected_delta_shares == 0:
+            kind = "held"  # R8: no share change is never an add/trim
         else:
-            kind = "add" if cv - pv >= 0 else "trim"
+            kind = "unclassified"  # R8: Δshares NULL never falls through to value
         assert row["change_kind"] == kind, (key, row["change_kind"], kind)
 
 
@@ -773,8 +886,10 @@ def test_sh_and_prn_subpositions_stay_distinct_across_quarters(tmp_path):
     assert set(rows) == {("sid:sec:x", "LONG", "SH"), ("sid:sec:x", "LONG", "PRN")}
     assert rows[("sid:sec:x", "LONG", "SH")]["delta_value_usd"] == 1400 - 1000
     assert rows[("sid:sec:x", "LONG", "PRN")]["delta_value_usd"] == 200 - 500
-    assert rows[("sid:sec:x", "LONG", "SH")]["change_kind"] == "add"
-    assert rows[("sid:sec:x", "LONG", "PRN")]["change_kind"] == "trim"
+    # Shares are unchanged on both subpositions (10 → 10, 20 → 20), so under R8
+    # each is `held` on its own row — the value deltas above stay distinct.
+    assert rows[("sid:sec:x", "LONG", "SH")]["change_kind"] == "held"
+    assert rows[("sid:sec:x", "LONG", "PRN")]["change_kind"] == "held"
     agg.close()
     conn.close()
 
@@ -811,7 +926,9 @@ def test_long_and_put_of_one_security_are_distinct_qoq_rows(tmp_path):
 def test_a_notice_only_quarter_breaks_qoq_adjacency(tmp_path):
     """QA-F6 / R1: keyable → notice-only → keyable must NOT compare the two
     keyable quarters across the gap (that fabricates continuity). The middle
-    period is real: Q1 exits, Q3 is new."""
+    period is real: Q1 exits. D2 (refinement 20260910 fix): Q3 is `no_prior`,
+    NOT `new` — the notice quarter has no comparable book, so nothing says the
+    filer omitted the position a quarter earlier."""
     conn = _db(tmp_path)
     _filer(conn, "0000000001")
     _security(conn, "sec:x")
@@ -831,7 +948,11 @@ def test_a_notice_only_quarter_breaks_qoq_adjacency(tmp_path):
     }
     # The ONLY comparisons are between consecutive filing periods.
     assert ("2025-09-30", "2025-12-31", "exit") in rows
-    assert ("2025-12-31", "2026-03-31", "new") in rows
+    assert ("2025-12-31", "2026-03-31", "no_prior") in rows
+    assert not any(kind == "new" for _, _, kind in rows)
+    (q3,) = _rows(agg, "SELECT * FROM agg_qoq_deltas WHERE curr_period='2026-03-31'")
+    # No prior basis → no prior value and no delta, never a fabricated zero.
+    assert (q3["prev_value_usd"], q3["delta_value_usd"], q3["delta_shares"]) == (None, None, None)
     # And never a bridge across the notice quarter.
     assert not any(prev == "2025-09-30" and curr == "2026-03-31"
                    for prev, curr, _ in rows)
@@ -1041,11 +1162,13 @@ def test_an_undisclosed_prior_value_does_not_fabricate_a_move(tmp_path):
     assert row["delta_value_usd"] is None, "a $5B move was fabricated"
     assert "value_undisclosed_one_side" in row["flags"]
     # Shares are unchanged, so the direction is not inventable from value.
-    # Deterministic: neither shares (unchanged) nor value (unknown) can
-    # classify a direction. The earlier `in (...)` disjunction accepted "add" —
-    # the exact wrong answer this fix exists to prevent — and survived mutation.
-    assert row["change_kind"] == "unclassified"
-    assert "change_kind_undeterminable" in row["flags"]
+    # Under R8 an unchanged share count is `held` (mark-to-market only) — the
+    # earlier `in (...)` disjunction accepted "add", the exact wrong answer
+    # this fix exists to prevent, and survived mutation. `held` is never a
+    # direction, and the value side stays undisclosed.
+    assert row["change_kind"] == "held"
+    assert row["delta_shares"] == 0
+    assert "change_kind_undeterminable" not in row["flags"]
 
 
 # --- F4: a REFUSED clobber leaves the source byte-identical -------------------
@@ -1398,7 +1521,7 @@ def test_compact_qoq_iterator_is_exactly_equal_to_the_public_view(tmp_path):
 
 
 def test_compact_qoq_decoder_covers_every_enum_and_flag_mask():
-    """All 3×5×3 enum combinations and all 32 canonical flag masks decode."""
+    """All 3×6×3 enum combinations and all 64 canonical flag masks decode."""
     import populus.inst_agg as inst_agg_module
 
     observed_masks = set()
@@ -1429,7 +1552,7 @@ def test_compact_qoq_decoder_covers_every_enum_and_flag_mask():
                     assert decoded[12] == unit_value
                     assert decoded[13] == flags
                     observed_masks.add(mask)
-    assert observed_masks == set(range(32))
+    assert observed_masks == set(range(64))
 
 
 def test_prepared_aggregate_reuses_heavy_stages_and_restores_settings(
@@ -1705,4 +1828,346 @@ def test_deferred_concentration_is_cancellable_and_removes_partial_destination(
         "SELECT 1 FROM sqlite_temp_schema"
         " WHERE name='_populus_inst_agg_conc_positions'"
     ).fetchone() is None
+    conn.close()
+
+
+# --- R6 (refinement 20260910): CIK succession + book discontinuity -----------
+
+
+def _seed_migration(conn, *, old="0000000901", new="0000000902"):
+    """OLD files 2025-12-31 and stops; NEW first files 2026-03-31 with the
+    same book, shares moved. Without the bridge NEW is a wall of `new`."""
+    _filer(conn, old, "Old Shell")
+    _filer(conn, new, "New Shell")
+    _security(conn, "sec:a")
+    _security(conn, "sec:b")
+    _load(conn, fid="inst:OLD-1", cik=old, period="2025-12-31", filed="2026-01-15",
+          holds=[_hold(ordinal=1, issuer="A CO", cusip="111111111", value=1000, shares=100, security_id="sec:a"),
+                 _hold(ordinal=2, issuer="B CO", cusip="222222222", value=500, shares=50, security_id="sec:b")])
+    _load(conn, fid="inst:NEW-1", cik=new, period="2026-03-31", filed="2026-04-15",
+          holds=[_hold(ordinal=1, issuer="A CO", cusip="111111111", value=1300, shares=130, security_id="sec:a")])
+
+
+def test_r6_registry_succession_bridges_the_predecessor_book(tmp_path, monkeypatch):
+    """With `predecessor_ciks` declared, the successor's first quarter compares
+    against the predecessor's last book: A CO is an `add` with a REAL Δshares,
+    B CO is an `exit`, every row carries `filer_migrated` — on BOTH build
+    paths (`_agg` asserts python == bulk)."""
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "succession_map", lambda *a, **k: {"0000000902": ("0000000901",)})
+    conn = _db(tmp_path)
+    _seed_migration(conn)
+    agg = _agg(conn, tmp_path)
+    rows = {r["position_key"]: r for r in _rows(agg, "SELECT * FROM agg_qoq_deltas WHERE cik='0000000902'")}
+    assert set(rows) == {"sid:sec:a", "sid:sec:b"}
+    a, b = rows["sid:sec:a"], rows["sid:sec:b"]
+    assert (a["change_kind"], a["delta_shares"], a["prev_period"]) == ("add", 30, "2025-12-31")
+    assert (b["change_kind"], b["delta_shares"]) == ("exit", -50)
+    for r in (a, b):
+        assert "filer_migrated" in json.loads(r["flags"]), r
+    # The predecessor's own timeline is untouched: one period, no QoQ rows.
+    assert _rows(agg, "SELECT * FROM agg_qoq_deltas WHERE cik='0000000901'") == []
+    # A bridged pair is never a discontinuity.
+    assert _rows(agg, "SELECT * FROM agg_book_discontinuity") == []
+    agg.close()
+    conn.close()
+
+
+def test_r6_without_a_registry_link_nothing_is_bridged(tmp_path, monkeypatch):
+    """Mutation guard: the bridge is registry-driven, never inferred."""
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "succession_map", lambda *a, **k: {})
+    conn = _db(tmp_path)
+    _seed_migration(conn)
+    agg = _agg(conn, tmp_path)
+    assert _rows(agg, "SELECT * FROM agg_qoq_deltas") == []
+    agg.close()
+    conn.close()
+
+
+def test_r6_a_predecessor_that_still_files_is_not_bridged(tmp_path, monkeypatch):
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "succession_map", lambda *a, **k: {"0000000902": ("0000000901",)})
+    conn = _db(tmp_path)
+    _seed_migration(conn)
+    # OLD keeps filing in the successor's first period → no succession.
+    _load(conn, fid="inst:OLD-2", cik="0000000901", period="2026-03-31", filed="2026-04-15",
+          holds=[_hold(ordinal=1, issuer="A CO", cusip="111111111", value=1000, shares=100, security_id="sec:a")])
+    agg = _agg(conn, tmp_path)
+    assert _rows(agg, "SELECT * FROM agg_qoq_deltas WHERE cik='0000000902'") == []
+    agg.close()
+    conn.close()
+
+
+def test_r6_a_whole_book_of_exits_is_flagged_as_a_discontinuity(tmp_path):
+    """≥95% exits in one filer-period with no succession bridge →
+    `agg_book_discontinuity`; a book that merely trimmed is not."""
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001", "Vanishing Co")
+    _filer(conn, "0000000002", "Steady Co")
+    for i in range(3):
+        _security(conn, f"sec:{i}")
+    full = [_hold(ordinal=i + 1, issuer=f"CO{i}", cusip=f"11111111{i}", value=100,
+                  shares=10, security_id=f"sec:{i}") for i in range(3)]
+    _load(conn, fid="inst:V-1", cik="0000000001", period="2025-12-31", filed="2026-01-15", holds=full)
+    # A notice-style quarter: the book is gone but a filing exists.
+    _load(conn, fid="inst:V-2", cik="0000000001", period="2026-03-31", filed="2026-04-15", holds=[])
+    _load(conn, fid="inst:S-1", cik="0000000002", period="2025-12-31", filed="2026-01-15", holds=full)
+    _load(conn, fid="inst:S-2", cik="0000000002", period="2026-03-31", filed="2026-04-15",
+          holds=full[:2])
+    agg = _agg(conn, tmp_path)
+    flagged = _rows(agg, "SELECT * FROM agg_book_discontinuity ORDER BY cik")
+    assert [(r["cik"], r["period_of_report"], r["positions"], r["exit_positions"]) for r in flagged] == [
+        ("0000000001", "2026-03-31", 3, 3)
+    ]
+    agg.close()
+    conn.close()
+
+
+# --- R3 (refinement 20260910): class-grain ticker holders --------------------
+
+
+def _seed_alphabet(conn):
+    """Alphabet Class A and Class C held by DIFFERENT filers with different
+    amounts, plus a third (unmapped) class. Two closed quarters."""
+    _filer(conn, "0000000011", "A Holder")
+    _filer(conn, "0000000012", "C Holder")
+    _filer(conn, "0000000013", "Both Holder")
+    for i in range(3):
+        _security(conn, f"sec:goog{i}")
+    a = lambda o, v, s: _hold(ordinal=o, issuer="ALPHABET INC", cusip="02079K305", value=v, shares=s, security_id="sec:goog0")  # noqa: E731
+    c = lambda o, v, s: _hold(ordinal=o, issuer="ALPHABET INC", cusip="02079K107", value=v, shares=s, security_id="sec:goog1")  # noqa: E731
+    x = lambda o, v, s: _hold(ordinal=o, issuer="ALPHABET INC", cusip="02079K999", value=v, shares=s, security_id="sec:goog2")  # noqa: E731
+    # title_of_class is fixed to COM by `_hold`; patch per row below.
+    def cls(h, t):
+        return h.__class__(**{**h.__dict__, "title_of_class": t})
+    prior, curr = "2025-12-31", "2026-03-31"
+    _load(conn, fid="inst:A-p", cik="0000000011", period=prior, filed="2026-01-15", holds=[cls(a(1, 1000, 100), "CL A")])
+    _load(conn, fid="inst:A-c", cik="0000000011", period=curr, filed="2026-05-16", holds=[cls(a(1, 1300, 130), "CL A")])
+    _load(conn, fid="inst:C-p", cik="0000000012", period=prior, filed="2026-01-15", holds=[cls(c(1, 500, 50), "CL C")])
+    _load(conn, fid="inst:C-c", cik="0000000012", period=curr, filed="2026-05-16", holds=[cls(c(1, 400, 40), "CL C"), cls(x(2, 77, 7), "CL X")])
+    _load(conn, fid="inst:B-c", cik="0000000013", period=curr, filed="2026-05-16", holds=[cls(a(1, 200, 20), "CL A"), cls(c(2, 300, 30), "CL C")])
+
+
+def _alphabet_mapping(tmp_path):
+    from populus.ticker_mapping_13f import load_ticker_mapping as _load
+
+    p = tmp_path / "map.yaml"
+    p.write_text(
+        "version: 1\nrows:\n"
+        "  - {issuer_name_canonical: ALPHABET INC, title_of_class: CL A, ticker: GOOGL,"
+        " verified_date: '2026-09-10', verified_by: test, method: manual}\n"
+        "  - {issuer_name_canonical: ALPHABET INC, title_of_class: CL C, ticker: GOOG,"
+        " verified_date: '2026-09-10', verified_by: test, method: manual}\n"
+    )
+    return lambda *a, **k: _load(p)
+
+
+def test_r3_ticker_holders_are_class_grain_end_to_end(tmp_path, monkeypatch):
+    """GOOGL and GOOG get SEPARATE holder lists, totals and changes; the third,
+    unverified class stays unmapped; and the table exists on BOTH build paths
+    (via `_agg`) from source holdings alone."""
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    agg = _agg(conn, tmp_path)
+    rows = _rows(agg, "SELECT * FROM agg_ticker_holders ORDER BY ticker, rank")
+    by = {(r["ticker"], r["cik"]): r for r in rows}
+    assert {r["ticker"] for r in rows} == {"GOOGL", "GOOG"}
+    assert (by[("GOOGL", "0000000011")]["change_kind"], by[("GOOGL", "0000000011")]["delta_shares"]) == ("add", 30)
+    assert (by[("GOOG", "0000000012")]["change_kind"], by[("GOOG", "0000000012")]["delta_shares"]) == ("trim", -10)
+    # D2: Both Holder has NO filing for the prior quarter — `no_prior`, not new.
+    assert by[("GOOGL", "0000000013")]["change_kind"] == "no_prior"
+    assert by[("GOOG", "0000000013")]["change_kind"] == "no_prior"
+    assert by[("GOOG", "0000000013")]["delta_shares"] is None
+    assert ("GOOG", "0000000011") not in by and ("GOOGL", "0000000012") not in by
+    # Ranked by current value within the ticker: A Holder (1300) before Both (200).
+    assert [r["cik"] for r in rows if r["ticker"] == "GOOGL"] == ["0000000011", "0000000013"]
+    totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
+    assert totals["GOOGL"]["value_usd"] == 1500 and totals["GOOGL"]["holder_count"] == 2
+    assert totals["GOOG"]["value_usd"] == 700 and totals["GOOG"]["holder_count"] == 2
+    assert totals["GOOGL"]["prev_period"] == "2025-12-31" and totals["GOOGL"]["period_of_report"] == "2026-03-31"
+    assert all(r["method"] == "manual" and r["verified_date"] == "2026-09-10" for r in rows)
+    agg.close()
+    conn.close()
+
+
+def test_r3_no_mapping_rows_means_no_tickers_anywhere(tmp_path, monkeypatch):
+    """G14 mutation guard: with an empty mapping nothing is inferred."""
+    import populus.inst_agg as m
+    from populus.ticker_mapping_13f import TickerMapping
+
+    monkeypatch.setattr(m, "load_ticker_mapping", lambda *a, **k: TickerMapping(1, None, ()))
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    agg = _agg(conn, tmp_path)
+    assert _rows(agg, "SELECT * FROM agg_ticker_holders") == []
+    agg.close()
+    conn.close()
+
+
+def test_r3_closed_periods_follow_the_45_day_window():
+    from populus.inst_agg import closed_periods
+
+    ps = ["2026-03-31", "2026-06-30", "2025-12-31"]
+    # The store's newest filed date (2026-07-31): the June quarter is open.
+    assert closed_periods(ps, as_of="2026-07-31") == ["2025-12-31", "2026-03-31"]
+    # Deadline-exclusive, exactly as the dashboard's `isClosedPeriod`: on the
+    # deadline day (2026-08-14) the June quarter is still open.
+    assert closed_periods(ps, as_of="2026-08-14") == ["2025-12-31", "2026-03-31"]
+    assert closed_periods(ps, as_of="2026-08-15") == ["2025-12-31", "2026-03-31", "2026-06-30"]
+    assert closed_periods(ps, as_of="2026-09-10T00:00:00Z") == ["2025-12-31", "2026-03-31", "2026-06-30"]
+
+
+# --- D1 / D2 (refinement 20260910 fix) ---------------------------------------
+
+
+def test_d2_new_needs_a_prior_book_that_omits_the_position(tmp_path):
+    """A position is `new` only when the filer's prior book EXISTS and omits
+    it; the same position with no prior book at all is `no_prior` (both build
+    paths — `_agg` asserts python == bulk)."""
+    conn = _db(tmp_path)
+    _filer(conn, "0000000001", "Continuing Co")
+    _security(conn, "sec:x")
+    _security(conn, "sec:y")
+    x = lambda v: _hold(ordinal=1, issuer="X CO", cusip="111111111", value=v, shares=10, security_id="sec:x")  # noqa: E731
+    y = _hold(ordinal=2, issuer="Y CO", cusip="222222222", value=50, shares=5, security_id="sec:y")
+    _load(conn, fid="inst:c1", cik="0000000001", period="2025-12-31", filed="2026-01-15", holds=[x(100)])
+    _load(conn, fid="inst:c2", cik="0000000001", period="2026-03-31", filed="2026-04-15", holds=[x(120), y])
+    agg = _agg(conn, tmp_path)
+    rows = {r["position_key"]: r for r in _rows(agg, "SELECT * FROM agg_qoq_deltas")}
+    assert rows["sid:sec:y"]["change_kind"] == "new"
+    assert (rows["sid:sec:y"]["prev_value_usd"], rows["sid:sec:y"]["delta_shares"]) == (0, 5)
+    assert rows["sid:sec:x"]["change_kind"] == "held"
+    agg.close()
+    conn.close()
+
+
+def test_d2_ticker_holder_that_filed_prior_without_the_class_is_new(tmp_path, monkeypatch):
+    """The holders path's `new` needs a prior-quarter filing that omits the
+    class; a filer with no prior filing at all is `no_prior` and is not counted
+    in the ticker's adds."""
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    _filer(conn, "0000000014", "Switcher")
+    _security(conn, "sec:other")
+    other = _hold(ordinal=1, issuer="OTHER CO", cusip="333333333", value=10, shares=1, security_id="sec:other")
+    c_row = _hold(ordinal=2, issuer="ALPHABET INC", cusip="02079K107", value=90, shares=9, security_id="sec:goog1")
+    c_row = c_row.__class__(**{**c_row.__dict__, "title_of_class": "CL C"})
+    _load(conn, fid="inst:S-p", cik="0000000014", period="2025-12-31", filed="2026-01-15", holds=[other])
+    _load(conn, fid="inst:S-c", cik="0000000014", period="2026-03-31", filed="2026-05-16", holds=[other, c_row])
+    agg = _agg(conn, tmp_path)
+    by = {(r["ticker"], r["cik"]): r for r in _rows(agg, "SELECT * FROM agg_ticker_holders")}
+    assert (by[("GOOG", "0000000014")]["change_kind"], by[("GOOG", "0000000014")]["delta_shares"]) == ("new", 9)
+    assert by[("GOOG", "0000000013")]["change_kind"] == "no_prior"
+    totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
+    # GOOG adds = Switcher's new stake only; C Holder trimmed, Both Holder is no_prior.
+    assert totals["GOOG"]["adds"] == 1
+    agg.close()
+    conn.close()
+
+
+def test_d1_ticker_keys_carry_every_reviewed_spelling(tmp_path, monkeypatch):
+    """`agg_ticker_holder_totals` keeps ONE (name, class) per ticker; the row
+    TICKER cell needs every reviewed spelling, so `agg_ticker_keys` carries
+    the whole mapping file — and nothing else (G14)."""
+    import populus.inst_agg as m
+    from populus.ticker_mapping_13f import load_ticker_mapping as _load_map
+
+    path = tmp_path / "map2.yaml"
+    path.write_text(
+        "version: 1\nrows:\n"
+        "  - {issuer_name_canonical: ALPHABET INC, title_of_class: CL A, ticker: GOOGL,"
+        " verified_date: '2026-09-10', verified_by: test, method: manual}\n"
+        "  - {issuer_name_canonical: ALPHABET INC, title_of_class: CAP STK CL A, ticker: GOOGL,"
+        " verified_date: '2026-09-10', verified_by: test, method: manual}\n"
+    )
+    monkeypatch.setattr(m, "load_ticker_mapping", lambda *a, **k: _load_map(path))
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    agg = _agg(conn, tmp_path)
+    keys = _rows(agg, "SELECT issuer_name, title_of_class, ticker FROM agg_ticker_keys ORDER BY title_of_class")
+    assert keys == [
+        {"issuer_name": "ALPHABET INC", "title_of_class": "CAP STK CL A", "ticker": "GOOGL"},
+        {"issuer_name": "ALPHABET INC", "title_of_class": "CL A", "ticker": "GOOGL"},
+    ]
+    assert len(_rows(agg, "SELECT * FROM agg_ticker_holder_totals WHERE ticker='GOOGL'")) == 1
+    agg.close()
+    conn.close()
+
+
+# --- Codex code review round 1 (refinement 20260910): F6 / F7 / F8 -------------
+
+
+def test_review_f6_f8_holder_count_excludes_exits_and_rows_carry_filed_date(tmp_path, monkeypatch):
+    """R20: `holder_count` counts filers holding the class NOW — an exit is a
+    former holder, counted under `exits` only. R19/T20: every holder row
+    carries its current-quarter 13F filed date; a holder with no current
+    filing on record carries NULL."""
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    # An exiter: held Class C in the prior quarter and filed NOTHING for the current one.
+    _filer(conn, "0000000016", "Exiter")
+    c_row = _hold(ordinal=1, issuer="ALPHABET INC", cusip="02079K107", value=60, shares=6, security_id="sec:goog1")
+    c_row = c_row.__class__(**{**c_row.__dict__, "title_of_class": "CL C"})
+    _load(conn, fid="inst:X-p", cik="0000000016", period="2025-12-31", filed="2026-01-15", holds=[c_row])
+    agg = _agg(conn, tmp_path)
+    by = {(r["ticker"], r["cik"]): r for r in _rows(agg, "SELECT * FROM agg_ticker_holders")}
+    assert by[("GOOG", "0000000016")]["change_kind"] == "exit"
+    assert by[("GOOG", "0000000016")]["filed_date"] is None
+    assert by[("GOOGL", "0000000011")]["filed_date"] == "2026-05-16"
+    totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
+    # C Holder and Both Holder hold GOOG now; the exiter does not.
+    assert totals["GOOG"]["holder_count"] == 2
+    assert totals["GOOG"]["exits"] == 1
+    agg.close()
+    conn.close()
+
+
+def test_review_f7_notable_manager_past_the_rank_cap_is_kept(tmp_path, monkeypatch):
+    """R19: the overlap band's notable population must not be cut by the display
+    cap. A notable manager ranked past `TICKER_HOLDERS_RANK_CAP` keeps its row
+    at its TRUE rank; a non-notable holder past the cap is still dropped."""
+    import populus.inst_agg as m
+    from populus.manager_registry import ManagerRegistry, ManagerRow
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    monkeypatch.setattr(m, "TICKER_HOLDERS_RANK_CAP", 1)
+    notable = ManagerRow(
+        cik=13, display_name="Both Holder", sec_name="BOTH HOLDER", manager_type="hedge_fund",
+        notable=True, status="active", verified_channel="test", verified_date="2026-09-10",
+        person=None,
+    )
+    registry = ManagerRegistry(version=1, rows=(notable,), excluded=(), population_floor=10**9)
+    monkeypatch.setattr(m, "load_manager_registry", lambda *a, **k: registry)
+    conn = _db(tmp_path)
+    _seed_alphabet(conn)
+    # A small, non-notable Class A holder ranked third by value.
+    _filer(conn, "0000000015", "Small Holder")
+    a_row = _hold(ordinal=1, issuer="ALPHABET INC", cusip="02079K305", value=50, shares=5, security_id="sec:goog0")
+    a_row = a_row.__class__(**{**a_row.__dict__, "title_of_class": "CL A"})
+    _load(conn, fid="inst:S15-p", cik="0000000015", period="2025-12-31", filed="2026-01-15", holds=[a_row])
+    _load(conn, fid="inst:S15-c", cik="0000000015", period="2026-03-31", filed="2026-05-16", holds=[a_row])
+    agg = _agg(conn, tmp_path)
+    googl = [
+        (r["rank"], r["cik"])
+        for r in _rows(agg, "SELECT * FROM agg_ticker_holders ORDER BY ticker, rank")
+        if r["ticker"] == "GOOGL"
+    ]
+    # Rank 1 is inside the cap; rank 2 is the notable manager past it; rank 3 is dropped.
+    assert googl == [(1, "0000000011"), (2, "0000000013")]
+    totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
+    assert totals["GOOGL"]["holder_count"] == 3, "the true count still states every holder"
+    agg.close()
     conn.close()

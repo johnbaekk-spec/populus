@@ -297,12 +297,14 @@ def test_affiliation_runs_over_the_restatement_survivor_set(crafted_conn):
             )
         }
 
-    # 2024-03-31: the covered filer 0006 is excluded — coverage lives in the
-    # SURVIVING restatement of the covering filer 0005 (base 0005 is superseded).
+    # 2024-03-31: 0006 is named by the SURVIVING restatement of 0005 (base 0005
+    # is superseded) — but 0006 filed a 13F HOLDINGS report, which by Form 13F
+    # Special Instruction 5 carries its whole book, so it stays in the default
+    # set (refinement 20260910 C2). Only a covered NOTICE is excluded.
     d0331 = default_for("2024-03-31")
     assert "0009000005-24-000002" in d0331          # surviving restatement
     assert "0009000005-24-000001" not in d0331      # superseded base
-    assert "0009000006-24-000001" not in d0331      # covered -> excluded
+    assert "0009000006-24-000001" in d0331          # covered holdings report -> kept
 
     # 2024-06-30 (F6): filer A's restatement DROPPED other-manager 28-6001, so
     # over the survivor set 0006 is NOT suppressed and appears in the default set.
@@ -311,10 +313,10 @@ def test_affiliation_runs_over_the_restatement_survivor_set(crafted_conn):
     assert "0009000003-24-000003" in d0630 and "0009000003-24-000004" in d0630
     assert "0009000003-24-000001" not in d0630      # superseded base (stale 28-6001 ignored)
 
-    # 2024-09-30: mutual coverage — both excluded and both flagged.
+    # 2024-09-30: mutual naming between two HOLDINGS reports — both kept (C2).
     d0930 = default_for("2024-09-30")
-    assert "0009000005-24-000003" not in d0930
-    assert "0009000006-24-000003" not in d0930
+    assert "0009000005-24-000003" in d0930
+    assert "0009000006-24-000003" in d0930
 
 
 def test_affiliation_flags_are_stamped_symmetrically(crafted_conn):
@@ -322,10 +324,11 @@ def test_affiliation_flags_are_stamped_symmetrically(crafted_conn):
         crafted_conn,
         "SELECT flags FROM inst_filings WHERE accession = '0009000006-24-000001'",
     )[0]
-    assert "affiliated_covered" in json.loads(covered["flags"])
+    # C2: a named HOLDINGS report is flagged shared-discretion, never covered.
+    assert json.loads(covered["flags"]) == ["affiliated_shared_discretion"]
     for accession in ("0009000005-24-000003", "0009000006-24-000003"):
         flags = _rows(crafted_conn, "SELECT flags FROM inst_filings WHERE accession = ?", (accession,))[0]
-        assert "affiliated_mutual_coverage" in json.loads(flags["flags"])
+        assert json.loads(flags["flags"]) == ["affiliated_shared_discretion"]
     # F6: the not-suppressed affiliate carries no affiliation flag.
     free = _rows(crafted_conn, "SELECT flags FROM inst_filings WHERE accession = '0009000006-24-000002'")[0]
     assert json.loads(free["flags"]) == []
@@ -808,14 +811,16 @@ def test_selective_reingest_clears_a_stale_affiliation_flag(crafted_conn, tmp_pa
         crafted_conn,
         "SELECT filing_id, flags FROM inst_filings"
         " WHERE EXISTS (SELECT 1 FROM json_each(flags)"
-        "               WHERE value IN ('affiliated_covered','affiliated_mutual_coverage'))",
+        "               WHERE value IN ('affiliated_covered','affiliated_mutual_coverage',"
+        "                               'affiliated_shared_discretion'))",
     )
     # Plant a stale flag on a filing that has no surviving coverer.
     victim = _rows(
         crafted_conn,
         "SELECT filing_id FROM inst_filings"
         " WHERE NOT EXISTS (SELECT 1 FROM json_each(flags)"
-        "                   WHERE value IN ('affiliated_covered','affiliated_mutual_coverage'))"
+        "                   WHERE value IN ('affiliated_covered','affiliated_mutual_coverage',"
+        "                                   'affiliated_shared_discretion'))"
         " ORDER BY filing_id LIMIT 1",
     )[0]["filing_id"]
     from populus.ingest.inst13f import mark_affiliated_coverage
@@ -836,7 +841,8 @@ def test_selective_reingest_clears_a_stale_affiliation_flag(crafted_conn, tmp_pa
             crafted_conn,
             "SELECT filing_id FROM inst_filings"
             " WHERE EXISTS (SELECT 1 FROM json_each(flags)"
-            "               WHERE value IN ('affiliated_covered','affiliated_mutual_coverage'))",
+            "               WHERE value IN ('affiliated_covered','affiliated_mutual_coverage',"
+            "                               'affiliated_shared_discretion'))",
         )
         == [{"filing_id": f["filing_id"]} for f in flagged]
     )

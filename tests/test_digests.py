@@ -851,7 +851,7 @@ def test_compact_qoq_view_matches_legacy_values_types_and_digest():
     with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
         compact.execute(
             "INSERT INTO _agg_qoq_deltas VALUES(1,'sid:bad-mask',0,2,1,0,"
-            "NULL,NULL,NULL,NULL,NULL,NULL,0,32)"
+            "NULL,NULL,NULL,NULL,NULL,NULL,0,64)"  # bit 32 = filer_migrated (R6)
         )
     compact.close()
     legacy.close()

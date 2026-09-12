@@ -23,7 +23,8 @@ for (const [file, route] of references) {
       const response = await page.goto(route);
       expect(response?.status(), `${route} must be a real page in the QA build`).toBe(200);
       await expect(page.locator('main h1')).toBeVisible();
-      await expect(page.locator('.design-briefing .design-story')).toHaveCount(3);
+      // R14: the institutional landing folded its three cards into one methodology line.
+      await expect(page.locator('.design-briefing .design-story')).toHaveCount(route === "/institutional/" ? 0 : 3);
       const metrics = await page.evaluate(() => ({
         font: getComputedStyle(document.body).fontFamily,
         paper: getComputedStyle(document.documentElement).getPropertyValue('--paper').trim(),
@@ -38,57 +39,70 @@ for (const [file, route] of references) {
       expect(source.toLowerCase()).toContain(`background:${metrics.paper.toLowerCase()}`);
       expect(metrics.width).toBeLessThanOrEqual(metrics.viewport + 1);
       if (route === "/institutional/") {
-        for (const title of ["Cluster board", "Recent activity", "Conviction leaders", "Sector rotation", "Filer directory"]) {
+        // R14: named moves lead; the cluster board became the consensus board.
+        for (const title of ["Notable managers — latest named moves", "Filer directory", "Consensus", "Conviction leaders", "Recent activity"]) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
       }
       if (route.includes('/members/')) {
-        for (const title of ['Holdings from annual disclosure', 'Reconciliation', 'Trading profile', 'Filing history', 'Institutional overlap']) {
+        // R16: the empty annual/overlap frames are one planned line.
+        for (const title of ['Disclosed flow by quarter', 'Net disclosed flow by ticker', 'Trading profile', 'Filing history']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
         await expect(page.locator('[data-entity-table] thead th')).toHaveCount(8);
       }
       if (route === '/signals/') {
-        for (const title of ['Rule book', 'Hits', 'Lag distribution', 'Hit rate by family', 'Watchlist']) {
+        // R17: the hits table leads; the rule book is collapsed below it.
+        for (const title of ['Hits', 'Lag distribution', 'Hit rate by family', 'Watchlist']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
+        await expect(page.locator('#signal-rulebook-wrap')).toHaveCount(1);
         await expect(page.locator('#signal-rulebook tbody tr')).toHaveCount(7);
-        await expect(page.locator('#signal-hits thead th')).toHaveCount(7);
-        // the family filter hides rows without fetching; the status line announces the count
+        await expect(page.locator('#signal-hits thead th')).toHaveCount(6);
         const all = await page.locator('#signal-hits-body tr.si-hit').count();
-        const families = page.locator('.si-hit-filter button[data-family]');
-        if (await families.count() > 1) {
-          await families.nth(1).click();
-          const fam = await families.nth(1).getAttribute('data-family');
-          const visible = await page.locator(`#signal-hits-body tr.si-hit[data-family="${fam}"]`).count();
-          await expect(page.locator('#signal-hits-body tr.si-hit:visible')).toHaveCount(visible);
-          expect(visible).toBeLessThanOrEqual(all);
-          await families.first().click();
-          await expect(page.locator('#signal-hits-body tr.si-hit:visible')).toHaveCount(all);
+        expect(all).toBeLessThanOrEqual(50);
+        // the rule filter re-renders from the complete artifact; the status line announces the count
+        const kinds = page.locator('.si-hit-filter button[data-kind]');
+        if (await kinds.count() > 1) {
+          await kinds.nth(1).click();
+          const kind = await kinds.nth(1).getAttribute('data-kind');
+          await expect(page.locator('#signal-hits-body tr.si-hit').first()).toHaveAttribute('data-kind', kind!);
+          // retrying: the filter repaints after one artifact fetch, and the server's
+          // first row may already be of this kind
+          await expect(page.locator(`#signal-hits-body tr.si-hit:not([data-kind="${kind}"])`)).toHaveCount(0);
+          await kinds.first().click();
+          await expect(page.locator('#signal-hits-body tr.si-hit')).toHaveCount(all);
         }
         // every rendered hit carries its receipt link
         expect(await page.locator('#signal-hits-body tr.si-hit td.c-src a').count()).toBe(all);
-        if (width === 1440) {
-          const hits = await page.locator('#signal-hits').boundingBox();
-          const lag = await page.locator('.si-lagband').boundingBox();
-          expect(Math.abs(hits!.y - lag!.y), 'hits and lag distribution share a band').toBeLessThanOrEqual(2);
+        // the pager pages the artifact: 50 per page, "Showing 1–50 of N"
+        const total = Number(await page.locator('#signal-hits').getAttribute('data-total'));
+        if (total > 50) {
+          await expect(page.locator('#signal-hits-range')).toContainText('Showing 1–50 of');
+          await page.locator('#signal-hits-next').click();
+          await expect(page.locator('#signal-hits-range')).toContainText('Showing 51–');
+          await page.locator('#signal-hits-prev').click();
+          await expect(page.locator('#signal-hits-range')).toContainText('Showing 1–50 of');
         }
       }
       if (route === '/congress/') {
         await expect(page.locator('.reference-feed thead th')).toHaveCount(8);
         await expect(page.locator('.reference-feed .reference-row').first().locator('td')).toHaveCount(8);
+        // R12: fifty rows per page. The narrow viewport keeps its scroll
+        // container; the desktop table is in flow.
         const scroll = await page.locator('.reference-feed-scroll').evaluate(el => ({height:el.clientHeight, contents:el.scrollHeight}));
-        expect(scroll.height).toBeLessThanOrEqual(width === 1440 ? 310 : 440);
-        await expect(page.locator('.reference-feed .reference-row')).toHaveCount(8);
+        if (width !== 1440) expect(scroll.height).toBeLessThanOrEqual(440);
+        await expect(page.locator('.reference-feed .reference-row')).toHaveCount(50);
         if (width === 1440) {
           const rows = await page.locator('.reference-feed .reference-row').evaluateAll(els => els.map(el => el.getBoundingClientRect().height));
           expect(rows.every(height => Math.abs(height - 31) <= 1)).toBe(true);
           const bars = await page.locator('.reference-feed .band-fill').evaluateAll(els => els.map(el => ({height:el.getBoundingClientRect().height,width:el.getBoundingClientRect().width})));
           expect(bars.every(bar => bar.height >= 3 && bar.width > 0), 'interval fills must actually paint inside their tracks').toBe(true);
           await expect(page.locator('#momentum-section thead th')).toHaveCount(6);
+          // R11: Leaders (full width) precedes Tickers; they are stacked, not paired.
           const memberHead = await page.locator('#members-section thead').first().boundingBox();
           const tickerHead = await page.locator('#momentum-section thead').first().boundingBox();
-          expect(Math.abs(memberHead!.y - tickerHead!.y), 'paired ranking tables must begin on the same baseline').toBeLessThanOrEqual(1);
+          expect(memberHead!.y, 'Leaders lead; Tickers follow').toBeLessThan(tickerHead!.y);
           const header = await page.locator('#feed-section > .panel-head').boundingBox();
           const filters = await page.locator('#feed-section .filter-controls').boundingBox();
           expect(Math.abs(header!.y - filters!.y)).toBeLessThan(2);
@@ -161,11 +175,11 @@ test('compact feed paging and row flags remain usable', async ({page}) => {
   const first = await page.locator('.reference-row').first().textContent();
   await expect(page.locator('#pager-older')).toHaveAttribute('aria-disabled','false');
   await page.locator('#pager-older').click();
-  await expect(page.locator('#filter-count-line')).toContainText('9–16');
-  await expect(page.locator('.reference-row')).toHaveCount(8);
+  await expect(page.locator('#filter-count-line')).toContainText('51–100');
+  await expect(page.locator('.reference-row')).toHaveCount(50);
   expect(await page.locator('.reference-row').first().textContent()).not.toBe(first);
   await page.locator('#pager-newer').click();
-  await expect(page.locator('#filter-count-line')).toContainText('1–8');
+  await expect(page.locator('#filter-count-line')).toContainText('1–50');
   const flag = page.locator('.reference-flags .note-btn').first();
   await flag.click();
   await expect(page.locator(`#${await flag.getAttribute('popovertarget')}`)).toBeVisible();

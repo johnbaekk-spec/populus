@@ -43,6 +43,18 @@ export function isClosedPeriod(periodEnd: string, buildDate: string): boolean {
   return buildDate > filingDeadline(periodEnd);
 }
 
+/** R4 (refinement 20260910): the date a quarter's closedness is judged against.
+    The build clock alone called 2026-06-30 "closed" on 2026-08-17 while the
+    corpus's newest filing was dated 2026-07-31 — 3,660 of ~8,800 filers had
+    reported. A quarter is closed only when the CORPUS has seen its deadline:
+    the earlier of the build date and the newest filed date. This is the same
+    rule `populus.inst_agg.closed_periods` applies to the ticker-holders
+    aggregate, so the two runtimes name the same closed quarter. */
+export function corpusAsOf(buildDate: string, latestFiledDate: string | null | undefined): string {
+  if (!latestFiledDate) return buildDate;
+  return latestFiledDate < buildDate ? latestFiledDate : buildDate;
+}
+
 /** The latest `ADDS_PERIOD_COUNT` closed periods, newest first.
 
     A period still open for filing is NEVER selectable — it is not returned at

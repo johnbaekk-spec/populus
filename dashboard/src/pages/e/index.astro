@@ -27,6 +27,10 @@ const description =
   </main>
   <script>
     import { runGenericRoute } from "../../scripts/entity-client";
+    import { initDomDisclosures } from "../../scripts/inst-index-client";
+    /* R15: a tail filer's Position changes "Show more" is a DOM-backed
+       disclosure; the driver dispatches `populus:rerender` after each render. */
+    initDomDisclosures();
     runGenericRoute();
   </script>
 </Base>

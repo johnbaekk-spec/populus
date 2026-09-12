@@ -47,11 +47,18 @@ from populus.inst_agg import (
     build_inst_agg,
     prepared_materialized_inst_aggregate,
 )
+from populus.inst_redaction import (
+    apply_cusip_redaction,
+    apply_registry_redaction,
+    plan_cusip_redaction,
+)
 from populus.inst_serving import (
+    PUBLISHED_PERIODS_NOTABLE,
     build_serving_projection,
     publication_periods,
     write_serving_db,
 )
+from populus.manager_registry import load_manager_registry
 from populus.normalize_inst import NORMALIZATION_VERSION as INST_NORMALIZATION_VERSION
 from populus.publish import atomic_write_bytes
 from populus.publish.attestation import AttestationProvider, StagingNoop
@@ -1338,20 +1345,33 @@ def _derive_inst_module_in_materialized_scope(
         if end_read_txn is not None:
             end_read_txn()
         return derived
-    agg_conn = connect(str(inst_agg_path))
-    try:
-        derived["inst_logical"] = logical_digest(
-            agg_conn, LOGICAL_PROJECTIONS[INST_MODULE]
-        )
-    finally:
-        agg_conn.close()
+    # C1 (refinement 20260910): the withheld-CUSIP plan is read from the SOURCE
+    # inside the single read transaction; it is APPLIED to both published files
+    # only after the serving projection (which joins the aggregate on the
+    # original keys) is written, and both logical digests are taken after that.
+    redaction_plan = plan_cusip_redaction(source)
+    # Carried to the caller so the published congress.db's SEC 13F list is
+    # withheld from the SAME set, without re-reading the snapshot after the
+    # single COMMIT. `stage_build` pops it; it never reaches the manifest.
+    derived["_withheld_cusips"] = redaction_plan.cusips
     # --- the per-filer SERVING artifact ----------------------------
     # The projection reads the composed views (in *source*) AND
     # `agg_qoq_deltas` (in the aggregate just written), so the
     # aggregate is ATTACHed for the duration. ATTACH does not write
     # to *source*, and the DETACH is unconditional, so the source's
     # bytes are untouched either way.
-    inst_serving_periods = publication_periods(source)
+    # R5 (LD3): candidates are the newest PUBLISHED_PERIODS_NOTABLE periods;
+    # the projection keeps all of them for `notable` registry filers and only
+    # the newest PUBLISHED_PERIODS for everyone else. The activity grain stays
+    # on the newest PUBLISHED_PERIODS (the projection's default).
+    inst_serving_periods = publication_periods(
+        source, width=PUBLISHED_PERIODS_NOTABLE
+    )
+    notable_ciks = frozenset(
+        r.cik_padded
+        for r in load_manager_registry().rows
+        if r.notable and r.status == "active"
+    )
     # The watermarks are read HERE — before the single read transaction ends —
     # so they describe the same snapshot state as every derived artifact
     # (reading them after the COMMIT let them describe a different
@@ -1367,7 +1387,7 @@ def _derive_inst_module_in_materialized_scope(
     source.execute("ATTACH DATABASE ? AS inst_agg", (str(inst_agg_path),))
     try:
         serving_projection = build_serving_projection(
-            source, periods=inst_serving_periods
+            source, periods=inst_serving_periods, notable_ciks=notable_ciks
         )
     except BaseException:
         # The owner catches this outside the prepared context, rolls back its
@@ -1386,6 +1406,18 @@ def _derive_inst_module_in_materialized_scope(
         str(inst_serving_path),
         source_conn=source,
     )
+    derived["inst_redaction"] = {
+        **redaction_plan.summary(),
+        "inst_agg_rows": apply_cusip_redaction(redaction_plan, inst_agg_path),
+        "inst_serving_rows": apply_cusip_redaction(redaction_plan, inst_serving_path),
+    }
+    agg_conn = connect(str(inst_agg_path))
+    try:
+        derived["inst_logical"] = logical_digest(
+            agg_conn, LOGICAL_PROJECTIONS[INST_MODULE]
+        )
+    finally:
+        agg_conn.close()
     serving_conn = connect(str(inst_serving_path))
     try:
         derived["inst_serving_logical"] = logical_digest(
@@ -2809,8 +2841,29 @@ def stage_build(
         inst_withheld: dict | None = derived["inst_withheld"]
         inst_period_coverage: list[dict] | None = derived["inst_period_coverage"]
         inst_cover_dispositions: dict | None = derived["inst_cover_dispositions"]
+        withheld_cusips: frozenset[str] = derived.pop("_withheld_cusips", frozenset())
     finally:
         snapshot.close()
+
+    # C1 (refinement 20260910): the published congress.db republishes the SEC
+    # Official 13F List, whose CUSIP + issuer name + class pairs with the
+    # reviewed (name, class) -> ticker mapping Public Filings also publishes.
+    # Applied to the STAGED COPY only: `db_path` (the build's own store) keeps
+    # every CUSIP, and the copy keeps every ROW — only the CUSIP and the ids
+    # derived from it are withheld.
+    #
+    # Order is load-bearing, and measured rather than assumed. It runs AFTER the
+    # inst derive because on the LEGACY path the derive reads this very
+    # snapshot: replacing `securities.security_id` first breaks the
+    # `inst_holdings.security_id -> securities.entity_id` join that gives the
+    # aggregate its `entity:` issuer keys, and `test_r10_full_lifecycle` caught
+    # exactly that — Berkshire vanished from AAPL's holders through the MCP
+    # path, which looks up `agg_issuer_top_holders` by `entity:<id>`. It also
+    # runs after `snapshot.close()`, because the VACUUM inside it cannot run
+    # while another connection holds this file open.
+    apply_registry_redaction(snapshot_path, filed_cusips=withheld_cusips)
+    # The digest must describe the bytes actually published.
+    db_logical = _recompute_db_logical(snapshot_path)
 
     # --- previous build ------------------------------------------------------
     previous_build_id: str | None = None

@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS _agg_qoq_deltas (
   put_call_code     INTEGER NOT NULL CHECK (put_call_code BETWEEN 0 AND 2),
   curr_period_id    INTEGER NOT NULL,
   prev_period_id    INTEGER NOT NULL,
-  change_kind_code  INTEGER NOT NULL CHECK (change_kind_code BETWEEN 0 AND 4),
+  change_kind_code  INTEGER NOT NULL CHECK (change_kind_code BETWEEN 0 AND 6),  -- 5 = held (R8); 6 = no_prior
   prev_value_usd    INTEGER,
   curr_value_usd    INTEGER,
   delta_value_usd   INTEGER,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS _agg_qoq_deltas (
   curr_shares       INTEGER,
   delta_shares      INTEGER,
   unit_code         INTEGER NOT NULL CHECK (unit_code BETWEEN 0 AND 2),
-  flags_mask        INTEGER NOT NULL CHECK (flags_mask BETWEEN 0 AND 31),
+  flags_mask        INTEGER NOT NULL CHECK (flags_mask BETWEEN 0 AND 63),  -- bit 32 = filer_migrated (R6)
   PRIMARY KEY (
     filer_id, position_key, put_call_code, unit_code, curr_period_id
   )
@@ -91,6 +91,8 @@ SELECT
     WHEN 1 THEN 'add'
     WHEN 2 THEN 'trim'
     WHEN 3 THEN 'exit'
+    WHEN 5 THEN 'held'
+    WHEN 6 THEN 'no_prior'
     ELSE 'unclassified'
   END AS change_kind,
   q.prev_value_usd,
@@ -105,6 +107,8 @@ SELECT
   '[' || rtrim(
     CASE WHEN q.flags_mask & 1
       THEN '"change_kind_undeterminable",' ELSE '' END ||
+    -- bit 2 (`classified_by_value`) is RETIRED by R8: new builds never set it;
+    -- the label is kept only so an older aggregate still decodes.
     CASE WHEN q.flags_mask & 2
       THEN '"classified_by_value",' ELSE '' END ||
     CASE WHEN q.flags_mask & 4
@@ -112,7 +116,9 @@ SELECT
     CASE WHEN q.flags_mask & 8
       THEN '"shares_unit_mismatch",' ELSE '' END ||
     CASE WHEN q.flags_mask & 16
-      THEN '"value_undisclosed_one_side",' ELSE '' END,
+      THEN '"value_undisclosed_one_side",' ELSE '' END ||
+    CASE WHEN q.flags_mask & 32
+      THEN '"filer_migrated",' ELSE '' END,
     ','
   ) || ']' AS flags,
   (SELECT value FROM agg_build_meta WHERE key = 'ingested_at') AS ingested_at
@@ -185,6 +191,73 @@ CREATE TABLE IF NOT EXISTS agg_manager_registry (
   notable       INTEGER NOT NULL CHECK (notable IN (0, 1)),
   verified_date TEXT    NOT NULL,
   FOREIGN KEY (cik) REFERENCES agg_filer_registry (cik)
+);
+
+-- R6 (refinement 20260910): the artifact suppressor. A (filer, period) whose
+-- QoQ rows are >= 95% exits with no succession bridge is a book DISCONTINUITY
+-- — a manager that stopped filing under this CIK, a notice-only quarter, a
+-- registry gap — not a wave of selling. Landing feeds exclude these
+-- filer-periods; shards and the filer page keep them, with a banner. Derived
+-- after BOTH build paths by `populate_book_discontinuity`, and not part of the
+-- digest projection (like `agg_manager_registry`).
+CREATE TABLE IF NOT EXISTS agg_book_discontinuity (
+  cik              TEXT NOT NULL,
+  period_of_report TEXT NOT NULL,
+  positions        INTEGER NOT NULL CHECK (positions > 0),
+  exit_positions   INTEGER NOT NULL CHECK (exit_positions >= 0),
+  PRIMARY KEY (cik, period_of_report)
+);
+
+-- R3 (refinement 20260910, LD2): CLASS-GRAIN holders per REVIEWED ticker.
+-- Built entirely from source holdings (`v_filer_reported_holdings`, the
+-- newest CLOSED quarter and the one before it) joined on the Tier C key —
+-- normalized (issuer name, title of class) → ticker from
+-- `populus/ticker_mapping_13f.yaml` — summing value and shares per
+-- (cik, key, period) ONLY within the key, so GOOGL (Class A) and GOOG
+-- (Class C) get separate holder lists, amounts and changes. It never reads
+-- `agg_issuer_top_holders` (which sums across classes) and has NO CUSIP.
+-- `rank` runs over the current-period holders by value; exits (no current
+-- row) follow. Bounded to TICKER_HOLDERS_RANK_CAP rows per ticker-period —
+-- the totals table carries the TRUE holder count so the bound is stated.
+CREATE TABLE IF NOT EXISTS agg_ticker_holders (
+  ticker           TEXT NOT NULL,                -- SEC spelling (BRK-B)
+  period_of_report TEXT NOT NULL,                -- the current closed quarter
+  rank             INTEGER NOT NULL,
+  cik              TEXT NOT NULL,
+  filer_name       TEXT NOT NULL,
+  value_usd        INTEGER,                      -- NULL = undisclosed / exited
+  shares           INTEGER,
+  prev_shares      INTEGER,
+  delta_shares     INTEGER,
+  change_kind      TEXT NOT NULL CHECK (change_kind IN ('new','add','trim','exit','held','unclassified','no_prior')),
+  method           TEXT NOT NULL,                -- mapping row's method
+  verified_date    TEXT NOT NULL,                -- mapping row's verified_date
+  filed_date       TEXT,                         -- the holder's current-quarter 13F filed date; NULL = none on record
+  PRIMARY KEY (ticker, period_of_report, rank)
+);
+-- D1 (refinement 20260910 fix): EVERY reviewed (issuer name, class) row of the
+-- mapping file, so a filed row resolves under any reviewed spelling of its
+-- issuer and class, not only the one spelling `agg_ticker_holder_totals` keeps.
+-- Straight from `ticker_mapping_13f.yaml`; nothing here is inferred (G14).
+CREATE TABLE IF NOT EXISTS agg_ticker_keys (
+  issuer_name      TEXT NOT NULL,                 -- mapping row's canonical filed name
+  title_of_class   TEXT NOT NULL,
+  ticker           TEXT NOT NULL,                 -- SEC spelling (BRK-B)
+  method           TEXT NOT NULL,
+  verified_date    TEXT NOT NULL,
+  PRIMARY KEY (issuer_name, title_of_class)
+);
+CREATE TABLE IF NOT EXISTS agg_ticker_holder_totals (
+  ticker           TEXT NOT NULL,
+  period_of_report TEXT NOT NULL,
+  prev_period      TEXT,                          -- the prior closed quarter, when the corpus has one
+  issuer_name      TEXT NOT NULL,                 -- mapping row's canonical filed name
+  title_of_class   TEXT NOT NULL,
+  holder_count     INTEGER NOT NULL,              -- TRUE count, before the rank cap
+  value_usd        INTEGER NOT NULL,              -- summed disclosed value, current period
+  adds             INTEGER NOT NULL,              -- new + add
+  exits            INTEGER NOT NULL,
+  PRIMARY KEY (ticker, period_of_report)
 );
 
 CREATE TABLE IF NOT EXISTS agg_issuer_adds (

@@ -94,6 +94,9 @@ ARTIFACT_PROJECTIONS: dict[str, dict[str, frozenset[str]]] = {
         "serving_filer_rows": frozenset(),
         "serving_issuer_holder_rows": frozenset(),
         "serving_activity": frozenset(),
+        # R1 (refinement 20260910): the deduplicated display relation, digested
+        # like every other serving table — derived, reproducible, no timestamp.
+        "serving_position_display": frozenset(),
     },
 }
 
@@ -121,7 +124,12 @@ def projection_for(artifact_name: str, module: str) -> dict[str, frozenset[str]]
 #: serving projection — there is no earlier envelope for a consumer to be confused
 #: by. Any subsequent edit to `ARTIFACT_PROJECTIONS["inst_serving.db"]` is a real
 #: envelope change and must bump it.
-LOGICAL_PROJECTION_VERSIONS = {"congress": "2", "inst": "1"}
+#:
+#: `inst` → "2" (refinement 20260910, R1): `inst_serving.db` gained the digested
+#: `serving_position_display` relation, so the serving envelope moved.
+#: `inst` → "3" (refinement 20260910, R25): `serving_filer_rows` gained the
+#: digested `issuer_key` column, so the serving envelope moved again.
+LOGICAL_PROJECTION_VERSIONS = {"congress": "2", "inst": "3"}
 # Back-compat aliases: the unqualified names are the congress projection v1, so
 # every existing caller that passes nothing keeps the exact same envelope.
 LOGICAL_PROJECTION_V1: dict[str, frozenset[str]] = LOGICAL_PROJECTIONS["congress"]

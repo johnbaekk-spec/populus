@@ -479,3 +479,42 @@ def test_the_declared_floor_is_REQUIRED_and_validated(tmp_path):
     doc_missing.write_text(_yaml.safe_dump(data), encoding="utf-8")
     with pytest.raises(ManagerRegistryError, match="population_floor"):
         load_manager_registry(doc_missing)
+
+
+# --- R6 (refinement 20260910): predecessor_ciks ------------------------------
+
+
+def test_r6_predecessor_ciks_are_accepted_and_exposed_padded(tmp_path):
+    from populus.manager_registry import succession_map
+
+    reg = load_manager_registry(write_seed(tmp_path, [row(predecessor_ciks=[1364742])]))
+    assert reg.rows[0].predecessor_ciks == (1364742,)
+    assert succession_map(reg) == {"0001067983": ("0001364742",)}
+    # Absent field → no predecessors, and no succession entry.
+    reg2 = load_manager_registry(write_seed(tmp_path, [row()]))
+    assert reg2.rows[0].predecessor_ciks == ()
+    assert succession_map(reg2) == {}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [[], "1364742", [0], [-5], ["1364742"], [1067983], [1364742, 1364742]],
+)
+def test_r6_malformed_predecessor_ciks_are_rejected(tmp_path, bad):
+    with pytest.raises(ManagerRegistryError):
+        load_manager_registry(write_seed(tmp_path, [row(predecessor_ciks=bad)]))
+
+
+def test_r6_a_predecessor_that_is_a_live_row_is_rejected(tmp_path):
+    seed = write_seed(
+        tmp_path,
+        [row(), row(cik=2012383, display_name="BlackRock", predecessor_ciks=[1067983])],
+    )
+    with pytest.raises(ManagerRegistryError, match="belongs under `excluded`"):
+        load_manager_registry(seed)
+
+
+def test_r6_the_shipped_seed_links_blackrock_to_its_predecessor():
+    from populus.manager_registry import succession_map
+
+    assert succession_map(REGISTRY)["0002012383"] == ("0001364742",)

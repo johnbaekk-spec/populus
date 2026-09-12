@@ -921,6 +921,10 @@ def test_materialized_filing_rows_match_every_survivor_and_affiliation_edge_case
     )
     main_reconciled_rows = main_reconciled_cursor.fetchall()
     assert {row[0] for row in main_reconciled_rows} == {
+        # C2 (refinement 20260910): COVERED filed a 13F HOLDINGS report, so being
+        # named on COVERER's list no longer suppresses it — only a 13F-NT notice
+        # is dropped here.
+        "inst:COVERED",
         "inst:COVERER",
         "inst:CROSS-SOURCE",
         "inst:CROSS-TARGET",
@@ -964,6 +968,9 @@ def test_materialized_filing_rows_match_every_survivor_and_affiliation_edge_case
     )
     main_default_rows = main_default_cursor.fetchall()
     assert {row[0] for row in main_default_rows} == {
+        # C2: kept for the same reason as the reconciled set above. COVERER is
+        # absent from the default set on the COVER predicate, not affiliation.
+        "inst:COVERED",
         "inst:CROSS-SOURCE",
         "inst:CROSS-TARGET",
         "inst:INACTIVE-VICTIM",

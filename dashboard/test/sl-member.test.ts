@@ -138,7 +138,8 @@ test("SL-R20: the signal rule is a note on EACH ROW'S KIND CELL — mixed kinds,
   for (const [, rule] of kinds) {
     assert.ok(html.includes(esc(rule)), `the exact rule "${rule.slice(0, 24)}…" is still published`);
   }
-  const ids = [...html.matchAll(PANEL_ID)].map((m) => m[1]!);
+  // R21: the card's footer ⓘ (cardFoot) is not a row note.
+  const ids = [...html.matchAll(PANEL_ID)].map((m) => m[1]!).filter((id) => !id.includes("signals-foot"));
   assert.equal(ids.length, 3, "one note per row");
   assert.equal(new Set(ids).size, 3, "three rows, three distinct panels");
   // each panel is the one its own row addresses
@@ -162,7 +163,7 @@ test("SL-R20/SL-R26: a SAME-MEMBER DUPLICATE-KIND fixture emits unique panel ids
     "T000001",
     CTX,
   );
-  const ids = [...html.matchAll(PANEL_ID)].map((m) => m[1]!);
+  const ids = [...html.matchAll(PANEL_ID)].map((m) => m[1]!).filter((id) => !id.includes("signals-foot"));
   assert.equal(ids.length, 3, "three same-kind rows each render their rule");
   assert.equal(new Set(ids).size, 3, "…and no two share a panel id");
   for (const id of ids) {
@@ -237,7 +238,7 @@ test("SL-R20: the two ABSENT panels and NON_ALLEGATION_CAVEAT stay VISIBLE, verb
      non-allegation caveat is a legal statement, not a definition. Neither is a
      hover candidate at any width. */
   const absent = memberV2Sections(MEMBER, STAMPS, CTX, V2_DEPS);
-  assert.match(absent, /aria-label="Sector rotation"/, "the absent Sector mix panel is on the page");
+  assert.match(absent, /<strong>Sector rotation<\/strong> — not available in this build\./, "the absent Sector mix surface is stated on the page (R24: one line, no empty frame)");
   assert.match(absent, /Sector data is not in this build/, "…stating its absence in visible text");
   assert.match(absent, /Committee/, "as is the Committees panel");
 

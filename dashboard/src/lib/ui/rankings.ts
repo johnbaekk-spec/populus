@@ -34,6 +34,8 @@ import {
   partyClass,
   compactDisclosure,
   COMPACT_ROWS,
+  COMPACT_STEP,
+  thLabelHtml,
 } from "../format.ts";
 import {
   type NetInterval,
@@ -167,7 +169,7 @@ function visualColumns(kind: "leaders" | "tickers", reference = false): Congress
     { sortable: false, key: null, label: "Buy ◂ ▸ Sell · count", numeric: false, why: "Bars show transaction counts: purchases left, sales right; each row uses the larger count as its scale." },
     columns[2]!, { sortable: false, key: null, label: "Members", numeric: true, why: "Distinct joined members in the stated window. Unjoined filers are not inferred to be members." },
     { ...columns[7]!, label: "Net flow" }];
-  const labels = ["#", "Member", "Txns†", "Buy", "Sell", "Gross purch ·§", "Gross sales ·§", "Net flow", "Late†"];
+  const labels = ["#", "Member", "Trades†", "Buy", "Sell", "Gross bought ·§", "Gross sales ·§", "Net flow", "Late†"];
   return columns.map((c, i) => ({ ...c, label: labels[i]! }));
 }
 
@@ -185,7 +187,7 @@ function rankingHeadHtml(
     .map((c) => {
       if (!c.sortable) {
         return (
-          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${esc(c.label)}` +
+          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${thLabelHtml(c.label)}` +
           colWhyHtml(c.why, notes, c.key ?? c.label) + `</th>`
         );
       }
@@ -197,7 +199,7 @@ function rankingHeadHtml(
       return (
         `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-congress-sort="${esc(c.key)}" ` +
         `data-congress-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
-        `<button class="th-sort" type="button">${esc(c.label)}</button>` +
+        `<button class="th-sort" type="button">${thLabelHtml(c.label)}</button>` +
         (c.note ? noteFromHtml(c.note, notes, c.key) : "") +
         `</th>`
       );
@@ -212,7 +214,7 @@ export function rankingRowsHtml(
   rows: readonly LeaderRow[],
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { numbered?: boolean; startAt?: number } = {},
+  opts: { numbered?: boolean; startAt?: number; hiddenFrom?: number } = {},
 ): string {
   // The incomparability marker is recomputed from THIS order. Carrying a
   // marker over from a previous sort would claim an overlap against a row that
@@ -220,8 +222,14 @@ export function rankingRowsHtml(
   const flags = overlapFlags(rows);
   const numbered = opts.numbered ?? true;
   const start = opts.startAt ?? 1;
+  /* R13: rows at or past `hiddenFrom` ship in the server bytes but start
+     `hidden` — the "Show 50 more" control reveals them without any download. */
+  const hiddenFrom = opts.hiddenFrom ?? Number.MAX_SAFE_INTEGER;
   return rows
-    .map((r, i) => rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx))
+    .map((r, i) => {
+      const html = rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx);
+      return i >= hiddenFrom ? html.replace(/^<tr\b/, "<tr hidden data-compact-hidden") : html;
+    })
     .join("\n");
 }
 
@@ -245,13 +253,17 @@ export function rankingRootHtml(
   dir: "asc" | "desc",
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { compact?: number } = {},
+  opts: { compact?: number; prefetch?: number } = {},
 ): { html: string; total: number; shown: number } {
   const cols = visualColumns(kind, ctx.referenceRankings);
   const { ranked, unrankable } = sortRankingRows(rows, key, dir);
   const total = ranked.length + unrankable.length;
   const limit = opts.compact ?? total;
-  const rankedShown = ranked.slice(0, limit);
+  /* R13: `prefetch` more ranked rows ride along HIDDEN past the compact slice,
+     so the expand control has real rows to reveal before (or without) the
+     full dataset download. They are not counted as shown. */
+  const prefetch = opts.compact === undefined ? 0 : (opts.prefetch ?? 0);
+  const rankedShown = ranked.slice(0, limit + prefetch);
   // The compact slice is a bound on the WHOLE table, so it consumes the ranked
   // rows first and only then the unrankable tail — otherwise collapsing could
   // drop every ranked row and show only the tail.
@@ -260,7 +272,7 @@ export function rankingRootHtml(
     cols.find((c) => c.sortable && c.key === key)?.label ?? key;
   return {
     html:
-      rankingRowsHtml(rankedShown, kind, ctx) +
+      rankingRowsHtml(rankedShown, kind, ctx, { hiddenFrom: limit }) +
       // The separator states that rows exist which this column CANNOT
       // rank. That is a stated absence, so it renders whenever the bucket is
       // non-empty — NOT only when a bucket row happens to survive the compact
@@ -276,7 +288,7 @@ export function rankingRootHtml(
             : "")
         : ""),
     total,
-    shown: rankedShown.length + unrankableShown.length,
+    shown: Math.min(rankedShown.length, limit) + unrankableShown.length,
   };
 }
 
@@ -475,6 +487,13 @@ export function emptyWindowHtml(
   return `<p class="section-note empty-window">${body}</p>`;
 }
 
+/** D4: the default sort of a ranking section — disclosure count for tickers
+    ("most disclosed"), net disclosed flow for members. ONE source, read by the
+    server render and the client binding so the two cannot disagree. */
+export function defaultRankingSortKey(kind: "leaders" | "tickers"): CongressSortKey {
+  return kind === "tickers" ? "txns" : "net";
+}
+
 /** One ranking section — used for BOTH the ticker momentum section and the
     member net-flow section. SSR renders the authoritative default view; the
     client re-renders only the roots. */
@@ -499,13 +518,17 @@ export function congressRankingSection(
     (r) => r.id,
   );
 
-  const main = rankingRootHtml(ranked, "net", "desc", kind, ctx, { compact });
+  /* D4: "Tickers · most disclosed" ranks by the NUMBER of disclosures (the
+     section's name and SRC §2); net disclosed flow stays one header click
+     away. The member section keeps net flow. */
+  const defaultKey: CongressSortKey = defaultRankingSortKey(kind);
+  const main = rankingRootHtml(ranked, defaultKey, "desc", kind, ctx, { compact, prefetch: COMPACT_STEP });
   const bucket = rankingRootHtml(undisclosedBucket, "name", "asc", kind, ctx, { compact });
 
   const caption =
     kind === "leaders"
       ? `Members ranked by net disclosed flow, ${windowText}`
-      : `Tickers ranked by net disclosed flow, ${windowText}`;
+      : `Tickers ranked by number of disclosures, ${windowText}`;
   const noun = kind === "leaders" ? "members" : "tickers";
   return (
     `<section class="panel panel-wide${ctx.referenceRankings ? " reference-ranking" : ""}" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
@@ -530,10 +553,10 @@ export function congressRankingSection(
        The paragraph itself is gone; its `<noscript>` is NOT, because that
        sentence is about scripting rather than about a column, so no column note
        is the right home for it and a no-JavaScript reader must still get it. */
-    `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by net disclosed flow, largest first.</noscript></p>` +
+    `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by ${kind === "tickers" ? "number of disclosures" : "net disclosed flow"}, largest first.</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${rankingHeadHtml(cols, "net", "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
+    `<thead><tr>${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
     /* A zero-rankable window STATES itself. The container ships
        in both states so the client can fill it when a range change empties the
@@ -563,7 +586,8 @@ export function congressRankingSection(
       shown: main.shown,
       noun,
       boundNoun: `ranked ${noun}`,
-      bound: `Every row remains in the <a href="/congress/data/feed.v1.json">published dataset</a>.`,
+      // SRC §5: the sentence moved to /methodology/#published-dataset; the link stays.
+      bound: `All rows are in the <a href="/congress/data/feed.v1.json">published dataset</a>.`,
     }) +
     (undisclosedBucket.length > 0 && opts.undisclosedRootId
       ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} not rankable · amounts wholly undisclosed</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +

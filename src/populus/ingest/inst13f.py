@@ -885,7 +885,11 @@ def _to_parsed_row(holding) -> InstParsedRow:
 #: from scratch on every reconciliation, so they must be cleared first — a filing
 #: that no longer has a surviving coverer would otherwise keep a stale
 #: `affiliated_*` flag and diverge from a clean rebuild.
-_AFFILIATION_DERIVED_FLAGS = ("affiliated_covered", "affiliated_mutual_coverage")
+_AFFILIATION_DERIVED_FLAGS = (
+    "affiliated_covered",
+    "affiliated_mutual_coverage",
+    "affiliated_shared_discretion",
+)
 
 
 def _drop_flag(
@@ -985,6 +989,10 @@ def mark_affiliated_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
     """Stamp ``affiliated_covered`` / ``affiliated_mutual_coverage`` over the
     restatement-survivor candidate set. Returns ``(covered, mutual)``.
 
+    Only a 13F NOTICE survivor can be covered (excluded from the default set);
+    a covered HOLDINGS report gets ``affiliated_shared_discretion`` instead and
+    is not counted in either return value (refinement 20260910 C2).
+
     Derived state is recomputed from scratch: both flags are CLEARED first, so a
     filing whose coverer stopped surviving (e.g. a later restatement dropped an
     other manager) does not keep a stale flag, and an incremental selective-CIK
@@ -1003,13 +1011,14 @@ def mark_affiliated_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
             "filing_id": filing_id,
             "period": period,
             "fnn": fnn,
+            "notice": submission_type in _NOTICE_TYPES,
             "others": {
                 m.get("file_number_norm")
                 for m in json.loads(other_managers)
                 if m.get("file_number_norm")
             },
         }
-        for filing_id, period, fnn, other_managers in conn.execute(
+        for filing_id, period, fnn, other_managers, submission_type in conn.execute(
             _INST_RESTATEMENT_SURVIVORS_SQL
         )
     ]
@@ -1026,6 +1035,13 @@ def mark_affiliated_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
             and s["fnn"] in c["others"]
         ]
         if not coverers:
+            continue
+        if not s["notice"]:
+            # C2 (refinement 20260910): a HOLDINGS report is never covered — its
+            # book stays in the default set (views.sql stage 2). The flag only
+            # records that another survivor names it as an other included
+            # manager, i.e. that positions may be shared-discretion.
+            _add_flag(conn, s["filing_id"], "affiliated_shared_discretion")
             continue
         is_mutual = any(c["fnn"] is not None and c["fnn"] in s["others"] for c in coverers)
         if is_mutual:

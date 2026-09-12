@@ -1,6 +1,6 @@
 ---
 import Base from "../../layouts/Base.astro";
-import { getBuildData, coverageSummary } from "../../lib/data";
+import { getBuildData, coverageSummary, feedPartsPlan } from "../../lib/data";
 import {
   amountText,
   DESIGN_FEED_PAGE_SIZE,
@@ -14,19 +14,30 @@ import {
   type RenderCtx,
 } from "../../lib/format";
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
-import { briefingCards, disclosureLedger, congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
+import { briefingCards, congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
+import { serializeInlineJson } from "../../lib/inline-json";
+import { COMPACT_ROWS, noteFromHtml, esc } from "../../lib/format";
 
 const build = getBuildData();
 const coverage = coverageSummary(build.stats);
+/* R12 / LD7: the part index rides inline so paging costs only the part that
+   holds the page — the same plan the /congress/data/feed/ routes emit. */
+const partsIndex = feedPartsPlan(build).index;
 const largest = build.txns.reduce<(typeof build.txns)[number] | null>((best, row) =>
   row.low !== null && (best === null || row.low > best.low!) ? row : best, null);
 const latestLate = build.txns.find(row => row.late === 1);
-const ledgerHtml = disclosureLedger([
-  { label: "Transactions", value: fmtInt(build.txnCount), detail: `filed since ${build.filedFrom}` },
-  { label: "House parse", value: `${coverage.housePct}%`, detail: `${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)} e-filed` },
-  { label: "Senate parse", value: `${coverage.senatePct}%`, detail: `${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)} e-filed` },
-  { label: "Paper", value: fmtInt(coverage.needsOcr), detail: "counted · needs OCR" },
-]);
+/* R11: the coverage strip is ONE line — "N disclosures · updated {date}" —
+   and every number it carried (parse rates, paper count) sits in its ⓘ,
+   with the full account on /methodology/#coverage. Nothing is deleted. */
+const coverageNote =
+  `<strong>${fmtInt(build.txnCount)}</strong> transactions filed since ${esc(build.filedFrom)} · ` +
+  `House parse <strong>${esc(coverage.housePct)}%</strong> (${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)} e-filed) · ` +
+  `Senate parse <strong>${esc(coverage.senatePct)}%</strong> (${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)} e-filed) · ` +
+  `<strong>${fmtInt(coverage.needsOcr)}</strong> paper filings counted, awaiting OCR. ` +
+  `<a href="/methodology/#coverage">Coverage, in full ↗</a>`;
+const stripHtml =
+  `<p class="coverage-strip" id="congress-coverage">${fmtInt(build.txnCount)} disclosures · updated ${esc(build.generatedAtDate)}` +
+  noteFromHtml(coverageNote, { scope: "congress-coverage" }, "coverage") + `</p>`;
 const briefingHtml = briefingCards([
   { tag: "Largest disclosed lower bound", title: largest ? `${largest.ticker ?? largest.asset ?? "Undisclosed asset"} · ${amountText(largest)}` : "No comparable amounts disclosed", body: largest ? `${largest.name} · traded ${largest.traded ?? "date not disclosed"} → filed ${largest.filed}. Ranked over this build by disclosed lower bound, not a point estimate.` : "The published records contain no usable lower bound to rank." },
   { tag: "Late filing", title: latestLate ? `${latestLate.lag ?? "—"} days from trade to filing` : "No late disclosures in this build", body: latestLate ? `${latestLate.name} · traded ${latestLate.traded ?? "—"} → filed ${latestLate.filed}. A filing delay describes the record, not its intent.` : "Computed over the published transaction records; unknown trade dates remain unknown." },
@@ -55,6 +66,7 @@ const ssrCtx: RenderCtx = {
   cutTickers: build.cutTickers,
 };
 const pageOne = pageSlice(build.merged, 0, DESIGN_FEED_PAGE_SIZE);
+const partsIndexJson = serializeInlineJson(partsIndex);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
 const sectionCtx: RenderCtx = {
   referenceRankings: true,
@@ -76,7 +88,7 @@ const momentumHtml = congressRankingSection(
     heading: "Tickers · most disclosed",
     sectionId: "momentum-section",
     controls: true,
-    compact: 5,
+    compact: COMPACT_ROWS,
     /* Computed here because only this page holds the full row set —
        the rollup above is already windowed. The client recomputes the same
        thing from the same rows through the same function when the reader
@@ -101,14 +113,14 @@ const membersHtml = congressRankingSection(
     undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed,
     heading: "Leaders · net disclosed flow",
     sectionId: "members-section",
-    compact: 5,
+    compact: COMPACT_ROWS,
   },
 );
 const footnoteHtml = footnoteBlock(
   [
     {
       mark: "†",
-      html: `filer not yet joined to a member record — name as printed on the filing <code>bioguide_id=null</code>`,
+      html: `Member not identified: this filer is not yet joined to a member record, so the name is shown as printed on the filing`,
     },
     {
       mark: "‡",
@@ -145,7 +157,7 @@ const description =
     id="congress-page"
     data-txn-count={build.txnCount}
     data-generated-at-date={build.generatedAtDate}
-    data-compact-limit="5"
+    data-compact-limit={String(COMPACT_ROWS)}
     data-range={MOMENTUM_RANGE}
     data-basis={MOMENTUM_BASIS}
   >
@@ -158,7 +170,7 @@ const description =
           Who disclosed what, in which statutory range, and when it was filed · House Clerk + Senate eFD.
         </p>
       </div>
-      <Fragment set:html={ledgerHtml} />
+      <Fragment set:html={stripHtml} />
     </div>
     <div class="design-provenance">
       Filed up to 45 days after the trade · amounts are statutory ranges, never point estimates
@@ -173,7 +185,11 @@ const description =
           <a href="/methodology/#owner-codes">whose trade is it — SP · DC · JT ↗</a>
         </div></details>
     </div>
-    <Fragment set:html={briefingHtml} />
+    <!-- R11: data first. Leaders (full width, 10 rows) → Tickers → the feed.
+         The three context cards live in a collapsed "Notes on this data"
+         below the feed; the coverage strip is the one line in the head. -->
+    <div class="design-rankings design-rankings-single"><Fragment set:html={membersHtml} /></div>
+    <div class="design-rankings design-rankings-single"><Fragment set:html={momentumHtml} /></div>
 
     <!-- filter bar. The controls live in their own wrapper so they can become a
          horizontal scroll strip on mobile WITHOUT taking the count line — which
@@ -202,7 +218,7 @@ const description =
           <button data-group="party" data-value="I" class="tint-ind" aria-pressed="false" aria-label="Independent">I</button>
         </div>
       </div>
-      <details class="advanced-filters"><summary>More filters</summary><div class="advanced-filter-body">
+      <details class="advanced-filters" id="advanced-filters"><summary>More filters</summary><div class="advanced-filter-body">
       <div class="filter-group" role="group" aria-label="Side">
         <span class="filter-label" aria-hidden="true">Side</span>
         <div class="seg">
@@ -334,8 +350,10 @@ const description =
     </div>
     </section>
 
-    <!-- Section three: member net-flow, two render roots. -->
-    <div class="design-rankings"><Fragment set:html={membersHtml} /><Fragment set:html={momentumHtml} /></div>
+    <details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary>
+      <Fragment set:html={briefingHtml} />
+    </details>
+    <script is:inline type="application/json" id="feed-parts-index" set:html={partsIndexJson} />
   </main>
 
   <script>
@@ -344,11 +362,15 @@ const description =
     import { initFeed } from "../../scripts/feed-client";
     import { initCongressSections } from "../../scripts/congress-sections";
     import { initNotes } from "../../scripts/notes";
-    const sections = initCongressSections();
+    /* R12: the full dataset is loaded LAZILY — the ranking sections ask
+       the feed island for it (`requestRows`) the first time a control needs
+       every row; page 1 and paging come from the byte-bounded parts. */
+    let feed: ReturnType<typeof initFeed> | null = null;
+    const sections = initCongressSections({ requestRows: () => void feed?.loadAll() });
     /* `onSettled` fires on BOTH the success and failure paths, so the
        momentum section's "applying …" state clears either way. Cleared only in
        `onRows` it would survive a failed download for the life of the page. */
-    initFeed({ onRows: sections.receiveRows, onSettled: sections.feedSettled });
+    feed = initFeed({ onRows: sections.receiveRows, onSettled: sections.feedSettled });
     /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —

@@ -300,8 +300,11 @@ async function runFilerWith(
   const h = harness(`?k=f:${Number(cik)}`, async (url) => {
     urls.push(url);
     if (url === FILER_INDEX_PATH) return { kind: "http", status: 200, body: indexBody };
-    const match = /\/(\d+)\.v3\.json$/.exec(url);
-    const body = match ? shardBodies.get(Number(match[1])) : undefined;
+    /* Shard URLs come from the driver's own `filerShardPath`, never a spelled
+       transport version: a hard-coded `.v3.json` here 404'd every shard after
+       the v4 bump and turned seven driver tests into `server_error`. */
+    let body: unknown;
+    for (const [n, shard] of shardBodies) if (url === filerShardPath(n)) body = shard;
     return body === undefined
       ? { kind: "http", status: 404, body: null }
       : { kind: "http", status: 200, body };
@@ -322,6 +325,19 @@ test("M2-12/F7: a cached v2 client meets the tombstone as version_mismatch, not 
      tombstone bytes the build emits. */
   const family = validFilerFamily();
   const tombstone = JSON.parse('{"v":3,"kind":"filer-index-upgrade-required"}');
+  const r = await runFilerWith(tombstone, family.shards, family.cik);
+  assert.equal(r.state, "version_mismatch", "a version discriminator mismatch is not bad_payload");
+  assert.deepEqual(r.urls, [FILER_INDEX_PATH], "a mismatched version must not go on to fetch shards");
+  assert.ok(!/data-retry/.test(r.lastRender), "version_mismatch is terminal, never retryable");
+});
+
+test("refinement F3: a cached v3 client meets the v3 tombstone as version_mismatch, not a retry", async () => {
+  /* The refinement review's F3 made `kindsByPeriod`, `discontinuityPeriods` and
+     `typing` REQUIRED, moving the transport to .v4.json and leaving
+     `index.v3.json` serving a tombstone — the same skew guard as the v2 case
+     above. This serves the EXACT bytes the v3 tombstone route emits. */
+  const family = validFilerFamily();
+  const tombstone = JSON.parse('{"v":4,"kind":"filer-index-upgrade-required"}');
   const r = await runFilerWith(tombstone, family.shards, family.cik);
   assert.equal(r.state, "version_mismatch", "a version discriminator mismatch is not bad_payload");
   assert.deepEqual(r.urls, [FILER_INDEX_PATH], "a mismatched version must not go on to fetch shards");
@@ -637,7 +653,7 @@ test("member happy path over real dist-cut bytes (cut member)", async () => {
   await handle.done;
   assert.equal(handle.state(), "body");
   const html = h.renders.at(-1)!;
-  assert.ok(html.includes("bioguide"), "member body renders");
+  assert.ok(html.includes("member ID"), "member body renders");
   assert.ok(html.includes("<caption"), "same real-table renderer as SSR");
   assert.equal(pages.size, 10, "exactly the budgeted member pages were emitted");
 });

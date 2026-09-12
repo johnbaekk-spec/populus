@@ -340,7 +340,7 @@ test("truncation is STATED on the page — never a silent cut", () => {
   assert.match(html, /Truncated by Public Filings\./);
   assert.match(html, /6<\/strong> further records are not published here/);
   assert.match(html, /The cut falls at/);
-  assert.match(html, /64-shard budget/);
+  assert.match(html, /64-file publication limit/);
 });
 
 /* ---------- 5. every row carries issuer, period, filed date, lag ---------- */
@@ -708,10 +708,9 @@ test("the feed states how much of the ordered set it shows, and where the rest i
      never is — so this asserts each in its own element. */
   assert.match(
     html,
-    /<span class="compact-bound-count">Showing the first 10 of the 50 rows rendered here/,
+    /<span class="compact-bound-count">Showing the first 10 of the 50 rows on this page/,
     "the render bound, visible, in the clause expanding is allowed to retract",
   );
-  assert.match(html, /a Public Filings render bound, not a data bound/, "the author of the cut is named");
   assert.match(
     html,
     /<span class="compact-bound-extra">[^<]*These rows are the largest of 300 ordered change records/,

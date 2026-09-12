@@ -4,17 +4,23 @@ import { renderParitySurfaces } from './lib/ui-parity-surfaces.ts';
 import { unavailableDesignPanel } from '../src/lib/ui/index.ts';
 import { feedHeadHtml, txnRowHtml, type TxnRow } from '../src/lib/format.ts';
 
-test('reference member bands remain in reading order even without annual and overlap data', async () => {
+test('R16: member bands read identity → chart → tickers ranked → transactions → signals; the empty annual/overlap frames are ONE planned line', async () => {
   const html = (await renderParitySurfaces()).memberBody!;
-  const titles = ['Holdings from annual disclosure', 'Reconciliation', 'Net disclosed flow by ticker', 'Trading profile', 'All disclosed transactions', 'Filing history', 'Institutional overlap'];
+  const titles = ['Disclosed flow by quarter', 'Net disclosed flow by ticker', 'Trading profile', 'All disclosed transactions', 'Filing history'];
   let previous = -1;
   for (const title of titles) {
     const at = html.indexOf(`>${title}</h2>`);
     assert.ok(at > previous, `${title} must be present in source reading order`);
     previous = at;
   }
-  assert.match(html, /annual financial-disclosure|Annual financial-disclosure/);
-  assert.match(html, /annual records unavailable/);
+  for (const gone of ['Holdings from annual disclosure', 'Reconciliation', 'Institutional overlap']) {
+    assert.ok(!html.includes(`>${gone}</h2>`), `${gone} is no longer a frame on the page`);
+  }
+  assert.doesNotMatch(html, /annual records unavailable|join unavailable/, 'no em-dash stat tiles remain');
+  assert.equal((html.match(/class="planned-line"/g) ?? []).length, 1, 'exactly one planned line');
+  assert.match(html, /planned-line"><span class="badge-planned">PLANNED<\/span> annual holdings · 13F overlap</);
+  // the honesty fold: the relocated explainer is still on the page
+  assert.match(html, /Annual holdings are not in this view/);
 });
 
 test('reference feed keeps eight matching columns, unknown amount, owner and both dates', () => {
@@ -31,13 +37,12 @@ test('reference feed keeps eight matching columns, unknown amount, owner and bot
   assert.doesNotMatch(html,/\$0/);
 });
 
-test('unavailable panels retain table semantics and escape all supplied content', () => {
+test('R24: an unavailable surface is one stated line (no empty frame) and escapes all supplied content', () => {
   const html = unavailableDesignPanel('<Title>', '<period>', ['<Column>', 'Value'], '<Missing>');
   assert.match(html, /&lt;Title&gt;/);
-  assert.match(html, /&lt;Missing&gt;/);
-  assert.match(html, /colspan="2"/);
-  assert.match(html, /Not available in this build/);
-  assert.doesNotMatch(html, /<Missing>|<Column>/);
+  assert.match(html, /&lt;Missing&gt;/, 'the reason is still stated');
+  assert.match(html, /not available in this build/);
+  assert.doesNotMatch(html, /<Missing>|<Column>|<table/);
 });
 
 test('filer weight requires a complete, fully valued book', async () => {
@@ -59,14 +64,15 @@ test('design label exemption cannot exempt unsupported analytical claims', async
 });
 
 
-test('eight-row feed paging retains every transaction and trailing paper filing', async () => {
+test('fifty-row feed paging (R12) retains every transaction and trailing paper filing', async () => {
   const {pageSlice, pageCountFor, feedCountText, DESIGN_FEED_PAGE_SIZE} = await import('../src/lib/format.ts');
-  const rows = Array.from({length:16}, (_,i) => ({kind:'txn',txnId:String(i)})) as any[];
+  assert.equal(DESIGN_FEED_PAGE_SIZE, 50);
+  const rows = Array.from({length:100}, (_,i) => ({kind:'txn',txnId:String(i)})) as any[];
   rows.push({kind:'paper',doc:'trailing'});
   const pages = Array.from({length:pageCountFor(rows,DESIGN_FEED_PAGE_SIZE)}, (_,page)=>pageSlice(rows,page,DESIGN_FEED_PAGE_SIZE));
-  assert.deepEqual(pages.map(p=>p.length), [8,8,1]);
+  assert.deepEqual(pages.map(p=>p.length), [50,50,1]);
   assert.deepEqual(pages.flat(),rows);
-  assert.match(feedCountText({page:1,pageSize:8,txnMatched:16,paperMatched:1,txnOnPage:8,paperOnPage:0,txnTotal:16,indeterminate:0}),/^9–16/);
+  assert.match(feedCountText({page:1,pageSize:50,txnMatched:100,paperMatched:1,txnOnPage:50,paperOnPage:0,txnTotal:100,indeterminate:0}),/^51–100/);
 });
 
 test('reference ticker ranks keep count bars and distinct member totals on sort repaint', async () => {

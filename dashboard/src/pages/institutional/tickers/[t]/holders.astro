@@ -1,80 +1,130 @@
 ---
-// 13F holders deep view, bound to
-// agg_issuer_top_holders via the ticker→issuer mapping contract: static
-// paths exist ONLY for tickers that resolve through the mapping AND whose
-// issuer is entity-keyed in the aggregate — i.e. as-of-resolved identity, the
-// same standard the full holder list below is served under.
+// 13F holders deep view (R20). Two data paths, one route:
 //
-// Two sections, deliberately not merged: the ranked top-N slice from
-// agg_issuer_top_holders (unchanged), then <HoldingsTable>, which serves the
-// as-of-resolved holder list from the M2-8 issuer projection with the
-// unresolved row count, unresolved value and identity coverage BESIDE it. That
-// projection carries per-row filed dates, lags and document links, so those
-// columns are no longer dropped there — the caveat on the aggregate table
-// still applies to the aggregate table.
+//   * REVIEWED (Tier C) tickers — every ticker the name-and-class mapping
+//     names generates a page from the class-grain `agg_ticker_holders` family:
+//     identity, four stats (holders · combined value · adds · exits), holders
+//     ranked by value with Δ shares and kind, the R19 overlap band, and the
+//     link to the Congress ticker page. No entity-keyed gate.
+//   * ENTITY-keyed issuers — the pre-existing path (agg_issuer_top_holders via
+//     the present-day ticker map + <HoldingsTable>), kept for tickers the
+//     mapping does not name but the entity join resolves.
+//
+// When both resolve, the ENTITY path wins: entity-keyed resolution is the
+// stronger identity claim and stays as-is (LD2); the reviewed mapping fills
+// in every ticker the entity join cannot reach.
 import Base from "../../../../layouts/Base.astro";
 import HoldingsTable from "../../../../components/HoldingsTable.astro";
-import { getBuildData, filerTier } from "../../../../lib/data";
-import { holdersFor, issuerPeriods } from "../../../../lib/inst";
-import { holdersBody } from "../../../../lib/ui/index.ts";
+import { getBuildData, filerTier, notableMovesPeriods, holdersPageTickers } from "../../../../lib/data";
+import { holdersFor, issuerPeriods, rankedTickerHolders, tickerTotalsFor } from "../../../../lib/inst";
+import { holdersBody, tickerHoldersBody } from "../../../../lib/ui/index.ts";
 import { filingWindow, resolveTicker } from "../../../../lib/derive";
 import { serializeInlineJson } from "../../../../lib/inline-json";
+import { overlapBand, overlapBandHtml } from "../../../../lib/overlap";
+import { filerHref } from "../../../../lib/holdings";
+import { congressTickerHref, pathSafeTicker, type RenderCtx } from "../../../../lib/format";
+
+type Props =
+  | { mode: "mapped"; ticker: string }
+  | { mode: "entity"; issuerKey: string; name: string };
 
 export function getStaticPaths() {
   const build = getBuildData();
   if (!build.inst.present) return [];
-  const paths: { params: { t: string }; props: { issuerKey: string; name: string } }[] = [];
+  const paths: { params: { t: string }; props: Props }[] = [];
+  const seen = new Set<string>();
   for (const t of build.tickers) {
+    if (!pathSafeTicker(t.ticker)) continue;
     const res = resolveTicker(build.tickerMap, t.ticker);
     if (res.state !== "resolved") continue;
     const rows = build.inst.holdersByIssuer.get(res.issuerKey) ?? [];
     if (!rows.some((r) => r.issuer_key_source === "entity")) continue;
-    paths.push({ params: { t: t.ticker }, props: { issuerKey: res.issuerKey, name: res.name } });
+    seen.add(t.ticker);
+    paths.push({ params: { t: t.ticker }, props: { mode: "entity", issuerKey: res.issuerKey, name: res.name } });
+  }
+  // Reviewed tickers: the ONE budgeted set (`holdersPageTickers`) that the
+  // Congress ticker page's link and the post-build resolver also read.
+  for (const t of holdersPageTickers(build).keys()) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    paths.push({ params: { t }, props: { mode: "mapped", ticker: t } });
   }
   return paths;
 }
 
 const { t } = Astro.params;
-const { issuerKey, name } = Astro.props as { issuerKey: string; name: string };
+const props = Astro.props as Props;
 const build = getBuildData();
 const inst = build.inst;
 if (!inst.present) throw new Error("holders page built without the inst module");
-const periods = issuerPeriods(inst, issuerKey);
-const period = periods.at(-1)!;
-// The top/tail budget state rides on every holder row — through the SSR
-// body AND the embedded period payload below — so the client period switch
-// re-renders the same filerHref targets the SSR produced.
-const holders = (inst.holdersByIssuer.get(issuerKey) ?? [])
-  .filter((h) => h.issuer_key_source === "entity")
-  .map((h) => ({ ...h, tier: filerTier(build, h.cik) }));
 const window = filingWindow(build.generatedAtDate);
+const ssrCtx: RenderCtx = { watched: new Set(), cutMembers: build.cutMembers, cutTickers: build.cutTickers };
+const hrefOf = (cik: string): string => filerHref(cik, filerTier(build, cik));
 
-const bodyHtml = holdersBody(
-  t!,
-  name,
-  holders,
-  periods,
-  period,
-  inst.watermarks.latest_filed_date,
-  inst.topn,
-  window,
-);
-
-const periodData = serializeInlineJson({
-  latestFiled: inst.watermarks.latest_filed_date,
-  topn: inst.topn,
-  periods: Object.fromEntries(
-    periods.map((p) => [
-      p,
-      holdersFor(inst, issuerKey, p)
-        .filter((h) => h.issuer_key_source === "entity")
-        .map((h) => ({ ...h, tier: filerTier(build, h.cik) })),
-    ]),
-  ),
-});
+let bodyHtml: string;
+let periodData: string;
+let entityProps: { issuerKey: string; name: string; period: string } | null = null;
+if (props.mode === "mapped") {
+  const totals = tickerTotalsFor(inst, props.ticker)!;
+  const period = totals.period_of_report;
+  const holders = rankedTickerHolders(inst, props.ticker, period);
+  const congressEntity = build.tickersByKey.get(props.ticker) ?? null;
+  const overlapHtml = overlapBandHtml(
+    overlapBand({
+      ticker: props.ticker,
+      txns: congressEntity?.txns ?? [],
+      generatedAtDate: build.generatedAtDate,
+      inst,
+      typingByCik: inst.typingByCik,
+      period: notableMovesPeriods(build)[0] ?? null,
+      ctx: ssrCtx,
+      filerHref: hrefOf,
+    }),
+    ssrCtx,
+    hrefOf,
+  );
+  bodyHtml = tickerHoldersBody({
+    ticker: props.ticker,
+    totals,
+    holders,
+    tierOf: (cik) => filerTier(build, cik),
+    latestFiled: inst.watermarks.latest_filed_date,
+    overlapHtml,
+    congress: congressEntity
+      ? { members: new Set(congressEntity.txns.map((r) => r.bioguide ?? `raw:${r.name}`)).size, href: congressTickerHref(props.ticker) }
+      : null,
+    window,
+  });
+} else {
+  const { issuerKey, name } = props;
+  const periods = issuerPeriods(inst, issuerKey);
+  const period = periods.at(-1)!;
+  const holders = (inst.holdersByIssuer.get(issuerKey) ?? [])
+    .filter((h) => h.issuer_key_source === "entity")
+    .map((h) => ({ ...h, tier: filerTier(build, h.cik) }));
+  bodyHtml = holdersBody(t!, name, holders, periods, period, inst.watermarks.latest_filed_date, inst.topn, window);
+  periodData = serializeInlineJson({
+    latestFiled: inst.watermarks.latest_filed_date,
+    topn: inst.topn,
+    periods: Object.fromEntries(
+      periods.map((p) => [
+        p,
+        holdersFor(inst, issuerKey, p)
+          .filter((h) => h.issuer_key_source === "entity")
+          .map((h) => ({ ...h, tier: filerTier(build, h.cik) })),
+      ]),
+    ),
+  });
+  entityProps = { issuerKey, name, period };
+  // The period payload rides inside the body string (the same inline-JSON
+  // primitive every other embed uses); a conditional `<script>` element in the
+  // template did not reach the page, which left the sort island unbound.
+  bodyHtml += `<script type="application/json" id="holders-period-data">${periodData}</script>`;
+}
 const description =
-  `Institutional holders of ${t} per 13F filings — the as-of-resolved holder list with the ` +
-  `unresolved remainder counted beside it; quarter-end snapshots, never current holdings.`;
+  props.mode === "mapped"
+    ? `Institutional holders of ${t} per 13F filings for the closed quarter — ranked by reported value with share changes; quarter-end snapshots, never current holdings.`
+    : `Institutional holders of ${t} per 13F filings — the as-of-resolved holder list with the unresolved remainder counted beside it; quarter-end snapshots, never current holdings.`;
 ---
 
 <Base
@@ -85,27 +135,20 @@ const description =
 >
   <main class="shell page entity-page">
     <Fragment set:html={bodyHtml} />
-    <HoldingsTable
-      kind="holders"
-      issuerKey={issuerKey}
-      issuerName={name}
-      ticker={t!}
-      period={period}
-    />
-    <script is:inline type="application/json" id="holders-period-data" set:html={periodData} />
+    {entityProps && (
+      <HoldingsTable
+        kind="holders"
+        issuerKey={entityProps.issuerKey}
+        issuerName={entityProps.name}
+        ticker={t!}
+        period={entityProps.period}
+      />
+    )}
   </main>
   <script>
     import { initHoldersPeriods } from "../../../../scripts/entity-client";
     import { initNotes } from "../../../../scripts/notes";
     initHoldersPeriods();
-    /* One `initNotes()` per surface that passes a note scope. Binding
-       is DELEGATED on `document`, so one call covers notes created later by an
-       `innerHTML` replacement — a sort repaint, a page change, a period switch —
-       and a second call would be idempotent. It is NOT added to `Base.astro`:
-       that would load the module on every page in the site, including the ones
-       this run does not touch, for no benefit. Without it a note still OPENS,
-       through `popovertarget` alone; what this adds is placement, hover, Escape
-       and outside-click. */
     initNotes();
   </script>
 </Base>

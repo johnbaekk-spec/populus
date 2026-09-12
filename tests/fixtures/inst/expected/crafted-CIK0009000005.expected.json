@@ -232,7 +232,7 @@
       "parse_status": "parsed",
       "failure_kind": null,
       "lifecycle": "active",
-      "flags": "[\"affiliated_mutual_coverage\"]",
+      "flags": "[\"affiliated_shared_discretion\"]",
       "doc_url": "https://www.sec.gov/Archives/edgar/data/9000005/000900000524000003/primary_doc.xml",
       "table_url": "https://www.sec.gov/Archives/edgar/data/9000005/000900000524000003/cov_mut.xml",
       "table_filename": "cov_mut.xml",

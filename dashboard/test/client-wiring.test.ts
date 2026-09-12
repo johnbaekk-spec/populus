@@ -139,7 +139,8 @@ test("feed wiring: a stale v1 dataset surfaces the load-failure state, not v2-of
   const restore = dom.install(dataset([txn()], [], 1));
   try {
     const { initFeed } = await import("../src/scripts/feed-client.ts");
-    initFeed();
+    // R12: the full dataset loads on demand; ask for it the way a filter does.
+    void initFeed().loadAll();
     await dom.flush();
     // Force a client render so the pending-apply path resolves the failure.
     await dom.flush();

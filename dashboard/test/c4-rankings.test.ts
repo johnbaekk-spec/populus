@@ -146,11 +146,10 @@ test("ranking body: the render bound is STATED VISIBLY by the server, counts sur
   const html = section("tickers", congressTickersRollup(rows, NOW, { range: "12m", basis: "traded" }), {
     compact: 1,
   });
-  assert.match(html, /1 further ranked\s+tickers are not rendered above/);
-  assert.match(html, /a Public Filings render bound, not a data bound/, "the author of the cut is named");
+  assert.match(html, /1 more ranked\s+tickers below/);
   assert.match(
     html,
-    /<span class="compact-bound-count">1 further ranked/,
+    /<span class="compact-bound-count">1 more ranked/,
     "…in a span with NO hidden attribute — the no-JS reader is the reason this exists",
   );
   assert.match(

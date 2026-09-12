@@ -42,12 +42,14 @@ from populus.manager_registry import (
     enforce_manager_registry_join,
     join_manager_registry,
     load_manager_registry,
+    succession_map,
 )
 from pathlib import Path
 from typing import Any
 
 from populus.amendments import _INST_AGG_INPUT_NAME, ensure_views
 from populus.normalize_inst import NORMALIZATION_VERSION
+from populus.ticker_mapping_13f import load_ticker_mapping, mapping_key
 
 #: Per-issuer top-holders depth (M2-CONTRACT §5.6). The long tail is not in the
 #: aggregate slice; recorded in ``agg_build_meta`` so the cut is legible (TD-M2-3-2).
@@ -216,14 +218,31 @@ def _qoq_row(
     curr: _FinalPosition | None,
     reconciled: bool,
     ingested_at: str,
+    migrated: bool = False,
+    prior_book: bool = True,
 ) -> tuple:
-    """One ``agg_qoq_deltas`` row tuple, with the unit-guarded Δshares."""
+    """One ``agg_qoq_deltas`` row tuple, with the unit-guarded Δshares.
+
+    ``prior_book`` (D2, refinement 20260910 fix): whether the prior side HAS a
+    comparable book — at least one keyable default position for that filer and
+    period. A position is ``new`` only when the filer's prior book exists and
+    omits it. With no prior book (a first filing under this registration, or a
+    prior quarter that is a 13F NOTICE, its book reported inside an affiliate's
+    filing) the position is ``no_prior``: no prior value, no
+    Δ, and never a new stake.
+
+    ``migrated`` (R6): the prior side is a registry-declared PREDECESSOR CIK's
+    last book, not this CIK's own; every row of such a pair carries
+    ``filer_migrated`` so a consumer knows the comparison basis."""
     # A position that existed but disclosed NO parseable value must NOT
     # difference against a fabricated zero. Absence of the
     # position is a real zero; presence with an undisclosed value is not.
     prev_undisclosed = prev is not None and not prev.has_disclosed_value
     curr_undisclosed = curr is not None and not curr.has_disclosed_value
-    prev_value = None if prev_undisclosed else (prev.value_usd if prev else 0)
+    no_prior = prev is None and not prior_book
+    prev_value = (
+        None if prev_undisclosed or no_prior else (prev.value_usd if prev else 0)
+    )
     curr_value = None if curr_undisclosed else (curr.value_usd if curr else 0)
     delta_value = (
         None if prev_value is None or curr_value is None
@@ -236,12 +255,18 @@ def _qoq_row(
     flags: set[str] = set()
     if reconciled:
         flags.add("identity_reconciled_by_cusip")
+    if migrated:
+        flags.add("filer_migrated")
     if prev_undisclosed or curr_undisclosed:
         flags.add("value_undisclosed_one_side")
 
     if prev is None:
-        change_kind = "new"
-        delta_shares = curr_shares
+        if prior_book:
+            change_kind = "new"
+            delta_shares = curr_shares
+        else:
+            change_kind = "no_prior"
+            delta_shares = None
     elif curr is None:
         change_kind = "exit"
         delta_shares = -prev_shares if prev_shares is not None else None
@@ -260,12 +285,17 @@ def _qoq_row(
             flags.add("shares_unit_mismatch")
         if delta_shares is not None and delta_shares != 0:
             change_kind = "add" if delta_shares > 0 else "trim"
-        elif delta_value is not None:
-            change_kind = "add" if delta_value >= 0 else "trim"
-            flags.add("classified_by_value")
+        elif delta_shares == 0:
+            # R8 (refinement 20260910): a position whose SHARE COUNT did not
+            # move is `held` — mark-to-market only. It is never an add or a
+            # trim on the strength of a value change, because a value change
+            # with no share change is a price move, not a decision.
+            change_kind = "held"
         else:
-            # Neither shares nor value can classify this — say so rather than
-            # pick a direction.
+            # Δshares is NULL (a unit mismatch or an undisclosed share count):
+            # neither side can classify this — say so rather than pick a
+            # direction. The value fallthrough that used to sit here is
+            # retired (R8); `classified_by_value` is no longer set.
             change_kind = "unclassified"
             flags.add("change_kind_undeterminable")
 
@@ -286,6 +316,39 @@ def _qoq_row(
         _flags_json(flags),
         ingested_at,
     )
+
+
+def _succession_bridges(
+    filer_periods: dict[str, list[str]],
+    successors: dict[str, tuple[str, ...]],
+) -> dict[tuple[str, str], tuple[str, str]]:
+    """R6: ``(successor cik, its FIRST period) -> (predecessor cik, the
+    predecessor's LAST period before it)`` — the one extra adjacent pair each
+    build path adds, so a manager that re-registered under a new CIK compares
+    its first book against the book it inherited rather than against nothing.
+
+    ONE implementation for both build paths (they must emit identical rows).
+    A predecessor that still files at or after the successor's first period is
+    NOT a succession — no bridge, never a guess. With several predecessors the
+    most recent last-book wins; ties go to the lower CIK.
+    """
+    out: dict[tuple[str, str], tuple[str, str]] = {}
+    for cik, preds in sorted(successors.items()):
+        periods = sorted(set(filer_periods.get(cik, ())))
+        if not periods:
+            continue
+        first = periods[0]
+        best: tuple[str, str] | None = None
+        for pred in sorted(preds):
+            pred_periods = sorted(set(filer_periods.get(pred, ())))
+            if not pred_periods or pred_periods[-1] >= first:
+                continue
+            candidate = (pred, pred_periods[-1])
+            if best is None or candidate[1] > best[1]:
+                best = candidate
+        if best is not None:
+            out[(cik, first)] = best
+    return out
 
 
 def _match_periods(
@@ -479,6 +542,7 @@ _BULK_TEMP_OBJECTS = (
     ("TABLE", "_populus_inst_agg_periods"),
     ("TABLE", "_populus_inst_agg_matches"),
     ("TABLE", "_populus_inst_agg_issuer_names"),
+    ("TABLE", "_populus_inst_agg_issuer_display"),
     ("TABLE", "_populus_inst_agg_issuer_holders"),
     ("INDEX", "_populus_inst_agg_raw_periods_key"),
     ("TABLE", "_populus_inst_agg_raw_periods"),
@@ -704,6 +768,10 @@ def _create_position_stage(
 
 
 def _create_match_stages(conn: sqlite3.Connection) -> None:
+    # `prev_cik` is the filer whose book is the PRIOR side: the filer itself
+    # for every ordinary adjacent pair, a registry-declared predecessor for the
+    # one bridged pair R6 adds (`_succession_bridges`, shared with the python
+    # path so both emit identical rows).
     conn.execute(
         "CREATE TEMP TABLE _populus_inst_agg_periods AS"
         " WITH periods AS ("
@@ -715,22 +783,50 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
         "            (PARTITION BY cik ORDER BY period_of_report) AS prev_period"
         "   FROM periods"
         " )"
-        " SELECT cik, curr_period, prev_period FROM paired"
+        " SELECT cik, curr_period, prev_period, cik AS prev_cik FROM paired"
         " WHERE prev_period IS NOT NULL"
+    )
+    filer_periods: dict[str, list[str]] = defaultdict(list)
+    for cik, period in conn.execute(
+        "SELECT DISTINCT cik, period_of_report FROM temp.v_filer_reported_filings"
+    ):
+        filer_periods[cik].append(period)
+    conn.executemany(
+        "INSERT INTO _populus_inst_agg_periods (cik,curr_period,prev_period,prev_cik)"
+        " VALUES (?,?,?,?)",
+        [
+            (cik, first, pred_period, pred_cik)
+            for (cik, first), (pred_cik, pred_period) in sorted(
+                _succession_bridges(filer_periods, succession_map()).items()
+            )
+        ],
+    )
+    # D2: whether the PRIOR side has a comparable book (any keyable default
+    # position). Same rule as the python path's `prior_book=bool(prev)`.
+    conn.execute(
+        "ALTER TABLE _populus_inst_agg_periods"
+        " ADD COLUMN prev_has_book INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute(
+        "UPDATE _populus_inst_agg_periods SET prev_has_book = EXISTS ("
+        " SELECT 1 FROM _populus_inst_agg_positions a"
+        " WHERE a.cik=_populus_inst_agg_periods.prev_cik"
+        " AND a.period_of_report=_populus_inst_agg_periods.prev_period)"
     )
     conn.execute(
         "CREATE TEMP TABLE _populus_inst_agg_matches ("
         " cik TEXT NOT NULL, curr_period TEXT NOT NULL, prev_period TEXT NOT NULL,"
         " prev_id INTEGER NOT NULL UNIQUE, curr_id INTEGER NOT NULL UNIQUE,"
-        " reconciled INTEGER NOT NULL)"
+        " reconciled INTEGER NOT NULL, migrated INTEGER NOT NULL)"
     )
     conn.execute(
         "INSERT INTO _populus_inst_agg_matches"
-        " (cik,curr_period,prev_period,prev_id,curr_id,reconciled)"
-        " SELECT p.cik,p.curr_period,p.prev_period,a.rowid,b.rowid,0"
+        " (cik,curr_period,prev_period,prev_id,curr_id,reconciled,migrated)"
+        " SELECT p.cik,p.curr_period,p.prev_period,a.rowid,b.rowid,0,"
+        "        (p.prev_cik<>p.cik)"
         " FROM _populus_inst_agg_periods p"
         " JOIN _populus_inst_agg_positions a"
-        "   ON a.cik=p.cik AND a.period_of_report=p.prev_period"
+        "   ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period"
         " JOIN _populus_inst_agg_positions b"
         "   ON b.cik=p.cik AND b.period_of_report=p.curr_period"
         "  AND b.position_key=a.position_key AND b.put_call=a.put_call"
@@ -738,13 +834,13 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "WITH prev AS ("
-        " SELECT p.cik,p.curr_period,p.prev_period,a.rowid AS id,"
+        " SELECT p.cik,p.curr_period,p.prev_period,p.prev_cik,a.rowid AS id,"
         "        a.position_key,a.put_call,"
         "        COUNT(*) OVER (PARTITION BY p.cik,p.curr_period,"
         "          a.position_key,a.put_call) AS n"
         " FROM _populus_inst_agg_periods p"
         " JOIN _populus_inst_agg_positions a"
-        "  ON a.cik=p.cik AND a.period_of_report=p.prev_period"
+        "  ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period"
         " LEFT JOIN _populus_inst_agg_matches m ON m.prev_id=a.rowid"
         " WHERE m.prev_id IS NULL"
         "), curr AS ("
@@ -759,8 +855,8 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
         " WHERE m.curr_id IS NULL"
         ")"
         " INSERT INTO _populus_inst_agg_matches"
-        " (cik,curr_period,prev_period,prev_id,curr_id,reconciled)"
-        " SELECT p.cik,p.curr_period,p.prev_period,p.id,c.id,0"
+        " (cik,curr_period,prev_period,prev_id,curr_id,reconciled,migrated)"
+        " SELECT p.cik,p.curr_period,p.prev_period,p.id,c.id,0,(p.prev_cik<>p.cik)"
         " FROM prev p JOIN curr c"
         " ON c.cik=p.cik AND c.curr_period=p.curr_period"
         " AND c.position_key=p.position_key AND c.put_call=p.put_call"
@@ -768,13 +864,13 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "WITH prev AS ("
-        " SELECT p.cik,p.curr_period,p.prev_period,a.rowid AS id,"
+        " SELECT p.cik,p.curr_period,p.prev_period,p.prev_cik,a.rowid AS id,"
         "        a.single_cusip,a.put_call,a.position_key,"
         "        COUNT(*) OVER (PARTITION BY p.cik,p.curr_period,"
         "          a.single_cusip,a.put_call) AS n"
         " FROM _populus_inst_agg_periods p"
         " JOIN _populus_inst_agg_positions a"
-        "  ON a.cik=p.cik AND a.period_of_report=p.prev_period"
+        "  ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period"
         " LEFT JOIN _populus_inst_agg_matches m ON m.prev_id=a.rowid"
         " WHERE m.prev_id IS NULL AND a.single_cusip IS NOT NULL"
         "), curr AS ("
@@ -789,8 +885,8 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
         " WHERE m.curr_id IS NULL AND b.single_cusip IS NOT NULL"
         ")"
         " INSERT INTO _populus_inst_agg_matches"
-        " (cik,curr_period,prev_period,prev_id,curr_id,reconciled)"
-        " SELECT p.cik,p.curr_period,p.prev_period,p.id,c.id,1"
+        " (cik,curr_period,prev_period,prev_id,curr_id,reconciled,migrated)"
+        " SELECT p.cik,p.curr_period,p.prev_period,p.id,c.id,1,(p.prev_cik<>p.cik)"
         " FROM prev p JOIN curr c"
         " ON c.cik=p.cik AND c.curr_period=p.curr_period"
         " AND c.single_cusip=p.single_cusip AND c.put_call=p.put_call"
@@ -802,12 +898,13 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
 _QOQ_SOURCE_SQL = """
 WITH pairs AS (
  SELECT m.cik,m.curr_period,m.prev_period,b.position_key,b.put_call,
-        b.grain_unit,m.reconciled,m.prev_id,m.curr_id
+        b.grain_unit,m.reconciled,m.migrated,m.prev_id,m.curr_id,
+        1 AS prev_has_book
  FROM _populus_inst_agg_matches m
  JOIN _populus_inst_agg_positions b ON b.rowid=m.curr_id
  UNION ALL
  SELECT p.cik,p.curr_period,p.prev_period,b.position_key,b.put_call,
-        b.grain_unit,0,NULL,b.rowid
+        b.grain_unit,0,(p.prev_cik<>p.cik),NULL,b.rowid,p.prev_has_book
  FROM _populus_inst_agg_periods p
  JOIN _populus_inst_agg_positions b
   ON b.cik=p.cik AND b.period_of_report=p.curr_period
@@ -815,15 +912,16 @@ WITH pairs AS (
  WHERE m.curr_id IS NULL
  UNION ALL
  SELECT p.cik,p.curr_period,p.prev_period,a.position_key,a.put_call,
-        a.grain_unit,0,a.rowid,NULL
+        a.grain_unit,0,(p.prev_cik<>p.cik),a.rowid,NULL,1
  FROM _populus_inst_agg_periods p
  JOIN _populus_inst_agg_positions a
-  ON a.cik=p.cik AND a.period_of_report=p.prev_period
+  ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period
  LEFT JOIN _populus_inst_agg_matches m ON m.prev_id=a.rowid
  WHERE m.prev_id IS NULL
 ), sides AS (
  SELECT q.*,
-   CASE WHEN q.prev_id IS NULL THEN 0 WHEN a.has_disclosed_value=0 THEN NULL ELSE a.value_usd END AS prev_value,
+   CASE WHEN q.prev_id IS NULL THEN CASE WHEN q.prev_has_book THEN 0 ELSE NULL END
+        WHEN a.has_disclosed_value=0 THEN NULL ELSE a.value_usd END AS prev_value,
    CASE WHEN q.curr_id IS NULL THEN 0 WHEN b.has_disclosed_value=0 THEN NULL ELSE b.value_usd END AS curr_value,
    a.shares AS prev_shares,b.shares AS curr_shares,
    (a.clean_unit IS NOT NULL AND b.clean_unit IS NOT NULL
@@ -836,22 +934,21 @@ WITH pairs AS (
 ), deltas AS (
  SELECT *,CASE WHEN prev_value IS NULL OR curr_value IS NULL THEN NULL
                ELSE curr_value-prev_value END AS delta_value,
-   CASE WHEN prev_id IS NULL THEN curr_shares
+   CASE WHEN prev_id IS NULL THEN CASE WHEN prev_has_book THEN curr_shares ELSE NULL END
         WHEN curr_id IS NULL THEN -prev_shares
         WHEN units_ok THEN curr_shares-prev_shares ELSE NULL END AS delta_shares
  FROM sides
 ), classified AS (
- SELECT *,CASE WHEN prev_id IS NULL THEN 'new' WHEN curr_id IS NULL THEN 'exit'
+ SELECT *,CASE WHEN prev_id IS NULL
+          THEN CASE WHEN prev_has_book THEN 'new' ELSE 'no_prior' END
+        WHEN curr_id IS NULL THEN 'exit'
         WHEN delta_shares IS NOT NULL AND delta_shares<>0
           THEN CASE WHEN delta_shares>0 THEN 'add' ELSE 'trim' END
-        WHEN delta_value IS NOT NULL
-          THEN CASE WHEN delta_value>=0 THEN 'add' ELSE 'trim' END
+        WHEN delta_shares=0 THEN 'held'
         ELSE 'unclassified' END AS change_kind,
    (prev_id IS NOT NULL AND curr_id IS NOT NULL AND NOT units_ok) AS shares_mismatch,
    (prev_id IS NOT NULL AND curr_id IS NOT NULL
-    AND (delta_shares IS NULL OR delta_shares=0) AND delta_value IS NOT NULL) AS by_value,
-   (prev_id IS NOT NULL AND curr_id IS NOT NULL
-    AND (delta_shares IS NULL OR delta_shares=0) AND delta_value IS NULL) AS undeterminable
+    AND delta_shares IS NULL) AS undeterminable
  FROM deltas
 )
 SELECT cik,position_key,put_call,curr_period,prev_period,change_kind,
@@ -859,7 +956,7 @@ SELECT cik,position_key,put_call,curr_period,prev_period,change_kind,
        grain_unit AS ssh_prnamt_type,
        '[' || rtrim(
          CASE WHEN undeterminable THEN '"change_kind_undeterminable",' ELSE '' END ||
-         CASE WHEN by_value THEN '"classified_by_value",' ELSE '' END ||
+         CASE WHEN migrated THEN '"filer_migrated",' ELSE '' END ||
          CASE WHEN reconciled THEN '"identity_reconciled_by_cusip",' ELSE '' END ||
          CASE WHEN shares_mismatch THEN '"shares_unit_mismatch",' ELSE '' END ||
          CASE WHEN value_undisclosed THEN '"value_undisclosed_one_side",' ELSE '' END,
@@ -1017,14 +1114,15 @@ def _build_inst_agg_python(
                 "source": source,
                 "value_usd": 0,
                 "tokens": set(),
-                "issuer_name": issuer_name_raw,
+                # R9: every contributing name, weighted by holding row; the
+                # display name is chosen by `display_issuer_name` at emission.
+                "names": [],
             },
         )
         if value_usd is not None:
             bucket["value_usd"] += value_usd
         bucket["tokens"].add(pk if pk is not None else f"row:{holding_id}")
-        if issuer_name_raw < bucket["issuer_name"]:
-            bucket["issuer_name"] = issuer_name_raw
+        bucket["names"].append(issuer_name_raw)
 
         # NOTE: per-filer concentration is NOT accumulated here. This loop
         # reads v_default_holdings, which suppresses a filer covered by an
@@ -1104,6 +1202,7 @@ def _build_inst_agg_python(
     for key, group in positions.items():
         final_positions[key] = {k: _finalize(pos) for k, pos in group.items()}
     qoq_rows: list[tuple] = []
+    bridges = _succession_bridges(filer_periods, succession_map())
     for cik in sorted(filer_periods):
         # CONSECUTIVE periods of the filing universe — never a bridge across an
         # intervening quarter that reported no keyable positions, which would
@@ -1111,8 +1210,14 @@ def _build_inst_agg_python(
         # positions compares as an EMPTY side, so its neighbours read as genuine
         # exits and new positions.
         ordered = sorted(set(filer_periods[cik]))
-        for prev_period, curr_period in zip(ordered, ordered[1:]):
-            prev = final_positions.get((cik, prev_period), {})
+        # (prev_cik, prev_period, curr_period, migrated). The registry-declared
+        # succession bridge (R6) is ONE extra pair in front of the filer's own.
+        pairs = [(cik, p, c, False) for p, c in zip(ordered, ordered[1:])]
+        bridge = bridges.get((cik, ordered[0]))
+        if bridge is not None:
+            pairs.insert(0, (bridge[0], bridge[1], ordered[0], True))
+        for prev_cik, prev_period, curr_period, migrated in pairs:
+            prev = final_positions.get((prev_cik, prev_period), {})
             curr = final_positions.get((cik, curr_period), {})
             if not prev and not curr:
                 continue  # nothing keyable on either side — no delta to state
@@ -1123,6 +1228,7 @@ def _build_inst_agg_python(
                         cik=cik, curr_period=curr_period, prev_period=prev_period,
                         position_key=pk, put_call=put_call, unit=unit, prev=prev_pos,
                         curr=curr_pos, reconciled=False, ingested_at=ingested_at,
+                        migrated=migrated,
                     )
                 )
             for (pk, put_call, unit), prev_pos, curr_pos in reconciled:
@@ -1131,6 +1237,7 @@ def _build_inst_agg_python(
                         cik=cik, curr_period=curr_period, prev_period=prev_period,
                         position_key=pk, put_call=put_call, unit=unit, prev=prev_pos,
                         curr=curr_pos, reconciled=True, ingested_at=ingested_at,
+                        migrated=migrated,
                     )
                 )
             for kind, (pk, put_call, unit), pos in unmatched:
@@ -1141,6 +1248,7 @@ def _build_inst_agg_python(
                         prev=None if kind == "new" else pos,
                         curr=pos if kind == "new" else None,
                         reconciled=False, ingested_at=ingested_at,
+                        migrated=migrated, prior_book=bool(prev),
                     )
                 )
 
@@ -1250,6 +1358,49 @@ def _adds_issuer_name(names: list[str | None]) -> str | None:
     if not counts:
         return None
     return min(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+
+
+def display_issuer_name(
+    names: Iterable[str | None], weights: Iterable[int] | None = None
+) -> str | None:
+    """ONE issuer display-name rule (R9), mirrored EXACTLY by
+    `displayIssuerName` in `dashboard/src/lib/format.ts`; the shared fixture
+    `tests/fixtures/refinement/display_issuer_name_cases.json` pins both.
+
+    Generalizes `_adds_issuer_name` (modal, ties lexicographic) with the
+    filters the landing surfaces needed: a pure-numeric candidate (a CUSIP
+    filed where a name belongs), a candidate of three characters or fewer, and
+    a digit-leading candidate are each dropped — but ONLY while another
+    candidate survives, so an issuer that was never named better still gets
+    its filed name rather than nothing. Ties go to the more frequent, then the
+    longer, then codepoint order. The token `TR` folds to `TRUST` and every
+    token is title-cased. Null only when every contributor is null.
+    """
+    counts: dict[str, int] = {}
+    weight_list = list(weights) if weights is not None else None
+    for index, raw in enumerate(names):
+        if raw is None:
+            continue
+        name = " ".join(str(raw).split())
+        if not name:
+            continue
+        weight = weight_list[index] if weight_list is not None else 1
+        key = name.upper()
+        counts[key] = counts.get(key, 0) + int(weight)
+    if not counts:
+        return None
+    candidates = list(counts)
+    for drop in (
+        lambda n: n.isdigit(),
+        lambda n: len(n) <= 3,
+        lambda n: n[0].isdigit(),
+    ):
+        kept = [c for c in candidates if not drop(c)]
+        if kept:
+            candidates = kept
+    best = min(candidates, key=lambda n: (-counts[n], -len(n), n))
+    tokens = ["TRUST" if t == "TR" else t for t in best.split()]
+    return " ".join(t[:1].upper() + t[1:].lower() for t in tokens)
 
 
 def _adds_sum(values: list[int | None]) -> tuple[int | None, bool]:
@@ -1404,7 +1555,7 @@ def _issuer_rows(
                     rank,
                     cik,
                     filers.get(cik, {}).get("filer_name", cik),
-                    data["issuer_name"],
+                    display_issuer_name(data["names"]) or "",
                     data["source"],
                     data["value_usd"],
                     len(data["tokens"]),
@@ -1489,6 +1640,10 @@ _QOQ_CHANGE_KIND_CODES = {
     "trim": 2,
     "exit": 3,
     "unclassified": 4,
+    # R8: Δshares == 0 — mark-to-market only, no share change.
+    "held": 5,
+    # D2: the prior side has no comparable book — never a new stake.
+    "no_prior": 6,
 }
 _QOQ_UNIT_CODES = {"SH": 0, "PRN": 1, "UNKNOWN": 2}
 _QOQ_FLAG_BITS = {
@@ -1497,12 +1652,14 @@ _QOQ_FLAG_BITS = {
     "identity_reconciled_by_cusip": 4,
     "shares_unit_mismatch": 8,
     "value_undisclosed_one_side": 16,
+    # R6 (LD5): the prior side came from a registry-declared predecessor CIK.
+    "filer_migrated": 32,
 }
 _QOQ_FLAG_MASKS = {
     _flags_json(
         {flag for flag, bit in _QOQ_FLAG_BITS.items() if mask & bit}
     ): mask
-    for mask in range(32)
+    for mask in range(64)
 }
 
 _QOQ_SCHEMA_SENTINELS = (
@@ -1717,9 +1874,9 @@ def _validate_compact_qoq_schema(
         " WHERE f.filer_id IS NULL OR cp.period_id IS NULL"
         " OR pp.period_id IS NULL"
         " OR q.put_call_code NOT BETWEEN 0 AND 2"
-        " OR q.change_kind_code NOT BETWEEN 0 AND 4"
+        " OR q.change_kind_code NOT BETWEEN 0 AND 6"
         " OR q.unit_code NOT BETWEEN 0 AND 2"
-        " OR q.flags_mask NOT BETWEEN 0 AND 31 LIMIT 1"
+        " OR q.flags_mask NOT BETWEEN 0 AND 63 LIMIT 1"
     ).fetchone()
     if invalid is not None:
         if invalid[0] == "orphan":
@@ -1965,7 +2122,8 @@ def _create_issuer_stages(
         "CREATE TEMP TABLE _populus_inst_agg_issuer_names ("
         " cik TEXT NOT NULL, period_of_report TEXT NOT NULL,"
         " normalized_name TEXT NOT NULL, issuer_name_raw TEXT NOT NULL,"
-        " value_usd INTEGER NOT NULL, security_token TEXT NOT NULL)"
+        " value_usd INTEGER NOT NULL, security_token TEXT NOT NULL,"
+        " row_count INTEGER NOT NULL)"
     )
     cursor = source.execute(
         f"WITH keyed AS (SELECT cik,period_of_report,issuer_name_raw,value_usd,"
@@ -1977,7 +2135,7 @@ def _create_issuer_stages(
         f" AND NOT (entity_id IS NOT NULL AND entity_link_state='resolved')"
         f" AND (cusip IS NULL OR length(cusip)<6))"
         f" SELECT cik,period_of_report,issuer_name_raw,"
-        f"        COALESCE(SUM(value_usd),0),security_token FROM keyed"
+        f"        COALESCE(SUM(value_usd),0),security_token,COUNT(*) FROM keyed"
         f" GROUP BY cik,period_of_report,issuer_name_raw,security_token"
     )
     while True:
@@ -1986,13 +2144,13 @@ def _create_issuer_stages(
         if not batch:
             break
         normalized = [
-            (row[0], row[1], _norm_issuer_name(row[2]), row[2], row[3], row[4])
+            (row[0], row[1], _norm_issuer_name(row[2]), row[2], row[3], row[4], row[5])
             for row in batch
         ]
         source.executemany(
             "INSERT INTO _populus_inst_agg_issuer_names"
             " (cik,period_of_report,normalized_name,issuer_name_raw,"
-            "  value_usd,security_token) VALUES (?,?,?,?,?,?)",
+            "  value_usd,security_token,row_count) VALUES (?,?,?,?,?,?,?)",
             normalized,
         )
     source.execute(
@@ -2004,6 +2162,86 @@ def _create_issuer_stages(
         "        COUNT(DISTINCT security_token)"
         " FROM _populus_inst_agg_issuer_names"
         " GROUP BY cik,period_of_report,normalized_name"
+    )
+    _apply_bulk_display_names(source, guard=guard)
+
+
+def _apply_bulk_display_names(source: sqlite3.Connection, *, guard: Any | None) -> None:
+    """R9 for the bulk path: replace the SQL `MIN(issuer_name_raw)` placeholder
+    with `display_issuer_name` — the SAME Python rule the python path applies —
+    without registering a function on the source connection (the bulk path
+    must leave the connection's function list untouched).
+
+    One grouped read of `(cik, period, issuer_key, name) -> row count`, a
+    streaming Python pass that emits one display name per issuer bucket into a
+    keyed temp table, and one `UPDATE ... FROM` to apply it."""
+    source.execute(
+        "CREATE TEMP TABLE _populus_inst_agg_issuer_display ("
+        " cik TEXT NOT NULL, period_of_report TEXT NOT NULL,"
+        " issuer_key TEXT NOT NULL, display_name TEXT NOT NULL,"
+        " PRIMARY KEY (cik, period_of_report, issuer_key)) WITHOUT ROWID"
+    )
+    cursor = source.execute(
+        f"WITH keyed AS (SELECT cik,period_of_report,"
+        f"        CASE WHEN entity_id IS NOT NULL"
+        f"                  AND entity_link_state='resolved'"
+        f"             THEN 'entity:' || entity_id"
+        f"             ELSE 'cusip6:' || substr(cusip,1,6) END AS issuer_key,"
+        f"        issuer_name_raw"
+        f" FROM temp.{_INST_AGG_INPUT_NAME}"
+        f" WHERE is_default=1 AND ((entity_id IS NOT NULL"
+        f"   AND entity_link_state='resolved') OR length(cusip)>=6))"
+        f" SELECT cik,period_of_report,issuer_key,issuer_name_raw,COUNT(*)"
+        f" FROM keyed GROUP BY cik,period_of_report,issuer_key,issuer_name_raw"
+        f" UNION ALL"
+        f" SELECT cik,period_of_report,'name:' || normalized_name,issuer_name_raw,"
+        f"        SUM(row_count)"
+        f" FROM _populus_inst_agg_issuer_names"
+        f" GROUP BY cik,period_of_report,normalized_name,issuer_name_raw"
+        f" ORDER BY 1,2,3"
+    )
+    current: tuple[str, str, str] | None = None
+    names: list[str | None] = []
+    weights: list[int] = []
+    pending: list[tuple[str, str, str, str]] = []
+
+    def _flush() -> None:
+        if current is not None:
+            pending.append((*current, display_issuer_name(names, weights) or ""))
+
+    while True:
+        _deadline_checkpoint(guard)
+        batch = cursor.fetchmany(_BULK_BATCH_SIZE)
+        if not batch:
+            break
+        for cik, period, issuer_key, name, count in batch:
+            key = (cik, period, issuer_key)
+            if key != current:
+                _flush()
+                current, names, weights = key, [], []
+            names.append(name)
+            weights.append(int(count))
+        if len(pending) >= _BULK_BATCH_SIZE:
+            source.executemany(
+                "INSERT INTO _populus_inst_agg_issuer_display"
+                " (cik,period_of_report,issuer_key,display_name) VALUES (?,?,?,?)",
+                pending,
+            )
+            pending = []
+    _flush()
+    if pending:
+        source.executemany(
+            "INSERT INTO _populus_inst_agg_issuer_display"
+            " (cik,period_of_report,issuer_key,display_name) VALUES (?,?,?,?)",
+            pending,
+        )
+    _deadline_checkpoint(guard)
+    source.execute(
+        "UPDATE _populus_inst_agg_issuer_holders AS h"
+        " SET issuer_name_raw=d.display_name"
+        " FROM _populus_inst_agg_issuer_display d"
+        " WHERE d.cik=h.cik AND d.period_of_report=h.period_of_report"
+        " AND d.issuer_key=h.issuer_key"
     )
 
 
@@ -2445,6 +2683,9 @@ def build_inst_agg(
             prepared=_prepared,
         )
         populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
+        populate_book_discontinuity(dest)
+        populate_ticker_holders(source_conn, dest, ingested_at=ingested_at)
+        populate_shared_discretion_flags(source_conn, dest)
         return bulk
     ensure_views(source_conn)
     if _materialized_agg_namespace_available(source_conn):
@@ -2457,12 +2698,349 @@ def build_inst_agg(
             prepared=_prepared,
         )
         populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
+        populate_book_discontinuity(dest)
+        populate_ticker_holders(source_conn, dest, ingested_at=ingested_at)
+        populate_shared_discretion_flags(source_conn, dest)
         return bulk
     report = _build_inst_agg_python(
         source_conn, dest, ingested_at=ingested_at, topn=topn
     )
     populate_issuer_adds(source_conn, dest, ingested_at=ingested_at)
+    populate_book_discontinuity(dest)
+    populate_ticker_holders(source_conn, dest, ingested_at=ingested_at)
+    populate_shared_discretion_flags(source_conn, dest)
     return report
+
+
+#: R3: rows kept per (ticker, period) in `agg_ticker_holders`; the totals
+#: table states the true holder count so the cap is never a silent drop.
+TICKER_HOLDERS_RANK_CAP = 500
+#: A 13F is due 45 days after quarter end; a quarter whose deadline has not
+#: passed as of the build is OPEN and under-reported by construction.
+_FILING_DEADLINE_DAYS = 45
+
+
+def closed_periods(periods: Iterable[str], *, as_of: str) -> list[str]:
+    """Periods (YYYY-MM-DD quarter ends) whose 45-day filing window had
+    closed by `as_of` (an ISO date or timestamp), ascending."""
+    import datetime as _dt
+
+    cutoff = _dt.date.fromisoformat(str(as_of)[:10])
+    out = []
+    for p in sorted(set(periods)):
+        try:
+            end = _dt.date.fromisoformat(p)
+        except ValueError:
+            continue
+        # Closed once the watermark is PAST the deadline day — the same
+        # deadline-exclusive rule `dashboard/src/lib/inst-adds.ts:isClosedPeriod`
+        # has always applied, so both runtimes name the same closed quarter.
+        if end + _dt.timedelta(days=_FILING_DEADLINE_DAYS) < cutoff:
+            out.append(p)
+    return out
+
+
+def populate_ticker_holders(
+    source_conn: sqlite3.Connection, dest_path: Path | str, *, ingested_at: str
+) -> None:
+    """Derive `agg_ticker_holders` / `agg_ticker_holder_totals` (LD2) from
+    SOURCE holdings for the newest closed quarter, with the prior closed
+    quarter as the comparison side — ONE implementation after both build
+    paths, and no dependency on the serving projection or any prior artifact.
+
+    Only rows the reviewed mapping names get a ticker (G14). Options rows
+    (`put_call` set) are not holdings of the class and are skipped. Value and
+    shares are summed per (cik, key, period) within the key only; a NULL
+    value on any component makes the holder's value NULL (never a partial
+    presented as a total); a unit mismatch (SH vs PRN) withholds Δshares.
+    """
+    mapping = load_ticker_mapping()
+    by_key = mapping.by_key()
+    dest = sqlite3.connect(str(dest_path))
+    try:
+        dest.execute("DELETE FROM agg_ticker_holders")
+        dest.execute("DELETE FROM agg_ticker_holder_totals")
+        dest.execute("DELETE FROM agg_ticker_keys")
+        # D1: every reviewed (issuer name, class) row, so a filed row resolves
+        # under ANY reviewed spelling — `agg_ticker_holder_totals` keeps one.
+        dest.executemany(
+            "INSERT INTO agg_ticker_keys (issuer_name, title_of_class, ticker,"
+            " method, verified_date) VALUES (?, ?, ?, ?, ?)",
+            [
+                (r.issuer_name_canonical, r.title_of_class, r.ticker, r.method, r.verified_date)
+                for r in mapping.rows
+            ],
+        )
+        if not by_key:
+            dest.commit()
+            return
+        all_periods = [
+            r[0]
+            for r in source_conn.execute(
+                "SELECT DISTINCT period_of_report FROM v_filer_reported_filings"
+            )
+            if r[0] is not None
+        ]
+        # "Closed" is judged against the CORPUS's own newest filed date — the
+        # same watermark the manifest publishes — not the build clock: a source
+        # snapshotted before a deadline is still open for that quarter however
+        # late the build runs (`ingested_at` is provenance, not evidence).
+        (as_of,) = source_conn.execute(
+            "SELECT MAX(filed_date) FROM v_filer_reported_filings"
+        ).fetchone()
+        closed = closed_periods(all_periods, as_of=as_of or ingested_at)
+        if not closed:
+            dest.commit()
+            return
+        current = closed[-1]
+        prior = closed[-2] if len(closed) >= 2 else None
+        periods = (current,) if prior is None else (prior, current)
+        placeholders = ",".join("?" for _ in periods)
+        names = dict(source_conn.execute("SELECT cik, name_raw FROM inst_filers"))
+        # D2: `new` needs a prior-quarter filing that OMITS the position. A
+        # holder with no filing at all for the prior quarter (a first filing
+        # under this registration) is `no_prior`, never a new stake.
+        filed_prior: set[str] = (
+            set()
+            if prior is None
+            else {
+                r[0]
+                for r in source_conn.execute(
+                    "SELECT DISTINCT cik FROM v_filer_reported_filings"
+                    " WHERE period_of_report = ?",
+                    (prior,),
+                )
+            }
+        )
+        # R19/T20: the date each holder's current-quarter 13F became public —
+        # the overlap timeline orders by FILED date, never by quarter end. NULL
+        # = no current-quarter filing on record.
+        filed_current: dict[str, str] = {
+            r[0]: r[1]
+            for r in source_conn.execute(
+                "SELECT cik, MAX(filed_date) FROM v_filer_reported_filings"
+                " WHERE period_of_report = ? GROUP BY cik",
+                (current,),
+            )
+            if r[1] is not None
+        }
+        # R19: the registry's notable managers keep their row past the rank cap,
+        # so the overlap band's population is complete however far down the
+        # value ranking (or among the exits, which rank last) they sit.
+        notable_ciks = {r.cik_padded for r in load_manager_registry().rows if r.notable}
+
+        # (ticker, cik, period) -> {value, value_undisclosed, shares, unit}
+        acc: dict[tuple[str, str, str], dict] = {}
+        # Filings first (period index), then holdings by filing id — the rows
+        # `v_filer_reported_holdings` yields, without a full holdings scan.
+        for cik, period, name, klass, value, shares, unit, put_call in source_conn.execute(
+            "SELECT h.cik, h.period_of_report, h.issuer_name_raw, h.title_of_class,"
+            "       h.value_usd, h.ssh_prnamt, h.ssh_prnamt_type, h.put_call"
+            " FROM v_filer_reported_filings f"
+            " CROSS JOIN inst_holdings h ON h.filing_id=f.filing_id"
+            f" WHERE f.period_of_report IN ({placeholders})",  # nosec B608
+            periods,
+        ):
+            if put_call:
+                continue
+            row = by_key.get(mapping_key(name, klass))
+            if row is None:
+                continue
+            b = acc.setdefault(
+                (row.ticker, cik, period),
+                {"value": 0, "undisclosed": False, "shares": 0, "shares_null": False, "units": set()},
+            )
+            if value is None:
+                b["undisclosed"] = True
+            else:
+                b["value"] += int(value)
+            if shares is None:
+                b["shares_null"] = True
+            else:
+                b["shares"] += int(shares)
+            b["units"].add(_unit_key(unit))
+
+        holders: dict[str, list[tuple]] = defaultdict(list)
+        ciks_by_ticker: dict[str, set[str]] = defaultdict(set)
+        for (ticker, cik, _period) in acc:
+            ciks_by_ticker[ticker].add(cik)
+        for ticker, ciks in ciks_by_ticker.items():
+            for cik in ciks:
+                cur = acc.get((ticker, cik, current))
+                prv = acc.get((ticker, cik, prior)) if prior else None
+                if cur is None and prv is None:
+                    continue
+
+                def _shares(b: dict | None) -> int | None:
+                    if b is None or b["shares_null"] or len(b["units"]) != 1:
+                        return None
+                    return b["shares"]
+
+                cur_shares, prv_shares = _shares(cur), _shares(prv)
+                units_ok = (
+                    cur is not None and prv is not None
+                    and cur["units"] == prv["units"] and len(cur["units"]) == 1
+                    and cur_shares is not None and prv_shares is not None
+                )
+                if prv is None:
+                    if cik in filed_prior:
+                        kind, delta = "new", cur_shares
+                    else:
+                        kind, delta = "no_prior", None
+                elif cur is None:
+                    kind, delta = "exit", (-prv_shares if prv_shares is not None else None)
+                elif units_ok:
+                    delta = cur_shares - prv_shares
+                    kind = "add" if delta > 0 else "trim" if delta < 0 else "held"
+                else:
+                    kind, delta = "unclassified", None
+                value = None if cur is None or cur["undisclosed"] else cur["value"]
+                holders[ticker].append(
+                    (cik, value, cur_shares, prv_shares, delta, kind, filed_current.get(cik))
+                )
+
+        holder_rows: list[tuple] = []
+        total_rows: list[tuple] = []
+        for ticker in sorted(holders):
+            ranked = sorted(
+                holders[ticker],
+                key=lambda h: (h[5] == "exit", -(h[1] if h[1] is not None else -1), h[0]),
+            )
+            mrow = next(r for r in mapping.rows if r.ticker == ticker)
+            total_rows.append(
+                (
+                    ticker, current, prior, mrow.issuer_name_canonical, mrow.title_of_class,
+                    # R20: holders = filers holding the class NOW; an exit is a
+                    # former holder, counted under `exits` only.
+                    sum(1 for h in ranked if h[5] != "exit"),
+                    sum(h[1] for h in ranked if h[1] is not None),
+                    sum(1 for h in ranked if h[5] in ("new", "add")),
+                    sum(1 for h in ranked if h[5] == "exit"),
+                )
+            )
+            for rank, (cik, value, cur_shares, prv_shares, delta, kind, filed) in enumerate(
+                ranked, start=1
+            ):
+                # The cap bounds the ranked list; a notable manager past it is
+                # kept at its TRUE rank (R19's population must be complete).
+                if rank > TICKER_HOLDERS_RANK_CAP and cik not in notable_ciks:
+                    continue
+                holder_rows.append(
+                    (
+                        ticker, current, rank, cik, names.get(cik, cik), value, cur_shares,
+                        prv_shares, delta, kind, mrow.method, mrow.verified_date, filed,
+                    )
+                )
+        dest.executemany(
+            "INSERT INTO agg_ticker_holders (ticker, period_of_report, rank, cik, filer_name,"
+            " value_usd, shares, prev_shares, delta_shares, change_kind, method, verified_date,"
+            " filed_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            holder_rows,
+        )
+        dest.executemany(
+            "INSERT INTO agg_ticker_holder_totals (ticker, period_of_report, prev_period,"
+            " issuer_name, title_of_class, holder_count, value_usd, adds, exits)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            total_rows,
+        )
+        dest.commit()
+    finally:
+        dest.close()
+
+
+#: The flag a cross-filer issuer row carries when its filer is named as an
+#: other included manager on ANOTHER surviving report for that quarter.
+SHARED_DISCRETION_FLAG = "affiliated_shared_discretion"
+
+
+def shared_discretion_filer_periods(
+    source_conn: sqlite3.Connection,
+) -> set[tuple[str, str]]:
+    """``(cik, period)`` of every filer another survivor names as an other
+    included manager for that quarter (C2, refinement 20260910).
+
+    Since C2 such a filer's own 13F HOLDINGS report stays in the default set:
+    Form 13F Special Instruction 5 has a manager file a Holdings Report only
+    when all its holdings are in it, and General Instruction 2 has a
+    shared-discretion position reported by ONE manager. Positions are therefore
+    not de-duplicated across the pair; this set only DISCLOSES that the pair
+    shares discretion over some positions, so a cross-filer total can say so.
+    """
+    rows = source_conn.execute(
+        "SELECT cik, period_of_report, file_number_norm, other_managers"
+        " FROM v_filer_reported_filings"
+    ).fetchall()
+    owners: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for cik, period, fnn, _others in rows:
+        if fnn:
+            owners[(period, fnn)].add(cik)
+    named: set[tuple[str, str]] = set()
+    for cik, period, _fnn, others in rows:
+        try:
+            entries = json.loads(others or "[]")
+        except (TypeError, ValueError):
+            continue
+        for entry in entries if isinstance(entries, list) else ():
+            fn = entry.get("file_number_norm") if isinstance(entry, dict) else None
+            for other in owners.get((period, fn), ()) if fn else ():
+                if other != cik:
+                    named.add((other, period))
+    return named
+
+
+def populate_shared_discretion_flags(
+    source_conn: sqlite3.Connection, dest_path: Path | str
+) -> None:
+    """Stamp :data:`SHARED_DISCRETION_FLAG` on `agg_issuer_top_holders` rows of
+    a named filer — ONE implementation after both build paths."""
+    named = sorted(shared_discretion_filer_periods(source_conn))
+    if not named:
+        return
+    conn = sqlite3.connect(str(dest_path))
+    try:
+        conn.executemany(
+            "UPDATE agg_issuer_top_holders SET flags = ("
+            "  SELECT json_group_array(value) FROM ("
+            "    SELECT value FROM json_each(agg_issuer_top_holders.flags)"
+            "    UNION SELECT ? ORDER BY 1))"
+            " WHERE cik = ? AND period_of_report = ?",
+            [(SHARED_DISCRETION_FLAG, cik, period) for cik, period in named],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+#: R6 artifact suppressor threshold: a filer-period whose exits are at least
+#: this share of its QoQ rows, with no succession bridge, is a book
+#: DISCONTINUITY (a manager that stopped filing under this CIK, a notice-only
+#: quarter, a registry gap) — kept everywhere, excluded from landing feeds.
+BOOK_DISCONTINUITY_EXIT_SHARE_BPS = 9_500
+
+
+def populate_book_discontinuity(dest_path: Path | str) -> None:
+    """Derive `agg_book_discontinuity` from a FINISHED aggregate — ONE
+    implementation after both build paths, like `populate_issuer_adds`."""
+    conn = sqlite3.connect(str(dest_path))
+    try:
+        conn.execute("DELETE FROM agg_book_discontinuity")
+        conn.execute(
+            "INSERT INTO agg_book_discontinuity"
+            " (cik, period_of_report, positions, exit_positions)"
+            " SELECT f.cik, p.period, COUNT(*),"
+            "        SUM(CASE WHEN q.change_kind_code=3 THEN 1 ELSE 0 END)"
+            " FROM _agg_qoq_deltas q"
+            " JOIN _agg_qoq_filers f ON f.filer_id=q.filer_id"
+            " JOIN _agg_qoq_periods p ON p.period_id=q.curr_period_id"
+            " GROUP BY f.cik, p.period"
+            " HAVING SUM(CASE WHEN q.change_kind_code=3 THEN 1 ELSE 0 END) * 10000"
+            "        >= ? * COUNT(*)"
+            "    AND SUM(CASE WHEN q.flags_mask & 32 THEN 1 ELSE 0 END) = 0",
+            (BOOK_DISCONTINUITY_EXIT_SHARE_BPS,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def populate_issuer_adds(

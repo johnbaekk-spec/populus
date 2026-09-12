@@ -1,4 +1,5 @@
-import { briefingCards, unavailableDesignPanel } from "./shared.ts";
+import { briefingCards, plannedLine, unavailableDesignPanel } from "./shared.ts";
+import { MANAGER_TYPE_LABELS, type ManagerTyping } from "../manager-directory.ts";
 /* Pure page/section renderers. Every entity body is a string function called
    by the thin .astro page for SSR AND by the generic-route client driver —
    parity is by construction (one function, two callers). No Node APIs, no DOM.
@@ -39,6 +40,7 @@ import {
   memberHrefFor,
   tickerHrefFor,
   partyClass,
+  cardFoot,
 } from "../format.ts";
 import {
   type FilingWindow,
@@ -57,7 +59,8 @@ import {
   type FilerBudgetState,
 } from "../holdings.ts";
 import { serializeInlineJson } from "../inline-json.ts";
-import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "../inst.ts";
+import { positionAnchor } from "../notable-moves.ts";
+import type { ConcentrationRow, QoqDeltaRow, TopHolderRow, TickerHolderRow, TickerTotalsRow } from "../inst.ts";
 import type { ClusterBoardResult, ClusterRow } from "../activity.ts";
 import type { ConcentrationBenchmark, NewPositionLeaders } from "../inst-analytics.ts";
 import { HOLDER_COLUMNS, HOLDER_ZERO_CAVEAT, holderSortNote, orderRankedHolders, type HolderSortKey } from "../holders-sort.ts";
@@ -77,15 +80,18 @@ import { s7Banner } from "./states.ts";
     no per-row filed date, so the honest form pairs the quarter-end with the
     module's build-wide filed-date watermark — never "current holdings". */
 export function instStamp(period: string, latestFiled: string | null): string {
-  const filed =
-    latestFiled == null
-      ? `latest filing date not recorded in this build's watermarks`
-      : `latest filing in build filed ${esc(latestFiled)}`;
-  return `<span class="inst-stamp">quarter-end ${esc(period)} · ${filed}</span>`;
+  // SRC §5: "Quarter ended {period}"; the newest-filing date moves to the ⓘ
+  // (`instFiledNote`) beside the table it qualifies.
+  return `<span class="inst-stamp"${latestFiled ? ` data-latest-filed="${esc(latestFiled)}"` : ""}>Quarter ended ${esc(period)}</span>`;
+}
+
+/** SRC §5: the ⓘ text for the quarter stamp. */
+export function instFiledNote(latestFiled: string | null): string {
+  return `${latestFiled ? `Newest filing in this build: ${latestFiled}. ` : ""}Per-row filing dates are on each receipt.`;
 }
 
 export const INST_STAMP_CAVEAT =
-  "per-filer filing dates are not in the published aggregate — the filed-date watermark is build-wide, not per row";
+  "Per-row filing dates are on each receipt; the newest-filing date covers the whole build, not each row.";
 
 /* ---------- 13F holders page body (build-time only) ---------- */
 
@@ -231,7 +237,7 @@ export function holdersTableHtml(
       author: "populus",
       html: `The aggregate publishes the top ${fmtInt(topn)} holders per issuer — a build parameter of the Public Filings aggregation. Rows beyond it exist in individual filings on EDGAR but are not ranked here. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
-    `<div class="caveat-line">${esc(INST_STAMP_CAVEAT)}</div>` +
+    cardFoot({ short: "Quarter-end positions", full: INST_STAMP_CAVEAT, scope: "holders-foot", key: "stamp" }) +
     `<div class="caveat-line">${esc(HOLDER_ZERO_CAVEAT)}</div>` +
     `</div>`
   );
@@ -309,11 +315,19 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
   {
     mark: "n/c",
-    html: `change not classifiable: value undisclosed on one side of the quarter pair, or neither shares nor value can classify it <code>value_undisclosed_one_side</code> <code>change_kind_undeterminable</code>`,
+    html: `change not classifiable: value undisclosed on one side of the quarter pair, or neither shares nor value can classify it`,
   },
   {
     mark: "§",
     html: `derived by Public Filings from the published aggregate; NULL means the source did not disclose a usable value — never zero`,
+  },
+  {
+    mark: "held",
+    html: `"no change" = the share count is identical in both quarters; the value moved only with price, so the row is mark-to-market and never an add or a trim (Add / New / Trim / Exit / No change)`,
+  },
+  {
+    mark: "np",
+    html: `"no prior" = this filer has no comparable holdings list for the previous quarter on record — a first filing under this registration, or a quarter reported inside an affiliated manager's filing — so the position is not called a new stake`,
   },
 ];
 
@@ -328,12 +342,12 @@ const QOQ_FN = new Map(QOQ_FOOTNOTES.map((e) => [e.mark, e.html]));
    Src column, so it hangs on Δ value. */
 const QOQ_COL_NOTES: Record<string, string | undefined> = {
   "position-grain": QOQ_FN.get("‡r"),
-  change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c")),
+  change: noteBody(QOQ_FN.get("†v"), QOQ_FN.get("‡e"), QOQ_FN.get("n/c"), QOQ_FN.get("held"), QOQ_FN.get("np")),
   "delta-value": QOQ_FN.get("§"),
   "delta-shares": QOQ_FN.get("‡u"),
 };
 const QOQ_COLS: readonly (readonly [string, string])[] = [
-  ["position-grain", "Position · grain"],
+  ["position-grain", "Position"],
   ["change", "Change"],
   ["delta-value", "Δ value"],
   ["delta-shares", "Δ shares"],
@@ -350,29 +364,87 @@ export function qoqChipHtml(row: QoqDeltaRow): string {
   return `<span class="qoq-chip ${p.chipCls}">${esc(p.chipText)}</span>${markers}`;
 }
 
+/** R15: rows of the changes table shown before "Show more". */
+export const CHANGES_COMPACT_ROWS = 20;
+
+/** D5: the filer page's Position changes filter — the landing band's chip
+    pattern (`mgr-chip`, `aria-pressed`), one kind at a time, "All" clears it. */
+export type ChangesKindFilter = "new" | "add" | "trim" | "exit";
+const CHANGES_KIND_CHIPS: readonly (readonly [ChangesKindFilter | null, string])[] = [
+  [null, "All"],
+  ["new", "New stakes"],
+  ["add", "Adds"],
+  ["trim", "Trims"],
+  ["exit", "Exits"],
+];
+
+export function changesKindChipsHtml(active: ChangesKindFilter | null): string {
+  return (
+    `<div class="chips changes-kind-chips" role="group" aria-label="Filter position changes by kind" data-changes-kinds>` +
+    CHANGES_KIND_CHIPS.map(
+      ([k, label]) =>
+        `<button type="button" class="mgr-chip" data-changes-kind="${k ?? "all"}" aria-pressed="${(active ?? null) === k}">${esc(label)}</button>`,
+    ).join("") +
+    `</div>`
+  );
+}
+
 export function changesTableHtml(
   deltas: QoqDeltaRow[],
   period: string,
   latestFiled: string | null,
-  opts: { total?: number; page?: number } = {},
+  opts: { total?: number; page?: number; compact?: number; kind?: ChangesKindFilter | null } = {},
 ): string {
   /* `deltas` arrives already ordered and bounded by `holdings.boundQoqDeltas`;
      re-ordering here is idempotent and keeps this function correct for a caller
      that hands it a raw list. `total` is the count BEFORE the bound — it is
      what every printed count uses, so a capped page never understates the
      filer's activity while looking complete. */
-  const ordered = sortQoqDeltas(deltas);
-  const total = opts.total ?? ordered.length;
+  const orderedAll = sortQoqDeltas(deltas);
+  /* R8: `held` rows (Δshares 0 — mark-to-market only) are not position
+     changes. They leave the paged table and render once, below it, in a
+     collapsed group, so a value-only row never reads as an add or a trim. */
+  const held = orderedAll.filter((d) => d.change_kind === "held");
+  /* D2: `no_prior` rows (no comparable prior-quarter list) are not position
+     changes either — they would otherwise read as a wall of new stakes. They
+     render once, below the table, in their own collapsed group. */
+  const noPrior = orderedAll.filter((d) => d.change_kind === "no_prior");
+  const kindFilter = opts.kind ?? null;
+  const ordered = orderedAll.filter(
+    (d) => d.change_kind !== "held" && d.change_kind !== "no_prior" && (kindFilter === null || d.change_kind === kindFilter),
+  );
+  const total = opts.total ?? orderedAll.length;
   const page = opts.page ?? 0;
-  const embedded = ordered.length;
+  const embedded = orderedAll.length;
   const pageRows = holdingsPageSlice(ordered, page);
-  const pageCount = holdingsPageCount(embedded);
-  /* Over `ordered` — every row this table can page through — not `pageRows`.
-     See the note in `holdings.ts`: a per-page set makes the caveat flicker
-     between pages of one table. */
+  const pageCount = holdingsPageCount(ordered.length);
+  /* Over every row of EACH table — the paged changes table and the held
+     group are two tables with two stated sets (R10 #12: a flag every row of a
+     table repeats is hoisted once for THAT table) — never `pageRows`. See the
+     note in `holdings.ts`: a per-page set makes the caveat flicker between
+     pages of one table. */
   const statedDeltas = universalFlags(ordered.map((d) => d.flags));
-  const rows = pageRows
-    .map((d) => {
+  const statedHeld = universalFlags(held.map((d) => d.flags));
+  const statedNoPrior = universalFlags(noPrior.map((d) => d.flags));
+  let rowSeq = 0;
+  const rowHtml = (d: QoqDeltaRow, stated: readonly string[] = statedDeltas): string => {
+    /* R1: the issuer NAME leads the row; the class is secondary ink; the raw
+       position key (sid:/cusip:) moves inside the row's ⓘ. A row the serving
+       artifact could not name (an older artifact, an unkeyed position) still
+       shows its key — never an invented name. */
+    const noteId = `${page}-${rowSeq++}`;
+    const keyNote = noteFromHtml(
+      `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
+      { scope: "filer-change-key" },
+      noteId,
+    );
+    const identity = d.issuer_name
+      ? `<span class="filed-name">${esc(d.issuer_name)}</span>` +
+        // The class is FILED text (a fund can be named "BULLISH FD"): it rides
+        // inside the filed-name marker the banned-wording scan exempts.
+        (d.title_of_class ? ` <span class="mono-note c-secondary"><span class="filed-name">${esc(d.title_of_class)}</span></span>` : "") +
+        keyNote
+      : `<span class="mono-note">${esc(d.position_key)}</span>`;
       const p = qoqPresentation(d);
       const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
       const posMarkers = p.positionMarkers.map((m) => fnMark(m)).join("");
@@ -392,7 +464,9 @@ export function changesTableHtml(
            one off-screen. Identity, then the verdict, then the two deltas that
            justify it; the four raw prev/curr levels are the supporting detail
            and follow. Nothing is removed — the order changed. */
-        `<tr><td class="c-pos"><span class="mono-note${posMarkers ? " reconciled" : ""}">${esc(d.position_key)}</span>${posMarkers}${grain}</td>` +
+        /* R14: the landing's notable-moves rows link here, anchored at the
+           position (`#pos-<slug(position_key)>`). */
+        `<tr id="${esc(positionAnchor(d.position_key))}"><td class="c-pos${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
         `<td class="c-chip">${qoqChipHtml(d)}</td>` +
         `<td class="c-num">${valueDelta}</td>` +
         `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
@@ -400,16 +474,20 @@ export function changesTableHtml(
         `<td class="c-num">${cell(d.curr_value_usd)}</td>` +
         `<td class="c-num">${shareCell(d.prev_shares)}</td>` +
         `<td class="c-num">${shareCell(d.curr_shares)}</td>` +
-        `<td class="c-flags">${flagTags(d.flags, undefined, { stated: statedDeltas })}</td></tr>`
+        `<td class="c-flags">${flagTags(d.flags, undefined, { stated })}</td></tr>`
       );
+  };
+  /* R15: twenty rows lead; the rest of this page ride hidden behind a real
+     "Show N more" (DOM-backed disclosure) — no download, no second render. */
+  const compact = opts.compact ?? CHANGES_COMPACT_ROWS;
+  const rows = pageRows
+    .map((d, i) => {
+      const html = rowHtml(d);
+      return i >= compact ? html.replace(/^<tr\b/, "<tr data-compact-extra") : html;
     })
     .join("\n");
-  return (
-    universalFlagNote(statedDeltas) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first${
-      pageCount > 1 ? ' data-paged="1"' : ""
-    } data-stated-flags="${esc(statedDeltas.join(","))}">` +
-    `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
+  const collapsed = pageRows.length > compact;
+  const headHtml =
     `<thead><tr>` +
     QOQ_COLS.map(([key, label]) => {
       const body = QOQ_COL_NOTES[key];
@@ -419,9 +497,52 @@ export function changesTableHtml(
         `</th>`
       );
     }).join("") +
-    `</tr></thead>` +
-    `<tbody>${rows}</tbody></table></div>` +
-    changesPagerHtml(page, pageRows.length, embedded, pageCount) +
+    `</tr></thead>`;
+  const heldGroup =
+    held.length === 0
+      ? ""
+      : `<details class="qoq-held-group" data-qoq-held><summary>Mark-to-market only (no share change) · ${fmtInt(held.length)}</summary>` +
+        `<p class="section-note">Positions whose share count is identical in both quarters; the value changed with price, not with a decision.</p>` +
+        universalFlagNote(statedHeld) +
+        `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHeld.join(","))}">` +
+        `<caption class="visually-hidden">Positions held with no share change into quarter ${esc(period)}</caption>` +
+        headHtml.replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-held-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-held-').replace(/ id="n-filer-changes-/g, ' id="n-filer-held-') +
+        `<tbody>${held.map((d) => rowHtml(d, statedHeld)).join("\n")}</tbody></table></div></details>`;
+  const noPriorGroup =
+    noPrior.length === 0
+      ? ""
+      : `<details class="qoq-held-group" data-qoq-no-prior><summary>No prior quarter to compare · ${fmtInt(noPrior.length)}</summary>` +
+        `<p class="section-note">This filer has no comparable holdings list for the previous quarter on record — a first filing under this registration, or a quarter reported inside an affiliated manager's filing. These positions are not new stakes; there is nothing to compare them against.</p>` +
+        universalFlagNote(statedNoPrior) +
+        `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedNoPrior.join(","))}">` +
+        `<caption class="visually-hidden">Positions with no prior quarter to compare into quarter ${esc(period)}</caption>` +
+        headHtml.replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-noprior-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-noprior-').replace(/ id="n-filer-changes-/g, ' id="n-filer-noprior-') +
+        `<tbody>${noPrior.map((d) => rowHtml(d, statedNoPrior)).join("\n")}</tbody></table></div></details>`;
+  const kindLabel = CHANGES_KIND_CHIPS.find(([k]) => k === kindFilter)?.[1] ?? "";
+  return (
+    changesKindChipsHtml(kindFilter) +
+    (kindFilter !== null && ordered.length === 0
+      ? `<p class="section-note" data-changes-kind-empty>No ${esc(kindLabel.toLowerCase())} among this page's embedded changes for ${esc(period)}.</p>`
+      : "") +
+    universalFlagNote(statedDeltas) +
+    `<div class="table-scroll"><table class="etable" data-sticky-first${
+      pageCount > 1 ? ' data-paged="1"' : ""
+    } data-stated-flags="${esc(statedDeltas.join(","))}">` +
+    `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
+    headHtml +
+    `<tbody id="filer-changes-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
+    (collapsed
+      ? compactDisclosure({
+          rootId: "filer-changes-tbody",
+          total: pageRows.length,
+          shown: compact,
+          noun: "changes",
+          domBacked: true,
+        })
+      : "") +
+    changesPagerHtml(page, pageRows.length, ordered.length, pageCount) +
+    heldGroup +
+    noPriorGroup +
     /* The bound names itself, with the TRUE total — the grammar the holdings
        surface below already uses (G3). An uncapped period must render nothing
        here: a terminus on a complete list would claim a withholding that never
@@ -437,9 +558,7 @@ export function changesTableHtml(
             `<a href="/methodology/#m2">methodology §13F ↗</a>`,
         })
       : "") +
-    `<div class="panel-note table-stamp">${instStamp(period, latestFiled)} · <span class="caveat-inline">${esc(
-      INST_STAMP_CAVEAT,
-    )}</span></div>`
+    cardFoot({ short: `Quarter ended ${period}`, full: instFiledNote(latestFiled), scope: "filer-changes-foot", key: "stamp" })
   );
 }
 
@@ -498,7 +617,7 @@ function filerBookShape(
     return `${word} median ${m.toFixed(unit === "%" ? 1 : 0)}${unit}`;
   };
   return `<section class="panel design-book-shape" aria-label="Book shape">` +
-    `<div class="panel-head"><h2 class="section-h">Book shape</h2><span class="panel-note">${esc(period)} · concentration · ${b ? `vs tracked median · gold tick` : "no tracked median"}</span></div>` +
+    `<div class="panel-head"><h2 class="section-h">Book shape</h2><span class="panel-note">${esc(period)} · concentration · ${b ? `vs tracked median · tick = median` : "no tracked median"}</span></div>` +
     `<dl>${metric(`Top-${topn} concentration`, share, share === null ? "—" : `${share.toFixed(1)}%`, medShare, compare(share, medShare, "%"))}` +
     `${metric("Concentration index", hhi === null ? null : hhi / 100, hhi === null ? "—" : `${fmtInt(hhi)} bps`, medHhi === null ? null : medHhi / 100, compare(hhi, medHhi, " bps"))}` +
     `${metric("Positions with value", known, known === null ? "—" : `${conc!.position_count - conc!.null_value_positions} / ${conc!.position_count}`, null, b?.positions ? `median book ${fmtInt(b.positions.median)} positions` : null)}</dl>` +
@@ -508,7 +627,7 @@ function filerBookShape(
       ? `Medians are over the ${fmtInt(b.population)} tracked filers with a ${esc(period)} book` +
         (b.hhi ? `; the index median over the ${fmtInt(b.hhi.n)} with a complete book` : "") + `.`
       : `No tracked-median comparison is published for ${esc(period)}.`) + `</p>` +
-    `<p class="section-note book-source">${filerTiles(conc, total).slice(2).map(tile => `${esc(tile.label)}: ${esc(tile.value)}${tile.title ? noteFromHtml(esc(tile.title), { scope: "filer-tiles" }, tile.label) : ""}`).join(" · ")}</p>` + unavailableDesignPanel("Sector rotation", "QUARTER-OVER-QUARTER", ["Sector", "Change", "Reported weight"], "Sector weights and comparable quarter changes are not published in this build.") + `</section>`;
+    `<p class="section-note book-source">${filerTiles(conc, total).slice(2).map(tile => `${esc(tile.label)}: ${esc(tile.value)}${tile.title ? noteFromHtml(esc(tile.title), { scope: "filer-tiles" }, tile.label) : ""}`).join(" · ")}</p></section>`;
 }
 
 export function filerPeriodSectionHtml(
@@ -517,8 +636,14 @@ export function filerPeriodSectionHtml(
   period: string,
   latestFiled: string | null,
   topn: number,
-  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null } = {},
+  opts: FilerPeriodOpts = {},
 ): string {
+  /* R6: the producer flagged this filer-period as a BOOK DISCONTINUITY —
+     ≥95% of its changes read as exits with no registry successor. It is kept
+     on the page and named; the landing feeds exclude it. */
+  const discontinuityBanner = opts.discontinuity
+    ? `<div class="s7-banner" role="note" data-book-discontinuity><span class="s7-chip">BOOK DISCONTINUITY</span><div class="s7-copy">Into <strong>${esc(period)}</strong> almost this entire book reads as <strong>exit</strong>. That pattern is a filing-record artifact — a manager that stopped filing under this CIK, a notice-only quarter, or a registry gap — not a wave of selling. These rows are kept here and excluded from the landing feeds.</div></div>`
+    : "";
   /* `total` is the count before the embed bound. The tile MUST report it: a
      capped page that tiled `deltas.length` would state a smaller number of
      moves than the filer actually made, with nothing on the page saying so. */
@@ -528,7 +653,7 @@ export function filerPeriodSectionHtml(
       ? `<p class="section-note">No quarter-over-quarter rows land in ${esc(
           period,
         )} — either the first period on record for this filer, or nothing keyable on either side.</p>`
-      : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page });
+      : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page, kind: opts.kind ?? null });
   return (
     /* The filer tiles' breakdowns become notes, keyed on each
        tile's LABEL — unique within a tile group by construction, in both the
@@ -537,26 +662,42 @@ export function filerPeriodSectionHtml(
        section on a period change, and an id that moved with the period would
        make the server's bytes and the client's differ for the same row set
        (Constraint 5). */
+    discontinuityBanner +
+    /* R15: the four stats — reported value · positions · new stakes · exits.
+       The kind counts come from the FULL period (never the embedded slice),
+       supplied by the caller; absent, the tile says so rather than counting
+       a bounded list. */
     statTiles([
       ...filerTiles(conc, total).slice(0, 2),
-      { value: topn === 5 && conc?.topn_share_bps != null ? `${(conc.topn_share_bps / 100).toFixed(1)}%` : "—", label: "Top-5 share", title: "Top-five concentration is only shown when the published aggregate provides that exact slice." },
-      { value: "—", label: "Congress overlap", title: "The member-to-institutional positions join is not published in this build." },
+      { value: opts.kinds ? fmtInt(opts.kinds.new) : "—", label: "new stakes", title: opts.kinds ? `positions with no comparable holding in the prior quarter (kind new), ${period}` : "new-stake count not supplied for this period" },
+      { value: opts.kinds ? fmtInt(opts.kinds.exit) : "—", label: "exits", title: opts.kinds ? `positions absent from this quarter's filing after being held last quarter (kind exit), ${period} — inferred from absence, not a sale record` : "exit count not supplied for this period" },
     ], {
       label: `Period statistics for ${period}`,
       compact: true,
       notes: { scope: "filer-tiles" },
     }) +
-    filerBookShape(conc, topn, period, total, opts.benchmark ?? null) +
-    `<details class="panel panel-wide design-supplement" aria-label="Position changes"><summary>Position changes · inspect the quarter-over-quarter record</summary>` +
+    `<section class="panel panel-wide design-changes" aria-label="Position changes">` +
     `<div class="panel-head"><h2 class="section-h">Position changes — into ${esc(period)}</h2>` +
-    `<span class="panel-note">producer-classified (change_kind) · grain: position × put/call × unit</span></div>` +
+    `<span class="panel-note">by shares · Δ value · filing link · <a href="/methodology/#position-grain">how changes are classified §</a></span></div>` +
     changes +
     terminusRow({
       author: "populus",
       html: `Changes derive from the aggregate's top-${fmtInt(topn)} slices and keyable positions only; unkeyable holdings are counted in the registry, not differenced. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
-    `</details>`
+    `</section>` +
+    filerBookShape(conc, topn, period, total, opts.benchmark ?? null)
   );
+}
+
+export interface FilerPeriodOpts {
+  total?: number;
+  page?: number;
+  benchmark?: ConcentrationBenchmark | null;
+  discontinuity?: boolean;
+  /** R15: kind counts over the WHOLE period's changes */
+  kinds?: { new: number; exit: number } | null;
+  /** D5: the Position changes kind filter (null = all kinds) */
+  kind?: ChangesKindFilter | null;
 }
 
 export function filerEdgarBlock(cik: string, filerName: string): string {
@@ -580,8 +721,9 @@ export function filerBody(
   latestFiled: string | null,
   topn: number,
   window: FilingWindow | null,
-  opts: { total?: number; page?: number; benchmark?: ConcentrationBenchmark | null } = {},
+  opts: FilerPeriodOpts & { typing?: ManagerTyping | null } = {},
 ): string {
+  const typing = opts.typing ?? null;
   const chips = periods
     .map(
       (p) =>
@@ -596,10 +738,15 @@ export function filerBody(
     ]) +
     `<header class="entity-head">` +
     `<div class="entity-head-copy">` +
-    `<h1 class="entity-title">${esc(filer.name)}</h1>` +
-    `<div class="entity-subline">13F aggregate · latest period on record <span class="mono-id">${esc(
-      filer.latestPeriod,
-    )}</span> · <span class="mono-id">CIK ${esc(filer.cik)}</span> · <a class="mono-note" href="${esc(
+    `<h1 class="entity-title">${esc(typing?.display_name ?? filer.name)}</h1>` +
+    /* R15: identity = name · principal · type · reported value. The filed
+       name stays as the record; the curated name leads when there is one. */
+    `<div class="entity-subline">` +
+    (typing?.person ? `<span class="mgr-person">${esc(typing.person)}</span> · ` : "") +
+    (typing ? `${esc(MANAGER_TYPE_LABELS[typing.manager_type] ?? typing.manager_type)}${typing.notable ? ` · <span class="mgr-chip mgr-chip-notable">notable</span>` : ""} · ` : "") +
+    (conc ? `${esc(fmtUsd(conc.total_value_usd))} reported 13(f) long value · ` : "") +
+    (typing && typing.display_name !== filer.name ? `<span class="mono-note filed-name">filed as ${esc(filer.name)}</span> · ` : "") +
+    `latest quarter <span class="mono-id">${esc(filer.latestPeriod)}</span> · <span class="mono-id">CIK ${esc(filer.cik)}</span> · <a class="mono-note" href="${esc(
       edgarFilerUrl(filer.cik),
     )}" rel="noopener" target="_blank">EDGAR ↗</a></div>` +
     // QA M2-8 M6: this used to be a THIRD phrasing of the §5 data_note, under a
@@ -616,20 +763,23 @@ export function filerBody(
     `</div>` +
     `</header>` +
     (window?.open ? s7Banner(window) : "") +
-    briefingCards([
-      { tag: "Reported positions", title: "Quarter-end holdings as filed", body: "Explore the full published position list and its source filing. This record excludes the manager’s cash, shorts and non-13(f) assets." },
-      { tag: "Share changes", title: "Compare consecutive quarters", body: "Position changes retain the producer’s classification and comparability flags. Share counts and reported values describe different changes." },
-      { tag: "Coverage", title: "A snapshot, not current holdings", body: "Use the quarter selector to inspect available periods. Unknown values stay unknown and each table states its coverage." },
-    ]) +
     `<div class="period-row"><span class="period-label">Period</span><div class="chips" data-period-chips>${chips}</div>` +
     `<noscript><span class="period-note">period switching needs JavaScript; showing ${esc(period)}</span></noscript></div>` +
     `<div data-filer-root>` +
     filerPeriodSectionHtml(conc, deltas, period, latestFiled, topn, opts) +
     `</div>` +
-    `<div class="design-band design-triptych"><section class="panel"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">AVAILABLE QUARTERS</span></div><div class="table-scroll design-history"><table class="etable"><caption class="visually-hidden">Available filing periods</caption><thead><tr><th>Period</th><th>Source</th></tr></thead><tbody>${periods.map(p => `<tr><td>${esc(p)}</td><td><a href="${esc(edgarFilerUrl(filer.cik))}" rel="noopener" target="_blank">EDGAR ↗</a></td></tr>`).join("")}</tbody></table></div></section>` +
-    unavailableDesignPanel("Congress overlap", "CROSS-MODULE", ["Ticker", "Members", "Disclosed flow"], "The congressional disclosure join is not published in this build.") +
-    unavailableDesignPanel("Signals for this filer", "13F DISCLOSURE RECORD", ["Signal", "Evidence"], "No filer signal evidence is published in this build.") + `</div>` +
-    filerEdgarBlock(filer.cik, filer.name)
+    /* R15 / R24: the three empty frames (sector rotation, Congress overlap,
+       signals for this filer) are ONE planned line; the filing history stays. */
+    `<div class="design-band design-triptych design-triptych-single"><section class="panel"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">AVAILABLE QUARTERS</span></div><div class="table-scroll design-history"><table class="etable"><caption class="visually-hidden">Available filing periods</caption><thead><tr><th>Period</th><th>Source</th></tr></thead><tbody>${periods.map(p => `<tr><td>${esc(p)}</td><td><a href="${esc(edgarFilerUrl(filer.cik))}" rel="noopener" target="_blank">EDGAR ↗</a></td></tr>`).join("")}</tbody></table></div></section></div>` +
+    plannedLine(["sector rotation", "Congress overlap", "signals for this filer"]) +
+    filerEdgarBlock(filer.cik, filer.name) +
+    `<details class="design-supplement filer-notes" id="filer-notes"><summary>Notes on this data</summary>` +
+    briefingCards([
+      { tag: "Reported positions", title: "Quarter-end holdings as filed", body: "Explore the full published position list and its source filing. This record excludes the manager’s cash, shorts and non-13(f) assets." },
+      { tag: "Share changes", title: "Compare consecutive quarters", body: "Position changes retain the producer’s classification and comparability flags. Share counts and reported values describe different changes." },
+      { tag: "Coverage", title: "A snapshot, not current holdings", body: "Use the quarter selector to inspect available periods. Unknown values stay unknown and each table states its coverage." },
+    ]) +
+    `</details>`
   );
 }
 
@@ -991,5 +1141,74 @@ export function notableRailHtml(res: NotableRecentResult, ctx: RenderCtx): strin
     `<div class="rail-rows" role="list">${rows}</div>` +
     `<div class="rail-caption">${notes.join(" · ")}</div>` +
     `</section>`
+  );
+}
+
+/* ---------- R20: the holders page for a REVIEWED (Tier C) ticker ---------- */
+
+export interface TickerHoldersPageInputs {
+  ticker: string;
+  totals: TickerTotalsRow;
+  holders: readonly TickerHolderRow[];
+  tierOf: (cik: string) => FilerBudgetState;
+  latestFiled: string | null;
+  /** the rendered R19 overlap band */
+  overlapHtml: string;
+  /** members who disclosed this ticker (Congress page link), or null when no Congress page exists */
+  congress: { members: number; href: string } | null;
+  window: FilingWindow | null;
+}
+
+/** Identity → 4 stats (holders · combined value · adds · exits) → holders
+    ranked by value with Δ shares and kind → the overlap band → the Congress
+    link. Everything from the class-grain `agg_ticker_holders` family; the
+    ticker's ⓘ names the mapping's verification. */
+export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
+  const t = i.totals;
+  const verified = i.holders[0]?.verified_date ?? "";
+  const tiles: StatTile[] = [
+    { value: fmtInt(t.holder_count), label: "holders", title: `13F filers reporting this class for the quarter ended ${t.period_of_report}${i.holders.length < t.holder_count ? `; the ${fmtInt(i.holders.length)} largest are listed` : ""}` },
+    { value: fmtUsd(t.value_usd), label: "combined value", title: "sum of the reported values across every holder; NULL values are excluded, never zero-filled" },
+    { value: fmtInt(t.adds), label: "adds", title: "holders whose share count rose or who opened the position (new + add), by shares" },
+    { value: fmtInt(t.exits), label: "exits", title: "holders absent this quarter after holding last quarter — inferred from absence, not a sale record" },
+  ];
+  const rows = i.holders
+    .map(
+      (h) =>
+        `<tr><td class="c-rank">${fmtInt(h.rank)}</td>` +
+        `<td class="c-filer">${filerLinkHtml(h.cik, h.filer_name, i.tierOf(h.cik))}</td>` +
+        `<td class="c-num">${h.value_usd == null ? "—" : esc(fmtUsd(h.value_usd))}</td>` +
+        `<td class="c-num">${h.shares == null ? "—" : fmtInt(h.shares)}</td>` +
+        `<td class="c-num ${h.delta_shares == null ? "c-muted" : h.delta_shares < 0 ? "c-sell" : h.delta_shares > 0 ? "c-buy" : ""}">${h.delta_shares == null ? "—" : `${h.delta_shares < 0 ? "−" : h.delta_shares > 0 ? "+" : ""}${fmtInt(Math.abs(h.delta_shares))}`}</td>` +
+        `<td class="c-chip"><span class="qoq-chip qoq-${esc(h.change_kind)}">${esc(h.change_kind === "held" ? "no change" : h.change_kind === "no_prior" ? "no prior" : h.change_kind)}</span></td></tr>`,
+    )
+    .join("\n");
+  return (
+    breadcrumb([
+      { text: "/institutional", href: "/institutional/" },
+      { text: "tickers" },
+      { text: i.ticker },
+      { text: "holders" },
+    ]) +
+    `<header class="entity-head"><div class="entity-head-copy">` +
+    `<h1 class="entity-title">Who holds <span class="mono-ticker">${esc(i.ticker)}</span>` +
+    noteFromHtml(`ticker verified against the SEC company list${verified ? ` on ${esc(verified)}` : ""} — a reviewed name-and-class mapping row, never an inferred symbol. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>`, { scope: "holders-ticker" }, "verified") +
+    `</h1>` +
+    `<div class="entity-subline"><span class="filed-name">${esc(t.issuer_name)}</span> · <span class="filed-name">${esc(t.title_of_class)}</span> · quarter ended <span class="mono-id">${esc(t.period_of_report)}</span>` +
+    (i.congress ? ` · <a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} disclosed ${esc(i.ticker)} ↗</a>` : "") +
+    `</div></div>` +
+    statTiles(tiles, { label: "Holder statistics", compact: true, notes: { scope: "holders-tiles" } }) +
+    `</header>` +
+    (i.window?.open ? s7Banner(i.window) : "") +
+    `<section class="panel panel-wide" id="ticker-holders" aria-label="Holders ranked by value">` +
+    `<div class="panel-head"><h2 class="section-h">Holders — quarter ended ${esc(t.period_of_report)}</h2>` +
+    `<span class="panel-note">ranked by reported value · Δ shares vs ${esc(t.prev_period ?? "the prior quarter")} · kind by shares</span></div>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first><caption class="visually-hidden">13F holders of ${esc(i.ticker)} ranked by reported value</caption>` +
+    `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col" class="num">Reported value</th><th scope="col" class="num">Shares</th><th scope="col" class="num">Δ shares</th><th scope="col">Change</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table></div>` +
+    cardFoot({ short: `Quarter ended ${t.period_of_report}`, full: instFiledNote(i.latestFiled), scope: "ticker-holders-foot", key: "stamp" }) +
+    `</section>` +
+    i.overlapHtml +
+    (i.congress ? `<p class="section-note"><a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} of Congress disclosed ${esc(i.ticker)} — the congressional view ↗</a></p>` : "")
   );
 }

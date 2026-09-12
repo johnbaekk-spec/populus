@@ -119,3 +119,59 @@ export function scanTree(root: string, include: (name: string) => boolean): Scan
   walk(root);
   return { covered, hits };
 }
+
+/* ---------- R27 (refinement 20260910): pipeline vocabulary in visible text ---------- */
+
+/** SRC §1 rule 3: pipeline vocabulary never reaches the reader. Exact word
+    forms, so a filed name such as "W.W. Grainger" is not a hit for "grain". */
+export const RULE3_PATTERNS: { name: string; re: RegExp }[] = [
+  { name: "render bound", re: /\brender bounds?\b/i },
+  { name: "shard", re: /\bshards?\b/i },
+  { name: "projection", re: /\bprojections?\b/i },
+  { name: "tombstone", re: /\btombstone[sd]?\b/i },
+  { name: "coverage bucket", re: /\bcoverage buckets?\b/i },
+  { name: "change_kind", re: /\bchange_kind/i },
+  { name: "grain", re: /\bgrains?\b/i },
+  { name: "watermark", re: /\bwatermarks?\b/i },
+  { name: "bioguide", re: /\bbioguides?\b/i },
+];
+
+/** What a reader can see or hear on a page: text nodes (including ⓘ note
+    bodies, which open on demand) plus aria-label / title / alt / placeholder.
+    Scripts, styles, templates, comments and every other attribute value (ids,
+    `data-bioguide`, hrefs) are machine surface, not copy. Filed names are
+    redacted first, exactly as in the §0 scan. */
+export function visibleText(html: string): string {
+  let t = redactFiledNames(html);
+  t = t.replace(/<(script|style|template)\b[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
+  const attrs = [...t.matchAll(/\b(?:aria-label|title|alt|placeholder)="([^"]*)"/g)].map((m) => m[1]).join(" ");
+  t = t.replace(/<[^>]+>/g, " ");
+  const decode = (s: string): string =>
+    s.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  return decode(`${t} ${attrs}`).replace(/\s+/g, " ");
+}
+
+/** Every `.html` file under `root`, scanned for RULE3_PATTERNS in its visible
+    text. Coverage is enumerated, as in `scanTree`. */
+export function scanVisibleRule3(root: string): ScanResult {
+  const covered: string[] = [];
+  const hits: ScanHit[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir).sort()) {
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.endsWith(".html")) continue;
+      const text = visibleText(readFileSync(full).toString("utf-8"));
+      covered.push(path.relative(root, full));
+      for (const { name, re } of RULE3_PATTERNS) {
+        const m = re.exec(text);
+        if (m) hits.push({ file: path.relative(root, full), pattern: name, excerpt: text.slice(Math.max(0, m.index - 60), m.index + 60) });
+      }
+    }
+  };
+  walk(root);
+  return { covered, hits };
+}

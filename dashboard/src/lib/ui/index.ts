@@ -40,10 +40,21 @@ export {
   rankingWindowHtml,
   CONGRESS_RANGES,
   rankingAlternatives,
+  defaultRankingSortKey,
   emptyWindowHtml,
   congressRankingSection,
 } from "./rankings.ts";
-export { type SignalsPageDeps, signalRowHtml, signalsBody, memberSignalsPanel } from "./signals.ts";
+export {
+  type SignalsPageDeps,
+  signalRowHtml,
+  signalsBody,
+  memberSignalsPanel,
+  hitRowHtml,
+  hitsRangeText,
+  sortHits,
+  signalKindShort,
+  SIGNAL_HITS_PAGE_SIZE,
+} from "./signals.ts";
 export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {
   type AddsSortKey,
@@ -56,6 +67,8 @@ export {
   QOQ_FOOTNOTES,
   qoqChipHtml,
   changesTableHtml,
+  changesKindChipsHtml,
+  type ChangesKindFilter,
   filerPeriodSectionHtml,
   filerEdgarBlock,
   filerBody,
@@ -65,6 +78,7 @@ export {
   addsColumns,
   addsSectionHtml,
   notableRailHtml,
+  tickerHoldersBody,
 } from "./institutional.ts";
 export {
   type S4ErrorKind,
@@ -74,7 +88,7 @@ export {
   s4Error,
   s7Banner,
 } from "./states.ts";
-export { pickSpecimen, specimenCard, type ModuleCardStats, moduleCard } from "./home.ts";
+export { pickSpecimen, specimenCard, type ModuleCardStats, moduleCard, congressTileHtml, movesTileHtml, signalsTileHtml, HOME_CLAIM, HOME_TILE_ROWS } from "./home.ts";
 
 /* `RANKING_FOOTNOTES` moved to `congress-columns.ts`, which is where
    the columns that now carry its text are declared, and is re-exported here so

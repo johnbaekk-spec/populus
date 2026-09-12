@@ -220,7 +220,7 @@ test("F12/F25: initializing over SSR rows changes NO honesty content before rows
     );
     assert.match(
       boundFor(doc, CONGRESS_ROOTS.momentum).textContent,
-      /further ranked tickers are not rendered above/,
+      /more ranked tickers below/,
       "…and the reader is told the count regardless",
     );
   } finally {
@@ -251,6 +251,25 @@ test("F12: the headers are not offered as usable until rows exist", () => {
     assert.equal(btn!.getAttribute("aria-disabled"), "false", "delivery enables them");
   } finally {
     h.restore();
+  }
+});
+
+test("R12: with a requestRows hook, a header press asks for the rows and the sort paints on delivery", () => {
+  const { doc, restore } = installDom(pageHtml(corpus()));
+  try {
+    let asked = 0;
+    const sections = initCongressSections({ requestRows: () => void asked++ });
+    const root = doc.getElementById(CONGRESS_ROOTS.momentum)!;
+    const btn = doc.querySelector('th[data-congress-sort=name] button');
+    assert.equal(btn!.getAttribute("aria-disabled"), "false", "a press can fetch its own rows, so it is offered");
+    const before = root.innerHTML;
+    doc.querySelector('th[data-congress-sort=name]')!.click();
+    assert.equal(asked > 0, true, "the press requested the dataset");
+    assert.equal(root.innerHTML, before, "…and did not blank the server view meanwhile");
+    sections.receiveRows(corpus());
+    assert.notEqual(root.innerHTML, before, "the pending sort painted once the rows arrived");
+  } finally {
+    restore();
   }
 });
 
@@ -313,8 +332,7 @@ test("F12/F16: expanding updates the control and the terminus in one step", () =
        terminus row could go. */
     assert.match(btn.textContent, /^Show all 24 tickers$/);
     assert.equal(bound.hidden, false);
-    assert.match(bound.textContent, /14 further ranked tickers are not rendered above/);
-    assert.match(bound.textContent, /a Public Filings render bound, not a data bound/, "the author is named");
+    assert.match(bound.textContent, /14 more ranked tickers below/);
 
     btn.click();
     // expanded: nothing is held back, so the sentence retracts WITH the label
@@ -358,11 +376,11 @@ test("SL-R10: the client restates each root's bound in the SERVER's words, not o
     h.sections.receiveRows(rows);
     assert.match(
       boundFor(doc, CONGRESS_ROOTS.membersRanked).textContent,
-      /further ranked members are not rendered above/,
+      /more ranked members below/,
     );
     assert.match(
       boundFor(doc, CONGRESS_ROOTS.membersUndisclosed).textContent,
-      /further wholly-undisclosed members are not rendered above/,
+      /more wholly-undisclosed members below/,
       "the unrankable bucket must never be restated as ranked",
     );
   } finally {
