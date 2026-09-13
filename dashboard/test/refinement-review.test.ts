@@ -443,3 +443,35 @@ test("F10: both clients carry the selection into the view switch", () => {
     assert.match(src(rel), /priorPeriodOf\(/, `${rel} resolves the predecessor of the selection`);
   }
 });
+
+test("C3: one ticker named by two reviewed rows takes the EARLIEST verified date, whatever the row order", () => {
+  // `tickerDates` is keyed by TICKER while the date is a property of a mapping
+  // ROW, and two reviewed rows can name one ticker with different dates (the
+  // two Agilent rows do). The payload must not let row order decide, so the
+  // real assembler is driven twice with the dates swapped between the two rows
+  // it sees, and both runs must agree on the earlier date.
+  const build = (appleDate: string, msftDate: string) => {
+    const db = servingDb();
+    return assembleFilerPayload(db, {
+      cik: "0001067983",
+      filerName: "BERKSHIRE HATHAWAY INC",
+      latestPeriod: "2026-03-31",
+      requestedPeriod: "2026-03-31",
+      filings: readServingFilings(db),
+      agg: agg(),
+      // BOTH rows map to ONE ticker, with different verified dates.
+      tickerFor: (n: string, _c: string | null) =>
+        n === "APPLE INC"
+          ? { ticker: "AAPL", verified_date: appleDate }
+          : n === "MICROSOFT CORP"
+            ? { ticker: "AAPL", verified_date: msftDate }
+            : null,
+    });
+  };
+  assert.equal(build("2026-09-10", "2026-03-02").tickerDates?.AAPL, "2026-03-02");
+  assert.equal(
+    build("2026-03-02", "2026-09-10").tickerDates?.AAPL,
+    "2026-03-02",
+    "row order must not decide which date the ⓘ states",
+  );
+});
