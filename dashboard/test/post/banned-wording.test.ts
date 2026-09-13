@@ -93,6 +93,7 @@ test("T3: every required term is a live pattern, and each one rejects a planted 
     projection: "the serving projection carries the newest two periods.",
     "coverage bucket": "each member falls in a coverage bucket by filing count.",
     "gold tick": "the gold tick names the build this page was rendered from.",
+    "classified by value": "this position was classified by value, not shares.",
   };
   for (const term of T3_REQUIRED_PATTERNS) {
     const dir = plantedDist(`<main><p>${phrases[term]}</p></main>`);

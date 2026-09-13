@@ -20,15 +20,16 @@ blocks, however many there are in total.
 | Data build | `/Users/johnbaek/populus-build-20260817.1` — `builddir/` + `congress.db` + `inst_serving.db` + `inst_agg.db`, the same real-data baseline the refinement run used |
 | Env | `POPULUS_BUILD_DIR` · `POPULUS_DB` · `POPULUS_INST_SERVING_DB` · `POPULUS_INST_DB` all set to that build |
 | Build | `npm run build:bounded` rc 0 — 9,660 pages, **17,255 files** in `dist/` (self-cap 18,000, provider cap 20,000) |
-| Result | **85 tests · 70 pass · 15 fail** |
+| Result | **85 tests · 71 pass · 14 fail** |
 
-The run BEFORE the one fix below was 69 pass / 16 fail; fixing the `.well-known`
-omission moved one test out of the failing set, and this table records the tree as
-it now stands. The previously recorded figure was 14; the difference is accounted
-for rather than absorbed — see "Why the count moved" below.
+Two fixes moved this figure, each recorded in section C rather than absorbed.
+The run before the `.well-known` fix was 69 pass / 16 fail; that fix moved one
+test out of the failing set (70/15), and the R23 copy fix moved a second
+(71/14). The previously recorded figure was 14 for different reasons — see
+"Why the count moved" below.
 
 The other lanes, measured on the same tree: `astro check` 0 errors · `npm test`
-**763 pass / 0 fail** · `uv run pytest -q` **3,627 passed, 2 failed** (the two
+**763 pass / 0 fail** · `uv run pytest -q` **3,633 passed, 2 failed** (the two
 tree-bound `test_maintenance_tooling::test_cross_run_*`, the standing Python
 baseline) · Playwright geometry **61 passed / 1 failed**
 (`design reference Institutional Filer.dc.html at 1440px` — the filer page renders
@@ -62,7 +63,7 @@ timeout can mask a real defect in any of the ten: they would fail the same way.
 Treat a run where this lane PASSES as the stronger evidence, and do not read
 these ten as permanently expected.
 
-### B. Data- and environment-bound expectations — 5 failures
+### B. Data- and environment-bound expectations — 4 failures
 
 11. `R19 GATE (margin): the largest deployed file keeps headroom under the cap`
     — `dashboard/test/post/file-budget.test.ts:203`. `congress/data/feed.v1.json`
@@ -88,17 +89,7 @@ these ten as permanently expected.
     reviewed mapping and holders pages are cut for NVDA; the 20260817.1 baseline
     data does not produce them.
 
-15. `POST-BUILD R23: every SRC §5 observed string returns 0 in dist's visible text …`
-    — `dashboard/test/post/refinement-dist.test.ts:325`. `"classified by value"`
-    on **716** institutional pages, e.g. `institutional/filers/1002672/index.html`.
-    This is a REAL copy finding, not an environment difference: the string is the
-    label of the `classified_by_value` disclosure flag
-    (`dashboard/src/lib/format.ts:483`, shipped in P3-2), and SRC §5 says that
-    vocabulary belongs only on `/methodology`. It is baselined here rather than
-    fixed because changing a disclosure-flag label is a copy decision with its own
-    blast radius, not a trivial repair. **Open item, not an accepted state.**
-
-### C. Fixed rather than baselined — 1 (NOT in the expected set)
+### C. Fixed rather than baselined — 2 (NOT in the expected set)
 
 `every built file class is named by some budget term`
 (`dashboard/test/post/file-budget.test.ts:430`) failed with
@@ -109,6 +100,29 @@ That was a true omission, not an environment difference:
 security-headers work and no budget term named it. **Fixed** by naming
 `.well-known` in `inst_budget.SITE_CHROME_CLASSES`. It is therefore NOT in the
 expected set, and a future `.well-known=…` failure is a new failure.
+
+`POST-BUILD R23: every SRC §5 observed string returns 0 in dist's visible text …`
+(`dashboard/test/post/refinement-dist.test.ts:325`) failed with
+`"classified by value"` on **716** institutional pages.
+
+That was a REAL copy defect, not an environment difference, and it is now
+**FIXED** rather than baselined. The string was the label of the
+`classified_by_value` disclosure flag — but R8 RETIRED the behaviour the phrase
+describes: a position whose share count did not change is no longer classified
+as a trade from its reported value, it is `held`, and no new build sets the
+flag at all. The copy described removed behaviour. The chip now reads
+**"no change in shares"** (`dashboard/src/lib/format.ts:490`) and the retired
+mechanism moved into the `†v` footnote
+(`dashboard/src/lib/ui/institutional.ts:307`), which is where SRC §5 puts a
+mechanism. The producer slug `classified_by_value` stays inside `<code>` so an
+older aggregate still decodes.
+
+It cannot return: `classified by value` is now a `RULE3_PATTERNS` entry and a
+`T3_REQUIRED_PATTERNS` member (`dashboard/test/lib/banned-scan.ts:149,163`), so
+the wording gate fails on a planted instance — asserted by the existing
+"each one rejects a planted page" test, which now covers this term too. A
+future `classified by value` hit is therefore a NEW failure, in the R27 lane as
+well as R23.
 
 Fixing it had its own trap, recorded because the next person will hit it:
 `dashboard/test/post/file-budget.test.ts` reads these sets out of

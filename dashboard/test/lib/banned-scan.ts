@@ -140,6 +140,13 @@ export const RULE3_PATTERNS: { name: string; re: RegExp }[] = [
   { name: "grain", re: /\bgrains?\b/i },
   { name: "watermark", re: /\bwatermarks?\b/i },
   { name: "bioguide", re: /\bbioguides?\b/i },
+  // R23 (2026-09-13): "classified by value" described a classification R8
+  // REMOVED — a position whose share count did not change is `held`, not a
+  // trade inferred from its reported value. It shipped on 716 institutional
+  // pages as a flag-chip label. The producer slug `classified_by_value` is NOT
+  // matched: it is machine vocabulary inside <code>, kept so an older
+  // aggregate still decodes, and the underscores put it outside this pattern.
+  { name: "classified by value", re: /\bclassified\s+by\s+value\b/i },
 ];
 
 /** The terms T3 requires the build to fail on, by the NAME they carry in
@@ -153,6 +160,7 @@ export const T3_REQUIRED_PATTERNS = [
   "projection",
   "coverage bucket",
   "gold tick",
+  "classified by value",
 ] as const;
 
 /** What a reader can see or hear on a page: text nodes (including ⓘ note

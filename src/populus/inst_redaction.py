@@ -37,11 +37,16 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections import defaultdict
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from populus.ticker_mapping_13f import TickerMapping, load_ticker_mapping, mapping_key
+from populus.ticker_mapping_13f import (
+    TickerMapping,
+    load_ticker_mapping,
+    mapping_key,
+    normalize_issuer_name,
+)
 
 __all__ = [
     "WITHHELD_ISSUER_PREFIX",
@@ -51,6 +56,7 @@ __all__ = [
     "DISCLOSURE_WITHHELD_TEXT",
     "apply_cusip_redaction",
     "close_withheld_cusips",
+    "load_list_issuers",
     "plan_cusip_redaction",
     "scrub_disclosure_text",
 ]
@@ -116,6 +122,12 @@ class RedactionPlan:
     blocks: frozenset[str]
     position_keys: dict[str, str]
     issuer_keys: dict[str, str]
+    #: Seeds the SEC-list issuer check refused to propagate. They ARE withheld
+    #: (they are in ``cusips``); they must simply never be expanded to a block.
+    unverified: frozenset[str] = frozenset()
+    #: ``(cusip, filed issuer name, class)`` for each of the above, so the build
+    #: record can name the mis-filed row instead of dropping it silently.
+    rejected_seeds: tuple[tuple[str, str, str | None], ...] = ()
 
     def summary(self) -> dict[str, int]:
         return {
@@ -125,6 +137,7 @@ class RedactionPlan:
             "withheld_cusip6_blocks": len(self.blocks),
             "opaque_position_keys": len(self.position_keys),
             "opaque_issuer_keys": len(self.issuer_keys),
+            "unverified_seeds": len(self.unverified),
         }
 
 
@@ -146,6 +159,11 @@ class WithheldClosure:
     ``tickers`` labels every member with the ticker(s) it is joinable to, found
     by walking the same edges out from the mapped rows; a member reached only
     through a security-id edge inherits the label of the row that reached it.
+
+    ``unverified`` are the seeds the SEC-list issuer check REFUSED TO PROPAGATE
+    (see :func:`close_withheld_cusips`); they are still members of ``cusips``.
+    ``rejected_seeds`` records each one as ``(cusip, filed issuer name, class)``
+    so a caller can name the filing rather than filter it silently.
     """
 
     mapped: frozenset[str]
@@ -153,11 +171,60 @@ class WithheldClosure:
     security_ids: frozenset[str]
     blocks: frozenset[str]
     tickers: dict[str, frozenset[str]]
+    unverified: frozenset[str] = frozenset()
+    rejected_seeds: tuple[tuple[str, str, str | None], ...] = ()
+
+
+#: An issuer-name token short enough to be noise ("CO", "SA", "NV", a stray
+#: initial) is not evidence either way, so agreement is decided on tokens of at
+#: least this length.
+_ISSUER_TOKEN_MIN = 3
+#: A token may also agree as a PREFIX of the other ("ELEC"/"ELECTRIC",
+#: "BUS"/"BUSINESS"), which is how the SEC list abbreviates. Four characters,
+#: so "CORP"/"CORPORATION" agrees while a two-letter coincidence cannot.
+_ISSUER_PREFIX_MIN = 4
+
+
+def _issuer_tokens(name: str) -> list[str]:
+    return [t for t in normalize_issuer_name(name).split() if len(t) >= _ISSUER_TOKEN_MIN]
+
+
+def _issuer_names_agree(filed: str, listed: str) -> bool:
+    """Do a FILED issuer name and the SEC list's own name describe one issuer?
+
+    NOT string equality, and measuring is why. On the 20260817.1 corpus, exact
+    equality after :func:`normalize_issuer_name` separated 493 seed CUSIPs from
+    their list rows, and the overwhelming majority were the same issuer spelled
+    differently — "Abbott Laboratories - US" against "ABBOTT LABORATORIES",
+    "AMERICAN ELECTRIC POWER" against "AMERICAN ELEC PWR". Treating those as
+    disagreements would have stopped withholding hundreds of securities that
+    genuinely resolve to a reviewed ticker, which is the property inverted.
+
+    So agreement is ONE shared significant token, exact or as a prefix. That is
+    deliberately generous: a false AGREEMENT only preserves today's behaviour,
+    while a false disagreement costs withholding. It still separates the case
+    this exists for — "NORTHERN OIL & GAS INC" against "UNITED STATES TREAS
+    NTS" shares nothing — and on the same corpus it cut the 493 to 156, of
+    which every one inspected was a filer writing another issuer's CUSIP.
+    """
+    filed_tokens, listed_tokens = _issuer_tokens(filed), _issuer_tokens(listed)
+    if not filed_tokens or not listed_tokens:
+        # No significant token on one side is an absence of evidence, not
+        # evidence of conflict; fail toward withholding.
+        return True
+    return any(
+        a == b
+        or (len(a) >= _ISSUER_PREFIX_MIN and b.startswith(a))
+        or (len(b) >= _ISSUER_PREFIX_MIN and a.startswith(b))
+        for a in filed_tokens
+        for b in listed_tokens
+    )
 
 
 def close_withheld_cusips(
     rows: Iterable[tuple[str | None, str | None, str, str | None]],
     mapping: TickerMapping | None = None,
+    list_issuers: Mapping[str, Collection[str]] | None = None,
 ) -> WithheldClosure:
     """Close the withheld set over ``(issuer_name, class, cusip, security_id)`` rows.
 
@@ -166,12 +233,38 @@ def close_withheld_cusips(
     issuer key or the issuer name) and a shared ``security_id`` (a CUSIP change
     inside one registry class). The seed for both is a row whose (issuer name,
     class) is in the reviewed mapping.
+
+    A SEED MUST AGREE WITH THE SEC LIST BEFORE IT MAY SPREAD. ``list_issuers``
+    maps a CUSIP to the issuer name(s) the SEC Official 13F List gives it
+    (:func:`load_list_issuers`). Filers mistype CUSIPs, and a mistyped one that
+    happens to match a reviewed (issuer name, class) used to seed the closure
+    like any other — so a single row reporting a Treasury CUSIP under a company
+    name pulled that Treasury's ENTIRE CUSIP-6 block into the withheld set, and
+    labelled 637 government bonds with an equity ticker they have nothing to do
+    with. Two measured rows did exactly that: ``NORTHERN OIL & GAS INC``
+    (91282CGE5) and ``KIMBERLY CLARK CORP`` (91282CHH7).
+
+    The check gates PROPAGATION, not membership, and the distinction is the
+    whole point. A seed whose CUSIP the list assigns to a plainly different
+    issuer is still withheld ITSELF — it costs one opaque ordinal and cannot
+    weaken anything — but it contributes no block and no security-id edge, so
+    it cannot drag in securities that are not its own. Gating membership
+    instead would un-withhold real securities whenever the list and the filer
+    disagree for an innocent reason: on the 20260817.1 corpus two of the
+    refused seeds are the TransForce/TFI International rename, filed 286 times,
+    whose CUSIP genuinely does resolve to a reviewed ticker.
+
+    ``list_issuers`` is optional only because a caller may have no list to read.
+    Passing ``None`` restores the un-gated seeding this exists to fix, so every
+    in-tree caller passes one.
     """
     by_key = (mapping or load_ticker_mapping()).by_key()
     cusip_sids: dict[str, set[str]] = defaultdict(set)
     sid_cusips: dict[str, set[str]] = defaultdict(set)
     block_cusips: dict[str, set[str]] = defaultdict(set)
     mapped: set[str] = set()
+    verified: set[str] = set()
+    rejected: dict[str, tuple[str, str | None]] = {}
     labels: dict[str, set[str]] = defaultdict(set)
     for name, klass, cusip, security_id in rows:
         if cusip is None:
@@ -183,9 +276,18 @@ def close_withheld_cusips(
         if name is not None and mapping_key(name, klass) in by_key:
             mapped.add(cusip)
             labels[cusip].add(by_key[mapping_key(name, klass)].ticker)
+            listed = None if list_issuers is None else list_issuers.get(cusip)
+            # A CUSIP the list does not carry is unverifiable, not refuted, so
+            # it keeps propagating: this gate only acts on positive contrary
+            # evidence from the SEC's own list.
+            if listed and not any(_issuer_names_agree(name, l) for l in listed):
+                rejected[cusip] = (name, klass)
+            else:
+                verified.add(cusip)
 
+    # Only the VERIFIED seeds start the walk.
     withheld: set[str] = set()
-    frontier = set(mapped)
+    frontier = set(verified)
     while frontier:
         withheld |= frontier
         grown: set[str] = set()
@@ -199,14 +301,58 @@ def close_withheld_cusips(
                 labels[other] |= labels[cusip]
             grown |= reached
         frontier = grown - withheld
+    # The BLOCKS are the walk's, taken before the refused seeds join the set: a
+    # block becomes an opaque issuer key for every row in it, so letting a
+    # mis-filed CUSIP contribute its block would re-drag the 637 Treasuries
+    # through `issuer_key` instead of through `cusip` — the same defect, one
+    # column over.
+    walked = frozenset(withheld)
+    # A refused seed is withheld, but only AFTER the walk, so it never acts as a
+    # starting point. Adding it before would also have kept anything the walk
+    # legitimately reached from re-entering the frontier.
+    withheld |= mapped
 
     return WithheldClosure(
         mapped=frozenset(mapped),
         cusips=frozenset(withheld),
         security_ids=frozenset(sid for c in withheld for sid in cusip_sids.get(c, ())),
-        blocks=frozenset(c[:6] for c in withheld),
+        blocks=frozenset(c[:6] for c in walked),
         tickers={c: frozenset(labels.get(c, ())) for c in withheld},
+        unverified=frozenset(rejected),
+        rejected_seeds=tuple(
+            (cusip, name, klass) for cusip, (name, klass) in sorted(rejected.items())
+        ),
     )
+
+
+
+def load_list_issuers(conn: sqlite3.Connection) -> dict[str, frozenset[str]]:
+    """``cusip -> the SEC Official 13F List's own issuer name(s)`` for that CUSIP.
+
+    Read from ``security_list_intervals``, which the same database already
+    carries — this adds no new source. A CUSIP can hold several rows (one per
+    quarter interval) and the printed name drifts, so every distinct spelling is
+    kept and :func:`close_withheld_cusips` accepts a seed that agrees with ANY
+    of them.
+
+    Rows ALREADY withheld by a previous release are skipped: their ``value`` is
+    ``withheld:<n>`` rather than a CUSIP, so they answer for no CUSIP at all,
+    and their first six characters ("withhe") are not an issuer block. Returns
+    an empty mapping when the table is absent, which is an ordinary state of a
+    fixture or a partially seeded corpus.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT value, issuer_name FROM security_list_intervals"
+            " WHERE id_type = 'cusip' AND issuer_name IS NOT NULL"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    names: dict[str, set[str]] = defaultdict(set)
+    for value, issuer_name in rows:
+        if isinstance(value, str) and not value.startswith(WITHHELD_LIST_VALUE_PREFIX):
+            names[value].add(issuer_name)
+    return {cusip: frozenset(v) for cusip, v in names.items()}
 
 
 def plan_cusip_redaction(
@@ -223,8 +369,13 @@ def plan_cusip_redaction(
             "SELECT issuer_name_raw, title_of_class, cusip, security_id"
             " FROM main.inst_holdings WHERE cusip IS NOT NULL"
             " GROUP BY issuer_name_raw, title_of_class, cusip, security_id"
-        ),
+        ).fetchall(),
         mapping,
+        # The SEC list lives in this same database, so the seeding gate reads it
+        # inside the caller's single read transaction like every other source
+        # read. `.fetchall()` above because the cursor cannot stay open across
+        # the second query on the same connection.
+        load_list_issuers(source),
     )
     mapped, withheld = closure.mapped, closure.cusips
     sids, blocks = closure.security_ids, closure.blocks
@@ -245,6 +396,8 @@ def plan_cusip_redaction(
         blocks=frozenset(blocks),
         position_keys=position_keys,
         issuer_keys=issuer_keys,
+        unverified=closure.unverified,
+        rejected_seeds=closure.rejected_seeds,
     )
 
 
@@ -498,6 +651,7 @@ def plan_registry_redaction(
     mapping: TickerMapping | None = None,
     *,
     filed_cusips: Collection[str] = (),
+    unverified_cusips: Collection[str] = (),
 ) -> tuple[dict[str, str], dict[str, str]]:
     """``(cusip -> opaque value, security_id -> opaque id)`` for the published
     list. Same closure as the inst plan: a reviewed issuer contributes its
@@ -544,8 +698,20 @@ def plan_registry_redaction(
         for value, _sid, name, klass in fresh
         if name is not None and mapping_key(name, klass) in by_key
     }
-    blocks |= {c[:6] for c in filed_cusips}
-    withheld = sorted({value for value, _s, _n, _c in fresh if value[:6] in blocks})
+    # A filed CUSIP carries its BLOCK into the withheld set — unless the seeding
+    # gate refused it (`close_withheld_cusips`). A filer who writes another
+    # issuer's CUSIP under a reviewed name must not withhold that issuer's whole
+    # block here either: the measured case dragged 637 Treasuries in behind two
+    # rows. The refused CUSIPs are still withheld, just as themselves.
+    unverified = frozenset(unverified_cusips)
+    blocks |= {c[:6] for c in filed_cusips if c not in unverified}
+    withheld = sorted(
+        {
+            value
+            for value, _s, _n, _c in fresh
+            if value[:6] in blocks or value in unverified
+        }
+    )
     start = _next_withheld_ordinal(prior)
     values = {
         value: f"{WITHHELD_LIST_VALUE_PREFIX}{n}"
@@ -563,6 +729,7 @@ def apply_registry_redaction(
     db_path: Path | str,
     *,
     filed_cusips: Collection[str] = (),
+    unverified_cusips: Collection[str] = (),
     inst_source: Path | str | None = None,
 ) -> dict[str, int]:
     """Withhold reviewed-ticker CUSIPs from ONE published congress.db copy.
@@ -583,12 +750,15 @@ def apply_registry_redaction(
     """
     counts: dict[str, int] = {}
     filed: frozenset[str] = frozenset(filed_cusips)
+    unverified: frozenset[str] = frozenset(unverified_cusips)
     if inst_source is not None:
         inst_conn = sqlite3.connect(
             f"file:{inst_source}?mode=ro&immutable=1", uri=True
         )
         try:
-            filed |= plan_cusip_redaction(inst_conn).cusips
+            standalone = plan_cusip_redaction(inst_conn)
+            filed |= standalone.cusips
+            unverified |= standalone.unverified
         finally:
             inst_conn.close()
     counts["filed_withheld_cusips"] = len(filed)
@@ -629,7 +799,9 @@ def apply_registry_redaction(
         values: dict[str, str] = {}
         sids: dict[str, str] = {}
         if has_list:
-            values, sids = plan_registry_redaction(conn, filed_cusips=filed)
+            values, sids = plan_registry_redaction(
+                conn, filed_cusips=filed, unverified_cusips=unverified
+            )
             counts["withheld_cusips"] = len(values)
             counts["withheld_security_ids"] = len(sids)
         else:

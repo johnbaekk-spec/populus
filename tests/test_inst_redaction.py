@@ -586,3 +586,142 @@ def test_the_dashboard_marker_matches_the_publishers(tmp_path):
     match = re.search(r'CUSIP_WITHHELD_MARKER\s*=\s*"([^"]+)"', ts)
     assert match is not None, "the dashboard constant was renamed or removed"
     assert match.group(1) == DISCLOSURE_WITHHELD_TEXT
+
+
+# --- the seeding gate (post-release A, 2026-09-13) ---------------------------
+#
+# Filers mistype CUSIPs. Two rows in the published corpus report TREASURY
+# CUSIPs under company issuer names that the reviewed mapping resolves —
+# `NORTHERN OIL & GAS INC` on 91282CGE5 and `KIMBERLY CLARK CORP` on 91282CHH7
+# — and because the closure seeds on (issuer name, class) alone, those two rows
+# pulled the ENTIRE 637-CUSIP `91282C` Treasury block into the withheld set and
+# labelled government bonds with an equity ticker. The visible symptom was a
+# probe reporting Treasury bonds paired with `KMB`, which is simply false.
+
+TREASURY_A = "91282CGE5"        # a real US Treasury note CUSIP
+TREASURY_B = "91282CHH7"        # another, same 91282C block
+TREASURY_SIBLING = "91282CJK8"  # a third — the innocent bystander
+SEC_LIST_TREASURY = "UNITED STATES TREAS NTS"
+
+
+def _treasury_rows():
+    """The two measured mis-filings, plus one Treasury nobody mis-filed."""
+    return [
+        ("NORTHERN OIL & GAS INC", "COM", TREASURY_A, None),
+        ("KIMBERLY CLARK CORP", "COM", TREASURY_B, None),
+        ("UNITED STATES TREAS NTS", "NOTE", TREASURY_SIBLING, None),
+    ]
+
+
+def test_c_a_misfiled_cusip_cannot_drag_its_block_into_the_withheld_set():
+    """THE REGRESSION. Without the SEC-list gate the whole Treasury block is
+    withheld and mislabelled; with it, only the mis-filed rows themselves are.
+
+    The un-gated call is asserted FIRST and in the same test, so this cannot
+    pass by the gate silently doing nothing: the old behaviour has to be
+    observed here for the new behaviour to mean anything.
+    """
+    rows = _treasury_rows()
+
+    # The behaviour this fixes, pinned so it cannot come back unnoticed.
+    ungated = close_withheld_cusips(rows)
+    assert TREASURY_SIBLING in ungated.cusips, (
+        "pre-fix: an untouched Treasury rode in on the block edge"
+    )
+    assert ungated.tickers[TREASURY_SIBLING] == frozenset({"NOG", "KMB"}), (
+        "pre-fix: and was labelled with equity tickers it has nothing to do with"
+    )
+
+    list_issuers = {
+        TREASURY_A: frozenset({SEC_LIST_TREASURY}),
+        TREASURY_B: frozenset({SEC_LIST_TREASURY}),
+        TREASURY_SIBLING: frozenset({SEC_LIST_TREASURY}),
+    }
+    gated = close_withheld_cusips(rows, None, list_issuers)
+    assert TREASURY_SIBLING not in gated.cusips, "the block is no longer dragged in"
+    assert "91282C" not in gated.blocks, (
+        "and contributes no opaque issuer key either — otherwise the same block"
+        " would be re-dragged through issuer_key instead of cusip"
+    )
+    # Both mis-filed rows are named, with the class, so the record can point at
+    # the filing rather than filter it silently.
+    assert gated.unverified == frozenset({TREASURY_A, TREASURY_B})
+    assert gated.rejected_seeds == (
+        (TREASURY_A, "NORTHERN OIL & GAS INC", "COM"),
+        (TREASURY_B, "KIMBERLY CLARK CORP", "COM"),
+    )
+
+
+def test_c_a_refused_seed_is_still_withheld_itself():
+    """The gate narrows PROPAGATION, never membership. A CUSIP that a reviewed
+    (issuer name, class) matched stays withheld whatever the list says — the
+    property is "no reviewed-ticker security publishes its CUSIP", and a filer's
+    typo is not a reason to start publishing one."""
+    rows = _treasury_rows()
+    gated = close_withheld_cusips(
+        rows, None, {TREASURY_A: frozenset({SEC_LIST_TREASURY})}
+    )
+    assert TREASURY_A in gated.cusips
+    assert TREASURY_A in gated.mapped
+
+
+def test_c_a_spelling_difference_is_not_a_disagreement():
+    """The SEC list abbreviates and filers do not. `AIR PRODS & CHEMS` against
+    the list's `AIR PRODUCTS AND CHEMICALS I` is ONE issuer, and a gate that
+    read it as a conflict would stop withholding a security that genuinely
+    resolves to a reviewed ticker — the property inverted. Measured: exact
+    equality separated 493 seed CUSIPs from their list rows on the 20260817.1
+    corpus, nearly all of them this shape.
+    """
+    apd, apd_sibling = "009158106", "009158205"
+    rows = [
+        ("AIR PRODS & CHEMS", "COM", apd, None),
+        ("AIR PRODUCTS AND CHEMICALS INC", "PFD", apd_sibling, None),
+    ]
+    gated = close_withheld_cusips(
+        rows, None, {apd: frozenset({"AIR PRODUCTS AND CHEMICALS I"})}
+    )
+    assert gated.unverified == frozenset(), "no seed was refused"
+    assert apd_sibling in gated.cusips, "the block edge still runs"
+
+
+def test_c_a_cusip_the_list_does_not_carry_still_propagates():
+    """Absence of evidence is not evidence of conflict. A CUSIP with no SEC list
+    row cannot be checked, so it keeps the pre-fix behaviour and stays a seed;
+    the gate acts only on positive contrary evidence."""
+    rows = [
+        ("3M CO", "COM", MAPPED_CUSIP, None),
+        ("3M CO", "NOTE 2.25% 2026", SIBLING_CUSIP, None),
+    ]
+    gated = close_withheld_cusips(rows, None, {"999999999": frozenset({"NOBODY"})})
+    assert gated.unverified == frozenset()
+    assert SIBLING_CUSIP in gated.cusips
+
+
+def test_c_load_list_issuers_ignores_rows_a_previous_release_withheld(tmp_path):
+    """`security_list_intervals` is re-seeded from the PUBLISHED congress.db, so
+    it already carries `withheld:<n>` values. Those answer for no CUSIP, and
+    their first six characters ("withhe") are not an issuer block."""
+    from populus.inst_redaction import load_list_issuers
+
+    conn = sqlite3.connect(tmp_path / "registry.db")
+    conn.execute(
+        "CREATE TABLE security_list_intervals (value TEXT, id_type TEXT,"
+        " issuer_name TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO security_list_intervals VALUES (?, 'cusip', ?)",
+        [(TREASURY_A, SEC_LIST_TREASURY), ("withheld:7", "3M CO")],
+    )
+    conn.commit()
+    assert load_list_issuers(conn) == {TREASURY_A: frozenset({SEC_LIST_TREASURY})}
+    conn.close()
+
+
+def test_c_load_list_issuers_on_a_database_without_the_table_is_empty(tmp_path):
+    """An ordinary state of a fixture or a partially seeded corpus, not an error."""
+    from populus.inst_redaction import load_list_issuers
+
+    conn = sqlite3.connect(tmp_path / "empty.db")
+    assert load_list_issuers(conn) == {}
+    conn.close()
