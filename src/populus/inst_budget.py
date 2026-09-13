@@ -267,6 +267,14 @@ MEASURED_M1_CLASSES: frozenset[str] = frozenset({"congress", "tickers"})
 #: the root files below these are `SITE_CHROME_FILES`.
 SITE_CHROME_CLASSES: frozenset[str] = frozenset(
     {
+        # RFC 9116 `security.txt`, one static file shipped from
+        # `dashboard/public/.well-known/`. It has been built since the security
+        # headers work and no budget term named it, so the file-class coverage
+        # gate reported ".well-known=1" as unaccounted on every real-data
+        # build — correctly. It is site chrome: fixed, tiny and unrelated to
+        # any module's row count. Named here rather than baselined, because the
+        # gate was reporting a real omission, not an environment difference.
+        ".well-known",
         "_astro",
         "e",
         "financials",
