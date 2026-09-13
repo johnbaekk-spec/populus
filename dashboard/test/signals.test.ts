@@ -194,9 +194,17 @@ test("review F1: prior-artifact chaining — first-seen carried, tombstones emit
   assert.ok(tomb, "a signal that left the retained view gets a TOMBSTONE, never silence");
   assert.equal(tomb!.supersededInBuild, "20260812.1");
   assert.equal(tomb!.occurrence.filedDate, "2026-07-15");
-  assert.match(buildB.lifecycleNote, /chained to the prior artifact/);
-  // Cold start says so.
-  assert.match(buildA.lifecycleNote, /cold start/);
+  // T3: the note is READER copy, so it is asserted on meaning, not on the
+  // internal vocabulary it used to borrow. It must say the build continues the
+  // previous one and that a departed signal is kept rather than deleted — and
+  // it must NOT reach for the pipeline's own words, which the post-build
+  // banned-wording gate rejects on the rendered page.
+  assert.match(buildB.lifecycleNote, /continues the previous one/);
+  assert.match(buildB.lifecycleNote, /kept in the file rather than deleted/);
+  assert.doesNotMatch(buildB.lifecycleNote, /tombstone|supersession|status:/i);
+  // A first build says so, in the same register.
+  assert.match(buildA.lifecycleNote, /first build with nothing before it/);
+  assert.doesNotMatch(buildA.lifecycleNote, /cold start|deterministic hash/i);
 });
 
 test("review F2: min-history withholds baseline-dependent kinds on a shallow corpus", () => {

@@ -126,15 +126,34 @@ export function scanTree(root: string, include: (name: string) => boolean): Scan
     forms, so a filed name such as "W.W. Grainger" is not a hit for "grain". */
 export const RULE3_PATTERNS: { name: string; re: RegExp }[] = [
   { name: "render bound", re: /\brender bounds?\b/i },
+  // "shard budget" is named in its own right by the T3 requirement; the bare
+  // "shard" already subsumes it, and keeping the narrower pattern as well would
+  // only report the same phrase twice. The broad form is the one that holds.
   { name: "shard", re: /\bshards?\b/i },
   { name: "projection", re: /\bprojections?\b/i },
   { name: "tombstone", re: /\btombstone[sd]?\b/i },
   { name: "coverage bucket", re: /\bcoverage buckets?\b/i },
+  // T3 (2026-09-13): the build-stamp vocabulary. A reader is shown a date and a
+  // build id, never the internal name for the marker that pins them.
+  { name: "gold tick", re: /\bgold ticks?\b/i },
   { name: "change_kind", re: /\bchange_kind/i },
   { name: "grain", re: /\bgrains?\b/i },
   { name: "watermark", re: /\bwatermarks?\b/i },
   { name: "bioguide", re: /\bbioguides?\b/i },
 ];
+
+/** The terms T3 requires the build to fail on, by the NAME they carry in
+    `RULE3_PATTERNS`. Kept as its own list so a rename or a deletion in the
+    table above is a test failure rather than a silently narrowed gate — the
+    failure mode a wording gate has is shrinking without anyone noticing. */
+export const T3_REQUIRED_PATTERNS = [
+  "tombstone",
+  "render bound",
+  "shard",
+  "projection",
+  "coverage bucket",
+  "gold tick",
+] as const;
 
 /** What a reader can see or hear on a page: text nodes (including ⓘ note
     bodies, which open on demand) plus aria-label / title / alt / placeholder.

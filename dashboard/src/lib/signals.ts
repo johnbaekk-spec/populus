@@ -736,10 +736,19 @@ export function buildSignalArtifact(
     retentionDays,
     coverageFrom,
     coverageTo,
+    /* T3 (2026-09-13): plain English, same facts. The published wording used
+       "supersession tombstones (status: superseded)" — the internal name for
+       the record and the raw field value beside it — in a note a reader opens
+       on the /signals page. Every fact it stated is kept: continuity with the
+       previous build, a stable id, the date a signal was first seen, that a
+       signal leaving the window is KEPT rather than deleted, and that the
+       record names the build it left in. What moved out is the vocabulary and
+       the field syntax; `status: "superseded"` is a detail for someone reading
+       signals.v1.json, and it is documented on /methodology instead. */
     lifecycleNote:
       prior !== null
-        ? "chained to the prior artifact: first-seen builds carry forward by stable id; signals that left the retained view carry supersession tombstones (status: superseded) naming the build that dropped them."
-        : "cold start: no prior artifact was supplied to this build, so first/last-seen name THIS build. Identities are deterministic hashes of (kind, dedupe key) — a consumer holding an older artifact can still chain by id.",
+        ? "this build continues the previous one: a signal keeps the same id and the date it was first seen for as long as it stays in the window. A signal that is no longer in the window — amended away, or no longer matching — is kept in the file rather than deleted, marked as no longer current and labelled with the build it left in."
+        : "this is a first build with nothing before it to continue from, so every signal is first seen here. Ids are computed from the signal itself, so a reader holding an older file can still line them up.",
     compaction:
       `signals whose filed date predates the ${retentionDays}-day window are compacted out of ` +
       `the artifact entirely; a device cursor older than coverage_from is a coverage gap the UI must state`,
