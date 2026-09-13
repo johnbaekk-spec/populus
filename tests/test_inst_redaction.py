@@ -9,12 +9,15 @@ or a CUSIP-derived key — with the ticker".
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from populus.identity.registry import anchor, provisional_security_id
 from populus.inst_redaction import (
+    DISCLOSURE_WITHHELD_TEXT,
     close_withheld_cusips,
     WITHHELD_ISSUER_PREFIX,
     WITHHELD_POSITION_PREFIX,
@@ -400,3 +403,186 @@ def test_a_replay_without_a_cusip_bearing_source_refuses_instead_of_under_withho
     apply_registry_redaction(path, filed_cusips=frozenset({MAPPED_CUSIP}))
     with pytest.raises(ValueError, match="seeded artifact"):
         apply_registry_redaction(path)
+
+
+# --- T1 (2026-09-13): CUSIPs a MEMBER wrote into disclosure text -------------
+#
+# The owner's decision closing the one residual C1 named at release: three
+# CUSIPs in five rows of `transactions.comment` and its verbatim `raw_row`
+# copy, where the filer stated BOTH identifiers in one sentence. Nothing about
+# those cells is a CUSIP column, so every pass above walks straight past them.
+
+
+DISCLOSURE_SENTENCE = (
+    "11/3/23 Buy 247 shares of EOG Resources, Inc, cusip {cusip}, ticker EOG,"
+    " at a price of $125.6342/share."
+)
+RECEIPT_URL = "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2023/20024109.pdf"
+
+
+def _disclosure_db(tmp_path, mapped_row):
+    """A congress.db-shaped copy carrying BOTH published surfaces: the SEC 13F
+    list (so the whole pass runs as publish runs it) and a `transactions` table
+    whose comment states a withheld CUSIP beside its ticker, with the filing's
+    receipt link beside it."""
+    path = _registry_db(tmp_path, mapped_row)
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE filings (filing_id TEXT PRIMARY KEY, doc_url TEXT)")
+    conn.execute("INSERT INTO filings VALUES ('house:20024109', ?)", (RECEIPT_URL,))
+    conn.execute(
+        "CREATE TABLE transactions (txn_id TEXT PRIMARY KEY, filing_id TEXT,"
+        " comment TEXT, raw_row TEXT NOT NULL, ticker TEXT, asset_name TEXT)"
+    )
+    rows = [
+        # The owner's case: the member paired the two identifiers themselves.
+        ("t:withheld", "house:20024109",
+         DISCLOSURE_SENTENCE.format(cusip=MAPPED_CUSIP), "MMM"),
+        # A sibling class in the same reviewed block — closed over, so withheld.
+        ("t:sibling", "house:20024109",
+         DISCLOSURE_SENTENCE.format(cusip=SIBLING_CUSIP), "MMM"),
+        # An UNMAPPED security's CUSIP pairs with no ticker: it must SURVIVE.
+        # Over-redaction is a defect too — it edits the congressional record
+        # for nothing.
+        ("t:kept", "house:20024109",
+         DISCLOSURE_SENTENCE.format(cusip=UNMAPPED_CUSIP), None),
+    ]
+    for txn_id, filing_id, comment, ticker in rows:
+        raw = (
+            '{"asset_name":"EOG Resources, Inc. (EOG) [ST]","comment":'
+            + f'"{comment}"'
+            + ',"side":"P"}'
+        )
+        conn.execute(
+            "INSERT INTO transactions VALUES (?,?,?,?,?,?)",
+            (txn_id, filing_id, comment, raw, ticker, "EOG Resources, Inc. (EOG) [ST]"),
+        )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_a_cusip_the_filer_wrote_into_disclosure_text_is_withheld_visibly(
+    tmp_path, mapped_row
+):
+    """Pre-change this FAILS: `apply_registry_redaction` rewrote the SEC list
+    and nothing else, so the member's sentence published the CUSIP verbatim
+    next to the ticker and the join probe reported the pair."""
+    path = _disclosure_db(tmp_path, mapped_row)
+    counts = apply_registry_redaction(path, filed_cusips=frozenset({MAPPED_CUSIP}))
+
+    assert counts["transactions.comment"] == 2, "the mapped class and its block sibling"
+    assert counts["transactions.raw_row"] == 2
+
+    conn = sqlite3.connect(path)
+    by_id = {
+        r[0]: r[1:]
+        for r in conn.execute("SELECT txn_id, comment, raw_row FROM transactions")
+    }
+    conn.close()
+
+    for txn_id in ("t:withheld", "t:sibling"):
+        comment, raw = by_id[txn_id]
+        # VISIBLE, not a silent deletion: the reader can see an edit was made.
+        assert DISCLOSURE_WITHHELD_TEXT in comment, txn_id
+        assert DISCLOSURE_WITHHELD_TEXT in raw, txn_id
+        # Every other word of the filer's sentence survives, including the
+        # ticker they stated — only the identifier is withheld.
+        assert "247 shares of EOG Resources" in comment
+        assert "ticker EOG" in comment
+        assert "$125.6342/share" in comment
+
+    # An unmapped security pairs with nothing, so its CUSIP is NOT edited.
+    kept_comment, kept_raw = by_id["t:kept"]
+    assert UNMAPPED_CUSIP in kept_comment and UNMAPPED_CUSIP in kept_raw
+
+    # Nothing is dropped, and the raw bytes carry no copy in a freed page —
+    # the probe reads the file, not the live rows.
+    assert len(by_id) == 3
+    blob = path.read_bytes()
+    assert MAPPED_CUSIP.encode() not in blob
+    assert SIBLING_CUSIP.encode() not in blob
+
+
+def test_the_receipt_link_still_points_at_the_unaltered_source_document(
+    tmp_path, mapped_row
+):
+    """The withheld text must stay one click from the original. If the receipt
+    moved — or were cleared the way `security_list_intervals.raw` is — the edit
+    would become unverifiable rather than merely visible."""
+    path = _disclosure_db(tmp_path, mapped_row)
+    apply_registry_redaction(path, filed_cusips=frozenset({MAPPED_CUSIP}))
+    conn = sqlite3.connect(path)
+    urls = dict(conn.execute("SELECT filing_id, doc_url FROM filings"))
+    joined = conn.execute(
+        "SELECT f.doc_url FROM transactions t JOIN filings f USING (filing_id)"
+        " WHERE t.txn_id = 't:withheld'"
+    ).fetchone()
+    conn.close()
+    assert urls["house:20024109"] == RECEIPT_URL
+    assert joined == (RECEIPT_URL,)
+
+
+def test_the_disclosure_sweep_is_idempotent_across_a_seeded_republish(
+    tmp_path, mapped_row
+):
+    """The published congress.db seeds the next build, so this pass runs again
+    over text it already marked. The marker carries no CUSIP-shaped token, so
+    a second pass must change nothing at all."""
+    path = _disclosure_db(tmp_path, mapped_row)
+    filed = frozenset({MAPPED_CUSIP})
+    apply_registry_redaction(path, filed_cusips=filed)
+    first = sqlite3.connect(path)
+    before = first.execute(
+        "SELECT txn_id, comment, raw_row FROM transactions ORDER BY txn_id"
+    ).fetchall()
+    first.close()
+
+    second = apply_registry_redaction(path, filed_cusips=filed)
+    assert second["transactions.comment"] == 0
+    assert second["transactions.raw_row"] == 0
+    conn = sqlite3.connect(path)
+    after = conn.execute(
+        "SELECT txn_id, comment, raw_row FROM transactions ORDER BY txn_id"
+    ).fetchall()
+    conn.close()
+    assert after == before
+
+
+def test_a_congress_db_with_no_sec_list_still_has_its_disclosure_text_swept(
+    tmp_path, mapped_row
+):
+    """The list pass returns early when `security_list_intervals` is absent.
+    The disclosure sweep must not be behind that exit — an artifact without the
+    list is an ordinary shape, not a reason to publish the CUSIP.
+
+    Without the list, the BLOCK is unknowable: the sibling class is reachable
+    only through the list's own rows. So the sweep covers exactly the caller's
+    closed set and says so, rather than appearing to cover more. This is the
+    weaker of the two behaviours and it is asserted as such deliberately —
+    publish always passes the list, and the case above pins the full set."""
+    path = _disclosure_db(tmp_path, mapped_row)
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE security_list_intervals")
+    conn.commit()
+    conn.close()
+
+    counts = apply_registry_redaction(path, filed_cusips=frozenset({MAPPED_CUSIP}))
+    assert counts["security_list_intervals.absent"] == 0
+    assert counts["transactions.comment"] == 1, "the caller's set, with no block to close over"
+    assert MAPPED_CUSIP.encode() not in path.read_bytes()
+    assert SIBLING_CUSIP.encode() in path.read_bytes(), (
+        "an unreachable block member is left alone, not guessed at"
+    )
+
+
+def test_the_dashboard_marker_matches_the_publishers(tmp_path):
+    """Two copies of one string, in two languages. The dashboard counts rows by
+    matching this literal; a diverged copy would report "none withheld" on a
+    build that withheld some, which is the shape of a false green."""
+    ts = (
+        Path(__file__).resolve().parents[1]
+        / "dashboard" / "src" / "lib" / "data.ts"
+    ).read_text(encoding="utf-8")
+    match = re.search(r'CUSIP_WITHHELD_MARKER\s*=\s*"([^"]+)"', ts)
+    assert match is not None, "the dashboard constant was renamed or removed"
+    assert match.group(1) == DISCLOSURE_WITHHELD_TEXT

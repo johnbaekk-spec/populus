@@ -48,9 +48,11 @@ __all__ = [
     "WITHHELD_POSITION_PREFIX",
     "RedactionPlan",
     "WithheldClosure",
+    "DISCLOSURE_WITHHELD_TEXT",
     "apply_cusip_redaction",
     "close_withheld_cusips",
     "plan_cusip_redaction",
+    "scrub_disclosure_text",
 ]
 
 WITHHELD_POSITION_PREFIX = "pos:"
@@ -63,6 +65,25 @@ WITHHELD_ISSUER_PREFIX = "iss:"
 #: after the key columns were withheld. The marker keeps the row and says why
 #: the cell is empty, rather than deleting a filer's reported row.
 WITHHELD_TEXT = "(CUSIP withheld)"
+
+#: What replaces a withheld CUSIP that a MEMBER OF CONGRESS typed into the text
+#: of a periodic transaction report. Square brackets, not the parentheses of
+#: :data:`WITHHELD_TEXT`: `transactions.comment` and `transactions.raw_row` are
+#: a VERBATIM quotation of the filer's own document, and square brackets are the
+#: editorial convention for an alteration the publisher made. The requirement
+#: the marker exists to satisfy (owner decision 2026-09-13) is that the edit be
+#: VISIBLE — a silent deletion would leave a fluent sentence that still reads as
+#: the member's own words, and a reader could not tell the published text
+#: differs from the filing. The receipt link on the row is untouched, so the
+#: unaltered source document stays one click away.
+DISCLOSURE_WITHHELD_TEXT = "[CUSIP withheld]"
+
+#: Congressional disclosure columns swept for an embedded withheld CUSIP.
+#: `comment` is the member's sentence; `raw_row` is the verbatim JSON the row
+#: fingerprint was computed over, which carries that same sentence a second
+#: time. Both are published in `congress.db`, so both are swept — a marker in
+#: one and the CUSIP still in the other would withhold nothing.
+_DISCLOSURE_TEXT_COLUMNS = (("transactions", "comment"), ("transactions", "raw_row"))
 
 #: A CUSIP sitting inside a longer filer-written string. Managers describe
 #: corporate actions in the issuer-name field — "EXXON MOBIL CORP COM EXCHANGED
@@ -246,7 +267,11 @@ def _text_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _scrub_embedded(
-    conn: sqlite3.Connection, table: str, column: str, cusips: frozenset[str]
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    cusips: frozenset[str],
+    marker: str = WITHHELD_TEXT,
 ) -> int:
     """Replace withheld CUSIPs that sit INSIDE a longer value, keeping the rest
     of the filer's text. Returns the number of rows changed.
@@ -267,10 +292,10 @@ def _scrub_embedded(
     updates: list[tuple[str, str]] = []
     for value in values:
         replaced = _CUSIP_IN_TEXT_RE.sub(
-            lambda m: WITHHELD_TEXT if m.group(0) in cusips else m.group(0), value
+            lambda m: marker if m.group(0) in cusips else m.group(0), value
         )
         replaced = _ISIN_RE.sub(
-            lambda m: WITHHELD_TEXT if m.group(2) in cusips else m.group(0), replaced
+            lambda m: marker if m.group(2) in cusips else m.group(0), replaced
         )
         if replaced != value:
             updates.append((replaced, value))
@@ -398,6 +423,58 @@ _SECURITY_ID_TABLES = (
 )
 
 
+def scrub_disclosure_text(
+    conn: sqlite3.Connection, cusips: Collection[str]
+) -> dict[str, int]:
+    """Replace withheld CUSIPs that a FILER wrote into congressional disclosure
+    text, keeping every other word. Returns rows changed per ``table.column``.
+
+    Owner decision 2026-09-13, closing the one residual the C1 join probe named
+    at release: three CUSIPs in five rows of `transactions.comment` and its
+    verbatim `raw_row` copy, where the member wrote BOTH identifiers in one
+    sentence — "…cusip 26875P101, ticker EOG, at a price of $125.6342/share."
+    That pairing is the filer's own, not a key Public Filings derived, which is
+    why it survived the key-column pass: nothing about it is a CUSIP column.
+
+    Three properties this deliberately has:
+
+    * It runs at PUBLISH time, on the staged copy, in the same pass as the SEC
+      13F list withholding. The build's own store — and therefore the internal
+      corpus and every re-derivation from it — keeps the member's original
+      words. Doing this in ingest would destroy the filing's text permanently.
+    * The edit is VISIBLE. The marker is
+      :data:`DISCLOSURE_WITHHELD_TEXT`, not a deletion, so the published
+      sentence cannot be mistaken for the member's unaltered wording.
+    * Matching is by exact membership in `cusips`, never by CUSIP-6 prefix.
+      The caller decides the population (`apply_registry_redaction` passes the
+      block-closed set, which is what the SEC list pass withholds); this
+      function replaces a token only when the whole nine characters are in that
+      set, which is precisely what `scripts/cusip_join_probe.py` looks for.
+      Matching on a six-character prefix here would also hit nine-character
+      words in free prose, and disclosure text is prose.
+
+    The row's `row_fingerprint`/`txn_id` still describe the ORIGINAL `raw_row`,
+    so the published `raw_row` no longer recomputes to them. That is intended
+    and is the visible edit's cost: identity stays stable across publishes
+    (recomputing it would renumber every affected transaction), and the
+    unaltered document remains reachable through the row's receipt link.
+    """
+    withheld = frozenset(cusips)
+    counts: dict[str, int] = {}
+    if not withheld:
+        return counts
+    existing = {
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    for table, column in _DISCLOSURE_TEXT_COLUMNS:
+        if table not in existing or column not in _columns(conn, table):
+            continue
+        counts[f"{table}.{column}"] = _scrub_embedded(
+            conn, table, column, withheld, marker=DISCLOSURE_WITHHELD_TEXT
+        )
+    return counts
+
+
 def _next_withheld_ordinal(
     prior: Collection[tuple[str, str | None, str | None, str | None]],
 ) -> int:
@@ -517,12 +594,13 @@ def apply_registry_redaction(
     counts["filed_withheld_cusips"] = len(filed)
     conn = sqlite3.connect(str(db_path), isolation_level=None)
     try:
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table'"
-            " AND name='security_list_intervals'"
-        ).fetchone():
-            return {"security_list_intervals.absent": 0}
         conn.execute("PRAGMA secure_delete = ON")
+        has_list = bool(
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table'"
+                " AND name='security_list_intervals'"
+            ).fetchone()
+        )
         # FAIL CLOSED ON A REPLAY WITH NO CUSIP-BEARING SOURCE. A previous pass
         # replaced the CUSIPs of the reviewed blocks with opaque ordinals, so
         # the artifact can no longer say WHICH blocks were withheld — that is
@@ -535,7 +613,7 @@ def apply_registry_redaction(
         # its issuer name still pairs it to the reviewed ticker. Refusing is the
         # only safe answer: a silent under-withholding looks exactly like a
         # clean run.
-        replayed = conn.execute(
+        replayed = has_list and conn.execute(
             "SELECT 1 FROM security_list_intervals"
             " WHERE id_type = 'cusip' AND value LIKE ? || '%' LIMIT 1",
             (WITHHELD_LIST_VALUE_PREFIX,),
@@ -548,10 +626,37 @@ def apply_registry_redaction(
                 " still holds the CUSIPs. Re-running without one would publish a"
                 " newly listed class in an already-withheld block."
             )
-        values, sids = plan_registry_redaction(conn, filed_cusips=filed)
-        counts["withheld_cusips"] = len(values)
-        counts["withheld_security_ids"] = len(sids)
+        values: dict[str, str] = {}
+        sids: dict[str, str] = {}
+        if has_list:
+            values, sids = plan_registry_redaction(conn, filed_cusips=filed)
+            counts["withheld_cusips"] = len(values)
+            counts["withheld_security_ids"] = len(sids)
+        else:
+            counts["security_list_intervals.absent"] = 0
+
+        # Disclosure TEXT, over the SAME set the list pass withholds — `filed`
+        # UNIONED with the CUSIPs the plan decided on. Exact membership in
+        # `filed` alone is NOT enough and a fixture caught it: the closure the
+        # publisher passes covers what the 13F FILINGS hold, while the plan adds
+        # the rest of each reviewed CUSIP-6 block from the SEC list itself. A
+        # sibling class listed there but held by nobody would have had its
+        # identifier withheld from the list and published verbatim inside a
+        # member's sentence — the same pair, one table over.
+        #
+        # This runs OUTSIDE both early exits below, and before them. An artifact
+        # with no list table, and a replay whose list is already fully withheld
+        # (`values` empty), are both ordinary states of the seeded artifact that
+        # publish re-publishes — neither is a reason to leave the text alone.
+        counts.update(scrub_disclosure_text(conn, filed | frozenset(values)))
+        text_rows = sum(
+            n for key, n in counts.items() if key.startswith("transactions.")
+        )
         if not values:
+            if text_rows:
+                # The probe reads RAW BYTES, so a value left behind in a freed
+                # page still pairs. VACUUM under secure_delete is what drops it.
+                conn.execute("VACUUM")
             return counts
         conn.execute("CREATE TEMP TABLE _w_val (old TEXT PRIMARY KEY, new TEXT NOT NULL)")
         conn.execute("CREATE TEMP TABLE _w_sid (old TEXT PRIMARY KEY, new TEXT NOT NULL)")

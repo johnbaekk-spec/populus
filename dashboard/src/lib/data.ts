@@ -122,6 +122,13 @@ export interface BuildData {
   /* --- ALPHA-UX C-3 context (B-5/B-6 tables; null until a build carries them) --- */
   sectorData: SectorData | null;
   committeeData: CommitteeData | null;
+  /** Disclosure rows whose text had a CUSIP withheld at publish time (T1,
+      2026-09-13). Counted from the PUBLISHED congress.db by looking for the
+      marker the publisher wrote, so the methodology page states a measured
+      number for the build it is rendering and a build with none says none.
+      Never a literal: an invented count is the failure mode /methodology
+      exists to refuse. */
+  cusipWithheldRows: number;
 }
 
 export interface SectorData {
@@ -579,6 +586,39 @@ interface MemberDbMeta {
   paperFilingCount: number;
 }
 
+/** The marker the publisher writes over a withheld CUSIP in congressional
+    disclosure text. MUST equal
+    `populus.inst_redaction.DISCLOSURE_WITHHELD_TEXT`; the two are pinned
+    together by `tests/test_inst_redaction.py::test_the_dashboard_marker_matches_the_publishers`,
+    because a silently diverged copy would count zero rows and the methodology
+    page would state "none withheld" on a build that withheld some. */
+export const CUSIP_WITHHELD_MARKER = "[CUSIP withheld]";
+
+/** Rows of congressional disclosure text carrying the publish-time CUSIP
+    marker. See `populus.inst_redaction.scrub_disclosure_text`: where a filer
+    wrote a CUSIP into `comment` (and its verbatim `raw_row` copy) for a
+    security that has a reviewed ticker, the publisher replaces the identifier
+    with a visible marker on the published copy only.
+
+    `comment` is the count, not `raw_row`: `raw_row` re-states the same sentence
+    and also carries the asset name, so counting both would double-count the
+    same disclosure. Returns 0 on a build published before the marker existed —
+    the column is queried, never assumed. */
+export function countWithheldDisclosureRows(dbPath: string): number {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM transactions
+          WHERE comment LIKE '%' || ? || '%'`,
+      )
+      .get(CUSIP_WITHHELD_MARKER) as { n: number } | undefined;
+    return Number(row?.n ?? 0);
+  } finally {
+    db.close();
+  }
+}
+
 function loadRows(dbPath: string): {
   txns: TxnRow[];
   paper: PaperRow[];
@@ -809,6 +849,7 @@ export function getBuildData(): BuildData {
   const noticeTxt = readFileSync(path.join(buildDir, "NOTICE"), "utf-8");
 
   const { txns, paper, memberMeta } = loadRows(dbPath);
+  const cusipWithheldRows = countWithheldDisclosureRows(dbPath);
   const merged = mergeFeed(txns, paper);
 
   // The tile counts rows *filed* in this build's window, so it must be labelled
@@ -966,6 +1007,7 @@ export function getBuildData(): BuildData {
     inst,
     tickerMap,
     searchIndexJson,
+    cusipWithheldRows,
     ...loadContext(dbPath),
   };
   return cache;
