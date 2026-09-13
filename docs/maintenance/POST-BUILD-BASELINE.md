@@ -19,11 +19,21 @@ blocks, however many there are in total.
 | Tree | `fix/post-release-followups`, worktree `.claude/worktrees/post-release` |
 | Data build | `/Users/johnbaek/populus-build-20260817.1` — `builddir/` + `congress.db` + `inst_serving.db` + `inst_agg.db`, the same real-data baseline the refinement run used |
 | Env | `POPULUS_BUILD_DIR` · `POPULUS_DB` · `POPULUS_INST_SERVING_DB` · `POPULUS_INST_DB` all set to that build |
-| Build | `npm run build:bounded` rc 0 — 9,660 pages in 10m 41s, **17,255 files** in `dist/` (self-cap 18,000, provider cap 20,000) |
-| Result | **85 tests · 69 pass · 16 fail** |
+| Build | `npm run build:bounded` rc 0 — 9,660 pages, **17,255 files** in `dist/` (self-cap 18,000, provider cap 20,000) |
+| Result | **85 tests · 70 pass · 15 fail** |
 
-The previously recorded figure was 14. It is 16 here, and the difference is
-accounted for rather than absorbed: see "Why the count moved" below.
+The run BEFORE the one fix below was 69 pass / 16 fail; fixing the `.well-known`
+omission moved one test out of the failing set, and this table records the tree as
+it now stands. The previously recorded figure was 14; the difference is accounted
+for rather than absorbed — see "Why the count moved" below.
+
+The other lanes, measured on the same tree: `astro check` 0 errors · `npm test`
+**763 pass / 0 fail** · `uv run pytest -q` **3,627 passed, 2 failed** (the two
+tree-bound `test_maintenance_tooling::test_cross_run_*`, the standing Python
+baseline) · Playwright geometry **61 passed / 1 failed**
+(`design reference Institutional Filer.dc.html at 1440px` — the filer page renders
+one period chip where the spec wants more than one; data-bound to the 20260817.1
+build, and outside every file this branch changed).
 
 ## The set
 
@@ -88,7 +98,7 @@ these ten as permanently expected.
     fixed because changing a disclosure-flag label is a copy decision with its own
     blast radius, not a trivial repair. **Open item, not an accepted state.**
 
-### C. Fixed rather than baselined — 1
+### C. Fixed rather than baselined — 1 (NOT in the expected set)
 
 `every built file class is named by some budget term`
 (`dashboard/test/post/file-budget.test.ts:430`) failed with
@@ -100,6 +110,14 @@ security-headers work and no budget term named it. **Fixed** by naming
 `.well-known` in `inst_budget.SITE_CHROME_CLASSES`. It is therefore NOT in the
 expected set, and a future `.well-known=…` failure is a new failure.
 
+Fixing it had its own trap, recorded because the next person will hit it:
+`dashboard/test/post/file-budget.test.ts` reads these sets out of
+`inst_budget.py` with a regex that splits the braces on commas and asserts every
+token is a plain double-quoted name. A `#` comment placed INSIDE the braces fails
+the WHOLE test file at load — 11 tests vanish from the run and the count goes
+DOWN, which reads like an improvement. The explanation now sits above the
+constant, and `inst_budget.py` says so.
+
 `SITE_CHROME_FILES` is deliberately left at 107 while the measured chrome count on
 this tree is 47. Its drift guard tolerates ±1,000 and passes; re-measuring it
 against one local tree is what its own comment warns against
@@ -108,7 +126,8 @@ side effect of this pass.
 
 ## Why the count moved: 14 → 16
 
-- **+1** `every built file class …` (`.well-known`) — now fixed, so it leaves the set again.
+- `every built file class …` (`.well-known`) was the sixteenth. It is fixed, so
+  the expected set is the **15** named in A and B.
 - The fixture-preview lane contributed ten of the sixteen here. How many it
   contributed to the archived "14" is **not knowable** — that record names no
   test — so the remainder of the difference is not attributed. This is the

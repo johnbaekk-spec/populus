@@ -265,15 +265,18 @@ PAGE_BYTE_LIMIT = 2 * 1024 * 1024     # 2 MiB of SERIALIZED bytes, measured
 MEASURED_M1_CLASSES: frozenset[str] = frozenset({"congress", "tickers"})
 #: `_astro/` bundles plus the ten single-page top-level routes. Together with
 #: the root files below these are `SITE_CHROME_FILES`.
+#: `.well-known/` holds one static file, the RFC 9116 `security.txt` shipped from
+#: `dashboard/public/`. It has been built since the security-headers work and no
+#: budget term named it, so the file-class coverage gate reported
+#: ".well-known=1" as unaccounted on every real-data build — correctly. It is
+#: site chrome: fixed, tiny, unrelated to any module's row count.
+#:
+#: KEEP THIS SET A BARE LITERAL. `dashboard/test/post/file-budget.test.ts`
+#: reads it with a regex that splits the braces on commas and requires every
+#: token to be a plain double-quoted name, so a `#` comment INSIDE the braces
+#: fails the whole test file at load — measured, not hypothetical.
 SITE_CHROME_CLASSES: frozenset[str] = frozenset(
     {
-        # RFC 9116 `security.txt`, one static file shipped from
-        # `dashboard/public/.well-known/`. It has been built since the security
-        # headers work and no budget term named it, so the file-class coverage
-        # gate reported ".well-known=1" as unaccounted on every real-data
-        # build — correctly. It is site chrome: fixed, tiny and unrelated to
-        # any module's row count. Named here rather than baselined, because the
-        # gate was reporting a real omission, not an environment difference.
         ".well-known",
         "_astro",
         "e",
