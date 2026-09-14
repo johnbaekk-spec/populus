@@ -250,7 +250,7 @@ test("SL-R10: the five deleted termini took NOTHING with them — every clause s
   const surfaces = new Map((await boundedSurfaces()).map((s) => [s.name, s.html]));
 
   const ranking = surfaces.get("congress ranking (tickers)")!;
-  assert.match(ranking, /All rows are in the <a href="\/congress\/data\/feed\.v1\.json">published dataset<\/a>\./);
+  assert.match(ranking, /All rows are in the <a href="\/congress\/data\/">published dataset<\/a>\./);
 
   const adds = surfaces.get("institutional adds leaderboard")!;
   assert.match(adds, /Every issuer in this quarter's bounded payload remains in /);
@@ -925,7 +925,8 @@ test("CODE-REVIEW F3: failure, retry, failure — BOTH attempts settle, and the 
 
 test("CODE-REVIEW F3: on the SUCCESS path the indicator is cleared outright, not restated", async () => {
   const { makeDom, makeElement } = await import("./lib/fake-dom.ts");
-  const { DATASET_VERSION, TXN_COLS, PAPER_COLS } = await import("../src/lib/format.ts");
+  const { mergeFeed } = await import("../src/lib/format.ts");
+  const { planFeedParts } = await import("../src/lib/feed-parts.ts");
   const rangeBtn = makeElement("btn-30d");
   rangeBtn.dataset = { range: "30d" };
   const dom = makeDom([...FEED_IDS, ...SECTION_IDS], {
@@ -936,13 +937,11 @@ test("CODE-REVIEW F3: on the SUCCESS path the indicator is cleared outright, not
     generatedAtDate: "2026-08-23", range: "12m", basis: "traded",
   };
   dom.elements.get("momentum-section-pending")!.setAttribute("hidden", "");
-  const restore = dom.install({
-    dataset_version: DATASET_VERSION,
-    txn_cols: [...TXN_COLS],
-    paper_cols: [...PAPER_COLS],
-    txns: [],
-    paper: [],
-  });
+  /* R19: the corpus arrives as PARTS. An empty corpus is a valid index naming
+     zero parts — the SUCCESS path, which is what this test is about. */
+  const restore = dom.install(
+    planFeedParts(mergeFeed([], []), { build_id: "b", generated_at: null }).index,
+  );
   try {
     const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
     let feed: { loadAll(): Promise<void> } | null = null;

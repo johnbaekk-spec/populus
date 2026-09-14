@@ -15,9 +15,11 @@ import {
   DATASET_VERSION,
   TXN_COLS,
   PAPER_COLS,
+  mergeFeed,
   txnToArray,
   type TxnRow,
 } from "../src/lib/format.ts";
+import { feedPartHref, planFeedParts } from "../src/lib/feed-parts.ts";
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
@@ -59,29 +61,91 @@ function dataset(txns: TxnRow[]): unknown {
   };
 }
 
+/* R19: the corpus is published as byte-bounded PARTS; `feed.v1.json` is a
+   retirement tombstone. `dataset()` above is kept only to build that stale
+   body, so the refusal path can still be exercised.
+
+   `parts()` returns the plan plus a per-URL responder, which is what the page
+   really faces: an inlined index and one response per part. */
+function parts(txns: TxnRow[]) {
+  const plan = planFeedParts(mergeFeed(txns, []), { build_id: "b", generated_at: null });
+  const byHref = new Map<string, unknown>();
+  for (const [part, body] of plan.bodies) byHref.set(feedPartHref(part), JSON.parse(body));
+  return {
+    plan,
+    hrefs: plan.index.parts.map((p) => feedPartHref(p.part)),
+    serve: (url: string) => byHref.get(url) ?? plan.index,
+  };
+}
+
 const FEED_IDS = [
   "congress-feed", "feed-tbody", "feed", "feed-loading", "feed-empty",
   "feed-empty-detail", "feed-empty-suggestions", "filter-count-line",
   "pager-range", "feed-status", "filter-reset", "filter-reset-wrap",
-  "pager-newer", "pager-older",
+  "pager-newer", "pager-older", "feed-parts-index",
 ];
 
-test("R17/R12: load fetches NOTHING; the first request for rows is exactly ONE fetch of the dataset", async () => {
+test("R17/R12/R19: load fetches NOTHING; the first request for rows downloads the corpus once, as PARTS", async () => {
   const dom = makeDom(FEED_IDS);
-  dom.elements.get("congress-feed")!.dataset = { txnCount: "1" };
-  const restore = dom.install(dataset([txn()]));
+  const rows = [txn(), txn({ txnId: "t-2", ticker: "AAPL" })];
+  const p = parts(rows);
+  dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
+  dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(p.plan.index);
+  const restore = dom.install(p.serve);
   try {
     const { initFeed } = await import("../src/scripts/feed-client.ts");
     let received: readonly TxnRow[] | null = null;
-    const feed = initFeed({ onRows: (rows) => { received = rows; } });
+    const feed = initFeed({ onRows: (r) => { received = r; } });
     await dom.flush();
     assert.equal(dom.fetchCalls.length, 0, `page 1 is server-rendered; nothing downloads at load, saw ${dom.fetchCalls.join(", ")}`);
     await feed.loadAll();
     await dom.flush();
-    assert.equal(dom.fetchCalls.length, 1, `expected one fetch, saw ${dom.fetchCalls.join(", ")}`);
-    assert.equal(dom.fetchCalls[0], "/congress/data/feed.v1.json");
+    // The index is INLINE, so the corpus costs exactly the parts and nothing else.
+    assert.deepEqual(
+      [...dom.fetchCalls].sort(),
+      [...p.hrefs].sort(),
+      `the corpus is exactly the parts, once each; saw ${dom.fetchCalls.join(", ")}`,
+    );
+    // R19: the retired single asset is never requested again, by anyone.
+    assert.ok(
+      !dom.fetchCalls.some((u) => u.includes("feed.v1.json")),
+      "the retired 22 MB single-asset feed must never be fetched",
+    );
     assert.ok(received, "the momentum section consumes the feed island's parsed rows");
-    assert.equal(received!.length, 1);
+    assert.equal(received!.length, rows.length);
+  } finally {
+    restore();
+  }
+});
+
+test("R19: a SHORT part set fails visibly — a partial corpus is never handed to consumers", async () => {
+  const dom = makeDom(FEED_IDS);
+  // Parts are cut per FILING YEAR, so two years guarantee at least two parts
+  // without depending on how many rows happen to fit in a 1 MiB response.
+  const rows = Array.from({ length: 40 }, (_, i) =>
+    txn({ txnId: `t-${i}`, filed: i % 2 === 0 ? "2026-08-01" : "2025-08-01" }),
+  );
+  const p = parts(rows);
+  assert.ok(p.plan.index.parts.length >= 2, "this fixture needs more than one part to drop one");
+  const dropped = p.hrefs[p.hrefs.length - 1]!;
+  dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
+  dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(p.plan.index);
+  // One part 404s. The index still declares the full item_total.
+  const restore = dom.install((url: string) => (url === dropped ? null : p.serve(url)));
+  try {
+    const { initFeed } = await import("../src/scripts/feed-client.ts");
+    let received: readonly TxnRow[] | null = null;
+    let ok: boolean | null = null;
+    const feed = initFeed({ onRows: (r) => { received = r; }, onSettled: (v) => { ok = v; } });
+    await feed.loadAll();
+    await dom.flush();
+    assert.equal(ok, false, "a short part set settles as a FAILURE");
+    assert.equal(received, null, "onRows must not fire on a corpus that is missing rows");
+    assert.match(
+      dom.elements.get("feed-empty-detail")!.textContent,
+      /failed to download/,
+      "the reader is told, rather than shown a silently short feed",
+    );
   } finally {
     restore();
   }
@@ -89,8 +153,11 @@ test("R17/R12: load fetches NOTHING; the first request for rows is exactly ONE f
 
 test("R17: onRows fires EXACTLY once — one decode, not one per consumer or per request", async () => {
   const dom = makeDom(FEED_IDS);
-  dom.elements.get("congress-feed")!.dataset = { txnCount: "2" };
-  const restore = dom.install(dataset([txn(), txn({ txnId: "t-2", ticker: "AAPL" })]));
+  const rows = [txn(), txn({ txnId: "t-2", ticker: "AAPL" })];
+  const p = parts(rows);
+  dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
+  dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(p.plan.index);
+  const restore = dom.install(p.serve);
   try {
     const { initFeed } = await import("../src/scripts/feed-client.ts");
     let calls = 0;
@@ -100,10 +167,26 @@ test("R17: onRows fires EXACTLY once — one decode, not one per consumer or per
     await feed.loadAll();
     await dom.flush();
     assert.equal(calls, 1, "a second call would mean a second decode of the same bytes");
-    assert.equal(dom.fetchCalls.length, 1, "three requests, one download");
+    assert.equal(
+      dom.fetchCalls.length,
+      p.hrefs.length,
+      "three requests, one download of each part",
+    );
   } finally {
     restore();
   }
+});
+
+test("R19: a cached client that still asks for feed.v1.json is REFUSED, never fed a tombstone as data", async () => {
+  // The published tombstone body, verbatim in shape: a dataset_version that
+  // can never be real, so classifyDataset returns version_mismatch.
+  const { classifyDataset } = await import("../src/lib/format.ts");
+  const cls = classifyDataset({
+    dataset_version: 0,
+    kind: "congress-feed-retired",
+    parts_index: "/congress/data/feed/index.v1.json",
+  });
+  assert.equal(cls.outcome, "version_mismatch", "a stale client must fail closed on the tombstone");
 });
 
 test("R12/LD7: page 2 costs exactly ONE part fetch and never the full dataset", async () => {
@@ -235,13 +318,18 @@ test("R17: the congress page loads exactly ONE module that fetches the dataset",
       const full = path.join(d, e.name);
       if (e.isDirectory()) walk(full);
       else if (/\.(ts|astro)$/.test(e.name)) {
-        if (readFileSync(full, "latin1").includes('fetch("/congress/data/feed.v1.json")')) {
+        if (/from "\.\/feed-corpus\.ts"/.test(readFileSync(full, "latin1"))) {
           owners.push(path.relative(dir, full));
         }
       }
     }
   };
   walk(dir);
+  /* R19: ownership is now pinned on the CORPUS LOADER, not on a URL literal.
+     The single-asset `feed.v1.json` is retired, so a URL-literal needle would
+     match nothing and this test would pass vacuously forever — the exact shape
+     of false green this suite exists to refuse. Importing `feed-corpus.ts` is
+     what makes a module a corpus owner, so that is what is counted. */
   // `watchlist-client.ts` also reads this dataset, and that is NOT a violation:
   // it is the single owner on /watchlist/, a different page, and the two are
   // never loaded together. R17 forbids ONE PAGE fetching the dataset twice.

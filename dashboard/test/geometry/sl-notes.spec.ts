@@ -295,14 +295,19 @@ test("SL-R10: with JavaScript disabled the bound is STATED and the button is inv
 
 test("SL-R10: with JavaScript ON, the bound stands BEFORE the feed arrives", async ({ page }) => {
   /* State (c), the one that survived the `<noscript>` attempt. `syncDisclosure`
-     deliberately waits for `feed.v1.json` (F25) — 22 MB in production — so for
-     the whole duration of that download nothing reveals the ranking control. A
-     `<noscript>` block does not render for this reader either.
+     deliberately waits for the full corpus, so for the whole duration of that
+     download nothing reveals the ranking control. A `<noscript>` block does not
+     render for this reader either.
+
+     R19: the corpus is now the byte-bounded PARTS — `feed.v1.json` is a
+     retirement tombstone — so the parts are what must be blocked. Aborting the
+     old single asset would abort nothing and this test would pass vacuously
+     against a feed that had in fact arrived.
 
      The wait is made deterministic by never answering the request, which is
      also a faithful stand-in for state (d): an island that loaded and did not
      finish. Either way the reader must be told what is held back. */
-  await page.route("**/congress/data/feed.v1.json", (route) => route.abort());
+  await page.route("**/congress/data/feed/*.v1.json", (route) => route.abort());
   await page.goto(CONGRESS);
 
   const stated = page.locator(".compact-bound-count:not([hidden])").first();
@@ -320,7 +325,7 @@ test("SL-R10: with JavaScript ON, the bound stands BEFORE the feed arrives", asy
 
   // The remainder — the route to the rows being held back — is stated too.
   await expect(
-    page.locator('.compact-bound-extra a[href="/congress/data/feed.v1.json"]').first(),
+    page.locator('.compact-bound-extra a[href="/congress/data/"]').first(),
   ).toBeVisible();
 });
 

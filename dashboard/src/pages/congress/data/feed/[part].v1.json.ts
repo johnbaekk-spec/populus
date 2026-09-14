@@ -3,8 +3,9 @@ import { getBuildData, feedPartsPlan } from "../../../../lib/data";
 
 /* R12 / LD7: one byte-bounded per-year part of the congress feed
    (`/congress/data/feed/{year}-{n}.v1.json`), each ≤ SHARD_RESPONSE_CEILING_BYTES.
-   The full `feed.v1.json` stays published beside these; the feed island reads
-   the parts for first paint and paging and the full dataset for filtering. */
+   R19: these parts are the ONLY publication of the corpus — `feed.v1.json` is
+   a retirement tombstone. The feed island reads the part or parts holding a
+   page for paging, and every part for a filter. */
 export function getStaticPaths(): { params: { part: string } }[] {
   return feedPartsPlan(getBuildData()).index.parts.map((p) => ({ params: { part: p.part } }));
 }

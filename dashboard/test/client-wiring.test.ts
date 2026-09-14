@@ -12,11 +12,17 @@ import {
   DATASET_VERSION,
   TXN_COLS,
   PAPER_COLS,
+  mergeFeed,
   txnToArray,
   paperToArray,
   type TxnRow,
   type PaperRow,
 } from "../src/lib/format.ts";
+import {
+  FEED_PARTS_INDEX_HREF,
+  feedPartHref,
+  planFeedParts,
+} from "../src/lib/feed-parts.ts";
 import { CURSOR_KEY } from "../src/lib/watchlist.ts";
 import { WATCH_V2_KEY } from "../src/scripts/entity-client.ts";
 
@@ -72,6 +78,18 @@ function dataset(txns: TxnRow[], paper: PaperRow[], version = DATASET_VERSION): 
   };
 }
 
+/* R19: /watchlist/ reads the byte-bounded PARTS, not the retired single asset.
+   This serves the part index and each part, so the tests drive the real
+   transport. `version` still forces the stale-body case: an index that is not
+   this dataset version must be REFUSED, exactly as a stale monolith body was. */
+function partsResponder(txns: TxnRow[], paper: PaperRow[], version = DATASET_VERSION) {
+  const plan = planFeedParts(mergeFeed(txns, paper), { build_id: "b", generated_at: null });
+  const byHref = new Map<string, unknown>();
+  for (const [part, body] of plan.bodies) byHref.set(feedPartHref(part), JSON.parse(body));
+  const index = version === DATASET_VERSION ? plan.index : { ...plan.index, dataset_version: version };
+  return (url: string) => (url === FEED_PARTS_INDEX_HREF ? index : (byHref.get(url) ?? index));
+}
+
 const WATCHLIST_IDS = [
   "watchlist-root", "watch-chips", "watch-banner", "watch-body",
   "watch-count", "watch-empty", "watch-new-only", "watch-mark-seen",
@@ -93,7 +111,7 @@ async function runWatchlist(body: unknown, opts: { preClick?: boolean } = {}) {
 }
 
 test("watchlist wiring: a stale v1 dataset is refused; mark-seen never enables", async () => {
-  const { dom, markBtn, restore } = await runWatchlist(dataset([txn()], [], 1));
+  const { dom, markBtn, restore } = await runWatchlist(partsResponder([txn()], [], 1));
   try {
     assert.match(dom.elements.get("watch-banner")!.innerHTML, /dataset failed to download|cannot\s+render/);
     assert.equal(markBtn.disabled, true, "mark-seen must stay disabled after a refused dataset");
@@ -104,7 +122,7 @@ test("watchlist wiring: a stale v1 dataset is refused; mark-seen never enables",
 });
 
 test("watchlist wiring: a pre-load click writes NO cursor (no wall-clock fallback)", async () => {
-  const { dom, restore } = await runWatchlist(dataset([txn()], []), { preClick: true });
+  const { dom, restore } = await runWatchlist(partsResponder([txn()], []), { preClick: true });
   try {
     assert.equal(dom.storage.map.has(CURSOR_KEY), false, "an early click must be a no-op");
   } finally {
@@ -114,7 +132,7 @@ test("watchlist wiring: a pre-load click writes NO cursor (no wall-clock fallbac
 
 test("watchlist wiring: paper-only watched member renders; mark-seen writes the dataset high-water incl. paper", async () => {
   const p = paperRow({ filed: "2026-08-09" });
-  const { dom, markBtn, restore } = await runWatchlist(dataset([], [p]));
+  const { dom, markBtn, restore } = await runWatchlist(partsResponder([], [p]));
   try {
     assert.match(dom.elements.get("watch-body")!.innerHTML, /paper filing — needs OCR/);
     assert.match(dom.elements.get("watch-chips")!.innerHTML, /latest 2026-08-09/);

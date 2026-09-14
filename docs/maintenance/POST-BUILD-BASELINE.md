@@ -63,13 +63,33 @@ timeout can mask a real defect in any of the ten: they would fail the same way.
 Treat a run where this lane PASSES as the stronger evidence, and do not read
 these ten as permanently expected.
 
-### B. Data- and environment-bound expectations — 4 failures
+### B. Data- and environment-bound expectations — 3 failures
 
-11. `R19 GATE (margin): the largest deployed file keeps headroom under the cap`
-    — `dashboard/test/post/file-budget.test.ts:203`. `congress/data/feed.v1.json`
-    is 22,289,120 B = 85.0% of the 26,214,400 B provider cap, past the 60% margin
-    the gate holds. The full feed stays published by decision; the margin is a
-    standing warning about congress data volume, not a defect in any change.
+(Entry 11 was resolved 2026-09-14; it is kept, struck through, so the reason
+the margin gate used to fail is not rediscovered as a new finding.)
+
+11. ~~`R19 GATE (margin): the largest deployed file keeps headroom under the cap`~~
+    — **RESOLVED 2026-09-14 for the cause recorded here.** This entry existed
+    because `congress/data/feed.v1.json` was the largest deployed file at
+    22,382,648 B = 85.4% of the 26,214,400 B provider cap (measured on the live
+    site 2026-09-13; 22,289,120 B on `20260817.1` when this entry was written).
+    That single asset is now **retired**: the corpus is published only as the
+    byte-bounded per-year parts under `/congress/data/feed/`, each capped at
+    `SHARD_RESPONSE_CEILING_BYTES` (1,048,576 B) by a planner that throws rather
+    than emit an oversized part, and the old path serves a fail-closed tombstone.
+    See `docs/architecture/data-contracts/congress-feed-transport.md`.
+
+    **The congress feed can no longer consume this margin at all**, at any corpus
+    size. What the gate now measures is the *next* largest file, which is an
+    institutional filer page — a different, already-tracked growth problem
+    (roadmap **B22 / TD-M2-12-3**: the per-period changes embed, 12,979,794 B =
+    49.5% of the cap measured 2026-08-12, growing ~2 MiB per quarter). On the
+    local 20260812.1 build used to verify this change the largest file measured
+    9,081,482 B = 34.6%.
+
+    **Do not re-add a congress-feed entry here.** If this expectation fails again,
+    the cause is B22's filer embed and the fix is a byte-bounded shard family for
+    changes — not a return to a single-asset feed.
 
 12. `real search index: allowlist shape + ≤128 KiB budget (R11)`
     — `dashboard/test/post/http-status.test.ts:84`. 542,106 B against a 131,072 B

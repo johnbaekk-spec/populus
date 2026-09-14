@@ -242,9 +242,21 @@ test("F5: switching to a filtered view invalidates a part request still in fligh
   dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(plan.index);
   let releasePart!: () => void;
   const partGate = new Promise<void>((r) => (releasePart = r));
+  /* R19: the corpus is now assembled from the SAME part family the pager uses,
+     so gating "every part URL" would also stall the filter's own corpus load and
+     the test could never reach the race it exists to describe. Only the FIRST
+     part request — the page-2 one this test holds open — is gated; every later
+     request resolves normally. That is exactly one stale response in flight,
+     which is the condition under test. */
+  let gated = 0;
   const restore = dom.install((url: string) => {
     const m = /\/congress\/data\/feed\/(.+)\.v1\.json$/.exec(url);
-    if (m) return partGate.then(() => JSON.parse(plan.bodies.get(decodeURIComponent(m[1]!))!));
+    if (m) {
+      const name = decodeURIComponent(m[1]!);
+      if (name === "index") return plan.index;
+      const body = () => JSON.parse(plan.bodies.get(name)!);
+      return gated++ === 0 ? partGate.then(body) : body();
+    }
     return {
       dataset_version: DATASET_VERSION, build_id: "b", generated_at: "2026-08-12 00:00 UTC", data_note: "",
       txn_cols: TXN_COLS, paper_cols: PAPER_COLS, txns: rows.map(txnToArray), paper: [],

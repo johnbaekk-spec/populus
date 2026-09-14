@@ -587,7 +587,7 @@ export function congressRankingSection(
       noun,
       boundNoun: `ranked ${noun}`,
       // SRC §5: the sentence moved to /methodology/#published-dataset; the link stays.
-      bound: `All rows are in the <a href="/congress/data/feed.v1.json">published dataset</a>.`,
+      bound: `All rows are in the <a href="/congress/data/">published dataset</a>.`,
     }) +
     (undisclosedBucket.length > 0 && opts.undisclosedRootId
       ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} not rankable · amounts wholly undisclosed</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +
