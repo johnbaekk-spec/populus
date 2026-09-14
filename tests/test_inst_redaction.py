@@ -685,17 +685,81 @@ def test_c_a_spelling_difference_is_not_a_disagreement():
     assert apd_sibling in gated.cusips, "the block edge still runs"
 
 
-def test_c_a_cusip_the_list_does_not_carry_still_propagates():
-    """Absence of evidence is not evidence of conflict. A CUSIP with no SEC list
-    row cannot be checked, so it keeps the pre-fix behaviour and stays a seed;
-    the gate acts only on positive contrary evidence."""
+def test_c_a_cusip_absent_from_the_list_neither_propagates_nor_is_withheld():
+    """THE SECOND REGRESSION. The first gate refused only a seed the list
+    assigns to a DIFFERENT issuer, so a silent list still let a mis-filed row
+    seed its block — which is exactly the measured production case, because
+    Treasuries are not 13(f) securities and appear on the list nowhere.
+
+    The un-gated behaviour is asserted FIRST, in this test, so it cannot pass by
+    the new rule doing nothing.
+    """
     rows = [
         ("3M CO", "COM", MAPPED_CUSIP, None),
         ("3M CO", "NOTE 2.25% 2026", SIBLING_CUSIP, None),
     ]
+
+    # Pre-fix: with no list to consult, the mis-filed row seeds its whole block.
+    ungated = close_withheld_cusips(rows)
+    assert MAPPED_CUSIP in ungated.cusips and SIBLING_CUSIP in ungated.cusips, (
+        "pre-fix: an unchecked CUSIP seeded the withheld set and its block"
+    )
+
     gated = close_withheld_cusips(rows, None, {"999999999": frozenset({"NOBODY"})})
-    assert gated.unverified == frozenset()
-    assert SIBLING_CUSIP in gated.cusips
+    assert gated.absent_seeds, "the absent seed is recorded, not dropped silently"
+    assert MAPPED_CUSIP not in gated.cusips, (
+        "a CUSIP the 13(f) list does not carry is not that issuer's 13(f) security"
+    )
+    assert SIBLING_CUSIP not in gated.cusips, "and it drags no block in"
+    assert MAPPED_CUSIP[:6] not in gated.blocks, (
+        "nor an opaque issuer key, which would re-drag the block one column over"
+    )
+
+
+def test_c_a_treasury_block_absent_from_the_list_never_enters():
+    """The production case, measured on the published data-20260914.1:
+    `security_list_intervals` has ZERO rows for the 91282C block, and one row
+    filing 91282CHH7 under KIMBERLY CLARK CORP put all of it in the withheld
+    set, where the join probe then counted 18 Treasuries as KMB pairs."""
+    rows = _treasury_rows()
+    # A real list that carries plenty of securities — just no Treasuries.
+    list_issuers = {"009158106": frozenset({"AIR PRODUCTS AND CHEMICALS I"})}
+
+    gated = close_withheld_cusips(rows, None, list_issuers)
+    assert TREASURY_A not in gated.cusips and TREASURY_B not in gated.cusips
+    assert TREASURY_SIBLING not in gated.cusips, "the bystander never enters"
+    assert "91282C" not in gated.blocks
+    assert {c for c, _n, _k in gated.absent_seeds} == {TREASURY_A, TREASURY_B}
+
+
+def test_c_an_absent_seed_the_walk_reaches_anyway_stays_withheld():
+    """Membership is narrowed only on the typo's own evidence. A verified
+    sibling in the same block puts the CUSIP back, on the block's evidence."""
+    rows = [
+        ("3M CO", "COM", MAPPED_CUSIP, None),   # absent from the list
+        ("3M CO", "COM", SIBLING_CUSIP, None),  # on the list, under 3M
+    ]
+    gated = close_withheld_cusips(
+        rows, None, {SIBLING_CUSIP: frozenset({"3M CO"})}
+    )
+    assert SIBLING_CUSIP in gated.cusips, "the verified sibling seeds the block"
+    assert MAPPED_CUSIP in gated.cusips, (
+        "and the absent CUSIP is withheld because the walk REACHED it, not"
+        " because a mis-filed row named it"
+    )
+
+
+def test_c_an_empty_list_mapping_is_no_list_not_universal_absence():
+    """The inversion this rule could have caused. `load_list_issuers` returns {}
+    for a database with no `security_list_intervals` table — an ordinary state
+    of a fixture. Reading that as "every CUSIP is absent" would refuse every
+    seed and withhold NOTHING, and an empty withheld set looks like a clean run.
+    """
+    rows = _treasury_rows()
+    for no_list in (None, {}):
+        closure = close_withheld_cusips(rows, None, no_list)
+        assert closure.cusips, f"{no_list!r} must fall back to un-gated seeding"
+        assert not closure.absent_seeds, "nothing is 'absent' without a list"
 
 
 def test_c_load_list_issuers_ignores_rows_a_previous_release_withheld(tmp_path):
