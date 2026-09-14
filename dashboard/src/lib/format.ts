@@ -480,7 +480,14 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   // source facts and parse defects in the same two visual classes as above.
   value_undisclosed_one_side: { label: "value undisclosed one side", cls: "dashed" },
   shares_unit_mismatch: { label: "unit mismatch", cls: "dashed" },
-  classified_by_value: { label: "classified by value", cls: "dashed" },
+  // R8 RETIRED the behaviour this flag named: a position whose share count did
+  // not change is no longer classified as a trade from its reported value, it
+  // is `held`. New builds never set the flag; the entry survives only so an
+  // OLDER aggregate still decodes (docs/frontend/qoq-presentation.md). The
+  // label therefore states the FACT such a row carries — the share count did
+  // not change — instead of naming a classification the code no longer makes.
+  // The mechanism moves to the †v footnote, per SRC §5.
+  classified_by_value: { label: "no change in shares", cls: "dashed" },
   change_kind_undeterminable: { label: "change n/c", cls: "dashed" },
   identity_reconciled_by_cusip: { label: "cusip-reconciled", cls: "dashed" },
   issuer_from_cusip6: { label: "issuer from CUSIP-6", cls: "dashed" },

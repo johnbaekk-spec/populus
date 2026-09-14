@@ -1354,6 +1354,10 @@ def _derive_inst_module_in_materialized_scope(
     # withheld from the SAME set, without re-reading the snapshot after the
     # single COMMIT. `stage_build` pops it; it never reaches the manifest.
     derived["_withheld_cusips"] = redaction_plan.cusips
+    # The seeds the SEC-list gate refused travel WITH the withheld set: the
+    # registry pass expands a filed CUSIP to its whole CUSIP-6 block, and a
+    # mis-filed one must not expand there either.
+    derived["_unverified_cusips"] = redaction_plan.unverified
     # --- the per-filer SERVING artifact ----------------------------
     # The projection reads the composed views (in *source*) AND
     # `agg_qoq_deltas` (in the aggregate just written), so the
@@ -2842,6 +2846,9 @@ def stage_build(
         inst_period_coverage: list[dict] | None = derived["inst_period_coverage"]
         inst_cover_dispositions: dict | None = derived["inst_cover_dispositions"]
         withheld_cusips: frozenset[str] = derived.pop("_withheld_cusips", frozenset())
+        unverified_cusips: frozenset[str] = derived.pop(
+            "_unverified_cusips", frozenset()
+        )
     finally:
         snapshot.close()
 
@@ -2861,7 +2868,11 @@ def stage_build(
     # path, which looks up `agg_issuer_top_holders` by `entity:<id>`. It also
     # runs after `snapshot.close()`, because the VACUUM inside it cannot run
     # while another connection holds this file open.
-    apply_registry_redaction(snapshot_path, filed_cusips=withheld_cusips)
+    apply_registry_redaction(
+        snapshot_path,
+        filed_cusips=withheld_cusips,
+        unverified_cusips=unverified_cusips,
+    )
     # The digest must describe the bytes actually published.
     db_logical = _recompute_db_logical(snapshot_path)
 

@@ -31,6 +31,16 @@ and `test` run anywhere. The whole chain also runs under the repository's
 canonical `make test`. Node is pinned by `.node-version`; the DB is read with
 `node:sqlite` — no native dependencies.
 
+**`test:post` does not exit 0 on any tree.** Several of its expectations
+describe a build the local toolchain cannot produce (a dev build with no
+institutional module, a holders cut the baseline data does not contain), and one
+lane shells out to a nested build that times out under load. The expected
+failures are recorded **by name** in
+[`docs/maintenance/POST-BUILD-BASELINE.md`](../docs/maintenance/POST-BUILD-BASELINE.md),
+with the date and the data build they were measured against. Compare a run
+against that list by name: a failure whose name is not on it is a new failure,
+whatever the total count is.
+
 `src/lib/format.ts`, `src/lib/derive.ts`, and the `src/lib/ui/` domain
 modules (entry point `src/lib/ui/index.ts`) are pure and
 environment-agnostic precisely so the honesty rules can be tested without a

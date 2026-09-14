@@ -237,6 +237,17 @@ const description =
         the signals as <a href="/signals/data/signals.v1.json">signals.v1.json</a>. A table that shows
         fewer rows than it holds says so; nothing is withheld from the data.
       </p>
+      <p class="metho-body" id="signal-lifecycle">
+        <strong>What happens to a signal that stops matching.</strong> Signals are recomputed from
+        scratch on every build over a fixed recent window. A signal keeps the same id and its
+        original first-seen date for as long as it keeps matching. When one stops — the filing was
+        amended, or it fell out of the window — it is kept in{" "}
+        <a href="/signals/data/signals.v1.json">signals.v1.json</a> rather than deleted, so a reader
+        comparing two builds sees a departure instead of a silent gap. In the file those entries
+        carry <span class="mono-id">status</span> of{" "}
+        <span class="mono-id">superseded</span> and name the build they left in; the page counts
+        them separately and never mixes them into a current total.
+      </p>
       <p class="metho-body" id="ranges">
         <strong>Ranges.</strong> Congressional amounts are disclosed as statutory ranges, never exact
         figures; totals over ranges are computed by interval arithmetic — a net range is the
@@ -259,6 +270,18 @@ const description =
         keyed mapping row supplies one — verified against the SEC company list on the date the row
         states. Symbols are never inferred automatically; an unmapped security shows "Ticker not yet
         mapped".
+      </p>
+      <p class="metho-body" id="cusip-withholding">
+        <strong>CUSIP identifiers in disclosure text.</strong> Where a filer wrote a CUSIP into the
+        text of a disclosure for a security that already has a reviewed ticker on this site, the
+        published copy replaces that identifier with{" "}
+        <span class="mono-id">[CUSIP withheld]</span> and keeps every other word. The marker is
+        deliberately visible: a reader can always tell the published sentence differs from the
+        filing, and the receipt link on the row still opens the unaltered source document. Nothing
+        is withheld from the internal record, and no row is dropped.{" "}
+        {build.cusipWithheldRows > 0
+          ? `${fmtInt(build.cusipWithheldRows)} ${build.cusipWithheldRows === 1 ? "disclosure" : "disclosures"} in this build carry the marker.`
+          : "No disclosure in this build carries the marker."}
       </p>
       <p class="metho-body" id="site-weight">
         <strong>Site weight.</strong> Every page and data file is byte-bounded: no served file exceeds

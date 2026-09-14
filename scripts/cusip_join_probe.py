@@ -57,7 +57,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from populus.identity.registry import anchor, provisional_security_id  # noqa: E402
-from populus.inst_redaction import close_withheld_cusips  # noqa: E402
+from populus.inst_redaction import close_withheld_cusips, load_list_issuers  # noqa: E402
 
 CUSIP_RE = re.compile(rb"(?<![0-9A-Za-z])[0-9A-Z]{9}(?![0-9A-Za-z])")
 #: An ISIN carries the CUSIP as its middle nine characters ("US0378331005"), so
@@ -70,7 +70,9 @@ HEX32_RE = re.compile(rb"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])")
 BLOCK_KEY_RE = re.compile(rb"cusip6:([0-9A-Z]{6})")
 
 
-def truth_pairs(truth_db: Path) -> tuple[dict[str, str], dict[str, set[str]]]:
+def truth_pairs(
+    truth_db: Path, sec_list_db: Path | None = None
+) -> tuple[dict[str, str], dict[str, set[str]]]:
     """``(cusip -> ticker, block -> tickers)`` over the PRODUCER's closed
     withheld set — every CUSIP the producer withholds, not a subset of it.
 
@@ -99,8 +101,36 @@ def truth_pairs(truth_db: Path) -> tuple[dict[str, str], dict[str, set[str]]]:
                " FROM inst_holdings WHERE cusip IS NOT NULL GROUP BY 1,2,3,4")
     else:
         raise SystemExit(f"{truth_db} carries neither serving_filer_rows nor inst_holdings")
-    closure = close_withheld_cusips(conn.execute(sql))
+    # The SEEDING GATE needs the SEC Official 13F List. It lives in
+    # `congress.db`, while the truth database is usually `inst_serving.db`, so
+    # it is read from whichever of the two actually carries the table. Without
+    # it the probe would close over the UN-GATED seeding and its truth set would
+    # again be wider than the producer's — the exact divergence this function's
+    # docstring exists to forbid, so a missing list is announced, never assumed.
+    list_issuers: dict[str, frozenset[str]] = {}
+    if "security_list_intervals" in tables:
+        list_issuers = load_list_issuers(conn)
+    elif sec_list_db is not None:
+        lc = sqlite3.connect(f"file:{sec_list_db}?mode=ro", uri=True)
+        list_issuers = load_list_issuers(lc)
+        lc.close()
+    if not list_issuers:
+        print(
+            "WARNING: no SEC 13F list issuer rows available"
+            f" (truth={truth_db.name}, --sec-list={sec_list_db})."
+            " The truth set is computed WITHOUT the seeding gate and is wider"
+            " than what the producer withholds.",
+            file=sys.stderr,
+        )
+    rows = conn.execute(sql).fetchall()
+    closure = close_withheld_cusips(rows, None, list_issuers)
     conn.close()
+    if closure.rejected_seeds:
+        print(
+            f"seeding gate: {len(closure.rejected_seeds)} mapped CUSIP(s) refused"
+            " propagation (the SEC list names a different issuer); still withheld,"
+            " but they contribute no block and no security-id edge"
+        )
     blocks: dict[str, set[str]] = defaultdict(set)
     for cusip, tickers in closure.tickers.items():
         blocks[cusip[:6]] |= set(tickers)
@@ -154,6 +184,9 @@ def scan_path(path: Path, *args) -> tuple[dict[str, set[str]], dict[str, int]]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--truth", required=True, type=Path)
+    ap.add_argument("--sec-list", type=Path, default=None,
+                    help="database carrying security_list_intervals (congress.db) when"
+                         " --truth does not; required for the seeding gate")
     ap.add_argument("--artifact", action="append", default=[], metavar="NAME=PATH",
                     help="a published artifact: a file or a directory scanned recursively")
     ap.add_argument("--allow-residual", action="append", default=[], metavar="NAME",
@@ -162,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--top", type=int, default=8)
     args = ap.parse_args(argv)
 
-    cusips, blocks = truth_pairs(args.truth)
+    cusips, blocks = truth_pairs(args.truth, args.sec_list)
     sids = {provisional_security_id(anchor("cusip", c))[len("sec:prov:"):]: c for c in cusips}
     print(f"truth: {len(cusips)} withheld CUSIPs in {len(blocks)} reviewed-ticker "
           f"CUSIP-6 blocks (probe searches CUSIP, cusip6:<block> and sec:prov:<hex32>)")

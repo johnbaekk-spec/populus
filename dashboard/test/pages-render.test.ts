@@ -413,7 +413,18 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
     null,
   );
   assert.ok(withChanges.includes('id="n-filer-changes-change"'));
-  assert.ok(withChanges.includes("direction classified from reported value, not shares"));
+  // R23 (2026-09-13): the †v note no longer states a classification R8 removed.
+  // It states the FACT (share count unchanged -> `held`) and names the value
+  // inference as something only pre-release builds did.
+  assert.ok(
+    withChanges.includes(
+      "the reported share count is unchanged across the pair, so the position reads as held",
+    ),
+  );
+  assert.ok(
+    !withChanges.includes("direction classified from reported value, not shares"),
+    "the retired classification must not be stated as current behaviour",
+  );
 });
 
 /* ---------- grep-negative: mockup sample literals never ship (R14) ---------- */

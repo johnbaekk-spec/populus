@@ -299,7 +299,12 @@ export function filerTiles(conc: ConcentrationRow | null, deltaCount: number): S
 export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   {
     mark: "†v",
-    html: `direction classified from reported value, not shares <code>classified_by_value</code>`,
+    // Was "direction classified from reported value, not shares" — a
+    // description of what R8 REMOVED. A value-only move is not a trade now; it
+    // is `held`. The fact is kept (the pair's share counts are equal), the
+    // retired mechanism is named as retired rather than stated as current, and
+    // the producer slug stays so an older aggregate remains decodable.
+    html: `the reported share count is unchanged across the pair, so the position reads as held rather than as a buy or a sell; only builds before this release inferred a direction from the reported value instead <code>classified_by_value</code>`,
   },
   {
     mark: "‡u",
