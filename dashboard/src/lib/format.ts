@@ -111,6 +111,15 @@ function colsMatch(got: unknown, want: readonly string[]): boolean {
   );
 }
 
+/* R19 — DO NOT DELETE AS DEAD CODE. Since the single-asset congress feed was
+   retired, no module in this tree calls this: the live islands read the
+   byte-bounded parts through `scripts/feed-corpus.ts`. It is retained because
+   it is the function a CACHED client still runs, and the retirement tombstone
+   at `/congress/data/feed.v1.json` is designed around its behaviour — a body
+   whose `dataset_version` can never be real classifies as `version_mismatch`,
+   so a stale island fails closed instead of rendering a partial corpus.
+   Deleting this would not break a build; it would silently remove the reasoning
+   that makes the tombstone safe. `r17-single-fetch.test.ts` pins it. */
 export function classifyDataset(body: unknown): DatasetClassification {
   if (typeof body !== "object" || body === null) {
     return { outcome: "bad_payload", detail: "dataset is not a JSON object" };

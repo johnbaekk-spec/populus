@@ -116,17 +116,24 @@ Carried open from the M2-5 merge. Full mechanism analysis was recorded in
   Do NOT simply re-measure into the smaller number — that under-projects
   capacity for the day TD-7 resolves. Do not re-measure at all until the B25
   corpus question is settled, or the outage becomes the baseline.
-- **B27 — `congress/data/feed.v1.json` is at ~85% of the 25 MiB provider
-  per-file cap** (22,288,548 B on build `20260817.1`; growth ~2 MB/year ≈ 18
-  months of headroom, less in an election year). The design is settled and
-  measured (owner, 2026-08-18): **shard by year, client fetches all shards**
-  (~13 × ~1.5 MB), scheduled after M1. Three silent-failure requirements:
-  (1) concatenate newest-year-first so the global order is preserved exactly;
-  (2) a partial shard set must FAIL VISIBLY, never render a short feed;
-  (3) the index file keeps metadata + `shards: [{year, path, rows}]`, the
-  three "full published data" strings change with the shape, and
-  `classifyDataset` learns the index shape while still refusing a stale cached
-  body.
+- **B27 — `congress/data/feed.v1.json` at ~85% of the 25 MiB provider per-file
+  cap — DONE 2026-09-14.** The single asset is retired; the corpus is published
+  only as the byte-bounded per-year parts under `/congress/data/feed/`, and the
+  old path serves a fail-closed tombstone. All three silent-failure requirements
+  are implemented and tested in `dashboard/src/scripts/feed-corpus.ts`:
+  (1) order is preserved exactly — parts are ordered by the `offset` each part
+  declares about itself, never by resolution or array order;
+  (2) a partial part set FAILS VISIBLY — a gap in the `offset` chain or a row
+  count short of the index's `item_total` throws, and the island renders its
+  stated load-failure rather than a short feed;
+  (3) the index carries the metadata and part list, the three "full published
+  data" strings now point at `/congress/data/` (a script-free page listing every
+  part), and `classifyFeedPartsIndex` refuses a stale index exactly as
+  `classifyDataset` refused a stale body.
+  Contract: `docs/architecture/data-contracts/congress-feed-transport.md`.
+  **The binding constraint moves to the per-project FILE COUNT** (17,749 of an
+  18,000 self-cap on the 2026-09-13 production deploy), and the largest-asset
+  margin is now governed by B22 below, not by congress data.
 - **B21 / TD-M2-12-2 — `holders-period-data`** carries the same unbounded
   embed shape M2-12 fixed for filers; bounded in practice by `topn = 25` but
   not gated, so nothing catches it becoming a breach.

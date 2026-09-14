@@ -154,7 +154,7 @@ test("ranking body: the render bound is STATED VISIBLY by the server, counts sur
   );
   assert.match(
     html,
-    /<a href="\/congress\/data\/feed\.v1\.json">published dataset<\/a>/,
+    /<a href="\/congress\/data\/">published dataset<\/a>/,
     "and the deleted terminus's link travelled with it",
   );
   // R7: the control offering to lift the bound is present — and hidden, because

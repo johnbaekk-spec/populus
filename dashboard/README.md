@@ -71,8 +71,13 @@ declared, `inst_agg.db`.
 ## Route map
 
 - `/` — Home; `/methodology/` — the honesty ledger, a first-class surface
-- `/congress/` — the feed (SSR page 1 + a vanilla-TS client island over
-  `/congress/data/feed.v1.json`); `/congress/members/[bioguide]/`,
+- `/congress/` — the feed (SSR page 1 + a vanilla-TS client island over the
+  byte-bounded parts under `/congress/data/feed/`, indexed by
+  `/congress/data/feed/index.v1.json` and listed for a human reader at
+  `/congress/data/`; the former single-asset `/congress/data/feed.v1.json` is a
+  retirement tombstone — see
+  `docs/architecture/data-contracts/congress-feed-transport.md`);
+  `/congress/members/[bioguide]/`,
   `/congress/tickers/[ticker]/` (+ index), `/congress/leaders/`
 - `/institutional/` — filer index; `/institutional/filers/[cik]/`;
   `/institutional/tickers/[t]/holders/`; versioned JSON shards under

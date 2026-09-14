@@ -4,9 +4,6 @@
    Rows render through the same feedItemHtml the build used for page 1. */
 
 import {
-  classifyDataset,
-  txnFromArray,
-  paperFromArray,
   mergeFeed,
   pageSlice,
   pageCountFor,
@@ -30,6 +27,7 @@ import {
   partsForPage,
   type FeedPartsIndex,
 } from "../lib/feed-parts.ts";
+import { fetchFeedPartsIndex, loadFeedCorpus } from "./feed-corpus.ts";
 import { initSortableTable } from "./table-sort.ts";
 import { loadWatchStore } from "./entity-client.ts";
 
@@ -109,8 +107,11 @@ export function amountOrder(
    own copy — a second owner would mean a second download, a second decode, and
    a second failure mode, without removing the first of any of them.
 
-   A shared cached loader module was considered and rejected for the same
-   reason: it would be a second owner of the same bytes.
+   R19: the download itself now lives in `scripts/feed-corpus.ts`, because
+   /watchlist/ needs the same reassembly. That module is deliberately a set of
+   FUNCTIONS with no module-level cache — a shared *cached* loader was
+   considered and rejected, and still is: a cache there would be a second owner
+   of the same bytes. Ownership stays here, one caller per page.
 
    `onRows` fires EXACTLY ONCE, after a successful decode. It does not fire on
    failure — that is what leaves the server-rendered views standing. */
@@ -130,8 +131,8 @@ export interface FeedOptions {
 /** R12: what the feed island hands back — the ONE way another island on the
     page can ask for the full dataset. */
 export interface FeedHandle {
-  /** Download and decode the full `feed.v1.json` once (idempotent); rows
-      reach `onRows`. Resolves on either outcome. */
+  /** Download and decode the full corpus once (idempotent) from the
+      byte-bounded parts; rows reach `onRows`. Resolves on either outcome. */
   loadAll(): Promise<void>;
 }
 
@@ -243,24 +244,17 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
 
   function loadData(): Promise<void> {
     settled = false; // each attempt settles exactly once.
-    loadPromise ??= fetch("/congress/data/feed.v1.json")
-      .then((r) => {
-        if (!r.ok) throw new Error(`dataset fetch failed: ${r.status}`);
-        return r.json();
-      })
-      .then((d) => {
-        // A cached v1 body decoded with v2 offsets leaves asset
-        // fields and txnId undefined — classify before decoding, refuse stale.
-        const cls = classifyDataset(d);
-        if (cls.outcome !== "ok") {
-          throw new Error(
-            cls.outcome === "version_mismatch"
-              ? `dataset version mismatch: got ${String(cls.got)}`
-              : `dataset rejected: ${cls.detail}`,
-          );
-        }
-        txns = cls.txns.map(txnFromArray);
-        paper = cls.paper.map(paperFromArray);
+    /* R19: the corpus arrives as the byte-bounded PARTS, never as one asset.
+       `feed.v1.json` reached 85% of the provider's hard 25 MiB per-asset limit
+       and is retired; the parts carry exactly the same rows in exactly the same
+       order, and `loadFeedCorpus` refuses a set that is short or out of order
+       rather than handing back a partial corpus. The index is already inlined
+       in the page, so the common path costs no extra round trip. */
+    loadPromise ??= (partsIndex !== null ? Promise.resolve(partsIndex) : fetchFeedPartsIndex())
+      .then((index) => loadFeedCorpus(index))
+      .then((corpus) => {
+        txns = corpus.txns;
+        paper = corpus.paper;
         // A-1: the load order (filed desc, txn_id asc within a date) is the
         // stable tie-break for every other sort — reproducible by build.
         txns.forEach((t, i) => orderIndex.set(t, i));
@@ -309,7 +303,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     emptySuggestEl.appendChild(retry);
     const raw = document.createElement("a");
     raw.className = "plain";
-    raw.href = "/congress/data/feed.v1.json";
+    raw.href = "/congress/data/";
     raw.textContent = "open the raw dataset";
     emptySuggestEl.appendChild(raw);
     emptyEl.removeAttribute("hidden");

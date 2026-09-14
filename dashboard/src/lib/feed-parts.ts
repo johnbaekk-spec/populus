@@ -1,10 +1,12 @@
 /* R12 / LD7 — the byte-bounded per-year PARTS of the congress feed.
 
-   The full `feed.v1.json` stays published unchanged: it is the "published
-   dataset" every ranking page, the `<noscript>` link and the watchlist island
-   point to, and it is what the feed island still loads once a FILTER is
-   applied (filter results cover the whole corpus). What changes is first
-   paint and paging: the merged feed, in its existing deterministic order
+   R19 UPDATE: `feed.v1.json` is RETIRED — it reached 85% of the provider's
+   hard 25 MiB per-asset limit and now serves a fail-closed tombstone. These
+   parts are the ONLY publication of the corpus: they carry every row a ranking
+   page, the `<noscript>` link, the watchlist island or a filter needs, and
+   `scripts/feed-corpus.ts` reassembles them. The "published dataset" links all
+   point at `/congress/data/`, which lists these parts for a human reader.
+   The cut itself is unchanged: the merged feed, in its existing deterministic order
    (filed desc, transactions before paper within a date), is cut per calendar
    year of the filed date into parts whose complete serialized response never
    exceeds `SHARD_RESPONSE_CEILING_BYTES` — a part closes as soon as the next

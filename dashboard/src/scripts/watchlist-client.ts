@@ -3,9 +3,6 @@
    external calls. Rows render through the same feedItemHtml as everywhere. */
 
 import {
-  classifyDataset,
-  txnFromArray,
-  paperFromArray,
   mergeFeed,
   feedItemHtml,
   fmtInt,
@@ -19,6 +16,7 @@ import {
   type RenderCtx,
 } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
+import { fetchFeedCorpus } from "./feed-corpus.ts";
 import {
   classifyCursor,
   isNewSince,
@@ -161,24 +159,16 @@ export function initWatchlist(): void {
     renderBanner(mergeFeed(rows, paperRows)[0]?.filed ?? null);
   }
 
-  fetch("/congress/data/feed.v1.json")
-    .then((r) => {
-      if (!r.ok) throw new Error(`dataset fetch failed: ${r.status}`);
-      return r.json();
-    })
-    .then((d) => {
-      // Classify before decoding — a stale v1 body must be refused,
-      // never read with v2 column offsets.
-      const cls = classifyDataset(d);
-      if (cls.outcome !== "ok") {
-        throw new Error(
-          cls.outcome === "version_mismatch"
-            ? `dataset version mismatch: got ${String(cls.got)}`
-            : `dataset rejected: ${cls.detail}`,
-        );
-      }
-      txns = cls.txns.map(txnFromArray);
-      paper = cls.paper.map(paperFromArray);
+  /* R19: /watchlist/ is the single corpus owner on ITS page, and it now reads
+     the byte-bounded parts rather than the retired single-asset feed. This page
+     carries no inlined part index, so it fetches one — a few kilobytes ahead of
+     the parts themselves. `fetchFeedCorpus` refuses a stale index and a short or
+     out-of-order part set, so the catch below still means "no corpus", never
+     "some of the corpus". */
+  fetchFeedCorpus()
+    .then((corpus) => {
+      txns = corpus.txns;
+      paper = corpus.paper;
       loaded = true;
       if (markBtn) markBtn.disabled = false;
       render();

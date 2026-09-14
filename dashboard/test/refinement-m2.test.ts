@@ -211,9 +211,9 @@ test("LD7: the wire encoding round-trips both row kinds and refuses a foreign sh
   assert.equal(decodeFeedPart({ dataset_version: 1, rows: [] }), null);
 });
 
-test("R12: the full dataset is loaded for a FILTER, never a part — filter results cover the whole corpus", async () => {
+test("R12/R19: a FILTER loads the WHOLE corpus — every part, once — never a single part and never the retired asset", async () => {
   const { makeDom, makeElement } = await import("./lib/fake-dom.ts");
-  const { DATASET_VERSION, TXN_COLS, PAPER_COLS, txnToArray } = await import("../src/lib/format.ts");
+  const { feedPartHref } = await import("../src/lib/feed-parts.ts");
   const rows = Array.from({ length: 120 }, (_, i) => txn({ txnId: `t-${i}`, ticker: `T${i}X`, late: i % 2 }));
   const plan = planFeedParts(mergeFeed(rows, []), { build_id: "b", generated_at: null });
   const lateChk = makeElement("filter-late");
@@ -226,11 +226,9 @@ test("R12: the full dataset is loaded for a FILTER, never a part — filter resu
   dom.elements.set("filter-late", lateChk);
   dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
   dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(plan.index);
-  const full = {
-    dataset_version: DATASET_VERSION, build_id: "b", generated_at: null, data_note: "",
-    txn_cols: TXN_COLS, paper_cols: PAPER_COLS, txns: rows.map(txnToArray), paper: [],
-  };
-  const restore = dom.install((url: string) => (url.includes("/feed/") ? JSON.parse(plan.bodies.get("2026-1")!) : full));
+  const byHref = new Map<string, unknown>();
+  for (const [part, body] of plan.bodies) byHref.set(feedPartHref(part), JSON.parse(body));
+  const restore = dom.install((url: string) => byHref.get(url) ?? plan.index);
   try {
     const { initFeed } = await import("../src/scripts/feed-client.ts");
     initFeed();
@@ -238,7 +236,15 @@ test("R12: the full dataset is loaded for a FILTER, never a part — filter resu
     lateChk.listeners.get("change")!.forEach((fn) => fn({}));
     await dom.flush();
     await dom.flush();
-    assert.deepEqual(dom.fetchCalls, ["/congress/data/feed.v1.json"], "a filter loads the whole corpus, once");
+    assert.deepEqual(
+      [...dom.fetchCalls].sort(),
+      [...byHref.keys()].sort(),
+      "a filter loads the whole corpus as its parts, each exactly once",
+    );
+    assert.ok(
+      !dom.fetchCalls.some((u) => u.includes("feed.v1.json")),
+      "the retired single-asset feed must never be fetched",
+    );
     assert.match(dom.elements.get("pager-range")!.textContent, /^1–50 of 60 transactions/, "60 late rows over the full corpus");
   } finally {
     restore();

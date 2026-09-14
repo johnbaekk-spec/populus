@@ -200,14 +200,32 @@ test("POST-BUILD R20: /institutional/tickers/NVDA/holders/ exists with ≥10 hol
   assert.match(html, /id="overlap"/, "the overlap band renders on the holders page");
   const ticker = path.join(DIST, "tickers", "NVDA", "index.html");
   if (existsSync(ticker)) assert.match(readFileSync(ticker, "utf-8"), /id="overlap"/, "…and on the unified ticker page");
-  // top-50 Congress tickers by disclosures, from the feed part index (whole corpus)
-  const feed = JSON.parse(readFileSync(path.join(DIST, "congress", "data", "feed.v1.json"), "utf-8")) as { txn_cols: string[]; txns: unknown[][] };
-  const col = feed.txn_cols.indexOf("ticker");
+  /* Top-50 Congress tickers by disclosures, reassembled from the feed PARTS —
+     the whole corpus, which is what this assertion has always needed. It used
+     to read `feed.v1.json`; R19 retired that single asset (85% of the 25 MiB
+     provider cap), and the parts carry exactly the same rows. */
+  const feedDir = path.join(DIST, "congress", "data", "feed");
+  const index = JSON.parse(readFileSync(path.join(feedDir, "index.v1.json"), "utf-8")) as {
+    item_total: number;
+    parts: { part: string }[];
+  };
   const counts = new Map<string, number>();
-  for (const row of feed.txns) {
-    const t = row[col];
-    if (typeof t === "string" && t) counts.set(t, (counts.get(t) ?? 0) + 1);
+  let seen = 0;
+  let col = -1;
+  for (const meta of index.parts) {
+    const body = JSON.parse(readFileSync(path.join(feedDir, `${meta.part}.v1.json`), "utf-8")) as {
+      txn_cols: string[];
+      rows: unknown[][];
+    };
+    if (col === -1) col = body.txn_cols.indexOf("ticker");
+    for (const row of body.rows) {
+      seen++;
+      if (row[0] !== "t") continue; // a paper filing carries no ticker
+      const t = row[col + 1]; // +1: the leading kind tag
+      if (typeof t === "string" && t) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
   }
+  assert.equal(seen, index.item_total, "every published part was read — a short read would rank the wrong tickers");
   const top50 = [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 50).map(([t]) => t);
   const missing = top50.filter((t) => !existsSync(path.join(DIST, "institutional", "tickers", t, "holders", "index.html")));
   /* The MECHANISM is asserted: every top-50 ticker the reviewed mapping names

@@ -1,0 +1,119 @@
+---
+/* R19: the human-readable route to the WHOLE congress corpus.
+
+   This page exists because retiring the 22 MB single-asset feed must not cost
+   a reader the ability to take the whole dataset. It is server-rendered and
+   entirely static — no JavaScript, no client island — so the `<noscript>` path
+   on /congress/, the ranking sections' "published dataset" link and the feed
+   island's failure state all have one honest destination that works with
+   scripting off.
+
+   Every number on this page is MEASURED from the same plan that emits the
+   parts (`feedPartsPlan`), never restated from a constant: the byte counts are
+   the exact serialized response sizes, and the row counts are the rows those
+   responses carry. */
+import Base from "../../../layouts/Base.astro";
+import { getBuildData, feedPartsPlan } from "../../../lib/data";
+import { fmtInt } from "../../../lib/format.ts";
+import { SHARD_RESPONSE_CEILING_BYTES } from "../../../lib/shards.ts";
+import { FEED_PARTS_INDEX_HREF, feedPartHref } from "../../../lib/feed-parts.ts";
+
+const build = getBuildData();
+const index = feedPartsPlan(build).index;
+const parts = index.parts;
+const totalBytes = parts.reduce((n, p) => n + p.bytes, 0);
+const largest = parts.reduce((m, p) => Math.max(m, p.bytes), 0);
+const years = [...new Set(parts.map((p) => p.year))].sort((a, b) => b - a);
+
+function kib(n: number): string {
+  return `${(n / 1024).toFixed(1)} KiB`;
+}
+function mib(n: number): string {
+  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
+}
+---
+
+<Base
+  title="Full congressional dataset — Public Filings"
+  description="Every congressional disclosure row in this build, published as byte-bounded JSON parts you can download."
+  active="congress"
+>
+  <main class="shell page">
+    <div class="s2-block">
+      <h1 class="s1-h">The full congressional dataset</h1>
+      <p class="s1-detail">
+        Every row behind <a class="plain-link" href="/congress/">the feed</a> is
+        published here as plain JSON: {fmtInt(index.item_total)} disclosures
+        ({fmtInt(index.txn_total)} transactions and {fmtInt(index.paper_total)} paper
+        filings), cut into {fmtInt(parts.length)} parts across {years.length}{" "}
+        {years.length === 1 ? "filing year" : "filing years"}, {mib(totalBytes)} in total. Downloading
+        every part below gives you the complete corpus for build {build.buildId} —
+        nothing is sampled, summarised or withheld from it.
+      </p>
+      <p class="s1-detail">
+        The parts are contiguous and already in the site's own feed order (newest
+        filing date first, transactions before paper filings within a date), so
+        concatenating their <code>rows</code> arrays in the order listed
+        reproduces the dataset exactly. Each part names its own
+        <code>offset</code>, so the reassembly can be checked rather than trusted.
+        <a class="plain-link" href={FEED_PARTS_INDEX_HREF}>The machine-readable index</a>
+        lists every part with its row counts, byte size and first/last row key.
+      </p>
+      <p class="s1-detail">
+        <strong>Why parts, and not one file.</strong> This dataset was previously
+        served as a single <code>feed.v1.json</code>. It reached 22,382,648 bytes —
+        85.4% of the 25 MiB per-asset limit our static host enforces on every plan —
+        and was growing by roughly 9,287 disclosures a year. A single file would have
+        become undeployable, taking the whole site's next release with it. Each part
+        below is bounded at {kib(SHARD_RESPONSE_CEILING_BYTES)}, so the corpus can now
+        grow without any one asset approaching that limit. The old path,
+        <code>/congress/data/feed.v1.json</code>, still answers and states its own
+        retirement rather than disappearing.
+      </p>
+
+      <div class="table-scroll">
+        <table class="etable">
+          <caption class="visually-hidden">
+            Every published part of the congressional dataset, in feed order
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Part</th>
+              <th scope="col" class="c-num">Filing year</th>
+              <th scope="col" class="c-num">Rows</th>
+              <th scope="col" class="c-num">Transactions</th>
+              <th scope="col" class="c-num">Offset</th>
+              <th scope="col" class="c-num">Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {parts.map((p) => (
+              <tr>
+                <td><a href={feedPartHref(p.part)}>{p.part}.v1.json</a></td>
+                <td class="c-num">{p.year}</td>
+                <td class="c-num">{fmtInt(p.rows)}</td>
+                <td class="c-num">{fmtInt(p.txn_rows)}</td>
+                <td class="c-num">{fmtInt(p.offset)}</td>
+                <td class="c-num">{kib(p.bytes)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p class="s1-detail">
+        Largest part in this build: {kib(largest)}, against a
+        {" "}{kib(SHARD_RESPONSE_CEILING_BYTES)} ceiling the build enforces — a build
+        that could not fit a part under it fails rather than publishing an
+        oversized asset.
+      </p>
+
+      <div class="s4-actions">
+        <a class="cta" href={FEED_PARTS_INDEX_HREF}>Part index (JSON) →</a>
+        <a class="plain-link" href="/congress/">Back to the feed ↗</a>
+        <a class="plain-link" href="/legal/DATA-LICENSE.md">Data licence ↗</a>
+        <a class="plain-link" href="/methodology/">Methodology ↗</a>
+      </div>
+    </div>
+  </main>
+</Base>

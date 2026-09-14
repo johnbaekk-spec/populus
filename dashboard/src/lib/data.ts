@@ -27,8 +27,6 @@ import {
   normalizeTicker,
   txnToArray,
   paperToArray,
-  TXN_COLS,
-  PAPER_COLS,
   DATASET_VERSION,
 } from "./format.ts";
 import {
@@ -106,7 +104,12 @@ export interface BuildData {
   paperCount: number;
   filedFrom: string; // earliest FILING year in this build
   tradesFrom: string; // earliest disclosed TRADE year (can precede filedFrom)
-  dataset: string; // JSON string served at /congress/data/feed.v1.json
+  /* R19: there is deliberately NO full-corpus string here. `/congress/data/
+     feed.v1.json` served one and reached 85% of the provider's hard 25 MiB
+     per-asset limit; it is retired (docs/architecture/data-contracts/
+     congress-feed-transport.md). The corpus is published only as the
+     byte-bounded parts `feedPartsPlan` emits, so no code path can
+     re-materialise the whole corpus as a single asset by accident. */
   dataLicenseMd: string;
   noticeTxt: string;
   /* --- entities --- */
@@ -882,17 +885,6 @@ export function getBuildData(): BuildData {
   }
 
 
-  const dataset = JSON.stringify({
-    dataset_version: DATASET_VERSION,
-    build_id: buildId,
-    generated_at: stats.generated_at ?? null,
-    data_note: stats.data_note ?? "",
-    txn_cols: TXN_COLS,
-    paper_cols: PAPER_COLS,
-    txns: txns.map(txnToArray),
-    paper: paper.map(paperToArray),
-  });
-
   const generatedAtDate = generatedAtIso.slice(0, 10);
 
   /* --- entity assembly (grouped in memory, no per-entity SQL) --- */
@@ -995,7 +987,6 @@ export function getBuildData(): BuildData {
     paperCount: paper.length,
     filedFrom,
     tradesFrom,
-    dataset,
     dataLicenseMd,
     noticeTxt,
     members,
