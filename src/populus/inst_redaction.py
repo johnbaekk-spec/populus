@@ -128,6 +128,10 @@ class RedactionPlan:
     #: ``(cusip, filed issuer name, class)`` for each of the above, so the build
     #: record can name the mis-filed row instead of dropping it silently.
     rejected_seeds: tuple[tuple[str, str, str | None], ...] = ()
+    #: Seeds the SEC 13(f) list does not carry at all. Unlike the above these
+    #: are NOT in ``cusips`` (unless the walk reached them anyway): a CUSIP that
+    #: is not a 13(f) security cannot be the matched issuer's.
+    absent_seeds: tuple[tuple[str, str, str | None], ...] = ()
 
     def summary(self) -> dict[str, int]:
         return {
@@ -138,6 +142,7 @@ class RedactionPlan:
             "opaque_position_keys": len(self.position_keys),
             "opaque_issuer_keys": len(self.issuer_keys),
             "unverified_seeds": len(self.unverified),
+            "list_absent_seeds": len(self.absent_seeds),
         }
 
 
@@ -160,10 +165,15 @@ class WithheldClosure:
     by walking the same edges out from the mapped rows; a member reached only
     through a security-id edge inherits the label of the row that reached it.
 
-    ``unverified`` are the seeds the SEC-list issuer check REFUSED TO PROPAGATE
-    (see :func:`close_withheld_cusips`); they are still members of ``cusips``.
-    ``rejected_seeds`` records each one as ``(cusip, filed issuer name, class)``
-    so a caller can name the filing rather than filter it silently.
+    ``unverified`` are the seeds the SEC-list issuer check refused to propagate
+    because the list names a DIFFERENT issuer; they are still members of
+    ``cusips``. ``rejected_seeds`` records each one as ``(cusip, filed issuer
+    name, class)`` so a caller can name the filing rather than filter it
+    silently.
+
+    ``absent_seeds`` are the seeds the list does not carry AT ALL, recorded the
+    same way. They are NOT members of ``cusips`` unless the walk independently
+    reached them — see :func:`close_withheld_cusips`.
     """
 
     mapped: frozenset[str]
@@ -173,6 +183,7 @@ class WithheldClosure:
     tickers: dict[str, frozenset[str]]
     unverified: frozenset[str] = frozenset()
     rejected_seeds: tuple[tuple[str, str, str | None], ...] = ()
+    absent_seeds: tuple[tuple[str, str, str | None], ...] = ()
 
 
 #: An issuer-name token short enough to be noise ("CO", "SA", "NV", a stray
@@ -244,9 +255,11 @@ def close_withheld_cusips(
     with. Two measured rows did exactly that: ``NORTHERN OIL & GAS INC``
     (91282CGE5) and ``KIMBERLY CLARK CORP`` (91282CHH7).
 
-    The check gates PROPAGATION, not membership, and the distinction is the
-    whole point. A seed whose CUSIP the list assigns to a plainly different
-    issuer is still withheld ITSELF — it costs one opaque ordinal and cannot
+    TWO REFUSALS, WITH DIFFERENT REACH, because the evidence differs.
+
+    (1) THE LIST NAMES A DIFFERENT ISSUER. Propagation only is gated, not
+    membership, and the distinction is the whole point. A seed whose CUSIP the
+    list assigns to a plainly different issuer is still withheld ITSELF — it costs one opaque ordinal and cannot
     weaken anything — but it contributes no block and no security-id edge, so
     it cannot drag in securities that are not its own. Gating membership
     instead would un-withhold real securities whenever the list and the filer
@@ -254,9 +267,33 @@ def close_withheld_cusips(
     refused seeds are the TransForce/TFI International rename, filed 286 times,
     whose CUSIP genuinely does resolve to a reviewed ticker.
 
+    (2) THE LIST DOES NOT CARRY THE CUSIP AT ALL. Here membership is narrowed
+    too. The SEC Official 13(f) List names every 13(f) security, so a CUSIP with
+    no row on it cannot BE the matched issuer's 13(f) security — the match is
+    the filer's error, with no innocent reading available. Such a seed
+    propagates nothing and is not withheld itself.
+
+    Measured on the published ``data-20260914.1``: no CUSIP in the ``91282C``
+    Treasury block has a list row (Treasuries are not 13(f) securities), yet one
+    row filing 91282CHH7 under ``KIMBERLY CLARK CORP`` put the whole block in
+    the withheld set, where `scripts/cusip_join_probe.py` then counted 18 of
+    them as ``KMB`` pairs recovered from congressional disclosures naming
+    Treasury bonds. The pairs are false — a Treasury has no ticker, and the
+    ``KMB`` association exists only inside this bookkeeping. The real cost is
+    the mirror image: a Treasury CUSIP written into a disclosure ``comment``
+    would be replaced with ``[CUSIP withheld]``, degrading a verbatim public
+    record to protect nothing.
+
+    The rule is ABSENCE FROM THE LIST, not Treasuries and not the ``91282C``
+    prefix; nothing here knows what a Treasury is. It cannot cost a real
+    withholding, because a security that genuinely resolves to a reviewed
+    ticker is a 13(f) security and so is on the list by construction.
+
     ``list_issuers`` is optional only because a caller may have no list to read.
-    Passing ``None`` restores the un-gated seeding this exists to fix, so every
-    in-tree caller passes one.
+    Passing ``None`` — or an EMPTY mapping, which is what
+    :func:`load_list_issuers` returns for a database with no
+    ``security_list_intervals`` table — restores the un-gated seeding this
+    exists to fix, so every in-tree caller passes a real one.
     """
     by_key = (mapping or load_ticker_mapping()).by_key()
     cusip_sids: dict[str, set[str]] = defaultdict(set)
@@ -265,7 +302,16 @@ def close_withheld_cusips(
     mapped: set[str] = set()
     verified: set[str] = set()
     rejected: dict[str, tuple[str, str | None]] = {}
+    absent: dict[str, tuple[str, str | None]] = {}
     labels: dict[str, set[str]] = defaultdict(set)
+    # AN EMPTY MAPPING IS "NO LIST TO CONSULT", NEVER "EVERY CUSIP IS ABSENT".
+    # `load_list_issuers` returns {} for a database with no
+    # `security_list_intervals` table — an ordinary state of a fixture or a
+    # partially seeded corpus — and reading that as universal absence would
+    # refuse EVERY seed and withhold nothing at all: the property inverted
+    # wholesale, and silently, because an empty withheld set looks like a clean
+    # run. Both no-list forms therefore fall back to the un-gated seeding.
+    consultable = bool(list_issuers)
     for name, klass, cusip, security_id in rows:
         if cusip is None:
             continue
@@ -276,11 +322,15 @@ def close_withheld_cusips(
         if name is not None and mapping_key(name, klass) in by_key:
             mapped.add(cusip)
             labels[cusip].add(by_key[mapping_key(name, klass)].ticker)
-            listed = None if list_issuers is None else list_issuers.get(cusip)
-            # A CUSIP the list does not carry is unverifiable, not refuted, so
-            # it keeps propagating: this gate only acts on positive contrary
-            # evidence from the SEC's own list.
-            if listed and not any(_issuer_names_agree(name, l) for l in listed):
+            listed = list_issuers.get(cusip) if consultable else None
+            if consultable and not listed:
+                # NO ROW ON THE SEC OFFICIAL 13(F) LIST. The list names every
+                # 13(f) security, so this CUSIP is not the matched issuer's —
+                # it propagates nothing AND is not withheld on its own account.
+                absent[cusip] = (name, klass)
+            elif listed and not any(_issuer_names_agree(name, l) for l in listed):
+                # On the list, under a plainly different issuer. Refused
+                # propagation, still withheld itself.
                 rejected[cusip] = (name, klass)
             else:
                 verified.add(cusip)
@@ -307,10 +357,15 @@ def close_withheld_cusips(
     # through `issuer_key` instead of through `cusip` — the same defect, one
     # column over.
     walked = frozenset(withheld)
-    # A refused seed is withheld, but only AFTER the walk, so it never acts as a
-    # starting point. Adding it before would also have kept anything the walk
-    # legitimately reached from re-entering the frontier.
-    withheld |= mapped
+    # A DISAGREEING seed is withheld, but only AFTER the walk, so it never acts
+    # as a starting point. Adding it before would also have kept anything the
+    # walk legitimately reached from re-entering the frontier.
+    #
+    # An ABSENT seed is not added at all — the one place membership, and not
+    # just propagation, is narrowed. It is still withheld if the walk genuinely
+    # REACHED it, which is the honest case: a verified sibling in its own block
+    # puts it there on the block's evidence rather than on a typo's.
+    withheld |= mapped - absent.keys()
 
     return WithheldClosure(
         mapped=frozenset(mapped),
@@ -321,6 +376,9 @@ def close_withheld_cusips(
         unverified=frozenset(rejected),
         rejected_seeds=tuple(
             (cusip, name, klass) for cusip, (name, klass) in sorted(rejected.items())
+        ),
+        absent_seeds=tuple(
+            (cusip, name, klass) for cusip, (name, klass) in sorted(absent.items())
         ),
     )
 
@@ -398,6 +456,7 @@ def plan_cusip_redaction(
         issuer_keys=issuer_keys,
         unverified=closure.unverified,
         rejected_seeds=closure.rejected_seeds,
+        absent_seeds=closure.absent_seeds,
     )
 
 

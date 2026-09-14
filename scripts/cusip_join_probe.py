@@ -131,6 +131,14 @@ def truth_pairs(
             " propagation (the SEC list names a different issuer); still withheld,"
             " but they contribute no block and no security-id edge"
         )
+    if closure.absent_seeds:
+        dropped = sum(1 for c, _n, _k in closure.absent_seeds if c not in closure.cusips)
+        print(
+            f"seeding gate: {len(closure.absent_seeds)} mapped CUSIP(s) have no SEC"
+            f" 13(f) list row, so they are not that issuer's 13(f) security;"
+            f" {dropped} dropped from the withheld set entirely, the rest reached"
+            " by a verified sibling's block"
+        )
     blocks: dict[str, set[str]] = defaultdict(set)
     for cusip, tickers in closure.tickers.items():
         blocks[cusip[:6]] |= set(tickers)
