@@ -168,6 +168,23 @@ must not regress (pinned by `css-fold.test.ts`'s token assertions):
 - Fonts are self-hosted (Source Serif 4, Public Sans, IBM Plex Mono, latin
   subsets) — no external font requests, per the no-external-requests rule.
 
+### Ledger tokens and non-text contrast (DESIGN-POLISH M1)
+
+Every font size on the site reads one of fourteen `--fs-*` tokens in
+`foundation.css`, none under a 9.5px floor. The ledger's header-label and meta
+inks are lifted from the design's `#51617A`/`#64748A` to `--ink-label`
+`#8494A8` (6.51:1 on `#04070D`) and `--ink-meta` `#7B8B9F` (5.80:1); the light
+theme uses `#6b6659` (5.43:1) for both (L3).
+
+**Record L16 (deviation) — non-text contrast.** Text is at least 4.5:1
+everywhere. The 3:1 non-text floor applies to boundaries, bars and indicators
+that are the *only* cue of a control, a state or a value. So the segmented
+control's active item carries a 2px `--seg-cue` (`#69B4EC`, 7.72:1 on the
+fill) inset bottom bar, while the group's outline (`--seg-border`) may stay
+subtle, because each item's own text identifies it. Bars keep a printed value
+beside them; the sell fill is lifted from the design's `#5A2E28` to `#9E4E41`
+(3.48:1). The light theme follows the same rule.
+
 ## 7. Structural shape
 
 Four page archetypes, designed once and reused per module: **feed**
@@ -190,6 +207,35 @@ no build pill (R4 pins the build watermark to the footer, once), and every
 analytics panel whose inputs are not in the build renders the same
 "Not available in this build" surface with its named reason — the exports'
 illustrative rows are never reproduced.
+
+### Tables are ledgers (DESIGN-POLISH M1)
+
+Every table is built from one region of `entities.css` (`ledger:begin` …
+`ledger:end`): one flexible column, numeric columns right-aligned under
+right-aligned headers, marks (§ † ‡ ≈) hung in a reserved slot so they never
+move a digit, a 3px row edge coloured by kind, and one count grammar
+("1–10 of 608 tickers", `rangeOfTotal`). A note's trigger is the text it
+explains (the label form), a mark in the slot (sortable headers, links,
+numbers), or — only where neither fits — the legacy glyph. A feed row's flags
+are visible chips, and each chip is the label trigger of its own definition,
+drawn only from wording the site already publishes (`FEED_FLAG_DEFINITIONS`).
+
+**Record L9 (reversal of a mechanism) — the 44px target.** SL-R24's "44px at
+every width" becomes the `--hit-min` square: 44px under
+`(any-pointer: coarse), (max-width: 720px)`, 24px otherwise, reached through a
+layout-neutral `::before` on every note trigger and sort button, clipped at the
+header row's bottom and at the midpoint between a sort button and its mark.
+The property — every note and sort control is comfortably tappable on touch —
+is kept, and the check is sharper: the unit tests pin the per-adopter cascade
+(no `min-width`/`min-height` on the element), and Chromium hit-tests the four
+corners of each square (G12, `sl-notes.spec.ts`, `holders.spec.ts`), which also
+fails if the hit area inflates the row.
+
+**Record L8 (staged reversal) — sticky headers inside boxes.** A-5's sticky
+header existed because tables scrolled inside fixed-height boxes. Rows now flow
+on the page (R3): M1 removes eight of the eleven boxes; the three M2 recomposes
+(member flows, member and filer filing history, the filer's reported
+positions) keep their box and the `.etable` sticky header until T2.5.
 
 ## 8. Hard constraints
 

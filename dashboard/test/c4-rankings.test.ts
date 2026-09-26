@@ -127,7 +127,13 @@ test("ranking body: overlap marker when adjacent ranked intervals overlap", () =
      link. The PROPERTY is unchanged and is asserted in both halves: the marker
      is still rendered on the overlapping row, and its text is still reachable
      in the same body. Only the wrapper moved. */
-  assert.match(html, /<span class="fn-ref">≈<\/span>/);
+  /* DESIGN-POLISH M1 (R2): the marker HANGS in the Net cell's mark slot
+     (`.hang`, zero inline advance) so the interval's digits keep the column
+     edge. The property is unchanged: the overlapping row — and only it —
+     carries ≈, and its text is still reachable in the same body. */
+  const rowsHtml = html.slice(html.indexOf("<tbody"), html.indexOf("</tbody>")).split("</tr>");
+  assert.doesNotMatch(rowsHtml[0]!, /<span class="hang">≈<\/span>/, "the first row overlaps nothing above it");
+  assert.match(rowsHtml[1]!, /<td class="c-num has-marks c-net">[^<]*<span class="net-dir[^>]*>[^<]*<\/span><span class="hang">≈<\/span><\/td>/);
   assert.match(html, /incomparable<\/strong>, not tied/);
 });
 
@@ -146,10 +152,11 @@ test("ranking body: the render bound is STATED VISIBLY by the server, counts sur
   const html = section("tickers", congressTickersRollup(rows, NOW, { range: "12m", basis: "traded" }), {
     compact: 1,
   });
-  assert.match(html, /1 more ranked\s+tickers below/);
+  /* The count takes the range grammar (DESIGN-POLISH M1, R8): the rows shown
+     of the ranked total, in the server's bound noun. */
   assert.match(
     html,
-    /<span class="compact-bound-count">1 more ranked/,
+    /<span class="compact-bound-count">1–1 of 2 ranked tickers<\/span>/,
     "…in a span with NO hidden attribute — the no-JS reader is the reason this exists",
   );
   assert.match(

@@ -22,7 +22,8 @@
    is how a double starts lying again.
 
    Selectors: tag, `#id`, `.class`, `[attr]`, `[attr="value"]`, any combination
-   of those on one compound, and descendant combinators between compounds. */
+   of those on one compound, descendant combinators between compounds, and a
+   comma-separated list of such selectors. */
 
 const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input",
   "link", "meta", "param", "source", "track", "wbr"]);
@@ -116,6 +117,13 @@ export class MiniElement {
   }
 
   querySelectorAll(sel: string): MiniElement[] {
+    /* A selector LIST ("a, b") is the union of its selectors, in document
+       order — the directory island binds its chips through one. */
+    const list = sel.split(/,(?![^[]*\])/).map((s) => s.trim()).filter(Boolean);
+    if (list.length > 1) {
+      const hits = new Set(list.flatMap((one) => this.querySelectorAll(one)));
+      return [...descendants(this)].filter((d) => hits.has(d));
+    }
     const compounds = sel.trim().split(/\s+(?![^[]*\])/);
     let scope: MiniElement[] = [this];
     for (const compound of compounds) {
@@ -141,6 +149,19 @@ export class MiniElement {
     parseInto(this, html);
   }
 
+  /** Replaces this element in its parent with the parsed markup (the adds
+      island swaps its note container this way). */
+  set outerHTML(html: string) {
+    const parent = this.parent;
+    if (!parent) throw new Error("mini-dom: outerHTML set on a detached element");
+    const holder = new MiniElement("template");
+    parseInto(holder, html);
+    const ni = parent.nodes.indexOf(this);
+    parent.nodes.splice(ni, 1, ...holder.nodes);
+    for (const n of holder.nodes) if (typeof n !== "string") n.parent = parent;
+    parent.children = parent.nodes.filter((n): n is MiniElement => typeof n !== "string");
+    this.parent = null;
+  }
   get outerHTML(): string {
     const attrs = [...this.attributes]
       .map(([k, v]) => (v === "" ? ` ${k}` : ` ${k}="${v}"`))

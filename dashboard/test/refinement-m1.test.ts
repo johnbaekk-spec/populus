@@ -44,7 +44,17 @@ test("R8: held rows leave the paged changes table and render once in the collaps
   assert.ok(!mainTable!.includes("MICROSOFT CORP"), "held row is not in the paged table");
   assert.ok(mainTable!.includes("APPLE INC") && mainTable!.includes("NVIDIA CORP"));
   // R1: the name leads, the class is secondary, the key is in the ⓘ — not a cell.
-  assert.ok(mainTable!.includes('<span class="filed-name">APPLE INC</span> <span class="mono-note c-secondary"><span class="filed-name">COM</span></span>'));
+  /* DESIGN-POLISH M1 (R6): the NAME is the key note's label trigger — the
+     name still leads, the class still follows as secondary text, and the key
+     is still in the note, not a cell. The filed name never leaves its
+     `filed-name` marker (the §0 wording gate redacts only inside it): the
+     button carries no aria-label and is named by its content plus a hidden
+     ", explain" — "APPLE INC, explain", as before. */
+  assert.match(
+    mainTable!,
+    /<button type="button" class="note-btn note-label" [^>]*><span class="filed-name">APPLE INC<\/span><span class="visually-hidden">, explain<\/span><\/button><span class="note-pop"[^>]*>position key <code>sid:sec:a<\/code>[\s\S]*?<\/span><\/span> <span class="mono-note c-secondary"><span class="filed-name">COM<\/span><\/span>/,
+  );
+  assert.ok(!/aria-label="[^"]*APPLE INC/.test(mainTable!), "the filed name is in no attribute");
   assert.ok(mainTable!.includes("position key <code>sid:sec:a</code>"));
   assert.ok(!/<td class="c-pos[^"]*"><span class="mono-note">sid:/.test(mainTable!), "no bare sid: cell when a name exists");
   // No held group when nothing is held.

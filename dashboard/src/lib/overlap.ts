@@ -12,7 +12,7 @@
    is a `Planned` badge and the Congress half still ships.
    Below both: a merged timeline, 20 rows, newest first. */
 
-import { esc, fmtInt, fmtUsd, memberHrefFor, sideLabel, amountText, utcDayNumber, type RenderCtx, type TxnRow } from "./format.ts";
+import { esc, fmtInt, fmtUsd, memberHrefFor, sideLabel, amountText, utcDayNumber, thHtml, type RenderCtx, type TxnRow } from "./format.ts";
 import { sumRanges, sumRangesText, excludeDateAnomalies, affTextOf } from "./derive.ts";
 import { type InstData, type TickerHolderRow, tickerHoldersFor, tickerTotalsFor } from "./inst.ts";
 import type { ManagerTyping } from "./manager-directory.ts";
@@ -212,13 +212,21 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
       `</dl><p class="section-note">new + add vs trim + exit, by shares · $ = reported value now, not the change · <span class="filed-name">${esc(b.inst.issuer)}</span></p></div>`
     : `<div class="overlap-half overlap-inst overlap-planned"><h3 class="section-h">Notable managers <span class="badge-planned">PLANNED</span></h3>` +
       `<p class="section-note">Ticker not yet mapped — the 13F side needs a reviewed name-and-class mapping row for ${esc(b.ticker)}. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a></p></div>`;
+  /* The row edge (tr[data-edge], DESIGN-POLISH M1): a congressional row by its
+     side, a 13F row by its change kind. */
+  const edgeOf = (r: OverlapTimelineRow): string | null =>
+    r.side === "13f"
+      ? r.move
+      : r.cls === "buy" ? "buy" : r.cls === "sell" ? "sell" : r.cls === "neutral" ? "exch" : null;
   const rows = b.timeline
-    .map(
-      (r) =>
-        `<tr><td class="c-filed">${esc(r.date)}</td>` +
-        `<td>${r.href ? `<a href="${esc(r.href)}">${esc(r.actor)}</a>` : esc(r.actor)} <span class="mono-note">${r.side === "congress" ? "Congress" : "13F"}</span></td>` +
-        `<td class="${esc(r.cls)}">${esc(r.move)}</td><td class="c-num">${esc(r.amount)}</td></tr>`,
-    )
+    .map((r) => {
+      const edge = edgeOf(r);
+      return (
+        `<tr${edge ? ` data-edge="${esc(edge)}"` : ""}><td class="c-filed c-num">${esc(r.date)}</td>` +
+        `<td class="c-member c-flex">${r.href ? `<a href="${esc(r.href)}">${esc(r.actor)}</a>` : esc(r.actor)} <span class="mono-note">${r.side === "congress" ? "Congress" : "13F"}</span></td>` +
+        `<td class="c-kind ${esc(r.cls)}">${esc(r.move)}</td><td class="c-num">${esc(r.amount)}</td></tr>`
+      );
+    })
     .join("\n");
   return (
     `<section class="panel panel-wide design-overlap" id="overlap" aria-label="Congress and notable managers on ${esc(b.ticker)}">` +
@@ -228,7 +236,7 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
     (b.timeline.length === 0
       ? `<p class="section-note">No moves on either side in the window.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Merged timeline of congressional filings and notable-manager moves on ${esc(b.ticker)}</caption>` +
-        `<thead><tr><th scope="col">Date</th><th scope="col">Who</th><th scope="col">Change</th><th scope="col" class="num">Size</th></tr></thead>` +
+        `<thead><tr>${thHtml({ label: "Date", cls: "c-num" })}${thHtml({ label: "Who", cls: "c-member c-flex" })}${thHtml({ label: "Change", cls: "c-kind" })}${thHtml({ label: "Size", cls: "c-num" })}</tr></thead>` +
         `<tbody>${rows}</tbody></table></div>` +
         `<p class="section-note">${fmtInt(b.timeline.length)} newest rows · Congress rows date by filing, 13F rows by quarter end · a 13F row is a quarter-end snapshot, not a trade</p>`) +
     `</section>`

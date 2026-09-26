@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { cardFoot, thLabelHtml, HEADER_ABBREVIATIONS } from "../src/lib/format.ts";
+import { cardFoot, thLabelHtml, thHtml, HEADER_ABBREVIATIONS } from "../src/lib/format.ts";
+import { baseStylesheet } from "./lib/styles.ts";
 import { DESIGN_INST_INDEX_HEADS } from "../src/lib/inst-index.ts";
 import { unavailableDesignPanel, plannedLine } from "../src/lib/ui/shared.ts";
 import { instStamp, instFiledNote, INST_STAMP_CAVEAT } from "../src/lib/ui/institutional.ts";
@@ -15,10 +16,16 @@ const SRC = path.resolve(import.meta.dirname, "..", "src");
 
 /* ---------- R21 cardFoot ---------- */
 
-test("R21: cardFoot — a short line with the full text behind an ⓘ when it has ≤2 clauses", () => {
+test("R21: cardFoot — a short line whose text opens the full text when it has ≤2 clauses", () => {
   const html = cardFoot({ short: "Counts of filed transactions", full: "Counts are filed transactions; ranges cannot be netted.", scope: "t", key: "k" });
-  assert.match(html, /^<div class="card-foot"><span>Counts of filed transactions<\/span>/);
-  assert.ok(html.includes('class="note-btn"'), "the full text sits behind an ⓘ");
+  /* DESIGN-POLISH M1 (R6): the short line IS the note's label trigger, so the
+     summary cards show no glyph; the full text is still one interaction away
+     and still in the DOM. */
+  assert.match(
+    html,
+    /^<div class="card-foot"><span class="note"><button type="button" class="note-btn note-label"[^>]*aria-label="Counts of filed transactions, explain">Counts of filed transactions<\/button>/,
+  );
+  assert.ok(!/>i<\/button>/.test(html), "no glyph trigger");
   assert.ok(html.includes("ranges cannot be netted"), "the full text is in the DOM, never dropped");
   assert.ok(!html.includes("<details"), "two clauses do not need a disclosure");
 });
@@ -43,14 +50,23 @@ test("R21: the six footers are converted — no raw card-foot literal is left in
 /* ---------- R22 header labels ---------- */
 
 test("R22: abbreviated headers read in full words; the abbreviation is narrow-only and hidden from AT", () => {
+  /* DESIGN-POLISH M1 (R2): the map is keyed by MARK-FREE labels — the mark
+     hangs in the column's slot, outside the label and its abbreviation. */
   assert.deepEqual(
-    Object.fromEntries(["Source", "Trades", "Position change", "Amount range", "Gross bought ·§"].map((k) => [k, HEADER_ABBREVIATIONS[k]])),
-    { Source: "Rcpt", Trades: "Txns", "Position change": "Δ Pos", "Amount range": "Interval", "Gross bought ·§": "Gross purch ·§" },
+    Object.fromEntries(["Source", "Trades", "Position change", "Amount range", "Gross bought"].map((k) => [k, HEADER_ABBREVIATIONS[k]])),
+    { Source: "Rcpt", Trades: "Txns", "Position change": "Δ Pos", "Amount range": "Interval", "Gross bought": "Gross purch" },
+  );
+  assert.ok(Object.keys(HEADER_ABBREVIATIONS).every((k) => !/[§†‡¶≈]/.test(k) && !/[§†‡¶≈]/.test(HEADER_ABBREVIATIONS[k]!)), "no mark in the map");
+  assert.equal(
+    thHtml({ label: "Gross bought ·§", cls: "c-num" }),
+    '<th scope="col" class="c-num has-marks"><span class="th-full">Gross bought</span><span class="th-abbr" aria-hidden="true">Gross purch</span><span class="hang">·§</span></th>',
+    "the mark hangs after both halves of the swap",
   );
   const html = thLabelHtml("Source");
   assert.equal(html, '<span class="th-full">Source</span><span class="th-abbr" aria-hidden="true">Rcpt</span>');
   assert.equal(thLabelHtml("Member"), "Member", "a label with no abbreviation is plain text");
-  const css = readFileSync(path.join(SRC, "styles/late-additions.css"), "utf-8");
+  // The swap moved into the ledger region (DESIGN-POLISH M1); read the cascade.
+  const css = baseStylesheet();
   assert.match(css, /\.th-abbr \{ display: none; \}/);
   assert.match(css, /@media \(max-width: 899px\)[\s\S]*\.th-abbr \{ display: inline; \}/);
   for (const f of ["lib/format.ts", "lib/congress-columns.ts", "lib/ui/rankings.ts", "lib/ui/congress.ts", "lib/holdings.ts", "lib/activity.ts"]) {

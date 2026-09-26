@@ -21,42 +21,10 @@
   max-width: 100%;
   display: contents;
 }
-.filter-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.filter-label {
-  font: 600 10px var(--sans);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink3);
-  white-space: nowrap;
-}
-.seg {
-  display: flex;
-  border: 1px solid var(--rule2);
-}
-.seg button {
-  font: 500 11.5px var(--sans);
-  padding: 5px 11px;
-  color: var(--ink2);
-  min-height: 28px;
-  white-space: nowrap;
-}
-.seg button + button {
-  border-left: 1px solid var(--rule2);
-}
-.seg button[aria-pressed="true"] {
-  font-weight: 600;
-  background: var(--ink);
-  color: var(--paper);
-}
-.seg button.tint-dem:not([aria-pressed="true"]) { color: var(--dem); font-weight: 600; }
-.seg button.tint-rep:not([aria-pressed="true"]) { color: var(--rep); font-weight: 600; }
-.seg button.tint-ind:not([aria-pressed="true"]) { color: var(--ind); font-weight: 600; }
-.seg button.tint-buy:not([aria-pressed="true"]) { color: var(--buy); }
-.seg button.tint-sell:not([aria-pressed="true"]) { color: var(--sell); }
+/* `.filter-group`, `.filter-label` and the segmented `.seg` control are the
+   ledger region's one control spec now (entities.css): one joined group, the
+   active item filled with a 2px cue bar. The party tints stay (the design
+   colours them); the buy and sell tints are gone (the design does not). */
 
 .filter-select {
   appearance: none;
@@ -65,7 +33,7 @@
   border-radius: 0;
   background: transparent;
   padding: 5px 26px 5px 11px;
-  font: 500 11.5px var(--sans);
+  font: 500 var(--fs-cell) var(--sans);
   color: var(--ink2);
   min-height: 28px;
   cursor: pointer;
@@ -79,7 +47,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font: 500 11.5px var(--sans);
+  font: 500 var(--fs-cell) var(--sans);
   color: var(--ink2);
   cursor: pointer;
 }
@@ -109,7 +77,7 @@
   margin-left: 0;
   padding-top: 8px;
   border-top: 1px solid var(--rule);
-  font: 400 11px/1.5 var(--mono);
+  font: 400 var(--fs-note)/1.5 var(--mono);
   color: var(--ink3);
   text-align: right;
 }
@@ -136,7 +104,12 @@
 .feed-table tbody {
   display: block;
 }
-.feed-grid-cols {
+/* The CLASSIC feed (/watchlist/): every row and cell rule below is scoped
+   `:where(.feed-table:not(.reference-feed))`, so it adds no specificity (the
+   ≤1080px and ≤720px folds in media.css still win exactly as before) and can
+   never reach the reference feed, whose rules are the ledger region's. The
+   classic contract is declared debt (DESIGN-POLISH-PLAN, Declared debt). */
+:where(.feed-table:not(.reference-feed)) .feed-grid-cols {
   display: grid;
   /* Column order: star · filed · TICKER · member · side · traded · amount · range · src.
      Ticker moves AHEAD of member and takes the anchor's emphasis — but not the
@@ -150,36 +123,38 @@
   grid-template-columns: 26px 92px 150px 1fr 118px 118px 100px 210px 56px;
   padding: 0 14px;
 }
-.feed-head {
+:where(.feed-table:not(.reference-feed)) .feed-head {
   border-bottom: 1.5px solid var(--rule2);
 }
 /* The header cells are <th> now; the `.col` rules below apply to them. */
-.feed-head th,
-.feed-head .col {
-  font: 600 10px var(--sans);
+:where(.feed-table:not(.reference-feed)) .feed-head th,
+:where(.feed-table:not(.reference-feed)) .feed-head .col {
+  font: 600 var(--fs-meta) var(--sans);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink3);
   padding: 9px 8px 7px 0;
 }
-.feed-head th {
+:where(.feed-table:not(.reference-feed)) .feed-head th {
   text-align: left;
   vertical-align: bottom;
 }
-.feed-head .num {
+:where(.feed-table:not(.reference-feed)) .feed-head .c-num {
   text-align: right;
+  /* the body cells carry the table's default 1px, so the label ends on the digits */
+  padding-right: 1px;
 }
-.feed-head .range {
+:where(.feed-table:not(.reference-feed)) .feed-head .range {
   padding: 9px 0 7px 16px;
 }
-.feed-head .src {
+:where(.feed-table:not(.reference-feed)) .feed-head .src {
   padding: 9px 0 7px;
   text-align: right;
 }
 /* The header's sort buttons inherit the header's own type; they are controls,
    not links, and they keep the 44px target the shared rule gives every
    `.th-sort`. */
-.feed-head .th-sort {
+:where(.feed-table:not(.reference-feed)) .feed-head .th-sort {
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
@@ -187,7 +162,7 @@
   text-align: inherit;
 }
 
-.feed-row {
+:where(.feed-table:not(.reference-feed)) .feed-row {
   align-items: center;
   height: 38px;
   border-bottom: 1px solid var(--rule);
@@ -196,14 +171,14 @@
    that existed only to group the mobile fold's two lines, and a table row
    cannot legally contain them. The fold uses grid areas on the row instead, so
    the wrappers have no remaining purpose and no rule may reference them. */
-.feed-row:hover {
+:where(.feed-table:not(.reference-feed)) .feed-row:hover {
   background: color-mix(in oklab, var(--accent) 4%, var(--raised));
 }
 .cell {
   min-width: 0;
 }
 .star-btn {
-  font: 400 13px var(--sans);
+  font: 400 var(--fs-body) var(--sans);
   /* --rule2 measured 1.58:1 — the unstarred ☆ was effectively invisible.
      --ink3 clears WCAG 1.4.11's 3:1 for a meaningful non-text control. */
   color: var(--ink3);
@@ -217,45 +192,45 @@
 .star-btn[disabled] {
   cursor: default;
 }
-.cell-filed,
-.cell-traded {
-  font: 500 12.5px var(--sans);
+:where(.feed-table:not(.reference-feed)) .cell-filed,
+:where(.feed-table:not(.reference-feed)) .cell-traded {
+  font: 500 var(--fs-name) var(--sans);
   font-variant-numeric: tabular-nums;
   color: var(--ink2);
 }
-.cell-member {
+:where(.feed-table:not(.reference-feed)) .cell-member {
   /* SECONDARY emphasis. Lighter weight and --ink2 against the ticker's
      accent-coloured mono, so the eye lands on the ticker first. The member is
      not de-emphasised out of legibility — it keeps full contrast text. */
-  font: 500 12.5px var(--sans);
+  font: 500 var(--fs-name) var(--sans);
   color: var(--ink2);
   padding-right: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cell-member a {
+:where(.feed-table:not(.reference-feed)) .cell-member a {
   text-decoration: none;
   color: var(--ink2);
 }
 .cell-member a.unjoined {
   border-bottom: 1.5px dotted var(--ink3);
 }
-.cell-member sup {
-  font: 600 10px var(--sans);
+:where(.feed-table:not(.reference-feed)) .cell-member sup {
+  font: 600 var(--fs-meta) var(--sans);
   color: var(--accent);
 }
 .aff {
-  font: 600 11px var(--sans);
+  font: 600 var(--fs-note) var(--sans);
 }
 .aff.dem { color: var(--dem); }
 .aff.rep { color: var(--rep); }
 .aff.ind { color: var(--ind); }
 /* party could not be resolved — deliberately NOT tinted as Independent */
 .aff.unknown { color: var(--ink3); }
-.cell-ticker {
+:where(.feed-table:not(.reference-feed)) .cell-ticker {
   /* PRIMARY emphasis — the largest, heaviest type in the row. */
-  font: 700 14px var(--mono);
+  font: 700 var(--fs-brand) var(--mono);
   /* This is a 66px grid column and it renders the full asset name whenever
      no ticker was disclosed. Without containment the text simply painted over
      `.cell-side` and everything after it — `.cell-member` had exactly this
@@ -267,29 +242,33 @@
   text-overflow: ellipsis;
   padding-right: 8px;
 }
-.cell-ticker .asset-name {
+:where(.feed-table:not(.reference-feed)) .cell-ticker .asset-name {
   /* the inner span must clip with its cell rather than establish its own
      unbounded inline box */
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  font: 500 var(--fs-cell) var(--sans);
+  color: var(--ink2);
+  white-space: nowrap;
+  max-width: 26ch;
 }
-.cell-ticker a {
+:where(.feed-table:not(.reference-feed)) .cell-ticker a {
   text-decoration: none;
   color: var(--accent);
 }
-.cell-ticker .none {
+:where(.feed-table:not(.reference-feed)) .cell-ticker .none {
   color: var(--ink3);
 }
-.cell-side {
-  font: 600 12.5px var(--sans);
+:where(.feed-table:not(.reference-feed)) .cell-side {
+  font: 600 var(--fs-name) var(--sans);
 }
-.cell-side.buy { color: var(--buy); }
-.cell-side.sell { color: var(--sell); }
-.cell-side.neutral { color: var(--ink2); }
-.cell-side.unknown { color: var(--ink3); }
+:where(.feed-table:not(.reference-feed)) .cell-side.buy { color: var(--buy); }
+:where(.feed-table:not(.reference-feed)) .cell-side.sell { color: var(--sell); }
+:where(.feed-table:not(.reference-feed)) .cell-side.neutral { color: var(--ink2); }
+:where(.feed-table:not(.reference-feed)) .cell-side.unknown { color: var(--ink3); }
 .owner-note {
-  font: 500 11px var(--sans);
+  font: 500 var(--fs-note) var(--sans);
   color: var(--ink3);
 }
 .lag {
@@ -302,7 +281,7 @@
 }
 .lag-late {
   display: inline-block;
-  font: 700 9.5px var(--sans);
+  font: 700 var(--fs-label) var(--sans);
   letter-spacing: 0.05em;
   padding: 1px 5px;
   border-radius: 2px;
@@ -312,15 +291,15 @@
 .mobile-dates {
   display: none;
 }
-.cell-amount {
-  font: 500 12.5px var(--sans);
+:where(.feed-table:not(.reference-feed)) .cell-amount {
+  font: 500 var(--fs-name) var(--sans);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
-.cell-amount.unknown {
+:where(.feed-table:not(.reference-feed)) .cell-amount.unknown {
   color: var(--ink3);
 }
-.cell-range {
+:where(.feed-table:not(.reference-feed)) .cell-range {
   padding-left: 16px;
   display: flex;
   align-items: center;
@@ -346,7 +325,7 @@
   background-image: var(--hatch);
 }
 .flag {
-  font: 600 10px var(--sans);
+  font: 600 var(--fs-meta) var(--sans);
   padding: 2px 6px;
   border-radius: 2px;
   white-space: nowrap;
@@ -370,13 +349,13 @@
   text-align: right;
 }
 .cell-src a {
-  font: 500 10.5px var(--mono);
+  font: 500 var(--fs-control) var(--mono);
   text-decoration: none;
   border-bottom: 1px solid var(--rule2);
 }
 /* source URL present but not an https document we will link to */
 .src-missing {
-  font: 500 10.5px var(--mono);
+  font: 500 var(--fs-control) var(--mono);
   color: var(--ink3);
   border-bottom: 1px dashed var(--rule2);
 }
@@ -392,19 +371,19 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font: 500 12.5px var(--sans);
+  font: 500 var(--fs-name) var(--sans);
   color: var(--ink2);
   min-width: 0;
   overflow: hidden;
 }
 .paper-main .who {
-  font: 600 13px var(--sans);
+  font: 600 var(--fs-body) var(--sans);
   text-decoration: none;
   color: var(--ink);
   white-space: nowrap;
 }
 .chip-ocr {
-  font: 600 10px var(--sans);
+  font: 600 var(--fs-meta) var(--sans);
   padding: 2px 7px;
   border-radius: 2px;
   border: 1px dashed var(--rule2);
@@ -412,7 +391,7 @@
   white-space: nowrap;
 }
 .paper-note {
-  font: 400 12px var(--sans);
+  font: 400 var(--fs-small) var(--sans);
   color: var(--ink3);
   white-space: nowrap;
   overflow: hidden;
@@ -423,7 +402,7 @@
 .feed-footnote {
   padding: 9px 16px;
   border-bottom: 1px solid var(--rule);
-  font: 400 11.5px/1.6 var(--sans);
+  font: 400 var(--fs-cell)/1.6 var(--sans);
   color: var(--ink2);
 }
 .feed-footnote .dagger {
@@ -432,33 +411,11 @@
 }
 .feed-footnote code {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--fs-control);
   color: var(--ink3);
 }
-.feed-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  gap: 16px;
-}
-.view-note {
-  font: 400 11px var(--mono);
-  color: var(--ink3);
-}
-.view-note a {
-  font: inherit;
-}
-.pager {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.pager-range {
-  font: 500 12px var(--sans);
-  color: var(--ink3);
-  font-variant-numeric: tabular-nums;
-}
+/* `.feed-foot`, `.view-note`, `.pager`, `.pager-range` and `.pager-btn` are the
+   ledger region's table foot and one-item-group control (entities.css). */
 /* Focus is moved here programmatically when a pager control becomes
    unavailable. Chrome does not apply :focus-visible to programmatic focus on a
    non-input element, so an explicit :focus rule is what makes it visible. */
@@ -466,21 +423,8 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.pager-btn {
-  font: 600 12px var(--sans);
-  text-decoration: none;
-  border: 1px solid var(--rule2);
-  padding: 6px 14px;
-  color: var(--ink);
-  min-height: 32px;
-}
-/* Unavailable, but still focusable and in the tab order — removing the control
-   that was just activated dumps keyboard focus to <body>. */
-.pager-btn.is-unavailable {
-  color: var(--ink3);
-  border-color: var(--rule);
-  cursor: default;
-}
+/* An unavailable pager button stays focusable and in the tab order — removing
+   the control that was just activated dumps keyboard focus to <body>. */
 
 /* S3 · filter returns nothing */
 .feed-empty {
@@ -488,11 +432,11 @@
   border-bottom: 1px solid var(--rule);
 }
 .feed-empty h2 {
-  font: 600 18px/1.3 var(--serif);
+  font: 600 var(--fs-heading)/1.3 var(--serif);
   margin: 0;
 }
 .feed-empty p {
-  font: 400 13px/1.7 var(--sans);
+  font: 400 var(--fs-body)/1.7 var(--sans);
   color: var(--ink2);
   margin: 10px 0 0;
   max-width: 520px;
@@ -504,14 +448,14 @@
   flex-wrap: wrap;
 }
 .feed-empty .suggestions button {
-  font: 600 12.5px var(--sans);
+  font: 600 var(--fs-name) var(--sans);
   border: 1px solid var(--rule2);
   padding: 8px 16px;
   color: var(--ink);
   min-height: 36px;
 }
 .feed-empty .suggestions .plain {
-  font: 500 12.5px var(--sans);
+  font: 500 var(--fs-name) var(--sans);
   border: none;
   padding: 8px 4px;
   color: var(--accent);
@@ -549,7 +493,7 @@
   gap: 40px;
 }
 .footer-block {
-  font: 400 11.5px/1.7 var(--sans);
+  font: 400 var(--fs-cell)/1.7 var(--sans);
   color: var(--ink2);
 }
 .footer-block strong {
@@ -557,7 +501,7 @@
   color: var(--ink);
 }
 .footer-build {
-  font: 400 11px/1.7 var(--mono);
+  font: 400 var(--fs-note)/1.7 var(--mono);
   color: var(--ink3);
 }
 

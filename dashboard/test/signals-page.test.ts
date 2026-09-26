@@ -5,6 +5,20 @@ import assert from "node:assert/strict";
 import { signalsBody } from "../src/lib/ui/index.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
 import { scanBannedWording } from "../src/lib/activity.ts";
+import { MiniElement } from "./lib/mini-dom.ts";
+import { syncScrollRegion, type ScrollRegionNode } from "../src/scripts/signals-client.ts";
+
+function domOf(html: string): MiniElement {
+  const root = new MiniElement("body");
+  root.innerHTML = html;
+  return root;
+}
+/** Visible text: note panels and visually hidden text excluded. */
+function ownText(el: MiniElement): string {
+  return el.nodes
+    .map((n) => (typeof n === "string" ? n : n.classList.contains("note-pop") || n.classList.contains("visually-hidden") ? "" : ownText(n)))
+    .join("");
+}
 
 function sig(over: Partial<Signal> & { kind: Signal["kind"] }): Signal {
   return {
@@ -41,10 +55,18 @@ const CTX = { watched: new Set<string>() };
 
 test("rule book lists every kind with its exact rule, active hit counts and the withheld kinds by reason", () => {
   const html = signalsBody(ART, CTX);
-  for (const k of ["LARGE", "INFREQUENT", "CO-OCCURRENCE", "FIRST FILING", "COMMITTEE", "LATE", "RETURN"]) assert.match(html, new RegExp(`si-kind">${k}<`), k);
+  /* DOM parse (DESIGN-POLISH M1, T1.9): the kind cell now carries its ledger
+     role too (`si-kind c-kind`), so the kinds are read from the rule book's
+     kind cells rather than matched against one class string. */
+  const book = domOf(html).querySelector("#signal-rulebook")!;
+  const kinds = book.querySelectorAll("td.si-kind").map((td) => ownText(td).trim());
+  for (const k of ["LARGE", "INFREQUENT", "CO-OCCURRENCE", "FIRST FILING", "COMMITTEE", "LATE", "RETURN"]) assert.ok(kinds.includes(k), k);
   assert.match(html, /<td class="c-num si-hits">1<\/td>/, "S-1 counts ONE active — the tombstone is history");
   assert.match(html, /<td class="c-num si-hits c-muted">0<\/td>/, "a zero is printed, never blank");
-  assert.match(html, /si-status-withheld">WITHHELD/);
+  // DESIGN-POLISH M1 (R6): the word WITHHELD is its reason's label trigger.
+  const withheld = book.querySelectorAll("td.si-status-withheld").map((td) => ownText(td).trim());
+  assert.ok(withheld.includes("WITHHELD"));
+  assert.ok(book.querySelector("td.si-status-withheld .note-btn.note-label"), "the reason is one interaction from the word");
   assert.match(html, /BY DESIGN/);
   // R17: the tombstone table left the page; the footnote links the artifact.
   assert.doesNotMatch(html, /Superseded in build/);
@@ -62,9 +84,17 @@ test("R17: hits are Ticker · Who · What · Filed · Size · Src, paged 50 with
   assert.match(html, /datetime="2026-01-01"/);
   assert.match(html, /\+151d/);
   assert.match(html, /si-stamp">eFD/);
-  assert.match(html, /<thead><tr><th scope="col">Ticker<\/th><th scope="col">Who<\/th><th scope="col">What<\/th><th scope="col">Filed<\/th><th scope="col" class="num">Size<\/th><th scope="col">Src<\/th><\/tr><\/thead>/);
-  assert.match(html, /<td class="si-ticker-cell"><a class="si-ticker mono-ticker" href="\/tickers\/ABC\/">ABC<\/a><\/td>/, "the ticker is the first cell");
-  assert.match(html, /id="signal-hits-range"[^>]*>Showing 1–2 of 3</, "the pager states the page");
+  // DESIGN-POLISH M1 (R2): the same six columns, in order, each with its ledger role.
+  const hits = domOf(html).querySelector("#signal-hits")!;
+  assert.deepEqual(
+    hits.querySelectorAll("thead th").map((th) => [ownText(th).trim(), th.getAttribute("class")]),
+    [["Ticker", "c-ticker"], ["Who", "c-member"], ["What", "c-secondary c-flex"], ["Filed", "c-num"], ["Size", "c-num"], ["Src", "c-src"]],
+  );
+  const firstCell = hits.querySelectorAll("tbody tr")[0]!.children[0]!;
+  assert.ok(firstCell.classList.contains("si-ticker-cell") && firstCell.classList.contains("c-ticker"));
+  assert.equal(firstCell.querySelector("a.si-ticker")?.getAttribute("href"), "/tickers/ABC/", "the ticker is the first cell");
+  // DESIGN-POLISH M1 (R8): the range grammar.
+  assert.match(html, /id="signal-hits-range"[^>]*>1–2 of 3 hits</, "the pager states the page");
   assert.match(html, /id="signal-hits-next" aria-disabled="false"/);
   assert.match(html, /data-family="COMPLIANCE"/);
   assert.match(html, /<details class="si-expand"><summary>disclosed lower bound \$250K · ≥ \$250K rule<\/summary>/, "one-line evidence");
@@ -72,7 +102,7 @@ test("R17: hits are Ticker · Who · What · Filed · Size · Src, paged 50 with
   assert.doesNotMatch(html, /render bound/);
   const full = signalsBody(ART, CTX, { rowsEvaluated: 1000, latestBatch: [], latestBatchFiled: null });
   assert.match(full, /data-page-size="50"/);
-  assert.match(full, /Showing 1–3 of 3/);
+  assert.match(full, /id="signal-hits-range"[^>]*>1–3 of 3 hits</);
   assert.match(full, /id="signal-hits-next" aria-disabled="true"/);
   assert.match(full, /button" data-kind="s1-large"/, "filter by rule");
   assert.match(full, /id="signal-watched-only"/, "filter by watchlist");
@@ -111,4 +141,44 @@ test("a withheld LATE kind renders as unevaluated in the compliance summary, nev
   // the non-withheld artifact with zero LATE hits still states the computed zero
   const zero = signalsBody({ ...ART, signals: ART.signals.filter((s) => s.kind !== "s6-late-large") }, CTX);
   assert.match(zero, /No late-and-large disclosures in the window/);
+});
+
+/* DESIGN-POLISH M1 review R-8. The hits wrapper was a focusable region named
+   "scroll sideways for more columns" at EVERY width — a tab stop announcing a
+   scroll that at 1440px does not exist. The server renders a plain box that
+   carries the name in `data-scroll-region`; the island makes it a named,
+   focusable region exactly while the table overflows it. */
+
+function regionBox(scrollWidth: number, clientWidth: number, name: string | undefined): ScrollRegionNode & { attrs: Map<string, string> } {
+  const attrs = new Map<string, string>();
+  return {
+    scrollWidth,
+    clientWidth,
+    dataset: { scrollRegion: name },
+    attrs,
+    setAttribute: (k, v) => void attrs.set(k, v),
+    removeAttribute: (k) => void attrs.delete(k),
+  };
+}
+
+test("R-8: the hits wrapper is a named, focusable region only while its table overflows it", () => {
+  const html = signalsBody(ART, CTX);
+  const wrap = domOf(html).querySelector(".si-hits-scroll")!;
+  assert.ok(wrap, "the hits wrapper renders");
+  for (const a of ["tabindex", "role", "aria-label"]) assert.equal(wrap.getAttribute(a), null, `the server renders no ${a}`);
+  const name = wrap.getAttribute("data-scroll-region")!;
+  assert.match(name, /scroll sideways/);
+
+  const narrow = regionBox(900, 358, name);
+  assert.equal(syncScrollRegion(narrow), true);
+  assert.deepEqual(Object.fromEntries(narrow.attrs), { tabindex: "0", role: "region", "aria-label": name });
+  // …and the attributes go when the viewport grows past the table
+  narrow.scrollWidth = 1200;
+  narrow.clientWidth = 1200;
+  assert.equal(syncScrollRegion(narrow), false);
+  assert.deepEqual(Object.fromEntries(narrow.attrs), {}, "no tab stop, no role, no name once nothing scrolls");
+  // control: the pre-fix wrapper, always a region, fails the property at 1440
+  const pre = regionBox(1200, 1200, name);
+  pre.attrs.set("tabindex", "0");
+  assert.notDeepEqual(Object.fromEntries(pre.attrs), {}, "control");
 });

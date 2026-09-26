@@ -18,10 +18,13 @@ import {
   type FootnoteEntry,
   type NoteCtx,
   assetNameCell,
-  colWhyHtml,
+  changeEdgeAttr,
   fnMark,
+  hangMark,
   noteBody,
   noteFromHtml,
+  thHtml,
+  rangeOfTotal,
   esc,
   fmtInt,
   fmtUsd,
@@ -67,6 +70,7 @@ import { HOLDER_COLUMNS, HOLDER_ZERO_CAVEAT, holderSortNote, orderRankedHolders,
 import { addsRowHtml } from "../inst-adds-render.ts";
 import {
   ADDS_MODES,
+  addsBoundNoun,
   addsNoteHtml,
   addsPayloadHref,
   type AddsMode,
@@ -144,8 +148,12 @@ export function holdersBody(
     `<header class="entity-head">` +
     `<div class="entity-head-copy">` +
     `<h1 class="entity-title">Who holds <span class="mono-ticker">${esc(ticker)}</span></h1>` +
-    `<p class="entity-lede">Institutional holders of ${esc(issuerName)}${fnMark("†")}` +
-    noteFromHtml(HOLDERS_MAPPING_NOTE, { scope: "holders-lede" }, "issuer-mapping") +
+    /* The issuer's name is FILED text: it stays inside its `filed-name`
+       marker, and the mark trigger beside it is named in the site's own words
+       — never by copying the filed name into an attribute, where the §0
+       wording gate cannot see it is filed (review R-6; D17). */
+    `<p class="entity-lede">Institutional holders of <span class="filed-name">${esc(issuerName)}</span>` +
+    noteFromHtml(HOLDERS_MAPPING_NOTE, { scope: "holders-lede" }, "issuer-mapping", { trigger: "mark", textHtml: "†", name: "Issuer mapping" }) +
     ` per 13F filings for the quarter ended <strong>${esc(
       period,
     )}</strong>. Long positions only; managers under $100M in 13(f) securities do not file. The ranking below is a top-${fmtInt(
@@ -188,13 +196,13 @@ export function holdersTableHtml(
     list
     .map(
       (h) =>
-        `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
+        `<tr><td class="c-num c-muted has-marks">${fmtInt(h.rank)}</td>` +
         // ONE href primitive (filerHref): tier rides on the row through the SSR call
         // AND the embedded period payload, so both renders link identically.
-        `<td class="c-filer"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.filer_name)}</a></td>` +
-        `<td class="c-num c-strong">${esc(fmtUsd(h.value_usd))}</td>` +
-        `<td class="c-num">${fmtInt(h.security_count)}</td>` +
-        `<td class="c-keysrc"><span class="mono-note">${esc(h.issuer_key_source)}</span></td>` +
+        `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.filer_name)}</a></td>` +
+        `<td class="c-num c-strong has-marks">${esc(fmtUsd(h.value_usd))}</td>` +
+        `<td class="c-num has-marks">${fmtInt(h.security_count)}</td>` +
+        `<td class="c-keysrc c-secondary"><span class="mono-note">${esc(h.issuer_key_source)}</span></td>` +
         `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedRanked })}</td>` +
         `<td class="c-src">${srcLinkDerived(null, edgarFilerUrl(h.cik))}</td></tr>`,
     )
@@ -213,15 +221,26 @@ export function holdersTableHtml(
      This table renders on `/institutional/tickers/[t]/holders/` only, which is
      in scope, so the scope is fixed here rather than threaded (opt-in threading
      is for renderers shared with routes this run does not own). */
-  const holderNote = (c: (typeof HOLDER_COLUMNS)[number]): string => {
-    const body = noteBody(c.why, c.label === "Src" ? HOLDERS_DERIVED_NOTE : null);
-    return body ? noteFromHtml(body, { scope: "holders-ranked" }, c.key ?? c.label) : "";
+  const holderNote = (c: (typeof HOLDER_COLUMNS)[number]): string | null =>
+    noteBody(c.why, c.label === "Src" ? HOLDERS_DERIVED_NOTE : null) || null;
+  /* The ledger role of each holder column (DESIGN-POLISH M1, R2). */
+  const HOLDER_CLASS: Record<string, string> = {
+    rank: "c-num", filer: "c-filer c-flex", value: "c-num", securities: "c-num",
+    keysrc: "c-secondary", Flags: "c-flags", Src: "c-src",
   };
   const heads = HOLDER_COLUMNS.map((c) =>
-    c.key === null
-      ? `<th scope="col">${esc(c.label)}${holderNote(c)}</th>`
-      : `<th scope="col" data-sort="${c.key}" aria-sort="${c.key === sort.key ? (sort.dir === "desc" ? "descending" : "ascending") : "none"}">` +
-        `<button type="button" class="th-sort">${esc(c.label)}</button>${holderNote(c)}</th>`,
+    thHtml({
+      label: c.label,
+      mark: null,
+      cls: HOLDER_CLASS[c.key ?? c.label] ?? "",
+      noteHtml: holderNote(c),
+      notes: { scope: "holders-ranked" },
+      noteKey: c.key ?? c.label,
+      sort:
+        c.key === null
+          ? null
+          : { attr: "data-sort", key: c.key, state: c.key === sort.key ? (sort.dir === "desc" ? "descending" : "ascending") : "none" },
+    }),
   ).join("");
   return (
     `<div class="panel panel-wide">` +
@@ -351,6 +370,18 @@ const QOQ_COL_NOTES: Record<string, string | undefined> = {
   "delta-value": QOQ_FN.get("§"),
   "delta-shares": QOQ_FN.get("‡u"),
 };
+/** The ledger role of each change column (DESIGN-POLISH M1, R2). */
+const QOQ_COL_CLASS: Record<string, string> = {
+  "position-grain": "c-pos c-flex",
+  change: "c-chip c-kind",
+  "delta-value": "c-num",
+  "delta-shares": "c-num",
+  "prev-value": "c-num",
+  "curr-value": "c-num",
+  "prev-shares": "c-num",
+  "curr-shares": "c-num",
+  flags: "c-flags",
+};
 const QOQ_COLS: readonly (readonly [string, string])[] = [
   ["position-grain", "Position"],
   ["change", "Change"],
@@ -371,6 +402,10 @@ export function qoqChipHtml(row: QoqDeltaRow): string {
 
 /** R15: rows of the changes table shown before "Show more". */
 export const CHANGES_COMPACT_ROWS = 20;
+
+/** The changes table's compact bound is one PAGE of the filer's changes: its
+    count names that bound (review R-3), beside the pager's whole-set range. */
+export const CHANGES_PAGE_BOUND = { boundNoun: "changes on this page", definite: true } as const;
 
 /** D5: the filer page's Position changes filter — the landing band's chip
     pattern (`mgr-chip`, `aria-pressed`), one kind at a time, "All" clears it. */
@@ -438,17 +473,19 @@ export function changesTableHtml(
        artifact could not name (an older artifact, an unkeyed position) still
        shows its key — never an invented name. */
     const noteId = `${page}-${rowSeq++}`;
-    const keyNote = noteFromHtml(
-      `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
-      { scope: "filer-change-key" },
-      noteId,
-    );
+    const keyNote = (labelHtml: string, name: string): string =>
+      noteFromHtml(
+        `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
+        { scope: "filer-change-key" },
+        noteId,
+        { trigger: "label", textHtml: labelHtml, name },
+      );
+    /* The issuer NAME is the key note's LABEL trigger (no glyph beside it). */
     const identity = d.issuer_name
-      ? `<span class="filed-name">${esc(d.issuer_name)}</span>` +
+      ? keyNote(`<span class="filed-name">${esc(d.issuer_name)}</span>`, d.issuer_name) +
         // The class is FILED text (a fund can be named "BULLISH FD"): it rides
         // inside the filed-name marker the banned-wording scan exempts.
-        (d.title_of_class ? ` <span class="mono-note c-secondary"><span class="filed-name">${esc(d.title_of_class)}</span></span>` : "") +
-        keyNote
+        (d.title_of_class ? ` <span class="mono-note c-secondary"><span class="filed-name">${esc(d.title_of_class)}</span></span>` : "")
       : `<span class="mono-note">${esc(d.position_key)}</span>`;
       const p = qoqPresentation(d);
       const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
@@ -471,8 +508,8 @@ export function changesTableHtml(
            and follow. Nothing is removed — the order changed. */
         /* R14: the landing's notable-moves rows link here, anchored at the
            position (`#pos-<slug(position_key)>`). */
-        `<tr id="${esc(positionAnchor(d.position_key))}"><td class="c-pos${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
-        `<td class="c-chip">${qoqChipHtml(d)}</td>` +
+        `<tr id="${esc(positionAnchor(d.position_key))}"${changeEdgeAttr(d.change_kind)}><td class="c-pos c-flex${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
+        `<td class="c-chip c-kind">${qoqChipHtml(d)}</td>` +
         `<td class="c-num">${valueDelta}</td>` +
         `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
         `<td class="c-num">${cell(d.prev_value_usd)}</td>` +
@@ -494,14 +531,9 @@ export function changesTableHtml(
   const collapsed = pageRows.length > compact;
   const headHtml =
     `<thead><tr>` +
-    QOQ_COLS.map(([key, label]) => {
-      const body = QOQ_COL_NOTES[key];
-      return (
-        `<th scope="col">${esc(label)}` +
-        (body ? noteFromHtml(body, { scope: "filer-changes" }, key) : "") +
-        `</th>`
-      );
-    }).join("") +
+    QOQ_COLS.map(([key, label]) =>
+      thHtml({ label, mark: null, cls: QOQ_COL_CLASS[key] ?? "", noteHtml: QOQ_COL_NOTES[key] ?? null, notes: { scope: "filer-changes" }, noteKey: key }),
+    ).join("") +
     `</tr></thead>`;
   const heldGroup =
     held.length === 0
@@ -536,12 +568,17 @@ export function changesTableHtml(
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
     headHtml +
     `<tbody id="filer-changes-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
+    /* The compact bound counts THIS PAGE's rows, not the filer's changes: the
+       pager beside it states the whole ("101–200 of 250 changes"), so the bound
+       is definite and its noun names it — "1–20 of the 100 changes on this
+       page" — never "1–20 of 100 changes" (review R-3). */
     (collapsed
       ? compactDisclosure({
           rootId: "filer-changes-tbody",
           total: pageRows.length,
           shown: compact,
           noun: "changes",
+          ...CHANGES_PAGE_BOUND,
           domBacked: true,
         })
       : "") +
@@ -632,7 +669,7 @@ function filerBookShape(
       ? `Medians are over the ${fmtInt(b.population)} tracked filers with a ${esc(period)} book` +
         (b.hhi ? `; the index median over the ${fmtInt(b.hhi.n)} with a complete book` : "") + `.`
       : `No tracked-median comparison is published for ${esc(period)}.`) + `</p>` +
-    `<p class="section-note book-source">${filerTiles(conc, total).slice(2).map(tile => `${esc(tile.label)}: ${esc(tile.value)}${tile.title ? noteFromHtml(esc(tile.title), { scope: "filer-tiles" }, tile.label) : ""}`).join(" · ")}</p></section>`;
+    `<p class="section-note book-source">${filerTiles(conc, total).slice(2).map(tile => `${tile.title ? noteFromHtml(esc(tile.title), { scope: "filer-tiles" }, tile.label, { trigger: "label", textHtml: esc(tile.label) }) : esc(tile.label)}: ${esc(tile.value)}`).join(" · ")}</p></section>`;
 }
 
 export function filerPeriodSectionHtml(
@@ -775,7 +812,7 @@ export function filerBody(
     `</div>` +
     /* R15 / R24: the three empty frames (sector rotation, Congress overlap,
        signals for this filer) are ONE planned line; the filing history stays. */
-    `<div class="design-band design-triptych design-triptych-single"><section class="panel"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">AVAILABLE QUARTERS</span></div><div class="table-scroll design-history"><table class="etable"><caption class="visually-hidden">Available filing periods</caption><thead><tr><th>Period</th><th>Source</th></tr></thead><tbody>${periods.map(p => `<tr><td>${esc(p)}</td><td><a href="${esc(edgarFilerUrl(filer.cik))}" rel="noopener" target="_blank">EDGAR ↗</a></td></tr>`).join("")}</tbody></table></div></section></div>` +
+    `<div class="design-band design-triptych design-triptych-single"><section class="panel"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">AVAILABLE QUARTERS</span></div><div class="table-scroll design-history"><table class="etable"><caption class="visually-hidden">Available filing periods</caption><thead><tr><th scope="col" class="c-flex">Period</th><th scope="col" class="c-src">Source</th></tr></thead><tbody>${periods.map(p => `<tr><td class="c-flex">${esc(p)}</td><td class="c-src"><a href="${esc(edgarFilerUrl(filer.cik))}" rel="noopener" target="_blank">EDGAR ↗</a></td></tr>`).join("")}</tbody></table></div></section></div>` +
     plannedLine(["sector rotation", "Congress overlap", "signals for this filer"]) +
     filerEdgarBlock(filer.cik, filer.name) +
     `<details class="design-supplement filer-notes" id="filer-notes"><summary>Notes on this data</summary>` +
@@ -797,15 +834,15 @@ function clusterRowHtml(r: ClusterRow, max: number): string {
   const delta =
     r.netDeltaUsd == null
       ? `<span class="none">—</span>`
-      : `<span class="${r.netDeltaUsd >= 0 ? "c-buy" : "c-sell"}">${r.netDeltaUsd >= 0 ? "+" : "−"}${fmtUsd(Math.abs(r.netDeltaUsd))}</span>${r.netDeltaPartial ? fnMark("≈") : ""}`;
+      : `<span class="${r.netDeltaUsd >= 0 ? "c-buy" : "c-sell"}">${r.netDeltaUsd >= 0 ? "+" : "−"}${fmtUsd(Math.abs(r.netDeltaUsd))}</span>${r.netDeltaPartial ? hangMark("≈") : ""}`;
   return (
     `<tr class="design-cluster-row">` +
-    `<td class="c-issuer"><span class="filed-name">${esc(r.issuerName)}</span></td>` +
-    `<td><span class="design-diverging design-cluster-bar" aria-hidden="true"><span style="width:${aw.toFixed(1)}%"></span><span class="sale" style="width:${cw.toFixed(1)}%"></span></span>` +
+    `<td class="c-issuer c-flex"><span class="filed-name">${esc(r.issuerName)}</span></td>` +
+    `<td class="c-bar"><span class="design-diverging design-cluster-bar" aria-hidden="true"><span style="width:${aw.toFixed(1)}%"></span><span class="sale" style="width:${cw.toFixed(1)}%"></span></span>` +
     `<span class="visually-hidden">${fmtInt(r.adders)} filers added, ${fmtInt(r.cutters)} trimmed or exited</span></td>` +
     `<td class="c-num">${fmtInt(r.filers)}</td>` +
     `<td class="c-num c-buy">${fmtInt(r.newPositions)}</td>` +
-    `<td class="c-num">${delta}</td>` +
+    `<td class="c-num has-marks">${delta}</td>` +
     `<td class="c-num c-muted"><span class="visually-hidden">share of the board's largest count </span>${Math.round((r.newPositions / Math.max(1, max)) * 100)}%</td>` +
     `</tr>`
   );
@@ -835,9 +872,9 @@ export function clusterBoardHtml(result: ClusterBoardResult, period: string | nu
     `<div class="panel-head"><h2 class="section-h">Cluster board</h2>` +
     `<span class="panel-note">≥${fmtInt(b.minFilers)} FILERS CHANGED THE SAME NAME · ${esc(b.period)} · RANKED BY NEW POSITIONS</span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Issuers changed by ${fmtInt(b.minFilers)} or more filers in ${esc(b.period)}</caption>` +
-    `<thead><tr>${columns.map((c, i) => `<th scope="col"${i > 1 ? ' class="num"' : ""}>${esc(c)}${i === 4 ? fnMark("≈") : ""}</th>`).join("")}</tr></thead>` +
+    `<thead><tr>${columns.map((c, i) => thHtml({ label: c, mark: i === 4 ? "≈" : null, cls: i === 0 ? "c-issuer c-flex" : i === 1 ? "c-bar" : "c-num" })).join("")}</tr></thead>` +
     `<tbody>${b.rows.map((r) => clusterRowHtml(r, max)).join("\n")}</tbody></table></div>` +
-    `<p class="section-note">${fmtInt(b.rows.length)} of ${fmtInt(b.qualifying)} qualifying issuers rendered — a render bound, not a data bound · ` +
+    `<p class="section-note">${esc(rangeOfTotal(1, b.rows.length, b.qualifying, "qualifying issuers"))} rendered — a render bound, not a data bound · ` +
     `bars = filers adding vs trimming or exiting · NEW = filers with no position last quarter · ` +
     `${fnMark("≈")} = a contributing row disclosed no value, so the sum is partial` +
     (b.unkeyedRows > 0 ? ` · ${fmtInt(b.unkeyedRows)} change rows carry no issuer identity and are outside this board` : "") +
@@ -866,9 +903,9 @@ export function newPositionLeadersHtml(
   const rows = leaders.rows
     .map(
       (r, i) =>
-        `<tr><td class="c-rank">${i + 1}</td>` +
-        `<td class="c-filer">${filerLinkHtml(r.cik, r.filerName, tierOf(r.cik))}</td>` +
-        `<td><span class="design-weight-bar" aria-hidden="true"><span style="width:${((r.maxWeightBps / max) * 100).toFixed(1)}%"></span></span></td>` +
+        `<tr><td class="c-rank c-num">${i + 1}</td>` +
+        `<td class="c-filer c-flex">${filerLinkHtml(r.cik, r.filerName, tierOf(r.cik))}</td>` +
+        `<td class="c-bar"><span class="design-weight-bar" aria-hidden="true"><span style="width:${((r.maxWeightBps / max) * 100).toFixed(1)}%"></span></span></td>` +
         `<td class="c-num c-accent">${(r.maxWeightBps / 100).toFixed(1)}%</td>` +
         `<td class="c-num c-muted">${fmtInt(r.atThreshold)}<span class="visually-hidden"> at or above threshold</span> / ${fmtInt(r.newPositions)}<span class="visually-hidden"> new positions</span></td></tr>`,
     )
@@ -877,7 +914,7 @@ export function newPositionLeadersHtml(
     `<section class="panel design-newpositions" aria-label="Conviction leaders">` +
     `<div class="panel-head"><h2 class="section-h">Conviction leaders</h2><span class="panel-note">${esc(context)}</span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Filers ranked by the weight of their largest new position in ${esc(leaders.period)}</caption>` +
-    `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col"><span class="visually-hidden">Largest new weight, relative</span></th><th scope="col" class="num">Largest new</th><th scope="col" class="num">≥2% / new</th></tr></thead>` +
+    `<thead><tr><th scope="col" class="c-num">#</th><th scope="col" class="c-filer c-flex">Filer</th><th scope="col" class="c-bar"><span class="visually-hidden">Largest new weight, relative</span></th><th scope="col" class="c-num">Largest new</th><th scope="col" class="c-num">≥2% / new</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     `<p class="section-note">Weight = a new position's reported value over the filer's complete reported 13F long book for the same quarter — ranked only over books where every position carries a value. ` +
     `${fmtInt(leaders.evaluated)} filers opened positions in ${esc(leaders.period)}` +
@@ -970,25 +1007,36 @@ function addsHeadHtml(
   dir: "asc" | "desc",
   notes: NoteCtx,
 ): string {
+  /* Ledger roles (DESIGN-POLISH M1, R2): the issuer takes the slack, the top
+     adder is secondary text, every count and value is numeric. */
+  const role = (c: CongressColumn): string =>
+    c.key === ("issuer" as never) ? "c-issuer c-flex" : c.key === ("adder" as never) ? "c-filer c-secondary" : c.numeric ? "c-num" : "";
   return cols
     .map((c) => {
       if (!c.sortable) {
-        return (
-          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${esc(c.label)}` +
-          colWhyHtml(c.why, notes, c.key ?? c.label) + `</th>`
-        );
+        return thHtml({
+          label: c.label,
+          cls: role(c),
+          noteHtml: c.why ? esc(c.why) : null,
+          notes,
+          noteKey: String(c.key ?? c.label),
+        });
       }
-      const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
-      // Same rule as the ranking head — Issuer, Δ value and Top adder
-      // are sortable AND carry a mark, so the note hangs off the sortable
-      // branch as well.
-      return (
-        `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-adds-sort="${esc(String(c.key))}" ` +
-        `data-adds-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
-        `<button class="th-sort" type="button">${esc(c.label)}</button>` +
-        (c.note ? noteFromHtml(c.note, notes, String(c.key)) : "") +
-        `</th>`
-      );
+      // Same rule as the ranking head — Issuer, Δ value and Top adder are
+      // sortable AND carry a mark, so the mark is the note's trigger.
+      return thHtml({
+        label: c.label,
+        cls: role(c),
+        noteHtml: c.note ?? null,
+        notes,
+        noteKey: String(c.key),
+        sort: {
+          attr: "data-adds-sort",
+          key: String(c.key),
+          state: c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none",
+          extra: ` data-adds-dir="${c.defaultDir}"`,
+        },
+      });
     })
     .join("");
 }
@@ -1082,6 +1130,10 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
       total,
       shown,
       noun: "issuers",
+      /* a truncated payload's total is the leaderboard's bound, not the
+         quarter's count of issuers (review R-4); the island restates it from
+         the same function for every quarter it loads */
+      ...addsBoundNoun(payload.truncated),
       bound:
         `Every issuer in this quarter's bounded payload remains in ` +
         `<a href="${esc(addsPayloadHref(opts.period, opts.mode))}">the published JSON</a>.`,
@@ -1172,7 +1224,7 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
   const t = i.totals;
   const verified = i.holders[0]?.verified_date ?? "";
   const tiles: StatTile[] = [
-    { value: fmtInt(t.holder_count), label: "holders", title: `13F filers reporting this class for the quarter ended ${t.period_of_report}${i.holders.length < t.holder_count ? `; the ${fmtInt(i.holders.length)} largest are listed` : ""}` },
+    { value: fmtInt(t.holder_count), label: "holders", title: `13F filers reporting this class for the quarter ended ${t.period_of_report}${i.holders.length < t.holder_count ? `; ${rangeOfTotal(1, i.holders.length, t.holder_count, "holders")} are listed, largest first` : ""}` },
     { value: fmtUsd(t.value_usd), label: "combined value", title: "sum of the reported values across every holder; NULL values are excluded, never zero-filled" },
     { value: fmtInt(t.adds), label: "adds", title: "holders whose share count rose or who opened the position (new + add), by shares" },
     { value: fmtInt(t.exits), label: "exits", title: "holders absent this quarter after holding last quarter — inferred from absence, not a sale record" },
@@ -1180,12 +1232,12 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
   const rows = i.holders
     .map(
       (h) =>
-        `<tr><td class="c-rank">${fmtInt(h.rank)}</td>` +
-        `<td class="c-filer">${filerLinkHtml(h.cik, h.filer_name, i.tierOf(h.cik))}</td>` +
+        `<tr${changeEdgeAttr(h.change_kind)}><td class="c-rank c-num">${fmtInt(h.rank)}</td>` +
+        `<td class="c-filer c-flex">${filerLinkHtml(h.cik, h.filer_name, i.tierOf(h.cik))}</td>` +
         `<td class="c-num">${h.value_usd == null ? "—" : esc(fmtUsd(h.value_usd))}</td>` +
         `<td class="c-num">${h.shares == null ? "—" : fmtInt(h.shares)}</td>` +
         `<td class="c-num ${h.delta_shares == null ? "c-muted" : h.delta_shares < 0 ? "c-sell" : h.delta_shares > 0 ? "c-buy" : ""}">${h.delta_shares == null ? "—" : `${h.delta_shares < 0 ? "−" : h.delta_shares > 0 ? "+" : ""}${fmtInt(Math.abs(h.delta_shares))}`}</td>` +
-        `<td class="c-chip"><span class="qoq-chip qoq-${esc(h.change_kind)}">${esc(h.change_kind === "held" ? "no change" : h.change_kind === "no_prior" ? "no prior" : h.change_kind)}</span></td></tr>`,
+        `<td class="c-chip c-kind"><span class="qoq-chip qoq-${esc(h.change_kind)}">${esc(h.change_kind === "held" ? "no change" : h.change_kind === "no_prior" ? "no prior" : h.change_kind)}</span></td></tr>`,
     )
     .join("\n");
   return (
@@ -1196,8 +1248,8 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
       { text: "holders" },
     ]) +
     `<header class="entity-head"><div class="entity-head-copy">` +
-    `<h1 class="entity-title">Who holds <span class="mono-ticker">${esc(i.ticker)}</span>` +
-    noteFromHtml(`ticker verified against the SEC company list${verified ? ` on ${esc(verified)}` : ""} — a reviewed name-and-class mapping row, never an inferred symbol. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>`, { scope: "holders-ticker" }, "verified") +
+    `<h1 class="entity-title">Who holds ` +
+    noteFromHtml(`ticker verified against the SEC company list${verified ? ` on ${esc(verified)}` : ""} — a reviewed name-and-class mapping row, never an inferred symbol. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>`, { scope: "holders-ticker" }, "verified", { trigger: "label", textHtml: `<span class="mono-ticker">${esc(i.ticker)}</span>`, name: i.ticker }) +
     `</h1>` +
     `<div class="entity-subline"><span class="filed-name">${esc(t.issuer_name)}</span> · <span class="filed-name">${esc(t.title_of_class)}</span> · quarter ended <span class="mono-id">${esc(t.period_of_report)}</span>` +
     (i.congress ? ` · <a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} disclosed ${esc(i.ticker)} ↗</a>` : "") +
@@ -1209,7 +1261,7 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     `<div class="panel-head"><h2 class="section-h">Holders — quarter ended ${esc(t.period_of_report)}</h2>` +
     `<span class="panel-note">ranked by reported value · Δ shares vs ${esc(t.prev_period ?? "the prior quarter")} · kind by shares</span></div>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first><caption class="visually-hidden">13F holders of ${esc(i.ticker)} ranked by reported value</caption>` +
-    `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col" class="num">Reported value</th><th scope="col" class="num">Shares</th><th scope="col" class="num">Δ shares</th><th scope="col">Change</th></tr></thead>` +
+    `<thead><tr><th scope="col" class="c-num">#</th><th scope="col" class="c-filer c-flex">Filer</th><th scope="col" class="c-num">Reported value</th><th scope="col" class="c-num">Shares</th><th scope="col" class="c-num">Δ shares</th><th scope="col" class="c-chip c-kind">Change</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     cardFoot({ short: `Quarter ended ${t.period_of_report}`, full: instFiledNote(i.latestFiled), scope: "ticker-holders-foot", key: "stamp" }) +
     `</section>` +

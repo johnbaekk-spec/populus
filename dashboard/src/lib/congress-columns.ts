@@ -29,6 +29,7 @@ export type CongressColumn =
   | {
       sortable: true;
       key: CongressSortKey;
+      /** the MARK-FREE label (DESIGN-POLISH M1, R2) — the mark is `mark` */
       label: string;
       /** direction applied when the reader switches TO this column */
       defaultDir: "asc" | "desc";
@@ -37,6 +38,9 @@ export type CongressColumn =
           rendered as a note on the header. Pre-escaped html, because the
           footnote registries publish `<strong>`/`<code>` emphasis. */
       note?: string;
+      /** the footnote mark (§ † ·§ …) — hung in the column's mark slot, and the
+          note's trigger when the column carries a note */
+      mark?: string;
     }
   | {
       sortable: false;
@@ -45,6 +49,7 @@ export type CongressColumn =
       why: string;
       numeric: boolean;
       note?: string;
+      mark?: string;
     };
 
 export type CongressSortKey =
@@ -127,13 +132,17 @@ export function congressRankingColumns(kind: "leaders" | "tickers"): CongressCol
       defaultDir: "asc",
       numeric: false,
     },
-    { sortable: true, key: "txns", label: "Trades †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
-    { sortable: true, key: "buys", label: "Purchases †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
-    { sortable: true, key: "sells", label: "Sales †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
+    /* The marks are split out of the labels (DESIGN-POLISH M1, R2): the label
+       text is the alignment edge, the mark hangs in the column's slot and is
+       the note's trigger. */
+    { sortable: true, key: "txns", label: "Trades", mark: "†", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
+    { sortable: true, key: "buys", label: "Purchases", mark: "†", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
+    { sortable: true, key: "sells", label: "Sales", mark: "†", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
     {
       sortable: true,
       key: "purchases",
-      label: "Gross purchases ·§",
+      label: "Gross purchases",
+      mark: "·§",
       defaultDir: "desc",
       numeric: true,
       note: `${INTERVAL_CLAIM} · ${RANKING_FN.get("§")}`,
@@ -141,7 +150,8 @@ export function congressRankingColumns(kind: "leaders" | "tickers"): CongressCol
     {
       sortable: true,
       key: "sales",
-      label: "Gross sales ·§",
+      label: "Gross sales",
+      mark: "·§",
       defaultDir: "desc",
       numeric: true,
       note: `${INTERVAL_CLAIM} · ${RANKING_FN.get("§")}`,
@@ -149,7 +159,8 @@ export function congressRankingColumns(kind: "leaders" | "tickers"): CongressCol
     {
       sortable: true,
       key: "net",
-      label: "Net disclosed flow ·§",
+      label: "Net disclosed flow",
+      mark: "·§",
       defaultDir: "desc",
       numeric: true,
       /* The Net column carries the whole of the deleted paragraph that
@@ -158,7 +169,7 @@ export function congressRankingColumns(kind: "leaders" | "tickers"): CongressCol
         `${INTERVAL_CLAIM} · ${DIRECTION_CLAIM} · ${RANKING_FN.get("§")} · ` +
         `${ORDER_CLAIM} · ≈ ${RANKING_FN.get("≈")}`,
     },
-    { sortable: true, key: "late", label: "Late †", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
+    { sortable: true, key: "late", label: "Late", mark: "†", defaultDir: "desc", numeric: true, note: RANKING_FN.get("†") },
   ];
 }
 

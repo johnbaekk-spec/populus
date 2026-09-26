@@ -37,7 +37,7 @@ import {
   rankingRootHtml,
   rankingWindowHtml,
 } from "../lib/ui/index.ts";
-import { COMPACT_ROWS, COMPACT_STEP, compactBoundCount, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, COMPACT_STEP, compactBoundCountFor, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
 import type { CongressSortKey } from "../lib/congress-columns.ts";
 import { congressRankingColumns } from "../lib/congress-columns.ts";
@@ -248,10 +248,10 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     const limit = compactLimit;
     const hidden = Math.max(0, total - limit);
     const noun = b.noun ?? "rows";
-    // The bound noun is the SERVER's, read back off the element: this one
-    // function serves the ranked tables and the wholly-undisclosed bucket, and
-    // composing "ranked …" for all three would relabel the bucket.
-    const boundNoun = b.disclosure.dataset?.compactBoundNoun ?? `ranked ${noun}`;
+    // The bound noun (and whether the total is a bound) is the SERVER's, read
+    // back off the element by the one shared reader: this one function serves
+    // the ranked tables and the wholly-undisclosed bucket, and composing
+    // "ranked …" for all three would relabel the bucket.
 
     /* The count clause, the button and the wrapper commit TOGETHER,
        in one call to the shared updater. Three private copies of that contract
@@ -268,7 +268,8 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
       hidden: b.expanded ? 0 : hidden,
       expanded: b.expanded,
       noun,
-      count: { text: compactBoundCount(hidden, boundNoun) },
+      // The range grammar (R8): "1–10 of 833 ranked tickers", the server's words.
+      count: { text: compactBoundCountFor(b.disclosure, total - hidden, total, `ranked ${noun}`) },
     });
   }
 

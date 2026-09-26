@@ -127,42 +127,58 @@ test("headers without a key are skipped, not crashed on", () => {
 
 import { readFileSync } from "node:fs";
 
-test("both sortable-header surfaces meet the 44 px touch target", () => {
-  const css = baseStylesheet();
+/* L9 (DESIGN-POLISH M1; record in design-principles §7). The 44px target
+   becomes a --hit-min square (44px coarse / at the fold, 24px otherwise)
+   reached through a layout-neutral ::before, so a sort button never makes its
+   header row taller than the ledger's. Still evaluated PER ADOPTER, in source
+   order, as the cascade would (code review, cycle 4 F3): each adopter must end
+   with the pseudo-element's content, absolute position and --hit-min insets,
+   and no rule may give the button itself a min-width or min-height. */
+const ADOPTERS = ["data-sort", "data-inst-sort", "data-congress-sort", "data-feed-sort", "data-adds-sort"];
 
-  // Evaluate PER SELECTOR. Joining every .th-sort rule and taking the globally
-  // last declaration would let one adopter sit at zero while a later rule for
-  // the OTHER adopter restored 44px (code review, cycle 4 F3). Each adopter is
-  // resolved independently, in source order, exactly as the cascade would.
-  const rules = css
-    .split("}")
-    .map((chunk) => chunk + "}")
-    .filter((chunk) => /\.th-sort/.test(chunk) && /min-(height|width)\s*:/.test(chunk));
-
-  // Source order alone is NOT the cascade: an `!important` declaration beats any
-  // later non-important one (code review, cycle 4 F3). Track both, and let an
-  // important value stand unless a later important value replaces it.
-  const effective = (adopter: string, prop: string): string | null => {
+function hitAreaFor(source: string, adopter: string): { content: string | null; position: string | null; left: string | null; minSize: string[] } {
+  const rules = [...source.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]!.trim(), decls: m[2]! }));
+  const applies = (part: string, pseudo: boolean): boolean => {
+    const p = part.trim();
+    const target = pseudo ? /\.th-sort\)?::before$/.test(p) : /\.th-sort$/.test(p);
+    if (!target) return false;
+    const qual = /th\[(data-[\w-]+)\]/.exec(p);
+    return !qual || qual[1] === adopter;
+  };
+  const effective = (prop: string): string | null => {
     let value: string | null = null;
-    let valueIsImportant = false;
-    for (const rule of rules) {
-      const selectorPart = rule.slice(0, rule.indexOf("{"));
-      if (!new RegExp(`th\\[${adopter}\\]\\s*\\.th-sort`).test(selectorPart)) continue;
-      for (const decl of rule.matchAll(new RegExp(`${prop}\\s*:\\s*([^;\}]+)`, "g"))) {
-        const raw = decl[1].trim();
-        const important = /!\s*important/i.test(raw);
-        if (valueIsImportant && !important) continue; // a later normal decl cannot win
+    let important = false;
+    for (const r of rules) {
+      if (!r.sel.split(",").some((part) => applies(part, true))) continue;
+      for (const d of r.decls.matchAll(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`, "g"))) {
+        const raw = d[1]!.trim();
+        const imp = /!\s*important/i.test(raw);
+        if (important && !imp) continue;
         value = raw.replace(/!\s*important/i, "").trim();
-        valueIsImportant = important;
+        important = imp;
       }
     }
     return value;
   };
+  const minSize = rules
+    .filter((r) => r.sel.split(",").some((part) => applies(part, false)) && /min-(width|height)\s*:/.test(r.decls))
+    .map((r) => r.sel);
+  return { content: effective("content"), position: effective("position"), left: effective("left"), minSize };
+}
 
-  for (const adopter of ["data-sort", "data-inst-sort"]) {
-    assert.equal(effective(adopter, "min-height"), "44px", `${adopter}: effective min-height`);
-    assert.equal(effective(adopter, "min-width"), "44px", `${adopter}: effective min-width`);
+test("L9: every sortable-header adopter reaches --hit-min through the button's ::before, with no min size on the button", () => {
+  const css = baseStylesheet();
+  for (const adopter of ADOPTERS) {
+    const h = hitAreaFor(css, adopter);
+    assert.equal(h.content, '""', `${adopter}: the pseudo-element exists`);
+    assert.equal(h.position, "absolute", `${adopter}: it is layout-neutral`);
+    assert.match(h.left ?? "", /var\(--hit-min\)/, `${adopter}: it is sized by --hit-min`);
+    assert.deepEqual(h.minSize, [], `${adopter}: no min-width/min-height on the button itself`);
   }
+  // controls: an adopter whose pseudo is switched off, and a button given a min size, each fail
+  const off = hitAreaFor(css + "\nth[data-inst-sort] .th-sort::before { content: none; }", "data-inst-sort");
+  assert.notEqual(off.content, '""');
+  assert.deepEqual(hitAreaFor(css + "\nth[data-sort] .th-sort { min-height: 44px; }", "data-sort").minSize, ["th[data-sort] .th-sort"]);
 });
 
 test("the base .th-sort reset does not silently re-zero the target", () => {

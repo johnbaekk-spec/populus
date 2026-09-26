@@ -44,7 +44,7 @@
   flex-shrink: 0;
 }
 .brand-name {
-  font: 700 21px var(--serif);
+  font: 700 var(--fs-brand) var(--serif);
   letter-spacing: -0.01em;
 }
 .site-nav {
@@ -56,7 +56,7 @@
 }
 .site-nav a,
 .site-nav .nav-soon {
-  font: 500 13px var(--sans);
+  font: 500 var(--fs-body) var(--sans);
   text-decoration: none;
   color: var(--ink2);
   white-space: nowrap;
@@ -72,7 +72,7 @@
   color: var(--ink3);
 }
 .badge-soon {
-  font: 600 9px var(--mono);
+  font: 600 var(--fs-label) var(--mono);
   color: var(--ink3);
   border: 1px solid var(--rule2);
   padding: 1px 4px;
@@ -95,11 +95,11 @@
   width: 230px;
 }
 .site-search .glyph {
-  font: 400 12px var(--mono);
+  font: 400 var(--fs-small) var(--mono);
   color: var(--ink3);
 }
 .site-search input {
-  font: 400 12.5px var(--sans);
+  font: 400 var(--fs-name) var(--sans);
   color: var(--ink);
   background: none;
   border: none;
@@ -119,7 +119,7 @@
   outline-offset: 1px;
 }
 .theme-toggle {
-  font: 500 10.5px var(--mono);
+  font: 500 var(--fs-control) var(--mono);
   color: var(--ink2);
   border: 1px solid var(--rule2);
   padding: 5px 9px;
@@ -156,22 +156,22 @@
   max-width: 660px;
 }
 .kicker {
-  font: 600 11px var(--sans);
+  font: 600 var(--fs-note) var(--sans);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ink3);
 }
 .page-title {
-  font: 600 34px/1.1 var(--serif);
+  font: 600 var(--fs-display)/1.1 var(--serif);
   margin: 8px 0 12px;
 }
 .page-lede {
-  font: 400 14px/1.6 var(--sans);
+  font: 400 var(--fs-brand)/1.6 var(--sans);
   color: var(--ink2);
   margin: 0;
 }
 .page-lede a {
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 /* `.mobile-meta` is DELETED. It was the stat strip's mobile duplicate, and
    the strip it duplicated is gone — the single `.caveat-line` under the lede
@@ -219,17 +219,17 @@
   flex: 1 1 auto;
 }
 .tile-value {
-  font: 600 22px var(--sans);
+  font: 600 var(--fs-display) var(--sans);
   font-variant-numeric: tabular-nums;
 }
 .tile-value .unit {
-  font-size: 14px;
+  font-size: var(--fs-brand);
 }
 .tile-value.muted {
   color: var(--ink2);
 }
 .tile-label {
-  font: 600 10px var(--sans);
+  font: 600 var(--fs-meta) var(--sans);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink3);

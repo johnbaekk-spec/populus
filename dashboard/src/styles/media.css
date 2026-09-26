@@ -22,7 +22,7 @@
     gap: 6px 20px;
   }
   .brand-name {
-    font-size: 18px;
+    font-size: var(--fs-brand);
   }
   .site-nav {
     gap: 6px 18px;
@@ -92,8 +92,16 @@
      may hold only cells, and a browser HOISTS an illegal child out of the
      table rather than erroring, which would have destroyed this fold silently.
      Same two lines, same order, no extra elements — and nothing is removed:
-     both dates stay in the accessibility tree via the clip below. */
-  .feed-row {
+     both dates stay in the accessibility tree via the clip below.
+
+     DESIGN-POLISH M1 (R9, A-4): the `.feed-row` selectors in this block are
+     `.feed-row:where(:not(.reference-row))` — the SAME specificity, so the
+     classic feed (/watchlist/) keeps every rule and its ≤720px overrides still
+     win, while none of them can reach a reference row, whose ≤1080px rules are
+     the ledger region's. `.feed-row .mobile-dates`, `.feed-row .cell-filed` and
+     `.feed-row .cell-traded .traded-date` keep their selectors: reference rows
+     render none of those elements. */
+  .feed-row:where(:not(.reference-row)) {
     display: grid;
     grid-template-columns: auto 1fr auto;
     grid-template-areas:
@@ -106,13 +114,13 @@
     position: relative;
     padding-right: 40px; /* clear of the star */
   }
-  .feed-row .cell-ticker { grid-area: ticker; }
-  .feed-row .cell-member { grid-area: member; }
-  .feed-row .cell-side { grid-area: side; }
-  .feed-row .cell-range { grid-area: range; }
-  .feed-row .cell-amount { grid-area: amount; }
-  .feed-row .cell-traded { grid-area: traded; }
-  .feed-row .cell-src { grid-area: src; }
+  .feed-row:where(:not(.reference-row)) .cell-ticker { grid-area: ticker; }
+  .feed-row:where(:not(.reference-row)) .cell-member { grid-area: member; }
+  .feed-row:where(:not(.reference-row)) .cell-side { grid-area: side; }
+  .feed-row:where(:not(.reference-row)) .cell-range { grid-area: range; }
+  .feed-row:where(:not(.reference-row)) .cell-amount { grid-area: amount; }
+  .feed-row:where(:not(.reference-row)) .cell-traded { grid-area: traded; }
+  .feed-row:where(:not(.reference-row)) .cell-src { grid-area: src; }
   /* Both dates stay in the accessibility tree — visually-hidden, never
      `display: none`, which would delete them for screen readers. The visible
      pair is recomposed by `.mobile-dates` below. */
@@ -128,49 +136,67 @@
     white-space: nowrap;
     border: 0;
   }
-  .feed-row .cell-star {
+  .feed-row:where(:not(.reference-row)) .cell-star {
     position: absolute;
     top: 4px;
     right: 8px;
   }
-  .feed-row .cell-member .aff {
+  .feed-row:where(:not(.reference-row)) .cell-member .aff {
     white-space: nowrap;
   }
-  .feed-row .cell-traded {
+  .feed-row:where(:not(.reference-row)) .cell-traded {
     text-align: right;
     white-space: nowrap;
   }
-  .feed-row .cell-src {
+  .feed-row:where(:not(.reference-row)) .cell-src {
     text-align: right;
   }
-  .feed-row .cell-range {
+  /* The band and its flag chips share a line of a chip's height, so a row
+     with one short flag folds to the same height as one without (G8). Flags
+     WRAP rather than truncate (§5; review C-5): a chip never shrinks, and one
+     longer than the whole line breaks its own words instead of an ellipsis
+     cutting them. */
+  .feed-row:where(:not(.reference-row)) .cell-range {
     padding-left: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px 6px;
+    min-height: 19px;
     flex-wrap: wrap;
     overflow: visible;
   }
-  .cell-amount {
+  .feed-row:where(:not(.reference-row)) .cell-range .band { flex: 1 1 16px; min-width: 16px; }
+  .feed-row:where(:not(.reference-row)) .cell-range .flag {
+    flex: 0 0 auto;
+    max-width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  :where(.feed-table:not(.reference-feed)) .cell-amount {
     text-align: left;
     white-space: nowrap;
   }
   .feed-row .mobile-dates {
     display: inline;
-    font: 400 10px var(--sans);
+    font: 400 var(--fs-meta) var(--sans);
     font-variant-numeric: tabular-nums;
     color: var(--ink3);
   }
-  .feed-row .flag {
+  .feed-row:where(:not(.reference-row)) .flag {
     max-width: 100%;
   }
   /* A paper row has only three visible cells, so it keeps a simple two-line
      shape of its own rather than inheriting the transaction row's areas. */
-  .feed-row.paper {
+  .feed-row.paper:where(:not(.reference-paper)) {
     grid-template-columns: 1fr auto;
     grid-template-areas:
       "main main"
       "src  src";
   }
-  .feed-row.paper .paper-main { grid-area: main; }
-  .feed-row.paper .cell-src { grid-area: src; text-align: right; }
+  .feed-row.paper:where(:not(.reference-paper)) .paper-main { grid-area: main; }
+  .feed-row.paper:where(:not(.reference-paper)) .cell-src { grid-area: src; text-align: right; }
   .paper-main {
     flex-wrap: wrap;
     white-space: normal;
@@ -198,7 +224,7 @@
     height: 16px;
   }
   .brand-name {
-    font-size: 17px;
+    font-size: var(--fs-brand);
   }
   .site-nav {
     display: none;
@@ -256,7 +282,7 @@
     justify-content: center;
     min-width: 44px;
     min-height: 44px;
-    font: 600 14px var(--sans);
+    font: 600 var(--fs-brand) var(--sans);
     color: var(--ink2);
   }
   .search-toggle {
@@ -276,14 +302,14 @@
     gap: 0;
   }
   .page-title {
-    font-size: 21px;
+    font-size: var(--fs-display);
     margin: 6px 0 4px;
   }
   /* The lede carries the 45-day-lag and range caveats — it stays, tightened.
      Hiding it was the "cleaner because a caveat disappeared" failure the
      brief explicitly forbids (§7). */
   .page-lede {
-    font-size: 12.5px;
+    font-size: var(--fs-name);
     line-height: 1.55;
     margin-top: 6px;
   }
@@ -309,10 +335,10 @@
     min-width: 104px;
   }
   .tile-value {
-    font-size: 16px;
+    font-size: var(--fs-lede);
   }
   .tile-label {
-    font-size: 8.5px;
+    font-size: var(--fs-label);
   }
 
   /* filter controls become one horizontally scrollable strip; the count line
@@ -337,7 +363,7 @@
   .filter-label {
     display: none;
   }
-  .seg button,
+  /* The segmented control's 44px comes from --hit-min (ledger region). */
   .filter-select,
   .theme-toggle {
     padding: 7px 12px;
@@ -358,7 +384,7 @@
     width: 100%;
     min-width: 0;
     line-height: 1.55;
-    font-size: 10px;
+    font-size: var(--fs-meta);
     border-top: 1px solid var(--rule);
     padding-top: 6px;
   }
@@ -374,28 +400,28 @@
   }
 
   /* rows fold to two-line cards: who · what · side / band · amount · dates */
-  .feed-grid-cols {
+  :where(.feed-table:not(.reference-feed)) .feed-grid-cols {
     padding: 0 16px;
   }
   /* structure (display:block, the two lines, the star, the date collapse) is
      owned by the ≤1080px block above — only touch sizing and the small-screen
      type ramp remain here. */
-  .feed-row {
+  .feed-row:where(:not(.reference-row)) {
     padding: 12px 16px;
     min-height: 44px;
   }
-  .feed-row .cell-star .star-btn {
+  .feed-row:where(:not(.reference-row)) .cell-star .star-btn {
     min-width: 44px;
     min-height: 44px;
-    font-size: 16px;
+    font-size: var(--fs-lede);
     text-align: center;
   }
-  .feed-row .cell-member {
-    font-size: 13.5px;
+  .feed-row:where(:not(.reference-row)) .cell-member {
+    font-size: var(--fs-title);
   }
-  .feed-row .cell-ticker,
-  .feed-row .cell-side {
-    font-size: 12px;
+  .feed-row:where(:not(.reference-row)) .cell-ticker,
+  .feed-row:where(:not(.reference-row)) .cell-side {
+    font-size: var(--fs-small);
   }
   /* Line-2 width budget at 375px: band 64 + amount ~80 + dates ~92 +
      provenance 44 + gaps ≈ 300 + 32 padding — so the provenance link and the
@@ -405,18 +431,18 @@
     width: 64px;
     background: var(--raised);
   }
-  .cell-amount {
-    font-size: 11.5px;
+  :where(.feed-table:not(.reference-feed)) .cell-amount {
+    font-size: var(--fs-cell);
   }
-  .feed-row .lag,
-  .feed-row .lag-late {
-    font-size: 9px;
+  .feed-row:where(:not(.reference-row)) .lag,
+  .feed-row:where(:not(.reference-row)) .lag-late {
+    font-size: var(--fs-label);
   }
-  .feed-row .owner-note {
-    font-size: 10.5px;
+  .feed-row:where(:not(.reference-row)) .owner-note {
+    font-size: var(--fs-control);
   }
-  .feed-row .flag {
-    font-size: 9px;
+  .feed-row:where(:not(.reference-row)) .flag {
+    font-size: var(--fs-label);
   }
   /* provenance stays reachable: the glyph alone, with its own 44px target */
   .feed-row .cell-src a {
@@ -427,7 +453,7 @@
     min-height: 44px;
     margin: -14px 0; /* 44px target without inflating the row */
     border-bottom: none;
-    font-size: 10.5px;
+    font-size: var(--fs-control);
   }
 
   .feed-empty {
@@ -442,12 +468,11 @@
     justify-content: space-between;
   }
   .pager-btn {
-    min-height: 44px;
     display: inline-flex;
     align-items: center;
   }
   .view-note {
-    font-size: 8.5px;
+    font-size: var(--fs-meta);
   }
 
   .site-footer-inner {
@@ -468,8 +493,8 @@
     flex-direction: column;
     gap: 16px;
   }
-  .entity-title { font-size: 24px; }
-  .entity-lede { font-size: 12.5px; }
+  .entity-title { font-size: var(--fs-display); }
+  .entity-lede { font-size: var(--fs-name); }
   .watch-btn { min-height: 44px; }
   /* `.tiles-entity` is the same strip in compact dress (`format.ts:808` emits
      both from one function), so it loses the same dead scroll affordance. */
@@ -478,39 +503,20 @@
   .gaps-block.cols-2 { columns: 1; }
   .source-row { grid-template-columns: 1fr; gap: 4px; }
   .hero { padding-top: 36px; padding-bottom: 32px; gap: 32px; grid-template-columns: 1fr; }
-  .hero-title { font-size: 32px; }
-  .metho-title { font-size: 26px; }
+  .hero-title { font-size: var(--fs-hero); }
+  .metho-title { font-size: var(--fs-hero); }
   .section-index { overflow-x: auto; }
   .section-index a, .section-index .si-soon { min-height: 44px; }
   .si-asof { margin-left: 0; }
-  .chip { min-height: 44px; }
   .toc a { min-height: 44px; }
   .search-opt { min-height: 44px; }
   .quick-link { min-height: 44px; }
-  .pager-btn { min-height: 44px; }
   .cta { min-height: 44px; }
   .module-shell, .s1-block, .s2-block, .s4-error { padding: 24px 18px; }
 
-  /* wide tables: scroll in-container, sticky identity column, edge fade.
-     All cells stay in the DOM — the fade signals overflow, it removes nothing. */
-  .table-scroll {
-    position: relative;
-    mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
-  }
-  .etable[data-sticky-first] th:first-child,
-  .etable[data-sticky-first] td:first-child {
-    position: sticky;
-    left: 0;
-    background: var(--raised);
-    border-right: 1px solid var(--rule2);
-    z-index: 2;
-  }
-  .etable th, .etable td { padding: 8px 8px; }
-  .etable td { font-size: 12px; }
-  /* two-line fold for the compact member/ticker cards: identity wraps, the
-     numbers stay on-row — nothing removed, only re-laid-out */
-  .etable .c-member, .etable .c-filer, .etable .c-pos { max-width: 200px; }
+  /* The wide-table fold — in-container scroll, the sticky identity column, the
+     edge fade and the 200px name cap — is in the ledger region's ≤720px block
+     (entities.css) now; all cells stay in the DOM, the fade removes nothing. */
 
   .rb-track { gap: 8px; }
   .rb-bar { width: 12px; }

@@ -52,7 +52,8 @@ import { plannedLine, unavailableDesignPanel } from "./shared.ts";
 import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
 import { type BuildStamps, asOfNote, briefingCards, disclosureLedger } from "./shared.ts";
-import { note } from "../format.ts";
+import { note, rangeOfTotal, thHtml } from "../format.ts";
+import { familyOf } from "./signals.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
 import { instStamp, instFiledNote } from "./institutional.ts";
 
@@ -128,8 +129,8 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
       (h) =>
         `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
         // ONE href primitive (filerHref): the payload carries the top/tail target.
-        `<td class="c-filer"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
-        `<td class="c-num c-strong">${esc(fmtUsd(h.value))}</td>` +
+        `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
+        `<td class="c-num c-strong has-marks">${esc(fmtUsd(h.value))}</td>` +
         `<td class="c-num">${fmtInt(h.securities)}</td>` +
         `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedHolders })}</td>` +
         `<td class="c-src">${srcLinkDerived("#ticker-inst-footnotes", edgarFilerUrl(h.cik))}</td></tr>`,
@@ -149,7 +150,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
     universalFlagNote(statedHolders) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHolders.join(","))}">` +
     `<caption class="visually-hidden">Top institutional holders of ${esc(ticker)} for quarter ${esc(inst.period!)}</caption>` +
-    `<thead><tr><th scope="col">#</th><th scope="col">Filer</th><th scope="col">Value ▾</th><th scope="col">Securities</th><th scope="col">Flags</th><th scope="col">Src</th></tr></thead>` +
+    `<thead><tr>${thHtml({ label: "#", cls: "c-num" })}${thHtml({ label: "Filer", cls: "c-filer c-flex" })}${thHtml({ label: "Value", cls: "c-num", order: "descending" })}${thHtml({ label: "Securities", cls: "c-num" })}${thHtml({ label: "Flags", cls: "c-flags" })}${thHtml({ label: "Src", cls: "c-src" })}</tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     terminusRow({
       author: "populus",
@@ -218,7 +219,9 @@ export function tickerUnifiedBody(
       `<div class="table-scroll"><table class="etable etable-compact" data-stated-flags="${esc(statedPreview.join(","))}"><caption class="visually-hidden">Latest congressional filings mentioning ${esc(
         t.ticker,
       )}</caption>` +
-      `<thead><tr><th scope="col">Filed ▾</th><th scope="col">Member</th><th scope="col">Side · Owner</th><th scope="col">Traded · Lag</th><th scope="col">Amount</th><th scope="col">Range · Flags</th><th scope="col">Src</th></tr></thead>` +
+      `<thead><tr>${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}${(
+        [["Member", "c-member c-flex"], ["Side · Owner", "c-kind"], ["Traded · Lag", "c-num"], ["Amount", "c-num"], ["Range · Flags", "c-bar"], ["Src", "c-src"]] as const
+      ).map(([label, cls]) => thHtml({ label, mark: null, cls })).join("")}</tr></thead>` +
       `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview)}</tbody></table></div>` +
       cardFoot({
         short: "Traded → filed dates on every row",
@@ -465,7 +468,7 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
     .map((m) => {
       const dir = netDirection(m.net);
       return (
-        `<tr><td class="c-member">${m.first.bioguide ? `<a href="${memberHrefFor(m.first.bioguide, ctx)}">${esc(m.first.name)}</a>` : esc(m.first.name)} <span class="aff ${partyClass(m.first.party)}">${esc(affTextOf(m.first))}</span></td>` +
+        `<tr><td class="c-member c-flex">${m.first.bioguide ? `<a href="${memberHrefFor(m.first.bioguide, ctx)}">${esc(m.first.name)}</a>` : esc(m.first.name)} <span class="aff ${partyClass(m.first.party)}">${esc(affTextOf(m.first))}</span></td>` +
         `<td class="c-num">${fmtInt(m.rows)}</td>` +
         `<td class="c-num ${dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted"}">${esc(netIntervalText(m.net))}</td>` +
         `<td class="c-num ${m.committee && m.committee !== "—" && m.committee !== "unanswerable" ? "c-amber" : "c-muted"}">${m.committee === null ? "—" : esc(m.committee)}</td></tr>`
@@ -479,9 +482,14 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
     (members.length === 0
       ? `<p class="section-note">No member disclosed ${esc(t.ticker)} in the trailing 12 months.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Members disclosing ${esc(t.ticker)} in the trailing 12 months</caption>` +
-        `<thead><tr><th scope="col">Member</th><th scope="col" class="num">Rows</th><th scope="col" class="num">Net${note("Net disclosed flow for this ticker: purchases minus sales, computed as a net range on the disclosed amounts. A lower bound is provable, never a point.", { scope: "ticker-members" }, "net")}</th><th scope="col" class="num">Committees${note(deps?.committees ? "Number of committees the member sat on as of their latest trade date in the window, from the cc0-legislators roster snapshot. Context, never an allegation; jurisdiction overlap needs the sector join." : "Committee membership data is not in this build; the column states absence rather than guessing from current rosters.", { scope: "ticker-members" }, "committees")}</th></tr></thead>` +
+        `<thead><tr>` +
+        thHtml({ label: "Member", cls: "c-member c-flex" }) +
+        thHtml({ label: "Rows", cls: "c-num" }) +
+        thHtml({ label: "Net", cls: "c-num", notes: { scope: "ticker-members" }, noteKey: "net", noteHtml: esc("Net disclosed flow for this ticker: purchases minus sales, computed as a net range on the disclosed amounts. A lower bound is provable, never a point.") }) +
+        thHtml({ label: "Committees", cls: "c-num", notes: { scope: "ticker-members" }, noteKey: "committees", noteHtml: esc(deps?.committees ? "Number of committees the member sat on as of their latest trade date in the window, from the cc0-legislators roster snapshot. Context, never an allegation; jurisdiction overlap needs the sector join." : "Committee membership data is not in this build; the column states absence rather than guessing from current rosters.") }) +
+        `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody></table></div>` +
-        `<p class="section-note">${fmtInt(byMember.size)} members in the window${byMember.size > members.length ? `; the ${fmtInt(members.length)} most active shown` : ""} · counts of disclosures, not dollars.</p>`) +
+        `<p class="section-note">${byMember.size > members.length ? `${esc(rangeOfTotal(1, members.length, byMember.size, "members"))} in the window, most active first` : `${fmtInt(byMember.size)} members in the window`} · counts of disclosures, not dollars.</p>`) +
     `</section>`
   );
 }
@@ -491,7 +499,7 @@ function crowdingHtml(c: TickerCrowding | null, inst: TickerInstSection): string
     return unavailableDesignPanel("Crowding", "PCT-RANK VS TRACKED NAMES", ["Measure", "Percentile"], instAbsenceReason(inst, "it cannot be ranked among tracked names", "No holder rows for the selected period, so no percentile can be ranked."), "design-crowding");
   }
   const bar = (label: string, pct: number, text: string, hint: string): string =>
-    `<div class="book-metric"><dt>${esc(label)}${note(hint, { scope: "ticker-crowding" }, label)}</dt><dd>` +
+    `<div class="book-metric"><dt>${note(hint, { scope: "ticker-crowding" }, label, { trigger: "label", textHtml: esc(label) })}</dt><dd>` +
     `<span class="book-track" aria-hidden="true"><span class="${pct >= 85 ? "book-hot" : ""}" style="width:${pct}%"></span></span>` +
     `<span class="${pct >= 85 ? "c-amber" : ""}">${esc(text)}</span><span class="book-compare"></span></dd></div>`;
   const ord = (n: number): string => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : n % 10 === 1 ? "st" : n % 10 === 2 ? "nd" : n % 10 === 3 ? "rd" : "th"}`;
@@ -540,10 +548,10 @@ function tickerSignalsHtml(ticker: string, signals: readonly Signal[] | null, wi
   for (const s of signals) kinds.set(s.kind, [...(kinds.get(s.kind) ?? []), s]);
   const labels: Record<Signal["kind"], string> = { "s1-large": "LARGE", "s2-first": "FIRST FILING", "s3-cooccurrence": "CO-OCCURRENCE", "s4-infrequent": "INFREQUENT", "s5-jurisdiction": "COMMITTEE", "s6-late-large": "LATE" };
   const rows = [...kinds.entries()]
-    .map(([kind, list]) => `<tr><td class="si-kind">${esc(labels[kind])}</td><td class="si-evidence">${esc(list[0]!.rule)}</td><td class="c-num">${fmtInt(list.length)} ${list.length === 1 ? "hit" : "hits"}</td></tr>`)
+    .map(([kind, list]) => `<tr data-edge="family-${familyOf(kind).toLowerCase()}"><td class="si-kind c-kind">${esc(labels[kind])}</td><td class="si-evidence c-secondary c-flex">${esc(list[0]!.rule)}</td><td class="c-num">${fmtInt(list.length)} ${list.length === 1 ? "hit" : "hits"}</td></tr>`)
     .join("\n");
   const withheldRows = withheld
-    .map((w) => `<tr class="si-withheld"><td class="si-kind">${esc(labels[w.kind] ?? w.kind)}</td><td class="si-evidence">withheld (${esc(w.reason)}): ${esc(w.detail)}</td><td class="c-num si-status-withheld">not evaluated</td></tr>`)
+    .map((w) => `<tr class="si-withheld" data-edge="family-withheld"><td class="si-kind c-kind">${esc(labels[w.kind] ?? w.kind)}</td><td class="si-evidence c-secondary c-flex">withheld (${esc(w.reason)}): ${esc(w.detail)}</td><td class="c-num si-status-withheld">not evaluated</td></tr>`)
     .join("\n");
   const evaluated = withheld.length === 0 ? "every rule" : `every evaluated rule (${fmtInt(withheld.length)} withheld, listed)`;
   return (
@@ -551,7 +559,7 @@ function tickerSignalsHtml(ticker: string, signals: readonly Signal[] | null, wi
     `<div class="panel-head"><h2 class="section-h">Signals on ${esc(ticker)}</h2><span class="panel-note">RETAINED WINDOW · ACTIVE HITS${withheld.length > 0 ? ` · ${fmtInt(withheld.length)} WITHHELD` : ""}</span></div>` +
     (signals.length === 0 && withheld.length === 0
       ? `<p class="section-note">Zero hits on ${esc(ticker)} in the retained window — a computed answer over every rule, not missing coverage.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact si-table"><caption class="visually-hidden">Signal hits naming ${esc(ticker)}</caption><thead><tr><th scope="col">Kind</th><th scope="col">Rule</th><th scope="col" class="num">Hits</th></tr></thead><tbody>${rows}${rows && withheldRows ? "\n" : ""}${withheldRows}</tbody></table></div>` +
+      : `<div class="table-scroll"><table class="etable etable-compact si-table"><caption class="visually-hidden">Signal hits naming ${esc(ticker)}</caption><thead><tr><th scope="col" class="c-kind">Kind</th><th scope="col" class="c-secondary c-flex">Rule</th><th scope="col" class="c-num">Hits</th></tr></thead><tbody>${rows}${rows && withheldRows ? "\n" : ""}${withheldRows}</tbody></table></div>` +
         (signals.length === 0 ? `<p class="section-note">Zero hits on ${esc(ticker)} in the retained window over ${evaluated} — a computed answer for those rules; a withheld rule states its reason above and is not a zero.</p>` : "")) +
     `<p class="section-note"><a href="/signals/">Every rule, with its definition →</a></p>` +
     `</section>`

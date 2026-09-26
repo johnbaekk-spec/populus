@@ -97,18 +97,70 @@ test("SL-R27: the forced-fallback seam carries the SAME declarations as the real
   );
 });
 
-test("SL-R4: the print block lays panels out in flow and hides the anchor", () => {
-  const printBlock = css.slice(css.indexOf("@media print"));
-  const noteRules = printBlock.slice(printBlock.indexOf(".note-btn"));
-  assert.ok(/\.note-btn\s*\{[^}]*display:\s*none/.test(noteRules), "the anchor button is hidden on paper");
-  assert.ok(/\.note-pop\s*\{[^}]*position:\s*static/.test(noteRules), "the panel is laid out in NORMAL FLOW, not fixed");
-  assert.ok(/\.note-pop\s*\{[^}]*display:\s*block/.test(noteRules), "the panel is forced visible");
+/* H-5 (DESIGN-POLISH M1, T1.5): on paper a MARK trigger prints its mark in
+   place, so the reader can pair it with its panel, and a LABEL trigger prints
+   as its plain label text; only the legacy glyph ("i") is hidden. The panels
+   still print in normal flow. */
+function printRules(source: string): { selector: string; decls: string }[] {
+  const out: { selector: string; decls: string }[] = [];
+  for (const m of source.matchAll(/@media print\s*\{((?:[^{}]*\{[^{}]*\})*)[^{}]*\}/g)) {
+    for (const r of m[1]!.matchAll(/([^{}]+)\{([^{}]*)\}/g)) out.push({ selector: r[1]!.trim(), decls: r[2]! });
+  }
+  return out;
+}
+function printHides(source: string, trigger: "glyph" | "label" | "mark"): boolean {
+  return printRules(source).some((r) => {
+    if (!/display:\s*none/.test(r.decls)) return false;
+    return r.selector.split(",").some((part) => {
+      const p = part.trim();
+      if (!/\.note-(btn|label|mark)\b/.test(p)) return false;
+      if (trigger === "glyph") return /\.note-btn\b/.test(p);
+      const own = trigger === "label" ? "note-label" : "note-mark";
+      // a rule reaches the trigger unless it excludes it by :not(.note-<kind>)
+      return (new RegExp(`\\.${own}\\b`).test(p) && !new RegExp(`:not\\(\\.${own}\\)`).test(p)) ||
+        (/\.note-btn\b/.test(p) && !new RegExp(`:not\\(\\.${own}\\)`).test(p));
+    });
+  });
+}
+
+test("SL-R4 / H-5: print hides only the glyph trigger, prints marks and labels, and lays panels out in flow", () => {
+  assert.ok(printHides(css, "glyph"), "the legacy glyph button is hidden on paper");
+  assert.ok(!printHides(css, "label"), "a label trigger prints as its text");
+  assert.ok(!printHides(css, "mark"), "a mark trigger prints its mark in place");
+  const pop = printRules(css).filter((r) => /(^|,)\s*\.note-pop\s*(,|$)/.test(r.selector)).map((r) => r.decls).join(";");
+  assert.match(pop, /position:\s*static/, "the panel is laid out in NORMAL FLOW, not fixed");
+  assert.match(pop, /display:\s*block/, "the panel is forced visible");
+  // controls: the old blanket rule, and a hidden mark, each fail
+  assert.ok(printHides("@media print { .note-btn { display: none; } }", "mark"));
+  assert.ok(printHides("@media print { .note-mark { display: none; } }", "mark"));
 });
 
-test("SL-R24: the anchor is a >=44px target and .note-pop is never suppressed outside the fallback", () => {
-  const btn = /\.note-btn\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-  assert.match(btn, /min-width:\s*44px/);
-  assert.match(btn, /min-height:\s*44px/);
+/* L9 (DESIGN-POLISH M1; record in design-principles §7). SL-R24's "44px at
+   every width" becomes a --hit-min square: 44px under a coarse pointer or at
+   the fold, 24px otherwise, reached through a layout-neutral ::before so the
+   trigger never inflates the row it sits in. The property — every note is
+   comfortably tappable on touch — is kept; Chromium hit-tests it (G12,
+   sl-notes.spec.ts). This pins the cascade the hit-test relies on. */
+test("SL-R24 / L9: the note trigger reaches --hit-min through its ::before, never min-width/min-height; .note-pop is never suppressed outside the fallback", () => {
+  const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]!.trim(), decls: m[2]! }));
+  const onButton = rules.filter((r) => r.sel.split(",").some((p) => /\.note-(btn|label|mark)\b(?![\w-])(?!.*::)/.test(p.trim()) && !/::/.test(p)));
+  assert.deepEqual(onButton.filter((r) => /min-(width|height)\s*:/.test(r.decls)).map((r) => r.sel), [], "no min-size on the trigger itself");
+  const before = rules.filter((r) => r.sel.split(",").some((p) => /^\.note-btn::before$/.test(p.trim())));
+  assert.equal(before.length, 1, "one base hit-area rule");
+  assert.match(before[0]!.decls, /content:\s*""/);
+  assert.match(before[0]!.decls, /position:\s*absolute/);
+  for (const side of ["left", "right", "top", "bottom"]) {
+    // the square, clipped at the midpoint to a neighbour (H-16: --hit-x-*)
+    const inset = new RegExp(`${side}:\\s*max\\(min\\(0px,\\s*calc\\(50% - var\\(--hit-min\\) / 2\\)\\),\\s*calc\\(-1 \\* var\\(--hit-x-${side[0]}, 999px\\)\\)\\)`);
+    assert.match(before[0]!.decls, inset, side);
+  }
+  assert.ok(
+    rules.some((r) => r.sel.split(",").some((p) => /^\.note-btn$/.test(p.trim())) && /position:\s*relative/.test(r.decls)),
+    "the square is anchored on the trigger",
+  );
+  const foundation = readFileSync(new URL("../src/styles/foundation.css", import.meta.url), "utf-8");
+  assert.match(foundation, /--hit-min:\s*24px/);
+  assert.match(foundation, /@media \(any-pointer: coarse\), \(max-width: 720px\)\s*\{[^}]*--hit-min:\s*44px/);
   // display:none on .note-pop is legal ONLY inside the fallback/seam blocks,
   // where hover/focus-within turns it back on. Anywhere else it would be an
   // honesty element suppressed at a breakpoint.

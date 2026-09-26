@@ -1,18 +1,25 @@
 /* ================= ALPHA-UX additions ================= */
 
-/* A-5: sticky column headers inside every scrolling table container. */
-.table-scroll { max-height: 78vh; overflow-y: auto; }
-.etable thead th {
+/* A-5: sticky column headers inside every scrolling table container.
+   DESIGN-POLISH M1 (L8, staged): the 78vh `.table-scroll` box that stood here is
+   DELETED — the page scrolls, never the table. These sticky heads stay until M2,
+   because the three boxes M2 removes still scroll and still use them. They are
+   scoped to those three boxes, and the HEAD ROW is what sticks: a sticky cell is
+   a stacking context of its own, which paints over (and takes the hit-test of)
+   the hit area of the control in the cell beside it (G12, H-16). */
+:is(.design-flow-band > .panel > .table-scroll, .design-history, [data-holdings-surface="filer"] .table-scroll) .etable thead {
   position: sticky;
   top: 0;
   z-index: 3;
   background: var(--paper2, var(--paper));
 }
 
-/* A-5: filter chips / controls wrap on mobile instead of clipping. */
+/* A-5: filter controls wrap on mobile instead of clipping. (The `.chips`
+   half moved into the ledger region: the segmented group wraps at every width,
+   and a second, fold-only rule here out-ranked nothing and only re-spaced the
+   watch lists — review C-3/C-6.) */
 @media (max-width: 720px) {
   .filter-controls { flex-wrap: wrap; row-gap: 8px; }
-  .chips { flex-wrap: wrap; row-gap: 6px; }
 }
 
 /* The /congress sub-tab nav (.ctabs/.ctab) is DELETED with its markup —
@@ -20,7 +27,7 @@
 
 /* C-4 ranking table pieces */
 .net-dir {
-  font: 600 10px var(--mono);
+  font: 600 var(--fs-meta) var(--mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 1px 5px;
@@ -31,21 +38,13 @@
 .unrankable-block { margin-top: 18px; }
 .c-net { white-space: nowrap; }
 
-/* B-7/F-6: asset-as-filed cell for no-ticker rows */
-.asset-name {
-  font: 500 11.5px var(--sans);
-  color: var(--ink2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 26ch;
-  display: inline-block;
-  vertical-align: bottom;
-}
+/* B-7/F-6: the asset-as-filed cell for no-ticker rows is a ledger role now
+   (entities.css ledger region, `.etable .asset-name`); the classic feed keeps
+   its own copy in congress-feed.css. */
 
 /* A-1: the unrankable-bucket separator inside the sorted feed */
 .feed-separator {
-  font: 600 11px var(--mono);
+  font: 600 var(--fs-note) var(--mono);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ink3);
@@ -56,42 +55,11 @@
 }
 .filter-text { min-width: 150px; }
 
-/* A-2: sortable headers + unranked separator on /institutional */
-.th-sort {
-  font: inherit;
-  color: inherit;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-transform: inherit;
-  letter-spacing: inherit;
-}
-th[data-inst-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
-th[data-inst-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
-/* The same indicator for the generic sortable-table plumbing, driven by
-   aria-sort so the arrow and the announced state cannot disagree. */
-th[data-sort][aria-sort="descending"] .th-sort::after { content: " ▾"; }
-th[data-sort][aria-sort="ascending"] .th-sort::after { content: " ▴"; }
-/* A real touch target. Originally scoped to [data-sort] alone to leave the
-   shipping [data-inst-sort] surface untouched — but that surface is now an
-   ADOPTER of the same helper, so the 44px requirement applies to it too and the
-   original scoping left it failing, caught in code review. Both selectors. */
-th[data-sort] .th-sort,
-th[data-inst-sort] .th-sort {
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 4px;
-  text-align: inherit;
-}
-.unranked-sep td {
-  font: 600 11px var(--mono);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ink3);
-  border-top: 1px dashed var(--rule, currentColor);
-  padding: 8px 12px;
-}
+/* A-2: the sortable header's base reset, its adopter rule and the sort caret
+   live in the ledger region now (entities.css). The ::after carets are GONE —
+   a real aria-hidden `.sort-caret` span sits in the column's mark slot, driven
+   by aria-sort, so the arrow and the announced state still cannot disagree.
+   The unranked separator's cell style moved into the region with them. */
 
 /* A-4: homepage largest-recent-disclosures rail */
 .rail { margin: 26px 0 8px; }
@@ -103,23 +71,23 @@ th[data-inst-sort] .th-sort {
   gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid color-mix(in oklab, currentColor 12%, transparent);
-  font: 500 13px var(--sans);
+  font: 500 var(--fs-body) var(--sans);
   flex-wrap: wrap;
 }
 .rail-who { min-width: 220px; }
 .rail-what { min-width: 90px; }
 .rail-amount { font-variant-numeric: tabular-nums; font-weight: 600; margin-left: auto; }
-.rail-filed { font: 400 11.5px var(--mono); color: var(--ink3); }
-.rail-caption { font: 400 11px var(--mono); color: var(--ink3); margin-top: 8px; }
+.rail-filed { font: 400 var(--fs-cell) var(--mono); color: var(--ink3); }
+.rail-caption { font: 400 var(--fs-note) var(--mono); color: var(--ink3); margin-top: 8px; }
 
 /* A-3: /watchlist */
 .watch-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 14px 0; }
 .watch-chip { display: inline-flex; align-items: baseline; gap: 6px; }
-.chip-x { background: none; border: none; cursor: pointer; color: var(--ink3); font-size: 13px; }
+.chip-x { background: none; border: none; cursor: pointer; color: var(--ink3); font-size: var(--fs-body); }
 .chip-x:hover { color: var(--sell, #c62828); }
-.watch-note { font: 500 12.5px var(--sans); color: var(--ink2); margin: 10px 0; }
+.watch-note { font: 500 var(--fs-name) var(--sans); color: var(--ink2); margin: 10px 0; }
 .watch-gap {
-  font: 500 13px var(--sans);
+  font: 500 var(--fs-body) var(--sans);
   border: 1px dashed var(--amber, #b8860b);
   color: var(--ink);
   padding: 10px 14px;
@@ -127,12 +95,11 @@ th[data-inst-sort] .th-sort {
 }
 .watch-new { border-left: 3px solid var(--amber, #b8860b); }
 
-/* C-3: member v2 panels */
-.mix-bucket td { color: var(--ink3); font-style: italic; }
+/* C-3: member v2 panels (the mix-bucket cell style is in the ledger region) */
 .non-allegation { font-weight: 600; }
 
 /* The exact rule inside per-entity signal rows */
-.signal-rule-inline { font: 400 10.5px var(--mono); color: var(--ink3); max-width: 46ch; }
+.signal-rule-inline { font: 400 var(--fs-control) var(--mono); color: var(--ink3); max-width: 46ch; }
 
 
 /* ---------- momentum, leaderboard & activity surfaces ---------- */
@@ -147,24 +114,13 @@ th[data-inst-sort] .th-sort {
   gap: 14px;
   margin: 10px 0 4px;
 }
-/* The adds control adopts the SAME one-row idiom. Its buttons are
-   `.chip`s rather than a `.seg`, so the chip row keeps its own spacing inside
-   the shared layout instead of a second control grammar being invented. */
-.control-row .chips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
+/* The adds control adopts the SAME one-row idiom. Its `.chips` groups are the
+   ledger's one segmented control (entities.css, the region's controls): a
+   `.control-row .chips` spacing rule that stood here out-ranked the group and
+   spread its items apart with stray dividers, so it is gone (review C-6). */
 /* The label is VISIBLE now, not only an aria-label — a sighted reader met two
-   unlabelled button rows and had to guess which axis each moved. */
-.control-row .filter-label {
-  font: 600 10.5px var(--sans);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink3);
-  margin-right: 8px;
-}
+   unlabelled button rows and had to guess which axis each moved. Its type is
+   the one filter-label spec in the ledger region. */
 
 /* The stated reason an unsortable column carries. VISIBLE text, never a
    title attribute — a tooltip is not a channel a touch device can open, and
@@ -172,7 +128,7 @@ th[data-inst-sort] .th-sort {
    on the page at every width. */
 .col-why {
   display: block;
-  font: 400 10px var(--sans);
+  font: 400 var(--fs-meta) var(--sans);
   line-height: 1.35;
   letter-spacing: 0;
   text-transform: none;
@@ -182,85 +138,34 @@ th[data-inst-sort] .th-sort {
   white-space: normal;
 }
 
-/* The bound a compact table states about itself, and the control
-   that lifts it. The STATEMENT comes first, so the reader meets the bound
-   before the offer to lift it — and it is styled like the `.terminus` row it
-   replaced, because it is the same fact in the same voice.
-
-   The statement is server-rendered VISIBLE; only the button waits for a script
-   (`[hidden]` above). Nothing here may hide `.compact-bound` at any width — it
-   is on the fold sweep's honesty list. */
-.compact-disclosure {
-  margin: 8px 0 2px;
-}
-.compact-bound {
-  font: 400 12px/1.6 var(--sans);
-  color: var(--ink2);
-  margin: 0 0 6px;
-}
-.compact-bound-count {
-  color: var(--ink);
-}
-.compact-bound-extra {
-  color: var(--ink2);
-}
-.compact-toggle {
-  font: 600 12px var(--sans);
-  min-height: 44px;
-  padding: 0 2px;
-}
+/* The bound a compact table states about itself, and the control that lifts
+   it, are the ledger's table foot now (entities.css ledger region): the count
+   clause first, the Show-all control on the same line as a one-item group. */
 
 /* The retired sub-tab stubs' visible link — the channel that works with
    both scripting and meta-refresh disabled, so it is sized as a real target. */
 .stub-link {
   display: inline-block;
-  font: 600 14px var(--sans);
+  font: 600 var(--fs-brand) var(--sans);
   min-height: 44px;
   line-height: 44px;
 }
 
-/* The activity feed's issuer anchor and its secondary filer column. The
-   emphasis is type, exactly as on the congress feed — the filer keeps full
-   contrast, it simply stops being the first thing the eye lands on. */
-.c-issuer {
-  font: 600 13px var(--sans);
-}
-.c-issuer .filed-name {
-  color: var(--ink);
-}
-.c-secondary {
-  font-weight: 500;
-  color: var(--ink2);
-}
+/* The activity feed's issuer anchor (the name role) and its secondary filer
+   column (the secondary role) are ledger roles in entities.css now. */
 
 /* Manager-type filter chips. `Notable` is EDITORIAL and orthogonal to
-   type, so it renders in the same chip row but is visually separated — it is
-   not a ninth type and must not read as one. */
+   type; it leads the joined group (the segmented control in the ledger
+   region) and, as a row tag, keeps a dashed outline so it never reads as a
+   ninth type. */
 .mgr-chips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
   margin: 8px 0 4px;
 }
-.mgr-chip {
-  font: 600 11px var(--sans);
-  min-height: 44px;
-  padding: 0 10px;
-  border: 1px solid var(--rule2);
-  background: var(--raised);
-  color: var(--ink2);
-}
-.mgr-chip[aria-pressed="true"] {
-  color: var(--ink);
-  border-color: var(--accent);
-}
-.mgr-chip-notable {
-  margin-right: 10px;
+span.mgr-chip-notable {
   border-style: dashed;
 }
 .mgr-person {
-  font: 400 11px var(--sans);
+  font: 400 var(--fs-note) var(--sans);
   color: var(--ink3);
 }
 
@@ -289,22 +194,47 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   vertical-align: baseline;
 }
 
-/* >= 44px hit target at every width. The visual dot is smaller than
-   the tappable box: padding carries the target, so the glyph can stay quiet. */
+/* The trigger takes ZERO inline layout (DESIGN-POLISH M1, R6; design-principles
+   §4). Three forms off one source string: a LABEL trigger is the label or value
+   text itself, dotted-underlined; a MARK trigger is the § † ‡ ≈ ⓘ mark in the
+   column's mark slot; the legacy GLYPH stays only where neither fits, sized to
+   the slot and never below the 9.5px floor. The hit square is a layout-neutral
+   ::before (ledger region, controls): 24px on a fine pointer, 44px under a
+   coarse pointer or at the fold. SL-R24's "44px at every width" became that
+   pseudo-element (L9), so a trigger no longer inflates the row it sits in. */
 .note-btn {
   appearance: none;
   background: none;
   border: 0;
   cursor: help;
   font: inherit;
-  font-size: 0.85em;
   line-height: 1;
-  color: var(--muted, #667);
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0 0.35em;
-  margin: -14px -0.1em;
-  border-radius: 999px;
+  color: var(--ink-meta);
+  padding: 0;
+  margin: 0;
+  position: relative;
+}
+.note-btn:not(.note-label):not(.note-mark) {
+  font: 500 var(--fs-meta)/1 var(--mono);
+  padding: 0 2px;
+}
+.note-label {
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  /* The dotted rule is the ONLY cue that this label opens an explanation
+     (L16), so it is drawn in the label's full colour: at 50% it measured
+     2.39:1 dark and 2.06:1 light (review C-9). */
+  text-decoration: underline dotted;
+  text-decoration-color: currentColor;
+  text-underline-offset: 3px;
+}
+.note-mark {
+  font: 500 var(--fs-meta)/1 var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-meta);
 }
 
 .note-btn:hover,
@@ -322,8 +252,8 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   border: 1px solid var(--rule, #ccc);
   border-radius: 4px;
   background: var(--raised);
-  color: var(--fg, #111);
-  font-size: 0.86rem;
+  color: var(--ink);
+  font-size: var(--fs-small);
   line-height: 1.45;
   box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
 
@@ -420,12 +350,33 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
 }
 
 /* --- print. Hover-only text must still reach paper: every panel is
-   laid out in NORMAL FLOW beneath its anchor and the button is hidden. This is
-   asserted by rendering under emulated print media and measuring a non-zero
-   box, not by grepping for this rule. */
+   laid out in NORMAL FLOW beneath its anchor. A MARK trigger prints its mark
+   beside the panel so the reader can pair them (H-5), a LABEL trigger prints as
+   its plain text, and only the legacy glyph button is hidden. This is asserted
+   by rendering under emulated print media and measuring a non-zero box, not by
+   grepping for this rule. */
 @media print {
-  .note-btn {
+  .note-btn:not(.note-label):not(.note-mark) {
     display: none;
+  }
+  .note-label {
+    text-decoration: none;
+  }
+  /* On screen a mark trigger's wrapper (and a hung mark that holds one) is a
+     zero-width box in the column's slot. In print the panel is laid out INSIDE
+     that wrapper, so the zero-width box set it one character per line (review
+     R-2/C-2). On paper the wrapper steps out of the layout (`contents`): the
+     MARK stays hung in the slot at zero width, so the column is no wider than
+     on screen, and the panel is a block across its cell's whole content box. */
+  :is(th, td) .note:has(> .note-mark),
+  .hang:has(.note-pop) {
+    display: contents;
+  }
+  :is(th, td) .note:has(> .note-mark) > .note-mark {
+    display: inline-block;
+    width: 0;
+    overflow: visible;
+    white-space: nowrap;
   }
   .note-pop {
     display: block !important;
@@ -435,65 +386,58 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
     border: 0;
     box-shadow: none;
     padding: 0.15rem 0 0.15rem 1rem;
-    font-size: 0.8rem;
-    color: var(--muted, #444);
+    font-size: var(--fs-note);
+    color: var(--ink2);
   }
 }
 
 /* Claude Design four-screen system. Reference: docs/design/reference/*.dc.html.
    Existing table markup, controls, notes and mobile honesty folds are retained. */
-body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: antialiased; }
 .shell { max-width: 1440px; width: 100%; padding-left: 32px; padding-right: 32px; }
 .masthead-inner { min-height: 52px; gap: 16px; }
 .masthead-left { gap: 24px; }
-.brand-name { font: 700 14px/1 var(--sans); letter-spacing: .22em; text-transform: uppercase; }
+.brand-name { font: 700 var(--fs-brand)/1 var(--sans); letter-spacing: .22em; text-transform: uppercase; }
 .brand-mark { width: 18px; height: 18px; }
 .site-nav { gap: 16px; }
-.site-nav a { font-size: 12.5px; }
+.site-nav a { font-size: var(--fs-name); }
 .site-nav a[aria-current="page"] { padding-bottom: 6px; margin-bottom: -8px; }
 .masthead-right { gap: 10px; }
 .site-search { width: 380px; border-radius: 2px; background: var(--paper); }
 .page { padding-top: 28px; }
 .page-head, .entity-head { gap: 28px; align-items: center; border-bottom: 0; margin-top: 0; padding-bottom: 18px; }
 .page-head-copy, .entity-head-copy { flex: 1 1 400px; max-width: 690px; }
-.page-title, .entity-title { font: 700 28px/1.15 var(--sans); letter-spacing: -.025em; margin: 8px 0 8px; }
-.kicker, .crumb { font: 500 10px/1.5 var(--mono); text-transform: uppercase; letter-spacing: .14em; color: var(--accent); }
+.page-title, .entity-title { font: 700 var(--fs-display)/1.15 var(--sans); letter-spacing: -.025em; margin: 8px 0 8px; }
+.kicker, .crumb { font: 500 var(--fs-meta)/1.5 var(--mono); text-transform: uppercase; letter-spacing: .14em; color: var(--accent); }
 .crumb { margin-bottom: 12px; }
-.page-lede, .entity-lede, .entity-subline { font: 400 13px/1.5 var(--sans); color: var(--ink2); margin: 0; }
+.page-lede, .entity-lede, .entity-subline { font: 400 var(--fs-body)/1.5 var(--sans); color: var(--ink2); margin: 0; }
 .tiles { border: 0; background: transparent; gap: 24px; }
 .tile, .tiles-entity .tile { border: 0; padding: 0; min-width: 100px; display: flex; flex-direction: column; background: transparent; }
-.tile-label { order: -1; font: 400 9px/1.6 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
-.tile-value, .tiles-entity .tile-value { font: 600 25px/1.3 var(--mono); letter-spacing: -.03em; }
+.tile-label { order: -1; font: 400 var(--fs-label)/1.6 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-meta); }
+.tile-value, .tiles-entity .tile-value { font: 600 var(--fs-display)/1.3 var(--mono); letter-spacing: -.03em; }
 .design-ledger { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 24px; flex: 1 1 560px; }
-.design-ledger dt { font: 400 9px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); }
-.design-ledger dd { margin: 2px 0 0; font: 600 25px/1.3 var(--mono); }
-.design-ledger small { display: block; font: 400 9px/1.6 var(--mono); color: var(--ink3); }
-.design-provenance { padding: 10px 0 16px; font: 400 10px/1.6 var(--mono); color: var(--ink2); }
+.design-ledger dt { font: 400 var(--fs-label)/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-meta); }
+.design-ledger dd { margin: 2px 0 0; font: 600 var(--fs-display)/1.3 var(--mono); }
+.design-ledger small { display: block; font: 400 var(--fs-label)/1.6 var(--mono); color: var(--ink-meta); }
+.design-provenance { padding: 10px 0 16px; font: 400 var(--fs-meta)/1.6 var(--mono); color: var(--ink2); }
 .design-briefing { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-top: 1px solid var(--accent); border-bottom: 1px solid var(--rule); margin: 0 0 22px; }
 .design-story { padding: 18px 24px; min-width: 0; }
 .design-story + .design-story { border-left: 1px solid var(--rule); }
-.design-story-tag { font: 500 9px/1.5 var(--mono); color: var(--accent); letter-spacing: .12em; text-transform: uppercase; }
+.design-story-tag { font: 500 var(--fs-label)/1.5 var(--mono); color: var(--accent); letter-spacing: .12em; text-transform: uppercase; }
 .design-story:nth-child(2) .design-story-tag { color: var(--amber); }
 .design-story:nth-child(3) .design-story-tag { color: var(--sell); }
-.design-story h2 { font: 600 13px/1.5 var(--sans); margin: 6px 0 3px; }
-.design-story p { font: 400 12px/1.6 var(--sans); color: var(--ink2); margin: 0; }
+.design-story h2 { font: 600 var(--fs-body)/1.5 var(--sans); margin: 6px 0 3px; }
+.design-story p { font: 400 var(--fs-small)/1.6 var(--sans); color: var(--ink2); margin: 0; }
 .panel, .panel-wide { border: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: transparent; border-radius: 0; box-shadow: none; margin-top: 22px; }
-.panel-head { padding: 12px 0; border-bottom: 1px solid var(--rule); background: transparent; gap: 12px; }
-.section-h { font: 600 13px/1.5 var(--sans); }
-.panel-note { font: 400 9px/1.6 var(--mono); letter-spacing: .06em; }
-.etable, .feed-table { font-size: 12px; }
-.etable th, .feed-table th { background: var(--paper); font: 400 9px/1.5 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink3); }
-.etable td, .feed-table td { border-bottom-color: var(--rule); padding-top: 8px; padding-bottom: 8px; }
-.etable tbody tr:hover, .feed-table tbody tr:hover { background: var(--raised); }
-.etable a, .feed-table a { text-decoration: none; }
+.section-h { font: 600 var(--fs-body)/1.5 var(--sans); }
+.feed-table a { text-decoration: none; }
 .entity-grid { gap: 28px; }
 .design-rankings { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap: 28px; }
 .design-rankings > * { min-width: 0; }
 .filterbar { margin-top: 0; padding: 10px 0; gap: 12px; background: transparent; border: 0; }
-.seg, .filter-select, .chip, .mgr-chip { border-radius: 2px; }
-.seg button[aria-pressed="true"], .chip-active, .mgr-chip[aria-pressed="true"] { color: var(--ink); background: var(--raised); }
-.feed-foot, .card-foot, .section-note, .terminus { font-size: 10px; line-height: 1.6; }
-.watch-btn { font: 500 10px/1.4 var(--mono); vertical-align: middle; }
+.filter-select { border-radius: 2px; }
+.card-foot, .section-note, .terminus { font-size: var(--fs-note); line-height: 1.6; }
+.watch-btn { font: 500 var(--fs-meta)/1.4 var(--mono); vertical-align: middle; }
 .watch-note { font: inherit; text-transform: uppercase; }
 .site-footer { border-top: 1px solid var(--rule); }
 @media (max-width: 1080px) {
@@ -505,18 +449,19 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 @media (max-width: 720px) {
   .shell { padding-left: 16px; padding-right: 16px; }
   .page { padding-top: 20px; }
-  .brand-name { font-size: 12px; }
+  .brand-name { font-size: var(--fs-small); }
   .masthead-left { gap: 16px; }
-  .page-title, .entity-title { font-size: 26px; }
   .design-ledger { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
   .design-briefing { grid-template-columns: minmax(0,1fr); }
   .design-story { padding: 16px 0; }
   .design-story + .design-story { border-left: 0; border-top: 1px solid var(--rule); }
-  .tiles { max-width: 100%; overflow-x: auto; gap: 20px; padding: 10px 0; }
+  /* The strip WRAPS (layout.css), so a scroll here never engaged — measured
+     scrollWidth equal to clientWidth at 360 and 390px — and a scroller clips
+     what overflows it: the tile labels' hit squares (T1.6). No scroller. */
+  .tiles { gap: 20px; padding: 10px 0; }
   .site-search { width: 100%; }
   .filter-controls { display: flex; flex-wrap: wrap; gap: 10px; }
-  .seg button, .chip, .mgr-chip, .watch-btn, .filter-select { min-height: 44px; }
-  .panel-head { flex-wrap: wrap; }
+  .watch-btn, .filter-select { min-height: 44px; }
 }
 
 /* Keep the reference's short page intro and compact default control row. */
@@ -526,14 +471,9 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 #congress-page .design-provenance { display: flex; flex-wrap: wrap; gap: 8px 18px; }
 #congress-page .stamp-line { margin: 0; font: inherit; color: var(--buy); }
 #congress-page .method-links { margin: 0; font: inherit; }
-#feed-section { margin-top: 0; }
-#feed-section > .panel-head { padding-bottom: 8px; }
-#feed-section .filter-count { border: 0; padding: 0; margin: 0; font-size: 9px; }
-#feed-section .filterbar { padding: 8px 0; }
 .advanced-filters { position: relative; }
-.advanced-filters > summary { cursor: pointer; font: 500 11px var(--mono); color: var(--accent); padding: 8px; }
+.advanced-filters > summary { cursor: pointer; font: 500 var(--fs-note) var(--mono); color: var(--accent); padding: 8px; }
 .advanced-filter-body { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 0; }
-.design-rankings .table-scroll { max-width: 100%; }
 @media (max-width: 720px) {
   #congress-page .page-head-copy, #congress-page .design-ledger { flex-basis: 100%; }
   .advanced-filters > summary { min-height: 44px; padding: 12px 8px; }
@@ -576,10 +516,8 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
 .design-book-shape dl { margin: 12px 0; }
 .book-metric { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
-.book-metric dt { color: var(--ink2); font-size: 12px; }
-.book-metric dd { display: grid; grid-template-columns: minmax(0,1fr) 70px; align-items: center; gap: 12px; margin: 0; font: 400 11px var(--mono); }
-.book-track { display: block; height: 4px; background: var(--rule); }
-.book-track > span { display: block; height: 100%; background: #2774AE; }
+.book-metric dt { color: var(--ink2); font-size: var(--fs-small); }
+.book-metric dd { display: grid; grid-template-columns: minmax(0,1fr) 70px; align-items: center; gap: 12px; margin: 0; font: 400 var(--fs-note) var(--mono); }
 @media (min-width: 1081px) {
   .entity-page:has([data-holdings-surface="filer"]) { grid-template-columns: minmax(0,1.7fr) minmax(0,1fr); }
   .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface] { grid-column: 1; }
@@ -587,74 +525,37 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 }
 /* Reference canvas geometry: adjoining bands share one-pixel seams. */
 .design-page, .entity-page { --design-gutter:32px; }
-.page-title, .entity-title { font-size:26px; line-height:1.1; }
+.page-title, .entity-title { font-size:var(--fs-display); line-height:1.1; }
 .design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--design-gutter)); margin-right:calc(-1 * var(--design-gutter)); margin-bottom:0; }
 .design-story { padding:18px 28px; }
 .design-band { display:grid; gap:0; margin:0 calc(-1 * var(--design-gutter)); border-bottom:1px solid var(--rule); }
 .design-band > * { min-width:0; padding:10px 32px 14px; }
 .design-band > * + * { border-left:1px solid var(--rule); }
 .design-band .panel { margin:0; border:0; }
-.design-band .panel-head { padding:12px 0 8px; align-items:baseline; }
 .design-member-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
 .design-institutional-band { grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); }
 .design-triptych { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .design-unavailable .table-scroll { min-height:180px; }
-.design-unavailable-message { white-space:normal; color:var(--ink3); font:400 11px/1.7 var(--sans); padding:26px 0 !important; max-width:450px; }
-.design-availability { display:block; margin-bottom:5px; color:var(--ink2); font:500 10px var(--mono); }
+.design-availability { display:block; margin-bottom:5px; color:var(--ink2); font:500 var(--fs-meta) var(--mono); }
 .design-holdings-band > .design-unavailable .table-scroll { min-height:300px; }
 .design-holdings-band > div .design-unavailable .table-scroll { min-height:110px; }
 .design-reconciliation dl, .design-trading-profile dl { margin:0; }
-.design-trading-profile .book-metric dd { grid-template-columns:40px minmax(0,1fr); text-align:right; font-size:10px; }
+.design-trading-profile .book-metric dd { grid-template-columns:40px minmax(0,1fr); text-align:right; font-size:var(--fs-meta); }
 .design-flow-band > .panel > .table-scroll { max-height:365px; overflow:auto; }
 .design-history { max-height:210px; overflow:auto; }
-.design-supplement { border-bottom:1px solid var(--rule); font-size:11px; }
+.design-supplement { border-bottom:1px solid var(--rule); font-size:var(--fs-note); }
 .design-supplement > summary { cursor:pointer; padding:10px 0; color:var(--ink3); }
 .design-supplement .entity-grid { margin:0; }
-.entity-page [aria-labelledby="txns-h"] > .table-scroll { max-height:250px; overflow:auto; }
-.design-directory-type { display:block; font:400 10px var(--sans); color:var(--ink3); }
-.design-activity .table-scroll { max-height:310px; overflow:auto; }
-.design-activity .inst-data-note { font-size:10px; }
+.design-activity .inst-data-note { font-size:var(--fs-meta); }
 .design-institutional-band .etable { min-width:0; }
-.design-institutional-band .etable th { font-size:8px; letter-spacing:.04em; }
-.design-institutional-band .etable td { font-size:11px; padding:8px 5px; }
-.design-institutional-band .design-unavailable td { font-size:11px; }
-.design-activity-row > td { white-space:nowrap; }
-.design-activity-row > td:nth-child(2), .design-activity-row > td:nth-child(3) { white-space:normal; }
-.reference-feed .reference-head, .reference-feed .reference-row { grid-template-columns:70px minmax(150px,1.1fr) 76px minmax(120px,1fr) 106px 180px 146px 48px; gap:12px; padding-left:0; padding-right:0; }
-.reference-feed .reference-row { min-height:42px; border-left:3px solid transparent; margin-left:-3px; }
-.reference-feed .reference-row .cell { min-width:0; }
-.reference-feed .cell-asset { color:var(--ink3); font:400 11.5px/1.3 var(--sans); }
-.reference-feed .cell-member { font-size:12px; }
-.reference-feed .cell-ticker { font:600 12px var(--mono); }
-.reference-feed .cell-side { font:600 10px var(--mono); display:flex; align-items:center; gap:2px; }
-.reference-watch .star-btn { font-size:10px; min-width:18px; padding:2px; }
-.reference-feed .cell-range .band { width:100%; height:3px; }
-.reference-feed .cell-amount { font-size:11px; }
-#feed-section > .table-scroll { max-height:390px; overflow:auto; }
 .design-rankings { gap:0; margin:0 -32px; border-bottom:1px solid var(--rule); }
 .design-rankings > * { padding:10px 32px 16px; margin:0; border:0; }
 .design-rankings > * + * { border-left:1px solid var(--rule); }
-.design-rankings .table-scroll { max-height:325px; overflow:auto; }
-.etable thead { position:sticky; top:0; z-index:1; }
 .entity-page:has([data-holdings-surface="filer"]) > .design-triptych { order:6; }
 .entity-page:has([data-holdings-surface="filer"]) > .edgar-block { order:7; }
 .entity-page:has([data-holdings-surface="filer"]) > .s7-banner { order:7; }
-@media(max-width:1080px) {
- .design-band, .design-rankings { grid-template-columns:minmax(0,1fr); }
- .design-band > * + *, .design-rankings > * + * { border-left:0; border-top:1px solid var(--rule); }
- .reference-feed .reference-row { display:grid; grid-template-columns:70px minmax(0,1fr) 100px; gap:8px 12px; padding:12px 0; }
- .reference-feed .reference-row > .cell { position:static; display:block; width:auto; max-width:none; margin:0; padding:0; float:none; }
- .reference-feed .cell-side { grid-column:1; grid-row:1; }
- .reference-feed .cell-member { grid-column:2; grid-row:1; }
- .reference-feed .cell-ticker { grid-column:3; grid-row:1; }
- .reference-feed .cell-asset { grid-column:1/4; grid-row:2; }
- .reference-feed .cell-amount { grid-column:1/3; grid-row:3; }
- .reference-feed .cell-range { grid-column:1/3; grid-row:4; }
- .reference-feed .cell-traded { grid-column:1/3; grid-row:5; }
- .reference-feed .cell-src { grid-column:3; grid-row:3/6; align-self:center; }
- .reference-feed .reference-head { display:none; }
- .reference-feed .cell-traded .filed { display:inline; }
-}
+/* The ≤1080px two-line feed block moved into the ledger region (entities.css)
+   together with the ≤720px fold, so the two keep their own order (A-4). */
 @media(max-width:720px) {
  .design-page, .entity-page { --design-gutter:16px; }
  .design-band > *, .design-rankings > * { padding:10px 16px 16px; }
@@ -662,18 +563,9 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
  .design-rankings { margin-left:-16px; margin-right:-16px; }
  .design-institutional-band .etable { min-width:540px; }
  .design-unavailable .etable { min-width:480px; }
- .design-ledger dd { font-size:22px; }
  .design-provenance { padding:6px 0 14px; }
  .design-holdings-band > .design-unavailable .table-scroll { min-height:180px; }
 }
-.reference-feed-scroll { max-height:370px; overflow:auto; }
-.reference-feed-scroll:focus-visible { outline:1px solid var(--accent); outline-offset:2px; }
-.reference-feed .reference-head { position:sticky; top:0; z-index:2; background:var(--paper); }
-.reference-feed .reference-head th { white-space:nowrap; }
-.reference-feed .reference-head .note-btn { margin:-14px -12px; }
-.reference-feed .reference-row { background:transparent; }
-.reference-feed .reference-row.buy { border-left-color:var(--buy); }
-.reference-feed .reference-row.sell { border-left-color:var(--sell); }
 .design-provenance { display:flex; flex-wrap:wrap; gap:8px 20px; }
 .design-page .entity-head { padding-bottom:8px; }
 .design-page .entity-lede { max-width:540px; }
@@ -682,10 +574,9 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 .design-institutional-band .design-unavailable .table-scroll { min-height:240px; }
 .design-institutional-band .design-newpositions .table-scroll, .design-institutional-band .design-rotation .table-scroll { min-height:180px; }
 .design-activity > .panel > .table-scroll { min-height:240px; }
-.design-activity > [data-inst-data-note] { padding:8px 0; border:0; font-size:10px; }
+.design-activity > [data-inst-data-note] { padding:8px 0; border:0; font-size:var(--fs-meta); }
 @media(max-width:720px) {
  .design-page .entity-head-copy, .design-page .design-ledger { flex-basis:100%; }
- .reference-feed .cell-member { white-space:normal; }
 }
 .design-band .book-metric { padding:6px 0; }
 .design-band .section-note { margin:8px 0; padding:0; }
@@ -694,7 +585,12 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 .design-book-shape > .panel { margin-top:12px; }
 .entity-page:has([data-holdings-surface="filer"]) > [data-inst-data-note] { order:8; }
 .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .tiles { grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
-.entity-page:has([data-holdings-surface="filer"]) .explainer { border:0; margin:8px 0 0; padding:0; font:400 10px/1.6 var(--mono); }
+/* At the fold four 100px tiles do not fit a 358px row: two per row, so no
+   label runs into its neighbour (they overlapped, text on text, at 390). */
+@media(max-width:720px) {
+ .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .tiles { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+.entity-page:has([data-holdings-surface="filer"]) .explainer { border:0; margin:8px 0 0; padding:0; font:400 var(--fs-meta)/1.6 var(--mono); }
 @media(min-width:1081px) {
  .entity-page:has([data-holdings-surface="filer"]) { column-gap:0; }
  .entity-page:has([data-holdings-surface="filer"]) > .crumb { grid-row:1; }
@@ -705,6 +601,9 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
  .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface],
  .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-book-shape { grid-row:5; margin-top:0; }
  .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface] { padding-right:28px; }
+ /* The holdings table reaches this cell's edges: its right gutter is the
+    cell's 28px (M2 recomposes the filer page into bands). */
+ .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface] .table-scroll { --gutter-r: 28px; }
  .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-book-shape { padding-left:28px; border-left:1px solid var(--rule); }
 }
 @media(max-width:1080px) {
@@ -712,188 +611,70 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
  .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .panel-wide { order:6; }
  .entity-page:has([data-holdings-surface="filer"]) > .design-triptych { order:7; }
 }
-.design-diverging { display:block; position:relative; height:3px; min-width:90px; background:var(--rule); }
-.design-diverging:after { content:""; position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:var(--rule2); }
-.design-diverging > span { position:absolute; height:100%; background:#2774AE; }
-.design-diverging > .sale { background:#5A2E28; }
-.design-net-row td { font-size:10.5px; }
-.design-net-row .design-issuer { max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink3); }
-.design-net-row .net-dir { display:none; }
-.design-flow-band > .panel .etable { min-width:780px; }
-[data-entity-table][data-kind="member"] .c-asset { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--ink2); }
-[data-entity-table][data-kind="member"] .c-owner { white-space:nowrap; font:400 11px var(--mono); color:var(--ink3); }
 .design-unavailable .table-scroll { background:none; }
-.reference-feed .cell-traded { white-space:normal; font-size:9px; }
-.design-dates { display:block; }
-[data-entity-table][data-kind="member"] .c-traded { font-size:10px; }
-.book-source { font-size:9px; }
+.book-source { font-size:var(--fs-label); }
 @media print {
- .reference-feed-scroll, .design-flow-band > .panel > .table-scroll, .design-history,
- .entity-page [aria-labelledby="txns-h"] > .table-scroll { max-height:none; overflow:visible; }
+ .design-flow-band > .panel > .table-scroll, .design-history { max-height:none; overflow:visible; }
  .design-supplement::details-content { content-visibility:visible; display:block; }
 }
 [data-holdings-surface="filer"] .table-scroll { max-height:380px; overflow:auto; }
-.design-holding-row .c-pos { max-width:190px; white-space:normal; font-size:10px; }
-.design-holding-row td { font-size:10px; }
-.design-holding-provenance { display:block; font:400 8px/1.5 var(--mono); color:var(--ink3); }
-.design-holding-row .book-track { min-width:65px; }
+.design-holding-row .c-pos { max-width:190px; white-space:normal; }
 @media print { [data-holdings-surface="filer"] .table-scroll { max-height:none; overflow:visible; } }
-.etable[data-sticky-issuer] th:nth-child(3), .etable[data-sticky-issuer] td:nth-child(3) { position:sticky; left:0; z-index:1; background:var(--paper); border-right:1px solid var(--rule); }
-.etable[data-sticky-issuer] th:nth-child(3) { z-index:2; }
+/* z 2/3: above the z-index 1 note triggers of the cells that scroll beneath it. */
+.etable[data-sticky-issuer] th:nth-child(3), .etable[data-sticky-issuer] td:nth-child(3) { position:sticky; left:0; z-index:2; background:var(--paper); border-right:1px solid var(--rule); }
+.etable[data-sticky-issuer] th:nth-child(3) { z-index:3; }
 .design-holding-row .c-pos { white-space:nowrap; }
 .design-holding-name { display:inline-block; max-width:96px; overflow:hidden; text-overflow:ellipsis; vertical-align:middle; }
-.design-holding-row .c-pos .note-btn { margin:-14px -12px; }
 .design-holding-row .c-pos .src { display:inline; }
 .design-book-shape .design-unavailable .table-scroll { min-height:140px; }
-.design-holding-row .c-pos > .cell-src { display:inline-block; padding:0; vertical-align:middle; font-size:9px; }
 .edgar-block.design-supplement { background:transparent; border:0; border-bottom:1px solid var(--rule); padding:0; margin:12px 0; }
-.edgar-block.design-supplement > summary { font:400 11px/1.6 var(--sans); }
+.edgar-block.design-supplement > summary { font:400 var(--fs-note)/1.6 var(--sans); }
 .site-footer-inner { padding-top:20px; padding-bottom:20px; row-gap:12px; }
 .site-footer-inner .theme-toggle { width:max-content; min-height:44px; padding:4px 10px; }
 @media print { .design-supplement::details-content { content-visibility:visible; display:block; } }
 
-/* Measured against the 1440px source canvas, not against our own screenshots. */
-.design-page, .entity-page {
-  --ink2:#8FA0B3; --ink3:#64748A;
-}
+/* Measured against the 1440px source canvas, not against our own screenshots.
+   (DESIGN-POLISH M1, R5: the `.design-page, .entity-page { --ink2; --ink3 }`
+   override that stood here is DELETED — it gave --ink3 4.23:1 in dark and
+   --ink2 2.54:1 in light. The ledger's own --ink-label / --ink-meta tokens carry
+   the quieter roles now.) */
 .design-briefing { border-top-color:#16202E; position:relative; }
 .design-briefing:before { content:""; position:absolute; top:-1px; left:0; width:240px; height:1px; background:linear-gradient(90deg,#2774AE,#16202E); }
-.design-story h2 { font-size:13.5px; line-height:1.4; }
-.design-story-tag { font-size:9.5px; line-height:1; }
+.design-story h2 { font-size:var(--fs-title); line-height:1.4; }
+.design-story-tag { font-size:var(--fs-label); line-height:1; }
 .design-story p { line-height:1.55; }
-.design-page .kicker { color:#2774AE; }
+.design-page .kicker { color:var(--ink-kicker); }
 .design-page .page-head, .design-page .entity-head { padding-bottom:0; align-items:flex-end; }
-.design-page .design-provenance { padding:14px 0 20px; align-items:baseline; gap:8px 18px; font-size:10px; }
+.design-page .design-provenance { padding:14px 0 20px; align-items:baseline; gap:8px 18px; font-size:var(--fs-meta); }
 .design-page .method-links { position:relative; }
 .design-page .method-links summary { cursor:pointer; color:var(--accent); }
 .design-page .method-links > div { position:absolute; right:0; top:24px; padding:12px; min-width:290px; z-index:5; background:var(--paper); border:1px solid var(--rule); display:grid; gap:10px; }
-.reference-feed .cell-range { padding-left:0; overflow:visible; position:relative; }
-.reference-feed .cell-range .band, [data-entity-table][data-kind="member"] .band { height:3px; border:0; background:repeating-linear-gradient(90deg,#1B2735 0 1px,#10161F 1px 20%); }
-.reference-feed .band-fill, [data-entity-table][data-kind="member"] .band-fill { top:0; bottom:0; background:#2774AE; }
-.reference-feed .sell .band-fill { background:#5A2E28; }
-.reference-feed .band-fill.open { background-image:var(--hatch); }
-.reference-feed .cell-member a { color:var(--accent); }
-.reference-feed .cell-ticker a { color:var(--ink); }
-.reference-feed .cell-asset { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.reference-feed .reference-row { background:var(--paper); }
-.reference-feed .cell-side.buy { color:var(--accent); }
-.reference-feed .reference-watch { opacity:0; }
-.reference-feed .reference-row:hover .reference-watch, .reference-feed .reference-row:focus-within .reference-watch { opacity:1; }
-.design-rankings .reference-ranking .etable { min-width:0; width:100%; table-layout:fixed; }
-.design-rankings .reference-ranking .etable td { padding:7.5px 4px; font:500 10.5px/1.2 var(--mono); white-space:nowrap; border-bottom-color:#0A101A; }
-.design-rankings .reference-ranking .etable th { padding:6px 4px; font:500 8px/1.2 var(--mono); letter-spacing:.08em; }
-.design-rankings .reference-ranking .etable .c-member { font-family:var(--sans); overflow:hidden; text-overflow:ellipsis; }
-.design-rankings .reference-ranking .etable .c-member a { color:var(--ink); }
-.design-rankings .reference-ranking .etable .aff { font:500 9px var(--mono); }
-.design-rankings .reference-ranking .etable th:first-child { width:24px; }
-#members-section.reference-ranking th:nth-child(2) { width:22%; }
-#members-section.reference-ranking th:nth-child(3) { width:6%; }
-#members-section.reference-ranking th:nth-child(4), #members-section.reference-ranking th:nth-child(5) { width:5%; }
-#members-section.reference-ranking th:last-child { width:10%; }
-#momentum-section.reference-ranking th:nth-child(2) { width:58px; }
-#momentum-section.reference-ranking th:nth-child(3) { width:24%; }
-#momentum-section.reference-ranking th:nth-child(4), #momentum-section.reference-ranking th:nth-child(5) { width:12%; }
-.design-rankings .net-dir { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
-.design-rankings .c-net:has(.net-acc) { color:var(--buy); }
-.design-rankings .c-net:has(.net-dis) { color:var(--sell); }
-.design-rankings .panel-head { display:flex; flex-wrap:wrap; justify-content:flex-start; gap:4px 10px; padding:8px 0; border:0; }
-.design-rankings .panel-note { font-size:8px; line-height:1.4; }
-.design-rankings .panel-head .section-h { font-size:12px; }
 .design-rankings .section-note:has(noscript) { margin:0; padding:0; }
-.ranking-options { position:relative; font:400 9px var(--mono); color:var(--ink3); margin:0 0 6px; }
-.ranking-options summary { cursor:pointer; }
-.ranking-options .range-control { position:absolute; top:18px; right:0; z-index:5; background:var(--paper); border:1px solid var(--rule); padding:12px; }
-.design-rankings .compact-disclosure { padding:10px 0 0; gap:8px; font-size:10px; }
-.design-rankings .design-diverging { min-width:0; }
 .design-unavailable .table-scroll, .design-institutional-band .design-unavailable .table-scroll,
 .design-holdings-band > .design-unavailable .table-scroll, .design-activity > .panel > .table-scroll { min-height:0; }
-.design-unavailable-message { padding:18px 0 !important; }
 .design-band:has(.design-activity) { align-items:start; }
 .design-institutional-band .design-activity { padding-bottom:14px; }
-@media(min-width:1081px) {
- #feed-section { display:grid; grid-template-columns:minmax(0,1fr) auto; margin-left:-32px; margin-right:-32px; border-top:0; }
- #feed-section > .panel-head { grid-row:1; grid-column:1; margin:0; padding:12px 0 12px 32px; justify-content:flex-start; border:0; }
- #feed-section .filterbar, #congress-feed { display:contents; }
- #feed-section .filter-controls { grid-column:2; grid-row:1; display:flex; align-items:center; padding-right:32px; gap:8px; }
- #feed-section .filter-label { display:none; }
- #feed-section .seg button { min-height:22px; padding:4px 10px; font:500 10px/1 var(--mono); }
- #feed-section .filter-group { gap:0; }
- #feed-section .advanced-filters > summary { padding:4px; font-size:10px; }
- /* R12: the "More filters" body is IN FLOW — it opens as a row inside the
-    control strip and pushes the table down; it never overlays table rows. */
- #feed-section .filter-controls { flex-wrap:wrap; }
- #feed-section .advanced-filters { flex-basis:100%; }
- #feed-section .advanced-filter-body { position:static; display:flex; flex-wrap:wrap; gap:8px 14px; width:auto; max-width:560px; margin-left:auto; background:var(--paper); border:1px solid var(--rule); padding:12px; }
- #feed-section .advanced-filter-body .filter-label { display:inline; }
- #feed-section .filter-count { grid-row:3; grid-column:1; padding:12px 0 8px 32px; font:400 10px/1.6 var(--sans); align-self:center; }
- #feed-section .reference-feed-scroll { grid-row:2; grid-column:1/-1; max-height:none; border-top:1px solid var(--rule); padding-top:18px; }
- .reference-feed .reference-head, .reference-feed .reference-row { grid-template-columns:58px minmax(150px,1.2fr) 70px minmax(100px,1fr) 100px 200px 140px 60px; column-gap:12px; padding-left:32px; padding-right:32px; }
- .reference-feed .reference-row { height:31px; min-height:31px; margin:0; padding-left:29px; border-bottom-color:#0A101A; }
- .reference-feed .reference-row td { padding-top:0; padding-bottom:0; }
- .reference-feed .reference-head th { font:500 9px/1 var(--mono); padding-top:0; padding-bottom:6px; }
- .reference-feed .reference-head .th-sort, .reference-ranking .th-sort { min-height:0; min-width:0; padding:0; }
- .reference-feed .reference-head .note-btn, .reference-ranking .note-btn { min-width:44px; min-height:44px; margin:-16px; padding:0; }
- .reference-feed .cell-member { font-size:12.5px; padding:0; }
- .reference-feed .cell-member .aff { font:500 9.5px var(--mono); }
- .reference-feed .cell-traded { font:500 10px/1.2 var(--mono); white-space:nowrap; text-align:right; }
- .design-dates { display:inline; }
- .design-date-year { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
- .reference-feed .cell-traded .lag, .reference-feed .cell-traded .lag-late { display:inline; font:inherit; }
- #feed-section .feed-foot { grid-row:3; grid-column:2; padding:8px 32px 8px 8px; margin:0; border:0; }
- #feed-section .feed-foot .pager-range { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
- #feed-section .pager-btn { min-height:24px; padding:4px 10px; font:500 10px/1 var(--mono); }
- #feed-footnote { grid-row:4; grid-column:1/-1; margin:0; padding:0 32px 12px; font-size:10px; }
- #feed-section .feed-loading, #feed-section .feed-empty { grid-row:2; grid-column:1/-1; }
- .design-rankings .reference-ranking { padding-top:14px; }
-}
+/* The feed band's ≥1081px placement, the reference rows, the ranking head and
+   the ranking foot moved into the ledger region (entities.css). What stays
+   here is page composition, which M2 recomposes. */
 @media(max-width:1080px) {
- .reference-feed-scroll { max-height:440px; }
- .reference-feed .reference-row { height:auto; }
+ /* Bands stack below 1080px. This stays HERE, after every band's own
+    column rule (.design-member-band and its siblings), or those win. */
+ .design-band, .design-rankings { grid-template-columns:minmax(0,1fr); }
+ .design-band > * + *, .design-rankings > * + * { border-left:0; border-top:1px solid var(--rule); }
  .design-rankings .reference-ranking .etable { min-width:680px; }
  #momentum-section.reference-ranking .etable { min-width:440px; }
- .reference-feed .reference-watch { opacity:1; }
 }
-@media print { .reference-feed-scroll { max-height:none; overflow:visible; } }
-.reference-feed .reference-row.buy { border-left-color:#2774AE; }
-.reference-feed .reference-row.reference-late { border-left-color:var(--amber); }
-.reference-feed .reference-late .cell-side { color:var(--amber); }
-.reference-flags { position:absolute; right:0; bottom:3px; z-index:3; }
-.reference-flags .note-btn, .reference-ranking .note-btn { min-width:44px; min-height:44px; padding:0; margin:-16px; }
-.reference-feed .lag-late { background:transparent; padding:0; }
-.design-activity .caveat-box { margin-top:6px; padding:0; border:0; font-size:10px; }
-.design-activity .caveat-box-summary { padding:4px 0; font-weight:400; font-size:10px; line-height:1.6; }
-.design-institutional-band .table-scroll { background:none; }
-.design-rankings .compact-disclosure { display:flex; align-items:center; justify-content:space-between; }
-.design-rankings .compact-bound { font-size:10px; line-height:1.6; margin:0; }
-.design-rankings .compact-bound-count { color:var(--ink3); }
-.design-rankings .compact-toggle { flex-shrink:0; min-height:24px; padding:5px 10px; border:1px solid var(--rule); border-radius:2px; font:500 10px/1 var(--mono); }
+.design-activity .caveat-box { margin-top:6px; padding:0; border:0; font-size:var(--fs-meta); }
+.design-activity .caveat-box-summary { padding:4px 0; font-weight:400; font-size:var(--fs-meta); line-height:1.6; }
 .design-rankings .unrankable-block { margin-top:8px; padding-top:0; border:0; }
-.design-rankings .unrankable-block > summary { padding:6px 0; font-size:10px; }
+.design-rankings .unrankable-block > summary { padding:6px 0; font-size:var(--fs-meta); }
 @media(min-width:1081px) {
- #feed-section .filter-count { text-align:left; }
- .reference-flags .flag { font-size:9px; padding:1px 3px; }
  .design-activity .caveat-box-summary { min-height:0; }
-}
-@media(max-width:1080px) {
- .reference-flags { position:static; display:inline; }
-}
-
-@media(min-width:1081px) {
- #feed-section .feed-foot { justify-content:flex-end; }
- .reference-ranking { position:relative; }
- .design-rankings .panel-head { height:62px; display:block; padding-top:8px; }
- .design-rankings .panel-head .panel-note { display:block; margin-top:4px; }
- .ranking-options { position:absolute; right:32px; top:12px; margin:0; }
- .ranking-options > summary { font-size:0; list-style:none; }
- .ranking-options > summary:after { content:"⋯"; font:500 16px/1 var(--mono); }
- #momentum-section.reference-ranking .panel-head { padding-right:20px; }
 }
 
 /* Absolute screen-reader text belongs to its scrolling table, not the page. */
 .table-scroll, .reference-feed-scroll { position:relative; }
-
-.reference-net-bound.positive { color:var(--buy); }
-.reference-net-bound.negative { color:var(--sell); }
 
 /* ---------- /signals (Signals.dc.html): rule book, hits, lag, rates, watchlist ---------- */
 #signals-page .page-head { align-items: center; }
@@ -901,69 +682,30 @@ body { font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 #signals-page .design-ledger { flex: 1 1 50%; margin: 0; }
 #signals-page .stamp-line { color: var(--buy); }
 .si-rulebook { margin-top: 0; border-top: 0; }
-.si-table { font-size: 11.5px; }
-.si-table td { padding: 8px 6px; vertical-align: middle; }
-.si-table .si-family { font: 500 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); white-space: nowrap; }
-.si-table .si-kind { font: 600 10px var(--mono); letter-spacing: .08em; white-space: nowrap; }
-.si-family-behaviour .si-kind, .si-family-structure .si-kind { color: var(--accent); }
-.si-family-novelty .si-kind { color: var(--buy); }
-.si-family-compliance .si-kind, .si-family-context .si-kind { color: var(--amber); }
-.si-withheld .si-kind, .si-family-withheld .si-kind { color: var(--sell); }
-tr.si-rule, tr.si-hit { border-left: 3px solid transparent; }
-tr.si-rule > td:first-child, tr.si-hit > td:first-child { box-shadow: inset 3px 0 0 var(--rule); }
-tr.si-family-behaviour > td:first-child, tr.si-family-structure > td:first-child { box-shadow: inset 3px 0 0 #2774AE; }
-tr.si-family-novelty > td:first-child { box-shadow: inset 3px 0 0 var(--buy); }
-tr.si-family-compliance > td:first-child, tr.si-family-context > td:first-child { box-shadow: inset 3px 0 0 #7A5A20; }
-tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
-.si-rule-text { font: 400 11.5px/1.4 var(--sans); color: var(--ink); max-width: 420px; }
-.si-why { font: 400 11.5px/1.4 var(--sans); color: var(--ink2); max-width: 380px; }
-.si-hits { font-weight: 600; font-family: var(--mono); }
-.si-status { font: 500 10px var(--mono); letter-spacing: .06em; white-space: nowrap; }
-.si-status-active { color: var(--buy); }
-.si-status-withheld { color: var(--sell); }
+/* The signal tables' cell roles, the family kind colours and the family row
+   edges are in the ledger region (tr[data-edge="family-…"]). The rule and why
+   caps stay until M2 lays the rule book out on the prose-table spec. */
+.si-rule-text { max-width: 420px; }
+.si-why { max-width: 380px; }
 .si-status .note-btn { margin-left: 2px; }
 .design-signals-band { grid-template-columns: minmax(0,1.8fr) minmax(0,1fr); }
 .design-signals-band > div { padding-top: 0; }
 .design-signals-band .panel-head { flex-wrap: wrap; }
 .si-hits .panel-head .seg { margin-left: auto; }
-.si-hits-scroll { max-height: 420px; overflow: auto; }
 .si-hits-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
-.si-subject { font: 400 12px var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.si-subject a { color: var(--accent); }
-.si-ticker { font: 600 11px var(--mono); color: var(--ink); margin-left: 4px; }
-.si-evidence { font: 400 11px/1.4 var(--sans); color: var(--ink2); max-width: 300px; }
-.si-stamp { font: 600 9px var(--mono); letter-spacing: .06em; color: var(--buy); }
-.si-mag { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.si-when { font-family: var(--mono); color: var(--ink2); white-space: nowrap; }
-.si-lag { color: var(--ink3); }
-.si-late { color: var(--amber); font-weight: 600; }
-.si-new { color: var(--amber); font: 600 10px var(--mono); }
+.si-stamp { font: 600 var(--fs-label) var(--mono); letter-spacing: .06em; color: var(--kind-new-text); }
+.si-new { color: var(--amber); font: 600 var(--fs-meta) var(--mono); }
 .si-gold { color: var(--amber); }
-.si-empty { white-space: normal; color: var(--ink3); font: 400 11px/1.6 var(--sans); padding: 22px 6px !important; }
 .si-lags { list-style: none; margin: 4px 0 0; padding: 0; }
 .si-lags li { display: grid; grid-template-columns: 150px minmax(0,1fr) 52px; gap: 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--rule); }
-.si-lag-name { font: 500 12px/1.3 var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.si-party { font: 500 9.5px var(--mono); }
 .c-dem { color: var(--dem); }
-.si-bar { position: relative; display: block; height: 3px; background: var(--raised); }
-.si-bar-fill { position: absolute; inset: 0 auto 0 0; background: #2774AE; }
-.si-bar-late { background: #7A5A20; }
 .si-bar-tick { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--amber); opacity: .6; }
-.si-fill-novelty { background: var(--buy); }
-.si-fill-compliance, .si-fill-context { background: #7A5A20; }
-.si-lag-val { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
 .si-rates { margin: 6px 0 0; }
 .si-rate { display: grid; grid-template-columns: 120px minmax(0,1fr) 70px; gap: 14px; align-items: center; padding: 7px 0; }
-.si-rate dt { font: 400 12px var(--sans); color: var(--ink2); text-align: right; }
 .si-rate dd { display: contents; margin: 0; }
-.si-rate-val { font: 500 11.5px var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
-.si-rate.si-withheld .si-rate-val { color: var(--sell); }
+.si-rate.si-withheld .si-rate-val { color: var(--kind-sell-text); }
 .si-watchband .panel-head { flex-wrap: wrap; }
 .si-watch-controls { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
-.si-watch-chips { border: 0; gap: 8px; }
-.si-watch-chips .chip { border: 1px solid var(--rule2); border-radius: 2px; font: 500 10.5px var(--mono); color: var(--ink); text-decoration: none; }
-.si-watch-chips .chip + .chip { border-left: 1px solid var(--rule2); }
-.si-watchband .pager-btn { font: 500 10.5px var(--mono); }
 .site-nav a[aria-current="page"] { position: relative; }
 @media (max-width: 1080px) {
   .design-signals-band { grid-template-columns: minmax(0,1fr); }
@@ -977,29 +719,13 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
   .si-table { min-width: 720px; }
   .si-watch-controls { margin-left: 0; flex-wrap: wrap; }
 }
-.si-lag-n { font: 500 9.5px var(--mono); color: var(--ink3); }
-/* cluster board + new-position leaders + benchmarked book shape */
-.design-cluster-bar:after { display: none; }
-.design-cluster-bar > span { left: 0; }
-.design-cluster-bar > .sale { left: auto; right: 0; }
-.design-clusters .c-issuer { font: 400 11.5px var(--sans); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.design-weight-bar { display: block; position: relative; height: 3px; min-width: 90px; background: var(--rule); }
-.design-weight-bar > span { position: absolute; inset: 0 auto 0 0; background: #2774AE; }
-.design-newpositions .c-rank { font: 600 11px var(--mono); color: var(--ink3); width: 14px; }
-.design-newpositions .c-accent { color: var(--accent); font-weight: 600; }
-.book-track { position: relative; }
-.book-median { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--amber); opacity: .7; }
+/* cluster board + new-position leaders + benchmarked book shape (the bars and
+   the cell roles are in the ledger region) */
 .book-metric dd { grid-template-columns: minmax(0,1fr) 70px minmax(0,110px); }
-.book-compare { font: 400 10px var(--mono); color: var(--ink3); white-space: nowrap; }
+.book-compare { font: 400 var(--fs-meta) var(--mono); color: var(--ink3); white-space: nowrap; }
 .book-above { color: var(--amber); }
 .book-below { color: var(--accent); }
 .design-trading-profile .book-metric dd { grid-template-columns: 40px minmax(0,1fr) minmax(0,120px); }
-/* compact reference rows in the institutional band */
-.design-activity-row > td { white-space: nowrap; }
-.design-activity-row > td:nth-child(2), .design-activity-row > td:nth-child(3) { white-space: nowrap; max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
-.design-activity .id-chip { font-size: 8px; padding: 0 3px; }
-.design-activity .etable td { padding-top: 7px; padding-bottom: 7px; }
-.design-newpositions td, .design-clusters td { white-space: nowrap; }
 .design-holdings-band > .design-unavailable .table-scroll { min-height: 200px; }
 .design-institutional-band .design-unavailable .table-scroll { min-height: 150px; }
 .design-institutional-band .design-newpositions .table-scroll, .design-institutional-band .design-rotation .table-scroll { min-height: 120px; }
@@ -1014,18 +740,14 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
 .design-ticker-congress, .design-ticker-holders { grid-template-columns: minmax(0,1.8fr) minmax(0,1fr); }
 .design-ticker-congress .panel-head, .design-ticker-holders .section-head { flex-wrap: wrap; }
 .design-ticker-holders .page-section { margin: 0; padding: 0; }
-.design-ticker-holders .section-h2 { font: 600 13px/1.5 var(--sans); }
+.design-ticker-holders .section-h2 { font: 600 var(--fs-body)/1.5 var(--sans); }
 .tl-plot { position: relative; height: 120px; margin: 14px 0 0; border-bottom: 1px solid var(--rule2); }
 .tl-mid { position: absolute; left: 0; right: 0; bottom: 50%; height: 1px; background: repeating-linear-gradient(90deg, var(--rule) 0 4px, transparent 4px 8px); }
-.tl-mark { position: absolute; width: 8px; height: 8px; margin-left: -4px; transform: rotate(45deg); background: #2774AE; }
+.tl-mark { position: absolute; width: 8px; height: 8px; margin-left: -4px; transform: rotate(45deg); background: var(--bar-buy); }
 .tl-sell { background: var(--sell); }
 .tl-other { background: var(--ink3); }
-.tl-axis { display: flex; justify-content: space-between; padding: 6px 0 0; font: 500 9.5px/1 var(--mono); color: var(--ink3); }
+.tl-axis { display: flex; justify-content: space-between; padding: 6px 0 0; font: 500 var(--fs-label)/1 var(--mono); color: var(--ink3); }
 .design-members-active .c-amber, .c-amber { color: var(--amber); }
-.book-track > .book-hot { background: #7A5A20; }
-.agree-row { display: grid; grid-template-columns: 150px minmax(0,1fr) 130px; gap: 14px; align-items: center; height: 40px; border-bottom: 1px solid var(--rule); font: 500 11.5px/1 var(--mono); }
-.agree-k { color: var(--ink2); font: 400 12px var(--sans); }
-.agree-v { text-align: right; font-weight: 600; }
 .agree-unavailable .design-diverging { opacity: .35; }
 .design-ticker-signals .si-evidence { max-width: none; }
 @media (max-width: 1080px) {
@@ -1037,7 +759,7 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
 
 /* R11: Leaders and Tickers each take the full width, one above the other. */
 .design-rankings-single { grid-template-columns:minmax(0,1fr); }
-.coverage-strip { margin:0; font:400 10px/1.6 var(--mono); color:var(--ink3); align-self:center; }
+.coverage-strip { margin:0; font:400 var(--fs-meta)/1.6 var(--mono); color:var(--ink3); align-self:center; }
 #congress-notes { margin-top:18px; }
 #congress-notes .design-briefing { margin-top:12px; border-top:0; }
 
@@ -1047,31 +769,27 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
 .entity-page:has([data-holdings-surface="filer"]) > .planned-line { order: 7; }
 .entity-page:has([data-holdings-surface="filer"]) > .filer-notes { order: 8; }
 .design-triptych-single { grid-template-columns: minmax(0,1fr); }
-.planned-line { margin: 12px 0 0; font: 400 11px/1.6 var(--sans); color: var(--ink3); }
+.planned-line { margin: 12px 0 0; font: 400 var(--fs-note)/1.6 var(--sans); color: var(--ink3); }
 .planned-line .badge-planned { margin-right: 6px; }
-.design-consensus .compact-disclosure { padding: 8px 0 0; }
-.design-notable-moves .table-scroll { max-height: none; }
 .design-activity-band { grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); }
 
 /* R18: home — one claim, three live tiles. */
 .hero-claim { grid-template-columns: minmax(0,1fr); }
 .home-tiles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 24px; margin: 24px 0 32px; }
 .home-tiles > .home-tile { min-width: 0; margin: 0; }
-.home-tile .table-scroll { max-height: none; }
-.home-tile .etable td, .home-tile .etable th { white-space: nowrap; }
 @media (max-width: 1080px) { .home-tiles { grid-template-columns: minmax(0,1fr); } }
 .metho-section#principles .commitments { margin-top: 18px; }
 
 /* R19: the overlap band — two halves, then the merged timeline. */
 .design-overlap .overlap-halves { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 24px; margin: 8px 0 12px; }
 .design-overlap .overlap-half { min-width: 0; }
-.design-overlap .overlap-half > .section-h { font-size: 12px; margin: 0 0 6px; }
+.design-overlap .overlap-half > .section-h { font-size: var(--fs-small); margin: 0 0 6px; }
 .overlap-rows { margin: 0; }
-.overlap-rows > div { display: grid; grid-template-columns: 64px minmax(0,1fr); gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 12px; }
-.overlap-rows dt { color: var(--ink3); font: 500 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+.overlap-rows > div { display: grid; grid-template-columns: 64px minmax(0,1fr); gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: var(--fs-small); }
+.overlap-rows dt { color: var(--ink3); font: 500 var(--fs-meta)/1.6 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
 .overlap-rows dd { margin: 0; }
-.overlap-n { display: inline-block; min-width: 1.6em; font: 600 13px var(--mono); margin-right: 4px; }
-.overlap-total { display: block; font: 500 10.5px var(--mono); color: var(--ink3); margin-top: 2px; }
+.overlap-n { display: inline-block; min-width: 1.6em; font: 600 var(--fs-body) var(--mono); margin-right: 4px; }
+.overlap-total { display: block; font: 500 var(--fs-control) var(--mono); color: var(--ink3); margin-top: 2px; }
 .overlap-planned .badge-planned { margin-left: 6px; }
 @media (max-width: 720px) { .design-overlap .overlap-halves { grid-template-columns: minmax(0,1fr); } }
 
@@ -1079,19 +797,12 @@ tr.si-withheld > td:first-child { box-shadow: inset 3px 0 0 var(--sell); }
 #signal-hits { min-width: 0; }
 #signal-hits .panel-head { flex-wrap: wrap; gap: 8px; }
 #signal-hits .si-hit-filter { flex-wrap: wrap; }
-#signal-hits .si-hits-scroll { overflow-x: auto; max-width: 100%; }
 #signal-hits .si-expand summary { cursor: pointer; }
-#signal-hits .si-expand-body { font-size: 11px; margin: 4px 0 0; }
 
-/* R22: full-word headers at >=900px; the abbreviation only below. The full word
-   stays in the accessibility tree at every width (clipped, never display:none). */
-.th-abbr { display: none; }
-@media (max-width: 899px) {
-  .th-abbr { display: inline; }
-  .th-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-/* R24: an unavailable surface is one line, not an empty frame. */
-.design-unavailable-line { margin: 8px 0; font-size: 12px; color: var(--muted, #555); }
+/* R22: the .th-abbr / .th-full narrow-width header swap is in the ledger region. */
+/* R24: an unavailable surface is one line, not an empty frame. (Its colour was
+   `var(--muted, #555)` — an undefined token falling back to 2.6:1 grey.) */
+.design-unavailable-line { margin: 8px 0; font-size: var(--fs-small); color: var(--ink3); }
 /* R21 */
 .card-foot-more summary { cursor: pointer; }
 

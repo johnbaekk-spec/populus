@@ -14,6 +14,7 @@ import { buildSignalArtifact, LAG_CAVEAT, type SignalInputs } from "../src/lib/s
 import { SIGNAL_THRESHOLDS as SIGNAL_THRESHOLDS_FOR_TESTS } from "../src/lib/signal-thresholds.ts";
 import { signalsBody } from "../src/lib/ui/index.ts";
 import type { TxnRow } from "../src/lib/format.ts";
+import { MiniElement } from "./lib/mini-dom.ts";
 
 let seq = 0;
 function txn(over: Partial<TxnRow> = {}): TxnRow {
@@ -246,13 +247,18 @@ test("R26: member signal cards lead with the ticker — Ticker · Kind · Filed 
   const { memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
   const html = memberSignalsPanel(art, "T000001", { watched: new Set() });
-  assert.ok(
-    html.includes('<thead><tr><th scope="col">Ticker</th><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Size</th><th scope="col">Src</th></tr></thead>'),
-    "the card's first column is the ticker",
-  );
+  /* DOM parse (DESIGN-POLISH M1, T1.9): the headers carry their ledger roles
+     and the rows their family edge, so the column order is read from the
+     parsed table. The property is unchanged — the ticker leads. */
+  const root = new MiniElement("body");
+  root.innerHTML = html;
+  const heads = root.querySelectorAll("thead th").map((th) => th.textContent.trim());
+  assert.deepEqual(heads, ["Ticker", "Kind", "Filed", "Size", "Src"], "the card's first column is the ticker");
   const mine = art.signals.find((s) => s.entities.bioguide === "T000001" && s.status === "active")!;
-  const first = mine.entities.ticker ? `<span class="mono-ticker">${mine.entities.ticker}</span>` : "—";
-  assert.ok(html.includes(`<tr><td class="c-ticker">${first}</td>`), "every row names its ticker first");
+  const firstCells = root.querySelectorAll("tbody tr").map((tr) => tr.children[0]!);
+  assert.ok(firstCells.length > 0);
+  for (const td of firstCells) assert.ok(td.classList.contains("c-ticker"), "every row names its ticker first");
+  assert.ok(firstCells.some((td) => td.textContent.trim() === (mine.entities.ticker ?? "—")));
 });
 
 test("review r2-F2: a tombstone is preserved VERBATIM across later builds", () => {

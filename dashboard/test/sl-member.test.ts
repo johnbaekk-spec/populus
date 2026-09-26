@@ -25,6 +25,7 @@ import {
 import { statTiles, noteId, esc, type RenderCtx, type TxnRow } from "../src/lib/format.ts";
 import { quarterlyFlow, type MemberEntity } from "../src/lib/derive.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
+import { MiniElement } from "./lib/mini-dom.ts";
 
 const STAMPS: BuildStamps = {
   buildId: "t.1",
@@ -262,7 +263,15 @@ test("SL-R2b: entityTxnTable, statTiles and flowRibbon are BYTE-UNCHANGED withou
      only form of the claim a leak cannot slip past. */
   const table = entityTxnTable(TXNS, { kind: "ticker", caption: "c", page: 0, ctx: CTX });
   assert.doesNotMatch(table, /class="note"/, "no note markup reaches a ticker page's txn table");
-  assert.ok(table.includes(`<th scope="col">Side · Owner</th>`), "…and its header is the literal it was");
+  /* DOM parse (DESIGN-POLISH M1, T1.9): the header now carries its role class
+     (`c-kind`), so it is read from the parsed table — its text is still the
+     bare label, with no trigger inside it. */
+  const root = new MiniElement("body");
+  root.innerHTML = table;
+  const sideOwner = root.querySelectorAll("thead th").find((th) => th.textContent.trim() === "Side · Owner");
+  assert.ok(sideOwner, "…and its header is the label it was");
+  assert.equal(sideOwner!.children.length, 0, "a plain label: no note, no button");
+  assert.equal(sideOwner!.getAttribute("class"), "c-kind");
 
   const tiles = statTiles([{ value: "1", label: "L", title: "the full breakdown" }]);
   assert.doesNotMatch(tiles, /class="note"/, "no note markup on a no-scope tile group");

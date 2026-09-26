@@ -125,7 +125,9 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
      are UNCHANGED: they still prove the text is in this collapsed body. The
      line the wrapper assertion becomes proves the new visible channel, so the
      honesty content asserted here went up rather than down. */
-  assert.match(html, /rows excluded<span class="note">/, "the summed magnitude is visible, and anchors the note");
+  /* DESIGN-POLISH M1 (R6): the summed magnitude IS the note's trigger (the
+     label form) — visible text, and the button that opens the clauses. */
+  assert.match(html, /<button type="button" class="note-btn note-label"[^>]*>\d+ rows excluded<\/button>/, "the summed magnitude is visible, and anchors the note");
   assert.match(html, /date-anomaly row excluded from the trade-date window/);
   assert.match(html, /discloses no trade date and cannot be placed in a trade-date window/);
   /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R10 (LD6). The enumerated honesty
@@ -135,7 +137,8 @@ test("R19: a collapsed table keeps every enumerated honesty element in the tree"
      child now, and — the property that made the deletion honest — they are
      emitted VISIBLE, while the button beside them waits for a script. The
      assertions follow the text, and pin the visibility the row used to supply. */
-  assert.match(html, /<span class="compact-bound-count">\d+ more ranked members below/);
+  // DESIGN-POLISH M1 (R8): the range grammar — rows shown of the ranked total.
+  assert.match(html, /<span class="compact-bound-count">1–5 of \d+ ranked members<\/span>/);
   assert.match(html, /published dataset<\/a>/, "and the route to the rows it holds back");
   // footnote markers AND their printed lines
   /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R6/R7 (LD6). The section's
@@ -240,7 +243,7 @@ test("R7: the omission rule holds at the boundary — equal to the slice renders
 
   const overLimit = [...atLimit, txn({ txnId: "extra", ticker: "ZZZ", low: 1, high: 2 })];
   assert.match(sectionFor(overLimit), /compact-toggle/);
-  assert.match(sectionFor(overLimit), /1 more ranked tickers below/);
+  assert.match(sectionFor(overLimit), /<span class="compact-bound-count">1–10 of 11 ranked tickers<\/span>/);
 });
 
 /* ---------- R3 parity ---------- */

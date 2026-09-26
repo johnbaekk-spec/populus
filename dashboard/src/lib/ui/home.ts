@@ -85,10 +85,11 @@ export function moduleCard(
 
 /* ---------- R18: the three live tiles ---------- */
 
-import { fmtInt, fmtUsd, tickerHrefFor, note } from "../format.ts";
+import { fmtInt, fmtUsd, tickerHrefFor, note, thHtml, txnEdge } from "../format.ts";
 import type { NotableMove } from "../notable-moves.ts";
 import type { Signal } from "../signals.ts";
 import { MOVE_KIND_LABELS } from "../notable-moves.ts";
+import { familyOf } from "./signals.ts";
 
 /** The ONE masthead claim — twelve words or fewer (R18). */
 export const HOME_CLAIM = "Who's trading, from the filings themselves.";
@@ -103,13 +104,19 @@ export function congressTileHtml(rows: readonly TxnRow[], ctx: RenderCtx): strin
   const body = shown
     .map((r, i) => {
       const side = sideLabel(r.side, r.flags);
-      const amount = esc(amountText(r)) + (i === 0 ? note("Amounts are disclosed as statutory ranges, never exact figures; this is the range as filed. Traded and filed dates are both kept, and every row links to its filing.", { scope: "home-congress" }, "range") : "");
+      // The first row's range is its own note's label trigger (R6): no glyph
+      // widens the numeric column.
+      const amount =
+        i === 0
+          ? note("Amounts are disclosed as statutory ranges, never exact figures; this is the range as filed. Traded and filed dates are both kept, and every row links to its filing.", { scope: "home-congress" }, "range", { trigger: "label", textHtml: esc(amountText(r)) })
+          : esc(amountText(r));
+      const edge = txnEdge(r);
       return (
-        `<tr><td>${r.bioguide ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` : esc(r.name)} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span></td>` +
-        `<td>${r.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : `<span class="none">—</span>`}</td>` +
-        `<td class="${side.cls}">${esc(side.text)}</td>` +
+        `<tr${edge ? ` data-edge="${edge}"` : ""}><td class="c-member c-flex">${r.bioguide ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` : esc(r.name)} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span></td>` +
+        `<td class="c-ticker">${r.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : `<span class="none">—</span>`}</td>` +
+        `<td class="c-kind ${side.cls}">${esc(side.text)}</td>` +
         `<td class="c-num">${amount}</td>` +
-        `<td class="c-filed">${esc(r.filed)}</td></tr>`
+        `<td class="c-filed c-num">${esc(r.filed)}</td></tr>`
       );
     })
     .join("\n");
@@ -119,7 +126,7 @@ export function congressTileHtml(rows: readonly TxnRow[], ctx: RenderCtx): strin
     (shown.length === 0
       ? `<p class="section-note">No disclosures in this build.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">The five newest congressional disclosures</caption>` +
-        `<thead><tr><th scope="col">Member</th><th scope="col">Ticker</th><th scope="col">Side</th><th scope="col" class="num">Amount</th><th scope="col">Filed</th></tr></thead>` +
+        `<thead><tr>${thHtml({ label: "Member", cls: "c-member c-flex" })}${thHtml({ label: "Ticker", cls: "c-ticker" })}${thHtml({ label: "Side", cls: "c-kind" })}${thHtml({ label: "Amount", cls: "c-num" })}${thHtml({ label: "Filed", cls: "c-num" })}</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`) +
     `<p class="section-note">Amounts are ranges as filed · <a href="/methodology/#ranges">why ranges ↗</a></p>` +
     `</section>`
@@ -132,11 +139,11 @@ export function movesTileHtml(moves: readonly NotableMove[], period: string | nu
   const body = shown
     .map(
       (m) =>
-        `<tr><td><a href="${esc(filerHref(m.cik))}">${esc(m.manager)}</a></td>` +
-        `<td>${m.ticker ? `<span class="mono-ticker">${esc(m.ticker)}</span> ` : ""}<span class="filed-name">${esc(m.issuer)}</span></td>` +
-        `<td><span class="qoq-chip qoq-${m.kind}">${MOVE_KIND_LABELS[m.kind]}</span></td>` +
+        `<tr data-edge="${m.kind}"><td class="c-filer"><a href="${esc(filerHref(m.cik))}">${esc(m.manager)}</a></td>` +
+        `<td class="c-issuer c-flex">${m.ticker ? `<span class="mono-ticker">${esc(m.ticker)}</span> ` : ""}<span class="filed-name">${esc(m.issuer)}</span></td>` +
+        `<td class="c-chip c-kind"><span class="qoq-chip qoq-${m.kind}">${MOVE_KIND_LABELS[m.kind]}</span></td>` +
         `<td class="c-num ${m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy"}">${m.delta_value == null ? "—" : (m.delta_value < 0 ? "−" : "+") + esc(fmtUsd(Math.abs(m.delta_value)))}</td>` +
-        `<td class="c-filed">${esc(m.filed ?? "—")}</td></tr>`,
+        `<td class="c-filed c-num">${esc(m.filed ?? "—")}</td></tr>`,
     )
     .join("\n");
   return (
@@ -145,7 +152,7 @@ export function movesTileHtml(moves: readonly NotableMove[], period: string | nu
     (shown.length === 0
       ? `<p class="section-note">${period ? "No notable-manager moves are on record for this quarter." : "No closed quarter is available yet — 13F filings arrive up to 45 days after quarter end."}</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Largest notable-manager position changes this quarter</caption>` +
-        `<thead><tr><th scope="col">Manager</th><th scope="col">Ticker · Issuer</th><th scope="col">Change</th><th scope="col" class="num">Δ $</th><th scope="col">Filed</th></tr></thead>` +
+        `<thead><tr>${thHtml({ label: "Manager", cls: "c-filer" })}${thHtml({ label: "Ticker · Issuer", cls: "c-issuer c-flex" })}${thHtml({ label: "Change", cls: "c-chip c-kind" })}${thHtml({ label: "Δ $", cls: "c-num" })}${thHtml({ label: "Filed", cls: "c-num" })}</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`) +
     `<p class="section-note">Quarter-end positions, by shares · never current holdings</p>` +
     `</section>`
@@ -158,10 +165,10 @@ export function signalsTileHtml(signals: readonly Signal[], ctx: RenderCtx, labe
   const body = shown
     .map(
       (s) =>
-        `<tr><td>${s.entities.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>` : `<span class="none">—</span>`}</td>` +
-        `<td>${s.entities.bioguide ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>` : esc(s.entities.memberName)}</td>` +
-        `<td><span class="si-kind">${esc(labelOf(s.kind))}</span></td>` +
-        `<td class="c-filed">${esc(s.occurrence.filedDate)}</td></tr>`,
+        `<tr data-edge="family-${familyOf(s.kind).toLowerCase()}"><td class="c-ticker">${s.entities.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>` : `<span class="none">—</span>`}</td>` +
+        `<td class="c-member c-flex">${s.entities.bioguide ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>` : esc(s.entities.memberName)}</td>` +
+        `<td class="c-kind"><span class="si-kind">${esc(labelOf(s.kind))}</span></td>` +
+        `<td class="c-filed c-num">${esc(s.occurrence.filedDate)}</td></tr>`,
     )
     .join("\n");
   return (
@@ -170,7 +177,7 @@ export function signalsTileHtml(signals: readonly Signal[], ctx: RenderCtx, labe
     (shown.length === 0
       ? `<p class="section-note">Zero hits in the retained window — a computed answer, not missing coverage.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Newest signal hits</caption>` +
-        `<thead><tr><th scope="col">Ticker</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Filed</th></tr></thead>` +
+        `<thead><tr>${thHtml({ label: "Ticker", cls: "c-ticker" })}${thHtml({ label: "Who", cls: "c-member c-flex" })}${thHtml({ label: "What", cls: "c-kind" })}${thHtml({ label: "Filed", cls: "c-num" })}</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`) +
     `<p class="section-note">A signal is a fact about a filing, not a forecast · ${fmtInt(signals.length)} hits in the window</p>` +
     `</section>`

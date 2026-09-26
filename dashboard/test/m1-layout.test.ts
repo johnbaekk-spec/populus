@@ -15,6 +15,7 @@ import path from "node:path";
 
 import { assetNameCell } from "../src/lib/format.ts";
 import { changesTableHtml } from "../src/lib/ui/index.ts";
+import { MiniElement } from "./lib/mini-dom.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..");
 /* `grep -a` discipline, in Node form: read as bytes-to-text and never assume
@@ -215,14 +216,21 @@ test("R6: the decisive column is asserted, and it comes before the raw levels", 
     "2026-06-30",
     "2026-08-14",
   );
-  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6).
-     The header cells now carry a note after the label, so `[^<]*` no longer
-     reaches the closing tag. The note markup is stripped before the ORIGINAL
-     assertion runs — the column contract this test pins is unchanged and is
-     still asserted exactly, rather than the pattern being widened to tolerate
-     whatever the header happens to contain. */
-  const bare = html.replace(/<span class="note">.*?<\/span><\/span>/gs, "");
-  const headers = [...bare.matchAll(/<th scope="col">([^<]*)<\/th>/g)].map((m) => m[1]!);
+  /* RETARGETED — DESIGN-POLISH M1 (T1.9, DOM parse). A header now carries its
+     role class and its note's LABEL trigger (the label text is the button),
+     so the column contract is read from the parsed table rather than matched
+     as `<th scope="col">text</th>`: each header's visible label (note panels
+     excluded), and each body cell's role, in order. The contract itself is
+     unchanged and still asserted exactly — and it is sharper: every header's
+     role class must equal its body cell's, so the twin paths cannot drift. */
+  const root = new MiniElement("body");
+  root.innerHTML = html;
+  const visible = (el: MiniElement): string =>
+    el.nodes
+      .map((n) => (typeof n === "string" ? n : n.classList.contains("note-pop") ? "" : visible(n)))
+      .join("");
+  const ths = root.querySelectorAll("thead th");
+  const headers = ths.map((th) => visible(th).trim());
   assert.deepEqual(
     headers,
     [
@@ -244,15 +252,18 @@ test("R6: the decisive column is asserted, and it comes before the raw levels", 
   assert.ok(headers.indexOf("Change") <= 1, "the verdict sits beside the identity");
 
   /* the body's cell classes must line up with those headers, in that order */
-  const row = /<tr(?: id="pos-[^"]*")?><td class="c-pos">[\s\S]*?<\/tr>/.exec(html);
+  const row = root.querySelectorAll("tbody tr").find((tr) => tr.children[0]?.classList.contains("c-pos"));
   assert.ok(row, "a data row rendered");
-  const classes = [...row![0]!.matchAll(/<td class="(c-[a-z]+)[^"]*"/g)].map((m) => m[1]!);
+  const classes = row!.children.map((td) => (td.getAttribute("class") ?? "").split(/\s+/)[0]!);
   assert.deepEqual(
     classes,
     ["c-pos", "c-chip", "c-num", "c-num", "c-num", "c-num", "c-num", "c-num", "c-flags"],
     "the body cells drifted from the header order — the twin path was not moved",
   );
   assert.equal(headers.length, classes.length, "every header has exactly one cell");
+  const role = (el: MiniElement): string =>
+    (el.getAttribute("class") ?? "").split(/\s+/).filter((c) => /^c-(?:num|pos|chip|kind|flex|flags)$/.test(c)).sort().join(" ");
+  assert.deepEqual(ths.map(role), row!.children.map(role), "each header carries its column's role");
 });
 
 test("R6: the scroll cue exists at every width, not only inside the fold", () => {

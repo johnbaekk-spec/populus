@@ -17,10 +17,29 @@ import { test, expect, type Page } from "@playwright/test";
 import { baseStylesheet } from "../lib/styles.ts";
 import { readFileSync } from "node:fs";
 import { WIDTHS } from "../../playwright.config.ts";
+import { stripTypeScriptTypes } from "node:module";
+import { hitMisses } from "./geometry.ts";
+
+/* Wrapped in a function scope: `setContent` keeps the window, so a second
+   injection of top-level `const`s into the same page threw "already declared"
+   and the clip silently did not run at any width after the first. */
+const HIT_AREAS_JS =
+  "(function () {\n" +
+  stripTypeScriptTypes(readFileSync(new URL("../../src/scripts/hit-areas.ts", import.meta.url), "utf8")).replace(/^export /gm, "") +
+  "\ninitHitAreas();\n})();";
 
 /** A surface that renders notes and is cheap to load. */
 const CONGRESS = "/congress/";
 const HOLDERS_HINT = "/institutional/";
+
+/* L9 (DESIGN-POLISH M1; record in design-principles §7). The hit-test the
+   unit tests cannot do: the --hit-min square centred on the trigger — 44px
+   under a coarse pointer or at/below 720px, 24px otherwise — clipped at the
+   header row's bottom and at the midpoint to any neighbouring control, must
+   return the trigger at all four corners (1px inside). At a fine pointer above
+   the fold the trigger's own box is at most its text's height + 2px, so the
+   hit area never inflates the row it sits in. `hitMisses` is the ONE audit
+   G12 runs (geometry.ts; M1 review Q-11), not a copy of it. */
 
 async function firstNote(page: Page) {
   const btn = page.locator(".note-btn:visible").first();
@@ -100,15 +119,31 @@ for (const channel of ["hover", "focus"] as const) {
   });
 }
 
-test("SL-R4: under PRINT media every panel lays out with a real box and the anchor is hidden", async ({ page }) => {
+/* H-5 (DESIGN-POLISH M1): on paper a mark trigger prints its mark in place
+   and a label trigger its label text; only the legacy glyph is hidden; panels
+   print in flow. The control injects `.note-mark{display:none}` for print and
+   must be caught. */
+test("SL-R4 / H-5: under PRINT media panels lay out, marks and labels print, only the glyph is hidden", async ({ page }) => {
   await page.goto(CONGRESS);
   await page.emulateMedia({ media: "print" });
   const pop = page.locator(".note-pop").first();
   const box = await pop.boundingBox();
   expect(box, "a print panel must have a layout box, not merely a CSS rule").not.toBeNull();
   expect(box!.height, "and a non-zero one — hover-only text must reach paper").toBeGreaterThan(0);
-  const btnDisplay = await page.locator(".note-btn").first().evaluate((el) => getComputedStyle(el).display);
-  expect(btnDisplay, "the anchor button does not print").toBe("none");
+  const printState = () =>
+    page.evaluate(() => {
+      const shown = (sel: string) => Array.from(document.querySelectorAll(sel)).map((el) => getComputedStyle(el).display !== "none");
+      return { glyph: shown(".note-btn:not(.note-label):not(.note-mark)"), label: shown(".note-label"), mark: shown(".note-mark") };
+    });
+  const st = await printState();
+  expect(st.label.length + st.mark.length, "the page renders label or mark triggers to print").toBeGreaterThan(0);
+  expect(st.glyph.every((v) => !v), "the glyph button does not print").toBe(true);
+  expect(st.label.every(Boolean), "a label trigger prints as its text").toBe(true);
+  expect(st.mark.every(Boolean), "a mark trigger prints its mark").toBe(true);
+  // control: a print rule hiding the mark is caught
+  await page.addStyleTag({ content: "@media print { .note-mark, .note-label { display: none !important; } }" });
+  const broken = await printState();
+  expect([...broken.label, ...broken.mark].some((v) => !v), "control: hidden marks/labels are detected").toBe(true);
 });
 
 /* SL-R24 / T12. A representative anchor PER SURFACE, at EVERY swept width —
@@ -128,7 +163,7 @@ test("SL-R4: under PRINT media every panel lays out with a real box and the anch
    every surface at once. What a second surface adds is proof that no LOCAL rule
    overrides it, and the sweep takes it whenever the build offers it. */
 for (const surface of [CONGRESS, HOLDERS_HINT] as const) {
-  test(`SL-R24: the anchor on ${surface} is a >=44px target at EVERY swept width`, async ({ page }) => {
+  test(`SL-R24 / L9: the note triggers on ${surface} hit-test to --hit-min at EVERY swept width`, async ({ page }) => {
     await page.goto(surface);
     if ((await page.locator(".s1-block").count()) > 0) {
       test.skip(true, `${surface} renders the stated-absence page in this build — no table, no note`);
@@ -136,10 +171,7 @@ for (const surface of [CONGRESS, HOLDERS_HINT] as const) {
     for (const w of WIDTHS) {
       await page.setViewportSize({ width: w, height: 900 });
       await page.goto(surface);
-      const btn = page.locator(".note-btn:visible").first();
-      expect(await btn.count(), `${surface} must render a note anchor to measure`).toBeGreaterThan(0);
-      const box = (await btn.boundingBox())!;
-      expect(Math.min(box.width, box.height), `44px target at ${w}px on ${surface}`).toBeGreaterThanOrEqual(44);
+      expect(await hitMisses(page, ".note-btn"), `${surface} at ${w}px`).toEqual([]);
     }
   });
 }
@@ -284,7 +316,8 @@ test("SL-R10: with JavaScript disabled the bound is STATED and the button is inv
         `omission the deleted terminus rows existed to prevent`,
     ).toBeGreaterThan(0);
     await expect(stated.first()).toBeVisible();
-    await expect(stated.first()).toContainText(/more .* below|Showing the first/);
+    // DESIGN-POLISH M1 (R8): the range grammar, "1–10 of 608 tickers".
+    await expect(stated.first()).toHaveText(/^1–\d[\d,]* of (?:the )?\d[\d,]* \S/);
     // R13: the bound is stated in plain words; pipeline vocabulary never reaches the reader.
     await expect(stated.first()).not.toContainText(/render bound/);
   }
@@ -315,7 +348,8 @@ test("SL-R10: with JavaScript ON, the bound stands BEFORE the feed arrives", asy
     stated,
     "scripting is on, the island has run, the dataset has not arrived — and the reader is still told",
   ).toBeVisible();
-  await expect(stated).toContainText(/more ranked .* below/);
+  // DESIGN-POLISH M1 (R8): the range grammar, in the server's bound noun.
+  await expect(stated).toHaveText(/^1–\d[\d,]* of \d[\d,]* ranked \S/);
 
   // The button is what waits, and it is still waiting.
   await expect(
@@ -377,7 +411,7 @@ test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every wi
    silently, because a skipped requirement that looks covered is worse than an
    uncovered one that says so. */
 
-test("CODE-REVIEW F9: REAL member and filer renderer output meets 44px at every swept width", async ({ page }) => {
+test("CODE-REVIEW F9 / L9: REAL member and filer renderer output hit-tests to --hit-min at every swept width", async ({ page }) => {
   /* Cycle-3 F9. The previous version swept a hand-written table header, which
      the review rightly rejected: a generic fixture cannot see a surface's own
      ancestor styles, button rules, transforms or layout constraints. This
@@ -444,18 +478,17 @@ test("CODE-REVIEW F9: REAL member and filer renderer output meets 44px at every 
     expect(s.html, `${s.name}: fixture must actually render a note`).toContain("note-btn");
     for (const w of WIDTHS) {
       await page.setViewportSize({ width: w, height: 900 });
-      await page.setContent(`<style>${css}</style><body>${s.html}</body>`);
-      const anchors = page.locator(".note-btn");
-      const n = await anchors.count();
+      /* The fixture carries the page's midpoint clip (scripts/hit-areas.ts,
+         types stripped), room above its first row and the 16px side gutter
+         every page has (a control flush with the viewport edge exists on no
+         page, and half its square would be off screen). */
+      await page.setContent(`<style>${css}</style><body style="padding:48px 16px">${s.html}</body>`);
+      await page.addScriptTag({ content: HIT_AREAS_JS });
+      const n = await page.locator(".note-btn").count();
       expect(n, `${s.name}: at least one real anchor at ${w}px`).toBeGreaterThan(0);
-      for (let k = 0; k < Math.min(n, 6); k += 1) {
-        const box = await anchors.nth(k).boundingBox();
-        if (!box) continue; // inside a collapsed <details>; covered by the print/fold specs
-        expect(
-          Math.min(box.width, box.height),
-          `${s.name} anchor ${k} is a 44px target at ${w}px`,
-        ).toBeGreaterThanOrEqual(44);
-      }
+      // L9: the --hit-min square, hit-tested (hidden anchors inside a closed
+      // <details> are skipped by the helper; the print/fold specs cover them).
+      expect(await hitMisses(page, ".note-btn"), `${s.name} at ${w}px`).toEqual([]);
     }
   }
 
@@ -473,4 +506,98 @@ test("CODE-REVIEW F9: REAL member and filer renderer output meets 44px at every 
       expect(block, `${rel} must not restyle the note anchor or panel`).not.toMatch(/\.note-btn|\.note-pop|\.note\b/);
     }
   }
+});
+
+/* M1 review R-2/C-2. On screen a mark trigger's `.note` wrapper and a hung
+   mark are zero-width boxes in the column's slot. In print the panel was laid
+   out INSIDE that wrapper, so the zero-width box set it one character per
+   line. Property: under print media every mark trigger's panel spans its
+   cell's whole content box — at least 200px wherever the cell gives it 200px
+   (a narrow numeric header on paper is narrower than that, and the panel then
+   takes all of it). Control: the zero-width wrapper restored for print is
+   caught. */
+test("R-2/C-2: under PRINT media a mark trigger's panel spans its cell (≥ 200px where the cell allows)", async ({ page }) => {
+  const squeezed = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll(".note:has(> .note-mark) > .note-pop"))
+        .map((p) => {
+          const cell = p.closest("th, td")!;
+          const cs = getComputedStyle(cell);
+          const room = cell.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+          return { w: p.getBoundingClientRect().width, want: Math.min(200, room) };
+        })
+        .filter((x) => x.w > 0)
+        .map((x) => ({ w: Math.round(x.w), want: Math.round(x.want), ok: x.w >= x.want - 1 })),
+    );
+  let wide = 0;
+  for (const surface of [HOLDERS_HINT, CONGRESS]) {
+    await page.emulateMedia({ media: "screen" });
+    await page.goto(surface);
+    await page.emulateMedia({ media: "print" });
+    const ok = await squeezed();
+    expect(ok.length, `${surface} prints mark-trigger panels`).toBeGreaterThan(0);
+    expect(ok.filter((x) => !x.ok), `${surface}: every printed mark panel spans its cell (to 200px)`).toEqual([]);
+    wide += ok.filter((x) => x.want === 200).length;
+  }
+  expect(wide, "a mark panel in a cell of 200px or more is measured at 200px").toBeGreaterThan(0);
+  // control (on /congress/): the screen's zero-width slot box, forced into print
+  await page.addStyleTag({ content: "@media print { :is(th, td) .note:has(> .note-mark), .hang { display: inline-block !important; width: 0 !important; } }" });
+  expect((await squeezed()).filter((x) => !x.ok).length, "control: a zero-width wrapper squeezes the panel").toBeGreaterThan(0);
+});
+
+/* M1 review R-1. The midpoint clip measured `--hit-min` by appending a probe
+   box to <body>; the body's MutationObserver saw the append, scheduled another
+   clip, and the page re-measured itself on every animation frame forever.
+   Property: once a page settles, the clip schedules no further frames. It is
+   measured on a renderer-backed fixture that runs the module's own source, so
+   the frames counted are the clip's; the control runs the pre-fix probe (and
+   no record-draining) and must keep scheduling. */
+test("R-1: an idle page schedules no further clip frames once it settles", async ({ page }) => {
+  const { filerBody } = await import("../../src/lib/ui/index.ts");
+  const html = filerBody(
+    { cik: "0001067983", name: "FIXTURE HOLDINGS LLC", latestPeriod: "2026-03-31" } as never,
+    ["2025-12-31", "2026-03-31"], "2026-03-31",
+    { cik: "0001067983", period_of_report: "2026-03-31", position_count: 2, total_value_usd: 2300, null_value_positions: 0, topn_value_usd: 2300, topn_share_bps: 10000, hhi: 7500, flags: [] } as never,
+    [] as never, "2026-05-15", 25, null,
+  );
+  /** Frames whose callback runs the clip, counted over two settled seconds. */
+  const clipFrames = async (source: string): Promise<[number, number]> => {
+    await page.setContent(`<style>${baseStylesheet()}</style><body style="padding:48px 16px">${html}</body>`);
+    await page.evaluate(() => {
+      const w = window as unknown as { __clipFrames: number };
+      w.__clipFrames = 0;
+      const raf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = (f: FrameRequestCallback) => {
+        if (/clipHitAreas|run\(\)/.test(String(f))) w.__clipFrames++;
+        return raf(f);
+      };
+    });
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.addScriptTag({ content: source });
+    await page.waitForTimeout(1000);
+    expect(errors, "the injected clip runs without error").toEqual([]);
+    const a = await page.evaluate(() => (window as unknown as { __clipFrames: number }).__clipFrames);
+    await page.waitForTimeout(1000);
+    const b = await page.evaluate(() => (window as unknown as { __clipFrames: number }).__clipFrames);
+    return [a, b];
+  };
+  const [a, b] = await clipFrames(HIT_AREAS_JS);
+  expect(a, "the counter sees the clip's own frames (fonts, load)").toBeGreaterThan(0);
+  expect(b - a, `after settling, the clip scheduled ${b - a} more frames in a second`).toBe(0);
+  // control: the pre-fix probe, with the run's own records left to fire
+  const PRE_FIX = HIT_AREAS_JS
+    .replace(/function hitMin\(\)[\s\S]*?\n}\n/, `function hitMin() {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;width:var(--hit-min);height:0";
+  document.body.append(probe);
+  const w = probe.getBoundingClientRect().width;
+  probe.remove();
+  return w > 0 ? w : 24;
+}
+`)
+    .replace("observer?.takeRecords();", "");
+  expect(PRE_FIX, "the control really swapped the probe in").toContain("document.body.append(probe)");
+  const [c, d] = await clipFrames(PRE_FIX);
+  expect(d - c, "control: the pre-fix clip keeps re-running every frame").toBeGreaterThan(10);
 });

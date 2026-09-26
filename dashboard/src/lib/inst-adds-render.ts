@@ -22,24 +22,32 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
      `inst-adds.ts`'s declared fields, and `pos` is what makes it singular. */
   const ctx = { scope: "inst-adds-row" };
   const rowKey = `${r.issuer_key}-${pos}`;
+  /* DESIGN-POLISH M1 (R6): the dash and the "partial" qualifier ARE the note
+     triggers (label form), so no glyph widens the cell; the qualifier sits
+     BEFORE the number so every value's last digit stays on the column edge. */
   const value =
     r.delta_value_usd == null
-      ? `<span class="none">—</span>` +
-        note("every contributing delta was undisclosed — never zero", ctx, `${rowKey}-nodelta`)
-      : `${esc(fmtUsd(r.delta_value_usd))}${
+      ? note("every contributing delta was undisclosed — never zero", ctx, `${rowKey}-nodelta`, {
+          trigger: "label",
+          textHtml: `<span class="none">—</span>`,
+          name: "no disclosed value",
+        })
+      : `${
           r.delta_value_is_partial
-            ? ` <span class="mono-note">partial ·‡</span>` +
-              note(
-                "at least one contributing delta was undisclosed and is omitted from this sum",
-                ctx,
-                `${rowKey}-partial`,
-              )
+            ? note("at least one contributing delta was undisclosed and is omitted from this sum", ctx, `${rowKey}-partial`, {
+                trigger: "label",
+                textHtml: `<span class="mono-note">partial ·‡</span>`,
+                name: "partial",
+              }) + " "
             : ""
-        }`;
+        }${esc(fmtUsd(r.delta_value_usd))}`;
   const adder =
     r.top_adder_cik == null
-      ? `<span class="none">—</span>` +
-        note("no contributing manager disclosed a value — never an arbitrary pick", ctx, `${rowKey}-novalue`)
+      ? note("no contributing manager disclosed a value — never an arbitrary pick", ctx, `${rowKey}-novalue`, {
+          trigger: "label",
+          textHtml: `<span class="none">—</span>`,
+          name: "no top adder",
+        })
       : esc(r.top_adder_name ?? `CIK ${r.top_adder_cik}`);
   return (
     `<tr><td class="c-num c-muted">${fmtInt(pos)}</td>` +
@@ -48,10 +56,11 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
        `data-identity-key`, so nothing is lost and it stays copyable. An
        `entity:` key renders no chip at all — a resolved entity is the ordinary
        case, and marking it would flag the absence of a problem. */
-    `<td class="c-issuer">${name}${identityChipHtml(r.issuer_key, ctx, `${rowKey}-identity`)}</td>` +
-    `<td class="c-num">${fmtInt(r.manager_count)}</td>` +
-    `<td class="c-num">${fmtInt(r.new_position_count)}</td>` +
-    `<td class="c-num c-strong">${value}</td>` +
+    `<td class="c-issuer c-flex">${name}${identityChipHtml(r.issuer_key, ctx, `${rowKey}-identity`)}</td>` +
+    // Sortable numeric columns reserve the caret's slot, as their headers do.
+    `<td class="c-num has-marks">${fmtInt(r.manager_count)}</td>` +
+    `<td class="c-num has-marks">${fmtInt(r.new_position_count)}</td>` +
+    `<td class="c-num c-strong has-marks">${value}</td>` +
     `<td class="c-filer c-secondary">${adder}</td></tr>`
   );
 }

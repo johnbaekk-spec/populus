@@ -198,54 +198,65 @@ export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow)
      on the row's CIK — one row per CIK per rendered table, so it is singular
      by construction. */
   const nctx = { scope: "inst-index-row" };
+  /* DESIGN-POLISH M1 (R6): each note's trigger is the text it explains (the
+     label form), so no glyph widens a numeric cell. The reference row's
+     period-and-HHI note rides on the value itself; the "+N null" qualifier
+     sits BEFORE the value so every value's last digit stays on the edge. */
+  const periodText = `Reporting period ${r.period}. HHI ${r.hhi == null ? r.hhiNote : fmtInt(r.hhi) + " bps"}.`;
   const valueCell =
     r.value == null
-      ? `<span class="none">n/a ·§</span>` +
-        note(`no period-correct value for ${r.period} — never zero-filled`, nctx, `${r.cik}-period`)
-      : esc(fmtUsd(r.value));
+      ? note(
+          `no period-correct value for ${r.period} — never zero-filled` + (r.reference ? `. ${periodText}` : ""),
+          nctx,
+          `${r.cik}-period`,
+          { trigger: "label", textHtml: `<span class="none">n/a ·§</span>`, name: "n/a" },
+        )
+      : r.reference
+        ? note(periodText, nctx, `${r.cik}-period`, { trigger: "label", textHtml: esc(fmtUsd(r.value)) })
+        : esc(fmtUsd(r.value));
   const nullNote =
     r.nullValuePositions != null && r.nullValuePositions > 0
-      ? ` <span class="mono-note">+${fmtInt(r.nullValuePositions)} null</span>` +
-        note(
+      ? note(
           "positions whose value did not parse — excluded from the sum, surfaced beside it",
           nctx,
           `${r.cik}-nullvalue`,
-        )
+          { trigger: "label", textHtml: `<span class="mono-note">+${fmtInt(r.nullValuePositions)} null</span>` },
+        ) + " "
       : "";
   const hhiCell =
     r.hhi == null
-      ? `<span class="none">n/a ·§</span>` + note(r.hhiNote, nctx, `${r.cik}-hhi`)
+      ? note(r.hhiNote, nctx, `${r.cik}-hhi`, { trigger: "label", textHtml: `<span class="none">n/a ·§</span>`, name: "n/a" })
       : `${fmtInt(r.hhi)}`;
   const typing = r.typing ?? null;
   const typeCell =
     typing === null
-      ? `<span class="none">—</span>` +
-        note(
+      ? note(
           "not in the curated registry — this build types a curated subset, not the population",
           nctx,
           `${r.cik}-untyped`,
+          { trigger: "label", textHtml: `<span class="none">—</span>`, name: "no type" },
         )
       : `<span class="mgr-chip" data-type="${esc(typing.manager_type)}">${esc(
           MANAGER_TYPE_LABELS[typing.manager_type] ?? typing.manager_type,
         )}</span>${typing.notable ? ` <span class="mgr-chip mgr-chip-notable">notable</span>` : ""}`;
   if (r.reference) {
     return `<tr data-mgr-type="${esc(typing?.manager_type ?? "")}" data-mgr-notable="${typing?.notable ? "1" : "0"}">` +
-      `<td class="c-filer">${nameCellHtml(r, filerHrefOf(r))} <span class="design-directory-type">${typeCell}</span></td>` +
+      `<td class="c-filer c-flex">${nameCellHtml(r, filerHrefOf(r))} <span class="design-directory-type">${typeCell}</span></td>` +
       `<td class="c-num mono-id">${esc(r.cik)}</td>` +
-      `<td class="c-num c-strong">${valueCell}${nullNote}${note(`Reporting period ${r.period}. HHI ${r.hhi == null ? r.hhiNote : fmtInt(r.hhi) + " bps"}.`, nctx, `${r.cik}-period`)}</td>` +
-      `<td class="c-num">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
+      `<td class="c-num c-strong has-marks">${nullNote}${valueCell}</td>` +
+      `<td class="c-num has-marks">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
       `<td class="c-num">${r.top5Share == null ? "—" : (r.top5Share / 100).toFixed(1) + "%"}</td>` +
-      `<td>${r.changeHtml ?? "—"}</td></tr>`;
+      `<td class="c-secondary">${r.changeHtml ?? "—"}</td></tr>`;
   }
   return (
     `<tr data-mgr-type="${esc(typing?.manager_type ?? "")}" data-mgr-notable="${
       typing?.notable ? "1" : "0"
-    }"><td class="c-filer">${nameCellHtml(r, filerHrefOf(r))}</td>` +
+    }"><td class="c-filer c-flex">${nameCellHtml(r, filerHrefOf(r))}</td>` +
     `<td class="c-type">${typeCell}</td>` +
     `<td class="c-num">${esc(r.period)}</td>` +
-    `<td class="c-num c-strong">${valueCell}${nullNote}</td>` +
-    `<td class="c-num">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
-    `<td class="c-num">${hhiCell}</td>` +
+    `<td class="c-num c-strong has-marks">${nullNote}${valueCell}</td>` +
+    `<td class="c-num has-marks">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
+    `<td class="c-num has-marks">${hhiCell}</td>` +
     `<td class="c-num">${r.changeHtml ?? ""}</td>` +
     `<td class="c-num c-muted mono-id">CIK ${esc(r.cik)}</td></tr>`
   );
@@ -296,7 +307,7 @@ export function instIndexBodyHtml(
   // The separator spans the table's ACTUAL column count, derived from the
   // one column contract rather than a literal that goes stale when a column is
   // added — which is exactly what happened when the directory grew to eight.
-  const span = INST_INDEX_HEADS.length;
+  const span = rows.some((r) => r.reference) ? DESIGN_INST_INDEX_HEADS.length : INST_INDEX_HEADS.length;
   const total = ranked.length + unranked.length;
   const limit = compact ?? total;
   const rankedShown = ranked.slice(0, limit);
