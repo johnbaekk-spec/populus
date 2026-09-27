@@ -49,6 +49,15 @@ interface RootBinding {
   rows: LeaderRow[];
   /** collapsed → the compact slice; expanded → every row */
   expanded: boolean;
+  /** R13 (DESIGN-POLISH M2, R36): the rows currently offered. Each press of
+      "Show 50 more" adds COMPACT_STEP; the last press shows every row; the
+      collapse control returns to the compact slice. The label and the rows
+      it reveals therefore always agree. */
+  limit: number;
+  /** A "Show 50 more" pressed before the dataset arrived, past the rows the
+      server prefetched: it WAITS (the button is `aria-busy`) and its step lands
+      on delivery, or is withdrawn when the dataset fails (review R2-1). */
+  morePending?: boolean;
   disclosure?: HTMLElement | null;
   disclosureBtn?: HTMLElement | null;
   noun?: string;
@@ -121,6 +130,7 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
       kind,
       rows: [],
       expanded: false,
+      limit: compactLimit,
       state: { ...initial },
       repaint: () => {},
     };
@@ -150,7 +160,7 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
            the marker no longer carries an href at all and the server and the
            client are identical again by having one fewer thing to agree on. */
         return rankingRootHtml(binding.rows, state.key as CongressSortKey, state.dir, kind, ctx, {
-          compact: binding.expanded ? undefined : compactLimit,
+          compact: binding.expanded ? undefined : binding.limit,
           prefetch: COMPACT_STEP,
         }).html;
       },
@@ -211,27 +221,73 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     binding.disclosureBtn = btn;
     binding.noun = wrap.dataset.compactNoun ?? "rows";
     btn?.addEventListener("click", () => {
-      binding.expanded = !binding.expanded;
+      const total = totalOf(binding);
+      if (binding.expanded || binding.limit >= total) {
+        // The collapse control: back to the compact slice.
+        binding.expanded = false;
+        binding.limit = compactLimit;
+        setMorePending(binding, false);
+      } else if (binding.rows.length === 0) {
+        /* R13, before the dataset arrives: the server-rendered rows past the
+           compact slice are already in the DOM, hidden, and revealing them is
+           the first "Show 50 more" — nothing is downloaded for it. Rows past
+           the prefetched ones need the dataset. A press that asks for them
+           WAITS: the limit stays at the rows on screen, so the count never
+           states rows that are not there ("1–110 of 833" over 60 rows), the
+           button is busy, and the step lands on delivery (receiveRows) or is
+           withdrawn if the dataset fails (feedSettled) — review R2-1. */
+        const avail = Math.min(total, compactLimit + prefetchedOf(binding));
+        if (binding.limit < avail) {
+          binding.limit = Math.min(avail, binding.limit + COMPACT_STEP);
+          binding.expanded = binding.limit >= total;
+        } else {
+          setMorePending(binding, true);
+        }
+      } else {
+        // "Show 50 more" adds one step; the last step shows every row.
+        binding.limit = Math.min(total, binding.limit + COMPACT_STEP);
+        binding.expanded = binding.limit >= total;
+      }
       if (binding.rows.length === 0) {
-        /* R13: before the dataset arrives the server-rendered rows past the
-           compact slice are already in the DOM, hidden. Revealing them is the
-           whole "Show 50 more"; nothing is downloaded for it. Rows beyond the
-           prefetched fifty need the dataset, which is requested here so a
-           reader who keeps going is not left at a dead control. */
-        binding.el.querySelectorAll<HTMLElement>("tr[data-compact-hidden]").forEach((tr) => {
-          tr.hidden = !binding.expanded;
-        });
-        if (binding.expanded) requestRows();
+        revealPrefetched(binding);
+        if (binding.limit > compactLimit || binding.morePending) requestRows();
       } else {
         binding.repaint();
       }
       syncDisclosure(binding);
     });
-    // Do NOT sync here. At bind time `rows` is empty, so syncing would
-    // compute total=0, hide the control AND hide the server-rendered terminus —
-    // deleting honesty content the SSR view legitimately published, before any
-    // data has arrived to justify it. The first sync happens once rows exist.
+    /* Sync NOW, from the server's own total (`data-compact-total`) — the rows
+       have not arrived, and `syncDisclosure` reads the element's total until
+       they do. This reveals the button beside the count the server published
+       (R36: after load every disclosure with rows held back has a working
+       toggle); it never hides the published count. */
+    syncDisclosure(binding);
   });
+
+  /** Rows the server rendered past the compact slice (hidden until pressed). */
+  function prefetchedOf(b: RootBinding): number {
+    return b.el.querySelectorAll("tr[data-compact-hidden]").length;
+  }
+
+  /** Before delivery: show exactly the prefetched rows the limit offers. */
+  function revealPrefetched(b: RootBinding): void {
+    const extra = b.limit - compactLimit;
+    b.el.querySelectorAll<HTMLElement>("tr[data-compact-hidden]").forEach((tr, i) => {
+      tr.hidden = i >= extra;
+    });
+  }
+
+  /** A press waiting for the dataset says so on its button (`aria-busy`). */
+  function setMorePending(b: RootBinding, on: boolean): void {
+    b.morePending = on;
+    if (on) b.disclosureBtn?.setAttribute("aria-busy", "true");
+    else b.disclosureBtn?.removeAttribute("aria-busy");
+  }
+
+  /** The table's row count: its delivered rows, or the server's own total. */
+  function totalOf(b: RootBinding): number {
+    return b.rows.length || Number(b.disclosure?.dataset?.compactTotal ?? 0);
+  }
 
   /** Rewrite one root's disclosure from its CURRENT rows.
 
@@ -244,8 +300,9 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
   function syncDisclosure(b: RootBinding): void {
     if (!b.disclosure) return;
     // Before the dataset arrives the server's own total is the truth.
-    const total = b.rows.length || Number(b.disclosure.dataset?.compactTotal ?? 0);
-    const limit = compactLimit;
+    const total = totalOf(b);
+    if (b.limit > total) b.limit = Math.max(compactLimit, total);
+    const limit = b.expanded ? total : b.limit;
     const hidden = Math.max(0, total - limit);
     const noun = b.noun ?? "rows";
     // The bound noun (and whether the total is a bound) is the SERVER's, read
@@ -262,7 +319,10 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
        rows happen to be rendered right now — a range change that drops the
        total to at-or-below it must retract the control rather than leave one
        that expands to the rows already on screen. */
-    if (hidden === 0) b.expanded = false;
+    /* Expanded = every row offered and more than the slice exists; with
+       nothing past the compact slice there is no control at all. */
+    b.expanded = hidden === 0 && total > compactLimit && b.limit > compactLimit;
+    if (total <= compactLimit) b.limit = compactLimit;
     syncCompactDisclosure(b.disclosure, {
       total,
       hidden: b.expanded ? 0 : hidden,
@@ -270,6 +330,9 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
       noun,
       // The range grammar (R8): "1–10 of 833 ranked tickers", the server's words.
       count: { text: compactBoundCountFor(b.disclosure, total - hidden, total, `ranked ${noun}`) },
+      // The expand label counts from the rows on offer ("Show 50 more" while
+      // more than a step is held back); the collapse label names the slice.
+      shown: b.expanded ? compactLimit : limit,
     });
   }
 
@@ -360,6 +423,17 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     if (ok) {
       setPending(null);
       return;
+    }
+    /* The dataset did not load: a "Show 50 more" waiting for it is withdrawn,
+       and every ranking re-syncs to the rows it actually has on screen (review
+       R2-1). A later press asks for the dataset again. */
+    for (const b of bindings.values()) {
+      if (b.rows.length > 0) continue;
+      setMorePending(b, false);
+      b.limit = Math.min(b.limit, compactLimit + prefetchedOf(b));
+      b.expanded = b.limit >= totalOf(b) && totalOf(b) > compactLimit;
+      revealPrefetched(b);
+      syncDisclosure(b);
     }
     const el = document.getElementById("momentum-section-pending");
     if (!el || el.hasAttribute("hidden")) return;
@@ -487,6 +561,22 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     // paints now, over the delivered rows.
     for (const rootId of sortPending) bindings.get(rootId)?.repaint();
     sortPending.clear();
+    /* A "Show 50 more" pressed before delivery past the prefetched rows was
+       waiting (R2-1): its one step lands now. Every root the reader expanded
+       paints at the limit the reader chose. */
+    for (const b of [momentumBinding, rankedBinding, bucketBinding]) {
+      if (!b) continue;
+      if (b.morePending) {
+        setMorePending(b, false);
+        const total = totalOf(b);
+        b.limit = Math.min(total, b.limit + COMPACT_STEP);
+        b.expanded = b.limit >= total;
+      }
+      if (b.limit > compactLimit) {
+        b.repaint();
+        syncDisclosure(b);
+      }
+    }
     recomputeMomentumIfChanged();
     // The rows are painted, so the control no longer asserts anything
     // it has not shown. Cleared here as well as in `feedSettled` because this

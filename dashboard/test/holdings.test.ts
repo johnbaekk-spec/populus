@@ -62,6 +62,7 @@ import {
   institutionalDataNoteHtml,
   scanBannedWording,
 } from "../src/lib/activity.ts";
+import { filerFootHtml } from "../src/lib/ui/index.ts";
 
 const PAGE = HOLDINGS_PAGE_SIZE;
 
@@ -771,35 +772,59 @@ test("the §5 data_note is the canonical one, with every clause intact", () => {
   assert.ok(note.includes("data-inst-data-note"), "the note is findable on any surface");
 });
 
-test("the component renders the data_note on both surfaces and cannot be asked not to", () => {
+/* DESIGN-POLISH M2 (T2.5, F), rewritten property-first. The property the old
+   pin guarded — the §5 data_note renders on BOTH institutional surfaces and
+   no surface can omit it silently — is kept; the owner of the filer page's
+   copy moved. The holders surface renders it through this component; the
+   filer page renders it ONCE, as its full-width foot, through `filerFootHtml`
+   (so the component's copy is switched off there with `dataNote={false}`, or
+   the page would carry two `id="inst-data-note"` boxes). The prop is therefore
+   legitimate, and what is pinned is WHO may use it: only a page that renders
+   the note itself through `filerFootHtml` may turn the component's copy off. */
+function dataNoteOwnerProblems(pageSource: string): string[] {
+  const out: string[] = [];
+  const mounts = [...pageSource.matchAll(/<HoldingsTable\b([\s\S]*?)\/>/g)].map((m) => m[1]!);
+  if (mounts.length === 0) out.push("the page does not mount the surface");
+  for (const attrs of mounts) {
+    const off = /\bdataNote=\{\s*false\s*\}/.test(attrs);
+    const rendersFoot = /const footHtml = filerFootHtml\(/.test(pageSource) && (pageSource.match(/set:html=\{footHtml\}/g) ?? []).length === 1;
+    if (/\bdataNote=(?!\{\s*false\s*\})/.test(attrs)) out.push("dataNote is set to something other than a literal false");
+    if (off && !rendersFoot) out.push("the component's note is off and the page does not render it once through filerFootHtml");
+  }
+  return out;
+}
+
+test("the §5 data_note renders on both surfaces — the holders surface through the component, the filer page once at its foot — and no surface omits it silently", () => {
   const src = readFileSync(
     path.resolve(import.meta.dirname, "..", "src", "components", "HoldingsTable.astro"),
     "utf-8",
   );
-  // A CALL SITE in the template half, not a substring anywhere in the file: the
-  // literal "institutionalDataNoteHtml()" also appears in a prose comment at the
-  // top of this component, so `src.includes(...)` stayed true after the render
-  // line was deleted — the deletion broke every institutional page and broke no
-  // test. (Presence in the SHIPPED bytes is pinned in test/post/, over real
-  // rendered HTML; this pins the source shape.)
+  // A CALL SITE in the template half, not a substring anywhere in the file (a
+  // prose comment at the top mentions the function; a deletion of the render
+  // line once broke every institutional page and no test).
   const template = src.split("---").slice(2).join("---");
   assert.match(
     template,
-    /set:html=\{\s*institutionalDataNoteHtml\(\)\s*\}/,
-    "the component must RENDER the canonical note — a mention in a comment is not a render",
+    /\{props\.dataNote !== false && <Fragment set:html=\{\s*institutionalDataNoteHtml\(\)\s*\} \/>\}/,
+    "the component RENDERS the canonical note unless the page renders it itself",
   );
-  assert.ok(
-    !/data[_-]?note.*\?|hideNote|showNote/i.test(src),
-    "no prop can switch the note off (checked over the WHOLE component: the note " +
-      "renders in the template half, so scanning only the frontmatter missed it)",
-  );
-  for (const page of [
-    "pages/institutional/filers/[cik].astro",
-    "pages/institutional/tickers/[t]/holders.astro",
-  ]) {
-    const text = readFileSync(path.resolve(import.meta.dirname, "..", "src", page), "utf-8");
-    assert.ok(text.includes("<HoldingsTable"), `${page} mounts the surface`);
-  }
+  assert.ok(!/hideNote|showNote/i.test(src), "no second switch exists");
+
+  const pageText = (page: string): string => readFileSync(path.resolve(import.meta.dirname, "..", "src", page), "utf-8");
+  const holders = pageText("pages/institutional/tickers/[t]/holders.astro");
+  const filer = pageText("pages/institutional/filers/[cik].astro");
+  assert.deepEqual(dataNoteOwnerProblems(holders), [], "the holders page");
+  assert.doesNotMatch(holders, /dataNote=/, "the holders surface keeps the component's note");
+  assert.deepEqual(dataNoteOwnerProblems(filer), [], "the filer page");
+  assert.match(filer, /dataNote=\{false\}/, "the filer page renders the note at its foot instead");
+  // the filer page's foot part carries the note exactly once
+  assert.equal((filerFootHtml("0001067983", "F").match(/id="inst-data-note"/g) ?? []).length, 1);
+
+  // controls: a page that turns the note off without rendering the foot, and
+  // one that switches it with an expression, are each caught
+  assert.ok(dataNoteOwnerProblems(holders.replace("<HoldingsTable", "<HoldingsTable dataNote={false}")).length > 0, "control: off without the foot");
+  assert.ok(dataNoteOwnerProblems(filer.replace("dataNote={false}", "dataNote={hide}")).length > 0, "control: an expression switch");
+  assert.ok(dataNoteOwnerProblems(filer.replace(/<Fragment set:html=\{footHtml\} \/>/, "")).length > 0, "control: the foot dropped");
 });
 
 test("dual dates AND the elapsed lag ride on every rendered row", () => {

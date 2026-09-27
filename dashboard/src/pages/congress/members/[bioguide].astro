@@ -64,7 +64,11 @@ const description =
   <script>
     import { initEntityPage } from "../../../scripts/entity-client";
     import { initNotes } from "../../../scripts/notes";
+    import { initDomDisclosures } from "../../../scripts/inst-index-client";
     initEntityPage();
+    /* R36: the member page's DOM-backed compact tables (net disclosed flow by
+       ticker, filing history) are revealed and re-synced by the one binder. */
+    initDomDisclosures();
     /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an
        `innerHTML` replacement — a sort repaint, a page change, a period switch —

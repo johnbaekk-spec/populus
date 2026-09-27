@@ -245,8 +245,9 @@
 /* ---------- containers (carried forward from the real-tables rules) ---------- */
 
 .table-scroll {
-  /* its own stacking context: inside it a sticky head sits above the rows' note
-     triggers; outside it a band-head trigger's hit area reaches over the table */
+  /* its own stacking context: inside it a sticky identity column sits above
+     the rows' note triggers that scroll beneath it; outside it a band-head
+     trigger's hit area reaches over the table (no table head sticks since M2) */
   isolation: isolate;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -304,6 +305,14 @@
 .etable[data-sticky-first] tbody tr:hover > td:first-child {
   background: var(--raised);
 }
+/* The filer's reported positions keep their ISSUER column put while the
+   numbers scroll. Keyed to the column's role (`.c-pos`), never its position:
+   the removed Kind column moved the issuer from third to second (T2.1), and a
+   removed Ticker column moves it again. Child combinators, so the group
+   expander's nested table is not sticky. */
+.etable[data-sticky-issuer] > * > tr > .c-pos { position: sticky; left: 0; z-index: 2; background: var(--paper); border-right: 1px solid var(--rule); }
+.etable[data-sticky-issuer] > thead > tr > .c-pos { z-index: 3; }
+.etable[data-sticky-issuer] > tbody > tr:hover > .c-pos { background: var(--raised); }
 
 /* ---------- the table, the header row, the body row ---------- */
 
@@ -471,7 +480,8 @@ table:is(.etable, .feed-table.reference-feed) {
 }
 /* Carried forward: the row-level display rules the old real-tables block held. */
 .etable .c-muted { color: var(--ink3); }
-.etable .c-strong { font-weight: 600; }
+/* `.c-strong` is kept as a hook but carries no weight: the approved preview
+   and the canvas draw every number at mono 500 (T2.9 canvas comparison). */
 .etable .c-buy { color: var(--kind-buy-text); }
 .etable .c-sell { color: var(--kind-sell-text); }
 .etable .c-side { white-space: nowrap; }
@@ -853,7 +863,7 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .si-table .si-rule-text { font: 400 var(--fs-cell)/1.4 var(--sans); color: var(--ink); }
 .si-table .si-why { font: 400 var(--fs-cell)/1.4 var(--sans); color: var(--ink3); }
 .si-table .si-hits { font-weight: 600; font-family: var(--mono); }
-.si-table .si-status { font: 500 var(--fs-meta) var(--mono); letter-spacing: .06em; white-space: nowrap; }
+.si-table .si-status { font: 500 var(--fs-meta) var(--mono); letter-spacing: 0; white-space: nowrap; }
 .si-status-active { color: var(--kind-new-text); }
 .si-status-withheld { color: var(--kind-sell-text); }
 .si-table .si-mag { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -861,7 +871,6 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .si-lag { color: var(--ink3); }
 .si-late { color: var(--amber); font-weight: 600; }
 .si-table .si-what { white-space: nowrap; overflow: clip; overflow-clip-margin: var(--hit-half); text-overflow: ellipsis; }
-.si-table .si-what .si-kind { display: inline; margin-right: 10px; }
 .si-table .si-what details.si-expand,
 .si-table .si-what details.si-expand > summary { display: inline; }
 .si-table .si-what details.si-expand > summary {
@@ -869,8 +878,22 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
   color: var(--ink3);
   cursor: pointer;
 }
-.si-table .si-what details.si-expand[open] { display: block; white-space: normal; }
-.si-table .si-expand-body { font: 400 var(--fs-note)/1.5 var(--sans); margin: 4px 0 0; white-space: normal; }
+/* An opened evidence lays out at the FULL table width on its own row (R11,
+   H-14): the body is the row after its hit, shown while that hit's disclosure
+   is open — a one-line row never clips its receipts. A hit HELD BACK by its
+   compact disclosure (`[data-compact-extra]` in a collapsed tbody) is hidden,
+   and so is its evidence, open or not: shown under the visible hits, a held
+   hit's receipts would read as another hit's (review R2-2 / C2-1). The binder
+   also closes it on collapse. */
+.si-table > tbody > tr.si-evidence-row { display: none; }
+.si-table > tbody > tr.si-hit:has(details.si-expand[open]) + tr.si-evidence-row:not(tbody[data-collapsed="true"] > [data-compact-extra]) { display: table-row; }
+.si-table > tbody > tr.si-evidence-row > td { white-space: normal; padding-top: 4px; padding-bottom: 12px; }
+.si-table .si-expand-body { font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink2); margin: 0; white-space: normal; }
+.si-table .si-expand-body p,
+.si-table .si-expand-body .si-receipts { margin: 0 0 4px; }
+/* The receipts read on one line after their label (a <div>, never inside a
+   <p>: review C2-6). */
+.si-table .si-expand-body .si-receipts .cell-src { display: inline; text-align: left; }
 .si-table td.si-empty { white-space: normal; color: var(--ink3); font: 400 var(--fs-note)/1.6 var(--sans); padding-top: 22px; padding-bottom: 22px; }
 /* bar-list values (the lag distribution, the hit rate, the agreement rows) */
 .si-lag-name { font: 500 var(--fs-small)/1.3 var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -931,15 +954,20 @@ table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
 }
 .panel-note {
   font: 500 var(--fs-meta)/1.4 var(--mono);
-  letter-spacing: 0.06em;
+  /* the design's band-head meta is untracked (T2.9 canvas comparison) */
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ink-meta);
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.panel-head > :is(.seg, .chips, .mgr-chips, .ranking-options, .si-watch-controls) {
+.panel-head > :is(.seg, .chips, .mgr-chips, .ranking-options, .si-watch-controls, .head-controls) {
   margin-left: auto;
 }
+/* A band head that carries two segmented groups (the filer's period and kind
+   segments): one right-aligned row that wraps, each group with its label. */
+.head-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 16px; }
+.head-control { display: inline-flex; align-items: center; gap: 8px; }
 /* Table foot: the count clause, then the pager or Show-all on the same line.
    The bound a compact table states about itself is server-rendered VISIBLE;
    only its button waits for a script (`[hidden]`). Nothing here may hide
@@ -967,6 +995,9 @@ table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
    beside it are separated by the ledger's middle dot. */
 .compact-bound-count:not([hidden]):not(:empty) + .compact-bound-extra::before { content: " · "; }
 .view-note { font: 400 var(--fs-note)/1.6 var(--sans); color: var(--ink3); }
+/* R12: the one-line reason a removed column leaves in its table's foot — an
+   honesty line (it says what is not shown and why), on the fold sweep's list. */
+.table-foot-reason { margin: 0; padding: 8px 0 0; font: 400 var(--fs-note)/1.6 var(--sans); color: var(--ink3); }
 .view-note a { font: inherit; }
 
 /* ---------- controls: the segmented group, pagers, tags ---------- */
@@ -977,8 +1008,11 @@ table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
    item's text identifies it). It WRAPS at every width: a nowrap group wider
    than its band (the manager-type chips, ~857px) pushed the page sideways at
    721–920px (review C-3). The two watch lists are not segmented controls —
-   each chip is its own link or removable tag — and are styled below. */
-:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) {
+   each chip is its own link or removable tag — and are styled below. The
+   exclusion sits in `:where()`, so the group rule weighs ONE class (0,1,0): a
+   page's own placement of a group (`.mgr-chips` spacing, a band head pushing
+   its control right) out-ranks it (M1 delta review follow-up 2). */
+:is(.seg, .chips, .mgr-chips):where(:not(.si-watch-chips, [id="watch-chips"])) {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: stretch;
@@ -992,9 +1026,10 @@ table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
   width: auto;
   vertical-align: middle;
 }
-:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) > :is(button, a) {
+:is(.seg, .chips, .mgr-chips):where(:not(.si-watch-chips, [id="watch-chips"])) > :is(button, a) {
   font: 500 var(--fs-control)/1 var(--mono);
-  letter-spacing: 0.02em;
+  /* untracked, as the design's segment items are (T2.9) */
+  letter-spacing: 0;
   text-transform: none;
   text-decoration: none;
   padding: 6px 12px;
@@ -1016,7 +1051,7 @@ table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
      (review C-10) */
   outline-offset: -3px;
 }
-:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) > :first-child {
+:is(.seg, .chips, .mgr-chips):where(:not(.si-watch-chips, [id="watch-chips"])) > :first-child {
   border-left: 0;
 }
 /* A watch list: separate chips, each a link (/signals) or a tag with its own
@@ -1046,7 +1081,7 @@ table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
   white-space: nowrap;
 }
 :is(.si-watch-chips, [id="watch-chips"]) > .chip a { color: var(--accent); text-decoration: none; }
-:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) > :is([aria-pressed="true"], [aria-current="true"], [aria-current="page"], [aria-checked="true"], .chip-active) {
+:is(.seg, .chips, .mgr-chips):where(:not(.si-watch-chips, [id="watch-chips"])) > :is([aria-pressed="true"], [aria-current="true"], [aria-current="page"], [aria-checked="true"], .chip-active) {
   background: var(--seg-fill);
   color: var(--seg-text-active);
   box-shadow: inset 0 -2px 0 var(--seg-cue);
@@ -1075,7 +1110,7 @@ table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
 .pager-btn,
 .compact-toggle {
   font: 500 var(--fs-control)/1 var(--mono);
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   padding: 6px 12px;
   min-height: var(--hit-min);
   min-width: var(--hit-min);

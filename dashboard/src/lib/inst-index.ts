@@ -15,7 +15,7 @@
    reason, and n/a rows are excluded from HHI ordering — bucketed after,
    never given a sentinel. */
 
-import { esc, fmtInt, fmtUsd, note } from "./format.ts";
+import { esc, fmtInt, fmtUsd, note, presentColumns, type PresentColumns } from "./format.ts";
 // The directory body renderer lives here now and needs the filer href
 // builder the page and the island both used.
 import { filerHref } from "./holdings.ts";
@@ -193,7 +193,33 @@ function nameCellHtml(r: InstIndexRow, href: string): string {
   );
 }
 
-export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow) => string): string {
+/** R12 (DESIGN-POLISH M2; review R2-6): the reference directory's columns
+    over its FULL collection — every filer any sort, search or chip can show —
+    through the ONE presence function. "Top-5" is derived: it exists only when
+    the build's concentration slices hold five positions and some filer carries
+    a share; otherwise it is removed and the table foot says why. The set
+    travels in `data-columns`, which the client re-render reads back. */
+export function directoryColumns(rows: readonly InstIndexRow[], topn: number): PresentColumns {
+  return presentColumns(rows, [
+    { key: "filer", always: true },
+    { key: "cik", always: true },
+    { key: "value", always: true },
+    { key: "positions", always: true },
+    {
+      key: "top5",
+      hasValue: (r) => topn === 5 && r.top5Share != null,
+      emptyReason:
+        topn === 5
+          ? "Not shown: the top-five share — no filer's concentration slice in this build carries one."
+          : `Not shown: the top-five share — this build's concentration slices hold the top ${fmtInt(topn)} positions, not five.`,
+    },
+    { key: "latest-notable", always: true },
+  ]);
+}
+
+/** `columns`: the table's `data-columns` set (reference rows). Without it the
+    row falls back to whether it carries the field — the pre-M2 contract. */
+export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow) => string, columns: readonly string[] | null = null): string {
   /* Four tooltip-only explanations become notes, keyed
      on the row's CIK — one row per CIK per rendered table, so it is singular
      by construction. */
@@ -242,10 +268,18 @@ export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow)
   if (r.reference) {
     return `<tr data-mgr-type="${esc(typing?.manager_type ?? "")}" data-mgr-notable="${typing?.notable ? "1" : "0"}">` +
       `<td class="c-filer c-flex">${nameCellHtml(r, filerHrefOf(r))} <span class="design-directory-type">${typeCell}</span></td>` +
-      `<td class="c-num mono-id">${esc(r.cik)}</td>` +
+      /* the ledger's cell role (mono 500 --fs-cell), muted — never the 12px
+         .mono-id, which the canvas comparison measured once the directory
+         rendered rows (DESIGN-POLISH M2 review Q2-8) */
+      `<td class="c-num c-muted">${esc(r.cik)}</td>` +
       `<td class="c-num c-strong has-marks">${nullNote}${valueCell}</td>` +
       `<td class="c-num has-marks">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
-      `<td class="c-num">${r.top5Share == null ? "—" : (r.top5Share / 100).toFixed(1) + "%"}</td>` +
+      /* R12 (DESIGN-POLISH M2): the Top-5 cell renders exactly when the
+         table's column set holds it (`directoryColumns`, read back from
+         `data-columns` by the client). */
+      ((columns ? columns.includes("top5") : r.top5Share !== undefined)
+        ? `<td class="c-num">${r.top5Share == null ? "—" : (r.top5Share / 100).toFixed(1) + "%"}</td>`
+        : "") +
       `<td class="c-secondary">${r.changeHtml ?? "—"}</td></tr>`;
   }
   return (
@@ -297,6 +331,9 @@ export function instIndexBodyHtml(
     notableOnly: false,
   },
   compact?: number,
+  /** the reference table's `data-columns` set (server: `directoryColumns`;
+      client: read back off the table) */
+  columns: readonly string[] | null = null,
 ): { html: string; note: string; total: number; shown: number } {
   // Chips, search and sort are ONE pipeline. Chips used to hide <tr>s
   // after render, so any sort or search rebuilt the tbody and silently
@@ -307,20 +344,22 @@ export function instIndexBodyHtml(
   // The separator spans the table's ACTUAL column count, derived from the
   // one column contract rather than a literal that goes stale when a column is
   // added — which is exactly what happened when the directory grew to eight.
-  const span = rows.some((r) => r.reference) ? DESIGN_INST_INDEX_HEADS.length : INST_INDEX_HEADS.length;
+  const span = rows.some((r) => r.reference)
+    ? columns?.length ?? DESIGN_INST_INDEX_HEADS.length - (rows.some((r) => r.top5Share !== undefined) ? 0 : 1)
+    : INST_INDEX_HEADS.length;
   const total = ranked.length + unranked.length;
   const limit = compact ?? total;
   const rankedShown = ranked.slice(0, limit);
   const unrankedShown = unranked.slice(0, Math.max(0, limit - ranked.length));
   const html =
-    rankedShown.map((r) => instIndexRowHtml(r, href)).join("\n") +
+    rankedShown.map((r) => instIndexRowHtml(r, href, columns)).join("\n") +
     // The stated absence renders whenever the bucket is non-empty, not only
     // when one of its rows survives the compact slice (the same stated-absence
     // rule the other tables follow).
     (unranked.length > 0
       ? `<tr class="unranked-sep"><td colspan="${span}">${fmtInt(unranked.length)} filers have no ` +
         `value for the active sort key — listed below in CIK order, never treated as zero</td></tr>` +
-        unrankedShown.map((r) => instIndexRowHtml(r, href)).join("\n")
+        unrankedShown.map((r) => instIndexRowHtml(r, href, columns)).join("\n")
       : "");
   const active = chips.types.size + (chips.notableOnly ? 1 : 0);
   const note =

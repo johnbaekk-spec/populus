@@ -12,7 +12,14 @@ import Base from "../../../layouts/Base.astro";
 import HoldingsTable from "../../../components/HoldingsTable.astro";
 import { filerAggregateInputs, filerDefaultPeriod, getBuildData, servedPeriods, topFilerCiks } from "../../../lib/data";
 import { filerPeriods } from "../../../lib/inst";
-import { filerBody } from "../../../lib/ui/index.ts";
+import {
+  filerHeadHtml,
+  filerLedgerHtml,
+  filerChangesHtml,
+  filerBookShapeHtml,
+  filerHistoryHtml,
+  filerFootHtml,
+} from "../../../lib/ui/index.ts";
 import { filingWindow } from "../../../lib/derive";
 import { serializeInlineJson } from "../../../lib/inline-json";
 import { concentrationBenchmark } from "../../../lib/inst-analytics";
@@ -72,17 +79,23 @@ const kindsFor = (p: string): { new: number; exit: number } | null => agg.kindsB
 // One producer (filerAggregateInputs) for both routes — the tail payload carries the same.
 const typing = agg.typing;
 
-const bodyHtml = filerBody(
+/* DESIGN-POLISH M2 (F, A-9): DOM order IS the visual order — no `:has()`/
+   `order` grid rules. The page emits the filer's parts in reading order,
+   through the same functions the /e/ driver's `filerBody` composes and the
+   period switch repaints: head + period ledger, provenance, Position changes,
+   band F1 (Reported positions │ Book shape + Filing history), the foot. */
+const opts = { total: deltaTotal, benchmark: benchmarks[period] ?? null, discontinuity: discontinuityFor(period), kinds: kindsFor(period) };
+const headHtml = filerHeadHtml(
   { cik: cik10, name: filer.filer_name, latestPeriod: filer.latest_period },
-  periods,
-  period,
   conc,
-  deltas,
-  latestFiled,
-  inst.topn,
+  typing,
   window,
-  { total: deltaTotal, benchmark: benchmarks[period] ?? null, discontinuity: discontinuityFor(period), kinds: kindsFor(period), typing },
+  filerLedgerHtml(conc, period, deltaTotal, kindsFor(period)),
 );
+const changesHtml = filerChangesHtml(periods, period, conc, deltas, latestFiled, inst.topn, opts);
+const bookShapeHtml = filerBookShapeHtml(conc, inst.topn, period, deltaTotal, benchmarks[period] ?? null);
+const historyHtml = filerHistoryHtml(cik10, periods);
+const footHtml = filerFootHtml(cik10, filer.filer_name);
 
 // Every period's data, embedded for the client-side period selector: the switch
 // re-renders through the SAME filerPeriodSectionHtml the SSR used. `total` rides
@@ -116,9 +129,16 @@ const description =
   active="institutional"
   footer="inst13f"
 >
-  <main class="shell page entity-page">
-    <Fragment set:html={bodyHtml} />
-    <HoldingsTable kind="filer" cik={cik10} filerName={filer.filer_name} period={period} />
+  <main class="shell page entity-page filer-page">
+    <Fragment set:html={headHtml} />
+    <Fragment set:html={changesHtml} />
+    <!-- band F1: the same markup `filerBandHtml` builds, with the holdings
+         component as its left, PRIMARY cell (data-pair-primary, CD-1) -->
+    <div class="design-band design-filer-band">
+      <HoldingsTable kind="filer" cik={cik10} filerName={filer.filer_name} period={period} dataNote={false} pairPrimary />
+      <div class="design-filer-side"><div class="filer-bookshape-root" data-filer-bookshape set:html={bookShapeHtml} /><Fragment set:html={historyHtml} /></div>
+    </div>
+    <Fragment set:html={footHtml} />
     <script is:inline type="application/json" id="filer-period-data" set:html={periodData} />
   </main>
   <script>

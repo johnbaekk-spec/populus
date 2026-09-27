@@ -43,7 +43,7 @@ export class MiniElement {
   parent: MiniElement | null = null;
   /** text nodes are kept as siblings-in-order so textContent is faithful */
   nodes: (MiniElement | string)[] = [];
-  private listeners = new Map<string, (() => void)[]>();
+  private listeners = new Map<string, ((ev?: unknown) => void)[]>();
 
   constructor(tagName: string, attrs: Map<string, string> = new Map()) {
     this.tagName = tagName.toLowerCase();
@@ -103,10 +103,12 @@ export class MiniElement {
     return i > 0 ? this.parent.children[i - 1]! : null;
   }
 
+  /** Selector lists and descendant combinators are honoured (a delegated
+      handler asks `closest("[data-period-chips] [data-period]")`). */
   closest(sel: string): MiniElement | null {
     let node: MiniElement | null = this;
     while (node) {
-      if (matchesCompound(node, sel)) return node;
+      if (matchesSelector(node, sel)) return node;
       node = node.parent;
     }
     return null;
@@ -182,13 +184,29 @@ export class MiniElement {
 
   /* ---------- events ---------- */
 
-  addEventListener(type: string, fn: () => void): void {
+  addEventListener(type: string, fn: (ev?: any) => void): void {
     const list = this.listeners.get(type) ?? [];
     list.push(fn);
     this.listeners.set(type, list);
   }
   click(): void {
     for (const fn of this.listeners.get("click") ?? []) fn();
+  }
+  /** A click that BUBBLES from this element through its ancestors, each
+      listener receiving `{ type, target }` — what a DELEGATED handler needs
+      (`ev.target.closest(...)` on a root that is re-rendered under it).
+      `click()` stays the non-bubbling form the older tests are written to. */
+  bubbleClick(): void {
+    const ev = { type: "click", target: this };
+    for (let n: MiniElement | null = this; n; n = n.parent) for (const fn of [...(n.listeners.get("click") ?? [])]) fn(ev);
+  }
+  /** Focus is not modelled; an island that moves focus after a repaint must not throw. */
+  focus(): void {}
+  /** How many listeners of `type` are attached. A binder that re-attaches on
+      every re-render can look correct to a click test (an odd number of
+      toggles nets one), so "attached exactly once" is asserted by count. */
+  listenerCount(type: string): number {
+    return this.listeners.get(type)?.length ?? 0;
   }
 
   /** internal: used by the parser */
@@ -206,6 +224,22 @@ function* descendants(root: MiniElement): Generator<MiniElement> {
     yield c;
     yield* descendants(c);
   }
+}
+
+/** A selector list of descendant-combinator selectors, matched against `el`
+    itself: the last compound on `el`, each earlier one on some ancestor, in order. */
+function matchesSelector(el: MiniElement, sel: string): boolean {
+  return sel.split(/,(?![^[]*\])/).map((x) => x.trim()).filter(Boolean).some((one) => {
+    const compounds = one.split(/\s+(?![^[]*\])/);
+    if (!matchesCompound(el, compounds[compounds.length - 1]!)) return false;
+    let node = el.parent;
+    for (let i = compounds.length - 2; i >= 0; i--) {
+      while (node && !matchesCompound(node, compounds[i]!)) node = node.parent;
+      if (!node) return false;
+      node = node.parent;
+    }
+    return true;
+  });
 }
 
 /** One compound selector — no combinators. Throws on anything unsupported so a
@@ -279,6 +313,11 @@ export interface MiniDocument {
   getElementById(id: string): MiniElement | null;
   querySelector(sel: string): MiniElement | null;
   querySelectorAll(sel: string): MiniElement[];
+  /** Document-level events, synchronous and non-bubbling — enough for the
+      `populus:rerender` contract, where islands listen on `document` and
+      every client re-render dispatches there. */
+  addEventListener(type: string, fn: (ev: Event) => void): void;
+  dispatchEvent(ev: Event): boolean;
 }
 
 /** Parse a document fragment and install it as `globalThis.document`.
@@ -289,12 +328,22 @@ export interface MiniDocument {
 export function installDom(html: string): { doc: MiniDocument; restore(): void } {
   const documentElement = new MiniElement("body");
   documentElement.innerHTML = html;
+  const docListeners = new Map<string, ((ev: Event) => void)[]>();
   const doc: MiniDocument = {
     documentElement,
     getElementById: (id) =>
       id ? documentElement.querySelectorAll(`#${id}`)[0] ?? null : null,
     querySelector: (sel) => documentElement.querySelector(sel),
     querySelectorAll: (sel) => documentElement.querySelectorAll(sel),
+    addEventListener(type, fn) {
+      const list = docListeners.get(type) ?? [];
+      list.push(fn);
+      docListeners.set(type, list);
+    },
+    dispatchEvent(ev) {
+      for (const fn of [...(docListeners.get(ev.type) ?? [])]) fn(ev);
+      return true;
+    },
   };
   const g = globalThis as unknown as Record<string, unknown>;
   const prevDoc = g.document;

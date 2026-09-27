@@ -108,6 +108,34 @@ viewport or by sink.
    string and the empty-state copy. A threshold filter may never report a
    confident zero while indeterminate rows exist.
 
+6. **One count grammar (DESIGN-POLISH R8, under I5).** Every range count on
+   the site is built by ONE primitive, `rangeOfTotal(first, last, total, noun,
+   { definite })` in `format.ts`, on the server and the client alike: "1–10 of
+   608 tickers", "1–50 of 72,083 transactions". The total is the size of the
+   collection the rows come from. Where it is only a bound the page applies (a
+   page of a paged list, a size-capped embed, a render limit), the count says
+   so with `definite: true` and a noun that names the bound — "1–20 of the 100
+   changes on this page", "1–10 of the 50 newest changes by notable managers
+   shown here" — so it can never read as the collection's size. Ratios and
+   unwindowed counts ("N of M managers" matching a filter) are not ranges and
+   keep their words.
+
+7. **Compact tables have one named binder (DESIGN-POLISH R36).** A table whose
+   full body is in the DOM may show its first N rows (`tbody[data-collapsed]
+   tr[data-compact-extra]`) with the count and a Show-all beside it, and ONLY
+   through the one binder, `initDomDisclosures` (`scripts/inst-index-client.ts`),
+   called by every page that renders such a table. The binder reads the count's
+   total, shown, noun and `definite` off the element on EVERY sync — never once
+   at bind time — and re-syncs on `populus:rerender`, which every client
+   re-render dispatches (page, sort, range and period changes), so after load
+   and after every action the client prints exactly the server's count and the
+   toggle reveals exactly the held rows. Every compact table's N is a fixed
+   default (member flows 20, filing history 12, a filer's reported positions
+   20, the signal hits 12 of their 50-hit page, the Consensus board 10), never
+   tuned to its band partner or to one data build, and never estimated from a
+   cell's height (DESIGN-POLISH M2, coordinator decisions CD-1 and CD-5). No row
+   may be unreachable: a table with no binder is never compacted.
+
 ## Changing this mechanism
 
 Add or amend an invariant here **before** editing the code, and add its test in

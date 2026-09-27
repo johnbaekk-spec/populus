@@ -185,6 +185,23 @@ test("R5: a row renders its traded date exactly once", () => {
 
 /* ---------------- R6: the changes table ---------------- */
 
+const R6_ROW = {
+  cik: "0001067983",
+  position_key: "cusip:037833100",
+  put_call: "LONG",
+  curr_period: "2026-06-30",
+  prev_period: "2026-03-31",
+  change_kind: "trim",
+  prev_value_usd: 1_000_000,
+  curr_value_usd: 400_000,
+  delta_value_usd: -600_000,
+  prev_shares: 1_000,
+  curr_shares: 400,
+  delta_shares: -600,
+  ssh_prnamt_type: "SH",
+  flags: [] as string[],
+} as const;
+
 test("R6: the decisive column is asserted, and it comes before the raw levels", () => {
   /* The table exists to answer "added or trimmed?". That answer lived in the
      EIGHTH of nine columns, behind six numeric ones, so every viewport under
@@ -193,77 +210,73 @@ test("R6: the decisive column is asserted, and it comes before the raw levels", 
 
      The order is pinned here because it is a CONTRACT, not a preference: the
      header and the body cells are twin code paths, and moving one without the
-     other mislabels every column while still rendering a plausible table. */
-  const html = changesTableHtml(
-    [
-      {
-        cik: "0001067983",
-        position_key: "cusip:037833100",
-        put_call: "LONG",
-        curr_period: "2026-06-30",
-        prev_period: "2026-03-31",
-        change_kind: "trim",
-        prev_value_usd: 1_000_000,
-        curr_value_usd: 400_000,
-        delta_value_usd: -600_000,
-        prev_shares: 1_000,
-        curr_shares: 400,
-        delta_shares: -600,
-        ssh_prnamt_type: "SH",
-        flags: [],
-      },
-    ],
-    "2026-06-30",
-    "2026-08-14",
-  );
-  /* RETARGETED — DESIGN-POLISH M1 (T1.9, DOM parse). A header now carries its
-     role class and its note's LABEL trigger (the label text is the button),
-     so the column contract is read from the parsed table rather than matched
-     as `<th scope="col">text</th>`: each header's visible label (note panels
-     excluded), and each body cell's role, in order. The contract itself is
-     unchanged and still asserted exactly — and it is sharper: every header's
-     role class must equal its body cell's, so the twin paths cannot drift. */
-  const root = new MiniElement("body");
-  root.innerHTML = html;
-  const visible = (el: MiniElement): string =>
-    el.nodes
-      .map((n) => (typeof n === "string" ? n : n.classList.contains("note-pop") ? "" : visible(n)))
-      .join("");
-  const ths = root.querySelectorAll("thead th");
-  const headers = ths.map((th) => visible(th).trim());
-  assert.deepEqual(
-    headers,
-    [
-      // R1 (refinement 20260910): the issuer name leads the cell; the grain
-      // note stays on the row, so the header is simply "Position".
-      "Position",
-      "Change",
-      "Δ value",
-      "Δ shares",
-      "Prev value",
-      "Curr value",
-      "Prev shares",
-      "Curr shares",
-      "Flags",
-    ],
-    "the change verdict and its two deltas must precede the four raw levels",
-  );
-  assert.ok(headers.indexOf("Change") < headers.indexOf("Prev value"), "verdict before levels");
-  assert.ok(headers.indexOf("Change") <= 1, "the verdict sits beside the identity");
+     other mislabels every column while still rendering a plausible table.
 
-  /* the body's cell classes must line up with those headers, in that order */
-  const row = root.querySelectorAll("tbody tr").find((tr) => tr.children[0]?.classList.contains("c-pos"));
-  assert.ok(row, "a data row rendered");
-  const classes = row!.children.map((td) => (td.getAttribute("class") ?? "").split(/\s+/)[0]!);
-  assert.deepEqual(
-    classes,
-    ["c-pos", "c-chip", "c-num", "c-num", "c-num", "c-num", "c-num", "c-num", "c-flags"],
-    "the body cells drifted from the header order — the twin path was not moved",
-  );
-  assert.equal(headers.length, classes.length, "every header has exactly one cell");
-  const role = (el: MiniElement): string =>
-    (el.getAttribute("class") ?? "").split(/\s+/).filter((c) => /^c-(?:num|pos|chip|kind|flex|flags)$/.test(c)).sort().join(" ");
-  assert.deepEqual(ths.map(role), row!.children.map(role), "each header carries its column's role");
+     DESIGN-POLISH M2 (T2.1, R12; milestone map `m1-layout.test.ts:224-252`):
+     the Flags column renders BY PRESENCE — only when some row of the table's
+     collection still shows a flag after hoisting — so the column set is read
+     from the table's own `data-columns`, and the order contract is asserted
+     over the columns it lists. Both cases are rendered: a collection with a
+     flagged row (Flags present, on every row), and one without (Flags removed,
+     its reason printed in the table foot). */
+  const flagged = { ...R6_ROW, position_key: "cusip:594918104", flags: ["shares_unit_mismatch"] };
+  for (const [rows, expectFlags] of [
+    [[R6_ROW, flagged], true],
+    [[R6_ROW], false],
+  ] as const) {
+    const html = changesTableHtml(rows as never, "2026-06-30", "2026-08-14");
+    const root = new MiniElement("body");
+    root.innerHTML = html;
+    const visible = (el: MiniElement): string =>
+      el.nodes
+        .map((n) => (typeof n === "string" ? n : n.classList.contains("note-pop") ? "" : visible(n)))
+        .join("");
+    const table = root.querySelector("table[data-columns]")!;
+    const listed = table.getAttribute("data-columns")!.split(",");
+    assert.equal(listed.includes("flags"), expectFlags, `Flags is listed only when a row carries a flag (${expectFlags})`);
+    const ths = root.querySelectorAll("thead th");
+    assert.deepEqual(ths.map((th) => th.getAttribute("data-col")), listed, "every header is a listed column, in order");
+    const headers = ths.map((th) => visible(th).trim());
+    assert.deepEqual(
+      headers,
+      [
+        // R1 (refinement 20260910): the issuer name leads the cell; the grain
+        // note stays on the row, so the header is simply "Position".
+        "Position",
+        "Change",
+        "Δ value",
+        "Δ shares",
+        "Prev value",
+        "Curr value",
+        "Prev shares",
+        "Curr shares",
+        ...(expectFlags ? ["Flags"] : []),
+      ],
+      "the change verdict and its two deltas must precede the four raw levels",
+    );
+    assert.ok(headers.indexOf("Change") < headers.indexOf("Prev value"), "verdict before levels");
+    assert.ok(headers.indexOf("Change") <= 1, "the verdict sits beside the identity");
+
+    /* the body's cell classes must line up with those headers, in that order,
+       on EVERY row — the unflagged row keeps its (empty) Flags cell */
+    const dataRows = root.querySelectorAll("tbody tr").filter((tr) => tr.children[0]?.classList.contains("c-pos"));
+    assert.equal(dataRows.length, rows.length, "every row rendered");
+    const role = (el: MiniElement): string =>
+      (el.getAttribute("class") ?? "").split(/\s+/).filter((c) => /^c-(?:num|pos|chip|kind|flex|flags)$/.test(c)).sort().join(" ");
+    for (const row of dataRows) {
+      const classes = row.children.map((td) => (td.getAttribute("class") ?? "").split(/\s+/)[0]!);
+      assert.deepEqual(
+        classes,
+        ["c-pos", "c-chip", "c-num", "c-num", "c-num", "c-num", "c-num", "c-num", ...(expectFlags ? ["c-flags"] : [])],
+        "the body cells drifted from the header order — the twin path was not moved",
+      );
+      assert.equal(headers.length, classes.length, "every header has exactly one cell");
+      assert.deepEqual(ths.map(role), row.children.map(role), "each header carries its column's role");
+    }
+    const reason = root.querySelector("p.table-foot-reason");
+    if (expectFlags) assert.equal(reason, null, "a kept column prints no reason");
+    else assert.equal(visible(reason!).trim(), "Flags: no row carries a flag.", "the removed honesty column states why");
+  }
 });
 
 test("R6: the scroll cue exists at every width, not only inside the fold", () => {

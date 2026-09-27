@@ -12,11 +12,15 @@
    is then stale and must advance). Every other check runs per route and per
    width and must be green.
 
-   G2 is not pending in any milestone. It instead EXEMPTS, by selector, the
-   three scroll containers M2 removes (plan, Tasks: "It is a selector
-   exemption, not test.fail(), because those boxes scroll only when their
-   table outgrows them, so a test.fail() could flip on the data"). T2.5 empties
-   the M2 list. */
+   G2 is not pending in any milestone. In M1 it instead EXEMPTED, by
+   selector, the three scroll containers M2 removes (plan, Tasks: "It is a
+   selector exemption, not test.fail(), because those boxes scroll only when
+   their table outgrows them, so a test.fail() could flip on the data"). T2.5
+   removed those boxes, so from M2 on G2 exempts nothing; the M1 list stays
+   pinned in its own slot as the record of what M1 allowed.
+
+   M2 (this tree): G6 and G9 land, so NO check is pending — every check runs
+   per route and per width and must be green. */
 
 export type Milestone = "m1" | "m2" | "m3" | "m4" | "m5";
 
@@ -27,7 +31,7 @@ export const MILESTONE_ORDER: readonly Milestone[] = ["m1", "m2", "m3", "m4", "m
 /** The milestone this tree implements. The dev run bumps it when a milestone
     lands (M2: "m2"), in the same commit as the markup that makes the pending
     checks pass. */
-export const CURRENT_MILESTONE: Milestone = "m1";
+export const CURRENT_MILESTONE: Milestone = "m2";
 
 /** The plan's geometry checks, G1–G12 (Tasks and Verification), plus the four
     T1.2/T1.6 checks the task rows name that are not one of the twelve. */
@@ -56,7 +60,8 @@ export type CheckId = GeometryCheck | ExtraCheck;
     green).
 
     G6 (empty columns) needs `presentColumns` and the `data-columns` carriage,
-    T2.1; G9 (band balance) needs the M2 compositions, T2.2–T2.6.
+    T2.1; G9 (band balance) needs the M2 compositions, T2.2–T2.6. Both land in
+    M2, so at the current milestone neither is pending.
 
     G3 (no horizontal overflow at 1440) and G7 (no clipped numbers) are fixed
     by T2.7 in the plan's task table, but the M1 ledger (one `c-flex` column,

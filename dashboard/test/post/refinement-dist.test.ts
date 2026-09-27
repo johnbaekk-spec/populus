@@ -113,12 +113,59 @@ test("POST-BUILD R1/R8: filer 1067983 changes rows are named, never a bare sid: 
   assert.equal(valueOnly.length, 0, `${valueOnly.length} add/trim rows with Δ shares 0`);
 });
 
+/* The page-header ledger's figures, read from built HTML (DESIGN-POLISH M2,
+   T2.8): each `<div class="ledger-fig">` group's dt label (its visible text —
+   a label trigger's note PANEL is not part of the label), its value dd and its
+   sub dd. A figure group holds only spans inside its dt, so it ends at its
+   first `</div>`. */
+function ledgerFiguresOf(html: string): { label: string; value: string; sub: string | null }[] {
+  const out: { label: string; value: string; sub: string | null }[] = [];
+  for (const dl of html.match(/<dl class="design-ledger"[^>]*>[\s\S]*?<\/dl>/g) ?? []) {
+    for (const g of dl.split('<div class="ledger-fig"').slice(1)) {
+      const group = g.slice(0, g.indexOf("</div>"));
+      const dt = /<dt\b[^>]*>([\s\S]*?)<\/dt>/.exec(group)?.[1] ?? "";
+      out.push({
+        label: text(dt.split('<span class="note-pop"')[0]!),
+        value: text(/<dd class="ledger-value">([\s\S]*?)<\/dd>/.exec(group)?.[1] ?? ""),
+        sub: (() => { const m = /<dd class="ledger-sub">([\s\S]*?)<\/dd>/.exec(group); return m ? text(m[1]!) : null; })(),
+      });
+    }
+  }
+  return out;
+}
+
+/** R9: the issuer labels a reader sees on the institutional landing — the
+    board cells, any remaining tile value, and (M2) the header ledger's
+    Consensus-add figure: its value (the ticker, or "—") and the issuer NAME,
+    which leads its sub ("NAME · N notable managers opened it"). */
+function landingIssuerLabels(html: string): string[] {
+  const consensusAdd = ledgerFiguresOf(html).filter((f) => f.label === "Consensus add");
+  return [
+    ...cells(html, "c-issuer"),
+    ...(html.match(/class="tile-value">[^<]*/g)?.map((s) => s.slice(19)) ?? []),
+    ...consensusAdd.flatMap((f) => [f.value, ...(f.sub ? [f.sub.split(" · ")[0]!] : [])]),
+  ].map(text);
+}
+const numericOrCusip = (l: string): boolean => /^\d/.test(l) || /^[A-Z0-9]{9}$/.test(l);
+
+test("POST-BUILD R9: the issuer-label reader sees the ledger's Consensus-add figure (controls)", () => {
+  const fig = (value: string, sub: string): string =>
+    `<dl class="design-ledger"><div class="ledger-fig" data-tone="blue"><dt><span class="note"><button type="button" class="note-btn note-label" aria-label="Consensus add, explain">Consensus add</button><span class="note-pop" popover role="note">why</span></span></dt><dd class="ledger-value">${value}</dd><dd class="ledger-sub">${sub}</dd></div></dl>`;
+  assert.deepEqual(landingIssuerLabels(fig("NVDA", "Nvidia Corp · 3 notable managers opened it")), ["NVDA", "Nvidia Corp"]);
+  assert.deepEqual(landingIssuerLabels(fig("NVDA", "Nvidia Corp · 3 notable managers opened it")).filter(numericOrCusip), []);
+  // control: a CUSIP-shaped issuer in the sub, and a numeric value, are each caught by the same predicate
+  assert.deepEqual(landingIssuerLabels(fig("—", "30233Q108 · 3 notable managers opened it")).filter(numericOrCusip), ["30233Q108"]);
+  assert.deepEqual(landingIssuerLabels(fig("594918104", "Microsoft Corp · 3 notable managers opened it")).filter(numericOrCusip), ["594918104"]);
+  // the tile read is kept for any page that still has tiles
+  assert.deepEqual(landingIssuerLabels('<div class="tile-value">12345</div>').filter(numericOrCusip), ["12345"]);
+});
+
 test("POST-BUILD R9: no numeric or CUSIP-shaped issuer label on the institutional landing boards", () => {
   const page = path.join(DIST, "institutional", "index.html");
   if (!existsSync(page)) return;
   const html = readFileSync(page, "utf-8");
-  const labels = [...cells(html, "c-issuer"), ...html.match(/class="tile-value">[^<]*/g)?.map((s) => s.slice(19)) ?? []].map(text);
-  const bad = labels.filter((l) => /^\d/.test(l) || /^[A-Z0-9]{9}$/.test(l));
+  assert.ok(ledgerFiguresOf(html).some((f) => f.label === "Consensus add"), "the landing ledger carries its Consensus-add figure");
+  const bad = landingIssuerLabels(html).filter(numericOrCusip);
   assert.deepEqual(bad, [], `numeric / CUSIP-shaped issuer labels: ${bad.slice(0, 10).join(", ")}`);
 });
 
@@ -284,14 +331,18 @@ import { visibleText } from "../lib/banned-scan.ts";
 /** The observed strings of SRC §5, as the source plan quotes them. Two have a
     methodology anchor as their declared new home, so they may remain on
     /methodology/ and nowhere else. */
-const SRC5_OBSERVED: { s: string; home?: "methodology"; ci?: boolean }[] = [
+const SRC5_OBSERVED: { s: string; home?: "methodology"; ci?: boolean; ledgerLabelOn?: string }[] = [
   { s: "a render bound, not a data bound" },
   { s: "further hits are in the artifact but not rendered here" },
   { s: "Every row remains in the published dataset", home: "methodology" },
   { s: "v_default_transactions — active filings minus superseded amendment originals" },
   { s: "per-filer filing dates are not in the published aggregate" },
   { s: "is in this build's projection for this filer" },
-  { s: "HOUSE PARSE" },
+  /* L15 (DESIGN-POLISH M2, T2.2): "House parse" is a figure NAME on the
+     /congress/ ledger (D2) and allowed ONLY there, in that ledger's <dt>;
+     everywhere else — any other page, any paragraph, the figure's own note
+     panel — it is matched case-insensitively. See `src5Text`. */
+  { s: "HOUSE PARSE", ci: true, ledgerLabelOn: path.join("congress", "index.html") },
   { s: "Position discovery" },
   { s: "statutory lower bound" },
   { s: "interval subtraction" },
@@ -319,6 +370,71 @@ function walkHtml(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** The label half of each `<dt>` inside a `dl.design-ledger`, removed: its
+    text AND the label trigger's accessible name (`aria-label`, which the
+    visible-text reader includes). A note PANEL inside the dt (`.note-pop`, the
+    figure's explanation) is kept intact, so its text is still scanned. */
+function withoutLedgerLabels(html: string): string {
+  const stripLabel = (seg: string): string => seg.replace(/\s(?:aria-label|title)="[^"]*"/g, "").replace(/(^|>)[^<]*/g, "$1");
+  const keepPanels = (dt: string): string => {
+    let out = "";
+    let i = 0;
+    while (i < dt.length) {
+      const pop = dt.indexOf('<span class="note-pop"', i);
+      if (pop < 0) {
+        out += stripLabel(dt.slice(i));
+        break;
+      }
+      out += stripLabel(dt.slice(i, pop));
+      // the panel ends at its matching </span>
+      let depth = 0;
+      let j = pop;
+      const tag = /<span\b[^>]*>|<\/span>/g;
+      tag.lastIndex = pop;
+      for (let m = tag.exec(dt); m; m = tag.exec(dt)) {
+        depth += m[0] === "</span>" ? -1 : 1;
+        j = tag.lastIndex;
+        if (depth === 0) break;
+      }
+      out += dt.slice(pop, j);
+      i = j;
+    }
+    return out;
+  };
+  return html.replace(/<dl class="design-ledger"[^>]*>[\s\S]*?<\/dl>/g, (dl) =>
+    dl.replace(/(<dt\b[^>]*>)([\s\S]*?)(<\/dt>)/g, (_m, open: string, inner: string, close: string) => open + keepPanels(inner) + close),
+  );
+}
+
+/** The text an SRC §5 string is scanned against on page `rel`: the page's
+    visible text, except that a string declared a ledger label on ONE page
+    (`ledgerLabelOn`) is scanned there with that page's ledger LABELS removed —
+    and only the labels. */
+function src5Text(html: string, rel: string, o: { ledgerLabelOn?: string }): string {
+  return visibleText(o.ledgerLabelOn === rel ? withoutLedgerLabels(html) : html);
+}
+/** Does observed string `o` hit page `rel`? The ONE predicate the dist scan and its controls share. */
+function src5Hit(html: string, rel: string, o: { s: string; ci?: boolean; ledgerLabelOn?: string }): boolean {
+  const t = src5Text(html, rel, o);
+  return o.ci ? t.toLowerCase().includes(o.s.toLowerCase()) : t.includes(o.s);
+}
+
+test("POST-BUILD R23 / L15: the HOUSE PARSE exemption covers only the /congress/ ledger's <dt> label (controls)", () => {
+  const house = SRC5_OBSERVED.find((o) => o.s === "HOUSE PARSE")!;
+  const congress = path.join("congress", "index.html");
+  const ledger = (panel: string): string =>
+    `<dl class="design-ledger"><div class="ledger-fig" data-tone="ink"><dt><span class="note"><button type="button" class="note-btn note-label" popovertarget="n-x" aria-describedby="n-x" aria-label="House parse, explain">House parse</button><span class="note-pop" popover id="n-x" role="note">${panel}</span></span></dt><dd class="ledger-value">97%</dd><dd class="ledger-sub">1,000 of 1,030 e-filed</dd></div></dl>`;
+  const clean = ledger(`House electronic filings whose rows this build reads: 1,000 of 1,030. <a href="/methodology/#coverage">Coverage, in full ↗</a>`);
+  assert.equal(src5Hit(clean, congress, house), false, "the ledger label on /congress/ is allowed");
+  // controls: a planted paragraph, the phrase inside the figure's note panel, and the same ledger on another page are each caught
+  assert.equal(src5Hit(clean + "<p>House parse is 97%</p>", congress, house), true, "control: a planted 'House parse' paragraph fails");
+  assert.equal(src5Hit(ledger("the house parse rate"), congress, house), true, "control: the note panel inside the dt is still scanned");
+  assert.equal(src5Hit(clean, path.join("congress", "members", "X", "index.html"), house), true, "control: another page's ledger label is not exempt");
+  assert.equal(src5Hit(clean.replace("<dt>", "<dd>").replace("</dt>", "</dd>"), congress, house), true, "control: outside a <dt> it is not exempt");
+  // the exemption strips only labels: the value and sub stay in the scanned text
+  assert.match(src5Text(clean, congress, house), /97% 1,000 of 1,030 e-filed/);
+});
+
 test("POST-BUILD R23: every SRC §5 observed string returns 0 in dist's visible text (outside its declared methodology home)", () => {
   assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
   const counts = new Map<string, { n: number; at: string }>();
@@ -326,12 +442,10 @@ test("POST-BUILD R23: every SRC §5 observed string returns 0 in dist's visible 
   for (const file of walkHtml(DIST)) {
     pages++;
     const rel = path.relative(DIST, file);
-    const text = visibleText(readFileSync(file, "utf-8"));
-    const lower = text.toLowerCase();
+    const html = readFileSync(file, "utf-8");
     for (const o of SRC5_OBSERVED) {
       if (o.home === "methodology" && rel === path.join("methodology", "index.html")) continue;
-      const hit = o.ci ? lower.includes(o.s.toLowerCase()) : text.includes(o.s);
-      if (hit) {
+      if (src5Hit(html, rel, o)) {
         const c = counts.get(o.s) ?? { n: 0, at: rel };
         c.n++;
         counts.set(o.s, c);

@@ -15,6 +15,7 @@ import {
   mergeFeed,
   pageCountFor,
   pageSlice,
+  parseDataColumns,
   type TxnRow,
   type RenderCtx,
 } from "../lib/format.ts";
@@ -36,12 +37,13 @@ import {
   s4Skeleton,
   s4Error,
   filerPeriodSectionHtml,
+  filerLedgerHtml,
+  filerBookShapeHtml,
   holdersTableHtml,
   type BuildStamps,
   type ChangesKindFilter,
 } from "../lib/ui/index.ts";
 import {
-  institutionalDataNoteHtml,
   priorPeriodOf,
   projectionAbsentHtml,
   surfaceHtml,
@@ -275,6 +277,12 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       const html = deps.renderBody ? deps.renderBody(loaded!.kind, produce) : produce();
       deps.render(html);
       state = "body";
+      /* R36: every client re-render announces itself, so the DOM-backed
+         disclosure binder re-reads the fresh body's counts — the same
+         contract `renderFiler` and both period switches follow. */
+      if (typeof document !== "undefined" && typeof document.dispatchEvent === "function") {
+        document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "entity" } }));
+      }
     } catch {
       state = "render_error";
       deps.render(
@@ -494,13 +502,16 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
           discontinuity: p.discontinuityPeriods.includes(aggPeriod),
           kinds: p.kindsByPeriod[aggPeriod] ?? null,
           typing: p.typing,
+          /* DESIGN-POLISH M2 (F): the holdings surface is band F1's left cell,
+             in the same place the pre-rendered page's <HoldingsTable> sits; the
+             §5 note is the body's foot (filerFootHtml), rendered once. */
+          holdingsHtml:
+            `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
+            `<div data-holdings-body>` +
+            surface +
+            `</div></section>`,
         },
-      ) +
-      `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">` +
-      `<div data-holdings-body>` +
-      surface +
-      `</div></section>` +
-      institutionalDataNoteHtml()
+      )
     );
   }
 
@@ -896,7 +907,15 @@ export function initEntityPage(): void {
        rows and travels in `data-stated-flags`, so it cannot drift per page. */
     const statedAttr = table?.getAttribute("data-stated-flags") ?? "";
     const stated = statedAttr === "" ? [] : statedAttr.split(",");
-    rowsEl!.innerHTML = entityTxnRowsHtml(items, tableKind, ctx, stated);
+    /* R12: the column set the server decided over the WHOLE collection rides
+       in `data-columns`, so a later page renders exactly the header's columns. */
+    const columns = parseDataColumns(table?.getAttribute("data-columns"));
+    rowsEl!.innerHTML = entityTxnRowsHtml(items, tableKind, ctx, stated, columns);
+    // R36 (review R2-5): every client re-render announces itself, so a binder
+    // or measurement that owns anything under this body re-syncs.
+    if (typeof document.dispatchEvent === "function") {
+      document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "entity-pager" } }));
+    }
     const count = entityTableCountText(page, items.length, txns.length);
     countEl!.textContent = count;
     if (statusEl) statusEl.textContent = count;
@@ -925,13 +944,16 @@ export function initEntityPage(): void {
   });
 }
 
-/** Filer page period selector: re-render the period section through the SAME
-    pure renderer the SSR used, from the embedded per-period data. */
+/** Filer page period selector: re-render every period-dependent part through
+    the SAME pure renderers the SSR used, from the embedded per-period data —
+    the ledger root, the Position changes root (whose head carries the period
+    and kind segments) and the Book shape root (DESIGN-POLISH M2, F, A-9). */
 export function initFilerPeriods(): void {
   const dataEl = document.getElementById("filer-period-data");
   const root = document.querySelector<HTMLElement>("[data-filer-root]");
-  const chips = document.querySelector<HTMLElement>("[data-period-chips]");
-  if (!dataEl || !root || !chips) return;
+  const ledgerRoot = document.querySelector<HTMLElement>("[data-filer-ledger]");
+  const bookRoot = document.querySelector<HTMLElement>("[data-filer-bookshape]");
+  if (!dataEl || !root) return;
   let data: {
     latestFiled: string | null;
     topn: number;
@@ -960,68 +982,70 @@ export function initFilerPeriods(): void {
       return;
     }
   }
+  /* The periods the segments offer, in the server's order (the embed carries
+     exactly the periods the page offers). */
+  const periods = Object.keys(data.periods).sort();
   /* The changes table paginates, so the period section carries page
      state. Switching period resets it to 0 — a page index from another quarter
      addresses nothing in this one. */
-  /* This started as "" and the pager handler bails on a falsy period,
-     so on FIRST LOAD every pager click was swallowed and rows past the first page
-     were unreachable until a chip was clicked. Seed from the chip the SSR marked
-     active — that is the period the server rendered. */
+  /* Seed from the chip the SSR marked active — the period the server rendered
+     (a "" seed swallowed every pager click on first load). */
   let period =
-    chips.querySelector<HTMLElement>("[data-period].chip-active")?.dataset.period ??
-    chips.querySelector<HTMLElement>("[data-period]")?.dataset.period ??
+    root.querySelector<HTMLElement>("[data-period-chips] [data-period].chip-active")?.dataset.period ??
+    root.querySelector<HTMLElement>("[data-period-chips] [data-period]")?.dataset.period ??
     "";
   let page = 0;
   /* D5: the Position changes kind filter; kept across period switches (the
      reader asked for one kind), while the page resets as it always has. */
   let kind: ChangesKindFilter | null = null;
-  const draw = (): void => {
+  const draw = (repaintPeriodParts: boolean): void => {
     const slice = data.periods[period];
     if (!slice) return;
+    // `total` is REQUIRED in the embed (validated above) — never the embedded
+    // length, which would claim a completeness the server never claimed.
     root.innerHTML = filerPeriodSectionHtml(
       slice.conc,
       slice.deltas,
       period,
       data.latestFiled,
       data.topn,
-      // `total` is REQUIRED in the embed. A missing or contradictory
-      // total is a corrupt embed, handled above by leaving the SSR section alone
-      // — never papered over with the embedded length, which would claim a
-      // completeness the server never claimed.
-      { total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
+      { periods, total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
     );
+    if (repaintPeriodParts) {
+      if (ledgerRoot) ledgerRoot.innerHTML = filerLedgerHtml(slice.conc, period, slice.total!, slice.kinds ?? null);
+      if (bookRoot) bookRoot.innerHTML = filerBookShapeHtml(slice.conc, data.topn, period, slice.total!, data.benchmarks?.[period] ?? null);
+    }
     // R15: a re-rendered section carries fresh DOM-backed disclosures; the
     // owner of those controls re-binds on this event.
     document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "filer-period" } }));
   };
-  chips.addEventListener("click", (ev) => {
-    const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-period]");
-    if (!btn) return;
-    if (!data.periods[btn.dataset.period!]) return;
-    period = btn.dataset.period!;
-    page = 0;
-    draw();
-    chips.querySelectorAll<HTMLButtonElement>("[data-period]").forEach((c) => {
-      const active = c === btn;
-      c.classList.toggle("chip-active", active);
-      c.setAttribute("aria-pressed", String(active));
-    });
-  });
-  // Delegated on the root because `draw()` replaces the pager's own subtree.
+  // Delegated on the root because `draw()` replaces the segments, the pager and
+  // the table's own subtree.
   root.addEventListener("click", (ev) => {
-    const kindBtn = (ev.target as Element).closest<HTMLButtonElement>("[data-changes-kind]");
+    const target = ev.target as Element;
+    const chip = target.closest<HTMLButtonElement>("[data-period-chips] [data-period]");
+    if (chip) {
+      const next = chip.dataset.period!;
+      if (!data.periods[next]) return;
+      period = next;
+      page = 0;
+      draw(true);
+      root.querySelector<HTMLElement>(`[data-period-chips] [data-period="${next}"]`)?.focus();
+      return;
+    }
+    const kindBtn = target.closest<HTMLButtonElement>("[data-changes-kind]");
     if (kindBtn && period) {
       const k = kindBtn.dataset.changesKind;
       kind = k === "new" || k === "add" || k === "trim" || k === "exit" ? k : null;
       page = 0; // a page index under another filter addresses nothing here
-      draw();
+      draw(false);
       root.querySelector<HTMLElement>(`[data-changes-kind="${kind ?? "all"}"]`)?.focus();
       return;
     }
-    const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-changes-page]");
+    const btn = target.closest<HTMLButtonElement>("[data-changes-page]");
     if (!btn || btn.getAttribute("aria-disabled") === "true" || !period) return;
     page = Math.max(0, page + (btn.dataset.changesPage === "next" ? 1 : -1));
-    draw();
+    draw(false);
     root.querySelector<HTMLElement>(".pager-range")?.focus();
   });
 }
@@ -1145,6 +1169,10 @@ export function initHoldersPeriods(): void {
       c.setAttribute("aria-pressed", String(active));
     });
     bindSort(next);
+    // R36: the re-rendered table announces itself, like every client re-render.
+    if (typeof document !== "undefined" && typeof document.dispatchEvent === "function") {
+      document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "holders-period" } }));
+    }
   });
 }
 

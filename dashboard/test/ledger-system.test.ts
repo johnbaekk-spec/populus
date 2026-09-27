@@ -499,6 +499,10 @@ function danglingSelectors(css: string): string[] {
     }
     parts.push(cur);
     for (const p of parts) if (/\n/.test(p.trim())) out.push(p.trim().replace(/\s+/g, " "));
+    /* M1 delta review, follow-up 4: a selector list that ENDS in a comma (or
+       holds an empty item) is invalid CSS — the browser drops the WHOLE rule,
+       every selector in it, silently. */
+    if (parts.some((p) => p.trim() === "")) out.push(`an empty selector in the list "${prelude.replace(/\s+/g, " ")}"`);
   }
   return out;
 }
@@ -511,13 +515,32 @@ test("C-1: every selector has its own declaration block — none swallows the ne
   assert.equal(danglingSelectors(c1).length, 1, "control: the C-1 dangling selector is found");
   assert.ok(danglingSelectors(".a { color: red; ").length > 0, "control: an unclosed block is found");
   assert.deepEqual(danglingSelectors(".a,\n.b { color: red; }"), [], "a list broken after its comma is fine");
+  // follow-up 4: a list ending in a comma drops the whole rule
+  assert.equal(danglingSelectors(".a,\n.b, { color: red; }").length, 1, "control: a trailing comma is found");
+  assert.equal(danglingSelectors(".a, , .b { color: red; }").length, 1, "control: an empty item is found");
+  assert.equal(danglingSelectors(":is(.a, .b) { color: red; }").length, 0, "a comma inside :is() is not a list item");
 });
 
-test("C-1: the filer page's Filing history band is ordered after the holdings (order 6)", () => {
-  const triptych = rulesOf(baseStylesheet()).filter(
-    (r) => r.selector === '.entity-page:has([data-holdings-surface="filer"]) > .design-triptych',
+/* C-1, rewritten in DESIGN-POLISH M2 (T2.5, A-9). The property the M1 pin
+   guarded — the filer page's bands stack in their declared order — is now held
+   by construction: DOM order IS visual order, and no `:has()`/`order` rule
+   re-stacks the page (reading and tab order used to differ from what was
+   shown, WCAG 1.3.2 / 2.4.3). The pin moves from "the order rule exists" to
+   "no rule reorders a page's bands", with the DOM order pinned where the parts
+   are composed (filerBody) and the visual order measured in ledger.spec.ts. */
+function reorderingRules(css: string): string[] {
+  return rulesOf(css)
+    .filter((r) => /(?:^|;)\s*order\s*:/.test(r.decls) && /(?:\.entity-page|\.design-page|data-holdings-surface|data-filer-root|\.design-band|\.design-triptych)/.test(r.selector))
+    .map((r) => r.selector);
+}
+test("C-1 (M2): no rule reorders a page's bands — the filer's reading order is its DOM order", () => {
+  assert.deepEqual(reorderingRules(baseStylesheet()), []);
+  assert.deepEqual(
+    reorderingRules('.entity-page:has([data-holdings-surface="filer"]) > .design-filer-band { order: 6; }'),
+    ['.entity-page:has([data-holdings-surface="filer"]) > .design-filer-band'],
+    "control: a re-planted order rule is found",
   );
-  assert.ok(triptych.some((r) => /order\s*:\s*6/.test(r.decls)), "the ≥1081px order rule exists under its own selector");
+  assert.deepEqual(rulesOf(baseStylesheet()).filter((r) => r.selector.includes(':has([data-holdings-surface')).map((r) => r.selector), [], "no :has() composition rule survives");
 });
 
 /* ---- C-8: bar fills on the track reach 3:1 in both themes ---- */
@@ -587,7 +610,11 @@ test("C-9: a label trigger's dotted underline is drawn in its full colour (the o
   assert.equal(weak(".note-label { text-decoration-color: color-mix(in oklab, currentColor 50%, transparent); }").length, 1, "control");
 });
 
-const GROUP = ':is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips)';
+/* The group selector (M1 delta review, follow-up 2): its watch-list exclusion
+   sits in `:where()`, so it weighs one class and a page's own placement of a
+   group wins (it was (0,2,0) through `.chips:not(...)` inside `:is()`, which
+   silently beat `.mgr-chips { margin }` and `.panel-head > .chips`). */
+const GROUP = ':is(.seg, .chips, .mgr-chips):where(:not(.si-watch-chips, [id="watch-chips"]))';
 test("C-3/C-10: the segmented group wraps at every width, and its items draw the focus ring inside themselves", () => {
   const rules = rulesOf(baseStylesheet());
   const group = rules.filter((r) => r.selector === GROUP);
@@ -612,6 +639,51 @@ test("C-4: the two watch lists are not segmented groups — wrapping chips, each
   assert.match(chip!.decls, /padding\s*:/);
   // control: the pre-fix selector took #watch-chips into the group
   assert.ok(!':is(.seg, .chips:not(.si-watch-chips), .mgr-chips)'.includes('[id="watch-chips"]'), "control");
+});
+
+/** Selector specificity [ids, classes, types] for the forms the region uses:
+    `:is()`/`:not()` take their heaviest argument, `:where()` weighs nothing. */
+function specificity(sel: string): [number, number, number] {
+  const add = (a: number[], b: number[]): number[] => a.map((x, i) => x + b[i]!);
+  const max = (xs: number[][]): number[] => xs.reduce((m, x) => (x[0]! > m[0]! || (x[0] === m[0] && (x[1]! > m[1]! || (x[1] === m[1] && x[2]! > m[2]!))) ? x : m), [0, 0, 0]);
+  const split = (inner: string): string[] => {
+    const out: string[] = []; let depth = 0, cur = "";
+    for (const ch of inner) { if (ch === "(") depth++; if (ch === ")") depth--; if (ch === "," && depth === 0) { out.push(cur); cur = ""; } else cur += ch; }
+    return [...out, cur].map((x) => x.trim());
+  };
+  let total = [0, 0, 0];
+  let i = 0;
+  while (i < sel.length) {
+    const m = /^:(is|not|where|has)\(/.exec(sel.slice(i));
+    if (m) {
+      let depth = 1, j = i + m[0].length;
+      while (j < sel.length && depth > 0) { if (sel[j] === "(") depth++; if (sel[j] === ")") depth--; j++; }
+      const inner = sel.slice(i + m[0].length, j - 1);
+      if (m[1] !== "where") total = add(total, max(split(inner).map((x) => specificity(x) as number[])));
+      i = j;
+      continue;
+    }
+    const tok = /^(#[\w-]+|\.[\w-]+|\[[^\]]*\]|::?[\w-]+|[a-z][\w-]*|\*|[\s>+~]+)/i.exec(sel.slice(i));
+    if (!tok) { i++; continue; }
+    const t = tok[0];
+    if (t.startsWith("#")) total = add(total, [1, 0, 0]);
+    else if (t.startsWith(".") || t.startsWith("[") || (t.startsWith(":") && !t.startsWith("::"))) total = add(total, [0, 1, 0]);
+    else if (/^[a-z]/i.test(t) || t.startsWith("::")) total = add(total, [0, 0, 1]);
+    i += t.length;
+  }
+  return total as [number, number, number];
+}
+
+test("follow-up 2: the segmented group weighs one class, so a page's own group placement wins", () => {
+  assert.deepEqual(specificity(GROUP), [0, 1, 0]);
+  // control: the pre-fix selector weighed two classes and out-ranked `.mgr-chips { margin }`
+  assert.deepEqual(specificity(':is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips)'), [0, 2, 0]);
+  assert.deepEqual(specificity(".mgr-chips"), [0, 1, 0], "the late-additions spacing rule (later in the cascade) now wins");
+  assert.deepEqual(specificity(".panel-head > :is(.seg, .chips, .mgr-chips, .ranking-options, .si-watch-controls, .head-controls)"), [0, 2, 0], "the band head's push-right out-ranks the group's margin");
+  const rules = rulesOf(baseStylesheet());
+  assert.ok(rules.some((r) => r.selector === ".mgr-chips" && /margin\s*:/.test(r.decls)), "the page's group spacing rule exists");
+  // no other rule in the cascade re-heavies the group with the old exclusion form
+  assert.deepEqual(rules.filter((r) => r.selector.includes(".chips:not(")).map((r) => r.selector), []);
 });
 
 /** Rules OUTSIDE the ledger region that lay out a `.chips` group itself. */
@@ -833,3 +905,79 @@ function sourceFilesAll(): string[] {
   walkDir(SRC);
   return out;
 }
+
+/* DESIGN-POLISH M2 review C2-7 / C2-8. The property: a stylesheet rule says
+   something no other rule already says — no declaration is repeated for the
+   same selector in the same media context (a copy that drifts apart from its
+   twin is how one of them silently becomes dead), and no rule styles a class
+   no renderer emits. And the stacked summary cards at the fold are separated
+   by the page rule, not the 1.1:1 column divider. */
+/** Every (media context, selector, property, value) declared more than once in `css`. */
+function repeatedDeclarations(css: string): string[] {
+  const src = stripComments(css);
+  const stack: string[] = [];
+  const seen = new Map<string, number>();
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf("{", i), close = src.indexOf("}", i);
+    if (close < 0) break;
+    if (open >= 0 && open < close) {
+      const prelude = src.slice(i, open).trim();
+      const next = src.indexOf("{", open + 1), end = src.indexOf("}", open + 1);
+      if (prelude.startsWith("@") && next >= 0 && next < end) {
+        stack.push(prelude.replace(/\s+/g, " "));
+        i = open + 1;
+        continue;
+      }
+      const decls = src.slice(open + 1, end);
+      if (!prelude.startsWith("@")) {
+        for (const sel of prelude.split(/,(?![^(]*\))/).map((s) => s.trim().replace(/\s+/g, " ")).filter(Boolean)) {
+          for (const d of decls.split(";").map((x) => x.trim().replace(/\s+/g, " ")).filter(Boolean)) {
+            const key = `${stack.join(" / ") || "(top)"} | ${sel} | ${d}`;
+            seen.set(key, (seen.get(key) ?? 0) + 1);
+          }
+        }
+      }
+      i = end + 1;
+    } else {
+      stack.pop();
+      i = close + 1;
+    }
+  }
+  return [...seen].filter(([, n]) => n > 1).map(([k]) => k);
+}
+
+test("C2-7: late-additions.css repeats no declaration for the same selector in the same context, and styles no class no renderer emits", () => {
+  const late = readFileSync(path.join(STYLES, "late-additions.css"), "utf-8");
+  assert.deepEqual(repeatedDeclarations(late), []);
+  // controls: the deleted duplicates, re-planted, are each caught
+  assert.ok(repeatedDeclarations(late + "\n@media print {\n .design-supplement::details-content { content-visibility:visible; display:block; }\n}").length > 0, "control: the duplicate print block");
+  assert.ok(repeatedDeclarations(late + "\n@media (max-width: 720px) {\n  .site-search { width: 100%; }\n}").length > 0, "control: the duplicate fold search width");
+  assert.ok(repeatedDeclarations(late + "\n.design-institutional-band { grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); }").length > 0, "control: the duplicate I1 grid");
+  // no rule for a design class that no renderer or page emits (the retired reconciliation panel)
+  const emitted = (cls: string): boolean => {
+    const walk = (dir: string): boolean =>
+      readdirSync(dir).some((f) => {
+        const p = path.join(dir, f);
+        if (statSync(p).isDirectory()) return f !== "styles" && walk(p);
+        return /\.(ts|astro)$/.test(f) && readFileSync(p, "latin1").includes(cls);
+      });
+    return walk(SRC);
+  };
+  const designClasses = [...new Set([...stripComments(late).matchAll(/\.(design-[a-z0-9-]+)/g)].map((m) => m[1]!))];
+  assert.ok(designClasses.length > 10, "the sweep reads the design classes");
+  assert.deepEqual(designClasses.filter((c) => !emitted(c)), [], "every styled design class is emitted");
+  assert.equal(emitted("design-reconciliation"), false, "control: the retired class is emitted nowhere, so a rule for it would be caught");
+});
+
+test("C2-8: at the fold, stacked summary cards are separated by the page rule, never the 1.1:1 column divider", () => {
+  const late = stripComments(readFileSync(path.join(STYLES, "late-additions.css"), "utf-8"));
+  const fold = [...late.matchAll(/@media \(max-width: 720px\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]!).join("\n");
+  const seam = rulesOf(fold).find((r) => r.selector === ".design-story + .design-story");
+  assert.ok(seam, "the fold states the stacked seam");
+  assert.match(seam!.decls, /border-top: 1px solid var\(--rule\)/);
+  assert.doesNotMatch(seam!.decls, /--story-divider/, "the divider token is for side-by-side cards only");
+  // control: the pre-fix seam is caught by the same reading
+  const pre = rulesOf(".design-story + .design-story { border-left: 0; border-top: 1px solid var(--story-divider); }")[0]!;
+  assert.match(pre.decls, /--story-divider/);
+});

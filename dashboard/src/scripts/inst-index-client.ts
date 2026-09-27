@@ -11,7 +11,7 @@
    that: it captures this island's output and asserts it is unchanged. */
 
 import { type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, compactBoundCountFor, esc, fmtInt, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCountFor, esc, fmtInt, parseDataColumns, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
   addsBoundNoun,
@@ -120,6 +120,8 @@ export function initInstIndex(): void {
         state.dir,
         { types, notableOnly },
         expanded ? undefined : COMPACT_ROWS,
+        // R12 (review R2-6): the column set the server decided, read back
+        parseDataColumns(bodyEl!.closest?.("table")?.getAttribute("data-columns")),
       );
       lastNote = out.note;
       if (countEl) countEl.textContent = out.note;
@@ -372,6 +374,19 @@ export function initAddsControls(): void {
   syncDisclosure();
 }
 
+/* ---------- the ONE named binder for DOM-backed compact tables (R36) ----------
+
+   A table whose full body is already in the DOM shows its first N rows
+   (`tbody[data-collapsed] tr[data-compact-extra]`); this binder reveals the
+   button beside the server's visible count and toggles the held rows. It
+   re-reads every count off the element on each sync and re-syncs on
+   `populus:rerender`, which every client re-render dispatches, so a re-rendered
+   table always restates its own count. Callers: /institutional/, the filer
+   page, /e/, the member page and /signals/ (DESIGN-POLISH M2, T2.11). It stays
+   in this module — the plan's home for it — because a module of its own became
+   a new `_astro` chunk (+1 dist file, measured in the m2-dev gate), and the
+   dist file count must not grow (success criterion 11). */
+
 /** The generic compact-disclosure owner for tables whose FULL body is
     already in the DOM (the institutional activity feed).
 
@@ -383,50 +398,103 @@ export function initAddsControls(): void {
     re-render rule asks for. */
 export function initDomDisclosures(): void {
   bindDomDisclosures();
-  /* R15: a period switch replaces the filer section's markup, including its
-     disclosure; bind again for the new nodes (an already-bound wrapper is
-     marked and skipped, so this is idempotent). */
+  /* R15/R36: every client re-render announces itself with `populus:rerender`
+     (the /e/ driver, both period switches, the holdings surface). A re-render
+     can bring NEW wrappers — bound here — and can leave a wrapper in place
+     with different counts — re-read and re-synced here, so a re-rendered table
+     restates its own count. Idempotent: the click listener is attached once
+     per wrapper, and a sync only restates what the element says. */
   if (typeof document.addEventListener === "function") {
     document.addEventListener("populus:rerender", () => bindDomDisclosures());
   }
+}
+
+/** The state one sync restates, read off the element AT THAT SYNC — never
+    cached at bind time (R36). Caching is what let a table that re-rendered
+    from 25 rows to 40 keep saying "of 25". */
+function readDomDisclosure(wrap: HTMLElement): {
+  root: HTMLElement;
+  total: number;
+  shown: number;
+  hidden: number;
+  noun: string;
+  expanded: boolean;
+} | null {
+  const root = document.getElementById(wrap.dataset.compactFor ?? "");
+  if (!root) return null;
+  const total = Number(wrap.dataset.compactTotal ?? 0);
+  const shown = Number(wrap.dataset.compactShown ?? 0);
+  const hidden = total - shown;
+  /* The expanded state lives ON THE ELEMENT (`data-compact-expanded`), and it
+     holds only while the tbody it controls still agrees: a brand-new tbody the
+     server rendered collapsed starts collapsed, even under a wrapper that was
+     expanded, so the control and the rows can never disagree. Nothing held
+     back means nothing to be expanded (the omission rule). */
+  const expanded =
+    hidden > 0 &&
+    wrap.getAttribute("data-compact-expanded") === "1" &&
+    root.getAttribute("data-collapsed") === "false";
+  return { root, total, shown, hidden, noun: wrap.dataset.compactNoun ?? "rows", expanded };
+}
+
+function syncDomDisclosure(wrap: HTMLElement): void {
+  const s = readDomDisclosure(wrap);
+  if (!s) return;
+  if (s.expanded) wrap.setAttribute("data-compact-expanded", "1");
+  else wrap.removeAttribute("data-compact-expanded");
+  // The SERVER already rendered this state, so this is normally a no-op. It
+  // stays because an island that assumes the server did its half acquires a
+  // second precondition, and this one is idempotent.
+  if (s.hidden > 0) s.root.setAttribute("data-collapsed", String(!s.expanded));
+  /* This REVEALS THE BUTTON (or, with nothing held back, hides and empties
+     it). The count clause is RESTATED from the element on every sync, through
+     the one composer that reads the bound noun and `definite` back off it, so
+     after load the client prints exactly the server's text — and after a
+     re-render, the re-rendered table's own count. Expanding retracts the count
+     clause; the publication bound beside it stays. */
+  syncCompactDisclosure(wrap, {
+    total: s.total,
+    hidden: s.expanded ? 0 : Math.max(0, s.hidden),
+    expanded: s.expanded,
+    noun: s.noun,
+    count: { text: compactBoundCountFor(wrap, s.shown, s.total, s.noun) },
+    // the table's own slice, and one press reveals every held row
+    shown: s.shown,
+    all: true,
+  });
 }
 
 function bindDomDisclosures(): void {
   document
     .querySelectorAll<HTMLElement>(".compact-disclosure[data-compact-dom]")
     .forEach((wrap) => {
-      if (wrap.getAttribute("data-compact-bound") === "1") return;
-      wrap.setAttribute("data-compact-bound", "1");
-      const rootId = wrap.dataset.compactFor ?? "";
-      const root = document.getElementById(rootId);
       const btn = wrap.querySelector("button");
-      if (!root || !btn) return;
-      const total = Number(wrap.dataset.compactTotal ?? 0);
-      const shown = Number(wrap.dataset.compactShown ?? 0);
-      const noun = wrap.dataset.compactNoun ?? "rows";
-      const hidden = total - shown;
-      if (hidden <= 0) return; // the omission rule — nothing to disclose
-      // The SERVER already rendered this collapsed, so this is normally a
-      // no-op. It stays because an island that assumes the server did its half
-      // acquires a second precondition, and this one is idempotent.
-      root.setAttribute("data-collapsed", "true");
-      let expanded = false;
-      /* This REVEALS THE BUTTON — it does not reveal the statement,
-         which the server already published visible. The count clause is what
-         moves with the state: expanding puts the rows on screen, so the claim
-         that they are held back is retracted, while the publication bound
-         beside it stays. The server's own wording is left in place (no `count`
-         here) because this table's rows never change. */
-      const sync = (): void =>
-        syncCompactDisclosure(wrap, { total, hidden, expanded, noun });
-      sync();
-      btn.addEventListener("click", () => {
-        expanded = !expanded;
-        root.setAttribute("data-collapsed", String(!expanded));
-        sync();
-      });
+      if (!btn) return;
+      // ONE listener per wrapper element, however many re-renders announce
+      // themselves; the handler reads the element's state when it fires.
+      if (wrap.getAttribute("data-compact-bound") !== "1") {
+        wrap.setAttribute("data-compact-bound", "1");
+        btn.addEventListener("click", () => {
+          const s = readDomDisclosure(wrap);
+          if (!s || s.hidden <= 0) return; // an inert control discloses nothing
+          const expanded = !s.expanded;
+          s.root.setAttribute("data-collapsed", String(!expanded));
+          if (expanded) wrap.setAttribute("data-compact-expanded", "1");
+          else {
+            wrap.removeAttribute("data-compact-expanded");
+            /* A disclosure opened inside a row that is now held back closes
+               with it (review R2-2): a held signal hit's evidence row must
+               never stay open under the visible hits, where its receipts
+               would read as another hit's. The stylesheet hides it as well. */
+            s.root.querySelectorAll("tr[data-compact-extra] details[open]").forEach((d) => d.removeAttribute("open"));
+          }
+          syncDomDisclosure(wrap);
+        });
+      }
+      syncDomDisclosure(wrap);
     });
 }
+
 
 /* ---------- R14: the notable-manager moves band ---------- */
 

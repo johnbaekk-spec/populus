@@ -15,6 +15,7 @@
    module. The derivation that reads the serving grain lives beside it in
    `notable-moves-derive.ts` (server only). */
 import type { ManagerType } from "./manager-directory.ts";
+import type { LedgerItem } from "./ui/shared.ts";
 import { compactDisclosure, displayIssuerName, esc, fmtInt, fmtUsd, hangMark, note, rangeOfTotal, slug, thHtml } from "./format.ts";
 
 export type MoveKind = "new" | "add" | "trim" | "exit";
@@ -190,6 +191,41 @@ export interface ConsensusRow {
   topMover: { manager: string; kind: MoveKind; cik: string } | null;
 }
 
+/** The /institutional/ header's "Consensus add" figure (R15, DESIGN-POLISH
+    M2 review R2-3). The value is the name's reviewed TICKER; a name no
+    reviewed ticker maps has the count of notable managers who opened it as its
+    value — a figure, never "—", which on this ledger reads as "no consensus
+    add" on a quarter that has one. The issuer's filed name leads the sub
+    either way (R15, long names; a name that would wrap the sub to a third
+    line makes the figure wide — `ledgerFigureWide`), and only a quarter with
+    no qualifying name shows "—". */
+export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: string | null): LedgerItem {
+  if (!consensus) {
+    return {
+      label: "Consensus add",
+      value: "—",
+      /* the closed quarter is stated beside it (the provenance strip and the
+         other figures' subs), so the absence fits two lines */
+      detail: period ? "no name moved by ≥3 notable managers" : "no closed quarter yet",
+      subKind: "absence",
+      tone: "blue",
+    };
+  }
+  const n = consensus.newStakes;
+  const managers = `${fmtInt(n)} ${n === 1 ? "manager" : "managers"}`;
+  return {
+    label: "Consensus add",
+    value: consensus.ticker ?? managers,
+    detail: consensus.ticker ? `${consensus.issuer} · ${fmtInt(n)} notable ${n === 1 ? "manager" : "managers"} opened it` : `${consensus.issuer} · no reviewed ticker`,
+    subKind: consensus.ticker ? "count" : "absence",
+    tone: "blue",
+    noteHtml:
+      `The issuer the most notable managers opened a new stake in during the closed quarter ${esc(period ?? "")}` +
+      (consensus.ticker ? "" : `; no reviewed ticker maps it, so the figure is the number of notable managers who opened it`) +
+      `. Ranked in Consensus below.`,
+  };
+}
+
 /** The consensus board's count noun: its rows are the highest-ranked
     `limit` of the qualifying issuers, so when more qualify than it lists the
     count names that bound (review R-4). */
@@ -256,15 +292,23 @@ export function consensusBoard(period: string, moves: readonly NotableMove[], op
   return { period, minFilers, rows: rows.slice(0, limit), qualifying: rows.length };
 }
 
+/** Band I1 (DESIGN-POLISH M2, R10; coordinator decision CD-5): Consensus is
+    the PRIMARY cell (1.3fr) beside Conviction leaders (1fr, the side panel),
+    and shows a FIXED 10 rows — the approved preview's board — whatever its
+    partner holds. No row count here depends on the other cell (the paired-rows
+    estimate of M2F-D1 is withdrawn). The rest stay in the DOM behind the named
+    binder, one Show-all away. */
 export const CONSENSUS_COMPACT_ROWS = 10;
 
-export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOpts & { compact?: number }): string {
-  const compact = opts.compact ?? CONSENSUS_COMPACT_ROWS;
+export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOpts): string {
+  const compact = CONSENSUS_COMPACT_ROWS;
   const columns = ["Ticker · Issuer", "New stakes", "Adds", "Trims", "Exits", "Net $", "Top mover"];
   const head = `<div class="panel-head"><h2 class="section-h">Consensus</h2><span class="panel-note">${board ? `≥${fmtInt(board.minFilers)} notable managers moved the same name · ${esc(board.period)} · ranked by new stakes` : "notable managers · no closed quarter"}</span></div>`;
   if (board === null || board.rows.length === 0) {
     return (
-      `<section class="panel design-consensus" id="inst-consensus" aria-label="Consensus">${head}` +
+      /* `data-empty-state`: the board is ONE stated line, so band I1
+         collapses rather than pairing it with the Conviction table (R10). */
+      `<section class="panel design-consensus" id="inst-consensus" aria-label="Consensus" data-empty-state>${head}` +
       `<p class="section-note">${board ? `No issuer was moved by ${fmtInt(board.minFilers)} or more notable managers in the quarter ended ${esc(board.period)}. Absence is stated, never simulated.` : "No closed quarter is available to group over yet."}</p></section>`
     );
   }
@@ -286,20 +330,22 @@ export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOp
     `<p class="section-note">${fmtInt(board.qualifying)} issuers qualify · counts are distinct notable managers · ≈ = a contributing change disclosed no value, so the sum is partial.` +
     (board.qualifying > board.rows.length ? ` The ${fmtInt(board.rows.length)} highest-ranked are listed.` : "") + `</p>` +
     /* The one disclosure primitive and its range count (R8) — it was hand-built
-       here with a second grammar, a bare count of the held-back rows. */
-    (collapsed
-      ? compactDisclosure({
-          rootId: "inst-consensus-tbody",
-          total: board.rows.length,
-          shown: compact,
-          noun: "issuers",
-          /* when more issuers qualify than the board lists, its total is the
-             board's own bound — "1–10 of the 50 highest-ranked issuers" — never
-             the count of qualifying issuers (review R-4) */
-          ...consensusBoundNoun(board),
-          domBacked: true,
-        })
-      : "") +
+       here with a second grammar, a bare count of the held-back rows. A board
+       holding nothing back renders its hidden SHELL, so the table always
+       carries its own count (`data-compact-total` ≤ `data-compact-shown`):
+       G9 reads it to know a short primary is COMPLETE, not cut (M2 delta
+       review). */
+    compactDisclosure({
+      rootId: "inst-consensus-tbody",
+      total: board.rows.length,
+      shown: Math.min(compact, board.rows.length),
+      noun: "issuers",
+      /* when more issuers qualify than the board lists, its total is the
+         board's own bound — "1–10 of the 50 highest-ranked issuers" — never
+         the count of qualifying issuers (review R-4) */
+      ...consensusBoundNoun(board),
+      domBacked: true,
+    }) +
     `</section>`
   );
 }

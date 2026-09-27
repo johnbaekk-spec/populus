@@ -30,9 +30,14 @@ import {
   cardFoot,
   rangeOfTotal,
   thHtml,
+  compactDisclosure,
+  presentColumns,
+  dataColumnsAttr,
+  tableFootReasonHtml,
+  type PresentColumns,
 } from "../format.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
-import { briefingCards, disclosureLedger } from "./shared.ts";
+import { briefingCards, disclosureLedger, pairBandHtml } from "./shared.ts";
 import { serializeInlineJson } from "../inline-json.ts";
 
 /* ================================================================================
@@ -206,7 +211,9 @@ export const SIGNAL_HITS_PAGE_SIZE = 50;
 /** The hits wrapper's accessible name while it scrolls sideways (R-8). */
 export const SIGNAL_HITS_REGION_NAME = "Signal hits · scroll sideways for more columns";
 
-export const SIGNAL_HIT_COLUMNS = ["Ticker", "Who", "What", "Filed", "Size", "Src"] as const;
+/** The hit columns (DESIGN-POLISH M2, T2.6): the KIND is its own column, first,
+    as the design draws it — it was a word inside the evidence cell. */
+export const SIGNAL_HIT_COLUMNS = ["Kind", "Ticker", "Who", "What", "Filed", "Size", "Src"] as const;
 /** The watch band's columns and their ledger roles; the client's empty row
     takes its colspan from here, never a literal. */
 export const SIGNAL_WATCH_COLUMNS: readonly (readonly [string, string])[] = [
@@ -222,6 +229,7 @@ export const SIGNAL_WATCH_COLUMNS: readonly (readonly [string, string])[] = [
     alike. The evidence line (What) takes the band's slack, as the approved
     preview draws it; the member name is capped (recorded in DEV-NOTES). */
 export const SIGNAL_HIT_COLUMN_CLASSES: Readonly<Record<(typeof SIGNAL_HIT_COLUMNS)[number], string>> = {
+  Kind: "c-kind",
   Ticker: "c-ticker",
   Who: "c-member",
   What: "c-secondary c-flex",
@@ -240,7 +248,18 @@ export function sortHits(active: readonly Signal[]): Signal[] {
   );
 }
 
-export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = ""): string {
+/** R12 (DESIGN-POLISH M2): the hits table's columns over its FULL collection —
+    every active hit the pager or a filter can show. A Ticker column no hit
+    fills is not rendered; every other column always carries a value. */
+export function signalHitColumns(active: readonly Signal[]): PresentColumns {
+  return presentColumns(active, SIGNAL_HIT_COLUMNS.map((c) =>
+    c === "Ticker"
+      ? { key: "ticker", hasValue: (s: Signal) => s.entities.ticker != null, emptyReason: "Ticker: no hit in the window names a ticker." }
+      : { key: c.toLowerCase(), always: true },
+  ));
+}
+
+export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: readonly string[] | null = null): string {
   const family = familyOf(s.kind);
   const subject = s.entities.bioguide
     ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>`
@@ -250,29 +269,62 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = ""): string {
     : `<span class="none">—</span>`;
   const receipt = s.receipts[0] ?? "";
   const lag = lagDays(s);
-  /* The evidence is ONE line; the row expand carries the full text — the
-     exact rule and every receipt — so nothing is deleted, only folded. */
-  const expand =
-    `<details class="si-expand"><summary>${esc(evidenceText(s))}</summary>` +
+  /* The evidence is ONE line; its expand carries the full text — the exact
+     rule and every receipt — so nothing is deleted, only folded. Opened, the
+     evidence lays out at the FULL table width on its own row (R11, H-14): the
+     body is the next row (`.si-evidence-row`), shown while this row's
+     disclosure is open, so a one-line row can never clip its receipts. */
+  /* The summary names the row it opens (`aria-controls`, review R2-8): the
+     evidence is the NEXT row, not the <details> body, so the relation is
+     stated rather than implied by position. */
+  const evidenceId = `si-evidence-${s.id}`;
+  const expand = `<details class="si-expand"><summary aria-controls="${esc(evidenceId)}">${esc(evidenceText(s))}</summary></details>`;
+  /* The receipts are block cells (`srcLink` is a <div>), so they sit in a
+     <div>, never a <p> — a <div> inside a <p> is invalid and the parser closed
+     the paragraph early (review C2-6). */
+  const evidenceRow =
+    `<tr class="si-evidence-row" id="${esc(evidenceId)}" data-evidence-for="${esc(s.id)}"><td colspan="${columns === null ? SIGNAL_HIT_COLUMNS.length : columns.length}">` +
     `<div class="si-expand-body"><p><strong>Rule:</strong> ${esc(s.rule)}</p>` +
-    `<p><strong>Receipts:</strong> ${s.receipts.map((r) => srcLink(r)).join(" ") || "—"}</p>` +
-    `<p class="mono-note">${esc(SIGNAL_KIND_LABELS[s.kind])} · thresholds v${esc(String(s.thresholdVersion ?? ""))} · computed ${esc(String(s.computedAt ?? ""))}</p></div></details>`;
+    `<div class="si-receipts"><strong>Receipts:</strong> ${s.receipts.map((r) => srcLink(r)).join(" ") || "—"}</div>` +
+    `<p class="mono-note">${esc(SIGNAL_KIND_LABELS[s.kind])} · thresholds v${esc(String(s.thresholdVersion ?? ""))} · computed ${esc(String(s.computedAt ?? ""))}</p></div></td></tr>`;
   /* The family drives the row's 3px edge (`data-edge`); `data-kind` stays the
-     signal kind the filter reads (G-6). The kind WORD is the rule's label
-     trigger — the exact rule opens from it, with no glyph beside it. */
+     signal kind the filter reads (G-6). The kind WORD, in its own column, is
+     the rule's label trigger — the exact rule opens from it, no glyph. */
   return (
     `<tr class="si-hit si-family-${family.toLowerCase()} si-kind-${esc(s.kind)}" data-signal-id="${esc(s.id)}" data-family="${family}"` +
     ` data-kind="${esc(s.kind)}" data-edge="family-${family.toLowerCase()}" data-bioguide="${esc(s.entities.bioguide ?? "")}" data-ticker="${esc(s.entities.ticker ?? "")}"` +
     ` data-filed="${esc(s.occurrence.filedDate)}"${extraAttrs}>` +
-    `<td class="c-ticker si-ticker-cell">${ticker}</td>` +
+    `<td class="c-kind si-kind">${note(s.rule, { scope: "signal-hits" }, s.id, { trigger: "label", textHtml: esc(shortOf(s.kind)) })}</td>` +
+    (columns === null || columns.includes("ticker") ? `<td class="c-ticker si-ticker-cell">${ticker}</td>` : "") +
     `<td class="c-member si-subject">${subject}</td>` +
-    `<td class="c-secondary c-flex si-what"><span class="si-kind">${note(s.rule, { scope: "signal-hits" }, s.id, { trigger: "label", textHtml: esc(shortOf(s.kind)) })}</span>${expand}</td>` +
+    `<td class="c-secondary c-flex si-what">${expand}</td>` +
     `<td class="c-num si-when">${whenText(s)}${lag != null ? ` <span class="${lag > 45 ? "si-late" : "si-lag"}">+${fmtInt(lag)}d</span>` : ""}</td>` +
     `<td class="c-num si-mag">${esc(magnitudeText(s.magnitude))}</td>` +
     `<td class="c-src"><span class="si-stamp">${esc(s.cohort === "senate" ? "eFD" : "PTR")}</span> ${receipt ? srcLink(receipt) : "—"}${s.receipts.length > 1 ? `<span class="mono-note"> +${fmtInt(s.receipts.length - 1)}</span>` : ""}</td>` +
-    `</tr>`
+    `</tr>` +
+    evidenceRow
   );
 }
+
+/** The hits body for one page, compacted to its first `compactN` hits (each
+    hit and its evidence row); the rest of the page stays in the DOM behind the
+    named binder. The ONE body renderer the server page and the client pager
+    share, so a repaint compacts exactly as the first render did. */
+export function hitsBodyHtml(slice: readonly Signal[], ctx: RenderCtx, compactN: number, columns: readonly string[] | null = null): string {
+  return slice
+    .map((s, i) => {
+      const html = hitRowHtml(s, ctx, "", columns);
+      return i >= compactN ? html.replace(/<tr\b/g, "<tr data-compact-extra") : html;
+    })
+    .join("\n");
+}
+
+/** Hits the page shows before its "Show all 50 hits" (coordinator decision
+    CD-1): a FIXED default, never tuned to one data build. The page still holds
+    SIGNAL_HITS_PAGE_SIZE hits and the pager still moves by it; the rest of the
+    page stays in the DOM behind the named binder. Band S1's hits are its
+    PRIMARY cell, never cut to balance the lag and rate cell. */
+export const SIGNAL_HITS_COMPACT_ROWS = 12;
 
 /** "1–50 of 693 hits" — the ONE range string the server and the pager share,
     built by the site's one range grammar (`rangeOfTotal`). */
@@ -366,9 +418,11 @@ function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
   );
 }
 
-function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pageSize: number): string {
+function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pageSize: number, compactN: number): string {
   const sorted = sortHits(active);
   const shown = sorted.slice(0, pageSize);
+  const collapsed = shown.length > compactN;
+  const cols = signalHitColumns(active);
   const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
   const kinds = RULE_BOOK.filter((r) => active.some((s) => s.kind === r.kind));
   /* R17: filter by RULE (kind) and by the device-local watchlist; the family
@@ -380,11 +434,11 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
     `</div>` +
     `<label class="filter-check" for="signal-watched-only"><input type="checkbox" id="signal-watched-only" aria-label="watched members and tickers only — stored in this browser" /> watched only</label>`;
   const body = shown.length === 0
-    ? `<tr><td colspan="${SIGNAL_HIT_COLUMNS.length}" class="si-empty">Zero hits in the retained window — a computed answer over every rule, not missing coverage.</td></tr>`
-    : shown.map((s) => hitRowHtml(s, ctx)).join("\n");
+    ? `<tr><td colspan="${cols.columns.length}" class="si-empty">Zero hits in the retained window — a computed answer over every rule, not missing coverage.</td></tr>`
+    : hitsBodyHtml(shown, ctx, compactN, cols.columns);
   const range = hitsRangeText(0, shown.length, sorted.length, pageSize);
   return (
-    `<section class="panel panel-wide si-hits" id="signal-hits" aria-label="Hits" data-page-size="${pageSize}" data-total="${sorted.length}">` +
+    `<section class="panel panel-wide si-hits" id="signal-hits" aria-label="Hits" data-page-size="${pageSize}" data-compact-rows="${compactN}" data-total="${sorted.length}">` +
     `<div class="panel-head"><h2 class="section-h">Hits</h2>` +
     `<span class="panel-note">RETAINED WINDOW ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} · NEWEST FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
     seg + `</div>` +
@@ -394,10 +448,22 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
        announces sideways scrolling is a false statement. The signals island
        sets and clears the three attributes from the measured overflow; the
        name it uses rides here. */
-    `<div class="table-scroll si-hits-scroll" data-scroll-region="${esc(SIGNAL_HITS_REGION_NAME)}"><table class="etable etable-compact si-table">` +
+    `<div class="table-scroll si-hits-scroll" data-scroll-region="${esc(SIGNAL_HITS_REGION_NAME)}"><table class="etable etable-compact si-table"${dataColumnsAttr(cols)}>` +
     `<caption class="visually-hidden">Signal hits, newest filed first</caption>` +
-    `<thead><tr>${SIGNAL_HIT_COLUMNS.map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c] })).join("")}</tr></thead>` +
-    `<tbody id="signal-hits-body">${body}</tbody></table></div>` +
+    `<thead><tr>${SIGNAL_HIT_COLUMNS.filter((c) => cols.columns.includes(c.toLowerCase())).map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c], col: c.toLowerCase() })).join("")}</tr></thead>` +
+    `<tbody id="signal-hits-body"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
+    tableFootReasonHtml(cols) +
+    /* The page's compact bound names itself — "1–7 of the 50 hits on this
+       page" — beside the pager's whole-set range (the changes-table grammar). */
+    compactDisclosure({
+      rootId: "signal-hits-body",
+      total: shown.length,
+      shown: Math.min(compactN, shown.length),
+      noun: "hits",
+      boundNoun: "hits on this page",
+      definite: true,
+      domBacked: true,
+    }) +
     `<div class="feed-foot"><div class="pager">` +
     `<span class="pager-range" id="signal-hits-range" tabindex="-1">${esc(range)}</span>` +
     `<button class="pager-btn is-unavailable" id="signal-hits-prev" aria-disabled="true">← Prev</button>` +
@@ -413,7 +479,8 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
   );
 }
 
-function lagBandHtml(deps: SignalsPageDeps): string {
+/** The lag distribution's rows: one per (member, lag), at most 8. */
+function lagRows(deps: SignalsPageDeps): { name: string; party: string; lag: number; n: number; traded: string | null; filed: string }[] {
   // One row per (member, lag): a bulk filing of forty identical rows is one
   // fact about lag, not forty — the multiplicity is printed, never hidden.
   const grouped = new Map<string, { name: string; party: string; lag: number; n: number; traded: string | null; filed: string }>();
@@ -424,7 +491,10 @@ function lagBandHtml(deps: SignalsPageDeps): string {
     if (g) g.n++;
     else grouped.set(key, { name: r.name, party: r.party, lag: r.lag, n: 1, traded: r.traded, filed: r.filed });
   }
-  const rows = [...grouped.values()].sort((a, b) => b.lag - a.lag).slice(0, 8);
+  return [...grouped.values()].sort((a, b) => b.lag - a.lag).slice(0, 8);
+}
+function lagBandHtml(deps: SignalsPageDeps): string {
+  const rows = lagRows(deps);
   const scale = Math.max(112, ...rows.map((r) => r.lag));
   const tick = (45 / scale) * 100;
   const body =
@@ -542,10 +612,10 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
 
   /* --- ledger --- */
   const ledger = disclosureLedger([
-    { label: "Active kinds", value: fmtInt(evaluatedKinds), detail: `${fmtInt(withheldKinds)} withheld this build · 1 by design` },
-    { label: "Hits · Congress", value: fmtInt(active.length), detail: `${fmtInt(activeKinds.size)} kinds fired · ${artifact.retentionDays}-day window` },
-    { label: "Hits · 13F", value: "—", detail: "await closed 13F periods · not simulated" },
-    { label: "Cross-regime", value: "—", detail: "needs the 13F join · not simulated" },
+    { label: "Active kinds", value: fmtInt(evaluatedKinds), detail: `${fmtInt(withheldKinds)} withheld this build · 1 by design`, subKind: "count" },
+    { label: "Hits · Congress", value: fmtInt(active.length), detail: `${fmtInt(activeKinds.size)} kinds fired · ${artifact.retentionDays}-day window`, subKind: "count", tone: "green" },
+    { label: "Hits · 13F", value: "—", detail: "await closed 13F periods · not simulated", subKind: "absence", tone: "gold" },
+    { label: "Cross-regime", value: "—", detail: "needs the 13F join · not simulated", subKind: "absence", tone: "blue" },
   ]);
 
   /* --- three summaries, every one data-derived --- */
@@ -561,6 +631,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     .sort((a, b) => a.n - b.n)[0];
   const stories = briefingCards([
     {
+      tone: "gold",
       tag: "Largest lower bound this window",
       title: largest
         ? `${shortOf(largest.kind)}: ${largest.entities.memberName} · ${magnitudeText(largest.magnitude)}`
@@ -570,6 +641,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
         : "Every rule ran over the retained window; ranking needs a disclosed lower bound.",
     },
     {
+      tone: "green",
       tag: "Compliance",
       title: lateWithheld
         ? "The LATE rule was withheld this build — not evaluated"
@@ -583,6 +655,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
           : `The longest ran +${fmtInt(lateMax)} days from trade to filing — ${fmtInt(Math.max(0, lateMax - 45))} over the STOCK Act window. Late disclosure is stated, not editorialised.`,
     },
     {
+      tone: "sell",
       tag: "Rarest · highest signal",
       title: rarest
         ? rarest.n === 0
@@ -620,14 +693,16 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     `<span>${note(artifact.lagCaveat + " " + artifact.lifecycleNote, { scope: "signals-meta" }, "lag", { trigger: "label", textHtml: "zero hits is a computed answer, not missing coverage" })}</span>` +
     `</div>` +
     stories +
-    /* R17 order: the hits table first (data), the rule book collapsed below it. */
-    hitsHtml(artifact, active, ctx, d.renderCap ?? SIGNAL_HITS_PAGE_SIZE) +
-    `<div class="design-band design-signals-band">` +
-    lagBandHtml(d) + rateBandHtml(d, active, artifact) +
-    `</div>` +
-    `<details class="design-supplement" id="signal-rulebook-wrap"><summary>Rule book · every kind, its exact rule, why it carries information</summary>` +
+    /* D3 (L14): band S1 — Hits (1.8fr) │ Lag distribution + Hit rate (1fr) —
+       then the rule book as an EXPANDED full-width band (every rule published,
+       seven rows), then the watchlist band. */
+    pairBandHtml(
+      "design-signals-band",
+      hitsHtml(artifact, active, ctx, d.renderCap ?? SIGNAL_HITS_PAGE_SIZE, SIGNAL_HITS_COMPACT_ROWS),
+      `<div class="si-side">` + lagBandHtml(d) + rateBandHtml(d, active, artifact) + `</div>`,
+      { primary: "left" },
+    ) +
     ruleBookHtml(artifact, active) +
-    `</details>` +
     watchBandHtml(active, artifact) +
     supersededFoot +
     withheld
@@ -651,9 +726,12 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
   // Branch on ALL lifecycle rows — a member whose last active
   // signal became a tombstone still has history, and "no signals" would erase
   // exactly the supersession the lifecycle exists to preserve.
+  /* `data-empty-state`: the cell is ONE stated line, so the member page's
+     Filing history │ Signals pair collapses rather than pairing a table with a
+     sentence (DESIGN-POLISH M2, R10). */
   if (all.length === 0) {
     return (
-      `<section class="panel" aria-label="Signals">` +
+      `<section class="panel" aria-label="Signals" data-empty-state>` +
       `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
       `<span class="panel-note">window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)}</span></div>` +
       `<p class="section-note">No signals for this member in the retained window — a computed answer over the rules on <a href="/signals/">/signals</a>, not an absence of coverage.</p></section>`
@@ -661,7 +739,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
   }
   if (mine.length === 0) {
     return (
-      `<section class="panel" aria-label="Signals">` +
+      `<section class="panel" aria-label="Signals" data-empty-state>` +
       `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
       `<span class="panel-note">window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)}</span></div>` +
       `<p class="section-note">No ACTIVE signals for this member in the retained window` +

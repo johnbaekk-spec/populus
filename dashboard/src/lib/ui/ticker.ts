@@ -29,6 +29,9 @@ import {
   partyClass,
   sideLabel,
   cardFoot,
+  presentColumns,
+  dataColumnsAttr,
+  tableFootReasonHtml,
 } from "../format.ts";
 import {
   type TickerEntity,
@@ -251,9 +254,9 @@ export function tickerUnifiedBody(
   const timelyKnown = t.txns.length > 0 && unknownTimeliness === 0;
   const holders = inst.state === "data" ? inst.holders?.length ?? 0 : null;
   const ledger = disclosureLedger([
-    { label: "Congress txns", value: fmtInt(t.txns.length), detail: `all PTR rows naming ${t.ticker}` },
-    { label: "Members · 12m", value: fmtInt(members12), detail: `${fmtInt(buys12)} buys · ${fmtInt(sells12)} sells · by trade date` },
-    { label: "Latest PTR", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ? `filed ${latestFiled}` : "no filing on record" },
+    { label: "Congress txns", value: fmtInt(t.txns.length), detail: `all PTR rows naming ${t.ticker}`, subKind: "count" },
+    { label: "Members · 12m", value: fmtInt(members12), detail: `${fmtInt(buys12)} buys · ${fmtInt(sells12)} sells · by trade date`, subKind: "count" },
+    { label: "Latest PTR", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ? `filed ${latestFiled}` : "no filing on record", subKind: latestFiled ? "date" : "absence" },
     {
       label: "13F holders",
       value: holders === null ? "—" : fmtInt(holders),
@@ -263,6 +266,7 @@ export function tickerUnifiedBody(
           : inst.state === "module-absent"
             ? "13F module not in build"
             : "ticker not resolved to an issuer",
+      subKind: inst.state === "data" ? "qualifier" : "absence",
     },
   ]);
   const stories = briefingCards([
@@ -464,6 +468,30 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
     })
     .sort((a, b) => b.rows - a.rows || (a.first.name < b.first.name ? -1 : 1))
     .slice(0, 8);
+  /* R12 (DESIGN-POLISH M2): the Committees column renders only when some shown
+     member carries a committee statement; without the roster it is removed and
+     its absence stated in the foot. With the roster, a member whose rows carry
+     no member ID cannot be matched to it at all — the reason says so rather
+     than claiming that member sat on no committee (review R2-9). */
+  const unmatchable = members.filter((m) => !m.first.bioguide).length;
+  const committeesEmptyReason = !deps?.committees
+    ? "Committees: committee membership data is not in this build; absence is stated rather than guessed from current rosters."
+    : unmatchable === members.length
+      ? "Committees: none of these members carries a member ID, so none can be matched to the committee roster — unanswerable, not cleared."
+      : unmatchable > 0
+        ? `Committees: no matched member sat on a committee as of their latest trade in the window; ${fmtInt(unmatchable)} ${unmatchable === 1 ? "member carries" : "members carry"} no member ID and cannot be matched to the roster — unanswerable, not cleared.`
+        : "Committees: none of these members sat on a committee as of their latest trade in the window.";
+  const cols = presentColumns(members, [
+    { key: "member", always: true },
+    { key: "rows", always: true },
+    { key: "net", always: true },
+    {
+      key: "committees",
+      hasValue: (m) => m.committee !== null && m.committee !== "—",
+      emptyReason: committeesEmptyReason,
+    },
+  ]);
+  const hasCommittees = cols.columns.includes("committees");
   const rowsHtml = members
     .map((m) => {
       const dir = netDirection(m.net);
@@ -471,7 +499,8 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
         `<tr><td class="c-member c-flex">${m.first.bioguide ? `<a href="${memberHrefFor(m.first.bioguide, ctx)}">${esc(m.first.name)}</a>` : esc(m.first.name)} <span class="aff ${partyClass(m.first.party)}">${esc(affTextOf(m.first))}</span></td>` +
         `<td class="c-num">${fmtInt(m.rows)}</td>` +
         `<td class="c-num ${dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted"}">${esc(netIntervalText(m.net))}</td>` +
-        `<td class="c-num ${m.committee && m.committee !== "—" && m.committee !== "unanswerable" ? "c-amber" : "c-muted"}">${m.committee === null ? "—" : esc(m.committee)}</td></tr>`
+        (hasCommittees ? `<td class="c-num ${m.committee && m.committee !== "—" && m.committee !== "unanswerable" ? "c-amber" : "c-muted"}">${m.committee === null ? "—" : esc(m.committee)}</td>` : "") +
+        `</tr>`
       );
     })
     .join("\n");
@@ -481,14 +510,17 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
     `<span class="panel-note">12M · NET LOWER BOUND · ${deps?.committees ? `COMMITTEES AS OF TRADE DATE · SNAPSHOT ${esc(deps.committees.snapshotDate)}` : "COMMITTEE ROSTER NOT IN BUILD"}</span></div>` +
     (members.length === 0
       ? `<p class="section-note">No member disclosed ${esc(t.ticker)} in the trailing 12 months.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Members disclosing ${esc(t.ticker)} in the trailing 12 months</caption>` +
+      : `<div class="table-scroll"><table class="etable etable-compact"${dataColumnsAttr(cols)}><caption class="visually-hidden">Members disclosing ${esc(t.ticker)} in the trailing 12 months</caption>` +
         `<thead><tr>` +
-        thHtml({ label: "Member", cls: "c-member c-flex" }) +
-        thHtml({ label: "Rows", cls: "c-num" }) +
-        thHtml({ label: "Net", cls: "c-num", notes: { scope: "ticker-members" }, noteKey: "net", noteHtml: esc("Net disclosed flow for this ticker: purchases minus sales, computed as a net range on the disclosed amounts. A lower bound is provable, never a point.") }) +
-        thHtml({ label: "Committees", cls: "c-num", notes: { scope: "ticker-members" }, noteKey: "committees", noteHtml: esc(deps?.committees ? "Number of committees the member sat on as of their latest trade date in the window, from the cc0-legislators roster snapshot. Context, never an allegation; jurisdiction overlap needs the sector join." : "Committee membership data is not in this build; the column states absence rather than guessing from current rosters.") }) +
+        thHtml({ label: "Member", cls: "c-member c-flex", col: "member" }) +
+        thHtml({ label: "Rows", cls: "c-num", col: "rows" }) +
+        thHtml({ label: "Net", cls: "c-num", notes: { scope: "ticker-members" }, noteKey: "net", noteHtml: esc("Net disclosed flow for this ticker: purchases minus sales, computed as a net range on the disclosed amounts. A lower bound is provable, never a point."), col: "net" }) +
+        (hasCommittees
+          ? thHtml({ label: "Committees", cls: "c-num", notes: { scope: "ticker-members" }, noteKey: "committees", noteHtml: esc("Number of committees the member sat on as of their latest trade date in the window, from the cc0-legislators roster snapshot. Context, never an allegation; jurisdiction overlap needs the sector join."), col: "committees" })
+          : "") +
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody></table></div>` +
+        tableFootReasonHtml(cols) +
         `<p class="section-note">${byMember.size > members.length ? `${esc(rangeOfTotal(1, members.length, byMember.size, "members"))} in the window, most active first` : `${fmtInt(byMember.size)} members in the window`} · counts of disclosures, not dollars.</p>`) +
     `</section>`
   );
