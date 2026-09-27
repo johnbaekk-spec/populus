@@ -20,8 +20,8 @@ import type { InstData, QoqDeltaRow, ConcentrationRow } from "../src/lib/inst.ts
 import type { TxnRow } from "../src/lib/format.ts";
 
 const P = "2026-03-31";
-function conc(cik: string, total: number, nulls = 0, share: number | null = 5000, hhi: number | null = 1200): ConcentrationRow {
-  return { cik, period_of_report: P, position_count: 10, total_value_usd: total, null_value_positions: nulls, topn_value_usd: total / 2, topn_share_bps: share, hhi, flags: [] };
+function conc(cik: string, total: number, nulls = 0, share: number | null = 5000, hhi: number | null = 1200, positions = 10): ConcentrationRow {
+  return { cik, period_of_report: P, position_count: positions, total_value_usd: total, null_value_positions: nulls, topn_value_usd: total / 2, topn_share_bps: share, hhi, flags: [] };
 }
 function delta(cik: string, key: string, kind: QoqDeltaRow["change_kind"], curr: number | null): QoqDeltaRow {
   return { cik, position_key: key, put_call: "LONG", curr_period: P, prev_period: "2025-12-31", change_kind: kind, prev_value_usd: null, curr_value_usd: curr, delta_value_usd: curr, prev_shares: null, curr_shares: 1, delta_shares: 1, ssh_prnamt_type: "SH", flags: [] };
@@ -43,21 +43,26 @@ function inst(filers: { cik: string; conc: ConcentrationRow[]; deltas: QoqDeltaR
 }
 
 test("new-position leaders: weight over a COMPLETE book only; incomplete books are counted, never ranked", () => {
+  /* DESIGN-POLISH M4 (R26): every filer here is notable with a 25-position
+     book, so the only rule this test exercises is the complete-book one;
+     the eligibility rules are pinned in analytics-credibility.test.ts. */
+  const book = (cik: string, total: number, nulls = 0) => conc(cik, total, nulls, 5000, 1200, 25);
   const data = inst([
-    { cik: "1", conc: [conc("1", 1_000)], deltas: [delta("1", "a", "new", 50), delta("1", "b", "new", 10)] }, // 5% and 1%
-    { cik: "2", conc: [conc("2", 1_000, 1)], deltas: [delta("2", "a", "new", 300)] }, // NULL-valued position in book
-    { cik: "3", conc: [conc("3", 1_000)], deltas: [delta("3", "a", "new", null)] }, // undisclosed new value
-    { cik: "4", conc: [conc("4", 1_000)], deltas: [delta("4", "a", "add", 900)] }, // not a NEW position
-    { cik: "5", conc: [conc("5", 1_000)], deltas: [delta("5", "a", "new", 15)] }, // below 2%
+    { cik: "1", conc: [book("1", 1_000)], deltas: [delta("1", "a", "new", 50), delta("1", "b", "new", 10)] }, // 5% and 1%
+    { cik: "2", conc: [book("2", 1_000, 1)], deltas: [delta("2", "a", "new", 300)] }, // NULL-valued position in book
+    { cik: "3", conc: [book("3", 1_000)], deltas: [delta("3", "a", "new", null)] }, // undisclosed new value
+    { cik: "4", conc: [book("4", 1_000)], deltas: [delta("4", "a", "add", 900)] }, // not a NEW position
+    { cik: "5", conc: [book("5", 1_000)], deltas: [delta("5", "a", "new", 15)] }, // below 2%
   ]);
-  const l = newPositionLeaders(data, P)!;
+  const l = newPositionLeaders(data, P, new Set(["1", "2", "3", "4", "5"]))!;
   assert.deepEqual(l.rows.map((r) => [r.cik, r.maxWeightBps, r.atThreshold, r.newPositions]), [["1", 500, 1, 2]]);
-  assert.equal(l.incompleteBooks, 2, "the NULL-book filer and the undisclosed-value filer are stated, not zero-filled");
+  assert.equal(l.excluded.missingValue, 2, "the NULL-book filer and the undisclosed-value filer are stated, not zero-filled");
+  assert.equal(l.excluded.belowThreshold, 1);
   assert.equal(l.evaluated, 4);
   const html = newPositionLeadersHtml(l, () => "top", P);
   assert.match(html, /Conviction leaders/);
   assert.match(html, /5\.0%/);
-  assert.match(html, /2 were not rankable/);
+  assert.match(html, /2 a position without a value/);
   assert.doesNotMatch(html, /Filer 2/);
 });
 

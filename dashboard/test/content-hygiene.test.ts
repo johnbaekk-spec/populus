@@ -364,17 +364,20 @@ function notableFeed(): { feed: ActivityFeed; ciks: Set<string> } {
   const records = [
     r({ position_key: "sid:big-older", delta_value_usd: 9_000, filing_keys: [2] }),
     r({ position_key: "sid:small-newest", delta_value_usd: 5, filing_keys: [1] }),
-    ...Array.from({ length: 12 }, (_, i) => r({ position_key: `sid:n${i}`, delta_value_usd: 100 + i, filing_keys: [1] })),
+    /* DESIGN-POLISH M4 (R27): two rows per manager at most, so the twelve
+       newest rows come from six managers — the list stays 14 long under the cap */
+    ...Array.from({ length: 12 }, (_, i) => r({ cik: `000000010${i % 6}`, position_key: `sid:n${i}`, delta_value_usd: 100 + i, filing_keys: [1] })),
   ];
-  return { feed: { present: true, reason: null, filings: FILINGS_ACT, pagination: paginateActivity(records, FILINGS_ACT), records } as ActivityFeed, ciks: new Set(["0001067983"]) };
+  const ciks = new Set(["0001067983", ...Array.from({ length: 6 }, (_, i) => `000000010${i}`)]);
+  return { feed: { present: true, reason: null, filings: FILINGS_ACT, pagination: paginateActivity(records, FILINGS_ACT), records } as ActivityFeed, ciks };
 }
 
 test("T3.8 (H-1, V1 NEW-2, V1 NEW-3): over notable rows the bound, the caption and the count all say newest-first", () => {
   const { feed, ciks } = notableFeed();
   const html = activityFeedHtml(feed, { reference: true, notableCiks: ciks });
   const extra = html.slice(html.indexOf('<span class="compact-bound-extra">'));
-  assert.match(extra, /^<span class="compact-bound-extra"> These rows are notable managers' new, added, trimmed and exited positions, newest filing first, then largest change\. This build publishes all 14 of its changes, ranked by size of change with undisclosed values last, as 1 file of at most 2,000 changes or 2,097,152 bytes each\. <a href="[^"]+">Open the first file ↗<\/a>/);
-  assert.match(html, /<caption class="visually-hidden">Quarter-over-quarter position changes by notable managers, newest filing first, then largest change<\/caption>/);
+  assert.match(extra, /^<span class="compact-bound-extra"> These rows are notable managers' new, added, trimmed and exited positions, at most two per manager, newest filing first, then largest change; each manager's full list is on its filer page\. This build publishes all 14 of its changes, ranked by size of change with undisclosed values last, as 1 file of at most 2,000 changes or 2,097,152 bytes each\. <a href="[^"]+">Open the first file ↗<\/a>/);
+  assert.match(html, /<caption class="visually-hidden">Quarter-over-quarter position changes by notable managers, at most two per manager, newest filing first, then largest change<\/caption>/);
   assert.match(html, /1–10 of the 14 newest changes by notable managers shown here/);
   // controls: the old sentences over these rows are false and absent
   assert.doesNotMatch(html, /These rows are the largest of/, "control: the 'largest' bound over newest-first rows");

@@ -206,7 +206,7 @@ test("R-4: the consensus board's count names its bound when more issuers qualify
     issuerKey: `k${i}`, issuer: `ISSUER ${i}`, ticker: null, newStakes: 3, adds: 0, trims: 0, exits: 0, filers: 3,
     netDeltaUsd: 1000 - i, netDeltaPartial: false, topMover: null,
   });
-  const board = (listed: number, qualifying: number): ConsensusBoard => ({ period: "2026-03-31", minFilers: 3, rows: Array.from({ length: listed }, (_, i) => row(i)), qualifying });
+  const board = (listed: number, qualifying: number): ConsensusBoard => ({ period: "2026-03-31", minFilers: 3, rows: Array.from({ length: listed }, (_, i) => row(i)), qualifying, wrappersExcluded: 0, unkeyedMoves: 0 });
   const count = (b: ConsensusBoard) => countOf(parse(consensusBoardHtml(b, { filerHref: (c) => `/f/${c}` })), "inst-consensus-tbody");
   assert.equal(count(board(50, 71)), "1–10 of the 50 highest-ranked issuers", "a bounded board names its bound");
   assert.equal(count(board(24, 24)), "1–10 of 24 issuers", "a complete board states its total");

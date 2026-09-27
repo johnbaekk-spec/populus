@@ -271,8 +271,9 @@ const description =
           still printed there; the file path and the grouping rule live here. */}
       <p class="metho-body" id="activity-files">
         <strong>The activity list and its files.</strong> The Recent activity list on /institutional/
-        shows notable managers' new, added, trimmed and exited positions, newest filing first, then
-        largest change. Every change this build publishes is in numbered files at{" "}
+        shows notable managers' new, added, trimmed and exited positions, at most two per manager
+        over the whole list, newest filing first, then largest change; each manager's full list is on
+        its filer page. Every change this build publishes is in numbered files at{" "}
         <span class="mono-id">/institutional/data/activity/&lt;page&gt;.v1.json</span>, ranked by the
         size of the change in reported value, largest first, with changes whose value was not
         disclosed last. Each file holds at most {fmtInt(PAGE_RECORD_LIMIT)} changes or{" "}

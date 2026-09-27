@@ -188,6 +188,114 @@ export interface ConsensusRow {
   netDeltaUsd: number | null;
   netDeltaPartial: boolean;
   topMover: { manager: string; kind: MoveKind; cik: string } | null;
+  /** R28: set only when another qualifying issuer key resolves to the same
+      display name and the ticker does not tell them apart — the stable issuer
+      key's ordinal among the keys sharing the name ("#2"). */
+  disambiguator?: string | null;
+}
+
+/* ---------- R28: the reviewed fund-wrapper list ---------- */
+
+/** One reviewed fund-wrapper registrant. `key` is the stable identity: the
+    issuer name as filed, normalized (`normalizedIssuerName` — whitespace
+    collapsed, upper case), so every issuer key the producer assigns that
+    registrant matches it however many share classes or series it files
+    under. `name` is the reviewed name; `why` the review note. */
+export interface FundWrapperEntry {
+  key: string;
+  name: string;
+  why: string;
+}
+
+/** The identity the list is keyed on (DESIGN-POLISH R21: the normalized,
+    upper-case name as filed). */
+export function normalizedIssuerName(raw: string | null | undefined): string {
+  return String(raw ?? "").split(/\s+/).filter((t) => t !== "").join(" ").toUpperCase();
+}
+
+/** R28 (H-11): registrants that are fund wrappers — trusts and ETF series
+    whose "consensus" is a manager's cash or index sleeve, not a view on an
+    operating company. Seeded 2026-09-26 by measuring, over every 13F
+    position filed for the closed quarter 2026-03-31 on build 20260817.1
+    (`serving_filer_rows`), the issuer names filed under three or more distinct
+    classes, ranked by holder count; the fund registrants among them (a
+    trust or fund series, a commodity or crypto trust) down to ~550 holders
+    were kept by name review, and operating companies with many classes
+    (ALPHABET INC, JPMORGAN CHASE & CO …) were left out. Every entry matched
+    that quarter. The owner reviews the list at the M4 row-level review (D5). A
+    test fails on any entry that matches no issuer in the closed quarter, so
+    stale entries cannot accumulate. */
+export const FUND_WRAPPER_ISSUERS: readonly FundWrapperEntry[] = [
+  { key: "ISHARES TR", name: "iShares Trust", why: "multi-series fund registrant" },
+  { key: "VANGUARD INDEX FDS", name: "Vanguard Index Funds", why: "multi-series fund registrant" },
+  { key: "SPDR SERIES TRUST", name: "SPDR Series Trust", why: "multi-series fund registrant" },
+  { key: "STATE STR SPDR S&P 500 ETF T", name: "SPDR S&P 500 ETF Trust", why: "single-index ETF trust" },
+  { key: "INVESCO QQQ TR", name: "Invesco QQQ Trust", why: "single-index ETF trust" },
+  { key: "SCHWAB STRATEGIC TR", name: "Schwab Strategic Trust", why: "multi-series fund registrant" },
+  { key: "SELECT SECTOR SPDR TR", name: "Select Sector SPDR Trust", why: "multi-series fund registrant" },
+  { key: "ISHARES INC", name: "iShares, Inc.", why: "multi-series fund registrant" },
+  { key: "INVESCO EXCHANGE TRADED FD T", name: "Invesco Exchange-Traded Fund Trust", why: "multi-series fund registrant" },
+  { key: "VANGUARD INTL EQUITY INDEX F", name: "Vanguard International Equity Index Funds", why: "multi-series fund registrant" },
+  { key: "SPDR GOLD TR", name: "SPDR Gold Trust", why: "commodity or crypto trust" },
+  { key: "VANGUARD SCOTTSDALE FDS", name: "Vanguard Scottsdale Funds", why: "multi-series fund registrant" },
+  { key: "VANGUARD WORLD FD", name: "Vanguard World Fund", why: "multi-series fund registrant" },
+  { key: "VANECK ETF TRUST", name: "VanEck ETF Trust", why: "multi-series fund registrant" },
+  { key: "J P MORGAN EXCHANGE TRADED F", name: "J.P. Morgan Exchange-Traded Fund Trust", why: "multi-series fund registrant" },
+  { key: "VANGUARD TAX-MANAGED FDS", name: "Vanguard Tax-Managed Funds", why: "multi-series fund registrant" },
+  { key: "INVESCO EXCH TRADED FD TR II", name: "Invesco Exchange-Traded Fund Trust II", why: "multi-series fund registrant" },
+  { key: "VANGUARD BD INDEX FDS", name: "Vanguard Bond Index Funds", why: "multi-series fund registrant" },
+  { key: "VANGUARD SPECIALIZED FUNDS", name: "Vanguard Specialized Funds", why: "multi-series fund registrant" },
+  { key: "DIMENSIONAL ETF TRUST", name: "Dimensional ETF Trust", why: "multi-series fund registrant" },
+  { key: "VANGUARD WHITEHALL FDS", name: "Vanguard Whitehall Funds", why: "multi-series fund registrant" },
+  { key: "GLOBAL X FDS", name: "Global X Funds", why: "multi-series fund registrant" },
+  { key: "WISDOMTREE TR", name: "WisdomTree Trust", why: "multi-series fund registrant" },
+  { key: "FIRST TR EXCHANGE-TRADED FD", name: "First Trust Exchange-Traded Fund", why: "multi-series fund registrant" },
+  { key: "SPDR INDEX SHS FDS", name: "SPDR Index Shares Funds", why: "multi-series fund registrant" },
+  { key: "ISHARES GOLD TR", name: "iShares Gold Trust", why: "commodity or crypto trust" },
+  { key: "AMERICAN CENTY ETF TR", name: "American Century ETF Trust", why: "multi-series fund registrant" },
+  { key: "ISHARES BITCOIN TRUST ETF", name: "iShares Bitcoin Trust ETF", why: "commodity or crypto trust" },
+  { key: "VANGUARD STAR FDS", name: "Vanguard STAR Funds", why: "multi-series fund registrant" },
+  { key: "PIMCO ETF TR", name: "PIMCO ETF Trust", why: "multi-series fund registrant" },
+  { key: "FIDELITY COVINGTON TRUST", name: "Fidelity Covington Trust", why: "multi-series fund registrant" },
+  { key: "ISHARES SILVER TR", name: "iShares Silver Trust", why: "commodity or crypto trust" },
+  { key: "PROSHARES TR", name: "ProShares Trust", why: "multi-series fund registrant" },
+  { key: "VANGUARD MUN BD FDS", name: "Vanguard Municipal Bond Funds", why: "multi-series fund registrant" },
+  { key: "FIRST TR EXCHANGE TRADED FD", name: "First Trust Exchange-Traded Fund", why: "multi-series fund registrant" },
+  { key: "STATE STR SPDR S&P MIDCAP 40", name: "SPDR S&P MidCap 400 ETF Trust", why: "single-index ETF trust" },
+  { key: "STATE STR SPDR DOW JONES IND", name: "SPDR Dow Jones Industrial Average ETF Trust", why: "single-index ETF trust" },
+  { key: "GOLDMAN SACHS ETF TR", name: "Goldman Sachs ETF Trust", why: "commodity or crypto trust" },
+  { key: "PACER FDS TR", name: "Pacer Funds Trust", why: "multi-series fund registrant" },
+  { key: "VANGUARD ADMIRAL FDS INC", name: "Vanguard Admiral Funds", why: "multi-series fund registrant" },
+  { key: "VANGUARD MALVERN FDS", name: "Vanguard Malvern Funds", why: "multi-series fund registrant" },
+  { key: "VANGUARD CHARLOTTE FDS", name: "Vanguard Charlotte Funds", why: "multi-series fund registrant" },
+  { key: "JANUS DETROIT STR TR", name: "Janus Detroit Street Trust", why: "multi-series fund registrant" },
+  { key: "FIRST TR EXCHNG TRADED FD VI", name: "First Trust Exchange-Traded Fund VI", why: "multi-series fund registrant" },
+  { key: "BLACKROCK ETF TRUST II", name: "BLACKROCK ETF TRUST II (EDGAR conformed name)", why: "multi-series fund registrant" },
+  { key: "ALPS ETF TR", name: "ALPS ETF Trust", why: "multi-series fund registrant" },
+  { key: "EA SERIES TRUST", name: "EA Series Trust", why: "multi-series fund registrant" },
+  { key: "BLACKROCK ETF TRUST", name: "BLACKROCK ETF TRUST (EDGAR conformed name)", why: "multi-series fund registrant" },
+  { key: "AMPLIFY ETF TR", name: "Amplify ETF Trust", why: "multi-series fund registrant" },
+  { key: "FIRST TR EXCH TRADED FD III", name: "First Trust Exchange-Traded Fund III", why: "multi-series fund registrant" },
+  { key: "INNOVATOR ETFS TRUST", name: "Innovator ETFs Trust", why: "multi-series fund registrant" },
+  { key: "WORLD GOLD TR", name: "World Gold Trust", why: "commodity or crypto trust" },
+  { key: "DBX ETF TR", name: "DBX ETF Trust", why: "multi-series fund registrant" },
+  { key: "FIDELITY MERRIMACK STR TR", name: "Fidelity Merrimack Street Trust", why: "multi-series fund registrant" },
+  { key: "INVESCO EXCH TRD SLF IDX FD", name: "Invesco Exchange-Traded Self-Indexed Fund Trust", why: "multi-series fund registrant" },
+  { key: "ETF SER SOLUTIONS", name: "ETF Series Solutions", why: "multi-series fund registrant" },
+  { key: "SSGA ACTIVE ETF TR", name: "SSgA Active ETF Trust", why: "multi-series fund registrant" },
+  { key: "FRANKLIN TEMPLETON ETF TR", name: "Franklin Templeton ETF Trust", why: "multi-series fund registrant" },
+  { key: "ARK ETF TR", name: "ARK ETF Trust", why: "multi-series fund registrant" },
+  { key: "ISHARES U S ETF TR", name: "iShares U.S. ETF Trust", why: "multi-series fund registrant" },
+  { key: "GRAYSCALE BITCOIN TRUST ETF", name: "Grayscale Bitcoin Trust ETF", why: "commodity or crypto trust" },
+];
+
+/** Entries that match no issuer name filed in the closed quarter — stale on
+    this build. `issuerNames` is every issuer name the quarter's filings carry
+    (any filer, not only notable ones), as filed. */
+export function staleFundWrapperEntries(issuerNames: Iterable<string>, list: readonly FundWrapperEntry[] = FUND_WRAPPER_ISSUERS): FundWrapperEntry[] {
+  const names = new Set<string>();
+  for (const n of issuerNames) names.add(normalizedIssuerName(n));
+  return list.filter((e) => !names.has(e.key));
 }
 
 /** The /institutional/ header's "Consensus add" figure (R15, DESIGN-POLISH
@@ -198,7 +306,12 @@ export interface ConsensusRow {
     either way (R15, long names; a name that would wrap the sub to a third
     line makes the figure wide — `ledgerFigureWide`), and only a quarter with
     no qualifying name shows "—". */
-export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: string | null): LedgerItem {
+export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: string | null, wrappersExcluded = 0): LedgerItem {
+  /* R28: the figure is row 1 of the board, so it excludes the reviewed fund
+     wrappers too, and its note says how many. */
+  const wrappers = wrappersExcluded > 0
+    ? ` ${fmtInt(wrappersExcluded)} fund-wrapper ${wrappersExcluded === 1 ? "registrant" : "registrants"} on the reviewed list ${wrappersExcluded === 1 ? "is" : "are"} excluded.`
+    : "";
   if (!consensus) {
     return {
       label: "Consensus add",
@@ -208,6 +321,7 @@ export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: s
       detail: period ? "no name moved by ≥3 notable managers" : "no closed quarter yet",
       subKind: "absence",
       tone: "blue",
+      ...(wrappers ? { noteHtml: `No issuer was opened by enough notable managers in the closed quarter ${esc(period ?? "")}.${wrappers}` } : {}),
     };
   }
   const n = consensus.newStakes;
@@ -221,8 +335,19 @@ export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: s
     noteHtml:
       `The issuer the most notable managers opened a new stake in during the closed quarter ${esc(period ?? "")}` +
       (consensus.ticker ? "" : `; no reviewed ticker maps it, so the figure is the number of notable managers who opened it`) +
-      `. Ranked in Consensus below.`,
+      `. Ranked in Consensus below.${wrappers}`,
   };
+}
+
+/** R28: the board's two stated exclusions — the reviewed fund wrappers and
+    the moves no issuer key groups. */
+export function consensusExclusionText(board: Pick<ConsensusBoard, "wrappersExcluded" | "unkeyedMoves">): string {
+  const w = board.wrappersExcluded;
+  const u = board.unkeyedMoves;
+  return (
+    `${fmtInt(w)} fund-wrapper ${w === 1 ? "registrant" : "registrants"} on the reviewed list ${w === 1 ? "is" : "are"} excluded · ` +
+    `${fmtInt(u)} ${u === 1 ? "move carries" : "moves carry"} no issuer identity and ${u === 1 ? "is" : "are"} outside this board.`
+  );
 }
 
 /** The consensus board's count noun: its rows are the highest-ranked
@@ -239,19 +364,34 @@ export interface ConsensusBoard {
   minFilers: number;
   rows: ConsensusRow[];
   qualifying: number;
+  /** R28: issuer keys that would qualify but are on the reviewed fund-wrapper
+      list — excluded from the board and from the "Consensus add" figure */
+  wrappersExcluded: number;
+  /** R28: moves that carry no issuer key and so cannot be grouped */
+  unkeyedMoves: number;
 }
 
 /** Issuers ≥ `minFilers` DISTINCT notable filers moved in the quarter, ranked
     by new-stake count then net $. Built from the same moves as the band. */
-export function consensusBoard(period: string, moves: readonly NotableMove[], opts: { minFilers?: number; limit?: number } = {}): ConsensusBoard {
+export function consensusBoard(
+  period: string,
+  moves: readonly NotableMove[],
+  opts: { minFilers?: number; limit?: number; wrappers?: readonly FundWrapperEntry[] } = {},
+): ConsensusBoard {
   const issuerKeyOf = (m: NotableMove): string | null => m.ikey;
   const minFilers = opts.minFilers ?? 3;
   const limit = opts.limit ?? 50;
+  const wrapperKeys = new Set((opts.wrappers ?? FUND_WRAPPER_ISSUERS).map((e) => e.key));
+  let unkeyedMoves = 0;
+  let wrappersExcluded = 0;
   interface Acc { names: string[]; tickers: Map<string, number>; byKind: Record<MoveKind, Set<string>>; filers: Set<string>; net: number; any: boolean; partial: boolean; top: NotableMove | null }
   const groups = new Map<string, Acc>();
   for (const m of moves) {
     const key = issuerKeyOf(m);
-    if (!key) continue;
+    if (!key) {
+      unkeyedMoves++;
+      continue;
+    }
     let g = groups.get(key);
     if (!g) {
       g = { names: [], tickers: new Map(), byKind: { new: new Set(), add: new Set(), trim: new Set(), exit: new Set() }, filers: new Set(), net: 0, any: false, partial: false, top: null };
@@ -268,6 +408,12 @@ export function consensusBoard(period: string, moves: readonly NotableMove[], op
   const rows: ConsensusRow[] = [];
   for (const [key, g] of groups) {
     if (g.filers.size < minFilers) continue;
+    /* R28: a group ANY of whose filed names is a reviewed fund wrapper is
+       excluded and counted — never silently dropped. */
+    if (g.names.some((n) => wrapperKeys.has(normalizedIssuerName(n)))) {
+      wrappersExcluded++;
+      continue;
+    }
     const ticker = [...g.tickers.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? null;
     rows.push({
       issuerKey: key,
@@ -288,7 +434,36 @@ export function consensusBoard(period: string, moves: readonly NotableMove[], op
     ((b.netDeltaUsd ?? Number.NEGATIVE_INFINITY) - (a.netDeltaUsd ?? Number.NEGATIVE_INFINITY)) ||
     (a.issuerKey < b.issuerKey ? -1 : 1),
   );
-  return { period, minFilers, rows: rows.slice(0, limit), qualifying: rows.length };
+  disambiguateConsensusLabels(rows);
+  return { period, minFilers, rows: rows.slice(0, limit), qualifying: rows.length, wrappersExcluded, unkeyedMoves };
+}
+
+/** The label a consensus row reads as — ticker, filed name and, when needed,
+    the disambiguating ordinal. No two rows of one board share it (R28). */
+export function consensusRowLabel(r: Pick<ConsensusRow, "ticker" | "issuer" | "disambiguator">): string {
+  return `${r.ticker ? `${r.ticker} ` : ""}${r.issuer}${r.disambiguator ? ` ${r.disambiguator}` : ""}`;
+}
+
+/** R28: when two issuer keys resolve to one display name, each is told apart
+    by its ticker, or — when no ticker separates them — by its stable issuer
+    key's ordinal among the keys sharing the name, in codepoint order. Runs over
+    EVERY qualifying row, so the ordinal does not depend on the board's cut. */
+function disambiguateConsensusLabels(rows: ConsensusRow[]): void {
+  const byName = new Map<string, ConsensusRow[]>();
+  for (const r of rows) {
+    const k = normalizedIssuerName(r.issuer);
+    byName.set(k, [...(byName.get(k) ?? []), r]);
+  }
+  for (const same of byName.values()) {
+    if (same.length < 2) continue;
+    const ordered = [...same].sort((a, b) => (a.issuerKey < b.issuerKey ? -1 : a.issuerKey > b.issuerKey ? 1 : 0));
+    const tickerCount = new Map<string, number>();
+    for (const r of same) if (r.ticker) tickerCount.set(r.ticker, (tickerCount.get(r.ticker) ?? 0) + 1);
+    for (const r of same) {
+      const tickerTells = r.ticker !== null && tickerCount.get(r.ticker) === 1;
+      r.disambiguator = tickerTells ? null : `#${ordered.indexOf(r) + 1}`;
+    }
+  }
 }
 
 /** Band I1 (DESIGN-POLISH M2, R10; coordinator decision CD-5): Consensus is
@@ -308,13 +483,14 @@ export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOp
       /* `data-empty-state`: the board is ONE stated line, so band I1
          collapses rather than pairing it with the Conviction table (R10). */
       `<section class="panel design-consensus" id="inst-consensus" aria-label="Consensus" data-empty-state>${head}` +
-      `<p class="section-note">${board ? `No issuer was moved by ${fmtInt(board.minFilers)} or more notable managers in the quarter ended ${esc(board.period)}. Absence is stated, never simulated.` : "No closed quarter is available to group over yet."}</p></section>`
+      `<p class="section-note">${board ? `No issuer was moved by ${fmtInt(board.minFilers)} or more notable managers in the quarter ended ${esc(board.period)}. Absence is stated, never simulated. ${consensusExclusionText(board)}` : "No closed quarter is available to group over yet."}</p></section>`
     );
   }
   const rows = board.rows
     .map((r, i) =>
       `<tr${i >= compact ? " data-compact-extra" : ""}>` +
-      `<td class="c-issuer c-flex">${r.ticker ? `<span class="mono-ticker">${esc(r.ticker)}</span> ` : ""}<span class="filed-name">${esc(r.issuer)}</span></td>` +
+      `<td class="c-issuer c-flex">${r.ticker ? `<span class="mono-ticker">${esc(r.ticker)}</span> ` : ""}<span class="filed-name">${esc(r.issuer)}</span>` +
+      `${r.disambiguator ? ` <span class="c-muted">${esc(r.disambiguator)}</span>` : ""}</td>` +
       `<td class="c-num c-strong">${fmtInt(r.newStakes)}</td><td class="c-num">${fmtInt(r.adds)}</td><td class="c-num">${fmtInt(r.trims)}</td><td class="c-num">${fmtInt(r.exits)}</td>` +
       `<td class="c-num has-marks ${r.netDeltaUsd == null ? "c-muted" : r.netDeltaUsd < 0 ? "c-sell" : "c-buy"}">${esc(signedUsd(r.netDeltaUsd))}${r.netDeltaPartial ? hangMark("≈") : ""}</td>` +
       `<td class="c-filer c-secondary">${r.topMover ? `<a href="${esc(opts.filerHref(r.topMover.cik))}">${esc(r.topMover.manager)}</a> ${kindWordHtml(r.topMover.kind)}` : "—"}</td></tr>`,
@@ -327,7 +503,9 @@ export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOp
     `<thead><tr>${columns.map((c, i) => thHtml({ label: c, cls: i === 0 ? "c-issuer c-flex" : i === 6 ? "c-filer c-secondary" : i === 5 ? "c-num has-marks" : "c-num" })).join("")}</tr></thead>` +
     `<tbody id="inst-consensus-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
     `<p class="section-note">${fmtInt(board.qualifying)} issuers qualify · counts are distinct notable managers · ≈ = a contributing change disclosed no value, so the sum is partial.` +
-    (board.qualifying > board.rows.length ? ` The ${fmtInt(board.rows.length)} highest-ranked are listed.` : "") + `</p>` +
+    (board.qualifying > board.rows.length ? ` The ${fmtInt(board.rows.length)} highest-ranked are listed.` : "") +
+    (board.rows.some((r) => r.disambiguator) ? ` #n tells apart issuers filed under one name: the order of their stable issuer keys.` : "") +
+    ` ${consensusExclusionText(board)}</p>` +
     /* The one disclosure primitive and its range count (R8) — it was hand-built
        here with a second grammar, a bare count of the held-back rows. A board
        holding nothing back renders its hidden SHELL, so the table always
