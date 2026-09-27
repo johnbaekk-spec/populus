@@ -3,7 +3,7 @@
    the island imports it dynamically and `ui.ts` pulls in the whole rendering
    surface. */
 
-import { esc, fmtInt, fmtUsd, identityChipHtml, note } from "./format.ts";
+import { esc, fmtCik, fmtInt, fmtUsd, identityChipHtml, note } from "./format.ts";
 import type { AddsRow } from "./inst-adds.ts";
 
 /** One leaderboard row. Every metric is that row's OWN mode — the payload is
@@ -48,7 +48,7 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
           textHtml: `<span class="none">—</span>`,
           name: "no top adder",
         })
-      : esc(r.top_adder_name ?? `CIK ${r.top_adder_cik}`);
+      : esc(r.top_adder_name ?? `CIK ${fmtCik(r.top_adder_cik)}`);
   return (
     `<tr><td class="c-num c-muted">${fmtInt(pos)}</td>` +
     /* The raw issuer key (`cusip6:464287`) stops being visible text.

@@ -246,6 +246,90 @@ def test_a_cusip_written_inside_a_filers_own_text_is_withheld_too(tmp_path, sour
     assert MAPPED_CUSIP.encode() not in path.read_bytes()
 
 
+def test_d4_a_filed_name_embedding_a_cusip_keeps_it_uppercase_and_is_scrubbed(tmp_path, source):
+    """DESIGN-POLISH M3 (R21, D4 (a)): the display rule no longer title-cases,
+    so a CUSIP a filer wrote into the issuer-name field keeps its capitals
+    through `display_issuer_name`. P-3 (M3 review), rewritten property-first:
+    whatever case a name reaches the published file in — verbatim, or the
+    retired rule's title case ("... Cusip 88579y101") — the published name
+    carries the withheld CUSIP in NO case, because the scrub matches tokens
+    case-insensitively (P-2). The previous version of this test asserted the
+    title-cased CUSIP SURVIVED, i.e. it pinned the leak."""
+    from populus.inst_agg import display_issuer_name
+
+    filed = f"3M CO COM EXCHANGED FOR CUSIP {MAPPED_CUSIP}"
+    shown = display_issuer_name([filed, "3M CO"])
+    assert shown == filed, shown
+    assert MAPPED_CUSIP in shown, "the embedded CUSIP keeps its capitals"
+    # the literal plan example, 30233Q108, keeps its capitals the same way
+    assert display_issuer_name(["EXXON MOBIL CORP COM EXCHANGED FOR CUSIP 30233Q108"]).endswith("30233Q108")
+
+    plan = plan_cusip_redaction(source)
+    retired = " ".join(t[:1].upper() + t[1:].lower() for t in filed.split())
+    path = _published(tmp_path, [
+        (None, None, shown, "pos:1", "iss:1"),
+        (None, None, retired, "pos:2", "iss:2"),
+    ])
+    apply_cusip_redaction(plan, path)
+    names = [r[0] for r in sqlite3.connect(path).execute(
+        "SELECT issuer_name FROM serving_filer_rows ORDER BY position_key")]
+    for name in names:
+        assert MAPPED_CUSIP.lower() not in name.lower(), name
+        assert "(CUSIP withheld)" in name, name
+    # the filer's surrounding words survive in both
+    assert names[0].startswith("3M CO COM EXCHANGED FOR CUSIP") and names[1].startswith("3m Co Com Exchanged"), names
+    blob = path.read_bytes()
+    assert MAPPED_CUSIP.encode() not in blob and MAPPED_CUSIP.lower().encode() not in blob
+
+
+def test_p2_a_lower_case_cusip_in_any_published_text_is_withheld(tmp_path, source):
+    """P-2 (M3 review): filers write CUSIPs in lower case — seen in the corpus
+    as "…USD 50 - 06738c778" and "Palisade Bio In Contra Spin From(81689b103)".
+    The scrub matches a token in any case and checks its UPPER-CASED form
+    against the withheld set: bare, parenthesised, inside an ISIN, and as a
+    whole value. An unmapped CUSIP in lower case is left alone."""
+    plan = plan_cusip_redaction(source)
+    low = MAPPED_CUSIP.lower()
+    path = _published(tmp_path, [
+        (None, None, f"3M CO NOTE USD 50 - {low}", "pos:1", "iss:1"),
+        (None, None, f"3M Co Contra Spin From({low})", "pos:2", "iss:2"),
+        (None, None, f"3M CO REGISTERED SHS isin#us{low}7", "pos:3", "iss:3"),
+        (None, None, low, "pos:4", "iss:4"),
+        (None, None, f"Some Other Corp {UNMAPPED_CUSIP.lower()}", "pos:5", "iss:5"),
+    ])
+    counts = apply_cusip_redaction(plan, path)
+    names = dict(sqlite3.connect(path).execute(
+        "SELECT position_key, issuer_name FROM serving_filer_rows"))
+    for key in ("pos:1", "pos:2", "pos:3", "pos:4"):
+        assert low not in names[key].lower(), names[key]
+        assert "(CUSIP withheld)" in names[key], names[key]
+    assert names["pos:1"] == "3M CO NOTE USD 50 - (CUSIP withheld)"
+    assert names["pos:2"] == "3M Co Contra Spin From((CUSIP withheld))"
+    assert names["pos:4"] == "(CUSIP withheld)", "a whole value that IS a lower-case CUSIP"
+    assert names["pos:5"] == f"Some Other Corp {UNMAPPED_CUSIP.lower()}", "an unmapped CUSIP is untouched"
+    assert counts.get("serving_filer_rows.issuer_name.cusip_text") == 1
+    assert low.encode() not in path.read_bytes(), "no freed page keeps the lower-case token"
+
+
+def test_p2_a_lower_case_cusip_in_disclosure_text_is_withheld_visibly(tmp_path, mapped_row):
+    """P-2 (M3 review): the congressional disclosure sweep shares the scrub, so
+    a member's sentence carrying a lower-case CUSIP is withheld too."""
+    from populus.inst_redaction import scrub_disclosure_text
+
+    conn = sqlite3.connect(tmp_path / "c.db")
+    conn.execute("CREATE TABLE transactions (txn_id TEXT, comment TEXT, raw_row TEXT)")
+    low = MAPPED_CUSIP.lower()
+    conn.execute(
+        "INSERT INTO transactions VALUES ('t:1', ?, ?)",
+        (f"sold cusip {low}, ticker MMM", f'{{"comment":"sold cusip {low}, ticker MMM"}}'),
+    )
+    counts = scrub_disclosure_text(conn, frozenset({MAPPED_CUSIP}))
+    comment, raw = conn.execute("SELECT comment, raw_row FROM transactions").fetchone()
+    assert counts == {"transactions.comment": 1, "transactions.raw_row": 1}
+    assert comment == f"sold cusip {DISCLOSURE_WITHHELD_TEXT}, ticker MMM"
+    assert low not in raw.lower()
+
+
 # --- F1: the published list SEEDS the next build, so the pass must replay ----
 
 

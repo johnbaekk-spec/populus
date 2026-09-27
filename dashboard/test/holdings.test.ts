@@ -881,7 +881,22 @@ test("no honesty content is hidden by the surface's own markup (the fold ban)", 
     surfaceHtml(holdersPayload([issuerRow()]), { view: "current", page: 0, period: "2026-03-31" }),
     institutionalDataNoteHtml(),
   ];
-  for (const html of surfaces) {
+  /* DESIGN-POLISH M3 (M2V-D2): a grouped table showing its whole collection
+     renders the compact disclosure's hidden SHELL so it carries its own count
+     for G9. The property this test pins is that no rendered CONTENT is hidden;
+     so the shell is exempt only after it is proved to hold no reader text at
+     all — every descendant empty — and nothing else may carry `hidden`. */
+  const shells = (html: string): string[] => html.match(/<div class="compact-disclosure"[^>]*>[\s\S]*?<\/div>/g) ?? [];
+  const withoutEmptyShells = (html: string): string => {
+    for (const shell of shells(html)) {
+      assert.equal(shell.replace(/<[^>]*>/g, "").trim(), "", `a hidden disclosure shell carries no reader text: ${shell}`);
+    }
+    return html.replace(/<div class="compact-disclosure"[^>]*>[\s\S]*?<\/div>/g, "");
+  };
+  // control: a shell that hid text would fail the proof above
+  assert.throws(() => withoutEmptyShells('<div class="compact-disclosure" hidden><p><span hidden>3 rows not shown</span></p></div>'));
+  for (const raw of surfaces) {
+    const html = withoutEmptyShells(raw);
     assert.ok(!/display\s*:\s*none/i.test(html), "no inline display:none");
     assert.ok(!/visibility\s*:\s*hidden/i.test(html), "no inline visibility:hidden");
     assert.ok(!/\shidden(\s|=|>)/.test(html), "no hidden attribute on rendered content");
@@ -1245,7 +1260,9 @@ test("R25: two classes of one issuer fold into one row; the expand keeps each re
   assert.equal(groups[0]!.value_usd, 500);
   assert.equal(groups[0]!.shares, 5);
   const html = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0 });
-  const bodyRows = html.slice(html.indexOf("<tbody>")).match(/<tr class="design-holding-row/g) ?? [];
+  /* the tbody now carries its id when the table is complete (M2V-D2), so the
+     body is found by its tag, not by a bare "<tbody>" */
+  const bodyRows = html.slice(html.search(/<tbody\b/)).match(/<tr class="design-holding-row/g) ?? [];
   assert.equal(bodyRows.length, 2, "one table row per issuer");
   assert.ok(html.includes("2 positions · 2 reported rows"), "the expand says what it folds");
   assert.ok(html.includes("CAP STK CL A") && html.includes("CAP STK CL C"), "every reported row stays in the expand");

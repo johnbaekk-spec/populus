@@ -15,7 +15,7 @@
    reason, and n/a rows are excluded from HHI ordering — bucketed after,
    never given a sentinel. */
 
-import { esc, fmtInt, fmtUsd, note, presentColumns, type PresentColumns } from "./format.ts";
+import { esc, fmtCik, fmtInt, fmtUsd, note, presentColumns, type PresentColumns } from "./format.ts";
 // The directory body renderer lives here now and needs the filer href
 // builder the page and the island both used.
 import { filerHref } from "./holdings.ts";
@@ -271,7 +271,9 @@ export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow)
       /* the ledger's cell role (mono 500 --fs-cell), muted — never the 12px
          .mono-id, which the canvas comparison measured once the directory
          rendered rows (DESIGN-POLISH M2 review Q2-8) */
-      `<td class="c-num c-muted">${esc(r.cik)}</td>` +
+      /* R20 (M3): the CIK a reader sees has no leading zeros; the padded
+         form stays in the href and the row's data */
+      `<td class="c-num c-muted">${esc(fmtCik(r.cik))}</td>` +
       `<td class="c-num c-strong has-marks">${nullNote}${valueCell}</td>` +
       `<td class="c-num has-marks">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
       /* R12 (DESIGN-POLISH M2): the Top-5 cell renders exactly when the
@@ -280,7 +282,9 @@ export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow)
       ((columns ? columns.includes("top5") : r.top5Share !== undefined)
         ? `<td class="c-num">${r.top5Share == null ? "—" : (r.top5Share / 100).toFixed(1) + "%"}</td>`
         : "") +
-      `<td class="c-secondary">${r.changeHtml ?? "—"}</td></tr>`;
+      /* the change line's own role (DESIGN-POLISH M3; M2F-D4 expired): mono,
+         the kind word first — the canvas's LATEST NOTABLE line */
+      `<td class="c-change">${r.changeHtml ?? "—"}</td></tr>`;
   }
   return (
     `<tr data-mgr-type="${esc(typing?.manager_type ?? "")}" data-mgr-notable="${
@@ -292,7 +296,7 @@ export function instIndexRowHtml(r: InstIndexRow, filerHrefOf: (r: InstIndexRow)
     `<td class="c-num has-marks">${r.positions == null ? "—" : fmtInt(r.positions)}</td>` +
     `<td class="c-num has-marks">${hhiCell}</td>` +
     `<td class="c-num">${r.changeHtml ?? ""}</td>` +
-    `<td class="c-num c-muted mono-id">CIK ${esc(r.cik)}</td></tr>`
+    `<td class="c-num c-muted mono-id">CIK ${esc(fmtCik(r.cik))}</td></tr>`
   );
 }
 
@@ -351,7 +355,10 @@ export function instIndexBodyHtml(
   const limit = compact ?? total;
   const rankedShown = ranked.slice(0, limit);
   const unrankedShown = unranked.slice(0, Math.max(0, limit - ranked.length));
+  /* CD-3 (DESIGN-POLISH M3, carried): a chip or search that leaves NO row
+     states why, in one line, instead of an empty table. */
   const html =
+    (total === 0 && rows.length > 0 ? `<tr class="directory-empty"><td colspan="${span}" data-empty-state>${esc(directoryEmptyText(rows, q, chips))}</td></tr>` : "") +
     rankedShown.map((r) => instIndexRowHtml(r, href, columns)).join("\n") +
     // The stated absence renders whenever the bucket is non-empty, not only
     // when one of its rows survives the compact slice (the same stated-absence
@@ -367,6 +374,32 @@ export function instIndexBodyHtml(
     (active > 0 ? ` · ${active} filter${active === 1 ? "" : "s"} active` : "") +
     ` · filtered on this device`;
   return { html, note, total, shown: rankedShown.length + unrankedShown.length };
+}
+
+/** Why the directory shows no row (CD-3, DESIGN-POLISH M3), true of the
+    collection it filtered. When no filer in the build carries a manager type
+    at all, a type or notable chip can match nothing, and the line says the
+    build's manager-type registry types none of its filers — the case on a
+    build whose aggregate has no registry (`loadTyping` reads it as empty).
+    Otherwise it names the search and the filters that matched nothing. Plain
+    text; the caller escapes. */
+export function directoryEmptyText(
+  rows: readonly InstIndexRow[],
+  q: string,
+  chips: { types: ReadonlySet<string>; notableOnly: boolean },
+): string {
+  const typed = rows.filter((r) => (r.typing ?? null) !== null).length;
+  const labels = [...chips.types].map((t) => MANAGER_TYPE_LABELS[t as keyof typeof MANAGER_TYPE_LABELS] ?? t);
+  const chipsActive = chips.types.size > 0 || chips.notableOnly;
+  const what = [chips.notableOnly ? "marked notable" : null, labels.length ? `of the type ${labels.join(" or ")}` : null]
+    .filter(Boolean)
+    .join(" and ");
+  if (chipsActive && typed === 0) {
+    return `No filer in this build is ${what}: this build's manager-type registry types none of its ${fmtInt(rows.length)} filers.`;
+  }
+  const query = q.trim();
+  if (query !== "") return `No filer matches "${query}"${chipsActive ? ` among those ${what}` : ""}.`;
+  return `No filer in this build is ${what}.`;
 }
 
 /** Default direction when switching TO a column: names ascend, numbers descend. */

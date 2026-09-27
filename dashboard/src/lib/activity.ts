@@ -43,6 +43,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { filerLinkHtml, type FilerBudgetState } from "./holdings.ts";
 import { fillShardsByBytes, type ShardableItem } from "./shards.ts";
+import { filingDeadline } from "./inst-adds.ts";
 import {
   displayIssuerName,
   esc,
@@ -64,6 +65,9 @@ import {
   COMPACT_ROWS,
   compactDisclosure,
   changeEdgeAttr,
+  kindWord,
+  fmtCik,
+  identityPlainHtml,
   thHtml,
 } from "./format.ts";
 export { reportingLagDays };
@@ -82,9 +86,6 @@ export const ACTIVITY_SHARDS_MAX = 64;
 
 /** Payload version of an activity shard. */
 export const ACTIVITY_SHARD_VERSION = 1;
-
-/** 13F is due 45 days after quarter end — the lag past which a filing is late. */
-export const STATUTORY_LAG_DAYS = 45;
 
 /** Rows rendered inline on /institutional. The rest are served from the shards;
     the count and the shard base are stated on the page (G3 never-drop). */
@@ -745,16 +746,21 @@ import { institutionalDataNoteHtml } from "./holdings.ts";
 
 /* ---------- rendering ---------- */
 
-const CHANGE_LABEL: Record<ChangeKind, { chip: string; cls: string; spoken: string }> = {
-  new: { chip: "new", cls: "qoq-new", spoken: "newly reported this quarter" },
-  add: { chip: "add", cls: "qoq-add", spoken: "reported larger than last quarter" },
-  trim: { chip: "trim", cls: "qoq-trim", spoken: "reported smaller than last quarter" },
-  exit: { chip: "exit", cls: "qoq-exit", spoken: "no longer reported this quarter" },
-  held: { chip: "no change", cls: "qoq-held", spoken: "share count unchanged; only the reported value moved" },
-  unclassified: { chip: "n/c", cls: "qoq-nc", spoken: "not classifiable from the filings" },
+/* The word and colour hook come from the ONE change-kind table (DESIGN-POLISH
+   M3, R19: `kindWord`); only the spoken gloss is this feed's own. */
+const CHANGE_SPOKEN: Record<ChangeKind, string> = {
+  new: "newly reported this quarter",
+  add: "reported larger than last quarter",
+  trim: "reported smaller than last quarter",
+  exit: "no longer reported this quarter",
+  held: "share count unchanged; only the reported value moved",
+  unclassified: "not classifiable from the filings",
   // D2: the filer has no comparable book for the prior quarter — never a new stake.
-  no_prior: { chip: "no prior", cls: "qoq-nc", spoken: "no prior quarter on record to compare against; not a new stake" },
+  no_prior: "no prior quarter on record to compare against; not a new stake",
 };
+const CHANGE_LABEL: Record<ChangeKind, { chip: string; cls: string; spoken: string }> = Object.fromEntries(
+  (Object.keys(CHANGE_SPOKEN) as ChangeKind[]).map((k) => [k, { chip: kindWord(k).word, cls: kindWord(k).cls, spoken: CHANGE_SPOKEN[k] }]),
+) as Record<ChangeKind, { chip: string; cls: string; spoken: string }>;
 
 /** Δ value cell. A null delta is UNDISCLOSED, never 0 and never an em-dash that
     could read as "nothing changed". */
@@ -770,9 +776,12 @@ function deltaCell(r: ActivityFeedRecord): string {
   return `${esc(sign)}${esc(fmtUsd(r.delta_value_usd))}`;
 }
 
-/** Elapsed reporting lag, named honestly at both ends: past the 45-day deadline
-    is LATE; a filing dated before quarter end is an anomaly, not a negative lag
-    printed as if it were normal. */
+/** Elapsed reporting lag, named honestly at both ends: a filing dated after
+    the quarter's filing deadline (`filingDeadline`: 45 days, rolled by Rule
+    0-3) is LATE — the day count alone is not the test: a Q4 2025 report
+    filed 2026-02-17 is 48 days out and on time (W-1, M3 review); a filing
+    dated before quarter end is an anomaly, not a negative lag printed as if
+    it were normal. */
 function lagCell(r: ActivityFeedRecord): string {
   const lag = r.reporting_lag_days;
   /* The key is the repository's OWN declared
@@ -802,10 +811,11 @@ function lagCell(r: ActivityFeedRecord): string {
       textHtml: `<span class="lag lag-anomaly">filed ${esc(String(Math.abs(lag)))}d before quarter end</span>`,
     });
   }
-  if (lag > STATUTORY_LAG_DAYS) {
+  const deadline = r.curr_period ? filingDeadline(r.curr_period) : null;
+  if (deadline !== null && r.filed_date !== null && r.filed_date > deadline) {
     return `<span class="lag-late">LATE·${esc(String(lag))}d</span><span class="visually-hidden"> — filed ${esc(
       String(lag),
-    )} days after quarter end, past the 45-day deadline</span>`;
+    )} days after quarter end, past its filing deadline of ${esc(deadline)}</span>`;
   }
   return `<span class="lag">+${esc(String(lag))}d<span class="visually-hidden"> after quarter end</span></span>`;
 }
@@ -855,7 +865,7 @@ export function activityRowHtml(
   stated: readonly string[] = [],
 ): string {
   const label = CHANGE_LABEL[r.change_kind] ?? CHANGE_LABEL.unclassified;
-  const filerName = r.filer_name && r.filer_name.trim() !== "" ? r.filer_name : `CIK ${r.cik}`;
+  const filerName = r.filer_name && r.filer_name.trim() !== "" ? r.filer_name : `CIK ${fmtCik(r.cik)}`;
   return (
     `<tr${changeEdgeAttr(r.change_kind)}>` +
     // ONE filer-link rule (holdings.filerLinkHtml), which routes through the
@@ -883,28 +893,69 @@ export function activityRowHtml(
 export function truncationNoticeHtml(t: ActivityTruncation | null, shards: number): string {
   if (t === null) return "";
   const k = t.boundary_sort_key;
-  const boundary =
+  /* Architecture H (H-2, V1 NEW-5). `boundary_sort_key` is the FIRST dropped
+     record (`paginateActivity`), and every dropped record sorts after it in
+     the one order (absolute Δ value descending, nulls last). So with a
+     disclosed boundary, no dropped change is larger than it and every
+     null-valued change is dropped; with a null boundary the cut falls among
+     the nulls, so every disclosed change is published. A change is the
+     difference between two quarters' filings (inst_agg.py:898-944) — no filing
+     prints it — so the rest "can be derived from" EDGAR, never "remain in" it.
+
+     The boundary value is printed EXACTLY ($ + fmtInt, never fmtUsd's
+     rounding), and it is the label trigger of a note that names the first
+     change left out. The position's identity is stated in plain words in
+     that panel (no trigger nested in a trigger); the raw key stays in the
+     panel and in `data-boundary-key`. */
+  const first =
+    `The first change left out: filer CIK ${esc(fmtCik(k.cik))}, position ` +
+    `${identityPlainHtml(k.position_key)} · ${esc(k.put_call)} · ${esc(k.ssh_prnamt_type)}.`;
+  const nctx = { scope: "activity-cut" };
+  const files = `${fmtInt(shards)} file${shards === 1 ? "" : "s"}`;
+  const html =
     k.abs_delta_value_usd == null
-      ? "an undisclosed delta"
-      : `a reported change of ${esc(fmtUsd(k.abs_delta_value_usd))} in absolute value`;
-  return terminusRow({
-    author: "populus",
-    html:
-      `The ordered set does not fit in this build's ${fmtInt(shards)}-file publication limit: ` +
-      `<strong>${fmtInt(t.dropped_records)}</strong> further records are not published here. ` +
-      /* The boundary's `position_key` may be a provisional
-         `sid:sec:prov:<hash>`, and this prose is VISIBLE on /institutional/ —
-         so printing it raw violates the no-raw-key rule. The publication bound
-         is the honesty content here and it
-         is unchanged; only the identity's CHANNEL moves. The readable chip
-         states how strong the identity is, its note carries the exact key, and
-         the raw value stays machine-reachable in a `data-` attribute — the same
-         treatment applied everywhere else a weak key surfaces. */
-      `The cut falls at ${boundary} — filer CIK ${esc(k.cik)}, position ` +
-      `${identityChipHtml(k.position_key, { scope: "activity-cut" }, "boundary")}, ` +
-      `${esc(k.put_call)} · ${esc(k.ssh_prnamt_type)}. Everything below that boundary is absent ` +
-      `from these published files and remains in the filings on EDGAR.`,
-  });
+      ? `This list stops at ${files}: every change with a disclosed value is published, and ` +
+        `<strong>${fmtInt(t.dropped_records)}</strong> changes whose value was ` +
+        noteFromHtml(first, nctx, "boundary", { trigger: "label", textHtml: "not disclosed" }) +
+        ` are not. They can be derived from the filings on EDGAR.`
+      : `This list stops at ${files}: <strong>${fmtInt(t.dropped_records)}</strong> further changes ` +
+        `are not published here — none larger than ` +
+        noteFromHtml(first, nctx, "boundary", { trigger: "label", textHtml: esc(`$${fmtInt(k.abs_delta_value_usd)}`) }) +
+        ` in absolute value, and every change whose value was not disclosed. They can be derived ` +
+        `from the filings on EDGAR.`;
+  return terminusRow({ author: "populus", html: `<span data-boundary-key="${esc(k.position_key)}">${html}</span>` });
+}
+
+/** The activity list's bound (Architecture H, H-1): what the rows ARE, chosen
+    by the same `notable` value that chose them, then what the build
+    publishes. The file path lives on /methodology/#activity-files. */
+export function activityBoundHtml(o: {
+  notable: boolean;
+  emitted: number;
+  total: number;
+  files: number;
+  recordLimit: number;
+  byteLimit: number;
+  firstShard: string;
+}): string {
+  const files = `${fmtInt(o.files)} file${o.files === 1 ? "" : "s"} of at most ${fmtInt(o.recordLimit)} changes or ${fmtInt(o.byteLimit)} bytes each`;
+  const ranked = "ranked by size of change with undisclosed values last";
+  const open = `<a href="${esc(o.firstShard)}">Open the first file ↗</a> to reach every published change, with or without scripting.`;
+  if (o.notable) {
+    /* notableActivity (activity.ts): notable CIKs, kinds new/add/trim/exit,
+       newest filing first, then compareActivity; the files hold
+       paginateActivity's prefix of the size order */
+    const publishes =
+      o.emitted === o.total
+        ? `This build publishes all ${fmtInt(o.total)} of its changes, ${ranked}, as ${files}.`
+        : `This build publishes the first ${fmtInt(o.emitted)} of its ${fmtInt(o.total)} changes, ${ranked}, as ${files}.`;
+    return `These rows are notable managers' new, added, trimmed and exited positions, newest filing first, then largest change. ${publishes} ${open}`;
+  }
+  /* the first file's rows are the head of the size order */
+  return (
+    `These rows are the largest of the ${fmtInt(o.emitted)} changes this build publishes` +
+    `${o.emitted === o.total ? "" : ` (of ${fmtInt(o.total)})`}, ${ranked}, as ${files}. ${open}`
+  );
 }
 
 const ACTIVITY_FOOTNOTES = [
@@ -912,9 +963,9 @@ const ACTIVITY_FOOTNOTES = [
     mark: "§",
     html:
       `Labels describe what the DOCUMENTS say between two quarter-end snapshots, not trading` +
-      ` activity: <strong>new</strong> = first reported this quarter · <strong>add</strong> =` +
-      ` reported larger than last quarter · <strong>trim</strong> = reported smaller ·` +
-      ` <strong>exit</strong> = absent from this quarter's composition (disposed, delisted, under` +
+      ` activity: <strong>NEW</strong> = first reported this quarter · <strong>ADD</strong> =` +
+      ` reported larger than last quarter · <strong>TRIM</strong> = reported smaller ·` +
+      ` <strong>EXIT</strong> = absent from this quarter's composition (disposed, delisted, under` +
       ` confidential treatment, or reported instead by an affiliated manager — the filing does not` +
       ` say which) · <strong>n/c</strong> = not classifiable from the filings`,
   },
@@ -929,7 +980,8 @@ const ACTIVITY_FOOTNOTES = [
     html:
       `Filed date is the latest filing date over the position's current-period composition (a base` +
       ` 13F-HR plus any NEW-HOLDINGS amendments); the lag is that date minus the quarter end, and` +
-      ` a lag over 45 days is past the statutory deadline`,
+      ` a filing is late when it is dated after the deadline: 45 days after quarter end, or the next` +
+      ` business day when that day is a weekend or federal holiday (Exchange Act Rule 0-3)`,
   },
 ];
 
@@ -1031,9 +1083,13 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     return (
       `<section class="panel panel-wide" aria-label="Cross-filer activity">` +
       `<div class="panel-head"><h2 class="section-h">Largest reported quarter-over-quarter changes</h2></div>` +
+      /* Architecture H (G-11, V1 NEW-4): QoQ emits a record for every position
+         with a security identifier on EITHER side of a filer's period pair
+         (inst_agg.py:898-944), so no records means no period pair, or no keyed
+         position on either side. */
       `<p class="section-note">No quarter-over-quarter change records land in this build — either` +
-      ` one period only, or nothing keyable on both sides. That is the state of the data, not a` +
-      ` rendering failure.</p></section>`
+      ` this build holds one period only, or neither quarter has a position with a security` +
+      ` identifier. That is the state of the data, not a rendering failure.</p></section>`
     );
   }
 
@@ -1080,7 +1136,10 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     `<span class="panel-note">${notable ? "notable managers · newest filing first, then largest change" : "ordered by absolute reported change · undisclosed deltas last"}</span></div>` +
     universalFlagNote(statedActivity) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
-    `<caption class="visually-hidden">Quarter-over-quarter position changes by issuer, ordered by absolute reported change</caption>` +
+    /* Architecture H (V1 NEW-3): the caption is chosen by the same `notable`
+       value as the rows, so a screen reader never hears "ordered by absolute
+       reported change" over newest-first rows. */
+    `<caption class="visually-hidden">${notable ? "Quarter-over-quarter position changes by notable managers, newest filing first, then largest change" : "Quarter-over-quarter position changes by issuer, ordered by absolute reported change"}</caption>` +
     /* Every column states WHY it is not sortable, in visible text.
 
        This table is a BOUNDED SLICE of an ordered set — the largest reported
@@ -1156,18 +1215,15 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
          bound — chosen by the same `notable` value that chose the rows. */
       boundNoun: notable ? "newest changes by notable managers shown here" : "largest changes shown here",
       definite: true,
-      bound:
-        `These rows are the largest of ${fmtInt(emitted)} ordered change records` +
-        ` published in this build${
-          emitted === total ? "" : ` (of ${fmtInt(total)} in the ordered set)`
-        }. The complete ordered set is served as ${fmtInt(feed.pagination.pages.length)} same-origin file${
-          feed.pagination.pages.length === 1 ? "" : "s"
-        } under <span class="mono-note">${esc(shardBase)}/&lt;page&gt;.v1.json</span>,` +
-        ` each closed at whichever binds first — ${fmtInt(
-          feed.pagination.limits.recordLimit,
-        )} records or ${fmtInt(feed.pagination.limits.byteLimit)} bytes of serialized JSON.` +
-        ` <a href="${esc(firstShard)}">Open the first file</a> to reach every record` +
-        ` directly, with or without scripting.`,
+      bound: activityBoundHtml({
+        notable: notable !== null,
+        emitted,
+        total,
+        files: feed.pagination.pages.length,
+        recordLimit: feed.pagination.limits.recordLimit,
+        byteLimit: feed.pagination.limits.byteLimit,
+        firstShard,
+      }),
     }) +
     truncationNoticeHtml(feed.pagination.truncation, feed.pagination.limits.shardLimit) +
     `<div class="caveat-line">Quarter-over-quarter comparisons are between two quarter-end` +
@@ -1358,8 +1414,11 @@ function activityReferenceRow(r: ActivityFeedRecord, tier: FilerBudgetState, sta
   const accession = r.filed_accession;
   const source = accession && /^[0-9-]+$/.test(accession)
     ? `<a href="https://www.sec.gov/Archives/edgar/data/${Number(r.cik)}/${accession.replace(/-/g, "")}/${accession}-index.html" target="_blank" rel="noopener">13F ↗</a>` : `<span class="none">—</span>`;
-  return `<tr class="design-activity-row ${esc(label.cls)}"${changeEdgeAttr(r.change_kind)}><td class="c-kind"><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span></td>` +
-    `<td class="c-issuer c-flex">${issuerCell(r)}</td><td class="c-filer c-secondary">${filerLinkHtml(r.cik, r.filer_name || `CIK ${r.cik}`, tier)}</td>` +
+  /* K-5 (M3 review): the kind's colour hook (`qoq-*`) belongs on the word, not
+     on the row — on the <tr> it coloured every cell; the row edge rides on
+     `data-edge` */
+  return `<tr class="design-activity-row"${changeEdgeAttr(r.change_kind)}><td class="c-kind"><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span></td>` +
+    `<td class="c-issuer c-flex">${issuerCell(r)}</td><td class="c-filer c-secondary">${filerLinkHtml(r.cik, r.filer_name || `CIK ${fmtCik(r.cik)}`, tier)}</td>` +
     // R7: the money column is the SIGNED Δ value — never `curr_value_usd`,
     // which is 0 for every exit and made the feed read "exit · $0".
     `<td class="c-num">${deltaCell(r)}</td>` +

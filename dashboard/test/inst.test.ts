@@ -122,8 +122,9 @@ test("producer QoQ rows classify the fixture timeline; the frontend only maps", 
   assert.equal(msft.change_kind, "exit");
   const nvda = byKey.get("sid:sec:nvda")!;
   assert.equal(nvda.change_kind, "new");
-  assert.equal(qoqPresentation(aapl).chipText, "add");
-  assert.equal(qoqPresentation(msft).chipText, "exit");
+  // DESIGN-POLISH M3 (R19): the mapped word is the caps kind word.
+  assert.equal(qoqPresentation(aapl).chipText, "ADD");
+  assert.equal(qoqPresentation(msft).chipText, "EXIT");
 });
 
 test("SH→PRN unit transition: Δshares NULL + shares_unit_mismatch, mapped to em-dash + ‡u", () => {

@@ -1,0 +1,36 @@
+{
+  "_doc": "Known Form 13F filing deadlines and Rule 0-3 rolls, read by BOTH runtimes: src/populus/filing_calendar.py (filing_deadline, rule_0_3_roll; inst_agg.closed_periods) and dashboard/src/lib/inst-adds.ts (filingDeadline, rule03Roll, isClosedPeriod). A 13F is due 45 days after quarter end; Exchange Act Rule 0-3(a) (17 CFR 240.0-3(a)) moves a deadline that falls on a Saturday, Sunday or holiday to the first business day following. Holidays are the 5 U.S.C. 6103(a) legal public holidays on their observed dates (Saturday -> the Friday before, 5 U.S.C. 6103(b)(1); Sunday -> the Monday after, E.O. 11582 s.3(a)). Weekdays checked with Python's datetime; observed dates for 2026-2027 match OPM's federal-holidays page (read 2026-09-26).",
+  "quarter_deadlines": [
+    {"period_end": "2026-03-31", "deadline": "2026-05-15", "why": "day 45 is a Friday"},
+    {"period_end": "2026-06-30", "deadline": "2026-08-14", "why": "day 45 is a Friday"},
+    {"period_end": "2026-09-30", "deadline": "2026-11-16", "why": "day 45, 2026-11-14, is a Saturday"},
+    {"period_end": "2026-12-31", "deadline": "2027-02-16", "why": "day 45, 2027-02-14, is a Sunday and 2027-02-15 is Washington's Birthday"},
+    {"period_end": "2027-03-31", "deadline": "2027-05-17", "why": "day 45, 2027-05-15, is a Saturday"},
+    {"period_end": "2025-12-31", "deadline": "2026-02-17", "why": "day 45, 2026-02-14, is a Saturday and 2026-02-16 is Washington's Birthday"},
+    {"period_end": "2027-06-30", "deadline": "2027-08-16", "why": "day 45, 2027-08-14, is a Saturday"},
+    {"period_end": "2027-09-30", "deadline": "2027-11-15", "why": "day 45, 2027-11-14, is a Sunday"},
+    {"period_end": "2022-06-30", "deadline": "2022-08-15", "why": "day 45, 2022-08-14, is a Sunday"},
+    {"period_end": "2024-12-31", "deadline": "2025-02-14", "why": "day 45 is a Friday"}
+  ],
+  "rolls": [
+    {"date": "2026-11-17", "filed_by": "2026-11-17", "why": "a business day is its own deadline"},
+    {"date": "2026-06-19", "filed_by": "2026-06-22", "why": "Juneteenth, a Friday"},
+    {"date": "2027-06-18", "filed_by": "2027-06-21", "why": "Juneteenth 2027 is a Saturday, observed Friday 2027-06-18"},
+    {"date": "2021-06-18", "filed_by": "2021-06-21", "why": "Juneteenth 2021, its first year, is a Saturday, observed Friday 2021-06-18"},
+    {"date": "2026-07-03", "filed_by": "2026-07-06", "why": "Independence Day 2026 is a Saturday, observed Friday 2026-07-03"},
+    {"date": "2027-07-05", "filed_by": "2027-07-06", "why": "Independence Day 2027 is a Sunday, observed Monday 2027-07-05"},
+    {"date": "2026-11-26", "filed_by": "2026-11-27", "why": "Thanksgiving Day; the Friday after is not a federal holiday"},
+    {"date": "2027-12-24", "filed_by": "2027-12-27", "why": "Christmas 2027 is a Saturday, observed Friday 2027-12-24"},
+    {"date": "2022-12-25", "filed_by": "2022-12-27", "why": "Christmas 2022 is a Sunday, observed Monday 2022-12-26"},
+    {"date": "2027-12-31", "filed_by": "2028-01-03", "why": "New Year's Day 2028 is a Saturday, observed Friday 2027-12-31, in the year before"}
+  ],
+  "closed": [
+    {"period_end": "2026-09-30", "as_of": "2026-11-15", "closed": false, "why": "past day 45 but before the rolled deadline"},
+    {"period_end": "2026-09-30", "as_of": "2026-11-16", "closed": false, "why": "on the deadline day filings are still arriving"},
+    {"period_end": "2026-09-30", "as_of": "2026-11-17", "closed": true, "why": "strictly after the deadline"},
+    {"period_end": "2026-12-31", "as_of": "2027-02-16", "closed": false, "why": "the rolled deadline day"},
+    {"period_end": "2026-12-31", "as_of": "2027-02-17", "closed": true, "why": "strictly after the deadline"},
+    {"period_end": "2026-03-31", "as_of": "2026-05-15", "closed": false, "why": "the deadline day"},
+    {"period_end": "2026-03-31", "as_of": "2026-05-16", "closed": true, "why": "strictly after the deadline"}
+  ]
+}

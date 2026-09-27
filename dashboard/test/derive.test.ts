@@ -41,6 +41,7 @@ import {
   pathSafeTicker,
 } from "../src/lib/derive.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
+import { filingDeadline } from "../src/lib/inst-adds.ts";
 import { DATASET_VERSION, type TxnRow, type PaperRow, tickerHrefFor } from "../src/lib/format.ts";
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
@@ -240,8 +241,17 @@ test("servingSince: earliest term start; malformed terms yield null, never a gue
 
 /* ---------- QoQ presentation mapping (Locked #8 — the full table) ---------- */
 
+/* DESIGN-POLISH M3 (R19, T3.10): the kind is a caps word from the ONE table
+   (qoq-presentation.md §1 as amended 2026-09-26) — NEW, ADD, TRIM, EXIT, NO
+   CHANGE, NO PRIOR — and an unknown or unclassified kind still fails closed to
+   the hatched n/c (the block below is unchanged). */
 test("qoqPresentation: chip per change_kind; unknown kind fails closed to n/c", () => {
-  assert.equal(qoqPresentation(qoq({ change_kind: "new" })).chipText, "new");
+  assert.equal(qoqPresentation(qoq({ change_kind: "new" })).chipText, "NEW");
+  assert.equal(qoqPresentation(qoq({ change_kind: "add" })).chipText, "ADD");
+  assert.equal(qoqPresentation(qoq({ change_kind: "trim" })).chipText, "TRIM");
+  assert.equal(qoqPresentation(qoq({ change_kind: "exit" })).chipText, "EXIT");
+  assert.equal(qoqPresentation(qoq({ change_kind: "held" })).chipText, "NO CHANGE", "L5: NO CHANGE, never HOLD");
+  assert.equal(qoqPresentation(qoq({ change_kind: "no_prior" })).chipText, "NO PRIOR");
   assert.equal(qoqPresentation(qoq({ change_kind: "add" })).chipCls, "qoq-add");
   assert.equal(qoqPresentation(qoq({ change_kind: "trim" })).chipCls, "qoq-trim");
   const exit = qoqPresentation(qoq({ change_kind: "exit" }));
@@ -299,10 +309,17 @@ test("filingWindow: open within quarter-end + 45d, closed after", () => {
   assert.equal(closed.quarterEnd, "2026-06-30");
   assert.equal(closed.open, false);
 
+  /* W-1 (M3 review): day 45 of the December 2025 quarter, 2026-02-14, is a
+     Saturday and 2026-02-16 is Washington's Birthday, so the deadline rolls to
+     2026-02-17 (Exchange Act Rule 0-3). The window's deadline is
+     `filingDeadline`'s — the one calendar every 13F surface reads. */
   const q4 = filingWindow("2026-01-10");
   assert.equal(q4.quarterEnd, "2025-12-31");
-  assert.equal(q4.deadline, "2026-02-14");
+  assert.equal(q4.deadline, "2026-02-17");
+  assert.equal(q4.deadline, filingDeadline(q4.quarterEnd));
   assert.equal(q4.open, true);
+  assert.equal(filingWindow("2026-02-16").open, true, "control: the retired +45 rule closed the window on the holiday");
+  assert.equal(filingWindow("2026-02-18").open, false);
 
   const exactly = filingWindow("2026-08-14");
   assert.equal(exactly.open, true, "the deadline day is still inside the window");

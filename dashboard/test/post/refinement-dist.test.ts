@@ -6,7 +6,8 @@
        asserted only when the serving artifact the build read carries the R1
        display relation, so a baseline-artifact (rollback) build is not blamed
        for names it could not have.
-   R8: no visible add/trim chip sits on a row whose Δ shares is exactly 0.
+   R8: no ADD or TRIM row on any filer page has a Δ shares of exactly 0 (DOM
+       parse over every filer page since DESIGN-POLISH M3).
    R9: no issuer label on the institutional landing's cluster / consensus
        board starts with a digit or is a 9-character CUSIP-shaped token. */
 
@@ -17,6 +18,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { resolveServingDbPath } from "../../src/lib/activity.ts";
+import { addTrimRows, qoqViewPredatesR8, r8Violations, type KindRow } from "../lib/kind-rows.ts";
 
 const DIST = path.join(process.cwd(), "dist");
 
@@ -77,7 +79,7 @@ test("POST-BUILD R2: every /institutional/tickers/… href resolves to a built f
   assert.deepEqual(dead, [], `dead institutional ticker hrefs: ${dead.slice(0, 10).join(", ")}`);
 });
 
-test("POST-BUILD R1/R8: filer 1067983 changes rows are named, never a bare sid: cell; no add/trim with Δshares 0", () => {
+test("POST-BUILD R1: filer 1067983 changes rows are named, never a bare sid: cell", () => {
   const page = path.join(DIST, "institutional", "filers", "1067983", "index.html");
   if (!existsSync(page)) {
     // The dev extract does not carry this filer; the real-data build does.
@@ -103,14 +105,76 @@ test("POST-BUILD R1/R8: filer 1067983 changes rows are named, never a bare sid: 
     const unnamed = posCells.filter((c) => !c.includes('class="filed-name"'));
     assert.equal(unnamed.length, 0, `${unnamed.length} unnamed change rows of ${posCells.length}`);
   }
-  // R8 — over every change row on the page: an add/trim chip never sits on a
-  // row whose Δ shares cell is exactly "0".
-  const rows = html.match(/<tr>(?:(?!<\/tr>)[\s\S])*?qoq-chip qoq-(?:add|trim)[\s\S]*?<\/tr>/g) ?? [];
-  const valueOnly = rows.filter((r) => {
-    const nums = cells(r, "c-num").map(text);
-    return nums[1] === "0";
-  });
-  assert.equal(valueOnly.length, 0, `${valueOnly.length} add/trim rows with Δ shares 0`);
+});
+
+/* R8, rewritten in DESIGN-POLISH M3 (T3.1, T-5). The old check matched
+   `<tr>…qoq-chip qoq-(add|trim)…</tr>` on one filer page; once every change row
+   carried an `id` and a `data-edge` (M1) no `<tr>` matched, so it collected
+   nothing and passed on nothing. Now: EVERY built filer page's Position
+   changes table is read by DOM parse (`addTrimRows`), every row whose kind
+   cell reads ADD or TRIM is collected, at least one must exist across the
+   build, and none may carry a Δ shares of exactly 0.
+
+   The †v exemption, REVERSED IN PART by the M3 review (P-4, M3-D12 revised):
+   the m3-dev version exempted any row carrying the producer's †v
+   (`classified_by_value`) marker, on any build — an unbounded exemption. Now
+   it applies ONLY when the aggregate this build read predates R8, detected
+   from the artifact the way R1 detects its display relation: R8 added the
+   `held` (NO CHANGE) kind, so a pre-R8 `agg_qoq_deltas` view never names
+   'held'. On such a build (the local 20260817.1: 6,890 of 97,158 ADD/TRIM rows
+   at Δ shares 0, every one marked †v) the disclosed rows are counted, not
+   failed; on a post-R8 build the rule is the plan's own and a †v row at 0
+   fails like any other. Predicate and detection: `test/lib/kind-rows.ts`
+   (`r8Violations`, `qoqViewPredatesR8`), proved in the contributor tier. */
+function aggregateQoqViewSql(): string | null {
+  const dbPath = process.env.POPULUS_INST_DB ?? (process.env.POPULUS_BUILD_DIR ? path.join(process.env.POPULUS_BUILD_DIR, "inst_agg.db") : null);
+  if (!dbPath || !existsSync(dbPath)) return null;
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare(`SELECT sql FROM sqlite_master WHERE name='agg_qoq_deltas'`).get() as { sql?: string } | undefined;
+    return row?.sql ?? null;
+  } finally {
+    db.close();
+  }
+}
+
+test("POST-BUILD R8 (M3 T3.1): no ADD or TRIM row on any filer page has Δ shares 0, read by DOM parse", () => {
+  const filers = path.join(DIST, "institutional", "filers");
+  assert.ok(existsSync(filers), "the build renders filer pages");
+  let pages = 0;
+  const rows: (KindRow & { page: string })[] = [];
+  for (const name of readdirSync(filers).sort()) {
+    const page = path.join(filers, name, "index.html");
+    if (!existsSync(page)) continue;
+    const found = addTrimRows(readFileSync(page, "utf-8"));
+    if (found === null) continue;
+    pages++;
+    for (const r of found) rows.push({ page: name, ...r });
+  }
+  assert.ok(pages > 0, "at least one filer page renders a Position changes table");
+  assert.ok(rows.length > 0, `at least one ADD or TRIM row exists across ${pages} filer pages (a check that collected nothing proves nothing)`);
+  const preR8 = qoqViewPredatesR8(aggregateQoqViewSql()) === true;
+  const zero = r8Violations(rows, preR8) as (KindRow & { page: string })[];
+  const disclosed = preR8 ? rows.filter((r) => r.deltaShares === "0" && r.valueClassified).length : 0;
+  assert.equal(
+    zero.length,
+    0,
+    `${zero.length} ADD/TRIM rows with Δ shares 0${preR8 ? " and no †v disclosure" : " (a post-R8 aggregate: no †v exemption)"}: ` +
+      `${zero.slice(0, 5).map((r) => `${r.page} ${r.kind}`).join(", ")}` +
+      (preR8 ? ` (${disclosed} more carry the pre-R8 †v marker on this pre-R8 aggregate)` : ""),
+  );
+  /* controls: the post tier's own, on the same predicate — an unmarked ADD at
+     Δ shares 0 fails on any build; a †v ADD at 0 is exempt on a pre-R8
+     aggregate only; a page with no ADD or TRIM row collects nothing */
+  const page = (kindCell: string, delta: string): string =>
+    `<table class="etable"><thead><tr><th>Position</th><th class="c-kind">Change</th><th>Δ value</th><th>Δ shares</th></tr></thead>` +
+    `<tbody id="filer-changes-tbody"><tr><td class="c-pos">X</td><td class="c-chip c-kind">${kindCell}</td><td class="c-num">+$1K</td><td class="c-num">${delta}</td></tr></tbody></table>`;
+  const unmarked = addTrimRows(page('<span class="qoq-chip qoq-add">ADD</span>', "0"))!;
+  assert.equal(r8Violations(unmarked, true).length, 1, "control: an unmarked ADD at Δ shares 0 is caught, even pre-R8");
+  const marked = addTrimRows(page('<span class="qoq-chip qoq-add">ADD</span><span class="fn-ref">†v</span>', "0"))!;
+  assert.equal(r8Violations(marked, true).length, 0, "control: the †v row is disclosed on a pre-R8 aggregate");
+  assert.equal(r8Violations(marked, false).length, 1, "control: the same †v row FAILS on a post-R8 aggregate");
+  assert.deepEqual(addTrimRows(page('<span class="qoq-chip qoq-new">NEW</span>', "+5")), [], "control: a page with no ADD or TRIM row collects nothing");
 });
 
 /* The page-header ledger's figures, read from built HTML (DESIGN-POLISH M2,
@@ -461,7 +525,43 @@ test("POST-BUILD R23: every methodology anchor the copy pass points at exists", 
   const page = path.join(DIST, "methodology", "index.html");
   assert.ok(existsSync(page), "the methodology page is built");
   const html = readFileSync(page, "utf-8");
-  for (const id of ["published-dataset", "coverage", "13f-method", "ranges", "position-grain", "ticker-mapping", "site-weight", "principles"]) {
+  /* DESIGN-POLISH M3 (R24, H-8): + the two paragraphs that receive the
+     moved detail — the activity list's order, files and cut, and the filer
+     page's grouping, size cap and de-duplicated totals. */
+  for (const id of ["published-dataset", "coverage", "13f-method", "ranges", "position-grain", "ticker-mapping", "site-weight", "principles", "activity-files", "filer-positions"]) {
     assert.ok(html.includes(`id="${id}"`), `/methodology/ lacks #${id}`);
   }
+});
+
+/* ---------- DESIGN-POLISH M3: content hygiene over EVERY built page ----------
+
+   R17 (no "· ·", no cell opening with a separator), R18 (no retired side word
+   in a cell), R19 (no lowercase kind pill), R20 (no visible zero-padded CIK;
+   no directory CIK cell with a leading zero), R23 (the receipt prints once).
+   The predicates are `test/lib/content-scan.ts`; each one's detection is
+   proved on a planted fixture in `test/content-hygiene.test.ts` (contributor
+   tier) and again here, so this scan cannot pass by matching nothing. */
+import { contentHits } from "../lib/content-scan.ts";
+
+test("POST-BUILD M3: no doubled separator, padded CIK, doubled receipt, retired side word or kind pill on any page", () => {
+  assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
+  const planted = contentHits('<td class="cell-asset">A <span class="owner-note">· · SP</span></td><p>CIK 0001135730</p><td class="c-src">PTR PTR</td><td class="c-kind">Sale</td><td><span class="qoq-chip qoq-add">add</span></td>');
+  assert.deepEqual(
+    [...new Set(planted.map((h) => h.check))].sort(),
+    ["a cell reads the retired side word", "a lowercase kind pill", "doubled receipt", "doubled separator", "zero-padded CIK"],
+    "control: every predicate fires on its planted defect",
+  );
+  const pages = walk(DIST);
+  assert.ok(pages.length >= 50, `only ${pages.length} pages scanned`);
+  const found = new Map<string, { n: number; at: string }>();
+  for (const file of pages) {
+    const rel = path.relative(DIST, file).split(path.sep).join("/");
+    for (const h of contentHits(readFileSync(file, "utf-8"), rel)) {
+      const c = found.get(h.check) ?? { n: 0, at: `${rel}: ${h.excerpt}` };
+      c.n++;
+      found.set(h.check, c);
+    }
+  }
+  const report = [...found].map(([k, v]) => `${k}: ${v.n} page(s), e.g. ${v.at}`);
+  assert.deepEqual(report, [], `content hygiene:\n${report.join("\n")}`);
 });

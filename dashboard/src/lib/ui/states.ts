@@ -63,7 +63,9 @@ export function s4Skeleton(endpoint: string, keyLabel: string): string {
     `<div class="feed-loading" aria-hidden="true">` +
     `<div class="bar" style="width:88%"></div><div class="bar" style="width:76%"></div>` +
     `<div class="bar" style="width:82%"></div><div class="bar" style="width:64%"></div></div>` +
-    `<p class="mono-note">same-origin fetch · no external calls · identical template to pre-rendered pages</p>` +
+    /* Architecture H (G-11): plain words for the same three facts — the route
+       fetches only this site's own data files */
+    `<p class="mono-note">loaded from this site · no external calls · the same template as the pre-rendered pages</p>` +
     `<p class="visually-hidden" role="status">Loading the published record for this page.</p>` +
     `</div>`
   );

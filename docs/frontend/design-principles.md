@@ -219,8 +219,11 @@ move a digit, a 3px row edge coloured by kind, and one count grammar
 ("1–10 of 608 tickers", `rangeOfTotal`). A note's trigger is the text it
 explains (the label form), a mark in the slot (sortable headers, links,
 numbers), or — only where neither fits — the legacy glyph. A feed row's flags
-are visible chips, and each chip is the label trigger of its own definition,
-drawn only from wording the site already publishes (`FEED_FLAG_DEFINITIONS`).
+are visible chips, and each chip is the label trigger of its own definition
+(`FEED_FLAG_DEFINITIONS`): the site's published wording, and — for the seven
+defect flags, since DESIGN-POLISH M3 — one sentence each derived from, and
+citing, the producer line that sets the flag, ending with the methodology's
+defect line.
 
 **Record L9 (reversal of a mechanism) — the 44px target.** SL-R24's "44px at
 every width" becomes the `--hit-min` square: 44px under
@@ -329,6 +332,76 @@ note says in plain words what it counts. The mechanism: the post-build scan
 allows the label in exactly one home, the `/congress/` ledger's `<dt>`, and
 matches it case-insensitively everywhere else, so a CSS-uppercased
 "House parse" in any paragraph fails.
+
+### Words in the ledger (DESIGN-POLISH M3)
+
+One vocabulary per kind of fact, from one table each, on every surface:
+
+- **Disclosed trades** read **BUY**, **SELL** or **EXCHANGE** (spelled out, never
+  "EXCH"), and "—" when the side did not parse (`sideLabel`). A partial sale
+  reads SELL with its "partial" qualifier. The Congress side filter uses the
+  same words.
+- **13F changes** read **NEW**, **ADD**, **TRIM**, **EXIT**, **NO CHANGE** and
+  **NO PRIOR**; an unclassified or unknown kind stays the hatched **n/c**
+  (`kindWord`, `docs/frontend/qoq-presentation.md` §1 as amended). A kind is a
+  caps word in its kind's colour beside the row's edge — never a tinted pill.
+  The filer holdings view's two-period comparison is not a QoQ classification
+  and keeps its own words (ADDED, ABSENT, INCREASED, DECREASED, UNCHANGED).
+- **Member flows by ticker** read **NET BUY**, **NET SELL**, **FLAT** (a
+  bounded net range that spans zero and stays inside the smallest bucket, both
+  bounds within ±$15,000), **±** (a bounded range that spans zero more widely;
+  spoken "net range spans zero") or "—" (an undisclosed side, or an open bound
+  that reaches across zero: no direction can be stated). The Issuer cell shows
+  the issuer's name without a type code's words, because the row nets every
+  trade in the ticker.
+- **Qualifiers** (partial, then the owner code) are joined by one separator
+  (`joinQualifiers`): no cell prints "· ·" or opens with a separator, and in an
+  asset cell they sit outside the ellipsis.
+- **The asset text** drops a trailing `[ST]` equal to the row's type, a
+  parenthesised ticker equal to the row's ticker and a "Common Stock" /
+  "Ordinary Shares" suffix; every other House code renders as the House
+  Clerk's words (`ASSET_TYPE_WORDS`, transcribed from
+  https://fd.house.gov/reference/asset-type-codes.aspx); an unknown code keeps
+  its bracket. The parts are stripped to a fixpoint, and a suffix that a count
+  or "of" governs ("each representing 3 Ordinary Shares") is not a type and
+  stays. The rule is stated once, in the asset column's header note
+  (`assetColumnNote`); a name that differs from the filing in any other way is
+  a label trigger whose note gives the as-filed string, and it prints. A
+  no-ticker asset (`assetNameCell`) is a label trigger whenever its cell hides
+  anything (truncation, a code, a stated type).
+- **Signal receipts** name their regime once: "PTR ↗" / "eFD ↗"; where the link
+  cannot ("src") or there is no usable receipt, the regime stamp states it
+  ("PTR src ↗", "PTR —") — the hit rows, the member panel and the watch band
+  alike (`signalReceiptHtml`).
+- **CIKs** show without leading zeros; the padded form stays in URLs and data.
+- **Issuer names** are the modal filed name, verbatim (owner decision D4 (a)):
+  never re-cased, so an abbreviation is never mangled and an embedded CUSIP
+  keeps its capitals for the scrub.
+- **Sectors** show the SIC Manual's division titles (`sectorLabel`).
+
+**Record CD3-4 (deviation from R17, M3 review; the owner may reverse) — the
+as-filed note only where the rule does not say it.** R17 put the as-filed
+string one interaction away on every asset whose display differs from it. On
+the heaviest member pages that doubled the page (M001193 535 KB → 964 KB, 608
+net-flow Issuer notes). A name that differs from the filing ONLY by a trailing
+" (TICKER)" equal to the row's ticker, " [ST]" when ST is the row's type, or a
+" Common Stock" / " - Common Stock" / " Ordinary Shares" suffix — each matched
+exactly, case included — carries no per-row note; the column's header note
+states the rule and the House Clerk's stock code once. What the rule does not
+restore is which of those parts the filing carried; the filing itself (the
+row's receipt) is the exact record. Any other difference — another code's
+words, a case-variant ticker "(AAPl)", "[sT]", stray punctuation — keeps its
+per-row note. The net-flow notes are keyed on the ticker (`n-mf-<ticker>`).
+
+**Record L4 (deviation from the design) — a late row keeps its side.** The
+design prints LATE as a late row's kind word. The side is honesty content
+(§1): a late SELL is still a SELL. The row reads BUY or SELL; lateness is the
+gold row edge and the dates cell's unchanged `LATE·Nd` text.
+
+**Record L5 (deviation from the design) — NO CHANGE, not HOLD.** A held
+position (share count unchanged) reads NO CHANGE: HOLD reads as an analyst
+rating, which §2 forbids. The hatched n/c keeps its own meaning, "not
+classifiable".
 
 ## 8. Hard constraints
 

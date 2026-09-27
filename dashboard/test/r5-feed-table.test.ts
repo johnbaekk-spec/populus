@@ -99,6 +99,14 @@ test("R5/R19: honesty content survives the conversion — both dates, lag, flags
   assert.match(html, /class="traded-date">07-20</, "the trade date is present");
   assert.match(html, /07-20 → 08-01/, "the folded combined-date string survives");
   assert.match(html, /LATE·60d/, "the filing lag survives");
+  /* DESIGN-POLISH M3 (L4, T3.10): a late row keeps its SIDE word in both feed
+     forms — the reference feed's kind cell reads BUY, never LATE; lateness is
+     the gold edge and the unchanged LATE·Nd. */
+  const ref = txnRowHtml(txn({ late: 1, lag: 60 }), { ...CTX, referenceFeed: true });
+  assert.match(ref, /data-edge="late"/);
+  assert.match(ref, /<td class="cell cell-side c-kind buy">BUY<span class="reference-watch">/, "the late row reads its side");
+  assert.doesNotMatch(ref, /c-kind buy">LATE/, "control: LATE never replaces the side");
+  assert.match(ref, /LATE·60d/);
   assert.match(html, /class="flag solid">spouse cap</, "the flag chip survives");
   assert.match(html, /cell-src/, "the provenance link is a cell");
   assert.match(html, /visually-hidden">Filed /, "the filed date keeps its accessible label");

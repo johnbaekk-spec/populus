@@ -1,23 +1,29 @@
 /* ---------- QoQ chips + institutional bits ---------- */
 
+/* DESIGN-POLISH M3 (R19, T3.1): the lowercase tinted pill is deleted. A change
+   kind is a caps word (mono 600 --fs-meta .08em) in its kind's text token,
+   beside the row's edge (qoq-presentation.md §1, as amended); the words come
+   from `kindWord` (format.ts). The n/c hatch below stays: it is the one cue of
+   an unclassifiable change. */
 .qoq-chip {
-  font: 700 var(--fs-meta) var(--sans);
-  letter-spacing: 0.06em;
-  padding: 2.5px 8px;
-  border-radius: 2px;
+  font: 600 var(--fs-meta)/1.2 var(--mono);
+  letter-spacing: 0.08em;
   white-space: nowrap;
 }
-.qoq-add { background: color-mix(in oklab, var(--buy) 14%, var(--raised)); color: var(--buy); }
-.qoq-trim { background: color-mix(in oklab, var(--sell) 14%, var(--raised)); color: var(--sell); }
-.qoq-new { border: 1px solid var(--buy); color: var(--buy); }
-.qoq-exit { border: 1px solid var(--sell); color: var(--sell); }
-/* R8: `held` — share count unchanged, value moved with price. Neutral ink, no
-   buy/sell colour, because it is not a direction. */
-.qoq-held { border: 1px solid var(--rule2); color: var(--ink2); }
+.qoq-new { color: var(--kind-new-text); }
+.qoq-add { color: var(--kind-buy-text); }
+.qoq-trim { color: var(--kind-trim-text); }
+.qoq-exit { color: var(--kind-sell-text); }
+/* R8: `held` — share count unchanged, value moved with price; D2: `no_prior`
+   — nothing to compare against. Neutral ink: neither is a direction. */
+.qoq-held { color: var(--kind-nochange-text); }
+.qoq-noprior { color: var(--kind-noprior-text); }
 .qoq-held-group { margin-top: 8px; }
 .qoq-held-group > summary { cursor: pointer; font: 600 var(--fs-small) var(--sans); color: var(--ink2); }
 .qoq-nc {
   border: 1px solid var(--rule2);
+  border-radius: 2px;
+  padding: 0 4px;
   background-image: var(--hatch);
   color: var(--ink2);
 }

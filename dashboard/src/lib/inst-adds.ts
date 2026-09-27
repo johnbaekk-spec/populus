@@ -6,7 +6,8 @@
 
 import { esc, fmtInt, fmtUsd } from "./format.ts";
 
-/** Days after a period end by which a 13F must be filed. */
+/** Days after a period end by which a 13F must be filed, before the Rule 0-3
+    roll (`filingDeadline`). */
 export const FILING_DEADLINE_DAYS = 45;
 
 /** Exactly this many closed periods are offered. */
@@ -27,9 +28,91 @@ function addDays(dateIso: string, days: number): string {
   return new Date(t + days * 86_400_000).toISOString().slice(0, 10);
 }
 
-/** The filing deadline for a period: period end plus 45 days. */
+/* ---------- the 13F deadline calendar (Exchange Act Rule 0-3) ----------
+
+   A Form 13F report is due 45 days after the end of the calendar quarter, and
+   Exchange Act Rule 0-3(a) (17 CFR 240.0-3(a)) moves a deadline that falls on
+   a weekend or holiday: "if the last day on which papers can be accepted as
+   timely filed falls on a Saturday, Sunday or holiday, such papers may be
+   filed on the first business day following". The SEC's Form 13F FAQ applies
+   it to 13F ("your filing is due on the first business day thereafter").
+
+   The holidays are the eleven legal public holidays of 5 U.S.C. 6103(a) on
+   their OBSERVED dates: Saturday → the Friday before (5 U.S.C. 6103(b)(1)),
+   Sunday → the Monday after (Executive Order 11582, s. 3(a)) — so New Year's
+   Day on a Saturday is observed on 31 December of the year before. Juneteenth
+   from 2021; the Martin Luther King, Jr. holiday from 1986. Not modelled: a
+   one-off closure by executive order, and Inauguration Day (Washington-area
+   only, 20 January, nowhere near a 13F deadline).
+
+   ONE rule in two runtimes: `src/populus/filing_calendar.py` implements the
+   same calendar for `inst_agg.closed_periods`, and both read the shared
+   fixture `tests/fixtures/refinement/filing_deadline_cases.json`. */
+
+function isoOf(y: number, m: number, d: number): string {
+  return new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
+}
+
+function weekdayOf(dateIso: string): number {
+  return new Date(`${dateIso}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+}
+
+/** The n-th `weekday` (0 = Sunday) of a month; n = -1 is the last. */
+function nthWeekday(y: number, m: number, weekday: number, n: number): string {
+  if (n > 0) {
+    const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+    return isoOf(y, m, 1 + ((weekday - first + 7) % 7) + 7 * (n - 1));
+  }
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const last = new Date(Date.UTC(y, m - 1, lastDay)).getUTCDay();
+  return isoOf(y, m, lastDay - ((last - weekday + 7) % 7));
+}
+
+/** A fixed-date holiday's observed day: Saturday → Friday, Sunday → Monday. */
+function observed(y: number, m: number, d: number): string {
+  const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return w === 6 ? isoOf(y, m, d - 1) : w === 0 ? isoOf(y, m, d + 1) : isoOf(y, m, d);
+}
+
+const HOLIDAYS = new Map<number, ReadonlySet<string>>();
+
+/** The observed dates of the legal public holidays OF `year` (5 U.S.C.
+    6103(a)); one may fall in the year before (New Year's Day on a Saturday). */
+export function federalHolidays(year: number): ReadonlySet<string> {
+  const hit = HOLIDAYS.get(year);
+  if (hit) return hit;
+  const days = new Set<string>([observed(year, 1, 1), observed(year, 7, 4), observed(year, 11, 11), observed(year, 12, 25)]);
+  if (year >= 2021) days.add(observed(year, 6, 19));
+  if (year >= 1986) days.add(nthWeekday(year, 1, 1, 3)); // Martin Luther King, Jr.
+  days.add(nthWeekday(year, 2, 1, 3)); // Washington's Birthday
+  days.add(nthWeekday(year, 5, 1, -1)); // Memorial Day
+  days.add(nthWeekday(year, 9, 1, 1)); // Labor Day
+  days.add(nthWeekday(year, 10, 1, 2)); // Columbus Day
+  days.add(nthWeekday(year, 11, 4, 4)); // Thanksgiving Day
+  HOLIDAYS.set(year, days);
+  return days;
+}
+
+/** Neither a Saturday, a Sunday nor an observed federal holiday. */
+export function isBusinessDay(dateIso: string): boolean {
+  const w = weekdayOf(dateIso);
+  if (w === 0 || w === 6) return false;
+  const y = Number(dateIso.slice(0, 4));
+  return !federalHolidays(y).has(dateIso) && !federalHolidays(y + 1).has(dateIso);
+}
+
+/** `dateIso` itself when it is a business day, else the first business day
+    following (Rule 0-3(a)). */
+export function rule03Roll(dateIso: string): string {
+  let d = dateIso;
+  while (!isBusinessDay(d)) d = addDays(d, 1);
+  return d;
+}
+
+/** The last timely filing day of the 13F for the quarter ending `periodEnd`:
+    45 days after it, rolled to the next business day by Rule 0-3. */
 export function filingDeadline(periodEnd: string): string {
-  return addDays(periodEnd, FILING_DEADLINE_DAYS);
+  return rule03Roll(addDays(periodEnd, FILING_DEADLINE_DAYS));
 }
 
 /** A period is CLOSED when the build date is STRICTLY AFTER its deadline.
@@ -41,6 +124,21 @@ export function filingDeadline(periodEnd: string): string {
     early, which is not the question it claims to answer. */
 export function isClosedPeriod(periodEnd: string, buildDate: string): boolean {
   return buildDate > filingDeadline(periodEnd);
+}
+
+/** The Institutional freshness line (DESIGN-POLISH M3, R25, Architecture H
+    H-7). It names the FILING DEADLINE, not the quarter, as the thing still
+    open, and it says the quarter is incomplete ONLY while the corpus has not
+    passed that deadline (`!isClosedPeriod(period, asOf)`, `asOf` =
+    `corpusAsOf(build date, latest filed date)`): under that condition the
+    corpus ends on or before the deadline, so filings are still due. Plain
+    text; the caller escapes. */
+export function instFreshnessText(latestFiled: string | null, latestPeriod: string | null, asOf: string): string {
+  const first = latestFiled
+    ? `13F data in this build runs through filings received ${latestFiled}.`
+    : "The newest filing date in this build is not available.";
+  if (latestPeriod === null || isClosedPeriod(latestPeriod, asOf)) return first;
+  return `${first} The filing deadline for the quarter ended ${latestPeriod} is ${filingDeadline(latestPeriod)}, so that quarter is incomplete here.`;
 }
 
 /** R4 (refinement 20260910): the date a quarter's closedness is judged against.

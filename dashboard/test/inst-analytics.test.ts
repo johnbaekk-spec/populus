@@ -113,11 +113,13 @@ test("cluster board: grouped over the serving activity grain, distinct filers, p
   db.exec(`CREATE TABLE serving_activity (row_id INTEGER PRIMARY KEY, cik TEXT, filer_name TEXT, issuer_key TEXT, issuer_name TEXT, position_key TEXT, put_call TEXT, ssh_prnamt_type TEXT, change_kind TEXT, curr_period TEXT, prev_period TEXT, prev_value_usd INTEGER, curr_value_usd INTEGER, delta_value_usd INTEGER, prev_shares INTEGER, curr_shares INTEGER, delta_shares INTEGER, filing_keys TEXT, prior_filing_keys TEXT, current_filing_keys TEXT, flags TEXT)`);
   const ins = db.prepare(`INSERT INTO serving_activity (cik, issuer_key, issuer_name, position_key, put_call, ssh_prnamt_type, change_kind, curr_period, delta_value_usd, filing_keys, prior_filing_keys, current_filing_keys, flags) VALUES (?,?,?,?,'LONG','SH',?,?,?,'[]','[]','[]','[]')`);
   const rows: [string, string | null, string | null, string, number | null][] = [
-    ["1", "cusip6:AAA", "Alpha", "new", 10], ["2", "cusip6:AAA", "Alpha", "new", 10], ["3", "cusip6:AAA", "Alpha", "trim", -5],
-    ["3", "cusip6:AAA", "Alpha", "trim", null], // same filer twice → still ONE cutter; null → partial
+    /* P-8 (M3 review): an all-caps filed name, so the board's verbatim rule
+       (D4 (a)) is distinguishable from the retired title-casing ("Alpha Inc") */
+    ["1", "cusip6:AAA", "ALPHA INC", "new", 10], ["2", "cusip6:AAA", "ALPHA INC", "new", 10], ["3", "cusip6:AAA", "ALPHA INC", "trim", -5],
+    ["3", "cusip6:AAA", "ALPHA INC", "trim", null], // same filer twice → still ONE cutter; null → partial
     ["1", "cusip6:BBB", "Beta", "add", 1], ["2", "cusip6:BBB", "Beta", "add", 1], // only two filers → below the bar
     ["1", null, null, "new", 7], // unkeyed
-    ["1", "cusip6:AAA", "Alpha", "new", 99], // other period → ignored
+    ["1", "cusip6:AAA", "ALPHA INC", "new", 99], // other period → ignored
   ];
   rows.forEach(([cik, key, name, kind, d], i) => ins.run(cik, key, name, `sid:${i}`, kind, i === rows.length - 1 ? "2025-12-31" : P, d));
   db.close();
@@ -125,10 +127,11 @@ test("cluster board: grouped over the serving activity grain, distinct filers, p
   assert.ok(res.present);
   const b = res.board;
   assert.equal(b.qualifying, 1);
-  assert.deepEqual(b.rows.map((r) => [r.issuerName, r.filers, r.adders, r.cutters, r.newPositions, r.netDeltaUsd, r.netDeltaPartial]), [["Alpha", 3, 2, 1, 2, 15, true]]);
+  assert.deepEqual(b.rows.map((r) => [r.issuerName, r.filers, r.adders, r.cutters, r.newPositions, r.netDeltaUsd, r.netDeltaPartial]), [["ALPHA INC", 3, 2, 1, 2, 15, true]]);
   assert.equal(b.unkeyedRows, 1);
   const html = clusterBoardHtml(res, P);
-  assert.match(html, /Alpha/);
+  assert.match(html, /ALPHA INC/);
+  assert.doesNotMatch(html, /Alpha Inc/, "control: the retired title-case form");
   assert.match(html, /1 change rows carry no issuer identity/);
   assert.match(html, /≈/);
   // absence states are typed, never a blank table

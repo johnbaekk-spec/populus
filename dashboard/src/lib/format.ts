@@ -307,6 +307,35 @@ export function changeEdgeAttr(kind: string): string {
   return edge ? ` data-edge="${edge}"` : "";
 }
 
+/* ---------- the change-kind vocabulary (DESIGN-POLISH M3, R19, T3.1) ----------
+   ONE table for every 13F surface (docs/frontend/qoq-presentation.md §1, as
+   amended 2026-09-26): a change kind is a caps word in its kind's text colour,
+   beside the row's edge — never a tinted pill, and never a second spelling on
+   another surface. `cls` is the colour hook (`institutional.css`). An unknown
+   kind fails closed to the hatched n/c, never a guessed direction. */
+export const CHANGE_KIND_WORDS: Readonly<Record<string, { word: string; cls: string }>> = {
+  new: { word: "NEW", cls: "qoq-new" },
+  add: { word: "ADD", cls: "qoq-add" },
+  trim: { word: "TRIM", cls: "qoq-trim" },
+  exit: { word: "EXIT", cls: "qoq-exit" },
+  // R8: Δshares == 0 — mark-to-market only. NO CHANGE, never the design's HOLD (L5).
+  held: { word: "NO CHANGE", cls: "qoq-held" },
+  // D2: no comparable prior book — never a new stake.
+  no_prior: { word: "NO PRIOR", cls: "qoq-noprior" },
+  unclassified: { word: "n/c", cls: "qoq-nc" },
+};
+
+/** The word and colour hook for a producer `change_kind`. */
+export function kindWord(kind: string): { word: string; cls: string } {
+  return Object.hasOwn(CHANGE_KIND_WORDS, kind) ? CHANGE_KIND_WORDS[kind]! : CHANGE_KIND_WORDS.unclassified!;
+}
+
+/** The kind word as markup (escaped; the class hook kept for the colour). */
+export function kindWordHtml(kind: string): string {
+  const k = kindWord(kind);
+  return `<span class="qoq-chip ${k.cls}">${esc(k.word)}</span>`;
+}
+
 /** The sort caret: a real aria-hidden span in the mark slot, its glyph drawn
     from the header's own `aria-sort`, so the arrow and the announced state
     cannot disagree. It replaced the `.th-sort::after` caret. */
@@ -495,17 +524,45 @@ export function bandGeometry(r: Pick<TxnRow, "low" | "high">): BandGeom {
 
 /* ---------- row field presentation ---------- */
 
+/** A note key that is INJECTIVE over tickers (CD3-4 (a), M3 review): `slug`
+    folds every non-alphanumeric run to "-", so "BRK.B" and "BRK-B" would
+    share an id; each punctuation character is spelled as its code point
+    instead ("BRK.B" → "brk_1a_b" → id "n-mf-brk-1a-b"). A plain ticker is its
+    own key ("AAPL" → "n-mf-aapl"). */
+export function tickerNoteKey(ticker: string): string {
+  return ticker.replace(/[^A-Za-z0-9]/g, (ch) => `_${ch.codePointAt(0)!.toString(36)}_`);
+}
+
 /** No-ticker cell (B-7/F-6): the 16.1% of rows without a ticker used to show a
     bare "—" — but the filing names the asset. Render the asset name AS FILED
     (with its verbatim source asset-type value, when stated) instead of
     pretending the row is empty. No classification happens here: the type
-    string is the producer's, shown verbatim or not at all. */
-export function assetNameCell(r: Pick<TxnRow, "asset" | "assetType">): string {
+    string is the producer's, shown verbatim or not at all.
+
+    K-3 (M3 review): with a note scope (every surface that renders one passes
+    it, keyed on the row's `txnId`), the name is a LABEL trigger whose note
+    gives the asset and its type as filed, so a sighted reader reaches what the
+    40-character truncation and the cell's clip hide — before, only a screen
+    reader could. The trigger is omitted only when the visible text hides
+    NOTHING — shown exactly as filed, untruncated, with no stated type. These
+    surfaces (the classic feed, the member's largest recent disclosures, the
+    home rail) have no column note stating the mechanical rule, so CD3-4 (c)'s
+    drop does not apply to them. */
+export function assetNameCell(
+  r: Pick<TxnRow, "asset" | "assetType"> & Partial<Pick<TxnRow, "txnId">>,
+  notes?: NoteCtx,
+): string {
   if (r.asset == null || r.asset.trim() === "") {
     return `<span class="none">—<span class="visually-hidden"> no ticker disclosed</span></span>`;
   }
   const name = r.asset.trim();
-  const short = name.length > 40 ? name.slice(0, 37) + "…" : name;
+  /* the visible text is the default asset text (M3, R17: a stock code equal to
+     the row's type and a "Common Stock" suffix drop, other codes become the
+     House Clerk's words); the hidden text below keeps the name as filed */
+  const d = displayAsset({ asset: r.asset, assetType: r.assetType, ticker: null });
+  const display = d.text;
+  const truncated = display.length > 40;
+  const short = truncated ? display.slice(0, 37) + "…" : display;
   const type = r.assetType != null && r.assetType.trim() !== "" ? r.assetType.trim() : null;
   /* The visible string is truncated at 40 characters and then clipped
      again by the cell (`.cell-ticker`/`.c-ticker` are 66px columns; 40
@@ -515,18 +572,25 @@ export function assetNameCell(r: Pick<TxnRow, "asset" | "assetType">): string {
      tooltip-only, which the plan forbids for anything honesty-bearing, and
      what was traded is exactly that. So the visible span is aria-hidden and
      the accessible name carries the whole string. */
-  return (
+  const inner =
     /* The `title=` is DELETED, not converted. The
        `.visually-hidden` sibling below is a strict superset — it carries the
        same name, the same type, and one clause more ("asset as filed, no
        ticker disclosed"). A prior review put that sibling there precisely
-       because tooltip-only identity was forbidden; adding a note here would be
-       a THIRD channel for text that already has two. Recorded honestly: the
+       because tooltip-only identity was forbidden. Recorded honestly: the
        containment is of the CONTENT, not of the bytes — the two channels
        separate name from type with `·` and `—` respectively. */
-    `<span class="asset-name">` +
     `<span aria-hidden="true">${esc(short)}</span>` +
-    `<span class="visually-hidden">${esc(name)}${type ? ` — asset type as filed: ${esc(type)}` : ""} — asset as filed, no ticker disclosed</span></span>`
+    `<span class="visually-hidden">${esc(name)}${type ? ` — asset type as filed: ${esc(type)}` : ""} — asset as filed, no ticker disclosed</span>`;
+  /* the cell never shows the stated type, so a row that states one hides it */
+  const hidesMore = truncated || d.changed || type !== null;
+  if (!notes || !r.txnId || !hidesMore) return `<span class="asset-name">${inner}</span>`;
+  const body =
+    `As filed: <span class="filed-name">${esc(name)}</span>` + (type ? ` · asset type as filed: ${esc(type)}` : "");
+  return (
+    `<span class="asset-name">` +
+    noteFromHtml(body, notes, `${r.txnId}-asset`, { trigger: "label", textHtml: `<span class="filed-name">${inner}</span>` }) +
+    `</span>`
   );
 }
 
@@ -556,30 +620,291 @@ export function affText(r: {
   return `${p}–${r.state}`;
 }
 
-/** An unparsed side is shown as unknown, never as the named category "Other" —
-    `side='other'` in this corpus always means the field did not parse. */
+/** The ONE disclosed-trade vocabulary (DESIGN-POLISH M3, R18, T3.2): BUY, SELL
+    or EXCHANGE, and "—" when the side did not parse. A partial sale reads SELL;
+    its "partial" qualifier is `ownerNote`'s, beside it. A late row keeps its
+    side word (L4): lateness is the gold edge and the dates cell's `LATE·Nd`.
+    An unparsed side is shown as unknown, never as a named category —
+    `side='other'` in this corpus always means the field did not parse
+    (normalize.py `normalize_side`). */
 export function sideLabel(
   side: TxnRow["side"],
   flags: readonly string[] = [],
 ): { text: string; cls: string } {
   if (flags.includes("side_unparsed")) return { text: "—", cls: "unknown" };
   switch (side) {
-    case "purchase": return { text: "Purchase", cls: "buy" };
-    case "sale": return { text: "Sale", cls: "sell" };
-    case "sale_partial": return { text: "Sale", cls: "sell" };
-    case "exchange": return { text: "Exchange", cls: "neutral" };
-    default: return { text: "Other", cls: "neutral" };
+    case "purchase": return { text: "BUY", cls: "buy" };
+    case "sale": return { text: "SELL", cls: "sell" };
+    case "sale_partial": return { text: "SELL", cls: "sell" };
+    case "exchange": return { text: "EXCHANGE", cls: "neutral" };
+    default: return { text: "—", cls: "unknown" };
   }
 }
 
-/** "· partial · SP" — grammar order per the design: partial first, then owner. */
-export function ownerNote(r: Pick<TxnRow, "side" | "owner">): string {
+/** The row's qualifiers, UNPREFIXED, in the design's grammar order: partial
+    first, then the owner code (DESIGN-POLISH M3, R17). It used to return
+    "· partial · SP" with its own leading separator, and the reference feed
+    added another, which printed "· ·" (A9); every caller now joins through
+    `joinQualifiers`, the one separator. */
+export function ownerNote(r: Pick<TxnRow, "side" | "owner">): string[] {
   const parts: string[] = [];
   if (r.side === "sale_partial") parts.push("partial");
   if (r.owner === "spouse") parts.push("SP");
   else if (r.owner === "child") parts.push("DC");
   else if (r.owner === "joint") parts.push("JT");
-  return parts.length ? "· " + parts.join(" · ") : "";
+  return parts;
+}
+
+/** The ONE qualifier join: non-empty parts separated by " · ", never a leading
+    or doubled separator. */
+export function joinQualifiers(parts: readonly (string | null | undefined)[]): string {
+  return parts.map((p) => (p ?? "").trim()).filter((p) => p !== "").join(" · ");
+}
+
+/** The partial and owner qualifiers as one `.owner-note` span, spelled out for
+    assistive technology, or "" when the row carries neither. */
+export function ownerQualifiersHtml(r: Pick<TxnRow, "side" | "owner">): string {
+  const parts = ownerNote(r);
+  if (parts.length === 0) return "";
+  return `<span class="owner-note">${esc(joinQualifiers(parts))}<span class="visually-hidden"> (${esc(ownerNoteLong(r))})</span></span>`;
+}
+
+/* ---------- the asset text (DESIGN-POLISH M3, R17, T3.3) ----------
+
+   `ASSET_TYPE_WORDS` is TRANSCRIBED from the primary source, the House
+   Clerk's official list of Financial Disclosure asset type codes:
+   https://fd.house.gov/reference/asset-type-codes.aspx ("List of Asset Type
+   Codes | Financial Disclosure | U.S. House of Representatives"), retrieved
+   2026-09-27T00:19Z (sha256 of the page as fetched 9403c424…6165c22; 48 codes;
+   the page shows no revision date). The PTR PDFs cite the same page for the
+   bracketed code after each asset. A code missing from this table is not
+   guessed: it keeps its bracket as filed (declared debt: a new Clerk code shows
+   its bracket until the table is updated). */
+export const ASSET_TYPE_WORDS: Readonly<Record<string, string>> = {
+  "4K": "401K and Other Non-Federal Retirement Accounts",
+  "5C": "529 College Savings Plan",
+  "5F": "529 Portfolio",
+  "5P": "529 Prepaid Tuition Plan",
+  AB: "Asset-Backed Securities",
+  BA: "Bank Accounts, Money Market Accounts and CDs",
+  BK: "Brokerage Accounts",
+  CO: "Collectibles",
+  CS: "Corporate Securities (Bonds and Notes)",
+  CT: "Cryptocurrency",
+  DB: "Defined Benefit Pension",
+  DO: "Debts Owed to the Filer",
+  DS: "Delaware Statutory Trust",
+  EF: "Exchange Traded Funds (ETF)",
+  EQ: "Excepted/Qualified Blind Trust",
+  ET: "Exchange Traded Notes",
+  FA: "Farms",
+  FE: "Foreign Exchange Position (Currency)",
+  FN: "Fixed Annuity",
+  FU: "Futures",
+  GS: "Government Securities and Agency Debt",
+  HE: "Hedge Funds & Private Equity Funds (EIF)",
+  HN: "Hedge Funds & Private Equity Funds (non-EIF)",
+  IC: "Investment Club",
+  IH: "IRA (Held in Cash)",
+  IP: "Intellectual Property & Royalties",
+  IR: "IRA",
+  MA: "Managed Accounts (e.g., SMA and UMA)",
+  MF: "Mutual Funds",
+  MO: "Mineral/Oil/Solar Energy Rights",
+  OI: "Ownership Interest (Holding Investments)",
+  OL: "Ownership Interest (Engaged in a Trade or Business)",
+  OP: "Options",
+  OT: "Other",
+  PE: "Pensions",
+  PM: "Precious Metals",
+  PS: "Stock (Not Publicly Traded)",
+  RE: "Real Estate Invest. Trust (REIT)",
+  RF: "REIT (EIF)",
+  RN: "REIT (non-EIF)",
+  RP: "Real Property",
+  RS: "Restricted Stock Units (RSUs)",
+  SA: "Stock Appreciation Right",
+  ST: "Stocks (including ADRs)",
+  TR: "Trust",
+  VA: "Variable Annuity",
+  VI: "Variable Insurance",
+  WU: "Whole/Universal Insurance",
+};
+
+export interface DisplayAsset {
+  /** the default visible asset text: the name, then the type code's words */
+  text: string;
+  /** the name alone, without the type code's words (the member net-flow
+      Issuer cell, which names a ticker across trades of several types — W-9) */
+  name: string;
+  /** the asset exactly as filed (whitespace collapsed) */
+  asFiled: string;
+  /** the bracketed code as filed, when there was one */
+  code: string | null;
+  /** true when `text` differs from `asFiled` — something is one interaction away */
+  changed: boolean;
+  /** true when `name` differs from `asFiled` ONLY by the mechanical parts the
+      column's header note states (CD3-4 (c), M3 review): a trailing " [ST]"
+      when "ST" is the row's type, a trailing " (TICKER)" equal to the row's
+      ticker, and a trailing " Common Stock" / " - Common Stock" / " Ordinary
+      Shares" / " - Ordinary Shares" — each matched exactly, case included. A
+      row like that needs no per-row note; any other difference (another code's
+      words, a case-variant ticker "(AAPl)", "[sT]", punctuation) keeps it. */
+  mechanicalOnly: boolean;
+}
+
+const TRAILING_CODE = /\s*\[([A-Za-z0-9]{2})\]$/;
+const TRAILING_PAREN = /\s*\(([^()]+)\)$/;
+const TRAILING_TYPE_SUFFIX = /(^|\s*-\s*|,\s*|\s+)(Common Stock|Ordinary Shares)$/i;
+/* The suffix is the security's TYPE only when nothing counts or relates it:
+   "American Depositary Shares each representing 3 ordinary Shares" and "one
+   share of Common Stock" name what a unit REPRESENTS, and dropping the tail
+   left "…each representing 3" (measured on the 20260817.1 corpus). */
+const COUNTED_SUFFIX = /(?:^|\s)(?:representing|represents|each|of|per|one|two|three|four|five|six|seven|eight|nine|ten|\d[\d,./]*)$/i;
+
+/** The default asset text (R17): drop a trailing `[ST]` code that equals the
+    row's `assetType`, a parenthesised ticker equal to the row's ticker, and a
+    trailing "Common Stock" / "Ordinary Shares" type suffix; any other known
+    code renders as its House Clerk words, an unknown code keeps its bracket.
+    The parts are stripped to a FIXPOINT (K-9, M3 review), so their order in
+    the filing does not matter ("X Common Stock, (T) [ST]" and "X (T) Common
+    Stock [ST]" both end at "X"). Nothing is classified: the code is the
+    filing's own, the words are the Clerk's, and the as-filed string stays one
+    interaction away (`asFiled`). */
+export function displayAsset(r: Pick<TxnRow, "asset" | "assetType" | "ticker">): DisplayAsset {
+  const asFiled = (r.asset ?? "").replace(/\s+/g, " ").trim();
+  if (asFiled === "") return { text: "Asset not named", name: "Asset not named", asFiled: "", code: null, changed: false, mechanicalOnly: false };
+  let name = asFiled;
+  let code: string | null = null;
+  let codeSeen = false;
+  let words: string | null = null;
+  let mechanical = true;
+  for (let guard = 0; guard < 16; guard++) {
+    const before = name;
+    const c = codeSeen ? null : TRAILING_CODE.exec(name);
+    if (c) {
+      codeSeen = true;
+      code = c[1]!;
+      const up = code.toUpperCase();
+      if (Object.hasOwn(ASSET_TYPE_WORDS, up)) {
+        name = name.slice(0, c.index);
+        const isRowType = r.assetType != null && r.assetType.trim().toUpperCase() === up;
+        /* only a stock code that is the row's own type goes silent: every
+           other known code is information the reader needs, so it becomes
+           words */
+        if (up === "ST" && isRowType) {
+          if (!(c[0] === " [ST]" && r.assetType === "ST")) mechanical = false;
+        } else {
+          words = ASSET_TYPE_WORDS[up]!;
+          mechanical = false;
+        }
+      }
+      /* an unknown code keeps its bracket as filed */
+    }
+    const p = TRAILING_PAREN.exec(name);
+    if (p && r.ticker && p[1]!.trim().toUpperCase() === r.ticker.trim().toUpperCase()) {
+      if (p[0] !== ` (${r.ticker})`) mechanical = false;
+      name = name.slice(0, p.index);
+    }
+    const s = TRAILING_TYPE_SUFFIX.exec(name);
+    if (s && !COUNTED_SUFFIX.test(name.slice(0, s.index))) {
+      if (!((s[1] === " " || s[1] === " - ") && (s[2] === "Common Stock" || s[2] === "Ordinary Shares"))) mechanical = false;
+      name = name.slice(0, s.index);
+    }
+    const trimmed = name.replace(/[\s\-–—,·]+$/, "");
+    if (trimmed !== name) {
+      mechanical = false;
+      name = trimmed;
+    }
+    if (name === before) break;
+  }
+  name = name.trim();
+  /* a name that was nothing but the stripped parts keeps its filed form */
+  if (name === "") return { text: asFiled, name: asFiled, asFiled, code, changed: false, mechanicalOnly: false };
+  const text = joinQualifiers([name, words]);
+  return { text, name, asFiled, code, changed: text !== asFiled, mechanicalOnly: mechanical && name !== asFiled };
+}
+
+/** The as-filed note's body for one asset (R17; CD3-4 (b), M3 review): the
+    filed string, and a code clause only where the row's own text does not
+    already say it — an unknown code ("not in the House Clerk's code list"),
+    or a known code whose words the cell leaves out (`nameOnly`). The code
+    list itself is stated once, in the column's header note
+    (`assetColumnNote`), never repeated on every row. */
+function asFiledNoteHtml(d: DisplayAsset, nameOnly: boolean): string {
+  const up = d.code?.toUpperCase() ?? null;
+  const known = up !== null && Object.hasOwn(ASSET_TYPE_WORDS, up);
+  return (
+    `As filed: <span class="filed-name">${esc(d.asFiled)}</span>` +
+    (up === null
+      ? ""
+      : !known
+        ? ` · type code ${esc(d.code!)}: not in the House Clerk's code list`
+        : nameOnly && up !== "ST"
+          ? ` · type code ${esc(d.code!)}: ${esc(ASSET_TYPE_WORDS[up]!)}`
+          : "")
+  );
+}
+
+/** The ONE header-note statement of the asset rule (CD3-4 (b)/(c), M3
+    review). A cell whose name differs from the filing ONLY by these parts
+    carries no per-row note, so the rule is stated once, on the column; the
+    House Clerk's code list lives here instead of on every row. `nameOnly` is
+    the member net-flow Issuer column's form (W-9), which never shows a code's
+    words. Plain text; the caller escapes. */
+export function assetColumnNote(opts: { nameOnly?: boolean } = {}): string {
+  const lead = opts.nameOnly
+    ? `The issuer as the ticker's newest trade names it, without the parts that repeat the row: `
+    : `The asset as filed, without the parts that repeat the row: `;
+  const parts =
+    `a trailing “(TICKER)” that is the row's ticker, the stock code “[ST]” when it is the row's type ` +
+    `(“Stocks (including ADRs)” in the House Clerk's list of asset type codes), and a trailing ` +
+    `“Common Stock” or “Ordinary Shares”. `;
+  const codes = opts.nameOnly
+    ? `No code is shown as words here, since the row nets every trade in the ticker. `
+    : `Any other code is shown as its words from that list; a code not on it keeps its brackets. `;
+  return (
+    lead + parts + codes +
+    `A name that differs from the filing in any other way is a button: its note gives the text as filed` +
+    (opts.nameOnly ? ` and its code. ` : `. `) +
+    `The filing itself is the exact record.`
+  );
+}
+
+/** The asset cell's line (R17): the default asset text — a LABEL trigger whose
+    note carries the as-filed string and prints (§4) whenever the display
+    differs from it in more than the header's mechanical parts (CD3-4 (c)) —
+    then, OUTSIDE the ellipsis, the partial and owner qualifiers
+    (`qualifiers: true`), so a truncated asset never hides them. `nameOnly`
+    shows the name without a code's words (W-9); `noteKey` overrides the
+    per-row key (the net-flow table keys its notes on the ticker, CD3-4 (a)). */
+export function assetLineHtml(
+  r: Pick<TxnRow, "asset" | "assetType" | "ticker" | "side" | "owner" | "txnId">,
+  opts: { notes?: NoteCtx; noteKey?: string; qualifiers?: boolean; nameOnly?: boolean } = {},
+): string {
+  const d = displayAsset(r);
+  const visible = opts.nameOnly ? d.name : d.text;
+  const shown = d.asFiled === "" ? esc(visible) : `<span class="filed-name">${esc(visible)}</span>`;
+  /* `mechanicalOnly` implies no code words, so the rule holds for `text` and
+     `name` alike */
+  const needsNote = visible !== d.asFiled && d.asFiled !== "" && !d.mechanicalOnly;
+  const text =
+    needsNote && opts.notes
+      ? noteFromHtml(asFiledNoteHtml(d, opts.nameOnly === true), opts.notes, opts.noteKey ?? `${r.txnId}-asset`, { trigger: "label", textHtml: shown })
+      : shown;
+  const quals = opts.qualifiers ? ownerQualifiersHtml(r) : "";
+  /* the separator between the asset and its qualifiers is its own element, so
+     neither side ever opens or doubles one */
+  return `<span class="asset-line"><span class="asset-text">${text}</span>${quals ? `<span class="asset-sep">·</span>${quals}` : ""}</span>`;
+}
+
+/** A CIK as a reader sees it (R20): no leading zeros. The zero-padded form
+    stays in URLs, data attributes and machine fields. */
+export function fmtCik(cik: string | number): string {
+  const s = String(cik).trim();
+  if (!/^\d+$/.test(s)) return s;
+  const n = s.replace(/^0+(?=\d)/, "");
+  return n;
 }
 
 /** The same qualifiers spelled out, for assistive technology and tooltips —
@@ -712,6 +1037,54 @@ export const DATE_ANOMALY_NOTE = "impossible trade dates";
 /** The methodology page's known-limits line on every defect flag. */
 export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged, never dropped";
 
+/* The seven defect flags, one sentence each (DESIGN-POLISH M3, carried item
+   F2 from M1). Each sentence is derived ONLY from the producer code that sets
+   the flag — every congress row goes through these normalizers (the House and
+   Senate parsers via `normalize_row`, the kadoa backfill via the same
+   functions, backfill.py:158-172) — and ends with the site's standing rule
+   that such rows stay visible. Sources, in src/populus/:
+   - date_missing: normalize.py:192-235 (`date_stats` / `normalize_dates`) —
+     the trade date is absent, not M/D/YYYY, or not a real calendar date; the
+     date and the days-to-file are then NULL.
+   - side_unparsed: normalize.py:90-96 (`normalize_side`) — the type cell is
+     none of the House codes P, S, S (partial), E or the Senate labels
+     Purchase, Sale (Full), Sale (Partial), Exchange; the side is then "—".
+   - asset_unparsed: normalize.py:124-132 (`normalize_asset`) — the asset cell
+     is empty; the row keeps the placeholder "(unparsed asset)".
+   - capgains_unparsed: normalize.py:270-283 (`normalize_capgains`) — the
+     column is present but its box reads as neither checked nor unchecked.
+   - row_incomplete: parse/house_ptr.py:330-335 (a type, date or amount cell
+     is missing, or the text did not open a row of its own) and
+     parse/senate_ptr.py:158-159 (a Senate row with fewer than nine cells).
+   - row_orphan: parse/house_ptr.py:20-22, :334-335, :618-627 — text that
+     completed no open row was kept as a row of its own (House only).
+   - owner_unparsed: normalize.py:99-106 (`normalize_owner`) — the owner cell
+     is not blank and is none of SP, DC, JT, self (or the Senate's Spouse,
+     Child, Joint); no owner is then shown. */
+const DEFECT_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
+  date_missing:
+    /* W-8 (M3 review): the producer reads M/D/YYYY only (`_MDY`), so a date
+       written any other way is "missing" too — the sentence says so */
+    "The filing gives no trade date in month/day/four-digit-year form that is a real calendar date, so the row carries no trade date and no days-to-file; " +
+    DEFECT_FLAG_NOTE + ".",
+  side_unparsed:
+    "The filing's transaction-type cell is missing or is none of the purchase, sale, partial-sale or exchange codes, so the side reads —; " +
+    DEFECT_FLAG_NOTE + ".",
+  asset_unparsed:
+    "The filing's asset cell is missing or empty, so the row is kept with the placeholder \"(unparsed asset)\"; " + DEFECT_FLAG_NOTE + ".",
+  capgains_unparsed:
+    "The filing's capital-gains-over-$200 box reads as neither checked nor unchecked; " + DEFECT_FLAG_NOTE + ".",
+  row_incomplete:
+    "A cell a complete row carries is missing in the filing — on a House report the type, date or amount, or the text did not start a row of its own; on a Senate report fewer than the table's nine cells; " +
+    DEFECT_FLAG_NOTE + ".",
+  row_orphan:
+    "On a House report, text that completed no row above it is kept as a row of its own rather than dropped; " +
+    DEFECT_FLAG_NOTE + ".",
+  owner_unparsed:
+    "The filing's owner cell holds a value that is none of the owner codes (SP, DC, JT, self, or the Senate's Spouse, Child, Joint), so no owner is shown; " +
+    DEFECT_FLAG_NOTE + ".",
+};
+
 /** The definition each congress flag chip opens. A flag with no entry keeps a
     plain chip (the institutional flags never reach the reference feed). */
 export const FEED_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
@@ -720,13 +1093,7 @@ export const FEED_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
   amount_unparsed: AMOUNT_UNPARSED_SPOKEN,
   amendment_unresolved: AMENDMENT_PENDING_NOTE,
   date_anomaly: DATE_ANOMALY_NOTE,
-  date_missing: DEFECT_FLAG_NOTE,
-  side_unparsed: DEFECT_FLAG_NOTE,
-  asset_unparsed: DEFECT_FLAG_NOTE,
-  capgains_unparsed: DEFECT_FLAG_NOTE,
-  row_incomplete: DEFECT_FLAG_NOTE,
-  row_orphan: DEFECT_FLAG_NOTE,
-  owner_unparsed: DEFECT_FLAG_NOTE,
+  ...DEFECT_FLAG_DEFINITIONS,
 };
 
 /* ---------- flags a reader can read ----------
@@ -1205,7 +1572,7 @@ export function tickerHrefFor(ticker: string, ctx: RenderCtx): string {
     `<div>` form (nested inside a `<td class="c-src">` on a dozen surfaces) and
     the `<td>` form (a feed row IS a table row now) cannot drift: an unusable
     source URL must degrade the same way in both. */
-function srcLinkInner(doc: string): string {
+export function srcLinkInner(doc: string): string {
   const src = srcLabel(doc);
   if (!doc.startsWith("https://")) {
     return `<span class="src-missing" title="source URL not usable">${src}</span>`;
@@ -1352,8 +1719,7 @@ function referenceEdge(r: Pick<TxnRow, "late">, sideCls: string): string | null 
    flags and the provenance link stay exactly as reachable as before. */
 export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
   const side = sideLabel(r.side, r.flags);
-  const owner = ownerNote(r);
-  const ownerLong = ownerNoteLong(r);
+  const qualifiers = ownerQualifiersHtml(r);
   const amount = amountText(r);
   const amountUnknown = r.low == null && r.high == null;
   /* The sole channel for this fact was a `title=`, which no
@@ -1377,9 +1743,14 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
       note(SPOUSE_CAP_NOTE, { scope: "txn" }, `${r.txnId}-dagger`, { trigger: "mark", textHtml: "‡", name: "open-ended cap" }) +
       `</sup>`
     : "";
+  /* K-3 (M3 review): the classic feed's no-ticker cell is a label trigger
+     whose note gives the asset as filed (scope `feed-noticker`, keyed on the
+     txn id, like the spouse-cap note beside it) */
   const tickerHtml = r.ticker
     ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
-    : assetNameCell(r);
+    : ctx.referenceFeed
+      ? ""
+      : assetNameCell(r, { scope: "feed-noticker" });
   const amountSpoken = amountUnknown ? AMOUNT_UNPARSED_SPOKEN : amount;
 
   if (ctx.referenceFeed) {
@@ -1399,10 +1770,15 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
         `</span>`
       : "";
     return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}${rowClass ? " " + esc(rowClass) : ""}"${edge ? ` data-edge="${edge}"` : ""}>` +
-      `<td class="cell cell-side c-kind ${esc(side.cls)}">${r.late === 1 ? "LATE" : side.cls === "buy" ? "BUY" : side.cls === "sell" ? "SELL" : esc(side.text)}<span class="reference-watch">${starHtml(r.bioguide, r.name, ctx)}</span></td>` +
+      /* L4 (DESIGN-POLISH M3, T3.2): a late row keeps its side word — the
+         lateness is the gold edge and the dates cell's LATE·Nd, never a
+         replacement for the side, which is honesty content (§1). */
+      `<td class="cell cell-side c-kind ${esc(side.cls)}">${esc(side.text)}<span class="reference-watch">${starHtml(r.bioguide, r.name, ctx)}</span></td>` +
       `<td class="cell cell-member c-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
       `<td class="cell cell-ticker c-ticker">${r.ticker ? tickerHtml : '<span class="none">—</span>'}</td>` +
-      `<td class="cell cell-asset c-secondary">${esc(r.asset || "Asset not named")} ${owner ? `<span class="owner-note">· ${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>` : ""}</td>` +
+      /* R17 (M3, T3.3): the default asset text, its as-filed note, and the
+         qualifiers OUTSIDE the ellipsis — one separator, never "· ·" (A9). */
+      `<td class="cell cell-asset c-secondary">${assetLineHtml(r, { notes: { scope: "feed-asset" }, qualifiers: true })}</td>` +
       `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amount)}${capMark}</td>` +
       /* H-17: the row's flags are VISIBLE chips in the range cell, as the
          classic feed prints them — never folded behind a note. Each chip is
@@ -1416,11 +1792,7 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
 <td class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>
 <td class="cell cell-ticker"><span class="visually-hidden">Ticker </span>${tickerHtml}</td>
 <td class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>
-<td class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${
-    owner
-      ? ` <span class="owner-note">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
-      : ""
-  }</td>
+<td class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${qualifiers ? ` ${qualifiers}` : ""}</td>
 ${dualDateCell(r)}
 <td class="cell cell-amount${amountUnknown ? " unknown" : ""}"><span class="visually-hidden">Amount </span><span aria-hidden="true">${esc(amount)}</span><span class="visually-hidden">${esc(amountSpoken)}</span>${spouseCapDagger}</td>
 <td class="cell cell-range">${rangeBand(r)}${flagTags(r.flags, r)}</td>
@@ -1544,7 +1916,8 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
     { label: "Kind", why: "Purchase, sale or exchange as disclosed; watch controls save locally.", cls: "c-kind" },
     { label: "Member", why: "Member and affiliation as recorded in the filing.", cls: "c-member" },
     { label: "Ticker", why: TICKER_ABSENT_NOTE, cls: "c-ticker" },
-    { label: "Asset · Owner", why: "Asset and ownership as filed; partial-sale qualifiers are retained.", cls: "c-secondary" },
+    /* CD3-4 (b)/(c), M3 review: the asset rule, stated once on the column */
+    { label: "Asset · Owner", why: `${assetColumnNote()} The partial-sale and owner qualifiers are kept beside it.`, cls: "c-secondary" },
     { label: "Range", sortKey: "amount", cls: "c-num" },
     { label: "Amount range", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range c-bar" },
     { label: "Traded → Filed", sortKey: "filed", cls: "c-num" },
@@ -1990,8 +2363,10 @@ const IDENTITY_CHIP: Record<Exclude<IdentityStrength, "entity">, { label: string
   withheld: {
     label: "CUSIP withheld",
     why:
+      /* DESIGN-POLISH M3 (Architecture H, H-18): only "is an opaque reference
+         that" goes; "nor any key computed from it" is the C1 fact and stays */
       "this security has a reviewed ticker, so Public Filings publishes neither its CUSIP nor any " +
-      "key computed from it; the key shown is an opaque reference that only links this build's own files",
+      "key computed from it; the key shown links only this build's own files",
   },
   unknown: {
     label: "unrecognized key",
@@ -2019,6 +2394,15 @@ export function identityChipHtml(key: string, ctx: NoteCtx, noteKey: string): st
     noteLabel(chip.label, `${chip.why} · key as published: ${key}`, ctx, noteKey) +
     `</span>`
   );
+}
+
+/** The same identity in plain words for a note panel (no nested trigger): the
+    chip's label and the key as published, or the key alone for a resolved
+    entity, which the site never chips. Pre-escaped html. */
+export function identityPlainHtml(key: string): string {
+  const strength = identityStrengthOf(key);
+  if (strength === "entity") return `<code>${esc(key)}</code>`;
+  return `${esc(IDENTITY_CHIP[strength].label)} (key as published: <code>${esc(key)}</code>)`;
 }
 
 /* ---------- FootnoteBlock (G5) ---------- */
@@ -2231,36 +2615,67 @@ export function latestFiling<T extends FiledDateCandidate>(refs: readonly T[]): 
   return best;
 }
 
-/* ---------- R9 (refinement 20260910): ONE issuer display-name rule ---------- */
+/* ---------- R9 (refinement 20260910): ONE issuer display-name rule ----------
+   Rule set by owner decision D4 (a), DESIGN-POLISH M3 (R21, A-6), 2026-09-25. */
+
+/** Codepoint order (Python's `str` order), never UTF-16 code-unit order, so the
+    tie-break is identical in both runtimes for every character. */
+function codepointCompare(a: string, b: string): number {
+  const x = [...a];
+  const y = [...b];
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const d = x[i]!.codePointAt(0)! - y[i]!.codePointAt(0)!;
+    if (d !== 0) return d;
+  }
+  return x.length - y.length;
+}
 
 /** The TypeScript half of `populus.inst_agg.display_issuer_name`, mirrored
     token for token; `tests/fixtures/refinement/display_issuer_name_cases.json`
-    pins both runtimes on the same cases.
+    pins both runtimes on the same cases (and passes its optional `weights`).
 
-    Modal candidate over the whitespace-collapsed, upper-cased names (weighted
-    when `weights` is given); a pure-numeric candidate, then a candidate of
-    three characters or fewer, then a digit-leading candidate are dropped ONLY
-    while another candidate survives; ties go to the more frequent, then the
-    longer, then codepoint order; the token `TR` folds to `TRUST`; every token
-    is title-cased. Null only when every contributor is null. */
+    D4 (a): the modal FILED name, verbatim — whitespace collapsed, case
+    untouched, no TR→TRUST fold, no SEC-title substitution. Title-casing is
+    retired: it mangled abbreviations ("Asml Hldg Nv") and lower-cased the
+    letters of a CUSIP embedded in a name, which the uppercase-only scrub and
+    probe then no longer matched.
+
+    Which spelling wins (A-6):
+    1. names are grouped by their upper-cased, whitespace-collapsed form; a
+       pure-numeric group, then a group of three characters or fewer, then a
+       digit-leading group are dropped ONLY while another group survives; the
+       group with the highest summed weight wins, ties to the longer, then the
+       codepoint-smallest form (as before D4);
+    2. inside that group, the exact whitespace-collapsed spelling with the
+       largest summed weight wins — the sum of the weights passed for that
+       spelling, or its number of occurrences when none are passed — ties to
+       the codepoint-smallest spelling.
+    Null only when every contributor is null. */
 export function displayIssuerName(
   names: readonly (string | null | undefined)[],
   weights?: readonly number[],
 ): string | null {
-  const counts = new Map<string, number>();
+  const groups = new Map<string, { weight: number; spellings: Map<string, number> }>();
   names.forEach((raw, index) => {
     if (raw == null) return;
     const name = String(raw).split(/\s+/).filter((t) => t !== "").join(" ");
     if (name === "") return;
     const weight = weights ? Math.trunc(weights[index] ?? 1) : 1;
     const key = name.toUpperCase();
-    counts.set(key, (counts.get(key) ?? 0) + weight);
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { weight: 0, spellings: new Map() }));
+    g.weight += weight;
+    g.spellings.set(name, (g.spellings.get(name) ?? 0) + weight);
   });
-  if (counts.size === 0) return null;
-  let candidates = [...counts.keys()];
+  if (groups.size === 0) return null;
+  /* K-8 (M3 review): lengths are counted in CODE POINTS, as Python's `len`
+     counts them — `.length` counts UTF-16 units, so a name with an astral
+     character was "longer" here than in `display_issuer_name` */
+  const cpLen = (s: string): number => [...s].length;
+  let candidates = [...groups.keys()];
   const drops: ((n: string) => boolean)[] = [
     (n) => /^[0-9]+$/.test(n),
-    (n) => n.length <= 3,
+    (n) => cpLen(n) <= 3,
     (n) => /^[0-9]/.test(n),
   ];
   for (const drop of drops) {
@@ -2268,18 +2683,15 @@ export function displayIssuerName(
     if (kept.length > 0) candidates = kept;
   }
   candidates.sort((a, b) => {
-    const ca = counts.get(a)!;
-    const cb = counts.get(b)!;
-    if (ca !== cb) return cb - ca;
-    if (a.length !== b.length) return b.length - a.length;
-    return a < b ? -1 : a > b ? 1 : 0;
+    const wa = groups.get(a)!.weight;
+    const wb = groups.get(b)!.weight;
+    if (wa !== wb) return wb - wa;
+    if (cpLen(a) !== cpLen(b)) return cpLen(b) - cpLen(a);
+    return codepointCompare(a, b);
   });
-  const best = candidates[0]!;
-  return best
-    .split(" ")
-    .map((t) => (t === "TR" ? "TRUST" : t))
-    .map((t) => t.slice(0, 1).toUpperCase() + t.slice(1).toLowerCase())
-    .join(" ");
+  const spellings = [...groups.get(candidates[0]!)!.spellings.entries()];
+  spellings.sort(([a, wa], [b, wb]) => (wa !== wb ? wb - wa : codepointCompare(a, b)));
+  return spellings[0]![0];
 }
 
 /* ---------- R3 (refinement 20260910): Tier C key normalizers ---------- */

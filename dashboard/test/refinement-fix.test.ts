@@ -75,7 +75,10 @@ function delta(over: Partial<QoqDeltaRow>): QoqDeltaRow {
 
 test("D2: a no_prior row presents as 'no prior', never as new, and no feed treats it as a move", () => {
   const p = qoqPresentation(delta({ change_kind: "no_prior", prev_value_usd: null, delta_value_usd: null, delta_shares: null }));
-  assert.equal(p.chipText, "no prior");
+  // DESIGN-POLISH M3 (R19): the word is NO PRIOR, on its own neutral hook —
+  // never NEW and never the n/c hatch (the kind is known; only a prior is not).
+  assert.equal(p.chipText, "NO PRIOR");
+  assert.equal(p.chipCls, "qoq-noprior");
   assert.notEqual(p.chipCls, "qoq-new");
   assert.equal(FEED_MOVE_KINDS.has("no_prior"), false, "landing, notable-moves and consensus feeds skip it");
 });
@@ -89,7 +92,7 @@ test("D2: the filer changes table moves no_prior rows into their own collapsed g
   const html = changesTableHtml(rows, "2026-03-31", null, { total: 3 });
   const main = html.slice(html.indexOf('<tbody id="filer-changes-tbody"'), html.indexOf("</tbody>"));
   assert.ok(main.includes("pos-cusip-A") || main.includes("cusip:A"), "the add stays in the changes table");
-  assert.ok(!main.includes("no prior"), "no no_prior row is in the paged changes table");
+  assert.ok(!main.includes("NO PRIOR") && !main.includes("no prior"), "no no_prior row is in the paged changes table");
   assert.match(html, /<details class="qoq-held-group" data-qoq-no-prior><summary>No prior quarter to compare · 2<\/summary>/);
   assert.ok(html.includes("not new stakes"), "the group says why");
 });

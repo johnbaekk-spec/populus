@@ -19,8 +19,13 @@
    removed those boxes, so from M2 on G2 exempts nothing; the M1 list stays
    pinned in its own slot as the record of what M1 allowed.
 
-   M2 (this tree): G6 and G9 land, so NO check is pending — every check runs
-   per route and per width and must be green. */
+   M2: G6 and G9 land, so NO check is pending — every check runs per route
+   and per width and must be green.
+
+   M3 (this tree): content hygiene adds no geometry check and defers none; the
+   milestone advances so the canvas comparison's `until: "m3"` kind-vocabulary
+   allowances EXPIRE (coordinator decision CD-4) and the routes must show the
+   canvas's words. Still no check is pending. */
 
 export type Milestone = "m1" | "m2" | "m3" | "m4" | "m5";
 
@@ -31,7 +36,7 @@ export const MILESTONE_ORDER: readonly Milestone[] = ["m1", "m2", "m3", "m4", "m
 /** The milestone this tree implements. The dev run bumps it when a milestone
     lands (M2: "m2"), in the same commit as the markup that makes the pending
     checks pass. */
-export const CURRENT_MILESTONE: Milestone = "m2";
+export const CURRENT_MILESTONE: Milestone = "m3";
 
 /** The plan's geometry checks, G1–G12 (Tasks and Verification), plus the four
     T1.2/T1.6 checks the task rows name that are not one of the twelve. */

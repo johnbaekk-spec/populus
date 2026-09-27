@@ -15,7 +15,7 @@ import {
   esc,
   amountText,
   sideLabel,
-  ownerNote,
+  ownerQualifiersHtml,
   rangeBand,
   srcLink,
   memberHrefFor,
@@ -35,7 +35,7 @@ export function pickSpecimen(txns: readonly TxnRow[]): TxnRow | null {
 
 export function specimenCard(r: TxnRow, ctx: RenderCtx): string {
   const side = sideLabel(r.side, r.flags);
-  const owner = ownerNote(r);
+  const owner = ownerQualifiersHtml(r);
   const lagText = r.lag == null ? "" : ` <span class="spec-lag">+${r.lag}d</span>`;
   return (
     `<aside class="specimen" aria-label="What a number looks like here">` +
@@ -45,7 +45,7 @@ export function specimenCard(r: TxnRow, ctx: RenderCtx): string {
       r.bioguide ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` : esc(r.name)
     } <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span></span>${srcLink(r.doc)}</div>` +
     `<div class="spec-row2"><span class="mono-ticker">${esc(r.ticker ?? "—")}</span>` +
-    `<span class="spec-side ${side.cls}">${esc(side.text)}${owner ? ` <span class="owner-note">${esc(owner)}</span>` : ""}</span>` +
+    `<span class="spec-side ${side.cls}">${esc(side.text)}${owner ? ` ${owner}` : ""}</span>` +
     `<span class="spec-amount">${esc(amountText(r))}</span></div>` +
     rangeBand(r) +
     `<div class="spec-scale" aria-hidden="true"><span>$1K</span><span>$1M</span><span>$50M+</span></div>` +
@@ -85,10 +85,9 @@ export function moduleCard(
 
 /* ---------- R18: the three live tiles ---------- */
 
-import { fmtInt, fmtUsd, tickerHrefFor, note, thHtml, txnEdge, presentColumns, dataColumnsAttr, tableFootReasonHtml } from "../format.ts";
+import { fmtInt, fmtUsd, tickerHrefFor, note, thHtml, txnEdge, presentColumns, dataColumnsAttr, tableFootReasonHtml, kindWordHtml } from "../format.ts";
 import type { NotableMove } from "../notable-moves.ts";
 import type { Signal } from "../signals.ts";
-import { MOVE_KIND_LABELS } from "../notable-moves.ts";
 import { familyOf } from "./signals.ts";
 
 /** The ONE masthead claim — twelve words or fewer (R18). */
@@ -155,7 +154,7 @@ export function movesTileHtml(moves: readonly NotableMove[], period: string | nu
       (m) =>
         `<tr data-edge="${m.kind}"><td class="c-filer"><a href="${esc(filerHref(m.cik))}">${esc(m.manager)}</a></td>` +
         `<td class="c-issuer c-flex">${m.ticker ? `<span class="mono-ticker">${esc(m.ticker)}</span> ` : ""}<span class="filed-name">${esc(m.issuer)}</span></td>` +
-        `<td class="c-chip c-kind"><span class="qoq-chip qoq-${m.kind}">${MOVE_KIND_LABELS[m.kind]}</span></td>` +
+        `<td class="c-chip c-kind">${kindWordHtml(m.kind)}</td>` +
         `<td class="c-num ${m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy"}">${m.delta_value == null ? "—" : (m.delta_value < 0 ? "−" : "+") + esc(fmtUsd(Math.abs(m.delta_value)))}</td>` +
         `<td class="c-filed c-num">${esc(m.filed ?? "—")}</td></tr>`,
     )

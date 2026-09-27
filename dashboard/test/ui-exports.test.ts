@@ -108,6 +108,10 @@ const VALUE_EXPORTS = [
   "SIGNAL_HITS_COMPACT_ROWS",
   // R12: the hits table's column set, shared by the server and the pager
   "signalHitColumns",
+  /* DESIGN-POLISH M3 (T3.6, R22): sector keys as the SIC division titles, the
+     one table and its reader. Two runtime symbols, no types. */
+  "sectorLabel",
+  "SECTOR_LABELS",
 ] as const;
 
 const TYPE_EXPORTS = [
@@ -127,16 +131,16 @@ const TYPE_EXPORTS = [
   "TickerPageDeps",
 ] as const;
 
-test("ui entry exports exactly the 82 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 84 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
-  assert.equal(VALUE_EXPORTS.length, 82, "70 through M1, plus the twelve M2 exports");
+  assert.equal(VALUE_EXPORTS.length, 84, "70 through M1, the twelve M2 exports, and the two M3 exports");
 });
 
-test("ui entry exports the 13 reconciled type-only symbols (95 total)", () => {
+test("ui entry exports the 13 reconciled type-only symbols (97 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -148,5 +152,5 @@ test("ui entry exports the 13 reconciled type-only symbols (95 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 95, "the reconciled surface is 95 (83 through M1 + 12 M2 runtime exports)");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 97, "the reconciled surface is 97 (83 through M1 + 12 M2 + 2 M3 runtime exports)");
 });

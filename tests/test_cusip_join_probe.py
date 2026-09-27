@@ -106,3 +106,38 @@ def test_a_clean_stream_reports_nothing(probe, truth_db):
     cusips, blocks = probe.truth_pairs(truth_db)
     clean = f'{{"issuer":"SOME OTHER CORP","id":"{UNRELATED}","key":"pos:41"}}'.encode()
     assert probe.scan(clean, cusips, {}, blocks) == {}
+
+
+def test_a_lower_case_cusip_is_DETECTED_in_every_token_form(probe, truth_db):
+    """P-2 (M3 review): filers write CUSIPs in lower case ("…USD 50 -
+    06738c778", "Palisade Bio In Contra Spin From(81689b103)") and D4 (a) shows
+    filed names verbatim, so the probe must see a withheld CUSIP in ANY case —
+    bare, inside an ISIN, as a CUSIP-6 key, and as an upper-cased hex id. With
+    the retired upper-case-only patterns every one of these scanned CLEAN."""
+    cusips, blocks = probe.truth_pairs(truth_db)
+    sid = provisional_security_id(anchor("cusip", MAPPED_CUSIP))[len("sec:prov:"):]
+    sids = {sid: MAPPED_CUSIP}
+    low = MAPPED_CUSIP.lower()
+    streams = {
+        "bare": f"3M CO NOTE USD 50 - {low}".encode(),
+        "parenthesised": f"3M Co Contra Spin From({low})".encode(),
+        "isin": f"isin#us{low}7".encode(),
+        "block key": f"cusip6:{low[:6]}".encode(),
+        "upper-cased hex id": f"sec:prov:{sid.upper()}".encode(),
+    }
+    for name, data in streams.items():
+        found = probe.scan(data, cusips, sids, blocks)
+        assert found, f"{name}: a lower-case withheld token scanned clean"
+        assert "MMM" in set().union(*found.values()), name
+    # control: the retired pattern cannot see the bare lower-case token
+    import re
+
+    retired = re.compile(rb"(?<![0-9A-Za-z])[0-9A-Z]{9}(?![0-9A-Za-z])")
+    assert not retired.search(streams["bare"]), "the premise: the old probe was blind to it"
+    # the lowercase id keeps its ORIGINAL boundaries: raw page bytes may follow
+    # it with an ASCII "A"-"F", which a case-insensitive lookahead rejected
+    # (the first after-run lost 1,401 pairs on inst_serving.db that way)
+    assert probe.scan(f"sec:prov:{sid}B".encode(), cusips, sids, blocks), "a lowercase id before an upper-case byte"
+    # and the case-insensitive probe is still capable of zero
+    assert probe.scan(f"some other corp {UNRELATED.lower()}".encode(), cusips, sids, blocks) == {}
+

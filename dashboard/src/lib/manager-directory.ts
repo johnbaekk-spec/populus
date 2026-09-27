@@ -10,7 +10,7 @@
    state. Ranking on absolute value and then painting a positive sign would
    fabricate a direction the data does not carry. */
 
-import { esc, fmtInt, fmtUsd } from "./format.ts";
+import { esc, fmtInt, fmtUsd, kindWordHtml } from "./format.ts";
 import type { QoqDeltaRow } from "./inst.ts";
 
 export type ManagerType =
@@ -139,9 +139,12 @@ export function biggestChangeCellHtml(result: BiggestChangeResult): string {
   // R14: the "Latest notable" cell NAMES the issuer (R1 display relation);
   // an unnamed row shows nothing extra rather than an invented name.
   const issuer = row.issuer_name ? `<span class="filed-name">${esc(row.issuer_name)}</span> ` : "";
+  /* DESIGN-POLISH M3 (R19; M2F-D4 expired): the canvas's change line — the
+     kind word leads, from the ONE change-kind table, then the issuer, then the
+     signed change. */
   return (
+    `${kindWordHtml(row.change_kind)} ` +
     issuer +
-    `<span class="qoq-chip qoq-${esc(row.change_kind)}">${esc(row.change_kind)}</span> ` +
     `<span class="${dirCls}">${esc(signed)}</span>${basis}`
   );
 }

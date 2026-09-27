@@ -504,14 +504,17 @@ test("R14: the consensus board counts DISTINCT notable filers per issuer, needs 
   ];
   const moves = notableMoves({ feed: feedOf(rows), inst, period: "2026-03-31" });
   const board = consensusBoard("2026-03-31", moves, { minFilers: 3 });
-  assert.deepEqual(board.rows.map((r) => [r.issuer, r.newStakes, r.filers]), [["Nvidia Corp", 3, 3], ["Microsoft Corp", 0, 3]]);
+  /* DESIGN-POLISH M3 (R21, D4 (a); T3.10): the issuer reads as FILED —
+     "NVIDIA CORP", never the retired title-case "Nvidia Corp". */
+  assert.deepEqual(board.rows.map((r) => [r.issuer, r.newStakes, r.filers]), [["NVIDIA CORP", 3, 3], ["MICROSOFT CORP", 0, 3]]);
   assert.equal(board.qualifying, 2, "APPLE INC has two notable filers (the ordinary one does not count) and does not qualify");
   assert.equal(board.rows[0]!.netDeltaUsd, 400);
   assert.equal(board.rows[0]!.topMover!.kind, "new");
   const html = consensusBoardHtml(board, { filerHref: (cik) => `/f/${cik}` }, );
   // DESIGN-POLISH M1 (R2): the ledger roles — the issuer takes the slack, counts are numeric.
   assert.match(html, /<th scope="col" class="c-issuer c-flex">Ticker · Issuer<\/th><th scope="col" class="c-num">New stakes<\/th>/);
-  assert.match(html, /Nvidia Corp/);
+  assert.match(html, /NVIDIA CORP/);
+  assert.doesNotMatch(html, /Nvidia Corp/, "no title-cased filed name");
   assert.doesNotMatch(html, /render bound/);
   // the landing's hero tile is row 1 of this board
   const page = readFileSync(path.join(SRC, "pages", "institutional", "index.astro"), "utf-8");

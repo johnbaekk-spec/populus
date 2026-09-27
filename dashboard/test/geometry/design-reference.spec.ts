@@ -18,7 +18,7 @@ import {
   type PageMeasure,
   type TableCoverage,
 } from "./canvas-compare.ts";
-import { CURRENT_MILESTONE, milestoneIndex, type Milestone } from "./milestones.ts";
+import { CURRENT_MILESTONE, type Milestone } from "./milestones.ts";
 
 // The supplied files are the authority, not newly blessed app screenshots.
 // These checks enforce shared tokens and responsive safety. Attached screenshots
@@ -693,7 +693,11 @@ const CANVAS_CASES: CanvasCase[] = [
       ledger: true, cards: true,
       tables: [
         { canvas: "Rule book", route: "Rule book" },
-        { canvas: "Hits", route: "Hits", columns: { WHO: "SUBJECT", WHAT: "EVIDENCE", FILED: "WHEN", SIZE: "MAGNITUDE" }, unmatched: { TICKER: WHY.ticker }, roleDeviation: { WHO: "table.role.member" } },
+        /* R23 (DESIGN-POLISH M3, T3.7): the route's SRC cell is now the
+           receipt ONCE — its "PTR ↗" link — which is the canvas's RCPT
+           column; the canvas's own SRC stamp (REAL / ILLUS.) marks the
+           mockup's illustrative rows and has no production twin */
+        { canvas: "Hits", route: "Hits", columns: { WHO: "SUBJECT", WHAT: "EVIDENCE", FILED: "WHEN", SIZE: "MAGNITUDE", SRC: "RCPT" }, unmatched: { TICKER: WHY.ticker }, roleDeviation: { WHO: "table.role.member" } },
         { canvas: "◆ Watchlist", route: "Watchlist", columns: { SOURCE: "RCPT" } },
       ],
       heads: [{ canvas: "Rule book", route: "Rule book" }, { canvas: "Hits", route: "Hits" }, { canvas: "Lag distribution", route: "Lag distribution" }, { canvas: "Hit rate by family", route: "Hit rate by family" }, { canvas: "◆ Watchlist", route: "Watchlist" }],
@@ -869,36 +873,53 @@ test('T2.9 control: an unrecorded difference fails', async ({ page, browser }) =
   expect(planted.some((f) => /role \(size\)/.test(f.check)), "control: a planted 13px header size fails T2.9").toBe(true);
 });
 
-/* The M3 kind-vocabulary allowances are milestone-scoped: they hold while the
-   tree is before m3 and expire by themselves at m3, when the same routes must
-   show the canvas's words (T3.1, T3.2). Control: the comparison run as of m3
-   reports the member's PURCHASE/SALE and net-flow words, and the feed's LATE
-   word, as unrecorded. */
-test('T2.9: the M3-scoped allowances expire at m3', async ({ page, browser }) => {
+/* The M3 kind-vocabulary allowances were milestone-scoped: they held while the
+   tree was before m3 and EXPIRED at m3 (coordinator decision CD-4), when the
+   same routes must show the canvas's words (T3.1, T3.2) and the directory's
+   change line its mono role (M2F-D4). This tree is m3, so they answer nothing:
+   the per-route canvas tests above pass WITHOUT them. The entries stay in the
+   list only as the record of what M2 allowed (the comparison refuses an id it
+   does not know). Controls: the retired words, planted back on the page, are
+   caught as UNRECORDED — PURCHASE on a member transaction, BUY / SELL on the
+   member's net flow, and the LATE word on a late feed row. Each plant is
+   asserted to have HAPPENED (P-9, M3 review): a control that found nothing to
+   plant on used to skip its assertion and pass on nothing. */
+test('T2.9 (M3): the M3-scoped allowances have expired, and the routes pass without them', async ({ page, browser }) => {
   const scoped = ALLOWED_DEVIATIONS.filter((d) => d.until);
-  /* + table.role.notable.m3 (DESIGN-POLISH M2 review Q2-8: the directory's
-     latest-notable role, surfaced once the directory was measured with rows) */
   expect(scoped.map((d) => d.id).sort()).toEqual(["kind.late.word.m3", "kind.netflow.word.m3", "kind.qoq.chip.m3", "kind.side.word.m3", "table.role.notable.m3"]);
   expect(scoped.every((d) => d.until === "m3")).toBe(true);
-  expect(milestoneIndex(CURRENT_MILESTONE), "this tree is before m3, so they are in force").toBeLessThan(milestoneIndex("m3"));
-  for (const d of scoped) {
-    expect(allowedAt(CURRENT_MILESTONE).some((x) => x.id === d.id), `${d.id} in force now`).toBe(true);
-    expect(allowedAt("m3").some((x) => x.id === d.id), `${d.id} expired at m3`).toBe(false);
-  }
+  expect(CURRENT_MILESTONE, "this tree is m3").toBe("m3");
+  for (const d of scoped) expect(allowedAt(CURRENT_MILESTONE).some((x) => x.id === d.id), `${d.id} has expired`).toBe(false);
+
   const MEMBER = CANVAS_CASES[2]!;
   await openRoute(page, MEMBER);
-  const now = unrecorded((await compareRoute(page, browser, MEMBER)).findings).filter((f) => / kind word$/.test(f.check));
-  expect(now, `the member's kind words are answered now:\n${formatFindings(now)}`).toEqual([]);
-  const atM3 = unrecorded((await compareRoute(page, browser, MEMBER, "m3")).findings);
-  expect(hasFinding(atM3, /^table All disclosed transactions/, /^(buy|sell) kind word$/), "control: PURCHASE/SALE fails at m3").toBe(true);
-  expect(hasFinding(atM3, /^table Flows by ticker/, /^net(buy|sell) kind word$|^flat kind word$/), "control: BUY/SELL/MIXED net-flow words fail at m3").toBe(true);
+  const words = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => / kind word$/.test(f.check));
+  const now = words((await compareRoute(page, browser, MEMBER)).findings);
+  expect(now, `the member's kind words match the canvas with no allowance:\n${formatFindings(now)}`).toEqual([]);
+  /* control: the retired side word and net-flow word, planted back */
+  const planted = await page.evaluate(() => {
+    const side = document.querySelector<HTMLElement>('[data-entity-table] tr[data-edge="buy"] td.c-kind, [data-entity-table] tr[data-edge="sell"] td.c-kind');
+    const net = document.querySelector<HTMLElement>('.design-flow-band tr[data-edge="netbuy"] td.c-kind, .design-flow-band tr[data-edge="netsell"] td.c-kind');
+    if (side) side.textContent = side.closest("tr")!.getAttribute("data-edge") === "buy" ? "PURCHASE" : "SALE";
+    if (net) net.textContent = net.closest("tr")!.getAttribute("data-edge") === "netbuy" ? "BUY" : "SELL";
+    return { side: !!side, net: !!net };
+  });
+  expect(planted.side, "a buy or sell transaction row was found to plant on").toBe(true);
+  expect(planted.net, "a NET BUY or NET SELL flow row was found to plant on").toBe(true);
+  const after = unrecorded((await compareRoute(page, browser, MEMBER)).findings);
+  expect(hasFinding(after, /^table All disclosed transactions/, /^(buy|sell) kind word$/), "control: PURCHASE/SALE is unrecorded at m3").toBe(true);
+  expect(hasFinding(after, /^table Flows by ticker/, /^net(buy|sell) kind word$/), "control: BUY/SELL on the net flow is unrecorded at m3").toBe(true);
+
   await openRoute(page, CONGRESS);
-  const feedLate = (fs: Finding[]): Finding[] => fs.filter((f) => /^table Disclosure feed/.test(f.band) && /^late row kind word/.test(f.check));
-  const lateNow = feedLate((await compareRoute(page, browser, CONGRESS)).findings);
-  if (lateNow.length) {
-    expect(lateNow.every((f) => f.record !== null), "the feed's LATE word is answered now").toBe(true);
-    expect(feedLate(unrecorded((await compareRoute(page, browser, CONGRESS, "m3")).findings)).length, "control: the feed's LATE word fails at m3").toBeGreaterThan(0);
-  }
+  const feedLate = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => /^table Disclosure feed/.test(f.band) && /^late row kind word/.test(f.check));
+  expect(feedLate((await compareRoute(page, browser, CONGRESS)).findings), "a late feed row reads its side word (L4)").toEqual([]);
+  const late = await page.evaluate(() => {
+    const td = document.querySelector<HTMLElement>('#feed-section tr.reference-row[data-edge="late"] td.c-kind');
+    if (td) td.firstChild!.textContent = "LATE";
+    return !!td;
+  });
+  expect(late, "a late feed row was found to plant on").toBe(true);
+  expect(feedLate((await compareRoute(page, browser, CONGRESS)).findings).length, "control: the LATE word is unrecorded at m3").toBeGreaterThan(0);
 });
 
 // Compare against the independent export's rendered row, not an app-generated golden.

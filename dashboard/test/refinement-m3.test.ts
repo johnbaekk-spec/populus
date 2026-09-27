@@ -120,4 +120,23 @@ test("R27: the visible-text gate catches a planted term and ignores machine surf
   assert.deepEqual(hit('<td><span class="filed-name">W.W. GRAINGER, INC.</span></td>'), [], "a filed name is not the site's voice");
   assert.deepEqual(hit('<script>const shard = 1; const bioguide = 2;</script><p>ok</p>'), [], "script is not copy");
   assert.deepEqual(hit("<p>value_undisclosed_one_side change_kind_undeterminable</p>"), ["change_kind"], "a raw flag key is caught");
+  /* DESIGN-POLISH M3 (R24, T3.8): each new gate term is planted in the words
+     the site used to print, and each must be caught — so the gate can fail on
+     exactly the prose the copy pass removed. */
+  const planted: [string, string][] = [
+    ["same-origin", "<p>The complete ordered set is served as 64 same-origin files.</p>"],
+    ["serialized", "<p>2,000 records or 2,097,152 bytes of serialized JSON.</p>"],
+    ["ordered set", "<p>These rows are the largest of 128,000 records (of 3,567,905 in the ordered set).</p>"],
+    ["keyable", "<p>Changes derive from keyable positions only.</p>"],
+    ["keyable", "<p>unkeyable holdings are counted in the registry.</p>"],
+    ["differenced", "<p>holdings are counted, not differenced.</p>"],
+    ["agg_", "<p>The rest are in the published aggregate (agg_qoq_deltas).</p>"],
+    ["publication limit", "<p>The list does not fit in this build's 64-file publication limit.</p>"],
+    ["opaque reference", "<p>the key shown is an opaque reference that only links this build's own files</p>"],
+  ];
+  for (const [term, html] of planted) {
+    assert.ok(hit(html).includes(term), `planted "${term}" must be caught: ${html}`);
+  }
+  // …and M2-CONTRACT is NOT a term: the §5 data note keeps it (G-1, L18)
+  assert.deepEqual(hit("<p>These are disclosures, not investment advice (ARCHITECTURE.md §5.2 / M2-CONTRACT §5).</p>"), []);
 });

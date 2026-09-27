@@ -374,7 +374,10 @@ test("S2: primary-source CTA per kind — bioguide for members, EDGAR for ticker
 test("S4 skeleton names its endpoint; every error kind has its own honest heading", () => {
   const skel = s4Skeleton("/congress/data/tickers/OUST.v1.json", "/e/ · t:OUST");
   assert.ok(skel.includes("/congress/data/tickers/OUST.v1.json"));
-  assert.ok(skel.includes("same-origin fetch · no external calls"));
+  /* DESIGN-POLISH M3 (Architecture H, G-11; T3.10): the same facts in plain
+     words — the route loads only from this site and makes no external call */
+  assert.ok(skel.includes("loaded from this site · no external calls · the same template as the pre-rendered pages"));
+  assert.ok(!skel.includes("same-origin"), "control: the pipeline word is gone");
   const kinds: [string, string, boolean][] = [
     ["server_error", "answered with an error", true],
     ["network_error", "did not complete", true],

@@ -24,7 +24,9 @@ import {
   fmtInt,
   fmtUsd,
   note,
+  srcLabel,
   srcLink,
+  srcLinkInner,
   memberHrefFor,
   tickerHrefFor,
   cardFoot,
@@ -259,6 +261,20 @@ export function signalHitColumns(active: readonly Signal[]): PresentColumns {
   ));
 }
 
+/** A signal's receipt cell — ONE rule for every surface that prints one
+    (K-7, M3 review; R23). The link names its regime ("PTR ↗", "eFD ↗"), so
+    the stamp is not repeated beside it; where the link CANNOT name it (a
+    receipt URL that is neither the House Clerk's nor the Senate's, which
+    `srcLabel` reads as "src") and where there is no usable receipt, the
+    regime stamp states it: "PTR src ↗", "PTR —". The watch band's client
+    (`signals-client.ts`) applies the same rule to the same fields. */
+export function signalReceiptHtml(receipt: string | null | undefined, cohort: Signal["cohort"]): string {
+  const stamp = `<span class="si-stamp">${cohort === "senate" ? "eFD" : "PTR"}</span>`;
+  if (!receipt || !receipt.startsWith("https://")) return `${stamp} —`;
+  if (srcLabel(receipt) === "src") return `<div class="cell cell-src">${stamp} ${srcLinkInner(receipt)}</div>`;
+  return srcLink(receipt);
+}
+
 export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: readonly string[] | null = null): string {
   const family = familyOf(s.kind);
   const subject = s.entities.bioguide
@@ -300,7 +316,11 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: 
     `<td class="c-secondary c-flex si-what">${expand}</td>` +
     `<td class="c-num si-when">${whenText(s)}${lag != null ? ` <span class="${lag > 45 ? "si-late" : "si-lag"}">+${fmtInt(lag)}d</span>` : ""}</td>` +
     `<td class="c-num si-mag">${esc(magnitudeText(s.magnitude))}</td>` +
-    `<td class="c-src"><span class="si-stamp">${esc(s.cohort === "senate" ? "eFD" : "PTR")}</span> ${receipt ? srcLink(receipt) : "—"}${s.receipts.length > 1 ? `<span class="mono-note"> +${fmtInt(s.receipts.length - 1)}</span>` : ""}</td>` +
+    /* R23 (DESIGN-POLISH M3, T3.7): the receipt prints its regime ONCE —
+       the link reads "PTR ↗" or "eFD ↗", so the stamp before it printed
+       "PTR PTR". Only a row with no receipt link keeps the stamp, so its
+       source regime is still stated. The regime legend stays in the foot. */
+    `<td class="c-src">${signalReceiptHtml(receipt, s.cohort)}${s.receipts.length > 1 ? `<span class="mono-note"> +${fmtInt(s.receipts.length - 1)}</span>` : ""}</td>` +
     `</tr>` +
     evidenceRow
   );
@@ -563,7 +583,9 @@ function watchBandHtml(active: Signal[], artifact: SignalArtifact): string {
     v: 1,
     cap: WATCH_EMBED_CAP,
     total: active.length,
-    cols: ["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt"],
+    /* K-7 (M3 review): "cohort" rides along (appended, so no index moves)
+       so the watch band can state the receipt's regime as the hit rows do */
+    cols: ["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt", "cohort"],
     rows: newest.map((s) => [
       s.id,
       s.kind,
@@ -575,6 +597,7 @@ function watchBandHtml(active: Signal[], artifact: SignalArtifact): string {
       s.occurrence.tradeDate,
       s.occurrence.filedDate,
       s.receipts[0] ?? "",
+      s.cohort,
     ]),
   });
   return (
@@ -778,7 +801,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
         `<td class="c-kind">${note(s.rule, { scope: "member-signals" }, s.id, { trigger: "label", textHtml: esc(SIGNAL_KIND_LABELS[s.kind]) })}</td>` +
         `<td class="c-filed c-num">${esc(s.occurrence.filedDate)}</td>` +
         `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
-        `<td class="c-src">${srcLink(s.receipts[0] ?? "")}</td></tr>`,
+        `<td class="c-src">${signalReceiptHtml(s.receipts[0], s.cohort)}</td></tr>`,
     )
     .join("\n");
   return (

@@ -59,15 +59,24 @@ sys.path.insert(0, str(ROOT / "src"))
 from populus.identity.registry import anchor, provisional_security_id  # noqa: E402
 from populus.inst_redaction import close_withheld_cusips, load_list_issuers  # noqa: E402
 
-CUSIP_RE = re.compile(rb"(?<![0-9A-Za-z])[0-9A-Z]{9}(?![0-9A-Za-z])")
+#: CASE-INSENSITIVE (P-2, M3 review): a filer-written CUSIP can be lower case
+#: ("06738c778"), so every token is matched in any case and looked up UPPER-CASED
+#: — the producer's scrub (`inst_redaction._CUSIP_IN_TEXT_RE`) does the same.
+CUSIP_RE = re.compile(rb"(?<![0-9A-Za-z])[0-9A-Za-z]{9}(?![0-9A-Za-z])")
 #: An ISIN carries the CUSIP as its middle nine characters ("US0378331005"), so
 #: the token-bounded CUSIP_RE above cannot see it — the nine characters are
 #: flanked by alphanumerics and both lookarounds reject the match. The PRODUCER
 #: extracts it (`inst_redaction._ISIN_RE`), so a probe that does not would
 #: report zero on a published ISIN that pairs perfectly well.
-ISIN_RE = re.compile(rb"(?<![0-9A-Za-z])[A-Z]{2}([0-9A-Z]{9})[0-9](?![0-9A-Za-z])")
+ISIN_RE = re.compile(rb"(?<![0-9A-Za-z])[A-Za-z]{2}([0-9A-Za-z]{9})[0-9](?![0-9A-Za-z])")
 HEX32_RE = re.compile(rb"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])")
-BLOCK_KEY_RE = re.compile(rb"cusip6:([0-9A-Z]{6})")
+#: The same id upper-cased (P-2, M3 review). A SEPARATE pattern, not a
+#: case-insensitive one: widening the lowercase pattern's lookarounds to
+#: [0-9a-fA-F] would reject a lowercase id that raw SQLite page bytes happen to
+#: follow with an ASCII "A"-"F" — measured on the 20260817.1 inst_serving.db,
+#: that tightening LOST 1,401 of its 9,484 recoverable pairs.
+HEX32_UPPER_RE = re.compile(rb"(?<![0-9A-F])[0-9A-F]{32}(?![0-9A-F])")
+BLOCK_KEY_RE = re.compile(rb"cusip6:([0-9A-Za-z]{6})")
 
 
 def truth_pairs(
@@ -158,16 +167,17 @@ def scan(data: bytes, cusips: dict[str, str], sids: dict[str, str],
     found: dict[str, set[str]] = defaultdict(set)
     for regex, group in ((CUSIP_RE, 0), (ISIN_RE, 1)):
         for m in regex.finditer(data):
-            value = m.group(group).decode("ascii")
+            value = m.group(group).decode("ascii").upper()
             ticker = cusips.get(value)
             if ticker is not None:
                 found[value].add(ticker)
-    for m in HEX32_RE.finditer(data):
-        cusip = sids.get(m.group(0).decode("ascii"))
-        if cusip is not None:
-            found[cusip].add(cusips[cusip])
+    for regex in (HEX32_RE, HEX32_UPPER_RE):
+        for m in regex.finditer(data):
+            cusip = sids.get(m.group(0).decode("ascii").lower())
+            if cusip is not None:
+                found[cusip].add(cusips[cusip])
     for m in BLOCK_KEY_RE.finditer(data):
-        block = m.group(1).decode("ascii")
+        block = m.group(1).decode("ascii").upper()
         if block in blocks:
             found[block] |= blocks[block]
     return found

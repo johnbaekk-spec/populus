@@ -26,7 +26,7 @@ import {
 import { tickerInstSection, type BuildData, type TickerInstSection } from "../src/lib/data.ts";
 import { readTickerMapJson, type TopHolderRow } from "../src/lib/inst.ts";
 import { type TxnRow, type RenderCtx } from "../src/lib/format.ts";
-import { ledgerFigures } from "./lib/ledger-dom.ts";
+import { domOf, ledgerFigures, visibleText } from "./lib/ledger-dom.ts";
 
 const CTX: RenderCtx = { watched: new Set() };
 const STAMPS: BuildStamps = {
@@ -147,7 +147,12 @@ test("memberBody: honesty invariants — dual dates, star, § resolves, S5 block
   // R12a: fold-mode honesty content present in markup — both dates + combined string
   assert.ok(html.includes('class="design-dates"'));
   assert.ok(html.includes("visually-hidden"));
-  assert.ok(html.includes("· partial · JT") || html.includes("· JT"), "owner qualifier present");
+  /* DESIGN-POLISH M3 (R17, T3.10): the owner qualifier is present, UNPREFIXED
+     — the Owner cell reads "partial · JT", never "· partial · JT", so no cell
+     opens with a separator (read by DOM parse, the cell a reader sees). */
+  const owners = domOf(html).querySelectorAll("td.c-owner").map((td) => visibleText(td).replace(/\s*\(.*\)$/, "").trim());
+  assert.ok(owners.includes("partial · JT"), `owner qualifier present, unprefixed (${owners.join(" | ")})`);
+  assert.ok(owners.every((o) => !o.startsWith("·")), "no Owner cell begins with a separator");
   assert.ok(html.includes("cell-src"), "SRC receipt present");
 });
 
@@ -337,10 +342,15 @@ test("holdersBody: period chips, top-N as a Public Filings build parameter, mapp
   assert.ok(html.includes("top-"), "top-N named");
   assert.ok(html.includes("not a census"));
   assert.ok(html.includes("company_tickers.json"), "mapping provenance printed");
-  assert.ok(html.includes("filed dates, lags, share counts and document links are not in the published aggregate"));
+  /* DESIGN-POLISH M3 (Architecture H, G-11): the same absent fields, named in
+     plain words — "this build's published top-holders list", never the table
+     name or the design mockup. */
+  assert.ok(html.includes("filed dates, lags, share counts and document links are not in that list and are not shown"));
+  assert.ok(html.includes("this build's published top-holders list"));
+  assert.ok(!/agg_issuer_top_holders|mockup/.test(html), "no table name, no mockup");
 });
 
-test("filerBody: explainer, period-correct tiles, EDGAR block with the contract citation", () => {
+test("filerBody: explainer, period-correct tiles, EDGAR block with the decision date", () => {
   const html = filerBody(
     { cik: "0001067983", name: "FIXTURE HOLDINGS LLC", latestPeriod: "2026-03-31" },
     ["2025-12-31", "2026-03-31"],
@@ -375,8 +385,16 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
   assert.ok(html.includes("not current holdings"));
   assert.ok(html.includes("$2.3K"), "period tile from agg_filer_concentration");
   assert.ok(html.includes("100.0%"), "topn share from bps");
-  assert.ok(html.includes("M2-CONTRACT §3"), "the EDGAR link-out names its contract");
-  // M2-CONTRACT §3 was amended 2026-08-02: holdings will be SERVED, not federated.
+  /* DESIGN-POLISH M3 (Architecture H, V1 NEW-1, round 3 NEW-1; T3.10): the
+     EDGAR block states the DECISION and its date — 2026-08-01, the owner's
+     decision and the §3 amendment (holdings-publication.md:3, :83) — never
+     "has served … since", and never 2026-08-02 (only when parameters were
+     locked). The contract's name leaves the reader copy. */
+  assert.ok(html.includes("Public Filings decided on 2026-08-01 to serve this list from its published build"), "the EDGAR link-out names the decision and its date");
+  assert.ok(html.includes("filings newer than this build are on EDGAR"));
+  assert.ok(html.includes("where the page cannot embed every reported row, the list says how many it leaves out"));
+  assert.ok(!/has served|has published [^.]* since|2026-08-02|M2-CONTRACT §3/.test(html), "control: no served-since claim, no parameter-lock date");
+  // M2-CONTRACT §3 was amended 2026-08-01: holdings will be SERVED, not federated.
   // Until RUN M2-8 publishes the projection the page must say so honestly, and it
   // must never re-assert the retired "never served" claim.
   // T11 landed: the holdings table renders, so the EDGAR block is now
@@ -385,7 +403,12 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
   assert.ok(html.includes("provenance, not a substitute"));
   assert.ok(!html.includes("not rendered here yet"));
   assert.ok(!html.includes("never served"));
-  assert.ok(html.includes("CIK 0001067983"));
+  /* R20 (DESIGN-POLISH M3, T3.4): the CIK a reader sees has no leading zeros —
+     breadcrumb and subline alike — and the padded form stays machine-only
+     (the EDGAR href keeps CIK=0001067983). */
+  assert.ok(html.includes("CIK 1067983"));
+  assert.ok(!/CIK 0\d/.test(html.replace(/<[^>]*>/g, " ")), "no visible zero-padded CIK");
+  assert.ok(html.includes("CIK=0001067983"), "the machine field keeps its padding");
   /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6). `#filer-footnotes` is
      deleted and its six clauses are notes on the position-changes columns whose
      cells emit their marks. That is a real behaviour change worth pinning: with
@@ -423,14 +446,18 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the contract 
     null,
   );
   assert.ok(withChanges.includes('id="n-filer-changes-change"'));
-  // R23 (2026-09-13): the †v note no longer states a classification R8 removed.
-  // It states the FACT (share count unchanged -> `held`) and names the value
-  // inference as something only pre-release builds did.
+  // R23 (2026-09-13): the †v note no longer states a classification R8 removed
+  // as current behaviour. W-7 (M3 review, 2026-09-26) sharpens it: the marker
+  // only ever sits beside an ADD or TRIM word that the producer derived from
+  // value, so "reads as held" was false next to it. The property kept: the
+  // FACT (share count unchanged), the value inference attributed to this
+  // build's data, and what builds from R8 (2026-09-10) on do instead.
   assert.ok(
     withChanges.includes(
-      "the reported share count is unchanged across the pair, so the position reads as held",
+      "the reported share count is unchanged across the pair; this build's data classified the change from its reported value; builds from 2026-09-10 on read it as NO CHANGE",
     ),
   );
+  assert.ok(!withChanges.includes("so the position reads as held"), "control: false beside the ADD/TRIM word the marker sits next to");
   assert.ok(
     !withChanges.includes("direction classified from reported value, not shares"),
     "the retired classification must not be stated as current behaviour",

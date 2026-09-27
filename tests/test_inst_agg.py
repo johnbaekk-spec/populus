@@ -426,14 +426,59 @@ def test_r9_display_issuer_name_matches_the_shared_fixture():
          / "display_issuer_name_cases.json").read_text()
     )
     assert len(fixture["cases"]) >= 10
+    # DESIGN-POLISH M3 (D4 (a), A-6): the optional weights pass through, so the
+    # weighted case pins the SUM that decides the spelling.
+    assert any("weights" in case for case in fixture["cases"])
     for case in fixture["cases"]:
-        assert display_issuer_name(case["names"]) == case["expect"], case
+        assert display_issuer_name(case["names"], case.get("weights")) == case["expect"], case
+
+
+def test_d4_a_planted_title_case_expectation_fails():
+    """D4 (a) control: the retired rule (title-case every token, fold TR) gives
+    a DIFFERENT answer on most fixture cases, so a planted title-case
+    expectation fails — the fixture pins case, not only the chosen group."""
+    from populus.inst_agg import display_issuer_name
+
+    def title_case(s: str) -> str:
+        return " ".join(
+            t[:1].upper() + t[1:].lower() for t in ("TRUST" if t == "TR" else t for t in s.split())
+        )
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "refinement"
+         / "display_issuer_name_cases.json").read_text()
+    )
+    planted = [c for c in fixture["cases"]
+               if c["expect"] is not None and title_case(c["expect"]) != c["expect"]]
+    assert len(planted) >= 5
+    for case in planted:
+        assert display_issuer_name(case["names"], case.get("weights")) != title_case(case["expect"]), case
+
+
+def test_d4_the_adds_leaderboard_and_the_holders_name_one_issuer_identically():
+    """R21 (A-6): `_adds_issuer_name` delegates to `display_issuer_name`, so the
+    adds leaderboard and the consensus/top-holders surfaces name an issuer the
+    same way — on the filters, the group, and the spelling."""
+    from populus.inst_agg import _adds_issuer_name, display_issuer_name
+
+    for names in (
+        ["438516106", "HONEYWELL INTERNATIONAL INC"],
+        ["Apple Inc", "APPLE INC", "APPLE INC"],
+        ["  microsoft   corp ", "MICROSOFT CORP"],
+        ["1ISHARES TR", "ISHARES TR"],
+        [None, None],
+    ):
+        assert _adds_issuer_name(list(names)) == display_issuer_name(names), names
+    # control: the retired modal-exact rule would have named the CUSIP here
+    # (one occurrence each, lexicographic tie: "438516106" < "HONEYWELL …")
+    assert _adds_issuer_name(["438516106", "HONEYWELL INTERNATIONAL INC"]) == "HONEYWELL INTERNATIONAL INC"
 
 
 def test_r9_both_build_paths_pick_the_same_display_name(tmp_path):
     """A CUSIP filed as the issuer name and a real name for the same issuer:
-    the aggregate's holder rows carry the real name, title-cased, on BOTH
-    build paths (`_agg` asserts python == bulk row for row)."""
+    the aggregate's holder rows carry the real name, AS FILED (D4 (a),
+    DESIGN-POLISH M3: title-casing retired), on BOTH build paths (`_agg`
+    asserts python == bulk row for row)."""
     conn = _db(tmp_path)
     _filer(conn, "0000000001")
     _security(conn, "sec:x")
@@ -445,7 +490,7 @@ def test_r9_both_build_paths_pick_the_same_display_name(tmp_path):
                        value=100, security_id="sec:x")])
     agg = _agg(conn, tmp_path)
     (row,) = _rows(agg, "SELECT issuer_name FROM agg_issuer_top_holders")
-    assert row["issuer_name"] == "Honeywell International Inc"
+    assert row["issuer_name"] == "HONEYWELL INTERNATIONAL INC"
     agg.close()
     conn.close()
 
@@ -2022,6 +2067,34 @@ def test_r3_closed_periods_follow_the_45_day_window():
     assert closed_periods(ps, as_of="2026-08-14") == ["2025-12-31", "2026-03-31"]
     assert closed_periods(ps, as_of="2026-08-15") == ["2025-12-31", "2026-03-31", "2026-06-30"]
     assert closed_periods(ps, as_of="2026-09-10T00:00:00Z") == ["2025-12-31", "2026-03-31", "2026-06-30"]
+
+
+def test_w1_closed_periods_roll_the_deadline_by_rule_0_3():
+    """W-1 (M3 review): a 13F deadline that falls on a weekend or federal
+    holiday moves to the next business day (Exchange Act Rule 0-3(a)), and a
+    quarter is closed only strictly after that ROLLED deadline. One shared
+    fixture pins both runtimes (`inst-adds.ts` reads the same file)."""
+    import datetime as dt
+
+    from populus.filing_calendar import filing_deadline, rule_0_3_roll
+    from populus.inst_agg import closed_periods
+
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures" / "refinement" / "filing_deadline_cases.json").read_text()
+    )
+    assert len(cases["quarter_deadlines"]) >= 10 and len(cases["rolls"]) >= 10
+    for c in cases["quarter_deadlines"]:
+        assert filing_deadline(c["period_end"]) == c["deadline"], c
+    for c in cases["rolls"]:
+        assert rule_0_3_roll(dt.date.fromisoformat(c["date"])).isoformat() == c["filed_by"], c
+    for c in cases["closed"]:
+        got = c["period_end"] in closed_periods([c["period_end"]], as_of=c["as_of"])
+        assert got is c["closed"], c
+    # control: the retired rule (period end + 45 days, no roll) calls the
+    # September 2026 quarter closed on 2026-11-15, a day before its deadline
+    naive = dt.date(2026, 9, 30) + dt.timedelta(days=45)
+    assert naive.isoformat() < "2026-11-15"
+    assert "2026-09-30" not in closed_periods(["2026-09-30"], as_of="2026-11-15")
 
 
 # --- D1 / D2 (refinement 20260910 fix) ---------------------------------------

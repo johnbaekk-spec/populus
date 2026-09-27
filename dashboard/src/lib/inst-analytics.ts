@@ -16,7 +16,7 @@
    activity.ts), not from here. No Node APIs, no DOM. */
 
 import type { ConcentrationRow, InstData, QoqDeltaRow } from "./inst.ts";
-import type { TxnRow } from "./format.ts";
+import { fmtCik, type TxnRow } from "./format.ts";
 
 /* ---------- the corpus periods, from the table that has a row for every filer-period ---------- */
 
@@ -125,7 +125,7 @@ export function newPositionLeaders(
     if (at === 0) continue;
     rows.push({
       cik,
-      filerName: nameOf.get(cik) ?? `CIK ${cik}`,
+      filerName: nameOf.get(cik) ?? `CIK ${fmtCik(cik)}`,
       period,
       maxWeightBps: max,
       atThreshold: at,

@@ -94,6 +94,15 @@ test("T3: every required term is a live pattern, and each one rejects a planted 
     "coverage bucket": "each member falls in a coverage bucket by filing count.",
     "gold tick": "the gold tick names the build this page was rendered from.",
     "classified by value": "this position was classified by value, not shares.",
+    // DESIGN-POLISH M3 (R24): one planted phrase per new term
+    "same-origin": "the complete set is served as 64 same-origin files.",
+    serialized: "each file closes at 2,097,152 bytes of serialized JSON.",
+    "ordered set": "these rows are the largest of the ordered set.",
+    keyable: "changes cover keyable positions only.",
+    differenced: "holdings are counted in the registry, not differenced.",
+    agg_: "the rest are in the published aggregate (agg_qoq_deltas).",
+    "publication limit": "the list does not fit in this build's 64-file publication limit.",
+    "opaque reference": "the key shown is an opaque reference to this build's files.",
   };
   for (const term of T3_REQUIRED_PATTERNS) {
     const dir = plantedDist(`<main><p>${phrases[term]}</p></main>`);
@@ -109,6 +118,38 @@ test("T3: every required term is a live pattern, and each one rejects a planted 
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+});
+
+/* DESIGN-POLISH M3 (G-11): /methodology/ documents the published files by
+   name, so the `agg_` term exempts that ONE page — and nothing else. The pin is
+   exact; the control adds a second exemption and must fail it. The exemption
+   is also proved to bite on its own page only: a planted table name on
+   /methodology/ passes, the same text on any other page fails. */
+test("T3 (M3): exemptFiles is exactly the agg_ term on methodology/index.html", async () => {
+  const { rule3Exemptions } = await import("../lib/banned-scan.ts");
+  assert.deepEqual(rule3Exemptions(), { agg_: ["methodology/index.html"] });
+  const widened = RULE3_PATTERNS.map((p) => (p.name === "keyable" ? { ...p, exemptFiles: ["institutional/index.html"] } : p));
+  assert.notDeepEqual(rule3Exemptions(widened), { agg_: ["methodology/index.html"] }, "control: a second exempt file fails the pin");
+  const dir = plantedDist("<main><p>Filings, as filed.</p></main>");
+  try {
+    mkdirSync(path.join(dir, "methodology"));
+    /* P-6 (M3 review): the exemption is scoped to ONE TERM as well as one
+       page — the methodology page also carries a planted "keyable", which
+       must still be caught there */
+    writeFileSync(path.join(dir, "methodology", "index.html"), "<main><p>published as agg_filer_registry; changes cover keyable positions only.</p></main>");
+    mkdirSync(path.join(dir, "institutional"));
+    writeFileSync(path.join(dir, "institutional", "index.html"), "<main><p>published as agg_filer_registry</p></main>");
+    const all = scanVisibleRule3(dir).hits.map((h) => ({ pattern: h.pattern, file: h.file.split(path.sep).join("/") }));
+    const hits = all.filter((h) => h.pattern === "agg_").map((h) => h.file);
+    assert.deepEqual(hits, ["institutional/index.html"], "the exemption covers /methodology/ only");
+    assert.deepEqual(
+      all.filter((h) => h.file === "methodology/index.html").map((h) => h.pattern),
+      ["keyable"],
+      "the exemption covers the agg_ term only: another term on /methodology/ is still a hit",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

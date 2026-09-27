@@ -14,7 +14,7 @@ import { filerHref } from "../../lib/holdings";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { concentrationFor, deltasFor, typingFor, addsFor, addsExclusionCount } from "../../lib/inst";
-import { corpusAsOf, boundAdds, closedPeriods, type AddsMode } from "../../lib/inst-adds";
+import { corpusAsOf, boundAdds, closedPeriods, instFreshnessText, type AddsMode } from "../../lib/inst-adds";
 import { biggestChange, MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/manager-directory";
 import {
   footnoteBlock,
@@ -128,7 +128,7 @@ if (!inst.present) {
   /* Ledger roles (DESIGN-POLISH M1, R2): the filer name takes the slack. */
   const headClass: Record<string, string> = {
     Filer: "c-filer c-flex", Manager: "c-filer c-flex", CIK: "c-num", Value: "c-num", Pos: "c-num",
-    "Top-5": "c-num", "Latest notable": "c-secondary",
+    "Top-5": "c-num", "Latest notable": "c-change",
   };
   const heads = INST_INDEX_HEADS.filter((h) => top5Present || h.label !== "Top-5").map((h) =>
     thHtml({
@@ -219,7 +219,11 @@ if (!inst.present) {
        manifest watermark (the newest period ANY filer has reported into, an
        open one) moves to the footnote below as the newest filing received. */
     `<div class="design-provenance">13F universe · quarterly, 45-day lag · not current holdings <span>Closed quarter ${esc(analyticsPeriod ?? "unavailable")}${tracked ? ` · ${fmtInt(tracked.filers)} filers reported` : ""}</span> <a href="#inst-data-note">Long positions only · coverage §</a></div>` +
-    `<p class="section-note inst-watermark-foot">newest filing received: ${esc(inst.watermarks.latest_filed_date ?? "unavailable")}${inst.watermarks.latest_period_of_report && inst.watermarks.latest_period_of_report !== analyticsPeriod ? ` · filings for ${esc(inst.watermarks.latest_period_of_report)} are still arriving (window open)` : ""}</p>` +
+    /* R25 (H-7): the freshness line names the filing DEADLINE, not the
+       quarter, as the thing still open, and states the incompleteness only
+       while the corpus has not reached that deadline (`isClosedPeriod` over
+       the same `asOf` every band uses). */
+    `<p class="section-note inst-watermark-foot">${esc(instFreshnessText(inst.watermarks.latest_filed_date ?? null, inst.watermarks.latest_period_of_report ?? null, asOf))}</p>` +
     /* R14 order: the named moves first (data), then the directory, then the
        consensus board; the recent-activity feed sits below the fold. The three
        explainer cards are one footnote line into the methodology page. */
@@ -230,7 +234,8 @@ if (!inst.present) {
     `placeholder="filer name or CIK" aria-label="search filers by name or CIK — on this device" /></span></div>` +
     chipsHtml +
     `<p class="section-note"><span id="inst-index-count">${fmtInt(indexRows.length)} filers · sorted by reported 13(f) long value, largest first</span> · ` +
-    `each value is the filer's latest period, shown beside it · click a header to re-sort` +
+    /* true of the reference rows (M3-D): the quarter is in the value's note */
+    `each value is the filer's latest period, named in the value's note · click a header to re-sort` +
     `<noscript> · sorting and search need JavaScript; the default order below is by value, largest first</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first${dataColumnsAttr(dirCols)}>` +
     `<caption class="visually-hidden">13F filers ranked by reported 13(f) long value for each filer's latest period</caption>` +
@@ -243,13 +248,17 @@ if (!inst.present) {
         {
           mark: "§",
           html:
-            `"reported 13(f) long value" is the sum of disclosed long-position values for the stated ` +
-            `quarter — it excludes cash, shorts, and non-13(f) assets, so it is NOT a measure of ` +
-            `everything the manager runs, and a large multi-asset manager can appear small. Sourced ` +
-            `period-correctly from <code>agg_filer_concentration</code>; NULL means the source ` +
-            `disclosed no usable value — never zero. HHI renders only over a complete disclosed-value ` +
-            `book: with any NULL-valued position the denominator is partial, so the number is withheld ` +
-            `from display and ordering rather than shown as false precision`,
+            /* Architecture H (H-18), true of the rows: a null value renders
+               "n/a ·§" (inst-index.ts), "+N null" is printed beside the sum,
+               and HHI is null — and sorts after — with any null-valued
+               position. The reference directory names each filer's quarter
+               in the value's own note, so the sentence says so (M3-D). */
+            `'Reported 13(f) long value' is the sum of a filer's disclosed long positions for its ` +
+            `latest quarter, which the value's note names — not assets under management: it excludes ` +
+            `cash, shorts and non-13(f) assets, so a large multi-asset manager can appear small. n/a ` +
+            `means the filing disclosed no usable value — never zero. A position reported without a ` +
+            `value is left out of the sum and counted beside it; the concentration index (HHI) is ` +
+            `withheld from display and from ordering whenever any value is missing.`,
         },
       ],
       { id: "inst-index-footnotes" },

@@ -825,7 +825,11 @@ test("D7 ruling: every flag chip in a reference feed row opens its OWN definitio
   assert.equal(byWord.get("amount unparsed"), AMOUNT_UNPARSED_SPOKEN);
   assert.equal(byWord.get("amendment pending"), AMENDMENT_PENDING_NOTE);
   assert.equal(byWord.get("date anomaly"), DATE_ANOMALY_NOTE);
-  assert.equal(byWord.get("row orphan"), DEFECT_FLAG_NOTE);
+  /* DESIGN-POLISH M3 (carried F2): a defect flag now opens its OWN one-sentence
+     definition, derived from the producer code that sets it, ending with the
+     methodology's published defect line — no longer the shared line alone. */
+  assert.match(byWord.get("row orphan") ?? "", /^On a House report, text that completed no row above it is kept as a row of its own rather than dropped; /);
+  assert.ok((byWord.get("row orphan") ?? "").endsWith(`${DEFECT_FLAG_NOTE}.`));
   // every congress flag the feed can carry has a definition
   const congressFlags = ["amendment_unresolved", "missing_ticker", "amount_spouse_cap", "amount_unparsed", "date_missing",
     "date_anomaly", "side_unparsed", "asset_unparsed", "capgains_unparsed", "row_incomplete", "row_orphan", "owner_unparsed"];
@@ -862,13 +866,50 @@ function unpublishedDefinitions(defs: Readonly<Record<string, string>>): string[
   return out;
 }
 
+/* The seven defect flags whose definitions the coordinator allowed as NEW copy
+   (DESIGN-POLISH M3, carried F2) — ONLY where the sentence can be derived from
+   the code that sets the flag, with the line cited. */
+const DEFECT_FLAGS = ["date_missing", "side_unparsed", "asset_unparsed", "capgains_unparsed", "row_incomplete", "row_orphan", "owner_unparsed"] as const;
+
+/** The producer file and line range `format.ts` cites for `flag`, or null. */
+function citationOf(flag: string, format: string): { file: string; from: number; to: number } | null {
+  const m = new RegExp(`- ${flag}: ((?:parse/)?[a-z_]+\\.py):(\\d+)(?:-(\\d+))?`).exec(format);
+  return m ? { file: m[1]!, from: Number(m[2]), to: Number(m[3] ?? m[2]) } : null;
+}
+
 test("D7 ruling: every flag definition is copy the site already publishes — no new wording", () => {
-  assert.deepEqual(unpublishedDefinitions(FEED_FLAG_DEFINITIONS), []);
+  /* Unchanged for every flag but the seven defect flags: their definitions are
+     the site's own published sentences. */
+  const published = Object.fromEntries(Object.entries(FEED_FLAG_DEFINITIONS).filter(([k]) => !(DEFECT_FLAGS as readonly string[]).includes(k)));
+  assert.deepEqual(unpublishedDefinitions(published), []);
   assert.equal(
-    unpublishedDefinitions({ row_orphan: "a row whose filing could not be joined" }).length,
+    unpublishedDefinitions({ missing_ticker: "a row whose filing could not be joined" }).length,
     1,
-    "control: a newly written definition is caught",
+    "control: a newly written definition for a non-defect flag is caught",
   );
+});
+
+test("F2 (M3): each defect flag's definition is its own sentence, cites the producer line that sets the flag, and keeps the published defect line", () => {
+  const format = readFileSync(path.join(SRC, "lib", "format.ts"), "utf-8");
+  const repo = path.resolve(SRC, "..", "..");
+  const texts = DEFECT_FLAGS.map((f) => FEED_FLAG_DEFINITIONS[f] ?? "");
+  assert.equal(new Set(texts).size, DEFECT_FLAGS.length, "seven different definitions — none shares a line");
+  for (const flag of DEFECT_FLAGS) {
+    const text = FEED_FLAG_DEFINITIONS[flag]!;
+    assert.notEqual(text, DEFECT_FLAG_NOTE, `${flag}: its own definition, not the shared line`);
+    assert.ok(text.endsWith(`; ${DEFECT_FLAG_NOTE}.`), `${flag}: ends with the methodology's published defect line`);
+    assert.equal(text.split(/[.;] (?=[A-Z])/).length, 1, `${flag}: one sentence`);
+    /* the citation is VERIFIED, not trusted: the cited producer lines must
+       contain the flag's own name */
+    const cite = citationOf(flag, format);
+    assert.ok(cite, `${flag}: format.ts cites the producer line that sets it`);
+    const lines = readFileSync(path.join(repo, "src", "populus", cite!.file), "utf-8").split("\n").slice(cite!.from - 1, cite!.to);
+    assert.ok(lines.some((l) => l.includes(flag)), `${flag}: ${cite!.file}:${cite!.from}-${cite!.to} does not mention the flag`);
+  }
+  // control: a citation to lines that never set the flag is caught
+  const wrong = citationOf("side_unparsed", format.replace(/- side_unparsed: normalize\.py:90-96/, "- side_unparsed: normalize.py:1-5"));
+  const wrongLines = readFileSync(path.join(repo, "src", "populus", wrong!.file), "utf-8").split("\n").slice(wrong!.from - 1, wrong!.to);
+  assert.ok(!wrongLines.some((l) => l.includes("side_unparsed")), "control: a wrong citation fails the check");
 });
 
 /* ---- C-13: the ledger region styles only what the renderers emit ---- */

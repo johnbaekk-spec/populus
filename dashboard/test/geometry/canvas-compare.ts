@@ -791,6 +791,7 @@ export const ALLOWED_DEVIATIONS: readonly Deviation[] = [
   { id: "kind.nochange.edge", record: "B (D-2 kind palette: NO CHANGE / FLAT edge)", canvas: "HOLD / FLAT edge #16202E", production: "--kind-nochange-edge" },
   { id: "kind.exch.word", record: "departure 6", canvas: "(no exchange row in the canvas)", production: "EXCHANGE, spelled out, in --kind-exch-text on the --kind-exch-edge" },
   { id: "kind.flat.none", record: "departure 6", canvas: "FLAT", production: "\"—\" when no direction can be stated" },
+  { id: "kind.flat.span", record: "W-10 (coordinator ruling on the M3 review)", canvas: "FLAT", production: "\"±\" (spoken \"net range spans zero\") when a bounded net range spans zero beyond the smallest bucket (±$15,000); FLAT only inside it" },
   { id: "table.role.dates.feed", record: "M1 D12", canvas: "the dates column at mono 500 11.5px", production: "mono 500 10px (--fs-meta) in the reference feed's TRADED → FILED cell" },
   { id: "table.role.dates", record: "A (prototype adoption, approved preview)", canvas: "the dates column at mono 500 11.5px", production: "mono 500 11px, the approved preview's date role (ledger-preview.css td.pv-date)" },
   { id: "table.role.name", record: "A (Roles: c-issuer is the name role)", canvas: "the issuer at Plex 400 11px (secondary)", production: "Plex 500 12.5px on the reported positions' ISSUER column" },
@@ -1271,6 +1272,7 @@ export function compareBands(canvas: PageMeasure, route: PageMeasure, map: BandM
       }
       if (e === "flat") {
         if (k.word === "—") push(b, "flat kind word", cw, k.word, "kind.flat.none");
+        else if (k.word === "±") push(b, "flat kind word", cw, k.word, "kind.flat.span");
         else if (k.word !== cw) push(b, `${e} kind word`, cw, k.word, k.word === "MIXED" ? "kind.netflow.word.m3" : undefined);
         colour(b, "flat text", want.color, k.color, "kind.nochange.text", "--kind-nochange-text");
         colour(b, "flat edge", want.edge ?? "", k.edge ?? "(none)", "kind.nochange.edge", "--kind-nochange-edge");

@@ -329,3 +329,39 @@ def test_the_leaderboard_is_populated_by_a_real_two_period_build(tmp_path):
     excl = _rows(agg, "SELECT * FROM agg_issuer_adds_exclusions ORDER BY mode")
     assert {e["mode"] for e in excl} == {"all", "new"}
     assert all(e["ambiguous_identity_exclusion_count"] == 0 for e in excl)
+
+
+def test_p7_a_built_aggregate_names_an_issuer_identically_on_adds_and_top_holders(tmp_path):
+    """P-7 (M3 review): the delegation (`_adds_issuer_name` ->
+    `display_issuer_name`, R21 / A-6) pinned on a BUILT aggregate, both build
+    paths (`_agg` compares the python and the materialized bulk path), not only
+    on the helper. One manager holds four classes of one entity-keyed issuer,
+    spelled three ways, and adds to every one: the adds leaderboard and the
+    top-holders row must store the SAME name. The spellings are chosen so a
+    rule that picks the most frequent exact spelling ("ACME CO", twice) differs
+    from the D4 rule (the case-folded group "ACME CORP" sums 2 and ties "ACME
+    CO" at 2, the longer group wins, its codepoint-smallest spelling is "ACME
+    CORP")."""
+    from test_inst_agg import _agg, _db, _entity, _filer, _hold, _load, _rows, _security
+
+    conn = _db(tmp_path)
+    cik = "0000000001"
+    _filer(conn, cik, "Manager One")
+    eid = _entity(conn, "0000009999")
+    spellings = ["Acme Corp", "ACME CORP", "ACME CO", "ACME CO"]
+    sids = [_security(conn, f"sec:acme{i}", entity_id=eid, link="resolved") for i in range(4)]
+    for fid, period, filed, scale in (("1", "2025-12-31", "2026-02-10", 1), ("2", "2026-03-31", "2026-05-10", 3)):
+        _load(conn, fid=f"f:{cik}:{fid}", cik=cik, period=period, filed=filed, holds=[
+            _hold(ordinal=i + 1, issuer=name, cusip=f"0000001{i}", value=1_000 * scale,
+                  shares=100 * scale, security_id=sids[i])
+            for i, name in enumerate(spellings)
+        ])
+    agg = _agg(conn, tmp_path)
+    adds = {r["issuer_name"] for r in _rows(agg, "SELECT issuer_name FROM agg_issuer_adds WHERE period_of_report='2026-03-31'")}
+    holders = {r["issuer_name"] for r in _rows(agg, "SELECT issuer_name FROM agg_issuer_top_holders WHERE period_of_report='2026-03-31'")}
+    assert adds == {"ACME CORP"}, adds
+    assert holders == {"ACME CORP"}, holders
+    # control: the retired frequency rule would have named it differently
+    from collections import Counter
+
+    assert Counter(spellings).most_common(1)[0][0] == "ACME CO"

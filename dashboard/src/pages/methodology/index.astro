@@ -12,6 +12,7 @@ import Base from "../../layouts/Base.astro";
 import { getBuildData, methodologyM1Tiles } from "../../lib/data";
 import { fmtInt } from "../../lib/format";
 import { filingWindow } from "../../lib/derive";
+import { ACTIVITY_SHARDS_MAX, PAGE_BYTE_LIMIT, PAGE_RECORD_LIMIT } from "../../lib/activity";
 
 const build = getBuildData();
 const m1 = methodologyM1Tiles(build.stats, build.filedFrom);
@@ -171,7 +172,7 @@ const description =
       <div class="gaps-block cols-2">
         <div>· Amendments are typed: a restatement supersedes; new-holdings merges. Originals are kept and marked superseded, never deleted.</div>
         <div>· A change with an undisclosed side is <strong>n/c</strong> — never coerced into add or trim.</div>
-        <div>· "Exit" is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
+        <div>· EXIT is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
         <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Public Filings build parameter.</div>
         <div id="13f-affiliates">· A manager that files its own 13F holdings report keeps its whole book, even when another manager's combination report names it: under the Form 13F instructions a holdings report carries all of that manager's holdings, and a position whose discretion is shared is reported by one manager only. Only a 13F notice — holdings reported entirely by someone else — is left out. Such pairs are marked <span class="mono-id">shared discretion</span> and are not netted against each other.</div>
         <div>· Concentration is computed only when the denominator is disclosed; otherwise the stat prints "n/a" with its reason <span class="mono-id">concentration_unavailable</span>.</div>
@@ -262,8 +263,37 @@ const description =
       </p>
       <p class="metho-body" id="position-grain">
         <strong>What counts as one position.</strong> A position is one issuer security × put/call × unit as the
-        filer reported it; the producer classifies each change (new · add · trim · exit · no change)
+        filer reported it; the producer classifies each change (NEW · ADD · TRIM · EXIT · NO CHANGE, and NO PRIOR where the filer has no comparable previous quarter)
         from the share delta between consecutive quarters, at that level.
+      </p>
+      {/* DESIGN-POLISH M3 (R24, H-8): the detail the /institutional/ and filer
+          pages moved here, in plain words — every number the pages printed is
+          still printed there; the file path and the grouping rule live here. */}
+      <p class="metho-body" id="activity-files">
+        <strong>The activity list and its files.</strong> The Recent activity list on /institutional/
+        shows notable managers' new, added, trimmed and exited positions, newest filing first, then
+        largest change. Every change this build publishes is in numbered files at{" "}
+        <span class="mono-id">/institutional/data/activity/&lt;page&gt;.v1.json</span>, ranked by the
+        size of the change in reported value, largest first, with changes whose value was not
+        disclosed last. Each file holds at most {fmtInt(PAGE_RECORD_LIMIT)} changes or{" "}
+        {fmtInt(PAGE_BYTE_LIMIT)} bytes, whichever it reaches first, and a build publishes at most{" "}
+        {fmtInt(ACTIVITY_SHARDS_MAX)} files. When the ranked list does not fit, the list stops at a
+        stated change, and the page names it as the first change left out. If that change has a
+        disclosed value, none of the changes left out is larger in absolute value and every change
+        without a disclosed value is left out; if the cut falls among the changes whose value was not
+        disclosed, every change with a disclosed value is published and only undisclosed ones are
+        left out. A change is the difference between two quarters' filings, so any change left out can
+        be derived from the filings on EDGAR.
+      </p>
+      <p class="metho-body" id="filer-positions">
+        <strong>Reported positions on a filer page.</strong> The list groups a filer's reported rows
+        by issuer: one line per issuer, largest reported value first, with every reported row inside
+        its line; a row that carries no issuer key stands on its own line. When a filer reported more
+        rows than its page can carry within its size budget, the page embeds the largest and states how
+        many it leaves out; those rows are in this build's published data and in the filer's own
+        filings. The holders pages' de-duplicated issuer total counts each manager's own holdings
+        report once — a 13F notice whose holdings sit in another manager's report adds nothing — and
+        that total never removes a row from a filer page.
       </p>
       <p class="metho-body" id="ticker-mapping">
         <strong>Ticker mapping.</strong> A 13F row shows a ticker only where a reviewed, name-and-class

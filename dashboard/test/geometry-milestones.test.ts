@@ -117,9 +117,13 @@ function pendingSet(map: Readonly<Record<CheckId, string>>, current: M): string[
   return (Object.keys(map) as CheckId[]).filter((c) => order.indexOf(map[c]!) > order.indexOf(current)).sort();
 }
 
-test("Q-7 (M2): this tree implements M2, and in M2 no check is pending", () => {
-  assert.equal(CURRENT_MILESTONE, "m2");
+/* DESIGN-POLISH M3: the tree implements M3 (the kind vocabulary lands, so the
+   canvas allowances scoped `until: "m3"` expire — CD-4); M3 adds no geometry
+   check and defers none, so the pending set stays empty at m2 AND at m3. */
+test("Q-7 (M3): this tree implements M3, and no check is pending (at m2 or m3)", () => {
+  assert.equal(CURRENT_MILESTONE, "m3");
   assert.deepEqual(pendingSet(CHECK_MILESTONE, "m2"), [], "no check may wait for a later milestone");
+  assert.deepEqual(pendingSet(CHECK_MILESTONE, "m3"), [], "…and none at m3");
   const all: CheckId[] = [...GEOMETRY_CHECKS, ...EXTRA_CHECKS];
   assert.deepEqual(all.filter((c) => isPending(c)), [], "isPending (at the current milestone) agrees with the map");
 });

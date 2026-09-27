@@ -83,14 +83,38 @@ test("M2-12: a capped period names the withholding, its author, and the TRUE tot
   assert.ok(html.includes('data-terminus-author="populus"'), "the cut is attributed");
   assert.ok(html.includes("15,885"), "the TRUE total appears, not the embedded count");
   assert.ok(html.includes("15,883"), "the withheld count appears");
-  assert.ok(/agg_qoq_deltas/.test(html), "the terminus points at where the rest live");
+  /* DESIGN-POLISH M3 (Architecture H, H-18; T3.10): the terminus still says
+     where the rest live, in plain words — this build's published data, and
+     the filings they derive from — and names the cap as a size budget. */
+  /* W-4 (M3 review): the terminus names the order the embed ACTUALLY keeps —
+     `compareQoqDeltas`: the position's reported value, this quarter's or else
+     last quarter's — never "the largest" changes, which it does not keep. */
+  assert.ok(
+    html.includes("15,883 of this filer's 15,885 quarter-over-quarter changes for 2026-03-31 are not included on this page, which keeps the changes on its largest positions by reported value (this quarter's, or last quarter's where this quarter has none, as for an exit) to stay within its size budget. The rest are in this build's published data and derivable from the filings themselves."),
+    "the terminus points at where the rest live",
+  );
+  assert.ok(!html.includes("which keeps the largest to"), "control: the retired claim");
+  assert.ok(!/agg_qoq_deltas|byte budget caps the embed/.test(html), "no table name or pipeline wording");
+});
+
+test("W-4 (M3 review): the kept order is by reported POSITION value, as the terminus says — not by the size of the change", () => {
+  /* A small position with a huge change, and a huge position with a tiny
+     change: the comparator keeps the huge position first, so "keeps the
+     largest [changes]" would be false and "largest positions by reported
+     value" is true. An exit (no current value) ranks by its prior value. */
+  const small = { position_key: "A", curr_value_usd: 10, prev_value_usd: 1_000_000 };
+  const huge = { position_key: "B", curr_value_usd: 5_000_000, prev_value_usd: 4_999_000 };
+  const exit = { position_key: "C", curr_value_usd: null, prev_value_usd: 3_000_000 };
+  assert.deepEqual(sortQoqDeltas([small, huge, exit]).map((r) => r.position_key), ["B", "C", "A"]);
+  const bigChange = Math.abs(small.curr_value_usd - small.prev_value_usd);
+  assert.ok(bigChange > Math.abs(huge.curr_value_usd - huge.prev_value_usd), "control: A is the largest CHANGE, yet it sorts last");
 });
 
 test("M2-12: an UNCAPPED period claims no withholding that never happened", () => {
   const rows = [delta(1, 900), delta(2, 800)];
   const html = changesTableHtml(rows, "2026-03-31", "2026-05-15", { total: rows.length });
   assert.ok(
-    !html.includes("are not embedded in this page"),
+    !html.includes("are not included on this page"),
     "a complete list must not carry a truncation terminus — that is the same lie inverted",
   );
 });
@@ -142,7 +166,7 @@ test("M2-12: an empty period stays the honest first-period state, not an empty t
   assert.ok(!html.includes("data-changes-pager"));
   // The section's standing methodology terminus is expected here; what must NOT
   // appear is a TRUNCATION claim over a period that withheld nothing.
-  assert.ok(!html.includes("are not embedded in this page"));
+  assert.ok(!html.includes("are not included on this page"));
 });
 
 /* ---- Codex round-3 blockers, pinned so they cannot silently return ---- */
