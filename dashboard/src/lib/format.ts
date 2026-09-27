@@ -268,15 +268,19 @@ export interface NoteOpts {
     abbreviation twin (`.th-abbr`, aria-hidden) is dropped first, so a header's
     name is its full word once. */
 function plainTextOf(html: string): string {
-  return html
-    .replace(/<span class="th-abbr"[^>]*>.*?<\/span>/g, "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  /* Strip to a fixpoint (a removed tag can expose another), then decode the
+     entities in one pass with `&amp;` handled by the same lookup, so no
+     entity is decoded twice. The result is escaped again at every sink. */
+  let text = html.replace(/<span class="th-abbr"[^>]*>.*?<\/span>/g, "");
+  for (let prev = ""; prev !== text; ) {
+    prev = text;
+    text = text.replace(/<[^>]*>/g, "");
+  }
+  const ENTITIES: Readonly<Record<string, string>> = {
+    "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'",
+  };
+  return text
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, (m) => ENTITIES[m] ?? m)
     .replace(/\s+/g, " ")
     .trim();
 }

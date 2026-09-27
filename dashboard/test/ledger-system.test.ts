@@ -766,9 +766,12 @@ test("D7 ruling: every flag chip in a reference feed row opens its OWN definitio
     methodology page's own sentence, or the string at the one site that
     rendered it before the chips existed (now read from the same constant). */
 function unpublishedDefinitions(defs: Readonly<Record<string, string>>): string[] {
-  const methodology = readFileSync(path.join(SRC, "pages", "methodology", "index.astro"), "utf-8")
-    .replace(/<[^>]+>/g, "")
-    .replace(/\s+/g, " ");
+  let methodology = readFileSync(path.join(SRC, "pages", "methodology", "index.astro"), "utf-8");
+  for (let prev = ""; prev !== methodology; ) {
+    prev = methodology;
+    methodology = methodology.replace(/<[^>]+>/g, "");
+  }
+  methodology = methodology.replace(/\s+/g, " ");
   const format = readFileSync(path.join(SRC, "lib", "format.ts"), "latin1");
   const sites: Record<string, RegExp> = {
     [TICKER_ABSENT_NOTE]: /label: "Ticker", why: TICKER_ABSENT_NOTE/,

@@ -471,7 +471,10 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
     expect(ok.failureCount, formatResult(ok)).toBe(0);
     await page.evaluate(() => {
       const td = document.querySelector("#t1 tbody tr:nth-child(3) td:nth-child(2)")!;
-      td.innerHTML = `<span style="display:inline-block;max-width:10px;overflow:hidden;vertical-align:bottom">${td.firstChild!.textContent}</span>`;
+      const span = document.createElement("span");
+      span.style.cssText = "display:inline-block;max-width:10px;overflow:hidden;vertical-align:bottom";
+      span.textContent = td.firstChild!.textContent;
+      td.replaceChildren(span);
     });
     const inner = await probe(page, "g7");
     expect(inner.failures.map((f) => [f.columnIndex, f.row]), formatResult(inner)).toEqual([[1, 2]]);
