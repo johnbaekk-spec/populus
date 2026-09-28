@@ -1026,7 +1026,9 @@ export interface TickerInstSection {
     rank: number;
     cik: string;
     name: string;
-    value: number;
+    /** reported value; null = the holder's value is not disclosed (a mapped
+        class-grain row with a NULL component) — rendered "—", never "$0" */
+    value: number | null;
     securities: number;
     keySource: string;
     flags: string[];
@@ -1107,7 +1109,9 @@ function mappedInstSection(build: BuildData, ticker: string, name: string | null
       rank: h.rank,
       cik: h.cik,
       name: h.filer_name,
-      value: h.value_usd ?? 0,
+      /* honesty §3: an undisclosed value stays NULL and renders "—"; `?? 0`
+         printed "$0" for a holder whose value the filing did not disclose */
+      value: h.value_usd ?? null,
       securities: 1,
       keySource: "mapped",
       flags: [],

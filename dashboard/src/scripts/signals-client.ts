@@ -9,7 +9,7 @@
 
 import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel, parseDataColumns, type RenderCtx } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
-import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf } from "../lib/ui/index.ts";
+import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf, signalKindShort } from "../lib/ui/index.ts";
 
 /** An empty row spans the table's own header — the column list the server
     rendered — never a literal count (DESIGN-POLISH M1, section E). */
@@ -20,20 +20,15 @@ function columnCount(body: HTMLElement | null, fallback: number): number {
 import type { Signal, SignalArtifact } from "../lib/signals.ts";
 import { classifyCursor, readCursor, writeCursor, watchBandEmptyText, watchSeenLabel } from "../lib/watchlist.ts";
 
-const SHORT: Record<string, string> = {
-  "s1-large": "LARGE",
-  "s2-first": "FIRST FILING",
-  "s3-cooccurrence": "CO-OCCURRENCE",
-  "s4-infrequent": "INFREQUENT",
-  "s5-jurisdiction": "COMMITTEE",
-  "s6-late-large": "LATE",
-};
+/* DESIGN-POLISH M3 (R18): the watch band's kind words are the rule book's own
+   (`signalKindShort` over RULE_BOOK) — the private SHORT map that duplicated
+   them is gone, so the band and the hits table cannot drift apart. */
 
 const BIOGUIDE_RE = /^[A-Z]\d{6}$/;
 /** rows the watch band renders; the summary line states the bound */
 const WATCH_RENDER_CAP = 50;
 
-type Row = [string, string, string | null, string, string | null, number | null, number | null, string | null, string, string];
+type Row = [string, string, string | null, string, string | null, number | null, number | null, string | null, string, string, string?];
 
 function magnitude(low: number | null, high: number | null): string {
   if (low == null && high == null) return "not disclosed";
@@ -234,13 +229,13 @@ function initWatchBand(): void {
       body.append(tr);
       return;
     }
-    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt] of hits.slice(0, WATCH_RENDER_CAP)) {
+    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt, cohort] of hits.slice(0, WATCH_RENDER_CAP)) {
       const tr = document.createElement("tr");
       tr.className = "si-hit";
       tr.dataset.signalId = id;
       // The family's row edge, as the server's hit rows (DESIGN-POLISH M1).
       tr.dataset.edge = `family-${familyOf(kind as Parameters<typeof familyOf>[0]).toLowerCase()}`;
-      const short = SHORT[kind] ?? kind;
+      const short = signalKindShort(kind as Parameters<typeof signalKindShort>[0]);
       tr.append(cell("si-kind c-kind", short));
       const subject = cell("si-subject c-member");
       subject.append(bioguide && BIOGUIDE_RE.test(bioguide) ? link(memberHref(bioguide), name) : name);
@@ -260,14 +255,22 @@ function initWatchBand(): void {
       tr.append(cell("c-filed c-num si-when", `${traded ? traded.slice(5) : "—"} → ${filed.slice(5)}`));
       const seen = watchSeenLabel(state, filed);
       tr.append(cell(`c-num ${seen === "NEW" ? "si-new" : "c-muted"}`, seen));
+      /* K-7 (M3 review): the hit rows' receipt rule (`signalReceiptHtml`) —
+         the link names its regime; where it cannot ("src") or there is no
+         usable receipt, the regime stamp states it ("PTR src ↗", "PTR —") */
       const rcpt = cell("c-src");
       const safe = safeReceiptHref(receipt);
+      const stamp = document.createElement("span");
+      stamp.className = "si-stamp";
+      stamp.textContent = cohort === "senate" ? "eFD" : "PTR";
       if (safe) {
-        const a = link(safe, `${srcLabel(safe)} ↗`);
+        const label = srcLabel(safe);
+        const a = link(safe, `${label} ↗`);
         a.rel = "noopener";
         a.target = "_blank";
+        if (label === "src") rcpt.append(stamp, " ");
         rcpt.append(a);
-      } else rcpt.textContent = "—";
+      } else rcpt.append(stamp, " —");
       tr.append(rcpt);
       body.append(tr);
     }

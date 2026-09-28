@@ -1603,3 +1603,75 @@ test.describe("M2: route properties", () => {
     }
   });
 });
+
+/* ======================================================================
+   DESIGN-POLISH M3 — content hygiene, the one geometric property (T3.3, R17):
+   in a TRUNCATED asset cell the partial and owner qualifiers are fully
+   visible. The qualifiers are the asset line's own flex item, outside the
+   ellipsis box, so a long asset name gives way and the qualifiers never do.
+   The route is /congress/ (the reference feed puts the qualifiers in its
+   asset cell); one qualified row's asset text is lengthened so it MUST
+   truncate, and the measurement requires it to have truncated — a check over
+   rows that happen to fit would prove nothing. Control: the pre-fix
+   structure — the qualifiers inside the truncating text — is caught.
+   ====================================================================== */
+test.describe("M3: route properties", () => {
+  test.beforeEach(({}, testInfo) => {
+    test.skip(!!testInfo.project.use.hasTouch, "fine-pointer route properties; the touch project runs the probe checks");
+  });
+
+  async function qualifierProblems(page: Page, plantInside = false): Promise<{ truncated: boolean; problems: string[] }> {
+    return page.evaluate((inside) => {
+      const line = [...document.querySelectorAll<HTMLElement>("#feed-section .asset-line")].find((l) => l.querySelector(":scope > .owner-note") && l.checkVisibility());
+      if (!line) return { truncated: false, problems: ["no qualified asset line on the page"] };
+      line.scrollIntoView({ block: "center" });
+      const text = line.querySelector<HTMLElement>(":scope > .asset-text")!;
+      const box = text.querySelector<HTMLElement>(".note-label") ?? text;
+      const label = box.querySelector(".filed-name") ?? box;
+      label.textContent = `${label.textContent} ${"Very Long Issuer Name Corporation ".repeat(8)}`.trim();
+      const q = line.querySelector<HTMLElement>(":scope > .owner-note")!;
+      /* the pre-fix structure: the qualifiers in the SAME truncating inline
+         run as the asset text */
+      if (inside) box.append(" ", q);
+      const cell = line.closest("td")!;
+      const cr = cell.getBoundingClientRect();
+      const qr = q.getBoundingClientRect();
+      const problems: string[] = [];
+      const truncated = box.scrollWidth > box.clientWidth + 1;
+      if (qr.width === 0) problems.push("the qualifiers have no box");
+      if (qr.left < cr.left - 0.5 || qr.right > cr.right + 0.5) problems.push(`the qualifiers (${qr.left.toFixed(1)}–${qr.right.toFixed(1)}) reach past their cell (${cr.left.toFixed(1)}–${cr.right.toFixed(1)})`);
+      const tr = text.getBoundingClientRect();
+      if (!inside && qr.left < tr.right - 0.5) problems.push("the qualifiers overlap the truncating text");
+      for (const [x, where] of [[qr.left + 1, "start"], [qr.right - 1, "end"]] as const) {
+        const e = document.elementFromPoint(x, qr.top + qr.height / 2);
+        if (!e || !(e === q || q.contains(e))) problems.push(`the qualifiers' ${where} is clipped or covered (${e ? e.tagName.toLowerCase() + "." + [...e.classList].join(".") : "nothing"})`);
+      }
+      return { truncated, problems };
+    }, plantInside);
+  }
+
+  for (const width of [1440, 390] as const) {
+    test(`T3.3: in a truncated asset cell the partial and owner qualifiers are fully visible @${width}`, async ({ browser }, testInfo) => {
+      const { ctx, page } = await open(browser, testInfo, width, "/congress/");
+      try {
+        await expect(page.locator("#feed-section .asset-line").first()).toBeAttached({ timeout: 20_000 });
+        const r = await qualifierProblems(page);
+        expect(r.truncated, "the planted asset text truncates (the check measures a truncated cell)").toBe(true);
+        expect(r.problems, `/congress/ @${width}`).toEqual([]);
+      } finally {
+        await ctx.close();
+      }
+    });
+  }
+
+  test("T3.3 control: the qualifiers inside the truncating text (the pre-fix structure) are caught @1440", async ({ browser }, testInfo) => {
+    const { ctx, page } = await open(browser, testInfo, 1440, "/congress/");
+    try {
+      await expect(page.locator("#feed-section .asset-line").first()).toBeAttached({ timeout: 20_000 });
+      const r = await qualifierProblems(page, true);
+      expect(r.problems.length, "control: qualifiers inside the ellipsis are clipped").toBeGreaterThan(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+});

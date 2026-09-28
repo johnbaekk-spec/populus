@@ -27,18 +27,19 @@ import os
 import sqlite3
 import subprocess
 import sys
-from datetime import date, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from populus.filing_calendar import (  # noqa: E402
+    FILING_DEADLINE_DAYS,
+    filing_deadline,
+)
 from populus.manager_registry import (  # noqa: E402
     join_manager_registry,
     load_manager_registry,
 )
-
-FILING_DEADLINE_DAYS = 45
 # The selector offers exactly this many closed periods (R20), and the
 # dashboard's `ADDS_PERIOD_COUNT` is the same number. Acceptance asserts
 # against the newest of them.
@@ -151,12 +152,10 @@ def selector_periods(conn: sqlite3.Connection, build_date: str) -> list[str]:
     universe: set[str] = set()
     for table in ("agg_filer_concentration", "agg_issuer_adds", "agg_issuer_adds_exclusions"):
         universe.update(_distinct_periods(conn, table))
-    closed = [
-        p
-        for p in universe
-        if date.fromisoformat(build_date)
-        > date.fromisoformat(p) + timedelta(days=FILING_DEADLINE_DAYS)
-    ]
+    # The dashboard's `isClosedPeriod` over the same Rule 0-3 calendar
+    # (`populus.filing_calendar`): 45 days after quarter end, rolled to the
+    # next business day, and closed only strictly after that deadline.
+    closed = [p for p in universe if build_date[:10] > filing_deadline(p)]
     return sorted(closed, reverse=True)[:ADDS_PERIOD_COUNT]
 
 
@@ -297,8 +296,8 @@ def main() -> int:
         offered = selector_periods(conn, build_date)
         if not offered:
             return fail(
-                f"no period on record has passed its {FILING_DEADLINE_DAYS}-day filing"
-                f" deadline as of the build date {build_date}, so the selector offers no"
+                f"no period on record has passed its filing deadline ({FILING_DEADLINE_DAYS}"
+                f" days, rolled by Rule 0-3) as of the build date {build_date}, so the selector offers no"
                 " quarter at all"
             )
         print(

@@ -55,8 +55,8 @@ import { plannedLine, unavailableDesignPanel } from "./shared.ts";
 import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
 import { type BuildStamps, asOfNote, briefingCards, disclosureLedger } from "./shared.ts";
-import { note, rangeOfTotal, thHtml } from "../format.ts";
-import { familyOf } from "./signals.ts";
+import { fmtCik, note, rangeOfTotal, thHtml } from "../format.ts";
+import { familyOf, signalKindShort } from "./signals.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
 import { instStamp, instFiledNote } from "./institutional.ts";
 
@@ -114,7 +114,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
       `<div class="absent-block">` +
       `<h3 class="absent-h">Mapped, but not in the published aggregate.</h3>` +
       `<p>${esc(ticker)} resolves to ${esc(inst.name ?? "an issuer")} (CIK ${esc(
-        inst.cik ?? "",
+        fmtCik(inst.cik ?? ""),
       )}), but this build's aggregate holds no entity-keyed top-holder rows for it. <a href="${esc(
         edgarTickerUrl(ticker),
       )}" rel="noopener" target="_blank">${esc(ticker)} on SEC EDGAR ↗</a></p>` +
@@ -133,7 +133,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
         `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
         // ONE href primitive (filerHref): the payload carries the top/tail target.
         `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
-        `<td class="c-num c-strong has-marks">${esc(fmtUsd(h.value))}</td>` +
+        `<td class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
         `<td class="c-num">${fmtInt(h.securities)}</td>` +
         `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedHolders })}</td>` +
         `<td class="c-src">${srcLinkDerived("#ticker-inst-footnotes", edgarFilerUrl(h.cik))}</td></tr>`,
@@ -157,13 +157,30 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
     `<tbody>${rows}</tbody></table></div>` +
     terminusRow({
       author: "populus",
-      html: `The published aggregate ranks the top ${fmtInt(inst.topn ?? 25)} holders per issuer — a build parameter of the Public Filings aggregation, not a census. Rows beyond it exist in individual filings on EDGAR. <a href="/methodology/#m2">methodology §13F ↗</a>`,
+      /* W-3 (M3 review): the two sources differ, so the terminus and the §
+         note branch on them. The reviewed-mapping list (share-class grain)
+         keeps the largest holders up to its rank cap and states the true
+         holder count; the entity-keyed top-holders list is cut at the build's
+         top-N parameter. */
+      html: inst.mapped
+        ? (holders.length >= inst.mapped.holderCount
+            ? `Every one of the ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class for the quarter is listed.`
+            : `The ${fmtInt(holders.length)} largest of the ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class for the quarter are listed; the rest are in the individual filings on EDGAR.`) +
+          ` <a href="/methodology/#m2">methodology §13F ↗</a>`
+        : `The published aggregate ranks the top ${fmtInt(inst.topn ?? 25)} holders per issuer — a build parameter of the Public Filings aggregation, not a census. Rows beyond it exist in individual filings on EDGAR. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
     footnoteBlock(
       [
         {
           mark: "§",
-          html: `derived by Public Filings from the published aggregate (agg_issuer_top_holders); per-filer filed dates, share counts and document links are not in the published aggregate — the EDGAR link opens the filer's 13F list`,
+          /* Architecture H (G-11): plain words. W-3 (M3 review): on the
+             reviewed-mapping path the list DOES carry each holder's share
+             count, share change and filed date — only this table leaves them
+             out — so the "not in that list" sentence is said of the
+             entity-keyed list alone. */
+          html: inst.mapped
+            ? `derived by Public Filings from this build's reviewed ticker-mapping holders list for this share class; that list carries each holder's share count, share change and filed date${inst.holdersPage ? " (the full holders view shows them)" : ", which this table does not show"}, but no document links — the EDGAR link opens the filer's 13F list`
+            : `derived by Public Filings from this build's published top-holders list; per-filer filed dates, share counts and document links are not in that list — the EDGAR link opens the filer's 13F list`,
         },
         { mark: "n/c", html: esc(instFiledNote(inst.latestFiled ?? null)) },
       ],
@@ -386,7 +403,7 @@ function instAbsenceReason(inst: TickerInstSection, consequence: string, whenDat
     case "data":
       return whenData;
     case "resolved-no-data":
-      return `The ticker resolves to ${esc(inst.name ?? "an issuer")} (CIK ${esc(inst.cik ?? "?")}), but this build's aggregate holds no entity-keyed holder rows for it — its 13F securities are provisional identities without a CUSIP→issuer bridge — so ${consequence}.`;
+      return `The ticker resolves to ${esc(inst.name ?? "an issuer")} (CIK ${esc(inst.cik ? fmtCik(inst.cik) : "?")}), but this build's aggregate holds no entity-keyed holder rows for it — its 13F securities are provisional identities without a CUSIP→issuer bridge — so ${consequence}.`;
     case "module-absent":
       return `This build does not include the institutional module, so ${consequence}.`;
     case "no-map":
@@ -578,12 +595,13 @@ function tickerSignalsHtml(ticker: string, signals: readonly Signal[] | null, wi
   }
   const kinds = new Map<Signal["kind"], Signal[]>();
   for (const s of signals) kinds.set(s.kind, [...(kinds.get(s.kind) ?? []), s]);
-  const labels: Record<Signal["kind"], string> = { "s1-large": "LARGE", "s2-first": "FIRST FILING", "s3-cooccurrence": "CO-OCCURRENCE", "s4-infrequent": "INFREQUENT", "s5-jurisdiction": "COMMITTEE", "s6-late-large": "LATE" };
+  /* K-4 (M3 review): the rule book's own short labels (`signalKindShort`),
+     never a private copy that could drift from them */
   const rows = [...kinds.entries()]
-    .map(([kind, list]) => `<tr data-edge="family-${familyOf(kind).toLowerCase()}"><td class="si-kind c-kind">${esc(labels[kind])}</td><td class="si-evidence c-secondary c-flex">${esc(list[0]!.rule)}</td><td class="c-num">${fmtInt(list.length)} ${list.length === 1 ? "hit" : "hits"}</td></tr>`)
+    .map(([kind, list]) => `<tr data-edge="family-${familyOf(kind).toLowerCase()}"><td class="si-kind c-kind">${esc(signalKindShort(kind))}</td><td class="si-evidence c-secondary c-flex">${esc(list[0]!.rule)}</td><td class="c-num">${fmtInt(list.length)} ${list.length === 1 ? "hit" : "hits"}</td></tr>`)
     .join("\n");
   const withheldRows = withheld
-    .map((w) => `<tr class="si-withheld" data-edge="family-withheld"><td class="si-kind c-kind">${esc(labels[w.kind] ?? w.kind)}</td><td class="si-evidence c-secondary c-flex">withheld (${esc(w.reason)}): ${esc(w.detail)}</td><td class="c-num si-status-withheld">not evaluated</td></tr>`)
+    .map((w) => `<tr class="si-withheld" data-edge="family-withheld"><td class="si-kind c-kind">${esc(signalKindShort(w.kind))}</td><td class="si-evidence c-secondary c-flex">withheld (${esc(w.reason)}): ${esc(w.detail)}</td><td class="c-num si-status-withheld">not evaluated</td></tr>`)
     .join("\n");
   const evaluated = withheld.length === 0 ? "every rule" : `every evaluated rule (${fmtInt(withheld.length)} withheld, listed)`;
   return (

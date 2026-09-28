@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from populus.amendments import _INST_AGG_INPUT_NAME, ensure_views
+from populus.filing_calendar import filing_deadline
 from populus.normalize_inst import NORMALIZATION_VERSION
 from populus.ticker_mapping_13f import load_ticker_mapping, mapping_key
 
@@ -1346,37 +1347,48 @@ ADDS_BYTE_LIMIT = 2 * 1024 * 1024
 
 
 def _adds_issuer_name(names: list[str | None]) -> str | None:
-    """The most frequent non-null issuer name, ties broken lexicographically.
+    """The adds leaderboard's issuer name: the ONE display rule.
 
+    DESIGN-POLISH M3 (R21, A-6): delegates to :func:`display_issuer_name`, so
+    the consensus board and the adds leaderboard name an issuer identically.
     Null ONLY when every contributor is null — an issuer that any holding named
     is never rendered nameless.
     """
-    counts: dict[str, int] = {}
-    for n in names:
-        if n is not None:
-            counts[n] = counts.get(n, 0) + 1
-    if not counts:
-        return None
-    return min(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+    return display_issuer_name(names)
 
 
 def display_issuer_name(
     names: Iterable[str | None], weights: Iterable[int] | None = None
 ) -> str | None:
-    """ONE issuer display-name rule (R9), mirrored EXACTLY by
-    `displayIssuerName` in `dashboard/src/lib/format.ts`; the shared fixture
+    """ONE issuer display-name rule (R9; owner decision D4 (a), DESIGN-POLISH
+    M3 R21 / A-6), mirrored EXACTLY by `displayIssuerName` in
+    `dashboard/src/lib/format.ts`; the shared fixture
     `tests/fixtures/refinement/display_issuer_name_cases.json` pins both.
 
-    Generalizes `_adds_issuer_name` (modal, ties lexicographic) with the
-    filters the landing surfaces needed: a pure-numeric candidate (a CUSIP
-    filed where a name belongs), a candidate of three characters or fewer, and
-    a digit-leading candidate are each dropped — but ONLY while another
-    candidate survives, so an issuer that was never named better still gets
-    its filed name rather than nothing. Ties go to the more frequent, then the
-    longer, then codepoint order. The token `TR` folds to `TRUST` and every
-    token is title-cased. Null only when every contributor is null.
+    D4 (a): the modal FILED name, verbatim — whitespace collapsed, case
+    untouched, no TR→TRUST fold, no SEC-title substitution. Title-casing is
+    retired: it mangled abbreviations and lower-cased the letters of a CUSIP
+    embedded in a name, which the uppercase-only scrub
+    (`inst_redaction.py`) and probe (`scripts/cusip_join_probe.py`) then no
+    longer matched.
+
+    Which spelling wins (A-6):
+
+    1. names are grouped by their upper-cased, whitespace-collapsed form; a
+       pure-numeric group (a CUSIP filed where a name belongs), then a group of
+       three characters or fewer, then a digit-leading group are each dropped
+       — but ONLY while another group survives; the group with the highest
+       summed weight wins, ties to the longer, then the codepoint-smallest
+       form;
+    2. inside that group, the exact whitespace-collapsed spelling with the
+       largest summed weight wins — the sum of the weights passed for that
+       spelling, or its number of occurrences when none are passed — ties to
+       the codepoint-smallest spelling.
+
+    Null only when every contributor is null.
     """
-    counts: dict[str, int] = {}
+    groups: dict[str, dict[str, int]] = {}
+    group_weight: dict[str, int] = {}
     weight_list = list(weights) if weights is not None else None
     for index, raw in enumerate(names):
         if raw is None:
@@ -1384,12 +1396,14 @@ def display_issuer_name(
         name = " ".join(str(raw).split())
         if not name:
             continue
-        weight = weight_list[index] if weight_list is not None else 1
+        weight = int(weight_list[index]) if weight_list is not None else 1
         key = name.upper()
-        counts[key] = counts.get(key, 0) + int(weight)
-    if not counts:
+        spellings = groups.setdefault(key, {})
+        spellings[name] = spellings.get(name, 0) + weight
+        group_weight[key] = group_weight.get(key, 0) + weight
+    if not groups:
         return None
-    candidates = list(counts)
+    candidates = list(groups)
     for drop in (
         lambda n: n.isdigit(),
         lambda n: len(n) <= 3,
@@ -1398,9 +1412,9 @@ def display_issuer_name(
         kept = [c for c in candidates if not drop(c)]
         if kept:
             candidates = kept
-    best = min(candidates, key=lambda n: (-counts[n], -len(n), n))
-    tokens = ["TRUST" if t == "TR" else t for t in best.split()]
-    return " ".join(t[:1].upper() + t[1:].lower() for t in tokens)
+    best = min(candidates, key=lambda n: (-group_weight[n], -len(n), n))
+    spellings = groups[best]
+    return min(spellings, key=lambda s: (-spellings[s], s))
 
 
 def _adds_sum(values: list[int | None]) -> tuple[int | None, bool]:
@@ -2715,27 +2729,29 @@ def build_inst_agg(
 #: R3: rows kept per (ticker, period) in `agg_ticker_holders`; the totals
 #: table states the true holder count so the cap is never a silent drop.
 TICKER_HOLDERS_RANK_CAP = 500
-#: A 13F is due 45 days after quarter end; a quarter whose deadline has not
-#: passed as of the build is OPEN and under-reported by construction.
-_FILING_DEADLINE_DAYS = 45
-
-
 def closed_periods(periods: Iterable[str], *, as_of: str) -> list[str]:
-    """Periods (YYYY-MM-DD quarter ends) whose 45-day filing window had
-    closed by `as_of` (an ISO date or timestamp), ascending."""
+    """Periods (YYYY-MM-DD quarter ends) whose 13F filing deadline had passed
+    by `as_of` (an ISO date or timestamp), ascending. A quarter whose deadline
+    has not passed is OPEN and under-reported by construction.
+
+    The deadline is 45 days after quarter end, rolled to the next business day
+    when that day is a Saturday, Sunday or federal holiday (Exchange Act Rule
+    0-3(a); `populus.filing_calendar.filing_deadline`)."""
     import datetime as _dt
 
-    cutoff = _dt.date.fromisoformat(str(as_of)[:10])
+    cutoff = str(as_of)[:10]
+    _dt.date.fromisoformat(cutoff)
     out = []
     for p in sorted(set(periods)):
         try:
-            end = _dt.date.fromisoformat(p)
+            _dt.date.fromisoformat(p)
         except ValueError:
             continue
         # Closed once the watermark is PAST the deadline day — the same
         # deadline-exclusive rule `dashboard/src/lib/inst-adds.ts:isClosedPeriod`
-        # has always applied, so both runtimes name the same closed quarter.
-        if end + _dt.timedelta(days=_FILING_DEADLINE_DAYS) < cutoff:
+        # applies, over the same calendar, so both runtimes name the same
+        # closed quarter (tests/fixtures/refinement/filing_deadline_cases.json).
+        if filing_deadline(p) < cutoff:
             out.append(p)
     return out
 

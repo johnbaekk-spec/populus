@@ -124,7 +124,7 @@ export function scanTree(root: string, include: (name: string) => boolean): Scan
 
 /** SRC §1 rule 3: pipeline vocabulary never reaches the reader. Exact word
     forms, so a filed name such as "W.W. Grainger" is not a hit for "grain". */
-export const RULE3_PATTERNS: { name: string; re: RegExp }[] = [
+export const RULE3_PATTERNS: { name: string; re: RegExp; exemptFiles?: readonly string[] }[] = [
   { name: "render bound", re: /\brender bounds?\b/i },
   // "shard budget" is named in its own right by the T3 requirement; the bare
   // "shard" already subsumes it, and keeping the narrower pattern as well would
@@ -147,7 +147,32 @@ export const RULE3_PATTERNS: { name: string; re: RegExp }[] = [
   // matched: it is machine vocabulary inside <code>, kept so an older
   // aggregate still decodes, and the underscores put it outside this pattern.
   { name: "classified by value", re: /\bclassified\s+by\s+value\b/i },
+  /* DESIGN-POLISH M3 (R24, Architecture H "New gate terms"): the engineering
+     prose the copy pass rewrote. "M2-CONTRACT" is deliberately NOT a term: the
+     §5 data note keeps "(ARCHITECTURE.md §5.2 / M2-CONTRACT §5)" in both
+     runtimes, pinned to the Python INST_DATA_NOTE (G-1, L18). */
+  { name: "same-origin", re: /\bsame-origin\b/i },
+  { name: "serialized", re: /\bseriali[sz]ed\b/i },
+  { name: "ordered set", re: /\bordered sets?\b/i },
+  // "keyable" and its negation "unkeyable" (the word boundary sits before "un")
+  { name: "keyable", re: /\b(?:un)?keyable\b/i },
+  { name: "differenced", re: /\bdifferenced\b/i },
+  /* a published table's name. /methodology/ documents the published data
+     files BY NAME, so that one page is exempt — the ONLY exemption, pinned by
+     `rule3Exemptions` (G-11) */
+  { name: "agg_", re: /\bagg_[a-z_]+/i, exemptFiles: ["methodology/index.html"] },
+  { name: "publication limit", re: /\bpublication limits?\b/i },
+  { name: "opaque reference", re: /\bopaque references?\b/i },
 ];
+
+/** Every per-pattern file exemption, as `pattern -> files` — a test pins this
+    to exactly `{ "agg_": ["methodology/index.html"] }`, so a second exemption
+    cannot be added without failing it. */
+export function rule3Exemptions(patterns: readonly { name: string; exemptFiles?: readonly string[] }[] = RULE3_PATTERNS): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const p of patterns) if (p.exemptFiles && p.exemptFiles.length > 0) out[p.name] = [...p.exemptFiles];
+  return out;
+}
 
 /** The terms T3 requires the build to fail on, by the NAME they carry in
     `RULE3_PATTERNS`. Kept as its own list so a rename or a deletion in the
@@ -161,6 +186,15 @@ export const T3_REQUIRED_PATTERNS = [
   "coverage bucket",
   "gold tick",
   "classified by value",
+  // DESIGN-POLISH M3 (R24)
+  "same-origin",
+  "serialized",
+  "ordered set",
+  "keyable",
+  "differenced",
+  "agg_",
+  "publication limit",
+  "opaque reference",
 ] as const;
 
 /** What a reader can see or hear on a page: text nodes (including ⓘ note
@@ -192,8 +226,10 @@ export function scanVisibleRule3(root: string): ScanResult {
       }
       if (!entry.endsWith(".html")) continue;
       const text = visibleText(readFileSync(full).toString("utf-8"));
+      const rel = path.relative(root, full).split(path.sep).join("/");
       covered.push(path.relative(root, full));
-      for (const { name, re } of RULE3_PATTERNS) {
+      for (const { name, re, exemptFiles } of RULE3_PATTERNS) {
+        if (exemptFiles?.includes(rel)) continue;
         const m = re.exec(text);
         if (m) hits.push({ file: path.relative(root, full), pattern: name, excerpt: text.slice(Math.max(0, m.index - 60), m.index + 60) });
       }

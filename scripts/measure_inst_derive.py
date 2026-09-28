@@ -127,12 +127,14 @@ WIDEST_FILING_WINDOW = {
 def filing_window_for(build_date: str | None) -> dict:
     """Mirror of `derive.ts::filingWindow` when the build date is known.
 
-    45 days after quarter end is the 13F deadline; `open` is true while the
-    build date sits inside that window. With no build date the caller gets the
-    WIDEST serialization instead of a guess."""
+    The 13F deadline is 45 days after quarter end, rolled to the next business
+    day by Exchange Act Rule 0-3 (`populus.filing_calendar.filing_deadline`,
+    the calendar `derive.ts` reads through `filingDeadline`); `open` is true
+    while the build date sits inside that window. With no build date the
+    caller gets the WIDEST serialization instead of a guess."""
     if build_date is None:
         return dict(WIDEST_FILING_WINDOW)
-    from datetime import date, timedelta
+    from populus.filing_calendar import filing_deadline
 
     # Mirrors `dashboard/src/lib/derive.ts::filingWindow` exactly, including its
     # candidate-list form (string compare on ISO dates, latest candidate <= d).
@@ -143,7 +145,7 @@ def filing_window_for(build_date: str | None) -> dict:
                       f"{y}-09-30", f"{y}-12-31"):
         if candidate <= d:
             quarter_end = candidate
-    deadline = (date.fromisoformat(quarter_end) + timedelta(days=45)).isoformat()
+    deadline = filing_deadline(quarter_end)
     return {"open": d <= deadline, "quarterEnd": quarter_end, "deadline": deadline}
 #: Full-run abort thresholds (R11): stop rather than thrash the machine.
 MIN_FREE_RAM_BYTES = 8 * GIB

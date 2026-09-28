@@ -337,10 +337,18 @@ test("truncation is STATED on the page — never a silent cut", () => {
   const records = series(70);
   const p = paginateActivity(records, FILINGS, { byteLimit: 10 });
   const html = activityFeedHtml({ present: true, reason: null, filings: FILINGS, pagination: p });
+  /* DESIGN-POLISH M3 (Architecture H, H-2 / V1 NEW-5; T3.10): the cut is
+     still stated with its count and its boundary, now in plain words. The
+     boundary (the FIRST dropped record, 1,000,000 − 64) is printed EXACTLY
+     — "$999,936", never fmtUsd's rounding — as the label trigger of a note
+     naming the first change left out; the rest "can be derived from" EDGAR,
+     because no filing prints a change. */
   assert.match(html, /Truncated by Public Filings\./);
-  assert.match(html, /6<\/strong> further records are not published here/);
-  assert.match(html, /The cut falls at/);
-  assert.match(html, /64-file publication limit/);
+  assert.match(html, /This list stops at 64 files: <strong>6<\/strong> further changes are not published here — none larger than /);
+  assert.match(html, />\$999,936<\/button>/, "the boundary value, exact, is the note's label trigger");
+  assert.match(html, /The first change left out: filer CIK 1000064, position/);
+  assert.match(html, /They can be derived from the filings on EDGAR\./);
+  assert.doesNotMatch(html, /remains? in the filings|publication limit|ordered set/);
 });
 
 /* ---------- 5. every row carries issuer, period, filed date, lag ---------- */
@@ -447,7 +455,24 @@ test("reporting lag: past 45 days is LATE, before quarter end is an anomaly, mis
   const late = paginateActivity([rec({ filing_keys: [4], curr_period: "2026-03-31" })], FILINGS);
   const lateHtml = activityFeedHtml({ present: true, reason: null, filings: FILINGS, pagination: late });
   assert.match(lateHtml, /LATE·123d/);
-  assert.match(lateHtml, /past the 45-day deadline/);
+  assert.match(lateHtml, /past its filing deadline of 2026-05-15/);
+
+  /* W-1 (M3 review): LATE means dated after the quarter's deadline as Rule 0-3
+     rolls it, not "more than 45 days". The December 2025 quarter's day 45 is
+     Saturday 2026-02-14 and Monday 2026-02-16 is Washington's Birthday, so a
+     report filed 2026-02-17 (48 days) is on time and one filed 2026-02-18 is
+     late. */
+  const q4 = (filed: string): string => {
+    const dict: FilingDictionary = {
+      "9": { accession: "0000000000-26-000009", submission_type: "13F-HR", period_of_report: "2025-12-31", filed_date: filed, doc_url: "https://www.sec.gov/Archives/9", source: "sec-edgar" },
+    };
+    const p = paginateActivity([rec({ filing_keys: [9], curr_period: "2025-12-31", prev_period: "2025-09-30" })], dict);
+    return activityFeedHtml({ present: true, reason: null, filings: dict, pagination: p });
+  };
+  const onTime = q4("2026-02-17");
+  assert.doesNotMatch(onTime, /LATE·/, "control: the retired 45-day count marked this timely report LATE");
+  assert.match(onTime, /\+48d/);
+  assert.match(q4("2026-02-18"), /LATE·49d[\s\S]*past its filing deadline of 2026-02-17/);
 
   const early = paginateActivity(
     [rec({ curr_period: "2026-06-30", filing_keys: [1] })],
@@ -715,15 +740,19 @@ test("the feed states how much of the ordered set it shows, and where the rest i
     "the render bound, visible, in the clause expanding is allowed to retract",
   );
   assert.doesNotMatch(html, /1–10 of 50 changes/, "never the bare count, which would read as the set's size");
+  /* DESIGN-POLISH M3 (Architecture H, H-1; T3.10): the publication bound in
+     plain words — what the rows are, how many changes the build publishes,
+     how they are ranked, and the per-file limits — every number kept. The
+     file-path pattern moved to /methodology/#activity-files; the link to the
+     first file stays (the no-JavaScript route). */
   assert.match(
     html,
-    /<span class="compact-bound-extra">[^<]*These rows are the largest of 300 ordered change records/,
+    /<span class="compact-bound-extra">[^<]*These rows are the largest of the 300 changes this build publishes, ranked by size of change with undisclosed values last, as 1 file of at most 2,000 changes or 2,097,152 bytes each\./,
     "the PUBLICATION bound is in the clause expanding must never retract",
   );
   // and the no-JavaScript route out of the compact slice is a real link
-  assert.match(html, /<a href="\/institutional\/data\/activity\/0\.v1\.json">/);
-  assert.match(html, /institutional\/data\/activity\/&lt;page&gt;\.v1\.json/);
-  assert.match(html, /2,000 records or 2,097,152 bytes of serialized JSON/);
+  assert.match(html, /<a href="\/institutional\/data\/activity\/0\.v1\.json">Open the first file ↗<\/a> to reach every published change, with or without scripting\./);
+  assert.doesNotMatch(html, /&lt;page&gt;\.v1\.json|serialized|same-origin|ordered set/, "the path and the pipeline words left the page");
   // …and none of it is behind a `hidden` the reader needs a script to lift.
   const bound = html.slice(html.indexOf('<p class="compact-bound">'));
   assert.match(bound.slice(0, bound.indexOf("</p>")), /^(?:(?!hidden).)*$/s,

@@ -16,7 +16,7 @@
    `notable-moves-derive.ts` (server only). */
 import type { ManagerType } from "./manager-directory.ts";
 import type { LedgerItem } from "./ui/shared.ts";
-import { compactDisclosure, displayIssuerName, esc, fmtInt, fmtUsd, hangMark, note, rangeOfTotal, slug, thHtml } from "./format.ts";
+import { compactDisclosure, displayIssuerName, esc, fmtInt, fmtUsd, hangMark, kindWordHtml, note, rangeOfTotal, slug, thHtml } from "./format.ts";
 
 export type MoveKind = "new" | "add" | "trim" | "exit";
 
@@ -54,7 +54,6 @@ export interface NotableMovesShard {
 
 /** New > Exit > Add > Trim (SRC §6-i). */
 export const MOVE_KIND_PRIORITY: Record<MoveKind, number> = { new: 0, exit: 1, add: 2, trim: 3 };
-export const MOVE_KIND_LABELS: Record<MoveKind, string> = { new: "New", exit: "Exit", add: "Add", trim: "Trim" };
 
 /** Rows rendered on the server; the shard carries the rest. */
 export const NOTABLE_MOVES_SSR_ROWS = 15;
@@ -109,7 +108,7 @@ export function notableMoveRowHtml(m: NotableMove, opts: MoveRowOpts): string {
     `<tr data-mv-kind="${m.kind}" data-mv-type="${esc(m.type)}" data-mv-cik="${esc(m.cik)}" data-edge="${m.kind}">` +
     `<td class="c-filer">${who}</td>` +
     `<td class="c-issuer c-flex">${tick}<span class="filed-name">${esc(m.issuer)}</span></td>` +
-    `<td class="c-chip c-kind"><span class="qoq-chip qoq-${m.kind}">${MOVE_KIND_LABELS[m.kind]}</span></td>` +
+    `<td class="c-chip c-kind">${kindWordHtml(m.kind)}</td>` +
     `<td class="c-num">${esc(signedShares(m.delta_shares))}</td>` +
     `<td class="c-num">${m.curr_value == null ? "—" : esc(fmtUsd(m.curr_value))}</td>` +
     `<td class="c-num ${dir}">${esc(signedUsd(m.delta_value))}</td>` +
@@ -318,7 +317,7 @@ export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOp
       `<td class="c-issuer c-flex">${r.ticker ? `<span class="mono-ticker">${esc(r.ticker)}</span> ` : ""}<span class="filed-name">${esc(r.issuer)}</span></td>` +
       `<td class="c-num c-strong">${fmtInt(r.newStakes)}</td><td class="c-num">${fmtInt(r.adds)}</td><td class="c-num">${fmtInt(r.trims)}</td><td class="c-num">${fmtInt(r.exits)}</td>` +
       `<td class="c-num has-marks ${r.netDeltaUsd == null ? "c-muted" : r.netDeltaUsd < 0 ? "c-sell" : "c-buy"}">${esc(signedUsd(r.netDeltaUsd))}${r.netDeltaPartial ? hangMark("≈") : ""}</td>` +
-      `<td class="c-filer c-secondary">${r.topMover ? `<a href="${esc(opts.filerHref(r.topMover.cik))}">${esc(r.topMover.manager)}</a> <span class="qoq-chip qoq-${r.topMover.kind}">${MOVE_KIND_LABELS[r.topMover.kind]}</span>` : "—"}</td></tr>`,
+      `<td class="c-filer c-secondary">${r.topMover ? `<a href="${esc(opts.filerHref(r.topMover.cik))}">${esc(r.topMover.manager)}</a> ${kindWordHtml(r.topMover.kind)}` : "—"}</td></tr>`,
     )
     .join("\n");
   const collapsed = board.rows.length > compact;

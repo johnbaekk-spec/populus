@@ -12,7 +12,7 @@
    is a `Planned` badge and the Congress half still ships.
    Below both: a merged timeline, 20 rows, newest first. */
 
-import { esc, fmtInt, fmtUsd, memberHrefFor, sideLabel, amountText, utcDayNumber, thHtml, type RenderCtx, type TxnRow } from "./format.ts";
+import { esc, fmtInt, fmtUsd, kindWord, memberHrefFor, sideLabel, amountText, utcDayNumber, thHtml, type RenderCtx, type TxnRow } from "./format.ts";
 import { sumRanges, sumRangesText, excludeDateAnomalies, affTextOf } from "./derive.ts";
 import { type InstData, type TickerHolderRow, tickerHoldersFor, tickerTotalsFor } from "./inst.ts";
 import type { ManagerTyping } from "./manager-directory.ts";
@@ -43,9 +43,14 @@ export interface OverlapTimelineRow {
   date: string;
   actor: string;
   href: string | null;
+  /** the word the reader sees: BUY / SELL / EXCHANGE, or a 13F kind word
+      (NEW / ADD / TRIM / EXIT) from the ONE vocabulary (`kindWord`, R19) */
   move: string;
   cls: string;
   side: "congress" | "13f";
+  /** a 13F row's producer change kind, which its row edge carries; null on a
+      Congress row */
+  kind: string | null;
   amount: string;
 }
 
@@ -145,6 +150,7 @@ export function overlapBand(i: OverlapInputs): OverlapBand {
       move: side.text,
       cls: side.cls,
       side: "congress",
+      kind: null,
       amount: amountText(r),
     });
   }
@@ -159,9 +165,12 @@ export function overlapBand(i: OverlapInputs): OverlapBand {
         date: m.filed_date,
         actor: m.name,
         href: i.filerHref(m.cik),
-        move: m.kind,
+        /* W-2 (M3 review): the caps kind word, never the raw producer kind;
+           the raw kind rides on the row edge only */
+        move: kindWord(m.kind).word,
         cls: m.kind === "new" || m.kind === "add" ? "c-buy" : "c-sell",
         side: "13f",
+        kind: m.kind,
         amount: m.delta_shares == null ? "—" : `${m.delta_shares < 0 ? "−" : "+"}${fmtInt(Math.abs(m.delta_shares))} sh`,
       });
     }
@@ -209,14 +218,14 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
       `<dl class="overlap-rows">` +
       `<div><dt>Adding</dt><dd><span class="overlap-n c-buy">${fmtInt(b.inst.adding.length)}</span> ${managerList(b.inst.adding, filerHref)} <span class="overlap-total c-num">${esc(fmtUsd(b.inst.addingValue))} held</span></dd></div>` +
       `<div><dt>Trimming</dt><dd><span class="overlap-n c-sell">${fmtInt(b.inst.trimming.length)}</span> ${managerList(b.inst.trimming, filerHref)} <span class="overlap-total c-num">${esc(fmtUsd(b.inst.trimmingValue))} held</span></dd></div>` +
-      `</dl><p class="section-note">new + add vs trim + exit, by shares · $ = reported value now, not the change · <span class="filed-name">${esc(b.inst.issuer)}</span></p></div>`
+      `</dl><p class="section-note">NEW + ADD vs TRIM + EXIT, by shares · $ = reported value now, not the change · <span class="filed-name">${esc(b.inst.issuer)}</span></p></div>`
     : `<div class="overlap-half overlap-inst overlap-planned"><h3 class="section-h">Notable managers <span class="badge-planned">PLANNED</span></h3>` +
       `<p class="section-note">Ticker not yet mapped — the 13F side needs a reviewed name-and-class mapping row for ${esc(b.ticker)}. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a></p></div>`;
   /* The row edge (tr[data-edge], DESIGN-POLISH M1): a congressional row by its
      side, a 13F row by its change kind. */
   const edgeOf = (r: OverlapTimelineRow): string | null =>
     r.side === "13f"
-      ? r.move
+      ? r.kind
       : r.cls === "buy" ? "buy" : r.cls === "sell" ? "sell" : r.cls === "neutral" ? "exch" : null;
   const rows = b.timeline
     .map((r) => {
@@ -238,7 +247,7 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Merged timeline of congressional filings and notable-manager moves on ${esc(b.ticker)}</caption>` +
         `<thead><tr>${thHtml({ label: "Date", cls: "c-num" })}${thHtml({ label: "Who", cls: "c-member c-flex" })}${thHtml({ label: "Change", cls: "c-kind" })}${thHtml({ label: "Size", cls: "c-num" })}</tr></thead>` +
         `<tbody>${rows}</tbody></table></div>` +
-        `<p class="section-note">${fmtInt(b.timeline.length)} newest rows · Congress rows date by filing, 13F rows by quarter end · a 13F row is a quarter-end snapshot, not a trade</p>`) +
+        `<p class="section-note">${fmtInt(b.timeline.length)} newest rows · every row dates by its filing date: a disclosure's, or the 13F's for the quarter · a 13F row is a quarter-end snapshot, not a trade</p>`) +
     `</section>`
   );
 }

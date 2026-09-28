@@ -18,6 +18,8 @@ import {
   type StatTile,
   type NoteCtx,
   assetNameCell,
+  assetColumnNote,
+  tickerNoteKey,
   note,
   noteFromHtml,
   esc,
@@ -25,6 +27,9 @@ import {
   amountText,
   sideLabel,
   ownerNote,
+  ownerQualifiersHtml,
+  joinQualifiers,
+  assetLineHtml,
   ownerNoteLong,
   rangeBand,
   dualDate,
@@ -71,7 +76,6 @@ import {
   affTextOf,
   partyLabel,
   netOverlaps,
-  netDirection,
   netFlow,
   netIntervalText,
   rankNetRows,
@@ -86,7 +90,7 @@ import {
   type MemberEntity as MemberEntityT,
 } from "../derive.ts";
 import { RANKING_FOOTNOTES as RANKING_FOOTNOTES_LIST } from "../congress-columns.ts";
-import { type BuildStamps, breadcrumb, asOfNote, netCellHtml } from "./shared.ts";
+import { type BuildStamps, breadcrumb, asOfNote, netCellHtml, netKindWord, sectorLabel } from "./shared.ts";
 
 /* ---------- flow ribbon ---------- */
 
@@ -342,7 +346,7 @@ export function memberTxnColumns(txns: readonly TxnRow[]): PresentColumns {
 
 function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [], cols: readonly string[] | null = null): string {
   const side = sideLabel(r.side, r.flags);
-  const owner = ownerNote(r);
+  const owner = joinQualifiers(ownerNote(r));
   const ownerLong = ownerNoteLong(r);
   const amountUnknown = r.low == null && r.high == null;
   const tickerCell = r.ticker
@@ -352,7 +356,10 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
   return (
     `<td class="c-side c-kind ${side.cls}">${esc(side.text)}</td>` +
     (has("ticker") ? `<td class="c-ticker">${r.ticker ? tickerCell : "—"}</td>` : "") +
-    `<td class="c-asset c-secondary c-flex">${esc(r.asset || "Asset not named")}</td>` +
+    /* R17 (M3, T3.3): the default asset text; its as-filed note prints. The
+       qualifiers have their own Owner column here, unprefixed (no cell ever
+       begins with a separator). */
+    `<td class="c-asset c-secondary c-flex">${assetLineHtml(r, { notes: { scope: "member-asset" } })}</td>` +
     (has("owner") ? `<td class="c-owner c-secondary">${owner ? `${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span>` : "—"}</td>` : "") +
     `<td class="c-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
     `<td class="c-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
@@ -363,8 +370,7 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
 
 function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = []): string {
   const side = sideLabel(r.side, r.flags);
-  const owner = ownerNote(r);
-  const ownerLong = ownerNoteLong(r);
+  const owner = ownerQualifiersHtml(r);
   const amountUnknown = r.low == null && r.high == null;
   const memberCell = r.bioguide
     ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
@@ -374,11 +380,7 @@ function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
   return (
     `<td class="c-filed c-num has-marks">${esc(r.filed)}</td>` +
     `<td class="c-member c-flex">${memberCell}</td>` +
-    `<td class="c-side c-kind ${side.cls}">${esc(side.text)}${
-      owner
-        ? ` <span class="owner-note">${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>`
-        : ""
-    }</td>` +
+    `<td class="c-side c-kind ${side.cls}">${esc(side.text)}${owner ? ` ${owner}` : ""}</td>` +
     `<td class="c-traded c-num">${dualDate(r)}</td>` +
     `<td class="c-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
     `<td class="c-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
@@ -442,7 +444,16 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
      one would be new copy, not a relocation. The header's own label is the
      note's trigger. */
   const headNote = (label: string): string | null =>
-    opts.notes && (label === "Side · Owner" || label === "Owner") ? OWNER_CODE_NOTE : null;
+    !opts.notes
+      ? null
+      : label === "Side · Owner" || label === "Owner"
+        ? OWNER_CODE_NOTE
+        : /* CD3-4 (b)/(c), M3 review: the asset rule is stated once, here —
+             a row whose name differs from the filing only by its mechanical
+             parts carries no per-row note */
+          label === "Asset"
+          ? esc(assetColumnNote())
+          : null;
   const count = entityTableCountText(opts.page, pageRows.length, txns.length);
   return (
     universalFlagNote(stated) +
@@ -457,7 +468,7 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
       .map(([h, cls, key]) =>
         // The ticker table's fixed newest-filed-first order is stated by the
         // header's aria-sort and caret, never a "▾" typed into the label.
-        thHtml({ label: h, mark: null, cls, noteHtml: headNote(h), notes: opts.notes, noteKey: "side-owner", order: opts.kind === "member" || h !== "Filed" ? undefined : "descending", ...(key ? { col: key } : {}) }),
+        thHtml({ label: h, mark: null, cls, noteHtml: headNote(h), notes: opts.notes, noteKey: h === "Asset" ? "asset" : "side-owner", order: opts.kind === "member" || h !== "Filed" ? undefined : "descending", ...(key ? { col: key } : {}) }),
       )
       .join("")}</tr></thead>` +
     `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx, stated, cols ? cols.columns : null)}</tbody>` +
@@ -1017,20 +1028,32 @@ function memberV2Parts(
   const { ranked, undisclosedBucket } = rankNetRows(netRows, (r) => r.net, (r) => r.ticker);
   const lower = (sum: SumRanges): number => sum.kind === "closed" || sum.kind === "open" ? sum.low : 0;
   const scale = Math.max(1, ...netRows.flatMap(row => [lower(row.purchases), lower(row.sales)]));
-  const identities = new Map<string, { asset: string; last: string }>();
+  /* the newest row per ticker supplies the Issuer cell: its asset as filed
+     and its type, so the cell can show the default asset text (R17) */
+  const identities = new Map<string, { row: TxnRow; last: string }>();
   for (const row of m.txns) if (row.ticker) {
     const previous = identities.get(row.ticker);
     const date = row.traded ?? "";
-    if (!previous || date > previous.last) identities.set(row.ticker, { asset: row.asset ?? "—", last: date });
+    if (!previous || date > previous.last) identities.set(row.ticker, { row, last: date });
   }
   const netRowHtml = (r: (typeof netRows)[number], overlapsPrev: boolean): string => {
-    const direction = netDirection(r.net);
-    /* The row's kind edge follows its net direction; a range that spans zero
-       (MIXED) takes the flat edge. */
-    const edge = direction === "accumulation" ? "netbuy" : direction === "disposal" ? "netsell" : "flat";
-    return `<tr class="design-net-row" data-edge="${edge}"><td class="c-kind ${direction === "accumulation" ? "c-buy" : direction === "disposal" ? "c-sell" : "c-muted"}">${direction === "accumulation" ? "BUY" : direction === "disposal" ? "SELL" : "MIXED"}</td>` +
+    const nk = netKindWord(r.net);
+    /* The row's kind edge follows its net direction; a bounded range that
+       spans zero (FLAT) and a range with no statable direction ("—") take the
+       neutral flat edge beside their word. */
+    const edge = nk.word === "NET BUY" ? "netbuy" : nk.word === "NET SELL" ? "netsell" : "flat";
+    return `<tr class="design-net-row" data-edge="${edge}"><td class="c-kind ${nk.word === "NET BUY" ? "c-buy" : nk.word === "NET SELL" ? "c-sell" : "c-muted"}">${esc(nk.word)}${nk.why ? `<span class="visually-hidden"> ${esc(nk.why)}</span>` : ""}</td>` +
       `<td class="c-ticker"><a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a></td>` +
-      `<td class="design-issuer c-secondary c-flex">${esc(identities.get(r.ticker)?.asset ?? "—")}</td>` +
+      /* R17 (M3, T3.3): the default asset text — "[ST]", the row's own
+         "(TICKER)" and a "Common Stock" suffix drop; the as-filed string is
+         the label trigger's note and prints. W-9 (M3 review): the NAME only —
+         the row nets every trade in the ticker, so the newest trade's type
+         words ("· Options") would misdescribe it; the note keeps the code.
+         CD3-4 (a): the note is keyed on the ticker (`n-mf-<ticker>`), unique
+         in this table, not on a 75-character txn id; (c): a name that differs
+         from the filing only mechanically carries no note (the Issuer
+         header states the rule). */
+      `<td class="design-issuer c-secondary c-flex">${(() => { const id = identities.get(r.ticker)?.row; return id && id.asset ? assetLineHtml(id, { notes: { scope: "mf" }, noteKey: tickerNoteKey(r.ticker), nameOnly: true }) : "—"; })()}</td>` +
       `<td class="c-bar"><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${lower(r.purchases) / scale * 50}%"></span><span class="sale" style="left:50%;width:${lower(r.sales) / scale * 50}%"></span></span><span class="visually-hidden">Purchases ${flowCellHtml(r.purchases)}; sales ${flowCellHtml(r.sales)}</span></td>` +
       `<td class="c-num c-buy">${fmtInt(r.buys)}</td><td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
       `<td class="c-num c-net has-marks">${netCellHtml(r.net, overlapsPrev)}</td>` +
@@ -1043,7 +1066,7 @@ function memberV2Parts(
   const netHeads = [
     thHtml({ label: "Net", cls: "c-kind" }),
     thHtml({ label: "Ticker", cls: "c-ticker" }),
-    thHtml({ label: "Issuer", cls: "c-secondary c-flex" }),
+    thHtml({ label: "Issuer", cls: "c-secondary c-flex", noteHtml: esc(assetColumnNote({ nameOnly: true })), notes: { scope: "member-netflow" }, noteKey: "issuer" }),
     thHtml({ label: "Buy ◂ ▸ Sell", cls: "c-bar", noteHtml: memberFlowNoteHtml(), notes: { scope: "member-netflow" }, noteKey: "gross-purchases" }),
     thHtml({ label: "Buys", cls: "c-num" }),
     thHtml({ label: "Sells", cls: "c-num" }),
@@ -1121,7 +1144,10 @@ function memberV2Parts(
     .map(
       (r) =>
         `<tr${txnEdge(r) ? ` data-edge="${txnEdge(r)}"` : ""}><td class="c-filed c-num has-marks">${esc(r.filed)}</td>` +
-        `<td class="c-ticker c-flex">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : assetNameCell(r)}</td>` +
+        /* K-3 (M3 review): a no-ticker row's asset is a label trigger whose
+           note gives the text as filed — reachable by sight, not only by a
+           screen reader */
+        `<td class="c-ticker c-flex">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : assetNameCell(r, { scope: "member-recent-asset" })}</td>` +
         `<td class="c-side c-kind ${sideLabel(r.side, r.flags).cls}">${esc(sideLabel(r.side, r.flags).text)}</td>` +
         `<td class="c-num">${esc(amountText(r))}</td>` +
         `<td class="c-src">${srcLink(r.doc)}</td></tr>`,
@@ -1154,7 +1180,7 @@ function memberV2Parts(
     const mixRows = mix
       .map(
         (r) =>
-          `<tr class="${r.bucket ? "mix-bucket" : ""}"><td class="c-flex">${esc(r.key)}${r.bucket ? ` <span class="mono-note">coverage</span>` : ""}</td>` +
+          `<tr class="${r.bucket ? "mix-bucket" : ""}"><td class="c-flex">${esc(r.bucket ? r.key : sectorLabel(r.key))}${r.bucket ? ` <span class="mono-note">coverage</span>` : ""}</td>` +
           `<td class="c-num">${fmtInt(r.txns)}</td>` +
           `<td class="c-num">${flowCellHtml(r.flow)}</td></tr>`,
       )
@@ -1218,7 +1244,7 @@ function memberV2Parts(
                 (r) =>
                   `<tr><td class="c-filed">${esc(r.txn.traded ?? "—")}</td>` +
                   `<td class="c-ticker">${esc(r.txn.ticker ?? "—")}</td>` +
-                  `<td class="c-secondary c-flex">${esc(r.sector)}</td>` +
+                  `<td class="c-secondary c-flex">${esc(sectorLabel(r.sector))}</td>` +
                   `<td class="c-secondary">${r.committees.map((c) => esc(c.name)).join(", ")}</td>` +
                   `<td class="c-src">${srcLink(r.txn.doc)}</td></tr>`,
               )

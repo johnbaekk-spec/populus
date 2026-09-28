@@ -72,7 +72,9 @@ test("filer happy path emitted: /institutional/filers/1067983/ renders the aggre
   assert.ok(html.includes("Position changes"));
   assert.ok(html.includes("2026-03-31"), "period chips from the aggregate");
   assert.ok(html.includes("2025-12-31"));
-  assert.ok(html.includes("M2-CONTRACT §3"), "the EDGAR link-out block ships");
+  /* DESIGN-POLISH M3 (Architecture H, V1 NEW-1): the EDGAR block states the
+     decision and its date in plain words */
+  assert.ok(html.includes("Public Filings decided on 2026-08-01 to serve this list"), "the EDGAR link-out block ships");
   assert.ok(html.includes("latest filing in build filed 2026-05-15"), "Locked #20 stamp");
   assert.ok(
     html.includes("not current holdings"),
@@ -119,7 +121,11 @@ test("/institutional landing lists the fixture filers when the module is present
     html.includes("BERKSHIRE HATHAWAY INC"),
     "an untyped fixture filer renders its FILED name, never a guessed display name",
   );
-  assert.ok(html.includes("agg_filer_concentration"), "period-correct sourcing is named");
+  /* DESIGN-POLISH M3 (Architecture H, H-18): the directory footnote states
+     what the value is and when it is n/a, in plain words; the table name left
+     the reader copy (/methodology/ documents the published files by name) */
+  assert.ok(html.includes("the sum of a filer&#39;s disclosed long positions for its latest quarter") || html.includes("the sum of a filer's disclosed long positions for its latest quarter"), "period-correct sourcing is stated");
+  assert.ok(!html.includes("agg_filer_concentration"), "no table name in the reader copy");
   assert.ok(!/\bAUM\b|fund size/i.test(html), "constraint 3: never AUM / fund size");
 
   // R9/R10/R11: the sections render in the specified order.

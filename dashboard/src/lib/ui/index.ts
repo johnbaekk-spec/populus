@@ -108,4 +108,4 @@ export { pickSpecimen, specimenCard, type ModuleCardStats, moduleCard, congressT
    block it named — the section no longer renders a footnote container. */
 export { RANKING_FOOTNOTES } from "../congress-columns.ts";
 
-export { briefingCards, disclosureLedger, markPairPrimary, unavailableDesignPanel } from "./shared.ts";
+export { briefingCards, disclosureLedger, markPairPrimary, unavailableDesignPanel, sectorLabel, SECTOR_LABELS } from "./shared.ts";

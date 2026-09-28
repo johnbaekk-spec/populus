@@ -16,26 +16,45 @@ plus a canonical sorted flag array per `agg_qoq_deltas` row. The frontend
 **maps** that output to presentation; it never reclassifies, never compares
 values itself, and never resolves a producer "unclassified" into a direction.
 
-### Chip mapping (from `change_kind`)
+### Kind-word mapping (from `change_kind`)
 
-| `change_kind` | chip text | chip class | notes |
-|---|---|---|---|
-| `new` | `new` | `qoq-new` (outlined, buy tint) | |
-| `add` | `add` | `qoq-add` (buy tint) | |
-| `trim` | `trim` | `qoq-trim` (sell tint) | |
-| `exit` | `exit ‡e` | `qoq-exit` (outlined, sell tint) | `‡e` resolves to the exit-semantics footnote line |
-| `unclassified` | `n/c` | `qoq-nc` (hatched) | fail-closed |
-| `held` | `no change` | `qoq-held` (neutral outline) | R8: Δshares == 0 — mark-to-market only; rendered once in the collapsed "Mark-to-market only (no share change)" group below the paged changes table, excluded from every landing / notable feed, never a direction |
-| *anything else* | `n/c` | `qoq-nc` (hatched) | **fail-closed**: an unknown kind is presented as not-classifiable, never guessed |
+**Amended 2026-09-26 (DESIGN-POLISH M3, R19, T3.1), before the code.** The
+lowercase tinted pill ("chip") is retired. A change kind is a **caps word** in
+the kind's text colour, and the row carries the kind's 3px edge
+(`tr[data-edge]`, the ledger region in `entities.css`). One table —
+`CHANGE_KIND_WORDS` / `kindWord` in `src/lib/format.ts` — supplies the word and
+its class hook to every 13F surface (the filer's Position changes, the activity
+feeds, notable moves, the Consensus board's top mover, the manager directory's
+latest notable change, the holders table, the landing tiles). The edge is never
+the only cue: every edge sits beside its word. The `qoq-*` class names stay as
+the colour hooks; the n/c hatch stays.
+
+| `change_kind` | kind word | class hook | row edge | notes |
+|---|---|---|---|---|
+| `new` | `NEW` | `qoq-new` | `new` | |
+| `add` | `ADD` | `qoq-add` | `add` | |
+| `trim` | `TRIM` | `qoq-trim` | `trim` | |
+| `exit` | `EXIT ‡e` | `qoq-exit` | `exit` | `‡e` resolves to the exit-semantics footnote line |
+| `held` | `NO CHANGE` | `qoq-held` | `nochange` | R8: Δshares == 0 — mark-to-market only; rendered once in the collapsed "Mark-to-market only (no share change)" group below the paged changes table, excluded from every landing / notable feed, never a direction. NO CHANGE, not the design's HOLD (L5): HOLD reads as an analyst rating |
+| `no_prior` | `NO PRIOR` | `qoq-noprior` | `noprior` | D2: no comparable prior book; never a new stake. Neutral ink, not hatched: the kind is known, only the comparison is absent |
+| `unclassified` | `n/c` | `qoq-nc` (hatched) | none | fail-closed; the hatch is the cue |
+| *anything else* | `n/c` | `qoq-nc` (hatched) | none | **fail-closed**: an unknown kind is presented as not-classifiable, never guessed |
+
+The two-period position comparison on the filer's holdings view
+(`positionDiffHtml`) is **not** a QoQ classification: it compares two
+browsable periods by value first, and a position missing from one side is
+absent from that period's rows, not an authoritative exit. It therefore keeps
+its own words, in the same caps-word style: `ADDED`, `ABSENT ‡a`, `INCREASED`,
+`DECREASED`, `UNCHANGED`, `n/c`.
 
 ### Flag mapping (producer flags → presentation)
 
 | producer flag | presentation |
 |---|---|
 | `value_undisclosed_one_side` | the **value delta cell** renders a hatched `n/c` (never a number, never `$0`); the flag also renders as a dashed tag |
-| `shares_unit_mismatch` | the **shares delta cell** renders an em-dash `—` and the chip carries the `‡u` marker; dashed tag |
+| `shares_unit_mismatch` | the **shares delta cell** renders an em-dash `—` and the kind word carries the `‡u` marker; dashed tag |
 | `classified_by_value` | **retired by R8 (refinement 20260910)** — no new build sets it (a value-only change is now `held`); the `†v` marker and dashed tag are kept only so an older aggregate still decodes |
-| `change_kind_undeterminable` | accompanies `unclassified`; dashed tag (the chip is already `n/c`) |
+| `change_kind_undeterminable` | accompanies `unclassified`; dashed tag (the kind word is already `n/c`) |
 | `identity_reconciled_by_cusip` | the position cell carries the `‡r` marker (dotted underline); dashed tag |
 | *unknown flag* | **fail-visible**: rendered as a raw dashed tag with the machine name verbatim — never dropped |
 

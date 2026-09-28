@@ -3,6 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   ADDS_PERIOD_COUNT,
@@ -12,7 +13,9 @@ import {
   closedPeriods,
   compareAddsRows,
   filingDeadline,
+  isBusinessDay,
   isClosedPeriod,
+  rule03Roll,
   type AddsRow,
 } from "../src/lib/inst-adds.ts";
 import {
@@ -24,6 +27,37 @@ import {
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
 
 /* ---------- R20: only closed periods ---------- */
+
+/* W-1 (M3 review): the deadline is 45 days after quarter end ROLLED to the
+   next business day by Exchange Act Rule 0-3 — weekends and the observed
+   federal holidays. The shared fixture is read by the Python runtime too
+   (`tests/test_inst_agg.py`), so both name the same deadline and the same
+   closed quarter. */
+test("W-1: filingDeadline, rule03Roll and isClosedPeriod match the shared Rule 0-3 fixture", () => {
+  const cases = JSON.parse(
+    readFileSync(new URL("../../tests/fixtures/refinement/filing_deadline_cases.json", import.meta.url), "utf-8"),
+  ) as {
+    quarter_deadlines: { period_end: string; deadline: string }[];
+    rolls: { date: string; filed_by: string }[];
+    closed: { period_end: string; as_of: string; closed: boolean }[];
+  };
+  assert.ok(cases.quarter_deadlines.length >= 10 && cases.rolls.length >= 10);
+  for (const c of cases.quarter_deadlines) assert.equal(filingDeadline(c.period_end), c.deadline, c.period_end);
+  for (const c of cases.rolls) assert.equal(rule03Roll(c.date), c.filed_by, c.date);
+  for (const c of cases.closed) assert.equal(isClosedPeriod(c.period_end, c.as_of), c.closed, `${c.period_end} @ ${c.as_of}`);
+  // the three the review named, spelled out
+  assert.equal(filingDeadline("2026-09-30"), "2026-11-16");
+  assert.equal(filingDeadline("2026-12-31"), "2027-02-16", "Sunday, then Washington's Birthday");
+  assert.equal(filingDeadline("2027-03-31"), "2027-05-17");
+  // control: the retired rule (+45 days, no roll) put the deadline on a
+  // Saturday and would call the quarter closed on 2026-11-15
+  const naive = new Date(Date.UTC(2026, 8, 30) + 45 * 86_400_000).toISOString().slice(0, 10);
+  assert.equal(naive, "2026-11-14");
+  assert.ok("2026-11-15" > naive, "the retired rule's verdict on 2026-11-15 was 'closed'");
+  assert.equal(isClosedPeriod("2026-09-30", "2026-11-15"), false, "day 45 was a Saturday; the quarter is still open");
+  assert.equal(isBusinessDay("2026-11-16"), true);
+  assert.equal(isBusinessDay("2027-02-15"), false, "Washington's Birthday");
+});
 
 test("R20: a period is closed only STRICTLY after its deadline", () => {
   assert.equal(filingDeadline("2026-03-31"), "2026-05-15");

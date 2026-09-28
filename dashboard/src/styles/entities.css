@@ -445,6 +445,63 @@ table:is(.etable, .feed-table.reference-feed) {
   text-transform: uppercase;
   color: var(--kind-color, var(--ink2));
 }
+/* The asset line (DESIGN-POLISH M3, R17): the asset text takes the ellipsis;
+   the partial and owner qualifiers sit OUTSIDE it, so a truncated asset never
+   hides them. A long label trigger ellipsizes inside its own button (an
+   atomic inline box would otherwise vanish whole). */
+.asset-line {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+/* Both boxes clip the inline axis only: the text ellipsizes, the trigger's
+   hit square still reaches past the line in the block axis, and no clipped
+   text counts toward the page's width. */
+.asset-line > .asset-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: clip;
+  overflow-y: visible;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-line > .asset-text > .note {
+  display: block;
+  max-width: 100%;
+}
+.asset-line > .asset-text > .note > .note-label {
+  display: block;
+  max-width: 100%;
+  /* the text's own line box, so a row with the trigger is exactly as tall as
+     one without (G8's uniform fold rows) */
+  line-height: inherit;
+  overflow-x: clip;
+  overflow-y: visible;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.asset-line > :is(.asset-sep, .owner-note) {
+  flex: none;
+  white-space: nowrap;
+}
+/* A change line (DESIGN-POLISH M3; M2F-D4's allowance expired): the
+   directory's latest notable change is the canvas's mono caps line — the kind
+   word leads, in its kind's colour, at the line's own role. */
+.etable td.c-change {
+  font: 500 var(--fs-note)/1.2 var(--mono);
+  color: var(--accent);
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+  max-width: 380px;
+}
+.etable td.c-change .qoq-chip {
+  font: inherit;
+  letter-spacing: 0;
+}
 /* Receipt. */
 .etable :is(th, td).c-src {
   text-align: right;
@@ -545,6 +602,11 @@ tr:is([data-edge="family-behaviour"], [data-edge="family-structure"]) { --row-ed
 tr[data-edge="family-novelty"] { --row-edge: var(--kind-novelty-edge); --kind-color: var(--kind-novelty-text); }
 tr:is([data-edge="family-compliance"], [data-edge="family-context"]) { --row-edge: var(--kind-compliance-edge); --kind-color: var(--kind-compliance-text); }
 tr[data-edge="family-withheld"] { --row-edge: var(--kind-withheld-edge); --kind-color: var(--kind-withheld-text); }
+/* L4 (DESIGN-POLISH M3): a late row keeps its SIDE word, in the side's colour;
+   the lateness is the gold edge and the dates cell's LATE·Nd. */
+tr[data-edge="late"] > td.c-kind.buy { --kind-color: var(--kind-buy-text); }
+tr[data-edge="late"] > td.c-kind.sell { --kind-color: var(--kind-sell-text); }
+tr[data-edge="late"] > td.c-kind.neutral { --kind-color: var(--kind-exch-text); }
 .etable tr[data-edge] > td:first-child {
   box-shadow: inset 3px 0 0 var(--row-edge, transparent);
 }
@@ -766,7 +828,14 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .reference-feed .cell-asset {
   font: 400 var(--fs-note)/1.2 var(--sans);
   color: var(--ink3);
-  overflow: hidden;
+  /* clip the inline axis only (M3): the ellipsis lives on the asset line's
+     own text box, the cell only keeps its track, and the text's label trigger
+     keeps its --hit-min square in the block axis. A clip MARGIN here would
+     count the clipped text's first 12px as page overflow (the fold scrolled
+     sideways by 6px at 390). */
+  overflow-x: clip;
+  overflow-y: visible;
+  min-width: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
 }

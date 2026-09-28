@@ -28,6 +28,7 @@ import {
   sideLabel,
   ownerNote,
   ownerNoteLong,
+  joinQualifiers,
   flagChips,
   lagHtml,
   tradedText,
@@ -390,20 +391,31 @@ test("partyClass: an unmappable party is not painted as Independent", () => {
   assert.equal(partyClass("Libertarian"), "unknown");
 });
 
+/* DESIGN-POLISH M3 (R18, T3.2/T3.10): one disclosed-trade vocabulary — BUY,
+   SELL, EXCHANGE, and "—" when the side did not parse; a partial sale reads
+   SELL (its "partial" qualifier is ownerNote's). An unparsed side is still
+   never the named category "Other". */
 test("sideLabel: an unparsed side is not presented as the category 'Other'", () => {
-  assert.equal(sideLabel("purchase").text, "Purchase");
-  assert.equal(sideLabel("sale").text, "Sale");
-  assert.equal(sideLabel("sale_partial").text, "Sale");
-  assert.equal(sideLabel("exchange").text, "Exchange");
+  assert.equal(sideLabel("purchase").text, "BUY");
+  assert.equal(sideLabel("sale").text, "SELL");
+  assert.equal(sideLabel("sale_partial").text, "SELL");
+  assert.equal(sideLabel("exchange").text, "EXCHANGE");
   assert.equal(sideLabel("other", ["side_unparsed"]).text, "—");
   assert.equal(sideLabel("other", ["side_unparsed"]).cls, "unknown");
+  assert.equal(sideLabel("other").text, "—", "no flag: still never 'Other'");
 });
 
+/* DESIGN-POLISH M3 (R17, T3.3/T3.10): the qualifiers survive, short and long,
+   but UNPREFIXED — the one separator is `joinQualifiers`'s, so no caller can
+   print "· ·" or open a cell with a separator (A9). */
 test("ownerNote: partial-sale and ownership qualifiers survive, short and long", () => {
-  assert.equal(ownerNote({ side: "sale_partial", owner: "joint" }), "· partial · JT");
+  assert.deepEqual(ownerNote({ side: "sale_partial", owner: "joint" }), ["partial", "JT"]);
+  assert.equal(joinQualifiers(ownerNote({ side: "sale_partial", owner: "joint" })), "partial · JT");
   assert.equal(ownerNoteLong({ side: "sale_partial", owner: "joint" }), "partial sale, jointly owned");
-  assert.equal(ownerNote({ side: "purchase", owner: "spouse" }), "· SP");
-  assert.equal(ownerNote({ side: "purchase", owner: null }), "");
+  assert.deepEqual(ownerNote({ side: "purchase", owner: "spouse" }), ["SP"]);
+  assert.deepEqual(ownerNote({ side: "purchase", owner: null }), []);
+  assert.equal(joinQualifiers(["", "partial", null, " ", "SP", undefined]), "partial · SP", "empties never leave a separator");
+  assert.equal(joinQualifiers([]), "");
 });
 
 test("flagChips: an unbounded amount always gets an 'amount unparsed' chip", () => {
@@ -476,7 +488,8 @@ test("row HTML: both dates are present in the markup on every row", () => {
 
 test("row HTML: the partial/owner qualifier is in the markup, not styling-only", () => {
   const html = txnRowHtml(txn({ side: "sale_partial", owner: "joint" }), CTX);
-  assert.ok(html.includes("· partial · JT"));
+  assert.ok(html.includes('<span class="owner-note">partial · JT'), "one join, no leading separator (M3, R17)");
+  assert.ok(!html.includes("· ·"));
   assert.ok(html.includes("partial sale, jointly owned"), "spelled out for assistive tech");
 });
 
@@ -1009,16 +1022,38 @@ import { displayIssuerName } from "../src/lib/format.ts";
 test("R9: displayIssuerName matches the shared Python fixture case for case", () => {
   const fixture = JSON.parse(
     readFixture(new URL("../../tests/fixtures/refinement/display_issuer_name_cases.json", import.meta.url), "utf-8"),
-  ) as { cases: { names: (string | null)[]; expect: string | null }[] };
+  ) as { cases: { names: (string | null)[]; weights?: number[]; expect: string | null }[] };
   assert.ok(fixture.cases.length >= 10);
+  /* DESIGN-POLISH M3 (D4 (a), A-6): the optional `weights` pass through, so
+     the weighted case pins the SUM that decides the spelling. */
+  assert.ok(fixture.cases.some((c) => c.weights), "the fixture carries a weighted case");
   for (const c of fixture.cases) {
-    assert.equal(displayIssuerName(c.names), c.expect, JSON.stringify(c));
+    assert.equal(displayIssuerName(c.names, c.weights), c.expect, JSON.stringify(c));
   }
 });
 
 test("R9: weights are honoured and a lone numeric name is still returned", () => {
-  assert.equal(displayIssuerName(["A CO", "B CO"], [1, 3]), "B Co");
+  // D4 (a): verbatim, never title-cased ("B CO", not "B Co").
+  assert.equal(displayIssuerName(["A CO", "B CO"], [1, 3]), "B CO");
   assert.equal(displayIssuerName(["438516106"]), "438516106");
+});
+
+/* D4 (a) control: the retired rule — title-case every token, fold TR — is a
+   DIFFERENT function on this fixture; a planted title-case expectation fails.
+   This proves the fixture pins case, not only the chosen group. */
+test("D4 control: a title-cased expectation fails the verbatim rule", () => {
+  const titleCase = (s: string): string =>
+    s.split(" ").map((t) => (t === "TR" ? "TRUST" : t)).map((t) => t.slice(0, 1).toUpperCase() + t.slice(1).toLowerCase()).join(" ");
+  const fixture = JSON.parse(
+    readFixture(new URL("../../tests/fixtures/refinement/display_issuer_name_cases.json", import.meta.url), "utf-8"),
+  ) as { cases: { names: (string | null)[]; weights?: number[]; expect: string | null }[] };
+  const planted = fixture.cases.filter((c) => c.expect !== null && titleCase(c.expect) !== c.expect);
+  assert.ok(planted.length >= 5, "most cases differ under title-casing");
+  for (const c of planted) {
+    assert.notEqual(displayIssuerName(c.names, c.weights), titleCase(c.expect!), `planted title-case expectation must fail: ${JSON.stringify(c)}`);
+  }
+  // the embedded CUSIP keeps its capitals — the letter the old rule lowered
+  assert.equal(displayIssuerName(["EXXON MOBIL CORP COM EXCHANGED FOR CUSIP 30233Q108"]), "EXXON MOBIL CORP COM EXCHANGED FOR CUSIP 30233Q108");
 });
 
 /* ---------- R3 (refinement 20260910): Tier C key normalizers parity ---------- */

@@ -19,6 +19,8 @@ import {
   type NoteCtx,
   assetNameCell,
   changeEdgeAttr,
+  kindWordHtml,
+  fmtCik,
   fnMark,
   hangMark,
   noteBody,
@@ -35,7 +37,7 @@ import {
   fmtUsd,
   amountText,
   sideLabel,
-  ownerNote,
+  ownerQualifiersHtml,
   flagTags,
   universalFlags,
   universalFlagNote,
@@ -112,10 +114,13 @@ const HOLDERS_MAPPING_NOTE =
   `ticker→issuer via the SEC's present-day ticker file (company_tickers.json), matched only ` +
   `against entity-keyed issuers in the aggregate — a present-day mapping, not the name as of ` +
   `each filing`;
+/* Architecture H (G-11): the holders surfaces read `agg_issuer_top_holders`
+   (lib/inst.ts), which carries none of these fields; the table name and the
+   design mockup are not reader vocabulary. */
 const HOLDERS_DERIVED_NOTE =
-  `derived by Public Filings from the published aggregate (agg_issuer_top_holders); the ` +
-  `mockup's per-holder filed dates, lags, share counts and document links are not in the ` +
-  `published aggregate and are not shown — the EDGAR link opens the filer's 13F filings`;
+  `derived by Public Filings from this build's published top-holders list; per-holder filed ` +
+  `dates, lags, share counts and document links are not in that list and are not shown — the ` +
+  `EDGAR link opens the filer's 13F filings`;
 
 export function holdersBody(
   ticker: string,
@@ -343,7 +348,11 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
     // is `held`. The fact is kept (the pair's share counts are equal), the
     // retired mechanism is named as retired rather than stated as current, and
     // the producer slug stays so an older aggregate remains decodable.
-    html: `the reported share count is unchanged across the pair, so the position reads as held rather than as a buy or a sell; only builds before this release inferred a direction from the reported value instead <code>classified_by_value</code>`,
+    /* W-7 (M3 review): the marker appears ONLY on a row the producer
+       classified by value — an ADD or TRIM word on an unchanged share count —
+       so "reads as held" beside that word was false. It says what this
+       build's data did, and what builds after R8 do instead. */
+    html: `the reported share count is unchanged across the pair; this build's data classified the change from its reported value; builds from 2026-09-10 on read it as NO CHANGE <code>classified_by_value</code>`,
   },
   {
     mark: "‡u",
@@ -355,7 +364,7 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
   {
     mark: "‡e",
-    html: `"exit" = absent this quarter: disposed, delisted, under confidential treatment, or reported instead by an affiliated manager — the filing does not say which`,
+    html: `EXIT = absent this quarter: disposed, delisted, under confidential treatment, or reported instead by an affiliated manager — the filing does not say which`,
   },
   {
     mark: "n/c",
@@ -367,11 +376,11 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
   {
     mark: "held",
-    html: `"no change" = the share count is identical in both quarters; the value moved only with price, so the row is mark-to-market and never an add or a trim (Add / New / Trim / Exit / No change)`,
+    html: `NO CHANGE = the share count is identical in both quarters; the value moved only with price, so the row is mark-to-market and never an ADD or a TRIM (NEW / ADD / TRIM / EXIT / NO CHANGE)`,
   },
   {
     mark: "np",
-    html: `"no prior" = this filer has no comparable holdings list for the previous quarter on record — a first filing under this registration, or a quarter reported inside an affiliated manager's filing — so the position is not called a new stake`,
+    html: `NO PRIOR = this filer has no comparable holdings list for the previous quarter on record — a first filing under this registration, or a quarter reported inside an affiliated manager's filing — so the position is not called a new stake`,
   },
 ];
 
@@ -632,10 +641,17 @@ export function changesTableHtml(
       ? terminusRow({
           author: "populus",
           html:
+            /* Architecture H (H-18): the counts are `total - embedded` and
+               `total`; "derivable from" is kept because a change is computed
+               from two filings, not printed in either. W-4 (M3 review): the
+               embed keeps rows in `compareQoqDeltas` order — the position's
+               reported value (this quarter's, else last quarter's), NOT the
+               size of the change — so "keeps the largest" was false. */
             `${fmtInt(total - embedded)} of this filer's ${fmtInt(total)} quarter-over-quarter ` +
-            `changes for ${esc(period)} are not embedded in this page — the page byte budget ` +
-            `caps the embed, and the largest changes are kept. The rest are in the published ` +
-            `aggregate (agg_qoq_deltas) and derivable from the filings themselves. ` +
+            `changes for ${esc(period)} are not included on this page, which keeps the changes on ` +
+            `its largest positions by reported value (this quarter's, or last quarter's where this ` +
+            `quarter has none, as for an exit) to stay within its size budget. The rest are in this build's published data and ` +
+            `derivable from the filings themselves. ` +
             `<a href="/methodology/#m2">methodology §13F ↗</a>`,
         })
       : "") +
@@ -720,7 +736,9 @@ export function filerPeriodSectionHtml(
   deltas: QoqDeltaRow[],
   period: string,
   latestFiled: string | null,
-  topn: number,
+  /* kept in the signature its callers share: the changes terminus no longer
+     names the top-N slice, because changes are not drawn from it (H-3) */
+  _topn: number,
   opts: FilerPeriodOpts = {},
 ): string {
   /* R6: the producer flagged this filer-period as a BOOK DISCONTINUITY —
@@ -737,7 +755,7 @@ export function filerPeriodSectionHtml(
     total === 0
       ? `<p class="section-note">No quarter-over-quarter rows land in ${esc(
           period,
-        )} — either the first period on record for this filer, or nothing keyable on either side.</p>`
+        )} — either this filer's first period on record, or neither quarter has a position with a security identifier.</p>`
       : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page, kind: opts.kind ?? null, chips: false });
   /* DESIGN-POLISH M2 (F.3): the period and kind segments sit on this band's
      head. The period chips re-render with the section (their clicks are
@@ -760,7 +778,13 @@ export function filerPeriodSectionHtml(
     changes +
     terminusRow({
       author: "populus",
-      html: `Changes derive from the aggregate's top-${fmtInt(topn)} slices and keyable positions only; unkeyable holdings are counted in the registry, not differenced. <a href="/methodology/#m2">methodology §13F ↗</a>`,
+      /* Architecture H (H-3): QoQ pairs EVERY default position keyed by
+         security id or CUSIP (inst_agg.py:83-94, :669-683, :898-965), calls
+         the unmatched ones new (or no prior) and exit (:940-944), and counts a
+         keyless holding in the registry (`unkeyed_positions`, :1173-1174);
+         `topn` bounds only top holders and concentration. The old "top-25
+         slices" sentence was false. */
+      html: `Changes compare every position with a security identifier, new and exited included; holdings without one are counted, not compared. <a href="/methodology/#m2">methodology §13F ↗</a>`,
     }) +
     `</section>`
   );
@@ -829,7 +853,7 @@ export function filerHeadHtml(
     breadcrumb([
       { text: "/institutional", href: "/institutional/" },
       { text: "filers" },
-      { text: `CIK ${filer.cik}` },
+      { text: `CIK ${fmtCik(filer.cik)}` },
     ]) +
     `<header class="entity-head">` +
     `<div class="entity-head-copy">` +
@@ -841,7 +865,7 @@ export function filerHeadHtml(
     (typing ? `${esc(MANAGER_TYPE_LABELS[typing.manager_type] ?? typing.manager_type)}${typing.notable ? ` · <span class="mgr-chip mgr-chip-notable">notable</span>` : ""} · ` : "") +
     (conc ? `${esc(fmtUsd(conc.total_value_usd))} reported 13(f) long value · ` : "") +
     (typing && typing.display_name !== filer.name ? `<span class="mono-note filed-name">filed as ${esc(filer.name)}</span> · ` : "") +
-    `latest quarter <span class="mono-id">${esc(filer.latestPeriod)}</span> · <span class="mono-id">CIK ${esc(filer.cik)}</span> · <a class="mono-note" href="${esc(
+    `latest quarter <span class="mono-id">${esc(filer.latestPeriod)}</span> · <span class="mono-id">CIK ${esc(fmtCik(filer.cik))}</span> · <a class="mono-note" href="${esc(
       edgarFilerUrl(filer.cik),
     )}" rel="noopener" target="_blank">EDGAR ↗</a></div>` +
     `</div>` +
@@ -916,7 +940,15 @@ export function filerEdgarBlock(cik: string, filerName: string): string {
   return (
     `<details class="edgar-block design-supplement" aria-label="Full holdings on EDGAR"><summary>Complete source filings on SEC EDGAR</summary>` +
     `<h2 class="section-h">The complete filing on EDGAR.</h2>` +
-    `<p>The position list above is served from the published Public Filings build — every position this filer reported for the selected quarter, as it reported it. This block is <strong>provenance, not a substitute</strong>: the filing itself is the record, and it is one click away. Serving this list is <a href="/methodology/">M2-CONTRACT §3</a>, amended 2026-08-02; §3.1 keeps live EDGAR for filings newer than this build.</p>`+
+    /* Architecture H (V1 NEW-1, H-8, round 3 NEW-1): 2026-08-01 is the date of
+       the owner's decision and of the M2-CONTRACT §3 amendment
+       (docs/architecture/decisions/holdings-publication.md:3, :83;
+       docs/architecture/data-contracts/institutional-13f.md:52); nothing was
+       SERVED on it — the site was not deployed until later — so the sentence
+       states the decision, never "has served since". This block cannot know
+       whether the page is size-capped, so the completeness claim lives on the
+       list, whose terminus states the cap. */
+    `<p>The position list above is served from the published Public Filings build, each position as this filer reported it; where the page cannot embed every reported row, the list says how many it leaves out. This block is <strong>provenance, not a substitute</strong>: the filing itself is the record, and it is one click away. Public Filings decided on 2026-08-01 to serve this list from its published build; filings newer than this build are on EDGAR.</p>`+
     `<a class="cta" href="${esc(edgarFilerUrl(cik))}" rel="noopener" target="_blank">Open ${esc(
       filerName,
     )}'s 13F filings on SEC EDGAR ↗</a>` +
@@ -1305,18 +1337,20 @@ export function notableRailHtml(res: NotableRecentResult, ctx: RenderCtx): strin
   const rows = res.rows
     .map((r) => {
       const side = sideLabel(r.side, r.flags);
-      const owner = ownerNote(r);
+      const owner = ownerQualifiersHtml(r);
       const who = r.bioguide
         ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>`
         : esc(r.name);
+      /* K-3 (M3 review): a no-ticker asset is a label trigger whose note
+         gives it as filed */
       const what = r.ticker
         ? `<a class="mono-ticker" href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
-        : assetNameCell(r);
+        : assetNameCell(r, { scope: "rail-asset" });
       return (
         `<div class="rail-row" role="listitem">` +
         `<span class="rail-who">${who} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span></span>` +
         `<span class="rail-what">${what}</span>` +
-        `<span class="rail-side ${side.cls}">${esc(side.text)}${owner ? ` <span class="owner-note">${esc(owner)}</span>` : ""}</span>` +
+        `<span class="rail-side ${side.cls}">${esc(side.text)}${owner ? ` ${owner}` : ""}</span>` +
         `<span class="rail-amount">${esc(amountText(r))}</span>` +
         `<span class="rail-filed">filed ${esc(r.filed)}</span>` +
         srcLink(r.doc, "rail-src") +
@@ -1384,7 +1418,7 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
         `<td class="c-num">${h.value_usd == null ? "—" : esc(fmtUsd(h.value_usd))}</td>` +
         `<td class="c-num">${h.shares == null ? "—" : fmtInt(h.shares)}</td>` +
         `<td class="c-num ${h.delta_shares == null ? "c-muted" : h.delta_shares < 0 ? "c-sell" : h.delta_shares > 0 ? "c-buy" : ""}">${h.delta_shares == null ? "—" : `${h.delta_shares < 0 ? "−" : h.delta_shares > 0 ? "+" : ""}${fmtInt(Math.abs(h.delta_shares))}`}</td>` +
-        `<td class="c-chip c-kind"><span class="qoq-chip qoq-${esc(h.change_kind)}">${esc(h.change_kind === "held" ? "no change" : h.change_kind === "no_prior" ? "no prior" : h.change_kind)}</span></td></tr>`,
+        `<td class="c-chip c-kind">${kindWordHtml(h.change_kind)}</td></tr>`,
     )
     .join("\n");
   return (
@@ -1413,6 +1447,11 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     cardFoot({ short: `Quarter ended ${t.period_of_report}`, full: instFiledNote(i.latestFiled), scope: "ticker-holders-foot", key: "stamp" }) +
     `</section>` +
     i.overlapHtml +
-    (i.congress ? `<p class="section-note"><a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} of Congress disclosed ${esc(i.ticker)} — the congressional view ↗</a></p>` : "")
+    (i.congress ? `<p class="section-note"><a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} of Congress disclosed ${esc(i.ticker)} — the congressional view ↗</a></p>` : "") +
+    /* CD-3 (DESIGN-POLISH M3, carried): the reviewed-mapping holders path is
+       an institutional surface like every other, so the §5 data note ships
+       with its body by construction — the entity path gets it from
+       HoldingsTable; this path rendered none. */
+    institutionalDataNoteHtml()
   );
 }

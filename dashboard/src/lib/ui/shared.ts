@@ -45,7 +45,69 @@ export function asOfNote(stamps: BuildStamps): string {
   return `as of ${esc(stamps.generatedAt)}`;
 }
 
-/* `footnotesId` is gone from this path. It existed ONLY so the ≈
+/** Sector keys as words (DESIGN-POLISH M3, R22, T3.6). The keys are the site's
+    own taxonomy (`src/populus/sic_taxonomy.yaml`, taxonomy v1); the words are
+    the SIC Manual's (1987) division titles, as published by OSHA
+    (https://www.osha.gov/data/sic-manual, read 2026-09-26: "Division A:
+    Agriculture, Forestry, And Fishing" … "Division J: Public Administration").
+    `nonclassifiable` is the manual's Major Group 99 title; `unknown` is the
+    taxonomy's declared bucket (no SIC, a malformed one, or one outside every
+    range) and says so. A test fails when the taxonomy gains a key this table
+    does not label. */
+export const SECTOR_LABELS: Readonly<Record<string, string>> = {
+  agriculture: "Agriculture, Forestry, and Fishing",
+  mining: "Mining",
+  construction: "Construction",
+  manufacturing: "Manufacturing",
+  "transport-utilities": "Transportation, Communications, Electric, Gas, and Sanitary Services",
+  wholesale: "Wholesale Trade",
+  retail: "Retail Trade",
+  "finance-insurance-realestate": "Finance, Insurance, and Real Estate",
+  services: "Services",
+  "public-administration": "Public Administration",
+  nonclassifiable: "Nonclassifiable Establishments",
+  unknown: "Unknown (no SIC division on record)",
+};
+
+/** The words for a sector key; a key the table does not know prints as itself
+    (never guessed into a division). */
+export function sectorLabel(key: string): string {
+  return Object.hasOwn(SECTOR_LABELS, key) ? SECTOR_LABELS[key]! : key;
+}
+
+/** The smallest statutory amount bucket's upper bound ($1,001–$15,000): a net
+    range inside ±this cannot tell a flat position from one small trade. */
+export const FLAT_NET_BOUND = 15_000;
+
+/** The member flows' Net kind word (DESIGN-POLISH M3, R18, D-15): NET BUY when
+    the whole net range is above zero, NET SELL when it is below, FLAT when it
+    is BOUNDED on both sides, spans zero, and stays inside the smallest bucket
+    (both bounds within ±$15,000 — W-10, coordinator ruling on the M3 review),
+    "±" when a bounded range spans zero more widely (−$15K to +$1.05M is not
+    "flat"), and "—" when no direction can be stated — an undisclosed side, or
+    an open bound whose range still reaches across zero. `why` says so for
+    assistive technology; the Net range cell beside it prints the range itself
+    ("not disclosed", "unbounded", "at least …"). */
+export function netKindWord(net: NetInterval): { word: "NET BUY" | "NET SELL" | "FLAT" | "±" | "—"; why: string | null } {
+  const dir = netDirection(net);
+  if (dir === "accumulation") return { word: "NET BUY", why: null };
+  if (dir === "disposal") return { word: "NET SELL", why: null };
+  if (net.kind === "empty") return { word: "FLAT", why: "the net range spans zero" };
+  if (net.kind === "finite") {
+    return Math.abs(net.low) <= FLAT_NET_BOUND && Math.abs(net.high) <= FLAT_NET_BOUND
+      ? { word: "FLAT", why: "the net range spans zero" }
+      : { word: "±", why: "net range spans zero" };
+  }
+  return {
+    word: "—",
+    why: net.kind === "undisclosed" ? "no direction: a side of the net range was not disclosed" : "no direction: the net range is open and reaches across zero",
+  };
+}
+
+/* K-10 (M3 review): this note sat above `SECTOR_LABELS`; it is about the
+   Net column's ≈ marker, so it lives here.
+
+   `footnotesId` is gone from this path. It existed ONLY so the ≈
    marker could point at whichever of /congress/'s two ranking footnote blocks
    belonged to its section. Both blocks are deleted and their text moves onto the
    Net column's header note, so there is no id left to thread — and threading a

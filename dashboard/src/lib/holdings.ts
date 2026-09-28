@@ -1460,7 +1460,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
        low/high bounds); a `FilerHoldingRow` has no bounds, so its presented set
        is its flags plus the provenance badge. */
     opts.rows.map((r) => [
-      ...r.flags,
+      ...presentedHoldingFlags(r),
       ...(provOf.get(r)!.known ? [] : ["filing_not_in_dictionary"]),
     ]),
   );
@@ -1507,7 +1507,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         const issuerName = row.issuer_name || "Issuer unnamed";
         return `<tr class="design-holding-row">` +
           (has("ticker") ? `<td class="c-ticker">${tickerCell}</td>` : "") +
-          `<td class="c-pos c-flex">${noteFromHtml(positionCell(row) + `<br>` + provenanceCellHtml(prov, statedHoldings), { scope: "filer-position-record" }, `${opts.page}-${rowIndex}`, { trigger: "label", textHtml: `<span class="design-holding-name"><span class="filed-name">${esc(issuerName)}</span></span>`, name: issuerName })} ${src}${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
+          `<td class="c-pos c-flex">${noteFromHtml(positionCell(row) + `<br>` + provenanceCellHtml(prov, statedHoldings), { scope: "filer-position-record" }, `${opts.page}-${rowIndex}`, { trigger: "label", textHtml: `<span class="design-holding-name"><span class="filed-name">${esc(issuerName)}</span></span>`, name: issuerName })} ${src}${flagTags(presentedHoldingFlags(row), undefined, { stated: statedHoldings })}</td>` +
           (has("weight") ? `<td class="c-bar"><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0,Math.min(100,weight))}%"></span>`}</span></td>` : "") +
           `<td class="c-num c-strong has-marks">${valueCell(row.value_usd)}</td><td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td>` +
           (has("wt") ? `<td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td>` : "") +
@@ -1519,7 +1519,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         `<td class="c-num c-strong has-marks">${valueCell(row.value_usd)}</td>` +
         `<td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td>` +
         `<td class="c-dates">${provenanceCellHtml(prov, statedHoldings)}</td>` +
-        `<td class="c-flags">${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
+        `<td class="c-flags">${flagTags(presentedHoldingFlags(row), undefined, { stated: statedHoldings })}</td>` +
         `<td class="c-src">${src}</td>` +
         `</tr>`
       );
@@ -1555,7 +1555,12 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         );
       })
       .join("");
-    const flags = [...new Set(g.rows.flatMap((r) => r.flags))];
+    /* W-6 (M3 review): R25 on the GROUP line — a line that shows a reviewed
+       ticker is not "ticker not yet mapped", even when one of its rows (an
+       option leg, another class) carries the flag */
+    const flags = [...new Set(g.rows.flatMap((r) => presentedHoldingFlags(r)))].filter(
+      (f) => !(f === "missing_security" && tickered.length > 0),
+    );
     return (
       `<tr class="design-holding-row design-holding-group">` +
       (has("ticker") ? `<td class="c-ticker">${tickerCell}</td>` : "") +
@@ -1583,6 +1588,13 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     ? pageGroups.map((g, gi) => held(g.rows.length === 1 ? renderRow(g.rows[0]!, gi) : groupRowHtml(g, gi), gi)).join("\n")
     : pageRows.map(renderRow).join("\n");
   const compactCollapsed = groups != null && pageGroups.length > compactN;
+  /* M2V-D2 (DESIGN-POLISH M3, carried): a grouped table that shows its WHOLE
+     collection — one page, every reported row embedded, nothing held back —
+     renders the disclosure's hidden SHELL, so it carries its own count
+     (`data-compact-total` = `data-compact-shown`) and G9's complete-primary
+     exemption can read it, as the Consensus board already does. A paged or
+     size-capped table never renders the shell: its page is not the collection. */
+  const completeShell = groups != null && !compactCollapsed && pageCount === 1 && total === matched;
 
   const folded = groups != null && groups.length !== matched;
   const rangeText = holdingsRangeText({
@@ -1651,8 +1663,8 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     /* The disclosure renders only while rows are held back: this table is
        re-rendered whole by every client action (HoldingsTable's draw), so it
        never needs a shell to gain a control later. */
-    `<tbody${compactCollapsed ? ' id="filer-holdings-tbody" data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
-    (compactCollapsed
+    `<tbody${compactCollapsed ? ' id="filer-holdings-tbody" data-collapsed="true"' : completeShell ? ' id="filer-holdings-tbody"' : ""}>${body}</tbody></table></div>` +
+    (compactCollapsed || completeShell
       ? compactDisclosure({
           rootId: "filer-holdings-tbody",
           total: pageGroups.length,
@@ -1671,19 +1683,60 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     (refCols ? tableFootReasonHtml(refCols, ["Change kind and share change are in Position changes above; Congress overlap is planned."]) : "") +
     truncation +
     pagerHtml({ page: opts.page, pageCount, rangeText, idPrefix: "holdings" }) +
-    `<div class="caveat-line">every row this filer reported for the quarter, as it reported ` +
-    `it — cross-filer de-duplication is applied to issuer totals elsewhere and never deletes ` +
-    `a row here</div>`
+    holdingsCaveatHtml(groups != null, total, matched)
   );
 }
 
+/** The flags a holdings row PRESENTS (DESIGN-POLISH M3, R25, T3.9).
+    `missing_security` means the reported CUSIP matched no security-master
+    interval (normalize_inst.py), and its chip reads "ticker not yet mapped" —
+    which is FALSE on a row that shows a reviewed ticker. So the chip is
+    presented only where no reviewed ticker is shown, and the hoist to the
+    table's header runs over these presented flags, never the raw ones: a
+    table with one ticker row and one unmapped row hoists nothing and shows
+    one chip. The producer's flag itself is untouched. */
+export function presentedHoldingFlags(row: Pick<FilerHoldingRow, "flags" | "ticker">): string[] {
+  return row.ticker ? row.flags.filter((f) => f !== "missing_security") : [...row.flags];
+}
+
+/** The caveat under Reported positions (Architecture H, H-8). What the
+    table IS: grouped by issuer on the filer page (`groupHoldingsByIssuer`:
+    a row with no issuer key stands alone under its position identity; groups
+    rank by group total), or each row as filed. The completeness sentence
+    renders ONLY when every reported row is embedded (`total === matched`); a
+    size-capped page (`total > matched`) prints none, because its terminus
+    already says how many rows are not embedded and why. The de-duplication
+    detail lives on /methodology/#filer-positions. */
+export function holdingsCaveatHtml(grouped: boolean, total: number, matched: number): string {
+  const what = grouped
+    ? "One line per issuer, largest first; a row with no issuer key stands on its own line. Open a line for its rows as this filer reported them."
+    : "Each row as this filer reported it.";
+  /* The plan's "These are all the rows …" is written with "every" (M3-D in
+     DEV-NOTES): the unqualified-"all" ban (`unqualifiedAllClaims`) admits
+     "all" only before a qualifier, and this is the old caveat's own word for
+     the same fact ("every row this filer reported for the quarter"). */
+  const all = total === matched ? " The list holds every row this filer reported for the quarter." : "";
+  return (
+    `<div class="caveat-line">${what}${all} Issuer totals on the holders pages count each ` +
+    `manager's own report once; that never removes a row here. ` +
+    `<a href="/methodology/#filer-positions">how positions are grouped ↗</a></div>`
+  );
+}
+
+/* DESIGN-POLISH M3 (R19): caps words in the change-kind style. This view is
+   NOT a QoQ classification (`diffPeriods`: value first, and a position
+   missing from one period's rows is absent there, not an authoritative exit),
+   so it keeps its own words — mapping them onto NEW / EXIT / ADD / TRIM would
+   claim what the comparison cannot know (qoq-presentation.md §1, as amended).
+   UNCHANGED is a classified state, so it takes the neutral hook, never the
+   n/c hatch. */
 function diffChip(kind: DiffKind): string {
   const map: Record<DiffKind, { text: string; cls: string; marker?: string }> = {
-    added: { text: "added", cls: "qoq-new" },
-    removed: { text: "absent", cls: "qoq-exit", marker: "‡a" },
-    increased: { text: "increased", cls: "qoq-add" },
-    decreased: { text: "decreased", cls: "qoq-trim" },
-    unchanged: { text: "unchanged", cls: "qoq-nc" },
+    added: { text: "ADDED", cls: "qoq-new" },
+    removed: { text: "ABSENT", cls: "qoq-exit", marker: "‡a" },
+    increased: { text: "INCREASED", cls: "qoq-add" },
+    decreased: { text: "DECREASED", cls: "qoq-trim" },
+    unchanged: { text: "UNCHANGED", cls: "qoq-held" },
     unclassified: { text: "n/c", cls: "qoq-nc" },
   };
   const m = map[kind];
@@ -2224,9 +2277,11 @@ export function projectionAbsentHtml(kind: "filer" | "holders", edgarUrl: string
       kind === "filer" ? "Reported positions" : "Resolved holders"
     }</h2><span class="panel-note">not published in this build</span></div>` +
     `<p class="section-note">This build does not ship the holdings list, so ${what} is ` +
-    `not served here. M2-CONTRACT §3 was amended on 2026-08-02 to serve it; a build that has ` +
-    `not published it says so rather than rendering an empty table. The primary source is the ` +
-    `filing itself:</p>` +
+    /* Architecture H (G-11, V1 NEW-1): the amendment is the owner's DECISION
+       of 2026-08-01 (holdings-publication.md:3, :83), in plain words */
+    `not served here. Public Filings decided on 2026-08-01 to serve this list from its ` +
+    `published build; a build that has not published it says so rather than showing an empty ` +
+    `table. The primary source is the filing itself:</p>` +
     (edgarUrl
       ? `<p class="section-note"><a class="cta" href="${esc(
           edgarUrl,

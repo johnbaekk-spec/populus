@@ -175,11 +175,16 @@ test("SL-R22: the truncation terminus and the pager both survive", () => {
      a terminus is exactly the kind of line that disappears in a refactor. */
   const html = body([delta()], CONC, { total: 5000, page: 0 });
   assert.match(html, /class="terminus" data-terminus-author="populus"/, "the changes terminus stands");
+  /* DESIGN-POLISH M3 (Architecture H, H-3; T3.10): the terminus now states
+     what is TRUE of the rows — QoQ compares every position with a security
+     identifier (new and exited included) and counts the keyless ones; the old
+     "top-25 slices" sentence was false (changes are not drawn from the top-N). */
   assert.match(
     html,
-    /Changes derive from the aggregate's top-25 slices and keyable positions only/,
-    "…stating exactly what it stated",
+    /Changes compare every position with a security identifier, new and exited included; holdings without one are counted, not compared\./,
+    "…stating what is true of the rows",
   );
+  assert.doesNotMatch(html, /top-25 slices|keyable|differenced/, "control: the false sentence and its pipeline words are gone");
   assert.match(html, /methodology\/#m2/, "with its methodology link intact");
 });
 

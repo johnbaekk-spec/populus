@@ -256,11 +256,18 @@ test("SL-R10: the five deleted termini took NOTHING with them — every clause s
   assert.match(adds, /Every issuer in this quarter's bounded payload remains in /);
   assert.match(adds, /<a href="\/institutional\/data\/adds\/2026-03-31\.all\.v1\.json">the published JSON<\/a>/);
 
+  /* DESIGN-POLISH M3 (Architecture H, H-1; T3.10): the activity feed's
+     publication bound, clause by clause, in plain words — the published
+     count, the file count and the per-file limits all still ship; the shard
+     path pattern moved to /methodology/#activity-files (asserted there by the
+     post-build anchor check), and the first file stays one link away. */
   const feed = surfaces.get("institutional activity feed")!;
-  assert.match(feed, /ordered change records published in this build/, "the publication bound");
-  assert.match(feed, /same-origin file/, "…its file count");
-  assert.match(feed, /institutional\/data\/activity\/&lt;page&gt;\.v1\.json/, "…the shard base path");
-  assert.match(feed, /records or [\d,]+ bytes of serialized JSON/, "…and the per-shard limits");
+  assert.match(feed, /changes this build publishes|This build publishes/, "the publication bound");
+  assert.match(feed, /as [\d,]+ files? of at most/, "…its file count");
+  assert.match(feed, /<a href="[^"]*\/0\.v1\.json">Open the first file ↗<\/a>/, "…the first file, one link away");
+  assert.match(feed, /of at most [\d,]+ changes or [\d,]+ bytes each/, "…and the per-file limits");
+  const methodology = readFileSync(new URL("../src/pages/methodology/index.astro", import.meta.url), "utf8");
+  assert.match(methodology, /id="activity-files"[\s\S]*?\/institutional\/data\/activity\/&lt;page&gt;\.v1\.json/, "…and the path pattern lives on /methodology/");
 
   // The directory's clause is on an Astro page, so it is read from source.
   const page = readFileSync(new URL("../src/pages/institutional/index.astro", import.meta.url), "utf8");
@@ -990,8 +997,11 @@ test("CODE-REVIEW F7: the activity truncation notice never prints a raw provisio
     },
     4,
   ) as string;
-  // The publication bound is honesty content and must survive verbatim.
-  assert.match(html, /further records are not published here/);
+  /* The publication bound is honesty content and must survive — in the plain
+     words of Architecture H since DESIGN-POLISH M3 (a null boundary: every
+     disclosed change is published, the undisclosed ones are not). */
+  assert.match(html, /<strong>12<\/strong> changes whose value was/);
+  assert.match(html, /This list stops at 4 files: every change with a disclosed value is published/);
   /* SL-R17 permits the raw key in exactly two channels — a note panel and a
      `data-` attribute — and forbids it as page prose. So strip the ALLOWED
      channels first, then assert on what a reader actually sees unaided. An

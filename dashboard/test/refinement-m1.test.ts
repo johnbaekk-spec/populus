@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { changesTableHtml } from "../src/lib/ui/institutional.ts";
 import { notableActivity, type ActivityFeed, type ActivityRecord } from "../src/lib/activity.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
+import { domOf, visibleText } from "./lib/ledger-dom.ts";
 
 function qoq(over: Partial<QoqDeltaRow> = {}): QoqDeltaRow {
   return {
@@ -40,7 +41,14 @@ test("R8: held rows leave the paged changes table and render once in the collaps
   const [mainTable, heldPart] = html.split('<details class="qoq-held-group"');
   assert.ok(heldPart, "the held group renders");
   assert.ok(heldPart.includes("Mark-to-market only (no share change) · 1"));
-  assert.ok(heldPart.includes("MICROSOFT CORP") && heldPart.includes('class="qoq-chip qoq-held">no change</span>'));
+  /* DESIGN-POLISH M3 (R19, L5; T3.10): the held row's kind cell reads NO
+     CHANGE — read by DOM parse, so the pin is the word a reader sees in that
+     row's kind cell, not a markup spelling. */
+  const heldRows = domOf("<details" + heldPart).querySelectorAll("tbody tr");
+  assert.equal(heldRows.length, 1, "one held row");
+  assert.ok(visibleText(heldRows[0]!).includes("MICROSOFT CORP"));
+  assert.equal(visibleText(heldRows[0]!.querySelector("td.c-kind")!).trim(), "NO CHANGE");
+  assert.equal(heldRows[0]!.getAttribute("data-edge"), "nochange", "the neutral edge beside the word");
   assert.ok(!mainTable!.includes("MICROSOFT CORP"), "held row is not in the paged table");
   assert.ok(mainTable!.includes("APPLE INC") && mainTable!.includes("NVIDIA CORP"));
   // R1: the name leads, the class is secondary, the key is in the ⓘ — not a cell.

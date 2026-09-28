@@ -177,12 +177,19 @@ def test_selector_periods_offers_a_quiet_quarter_the_adds_rows_never_mention():
 
 
 def test_selector_periods_never_offers_an_open_quarter():
-    """Strictly after the 45-day deadline, measured against the BUILD date."""
-    period = "2026-06-30"
-    deadline = date.fromisoformat(period) + timedelta(days=accept.FILING_DEADLINE_DAYS)
-    conn = _conn_with(periods_concentration=[period])
-    assert accept.selector_periods(conn, deadline.isoformat()) == []
-    assert accept.selector_periods(conn, (deadline + timedelta(days=1)).isoformat()) == [period]
+    """Strictly after the filing deadline, measured against the BUILD date —
+    the deadline rolled by Exchange Act Rule 0-3, as the dashboard's
+    `isClosedPeriod` and `inst_agg.closed_periods` read it (W-1, M3 review)."""
+    for period, deadline in (("2026-06-30", "2026-08-14"), ("2026-09-30", "2026-11-16")):
+        assert accept.filing_deadline(period) == deadline
+        conn = _conn_with(periods_concentration=[period])
+        assert accept.selector_periods(conn, deadline) == []
+        after = (date.fromisoformat(deadline) + timedelta(days=1)).isoformat()
+        assert accept.selector_periods(conn, after) == [period]
+    # control: day 45 of the September quarter (2026-11-14) is a Saturday, so a
+    # build dated 2026-11-15 sits inside the window; the retired rule closed it
+    conn = _conn_with(periods_concentration=["2026-09-30"])
+    assert accept.selector_periods(conn, "2026-11-15") == []
 
 
 def test_selector_periods_uses_the_build_date_not_the_wall_clock():

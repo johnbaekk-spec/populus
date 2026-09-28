@@ -96,10 +96,14 @@ _DISCLOSURE_TEXT_COLUMNS = (("transactions", "comment"), ("transactions", "raw_r
 #: FOR CUSIP 30233Q108", "HONEYWELL INTL INC R/S EFF 06/29/26 1 NEW CU 438516205
 #: …" — and those rows share an opaque position key with the properly-named rows
 #: that carry the ticker, so an embedded CUSIP is as joinable as the column was.
-#: Token-bounded, matching the probe.
-_CUSIP_IN_TEXT_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Z]{9}(?![0-9A-Za-z])")
+#: Token-bounded, matching the probe. CASE-INSENSITIVE (P-2, M3 review): filers
+#: also write CUSIPs in lower case ("…USD 50 - 06738c778", "Palisade Bio In
+#: Contra Spin From(81689b103)"), and since D4 (a) names are shown verbatim, so
+#: a token is matched in any case and its UPPER-CASED form is what is checked
+#: against the withheld set (CUSIPs are stored upper case).
+_CUSIP_IN_TEXT_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]{9}(?![0-9A-Za-z])")
 #: An ISIN carries the CUSIP as its middle nine characters ("ISIN#BMG2004J1036").
-_ISIN_RE = re.compile(r"(?<![0-9A-Za-z])([A-Z]{2})([0-9A-Z]{9})([0-9])(?![0-9A-Za-z])")
+_ISIN_RE = re.compile(r"(?<![0-9A-Za-z])([A-Za-z]{2})([0-9A-Za-z]{9})([0-9])(?![0-9A-Za-z])")
 
 #: Column names rewritten wherever they appear in a published table.
 _POSITION_COLUMN = "position_key"
@@ -504,10 +508,10 @@ def _scrub_embedded(
     updates: list[tuple[str, str]] = []
     for value in values:
         replaced = _CUSIP_IN_TEXT_RE.sub(
-            lambda m: marker if m.group(0) in cusips else m.group(0), value
+            lambda m: marker if m.group(0).upper() in cusips else m.group(0), value
         )
         replaced = _ISIN_RE.sub(
-            lambda m: marker if m.group(2) in cusips else m.group(0), replaced
+            lambda m: marker if m.group(2).upper() in cusips else m.group(0), replaced
         )
         if replaced != value:
             updates.append((replaced, value))
@@ -578,7 +582,7 @@ def apply_cusip_redaction(plan: RedactionPlan, db_path: Path | str) -> dict[str,
             for column in sorted(_text_columns(conn, table) - _KEY_COLUMNS):
                 changed = conn.execute(
                     f'UPDATE {q} SET "{column}" = ?'  # nosec B608
-                    f' WHERE "{column}" IN (SELECT v FROM _w_cusip)',
+                    f' WHERE upper("{column}") IN (SELECT v FROM _w_cusip)',
                     (WITHHELD_TEXT,),
                 ).rowcount
                 if changed:

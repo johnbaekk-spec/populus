@@ -7,10 +7,11 @@
    sumRanges, S4 taxonomy, ticker→issuer mapping, institutional time stamp)
    and dashboard/docs/pagination-and-counts.md (reused unchanged). */
 
-import { pathSafeTicker } from "./format.ts";
+import { fmtCik, kindWord, pathSafeTicker } from "./format.ts";
 // Deliberate module cycle with holdings.ts (function declarations only, used
 // at call time — safe under ESM): the ONE filer-href primitive lives there.
 import { filerHref } from "./holdings.ts";
+import { filingDeadline } from "./inst-adds.ts";
 export { pathSafeTicker };
 import {
   type TxnRow,
@@ -1069,7 +1070,7 @@ export function notableRecent(
 
 export interface QoqPresentation {
   chipText: string;
-  chipCls: "qoq-new" | "qoq-add" | "qoq-trim" | "qoq-exit" | "qoq-held" | "qoq-nc";
+  chipCls: "qoq-new" | "qoq-add" | "qoq-trim" | "qoq-exit" | "qoq-held" | "qoq-noprior" | "qoq-nc";
   /** page-scoped markers the chip carries (each resolves to a footnote line) */
   chipMarkers: string[];
   /** ‡r on the position cell when identity was producer-reconciled */
@@ -1081,23 +1082,15 @@ export interface QoqPresentation {
   grainNote: string;
 }
 
-const CHIP: Record<string, { text: string; cls: QoqPresentation["chipCls"] }> = {
-  new: { text: "new", cls: "qoq-new" },
-  add: { text: "add", cls: "qoq-add" },
-  trim: { text: "trim", cls: "qoq-trim" },
-  exit: { text: "exit", cls: "qoq-exit" },
-  // R8: Δshares == 0 — mark-to-market only. Never a direction.
-  held: { text: "no change", cls: "qoq-held" },
-  unclassified: { text: "n/c", cls: "qoq-nc" },
-  // D2: no comparable prior book — a first filing under this registration or a
-  // prior quarter reported inside an affiliate's filing. Never a new stake.
-  no_prior: { text: "no prior", cls: "qoq-nc" },
-};
-
+/* DESIGN-POLISH M3 (R19, T3.1): the words come from the ONE change-kind table
+   (`CHANGE_KIND_WORDS`, format.ts; qoq-presentation.md §1 as amended) — caps
+   words, the n/c hatch kept for unclassified and unknown kinds. NO PRIOR (D2:
+   no comparable prior book, never a new stake) is its own neutral word. */
 export function qoqPresentation(row: QoqDeltaRow): QoqPresentation {
   // Fail-closed: an unknown change_kind presents as not-classifiable, never a
   // guessed direction (the producer owns classification).
-  const chip = CHIP[row.change_kind] ?? CHIP.unclassified!;
+  const k = kindWord(row.change_kind);
+  const chip = { text: k.word, cls: k.cls as QoqPresentation["chipCls"] };
   const chipMarkers: string[] = [];
   const positionMarkers: string[] = [];
   if (row.change_kind === "exit") chipMarkers.push("‡e");
@@ -1141,7 +1134,7 @@ export function qoqPresentation(row: QoqDeltaRow): QoqPresentation {
 export interface FilingWindow {
   open: boolean;
   quarterEnd: string; // the quarter the open window belongs to
-  deadline: string; // quarter end + 45 days
+  deadline: string; // quarter end + 45 days, rolled by Rule 0-3 (`filingDeadline`)
 }
 
 function addDays(dateIso: string, days: number): string {
@@ -1155,7 +1148,7 @@ function addDays(dateIso: string, days: number): string {
 }
 
 /** Calendar-derived 13F window: the latest quarter end at or before the
-    build's generated_at date, open while generated_at ≤ quarter end + 45d.
+    build's generated_at date, open while generated_at ≤ its filing deadline.
     Suppression when the module is absent is the caller's responsibility. */
 export function filingWindow(generatedAtDate: string): FilingWindow {
   const d = generatedAtDate.slice(0, 10);
@@ -1171,7 +1164,10 @@ export function filingWindow(generatedAtDate: string): FilingWindow {
   for (const c of candidates) {
     if (c <= d) quarterEnd = c;
   }
-  const deadline = addDays(quarterEnd, 45);
+  /* W-1 (M3 review): the deadline is `filingDeadline`'s — 45 days after the
+     quarter end, rolled to the next business day by Exchange Act Rule 0-3 —
+     the one calendar `isClosedPeriod` and `inst_agg.closed_periods` read */
+  const deadline = filingDeadline(quarterEnd);
   return { open: d <= deadline, quarterEnd, deadline };
 }
 
@@ -1521,7 +1517,9 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
       kind: "filer",
       key: cik,
       label: principal ? `${name} · ${principal}` : name,
-      sub: `CIK ${cik.padStart(10, "0")}`,
+      /* R20 (DESIGN-POLISH M3): the search sub-line shows the CIK without
+         leading zeros; the padded form stays in the href */
+      sub: `CIK ${fmtCik(cik)}`,
       // ONE href primitive (filerHref): older indexes without the tier flag resolve
       // as tail — the /e/ shell is prerendered and never 404s.
       href: filerHref(cik, top === 1 ? "top" : "tail"),

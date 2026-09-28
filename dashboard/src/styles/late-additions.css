@@ -220,6 +220,24 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   text-decoration-color: currentColor;
   text-underline-offset: 3px;
 }
+/* K-3 (DESIGN-POLISH M3 review): a no-ticker asset (`assetNameCell`) is a
+   label trigger whose note gives the asset as filed; the trigger keeps the
+   one-line, clipped shape the plain text had, so the row does not grow */
+.asset-name > .note {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+.asset-name > .note > .note-label {
+  display: block;
+  max-width: 100%;
+  line-height: inherit;
+  overflow-x: clip;
+  overflow-y: visible;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
 .note-mark {
   font: 500 var(--fs-meta)/1 var(--sans);
   letter-spacing: 0;
@@ -378,6 +396,19 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
     padding: 0.15rem 0 0.15rem 1rem;
     font-size: var(--fs-note);
     color: var(--ink2);
+    /* a panel inside a one-line cell wraps on paper rather than running off it */
+    white-space: normal;
+  }
+  /* DESIGN-POLISH M3 (R17): the asset line's as-filed note prints in full —
+     the one-line ellipsis is a screen affordance, never a paper one */
+  .asset-line {
+    flex-wrap: wrap;
+  }
+  .asset-line > .asset-text,
+  .asset-line > .asset-text > .note > .note-label,
+  .asset-name > .note > .note-label {
+    overflow: visible;
+    white-space: normal;
   }
 }
 
