@@ -36,7 +36,9 @@ export interface ContentHit {
 function cellStarts(html: string): string[] {
   const out: string[] = [];
   for (const m of html.matchAll(/<td\b[^>]*>([\s\S]{0,400})/g)) {
-    const lead = m[1]!.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trimStart();
+    let text = m[1]!;
+    for (let prev = ""; prev !== text; ) { prev = text; text = text.replace(/<[^>]*>/g, ""); }
+    const lead = text.replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trimStart();
     out.push(lead);
   }
   return out;

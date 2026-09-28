@@ -889,7 +889,9 @@ test("no honesty content is hidden by the surface's own markup (the fold ban)", 
   const shells = (html: string): string[] => html.match(/<div class="compact-disclosure"[^>]*>[\s\S]*?<\/div>/g) ?? [];
   const withoutEmptyShells = (html: string): string => {
     for (const shell of shells(html)) {
-      assert.equal(shell.replace(/<[^>]*>/g, "").trim(), "", `a hidden disclosure shell carries no reader text: ${shell}`);
+      let text = shell;
+      for (let prev = ""; prev !== text; ) { prev = text; text = text.replace(/<[^>]*>/g, ""); }
+      assert.equal(text.trim(), "", `a hidden disclosure shell carries no reader text: ${shell}`);
     }
     return html.replace(/<div class="compact-disclosure"[^>]*>[\s\S]*?<\/div>/g, "");
   };
