@@ -167,12 +167,14 @@ export function normalizeTicker(raw: string | null): string | null {
 }
 
 export function esc(s: string): string {
+  /* Global-regex form (same output as the replaceAll chain), which CodeQL
+     recognises as an HTML sanitizer; `&` first so no entity is re-escaped. */
   return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /* ============================================================ notes
