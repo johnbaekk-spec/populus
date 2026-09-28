@@ -362,6 +362,14 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     );
   }
 
+  /** R36 (DESIGN-POLISH M2 review R2-5): every client re-render of the feed
+      body announces itself on `document`, as every other island's does. */
+  function announceRerender(): void {
+    if (typeof document.dispatchEvent === "function") {
+      document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "congress-feed" } }));
+    }
+  }
+
   let partsApplySeq = 0;
   function applyFromParts(index: FeedPartsIndex): void {
     const maxPage = Math.max(0, index.page_count - 1);
@@ -376,6 +384,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
         const items = pageSliceFrom(lists.flat(), parts[0]?.txn_offset ?? 0, state.page, PAGE_SIZE);
         const ctx: RenderCtx = { watched, referenceFeed: true };
         bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
+        announceRerender();
         setCounts(
           feedCountText({
             pageSize: PAGE_SIZE,
@@ -670,6 +679,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
       });
       bodyEl!.innerHTML = parts.join("\n");
     }
+    announceRerender();
 
     // One assembled string, every sink — no fragment can reach some readers
     // and not others (the indeterminate-amount disclosure previously reached

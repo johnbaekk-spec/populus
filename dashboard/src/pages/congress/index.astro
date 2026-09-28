@@ -14,9 +14,9 @@ import {
   type RenderCtx,
 } from "../../lib/format";
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
-import { briefingCards, congressRankingSection, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
+import { briefingCards, congressRankingSection, disclosureLedger, markPairPrimary, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
 import { serializeInlineJson } from "../../lib/inline-json";
-import { COMPACT_ROWS, noteFromHtml, esc } from "../../lib/format";
+import { COMPACT_ROWS } from "../../lib/format";
 
 const build = getBuildData();
 const coverage = coverageSummary(build.stats);
@@ -26,20 +26,48 @@ const partsIndex = feedPartsPlan(build).index;
 const largest = build.txns.reduce<(typeof build.txns)[number] | null>((best, row) =>
   row.low !== null && (best === null || row.low > best.low!) ? row : best, null);
 const latestLate = build.txns.find(row => row.late === 1);
-/* R11: the coverage strip is ONE line — "N disclosures · updated {date}" —
-   and every number it carried (parse rates, paper count) sits in its ⓘ,
-   with the full account on /methodology/#coverage. Nothing is deleted. */
-const coverageNote =
-  `<strong>${fmtInt(build.txnCount)}</strong> transactions filed since ${esc(build.filedFrom)} · ` +
-  `House parse <strong>${esc(coverage.housePct)}%</strong> (${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)} e-filed) · ` +
-  `Senate parse <strong>${esc(coverage.senatePct)}%</strong> (${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)} e-filed) · ` +
-  `<strong>${fmtInt(coverage.needsOcr)}</strong> paper filings counted, awaiting OCR. ` +
-  `<a href="/methodology/#coverage">Coverage, in full ↗</a>`;
-const stripHtml =
-  // The count IS the coverage note's trigger (DESIGN-POLISH M1, R6: the label form).
-  `<p class="coverage-strip" id="congress-coverage">` +
-  noteFromHtml(coverageNote, { scope: "congress-coverage" }, "coverage", { trigger: "label", textHtml: `${fmtInt(build.txnCount)} disclosures` }) +
-  ` · updated ${esc(build.generatedAtDate)}</p>`;
+/* D2 (DESIGN-POLISH M2, R15): the page head carries the four-figure ledger —
+   TRANSACTIONS, HOUSE PARSE, SENATE PARSE and PAPER — each derived from
+   `coverageSummary` with its denominator in the sub, through the ONE header
+   ledger every page uses. It replaces the one-line coverage strip; every number
+   that strip's note carried is now a figure or a figure's sub, and the full
+   account stays one click away (/methodology/#coverage). "Parse" is a figure
+   NAME only (L15): the notes say in plain words what each figure counts. */
+const coverageLink = `<a href="/methodology/#coverage">Coverage, in full ↗</a>`;
+const ledgerHtml = disclosureLedger(
+  [
+    {
+      label: "Transactions",
+      value: fmtInt(build.txnCount),
+      detail: `filed since ${build.filedFrom} · default view`,
+      subKind: "date",
+      noteHtml: `Transactions in the default view: active filings minus the originals an amendment superseded. <a href="/methodology/#defaults">Default view ↗</a>`,
+    },
+    {
+      label: "House parse",
+      value: `${coverage.housePct}%`,
+      detail: `${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)} e-filed`,
+      subKind: "count",
+      noteHtml: `House electronic filings whose transaction rows this build reads: ${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)}. ${coverageLink}`,
+    },
+    {
+      label: "Senate parse",
+      value: `${coverage.senatePct}%`,
+      detail: `${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)} e-filed`,
+      subKind: "count",
+      tone: "blue",
+      noteHtml: `Senate electronic filings whose transaction rows this build reads: ${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)}. ${coverageLink}`,
+    },
+    {
+      label: "Paper",
+      value: fmtInt(coverage.needsOcr),
+      detail: "counted, awaiting OCR",
+      tone: "gold",
+      noteHtml: `Paper reports remain counted in coverage; their transactions are not machine-readable until OCR. ${coverageLink}`,
+    },
+  ],
+  { scope: "congress-ledger" },
+);
 const briefingHtml = briefingCards([
   { tag: "Largest disclosed lower bound", title: largest ? `${largest.ticker ?? largest.asset ?? "Undisclosed asset"} · ${amountText(largest)}` : "No comparable amounts disclosed", body: largest ? `${largest.name} · traded ${largest.traded ?? "date not disclosed"} → filed ${largest.filed}. Ranked over this build by disclosed lower bound, not a point estimate.` : "The published records contain no usable lower bound to rank." },
   { tag: "Late filing", title: latestLate ? `${latestLate.lag ?? "—"} days from trade to filing` : "No late disclosures in this build", body: latestLate ? `${latestLate.name} · traded ${latestLate.traded ?? "—"} → filed ${latestLate.filed}. A filing delay describes the record, not its intent.` : "Computed over the published transaction records; unknown trade dates remain unknown." },
@@ -172,7 +200,7 @@ const description =
           Who disclosed what, in which statutory range, and when it was filed · House Clerk + Senate eFD.
         </p>
       </div>
-      <Fragment set:html={stripHtml} />
+      <Fragment set:html={ledgerHtml} />
     </div>
     <div class="design-provenance">
       Filed up to 45 days after the trade · amounts are statutory ranges, never point estimates
@@ -187,11 +215,13 @@ const description =
           <a href="/methodology/#owner-codes">whose trade is it — SP · DC · JT ↗</a>
         </div></details>
     </div>
-    <!-- R11: data first. Leaders (full width, 10 rows) → Tickers → the feed.
-         The three context cards live in a collapsed "Notes on this data"
-         below the feed; the coverage strip is the one line in the head. -->
-    <div class="design-rankings design-rankings-single"><Fragment set:html={membersHtml} /></div>
-    <div class="design-rankings design-rankings-single"><Fragment set:html={momentumHtml} /></div>
+    <!-- D2: the three context cards, collapsed as ONE line directly under the
+         provenance strip. D1 (L10): data first — band C1 pairs Leaders (1.6fr)
+         with Tickers (1fr) on one 1px seam, then the feed at 50 per page. -->
+    <details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary>
+      <Fragment set:html={briefingHtml} />
+    </details>
+    <div class="design-rankings" id="congress-leaders-band"><Fragment set:html={markPairPrimary(membersHtml)} /><Fragment set:html={momentumHtml} /></div>
 
     <!-- filter bar. The controls live in their own wrapper so they can become a
          horizontal scroll strip on mobile WITHOUT taking the count line — which
@@ -354,9 +384,6 @@ const description =
     </div>
     </section>
 
-    <details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary>
-      <Fragment set:html={briefingHtml} />
-    </details>
     <script is:inline type="application/json" id="feed-parts-index" set:html={partsIndexJson} />
   </main>
 

@@ -41,6 +41,10 @@ const description =
   <script>
     import { initSignalsPage } from "../../scripts/signals-client";
     import { initNotes } from "../../scripts/notes";
+    import { initDomDisclosures } from "../../scripts/inst-index-client";
+    /* The hits page is compact beside the lag and rate cells (band S1): its
+       held rows are one Show-all away through the named binder. */
+    initDomDisclosures();
     initSignalsPage();
     initNotes();
   </script>

@@ -58,6 +58,11 @@ import {
   type FootnoteEntry,
   type StatTile,
   thHtml,
+  compactDisclosure,
+  presentColumns,
+  dataColumnsAttr,
+  tableFootReasonHtml,
+  type PresentColumns,
 } from "./format.ts";
 export { reportingLagDays };
 import { edgarFilerUrl } from "./derive.ts";
@@ -601,6 +606,11 @@ export function provenanceCellHtml(p: Provenance, stated: readonly string[] = []
     population is homogeneous: there is no second grain riding along whose
     position decides the page count. */
 export const HOLDINGS_PAGE_SIZE = 100;
+/** Issuers the filer page's Reported positions shows before its Show-all
+    (DESIGN-POLISH M2, E: 20 of the 100-issuer page — a FIXED default,
+    coordinator decision CD-1: band F1's primary cell is never cut to balance
+    its side cell). */
+export const HOLDINGS_COMPACT_ROWS = 20;
 
 /** 0 for an empty set — never a padded blank page that a caller would render as
     "no positions" (invariant I2 of the pagination spec). */
@@ -1454,13 +1464,33 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
       ...(provOf.get(r)!.known ? [] : ["filing_not_in_dictionary"]),
     ]),
   );
+  /* A weight is a share of the WHOLE disclosed book, so it is computable only
+     when every reported row is embedded and carries a value. */
+  const weightable = total === matched && totals.undisclosedRows === 0 && totals.disclosedUsd > 0;
+  const weightOf = (value: number | null): number | null =>
+    weightable && value != null ? (value / totals.disclosedUsd) * 100 : null;
+  /* R12 (DESIGN-POLISH M2): the reference table's columns, decided over the
+     period's FULL collection (every row any page or the Show-all can reveal).
+     Kind, Position change and Congress are REMOVED outright — derived columns
+     empty by construction — and named in the table foot. */
+  const refCols: PresentColumns | null = opts.reference
+    ? presentColumns<FilerHoldingRow>(opts.rows, [
+        { key: "ticker", hasValue: (r) => !!r.ticker, emptyReason: "Ticker: no reported row here maps to a reviewed ticker." },
+        { key: "issuer", always: true },
+        { key: "weight", hasValue: (r) => weightOf(r.value_usd) != null, emptyReason: "Weight: shown only when every reported row is embedded and carries a disclosed value." },
+        { key: "value", always: true },
+        { key: "shares-unit", always: true },
+        { key: "wt", hasValue: (r) => weightOf(r.value_usd) != null },
+      ])
+    : null;
+  const has = (key: string): boolean => refCols === null || refCols.columns.includes(key);
   const renderRow = (row: FilerHoldingRow, rowIndex: number): string => {
       const prov = provOf.get(row) ?? provenanceOf([row.filing_key], opts.filings, row.period);
       const src = prov.docUrl
         ? srcLink(prov.docUrl)
         : srcLinkDerived(null, edgarFilerUrl(opts.cik));
       if (opts.reference) {
-        const weight = total === matched && totals.undisclosedRows === 0 && totals.disclosedUsd > 0 && row.value_usd != null ? row.value_usd / totals.disclosedUsd * 100 : null;
+        const weight = weightOf(row.value_usd);
         /* R3: the TICKER cell resolves per row from the reviewed mapping, and
            every ticker carries its verification ⓘ (LD6). "—" is the honest
            state for an unmapped class, never a guess. */
@@ -1475,10 +1505,13 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
             )
           : "—";
         const issuerName = row.issuer_name || "Issuer unnamed";
-        return `<tr class="design-holding-row"><td class="c-kind">—</td><td class="c-ticker">${tickerCell}</td>` +
+        return `<tr class="design-holding-row">` +
+          (has("ticker") ? `<td class="c-ticker">${tickerCell}</td>` : "") +
           `<td class="c-pos c-flex">${noteFromHtml(positionCell(row) + `<br>` + provenanceCellHtml(prov, statedHoldings), { scope: "filer-position-record" }, `${opts.page}-${rowIndex}`, { trigger: "label", textHtml: `<span class="design-holding-name"><span class="filed-name">${esc(issuerName)}</span></span>`, name: issuerName })} ${src}${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
-          `<td class="c-bar"><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0,Math.min(100,weight))}%"></span>`}</span></td>` +
-          `<td class="c-num c-strong has-marks">${valueCell(row.value_usd)}</td><td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td><td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`;
+          (has("weight") ? `<td class="c-bar"><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0,Math.min(100,weight))}%"></span>`}</span></td>` : "") +
+          `<td class="c-num c-strong has-marks">${valueCell(row.value_usd)}</td><td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td>` +
+          (has("wt") ? `<td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td>` : "") +
+          `</tr>`;
       }
       return (
         `<tr>` +
@@ -1496,10 +1529,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
      reported them. `foldPositions` gives the position count in the summary. */
   const groupRowHtml = (g: IssuerHoldingGroup, gi: number): string => {
     const first = g.rows[0]!;
-    const weight =
-      total === matched && totals.undisclosedRows === 0 && totals.disclosedUsd > 0 && g.value_usd != null
-        ? (g.value_usd / totals.disclosedUsd) * 100
-        : null;
+    const weight = weightOf(g.value_usd);
     const tickered = [...new Map(g.rows.filter((r) => r.ticker).map((r) => [r.ticker!, r] as const)).values()];
     const tickerCell = tickered.length
       ? tickered
@@ -1527,20 +1557,32 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
       .join("");
     const flags = [...new Set(g.rows.flatMap((r) => r.flags))];
     return (
-      `<tr class="design-holding-row design-holding-group"><td class="c-kind">—</td><td class="c-ticker">${tickerCell}</td>` +
+      `<tr class="design-holding-row design-holding-group">` +
+      (has("ticker") ? `<td class="c-ticker">${tickerCell}</td>` : "") +
       `<td class="c-pos c-flex"><span class="design-holding-name"><span class="filed-name">${esc(first.issuer_name || "Issuer unnamed")}</span></span>` +
       `<details class="holding-group-rows"><summary>${fmtInt(positions)} ${positions === 1 ? "position" : "positions"} · ${fmtInt(g.rows.length)} reported rows</summary>` +
       `<table class="etable etable-compact"><caption class="visually-hidden">Rows ${esc(opts.filerName)} reported for ${esc(first.issuer_name || "this issuer")}, as it reported them</caption>` +
       `<tbody>${raw}</tbody></table></details>` +
       `${flagTags(flags, undefined, { stated: statedHoldings })}</td>` +
-      `<td class="c-bar"><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0, Math.min(100, weight))}%"></span>`}</span></td>` +
+      (has("weight") ? `<td class="c-bar"><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0, Math.min(100, weight))}%"></span>`}</span></td>` : "") +
       `<td class="c-num c-strong has-marks">${valueCell(g.value_usd)}</td><td class="c-num">${sharesCell(g.shares, g.ssh_type)}</td>` +
-      `<td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`
+      (has("wt") ? `<td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td>` : "") +
+      `</tr>`
     );
   };
+  /* E (DESIGN-POLISH M2): the filer page shows the first HOLDINGS_COMPACT_ROWS
+     issuers of its page; the rest of the page rides in the DOM behind the
+     named binder (Show all), then the pager moves by page. */
+  /* The FIXED default (coordinator decision CD-1): Reported positions is band
+     F1's primary cell and shows its 20 issuers whatever the Book shape beside
+     it holds — never a count tuned to one data build. */
+  const compactN = HOLDINGS_COMPACT_ROWS;
+  const held = (html: string, i: number): string =>
+    groups && i >= compactN ? html.replace(/^<tr\b/, "<tr data-compact-extra") : html;
   const body = groups
-    ? pageGroups.map((g, gi) => (g.rows.length === 1 ? renderRow(g.rows[0]!, gi) : groupRowHtml(g, gi))).join("\n")
+    ? pageGroups.map((g, gi) => held(g.rows.length === 1 ? renderRow(g.rows[0]!, gi) : groupRowHtml(g, gi), gi)).join("\n")
     : pageRows.map(renderRow).join("\n");
+  const compactCollapsed = groups != null && pageGroups.length > compactN;
 
   const folded = groups != null && groups.length !== matched;
   const rangeText = holdingsRangeText({
@@ -1590,26 +1632,43 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
        cannot settle. */
     `<div class="table-scroll"><table class="etable" ${opts.reference ? "data-sticky-issuer" : "data-sticky-first"}${
       pageCount > 1 ? ' data-paged="1"' : ""
-    } data-stated-flags="${esc(statedHoldings.join(","))}">` +
+    } data-stated-flags="${esc(statedHoldings.join(","))}"${refCols ? dataColumnsAttr(refCols) : ""}>` +
     `<caption class="visually-hidden">Positions ${esc(opts.filerName)} reported for the quarter ended ${esc(
       opts.period,
     )}, as that filer reported them</caption>` +
     `<thead><tr>` +
-    (opts.reference ? [
-      ["kind", "Kind"], ["ticker", "Ticker"], ["issuer", "Issuer"], ["weight", "Weight"], ["value", "Value"], ["shares-unit", "Shares"], ["delta", "Position change"], ["wt", "Wt"], ["overlap", "Congress"],
-    ] : HOLDINGS_COLS).map(([key, label]) => {
+    (opts.reference
+      ? ([["ticker", "Ticker"], ["issuer", "Issuer"], ["weight", "Weight"], ["value", "Value"], ["shares-unit", "Shares"], ["wt", "Wt"]] as const).filter(([key]) => has(key))
+      : HOLDINGS_COLS).map(([key, label]) => {
       const explanation: Record<string, string> = {
-        kind: "Classification is not joined into this reported-position view. Use the changed-positions view to compare the two published quarters.",
         ticker: "This list carries reported issuer names and security identities, without a dated ticker mapping. Symbols are not inferred from names.",
         weight: "Share of total reported value, calculated only when the full position list has disclosed values. This is 13F long value, not total assets.",
-        delta: "Share change is available in the separate comparison view; it is not joined into this position list.",
-        overlap: "The congressional transaction join is unavailable in this build.",
       };
       const body = key === "issuer" && opts.reference ? `${HOLDINGS_COL_NOTES.issuer ?? ""} ${HOLDINGS_COL_NOTES.src ?? ""}` : HOLDINGS_COL_NOTES[key] ?? explanation[key];
-      return thHtml({ label, cls: HOLDINGS_COL_CLASS[key] ?? "", noteHtml: body ?? null, notes: { scope: "filer-holdings" }, noteKey: key });
+      return thHtml({ label, cls: HOLDINGS_COL_CLASS[key] ?? "", noteHtml: body ?? null, notes: { scope: "filer-holdings" }, noteKey: key, ...(opts.reference ? { col: key } : {}) });
     }).join("") +
     `</tr></thead>` +
-    `<tbody>${body}</tbody></table></div>` +
+    /* The disclosure renders only while rows are held back: this table is
+       re-rendered whole by every client action (HoldingsTable's draw), so it
+       never needs a shell to gain a control later. */
+    `<tbody${compactCollapsed ? ' id="filer-holdings-tbody" data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
+    (compactCollapsed
+      ? compactDisclosure({
+          rootId: "filer-holdings-tbody",
+          total: pageGroups.length,
+          shown: Math.min(compactN, pageGroups.length),
+          noun: folded ? "issuers" : "positions",
+          domBacked: true,
+          /* A PAGE of a paged list, or a size-capped embed, is a bound this page
+             applies — the count names it and never reads as the filer's total. */
+          ...(pageCount > 1
+            ? { boundNoun: `${folded ? "issuers" : "positions"} on this page`, definite: true }
+            : total > matched
+              ? { boundNoun: `${folded ? "issuers" : "positions"} embedded in this page`, definite: true }
+              : {}),
+        })
+      : "") +
+    (refCols ? tableFootReasonHtml(refCols, ["Change kind and share change are in Position changes above; Congress overlap is planned."]) : "") +
     truncation +
     pagerHtml({ page: opts.page, pageCount, rangeText, idPrefix: "holdings" }) +
     `<div class="caveat-line">every row this filer reported for the quarter, as it reported ` +
@@ -2065,6 +2124,18 @@ function periodUnavailableHtml(payload: SurfacePayload, period: string): string 
   );
 }
 
+/** The filer surface's view segments sit UNDER its band head (DESIGN-POLISH M2,
+    band F1): the "Reported positions" title opens the cell on the same line as
+    the "Book shape" title beside it, and the View row follows. Every filer view
+    opens with one `.panel-head` (no nested div), so the segments go directly
+    after its close. */
+function afterHead(sectionHtml: string, insertHtml: string): string {
+  const open = `<div class="panel-head">`;
+  if (!sectionHtml.startsWith(open)) return insertHtml + sectionHtml;
+  const end = sectionHtml.indexOf("</div>") + "</div>".length;
+  return sectionHtml.slice(0, end) + insertHtml + sectionHtml.slice(end);
+}
+
 /** ONE renderer for the SSR page and every client-paged page. The inline pager
     in `components/HoldingsTable.astro` calls exactly this function, so page 2
     cannot drift from page 1 (the repo's SSR/client parity rule). */
@@ -2075,26 +2146,25 @@ export function surfaceHtml(payload: SurfacePayload, state: SurfaceState): strin
       const priorRows = prior == null ? null : payload.rowsByPeriod[prior];
       const currentRows = payload.rowsByPeriod[selected];
       if (prior == null || priorRows == null || currentRows == null) {
-        return (
-          viewChips(payload, state) +
+        return afterHead(
           `<div class="panel-head"><h2 class="section-h">Added · absent · changed</h2>` +
-          `<span class="panel-note">needs two published quarters</span></div>` +
-          `<p class="section-note">This build carries one quarter for this filer, ` +
-          `so there is nothing to compare it against. A comparison needs both sides.</p>`
+            `<span class="panel-note">needs two published quarters</span></div>` +
+            `<p class="section-note">This build carries one quarter for this filer, ` +
+            `so there is nothing to compare it against. A comparison needs both sides.</p>`,
+          viewChips(payload, state),
         );
       }
       const diff = diffPeriods(currentRows, priorRows, {
         current: selected,
         prior,
       });
-      return viewChips(payload, state) + positionDiffHtml(diff, state.page);
+      return afterHead(positionDiffHtml(diff, state.page), viewChips(payload, state));
     }
     const pair = selectedPair(payload, state);
     const period = state.view === "prior" && pair.prior ? pair.prior : state.period;
     const rows = payload.rowsByPeriod[period];
-    if (rows == null) return viewChips(payload, state) + periodUnavailableHtml(payload, period);
-    return (
-      viewChips(payload, state) +
+    if (rows == null) return afterHead(periodUnavailableHtml(payload, period), viewChips(payload, state));
+    return afterHead(
       holdingsTableHtml({
         reference: true,
         cik: payload.cik,
@@ -2105,7 +2175,8 @@ export function surfaceHtml(payload: SurfacePayload, state: SurfaceState): strin
         page: state.page,
         totalRows: payload.totalsByPeriod[period] ?? rows.length,
         tickerDates: payload.tickerDates,
-      })
+      }),
+      viewChips(payload, state),
     );
   }
 

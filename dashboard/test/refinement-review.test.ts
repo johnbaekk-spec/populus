@@ -38,6 +38,7 @@ import { priorPeriodOf, surfaceHtml } from "../src/lib/holdings.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
 import { filerPayload, nRows } from "./fixtures/institutional.ts";
 import { makeDom } from "./lib/fake-dom.ts";
+import { ledgerFigures } from "./lib/ledger-dom.ts";
 
 const DASH = path.resolve(import.meta.dirname, "..");
 const REPO_ROOT = path.resolve(DASH, "..");
@@ -67,10 +68,16 @@ function member(txns: TxnRow[]): MemberEntity {
   };
 }
 
+/* DESIGN-POLISH M2 (T2.8): the member header's figures render through the ONE
+   ledger (`<div class="ledger-fig"><dt>…</dt><dd class="ledger-value">…`), and a
+   label may be its note's trigger, so the old `<dt>L</dt><dd>V</dd>` literal no
+   longer describes the markup. The property is unchanged — the page states a
+   "Net flow · 12m" figure and its value is the net arithmetic — read from the
+   parsed <dl>. */
 function netTile(html: string): string {
-  const m = /<dt>Net flow · 12m<\/dt><dd>([^<]*)<\/dd>/.exec(html);
-  assert.ok(m, "the member page states a Net flow · 12m stat");
-  return m![1]!;
+  const fig = ledgerFigures(html).find((f) => f.label === "Net flow · 12m");
+  assert.ok(fig, "the member page states a Net flow · 12m stat");
+  return fig!.value;
 }
 
 test("F1: a sale-only member's Net flow is negative — never the gross sum of the sale", () => {
@@ -220,6 +227,86 @@ test("F4: the /e/ route wires the DOM-disclosure binder and the driver re-announ
   const client = src("scripts/entity-client.ts");
   const render = client.slice(client.indexOf("function renderFiler"), client.indexOf("function maxPage"));
   assert.match(render, /populus:rerender/, "renderFiler dispatches the re-bind event");
+});
+
+/* ---------- R36 (T2.11): EVERY client re-render announces itself ---------- */
+
+test("R36: renderLoaded, the holders period switch and the holdings draw each dispatch populus:rerender; the member page binds", () => {
+  /** The source between two anchors, both of which must exist — a missing
+      anchor would otherwise slice to an empty or unrelated string. */
+  const between = (source: string, start: string, end: string, from = 0): string => {
+    const a = source.indexOf(start, from);
+    assert.ok(a >= 0, `anchor not found: ${start}`);
+    const b = source.indexOf(end, a + start.length);
+    assert.ok(b > a, `anchor not found after ${start}: ${end}`);
+    return source.slice(a, b);
+  };
+  const DISPATCH = /document\.dispatchEvent\(\s*new CustomEvent\(\s*["']populus:rerender["']/;
+  /** The dispatch exists AND follows the write it announces. */
+  const announcesAfter = (body: string, write: string, where: string): void => {
+    const m = DISPATCH.exec(body);
+    assert.ok(m, `${where} dispatches populus:rerender`);
+    const w = body.indexOf(write);
+    assert.ok(w >= 0, `${where} still performs ${write}`);
+    assert.ok(m!.index > w, `${where} dispatches AFTER ${write}`);
+  };
+
+  const client = src("scripts/entity-client.ts");
+  announcesAfter(between(client, "function renderLoaded", "function endpointFor"), "deps.render(html)", "renderLoaded");
+  announcesAfter(
+    between(client, "export function initHoldersPeriods", "\nexport function "),
+    "root.innerHTML = holdersTableHtml(",
+    "the holders period switch",
+  );
+
+  const holdings = src("components/HoldingsTable.astro");
+  announcesAfter(between(holdings, "const draw = ", "};"), "body.innerHTML = surfaceHtml(", "HoldingsTable draw()");
+
+  /* DESIGN-POLISH M2 review R2-5: the member/ticker entity pager and the
+     Congress feed pager re-render their bodies too, so they announce it. */
+  announcesAfter(
+    between(client, "export function initEntityPage", "\nexport function "),
+    "rowsEl!.innerHTML = entityTxnRowsHtml(",
+    "the entity pager apply()",
+  );
+  const feed = src("scripts/feed-client.ts");
+  const ANNOUNCE = /announceRerender\(\)/;
+  const feedFn = between(feed, "function announceRerender", "\n  }\n");
+  assert.match(feedFn, DISPATCH, "the feed's announcer dispatches populus:rerender");
+  const partsApply = between(feed, "function applyFromParts", ".catch(");
+  const partsWrite = partsApply.indexOf("bodyEl!.innerHTML = items.map(");
+  assert.ok(partsWrite >= 0 && ANNOUNCE.exec(partsApply.slice(partsWrite)) !== null, "the parts pager announces AFTER its body write");
+  const fullApply = between(feed, "  function apply(): void {", "\n  }\n");
+  const lastWrite = fullApply.lastIndexOf("bodyEl!.innerHTML = parts.join(");
+  assert.ok(lastWrite >= 0 && ANNOUNCE.exec(fullApply.slice(lastWrite)) !== null, "the full-corpus pager announces AFTER its body write");
+  // control: a pager body without the announcement fails the same reading
+  assert.equal(ANNOUNCE.exec(partsApply.slice(partsWrite).replace(/announceRerender\(\);/g, "")), null, "control: the write alone is caught");
+
+  // The two emitters that already existed stay.
+  assert.match(between(client, "function renderFiler", "function maxPage"), DISPATCH, "renderFiler still dispatches");
+  assert.match(between(client, "export function initFilerPeriods", "\nexport function "), DISPATCH, "the filer period draw still dispatches");
+
+  /* The member page binds its DOM-backed compact tables (net flow by ticker,
+     filing history) through the ONE binder, `initDomDisclosures` in
+     `scripts/inst-index-client.ts` (the plan's home; a module of its own became
+     a new _astro chunk, +1 dist file). The property is "the page imports
+     initDomDisclosures from the module that provides THE binder, and calls it". */
+  const PROVIDERS: Record<string, string> = {
+    "scripts/inst-index-client": "scripts/inst-index-client.ts",
+  };
+  const providesBinder = (rel: string): boolean => /export function initDomDisclosures\(/.test(src(rel));
+  const bindsDomDisclosures = (script: string): boolean => {
+    const imp = /import \{[^}]*\binitDomDisclosures\b[^}]*\} from "(?:\.\.\/)+(scripts\/[\w-]+)"/.exec(script);
+    const file = imp ? PROVIDERS[imp[1]!] : undefined;
+    return !!file && providesBinder(file) && /^\s*initDomDisclosures\(\);/m.test(script);
+  };
+  assert.ok(providesBinder("scripts/inst-index-client.ts"), "the binder lives in inst-index-client.ts");
+  const member = src("pages/congress/members/[bioguide].astro");
+  const script = between(member, "<script>", "</script>");
+  assert.ok(bindsDomDisclosures(script), "the member page imports the binder and calls it");
+  // controls: an import without the call, and an import from a module that has no binder, each fail
+  assert.ok(!bindsDomDisclosures(script.replace(/^\s*initDomDisclosures\(\);/m, "")), "control: no call");
+  assert.ok(!bindsDomDisclosures('import { initDomDisclosures } from "../../../scripts/notes";\ninitDomDisclosures();'), "control: a module that does not provide it");
 });
 
 /* ---------- F5: a stale part response never overwrites a filtered view ---------- */

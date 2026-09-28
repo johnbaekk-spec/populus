@@ -30,6 +30,7 @@ import { SHARD_RESPONSE_CEILING_BYTES } from "../src/lib/shards.ts";
 import { congressRankingSection, CONGRESS_ROOTS } from "../src/lib/ui/index.ts";
 import { leadersRollup } from "../src/lib/derive.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
+import { figuresOf, ledgerFigures } from "./lib/ledger-dom.ts";
 
 /* DESIGN-POLISH M1 (T1.9): tiles and tables are read by DOM parse. A tile label
    is now its note's LABEL trigger (the text is the button) and a row carries
@@ -43,9 +44,6 @@ function domOf(html: string): MiniElement {
 }
 function visibleText(el: MiniElement): string {
   return el.nodes.map((n) => (typeof n === "string" ? n : n.classList.contains("note-pop") ? "" : visibleText(n))).join("");
-}
-function tileLabels(html: string): string[] {
-  return domOf(html).querySelectorAll(".tile-label").map((e) => visibleText(e).trim());
 }
 function bodyRows(html: string): MiniElement[] {
   return domOf(html).querySelectorAll("tbody tr");
@@ -94,22 +92,77 @@ function paper(over: Partial<PaperRow> = {}): PaperRow {
   };
 }
 
-/* ---------- R11: Congress landing order ---------- */
+/* ---------- R11 → D1/D2: Congress landing composition ---------- */
 
-test("R11: the Congress landing renders Leaders (full width) → Tickers → the feed; cards collapse below the feed", () => {
+/* R11 rewritten in DESIGN-POLISH M2 (T2.2 / T2.10; records L10 and D1/D2 in
+   the plan's Decision log). The property R11 guarded is kept — the landing
+   leads with its data (the rankings) before the feed, and the context cards
+   are folded out of the reader's way, never deleted. The mechanism changed:
+   Leaders and Tickers are PAIRED in one `.design-rankings` band (Leaders
+   first) instead of stacked full width, and the cards collapse as ONE "Notes
+   on this data" line directly after the provenance strip instead of below the
+   feed. Read from the parsed template (the page's own element order), not
+   from string offsets. */
+function congressCompositionProblems(main: MiniElement): string[] {
+  const out: string[] = [];
+  const kids = main.children;
+  const at = (pred: (c: MiniElement) => boolean): number => kids.findIndex(pred);
+  const head = at((c) => c.classList.contains("page-head"));
+  const prov = at((c) => c.classList.contains("design-provenance"));
+  const notes = at((c) => c.id === "congress-notes");
+  const band = at((c) => c.id === "congress-leaders-band");
+  const feed = at((c) => c.id === "feed-section");
+  if ([head, prov, notes, band, feed].some((i) => i < 0)) return ["a landing part is missing"];
+  if (!(head < prov)) out.push("the provenance strip follows the head");
+  if (notes !== prov + 1) out.push("the notes line sits directly after the provenance strip");
+  if (!(band > notes && feed > band)) out.push("the rankings band precedes the feed");
+  const n = kids[notes]!;
+  if (n.tagName !== "details" || n.hasAttribute("open")) out.push("the notes are one closed <details>");
+  const cells = kids[band]!.children;
+  if (!kids[band]!.classList.contains("design-rankings")) out.push("the rankings are one .design-rankings band");
+  /* DESIGN-POLISH M2 (CD-1): the Leaders cell is marked the band's primary
+     (`markPairPrimary`); the fragments and their order are unchanged. */
+  const html = cells.map((c) => c.getAttribute("set:html"));
+  if (JSON.stringify(html) !== JSON.stringify(["{markPairPrimary(membersHtml)}", "{momentumHtml}"])) {
+    out.push(`the band pairs Leaders then Tickers (got ${JSON.stringify(html)})`);
+  }
+  return out;
+}
+function congressMain(page: string): MiniElement {
+  const main = page.slice(page.indexOf("<main"), page.indexOf("</main>") + "</main>".length);
+  let text = main;
+  for (let prev = ""; prev !== text; ) { prev = text; text = text.replace(/<!--[\s\S]*?-->/g, ""); }
+  return domOf(text).querySelector("main")!;
+}
+
+test("R11 → D1/D2 (L10): the Congress landing pairs Leaders │ Tickers in ONE band, Leaders first; the notes line follows the provenance strip; the feed comes after", () => {
   const page = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
-  const body = page.slice(page.indexOf("<Base"));
-  const leaders = body.indexOf("set:html={membersHtml}");
-  const tickers = body.indexOf("set:html={momentumHtml}");
-  const feed = body.indexOf('id="feed-section"');
-  const notes = body.indexOf('id="congress-notes"');
-  assert.ok(leaders > 0 && tickers > leaders && feed > tickers && notes > feed, "order: leaders, tickers, feed, notes");
-  assert.match(body.slice(leaders - 80, leaders), /design-rankings-single/, "Leaders take the full width");
-  assert.match(body, /<details class="design-supplement" id="congress-notes"><summary>Notes on this data<\/summary>/);
-  assert.match(page, /coverage-strip/, "the one-line strip replaces the ledger");
-  assert.doesNotMatch(page, /disclosureLedger/, "the four-tile ledger is gone from the landing head");
+  assert.deepEqual(congressCompositionProblems(congressMain(page)), []);
+  // the two fragments are the Leaders and Tickers sections, by kind
+  assert.match(page, /const membersHtml = congressRankingSection\(\s*"leaders",/);
+  assert.match(page, /const momentumHtml = congressRankingSection\(\s*"tickers",/);
+  // the notes line carries the three context cards (folded, not deleted)
+  assert.match(page, /<details class="design-supplement" id="congress-notes"><summary>Notes on this data<\/summary>\s*<Fragment set:html=\{briefingHtml\} \/>/);
+  // the four-figure ledger replaced the one-line strip, in the page head
+  assert.ok(congressMain(page).querySelector(".page-head")!.querySelectorAll("fragment").some((f) => f.getAttribute("set:html") === "{ledgerHtml}"));
+  assert.doesNotMatch(page, /coverage-strip|design-rankings-single/, "no strip, no single-cell rankings band");
   assert.match(page, /compact: COMPACT_ROWS,/, "Leaders and Tickers render the compact slice (10)");
   assert.doesNotMatch(page, /compact: 5,/);
+
+  // controls: each broken composition is caught by the same predicate
+  const swap = page.replace("<Fragment set:html={markPairPrimary(membersHtml)} /><Fragment set:html={momentumHtml} />", "<Fragment set:html={momentumHtml} /><Fragment set:html={markPairPrimary(membersHtml)} />");
+  assert.notEqual(swap, page, "control fixture applies");
+  assert.ok(congressCompositionProblems(congressMain(swap)).some((p) => /Leaders then Tickers/.test(p)), "control: Tickers first fails");
+  const stacked = page.replace(
+    '<div class="design-rankings" id="congress-leaders-band"><Fragment set:html={markPairPrimary(membersHtml)} /><Fragment set:html={momentumHtml} /></div>',
+    '<div class="design-rankings" id="congress-leaders-band"><Fragment set:html={markPairPrimary(membersHtml)} /></div><div class="design-rankings"><Fragment set:html={momentumHtml} /></div>',
+  );
+  assert.notEqual(stacked, page, "control fixture applies");
+  assert.ok(congressCompositionProblems(congressMain(stacked)).length > 0, "control: stacked (unpaired) rankings fail");
+  const notesLast = page
+    .replace(/<details class="design-supplement" id="congress-notes">[\s\S]*?<\/details>/, "")
+    .replace("</main>", '<details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary></details></main>');
+  assert.ok(congressCompositionProblems(congressMain(notesLast)).some((p) => /directly after the provenance/.test(p)), "control: notes below the feed fail");
 });
 
 test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for a download-free 'Show 50 more'", () => {
@@ -486,7 +539,30 @@ function qoq(i: number, kind: QoqDeltaRow["change_kind"] = "add"): QoqDeltaRow {
   };
 }
 
-test("R15: the filer page reads identity → 4 stats → position changes (20 rows + real show-more) → holdings/book shape → one Planned line", () => {
+/* R15, rewritten in DESIGN-POLISH M2 (T2.5 / T2.8 / T2.10; A-9). The
+   property is unchanged — the filer page reads identity → the period's four
+   figures → Position changes (20 rows + a real show-more) → holdings and book
+   shape → ONE Planned line — and is now held by DOM ORDER, which is the visual
+   order (no `:has()`/`order` rule re-stacks the page). The four figures moved
+   from `statTiles` to the ONE header ledger (read from its <dl>), and the parts
+   are: head (+ ledger root) → changes root → band F1 [holdings │ book shape +
+   filing history] → Planned line → EDGAR / notes → the §5 note at the foot. */
+function filerReadingOrder(html: string): string[] {
+  const root = domOf(html);
+  const mark = (el: MiniElement): string | null =>
+    el.classList.contains("entity-head") ? "head"
+      : el.hasAttribute("data-filer-root") ? "changes"
+        : el.classList.contains("design-filer-band") ? "band"
+          : el.classList.contains("planned-line") ? "planned"
+            : el.classList.contains("edgar-block") ? "edgar"
+              : el.id === "filer-notes" ? "notes"
+                : el.classList.contains("filer-data-note") ? "data-note"
+                  : null;
+  return root.children.map(mark).filter((m): m is string => m !== null);
+}
+
+test("R15 (M2): the filer page reads head + ledger → changes → band F1 [holdings │ book shape + history] → one Planned line → EDGAR/notes → §5 note, in DOM order", () => {
+  const holdingsHtml = '<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer"><div data-holdings-body></div></section>';
   const html = filerBody(
     { cik: "0001067983", name: "BERKSHIRE HATHAWAY INC", latestPeriod: "2026-03-31" },
     ["2025-12-31", "2026-03-31"],
@@ -496,31 +572,50 @@ test("R15: the filer page reads identity → 4 stats → position changes (20 ro
     "2026-05-15",
     25,
     null,
-    { total: 35, kinds: { new: 5, exit: 6 }, typing: typing({ cik: "0001067983", display_name: "Berkshire Hathaway", person: "Warren Buffett", manager_type: "asset_manager" }) },
+    { total: 35, kinds: { new: 5, exit: 6 }, typing: typing({ cik: "0001067983", display_name: "Berkshire Hathaway", person: "Warren Buffett", manager_type: "asset_manager" }), holdingsHtml },
   );
   const subline = html.slice(html.indexOf('class="entity-subline"'), html.indexOf("</div>", html.indexOf('class="entity-subline"')));
   assert.match(subline, /Warren Buffett/);
   assert.match(subline, /Asset managers/);
   assert.match(subline, /\$2\.5B reported 13\(f\) long value/);
-  const labels = tileLabels(html);
-  assert.deepEqual(labels.slice(0, 4), ["reported value", "positions", "new stakes", "exits"]);
-  const pairs = domOf(html).querySelectorAll(".tile-label").map((l) => [visibleText(l.previousElementSibling!).trim(), visibleText(l).trim()]);
-  assert.ok(pairs.some(([v, l]) => v === "5" && l === "new stakes"));
-  assert.ok(pairs.some(([v, l]) => v === "6" && l === "exits"));
-  const changes = html.indexOf('class="panel panel-wide design-changes"');
-  const bookShape = html.indexOf('class="panel design-book-shape"');
-  assert.ok(changes > 0 && changes < bookShape, "changes before the book shape");
+
+  // the reading order IS the DOM order
+  assert.deepEqual(filerReadingOrder(html), ["head", "changes", "band", "planned", "edgar", "notes", "data-note"]);
+  // control: the pre-M2 order (the holdings band before the changes) is caught
+  const bandAt = html.indexOf('<div class="design-band design-filer-band">');
+  const changesAt = html.indexOf("<div data-filer-root>");
+  const planned = html.indexOf('<p class="planned-line">');
+  const swapped = html.slice(0, changesAt) + html.slice(bandAt, planned) + html.slice(changesAt, bandAt) + html.slice(planned);
+  assert.notDeepEqual(filerReadingOrder(swapped), filerReadingOrder(html), "control: a band moved above the changes changes the order");
+
+  // the four period figures, from the ledger inside the head's ledger root
+  const head = domOf(html).querySelector("header.entity-head")!;
+  const ledger = head.querySelector("[data-filer-ledger]")!.querySelector("dl.design-ledger")!;
+  assert.equal(ledger.getAttribute("aria-label"), "Period statistics for 2026-03-31");
+  const figs = figuresOf(ledger);
+  assert.deepEqual(figs.map((f) => f.label), ["Reported value", "Positions", "New stakes", "Exits"]);
+  assert.deepEqual(figs.map((f) => f.value), ["$2.5B", "40", "5", "6"], "the kind counts are the WHOLE period's, not the embedded slice's");
+
+  // band F1: the holdings surface is the left cell; book shape then filing history on the right
+  const band = domOf(html).querySelector(".design-filer-band")!;
+  assert.equal(band.children.length, 2);
+  assert.equal(band.children[0]!.getAttribute("data-holdings-surface"), "filer");
+  const side = band.children[1]!;
+  assert.ok(side.classList.contains("design-filer-side"));
+  assert.deepEqual(side.children.map((c) => (c.hasAttribute("data-filer-bookshape") ? "bookshape" : c.getAttribute("aria-label"))), ["bookshape", "Filing history"]);
+  assert.ok(side.children[0]!.querySelector("section.design-book-shape"), "the book shape sits in its repaintable root");
+
+  // the changes: open (never folded), 20 rows visible, the rest behind a real show-more
   assert.doesNotMatch(html, /<details class="panel panel-wide design-supplement" aria-label="Position changes"/, "changes are open, not folded");
   const posRows = bodyRows(html).filter((tr) => (tr.getAttribute("id") ?? "").startsWith("pos-") && tr.children[0]?.classList.contains("c-pos"));
-  const visible = posRows.filter((tr) => !tr.hasAttribute("data-compact-extra")).length;
-  const hidden = posRows.filter((tr) => tr.hasAttribute("data-compact-extra")).length;
-  assert.equal(visible, CHANGES_COMPACT_ROWS);
-  assert.equal(hidden, 15);
+  assert.equal(posRows.filter((tr) => !tr.hasAttribute("data-compact-extra")).length, CHANGES_COMPACT_ROWS);
+  assert.equal(posRows.filter((tr) => tr.hasAttribute("data-compact-extra")).length, 15);
   assert.match(html, /data-compact-for="filer-changes-tbody" data-compact-total="35" data-compact-shown="20"/);
   assert.doesNotMatch(html, /aria-label="Congress overlap"|aria-label="Signals for this filer"|aria-label="Sector rotation"/, "empty frames are gone");
   assert.equal((html.match(/class="planned-line"/g) ?? []).length, 1);
   assert.match(html, /PLANNED<\/span> sector rotation · Congress overlap · signals for this filer/);
   assert.match(html, /id="filer-notes"/, "the explainer cards are folded, not deleted");
+  assert.equal((html.match(/id="inst-data-note"/g) ?? []).length, 1, "the §5 note renders once, at the foot");
   assert.doesNotMatch(html, /producer-classified \(change_kind\)/);
 });
 
@@ -667,9 +762,14 @@ test("R19/R20: the band renders on BOTH routes — the unified ticker page (via 
     window: null,
   });
   assert.match(holders, /id="overlap"/);
-  assert.deepEqual(tileLabels(holders), ["holders", "combined value", "adds", "exits"]);
-  assert.match(holders, /<div class="tile-value">4<\/div>/);
-  assert.match(holders, /\$3\.0M/);
+  /* DESIGN-POLISH M2 (T2.8, milestone map `refinement-m2.test.ts:638-640`):
+     the holders header's four figures moved from `statTiles` to the ONE
+     header ledger; the property — holders · combined value · adds · exits, in
+     order, with their values — is read from the ledger's <dl> by DOM parse. */
+  const holderFigs = ledgerFigures(holders);
+  assert.deepEqual(holderFigs.map((f) => f.label), ["Holders", "Combined value", "Adds", "Exits"]);
+  assert.deepEqual(holderFigs.map((f) => f.value), ["4", "$3.0M", "2", "1"]);
+  assert.equal(domOf(holders).querySelector("dl.design-ledger")!.getAttribute("aria-label"), "Holder statistics");
   assert.equal(bodyRows(holders).filter((tr) => tr.children[0]?.classList.contains("c-rank")).length, 4, "holders ranked");
   assert.match(holders, /27 members disclosed NVDA/);
   assert.match(holders, /verified against the SEC company list on 2026-09-10/);

@@ -21,7 +21,8 @@ import {
   entityTxnTable,
   type BuildStamps,
 } from "../src/lib/ui/index.ts";
-import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
+import { COMPACT_ROWS, compactCollapseLabel, compactDisclosure, syncCompactDisclosure, type RenderCtx, type TxnRow } from "../src/lib/format.ts";
+import { MiniElement } from "./lib/mini-dom.ts";
 import { leadersRollup } from "../src/lib/derive.ts";
 import { instIndexBodyHtml } from "../src/scripts/inst-index-client.ts";
 import { buildInstIndexRow, type InstIndexRow } from "../src/lib/inst-index.ts";
@@ -400,12 +401,30 @@ test("F16: the disclosure label is derived from the LIMIT, never the shown count
     "the island commits its label through the shared updater");
   assert.match(src, /const hidden = Math\.max\(0, total - limit\)/,
     "…and the count it passes is derived from the LIMIT, not from the shown rows");
-  const fmt = readFileSync(
-    path.resolve(import.meta.dirname, "..", "src", "lib", "format.ts"),
-    "latin1",
-  );
-  assert.match(fmt, /export function compactCollapseLabel[\s\S]{0,200}Show only the first \$\{fmtInt\(COMPACT_ROWS\)\}/,
-    "an expanded control must not promise to keep every row it is about to collapse");
+  /* DESIGN-POLISH M2 (T2.3/T2.5/T2.11): a compact table now has its OWN slice
+     (member flows 20, filer changes 20, the signal hits 12), so the collapse label
+     names THE TABLE'S LIMIT — `compactCollapseLabel(noun, shown)`, default
+     COMPACT_ROWS — rather than the one global constant. The property is
+     unchanged and asserted behaviourally: an expanded control names the slice
+     it will collapse TO, never the rows currently shown. */
+  assert.equal(compactCollapseLabel("members"), `Show only the first ${COMPACT_ROWS} members`, "the default limit is COMPACT_ROWS");
+  assert.equal(compactCollapseLabel("changes", 20), "Show only the first 20 changes", "a table's own slice");
+  const expandedLabel = (shown: number | undefined): string => {
+    const root = new MiniElement("body");
+    root.innerHTML = compactDisclosure({ rootId: "t", total: 40, shown: 20, noun: "changes", domBacked: true });
+    const wrap = root.querySelector(".compact-disclosure")!;
+    syncCompactDisclosure(wrap as never, { total: 40, hidden: 0, expanded: true, noun: "changes", shown, all: true });
+    return wrap.querySelector("button")!.textContent;
+  };
+  /** An expanded control that names every row it currently shows promises to keep them all. */
+  const promisesEveryRow = (label: string, total: number): boolean => new RegExp(`first ${total}\\b`).test(label);
+  assert.equal(expandedLabel(20), "Show only the first 20 changes");
+  assert.ok(!promisesEveryRow(expandedLabel(20), 40));
+  assert.ok(promisesEveryRow(expandedLabel(40), 40), "control: passing the SHOWN count (40) as the slice makes the promise");
+  // …and the one DOM-backed binder passes the server's slice, read off the element
+  const binder = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "inst-index-client.ts"), "latin1");
+  assert.match(binder, /const shown = Number\(wrap\.dataset\.compactShown \?\? 0\)/, "the slice is the server's data-compact-shown");
+  assert.match(binder, /\bshown: s\.shown,/, "…and that is what the binder passes");
 });
 
 test("F11: bounding accounts for the REAL boundary tuple, including a long issuer key", () => {
@@ -603,7 +622,10 @@ test("F3: the SSR page renders the directory through that one renderer", () => {
     path.resolve(import.meta.dirname, "..", "src", "pages", "institutional", "index.astro"),
     "latin1",
   );
-  assert.match(page, /instIndexBodyHtml\(indexRows, "", "value", "desc", \{ types: DEFAULT_TYPES, notableOnly: false \}, COMPACT_ROWS\)/);
+  /* The one renderer, with the one budget. DESIGN-POLISH M2 (review R2-6)
+     adds its column set as the last argument — the same `directoryColumns`
+     result the table's data-columns carries. */
+  assert.match(page, /instIndexBodyHtml\(indexRows, "", "value", "desc", \{ types: DEFAULT_TYPES, notableOnly: false \}, COMPACT_ROWS, dirCols\.columns\)/);
   assert.ok(
     !/ranked\.slice\(0, COMPACT_ROWS\)/.test(page),
     "a second budget on this page is the defect itself",

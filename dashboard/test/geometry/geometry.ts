@@ -251,10 +251,15 @@ export interface LedgerProbe {
   /** G11b's focus half: focuses one control of each kind (the caller presses
       Tab first so programmatic focus inherits keyboard modality) */
   focusRing(): LedgerResult;
-  g12(): LedgerResult;
+  /** async: after scrolling a control into view it waits for the page's own
+      clip to re-run (scripts/hit-areas.ts re-measures on every inner scroll),
+      so the square it samples is the one the page draws at that scroll.
+      `tableClamp: "shrink"` re-plants the pre-M2 table-side clamp — for the
+      negative control ONLY. */
+  g12(opts?: { tableClamp?: "shift" | "shrink" }): Promise<LedgerResult>;
   /** the G12 audit over `only` (at most `limit` of them), with the
       fine-pointer inflation check: the holders and note lanes' hit-test */
-  hits(opts: { only: string; limit?: number }): LedgerResult;
+  hits(opts: { only: string; limit?: number }): Promise<LedgerResult>;
   headFont(): LedgerResult;
   oneFlex(): LedgerResult;
   metaTruncation(): LedgerResult;
@@ -1113,6 +1118,10 @@ export function installLedgerProbe(): void {
       const hr = headerRow(t);
       if (!hr || !isVisible(hr)) { exclude(res, { table, tableIndex, detail: "no rendered header row" }); continue; }
       const listed = (t.getAttribute("data-columns") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      /* Only a column a VALUE proved over the full collection is excused
+         (`data-columns-proven`, review Q2-5): an `always` column is listed in
+         data-columns without a value check, so all-empty on the page it fails. */
+      const proven = (t.getAttribute("data-columns-proven") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
       const hmap = colMap(hr);
       const maps = bodyRows(t).map(colMap);
       if (!maps.length) { exclude(res, { table, tableIndex, detail: "no visible body rows" }); continue; }
@@ -1132,8 +1141,8 @@ export function installLedgerProbe(): void {
         if (empty === n) {
           const key = th.getAttribute("data-col");
           const f: LedgerFinding = { table, tableIndex, column: colLabel(th, c), columnIndex: c, detail: "" };
-          if (key && listed.includes(key)) exclude(res, { ...f, detail: `all ${n} visible cells empty; kept because data-columns lists "${key}"` });
-          else fail(res, { ...f, detail: `every one of ${n} visible cells is empty or a dash, and data-columns ${listed.length ? `("${listed.join(",")}")` : "(absent)"} does not list ${key ? `"${key}"` : "it (no data-col)"}` });
+          if (key && proven.includes(key)) exclude(res, { ...f, detail: `all ${n} visible cells empty; kept because a value elsewhere in the collection proved "${key}" (data-columns-proven)` });
+          else fail(res, { ...f, detail: `every one of ${n} visible cells is empty or a dash, and data-columns-proven ${proven.length ? `("${proven.join(",")}")` : "(absent)"} does not list ${key ? `"${key}"` : "it (no data-col)"}${key && listed.includes(key) ? ` — data-columns keeps "${key}" without a value (an always column must show one)` : ""}` });
         }
       }
     }
@@ -1304,35 +1313,123 @@ export function installLedgerProbe(): void {
     }
     return b === -Infinity ? null : b;
   }
+  /** A band cell that is ONLY its empty-state line (R10): marked
+      `data-empty-state` by its renderer, or the one-line unavailable panel. */
+  function emptyStateCell(c: Element): boolean {
+    return c.hasAttribute("data-empty-state") || c.classList.contains("design-unavailable-line");
+  }
+  /** A cell that shows its WHOLE collection (DESIGN-POLISH M2 delta review):
+      every table in it carries its own count — the compact disclosure naming
+      its tbody (`data-compact-for`) — with `data-compact-total` ≤
+      `data-compact-shown`, and its rows agree: the tbody holds exactly `total`
+      rows and every one shows. Read off the table's own count attributes and
+      its rows, never off a flag the page could set for G9. A cell with no
+      table, or a table carrying no count, is not proved complete. */
+  function completeCell(cell: Element): { complete: boolean; detail: string } {
+    const tables = Array.from(cell.querySelectorAll("table")).filter((t) => isVisible(t) && hasBox(t) && !nested(t));
+    if (!tables.length) return { complete: false, detail: "it has no table" };
+    const done: string[] = [];
+    for (const t of tables) {
+      const counted = Array.from(t.tBodies)
+        .map((b) => ({ b, w: b.id ? document.querySelector<HTMLElement>(`.compact-disclosure[data-compact-for="${CSS.escape(b.id)}"]`) : null }))
+        .filter((x): x is { b: HTMLTableSectionElement; w: HTMLElement } => x.w !== null);
+      if (!counted.length) return { complete: false, detail: `${describe(t)} carries no count (no compact disclosure names its tbody)` };
+      for (const { b, w } of counted) {
+        const total = Number(w.dataset.compactTotal), shown = Number(w.dataset.compactShown);
+        if (!Number.isFinite(total) || !Number.isFinite(shown) || total > shown) return { complete: false, detail: `#${b.id} holds rows back (${shown} of ${total})` };
+        const rows = Array.from(b.rows).filter((r) => !r.classList.contains("si-evidence-row"));
+        const showing = rows.filter((r) => isVisible(r) && hasBox(r)).length;
+        if (rows.length !== total || showing !== total) return { complete: false, detail: `#${b.id} counts ${total} of ${total}, but ${showing} of its ${rows.length} rows show` };
+        done.push(`#${b.id} ${total} of ${total}`);
+      }
+    }
+    return { complete: true, detail: done.join(", ") };
+  }
+  /* G9, rewritten for coordinator decision CD-1 (DESIGN-POLISH M2 review
+     Q2-2, Q2-3). A pair has ONE primary cell (`data-pair-primary`, the wider
+     one the reader came for), and the rule is ASYMMETRIC: the primary is never
+     cut to balance its side, so the side may end earlier, but it may not end
+     more than 96px later — no void opens under the primary. At the desktop
+     width the primary must be the wider (or equal) cell. A band counts as
+     collapsed only when its cells SHOW it: its last cell is its one
+     empty-state line (or every cell is one). A COMPLETE primary — its table
+     shows its whole collection, total ≤ shown on its own count (a Consensus
+     board of one to three issuers) — may end more than 96px above its side:
+     there are no more rows to show (M2 delta review). A primary holding rows
+     back still fails. */
   function g9(opts: { expectedPairs: number | null }): LedgerResult {
     reset();
     const res = newResult("G9");
     const cands = new Set(Array.from(document.querySelectorAll(".design-band, .design-rankings, .design-pair")));
+    const desktop = window.innerWidth >= 1081;
     let collapsed = 0;
     const pairs: { el: Element; cells: Element[] }[] = [];
+    const cellsOf = (el: Element): Element[] =>
+      Array.from(el.children).filter((c) => isVisible(c) && hasBox(c) && !c.matches(".planned-line, script, style, template"));
     for (const el of cands) {
       if (!isVisible(el)) continue;
-      if (el.matches('[data-collapsed="empty-state"]')) { collapsed++; continue; }
-      const cells = Array.from(el.children).filter(
-        (c) => isVisible(c) && hasBox(c) && !c.matches(".planned-line, script, style, template"),
-      );
+      const cells = cellsOf(el);
+      if (el.matches('[data-collapsed="empty-state"]')) {
+        const empties = cells.filter(emptyStateCell);
+        const last = cells[cells.length - 1];
+        const shows = !!last && emptyStateCell(last) && (empties.length === 1 || empties.length === cells.length);
+        res.measured++;
+        if (!shows) {
+          fail(res, { el: describe(el), detail: `${describe(el)} claims an empty-state collapse, but ${empties.length} of its ${cells.length} cells is an empty-state line${last && !emptyStateCell(last) ? " and its last cell is not one" : ""}` });
+          continue;
+        }
+        collapsed++;
+        /* CD-2: a lone table of at most three columns left by the collapse
+           keeps the design's cell width — half the band — at the desktop width. */
+        const content = cells.filter((c) => !emptyStateCell(c));
+        if (desktop && content.length === 1) {
+          const tables = Array.from(content[0]!.querySelectorAll("table")).filter((t) => isVisible(t) && hasBox(t));
+          const head = tables.length === 1 ? headerRow(tables[0]!) : null;
+          const cols = head ? Array.from(head.cells).reduce((n, c) => n + Math.max(1, c.colSpan), 0) : 0;
+          if (tables.length === 1 && cols > 0 && cols <= 3) {
+            res.measured++;
+            const bw = el.getBoundingClientRect().width, cw = content[0]!.getBoundingClientRect().width;
+            if (cw > bw / 2 + 1) fail(res, { el: describe(content[0]!), delta: r1(cw - bw / 2), detail: `a lone ${cols}-column table left by the collapse spans ${r1(cw)}px of the ${r1(bw)}px band (at most half: CD-2)` });
+          }
+        }
+        continue;
+      }
       if (cells.length === 2) pairs.push({ el, cells });
     }
     for (const p of pairs) {
-      const a = contentBottom(p.cells[0]!), b = contentBottom(p.cells[1]!);
       const name = `${describe(p.el)} [${describe(p.cells[0]!)} | ${describe(p.cells[1]!)}]`;
-      if (a === null || b === null) { fail(res, { el: name, detail: `${name}: a cell has no visible content` }); continue; }
+      const primaries = p.cells.filter((c) => c.hasAttribute("data-pair-primary"));
       res.measured++;
-      const d = Math.abs(a - b);
-      if (d > 96) fail(res, { el: name, delta: r1(d), detail: `${name}: last visible content ends ${r1(d)}px apart (≤96)` });
+      if (primaries.length !== 1) {
+        fail(res, { el: name, detail: `${name}: ${primaries.length} primary cells (a pair names exactly one, data-pair-primary)` });
+        continue;
+      }
+      const primary = primaries[0]!, side = p.cells.find((c) => c !== primary)!;
+      if (desktop) {
+        const pw = primary.getBoundingClientRect().width, sw = side.getBoundingClientRect().width;
+        if (pw < sw - 1) fail(res, { el: name, delta: r1(sw - pw), detail: `${name}: the primary cell is ${r1(pw)}px, narrower than its ${r1(sw)}px side cell` });
+      }
+      const pb = contentBottom(primary), sb = contentBottom(side);
+      if (pb === null || sb === null) { fail(res, { el: name, detail: `${name}: a cell has no visible content` }); continue; }
+      const d = sb - pb;
+      if (d > 96) {
+        const c = completeCell(primary);
+        if (c.complete) res.notes.push(`${name}: the side ends ${r1(d)}px below a COMPLETE primary (${c.detail}) — exempt`);
+        else fail(res, { el: name, delta: r1(d), detail: `${name}: the side cell ends ${r1(d)}px below the primary (a void under the primary; ≤96 — not a complete primary: ${c.detail})` });
+      }
     }
     res.notes.push(`pairs: ${pairs.map((p) => describe(p.el)).join(", ") || "none"}; collapsed: ${collapsed}`);
     if (opts?.expectedPairs != null) {
+      /* The pair COUNT is itself a measurement (T-4): a route whose every
+         pair collapsed under the empty-state rule (Institutional's I1 on the
+         bounded build) has measured its bands by counting them — a pair lost
+         any other way would fail right here. */
+      res.measured++;
       const want = opts.expectedPairs - collapsed;
       if (pairs.length !== want) {
         fail(res, { detail: `found ${pairs.length} pair(s), expected ${opts.expectedPairs} less ${collapsed} collapsed = ${want}` });
       }
-    } else if (!pairs.length) res.applicable = false;
+    } else if (!pairs.length && !collapsed) res.applicable = false;
     return done(res);
   }
 
@@ -1695,6 +1792,37 @@ export function installLedgerProbe(): void {
     return { l: cx - w / 2, r: cx + w / 2, t: cy - h / 2, b: cy + h / 2 };
   };
   const sqOverlap = (a: Sq, b: Sq): boolean => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+  /** The sticky identity cell in `c`'s row that `c` is not in (the page's
+      `stickyCellBeside`, read the same way: by computed position). */
+  function stickyCellBeside(c: Element): Element | null {
+    const own = c.closest("td, th");
+    const tr = own?.parentElement;
+    if (!own || !tr || tr.tagName !== "TR") return null;
+    const sticky = Array.from(tr.children).find((x) => getComputedStyle(x).position === "sticky") ?? null;
+    return sticky && sticky !== own ? sticky : null;
+  }
+  /** How the table-side clamp fits a square into its table. "shift" is the
+      page's rule since M2 (scripts/hit-areas.ts `shiftInto`); "shrink" is the
+      pre-fix rule — each side cut on its own, and the table's sides only, no
+      sticky column — kept ONLY so a negative control can re-plant it and
+      prove the size assertion below catches it. */
+  type TableClamp = "shift" | "shrink";
+  let tableClamp: TableClamp = "shift";
+  /** The horizontal room inside a control's scrolling table (the page's
+      `tableRoom`): its sides, and beside a sticky identity column that
+      column's right edge as it sits now. null outside a scrolling table. */
+  function tableRoom(c: Element): { l: number; r: number } | null {
+    const table = scrollersOf(c).length ? c.closest("table") : null;
+    if (!table) return null;
+    const tb = table.getBoundingClientRect();
+    let l = tb.left;
+    const sticky = tableClamp === "shift" ? stickyCellBeside(c) : null;
+    if (sticky) {
+      const sr = sticky.getBoundingClientRect();
+      if (sr.left < c.getBoundingClientRect().left) l = Math.max(l, sr.right);
+    }
+    return { l, r: tb.right };
+  }
   function clampedSquare(c: Element, min: number): Sq {
     const s = squareOf(c.getBoundingClientRect(), min);
     if (c.closest("thead")) {
@@ -1702,12 +1830,19 @@ export function installLedgerProbe(): void {
       if (tr) s.b = Math.min(s.b, tr.getBoundingClientRect().bottom);
     }
     /* the page's rule (scripts/hit-areas.ts): a control in a scrolling table
-       never reaches past the table's sides, where its scroller shows nothing */
-    const table = scrollersOf(c).length ? c.closest("table") : null;
-    if (table) {
-      const tb = table.getBoundingClientRect();
-      s.l = Math.max(s.l, tb.left);
-      s.r = Math.min(s.r, tb.right);
+       never reaches past the table's sides, where its scroller shows nothing,
+       nor under a sticky identity column; the square is SHIFTED into that
+       room, keeping its full side unless the room is narrower (M2) */
+    const room = tableRoom(c);
+    if (room) {
+      if (tableClamp === "shrink") {
+        s.l = Math.max(s.l, room.l);
+        s.r = Math.min(s.r, room.r);
+      } else {
+        if (s.r > room.r) { const d = s.r - room.r; s.l -= d; s.r -= d; }
+        if (s.l < room.l) { const d = room.l - s.l; s.l += d; s.r += d; }
+        if (s.r > room.r) s.r = room.r;
+      }
     }
     return s;
   }
@@ -1768,8 +1903,23 @@ export function installLedgerProbe(): void {
     /** measure at most this many of them */
     limit?: number;
     inflation?: boolean;
+    /** the negative control's plant (see `TableClamp`); default "shift" */
+    tableClamp?: TableClamp;
   }
-  function hitAudit(name: string, opts: HitOpts = {}): LedgerResult {
+  const frames = (n: number): Promise<void> =>
+    new Promise((done) => {
+      const step = (k: number): void => { if (k <= 0) done(); else requestAnimationFrame(() => step(k - 1)); };
+      step(n);
+    });
+  async function hitAudit(name: string, opts: HitOpts = {}): Promise<LedgerResult> {
+    tableClamp = opts.tableClamp ?? "shift";
+    try {
+      return await hitAuditRun(name, opts);
+    } finally {
+      tableClamp = "shift";
+    }
+  }
+  async function hitAuditRun(name: string, opts: HitOpts): Promise<LedgerResult> {
     reset();
     const res = newResult(name);
     const env = envInfo();
@@ -1785,9 +1935,13 @@ export function installLedgerProbe(): void {
     if (opts.limit !== undefined) targets = targets.slice(0, opts.limit);
     const all = [...new Set([...ctls, ...targets])];
     const x0 = window.scrollX, y0 = window.scrollY;
+    /* candidate neighbours, widened by a whole square on each side: the
+       table-side clamp SHIFTS a square by up to its side, and beside a sticky
+       column it depends on the inner scroll, which changes below — each pair
+       is then decided at the scroll it is measured at (`pairRects`) */
     const doc = all.map((c) => {
       const s = clampedSquare(c, min);
-      return { l: s.l + x0, r: s.r + x0, t: s.t + y0, b: s.b + y0 };
+      return { l: s.l + x0 - min, r: s.r + x0 + min, t: s.t + y0, b: s.b + y0 };
     });
     const order = all.map((_c, i) => i).sort((a, b) => doc[a]!.t - doc[b]!.t);
     const nbrs: number[][] = all.map(() => []);
@@ -1811,14 +1965,47 @@ export function installLedgerProbe(): void {
     /* every inner scroller a scrollIntoView moves is put back afterwards, so
        the checks that run after this one on the same page see it at rest */
     const scrolled = new Map<Element, [number, number]>();
-    all.forEach((c, i) => {
-      if (!measure.has(c)) return;
+    let shifted = 0;
+    for (let i = 0; i < all.length; i++) {
+      const c = all[i]!;
+      if (!measure.has(c)) continue;
+      const inner: [Element, number, number][] = [];
       for (let a = c.parentElement; a; a = a.parentElement) {
-        if (!scrolled.has(a) && (a.scrollWidth > a.clientWidth || a.scrollHeight > a.clientHeight)) scrolled.set(a, [a.scrollLeft, a.scrollTop]);
+        if (a.scrollWidth > a.clientWidth || a.scrollHeight > a.clientHeight) {
+          if (!scrolled.has(a)) scrolled.set(a, [a.scrollLeft, a.scrollTop]);
+          if (a !== document.body && a !== document.documentElement) inner.push([a, a.scrollLeft, a.scrollTop]);
+        }
       }
       c.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+      /* An inner scroller that moved makes the page re-run its clip on the
+         next frame (hit-areas.ts listens for inner scrolls; the sticky-column
+         room depends on the scroll). Sample what the page draws THEN, as a
+         pointer arriving after the scroll would. */
+      if (inner.some(([a, l, t]) => a.scrollLeft !== l || a.scrollTop !== t)) await frames(3);
       const own = c.getBoundingClientRect();
       const s = clampedSquare(c, min);
+      /* The table-side clamp keeps the whole square (M2 follow-up to the M1
+         delta review): after it — and before the midpoint clip, which may
+         rightly shorten a square between two close neighbours (H-16) — a
+         square is at least --hit-min on each axis, unless its room is
+         narrower (the table's sides, less a sticky identity column). The
+         header row still ends a header control's square (H-16), so the
+         vertical is held to that row. */
+      const room = tableRoom(c);
+      if (room) {
+        const wantW = Math.min(Math.max(own.width, min), room.r - room.l);
+        const head = c.closest("thead") ? c.closest("tr") : null;
+        const wantH = head ? Math.min(Math.max(own.height, min), head.getBoundingClientRect().bottom - s.t) : Math.max(own.height, min);
+        const sq0 = squareOf(own, min);
+        if (Math.abs(s.l - sq0.l) > 0.5) shifted++;
+        if (s.r - s.l < wantW - 0.5 || s.b - s.t < wantH - 0.5) {
+          const lbl = `${describe(c)} "${(c.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 16)}"`;
+          fail(res, {
+            el: lbl,
+            detail: `${lbl}: the table-side clamp left a ${r1(s.r - s.l)}×${r1(s.b - s.t)} square (needs ${r1(wantW)}×${r1(wantH)}: --hit-min ${min}px, room ${r1(room.r - room.l)}px) — shortened, not shifted`,
+          });
+        }
+      }
       for (const j of nbrs[i]!) {
         const pr = pairRects(c, all[j]!, min);
         if (pr) clipAt(s, pr[0], pr[1]);
@@ -1888,15 +2075,17 @@ export function installLedgerProbe(): void {
           }
         }
       }
-    });
+    }
+    res.notes.push(`table-side clamp: ${shifted} square(s) shifted inside their table`);
+    res.sub = { ...(res.sub ?? {}), shifted };
     for (const [a, [l, t]] of scrolled) { a.scrollLeft = l; a.scrollTop = t; }
     window.scrollTo({ left: x0, top: y0, behavior: "instant" });
     return done(res);
   }
-  function g12(): LedgerResult {
-    return hitAudit("G12");
+  function g12(opts?: { tableClamp?: TableClamp }): Promise<LedgerResult> {
+    return hitAudit("G12", { tableClamp: opts?.tableClamp });
   }
-  function hits(opts: { only: string; limit?: number }): LedgerResult {
+  function hits(opts: { only: string; limit?: number }): Promise<LedgerResult> {
     return hitAudit("hits", { only: opts.only, limit: opts.limit, inflation: true });
   }
 

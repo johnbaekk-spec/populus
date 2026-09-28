@@ -23,7 +23,7 @@ import {
   utf8ByteLength,
   type QoqDeltaLike,
 } from "../src/lib/holdings.ts";
-import { changesTableHtml, filerPeriodSectionHtml } from "../src/lib/ui/index.ts";
+import { changesTableHtml, filerChangesHtml, filerPeriodSectionHtml } from "../src/lib/ui/index.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
 
@@ -151,20 +151,50 @@ test("M2-12/F1: the changes pager works on FIRST LOAD, before any chip is clicke
   /* The shipped bug: `initFilerPeriods` seeded its period as "" and the pager
      handler bailed on a falsy period, so every click was swallowed until a chip
      was clicked — and the browser check that "verified" the pager had clicked a
-     chip first, so it never saw this. The regression guard is the SOURCE
-     invariant: the period must be seeded from the active chip, never from "". */
+     chip first, so it never saw this. The property: the period is seeded from
+     the SSR-active chip, never from "".
+
+     DESIGN-POLISH M2 (F.3) moved the period chips onto the Position changes
+     band head, INSIDE `[data-filer-root]`, which the switch repaints; so the
+     seed now reads the chip inside the root, and chip clicks are delegated on
+     the root (a listener bound to the first chip set would go stale on the
+     first repaint). Pinned from both sides: the SSR bytes carry exactly one
+     active chip for the rendered period inside the root, and the island seeds
+     from that chip and handles chip and pager clicks on the root. */
   const src = readFileSync(
     path.join(import.meta.dirname, "..", "src", "scripts", "entity-client.ts"),
     "utf-8",
   );
-  const seeded = /let period =\s*\n?\s*chips\.querySelector<HTMLElement>\("\[data-period\]\.chip-active"\)/.test(
-    src,
-  );
-  assert.ok(seeded, "the pre-rendered period must be seeded from the SSR-active chip");
-  assert.ok(
-    !/let period = "";\s*\n\s*let page = 0;/.test(src),
-    "seeding period to the empty string is exactly the defect this pins",
-  );
+  const start = src.indexOf("export function initFilerPeriods");
+  assert.ok(start >= 0);
+  const body = src.slice(start, src.indexOf("\nexport function ", start + 1));
+  /** The island's seed + delegation problems, as a predicate its controls run through. */
+  const seedProblems = (fn: string): string[] => {
+    const out: string[] = [];
+    if (!/const root = document\.querySelector<HTMLElement>\("\[data-filer-root\]"\)/.test(fn)) out.push("the root is not [data-filer-root]");
+    if (!/let period =\s*\n?\s*(?:offered\()?root\.querySelector<HTMLElement>\("\[data-period-chips\] \[data-period\]\.chip-active"\)\?\.dataset\.period/.test(fn)) out.push("the period is not seeded from the active chip inside the root");
+    if (/let period = "";/.test(fn)) out.push("the period is seeded to the empty string");
+    const handler = fn.slice(fn.indexOf('root.addEventListener("click"'));
+    if (!fn.includes('root.addEventListener("click"')) out.push("clicks are not delegated on the root");
+    else {
+      if (!/closest<HTMLButtonElement>\("\[data-period-chips\] \[data-period\]"\)/.test(handler)) out.push("chip clicks are not handled by the root's delegate");
+      if (!/closest<HTMLButtonElement>\("\[data-changes-page\]"\)/.test(handler)) out.push("pager clicks are not handled by the root's delegate");
+    }
+    return out;
+  };
+  assert.deepEqual(seedProblems(body), []);
+  // controls: the original defect, and a seed read from outside the root, each fail
+  assert.ok(seedProblems(body.replace(/let period =[\s\S]*?;\n/, 'let period = "";\n')).length > 0, "control: an empty seed");
+  assert.ok(seedProblems(body.replace('root.addEventListener("click"', 'chips.addEventListener("click"')).length > 0, "control: a non-delegated listener");
+
+  // the SSR half: exactly one active chip, for the rendered period, inside the root
+  const ssr = new MiniElement("body");
+  ssr.innerHTML = filerChangesHtml(["2025-12-31", "2026-03-31"], "2026-03-31", null, [delta(1, 100)], "2026-05-15", 25, { total: 1 });
+  const root = ssr.querySelector("[data-filer-root]")!;
+  const active = root.querySelectorAll("[data-period-chips] [data-period].chip-active");
+  assert.equal(active.length, 1, "one active chip inside the root");
+  assert.equal(active[0]!.getAttribute("data-period"), "2026-03-31", "…naming the rendered period");
+  assert.equal(active[0]!.getAttribute("aria-pressed"), "true");
 });
 
 test("M2-12/F1: the tail-filer route delegates changes-pager clicks", () => {

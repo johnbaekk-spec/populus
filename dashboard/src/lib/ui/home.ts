@@ -85,7 +85,7 @@ export function moduleCard(
 
 /* ---------- R18: the three live tiles ---------- */
 
-import { fmtInt, fmtUsd, tickerHrefFor, note, thHtml, txnEdge } from "../format.ts";
+import { fmtInt, fmtUsd, tickerHrefFor, note, thHtml, txnEdge, presentColumns, dataColumnsAttr, tableFootReasonHtml } from "../format.ts";
 import type { NotableMove } from "../notable-moves.ts";
 import type { Signal } from "../signals.ts";
 import { MOVE_KIND_LABELS } from "../notable-moves.ts";
@@ -101,9 +101,22 @@ export const HOME_TILE_ROWS = { congress: 5, moves: 5, signals: 3 } as const;
     card explained — a range, never a point — with the methodology link. */
 export function congressTileHtml(rows: readonly TxnRow[], ctx: RenderCtx): string {
   const shown = rows.slice(0, HOME_TILE_ROWS.congress);
+  /* R12 (DESIGN-POLISH M2): the tile's collection is exactly the rows it
+     shows; a Ticker column no row fills is not rendered, and says so. */
+  const cols = presentColumns(shown, [
+    { key: "member", always: true },
+    { key: "ticker", hasValue: (r) => r.ticker != null, emptyReason: "Ticker: none of these filings names a ticker; each row's member and filing link stay." },
+    { key: "side", always: true },
+    { key: "amount", always: true },
+    { key: "filed", always: true },
+  ]);
+  const hasTicker = cols.columns.includes("ticker");
   const body = shown
     .map((r, i) => {
       const side = sideLabel(r.side, r.flags);
+      const tickerCell = hasTicker
+        ? `<td class="c-ticker">${r.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : `<span class="none">—</span>`}</td>`
+        : "";
       // The first row's range is its own note's label trigger (R6): no glyph
       // widens the numeric column.
       const amount =
@@ -113,7 +126,7 @@ export function congressTileHtml(rows: readonly TxnRow[], ctx: RenderCtx): strin
       const edge = txnEdge(r);
       return (
         `<tr${edge ? ` data-edge="${edge}"` : ""}><td class="c-member c-flex">${r.bioguide ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` : esc(r.name)} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span></td>` +
-        `<td class="c-ticker">${r.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : `<span class="none">—</span>`}</td>` +
+        tickerCell +
         `<td class="c-kind ${side.cls}">${esc(side.text)}</td>` +
         `<td class="c-num">${amount}</td>` +
         `<td class="c-filed c-num">${esc(r.filed)}</td></tr>`
@@ -125,9 +138,10 @@ export function congressTileHtml(rows: readonly TxnRow[], ctx: RenderCtx): strin
     `<div class="panel-head"><h2 class="section-h">Latest Congress disclosures</h2><span class="panel-note"><a class="section-link" href="/congress/">all disclosures ↗</a></span></div>` +
     (shown.length === 0
       ? `<p class="section-note">No disclosures in this build.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">The five newest congressional disclosures</caption>` +
-        `<thead><tr>${thHtml({ label: "Member", cls: "c-member c-flex" })}${thHtml({ label: "Ticker", cls: "c-ticker" })}${thHtml({ label: "Side", cls: "c-kind" })}${thHtml({ label: "Amount", cls: "c-num" })}${thHtml({ label: "Filed", cls: "c-num" })}</tr></thead>` +
-        `<tbody>${body}</tbody></table></div>`) +
+      : `<div class="table-scroll"><table class="etable etable-compact"${dataColumnsAttr(cols)}><caption class="visually-hidden">The five newest congressional disclosures</caption>` +
+        `<thead><tr>${thHtml({ label: "Member", cls: "c-member c-flex", col: "member" })}${hasTicker ? thHtml({ label: "Ticker", cls: "c-ticker", col: "ticker" }) : ""}${thHtml({ label: "Side", cls: "c-kind", col: "side" })}${thHtml({ label: "Amount", cls: "c-num", col: "amount" })}${thHtml({ label: "Filed", cls: "c-num", col: "filed" })}</tr></thead>` +
+        `<tbody>${body}</tbody></table></div>` +
+        tableFootReasonHtml(cols)) +
     `<p class="section-note">Amounts are ranges as filed · <a href="/methodology/#ranges">why ranges ↗</a></p>` +
     `</section>`
   );
@@ -162,10 +176,18 @@ export function movesTileHtml(moves: readonly NotableMove[], period: string | nu
 /** Top signals, ticker first. */
 export function signalsTileHtml(signals: readonly Signal[], ctx: RenderCtx, labelOf: (kind: Signal["kind"]) => string): string {
   const shown = signals.slice(0, HOME_TILE_ROWS.signals);
+  const cols = presentColumns(shown, [
+    { key: "ticker", hasValue: (s) => s.entities.ticker != null, emptyReason: "Ticker: none of these hits names a ticker." },
+    { key: "who", always: true },
+    { key: "what", always: true },
+    { key: "filed", always: true },
+  ]);
+  const hasTicker = cols.columns.includes("ticker");
   const body = shown
     .map(
       (s) =>
-        `<tr data-edge="family-${familyOf(s.kind).toLowerCase()}"><td class="c-ticker">${s.entities.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>` : `<span class="none">—</span>`}</td>` +
+        `<tr data-edge="family-${familyOf(s.kind).toLowerCase()}">` +
+        (hasTicker ? `<td class="c-ticker">${s.entities.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>` : `<span class="none">—</span>`}</td>` : "") +
         `<td class="c-member c-flex">${s.entities.bioguide ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>` : esc(s.entities.memberName)}</td>` +
         `<td class="c-kind"><span class="si-kind">${esc(labelOf(s.kind))}</span></td>` +
         `<td class="c-filed c-num">${esc(s.occurrence.filedDate)}</td></tr>`,
@@ -176,9 +198,10 @@ export function signalsTileHtml(signals: readonly Signal[], ctx: RenderCtx, labe
     `<div class="panel-head"><h2 class="section-h">Signals</h2><span class="panel-note"><a class="section-link" href="/signals/">every rule ↗</a></span></div>` +
     (shown.length === 0
       ? `<p class="section-note">Zero hits in the retained window — a computed answer, not missing coverage.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Newest signal hits</caption>` +
-        `<thead><tr>${thHtml({ label: "Ticker", cls: "c-ticker" })}${thHtml({ label: "Who", cls: "c-member c-flex" })}${thHtml({ label: "What", cls: "c-kind" })}${thHtml({ label: "Filed", cls: "c-num" })}</tr></thead>` +
-        `<tbody>${body}</tbody></table></div>`) +
+      : `<div class="table-scroll"><table class="etable etable-compact"${dataColumnsAttr(cols)}><caption class="visually-hidden">Newest signal hits</caption>` +
+        `<thead><tr>${hasTicker ? thHtml({ label: "Ticker", cls: "c-ticker", col: "ticker" }) : ""}${thHtml({ label: "Who", cls: "c-member c-flex", col: "who" })}${thHtml({ label: "What", cls: "c-kind", col: "what" })}${thHtml({ label: "Filed", cls: "c-num", col: "filed" })}</tr></thead>` +
+        `<tbody>${body}</tbody></table></div>` +
+        tableFootReasonHtml(cols)) +
     `<p class="section-note">A signal is a fact about a filing, not a forecast · ${fmtInt(signals.length)} hits in the window</p>` +
     `</section>`
   );

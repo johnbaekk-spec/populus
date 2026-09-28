@@ -584,7 +584,10 @@ export function congressRankingSection(
        sentence is about scripting rather than about a column, so no column note
        is the right home for it and a no-JavaScript reader must still get it. */
     `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by ${kind === "tickers" ? "number of disclosures" : "net disclosed flow"}, largest first.</noscript></p>` +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    /* Band C1 (DESIGN-POLISH M2): Tickers is the pair's 1fr cell, so its table
+       is compact (the 10px numeric lead) — at the 16px lead its six columns
+       ran 7px past the 553px cell at 1440 (G3). */
+    `<div class="table-scroll"><table class="etable${kind === "tickers" && ctx.referenceRankings ? " etable-compact" : ""}" data-sticky-first>` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
     `<thead><tr>${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` }, kind)}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +

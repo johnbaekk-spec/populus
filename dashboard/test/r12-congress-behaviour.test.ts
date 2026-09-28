@@ -208,16 +208,23 @@ test("F12/F25: initializing over SSR rows changes NO honesty content before rows
       false,
       "the server published this notice because rows ARE held back; init must not retract it",
     );
-    /* SL-R10, state (c): this is the moment the old arrangement failed. The
-       island has run and the 22 MB feed has NOT arrived, so nothing has
-       revealed the button — and the bound is stated anyway, by the server, in
-       real text. That is what made deleting the terminus a de-duplication
-       rather than an omission. */
-    assert.equal(
-      disclosureFor(doc, CONGRESS_ROOTS.momentum).querySelector("button")!.hidden,
-      true,
-      "the button is still hidden — it is not the channel the bound depends on",
-    );
+    /* SL-R10, state (c), REWRITTEN in DESIGN-POLISH M2 (R36, T2.11). The
+       property is unchanged: the bound is stated by the SERVER, in real text,
+       and init never retracts it (asserted above, byte for byte). The
+       mechanism changed: the island now syncs at bind time from the server's
+       own total (`data-compact-total`) — never from the empty row set that
+       caused F25 — so after load the control is REVEALED and works before the
+       dataset arrives (R36: every disclosure holding rows back has a working
+       toggle after load). It reveals the prefetched rows, exactly one step,
+       and says so. */
+    const btn = disclosureFor(doc, CONGRESS_ROOTS.momentum).querySelector("button")!;
+    const heldInDom = doc.getElementById(CONGRESS_ROOTS.momentum)!.querySelectorAll("tr[data-compact-hidden]").length;
+    assert.equal(btn.hidden, false, "after load the control is offered (R36)");
+    assert.equal(btn.getAttribute("aria-expanded"), "false");
+    assert.ok(heldInDom > 0, "the server prefetched held rows for the first press");
+    // The button uses the table's noun ("tickers"); the count clause beside it
+    // the bound noun ("ranked tickers").
+    assert.match(btn.textContent ?? "", /^Show (50 more|all [\d,]+ tickers)$/, "its label promises one step (R13)");
     // DESIGN-POLISH M1 (R8): the count is the range grammar, in the server's words.
     assert.match(
       boundFor(doc, CONGRESS_ROOTS.momentum).textContent,
@@ -449,5 +456,160 @@ test("F12/R17: a dataset that never arrives leaves the server view standing", ()
     assert.equal(boundFor(doc, CONGRESS_ROOTS.momentum).hidden, false);
   } finally {
     h.restore();
+  }
+});
+
+/* ---------- DESIGN-POLISH M2 (R36, T2.11; R13): one press, one step ----------
+
+   The property: the ranking's toggle reveals EXACTLY what its label promises
+   — "Show 50 more" one step of rows, "Show all N" every held row — before the
+   dataset arrives as after, and collapsing returns to the compact slice. The
+   old control toggled a boolean "every row" while its label said "Show 50
+   more", and before the dataset arrived it revealed only the prefetched rows
+   and never painted the rest on delivery. */
+
+/** The rows a press is expected to reveal, read from the label alone. */
+function promisedByLabel(label: string, total: number, shown: number): number {
+  if (/^Show 50 more$/.test(label)) return Math.min(50, total - shown);
+  const all = /^Show all ([\d,]+) /.exec(label);
+  return all ? Number(all[1]!.replace(/,/g, "")) - shown : NaN;
+}
+
+test("R36/R13: a press before the dataset arrives reveals exactly the rows its label promises; collapse returns to the slice", () => {
+  const h = mount(corpus());
+  try {
+    const { doc } = h;
+    const root = doc.getElementById(CONGRESS_ROOTS.momentum)!;
+    const visible = (): number => root.querySelectorAll("tr").filter((tr) => !tr.hidden && !tr.hasAttribute("class")).length;
+    const control = disclosureFor(doc, CONGRESS_ROOTS.momentum);
+    const btn = control.querySelector("button")!;
+    const total = Number(control.getAttribute("data-compact-total"));
+    const before = visible();
+    assert.equal(before, 10, "the compact slice");
+    const promised = promisedByLabel(btn.textContent ?? "", total, before);
+    btn.click();
+    assert.equal(visible() - before, promised, `"${btn.textContent}" revealed ${visible() - before}, promised ${promised}`);
+    assert.equal(btn.getAttribute("aria-expanded"), visible() === total ? "true" : "false");
+    // control: the promise predicate distinguishes a one-step label from an all-rows one
+    assert.equal(promisedByLabel("Show 50 more", 130, 10), 50);
+    assert.equal(promisedByLabel("Show all 130 tickers", 130, 10), 120);
+    /* review Q2-9: unconditional — this fixture's held rows (under one step)
+       are all prefetched, so one press shows every row and the next collapses */
+    assert.ok(total - 10 <= 50, `the fixture holds at most one step back (${total})`);
+    assert.equal(visible(), total, "one press reveals every prefetched row");
+    btn.click();
+    assert.equal(visible(), 10, "collapse returns to the compact slice");
+    assert.equal(btn.getAttribute("aria-expanded"), "false");
+  } finally {
+    h.restore();
+  }
+});
+
+test("R36/R13: after delivery, \"Show 50 more\" adds exactly one step and \"Show all\" the rest (control: the old all-rows toggle)", () => {
+  const big = Array.from({ length: 130 }, (_, i) =>
+    txn({ txnId: `b${i}`, ticker: `B${String(i).padStart(3, "0")}`, bioguide: `N${i}`, name: `Member B${i}`, low: 1001 + i * 1000, high: 15000 + i * 1000 }),
+  );
+  const h = mount(big);
+  try {
+    const { doc } = h;
+    h.sections.receiveRows(big);
+    const root = doc.getElementById(CONGRESS_ROOTS.momentum)!;
+    const visible = (): number => root.querySelectorAll("tr").filter((tr) => !tr.hidden && !tr.hasAttribute("class")).length;
+    const control = disclosureFor(doc, CONGRESS_ROOTS.momentum);
+    const btn = control.querySelector("button")!;
+    const total = Number(control.getAttribute("data-compact-total"));
+    assert.ok(total > 110, `a fixture with more than two steps held back (${total})`);
+    const steps: number[] = [];
+    for (let i = 0; i < 4 && btn.getAttribute("aria-expanded") !== "true"; i++) {
+      const shown = visible();
+      const label = btn.textContent ?? "";
+      const promised = promisedByLabel(label, total, shown);
+      btn.click();
+      steps.push(visible() - shown);
+      assert.equal(visible() - shown, promised, `press ${i + 1}: "${label}" revealed ${visible() - shown}, promised ${promised}`);
+    }
+    assert.deepEqual(steps.slice(0, 2), [50, 50], "the first two presses each add one step");
+    assert.equal(visible(), total, "the last press shows every row");
+    // control: the pre-M2 model expanded to EVERY row on the first "Show 50 more"
+    const oldModelFirstPress = total - 10;
+    assert.notEqual(oldModelFirstPress, promisedByLabel("Show 50 more", total, 10), "the old all-rows toggle breaks its own label");
+  } finally {
+    h.restore();
+  }
+});
+
+/* ---------- DESIGN-POLISH M2 review R2-1: the press past the prefetched rows ----------
+
+   The property: before the dataset arrives, the count and the button never
+   state rows that are not on screen. The first "Show 50 more" reveals the
+   server's prefetched rows; a second press asks for the dataset and WAITS
+   (the button is busy, the count still "1–60 of N"), its step landing on
+   delivery. If the dataset fails, the waiting press is withdrawn and the
+   ranking re-syncs to the rows it has. The pre-fix island added 50 to its
+   limit per press regardless, so the second press read "1–110 of 130" over 60
+   rows, and a failed fetch never re-synced. */
+
+test("R2-1: a second \"Show 50 more\" before delivery waits for the dataset — the count never runs past the rows on screen; delivery lands the step", () => {
+  const big = Array.from({ length: 130 }, (_, i) =>
+    txn({ txnId: `b${i}`, ticker: `B${String(i).padStart(3, "0")}`, bioguide: `N${i}`, name: `Member B${i}`, low: 1001 + i * 1000, high: 15000 + i * 1000 }),
+  );
+  let requested = 0;
+  const { doc, restore } = installDom(pageHtml(big));
+  try {
+    const sections = initCongressSections({ requestRows: () => { requested++; } });
+    const root = doc.getElementById(CONGRESS_ROOTS.momentum)!;
+    const visible = (): number => root.querySelectorAll("tr").filter((tr) => !tr.hidden && !tr.hasAttribute("class")).length;
+    const control = disclosureFor(doc, CONGRESS_ROOTS.momentum);
+    const btn = control.querySelector("button")!;
+    const count = (): string => (boundFor(doc, CONGRESS_ROOTS.momentum).hidden ? "" : boundFor(doc, CONGRESS_ROOTS.momentum).textContent);
+    /** The count's shown end ("1–60 of …" → 60) must equal the rows on screen. */
+    const honest = (): string[] => {
+      const m = /^1–([\d,]+) of /.exec(count());
+      return m && Number(m[1]!.replace(/,/g, "")) !== visible() ? [`the count "${count()}" states ${m[1]} rows, ${visible()} show`] : [];
+    };
+    assert.equal(visible(), 10);
+    btn.click(); // reveals the prefetched rows
+    assert.equal(visible(), 60, "the first press reveals the 50 prefetched rows");
+    assert.deepEqual(honest(), []);
+    assert.ok(requested > 0, "the first press already asks for the dataset");
+    btn.click(); // past the prefetched rows: waits
+    assert.equal(visible(), 60, "no row can show before the dataset arrives");
+    assert.deepEqual(honest(), [], "the count still states the rows on screen");
+    assert.equal(btn.getAttribute("aria-busy"), "true", "the waiting press says so on its button");
+    assert.equal(btn.textContent, "Show 50 more", "the offer stands");
+    sections.receiveRows(big);
+    assert.equal(visible(), 110, "the waiting step lands on delivery — exactly one step");
+    assert.equal(btn.getAttribute("aria-busy"), null);
+    assert.deepEqual(honest(), []);
+    // control: a count running one step past the rows on screen (the pre-fix state) is caught by the same predicate
+    boundFor(doc, CONGRESS_ROOTS.momentum).textContent = "1–160 of 130 ranked tickers";
+    assert.deepEqual(honest(), ["the count \"1–160 of 130 ranked tickers\" states 160 rows, 110 show"], "control: the pre-fix count is caught");
+  } finally {
+    restore();
+  }
+});
+
+test("R2-1: a dataset that fails withdraws the waiting press and re-syncs the ranking to the rows it has", () => {
+  const big = Array.from({ length: 130 }, (_, i) =>
+    txn({ txnId: `f${i}`, ticker: `F${String(i).padStart(3, "0")}`, bioguide: `P${i}`, name: `Member F${i}`, low: 1001 + i * 1000, high: 15000 + i * 1000 }),
+  );
+  const { doc, restore } = installDom(pageHtml(big));
+  try {
+    const sections = initCongressSections({ requestRows: () => {} });
+    const root = doc.getElementById(CONGRESS_ROOTS.momentum)!;
+    const visible = (): number => root.querySelectorAll("tr").filter((tr) => !tr.hidden && !tr.hasAttribute("class")).length;
+    const btn = disclosureFor(doc, CONGRESS_ROOTS.momentum).querySelector("button")!;
+    btn.click();
+    btn.click();
+    assert.equal(btn.getAttribute("aria-busy"), "true");
+    sections.feedSettled(false);
+    assert.equal(btn.getAttribute("aria-busy"), null, "the waiting press is withdrawn");
+    assert.equal(visible(), 60, "the rows on screen stay");
+    assert.match(boundFor(doc, CONGRESS_ROOTS.momentum).textContent, /^1–60 of 130 /, "the count restates exactly those rows");
+    assert.equal(btn.textContent, "Show 50 more", "a later press may ask again");
+    btn.click(); // collapse is not what this press means: it asks again, and waits
+    assert.equal(btn.getAttribute("aria-busy"), "true", "the retry waits like the first");
+  } finally {
+    restore();
   }
 });

@@ -13,7 +13,13 @@
    as four custom properties (`--hit-x-l/r/t/b`, in px), which the `::before`
    insets read through `max()`. Without scripting the insets fall back to the
    plain square: the clip is an enhancement, the target never shrinks below its
-   own box, and nothing here changes layout. */
+   own box, and nothing here changes layout.
+
+   Inside a scrolling table a square stays within the table's sides and clear
+   of a sticky identity column — SHIFTED there, keeping its full side (M2). A
+   shifted square reaches past the centred one on one side, which the insets
+   alone cannot draw (they only cut the centred square), so such a trigger
+   also gets its own, wider `--hit-min`, read only by its `::before`. */
 
 const PSEUDO = ".note-btn, .th-sort";
 const CONTROLS =
@@ -83,6 +89,63 @@ function squareOverlaps(x: Rect, y: Rect): boolean {
   return x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b;
 }
 
+/** The sticky identity cell in `el`'s row that `el` itself is not in, if any
+    (the `.c-pos` issuer column of `[data-sticky-issuer]` tables, the first
+    column of `[data-sticky-first]` ones — read from the computed position, so
+    whichever rule makes a cell sticky, this sees it). */
+function stickyCellBeside(el: HTMLElement, cache: Map<Element, HTMLElement | null>): HTMLElement | null {
+  const own = el.closest("td, th");
+  const tr = own?.parentElement;
+  if (!own || !tr || tr.tagName !== "TR") return null;
+  let sticky = cache.get(tr);
+  if (sticky === undefined) {
+    sticky = null;
+    for (const c of Array.from(tr.children)) {
+      if (getComputedStyle(c).position === "sticky") {
+        sticky = c as HTMLElement;
+        break;
+      }
+    }
+    cache.set(tr, sticky);
+  }
+  return sticky && sticky !== own ? sticky : null;
+}
+
+/** The horizontal room a control's square may use inside its scrolling table:
+    the table's own sides, and — beside a sticky identity column — that
+    column's right edge AS IT SITS NOW, because a square that slides under the
+    sticky column is covered by it (a table scrolled sideways moves every other
+    column under it; this re-runs on every inner scroll). Document coordinates. */
+function tableRoom(el: HTMLElement, table: Element, sx: number, cache: Map<Element, HTMLElement | null>): { l: number; r: number } {
+  const tb = table.getBoundingClientRect();
+  let l = tb.left + sx;
+  const sticky = stickyCellBeside(el, cache);
+  if (sticky) {
+    const s = sticky.getBoundingClientRect();
+    // the identity column sits left of the data it identifies
+    if (s.left < el.getBoundingClientRect().left) l = Math.max(l, s.right + sx);
+  }
+  return { l, r: tb.right + sx };
+}
+
+/** Fit a square into [room.l, room.r] by SHIFTING it, never by shortening it
+    (DESIGN-POLISH M2, follow-up to the M1 delta review: clamping each side on
+    its own cut the holders page's last-column square to 22.3px of a 24px
+    minimum). Only a room narrower than the square shortens it, to the room. */
+function shiftInto(sq: { l: number; r: number }, room: { l: number; r: number }): void {
+  if (sq.r > room.r) {
+    const d = sq.r - room.r;
+    sq.l -= d;
+    sq.r -= d;
+  }
+  if (sq.l < room.l) {
+    const d = room.l - sq.l;
+    sq.l += d;
+    sq.r += d;
+  }
+  if (sq.r > room.r) sq.r = room.r; // a room narrower than the square
+}
+
 /** A table with a sticky identity column scrolls a focused (or scrolled-to)
     control clear of that column: its scroll padding is the column's width.
     This only READS; `applyScrollPadding` writes, after every read of the run
@@ -96,9 +159,13 @@ interface ScrollPad {
 function planScrollPadding(min: number): ScrollPad[] {
   const plan: ScrollPad[] = [];
   for (const box of Array.from(document.querySelectorAll<HTMLElement>(".table-scroll"))) {
+    /* the sticky identity column is keyed to its ROLE, `.c-pos` (T2.1 re-key):
+       the positional `:nth-child(3)` it replaced named a data column once the
+       Kind column left the reference table, so the padding stopped matching
+       the sticky column and a scrolled-to control landed under it */
     const first = box.querySelector<HTMLElement>(
       ".etable[data-sticky-first] > tbody > tr > :first-child, .etable[data-sticky-first] > thead > tr > :first-child, " +
-        ".etable[data-sticky-issuer] > thead > tr > :nth-child(3)",
+        ".etable[data-sticky-issuer] > thead > tr > .c-pos",
     );
     const w = first ? first.getBoundingClientRect().width : 0;
     // a box whose head row sticks keeps scrolled-to rows clear of it
@@ -157,6 +224,7 @@ export function clipHitAreas(): void {
     box.vis = v;
     boxes.push(box);
   }
+  const stickyCache = new Map<Element, HTMLElement | null>();
   const squares = boxes.map((x) => {
     const sq = square(x, min);
     // a header control's square ends at its header row (CSS clamps the same)
@@ -165,13 +233,12 @@ export function clipHitAreas(): void {
     /* a control in a scrolling table never reaches past the table's own
        sides: out there its scroller shows nothing of it, and the overhang only
        made the table scroll sideways by a pixel or two (the holders page's
-       last-column trigger, measured 2px at 1440 — M1 review Q-1) */
+       last-column trigger, measured 2px at 1440 — M1 review Q-1). Nor under a
+       sticky identity column, which covers it. The square is SHIFTED inside
+       that room, keeping its full side (M2): clamping each side on its own
+       shortened the holders page's last-column square to 22.3px. */
     const table = x.sc ? x.el.closest("table") : null;
-    if (table) {
-      const tb = table.getBoundingClientRect();
-      sq.l = Math.max(sq.l, tb.left + sx);
-      sq.r = Math.min(sq.r, tb.right + sx);
-    }
+    if (table) shiftInto(sq, tableRoom(x.el, table, sx, stickyCache));
     return sq;
   });
 
@@ -181,7 +248,7 @@ export function clipHitAreas(): void {
      that window instead of scanning every earlier control (review R-5). */
   const order = squares.map((_q, i) => i).sort((x, y) => squares[x]!.t - squares[y]!.t);
   const tallest = squares.reduce((m, q) => Math.max(m, q.b - q.t), 0);
-  const writes: { el: HTMLElement; ext: Rect }[] = [];
+  const writes: { el: HTMLElement; ext: Rect; ownMin: string }[] = [];
   for (let k = 0; k < order.length; k++) {
     const i = order[k]!;
     const a = boxes[i]!;
@@ -189,6 +256,15 @@ export function clipHitAreas(): void {
     const sa = squares[i]!;
     // the extension allowed beyond the box on each side; the square's own first
     const ext: Rect = { l: a.l - sa.l, r: sa.r - a.r, t: a.t - sa.t, b: sa.b - a.b };
+    /* A square SHIFTED inside its table reaches further on one side than the
+       centred square the CSS draws (whose side is --hit-min). The CSS clips
+       the centred square by --hit-x-*, never grows it, so a shifted control
+       gets its own, wider --hit-min: w + 2 × its longer reach. The --hit-x-*
+       written below then cut that square back to the shifted one exactly
+       (the far side and the vertical keep their own reach). "" = the root's. */
+    const w = a.r - a.l;
+    const reach = Math.max(ext.l, ext.r);
+    const ownMin = reach > Math.max(0, (min - w) / 2) + 0.01 ? `${(w + 2 * reach).toFixed(2)}px` : "";
     const visit = (j: number): void => {
       const sb = squares[j]!;
       if (!squareOverlaps(sa, sb)) return;
@@ -218,13 +294,17 @@ export function clipHitAreas(): void {
     };
     for (let f = k + 1; f < order.length && squares[order[f]!]!.t < sa.b; f++) visit(order[f]!);
     for (let r = k - 1; r >= 0 && squares[order[r]!]!.t > sa.t - tallest; r--) visit(order[r]!);
-    writes.push({ el: a.el, ext });
+    writes.push({ el: a.el, ext, ownMin });
   }
 
   /* ---- write: only what changed ---- */
   applyScrollPadding(pads);
-  for (const { el, ext } of writes) {
+  for (const { el, ext, ownMin } of writes) {
     const s = el.style;
+    if (s.getPropertyValue("--hit-min") !== ownMin) {
+      if (ownMin) s.setProperty("--hit-min", ownMin);
+      else s.removeProperty("--hit-min");
+    }
     for (const [side, v] of [["l", ext.l], ["r", ext.r], ["t", ext.t], ["b", ext.b]] as const) {
       const value = `${Math.max(0, v).toFixed(2)}px`;
       // an unchanged value is not rewritten: this runs on every inner scroll

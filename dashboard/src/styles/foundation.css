@@ -89,6 +89,8 @@
 
   /* header-ledger tones (D-3) */
   --tone-ink: #E9F0F7; --tone-blue: #A9D2F2; --tone-gold: #FFD100; --tone-green: #3FD6A4;
+  /* the summary cards' column divider (D-12): the design's #10161F */
+  --story-divider: #10161F;
 
   /* segmented control (D-4, T-10) */
   --seg-border: #1B2735;
@@ -134,6 +136,7 @@
   --kind-withheld-text: #92483a; --kind-withheld-edge: #92483a;
 
   --tone-ink: #262319; --tone-blue: #30567c; --tone-gold: #7a5a14; --tone-green: #2b6a52;
+  --story-divider: var(--rule);
 
   --seg-border: #cec8b9;
   --seg-text: #5f5a4e;        /* 6.52:1 */

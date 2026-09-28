@@ -34,6 +34,9 @@ import {
   breadcrumb,
   congressRankingSection,
   addsSectionHtml,
+  hitRowHtml,
+  consensusConvictionBandHtml,
+  signalsBody,
 } from "../src/lib/ui/index.ts";
 import { buildInstIndexRow, instIndexRowHtml } from "../src/lib/inst-index.ts";
 import { renderResults, renderPreQuery } from "../src/scripts/search-client.ts";
@@ -344,6 +347,11 @@ const HONESTY_SELECTORS = [
   ".c-kind",
   ".cell-side",
   ".reference-head",
+  /* DESIGN-POLISH M2 (T2.1, R12; M1 debt D9): `.table-foot-reason` — the one
+     line that says which honesty column a table REMOVED and why (no owner
+     qualifier, no flag, an incomplete book). A removed column plus a hidden
+     reason is a silent omission, the exact failure column presence forbids. */
+  ".table-foot-reason",
 ];
 const M1_HONESTY_SELECTORS = [".note-label", ".hang", ".c-kind", ".cell-side", ".reference-head"];
 
@@ -386,6 +394,18 @@ test("DESIGN-POLISH M1: the ledger honesty selectors are swept — each planted 
       assert.deepEqual(foldViolations(planted), [`.etable ${sel}`], `control: ${sel} { ${decl} } at the fold`);
     }
   }
+});
+
+test("DESIGN-POLISH M2 (D9): the table-foot reason is swept at the fold, and a surface emits it", async () => {
+  assert.ok(HONESTY_SELECTORS.includes(".table-foot-reason"));
+  for (const decl of ["display:none", "visibility:hidden", "content-visibility:hidden"]) {
+    const planted = `${css}\n@media (max-width: 720px) { .panel .table-foot-reason { ${decl}; } }`;
+    assert.deepEqual(foldViolations(planted), [".panel .table-foot-reason"], `control: .table-foot-reason { ${decl} } at the fold`);
+  }
+  // a swept selector nothing renders protects nothing: a parity surface emits it
+  const { renderParitySurfaces } = await import("./lib/ui-parity-surfaces.ts");
+  const corpus = Object.values(await renderParitySurfaces()).join("\n");
+  assert.match(corpus, /<p class="table-foot-reason">[^<]+<\/p>/, "a removed honesty column's reason is rendered");
 });
 
 test("DESIGN-POLISH M1: every ledger honesty selector is emitted by the parity surfaces or the feed rows", async () => {
@@ -675,6 +695,30 @@ function renderCorpus(): string {
     watchStarHtml("ticker", "WMB", "WMB", false),
     flagTags(["mystery_flag"]),
     breadcrumb([{ text: "/x", href: "/x/" }]),
+    /* DESIGN-POLISH M2: the hit's evidence row (T2.7), the empty-window chart
+       line (T2.3) and band I1's collapse (T2.4) — each a new class this
+       sweep reads. */
+    hitRowHtml(
+      {
+        id: "s1-large:x", kind: "s1-large", rule: "r", thresholdVersion: "1",
+        entities: { bioguide: "A000001", memberName: "A", ticker: "WMB" },
+        magnitude: { low: 250001, high: 500000 }, receipts: ["https://efdsearch.senate.gov/x"],
+        occurrence: { tradeDate: "2026-03-01", filedDate: "2026-06-01" }, sourceAvailableAt: "2026-06-01",
+        computedAt: "2026-07-24", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
+      },
+      CTX,
+    ),
+    flowRibbon(quarterlyFlow([], "2026-07-24", 4), { twoSided: true, sourceLine: "s", emptyWindow: { latestTraded: "2024-01-02" } }),
+    consensusConvictionBandHtml('<section class="panel">c</section>', '<p class="section-note">none</p>', { consensus: false, conviction: true }),
+    // band S1's side cell (T2.6)
+    signalsBody(
+      {
+        v: 1, buildId: "b", computedAt: "2026-07-24", thresholdVersion: "1", retentionDays: 90,
+        coverageFrom: "2026-04-25", coverageTo: "2026-07-24", lifecycleNote: "n", compaction: "none",
+        dateAnomaliesExcluded: 0, lagCaveat: "c", withheld: [], signals: [],
+      } as never,
+      CTX,
+    ),
   ].join("\n");
 }
 
@@ -690,7 +734,7 @@ const NEW_RENDERER_CLASSES = [
   "ribbon", "ribbon-two", "rb-track", "rb-col", "rb-up", "rb-down", "rb-bar",
   "rb-buy", "rb-sell", "rb-hatch", "rb-axis", "rb-labels", "rb-label", "rb-caption",
   "qoq-chip", "qoq-nc", "nc-chip", "inst-stamp", "caveat-line", "src-derived",
-  "period-row", "chips", "chip", "chip-active", "explainer", "edgar-block",
+  "period-row", "chips", "chip", "chip-active", "edgar-block",
   "terminus", "terminus-author", "watch-btn", "watch-glyph", "watch-note",
   "absent-block", "absent-h", "s1-block", "s1-mark", "s1-h", "s1-detail",
   "s2-block", "s4-shell", "s4-error", "s4-actions", "s7-banner", "s7-chip", "s7-copy",
@@ -700,6 +744,31 @@ const NEW_RENDERER_CLASSES = [
   "quick-links", "quick-link", "s6-block", "s6-h", "s6-body",
   "footnotes-stacked", "footnote-line", "fn-ref", "flag-raw", "planned-card",
   "paper-block", "unjoined-name", "reconciled",
+  /* DESIGN-POLISH M2: the one header ledger (T2.8), the paired bands and the
+     filer parts (T2.3–T2.5), column presence's foot reason (T2.1), the hit
+     evidence row (T2.7). `.explainer` left this list with M2: filerHeadHtml
+     replaced the paragraph with the provenance strip (see RETIRED below). */
+  "ledger-fig", "ledger-value", "ledger-sub", "design-pair", "design-filer-band",
+  "design-filer-side", "filer-ledger-root", "filer-data-note", "head-controls", "head-control",
+  "table-foot-reason", "si-evidence-row", "design-member-history-band",
+];
+
+/* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period
+   switch repaints, a cell wrapper the band grid lays out by position, a
+   modifier beside a styled base class — and that no rule styles on purpose.
+   Each must be emitted (a hook nothing renders is a dead selector in the
+   scripts) and must stay UNSTYLED here: a rule added for one moves it to the
+   list above, so the two lists cannot silently overlap. */
+const NEW_HOOK_CLASSES = [
+  "filer-bookshape-root", "filer-provenance", "si-side", "flow-window-empty",
+  "design-member-history", "design-consensus-band", "design-filer-history",
+];
+
+/* Classes a milestone RETIRED: neither styled nor emitted. A rule left behind
+   for a removed element is how a removed component quietly comes back. */
+const RETIRED_CLASSES = [
+  "explainer", "explainer-h", "design-rankings-single", "coverage-strip",
+  "design-triptych", "design-triptych-single", "design-activity-band",
 ];
 
 const ASTRO_ONLY_CLASSES = [
@@ -733,6 +802,26 @@ test("dead-CSS sweep: every new class is styled AND emitted", () => {
     assert.ok(css.includes(`.${cls}`), `class .${cls} has no CSS`);
     assert.ok(corpus.includes(cls), `class .${cls} is styled but never emitted by a renderer`);
   }
+  /* The M2 lists read exact class tokens: `.head-control` is a prefix of
+     `.head-controls`, so a substring test would pass on the wrong class. */
+  const styledExact = (cls: string, source = css): boolean => new RegExp(`\\.${cls}(?![\\w-])`).test(source.replace(/\/\*[\s\S]*?\*\//g, ""));
+  const emittedExact = (cls: string, source = corpus): boolean => new RegExp(`class="(?:[^"]*\\s)?${cls}(?:\\s[^"]*)?"`).test(source);
+  for (const cls of NEW_RENDERER_CLASSES.slice(NEW_RENDERER_CLASSES.indexOf("ledger-fig"))) {
+    assert.ok(styledExact(cls), `class .${cls} has no CSS (exact token)`);
+    assert.ok(emittedExact(cls), `class .${cls} is styled but never emitted (exact token)`);
+  }
+  for (const cls of NEW_HOOK_CLASSES) {
+    assert.ok(emittedExact(cls), `hook .${cls} is never emitted by a renderer`);
+    assert.ok(!styledExact(cls), `hook .${cls} is now styled — move it to NEW_RENDERER_CLASSES`);
+  }
+  for (const cls of RETIRED_CLASSES) {
+    assert.ok(!emittedExact(cls), `retired class .${cls} is emitted again`);
+    assert.ok(!styledExact(cls), `retired class .${cls} still has CSS — a dead selector`);
+  }
+  // controls: the exact-token readers tell the prefix from the class, and see a planted rule
+  assert.ok(!emittedExact("head-control", '<div class="head-controls">'), "control: a prefix is not the class");
+  assert.ok(styledExact("explainer", ".explainer { color: red; }") && !styledExact("explainer", ".explainer-h { color: red; }"), "control: exact CSS token");
+  assert.ok(!styledExact("explainer", "/* `.explainer` is gone */ .x { color: red; }"), "control: a comment naming a class is not a rule");
   for (const cls of ASTRO_ONLY_CLASSES) {
     assert.ok(css.includes(`.${cls}`) || css.includes(`[data-`) , `class .${cls} has no CSS`);
     assert.ok(
@@ -1058,6 +1147,30 @@ function pageSource(rel: string): string {
     .replace(/^[ \t]*\/\/.*$/gm, " ");
 }
 
+/** The page source as the WORDING scan must read it (DESIGN-POLISH M2, T2.4).
+    A reader receives the template's text and the frontmatter's STRING
+    LITERALS (labels, notes, copy handed to renderers) — never the
+    frontmatter's code. Scanning code made an object key (`{ conviction: … }`,
+    the empty-state flags `consensusConvictionBandHtml` takes) read as a banned
+    verb on the page, though no reader can ever see it. So the frontmatter
+    contributes its literals only; the template half is scanned whole. Fails
+    closed on a regex literal holding a quote, which could mis-pair literals. */
+function pageWordingSource(rel: string): string {
+  const src = pageSource(rel);
+  const parts = src.split(/^---$/m);
+  if (parts.length < 3) return src;
+  const code = parts[1]!;
+  if (/[=(,:]\s*\/(?![/*])[^/\n]*["'`][^/\n]*\/[gimsuy]*/.test(code)) {
+    throw new Error(`pageWordingSource(${rel}): a regex literal holds a quote; literal extraction would mis-pair`);
+  }
+  return frontmatterLiterals(code) + "\n" + parts.slice(2).join("---");
+}
+function frontmatterLiterals(code: string): string {
+  return [...code.matchAll(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g)]
+    .map((m) => m[0].slice(1, -1).replace(/\$\{[^}]*\}/g, " "))
+    .join("\n");
+}
+
 const HOLDERS_ROWS = [
   {
     issuer_key: "entity:cik:0000320193",
@@ -1106,17 +1219,19 @@ const DELTAS = [
 
 /** Each surface = what its renderer emits PLUS what its .astro template writes
     directly. A caveat that lives only in the template is still on the page. */
-function institutionalSurfaces(): { name: string; owner: string; html: string }[] {
+function institutionalSurfaces(): { name: string; owner: string; html: string; page: string }[] {
   const window = { open: true, quarterEnd: "2026-06-30", deadline: "2026-08-14" };
   return [
     {
       name: "/institutional",
       owner: "T13",
+      page: "institutional/index.astro",
       html: pageSource("institutional/index.astro") + activitySectionHtml(activityFeedFixture()),
     },
     {
       name: "/institutional/filers/[cik]",
       owner: "T11",
+      page: "institutional/filers/[cik].astro",
       html:
         pageSource("institutional/filers/[cik].astro") +
         filerBody(
@@ -1142,6 +1257,7 @@ function institutionalSurfaces(): { name: string; owner: string; html: string }[
     {
       name: "/institutional/tickers/[t]/holders",
       owner: "T12",
+      page: "institutional/tickers/[t]/holders.astro",
       html:
         pageSource("institutional/tickers/[t]/holders.astro") +
         holdersBody("AAPL", "APPLE INC", HOLDERS_ROWS, ["2026-03-31"], "2026-03-31", "2026-05-15", 25, window) +
@@ -1344,19 +1460,33 @@ test("T14/R16 + SL-R15/LD8: the §5 box may collapse, but every clause stays rea
 });
 
 test("T14/R16: no banned trading verb on any institutional surface", () => {
-  const findings: string[] = [];
-  for (const surface of institutionalSurfaces()) {
+  /** Every banned verb in the text a reader of `surface` can receive: the
+      rendered parts, the page template, and the frontmatter's literals (its
+      code is never visible — `pageWordingSource`). */
+  const findingsOf = (surface: { name: string; owner: string; html: string; page: string }, pageText = pageWordingSource(surface.page)): string[] => {
+    const rendered = surface.html.replace(pageSource(surface.page), "");
     // The user-approved reference names this fixed UI section "Conviction leaders".
     // Exempt only that literal label; all generated analytical claims remain scanned.
-    const scanned = surface.name === "/institutional" ? surface.html.replace('"Conviction leaders"', '"New-position leaders"') : surface.html;
-    for (const hit of scanBannedWording(scanned)) {
-      findings.push(`${surface.name} (owner ${surface.owner}) uses "${hit}"`);
-    }
-  }
+    const text = pageText + rendered;
+    const scanned = surface.name === "/institutional" ? text.replace('"Conviction leaders"', '"New-position leaders"') : text;
+    return scanBannedWording(scanned).map((hit) => `${surface.name} (owner ${surface.owner}) uses "${hit}"`);
+  };
+  const surfaces = institutionalSurfaces();
   assert.deepEqual(
-    findings,
+    surfaces.flatMap((s) => findingsOf(s)),
     [],
     "docs/architecture/data-contracts/outsized-positions.md §1.1: a 13F is a quarter-end snapshot filed up to 45 days" +
       " late, so at render time the position may not exist — no trading verb may claim otherwise",
   );
+  // controls: a banned verb in a frontmatter STRING, or in the template text, is still found
+  const landing = surfaces[0]!;
+  const planted = (edit: (src: string) => string): string[] => {
+    const src = readFileSync(path.resolve(import.meta.dirname, "..", "src", "pages", landing.page), "utf-8");
+    const parts = edit(src).split(/^---$/m);
+    return findingsOf(landing, frontmatterLiterals(parts[1]!) + "\n" + parts.slice(2).join("---"));
+  };
+  assert.deepEqual(planted((src) => src.replace(/^---$/m, '---\nconst plantedCopy = "a high-conviction call";')), ['/institutional (owner T13) uses "conviction"', '/institutional (owner T13) uses "high-conviction"'], "control: a frontmatter literal");
+  assert.ok(planted((src) => src.replace("</main>", "<p>Conviction buys this quarter</p></main>")).length > 0, "control: template text");
+  // …while a code identifier (the band's empty-state key) is not reader text
+  assert.deepEqual(scanBannedWording(frontmatterLiterals("const x = f(a, { conviction: true });")), []);
 });

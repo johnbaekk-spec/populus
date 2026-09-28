@@ -351,11 +351,19 @@ test("SL-R10: with JavaScript ON, the bound stands BEFORE the feed arrives", asy
   // DESIGN-POLISH M1 (R8): the range grammar, in the server's bound noun.
   await expect(stated).toHaveText(/^1–\d[\d,]* of \d[\d,]* ranked \S/);
 
-  // The button is what waits, and it is still waiting.
-  await expect(
-    page.locator(".compact-toggle").first(),
-    "nothing has revealed the control yet, which is exactly why the statement may not live on it",
-  ).toBeHidden();
+  /* DESIGN-POLISH M2 (R36, T2.11) changed only the button half: the island
+     now syncs at load from the SERVER's total (never the empty row set that
+     once retracted the statement), so the control is offered even while the
+     dataset never arrives — and its first press reveals exactly the rows the
+     server prefetched into the page (R13's first step), with nothing
+     downloaded. The statement above still stands on its own. */
+  const toggle = page.locator(".compact-toggle").first();
+  await expect(toggle, "after load the control is offered, dataset or not (R36)").toBeVisible();
+  const table = page.locator(".design-rankings tbody").first();
+  const shownBefore = await table.locator("tr:not([hidden]):not(.unranked-sep)").count();
+  const prefetched = await table.locator("tr[data-compact-hidden]").count();
+  await toggle.click();
+  await expect(table.locator("tr:not([hidden]):not(.unranked-sep)")).toHaveCount(shownBefore + prefetched);
 
   // The remainder — the route to the rows being held back — is stated too.
   await expect(

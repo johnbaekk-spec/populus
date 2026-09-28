@@ -5,11 +5,11 @@
 // cumulative registry counts are labeled as all-period values).
 import Base from "../../layouts/Base.astro";
 import { getBuildData, filerTier } from "../../lib/data";
-import { disclosureLedger, s1ModuleAbsent, s7Banner, addsSectionHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
+import { consensusConvictionBandHtml, disclosureLedger, s1ModuleAbsent, s7Banner, addsSectionHtml, newPositionLeadersHtml } from "../../lib/ui/index.ts";
 import { plannedLine } from "../../lib/ui/shared.ts";
 import { concentrationPeriods, newPositionLeaders, trackedValueFor } from "../../lib/inst-analytics";
 import { notableMovesFor, notableMovesPeriods } from "../../lib/data";
-import { consensusBoard, consensusBoardHtml, notableMovesBandHtml } from "../../lib/notable-moves";
+import { consensusAddLedgerItem, consensusBoard, consensusBoardHtml, notableMovesBandHtml } from "../../lib/notable-moves";
 import { filerHref } from "../../lib/holdings";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
@@ -25,10 +25,13 @@ import {
   noteBody,
   thHtml,
   COMPACT_ROWS,
+  dataColumnsAttr,
+  tableFootReasonHtml,
 } from "../../lib/format";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
 import {
   buildInstIndexRow,
+  directoryColumns,
   instIndexBodyHtml,
   DESIGN_INST_INDEX_HEADS as INST_INDEX_HEADS,
   type InstIndexRow,
@@ -76,16 +79,26 @@ if (!inst.present) {
      announced and then not applied. `instIndexBodyHtml` applies ONE budget
      across both buckets and still states the unranked bucket's size even when
      none of its rows fit, and it is now the only renderer of this table. */
+  /* R12 (DESIGN-POLISH M2; review R2-6): "Top-5" is a derived column that
+     exists only when the build's concentration slices hold five positions
+     (topn === 5) and some filer carries one; otherwise it is removed outright
+     and the table foot says why. ONE presence function decides it
+     (`directoryColumns`), the set rides in `data-columns`, and the client
+     re-render reads it back. The field travels only when the column does. */
+  const top5 = (cik: string, period: string): number | null =>
+    concentrationFor(inst, cik, period)?.topn_share_bps ?? null;
   for (const row of indexRows) {
     row.reference = true;
-    const concentration = concentrationFor(inst, row.cik, row.period);
-    row.top5Share = inst.topn === 5 ? (concentration?.topn_share_bps ?? null) : null;
+    if (inst.topn === 5) row.top5Share = top5(row.cik, row.period);
   }
+  const dirCols = directoryColumns(indexRows, inst.topn);
+  const top5Present = dirCols.columns.includes("top5");
+  if (!top5Present) for (const row of indexRows) delete row.top5Share;
   /* R14: *Hedge funds* is selected by default. The client keeps the chip
      unless the visitor has a watchlist on this device, in which case it clears
      the default — the server cannot know, so it renders the common case. */
   const DEFAULT_TYPES = new Set<string>(["hedge_fund"]);
-  const directory = instIndexBodyHtml(indexRows, "", "value", "desc", { types: DEFAULT_TYPES, notableOnly: false }, COMPACT_ROWS);
+  const directory = instIndexBodyHtml(indexRows, "", "value", "desc", { types: DEFAULT_TYPES, notableOnly: false }, COMPACT_ROWS, dirCols.columns);
   const rows = directory.html;
   /* A column with no well-defined order still STATES why — the channel
      changed, not the text. It was a `.col-why` sub-label under every unsortable
@@ -117,7 +130,7 @@ if (!inst.present) {
     Filer: "c-filer c-flex", Manager: "c-filer c-flex", CIK: "c-num", Value: "c-num", Pos: "c-num",
     "Top-5": "c-num", "Latest notable": "c-secondary",
   };
-  const heads = INST_INDEX_HEADS.map((h) =>
+  const heads = INST_INDEX_HEADS.filter((h) => top5Present || h.label !== "Top-5").map((h) =>
     thHtml({
       label: h.label,
       cls: headClass[h.label] ?? "",
@@ -125,6 +138,7 @@ if (!inst.present) {
       notes: headNotes,
       noteKey: h.label,
       sort: h.key == null ? null : { attr: "data-inst-sort", key: h.key, state: h.key === "value" ? "descending" : "none" },
+      col: ({ Filer: "filer", CIK: "cik", Value: "value", Pos: "positions", "Top-5": "top5", "Latest notable": "latest-notable" } as Record<string, string>)[h.label],
     }),
   ).join("");
 
@@ -193,11 +207,13 @@ if (!inst.present) {
     `<div class="kicker">Public record / Institutional · Form 13F</div><h1 class="entity-title">Institutional</h1>` +
     `<p class="entity-lede">What tracked 13F filers reported each quarter, and what changed between quarters.</p>` +
     `</div>` + disclosureLedger([
-      { label: "Filers tracked", value: fmtInt(inst.filers.length), detail: tracked ? `${fmtInt(tracked.filers)} filed ${tracked.period}` : "published registry" },
-      { label: "Tracked value", value: tracked ? fmtUsd(tracked.totalValueUsd) : "—", detail: tracked ? `13F long only · ${tracked.period}${tracked.partialBooks > 0 ? ` · ≥ (${fmtInt(tracked.partialBooks)} partial books)` : ""}` : "no closed quarter yet" },
-      { label: "Consensus add", value: consensus ? (consensus.ticker ?? (consensus.issuer.length > 14 ? `${consensus.issuer.slice(0, 13)}…` : consensus.issuer)) : "—", detail: consensus ? `${fmtInt(consensus.newStakes)} notable managers opened it · ${analyticsPeriod}` : analyticsPeriod ? `no name moved by ≥3 notable managers in ${analyticsPeriod}` : "no closed quarter yet" },
-      { label: "Notable managers", value: fmtInt(notableCiks.size), detail: analyticsPeriod ? `${fmtInt(moves.length)} named moves · ${analyticsPeriod}` : "curated registry" },
-    ]) + `</header>` +
+      { label: "Filers tracked", value: fmtInt(inst.filers.length), detail: tracked ? `${fmtInt(tracked.filers)} filed ${tracked.period}` : "published registry", subKind: tracked ? "count" : "plain" },
+      { label: "Tracked value", value: tracked ? fmtUsd(tracked.totalValueUsd) : "—", detail: tracked ? `13F long only · ${tracked.period}${tracked.partialBooks > 0 ? ` · ≥ (${fmtInt(tracked.partialBooks)} partial books)` : ""}` : "no closed quarter yet", subKind: tracked ? "qualifier" : "absence" },
+      /* R15 (long names) and review R2-3: the ticker, or the notable-manager
+         count when no reviewed ticker maps the name — never "—" for a name. */
+      consensusAddLedgerItem(consensus, analyticsPeriod),
+      { label: "Notable managers", value: fmtInt(notableCiks.size), detail: analyticsPeriod ? `${fmtInt(moves.length)} named moves · ${analyticsPeriod}` : "curated registry", subKind: analyticsPeriod ? "count" : "plain" },
+    ], { scope: "inst-ledger" }) + `</header>` +
     /* R4: ONE source for the quarter. The header names the CLOSED analytics
        period and its filer count from the same table the tiles use; the
        manifest watermark (the newest period ANY filer has reported into, an
@@ -216,10 +232,11 @@ if (!inst.present) {
     `<p class="section-note"><span id="inst-index-count">${fmtInt(indexRows.length)} filers · sorted by reported 13(f) long value, largest first</span> · ` +
     `each value is the filer's latest period, shown beside it · click a header to re-sort` +
     `<noscript> · sorting and search need JavaScript; the default order below is by value, largest first</noscript></p>` +
-    `<div class="table-scroll"><table class="etable" data-sticky-first>` +
+    `<div class="table-scroll"><table class="etable" data-sticky-first${dataColumnsAttr(dirCols)}>` +
     `<caption class="visually-hidden">13F filers ranked by reported 13(f) long value for each filer's latest period</caption>` +
     `<thead><tr>${heads}</tr></thead>` +
     `<tbody id="inst-managers-tbody">${rows}</tbody></table></div>` +
+    tableFootReasonHtml(dirCols) +
     (window?.open ? s7Banner(window) : "") +
     footnoteBlock(
       [
@@ -258,13 +275,20 @@ if (!inst.present) {
     `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
     `<script type="application/json" id="inst-index-data">${serializeInlineJson(indexRows)}</script>` +
     `</section>` +
-    `<div class="design-band design-institutional-band">` +
-    consensusBoardHtml(board, { filerHref: hrefOf }) +
-    newPositionLeadersHtml(leaders, (cik) => filerTier(build, cik), analyticsPeriod) +
-    `</div>` +
-    `<div class="design-band design-institutional-band design-activity-band"><div class="design-activity">` +
+    /* Band I1: Consensus (1.3fr, the primary, its fixed 10 rows) │
+       Conviction leaders (1fr, the side panel), as the approved preview pairs
+       them (CD-5); neither cell's rows depend on the other. When either holds
+       only its empty-state line the pair collapses and the line sits under the
+       other (R10, D-8); the band reads that off the cells' own markers. */
+    consensusConvictionBandHtml(
+      consensusBoardHtml(board, { filerHref: hrefOf }),
+      newPositionLeadersHtml(leaders, (cik) => filerTier(build, cik), analyticsPeriod),
+    ) +
+    /* Recent activity, full width — never inside a pair. */
+    `<div class="design-activity">` +
     activitySectionHtml(feed, { reference: true, tierOf: (cik) => filerTier(build, cik), notableCiks: notableCiks }) + `</div>` +
-    plannedLine(["sector rotation and its Congress comparison"]) + `</div>` +
+    /* R14: the ONE Planned line, outside every band. */
+    plannedLine(["sector rotation and its Congress comparison"]) +
     `<details class="design-supplement"><summary>Recently added issuers · explore published changes</summary>` + addsHtml + `</details>` +
     `<p class="section-note inst-method-foot">Quarter-end positions, disclosed up to 45 days later; never current holdings, never a complete portfolio. ` +
     `Changes are classified from comparable reported positions; a missing position is not proof of a sale. <a href="/methodology/#13f-method">How 13F data is read ↗</a></p>`;

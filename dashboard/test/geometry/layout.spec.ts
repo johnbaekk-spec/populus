@@ -317,12 +317,34 @@ for (const width of WIDTHS) {
           `nothing at the container's right edge — it renders identically with and without it`,
       ).toBe(false);
 
+      /* DESIGN-POLISH T2.1: the sticky issuer column is keyed to its ROLE,
+         `.c-pos` (`.etable[data-sticky-issuer] > * > tr > .c-pos`), not to a
+         column position — the Kind column left the reference table, so the
+         issuer is now its first column. The property is that the identity
+         column stays PINNED while the data scrolls: sticky, and — the table
+         scrolled to its middle above — sitting on the scroller's left edge. */
       const firstCell = page.locator("[data-holdings-surface] .design-holding-row .c-pos").first();
       expect(await firstCell.count(), "the holdings table pins its issuer identity column").toBeGreaterThan(0);
       expect(
         await firstCell.evaluate((el) => getComputedStyle(el).position),
         `at ${width}px the identity column scrolls away with the data it identifies`,
       ).toBe("sticky");
+      const pinned = await firstCell.evaluate((el) => {
+        const sc = el.closest(".table-scroll")!;
+        return { cell: el.getBoundingClientRect().left, box: sc.getBoundingClientRect().left + sc.clientLeft, scrolled: sc.scrollLeft };
+      });
+      expect(pinned.scrolled, "the table is scrolled sideways while the pin is measured").toBeGreaterThan(0);
+      expect(
+        Math.abs(pinned.cell - pinned.box),
+        `at ${width}px, scrolled ${pinned.scrolled}px, the issuer cell sits ${pinned.cell - pinned.box}px off the scroller's left edge`,
+      ).toBeLessThanOrEqual(1);
+      // control: the issuer column unpinned scrolls away with its row
+      await page.addStyleTag({ content: "[data-holdings-surface] .etable > * > tr > .c-pos { position: static !important; }" });
+      const loose = await firstCell.evaluate((el) => {
+        const sc = el.closest(".table-scroll")!;
+        return el.getBoundingClientRect().left - (sc.getBoundingClientRect().left + sc.clientLeft);
+      });
+      expect(Math.abs(loose), "control: an unpinned issuer column leaves the scroller's edge").toBeGreaterThan(1);
     });
   });
 }

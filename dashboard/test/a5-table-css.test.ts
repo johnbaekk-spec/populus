@@ -31,18 +31,17 @@ test("F-21: .mobile-dates is only ever displayed under a .feed-row scope", () =>
   }
 });
 
-/* L8 (DESIGN-POLISH M1, staged; record in design-principles §7). The property
-   A-5 protected — a long table stays readable — moves from "scroll inside a
-   box under a sticky header" to "rows flow on the page" (R3). M1 removes eight
-   of the eleven boxes; exactly the three M2 recomposes (member flows, member
-   and filer filing history, the filer's reported positions) keep their box
-   until T2.5, and the sticky .etable header those three still need stays with
-   them. A fourth box, or a box on any other selector, fails here. */
-const M2_BOXES = [
-  ".design-flow-band > .panel > .table-scroll",
-  ".design-history",
-  '[data-holdings-surface="filer"] .table-scroll',
-];
+/* L8 (completed in DESIGN-POLISH M2, T2.5/T2.10; record L8 in
+   docs/frontend/design-principles.md §7). The property A-5 protected — the
+   reader never loses a long table's column names inside a trapped scroll — is
+   now held by construction: no table sits in a fixed-height scroll box and no
+   table head sticks inside one; the page scrolls, never the table. M1 removed
+   eight of the eleven boxes and staged the last three (member flows, the
+   filing histories, the filer's reported positions) with the sticky `.etable`
+   head they used; M2 removed those three and the head, so the M1 allowlist is
+   EMPTIED here. The sticky IDENTITY column for sideways scroll is a different
+   property (a column that sticks left, never a head that sticks top) and is
+   kept — the detector below tells the two apart, with a control each way. */
 
 /** Selectors that give an element a bounded scroll box (a max-height with an
     overflow that scrolls), outside print and the search panel's own list. */
@@ -58,24 +57,48 @@ function boxSelectors(source: string): string[] {
   return out;
 }
 
-test("A-5 / L8: a scroll box lives on exactly the three M2 containers; their sticky header stays", () => {
-  const boxes = boxSelectors(css).filter((s) => !/search|suggest|\.nav-|menu/.test(s));
-  assert.deepEqual([...new Set(boxes)].sort(), [...M2_BOXES].sort());
-  /* …and those three boxes keep a sticky header. The head ROW sticks (a
-     sticky cell is its own stacking context and would take the hit area of
-     the control in the cell beside it, G12), and only inside the three boxes. */
-  const sticky = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-    .filter((m) => /position:\s*sticky/.test(m[2]!) && /\.etable thead\b/.test(m[1]!))
-    .map((m) => m[1]!.trim());
-  assert.equal(sticky.length, 1, sticky.join(" | "));
-  for (const box of M2_BOXES) assert.ok(sticky[0]!.includes(box), `the sticky head is scoped to ${box}`);
-  assert.doesNotMatch(sticky[0]!, /thead th/, "the row sticks, not each cell");
-  // controls: a fourth box, and a box put back on the generic container, each fail
-  assert.notDeepEqual(
-    [...new Set(boxSelectors(css + "\n.design-rankings .table-scroll { max-height:200px; overflow-y:auto; }"))].filter((s) => !/search|suggest|\.nav-|menu/.test(s)).sort(),
-    [...M2_BOXES].sort(),
+/** Table-scroll boxes: every bounded scroll box except the search panel's
+    suggestion list and the mobile nav menu, which hold no table. */
+function tableBoxes(source: string): string[] {
+  return [...new Set(boxSelectors(source).filter((s) => !/search|suggest|\.nav-|menu/.test(s)))].sort();
+}
+
+/** In-table sticky HEADS: a sticky rule on a table part (table, .etable,
+    thead, tr, th) that sticks VERTICALLY (a top/bottom/inset-block offset).
+    A sticky identity column sticks left only, and is not a head. */
+function inTableStickyHeads(source: string): string[] {
+  const text = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out: string[] = [];
+  for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const decls = m[2]!;
+    if (!/position\s*:\s*sticky/.test(decls)) continue;
+    if (!/(?:^|;)\s*(?:top|bottom|inset-block(?:-start|-end)?|inset)\s*:/.test(decls)) continue;
+    const sels = m[1]!.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const sel of sels) if (/(?:\bthead\b|\bth\b|\btr\b|\btable\b|\.etable\b)/.test(sel)) out.push(sel);
+  }
+  return out;
+}
+
+test("A-5 / L8: no table sits in a max-height scroll box and no table head sticks — the page scrolls, never the table", () => {
+  assert.deepEqual(tableBoxes(css), [], "no max-height table container anywhere (M2 emptied the M1 allowlist)");
+  assert.deepEqual(inTableStickyHeads(css), [], "no in-table sticky head anywhere");
+
+  // controls: each of the removed M2 boxes, planted back, is found…
+  assert.deepEqual(tableBoxes(css + "\n.design-history{max-height:210px;overflow:auto}"), [".design-history"]);
+  assert.deepEqual(
+    tableBoxes(css + '\n[data-holdings-surface="filer"] .table-scroll { max-height: 70vh; overflow-y: auto; }'),
+    ['[data-holdings-surface="filer"] .table-scroll'],
   );
-  assert.ok(boxSelectors(".table-scroll{max-height:200px;overflow-y:auto}").includes(".table-scroll"));
+  assert.deepEqual(tableBoxes(".table-scroll{max-height:200px;overflow-y:scroll}"), [".table-scroll"], "the generic container too");
+  // …and so is the sticky head the three boxes used, in either the old form or a bare one
+  assert.deepEqual(
+    inTableStickyHeads(":is(.design-flow-band > .panel > .table-scroll, .design-history) .etable thead { position: sticky; top: 0; z-index: 3; }"),
+    [":is(.design-flow-band > .panel > .table-scroll", ".design-history) .etable thead"],
+  );
+  assert.equal(inTableStickyHeads(".etable thead th{position:sticky;top:0}").length, 1);
+  // the kept sticky IDENTITY column is not a head: the detector does not flag it
+  assert.match(css, /\.etable\[data-sticky-issuer\] > \* > tr > \.c-pos \{ position: sticky; left: 0;/, "the identity column is kept");
+  assert.deepEqual(inTableStickyHeads(".etable[data-sticky-issuer] > * > tr > .c-pos { position: sticky; left: 0; z-index: 2; }"), []);
 });
 
 test("A-5: filter chips wrap on mobile instead of clipping", () => {
@@ -84,7 +107,7 @@ test("A-5: filter chips wrap on mobile instead of clipping", () => {
      group, and the group wraps at EVERY width — a stronger pin than the
      fold-only `.chips { flex-wrap: wrap }` it replaced, which the group rule
      out-ranked anyway. The group's own rule carries the wrap. */
-  const group = /:is\(\.seg, \.chips:not\([^)]*\), \.mgr-chips\) \{([^}]*)\}/.exec(css);
+  const group = /:is\(\.seg, \.chips, \.mgr-chips\):where\(:not\([^)]*\)\) \{([^}]*)\}/.exec(css);
   assert.ok(group, "the segmented group rule exists");
   assert.match(group![1]!, /flex-wrap: wrap;/);
   assert.doesNotMatch(group![1]!, /flex-wrap: nowrap/);

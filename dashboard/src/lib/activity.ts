@@ -950,7 +950,11 @@ const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
 
 /** The ledger role of each column (DESIGN-POLISH M1, R2), in column order. */
 const ACTIVITY_COL_CLASSES = ["c-issuer c-flex", "c-filer c-secondary", "c-kind", "c-num", "c-num", "c-num", "c-num", "c-flags"] as const;
-const ACTIVITY_REFERENCE_CLASSES = ["c-kind", "c-issuer c-flex", "c-filer c-secondary", "c-num", "c-num", "c-num", "c-src"] as const;
+/* The reference columns. "Wt" is REMOVED (DESIGN-POLISH M2, R12): position
+   weight is not in this activity list, so the column was empty by
+   construction; the table foot names it (ACTIVITY_REMOVED_REASON). */
+const ACTIVITY_REFERENCE_CLASSES = ["c-kind", "c-issuer c-flex", "c-filer c-secondary", "c-num", "c-num", "c-src"] as const;
+const ACTIVITY_REMOVED_REASON = "Not shown: position weight — it is not in this activity list.";
 
 /** Mark → column, read off the emitter. */
 const ACTIVITY_COL_FN: Record<string, string | undefined> = {
@@ -1011,7 +1015,7 @@ export function activityAbsentHtml(reason: ActivityAbsenceReason): string {
 export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions = {}): string {
   if (opts.reference && (!feed.present || feed.pagination.total_records === 0)) {
     const explanation = !feed.present ? activityAbsentHtml(feed.reason ?? "activity-grain-unavailable") : `<p class="section-note">No comparable quarter-over-quarter records are published in this build. Missing records are not evidence of no activity.</p>`;
-    return `<section class="panel" aria-label="Cross-filer activity"><div class="panel-head"><h2 class="section-h">Recent activity</h2><span class="panel-note">REPORTED QUARTER-OVER-QUARTER CHANGES</span></div><div class="table-scroll"><table class="etable"><caption class="visually-hidden">Recent institutional activity</caption><thead><tr>${(["Kind", "Name", "Filer", "Value", "Wt", "Position change", "Src"] as const).map((label, i) => thHtml({ label, cls: ACTIVITY_REFERENCE_CLASSES[i] })).join("")}</tr></thead><tbody><tr><td colspan="7" class="design-unavailable-message"><span class="design-availability">Not available in this build</span>No comparable activity rows to display.</td></tr></tbody></table></div>${explanation}</section>`;
+    return `<section class="panel" aria-label="Cross-filer activity"><div class="panel-head"><h2 class="section-h">Recent activity</h2><span class="panel-note">REPORTED QUARTER-OVER-QUARTER CHANGES</span></div><div class="table-scroll"><table class="etable"><caption class="visually-hidden">Recent institutional activity</caption><thead><tr>${(["Kind", "Name", "Filer", "Value", "Position change", "Src"] as const).map((label, i) => thHtml({ label, cls: ACTIVITY_REFERENCE_CLASSES[i] })).join("")}</tr></thead><tbody><tr><td colspan="${ACTIVITY_REFERENCE_CLASSES.length}" class="design-unavailable-message"><span class="design-availability">Not available in this build</span>No comparable activity rows to display.</td></tr></tbody></table></div>${explanation}</section>`;
   }
   if (!feed.present) return activityAbsentHtml(feed.reason ?? "activity-grain-unavailable");
 
@@ -1102,7 +1106,6 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
       ["issuer", "Name", "Issuer as filed, with the position identity key."],
       ["filer", "Filer", "Reporting manager."],
       ["value", "Δ value", "Signed change in reported value between the two quarters; an undisclosed side is stated, never zero."],
-      ["weight", "Wt", "Position weight is not available in this activity list."],
       ["shares", "Position change", "Reported share change; not an inference of intent."],
       ["source", "Src", "Filing date, reporting period, lag and record flags remain available in the source note."],
     ] : ACTIVITY_COLS).map(([key, label, why], i) =>
@@ -1119,6 +1122,7 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     // no sort or expansion could be scoped to it and no root-integrity test
     // could enforce single ownership.
     `<tbody id="inst-activity-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
+    (opts.reference ? `<p class="table-foot-reason">${esc(ACTIVITY_REMOVED_REASON)}</p>` : "") +
 
     /* This states BOTH bounds, because there are two and the
        reader is inside the tighter one. The compact slice is a render bound
@@ -1358,7 +1362,7 @@ function activityReferenceRow(r: ActivityFeedRecord, tier: FilerBudgetState, sta
     `<td class="c-issuer c-flex">${issuerCell(r)}</td><td class="c-filer c-secondary">${filerLinkHtml(r.cik, r.filer_name || `CIK ${r.cik}`, tier)}</td>` +
     // R7: the money column is the SIGNED Δ value — never `curr_value_usd`,
     // which is 0 for every exit and made the feed read "exit · $0".
-    `<td class="c-num">${deltaCell(r)}</td><td class="c-num none">—</td>` +
+    `<td class="c-num">${deltaCell(r)}</td>` +
     // The row's filing facts hang off the receipt as a MARK trigger (R6): the
     // receipt is a link, so it cannot be the label, and the mark hangs past it.
     `<td class="c-num">${esc(delta)}</td><td class="c-src">${source}${noteFromHtml(`Quarter ${esc(r.curr_period)} · filed ${filedCell(r)} · ${lagCell(r)} · ${deltaCell(r)}` + flagTags(r.flags, undefined, { stated }), { scope: "activity-reference" }, `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`, { trigger: "mark", textHtml: "ⓘ", name: "filing details" })}</td></tr>`;

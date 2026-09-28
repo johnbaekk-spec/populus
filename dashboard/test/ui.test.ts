@@ -33,6 +33,7 @@ import { quarterlyFlow, sumRanges } from "../src/lib/derive.ts";
 import type { MemberEntity } from "../src/lib/derive.ts";
 import type { QoqDeltaRow, TopHolderRow } from "../src/lib/inst.ts";
 import { type TxnRow, type RenderCtx } from "../src/lib/format.ts";
+import { ledgerFigures } from "./lib/ledger-dom.ts";
 
 const CTX: RenderCtx = { watched: new Set() };
 const STAMPS: BuildStamps = {
@@ -463,7 +464,16 @@ test("design briefing and ledger escape source text and retain visible metric co
   assert.ok(briefing.includes('&lt;coverage&gt;'));
   assert.ok(briefing.includes('A &amp; B'));
   assert.ok(!briefing.includes('<img'));
-  const ledger = disclosureLedger([{ label: 'Parse coverage', value: '—', detail: '0 of 0 e-filed · no denominator' }]);
-  assert.ok(ledger.includes('<dd>—</dd>'));
-  assert.ok(ledger.includes('<small>0 of 0 e-filed · no denominator</small>'));
+  /* DESIGN-POLISH M2 (T2.8): the ledger is a VALID <dl> — the value and the
+     sub are two <dd>s in one figure group (a <small> in the group was invalid
+     content). The property is unchanged: the value and its metric context
+     (the denominator sub) stay VISIBLE and every source string is escaped. */
+  const ledger = disclosureLedger([{ label: 'Parse coverage', value: '—', detail: '0 of 0 e-filed · no denominator', subKind: 'count' }]);
+  const [fig] = ledgerFigures(ledger);
+  assert.equal(fig!.value, '—');
+  assert.equal(fig!.sub, '0 of 0 e-filed · no denominator', 'the sub keeps its denominator in view');
+  assert.ok(ledger.includes('<dd class="ledger-value">—</dd><dd class="ledger-sub">0 of 0 e-filed · no denominator</dd>'));
+  const hostile = disclosureLedger([{ label: '<b>L</b>', value: '<img src=x>', detail: 'a & b', subKind: 'count' }]);
+  assert.ok(!hostile.includes('<img') && !hostile.includes('<b>'), 'label and value are escaped');
+  assert.ok(hostile.includes('&lt;img src=x&gt;') && hostile.includes('a &amp; b'));
 });

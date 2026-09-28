@@ -7,9 +7,9 @@
       watch-v2 store (members + tickers) and the last-seen cursor, all of which
       live in this browser only. Nothing leaves the device. */
 
-import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel, type RenderCtx } from "../lib/format.ts";
+import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel, parseDataColumns, type RenderCtx } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
-import { hitRowHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf } from "../lib/ui/index.ts";
+import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf } from "../lib/ui/index.ts";
 
 /** An empty row spans the table's own header — the column list the server
     rendered — never a literal count (DESIGN-POLISH M1, section E). */
@@ -89,6 +89,11 @@ function initHitPager(): void {
   const status = document.getElementById("signal-hits-status");
   if (!section || !seg || !body || !rangeEl) return;
   const pageSize = Number(section.dataset.pageSize) || SIGNAL_HITS_PAGE_SIZE;
+  /* The page's FIXED compact N (DESIGN-POLISH M2, CD-1: 12 of the 50): every
+     repaint compacts through the same body renderer, restates the bound on the
+     page's disclosure and announces the re-render to the named binder. */
+  const compactN = Number(section.dataset.compactRows) || pageSize;
+  const disclosure = section.querySelector<HTMLElement>('.compact-disclosure[data-compact-for="signal-hits-body"]');
   const store = loadWatchStore(localStorage);
   const ctx: RenderCtx = { watched: store.members, watchedTickers: store.tickers };
   let page = 0;
@@ -141,8 +146,14 @@ function initHitPager(): void {
     const slice = filtered.slice(page * pageSize, (page + 1) * pageSize);
     body!.innerHTML =
       slice.length === 0
-        ? `<tr><td colspan="${columnCount(body, 6)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
-        : slice.map((s) => hitRowHtml(s, ctx)).join("\n");
+        ? `<tr><td colspan="${columnCount(body, 7)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
+        : hitsBodyHtml(slice, ctx, compactN, parseDataColumns(body!.closest("table")?.getAttribute("data-columns")));
+    body!.setAttribute("data-collapsed", String(slice.length > compactN));
+    if (disclosure) {
+      disclosure.setAttribute("data-compact-total", String(slice.length));
+      disclosure.setAttribute("data-compact-shown", String(Math.min(compactN, slice.length)));
+    }
+    document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "signal-hits" } }));
     const range = hitsRangeText(page, slice.length, filtered.length, pageSize);
     rangeEl!.textContent = range;
     if (status) status.textContent = `${range}${kind === "all" ? "" : ` · rule ${kind}`}${watchedOnly ? " · watched only" : ""}.`;

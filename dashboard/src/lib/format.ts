@@ -167,12 +167,14 @@ export function normalizeTicker(raw: string | null): string | null {
 }
 
 export function esc(s: string): string {
+  /* Global-regex form (same output as the replaceAll chain), which CodeQL
+     recognises as an HTML sanitizer; `&` first so no entity is re-escaped. */
   return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /* ============================================================ notes
@@ -852,6 +854,29 @@ export function universalFlagNote(flags: readonly string[]): string {
     `Every row below carries <strong>${esc(labels.join(", "))}</strong>${provenance}` +
     ` — stated once here rather than repeated on every row.</div>`
   );
+}
+
+/** The labels a reader sees for a set of flag keys (unknown keys read as the
+    one unknown-flag label). */
+export function flagLabels(flags: readonly string[]): string[] {
+  const known = flags.filter((f) => FLAG_PRESENTATION[f]).map((f) => FLAG_PRESENTATION[f]!.label);
+  return [...known, ...(flags.some((f) => !FLAG_PRESENTATION[f]) ? [UNKNOWN_FLAG_LABEL] : [])];
+}
+
+/** The Flags column's presence rule (R12, H-6): it renders when some row shows
+    a flag AFTER hoisting. Emptied because every flag was hoisted, its reason
+    names the hoisted flags; emptied because no row carries one, it says that. */
+export function flagsColumnSpec<R>(flagsOf: (row: R) => readonly string[], stated: readonly string[]): ColumnSpec<R> {
+  const hoisted = new Set(stated);
+  return {
+    key: "flags",
+    honesty: true,
+    hasValue: (row) => flagsOf(row).some((f) => !hoisted.has(f)),
+    emptyReason:
+      stated.length > 0
+        ? `Flags: every row carries ${flagLabels(stated).join(", ")}, stated once above the table.`
+        : "Flags: no row carries a flag.",
+  };
 }
 
 /** ONE disclosure renderer, so the row-level and table-level provenance cannot
@@ -1705,6 +1730,16 @@ export function compactBoundCountFor(
 /** R13: how many rows one press of the expand control reveals. */
 export const COMPACT_STEP = 50;
 
+/* ---------- band balance (DESIGN-POLISH M2, R10, D-8; coordinator CD-1, CD-5) ----------
+
+   A paired band has ONE primary cell (`data-pair-primary`, the wider one) and a
+   side cell. Every compact table shows its FIXED default (member flows 20,
+   filing history 12, filer reported positions 20, signal hits 12, Consensus
+   10) — never a count tuned to one data build or estimated from its band
+   partner's height, and never cut to balance its side. The side may end
+   earlier; it may not end more than 96px LATER than the primary (G9), so no
+   void opens under the primary. Every held row is one Show-all away. */
+
 /** The bound statement plus its expand control.
 
     OMISSION RULE: a table whose row count does not EXCEED the compact
@@ -1763,23 +1798,36 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
     bound(o.boundCount ?? esc(compactBoundCount(o.shown, o.total, o.boundNoun ?? o.noun, { definite: o.definite })), false) +
     // The button carries the TOTAL, never the held-back count: the sentence
     // above it already states that count, and one bound stated twice, two
-    // elements apart, is exactly the duplication this control removes.
-    btn(compactExpandLabel(o.total, o.noun, o.shown)) +
+    // elements apart, is exactly the duplication this control removes. A
+    // DOM-backed control reveals every held row in one press, so it says so.
+    btn(esc(o.domBacked ? compactShowAllLabel(o.total, o.noun) : compactExpandLabel(o.total, o.noun, o.shown))) +
     `</div>`
   );
 }
 
 /** The collapse label, shared by every client owner for the same reason
-    `compactBoundCount` is. */
-export function compactCollapseLabel(noun: string): string {
-  return `Show only the first ${fmtInt(COMPACT_ROWS)} ${noun}`;
+    `compactBoundCount` is. It names the table's OWN slice (a compact-20 table
+    collapses to 20, not 10). */
+export function compactCollapseLabel(noun: string, shown = COMPACT_ROWS): string {
+  return `Show only the first ${fmtInt(shown)} ${noun}`;
+}
+
+/** A DOM-backed disclosure reveals every held row in one press.
+
+    PLAIN TEXT, like `compactCollapseLabel` and `compactBoundCount` (review
+    R2-7): every client writes a label through `textContent`, where an escaped
+    noun would print its entities ("Show all 3 R&amp;D filers"); the server
+    escapes it at the one place it is spliced into markup (`compactDisclosure`). */
+export function compactShowAllLabel(total: number, noun: string): string {
+  return `Show all ${fmtInt(total)} ${noun}`;
 }
 
 /** R13: "Show 50 more" while more than one step is held back, else the whole
-    remainder. `shown` defaults to the compact slice. */
+    remainder. `shown` defaults to the compact slice. Plain text (see
+    `compactShowAllLabel`). */
 export function compactExpandLabel(total: number, noun: string, shown = COMPACT_ROWS): string {
   const hidden = Math.max(0, total - shown);
-  return hidden > COMPACT_STEP ? `Show ${fmtInt(COMPACT_STEP)} more` : `Show all ${fmtInt(total)} ${esc(noun)}`;
+  return hidden > COMPACT_STEP ? `Show ${fmtInt(COMPACT_STEP)} more` : `Show all ${fmtInt(total)} ${noun}`;
 }
 
 /** The client-side counterpart of `compactDisclosure`, kept BESIDE it
@@ -1812,6 +1860,10 @@ export function syncCompactDisclosure(
     /** the remainder, when it moves with the selection — the adds leaderboard's
         payload link changes with the quarter. Omit to leave it alone. */
     extra?: CompactBoundBody;
+    /** the table's own compact slice (default COMPACT_ROWS) */
+    shown?: number;
+    /** a DOM-backed control: one press reveals every held row */
+    all?: boolean;
   },
 ): void {
   if (!disclosure) return;
@@ -1834,8 +1886,10 @@ export function syncCompactDisclosure(
     btn.textContent = inert
       ? ""
       : o.expanded
-        ? compactCollapseLabel(o.noun)
-        : compactExpandLabel(o.total, o.noun);
+        ? compactCollapseLabel(o.noun, o.shown)
+        : o.all
+          ? compactShowAllLabel(o.total, o.noun)
+          : compactExpandLabel(o.total, o.noun, o.shown);
   }
   // The wrapper goes away only when it would state nothing at all. `extraEl`
   // exists exactly when the caller published a state-independent remainder,
@@ -2344,6 +2398,9 @@ export interface ThOpts {
   /** the FIXED order of a table that does not re-sort: the header states it
       with `aria-sort` and the same caret span, never a "▾" typed into the label */
   order?: "ascending" | "descending";
+  /** the column's key in the table's `data-columns` set (R12), written as
+      `data-col` so the empty-column check can tell a kept column from a stray */
+  col?: string;
 }
 
 export function thHtml(o: ThOpts): string {
@@ -2379,6 +2436,91 @@ export function thHtml(o: ThOpts): string {
     : o.order
       ? ` aria-sort="${o.order}"`
       : "";
-  return `<th scope="col"${cls ? ` class="${cls}"` : ""}${sortAttrs}${o.attrs ?? ""}>${inner}</th>`;
+  return `<th scope="col"${cls ? ` class="${cls}"` : ""}${o.col ? ` data-col="${esc(o.col)}"` : ""}${sortAttrs}${o.attrs ?? ""}>${inner}</th>`;
+}
+
+/* ---------- column presence (DESIGN-POLISH M2, R12, Architecture D) ----------
+
+   A column renders only when at least one row of the table's FULL collection —
+   every row any page, expansion or client re-render of that table can show —
+   has a value. ONE pure function decides it for server and client alike; the
+   chosen set travels to the client in `data-columns` on the <table> (the
+   `data-stated-flags` pattern), and each header carries its key as `data-col`.
+
+   A kept column may be empty on the visible page (its value sits on another
+   page, or in held rows): it renders, with no reason. A column empty over the
+   whole collection is REMOVED; an honesty-bearing one (dates, amounts,
+   receipts, owner or partial qualifiers, flags) must carry the one-line
+   reason printed in the table foot in its place. */
+
+export interface ColumnSpec<R> {
+  key: string;
+  /** does this row carry a value in the column? (the renderer's own rule) */
+  hasValue?: (row: R) => boolean;
+  /** dates, amounts, receipts, owner/partial qualifiers, flags */
+  honesty?: boolean;
+  /** the plain-text reason printed when the column is removed; REQUIRED for
+      an honesty column */
+  emptyReason?: string;
+  /** the column is part of the table's identity and always renders */
+  always?: boolean;
+}
+
+export interface PresentColumns {
+  columns: string[];
+  /** The kept columns whose presence a VALUE proved: a spec with `hasValue`
+      that some row of the collection satisfies. An `always` column is kept
+      without a value check, so it is NOT proven — a column kept only because
+      the renderer said so must still show a value on the page (G6; review
+      Q2-5). Travels as `data-columns-proven`. */
+  proven: string[];
+  emptied: { key: string; reason: string | null }[];
+}
+
+export function presentColumns<R>(rows: readonly R[], specs: readonly ColumnSpec<R>[]): PresentColumns {
+  if (specs.length === 0) throw new Error("presentColumns: no column specs");
+  const seen = new Set<string>();
+  for (const s of specs) {
+    if (!s.key) throw new Error("presentColumns: a column spec without a key");
+    if (seen.has(s.key)) throw new Error(`presentColumns: duplicate column key ${s.key}`);
+    seen.add(s.key);
+    if (!s.always && typeof s.hasValue !== "function") throw new Error(`presentColumns: column ${s.key} has no hasValue`);
+    if (s.honesty && !s.always && !s.emptyReason) throw new Error(`presentColumns: honesty column ${s.key} needs an emptyReason`);
+  }
+  const columns: string[] = [];
+  const proven: string[] = [];
+  const emptied: { key: string; reason: string | null }[] = [];
+  for (const s of specs) {
+    const valued = typeof s.hasValue === "function" && rows.some((r) => s.hasValue!(r));
+    if (s.always || valued) {
+      columns.push(s.key);
+      if (valued) proven.push(s.key);
+    } else emptied.push({ key: s.key, reason: s.emptyReason ?? null });
+  }
+  return { columns, proven, emptied };
+}
+
+/** The `data-columns` attribute a table carries (leading space included), and
+    beside it `data-columns-proven`: the kept columns a value proved over the
+    full collection, the only ones G6 excuses when every visible cell is empty
+    (their value sits on another page or in held rows). */
+export function dataColumnsAttr(p: PresentColumns): string {
+  return ` data-columns="${esc(p.columns.join(","))}" data-columns-proven="${esc(p.proven.join(","))}"`;
+}
+
+/** Parse a table's `data-columns` back into its set (client renderers). */
+export function parseDataColumns(value: string | null | undefined): string[] | null {
+  if (value == null) return null;
+  return value.split(",").map((k) => k.trim()).filter(Boolean);
+}
+
+/** The table foot's one-line account of what a table does not show and why:
+    each removed column's reason, then any derived columns the renderer removed
+    outright (named by the caller). Nothing renders when there is nothing to
+    say. `extra` is plain text. */
+export function tableFootReasonHtml(p: PresentColumns | null, extra: readonly string[] = []): string {
+  const reasons = [...(p?.emptied ?? []).map((e) => e.reason).filter((r): r is string => !!r), ...extra];
+  if (reasons.length === 0) return "";
+  return `<p class="table-foot-reason">${reasons.map((r) => esc(r)).join(" ")}</p>`;
 }
 

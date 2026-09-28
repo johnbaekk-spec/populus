@@ -1,26 +1,16 @@
 /* ================= ALPHA-UX additions ================= */
 
-/* A-5: sticky column headers inside every scrolling table container.
-   DESIGN-POLISH M1 (L8, staged): the 78vh `.table-scroll` box that stood here is
-   DELETED — the page scrolls, never the table. These sticky heads stay until M2,
-   because the three boxes M2 removes still scroll and still use them. They are
-   scoped to those three boxes, and the HEAD ROW is what sticks: a sticky cell is
-   a stacking context of its own, which paints over (and takes the hit-test of)
-   the hit area of the control in the cell beside it (G12, H-16). */
-:is(.design-flow-band > .panel > .table-scroll, .design-history, [data-holdings-surface="filer"] .table-scroll) .etable thead {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  background: var(--paper2, var(--paper));
-}
+/* A-5 (L8, completed in DESIGN-POLISH M2): no table sits in a fixed-height
+   scroll box and no table head sticks inside one — the page scrolls, never the
+   table. The last three boxes (member flows, the filing histories, the filer's
+   reported positions) and the sticky heads they used are gone; their default
+   views are compact, behind the named binder. */
 
-/* A-5: filter controls wrap on mobile instead of clipping. (The `.chips`
-   half moved into the ledger region: the segmented group wraps at every width,
-   and a second, fold-only rule here out-ranked nothing and only re-spaced the
-   watch lists — review C-3/C-6.) */
-@media (max-width: 720px) {
-  .filter-controls { flex-wrap: wrap; row-gap: 8px; }
-}
+/* A-5: filter controls wrap on mobile instead of clipping — the ONE fold rule
+   for them is below with the other fold rules (this file's first copy repeated
+   its wrap and lost its row gap to that rule's `gap`: DESIGN-POLISH M2 review
+   C2-7). (The `.chips` half moved into the ledger region: the segmented group
+   wraps at every width — review C-3/C-6.) */
 
 /* The /congress sub-tab nav (.ctabs/.ctab) is DELETED with its markup —
    a dead selector left behind is how a removed component quietly comes back. */
@@ -405,8 +395,13 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .masthead-right { gap: 10px; }
 .site-search { width: 380px; border-radius: 2px; background: var(--paper); }
 .page { padding-top: 28px; }
-.page-head, .entity-head { gap: 28px; align-items: center; border-bottom: 0; margin-top: 0; padding-bottom: 18px; }
-.page-head-copy, .entity-head-copy { flex: 1 1 400px; max-width: 690px; }
+/* D-14: the header ledger is bottom-aligned with the H1 block; provenance
+   lines never sit inside the head, so the two bottoms agree. */
+.page-head, .entity-head { gap: 28px; align-items: flex-end; border-bottom: 0; margin-top: 0; padding-bottom: 18px; }
+/* The head copy takes what the ledger leaves; the ledger is as wide as its
+   figures (it wraps only when they cannot fit beside the copy). */
+.page-head-copy, .entity-head-copy { flex: 1 1 360px; max-width: 690px; min-width: 0; }
+.page-head, .entity-head { flex-wrap: wrap; }
 .page-title, .entity-title { font: 700 var(--fs-display)/1.15 var(--sans); letter-spacing: -.025em; margin: 8px 0 8px; }
 .kicker, .crumb { font: 500 var(--fs-meta)/1.5 var(--mono); text-transform: uppercase; letter-spacing: .14em; color: var(--accent); }
 .crumb { margin-bottom: 12px; }
@@ -415,19 +410,48 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .tile, .tiles-entity .tile { border: 0; padding: 0; min-width: 100px; display: flex; flex-direction: column; background: transparent; }
 .tile-label { order: -1; font: 400 var(--fs-label)/1.6 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-meta); }
 .tile-value, .tiles-entity .tile-value { font: 600 var(--fs-display)/1.3 var(--mono); letter-spacing: -.03em; }
-.design-ledger { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 24px; flex: 1 1 560px; }
-.design-ledger dt { font: 400 var(--fs-label)/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-meta); }
-.design-ledger dd { margin: 2px 0 0; font: 600 var(--fs-display)/1.3 var(--mono); }
-.design-ledger small { display: block; font: 400 var(--fs-label)/1.6 var(--mono); color: var(--ink-meta); }
+/* The ONE page-header ledger (DESIGN-POLISH M2, R15, D-3): figures 40px
+   apart, their TOPS aligned (so every value top agrees), the whole ledger
+   bottom-aligned with the H1 block (the head's flex-end). Label mono 500 10px
+   caps, 6px above the value; value mono 600 26px/1, tabular, −.02em, one line,
+   coloured by the figure's tone; sub mono 500 10.5px/1.6, as wide as its
+   figure and wrapping — never cut. */
+.design-ledger { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; gap: 16px 40px; margin: 0; flex: 0 1 auto; }
+.ledger-fig { display: flex; flex-direction: column; flex: 0 0 auto; min-width: 150px; max-width: 240px; margin: 0; }
+.ledger-fig > dt { font: 500 var(--fs-meta)/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-meta); margin: 0 0 6px; white-space: nowrap; }
+.ledger-fig > .ledger-value { font: 600 var(--fs-display)/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; white-space: nowrap; margin: 0; color: var(--ledger-tone, var(--tone-ink)); }
+/* `contain: inline-size`: the sub never widens its figure; it wraps inside it. */
+.ledger-fig > .ledger-sub { font: 500 var(--fs-control)/1.6 var(--mono); color: var(--ink-meta); margin: 4px 0 0; contain: inline-size; overflow-wrap: anywhere; }
+/* A WIDE figure (`data-wide`) takes its own width, never cut and never over
+   the next figure (review C2-2); at the fold it takes a full row (below). It
+   is wide when its value holds more characters than a 150px figure (a
+   member's net-flow range), or when its sub would take a third line there (a
+   long issuer name in the Consensus add — the M2 delta review): its sub then
+   sizes the figure too, uncontained, so it reads on one line where the ledger
+   has room. A figure wider than its ledger line shrinks to it (never below
+   the 150px floor) and its sub wraps there — the page never scrolls sideways. */
+.ledger-fig[data-wide] { max-width: none; flex-shrink: 1; }
+.ledger-fig[data-wide] > .ledger-sub { contain: none; }
+.ledger-fig[data-tone="blue"] { --ledger-tone: var(--tone-blue); }
+.ledger-fig[data-tone="gold"] { --ledger-tone: var(--tone-gold); }
+.ledger-fig[data-tone="green"] { --ledger-tone: var(--tone-green); }
+.filer-ledger-root { display: contents; }
 .design-provenance { padding: 10px 0 16px; font: 400 var(--fs-meta)/1.6 var(--mono); color: var(--ink2); }
-.design-briefing { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-top: 1px solid var(--accent); border-bottom: 1px solid var(--rule); margin: 0 0 22px; }
-.design-story { padding: 18px 24px; min-width: 0; }
-.design-story + .design-story { border-left: 1px solid var(--rule); }
-.design-story-tag { font: 500 var(--fs-label)/1.5 var(--mono); color: var(--accent); letter-spacing: .12em; text-transform: uppercase; }
-.design-story:nth-child(2) .design-story-tag { color: var(--amber); }
-.design-story:nth-child(3) .design-story-tag { color: var(--sell); }
-.design-story h2 { font: 600 var(--fs-body)/1.5 var(--sans); margin: 6px 0 3px; }
-.design-story p { font: 400 var(--fs-small)/1.6 var(--sans); color: var(--ink2); margin: 0; }
+/* The summary card (D-12, DESIGN-POLISH M2): three cards on one band, no gap,
+   a rule under the band and a 1px column divider; the design's padding
+   (18/28/20/28); tag mono 500 9.5px caps coloured by MEANING per page
+   (`data-tone`), 8px above the title; title Plex 600 13.5px/1.4; body Plex 400
+   12px/1.55 in --ink3, 4px below the title; no foot. */
+.design-briefing { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); margin: 0 0 22px; }
+.design-story { padding: 18px 28px 20px; min-width: 0; }
+.design-story + .design-story { border-left: 1px solid var(--story-divider); }
+.design-story-tag { font: 500 var(--fs-label)/1 var(--mono); color: var(--story-tone, var(--tone-blue)); letter-spacing: .14em; text-transform: uppercase; }
+.design-story[data-tone="blue"] { --story-tone: var(--tone-blue); }
+.design-story[data-tone="gold"] { --story-tone: var(--tone-gold); }
+.design-story[data-tone="green"] { --story-tone: var(--tone-green); }
+.design-story[data-tone="sell"] { --story-tone: var(--kind-sell-text); }
+.design-story h2 { font: 600 var(--fs-title)/1.4 var(--sans); color: var(--ink); margin: 8px 0 4px; }
+.design-story p { font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink3); margin: 0; }
 .panel, .panel-wide { border: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: transparent; border-radius: 0; box-shadow: none; margin-top: 22px; }
 .section-h { font: 600 var(--fs-body)/1.5 var(--sans); }
 .feed-table a { text-decoration: none; }
@@ -437,6 +461,11 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .filterbar { margin-top: 0; padding: 10px 0; gap: 12px; background: transparent; border: 0; }
 .filter-select { border-radius: 2px; }
 .card-foot, .section-note, .terminus { font-size: var(--fs-note); line-height: 1.6; }
+/* Everything on a design or entity page lines up on the gutter (DESIGN-POLISH
+   M2): a band's notes and caveat lines start where its title and its table's
+   first text start — the 16px inset they kept from the old boxed panels put
+   them on no edge at all. */
+:is(.design-page, .entity-page) :is(.section-note, .caveat-line) { padding-left: 0; padding-right: 0; }
 .watch-btn { font: 500 var(--fs-meta)/1.4 var(--mono); vertical-align: middle; }
 .watch-note { font: inherit; text-transform: uppercase; }
 .site-footer { border-top: 1px solid var(--rule); }
@@ -444,16 +473,25 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .masthead-inner { padding-top: 12px; padding-bottom: 12px; }
   .design-rankings { grid-template-columns: minmax(0,1fr); }
   .page-head-copy, .entity-head-copy { max-width: none; }
-  .design-ledger { flex-basis: 100%; }
+  .design-ledger { flex-basis: 100%; justify-content: flex-start; }
 }
 @media (max-width: 720px) {
   .shell { padding-left: 16px; padding-right: 16px; }
   .page { padding-top: 20px; }
   .brand-name { font-size: var(--fs-small); }
   .masthead-left { gap: 16px; }
-  .design-ledger { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+  .design-ledger { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+  .ledger-fig { min-width: 0; max-width: none; }
+  .ledger-fig[data-wide] { grid-column: 1 / -1; }
+  /* The head stacks at the fold (media.css: a column), and its ledger and copy
+     take the full width. The head's desktop `align-items: flex-end` above
+     would otherwise shrink the ledger to its content and push it right — a
+     207px ledger with a 151px gap on its left at 390 (review C2-3). */
+  .design-ledger, .page-head-copy, .entity-head-copy { align-self: stretch; }
   .design-briefing { grid-template-columns: minmax(0,1fr); }
   .design-story { padding: 16px 0; }
+  /* Stacked cards are separated by the page rule, not the 1.1:1 column
+     divider the side-by-side cards use (review C2-8). */
   .design-story + .design-story { border-left: 0; border-top: 1px solid var(--rule); }
   /* The strip WRAPS (layout.css), so a scroll here never engaged — measured
      scrollWidth equal to clientWidth at 360 and 390px — and a scroller clips
@@ -465,9 +503,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 }
 
 /* Keep the reference's short page intro and compact default control row. */
-#congress-page .page-head { align-items: center; }
-#congress-page .page-head-copy { flex: 1 1 42%; }
-#congress-page .design-ledger { flex: 1 1 50%; margin: 0; }
 #congress-page .design-provenance { display: flex; flex-wrap: wrap; gap: 8px 18px; }
 #congress-page .stamp-line { margin: 0; font: inherit; color: var(--buy); }
 #congress-page .method-links { margin: 0; font: inherit; }
@@ -475,41 +510,16 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .advanced-filters > summary { cursor: pointer; font: 500 var(--fs-note) var(--mono); color: var(--accent); padding: 8px; }
 .advanced-filter-body { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 0; }
 @media (max-width: 720px) {
-  #congress-page .page-head-copy, #congress-page .design-ledger { flex-basis: 100%; }
   .advanced-filters > summary { min-height: 44px; padding: 12px 8px; }
 }
 
 .footer-nav { display: flex; flex-wrap: wrap; gap: 14px; }
-.design-institutional-band { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.3fr); gap: 28px; }
 .design-institutional-band > * { min-width: 0; }
 .design-institutional-band .panel { margin-top: 0; }
-.entity-page:has([data-holdings-surface="filer"]) > .crumb { order: 0; }
-.entity-page:has([data-holdings-surface="filer"]) > .entity-head { order: 1; }
-.entity-page:has([data-holdings-surface="filer"]) > .design-briefing { order: 2; }
-.entity-page:has([data-holdings-surface="filer"]) > .period-row { order: 3; }
-.entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface] { order: 4; }
-.entity-page:has([data-holdings-surface="filer"]) > [data-filer-root] { order: 5; }
-.entity-page:has([data-holdings-surface="filer"]) > .edgar-block { order: 6; }
-@media (max-width: 1080px) {
-  .design-institutional-band { grid-template-columns: minmax(0,1fr); }
-}
-@media (max-width: 720px) {
-  .site-search { width: 100%; }
-}
-/* Filer header ledger remains inside the live period root, so changing quarters
-   updates the same statistics without a second rendering path. */
-.entity-page:has([data-holdings-surface="filer"]) { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 28px; }
-.entity-page:has([data-holdings-surface="filer"]) > * { grid-column: 1 / -1; }
-.entity-page:has([data-holdings-surface="filer"]) > .entity-head { grid-column: 1; }
-.entity-page:has([data-holdings-surface="filer"]) > [data-filer-root] { display: contents; }
-.entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .tiles { order: 1; grid-column: 2; align-self: center; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; }
-.entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .panel { order: 5; grid-column: 1 / -1; }
-.entity-page:has([data-holdings-surface="filer"]) > .s7-banner,
-.entity-page:has([data-holdings-surface="filer"]) > [data-inst-data-note] { order: 2; }
-@media (max-width: 1080px) {
-  .entity-page:has([data-holdings-surface="filer"]) { grid-template-columns: minmax(0,1fr); }
-  .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .tiles { grid-column: 1; }
-}
+/* The filer page (DESIGN-POLISH M2, F, A-9): its DOM order IS its visual order.
+   The `:has()`/`order` grid rules that re-stacked it here are deleted — reading
+   and tab order differed from what was shown (WCAG 1.3.2, 2.4.3). Band F1 is
+   `.design-filer-band` below. */
 @media (max-width: 1080px) {
   .page-head-copy, .entity-head-copy { flex-basis: auto; }
 }
@@ -518,42 +528,57 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .book-metric { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
 .book-metric dt { color: var(--ink2); font-size: var(--fs-small); }
 .book-metric dd { display: grid; grid-template-columns: minmax(0,1fr) 70px; align-items: center; gap: 12px; margin: 0; font: 400 var(--fs-note) var(--mono); }
-@media (min-width: 1081px) {
-  .entity-page:has([data-holdings-surface="filer"]) { grid-template-columns: minmax(0,1.7fr) minmax(0,1fr); }
-  .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface] { grid-column: 1; }
-  .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-book-shape { order: 4; grid-column: 2; align-self: start; }
-}
 /* Reference canvas geometry: adjoining bands share one-pixel seams. */
 .design-page, .entity-page { --design-gutter:32px; }
 .page-title, .entity-title { font-size:var(--fs-display); line-height:1.1; }
 .design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--design-gutter)); margin-right:calc(-1 * var(--design-gutter)); margin-bottom:0; }
-.design-story { padding:18px 28px; }
 .design-band { display:grid; gap:0; margin:0 calc(-1 * var(--design-gutter)); border-bottom:1px solid var(--rule); }
-.design-band > * { min-width:0; padding:10px 32px 14px; }
+.design-band > * { min-width:0; padding:10px var(--gutter) 14px; }
+/* D-11: 28px gutters only on Institutional's left band cells and on the inner
+   gutters of the member's Filing history │ Signals pair, as the exports draw
+   them; every other pair keeps 32px. The table inside follows its cell. */
+@media (min-width: 1081px) {
+  .design-institutional-band:not([data-collapsed]) > :first-child { --gutter: 28px; }
+  .design-member-history-band:not([data-collapsed]) > :first-child { padding-right: 28px; }
+  .design-member-history-band:not([data-collapsed]) > :first-child .table-scroll { --gutter-r: 28px; }
+  .design-member-history-band:not([data-collapsed]) > :last-child { padding-left: 28px; }
+  .design-member-history-band:not([data-collapsed]) > :last-child .table-scroll { --gutter-l: 28px; }
+}
 .design-band > * + * { border-left:1px solid var(--rule); }
 .design-band .panel { margin:0; border:0; }
 .design-member-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
-.design-institutional-band { grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); }
-.design-triptych { grid-template-columns:repeat(3,minmax(0,1fr)); }
-.design-unavailable .table-scroll { min-height:180px; }
+/* Band I1: Consensus (1.3fr, the primary — the seven-column table) │
+   Conviction leaders (1fr, the side panel), as the approved preview draws it
+   (coordinator decision CD-5). */
+.design-institutional-band { grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); }
+/* A paired band (R10): two cells of equal width with the 1px seam. */
+.design-pair { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+/* Band F1: Reported positions (1.7fr) │ Book shape + Filing history (1fr). */
+.design-filer-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
+.design-filer-band > [data-holdings-surface] { margin:0; border:0; }
+.design-filer-side > * + * { margin-top:14px; }
+/* A pair whose one cell holds only an empty-state line collapses to ONE
+   full-width column; the line sits under the other cell, on the seam's rule. */
+.design-band[data-collapsed="empty-state"] { grid-template-columns:minmax(0,1fr); }
+.design-band[data-collapsed="empty-state"] > * + * { border-left:0; border-top:1px solid var(--rule); }
+/* A lone table of at most three columns left by the collapse keeps the
+   design's cell width — half the band — instead of spanning 1,440px with its
+   three columns on the far edges (coordinator decision CD-2; `pairBandHtml`
+   marks it `data-pair-narrow`). Below 1081px every band stacks full width. */
+@media (min-width: 1081px) {
+  .design-band[data-collapsed="empty-state"] > [data-pair-narrow] { width:50%; }
+}
 .design-availability { display:block; margin-bottom:5px; color:var(--ink2); font:500 var(--fs-meta) var(--mono); }
-.design-holdings-band > .design-unavailable .table-scroll { min-height:300px; }
-.design-holdings-band > div .design-unavailable .table-scroll { min-height:110px; }
-.design-reconciliation dl, .design-trading-profile dl { margin:0; }
+.design-trading-profile dl { margin:0; }
 .design-trading-profile .book-metric dd { grid-template-columns:40px minmax(0,1fr); text-align:right; font-size:var(--fs-meta); }
-.design-flow-band > .panel > .table-scroll { max-height:365px; overflow:auto; }
-.design-history { max-height:210px; overflow:auto; }
 .design-supplement { border-bottom:1px solid var(--rule); font-size:var(--fs-note); }
 .design-supplement > summary { cursor:pointer; padding:10px 0; color:var(--ink3); }
 .design-supplement .entity-grid { margin:0; }
 .design-activity .inst-data-note { font-size:var(--fs-meta); }
 .design-institutional-band .etable { min-width:0; }
 .design-rankings { gap:0; margin:0 -32px; border-bottom:1px solid var(--rule); }
-.design-rankings > * { padding:10px 32px 16px; margin:0; border:0; }
+.design-rankings > * { padding:10px var(--gutter) 16px; margin:0; border:0; }
 .design-rankings > * + * { border-left:1px solid var(--rule); }
-.entity-page:has([data-holdings-surface="filer"]) > .design-triptych { order:6; }
-.entity-page:has([data-holdings-surface="filer"]) > .edgar-block { order:7; }
-.entity-page:has([data-holdings-surface="filer"]) > .s7-banner { order:7; }
 /* The ≤1080px two-line feed block moved into the ledger region (entities.css)
    together with the ≤720px fold, so the two keep their own order (A-4). */
 @media(max-width:720px) {
@@ -564,69 +589,20 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
  .design-institutional-band .etable { min-width:540px; }
  .design-unavailable .etable { min-width:480px; }
  .design-provenance { padding:6px 0 14px; }
- .design-holdings-band > .design-unavailable .table-scroll { min-height:180px; }
 }
 .design-provenance { display:flex; flex-wrap:wrap; gap:8px 20px; }
 .design-page .entity-head { padding-bottom:8px; }
 .design-page .entity-lede { max-width:540px; }
-.design-page .entity-head-copy { flex-basis:44%; }
-.design-page .design-ledger { flex-basis:50%; }
-.design-institutional-band .design-unavailable .table-scroll { min-height:240px; }
-.design-institutional-band .design-newpositions .table-scroll, .design-institutional-band .design-rotation .table-scroll { min-height:180px; }
-.design-activity > .panel > .table-scroll { min-height:240px; }
 .design-activity > [data-inst-data-note] { padding:8px 0; border:0; font-size:var(--fs-meta); }
-@media(max-width:720px) {
- .design-page .entity-head-copy, .design-page .design-ledger { flex-basis:100%; }
-}
 .design-band .book-metric { padding:6px 0; }
 .design-band .section-note { margin:8px 0; padding:0; }
-.design-reconciliation .panel-head { padding-top:12px; }
 .design-book-shape > .section-note { margin:8px 0; padding:0; }
 .design-book-shape > .panel { margin-top:12px; }
-.entity-page:has([data-holdings-surface="filer"]) > [data-inst-data-note] { order:8; }
-.entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .tiles { grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
-/* At the fold four 100px tiles do not fit a 358px row: two per row, so no
-   label runs into its neighbour (they overlapped, text on text, at 390). */
-@media(max-width:720px) {
- .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .tiles { grid-template-columns:repeat(2,minmax(0,1fr)); }
-}
-.entity-page:has([data-holdings-surface="filer"]) .explainer { border:0; margin:8px 0 0; padding:0; font:400 var(--fs-meta)/1.6 var(--mono); }
-@media(min-width:1081px) {
- .entity-page:has([data-holdings-surface="filer"]) { column-gap:0; }
- .entity-page:has([data-holdings-surface="filer"]) > .crumb { grid-row:1; }
- .entity-page:has([data-holdings-surface="filer"]) > .entity-head,
- .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .tiles { grid-row:2; }
- .entity-page:has([data-holdings-surface="filer"]) > .design-briefing { grid-row:3; }
- .entity-page:has([data-holdings-surface="filer"]) > .period-row { grid-row:4; margin:0; padding:10px 0; }
- .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface],
- .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-book-shape { grid-row:5; margin-top:0; }
- .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface] { padding-right:28px; }
- /* The holdings table reaches this cell's edges: its right gutter is the
-    cell's 28px (M2 recomposes the filer page into bands). */
- .entity-page:has([data-holdings-surface="filer"]) > [data-holdings-surface] .table-scroll { --gutter-r: 28px; }
- .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-book-shape { padding-left:28px; border-left:1px solid var(--rule); }
-}
-@media(max-width:1080px) {
- .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-book-shape { order:5; }
- .entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .panel-wide { order:6; }
- .entity-page:has([data-holdings-surface="filer"]) > .design-triptych { order:7; }
-}
 .design-unavailable .table-scroll { background:none; }
 .book-source { font-size:var(--fs-label); }
-@media print {
- .design-flow-band > .panel > .table-scroll, .design-history { max-height:none; overflow:visible; }
- .design-supplement::details-content { content-visibility:visible; display:block; }
-}
-[data-holdings-surface="filer"] .table-scroll { max-height:380px; overflow:auto; }
-.design-holding-row .c-pos { max-width:190px; white-space:normal; }
-@media print { [data-holdings-surface="filer"] .table-scroll { max-height:none; overflow:visible; } }
-/* z 2/3: above the z-index 1 note triggers of the cells that scroll beneath it. */
-.etable[data-sticky-issuer] th:nth-child(3), .etable[data-sticky-issuer] td:nth-child(3) { position:sticky; left:0; z-index:2; background:var(--paper); border-right:1px solid var(--rule); }
-.etable[data-sticky-issuer] th:nth-child(3) { z-index:3; }
-.design-holding-row .c-pos { white-space:nowrap; }
-.design-holding-name { display:inline-block; max-width:96px; overflow:hidden; text-overflow:ellipsis; vertical-align:middle; }
+/* The holding name takes the issuer column's width (the flexible column; its
+   96px and 190px caps are gone, R11) and ellipsizes only there. */
 .design-holding-row .c-pos .src { display:inline; }
-.design-book-shape .design-unavailable .table-scroll { min-height:140px; }
 .edgar-block.design-supplement { background:transparent; border:0; border-bottom:1px solid var(--rule); padding:0; margin:12px 0; }
 .edgar-block.design-supplement > summary { font:400 var(--fs-note)/1.6 var(--sans); }
 .site-footer-inner { padding-top:20px; padding-bottom:20px; row-gap:12px; }
@@ -637,12 +613,10 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
    (DESIGN-POLISH M1, R5: the `.design-page, .entity-page { --ink2; --ink3 }`
    override that stood here is DELETED — it gave --ink3 4.23:1 in dark and
    --ink2 2.54:1 in light. The ledger's own --ink-label / --ink-meta tokens carry
-   the quieter roles now.) */
-.design-briefing { border-top-color:#16202E; position:relative; }
-.design-briefing:before { content:""; position:absolute; top:-1px; left:0; width:240px; height:1px; background:linear-gradient(90deg,#2774AE,#16202E); }
-.design-story h2 { font-size:var(--fs-title); line-height:1.4; }
-.design-story-tag { font-size:var(--fs-label); line-height:1; }
-.design-story p { line-height:1.55; }
+   the quieter roles now.) The card band's top rule is a 1px gradient from the
+   buy edge to the rule over 240px (D-12). */
+.design-briefing { position:relative; }
+.design-briefing:before { content:""; position:absolute; top:-1px; left:0; width:240px; height:1px; background:linear-gradient(90deg,var(--kind-buy-edge),var(--rule)); }
 .design-page .kicker { color:var(--ink-kicker); }
 .design-page .page-head, .design-page .entity-head { padding-bottom:0; align-items:flex-end; }
 .design-page .design-provenance { padding:14px 0 20px; align-items:baseline; gap:8px 18px; font-size:var(--fs-meta); }
@@ -650,13 +624,12 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-page .method-links summary { cursor:pointer; color:var(--accent); }
 .design-page .method-links > div { position:absolute; right:0; top:24px; padding:12px; min-width:290px; z-index:5; background:var(--paper); border:1px solid var(--rule); display:grid; gap:10px; }
 .design-rankings .section-note:has(noscript) { margin:0; padding:0; }
-.design-unavailable .table-scroll, .design-institutional-band .design-unavailable .table-scroll,
-.design-holdings-band > .design-unavailable .table-scroll, .design-activity > .panel > .table-scroll { min-height:0; }
-.design-band:has(.design-activity) { align-items:start; }
-.design-institutional-band .design-activity { padding-bottom:14px; }
+/* No table container carries a min-height: a box taller than its rows is a
+   void (DESIGN-POLISH M2, R10). The min-height boxes that stood in this file
+   for surfaces that now state themselves in one line are deleted. */
 /* The feed band's ≥1081px placement, the reference rows, the ranking head and
    the ranking foot moved into the ledger region (entities.css). What stays
-   here is page composition, which M2 recomposes. */
+   here is page composition (recomposed in DESIGN-POLISH M2). */
 @media(max-width:1080px) {
  /* Bands stack below 1080px. This stays HERE, after every band's own
     column rule (.design-member-band and its siblings), or those win. */
@@ -666,6 +639,9 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
  #momentum-section.reference-ranking .etable { min-width:440px; }
 }
 .design-activity .caveat-box { margin-top:6px; padding:0; border:0; font-size:var(--fs-meta); }
+/* The filer page's §5 data note is its full-width foot line (M2, F.7): the
+   same box and words, ruled like the foot, never a 640px island. */
+.filer-data-note > .caveat-box { max-width:none; border-left:0; border-right:0; margin-top:12px; }
 .design-activity .caveat-box-summary { padding:4px 0; font-weight:400; font-size:var(--fs-meta); line-height:1.6; }
 .design-rankings .unrankable-block { margin-top:8px; padding-top:0; border:0; }
 .design-rankings .unrankable-block > summary { padding:6px 0; font-size:var(--fs-meta); }
@@ -677,21 +653,22 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .table-scroll, .reference-feed-scroll { position:relative; }
 
 /* ---------- /signals (Signals.dc.html): rule book, hits, lag, rates, watchlist ---------- */
-#signals-page .page-head { align-items: center; }
-#signals-page .page-head-copy { flex: 1 1 42%; }
-#signals-page .design-ledger { flex: 1 1 50%; margin: 0; }
+/* The Signals header ledger is bottom-aligned with its H1 block like every
+   other page's (R15, D-14): its `align-items: center` override is deleted
+   (review C2-4). */
 #signals-page .stamp-line { color: var(--buy); }
 .si-rulebook { margin-top: 0; border-top: 0; }
 /* The signal tables' cell roles, the family kind colours and the family row
-   edges are in the ledger region (tr[data-edge="family-…"]). The rule and why
-   caps stay until M2 lays the rule book out on the prose-table spec. */
-.si-rule-text { max-width: 420px; }
-.si-why { max-width: 380px; }
+   edges are in the ledger region (tr[data-edge="family-…"]). The rule book is
+   laid out on the prose-table spec there (M2): its rule and why tracks carry
+   no caps. */
 .si-status .note-btn { margin-left: 2px; }
 .design-signals-band { grid-template-columns: minmax(0,1.8fr) minmax(0,1fr); }
-.design-signals-band > div { padding-top: 0; }
 .design-signals-band .panel-head { flex-wrap: wrap; }
 .si-hits .panel-head .seg { margin-left: auto; }
+/* In band S1's 1.8fr cell the rule segments wrap below the title and its meta;
+   the "watched only" check sits on the segments' line, centred on them (G10). */
+.si-hits .panel-head > .filter-check { align-self: center; }
 .si-hits-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .si-stamp { font: 600 var(--fs-label) var(--mono); letter-spacing: .06em; color: var(--kind-new-text); }
 .si-new { color: var(--amber); font: 600 var(--fs-meta) var(--mono); }
@@ -710,10 +687,8 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 @media (max-width: 1080px) {
   .design-signals-band { grid-template-columns: minmax(0,1fr); }
   .si-hits .panel-head .seg { margin-left: 0; }
-  .si-rule-text, .si-why { max-width: none; }
 }
 @media (max-width: 720px) {
-  #signals-page .page-head-copy, #signals-page .design-ledger { flex-basis: 100%; }
   .si-lags li { grid-template-columns: 110px minmax(0,1fr) 48px; }
   .si-rate { grid-template-columns: 90px minmax(0,1fr) 60px; }
   .si-table { min-width: 720px; }
@@ -721,18 +696,20 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 }
 /* cluster board + new-position leaders + benchmarked book shape (the bars and
    the cell roles are in the ledger region) */
-.book-metric dd { grid-template-columns: minmax(0,1fr) 70px minmax(0,110px); }
-.book-compare { font: 400 var(--fs-meta) var(--mono); color: var(--ink3); white-space: nowrap; }
+/* R11: the comparison text is never cut — its track sizes to it (auto) and it
+   wraps only where the cell is too narrow for one line. At the fold the label
+   sits above its bar, value and comparison, so the three keep one line. */
+.book-metric dd { grid-template-columns: minmax(40px,1fr) 70px auto; }
+@media (max-width: 720px) {
+  .book-metric { grid-template-columns: minmax(0,1fr); gap: 4px; }
+}
+.book-compare { font: 400 var(--fs-meta) var(--mono); color: var(--ink3); }
 .book-above { color: var(--amber); }
 .book-below { color: var(--accent); }
-.design-trading-profile .book-metric dd { grid-template-columns: 40px minmax(0,1fr) minmax(0,120px); }
-.design-holdings-band > .design-unavailable .table-scroll { min-height: 200px; }
-.design-institutional-band .design-unavailable .table-scroll { min-height: 150px; }
-.design-institutional-band .design-newpositions .table-scroll, .design-institutional-band .design-rotation .table-scroll { min-height: 120px; }
+.design-trading-profile .book-metric dd { grid-template-columns: 40px minmax(40px,1fr) auto; }
 /* Accessibility text inside right-aligned cells is absolutely positioned; anchor it to the cell so it never extends the document past the right edge. */
 .book-metric dd > span, .si-lag-val, .si-rate-val, .design-newpositions td, .design-clusters td, .si-table td { position: relative; }
 .book-metric dd .visually-hidden, .si-lag-val .visually-hidden, .si-rate-val .visually-hidden, .design-newpositions td .visually-hidden, .design-clusters td .visually-hidden, .si-table td .visually-hidden { left: 0; top: 0; }
-.book-compare { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .book-metric dd > span { min-width: 0; }
 /* ---------- /tickers (Ticker.dc.html bands) ---------- */
 .design-ticker-band { margin-top: 0; }
@@ -757,21 +734,13 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .agree-row { grid-template-columns: 110px minmax(0,1fr) 100px; }
 }
 
-/* R11: Leaders and Tickers each take the full width, one above the other. */
-.design-rankings-single { grid-template-columns:minmax(0,1fr); }
-.coverage-strip { margin:0; font:400 var(--fs-meta)/1.6 var(--mono); color:var(--ink3); align-self:center; }
-#congress-notes { margin-top:18px; }
-#congress-notes .design-briefing { margin-top:12px; border-top:0; }
+/* D1 (L10): Leaders and Tickers are ONE paired band (the 1.6fr/1fr
+   `.design-rankings` grid with its 1px seam); D2: the cards are one collapsed
+   "Notes on this data" line directly under the provenance strip. */
+#congress-notes .design-briefing { margin-top:12px; }
 
-/* R15: filer page order — identity → stats → changes → [holdings | book shape]
-   → filing history → planned line → EDGAR → notes. */
-.entity-page:has([data-holdings-surface="filer"]) [data-filer-root] > .design-changes { order: 3; grid-column: 1 / -1; }
-.entity-page:has([data-holdings-surface="filer"]) > .planned-line { order: 7; }
-.entity-page:has([data-holdings-surface="filer"]) > .filer-notes { order: 8; }
-.design-triptych-single { grid-template-columns: minmax(0,1fr); }
 .planned-line { margin: 12px 0 0; font: 400 var(--fs-note)/1.6 var(--sans); color: var(--ink3); }
 .planned-line .badge-planned { margin-right: 6px; }
-.design-activity-band { grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); }
 
 /* R18: home — one claim, three live tiles. */
 .hero-claim { grid-template-columns: minmax(0,1fr); }

@@ -55,6 +55,13 @@ interface FilerProps {
   cik: string;
   filerName: string;
   period: string;
+  /** The §5 data note renders beside the surface unless the page renders it
+      once itself (the filer page puts it at its foot, DESIGN-POLISH M2 F). */
+  dataNote?: boolean;
+  /** The surface is band F1's PRIMARY cell (`data-pair-primary`,
+      DESIGN-POLISH M2 CD-1): the band-balance check measures its side cell
+      against it. */
+  pairPrimary?: boolean;
 }
 interface HoldersProps {
   kind: "holders";
@@ -62,6 +69,7 @@ interface HoldersProps {
   issuerName: string;
   ticker: string;
   period: string;
+  dataNote?: boolean;
 }
 export type Props = FilerProps | HoldersProps;
 
@@ -245,10 +253,10 @@ const bodyHtml =
 const payloadJson = payload == null ? "" : serializeInlineJson(payload);
 ---
 
-<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface={props.kind}>
+<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface={props.kind} data-pair-primary={props.kind === "filer" && props.pairPrimary ? "" : undefined}>
   <div data-holdings-body set:html={bodyHtml} />
 </section>
-<Fragment set:html={institutionalDataNoteHtml()} />
+{props.dataNote !== false && <Fragment set:html={institutionalDataNoteHtml()} />}
 {
   payload && (
     <script type="application/json" id="holdings-data" is:inline set:html={payloadJson} />
@@ -275,6 +283,8 @@ const payloadJson = payload == null ? "" : serializeInlineJson(payload);
       const state: SurfaceState = { view: "current", page: 0, period: payload.current };
       const draw = (): void => {
         body.innerHTML = surfaceHtml(payload!, state);
+        // R36: every client re-render announces itself on `document`.
+        document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "holdings" } }));
         const range = body.querySelector<HTMLElement>(".pager-range");
         range?.focus();
       };

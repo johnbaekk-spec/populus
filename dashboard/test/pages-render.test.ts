@@ -26,6 +26,7 @@ import {
 import { tickerInstSection, type BuildData, type TickerInstSection } from "../src/lib/data.ts";
 import { readTickerMapJson, type TopHolderRow } from "../src/lib/inst.ts";
 import { type TxnRow, type RenderCtx } from "../src/lib/format.ts";
+import { ledgerFigures } from "./lib/ledger-dom.ts";
 
 const CTX: RenderCtx = { watched: new Set() };
 const STAMPS: BuildStamps = {
@@ -301,7 +302,13 @@ test("congressTickerBody: two-sided ribbon, exclusions footnote, netting caveat"
   assert.ok(html.includes("purchases above axis, sales below"));
   assert.ok(html.includes("Amended filings show the latest version"));
   assert.ok(html.includes("ranges cannot be netted"));
-  assert.ok(html.includes("members · ever"));
+  /* DESIGN-POLISH M2 (T2.8): the header's figures render through the ONE
+     ledger; the property — the page states how many distinct members EVER
+     disclosed this ticker — is read from its <dl>, with the value checked. */
+  const figs = ledgerFigures(html);
+  assert.deepEqual(figs.map((f) => f.label), ["Members · ever", "Transactions", "Disclosed flow · 12m", "Latest filing"]);
+  assert.equal(figs[0]!.value, "2", "two distinct members disclosed WMB");
+  assert.equal(figs[1]!.value, String(TICKER.txns.length));
   // R2: the holders link renders ONLY when the holders page was built for
   // this ticker (ctx.holdersPage) — never an unconditional, dressed 404.
   assert.ok(!html.includes("13F institutional holders"));
@@ -514,7 +521,8 @@ test("unified ticker: ledger totals count the full 12-month population, not the 
   const txns = Array.from({ length: 6 }, (_, i) => ({ ...base, txnId: `t${i}`, bioguide: `A00000${i}`, name: `Member ${i}` }));
   const stamps = { buildId: "b", generatedAt: "2026-08-02 07:27 UTC", generatedAtDate: "2026-08-02" };
   const html = tickerUnifiedBody({ ticker: "T", txns }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
-  assert.match(html, /<dt>Members · 12m<\/dt><dd>6<\/dd>/, "six members, not the five displayed");
+  // DESIGN-POLISH M2 (T2.8): the figure is read from the ONE ledger's <dl> (DOM parse).
+  assert.equal(ledgerFigures(html).find((f) => f.label === "Members · 12m")?.value, "6", "six members, not the five displayed");
   assert.match(html, /6 buys · 0 sells/);
   assert.match(html, /Every row filed inside the 45-day window/);
   const unknown = tickerUnifiedBody({ ticker: "T", txns: [...txns, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });

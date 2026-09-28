@@ -111,18 +111,8 @@
   font: 400 var(--fs-note) var(--mono);
   color: var(--ink3);
 }
-.explainer {
-  margin-top: 14px;
-  border-top: 1px solid var(--rule2);
-  padding-top: 12px;
-  max-width: 720px;
-  font: 400 var(--fs-body)/1.65 var(--sans);
-  color: var(--ink2);
-}
-.explainer-h {
-  font: 600 var(--fs-brand) var(--serif);
-  color: var(--ink);
-}
+/* `.explainer` / `.explainer-h` are gone with the filer explainer paragraph:
+   its claim is the filer page's provenance strip now (DESIGN-POLISH M2, F.2). */
 .edgar-block {
   margin-top: 28px;
   border: 1px solid var(--rule2);

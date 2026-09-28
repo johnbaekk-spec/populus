@@ -198,6 +198,8 @@ The September overhaul fixes the shared **page composition** every archetype
 now follows, in the reference's order: masthead → identity block with the
 four-figure ledger on the right → provenance strip → three data-derived
 summary cards → dense content bands that share one-pixel seams → footer.
+(Where the design-polish run departs from this order, the departure is recorded
+below: L13 for the cards, L14 for the Signals rule book.)
 `/signals` is a feed-archetype page with three bands of its own: the rule
 book (every kind, its exact rule, hits, status — withheld kinds included),
 hits beside the lag distribution and per-family hit rate, and the
@@ -231,11 +233,102 @@ is kept, and the check is sharper: the unit tests pin the per-adopter cascade
 corners of each square (G12, `sl-notes.spec.ts`, `holders.spec.ts`), which also
 fails if the hit area inflates the row.
 
-**Record L8 (staged reversal) — sticky headers inside boxes.** A-5's sticky
-header existed because tables scrolled inside fixed-height boxes. Rows now flow
-on the page (R3): M1 removes eight of the eleven boxes; the three M2 recomposes
-(member flows, member and filer filing history, the filer's reported
-positions) keep their box and the `.etable` sticky header until T2.5.
+**Record L8 (reversal, completed in DESIGN-POLISH M2) — sticky headers inside
+boxes.** A-5's sticky header existed because tables scrolled inside
+fixed-height boxes. The property it protected — the reader never loses the
+column names inside a trapped scroll — is now held by construction: no table
+sits in a `max-height` box and no table head sticks inside one; the page
+scrolls, never the table. M1 removed eight of the eleven boxes; M2 removed the
+last three (member flows, the member and filer filing histories, the filer's
+reported positions) together with the `.etable` sticky head they used, and
+gave those tables compact default views behind the one named binder
+(`initDomDisclosures`). The pins are sharper than the rule they replace:
+`a5-table-css.test.ts` finds no `max-height` table container and no in-table
+sticky head anywhere, and the geometry check G2 fails any table ancestor that
+scrolls vertically, with no exemption. The sticky IDENTITY column for sideways
+scroll is a different property and is kept.
+
+### Page composition (DESIGN-POLISH M2)
+
+Each design page follows the approved preview on the design's grid fractions.
+A paired band names ONE primary cell (`data-pair-primary`, the wider cell the
+reader came for) and is balanced asymmetrically (coordinator decision CD-1):
+the primary's table shows its FIXED default — member flows 20, filing history
+12, a filer's reported positions 20, the signal hits 12 of their page, the
+Consensus board 10 — and is never cut to balance its side, and no row count
+depends on the partner cell (CD-5); the side cell may end earlier, but not more
+than 96px below the primary at 1440 (the geometry check G9), so no void opens
+under the primary — unless the primary is COMPLETE: its table shows its whole
+collection, read off its own count (`data-compact-total` ≤
+`data-compact-shown`, every row showing), as a Consensus board of one to three
+issuers does, and has no more rows to show. The rest of a compact table is one Show-all away through
+the named binder, and the count says so ("1–20 of 608 tickers"). A pair whose
+one cell holds only an empty-state line collapses to one full-width column
+with that line under the other cell (`data-collapsed="empty-state"`, derived
+from the cells' own empty-state markers); a lone table of at most three
+columns left by that collapse keeps the design's cell width, half the band
+(CD-2). A band never holds an empty or placeholder cell. A page carries at most one Planned line, at its foot, outside every
+band. A column renders only when some row of its table's full collection has a
+value (`presentColumns`, `data-columns`); a removed honesty column states its
+reason in the table foot. Every page header renders its figures through the
+one header ledger (`disclosureLedger`: valid `<dl>`, a tone per figure, values
+on one line, subs of at most two lines, never cut). A figure whose value runs
+past a 150px figure's 10 characters, or whose sub would take a third line of
+its 23 characters (a long issuer name in the Consensus add), is `data-wide`: it
+takes its content's width above the fold and a full ledger row at it.
+
+- **Congress:** the head beside the four-figure ledger, the provenance strip,
+  the "Notes on this data" line (the three cards, collapsed), band C1 —
+  Leaders (1.6fr) │ Tickers (1fr) — then the feed at 50 per page.
+- **Member:** the head beside the ledger, the provenance strip, the quarterly
+  chart (one data-derived line when its window holds nothing to plot), band M1
+  — Net flow by ticker │ Trading profile + Sector mix — all disclosed
+  transactions, band M2 — Filing history │ Signals — the Planned line, then the
+  context disclosures.
+- **Institutional:** the head beside the ledger, the provenance and freshness
+  lines, notable managers, the filer directory, band I1 — Consensus (1.3fr,
+  the primary) │ Conviction leaders (1fr), as the approved preview draws it
+  (CD-5) — Recent activity at full width, the Planned line, the collapsed
+  "Recently added issuers".
+- **Filer:** DOM order is the visual order (no `order` or `:has()` grid rules):
+  the head beside its period ledger, the provenance strip, Position changes
+  with the period and kind segments on its band head, band F1 — Reported
+  positions (1.7fr) │ Book shape + Filing history (1fr) — the Planned line, the
+  EDGAR and notes disclosures, and the §5 data note as the page's foot line.
+- **Signals:** the head beside the ledger, the provenance strip, the three
+  cards, band S1 — Hits (1.8fr) │ Lag distribution + Hit rate (1fr) — the rule
+  book as an expanded full-width band, the watchlist band, the withheld panels.
+
+**Record L10 (reversal of the Sep-10 IA) — Leaders and Tickers pair (D1).**
+The Sep-10 run stacked Leaders above Tickers, each at full width. They now pair
+in one band (1.6fr │ 1fr), Leaders left. The property kept is "data first":
+the leaders still lead the page, above the feed. The pins flip from "stacked"
+to "paired at the same y" (`design-reference.spec.ts`, `refinement-m2.test.ts`).
+
+**Record L13 (deviation from this section's composition) — summary cards.**
+The paragraph above puts three data-derived cards on every page. They show on
+`/signals/`; on `/congress/` they sit in one collapsed "Notes on this data" line
+directly under the provenance strip (D2); on the member and filer pages they sit
+in the collapsed context disclosures; `/institutional/` carries one method line
+instead. The cards that show follow the card spec (the design's padding, tags
+coloured by meaning, no foot). D2 also restores the Congress four-figure ledger
+beside the H1 — TRANSACTIONS, HOUSE PARSE, SENATE PARSE and PAPER, from
+`coverageSummary`, with the denominators in the subs.
+
+**Record L14 (deviation) — the Signals band order (D3).** This section lists
+the rule book before the hits. The owner's D3 places it as an expanded
+full-width band after Hits │ Lag. The rule book's content requirement here —
+every kind, its exact rule, why it carries information, hits and status,
+withheld kinds included — is met in full: seven rows, never collapsed.
+
+**Record L15 (reversal of a Sep-10 SRC §5 ban) — the HOUSE PARSE label (D2).**
+The Sep-10 copy pass banned "HOUSE PARSE" in visible text. D2 restores the
+design's HOUSE PARSE and SENATE PARSE ledger labels. The property kept:
+"parse" never appears in reader prose — the label is a figure name, and its
+note says in plain words what it counts. The mechanism: the post-build scan
+allows the label in exactly one home, the `/congress/` ledger's `<dt>`, and
+matches it case-insensitively everywhere else, so a CSS-uppercased
+"House parse" in any paragraph fails.
 
 ## 8. Hard constraints
 

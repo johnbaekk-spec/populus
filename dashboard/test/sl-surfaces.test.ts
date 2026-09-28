@@ -291,10 +291,11 @@ test("SL-R10 (5): the bound is stated ONCE — the button carries the total, not
 
 test("SL-R10 (c): the ranking bound is stated BEFORE the 22 MB feed arrives, scripting ON", async () => {
   /* State (c), behavioural — the exact scenario that blocked R10, inverted.
-     `syncDisclosure` deliberately does not run at bind time (F25), so the
-     button is still hidden after the island has initialised over the
-     server-rendered rows. The bound has to be stated anyway, and by the server,
-     because nothing else is going to state it in this window. */
+     The bound has to be stated by the server, in real text, whatever the
+     island does before the dataset arrives. DESIGN-POLISH M2 (R36, T2.11)
+     changed only the button half: the island now syncs at bind time from the
+     SERVER's total (never the empty row set F25 synced from), so the control is
+     offered after load, beside the unchanged statement. */
   const { installDom } = await import("./lib/mini-dom.ts");
   const { CONGRESS_ROOTS } = await import("../src/lib/ui/index.ts");
   const { initCongressSections } = await import("../src/scripts/congress-sections.ts");
@@ -313,8 +314,8 @@ test("SL-R10 (c): the ranking bound is stated BEFORE the 22 MB feed arrives, scr
     assert.ok(control, "the section renders a disclosure control");
     assert.equal(
       control!.querySelector("button")!.hidden,
-      true,
-      "the button is still hidden — nothing reveals it until rows arrive (F25)",
+      false,
+      "after load the control is offered (R36) — synced from the server's total, not from zero rows (F25)",
     );
     const bound = control!.querySelector(".compact-bound-count")!;
     assert.equal(

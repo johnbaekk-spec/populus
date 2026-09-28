@@ -32,7 +32,7 @@ import {
   type LedgerResult,
   type LedgerFinding,
 } from "./geometry.ts";
-import { g2Exemptions } from "./milestones.ts";
+import { g2Exemptions, G2_EXEMPT_M1 } from "./milestones.ts";
 import { baseStylesheet } from "../lib/styles.ts";
 import type { Page } from "@playwright/test";
 
@@ -440,10 +440,13 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
     expect(has(many, (f) => /not a type token/.test(f.detail)), "every size there is a token").toBe(false);
   });
 
-  /* ---------------------------------------------------------------- G6 */
-  const g6Table = (listed: string | null): string =>
+  /* ---------------------------------------------------------------- G6
+     Review Q2-5: only a column a VALUE proved over the full collection is
+     excused (`data-columns-proven`); an `always` column rides in data-columns
+     without a value check, so blank on the page it fails. */
+  const g6Table = (listed: string | null, proven: string | null = null): string =>
     band(
-      `<table class="etable"${listed === null ? "" : ` data-columns="${listed}"`}><thead><tr><th class="c-flex" data-col="member">Member</th>` +
+      `<table class="etable"${listed === null ? "" : ` data-columns="${listed}"`}${proven === null ? "" : ` data-columns-proven="${proven}"`}><thead><tr><th class="c-flex" data-col="member">Member</th>` +
         `<th data-col="owner">Owner</th><th data-col="bar">Book</th><th class="c-num" data-col="amount">Amount</th></tr></thead><tbody>` +
         Array.from({ length: 6 }, (_, i) =>
           `<tr><td class="c-flex">M${i}</td><td>${i % 2 ? "—" : "-"}<span class="visually-hidden">owner not stated</span></td>` +
@@ -451,16 +454,23 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
         `</tbody></table>`,
     );
 
-  test("G6 fails an all-dash column data-columns does not list, and passes it once listed", async ({ page }) => {
+  test("G6 fails an all-dash column no value proved, and passes it once data-columns-proven lists it", async ({ page }) => {
     await fixture(page, g6Table(null));
     const r = await probe(page, "g6");
     expect(r.failures.map((f) => f.columnIndex), formatResult(r)).toEqual([1]);
-    await fixture(page, g6Table("member,owner,amount"));
-    const listed = await probe(page, "g6");
-    expect(listed.failureCount, formatResult(listed)).toBe(0);
-    expect(listed.excluded.some((f) => f.columnIndex === 1), "the exemption comes from data-columns").toBe(true);
-    await fixture(page, g6Table("member,amount"));
-    expect((await probe(page, "g6")).failures.map((f) => f.columnIndex), "listing another key exempts nothing").toEqual([1]);
+    await fixture(page, g6Table("member,owner,amount", "owner"));
+    const proven = await probe(page, "g6");
+    expect(proven.failureCount, formatResult(proven)).toBe(0);
+    expect(proven.excluded.some((f) => f.columnIndex === 1), "the exemption comes from data-columns-proven").toBe(true);
+    await fixture(page, g6Table("member,owner,amount", "amount"));
+    expect((await probe(page, "g6")).failures.map((f) => f.columnIndex), "proving another key exempts nothing").toEqual([1]);
+  });
+
+  test("G6 control (Q2-5): an ALWAYS column — listed in data-columns, proven by no value — blanked on the page FAILS", async ({ page }) => {
+    await fixture(page, g6Table("member,owner,amount", ""));
+    const r = await probe(page, "g6");
+    expect(r.failures.map((f) => f.columnIndex), formatResult(r)).toEqual([1]);
+    expect(has(r, (f) => /data-columns keeps "owner" without a value/.test(f.detail)), formatResult(r)).toBe(true);
   });
 
   /* ---------------------------------------------------------------- G7 */
@@ -513,24 +523,62 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
     expect(has(short, (f) => /expected 44±1/.test(f.detail)), formatResult(short)).toBe(true);
   });
 
-  /* ---------------------------------------------------------------- G9 */
-  const pair = (id: string, extra = ""): string =>
-    `<div class="design-band" id="${id}"${extra} style="display:grid;grid-template-columns:1fr 1fr;gap:0">` +
-    `<section class="panel"><p>Leaders</p><p>row</p><p>row</p></section>` +
-    `<section class="panel"><p>Tickers</p><p>row</p><p>row</p></section>` +
-    `<p class="planned-line">PLANNED more</p></div>`;
+  /* ---------------------------------------------------------------- G9
+     CD-1 (review Q2-2): a pair names ONE primary cell and the rule is
+     asymmetric — the side may end earlier, never more than 96px later. The
+     fixtures put the primary on either side (every production pair leads with
+     its primary since CD-5 made Consensus I1's; the primitive allows either),
+     and a collapse counts only when its cells show it (Q2-3). */
+  const pair = (id: string, extra = "", opts: { primary?: "left" | "right" | "none" | "both"; cols?: string } = {}): string => {
+    const at = opts.primary ?? "left";
+    const mark = (side: "left" | "right"): string => (at === side || at === "both" ? " data-pair-primary" : "");
+    return (
+      `<div class="design-band" id="${id}"${extra} style="display:grid;grid-template-columns:${opts.cols ?? (at === "right" ? "1fr 1.6fr" : "1.6fr 1fr")};gap:0">` +
+      `<section class="panel" id="${id}-l"${mark("left")}><p>Leaders</p><p>row</p><p>row</p></section>` +
+      `<section class="panel" id="${id}-r"${mark("right")}><p>Tickers</p><p>row</p><p>row</p></section>` +
+      `<p class="planned-line">PLANNED more</p></div>`
+    );
+  };
+  const grow = async (page: Page, sel: string, px = 300): Promise<void> => {
+    await page.evaluate(([q, h]) => {
+      document.querySelector(q as string)!.insertAdjacentHTML("beforeend", `<p style="padding-top:${h}px">tail</p>`);
+    }, [sel, px] as const);
+  };
 
-  test("G9 passes a balanced pair, fails 300px appended to one cell and a lost pair", async ({ page }) => {
+  test("G9 passes a balanced pair, fails 300px under the SIDE cell and a lost pair; 300px under the PRIMARY passes", async ({ page }) => {
     await fixture(page, pair("b1"));
     const ok = await probe(page, "g9", { expectedPairs: 1 });
-    expect(ok.measured).toBe(1);
+    expect(ok.measured, "one pair + the pair count (M2: the count is a measurement)").toBe(2);
     expect(ok.failureCount, formatResult(ok)).toBe(0);
     expect((await probe(page, "g9", { expectedPairs: 2 })).failureCount, "a lost pair fails the count").toBe(1);
-    await page.evaluate(() => {
-      document.querySelector("#b1 > section")!.insertAdjacentHTML("beforeend", '<p style="padding-top:300px">tail</p>');
-    });
+    await grow(page, "#b1-l"); // the PRIMARY runs 300px longer: a void under the side is allowed (CD-1)
+    const primaryLong = await probe(page, "g9", { expectedPairs: 1 });
+    expect(primaryLong.failureCount, formatResult(primaryLong)).toBe(0);
+    await fixture(page, pair("b1"));
+    await grow(page, "#b1-r"); // the SIDE runs 300px past the primary: a void under the primary
     const r = await probe(page, "g9", { expectedPairs: 1 });
-    expect(has(r, (f) => (f.delta ?? 0) > 96), formatResult(r)).toBe(true);
+    expect(has(r, (f) => (f.delta ?? 0) > 96 && /below the primary/.test(f.detail)), formatResult(r)).toBe(true);
+  });
+
+  test("G9: the primary on the RIGHT is measured the same way — its side is the left cell", async ({ page }) => {
+    await fixture(page, pair("b4", "", { primary: "right" }));
+    await grow(page, "#b4-r");
+    expect((await probe(page, "g9", { expectedPairs: 1 })).failureCount, "a long primary on the right passes").toBe(0);
+    await fixture(page, pair("b4", "", { primary: "right" }));
+    await grow(page, "#b4-l");
+    const r = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(r, (f) => /below the primary/.test(f.detail)), formatResult(r)).toBe(true);
+  });
+
+  test("G9 fails a pair without exactly one primary, and a primary narrower than its side at 1440", async ({ page }) => {
+    for (const primary of ["none", "both"] as const) {
+      await fixture(page, pair("b5", "", { primary }));
+      const r = await probe(page, "g9", { expectedPairs: 1 });
+      expect(has(r, (f) => /primary cells \(a pair names exactly one/.test(f.detail)), `${primary}: ${formatResult(r)}`).toBe(true);
+    }
+    await fixture(page, pair("b5", "", { primary: "left", cols: "1fr 1.6fr" }));
+    const narrow = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(narrow, (f) => /primary cell is .* narrower than/.test(f.detail)), formatResult(narrow)).toBe(true);
   });
 
   test("G9 measures VISIBLE content: rows scrolled out of an inner box do not count as the cell's bottom", async ({ page }) => {
@@ -538,17 +586,110 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
     await fixture(
       page,
       `<div class="design-band" id="b3" style="display:grid;grid-template-columns:1fr 1fr">` +
-        `<section class="panel"><p>Flows</p><div style="max-height:60px;overflow-y:auto">${lines}</div></section>` +
-        `<section class="panel"><p>Profile</p><p>row</p><p>row</p><p>row</p></section></div>`,
+        `<section class="panel"><p>Profile</p><p>row</p><p>row</p><p>row</p></section>` +
+        `<section class="panel" data-pair-primary><p>Flows</p><div style="max-height:60px;overflow-y:auto">${lines}</div></section></div>`,
     );
     const r = await probe(page, "g9", { expectedPairs: 1 });
     expect(r.failureCount, formatResult(r)).toBe(0);
   });
 
-  test("G9: a pair collapsed by the empty-state rule is subtracted from the expected count", async ({ page }) => {
+  const collapsedBand = (id: string, content: string, line: string): string =>
+    `<div class="design-band" id="${id}" data-collapsed="empty-state" style="display:grid;grid-template-columns:1fr">${content}${line}</div>`;
+  const EMPTY_LINE = '<section class="panel" data-empty-state><p>No signals — a computed answer.</p></section>';
+  const HISTORY = (cols: number, narrow: boolean): string =>
+    `<section class="panel" data-pair-primary${narrow ? " data-pair-narrow" : ""} id="hist">` +
+    band(`<table class="etable"><thead><tr>${"<th>h</th>".repeat(cols)}</tr></thead><tbody><tr>${"<td>v</td>".repeat(cols)}</tr></tbody></table>`) + `</section>`;
+
+  test("G9: a collapse counts only when its last cell is its one empty-state line (Q2-3)", async ({ page }) => {
+    await fixture(page, pair("b1", "", {}) + collapsedBand("b2", HISTORY(5, false), EMPTY_LINE));
+    const ok = await probe(page, "g9", { expectedPairs: 2 });
+    expect(ok.failureCount, formatResult(ok)).toBe(0);
+    // control: the attribute alone, over two content cells, is not a collapse
     await fixture(page, pair("b1") + pair("b2", ' data-collapsed="empty-state"'));
-    const r = await probe(page, "g9", { expectedPairs: 2 });
-    expect(r.failureCount, formatResult(r)).toBe(0);
+    const liar = await probe(page, "g9", { expectedPairs: 2 });
+    expect(has(liar, (f) => /claims an empty-state collapse/.test(f.detail)), formatResult(liar)).toBe(true);
+    // control: the empty line LEADING (not under the other cell) is not the collapse either
+    await fixture(page, collapsedBand("b2", EMPTY_LINE, HISTORY(5, false)));
+    const leads = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(leads, (f) => /its last cell is not one/.test(f.detail)), formatResult(leads)).toBe(true);
+  });
+
+  /* M2F-D2: a band whose cells are BOTH empty-state lines (I1 when Consensus
+     and Conviction are both computed zeros) renders both, counts as
+     collapsed, and is never measured as a pair. */
+  const EMPTY_LINE_2 = '<div class="design-unavailable-line" id="line2"><p>Zero is the computed answer.</p></div>';
+  test("G9 (M2F-D2): a band of TWO empty-state lines counts as collapsed and is not measured as a pair", async ({ page }) => {
+    await fixture(page, pair("b1") + collapsedBand("b7", EMPTY_LINE, EMPTY_LINE_2));
+    const lines = await page.evaluate(() => Array.from(document.querySelectorAll("#b7 > *")).filter((c) => c.checkVisibility() && c.getBoundingClientRect().height > 0).length);
+    expect(lines, "both lines render").toBe(2);
+    const ok = await probe(page, "g9", { expectedPairs: 2 });
+    expect(ok.failureCount, formatResult(ok)).toBe(0);
+    expect(ok.notes.join(" "), "the two-line band is collapsed, and only b1 is a measured pair").toContain("pairs: div#b1.design-band; collapsed: 1");
+    // control: the same two lines WITHOUT the collapse are measured as a pair — and fail it (no primary)
+    await fixture(page, pair("b1") + collapsedBand("b7", EMPTY_LINE, EMPTY_LINE_2).replace(' data-collapsed="empty-state"', ""));
+    const asPair = await probe(page, "g9", { expectedPairs: 2 });
+    expect(asPair.notes.join(" "), formatResult(asPair)).toContain("pairs: div#b1.design-band, div#b7.design-band; collapsed: 0");
+    expect(has(asPair, (f) => /div#b7.*0 primary cells/.test(f.detail)), formatResult(asPair)).toBe(true);
+    // control: one of the two cells NOT an empty-state line — the collapse is claimed, not shown
+    await fixture(page, pair("b1") + collapsedBand("b7", EMPTY_LINE, '<div id="line2"><p>Zero is the computed answer.</p></div>'));
+    const unmarked = await probe(page, "g9", { expectedPairs: 2 });
+    expect(has(unmarked, (f) => /claims an empty-state collapse, but 1 of its 2 cells/.test(f.detail)), formatResult(unmarked)).toBe(true);
+  });
+
+  test("G9 (CD-2): a lone table of at most three columns left by a collapse is capped at half the band", async ({ page }) => {
+    const cap = "#fx [data-pair-narrow]{width:50%}";
+    await fixture(page, collapsedBand("b6", HISTORY(3, true), EMPTY_LINE), cap);
+    expect((await probe(page, "g9", { expectedPairs: 1 })).failureCount, "capped: passes").toBe(0);
+    await fixture(page, collapsedBand("b6", HISTORY(3, false), EMPTY_LINE), cap);
+    const wide = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(wide, (f) => /lone 3-column table .* spans/.test(f.detail)), formatResult(wide)).toBe(true);
+    await fixture(page, collapsedBand("b6", HISTORY(4, false), EMPTY_LINE), cap);
+    expect((await probe(page, "g9", { expectedPairs: 1 })).failureCount, "four columns keep the band").toBe(0);
+  });
+
+  /* M2 delta review: a COMPLETE primary — a Consensus board of one to three
+     issuers — may end more than 96px above its side: there are no more rows
+     to show. Completeness is read off the table's own count (the compact
+     disclosure naming its tbody: total ≤ shown) and checked against its rows;
+     a primary holding rows back still fails. */
+  const counted = (id: string, o: { rows: number; held?: number; total?: number; shown?: number; count?: boolean }): string => {
+    const held = o.held ?? 0;
+    const trs = Array.from({ length: o.rows + held }, (_, i) =>
+      `<tr${i >= o.rows ? " data-compact-extra" : ""}><td class="c-flex">Issuer ${i}</td><td class="c-num">${i + 3}</td></tr>`).join("");
+    const total = o.total ?? o.rows + held, shown = o.shown ?? o.rows;
+    return (
+      `<div class="design-band" id="${id}" style="display:grid;grid-template-columns:1.3fr 1fr;gap:0">` +
+      `<section class="panel" id="${id}-l" data-pair-primary><p>Consensus</p><div class="table-scroll">` +
+      `<table class="etable"><thead><tr><th class="c-flex">Issuer</th><th class="c-num">New</th></tr></thead>` +
+      `<tbody id="${id}-tb"${held ? ' data-collapsed="true"' : ""}>${trs}</tbody></table></div>` +
+      (o.count === false ? "" : `<div class="compact-disclosure" data-compact-for="${id}-tb" data-compact-total="${total}" data-compact-shown="${shown}"${total > shown ? "" : " hidden"}>` +
+        (total > shown ? `<p class="compact-bound"><span class="compact-bound-count">1–${shown} of ${total} issuers</span></p>` : "") + `</div>`) +
+      `</section><section class="panel" id="${id}-r"><p>Conviction leaders</p><p>row</p><p>row</p></section></div>`
+    );
+  };
+  test("G9 (M2 delta): a COMPLETE primary may end more than 96px above its side; a primary holding rows back may not", async ({ page }) => {
+    // complete: 3 of 3 issuers, the side 300px longer — exempt, and the exemption is stated
+    await fixture(page, counted("b8", { rows: 3 }));
+    await grow(page, "#b8-r");
+    const ok = await probe(page, "g9", { expectedPairs: 1 });
+    expect(ok.failureCount, formatResult(ok)).toBe(0);
+    expect(ok.notes.join(" "), formatResult(ok)).toMatch(/below a COMPLETE primary \(#b8-tb 3 of 3\) — exempt/);
+    // control: TRUNCATED — 3 of 18 issuers, 15 held back — with the same long side fails
+    await fixture(page, counted("b8", { rows: 3, held: 15 }));
+    expect(await page.locator("#b8-tb > tr").evaluateAll((trs) => trs.filter((t) => t.checkVisibility()).length), "the held rows are hidden").toBe(3);
+    await grow(page, "#b8-r");
+    const cut = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(cut, (f) => (f.delta ?? 0) > 96 && /below the primary .*holds rows back \(3 of 18\)/.test(f.detail)), formatResult(cut)).toBe(true);
+    // control: a count that LIES — "3 of 3" over a tbody holding 15 hidden rows — is not complete
+    await fixture(page, counted("b8", { rows: 3, held: 15, total: 3, shown: 3 }));
+    await grow(page, "#b8-r");
+    const liar = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(liar, (f) => /counts 3 of 3, but 3 of its 18 rows show/.test(f.detail)), formatResult(liar)).toBe(true);
+    // control: a short table that carries NO count is not proved complete
+    await fixture(page, counted("b8", { rows: 3, count: false }));
+    await grow(page, "#b8-r");
+    const unproved = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(unproved, (f) => /carries no count/.test(f.detail)), formatResult(unproved)).toBe(true);
   });
 
   /* --------------------------------------------------------------- G10 */
@@ -699,13 +840,18 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
 
   test("G12 @390: a header control's square is bottom-anchored to the header row, never into the first body row", async ({ page }) => {
     /* The header row is tall enough that the clamped square stays inside the
-       table (a .table-scroll clips vertically too, overflow-x being auto). */
+       table (a .table-scroll clips vertically too, overflow-x being auto).
+       M2: the header cell's side padding keeps the plain 44px square inside
+       the table's sides too. This fixture has no page script, so it draws the
+       CENTRED square; since M2 the table-side clamp SHIFTS a square that
+       overhangs its table instead of cutting it, and a fixture whose square
+       overhung would need the script's shift to pass. */
     const table = band(
       `<table class="etable" id="t12"><thead><tr><th class="c-num" aria-sort="none"><button class="th-sort" id="hs">Net</button></th></tr></thead>` +
         `<tbody><tr><td class="c-num">1,234</td></tr></tbody></table>`,
     );
     const css =
-      "#fx #t12 th{padding:26px 6px 6px}#fx #hs{position:relative}" +
+      "#fx #t12 th{padding:26px 30px 6px}#fx #hs{position:relative}" +
       '#fx #hs::before{content:"";position:absolute;left:50%;width:44px;margin-left:-22px;height:44px;bottom:-7px}';
     await fixture(page, table, css, 390);
     const ok = await probe(page, "g12");
@@ -1087,6 +1233,54 @@ test.describe("route negative controls (clean target → injected defect → sam
     expect(fresh.some((f) => /corners miss/.test(f.detail)), "a control smaller than 44px loses its target").toBe(true);
   });
 
+  /* M2 follow-up to the M1 delta review: the table-side clamp SHIFTS a hit
+     square inside its scrolling table and keeps its full --hit-min (it used to
+     cut each side on its own: the holders page's last-column square measured
+     22.3px of 24). G12 asserts it after the table-side clamp and before the
+     midpoint clip (which may rightly shorten a square between close
+     neighbours, H-16). At 390 the congress tables' last-column marks sit
+     within half a square of their table's right side, so their squares move. */
+  test("M2 G12 @390: a square the table-side clamp moves keeps its full --hit-min; re-planting the shrink FAILS", async ({ page }) => {
+    await openRoute(page, "/congress/", 390);
+    const ok = await probe(page, "g12");
+    expect(ok.failureCount, formatResult(ok)).toBe(0);
+    expect(ok.sub?.shifted ?? 0, `a mark at a scrolling table's side is shifted inside it\n${formatResult(ok)}`).toBeGreaterThan(0);
+    /* the pre-fix clamp re-planted in G12's mirror: the size assertion names
+       the shortened squares. (Here the shifted part then meets the header
+       label's square and the midpoint clip takes it — H-16 — so the page
+       draws the same area either way; the filer test below re-plants the
+       shrink on the PAGE, where the shifted part is a target.) */
+    const mirror = await probe(page, "g12", { tableClamp: "shrink" });
+    expect(has(mirror, (f) => /shortened, not shifted/.test(f.detail)), formatResult(mirror)).toBe(true);
+  });
+
+  /* M2 (T2.1 re-key): the filer's reported positions keep a STICKY issuer
+     column (`.c-pos`) at the fold. A column scrolled under it is covered, so
+     the room a square may use starts at that column's right edge as it sits
+     (hit-areas.ts and G12 alike), and the square is shifted clear of it. The
+     scroll padding that keeps a scrolled-to control clear of the column is
+     removed here, so G12's scrollIntoView lands the Weight and Value header
+     triggers beside and under it — the state a reader reaches by scrolling. */
+  test("M2 G12 @390: beside the filer's sticky issuer column a square is shifted clear of it; the old clamp FAILS", async ({ page }) => {
+    await openRoute(page, "/institutional/filers/1135730/", 390);
+    expect(await page.locator("[data-holdings-surface] .etable .c-pos").first().evaluate((el) => getComputedStyle(el).position), "the issuer column is sticky at 390").toBe("sticky");
+    await page.addStyleTag({ content: "[data-holdings-surface] .table-scroll { scroll-padding-left: 0px !important; }" });
+    const ok = await probe(page, "g12");
+    expect(ok.failureCount, formatResult(ok)).toBe(0);
+    expect(ok.sub?.shifted ?? 0, `a square beside the sticky column is shifted clear of it\n${formatResult(ok)}`).toBeGreaterThan(0);
+    /* control 1, in G12's mirror: the pre-fix clamp (the table's sides only,
+       each cut on its own) leaves a corner under the sticky column */
+    const old = await probe(page, "g12", { tableClamp: "shrink" });
+    expect(has(old, (f) => /corners miss: .*→ th\.c-pos/.test(f.detail)), `control: the old clamp leaves a corner under the sticky column\n${formatResult(old)}`).toBe(true);
+    /* control 2, on the PAGE: each control's own --hit-min (the shift the
+       page script writes) pinned back to the root's 44px, so the page draws
+       the centred, unshifted square again — the part shifted clear of the
+       sticky column is gone, and G12's corners find it missing */
+    await page.addStyleTag({ content: ".note-btn, .th-sort { --hit-min: 44px !important; }" });
+    const fresh = newFindings(ok, await probe(page, "g12"), elKey);
+    expect(fresh.some((f) => /corners miss/.test(f.detail)), `control: the page's unshifted square\n${fresh.map((f) => f.detail).join("\n")}`).toBe(true);
+  });
+
   test("T1.6 controlHeights @1440: .seg button{min-height:44px} is DETECTED", async ({ page }) => {
     await openRoute(page, "/congress/");
     const before = await probe(page, "controlHeights");
@@ -1239,7 +1433,7 @@ test.describe("route negative controls (clean target → injected defect → sam
     expect(fresh.some((f) => f.tableIndex === t && /clipped by span/.test(f.detail))).toBe(true);
   });
 
-  test("G6 @1440: an all-dash column not listed in data-columns fails; the same column passes once listed", async ({ page }) => {
+  test("G6 @1440: an all-dash column no value proved fails — listed in data-columns alone it still fails (Q2-5); proven, it passes", async ({ page }) => {
     await openRoute(page, "/congress/members/M001193/");
     const before = await probe(page, "g6");
     const target = await page.evaluate((bad) => {
@@ -1260,38 +1454,112 @@ test.describe("route negative controls (clean target → injected defect → sam
     expect(target).not.toBeNull();
     const after = await probe(page, "g6");
     expect(after.failures.some((f) => colKey(f) === `${target!.tableIndex}|${target!.columnIndex}`), formatResult(after, 5)).toBe(true);
+    // listed in data-columns only — an `always` column, kept without a value: still fails (review Q2-5)
     await page.evaluate(({ tableIndex }) => {
       const t = document.querySelectorAll("table")[tableIndex]!;
       const cur = (t.getAttribute("data-columns") ?? "").split(",").filter(Boolean);
       t.setAttribute("data-columns", [...cur, "ctl-empty"].join(","));
     }, target!);
+    const always = await probe(page, "g6");
+    expect(always.failures.some((f) => colKey(f) === `${target!.tableIndex}|${target!.columnIndex}`), "listed in data-columns alone, it still fails").toBe(true);
+    // proven by a value elsewhere in the collection (data-columns-proven): excused
+    await page.evaluate(({ tableIndex }) => {
+      const t = document.querySelectorAll("table")[tableIndex]!;
+      const cur = (t.getAttribute("data-columns-proven") ?? "").split(",").filter(Boolean);
+      t.setAttribute("data-columns-proven", [...cur, "ctl-empty"].join(","));
+    }, target!);
     const listed = await probe(page, "g6");
-    expect(listed.failures.some((f) => colKey(f) === `${target!.tableIndex}|${target!.columnIndex}`), "listed in data-columns, it passes").toBe(false);
+    expect(listed.failures.some((f) => colKey(f) === `${target!.tableIndex}|${target!.columnIndex}`), "proven in data-columns-proven, it passes").toBe(false);
     expect(listed.excluded.some((f) => colKey(f) === `${target!.tableIndex}|${target!.columnIndex}`)).toBe(true);
   });
 
-  test("G9 @1440: 300px appended to one cell of a pair is DETECTED", async ({ page }) => {
+  test("G9 @1440: 300px under a pair's SIDE cell is DETECTED; 300px under its PRIMARY is not (CD-1)", async ({ page }) => {
     await openRoute(page, "/congress/members/M001193/");
     const before = await probe(page, "g9", { expectedPairs: null });
     expect(before.measured, "the member page has a two-cell band").toBeGreaterThan(0);
-    const was = new Map(before.failures.map((f) => [f.el, f.delta ?? 0]));
-    /* 300px under ONE cell must open the gap by ~300px whichever way the pair
-       leans: try the first cell, then the second (grid cells stretch to one
-       height, so their boxes cannot say which content ends lower) */
+    expect(before.failureCount, formatResult(before)).toBe(0);
+    const plant = (side: boolean) => page.evaluate((s) => {
+      document.getElementById("ctl-g9")?.remove();
+      for (const el of Array.from(document.querySelectorAll(".design-band, .design-rankings, .design-pair"))) {
+        if (el.matches('[data-collapsed="empty-state"]')) continue;
+        const cells = Array.from(el.children).filter((c) => c.checkVisibility() && c.getBoundingClientRect().height > 0 && !c.matches(".planned-line, script"));
+        if (cells.length !== 2) continue;
+        const cell = cells.find((c) => c.hasAttribute("data-pair-primary") !== s)!;
+        /* under the side: 300px past the PRIMARY's whole height, so the side
+           ends well below it whatever the two held before */
+        const pad = s ? Math.ceil(cells.find((c) => c !== cell)!.getBoundingClientRect().height) + 300 : 300;
+        cell.insertAdjacentHTML("beforeend", `<p id="ctl-g9" style="margin:0;padding-top:${pad}px">tail</p>`);
+        return true;
+      }
+      return false;
+    }, side);
+    expect(await plant(false), "a real pair to plant under").toBe(true);
+    const primaryLong = await probe(page, "g9", { expectedPairs: null });
+    expect(primaryLong.failureCount, `300px under the primary: a void under the side is allowed\n${formatResult(primaryLong)}`).toBe(0);
+    await plant(true);
+    const sideLong = await probe(page, "g9", { expectedPairs: null });
+    expect(sideLong.failures.some((f) => (f.delta ?? 0) > 96 && /below the primary/.test(f.detail)), formatResult(sideLong)).toBe(true);
+  });
+
+  /* T2.2: band C1 (Leaders | Tickers) on /congress/ is a measured pair — 300px
+     appended under one of its cells opens the gap past 96px. */
+  test("T2.2 G9 @1440: 300px appended to one cell of Congress band C1 is DETECTED", async ({ page }) => {
+    await openRoute(page, "/congress/");
+    const before = await probe(page, "g9", { expectedPairs: 1 });
+    expect(before.failureCount, `C1 balances first\n${formatResult(before)}`).toBe(0);
+    expect(before.notes.join(" "), "C1 is the pair measured").toContain("div#congress-leaders-band");
     for (const which of [0, 1]) {
       await page.evaluate((w) => {
         document.getElementById("ctl-g9")?.remove();
-        for (const el of Array.from(document.querySelectorAll(".design-band, .design-rankings, .design-pair"))) {
-          const cells = Array.from(el.children).filter((c) => c.checkVisibility() && c.getBoundingClientRect().height > 0 && !c.matches(".planned-line"));
-          if (cells.length !== 2) continue;
-          cells[w]!.insertAdjacentHTML("beforeend", '<p id="ctl-g9" style="margin:0;padding-top:300px">tail</p>');
-          return;
-        }
+        const band = document.getElementById("congress-leaders-band")!;
+        const cells = Array.from(band.children).filter((c) => c.checkVisibility() && c.getBoundingClientRect().height > 0 && !c.matches(".planned-line"));
+        cells[w]!.insertAdjacentHTML("beforeend", '<p id="ctl-g9" style="margin:0;padding-top:300px">tail</p>');
       }, which);
-      const after = await probe(page, "g9", { expectedPairs: null });
-      if (after.failures.some((f) => (f.delta ?? 0) > 96 && (f.delta ?? 0) >= (was.get(f.el) ?? 0) + 290)) return;
+      const after = await probe(page, "g9", { expectedPairs: 1 });
+      if (after.failures.some((f) => /congress-leaders-band/.test(f.el ?? "") && (f.delta ?? 0) > 96)) return;
     }
-    throw new Error(`300px under either cell of the pair did not register\n${formatResult(before)}`);
+    throw new Error("300px under either cell of C1 did not register");
+  });
+
+  /* V2 NEW-6 (T2.3): a pair lost for any reason but the empty-state rule
+     fails G9's count. Band M2 rendered without its `.design-pair` wrapper and
+     without `data-collapsed` — its two cells left loose in the page — is one
+     pair fewer than the member route declares, and nothing marks it
+     collapsed. */
+  test("T2.3 G9 @1440: member band M2 without its .design-pair wrapper and without data-collapsed FAILS the pair count", async ({ page }) => {
+    await openRoute(page, "/congress/members/M001193/");
+    const before = await probe(page, "g9", { expectedPairs: 2 });
+    expect(before.failureCount, `the member route's two pairs pass first\n${formatResult(before)}`).toBe(0);
+    const unwrapped = await page.evaluate(() => {
+      const band = document.querySelector(".design-pair.design-member-history-band");
+      if (!band) return null;
+      const was = band.getAttribute("data-collapsed");
+      band.replaceWith(...Array.from(band.childNodes)); // the wrapper, and its data-collapsed, gone
+      return was ?? "(not collapsed)";
+    });
+    expect(unwrapped, "the member page renders band M2").not.toBeNull();
+    const after = await probe(page, "g9", { expectedPairs: 2 });
+    expect(has(after, (f) => /found \d+ pair\(s\), expected 2/.test(f.detail)), `control (band M2 was ${unwrapped})\n${formatResult(after)}`).toBe(true);
+  });
+
+  /* T2.5: G2 exempts nothing from M2 on. The filer's reported-positions box
+     (the M1 map's third selector) restored on the served page is caught; the
+     M1 list would have exempted exactly that box, which is why the map empties
+     it now. The table is expanded first, so the box has rows to scroll. */
+  test("T2.5 G2 @1440: restoring the filer's reported-positions scroll box FAILS G2 — the milestone map exempts nothing", async ({ page }) => {
+    await openRoute(page, "/institutional/filers/1135730/");
+    const exempt = [...g2Exemptions()];
+    expect(exempt, "the current milestone exempts nothing").toEqual([]);
+    const before = await probe(page, "g2", { exempt });
+    expect(before.failureCount, formatResult(before)).toBe(0);
+    const toggle = page.locator('.compact-disclosure[data-compact-for="filer-holdings-tbody"] button');
+    if (await toggle.isVisible()) await toggle.click();
+    await page.addStyleTag({ content: '[data-holdings-surface="filer"] .table-scroll{max-height:380px !important;overflow:auto !important}' });
+    const after = await probe(page, "g2", { exempt });
+    expect(has(after, (f) => /scrolls vertically/.test(f.detail)), `control: the restored box\n${formatResult(after)}`).toBe(true);
+    const m1 = await probe(page, "g2", { exempt: [...G2_EXEMPT_M1] });
+    expect(m1.failureCount, "the M1 list would have exempted exactly this box").toBe(0);
+    expect(m1.excluded.some((f) => /exempt in this milestone/.test(f.detail))).toBe(true);
   });
 
   /* ------------------------------------------------ T5.2 G11, G11b cue */

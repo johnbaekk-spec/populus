@@ -27,6 +27,7 @@ const VALUE_EXPORTS = [
   "breadcrumb",
   "briefingCards",
   "disclosureLedger",
+  "markPairPrimary",
   "unavailableDesignPanel",
   "changesTableHtml",
   // refinement 20260910 fix, D5: the Position changes kind chips
@@ -89,6 +90,24 @@ const VALUE_EXPORTS = [
   "tickerHoldersBody",
   "tickerInstSectionHtml",
   "tickerUnifiedBody",
+  /* DESIGN-POLISH M2 (T2.4–T2.6): the filer PARTS the pre-rendered page, the
+     /e/ driver and the period switch compose in DOM order (F, A-9); band I1's
+     empty-state collapse; the one hits body renderer the server and the pager
+     share, and its FIXED compact N (coordinator decision CD-1), and the hits
+     table's column set.
+     Twelve runtime symbols, no types. */
+  "filerHeadHtml",
+  "filerLedgerHtml",
+  "filerChangesHtml",
+  "filerBookShapeHtml",
+  "filerHistoryHtml",
+  "filerBandHtml",
+  "filerFootHtml",
+  "consensusConvictionBandHtml",
+  "hitsBodyHtml",
+  "SIGNAL_HITS_COMPACT_ROWS",
+  // R12: the hits table's column set, shared by the server and the pager
+  "signalHitColumns",
 ] as const;
 
 const TYPE_EXPORTS = [
@@ -108,15 +127,16 @@ const TYPE_EXPORTS = [
   "TickerPageDeps",
 ] as const;
 
-test("ui entry exports exactly the 70 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 82 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
+  assert.equal(VALUE_EXPORTS.length, 82, "70 through M1, plus the twelve M2 exports");
 });
 
-test("ui entry exports the 13 reconciled type-only symbols (83 total)", () => {
+test("ui entry exports the 13 reconciled type-only symbols (95 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -128,5 +148,5 @@ test("ui entry exports the 13 reconciled type-only symbols (83 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 83, "the reconciled surface is 83");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 95, "the reconciled surface is 95 (83 through M1 + 12 M2 runtime exports)");
 });

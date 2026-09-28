@@ -50,6 +50,9 @@ export {
   signalsBody,
   memberSignalsPanel,
   hitRowHtml,
+  hitsBodyHtml,
+  signalHitColumns,
+  SIGNAL_HITS_COMPACT_ROWS,
   hitsRangeText,
   sortHits,
   signalKindShort,
@@ -73,8 +76,16 @@ export {
   filerPeriodSectionHtml,
   filerEdgarBlock,
   filerBody,
+  filerHeadHtml,
+  filerLedgerHtml,
+  filerChangesHtml,
+  filerBookShapeHtml,
+  filerHistoryHtml,
+  filerBandHtml,
+  filerFootHtml,
   clusterBoardHtml,
   newPositionLeadersHtml,
+  consensusConvictionBandHtml,
   ADDS_FOOTNOTES,
   addsColumns,
   addsSectionHtml,
@@ -97,4 +108,4 @@ export { pickSpecimen, specimenCard, type ModuleCardStats, moduleCard, congressT
    block it named — the section no longer renders a footnote container. */
 export { RANKING_FOOTNOTES } from "../congress-columns.ts";
 
-export { briefingCards, disclosureLedger, unavailableDesignPanel } from "./shared.ts";
+export { briefingCards, disclosureLedger, markPairPrimary, unavailableDesignPanel } from "./shared.ts";

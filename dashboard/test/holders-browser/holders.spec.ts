@@ -12,10 +12,48 @@
    over `orderRankedHolders`; do not widen the claims here without enriching
    the seed in make-inst-preview.py first. */
 import { test, expect, type Page } from "@playwright/test";
-import { hitMisses, probe, formatResult, type PredicateName } from "../geometry/geometry.ts";
+import { hitMisses, probe, formatResult, themeBackgroundProblem, type PredicateName, type Theme } from "../geometry/geometry.ts";
 import { g2Exemptions, isPending, type CheckId } from "../geometry/milestones.ts";
 
 const ROUTE = "/institutional/tickers/AAPL/holders/";
+
+/* DESIGN-POLISH M2 (follow-up 3 of the M1 delta review): this lane runs in
+   BOTH themes, like the ledger gate. The theme is the gate script's input,
+   POPULUS_THEME (default dark): an init script seeds
+   `localStorage["populus:theme"]` before the page's own theme script runs,
+   and every page this lane measures first asserts the body background the
+   theme paints — rgb(4, 7, 13) dark, rgb(250, 249, 245) light — so a light
+   pass cannot pass as dark, or the reverse (the harness rule, T1.10). */
+function parseTheme(v: string | undefined): Theme {
+  const t = (v ?? "dark").trim();
+  if (t !== "dark" && t !== "light") throw new Error(`POPULUS_THEME must be "dark" or "light", got ${JSON.stringify(v)}`);
+  return t;
+}
+const THEME: Theme = parseTheme(process.env.POPULUS_THEME);
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript((t: string) => {
+    try {
+      localStorage.setItem("populus:theme", t);
+    } catch {
+      /* storage blocked: the background assertion then fails loudly */
+    }
+  }, THEME);
+});
+
+/** Open the holders page and prove it painted the pass's theme before
+    anything on it is asserted. */
+async function openRoute(page: Page): Promise<void> {
+  const resp = await page.goto(ROUTE);
+  expect(resp?.status(), `${ROUTE} must answer 200`).toBe(200);
+  expect(await themeBackgroundProblem(page, THEME), `the ${THEME} pass must paint the ${THEME} background (POPULUS_THEME=${THEME})`).toBeNull();
+}
+
+test(`the lane runs in the ${THEME} theme: the seeded page paints its background, and the other theme's does not match`, async ({ page }) => {
+  await openRoute(page);
+  const other: Theme = THEME === "dark" ? "light" : "dark";
+  expect(await themeBackgroundProblem(page, other), `control: the ${THEME} page must fail the ${other} assertion`).not.toBeNull();
+});
 
 /* The target hit-test is the ONE audit the ledger gate's G12 runs
    (test/geometry/geometry.ts, M1 review Q-11): the lanes serve different
@@ -30,7 +68,7 @@ async function activeSortHeaders(page: Page) {
 }
 
 test("default render: value descending, one active aria-sort, both rows present", async ({ page }) => {
-  await page.goto(ROUTE);
+  await openRoute(page);
   await expect(page.locator('th[data-sort="value"]')).toHaveAttribute("aria-sort", "descending");
   expect(await activeSortHeaders(page)).toBe(1);
   await expect(filerCells(page)).toHaveText([/BERKSHIRE HATHAWAY/, /OTHER CAPITAL/]);
@@ -41,7 +79,7 @@ test("default render: value descending, one active aria-sort, both rows present"
 });
 
 test("clicking the active value header reverses the rows — a real browser reorder", async ({ page }) => {
-  await page.goto(ROUTE);
+  await openRoute(page);
   await page.locator('th[data-sort="value"] button').click();
   await expect(page.locator('th[data-sort="value"]')).toHaveAttribute("aria-sort", "ascending");
   await expect(filerCells(page)).toHaveText([/OTHER CAPITAL/, /BERKSHIRE HATHAWAY/]);
@@ -49,7 +87,7 @@ test("clicking the active value header reverses the rows — a real browser reor
 });
 
 test("switching column moves aria-sort and updates the live region", async ({ page }) => {
-  await page.goto(ROUTE);
+  await openRoute(page);
   await page.locator('th[data-sort="filer"] button').click();
   await expect(page.locator('th[data-sort="filer"]')).toHaveAttribute("aria-sort", "ascending");
   await expect(page.locator('th[data-sort="value"]')).toHaveAttribute("aria-sort", "none");
@@ -60,7 +98,7 @@ test("switching column moves aria-sort and updates the live region", async ({ pa
 });
 
 test("period swap replaces the table AND the sort rebinds to the new nodes", async ({ page }) => {
-  await page.goto(ROUTE);
+  await openRoute(page);
   await page.locator('[data-period="2025-12-31"]').click();
   // The older quarter has exactly one ranked holder in the seed.
   await expect(filerCells(page)).toHaveText([/BERKSHIRE HATHAWAY/]);
@@ -80,7 +118,7 @@ test("period swap replaces the table AND the sort rebinds to the new nodes", asy
 test("L9: the sort button hit-tests to --hit-min in a real layout, without inflating its header", async ({ page }) => {
   for (const w of [390, 1440]) {
     await page.setViewportSize({ width: w, height: 900 });
-    await page.goto(ROUTE);
+    await openRoute(page);
     expect(await hitMisses(page, 'th[data-sort] .th-sort'), `at ${w}px`).toEqual([]);
   }
 });
@@ -110,7 +148,7 @@ async function openFirstNote(page: Page) {
 }
 
 test("SL-R28/F4: a note opens BEFORE the period swap, and again from the REPLACED root", async ({ page }) => {
-  await page.goto(ROUTE);
+  await openRoute(page);
 
   // Before: the server-rendered root's notes work.
   const before = await openFirstNote(page);
@@ -138,7 +176,7 @@ test("SL-R24/T12 / L9: the holders page's note anchors hit-test to --hit-min at 
      config that implies otherwise. */
   for (const w of [360, 720, 964, 1080, 1440]) {
     await page.setViewportSize({ width: w, height: 900 });
-    await page.goto(ROUTE);
+    await openRoute(page);
     expect(await page.locator(".note-btn").count(), `the holders page must render a note anchor at ${w}px`).toBeGreaterThan(0);
     // L9: the --hit-min square, hit-tested (not the button's own box)
     expect(await hitMisses(page, ".note-btn"), `at ${w}px`).toEqual([]);
@@ -149,14 +187,17 @@ test("SL-R24/T12 / L9: the holders page's note anchors hit-test to --hit-min at 
    `dist`, which builds no holders page, so its holders route was 56 stated
    skips and the route was never MEASURED by G1–G11. This lane serves the
    holders page, so the same probe runs here: every ledger check that applies
-   (the pending G6 and the design-route G9 excepted, G3 at 1440 only), at 1440
-   and 390, each required to measure something and to find nothing. */
+   (the design-route G9 excepted, G3 at 1440 only), at 1440 and 390, each
+   required to measure something and to find nothing — a check still pending
+   in the milestone map is left out by `isPending` (M1 left G6 out that way;
+   from M2 it runs here too). */
 const HOLDERS_CHECKS: { id: CheckId; fn: PredicateName; arg?: unknown; widths?: number[] }[] = [
   { id: "G1", fn: "g1" },
   { id: "G2", fn: "g2", arg: { exempt: [...g2Exemptions()] } },
   { id: "G3", fn: "g3", widths: [1440] },
   { id: "G4", fn: "g4" },
   { id: "G5", fn: "g5" },
+  { id: "G6", fn: "g6" },
   { id: "G7", fn: "g7" },
   { id: "G8", fn: "g8" },
   { id: "G10", fn: "g10" },
@@ -169,9 +210,9 @@ const HOLDERS_CHECKS: { id: CheckId; fn: PredicateName; arg?: unknown; widths?: 
 for (const width of [1440, 390]) {
   for (const c of HOLDERS_CHECKS) {
     if (isPending(c.id) || (c.widths && !c.widths.includes(width))) continue;
-    test(`Q-1: ledger ${c.id} measures the holders page @${width}`, async ({ page }) => {
+    test(`Q-1: ledger ${c.id} measures the holders page @${width} (${THEME})`, async ({ page }) => {
       await page.setViewportSize({ width, height: width > 720 ? 900 : 844 });
-      await page.goto(ROUTE);
+      await openRoute(page);
       await page.evaluate(() => document.fonts.ready);
       await expect(filerCells(page).first()).toBeVisible();
       const r = await probe(page, c.fn, c.arg);

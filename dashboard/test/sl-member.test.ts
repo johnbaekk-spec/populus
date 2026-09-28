@@ -197,6 +197,48 @@ test("SL-R19: the member `.entity-lede` is gone and BOTH its claims are anchored
   assert.match(owner, /methodology\/#owner-codes/, "T1 moved the sentence there; the note links it");
 });
 
+/* DESIGN-POLISH M2 (T2.1 / T2.10; plan milestone map `sl-member.test.ts:265`).
+   The member table's owner qualifiers left the combined "Side · Owner" header
+   for their own Owner column, which renders BY PRESENCE (R12). The property:
+   whenever ANY row of the table's collection carries a qualifier — an owner
+   code (SP, DC, JT) or the partial-sale qualifier, both printed in that cell by
+   `ownerNote` (H-18) — the Owner header renders and names what the codes mean
+   through its label trigger; when no row carries one, the column is removed
+   and the table foot says so. The header never disappears while a row still
+   needs it. */
+function ownerHeader(txns: TxnRow[]): { head: MiniElement | undefined; note: string | null; reason: string | null } {
+  const root = new MiniElement("body");
+  root.innerHTML = entityTxnTable(txns, { kind: "member", caption: "c", page: 0, ctx: CTX, notes: { scope: "member-txns" } });
+  const head = root.querySelectorAll("thead th").find((th) => th.getAttribute("data-col") === "owner");
+  const pop = head?.querySelector(".note-pop");
+  const reason = root.querySelector("p.table-foot-reason");
+  return { head, note: pop ? pop.textContent : null, reason: reason ? reason.textContent : null };
+}
+
+test("SL-R19 → M2: the Owner header renders and names the owner codes whenever any row carries a qualifier; absent, the foot says why", () => {
+  const plain = { owner: "self" as const, side: "purchase" as const };
+  for (const [label, rows] of [
+    ["an owner code on one row", [txn({ ...plain, txnId: "p1" }), txn({ txnId: "sp", owner: "joint" })]],
+    ["only the partial-sale qualifier", [txn({ ...plain, txnId: "p1" }), txn({ ...plain, txnId: "pp", side: "sale_partial" })]],
+  ] as const) {
+    const h = ownerHeader([...rows]);
+    assert.ok(h.head, `${label}: the Owner header renders`);
+    assert.equal(h.head!.querySelector(".note-btn.note-label")?.textContent, "Owner", `${label}: the header is its note's label trigger`);
+    assert.match(h.note!, /spouse \(SP\), dependent children \(DC\), and joint accounts \(JT\)/, `${label}: the note names the codes`);
+    assert.equal(h.reason, null);
+  }
+  const none = ownerHeader([txn({ ...plain, txnId: "p1" }), txn({ ...plain, txnId: "p2" })]);
+  assert.equal(none.head, undefined, "no qualifier anywhere: no Owner column");
+  assert.match(none.reason!, /^Owner: no row carries a partial-sale qualifier or a spouse \(SP\), dependent \(DC\) or joint \(JT\) owner code\.$/);
+  // the qualifier on the OLDEST row of a 60-row collection (page 2) still keeps the header on page 1
+  const many = Array.from({ length: 60 }, (_, i) => txn({ ...plain, txnId: `r${i}`, filed: `2026-0${i < 30 ? 7 : 6}-${String((i % 28) + 1).padStart(2, "0")}` }));
+  many[59] = { ...many[59]!, filed: "2026-01-01", owner: "child" };
+  assert.ok(ownerHeader(many).head, "a qualifier outside the visible page keeps the header");
+  // control: remove that one qualifier and the header goes — the page-2 row alone was holding it
+  many[59] = { ...many[59]!, owner: "self" };
+  assert.equal(ownerHeader(many).head, undefined, "control: without it the column is removed");
+});
+
 test("SL-R19: the member tiles carry their breakdown as a note keyed on the tile LABEL, and only once", () => {
   const html = memberBody(MEMBER, STAMPS, CTX, 0);
   const withTitles = memberStatTiles(MEMBER, STAMPS).filter((t) => t.title);

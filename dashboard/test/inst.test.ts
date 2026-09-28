@@ -27,7 +27,8 @@ import {
   type InstData,
 } from "../src/lib/inst.ts";
 import { qoqPresentation } from "../src/lib/derive.ts";
-import { filerPeriodSectionHtml, filerTiles } from "../src/lib/ui/index.ts";
+import { filerLedgerHtml, filerPeriodSectionHtml, filerTiles } from "../src/lib/ui/index.ts";
+import { ledgerFigures } from "./lib/ledger-dom.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const BRK = "0001067983";
@@ -94,10 +95,18 @@ test("period-correct tiles: two fixture periods render two different totals (R7)
   assert.equal(q4.total_value_usd, 1500);
   assert.equal(q1.total_value_usd, 2300);
   assert.notEqual(q4.total_value_usd, q1.total_value_usd);
+  /* DESIGN-POLISH M2 (T2.5 / T2.8): the period's figures moved from the
+     section's `statTiles` to the filer's period LEDGER, its own root the
+     period switch repaints through `filerLedgerHtml`; the changes section is
+     repainted through `filerPeriodSectionHtml`. The property is unchanged —
+     each period renders its OWN total — read from the ledger's <dl>. */
+  const reported = (html: string): string => ledgerFigures(html).find((f) => f.label === "Reported value")!.value;
+  const ledgerQ4 = filerLedgerHtml(q4, "2025-12-31", deltasFor(inst, BRK, "2025-12-31").length, null);
+  const ledgerQ1 = filerLedgerHtml(q1, "2026-03-31", deltasFor(inst, BRK, "2026-03-31").length, null);
+  assert.equal(reported(ledgerQ4), "$1.5K", "period Q4 renders its own total");
+  assert.equal(reported(ledgerQ1), "$2.3K", "period Q1 renders its own total");
   const htmlQ4 = filerPeriodSectionHtml(q4, deltasFor(inst, BRK, "2025-12-31"), "2025-12-31", "2026-05-15", 25);
   const htmlQ1 = filerPeriodSectionHtml(q1, deltasFor(inst, BRK, "2026-03-31"), "2026-03-31", "2026-05-15", 25);
-  assert.ok(htmlQ4.includes("$1.5K"), "period Q4 renders its own total");
-  assert.ok(htmlQ1.includes("$2.3K"), "period Q1 renders its own total");
   assert.notEqual(htmlQ4, htmlQ1, "changing the period changes every period-scoped number");
 });
 
