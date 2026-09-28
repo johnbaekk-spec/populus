@@ -156,18 +156,18 @@ function bandCollapseProblems(band: MiniElement): string[] {
   return out;
 }
 
-const LEADERS_NONE = { period: "2026-03-31", thresholdBps: 200, rows: [], incompleteBooks: 2, evaluated: 40 };
+const LEADERS_NONE = { period: "2026-03-31", thresholdBps: 200, rows: [], qualifying: 0, evaluated: 39, excluded: { notNotable: 30, smallBook: 4, missingValue: 2, belowThreshold: 3 }, minBookPositions: 20 };
 const LEADERS_SOME = {
-  period: "2026-03-31", thresholdBps: 200, incompleteBooks: 0, evaluated: 40,
+  period: "2026-03-31", thresholdBps: 200, qualifying: 1, evaluated: 40, minBookPositions: 20, excluded: { notNotable: 30, smallBook: 4, missingValue: 2, belowThreshold: 3 },
   rows: [{ cik: "0000000001", filerName: "A Filer", maxWeightBps: 450, atThreshold: 1, newPositions: 3 }],
 };
 const BOARD = {
-  period: "2026-03-31", minFilers: 3, qualifying: 1,
+  period: "2026-03-31", minFilers: 3, qualifying: 1, wrappersExcluded: 0, unkeyedMoves: 0,
   rows: [{ issuerKey: "k", issuer: "Nvidia Corp", ticker: "NVDA", newStakes: 3, adds: 0, trims: 0, exits: 0, filers: 3, netDeltaUsd: 100, netDeltaPartial: false, topMover: null }],
 };
 
 const LEADERS_FIVE = {
-  period: "2026-03-31", thresholdBps: 200, incompleteBooks: 0, evaluated: 40,
+  period: "2026-03-31", thresholdBps: 200, qualifying: 5, evaluated: 44, minBookPositions: 20, excluded: { notNotable: 30, smallBook: 4, missingValue: 2, belowThreshold: 3 },
   rows: Array.from({ length: 5 }, (_, i) => ({ cik: `000000000${i + 1}`, filerName: `Filer ${i + 1}`, maxWeightBps: 450 - i * 10, atThreshold: 1, newPositions: 3 })),
 };
 const filerHref = (c: string): string => `/f/${c}`;
@@ -200,7 +200,11 @@ test("T2.4: no qualifying conviction filer collapses band I1 — one column, the
   const band = domOf(consensusConvictionBandHtml(consensus, conviction)).children[0]!;
   assert.ok(band.classList.contains("design-band") && band.classList.contains("design-consensus-band"));
   assert.equal(band.getAttribute("data-collapsed"), "empty-state");
-  assert.deepEqual(band.children.map((c) => c.getAttribute("aria-label") ?? c.getAttribute("class")), ["Consensus", "design-unavailable-line design-newpositions"]);
+  /* DESIGN-POLISH M4 (R26): the computed zero is a headed section marked
+     `data-empty-state` (like the empty Consensus board), no longer the
+     "not available in this build" line */
+  assert.deepEqual(band.children.map((c) => c.getAttribute("aria-label") ?? c.getAttribute("class")), ["Consensus", "Conviction leaders"]);
+  assert.ok(band.children[1]!.hasAttribute("data-empty-state"));
   assert.match(visibleText(band.children[1]!), /Zero is the computed answer/, "the computed zero is stated, not a placeholder");
   assert.deepEqual(bandCollapseProblems(band), []);
   // the collapse is ONE column in CSS, and it outranks each pair's own two-column rule
@@ -507,7 +511,7 @@ function allLinesBandProblems(band: MiniElement, want: readonly string[]): strin
 test("M2F-D2: a band whose cells are BOTH empty-state lines renders both lines, collapsed, and is no measured pair", () => {
   const emptyBoard = consensusBoardHtml({ ...BOARD, rows: [], qualifying: 0 } as never, { filerHref });
   const none = newPositionLeadersHtml(LEADERS_NONE as never, () => "top", "2026-03-31");
-  const want = ["Consensus", "design-unavailable-line design-newpositions"];
+  const want = ["Consensus", "Conviction leaders"]; // M4: both are headed empty-state sections
   const html = consensusConvictionBandHtml(emptyBoard, none);
   const band = domOf(html).children[0]!;
   assert.deepEqual(allLinesBandProblems(band, want), []);
@@ -524,11 +528,11 @@ test("M2F-D2: a band whose cells are BOTH empty-state lines renders both lines, 
   assert.deepEqual(allLinesBandProblems(uncollapsed, want), ["not collapsed"], "control: the lines left as an uncollapsed pair");
   assert.deepEqual(bandCollapseProblems(uncollapsed), ["a band holds an empty-state cell uncollapsed"]);
   const dropped = domOf(html.replace(none, "")).children[0]!;
-  assert.deepEqual(allLinesBandProblems(dropped, want), ["renders Consensus (every line: Consensus | design-unavailable-line design-newpositions)"], "control: one line dropped");
+  assert.deepEqual(allLinesBandProblems(dropped, want), ["renders Consensus (every line: Consensus | Conviction leaders)"], "control: one line dropped");
   // the pre-fix shape: the second line promoted to a primary content cell, the first under it
   const measured = domOf(`<div class="design-band design-pair" data-collapsed="empty-state">${markPairPrimary(none)}${emptyBoard}</div>`).children[0]!;
   assert.deepEqual(allLinesBandProblems(measured, want), [
-    "renders design-unavailable-line design-newpositions | Consensus (every line: Consensus | design-unavailable-line design-newpositions)",
+    "renders Conviction leaders | Consensus (every line: Consensus | Conviction leaders)",
     "marked as a measured pair (a primary or a narrow cap)",
   ], "control: treated as a measured pair");
   assert.deepEqual(primaryProblems(measured), ["a band of empty-state lines names a primary (it is not a pair to measure)"]);

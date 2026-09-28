@@ -112,17 +112,19 @@ test("R7: the notable feed is notable-only, newest filed date first then |Δ val
     records: [
       rec({ cik: "0000000009", filer_name: "Not Notable", delta_value_usd: 99999, filing_keys: [1] }),
       rec({ position_key: "sid:small-newest", delta_value_usd: 5, filing_keys: [1] }),
-      rec({ position_key: "sid:big-older", delta_value_usd: 9000, filing_keys: [2] }),
+      // a second notable manager: the R27 cap (two per manager) leaves these three rows whole
+      rec({ cik: "0000000777", position_key: "sid:big-older", delta_value_usd: 9000, filing_keys: [2] }),
       rec({ position_key: "sid:held", change_kind: "held", delta_shares: 0, delta_value_usd: 8000, filing_keys: [1] }),
       rec({ position_key: "sid:gone", change_kind: "exit", delta_value_usd: -7000, filing_keys: [1], flags: ["book_discontinuity"] }),
       rec({ position_key: "sid:big-newest", delta_value_usd: 500, filing_keys: [1] }),
     ],
   };
-  const rows = notableActivity(feed, new Set(["0001067983"]), 50);
+  const notable = new Set(["0001067983", "0000000777"]);
+  const rows = notableActivity(feed, notable, 50);
   assert.deepEqual(rows.map((r) => r.position_key), ["sid:big-newest", "sid:small-newest", "sid:big-older"]);
-  assert.ok(rows.every((r) => r.cik === "0001067983"));
-  assert.equal(notableActivity(feed, new Set(["0001067983"]), 1).length, 1);
-  assert.deepEqual(notableActivity({ ...feed, present: false }, new Set(["0001067983"]), 5), []);
+  assert.ok(rows.every((r) => notable.has(r.cik)));
+  assert.equal(notableActivity(feed, notable, 1).length, 1);
+  assert.deepEqual(notableActivity({ ...feed, present: false }, notable, 5), []);
 });
 
 import { closedPeriods, corpusAsOf } from "../src/lib/inst-adds.ts";

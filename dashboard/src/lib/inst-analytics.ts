@@ -77,33 +77,63 @@ export interface NewPositionLeader {
   bookValueUsd: number;
 }
 
+/** Why an evaluated filer is not ranked (DESIGN-POLISH M4, R26). Each filer
+    is counted under the FIRST reason it meets, in this order, so the four
+    counts and the qualifying count sum to `evaluated`. */
+export interface ConvictionExclusions {
+  /** not a notable manager in the registry (the Sep-10 decision) */
+  notNotable: number;
+  /** a book of fewer than MIN_BOOK_POSITIONS positions */
+  smallBook: number;
+  /** a position in the book without a value (or a zero total), or a new
+      position without a value — the weight is not computable */
+  missingValue: number;
+  /** a complete, eligible book with no new position at the threshold */
+  belowThreshold: number;
+}
+
 export interface NewPositionLeaders {
   period: string;
   thresholdBps: number;
+  minBookPositions: number;
+  /** the highest-ranked `limit` of the qualifying filers */
   rows: NewPositionLeader[];
-  /** filers with ≥1 new position whose book was NOT complete (a NULL-valued
-      position, or a zero total) — excluded from ranking and STATED */
-  incompleteBooks: number;
+  /** filers that meet every rule — `rows` is at most `limit` of them */
+  qualifying: number;
   /** filers evaluated (had a concentration row and ≥1 new delta for the period) */
   evaluated: number;
+  excluded: ConvictionExclusions;
+  /** notable managers in the registry — 0 on a build whose registry marks
+      none (or has none), which the computed-zero line states */
+  notableManagers: number;
 }
 
 export const NEW_POSITION_THRESHOLD_BPS = 200;
 
+/** R26: the smallest book a conviction leader may have. Twenty positions puts
+    the average position at 5% of the book, so a new position of 2% or more is
+    a real weight, not an artefact of a tiny book (BASS SID R at 100.0% was a
+    one-position book). The owner confirms the value at the M4 review (D5). */
+export const MIN_BOOK_POSITIONS = 20;
+
 /** Rank filers by the weight of their largest NEW position for one period.
-    A filer is rankable only over a complete, fully valued book; the same
-    rule `holdingsTableHtml` applies to per-row weights. */
+    Eligible (R26): a NOTABLE manager, whose complete book has at least
+    `MIN_BOOK_POSITIONS` positions and every position a value — the same
+    complete-book rule `holdingsTableHtml` applies to per-row weights. Every
+    evaluated filer that is not ranked is counted under its reason. */
 export function newPositionLeaders(
   inst: InstData,
   period: string,
-  opts: { limit?: number; thresholdBps?: number } = {},
+  notableCiks: ReadonlySet<string>,
+  opts: { limit?: number; thresholdBps?: number; minBookPositions?: number } = {},
 ): NewPositionLeaders | null {
   if (!inst.present) return null;
   const limit = opts.limit ?? 5;
   const thresholdBps = opts.thresholdBps ?? NEW_POSITION_THRESHOLD_BPS;
+  const minBookPositions = opts.minBookPositions ?? MIN_BOOK_POSITIONS;
   const nameOf = new Map(inst.filers.map((f) => [f.cik, f.filer_name]));
   const rows: NewPositionLeader[] = [];
-  let incomplete = 0;
+  const excluded: ConvictionExclusions = { notNotable: 0, smallBook: 0, missingValue: 0, belowThreshold: 0 };
   let evaluated = 0;
   for (const [cik, deltas] of inst.deltasByCik) {
     const news = deltas.filter((d) => d.curr_period === period && d.change_kind === "new");
@@ -111,8 +141,16 @@ export function newPositionLeaders(
     const conc = (inst.concentrationByCik.get(cik) ?? []).find((c) => c.period_of_report === period);
     if (!conc) continue;
     evaluated++;
+    if (!notableCiks.has(cik)) {
+      excluded.notNotable++;
+      continue;
+    }
+    if (conc.position_count < minBookPositions) {
+      excluded.smallBook++;
+      continue;
+    }
     if (conc.null_value_positions > 0 || conc.total_value_usd <= 0 || news.some((d) => d.curr_value_usd == null)) {
-      incomplete++;
+      excluded.missingValue++;
       continue;
     }
     let max = 0;
@@ -122,7 +160,10 @@ export function newPositionLeaders(
       if (bps > max) max = bps;
       if (bps >= thresholdBps) at++;
     }
-    if (at === 0) continue;
+    if (at === 0) {
+      excluded.belowThreshold++;
+      continue;
+    }
     rows.push({
       cik,
       filerName: nameOf.get(cik) ?? `CIK ${fmtCik(cik)}`,
@@ -134,7 +175,7 @@ export function newPositionLeaders(
     });
   }
   rows.sort((a, b) => b.maxWeightBps - a.maxWeightBps || b.atThreshold - a.atThreshold || (a.cik < b.cik ? -1 : 1));
-  return { period, thresholdBps, rows: rows.slice(0, limit), incompleteBooks: incomplete, evaluated };
+  return { period, thresholdBps, minBookPositions, rows: rows.slice(0, limit), qualifying: rows.length, evaluated, excluded, notableManagers: notableCiks.size };
 }
 
 /* ---------- tracked-population medians ---------- */

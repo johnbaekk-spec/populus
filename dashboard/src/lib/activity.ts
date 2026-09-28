@@ -266,8 +266,26 @@ export function notableActivity(
     if (ad !== bd) return ad > bd ? -1 : 1; // newest first; unresolved ("") last
     return compareActivity(a, b);
   });
-  return rows.slice(0, limit);
+  /* R27 (H-10): at most NOTABLE_FEED_PER_FILER rows per filer, applied over
+     the WHOLE ordered list before the page's limit — so "1–10 of M" counts the
+     capped list, and a filer that filed thirty changes on the newest day
+     cannot fill the band. Each filer's full list is on its filer page. The
+     order is the total order above, so the cap is deterministic. */
+  const perFiler = new Map<string, number>();
+  const capped: ActivityFeedRecord[] = [];
+  for (const r of rows) {
+    const n = perFiler.get(r.cik) ?? 0;
+    if (n >= NOTABLE_FEED_PER_FILER) continue;
+    perFiler.set(r.cik, n + 1);
+    capped.push(r);
+    if (capped.length >= limit) break;
+  }
+  return capped;
 }
+
+/** R27: the landing feed's per-filer cap, stated in its note. */
+export const NOTABLE_FEED_PER_FILER = 2;
+export const NOTABLE_FEED_CAP_TEXT = `at most ${(["zero", "one", "two", "three"] as const)[NOTABLE_FEED_PER_FILER] ?? String(NOTABLE_FEED_PER_FILER)} per manager`;
 
 /* ---------- the total order ---------- */
 
@@ -949,7 +967,7 @@ export function activityBoundHtml(o: {
       o.emitted === o.total
         ? `This build publishes all ${fmtInt(o.total)} of its changes, ${ranked}, as ${files}.`
         : `This build publishes the first ${fmtInt(o.emitted)} of its ${fmtInt(o.total)} changes, ${ranked}, as ${files}.`;
-    return `These rows are notable managers' new, added, trimmed and exited positions, newest filing first, then largest change. ${publishes} ${open}`;
+    return `These rows are notable managers' new, added, trimmed and exited positions, ${NOTABLE_FEED_CAP_TEXT}, newest filing first, then largest change; each manager's full list is on its filer page. ${publishes} ${open}`;
   }
   /* the first file's rows are the head of the size order */
   return (
@@ -1133,13 +1151,13 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
   return (
     `<section class="panel panel-wide" aria-label="Cross-filer activity">` +
     `<div class="panel-head"><h2 class="section-h">${opts.reference ? "Recent activity" : "Largest reported quarter-over-quarter changes, by issuer"}</h2>` +
-    `<span class="panel-note">${notable ? "notable managers · newest filing first, then largest change" : "ordered by absolute reported change · undisclosed deltas last"}</span></div>` +
+    `<span class="panel-note">${notable ? `notable managers · ${NOTABLE_FEED_CAP_TEXT} · newest filing first, then largest change` : "ordered by absolute reported change · undisclosed deltas last"}</span></div>` +
     universalFlagNote(statedActivity) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
     /* Architecture H (V1 NEW-3): the caption is chosen by the same `notable`
        value as the rows, so a screen reader never hears "ordered by absolute
        reported change" over newest-first rows. */
-    `<caption class="visually-hidden">${notable ? "Quarter-over-quarter position changes by notable managers, newest filing first, then largest change" : "Quarter-over-quarter position changes by issuer, ordered by absolute reported change"}</caption>` +
+    `<caption class="visually-hidden">${notable ? `Quarter-over-quarter position changes by notable managers, ${NOTABLE_FEED_CAP_TEXT}, newest filing first, then largest change` : "Quarter-over-quarter position changes by issuer, ordered by absolute reported change"}</caption>` +
     /* Every column states WHY it is not sortable, in visible text.
 
        This table is a BOUNDED SLICE of an ordered set — the largest reported

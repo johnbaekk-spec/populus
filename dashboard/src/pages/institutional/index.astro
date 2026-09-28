@@ -194,7 +194,7 @@ if (!inst.present) {
      empty on an aggregate without the optional adds table. */
   const analyticsPeriod = closedPeriods(concentrationPeriods(inst), asOf)[0] ?? null;
   const tracked = analyticsPeriod === null ? null : trackedValueFor(inst, analyticsPeriod);
-  const leaders = analyticsPeriod === null ? null : newPositionLeaders(inst, analyticsPeriod, { limit: 5 });
+  const leaders = analyticsPeriod === null ? null : newPositionLeaders(inst, analyticsPeriod, notableCiks, { limit: 5 });
   /* R14: the notable-manager moves for the closed quarter feed the band, the
      consensus board (notable filers only, ≥3 distinct) and the hero tile. */
   const movesPeriods = notableMovesPeriods(build);
@@ -211,7 +211,7 @@ if (!inst.present) {
       { label: "Tracked value", value: tracked ? fmtUsd(tracked.totalValueUsd) : "—", detail: tracked ? `13F long only · ${tracked.period}${tracked.partialBooks > 0 ? ` · ≥ (${fmtInt(tracked.partialBooks)} partial books)` : ""}` : "no closed quarter yet", subKind: tracked ? "qualifier" : "absence" },
       /* R15 (long names) and review R2-3: the ticker, or the notable-manager
          count when no reviewed ticker maps the name — never "—" for a name. */
-      consensusAddLedgerItem(consensus, analyticsPeriod),
+      consensusAddLedgerItem(consensus, analyticsPeriod, board?.wrappersExcluded ?? 0),
       { label: "Notable managers", value: fmtInt(notableCiks.size), detail: analyticsPeriod ? `${fmtInt(moves.length)} named moves · ${analyticsPeriod}` : "curated registry", subKind: analyticsPeriod ? "count" : "plain" },
     ], { scope: "inst-ledger" }) + `</header>` +
     /* R4: ONE source for the quarter. The header names the CLOSED analytics
