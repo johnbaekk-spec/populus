@@ -968,6 +968,11 @@ export function initFilerPeriods(): void {
   } catch {
     return; // malformed embed: the SSR period stays — no partial re-render
   }
+  /* The top-N depth is a count: a non-integral one is a malformed embed, and the
+     renderers take it as a coerced number, never embed text (CodeQL
+     js/xss-through-dom). */
+  if (!Number.isSafeInteger(data.topn) || data.topn < 0) return;
+  const topn = Number(data.topn);
   /* A total that is absent, non-integral, negative, or SMALLER than the
      rows it ships alongside is a contradictory embed. Rendering from it would hide
      real rows behind "no changes" or suppress the truncation terminus, so the whole
@@ -1011,12 +1016,12 @@ export function initFilerPeriods(): void {
       slice.deltas,
       period,
       data.latestFiled,
-      data.topn,
+      topn,
       { periods, total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
     );
     if (repaintPeriodParts) {
       if (ledgerRoot) ledgerRoot.innerHTML = filerLedgerHtml(slice.conc, period, slice.total!, slice.kinds ?? null);
-      if (bookRoot) bookRoot.innerHTML = filerBookShapeHtml(slice.conc, data.topn, period, slice.total!, data.benchmarks?.[period] ?? null);
+      if (bookRoot) bookRoot.innerHTML = filerBookShapeHtml(slice.conc, topn, period, slice.total!, data.benchmarks?.[period] ?? null);
     }
     // R15: a re-rendered section carries fresh DOM-backed disclosures; the
     // owner of those controls re-binds on this event.
