@@ -172,7 +172,7 @@ test("M2-12/F1: the changes pager works on FIRST LOAD, before any chip is clicke
   const seedProblems = (fn: string): string[] => {
     const out: string[] = [];
     if (!/const root = document\.querySelector<HTMLElement>\("\[data-filer-root\]"\)/.test(fn)) out.push("the root is not [data-filer-root]");
-    if (!/let period =\s*\n?\s*root\.querySelector<HTMLElement>\("\[data-period-chips\] \[data-period\]\.chip-active"\)\?\.dataset\.period/.test(fn)) out.push("the period is not seeded from the active chip inside the root");
+    if (!/let period =\s*\n?\s*(?:offered\()?root\.querySelector<HTMLElement>\("\[data-period-chips\] \[data-period\]\.chip-active"\)\?\.dataset\.period/.test(fn)) out.push("the period is not seeded from the active chip inside the root");
     if (/let period = "";/.test(fn)) out.push("the period is seeded to the empty string");
     const handler = fn.slice(fn.indexOf('root.addEventListener("click"'));
     if (!fn.includes('root.addEventListener("click"')) out.push("clicks are not delegated on the root");

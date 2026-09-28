@@ -990,9 +990,12 @@ export function initFilerPeriods(): void {
      addresses nothing in this one. */
   /* Seed from the chip the SSR marked active — the period the server rendered
      (a "" seed swallowed every pager click on first load). */
+  /* A chip's attribute only SELECTS a period: the value used is the embed's own
+     key, so no DOM text reaches the renderers (CodeQL js/xss-through-dom). */
+  const offered = (v: string | undefined): string | undefined => periods.find((p) => p === v);
   let period =
-    root.querySelector<HTMLElement>("[data-period-chips] [data-period].chip-active")?.dataset.period ??
-    root.querySelector<HTMLElement>("[data-period-chips] [data-period]")?.dataset.period ??
+    offered(root.querySelector<HTMLElement>("[data-period-chips] [data-period].chip-active")?.dataset.period) ??
+    offered(root.querySelector<HTMLElement>("[data-period-chips] [data-period]")?.dataset.period) ??
     "";
   let page = 0;
   /* D5: the Position changes kind filter; kept across period switches (the
@@ -1025,8 +1028,8 @@ export function initFilerPeriods(): void {
     const target = ev.target as Element;
     const chip = target.closest<HTMLButtonElement>("[data-period-chips] [data-period]");
     if (chip) {
-      const next = chip.dataset.period!;
-      if (!data.periods[next]) return;
+      const next = offered(chip.dataset.period);
+      if (next === undefined || !data.periods[next]) return;
       period = next;
       page = 0;
       draw(true);

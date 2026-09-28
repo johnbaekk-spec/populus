@@ -130,7 +130,9 @@ function congressCompositionProblems(main: MiniElement): string[] {
 }
 function congressMain(page: string): MiniElement {
   const main = page.slice(page.indexOf("<main"), page.indexOf("</main>") + "</main>".length);
-  return domOf(main.replace(/<!--[\s\S]*?-->/g, "")).querySelector("main")!;
+  let text = main;
+  for (let prev = ""; prev !== text; ) { prev = text; text = text.replace(/<!--[\s\S]*?-->/g, ""); }
+  return domOf(text).querySelector("main")!;
 }
 
 test("R11 → D1/D2 (L10): the Congress landing pairs Leaders │ Tickers in ONE band, Leaders first; the notes line follows the provenance strip; the feed comes after", () => {

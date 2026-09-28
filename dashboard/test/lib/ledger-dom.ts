@@ -17,10 +17,13 @@ export function domOf(html: string): MiniElement {
   return root;
 }
 
+/* One pass, so an escaped "&amp;lt;" decodes to "&lt;", never on to "<". */
+const ENTITIES: Readonly<Record<string, string>> = { "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+
 /** The text a reader sees: a note's popover body is not visible text. */
 export function visibleText(el: MiniElement): string {
   return el.nodes
-    .map((n) => (typeof n === "string" ? n.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : n.classList.contains("note-pop") ? "" : visibleText(n)))
+    .map((n) => (typeof n === "string" ? n.replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, (m) => ENTITIES[m] ?? m) : n.classList.contains("note-pop") ? "" : visibleText(n)))
     .join("");
 }
 
