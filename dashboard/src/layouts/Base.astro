@@ -199,7 +199,11 @@ const build = getBuildData();
     </script>
     <script>
       import { initSearch } from "../scripts/search-client";
+      import { initHitAreas } from "../scripts/hit-areas";
       initSearch();
+      // DESIGN-POLISH M1 (H-16): each trigger's hit square stops at the
+      // midpoint to its neighbour; an enhancement, never a layout change.
+      initHitAreas();
     </script>
 
     {/* Cloudflare Web Analytics. `is:inline` is load-bearing: without

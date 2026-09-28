@@ -15,7 +15,7 @@
    module. The derivation that reads the serving grain lives beside it in
    `notable-moves-derive.ts` (server only). */
 import type { ManagerType } from "./manager-directory.ts";
-import { displayIssuerName, esc, fmtInt, fmtUsd, note, slug } from "./format.ts";
+import { compactDisclosure, displayIssuerName, esc, fmtInt, fmtUsd, hangMark, note, rangeOfTotal, slug, thHtml } from "./format.ts";
 
 export type MoveKind = "new" | "add" | "trim" | "exit";
 
@@ -94,26 +94,38 @@ export interface MoveRowOpts {
 export function notableMoveRowHtml(m: NotableMove, opts: MoveRowOpts): string {
   const href = `${opts.filerHref(m.cik)}#${positionAnchor(m.key)}`;
   const who = `<a href="${esc(href)}">${esc(m.manager)}</a>${m.principal ? ` <span class="c-muted">(${esc(m.principal)})</span>` : ""}`;
-  // LD6: a Tier C ticker always carries its verification ⓘ.
+  // LD6: a Tier C ticker always carries its verification note — the ticker
+  // itself is the trigger (DESIGN-POLISH M1, R6: the label form).
   const tick = m.ticker
-    ? `<span class="mono-ticker">${esc(m.ticker)}</span>` +
-      note(`ticker verified against the SEC company list${m.ticker_verified ? ` on ${m.ticker_verified}` : ""}`, { scope: "notable-moves" }, `${m.cik}-${m.key}`) + " "
+    ? note(`ticker verified against the SEC company list${m.ticker_verified ? ` on ${m.ticker_verified}` : ""}`, { scope: "notable-moves" }, `${m.cik}-${m.key}`, {
+        trigger: "label",
+        textHtml: `<span class="mono-ticker">${esc(m.ticker)}</span>`,
+        name: m.ticker,
+      }) + " "
     : "";
   const dir = m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy";
   return (
-    `<tr data-mv-kind="${m.kind}" data-mv-type="${esc(m.type)}" data-mv-cik="${esc(m.cik)}">` +
+    `<tr data-mv-kind="${m.kind}" data-mv-type="${esc(m.type)}" data-mv-cik="${esc(m.cik)}" data-edge="${m.kind}">` +
     `<td class="c-filer">${who}</td>` +
-    `<td class="c-issuer">${tick}<span class="filed-name">${esc(m.issuer)}</span></td>` +
-    `<td class="c-chip"><span class="qoq-chip qoq-${m.kind}">${MOVE_KIND_LABELS[m.kind]}</span></td>` +
+    `<td class="c-issuer c-flex">${tick}<span class="filed-name">${esc(m.issuer)}</span></td>` +
+    `<td class="c-chip c-kind"><span class="qoq-chip qoq-${m.kind}">${MOVE_KIND_LABELS[m.kind]}</span></td>` +
     `<td class="c-num">${esc(signedShares(m.delta_shares))}</td>` +
     `<td class="c-num">${m.curr_value == null ? "—" : esc(fmtUsd(m.curr_value))}</td>` +
     `<td class="c-num ${dir}">${esc(signedUsd(m.delta_value))}</td>` +
-    `<td class="c-filed">${esc(m.filed ?? "—")}</td>` +
+    `<td class="c-filed c-num">${esc(m.filed ?? "—")}</td>` +
     `<td class="c-src">${m.doc ? `<a href="${esc(m.doc)}" rel="noopener" target="_blank">EDGAR ↗</a>` : "—"}</td></tr>`
   );
 }
 
 export const NOTABLE_MOVES_COLUMNS = ["Manager", "Ticker · Issuer", "Change", "Δ shares", "Now $", "Δ $", "Filed", "Src"] as const;
+/** The ledger role of each column above (DESIGN-POLISH M1, R2). */
+const NOTABLE_MOVES_CLASSES = ["c-filer", "c-issuer c-flex", "c-chip c-kind", "c-num", "c-num", "c-num", "c-num", "c-src"] as const;
+
+/** The band's count — the range grammar (R8): "1–15 of 40 moves". The server
+    and the island both build it here. */
+export function notableMovesCountText(shown: number, total: number): string {
+  return rangeOfTotal(1, shown, total, "moves");
+}
 
 export interface NotableMovesBandOpts extends MoveRowOpts {
   /** closed periods offered by the selector, newest first */
@@ -149,9 +161,9 @@ export function notableMovesBandHtml(rows: readonly NotableMove[], opts: Notable
     `<div class="filter-group" role="group" aria-label="Manager type"><span class="filter-label">Type</span><div class="chips">${typeChips}</div></div>` +
     `</div>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first><caption class="visually-hidden">Notable managers' position changes${opts.period ? ` into the quarter ended ${esc(opts.period)}` : ""}</caption>` +
-    `<thead><tr>${NOTABLE_MOVES_COLUMNS.map((c, i) => `<th scope="col"${i >= 3 && i <= 5 ? ' class="num"' : ""}>${esc(c)}</th>`).join("")}</tr></thead>` +
+    `<thead><tr>${NOTABLE_MOVES_COLUMNS.map((c, i) => thHtml({ label: c, cls: NOTABLE_MOVES_CLASSES[i] })).join("")}</tr></thead>` +
     `<tbody id="inst-notable-moves-tbody">${body}</tbody></table></div>` +
-    `<p class="section-note" id="inst-notable-moves-count">${rows.length === 0 ? "" : `Showing ${fmtInt(shown.length)} of ${fmtInt(rows.length)} moves`}` +
+    `<p class="section-note" id="inst-notable-moves-count">${rows.length === 0 ? "" : esc(notableMovesCountText(shown.length, rows.length))}` +
     (rows.length > shown.length ? ` · <button type="button" class="linklike" id="inst-notable-moves-more">Show ${fmtInt(NOTABLE_MOVES_STEP)} more</button>` : "") +
     (opts.period ? ` · <a href="${esc(notableMovesHref(opts.period))}">every row for this quarter (JSON)</a>` : "") + `</p>` +
     `<p class="caveat-line" id="inst-notable-moves-status" role="status" aria-live="polite"></p>` +
@@ -176,6 +188,15 @@ export interface ConsensusRow {
   netDeltaUsd: number | null;
   netDeltaPartial: boolean;
   topMover: { manager: string; kind: MoveKind; cik: string } | null;
+}
+
+/** The consensus board's count noun: its rows are the highest-ranked
+    `limit` of the qualifying issuers, so when more qualify than it lists the
+    count names that bound (review R-4). */
+export function consensusBoundNoun(board: Pick<ConsensusBoard, "qualifying" | "rows">): { boundNoun: string; definite: boolean } {
+  return board.qualifying > board.rows.length
+    ? { boundNoun: "highest-ranked issuers", definite: true }
+    : { boundNoun: "issuers", definite: false };
 }
 
 export interface ConsensusBoard {
@@ -250,24 +271,34 @@ export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOp
   const rows = board.rows
     .map((r, i) =>
       `<tr${i >= compact ? " data-compact-extra" : ""}>` +
-      `<td class="c-issuer">${r.ticker ? `<span class="mono-ticker">${esc(r.ticker)}</span> ` : ""}<span class="filed-name">${esc(r.issuer)}</span></td>` +
+      `<td class="c-issuer c-flex">${r.ticker ? `<span class="mono-ticker">${esc(r.ticker)}</span> ` : ""}<span class="filed-name">${esc(r.issuer)}</span></td>` +
       `<td class="c-num c-strong">${fmtInt(r.newStakes)}</td><td class="c-num">${fmtInt(r.adds)}</td><td class="c-num">${fmtInt(r.trims)}</td><td class="c-num">${fmtInt(r.exits)}</td>` +
-      `<td class="c-num ${r.netDeltaUsd == null ? "c-muted" : r.netDeltaUsd < 0 ? "c-sell" : "c-buy"}">${esc(signedUsd(r.netDeltaUsd))}${r.netDeltaPartial ? "<sup>≈</sup>" : ""}</td>` +
-      `<td>${r.topMover ? `<a href="${esc(opts.filerHref(r.topMover.cik))}">${esc(r.topMover.manager)}</a> <span class="qoq-chip qoq-${r.topMover.kind}">${MOVE_KIND_LABELS[r.topMover.kind]}</span>` : "—"}</td></tr>`,
+      `<td class="c-num has-marks ${r.netDeltaUsd == null ? "c-muted" : r.netDeltaUsd < 0 ? "c-sell" : "c-buy"}">${esc(signedUsd(r.netDeltaUsd))}${r.netDeltaPartial ? hangMark("≈") : ""}</td>` +
+      `<td class="c-filer c-secondary">${r.topMover ? `<a href="${esc(opts.filerHref(r.topMover.cik))}">${esc(r.topMover.manager)}</a> <span class="qoq-chip qoq-${r.topMover.kind}">${MOVE_KIND_LABELS[r.topMover.kind]}</span>` : "—"}</td></tr>`,
     )
     .join("\n");
   const collapsed = board.rows.length > compact;
   return (
     `<section class="panel design-consensus" id="inst-consensus" aria-label="Consensus">${head}` +
     `<div class="table-scroll"><table class="etable etable-compact" data-sticky-first><caption class="visually-hidden">Issuers moved by ${fmtInt(board.minFilers)} or more notable managers in ${esc(board.period)}</caption>` +
-    `<thead><tr>${columns.map((c, i) => `<th scope="col"${i > 0 ? ' class="num"' : ""}>${esc(c)}</th>`).join("")}</tr></thead>` +
+    `<thead><tr>${columns.map((c, i) => thHtml({ label: c, cls: i === 0 ? "c-issuer c-flex" : i === 6 ? "c-filer c-secondary" : i === 5 ? "c-num has-marks" : "c-num" })).join("")}</tr></thead>` +
     `<tbody id="inst-consensus-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
     `<p class="section-note">${fmtInt(board.qualifying)} issuers qualify · counts are distinct notable managers · ≈ = a contributing change disclosed no value, so the sum is partial.` +
     (board.qualifying > board.rows.length ? ` The ${fmtInt(board.rows.length)} highest-ranked are listed.` : "") + `</p>` +
+    /* The one disclosure primitive and its range count (R8) — it was hand-built
+       here with a second grammar, a bare count of the held-back rows. */
     (collapsed
-      ? `<div class="compact-disclosure" data-compact-dom data-compact-for="inst-consensus-tbody" data-compact-total="${board.rows.length}" data-compact-shown="${compact}" data-compact-noun="issuers" data-compact-bound-noun="issuers">` +
-        `<p class="compact-bound"><span class="compact-bound-count">${fmtInt(board.rows.length - compact)} more issuers below.</span></p>` +
-        `<button class="linklike compact-toggle" type="button" aria-expanded="false" aria-controls="inst-consensus-tbody" hidden>Show all ${fmtInt(board.rows.length)} issuers</button></div>`
+      ? compactDisclosure({
+          rootId: "inst-consensus-tbody",
+          total: board.rows.length,
+          shown: compact,
+          noun: "issuers",
+          /* when more issuers qualify than the board lists, its total is the
+             board's own bound — "1–10 of the 50 highest-ranked issuers" — never
+             the count of qualifying issuers (review R-4) */
+          ...consensusBoundNoun(board),
+          domBacked: true,
+        })
       : "") +
     `</section>`
   );

@@ -11,9 +11,10 @@
    that: it captures this island's output and asserts it is unchanged. */
 
 import { type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, compactBoundCount, esc, fmtInt, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCountFor, esc, fmtInt, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
+  addsBoundNoun,
   addsNoteHtml,
   addsPayloadHref,
   sortAddsRows,
@@ -26,7 +27,9 @@ import { addsRowsHtml } from "../lib/inst-adds-render.ts";
 import {
   classifyNotableMovesShard,
   notableMoveRowHtml,
+  notableMovesCountText,
   notableMovesHref,
+  NOTABLE_MOVES_COLUMNS,
   NOTABLE_MOVES_SSR_ROWS,
   NOTABLE_MOVES_STEP,
   type MoveKind,
@@ -147,7 +150,8 @@ export function initInstIndex(): void {
       hidden: expanded ? 0 : hidden,
       expanded,
       noun,
-      count: { text: compactBoundCount(hidden, noun) },
+      // the server's bound noun and `definite`, read off the element (Q-4)
+      count: { text: compactBoundCountFor(disclosure, total - hidden, total, noun) },
     });
   }
 
@@ -271,7 +275,7 @@ export function initAddsControls(): void {
       hidden: expanded ? 0 : hidden,
       expanded,
       noun: "issuers",
-      count: { text: compactBoundCount(hidden, "issuers") },
+      count: { text: compactBoundCountFor(disclosure, rows.length - hidden, rows.length, "issuers") },
       extra: {
         html:
           `Every issuer in this quarter's bounded payload remains in ` +
@@ -320,6 +324,15 @@ export function initAddsControls(): void {
     // --- commit: rows, controls, caption, window and note, together ---------
     rows = payload.rows;
     expanded = false;
+    /* The count's noun moves with the quarter: a truncated payload's total is
+       the leaderboard's bound (review R-4). Written onto the element the
+       server rendered, where the shared reader takes it from. */
+    if (disclosure) {
+      const b = addsBoundNoun(payload.truncated);
+      disclosure.setAttribute("data-compact-bound-noun", b.boundNoun);
+      if (b.definite) disclosure.setAttribute("data-compact-definite", "1");
+      else disclosure.removeAttribute("data-compact-definite");
+    }
     period = nextPeriod;
     mode = nextMode;
     paint();
@@ -482,18 +495,18 @@ export function initNotableMoves(): void {
     const shown = rows.slice(0, limit);
     tbody!.innerHTML =
       shown.length === 0
-        ? `<tr><td colspan="8" class="design-unavailable-message">No moves match — a computed answer over every notable manager's changes this quarter.</td></tr>`
+        ? `<tr><td colspan="${NOTABLE_MOVES_COLUMNS.length}" class="design-unavailable-message">No moves match — a computed answer over every notable manager's changes this quarter.</td></tr>`
         : shown.map((m) => notableMoveRowHtml(m, { filerHref: (cik) => filerHref(cik, "top") })).join("\n");
     if (windowEl) windowEl.textContent = `quarter ended ${shard.period} · by shares · largest $ change first within New › Exit › Add › Trim`;
     if (countEl) {
       const more = rows.length > shown.length;
       countEl.innerHTML =
-        `Showing ${fmtInt(shown.length)} of ${fmtInt(rows.length)} moves` +
+        esc(notableMovesCountText(shown.length, rows.length)) +
         (shard.truncated ? ` (the ${fmtInt(shard.rows.length)} largest of ${fmtInt(shard.total)} are in the published file)` : "") +
         (more ? ` · <button type="button" class="linklike" id="inst-notable-moves-more">Show ${fmtInt(NOTABLE_MOVES_STEP)} more</button>` : "") +
         ` · <a href="${esc(notableMovesHref(shard.period))}">every row for this quarter (JSON)</a>`;
     }
-    setStatus(`Showing ${fmtInt(shown.length)} of ${fmtInt(rows.length)} moves for the quarter ended ${shard.period}.`);
+    setStatus(`${notableMovesCountText(shown.length, rows.length)} for the quarter ended ${shard.period}.`);
   }
 
   section.addEventListener("click", (ev) => {

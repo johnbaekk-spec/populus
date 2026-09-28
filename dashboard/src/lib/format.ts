@@ -233,8 +233,90 @@ export function noteId(scope: string, key: string): string {
  * The panel is a real element, so it is DOM, it is referenced by
  * `aria-describedby`, and the print stylesheet can lay it out in flow.
  */
-export function note(text: string, ctx: NoteCtx, key: string, opts: { label?: string } = {}): string {
+export function note(text: string, ctx: NoteCtx, key: string, opts: NoteOpts = {}): string {
   return noteFromHtml(esc(text), ctx, key, opts);
+}
+
+/** The three triggers of one note (DESIGN-POLISH M1, R6; design-principles §4).
+
+    - `"label"`: the label or value text ITSELF is the button, dotted-underlined.
+      Its accessible name repeats the visible label and adds "explain", so the
+      label stays in the name (WCAG 2.5.3). It adds no inline width. It is never
+      used on text that is a link or that sits inside a sort button.
+    - `"mark"`: a small button holding the mark (§ † ‡ ≈ ⓘ), hung in the
+      column's mark slot — the form for sortable headers, links and numbers.
+    - `"glyph"`: the legacy "i" button, only where neither of the others fits.
+
+    The panel, `popovertarget`, `aria-describedby` and the print path are the
+    same for all three; only the trigger changes. */
+export type NoteTrigger = "glyph" | "label" | "mark";
+
+export interface NoteOpts {
+  /** accessible name of a glyph trigger (default "explain") */
+  label?: string;
+  trigger?: NoteTrigger;
+  /** the visible text of a label trigger, or the mark of a mark trigger —
+      PRE-ESCAPED html (a header label may carry its `.th-full`/`.th-abbr` pair) */
+  textHtml?: string;
+  /** the plain-text visible label the accessible name repeats ("Net range" →
+      "Net range, explain"); defaults to the text of `textHtml`. Not used when
+      the label is filed text (a `filed-name` span): that name is the content. */
+  name?: string;
+}
+
+/** Plain text of a small pre-escaped html fragment, for an accessible name. The
+    abbreviation twin (`.th-abbr`, aria-hidden) is dropped first, so a header's
+    name is its full word once. */
+function plainTextOf(html: string): string {
+  /* Strip to a fixpoint (a removed tag can expose another), then decode the
+     entities in one pass with `&amp;` handled by the same lookup, so no
+     entity is decoded twice. The result is escaped again at every sink. */
+  let text = html.replace(/<span class="th-abbr"[^>]*>.*?<\/span>/g, "");
+  for (let prev = ""; prev !== text; ) {
+    prev = text;
+    text = text.replace(/<[^>]*>/g, "");
+  }
+  const ENTITIES: Readonly<Record<string, string>> = {
+    "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'",
+  };
+  return text
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, (m) => ENTITIES[m] ?? m)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** A mark hung in the column's reserved slot (§ † ‡ ≈ …): zero inline advance,
+    so it can never move a label's or a number's alignment edge. */
+export function hangMark(mark: string): string {
+  return `<span class="hang">${esc(mark)}</span>`;
+}
+
+/** The row edge of a quarter-over-quarter change (tr[data-edge]); an
+    unclassifiable change carries none — the hatched n/c is its cue. */
+export function changeEdgeAttr(kind: string): string {
+  const edge =
+    kind === "new" || kind === "add" || kind === "trim" || kind === "exit"
+      ? kind
+      : kind === "held"
+        ? "nochange"
+        : kind === "no_prior"
+          ? "noprior"
+          : null;
+  return edge ? ` data-edge="${edge}"` : "";
+}
+
+/** The sort caret: a real aria-hidden span in the mark slot, its glyph drawn
+    from the header's own `aria-sort`, so the arrow and the announced state
+    cannot disagree. It replaced the `.th-sort::after` caret. */
+export const SORT_CARET = `<span class="sort-caret" aria-hidden="true"></span>`;
+
+/** A column label split from any mark it embedded ("Trades †" → "Trades" +
+    "†", "Gross bought ·§" → "Gross bought" + "·§"). The label text is what
+    aligns; the mark hangs. */
+export function splitLabelMark(label: string): { text: string; mark: string | null } {
+  const m = /^(.*?)\s*((?:·\s*)?[§†‡¶≈])\s*$/.exec(label);
+  if (!m || m[1]!.trim() === "") return { text: label, mark: null };
+  return { text: m[1]!.trim(), mark: m[2]!.replace(/\s+/g, "") };
 }
 
 /**
@@ -251,17 +333,68 @@ export function noteFromHtml(
   html: string,
   ctx: NoteCtx,
   key: string,
-  opts: { label?: string } = {},
+  opts: NoteOpts = {},
 ): string {
   const id = noteId(ctx.scope, key);
-  const label = opts.label ?? "explain";
+  const trigger = opts.trigger ?? "glyph";
+  const common = `popovertarget="${esc(id)}" aria-describedby="${esc(id)}"`;
+  let button: string;
+  if (trigger === "label") {
+    const visible = opts.textHtml ?? "";
+    const filed = /class="[^"]*\bfiled-name\b/.test(visible);
+    const abbreviated = /<span class="th-abbr" aria-hidden="true">/.test(visible);
+    if (filed || abbreviated) {
+      /* Named by its CONTENT plus a hidden ", explain", never an aria-label:
+         - filed text (a fund filed as "BULLISH FD") is exempt from the site's
+           wording rules only INSIDE its `filed-name` marker, which the wording
+           gate redacts; copied into an attribute it would leave the marker;
+         - an abbreviated header shows "Gross purch" at ≤899px while an
+           aria-label said "Gross bought, explain", so the visible label was not
+           in the name (WCAG 2.5.3; review R-7). Inside a trigger the
+           abbreviation joins the name (it is not aria-hidden), after a space
+           that renders nothing at the start of its line: the name is
+           "Gross bought, explain" where the full word shows (the abbreviation
+           is display:none there) and "Gross bought Gross purch, explain" where
+           the abbreviation shows — the visible label is in it at every width. */
+      const content = abbreviated
+        ? visible.replace(/<span class="th-abbr" aria-hidden="true">/g, `<span class="th-abbr"> `)
+        : visible;
+      button =
+        `<button type="button" class="note-btn note-label" ${common}>` +
+        `${content}<span class="visually-hidden">, explain</span></button>`;
+    } else {
+      const name = opts.name ?? plainTextOf(visible);
+      button =
+        `<button type="button" class="note-btn note-label" ${common}` +
+        ` aria-label="${esc(`${name}, explain`)}">${visible}</button>`;
+    }
+  } else if (trigger === "mark") {
+    const mark = opts.textHtml ?? "ⓘ";
+    const name = opts.name ?? opts.label ?? "explain";
+    button =
+      `<button type="button" class="note-btn note-mark" ${common}` +
+      ` aria-label="${esc(opts.name ? `${name}, explain` : name)}">${mark}</button>`;
+  } else {
+    button =
+      `<button type="button" class="note-btn" ${common}` +
+      ` aria-label="${esc(opts.label ?? "explain")}">i</button>`;
+  }
   return (
     `<span class="note">` +
-    `<button type="button" class="note-btn" popovertarget="${esc(id)}"` +
-    ` aria-describedby="${esc(id)}" aria-label="${esc(label)}">i</button>` +
+    button +
     `<span class="note-pop" popover id="${esc(id)}" role="note">${html}</span>` +
     `</span>`
   );
+}
+
+/** A label trigger over plain text: the text is the button. */
+export function noteLabel(text: string, body: string, ctx: NoteCtx, key: string): string {
+  return note(body, ctx, key, { trigger: "label", textHtml: esc(text), name: text });
+}
+
+/** A label trigger over plain text with a pre-escaped html body. */
+export function noteLabelFromHtml(text: string, bodyHtml: string, ctx: NoteCtx, key: string): string {
+  return noteFromHtml(bodyHtml, ctx, key, { trigger: "label", textHtml: esc(text), name: text });
 }
 
 /** Compose one note body from several source clauses, in source order.
@@ -531,12 +664,12 @@ export function flagChips(
   flags: string[],
   r?: Pick<TxnRow, "low" | "high">,
   stated: ReadonlySet<string> = new Set(),
-): { label: string; cls: string }[] {
+): { label: string; cls: string; key: string }[] {
   // missing_ticker already renders as "—" in the ticker column; the chip
   // restates it per the design row "no ticker".
   const chips = flags
     .filter((f) => FLAG_PRESENTATION[f])
-    .map((f) => FLAG_PRESENTATION[f]!);
+    .map((f) => ({ ...FLAG_PRESENTATION[f]!, key: f }));
   /* An amount with no bounds must always SAY it is unknown, even when the
      upstream flag set explains the row some other way (row_incomplete etc.) —
      presentation is derived from the value, not from the flag vocabulary.
@@ -547,10 +680,52 @@ export function flagChips(
      badge straight back on every row — claiming "stated once here" above a
      table that repeats it. */
   if (r && !stated.has("amount_unparsed") && derivesAmountUnparsed({ ...r, flags })) {
-    chips.push({ label: "amount unparsed", cls: "dashed" });
+    chips.push({ label: "amount unparsed", cls: "dashed", key: "amount_unparsed" });
   }
   return chips;
 }
+
+/* ---------- the reference feed's flag definitions (H-17) ----------
+
+   Each visible flag chip in the reference feed opens its OWN definition, one
+   interaction away, as the row's single flag note did before the chips became
+   visible (M1 review, coordinator ruling on D7). The text is ONLY copy the
+   site already publishes — no new wording (per-flag copy would be M3's) — and
+   each constant below is the one source for its sentence, used at the site it
+   came from as well as here, so the two cannot drift. `format-flag-defs` in
+   `test/ledger-system.test.ts` pins every definition to its published source. */
+
+/** The reference feed's Ticker column note. */
+export const TICKER_ABSENT_NOTE = "An em dash means no ticker was disclosed; the asset remains named alongside it.";
+/** The ‡ note on a spouse-capped amount. */
+export const SPOUSE_CAP_NOTE = "disclosed only as an open-ended cap";
+/** What an amount with no parseable bounds says to assistive technology. */
+export const AMOUNT_UNPARSED_SPOKEN = "not disclosed in a parseable range";
+/** The methodology page's known-limits line on amendments (pages/methodology). */
+export const AMENDMENT_PENDING_NOTE =
+  "amendments carry amendment pending until amendment semantics are settled — the default view " +
+  "(v_default_transactions) excludes the superseded original, and both readings are queryable";
+/** The exclusion wording the flow panel and the rankings use for date anomalies. */
+export const DATE_ANOMALY_NOTE = "impossible trade dates";
+/** The methodology page's known-limits line on every defect flag. */
+export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged, never dropped";
+
+/** The definition each congress flag chip opens. A flag with no entry keeps a
+    plain chip (the institutional flags never reach the reference feed). */
+export const FEED_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
+  missing_ticker: TICKER_ABSENT_NOTE,
+  amount_spouse_cap: SPOUSE_CAP_NOTE,
+  amount_unparsed: AMOUNT_UNPARSED_SPOKEN,
+  amendment_unresolved: AMENDMENT_PENDING_NOTE,
+  date_anomaly: DATE_ANOMALY_NOTE,
+  date_missing: DEFECT_FLAG_NOTE,
+  side_unparsed: DEFECT_FLAG_NOTE,
+  asset_unparsed: DEFECT_FLAG_NOTE,
+  capgains_unparsed: DEFECT_FLAG_NOTE,
+  row_incomplete: DEFECT_FLAG_NOTE,
+  row_orphan: DEFECT_FLAG_NOTE,
+  owner_unparsed: DEFECT_FLAG_NOTE,
+};
 
 /* ---------- flags a reader can read ----------
 
@@ -719,15 +894,28 @@ function derivesAmountUnparsed(r: Pick<TxnRow, "flags" | "low" | "high">): boole
 export function flagTags(
   flags: string[],
   r?: Pick<TxnRow, "low" | "high">,
-  opts: { stated?: readonly string[] } = {},
+  opts: {
+    stated?: readonly string[];
+    /** each chip with a definition in `FEED_FLAG_DEFINITIONS` becomes that
+        definition's LABEL trigger (the chip's word is the button); `key` makes
+        the note ids unique per row */
+    definitions?: { notes: NoteCtx; key: string };
+  } = {},
 ): string {
   /* Flags already stated at table level are suppressed HERE rather than
      filtered by the caller, so every render site inherits the behaviour and
      none can forget it. */
   const stated = new Set(opts.stated ?? []);
   const shown = flags.filter((f) => !stated.has(f));
+  const defs = opts.definitions;
   const known = flagChips(shown, r, stated)
-    .map((c) => `<span class="flag ${c.cls}">${esc(c.label)}</span>`)
+    .map((c) => {
+      const def = defs ? FEED_FLAG_DEFINITIONS[c.key] : undefined;
+      const inner = def
+        ? note(def, defs!.notes, `${defs!.key}-${c.key}`, { trigger: "label", textHtml: esc(c.label), name: c.label })
+        : esc(c.label);
+      return `<span class="flag ${c.cls}">${inner}</span>`;
+    })
     .join("");
   const unknown = shown.filter((f) => !FLAG_PRESENTATION[f]);
   /* The raw token is ONE INTERACTION away and prints, rather than
@@ -868,6 +1056,28 @@ export interface CountInputs {
   indeterminate: number;
 }
 
+/** THE range-of-total count (DESIGN-POLISH M1, R8): "1–10 of 608 tickers",
+    "1–50 of 72,083 transactions". Every table foot, pager range and compact
+    disclosure on the site builds its count here, on the server and in the
+    client, so no two counts can drift into two grammars.
+
+    `total` is the size of the collection the rows come from. Where it is only
+    a bound this page applies — not the collection's size — pass
+    `definite: true` and a noun that names the bound ("1–10 of the 50 newest
+    changes by notable managers shown here"), so the count cannot read as the
+    size of the whole set. Ratios ("N of M managers" after a filter) and
+    unwindowed counts are NOT ranges and never come through here. Plain text. */
+export function rangeOfTotal(
+  first: number,
+  last: number,
+  total: number,
+  noun: string,
+  opts: { definite?: boolean } = {},
+): string {
+  if (!Number.isFinite(total) || total <= 0) return `0 ${noun}`;
+  return `${fmtInt(first)}–${fmtInt(last)} of ${opts.definite ? "the " : ""}${fmtInt(total)} ${noun}`;
+}
+
 export function feedCountText(i: CountInputs): string {
   let txnPart: string;
   if (i.txnMatched === 0) {
@@ -879,7 +1089,7 @@ export function feedCountText(i: CountInputs): string {
   } else {
     const lo = i.page * (i.pageSize ?? PAGE_SIZE) + 1;
     const hi = Math.min(lo + i.txnOnPage - 1, i.txnMatched);
-    txnPart = `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(i.txnMatched)} transactions`;
+    txnPart = rangeOfTotal(lo, hi, i.txnMatched, "transactions");
   }
   const paperPart =
     i.paperMatched === 0
@@ -1085,6 +1295,23 @@ export function dualDateCell(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late"
   return `<td class="cell cell-traded">${dualDate(r)}</td>`;
 }
 
+/** The kind edge of a disclosed-trade row (`tr[data-edge]`, DESIGN-POLISH M1):
+    lateness first — a late row carries the gold edge while its dates cell keeps
+    `LATE·Nd` — then the side. An unparsed side states no direction, so it gets
+    no edge rather than a guessed one. */
+export function txnEdge(r: Pick<TxnRow, "late" | "side" | "flags">): string | null {
+  if (r.late === 1) return "late";
+  const cls = sideLabel(r.side, r.flags).cls;
+  if (cls === "buy") return "buy";
+  if (cls === "sell") return "sell";
+  if (cls === "neutral") return "exch";
+  return null;
+}
+function referenceEdge(r: Pick<TxnRow, "late">, sideCls: string): string | null {
+  if (r.late === 1) return "late";
+  return sideCls === "buy" ? "buy" : sideCls === "sell" ? "sell" : sideCls === "neutral" ? "exch" : null;
+}
+
 /* The feed rows are REAL TABLE ROWS.
 
    They were `<div>`s in a CSS grid, which looked like a table and behaved like
@@ -1119,24 +1346,45 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
      parameter — would keep the `title=` in the source for the fallback branch
      and so break the exact 32→17 `title=` inventory gate while leaving the
      tooltip-only channel on the very rows the owner ratified converting. */
+  /* The ‡ IS its note's trigger (the mark form, DESIGN-POLISH M1 R6). */
   const spouseCapDagger = r.flags.includes("amount_spouse_cap")
-    ? `<sup class="dagger">‡</sup>` +
-      note("disclosed only as an open-ended cap", { scope: "txn" }, `${r.txnId}-dagger`)
+    ? `<sup class="dagger">` +
+      note(SPOUSE_CAP_NOTE, { scope: "txn" }, `${r.txnId}-dagger`, { trigger: "mark", textHtml: "‡", name: "open-ended cap" }) +
+      `</sup>`
     : "";
   const tickerHtml = r.ticker
     ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
     : assetNameCell(r);
-  const amountSpoken = amountUnknown ? "not disclosed in a parseable range" : amount;
+  const amountSpoken = amountUnknown ? AMOUNT_UNPARSED_SPOKEN : amount;
 
   if (ctx.referenceFeed) {
-    return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}${rowClass ? " " + esc(rowClass) : ""}">` +
-      `<td class="cell cell-side ${esc(side.cls)}">${r.late === 1 ? "LATE" : side.cls === "buy" ? "BUY" : side.cls === "sell" ? "SELL" : esc(side.text)}<span class="reference-watch">${starHtml(r.bioguide, r.name, ctx)}</span></td>` +
-      `<td class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
-      `<td class="cell cell-ticker">${r.ticker ? tickerHtml : '<span class="none">—</span>'}</td>` +
-      `<td class="cell cell-asset">${esc(r.asset || "Asset not named")} ${owner ? `<span class="owner-note">· ${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>` : ""}</td>` +
-      `<td class="cell cell-amount${amountUnknown ? " unknown" : ""}">${esc(amount)}${spouseCapDagger}</td>` +
-      `<td class="cell cell-range">${rangeBand(r)}<span class="reference-flags">${flagTags(r.flags, r) ? noteFromHtml(flagTags(r.flags, r), {scope:"feed-flags"}, r.txnId) : ""}</span></td>` +
-      `<td class="cell cell-traded">${dualDate(r, true)}</td>` + srcLinkCell(r.doc) + `</tr>`;
+    /* The row's kind drives its 3px edge (`data-edge`), never `data-kind`,
+       which already carries other meanings (G-6). A late row keeps the gold
+       lateness edge. */
+    const edge = referenceEdge(r, side.cls);
+    /* The spouse-cap mark hangs past the amount's digits (zero inline advance)
+       and IS the note's trigger, so the amount's alignment edge never moves. */
+    const capMark = r.flags.includes("amount_spouse_cap")
+      ? `<span class="hang">` +
+        note(SPOUSE_CAP_NOTE, { scope: "txn" }, `${r.txnId}-dagger`, {
+          trigger: "mark",
+          textHtml: "‡",
+          name: "Amount",
+        }) +
+        `</span>`
+      : "";
+    return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}${rowClass ? " " + esc(rowClass) : ""}"${edge ? ` data-edge="${edge}"` : ""}>` +
+      `<td class="cell cell-side c-kind ${esc(side.cls)}">${r.late === 1 ? "LATE" : side.cls === "buy" ? "BUY" : side.cls === "sell" ? "SELL" : esc(side.text)}<span class="reference-watch">${starHtml(r.bioguide, r.name, ctx)}</span></td>` +
+      `<td class="cell cell-member c-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
+      `<td class="cell cell-ticker c-ticker">${r.ticker ? tickerHtml : '<span class="none">—</span>'}</td>` +
+      `<td class="cell cell-asset c-secondary">${esc(r.asset || "Asset not named")} ${owner ? `<span class="owner-note">· ${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span></span>` : ""}</td>` +
+      `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amount)}${capMark}</td>` +
+      /* H-17: the row's flags are VISIBLE chips in the range cell, as the
+         classic feed prints them — never folded behind a note. Each chip is
+         the label trigger of its OWN definition (FEED_FLAG_DEFINITIONS). */
+      `<td class="cell cell-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { definitions: { notes: { scope: "feed-flag" }, key: r.txnId } })}</td>` +
+      `<td class="cell cell-traded c-num">${dualDate(r, true)}</td>` +
+      `<td class="cell cell-src c-src">${srcLinkInner(r.doc)}</td></tr>`;
   }
   return `<tr class="feed-row feed-grid-cols${rowClass ? " " + esc(rowClass) : ""}">
 <td class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</td>
@@ -1157,9 +1405,12 @@ ${srcLinkCell(r.doc)}
 
 export function paperRowHtml(r: PaperRow, ctx: RenderCtx, rowClass = ""): string {
   if (ctx.referenceFeed) {
-    return `<tr class="feed-row paper reference-paper"><td>Paper</td><td>${starHtml(r.bioguide,r.name,ctx)}${memberCellHtml(r,ctx)}</td>` +
-      `<td colspan="4" class="paper-main">Paper filing · needs OCR · no machine-readable transactions</td>` +
-      `<td class="cell-filed">${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
+    /* The ledger's grid row (DESIGN-POLISH M1): the kind word, the member, one
+       cell spanning the four columns a paper filing cannot fill, the filed
+       date in the dates column, the receipt. */
+    return `<tr class="feed-row paper reference-paper"><td class="cell cell-side c-kind">Paper</td><td class="cell cell-member c-member">${starHtml(r.bioguide,r.name,ctx)}${memberCellHtml(r,ctx)}</td>` +
+      `<td colspan="4" class="paper-main c-secondary">Paper filing · needs OCR · no machine-readable transactions</td>` +
+      `<td class="cell cell-traded c-num"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
   }
 
   // A paper filing discloses no ticker, side, amount, dates or flags, so its
@@ -1232,7 +1483,7 @@ export const FEED_COLUMNS: readonly FeedColumn[] = [
       "would silently rank rows it cannot place — the date range filter states both exclusions " +
       "instead",
   },
-  { label: "Amount", sortKey: "amount", cls: "num" },
+  { label: "Amount", sortKey: "amount", cls: "c-num" },
   {
     label: "Range · Flags",
     why: "the band renders the same statutory range the Amount column sorts on",
@@ -1260,15 +1511,19 @@ export interface FeedHeadOpts {
 }
 
 export function feedHeadHtml(opts: FeedHeadOpts): string {
+  /* The reference feed's columns carry their ledger ROLE classes (c-kind,
+     c-member, c-ticker, c-secondary, c-num, c-bar, c-src) on the header, and
+     every row cell carries the same class, so a number sits under its
+     right-aligned header by construction. */
   const referenceColumns: readonly FeedColumn[] = [
-    { label: "Kind", why: "Purchase, sale or exchange as disclosed; watch controls save locally." },
-    { label: "Member", why: "Member and affiliation as recorded in the filing." },
-    { label: "Ticker", why: "An em dash means no ticker was disclosed; the asset remains named alongside it." },
-    { label: "Asset · Owner", why: "Asset and ownership as filed; partial-sale qualifiers are retained." },
-    { label: "Range", sortKey: "amount", cls: "num" },
-    { label: "Amount range", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range" },
-    { label: "Traded → Filed", sortKey: "filed" },
-    { label: "Source", why: "Each link opens the original disclosure.", cls: "src" },
+    { label: "Kind", why: "Purchase, sale or exchange as disclosed; watch controls save locally.", cls: "c-kind" },
+    { label: "Member", why: "Member and affiliation as recorded in the filing.", cls: "c-member" },
+    { label: "Ticker", why: TICKER_ABSENT_NOTE, cls: "c-ticker" },
+    { label: "Asset · Owner", why: "Asset and ownership as filed; partial-sale qualifiers are retained.", cls: "c-secondary" },
+    { label: "Range", sortKey: "amount", cls: "c-num" },
+    { label: "Amount range", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range c-bar" },
+    { label: "Traded → Filed", sortKey: "filed", cls: "c-num" },
+    { label: "Source", why: "Each link opens the original disclosure.", cls: "src c-src" },
   ];
   const cells = (opts.referenceFeed ? referenceColumns : FEED_COLUMNS).map((c) => {
     const cls = c.cls ? ` class="${c.cls}"` : "";
@@ -1284,12 +1539,28 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
           : "none";
       return (
         `<th scope="col"${cls} data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
-        `aria-sort="${dir}"><button class="th-sort" type="button">${thLabelHtml(c.label)}</button></th>`
+        `aria-sort="${dir}"><button class="th-sort" type="button">${thLabelHtml(c.label)}</button>` +
+        (opts.referenceFeed ? SORT_CARET : "") +
+        `</th>`
       );
     }
     // Either a column with no defined order anywhere, or an orderable column on
     // a surface that offers no control. Both state a reason; neither is mute.
     const why = c.sortKey ? (opts.whyUnsorted ?? "") : (c.why ?? "");
+    /* With a note scope the stated reason is the header's own LABEL trigger:
+       the label is the button, so the header adds no inline width. Without one
+       (the classic feed on /watchlist/) it stays the visible `.col-why` text. */
+    if (why && opts.notes) {
+      return (
+        `<th scope="col"${cls}>` +
+        noteFromHtml(esc(why), opts.notes, c.sortKey ?? c.label, {
+          trigger: "label",
+          textHtml: thLabelHtml(c.label),
+          name: c.label,
+        }) +
+        `</th>`
+      );
+    }
     return (
       `<th scope="col"${cls}>${thLabelHtml(c.label)}` +
       colWhyHtml(why, opts.notes, c.sortKey ?? c.label) +
@@ -1375,10 +1646,15 @@ export interface CompactDisclosureOpts {
       tickers are not rendered above" and wrongly in "Show all 833 ranked
       tickers". Defaults to `noun`. */
   boundNoun?: string;
-  /** the whole count sentence, for the one table whose bound is not of
-      the "N further X are not rendered above" shape (the activity feed states
-      a first-of-total slice). Pre-escaped by the caller. */
+  /** the whole count sentence, pre-escaped, for a caller whose count is not
+      the range grammar at all. No caller needs it since the range grammar
+      (`rangeOfTotal`) landed; kept for a count that is genuinely not a range. */
   boundCount?: string;
+  /** the total is a bound THIS PAGE applies, not the collection's size — the
+      count reads "1–10 of the 50 …" and the bound noun must name the bound
+      (V1 NEW-2). Travels as `data-compact-definite` so a client restating the
+      count keeps its meaning. */
+  definite?: boolean;
   /** the STATE-INDEPENDENT remainder of the bound — the facts the
       deleted terminus rows carried beside their count: the link to the
       published dataset, the link to this quarter's payload, that every filer
@@ -1393,10 +1669,37 @@ export interface CompactDisclosureOpts {
 }
 
 /** The count clause, composed in ONE place so the server's first render and
-    every client that later restates it cannot drift into two wordings. */
-export function compactBoundCount(hidden: number, noun: string): string {
-  // R13: plain words — "more below", never pipeline vocabulary.
-  return `${fmtInt(hidden)} more ${esc(noun)} below.`;
+    every client that later restates it cannot drift into two wordings. It is
+    the range grammar — "1–10 of 608 tickers" — built by `rangeOfTotal`.
+
+    PLAIN TEXT (review R-9): every client writes it through `textContent`, where
+    an escaped string would print its entities; the server's html slot escapes
+    it at the one place it is spliced into markup (`compactDisclosure`). */
+export function compactBoundCount(
+  shown: number,
+  total: number,
+  noun: string,
+  opts: { definite?: boolean } = {},
+): string {
+  return rangeOfTotal(1, shown, total, noun, opts);
+}
+
+/** The count clause a client restates for the disclosure ELEMENT the server
+    rendered: its bound noun and whether its total is a bound (`definite`) are
+    read back off the element (`data-compact-bound-noun`,
+    `data-compact-definite`), so a client cannot restate "1–10 of the 50
+    newest changes" as "1–10 of 50 changes" (review Q-4). Every island that
+    restates a compact count goes through here. */
+export function compactBoundCountFor(
+  disclosure: { dataset?: Record<string, string | undefined> } | null | undefined,
+  shown: number,
+  total: number,
+  fallbackNoun: string,
+): string {
+  const ds = disclosure?.dataset ?? {};
+  return compactBoundCount(shown, total, ds.compactBoundNoun ?? fallbackNoun, {
+    definite: ds.compactDefinite === "1",
+  });
 }
 
 /** R13: how many rows one press of the expand control reveals. */
@@ -1426,7 +1729,8 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
     // "ranked members", "wholly-undisclosed members" — through ONE sync
     // function, and reading the noun back off the element is what stops it
     // relabelling the undisclosed bucket as ranked.
-    `data-compact-bound-noun="${esc(o.boundNoun ?? o.noun)}"`;
+    `data-compact-bound-noun="${esc(o.boundNoun ?? o.noun)}"` +
+    (o.definite ? ` data-compact-definite="1"` : "");
   // The button is `hidden` in EVERY branch, including this one: nothing reveals
   // it but a script, and a script is exactly what it needs to work.
   const btn = (label: string): string =>
@@ -1456,7 +1760,7 @@ export function compactDisclosure(o: CompactDisclosureOpts): string {
   }
   return (
     `<div ${attrs}>` +
-    bound(o.boundCount ?? compactBoundCount(hidden, o.boundNoun ?? o.noun), false) +
+    bound(o.boundCount ?? esc(compactBoundCount(o.shown, o.total, o.boundNoun ?? o.noun, { definite: o.definite })), false) +
     // The button carries the TOTAL, never the held-back count: the sentence
     // above it already states that count, and one bound stated twice, two
     // elements apart, is exactly the duplication this control removes.
@@ -1654,10 +1958,12 @@ export function identityChipHtml(key: string, ctx: NoteCtx, noteKey: string): st
   const strength = identityStrengthOf(key);
   if (strength === "entity") return "";
   const chip = IDENTITY_CHIP[strength];
+  /* The chip's own words are the note's LABEL trigger — the explanation opens
+     from the chip, with no glyph beside it (DESIGN-POLISH M1, R6). */
   return (
     `<span class="id-chip" data-identity-key="${esc(key)}" data-identity-strength="${esc(strength)}">` +
-    `${esc(chip.label)}</span>` +
-    note(`${chip.why} · key as published: ${key}`, ctx, noteKey)
+    noteLabel(chip.label, `${chip.why} · key as published: ${key}`, ctx, noteKey) +
+    `</span>`
   );
 }
 
@@ -1723,8 +2029,9 @@ export function statTiles(
     `<div class="tile-value${t.muted ? " muted" : ""}">${esc(t.value)}${
       t.unit ? `<span class="unit">${esc(t.unit)}</span>` : ""
     }</div>` +
-    `<div class="tile-label">${esc(t.label)}${
-      t.title && opts.notes ? note(t.title, opts.notes, t.label) : ""
+    /* With a scope the tile's LABEL is the note's trigger: no glyph beside it. */
+    `<div class="tile-label">${
+      t.title && opts.notes ? noteLabel(t.label, t.title, opts.notes, t.label) : esc(t.label)
     }</div>` +
     (t.title && !opts.notes ? `<span class="visually-hidden">${esc(t.title)}</span>` : "") +
     `</div>`;
@@ -1977,25 +2284,29 @@ export function tierCKey(issuerName: string, titleOfClass: string | null | undef
     pre-escaped markup (a link) kept after the line. */
 export function cardFoot(o: { short: string; full: string; scope: string; key: string; extraHtml?: string }): string {
   const clauses = o.full.split(/\s+[·—;]\s+|;\s+/).filter((c) => c.trim() !== "").length;
-  const more =
+  /* DESIGN-POLISH M1: the short line IS the note's label trigger, so a card
+     foot shows no glyph; a longer explanation keeps its disclosure. Either way
+     the full text stays in the DOM. */
+  const line =
     clauses > 2
-      ? `<details class="card-foot-more"><summary>How this is computed</summary><p>${esc(o.full)}</p></details>`
-      : note(o.full, { scope: o.scope }, o.key);
-  return `<div class="card-foot"><span>${esc(o.short)}</span>${more}${o.extraHtml ?? ""}</div>`;
+      ? `<span>${esc(o.short)}</span><details class="card-foot-more"><summary>How this is computed</summary><p>${esc(o.full)}</p></details>`
+      : noteLabel(o.short, o.full, { scope: o.scope }, o.key);
+  return `<div class="card-foot">${line}${o.extraHtml ?? ""}</div>`;
 }
 
 /** R22: column headers read in full words at ≥900 px. The old abbreviation is
     kept only below 900 px (CSS `.th-abbr`), hidden from assistive technology,
     which always reads the full word. */
+/* Keyed by MARK-FREE labels (DESIGN-POLISH M1, R2): a column's mark is split
+   out of its label and hung in the mark slot, so the label edge is measurable
+   and one abbreviation serves the marked and the unmarked form alike. */
 export const HEADER_ABBREVIATIONS: Readonly<Record<string, string>> = {
   "Source": "Rcpt",
   "Trades": "Txns",
-  "Trades †": "Txns †",
-  "Trades†": "Txns†",
-  "Purchases †": "Purch. †",
+  "Purchases": "Purch.",
   "Position change": "Δ Pos",
   "Amount range": "Interval",
-  "Gross bought ·§": "Gross purch ·§",
+  "Gross bought": "Gross purch",
 };
 
 export function thLabelHtml(label: string): string {
@@ -2003,5 +2314,71 @@ export function thLabelHtml(label: string): string {
   return abbr
     ? `<span class="th-full">${esc(label)}</span><span class="th-abbr" aria-hidden="true">${esc(abbr)}</span>`
     : esc(label);
+}
+
+/** One ledger header cell (DESIGN-POLISH M1, R2/R6). Every table header is
+    built here so the four rules cannot drift between renderers:
+      - the column's ROLE classes ride on the `<th>` (`c-num` right-aligns the
+        label over its digits);
+      - a mark embedded in the label is split out and HUNG in the mark slot
+        (`.hang`), so the label edge is the alignment edge;
+      - a sortable header is a `.th-sort` button plus the `.sort-caret` span,
+        and its note is a MARK trigger (never a label trigger inside a sort
+        button); an unsortable header's note is its LABEL trigger;
+      - a right-aligned column that carries a mark or a caret reserves the slot
+        (`has-marks`); its cells take the class too (the renderer adds it). */
+export interface ThOpts {
+  label: string;
+  /** role classes, e.g. "c-num", "c-flex c-member" */
+  cls?: string;
+  /** the column's mark when it is not embedded in `label` */
+  mark?: string | null;
+  /** the header's explanation, PRE-ESCAPED html */
+  noteHtml?: string | null;
+  notes?: NoteCtx;
+  noteKey?: string;
+  /** e.g. { attr: "data-congress-sort", key: "txns", state: "none", extra: ' data-congress-dir="desc"' } */
+  sort?: { attr: string; key: string; state: "ascending" | "descending" | "none"; extra?: string } | null;
+  /** extra attributes on the `<th>` */
+  attrs?: string;
+  /** the FIXED order of a table that does not re-sort: the header states it
+      with `aria-sort` and the same caret span, never a "▾" typed into the label */
+  order?: "ascending" | "descending";
+}
+
+export function thHtml(o: ThOpts): string {
+  const split = o.mark === undefined ? splitLabelMark(o.label) : { text: o.label, mark: o.mark };
+  const text = split.text;
+  const mark = split.mark;
+  const labelHtml = thLabelHtml(text);
+  const numeric = /(?:^|\s)c-num(?:\s|$)/.test(o.cls ?? "");
+  const hasNote = !!(o.noteHtml && o.notes);
+  const key = o.noteKey ?? o.sort?.key ?? text;
+  let inner: string;
+  if (o.sort) {
+    inner =
+      `<button class="th-sort" type="button">${labelHtml}</button>` +
+      SORT_CARET +
+      (hasNote
+        ? noteFromHtml(o.noteHtml!, o.notes!, key, { trigger: "mark", textHtml: esc(mark ?? "ⓘ"), name: text })
+        : mark
+          ? hangMark(mark)
+          : "");
+  } else if (hasNote) {
+    inner =
+      noteFromHtml(o.noteHtml!, o.notes!, key, { trigger: "label", textHtml: labelHtml, name: text }) +
+      (o.order ? SORT_CARET : "") +
+      (mark ? hangMark(mark) : "");
+  } else {
+    inner = labelHtml + (o.order ? SORT_CARET : "") + (mark ? hangMark(mark) : "");
+  }
+  const marked = numeric && (!!o.sort || !!mark || !!o.order);
+  const cls = [o.cls ?? "", marked && !/(?:^|\s)has-marks(?:\s|$)/.test(o.cls ?? "") ? "has-marks" : ""].filter(Boolean).join(" ").trim();
+  const sortAttrs = o.sort
+    ? ` ${o.sort.attr}="${esc(o.sort.key)}"${o.sort.extra ?? ""} aria-sort="${o.sort.state}"`
+    : o.order
+      ? ` aria-sort="${o.order}"`
+      : "";
+  return `<th scope="col"${cls ? ` class="${cls}"` : ""}${sortAttrs}${o.attrs ?? ""}>${inner}</th>`;
 }
 

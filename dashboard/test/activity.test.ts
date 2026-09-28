@@ -706,11 +706,15 @@ test("the feed states how much of the ordered set it shows, and where the rest i
      server. They are split along the line that decides whether expanding
      retracts them — the render bound is retractable, the publication bound
      never is — so this asserts each in its own element. */
+  /* The render-bound count takes the range grammar (DESIGN-POLISH M1, R8, V1
+     NEW-2). Its total is THIS PAGE's list, not the ordered set, so it is
+     definite and names the bound — "largest" over the first file's rows. */
   assert.match(
     html,
-    /<span class="compact-bound-count">Showing the first 10 of the 50 rows on this page/,
+    /<span class="compact-bound-count">1–10 of the 50 largest changes shown here<\/span>/,
     "the render bound, visible, in the clause expanding is allowed to retract",
   );
+  assert.doesNotMatch(html, /1–10 of 50 changes/, "never the bare count, which would read as the set's size");
   assert.match(
     html,
     /<span class="compact-bound-extra">[^<]*These rows are the largest of 300 ordered change records/,
@@ -724,6 +728,22 @@ test("the feed states how much of the ordered set it shows, and where the rest i
   const bound = html.slice(html.indexOf('<p class="compact-bound">'));
   assert.match(bound.slice(0, bound.indexOf("</p>")), /^(?:(?!hidden).)*$/s,
     "no clause of the bound ships hidden — the button below it is the only hidden thing");
+});
+
+/* V1 NEW-2 (DESIGN-POLISH M1, T1.4): over the notable rows the count's noun is
+   chosen by the same `notable` value that chose the rows, so the two cannot
+   describe different lists. Control: the first file's noun over notable rows. */
+test("the notable feed's count names its own bound — newest changes by notable managers", () => {
+  const records = series(300);
+  const p = paginateActivity(records, FILINGS);
+  const notableCiks = new Set(records.slice(0, 80).map((r) => r.cik));
+  const html = activityFeedHtml(
+    { present: true, reason: null, filings: FILINGS, pagination: p, records },
+    { rowLimit: 50, reference: true, notableCiks },
+  );
+  const count = /<span class="compact-bound-count">([^<]*)<\/span>/.exec(html)?.[1];
+  assert.equal(count, "1–10 of the 50 newest changes by notable managers shown here");
+  assert.notEqual(count, "1–10 of the 50 largest changes shown here");
 });
 
 test("each absence state renders as itself — the reader learns WHICH one", () => {

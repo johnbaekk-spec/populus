@@ -1,7 +1,7 @@
 /* ---------- shared component chrome ---------- */
 
 .crumb {
-  font: 400 11.5px var(--mono);
+  font: 400 var(--fs-cell) var(--mono);
   color: var(--ink3);
 }
 .crumb a {
@@ -9,13 +9,13 @@
   text-decoration: none;
 }
 .mono-note {
-  font: 400 11px/1.6 var(--mono);
+  font: 400 var(--fs-note)/1.6 var(--mono);
   color: var(--ink3);
 }
 .mono-note a { font: inherit; }
 .mono-id {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--ink3);
 }
 .mono-ticker {
@@ -23,7 +23,7 @@
   font-weight: 600;
 }
 .fn-ref {
-  font: 600 10px var(--sans);
+  font: 600 var(--fs-meta) var(--sans);
   color: var(--accent);
   text-decoration: none;
   vertical-align: super;
@@ -57,7 +57,7 @@
 .flag-provenance > .flag-raw {
   display: block;
   margin-top: 3px;
-  font-size: 9.5px;
+  font-size: var(--fs-label);
   color: var(--ink3);
   white-space: normal;
 }
@@ -67,7 +67,7 @@
   border-top: 1px dashed var(--rule2);
   border-bottom: 1px dashed var(--rule2);
   padding: 11px 16px;
-  font: 400 12px/1.6 var(--sans);
+  font: 400 var(--fs-small)/1.6 var(--sans);
   color: var(--ink2);
   background: color-mix(in oklab, var(--rule) 30%, var(--raised));
 }
@@ -78,7 +78,7 @@
 
 /* entity watch star */
 .watch-btn {
-  font: 400 15px var(--sans);
+  font: 400 var(--fs-lede) var(--sans);
   color: var(--ink3);
   border: 1px solid var(--rule2);
   border-radius: 2px;
@@ -90,7 +90,7 @@
   color: var(--amber);
 }
 .watch-note {
-  font: 500 11px var(--sans);
+  font: 500 var(--fs-note) var(--sans);
   color: var(--ink2);
   margin-left: 4px;
 }
@@ -108,15 +108,15 @@
 }
 .entity-head-copy { min-width: 0; }
 .entity-title {
-  font: 600 36px/1.1 var(--serif);
+  font: 600 var(--fs-display)/1.1 var(--serif);
   margin: 0 0 8px;
 }
 .entity-subline {
-  font: 500 14px var(--sans);
+  font: 500 var(--fs-brand) var(--sans);
   color: var(--ink2);
 }
 .entity-lede {
-  font: 400 13px/1.6 var(--sans);
+  font: 400 var(--fs-body)/1.6 var(--sans);
   color: var(--ink2);
   margin: 12px 0 0;
   max-width: 700px;
@@ -125,7 +125,7 @@
   padding: 14px 18px;
   min-width: 104px;
 }
-.tiles-entity .tile-value { font-size: 20px; }
+.tiles-entity .tile-value { font-size: var(--fs-display); }
 .entity-grid {
   display: grid;
   grid-template-columns: 1.5fr 1fr;
@@ -148,20 +148,20 @@
   flex-wrap: wrap;
 }
 .section-h {
-  font: 600 16px var(--serif);
+  font: 600 var(--fs-body) var(--serif);
   margin: 0;
 }
 .section-h2 {
-  font: 600 23px/1.2 var(--serif);
+  font: 600 var(--fs-heading)/1.2 var(--serif);
   margin: 0;
 }
 .panel-note,
 .section-note-inline {
-  font: 400 10.5px var(--mono);
+  font: 400 var(--fs-control) var(--mono);
   color: var(--ink3);
 }
 .section-note {
-  font: 400 12.5px/1.6 var(--sans);
+  font: 400 var(--fs-name)/1.6 var(--sans);
   color: var(--ink2);
   padding: 8px 16px;
   margin: 0;
@@ -175,7 +175,7 @@
   padding-bottom: 8px;
   flex-wrap: wrap;
 }
-.section-link { font: 500 12.5px var(--sans); }
+.section-link { font: 500 var(--fs-name) var(--sans); }
 .page-section { margin-top: 40px; }
 .card-foot {
   display: flex;
@@ -183,7 +183,7 @@
   gap: 12px;
   padding: 9px 16px;
   border-top: 1px solid var(--rule);
-  font: 400 10.5px var(--mono);
+  font: 400 var(--fs-control) var(--mono);
   color: var(--ink3);
 }
 .card-foot a { font: inherit; }
@@ -200,7 +200,7 @@
 }
 .section-index a,
 .section-index .si-soon {
-  font: 500 12.5px var(--sans);
+  font: 500 var(--fs-name) var(--sans);
   text-decoration: none;
   color: var(--ink2);
   padding: 10px 20px;
@@ -217,12 +217,12 @@
   border-bottom: 2px solid var(--accent);
 }
 .si-n {
-  font: 400 10.5px var(--mono);
+  font: 400 var(--fs-control) var(--mono);
   color: var(--ink3);
 }
 .si-soon { color: var(--ink3); }
 .si-asof {
-  font: 400 11px var(--mono);
+  font: 400 var(--fs-note) var(--mono);
   color: var(--ink3);
   margin-left: auto;
   padding: 12px 16px;
@@ -230,9 +230,24 @@
 }
 .nav-shell .badge-soon { margin-left: 2px; }
 
-/* ---------- real tables ---------- */
+/* ================================================================ ledger:begin
+   DESIGN-POLISH M1 — the ONE ledger construction (docs/design/DESIGN-POLISH-PLAN.md,
+   Architecture A). Every data table on the site renders through the rules between
+   this marker and the end marker: `.etable` (and `.etable-compact`), the reference
+   feed's grid rows, `.si-table`, the holdings and holders tables, the home tiles and
+   the overlap table. Every typography and padding declaration for a table cell lives
+   in this region and nowhere else: `test/ledger-system.test.ts` walks the whole
+   cascade (`baseStylesheet()`, all nine files in import order) and fails on one
+   outside these markers. The one allowlisted exception is `/watchlist/`'s classic
+   feed, scoped `.feed-table:not(.reference-feed)` in congress-feed.css (declared
+   debt). The tokens are in foundation.css. */
+
+/* ---------- containers (carried forward from the real-tables rules) ---------- */
 
 .table-scroll {
+  /* its own stacking context: inside it a sticky head sits above the rows' note
+     triggers; outside it a band-head trigger's hit area reaches over the table */
+  isolation: isolate;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   /* The scroll cue at EVERY width, not only inside the 720px fold.
@@ -245,112 +260,1010 @@
      content and sit over the shadows when the table is at rest against an
      edge, so a shadow is visible only while there is more table in that
      direction. A plain always-on fade would announce overflow that is not
-     there, which is a different lie. */
+     there, which is a different lie. The cover layers take the page colour,
+     because ledger rows sit on the page, so at rest they paint nothing. */
   background:
-    linear-gradient(to right, var(--raised) 30%, rgba(0, 0, 0, 0)) left center local,
-    linear-gradient(to left, var(--raised) 30%, rgba(0, 0, 0, 0)) right center local,
+    linear-gradient(to right, var(--paper) 30%, rgba(0, 0, 0, 0)) left center local,
+    linear-gradient(to left, var(--paper) 30%, rgba(0, 0, 0, 0)) right center local,
     radial-gradient(farthest-side at 0 50%, var(--scroll-shadow, rgba(0, 0, 0, 0.16)), rgba(0, 0, 0, 0)) left center scroll,
     radial-gradient(farthest-side at 100% 50%, var(--scroll-shadow, rgba(0, 0, 0, 0.16)), rgba(0, 0, 0, 0)) right center scroll;
   background-repeat: no-repeat;
   background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
+  /* The gutter the table's first and last cells take. Zero where the table sits
+     flush in its container (home tiles, side-by-side grids, the watchlist). */
+  --gutter-l: 0px;
+  --gutter-r: 0px;
+}
+/* Inside a band (a band cell, or a full-width panel on a design or entity page)
+   the table reaches the band's edges: row rules, hover and the row edge run the
+   full band width while the first cell's text sits on the gutter. */
+:is(.design-page, .entity-page) .table-scroll {
+  --gutter-l: var(--gutter);
+  --gutter-r: var(--gutter);
+  margin-left: calc(-1 * var(--gutter-l));
+  margin-right: calc(-1 * var(--gutter-r));
+}
+:is(.design-page, .entity-page) .entity-grid .table-scroll,
+.table-scroll .table-scroll {
+  --gutter-l: 0px;
+  --gutter-r: 0px;
+  margin-left: 0;
+  margin-right: 0;
 }
 /* The identity column stays put while the numbers scroll, at every width.
-   This was fold-only; above 720px a scrolled table lost the row's identity. */
+   This was fold-only; above 720px a scrolled table lost the row's identity.
+   Its background is the page's, because ledger rows sit on the page, so it
+   paints nothing at rest; the design draws no rule after the first column. */
 .etable[data-sticky-first] th:first-child,
 .etable[data-sticky-first] td:first-child {
   position: sticky;
   left: 0;
-  background: var(--raised);
-  border-right: 1px solid var(--rule2);
+  background: var(--paper);
   z-index: 2;
 }
-.etable {
+.etable[data-sticky-first] tbody tr:hover > td:first-child {
+  background: var(--raised);
+}
+
+/* ---------- the table, the header row, the body row ---------- */
+
+table:is(.etable, .feed-table.reference-feed) {
   width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
+  font: 500 var(--fs-cell)/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
 }
-.etable th {
-  font: 600 10px var(--sans);
+.etable > thead > tr > th,
+.reference-feed > thead > tr > th {
+  font: 600 var(--fs-label)/1 var(--mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ink3);
+  color: var(--ink-label);
   text-align: left;
-  padding: 9px 8px 7px;
-  border-bottom: 1.5px solid var(--rule2);
   white-space: nowrap;
+  vertical-align: bottom;
 }
-.etable td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--rule);
-  font: 400 12.5px var(--sans);
+.etable > thead > tr > th {
+  padding: var(--head-pad-t) var(--col-half) var(--head-pad-b);
+  border-bottom: 1px solid var(--rule-head);
+}
+.etable > tbody > tr > td {
+  padding: var(--row-pad-y) var(--col-half);
+  border-bottom: 1px solid var(--rule-row);
+  white-space: nowrap;
   vertical-align: middle;
 }
-.etable tbody tr:hover {
-  background: color-mix(in oklab, var(--accent) 4%, var(--raised));
+.etable tbody tr:hover,
+.reference-feed .reference-row:hover {
+  background: var(--raised);
 }
-.etable .c-filed,
-.etable .c-num {
-  font-variant-numeric: tabular-nums;
+.etable a,
+.reference-feed a {
+  text-decoration: none;
+}
+/* Gutters: the first cell's text on the band gutter, the last cell's text at
+   band right − gutter. Child combinators, so a table nested in a cell (the
+   holdings group expander) is never given a band gutter. */
+/* `:not([data-multiline])` on every cell-padding rule here: the rule book is a
+   declared prose table whose ROW carries the gutters (its cells reset to zero),
+   and these out-rank that reset (review C-7). */
+.table-scroll > table:not([data-multiline]) > :is(thead, tbody, tfoot) > tr > :first-child {
+  padding-left: var(--gutter-l);
+}
+.table-scroll > table:not([data-multiline]) > :is(thead, tbody, tfoot) > tr > :last-child {
+  padding-right: var(--gutter-r);
+}
+/* A row carrying a 3px kind edge needs its first text clear of the edge even
+   where the table has no band gutter. */
+.table-scroll > table:not([data-multiline]) > tbody > tr[data-edge] > td:first-child {
+  padding-left: max(var(--gutter-l), 11px);
+}
+
+/* ---------- column roles ---------- */
+
+/* Numbers, amounts and dates: right-aligned in header AND body, tabular, never
+   clipped. A 16px lead (10px compact) separates them from the column before. */
+.etable :is(th, td).c-num {
+  text-align: right;
   white-space: nowrap;
 }
-.etable .c-num { text-align: right; }
+.etable:not([data-multiline]) > * > tr > .c-num:not(:first-child) {
+  padding-left: var(--num-lead);
+}
+.etable-compact {
+  --num-lead: 10px;
+}
+/* The flexible column (D-1): exactly one per table absorbs the band's spare
+   width, so nothing else stretches. */
+.etable th.c-flex {
+  width: 100%;
+}
+.etable td.c-flex {
+  max-width: 0;
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+}
+/* Names (Plex 500 12.5px, links in the accent). */
+/* 1.1, not 1.2: a 12.5px name on a 15px line made every name row 31px; at
+   13.75px it sits on the same line as the 11.5px figures (30px rows). */
+.etable td:is(.c-member, .c-filer, .c-issuer, .c-pos) {
+  font: 500 var(--fs-name)/1.1 var(--sans);
+}
+.etable td:is(.c-member, .c-filer, .c-issuer, .c-pos) a {
+  color: var(--accent);
+}
+.etable td:is(.c-member, .c-filer, .c-issuer, .c-pos):not(.c-flex) {
+  max-width: 220px;
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+}
+.etable-compact td:is(.c-member, .c-filer, .c-issuer, .c-pos):not(.c-flex) {
+  max-width: 150px;
+}
+/* Ticker. */
+.etable td.c-ticker {
+  font-weight: 600;
+}
+.etable td.c-ticker a {
+  color: var(--ink);
+}
+/* Secondary text: asset, issuer as qualifier, class, filer as qualifier. The
+   full string stays in the DOM, so the accessible name is never cut. */
+.etable td.c-secondary,
+.etable td .c-secondary {
+  font: 400 var(--fs-note)/1.2 var(--sans);
+  color: var(--ink3);
+}
+.etable td.c-secondary {
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+}
+.etable td.c-secondary:not(.c-flex) {
+  max-width: 380px;
+}
+/* Kind: a caps word, coloured by the row's kind; no pill. */
+.etable :is(th, td).c-kind {
+  white-space: nowrap;
+}
+.etable td.c-kind {
+  font: 600 var(--fs-meta)/1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kind-color, var(--ink2));
+}
+/* Receipt. */
+.etable :is(th, td).c-src {
+  text-align: right;
+}
+.etable td.c-src {
+  font-size: var(--fs-control);
+}
+.etable td.c-src .cell-src {
+  display: inline;
+}
+.etable .cell-src a,
+.reference-feed .cell-src a,
+.cell-src.rail-src a {
+  font: 500 var(--fs-control)/1.2 var(--mono);
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rule2);
+}
+/* Flags. */
+.etable td.c-flags {
+  white-space: nowrap;
+}
+/* A bar column keeps room for its bar. */
+.etable :is(th, td).c-bar {
+  min-width: 150px;
+}
+/* Party tag. */
+.etable .aff,
+.reference-feed .aff {
+  font: 500 var(--fs-label)/1 var(--mono);
+  letter-spacing: 0.04em;
+  margin-left: 5px;
+}
+/* Carried forward: the row-level display rules the old real-tables block held. */
 .etable .c-muted { color: var(--ink3); }
 .etable .c-strong { font-weight: 600; }
-.etable .c-buy { color: var(--buy); }
-.etable .c-sell { color: var(--sell); }
-.etable .c-ticker a,
-.etable .c-filer a {
-  font: 600 12.5px var(--mono);
-  text-decoration: none;
-}
-.etable .c-filer a {
-  font: 600 13px var(--sans);
-  color: var(--ink);
-}
-.etable .c-member a {
-  font: 600 12.5px var(--sans);
-  text-decoration: none;
-  color: var(--ink);
-}
-/* `.c-ticker` joins this group. It renders the same `assetNameCell` as the
-   feed, so an undisclosed ticker puts a full asset name in a column that had no
-   bound at all — in an auto-layout table that widens the column and pushes the
-   decisive columns out of view, which is the hidden-column defect arriving by another
-   route. */
-.etable .c-member,
-.etable .c-filer,
-.etable .c-pos,
-.etable .c-ticker {
-  max-width: 340px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.etable .c-side { font-weight: 600; white-space: nowrap; }
-.etable .c-side.buy { color: var(--buy); }
-.etable .c-side.sell { color: var(--sell); }
-.etable .c-side.neutral { color: var(--ink2); }
+.etable .c-buy { color: var(--kind-buy-text); }
+.etable .c-sell { color: var(--kind-sell-text); }
+.etable .c-side { white-space: nowrap; }
+.etable .c-side.buy { color: var(--kind-buy-text); }
+.etable .c-side.sell { color: var(--kind-sell-text); }
+.etable .c-side.neutral { color: var(--kind-exch-text); }
 .etable .c-side.unknown { color: var(--ink3); }
-.etable .c-amount {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
+.etable .c-amount { text-align: right; white-space: nowrap; }
 .etable .c-amount.unknown { color: var(--ink3); }
-.etable .c-range { min-width: 150px; }
 .etable .c-range .band { display: inline-block; vertical-align: middle; margin-right: 6px; }
 .etable .c-traded .cell-traded { display: inline; }
-.etable .c-src { text-align: right; }
 .etable .c-src .cell-src { display: inline; }
 .etable .c-flags { white-space: nowrap; }
-.etable-compact td { padding: 5px 8px; font-size: 12px; }
-.table-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  gap: 16px;
-  flex-wrap: wrap;
+/* Empty-state rows are prose: they wrap. */
+.etable > tbody > tr:not(.unranked-sep) > td[colspan] {
+  white-space: normal;
+  font: 400 var(--fs-small)/1.5 var(--sans);
+  color: var(--ink3);
 }
+/* The stated absence inside a ranking: rows a column cannot rank. */
+.etable .unranked-sep td {
+  font: 600 var(--fs-meta)/1.4 var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-top: 1px dashed var(--rule);
+  white-space: normal;
+}
+.etable .mix-bucket td { color: var(--ink3); font-style: italic; }
+.etable td sup,
+.reference-feed td sup {
+  font-size: var(--fs-meta);
+  line-height: 0;
+}
+.etable td.c-traded { font-size: var(--fs-note); }
+.etable .asset-name {
+  font: 400 var(--fs-note)/1.2 var(--sans);
+  color: var(--ink3);
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* ---------- the row edge (tr[data-edge]) ----------
+   A 3px layout-neutral edge on the first cell, coloured by the row's kind; the
+   same attribute colours the kind word. `data-kind` stays what it already is
+   (the signal kind, the table kind) and is never an edge hook (G-6). */
+tr:is([data-edge="buy"], [data-edge="add"], [data-edge="netbuy"]) { --row-edge: var(--kind-buy-edge); --kind-color: var(--kind-buy-text); }
+tr:is([data-edge="sell"], [data-edge="exit"], [data-edge="netsell"]) { --row-edge: var(--kind-sell-edge); --kind-color: var(--kind-sell-text); }
+tr[data-edge="exch"] { --row-edge: var(--kind-exch-edge); --kind-color: var(--kind-exch-text); }
+tr[data-edge="late"] { --row-edge: var(--kind-late-edge); --kind-color: var(--kind-late-text); }
+tr[data-edge="new"] { --row-edge: var(--kind-new-edge); --kind-color: var(--kind-new-text); }
+tr[data-edge="trim"] { --row-edge: var(--kind-trim-edge); --kind-color: var(--kind-trim-text); }
+tr:is([data-edge="nochange"], [data-edge="flat"]) { --row-edge: var(--kind-nochange-edge); --kind-color: var(--kind-nochange-text); }
+tr[data-edge="noprior"] { --row-edge: var(--kind-noprior-edge); --kind-color: var(--kind-noprior-text); }
+tr:is([data-edge="family-behaviour"], [data-edge="family-structure"]) { --row-edge: var(--kind-behaviour-edge); --kind-color: var(--kind-behaviour-text); }
+tr[data-edge="family-novelty"] { --row-edge: var(--kind-novelty-edge); --kind-color: var(--kind-novelty-text); }
+tr:is([data-edge="family-compliance"], [data-edge="family-context"]) { --row-edge: var(--kind-compliance-edge); --kind-color: var(--kind-compliance-text); }
+tr[data-edge="family-withheld"] { --row-edge: var(--kind-withheld-edge); --kind-color: var(--kind-withheld-text); }
+.etable tr[data-edge] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--row-edge, transparent);
+}
+/* The feed's first cell reaches back over the row's gutter padding, so its
+   edge sits on the band edge and its text on the gutter — the same geometry
+   as the ledger tables' first cell. */
+.reference-feed :is(.reference-row, .reference-paper) > td:first-child {
+  margin-left: calc(-1 * var(--gutter));
+  padding-left: var(--gutter);
+}
+.reference-feed tr.reference-row[data-edge] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--row-edge, transparent);
+}
+
+/* ---------- marks and the sort caret ----------
+   A column that carries marks (§ † ‡ ≈ ¶) or a sort caret reserves a 14px slot
+   on its right, in the header and the cells. Digits and labels end at the
+   slot's left edge; the mark hangs in the slot with zero inline advance, so it
+   can never move the alignment edge. */
+.etable:not([data-multiline]) > * > tr > .has-marks.c-num:not(:last-child) {
+  padding-right: calc(var(--col-half) + var(--mark-slot));
+}
+.table-scroll > table:not([data-multiline]) > :is(thead, tbody) > tr > .has-marks.c-num:last-child {
+  padding-right: max(var(--gutter-r), var(--mark-slot));
+}
+.hang,
+.sort-caret,
+:is(th, td) .note:has(> .note-mark) {
+  display: inline-block;
+  width: 0;
+  overflow: visible;
+  white-space: nowrap;
+  text-align: left;
+  vertical-align: baseline;
+}
+.hang {
+  text-indent: 2px;
+  color: var(--ink-meta);
+  letter-spacing: 0;
+}
+.sort-caret {
+  text-indent: 2px;
+  color: var(--accent);
+  letter-spacing: 0;
+  text-transform: none;
+}
+th[aria-sort="descending"] .sort-caret::before { content: "▾"; }
+th[aria-sort="ascending"] .sort-caret::before { content: "▴"; }
+/* A mark trigger hangs like a mark (a label trigger never does: its text is
+   the label, and it keeps its width). With the caret showing, a mark trigger
+   in the same slot steps past it — this rule must follow the 2px one. */
+:is(th, td) .note:has(> .note-mark) > .note-mark {
+  margin-left: 2px;
+}
+th:is([aria-sort="ascending"], [aria-sort="descending"]) .note:has(> .note-mark) > .note-mark {
+  margin-left: 8px;
+}
+
+/* ---------- sortable headers ----------
+   The base reset, then the adopter rule after it (table-sort.test.ts pins the
+   order). The hit square is the layout-neutral ::before in the controls
+   section below; the button box is its label, so a right-aligned label ends
+   exactly on its digits. The active sort header's label takes the accent. */
+.th-sort {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+th[data-sort] .th-sort,
+th[data-inst-sort] .th-sort,
+th[data-congress-sort] .th-sort,
+th[data-feed-sort] .th-sort,
+th[data-adds-sort] .th-sort {
+  text-align: inherit;
+}
+th:is([aria-sort="ascending"], [aria-sort="descending"]) .th-sort,
+th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
+  color: var(--accent);
+}
+
+/* ---------- inline pieces inside a single-line ledger row ----------
+   Nothing inside a cell may make its line taller than the cell's own text line
+   (G8: 30px rows at a fine pointer): a chip, a mono note or a late lag sits on
+   the text line at the row's line height. */
+.etable td :is(.qoq-chip, .nc-chip, .flag, .mono-note, .aff, .owner-note, .id-chip, span.mgr-chip, .si-stamp) {
+  line-height: 1;
+}
+.etable td .design-holding-name { vertical-align: top; }
+/* a footnote mark after a chip stays raised without raising the line */
+.etable td :is(.fn-ref, sup) { line-height: 0; }
+.etable td :is(.qoq-chip, .nc-chip) {
+  display: inline;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* The late lag is its gold text, as in the feed; a padded chip would push the
+   lag's last digit off the numeric column's edge. */
+.etable td .lag-late {
+  background: transparent;
+  padding: 0;
+  display: inline;
+}
+
+/* ---------- carried forward: row-level display rules ---------- */
+
+/* The diverging bar's direction words: visually hidden in the rankings (kept
+   in the accessibility tree), dropped in the member's net rows, whose NET cell
+   states the direction. */
+.design-rankings .net-dir { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.design-net-row .net-dir { display: none; }
+.design-rankings .c-net:has(.net-acc) { color: var(--kind-new-text); }
+.design-rankings .c-net:has(.net-dis) { color: var(--kind-sell-text); }
+.reference-net-bound.positive { color: var(--kind-new-text); }
+.reference-net-bound.negative { color: var(--kind-sell-text); }
+/* The feed's dates: the year is visually hidden and spoken; the lag sits inline. */
+.design-dates { display: block; }
+/* Full-word headers at ≥900px; the abbreviation only below. The full word
+   stays in the accessibility tree at every width (clipped, never display:none). */
+.th-abbr { display: none; }
+
+/* ---------- bars in cells (bar tokens; H-18 lifts the sell fill) ---------- */
+
+.design-diverging { display: block; position: relative; height: 3px; min-width: 90px; background: var(--bar-track); }
+.design-diverging:after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--bar-tick); }
+.design-diverging > span { position: absolute; height: 100%; background: var(--bar-buy); }
+.design-diverging > .sale { background: var(--bar-sell); }
+.design-rankings .design-diverging { min-width: 0; }
+.design-cluster-bar:after { display: none; }
+.design-cluster-bar > span { left: 0; }
+.design-cluster-bar > .sale { left: auto; right: 0; }
+.design-weight-bar { display: block; position: relative; height: 3px; min-width: 90px; background: var(--bar-track); }
+.design-weight-bar > span { position: absolute; inset: 0 auto 0 0; background: var(--bar-buy); }
+.book-track { display: block; position: relative; height: 4px; background: var(--bar-track); }
+.book-track > span { display: block; height: 100%; background: var(--bar-buy); }
+/* the hot (≥85%) segment is the gold bar token: the late EDGE token is a row
+   rule colour and reads 2.86:1 on the track (review C-8) */
+.book-track > .book-hot { background: var(--bar-gold); }
+.book-median { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--amber); opacity: .7; }
+.design-holding-row .book-track { min-width: 65px; }
+
+/* ---------- the reference feed (grid rows) ----------
+   The feed keeps its grid-on-`tr` construction; its tracks equal the design's
+   and the canvas-row test pins them. Cells take no side padding: the row grid's
+   12px column-gap is the gap. Every hook here is scoped to `.reference-feed`,
+   because /watchlist/ uses `.feed-table` without it. */
+.reference-feed .reference-head,
+.reference-feed .reference-row,
+.reference-feed .reference-paper {
+  display: grid;
+  align-items: center;
+  grid-template-columns: 70px minmax(150px, 1.1fr) 76px minmax(120px, 1fr) 106px 180px 146px 48px;
+  column-gap: 12px;
+  padding-left: 0;
+  padding-right: 0;
+}
+.reference-feed .reference-head {
+  align-items: end;
+  padding-top: var(--head-pad-t);
+  padding-bottom: var(--head-pad-b);
+  border-bottom: 1px solid var(--rule-head);
+}
+.reference-feed .reference-row,
+.reference-feed .reference-paper {
+  /* 30px, or the hit square under a coarse pointer (rows grow to --hit-min) */
+  min-height: max(30px, var(--hit-min));
+  border-bottom: 1px solid var(--rule-row);
+  background: transparent;
+}
+/* A paper filing: one cell spans the ticker, asset, amount and range tracks. */
+.reference-feed .reference-paper > .paper-main {
+  grid-column: span 4;
+  display: block;
+  font: 400 var(--fs-note)/1.2 var(--sans);
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+}
+.reference-feed .reference-paper > .cell-side { --kind-color: var(--ink3); }
+.reference-feed .reference-paper > .cell-traded { text-align: right; white-space: nowrap; }
+.reference-feed .reference-row .cell { min-width: 0; }
+.reference-feed > * > tr > :is(th, td) {
+  padding: 0;
+  border: 0;
+}
+.reference-feed > thead > tr > th:is(.c-num, .c-src) { text-align: right; }
+.reference-feed .cell-side {
+  font: 600 var(--fs-meta)/1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kind-color, var(--ink2));
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.reference-feed .cell-member {
+  font: 500 var(--fs-name)/1.2 var(--sans);
+  white-space: nowrap;
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+}
+.reference-feed .cell-member a { color: var(--accent); }
+.reference-feed .cell-ticker {
+  font: 600 var(--fs-cell)/1.2 var(--mono);
+  white-space: nowrap;
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  text-overflow: ellipsis;
+}
+.reference-feed .cell-ticker a { color: var(--ink); }
+.reference-feed .cell-ticker .none { color: var(--ink3); }
+.reference-feed .cell-asset {
+  font: 400 var(--fs-note)/1.2 var(--sans);
+  color: var(--ink3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.reference-feed .cell-amount {
+  font: 500 var(--fs-cell)/1.2 var(--mono);
+  text-align: right;
+  white-space: nowrap;
+}
+.reference-feed .cell-amount.unknown { color: var(--ink3); }
+/* The range cell holds the band and the row's visible flag chips (H-17). A
+   chip is never clipped: the band gives way first (down to 16px), and only a
+   row whose chips outrun the whole track wraps them onto a second line. The
+   band's BASIS is that 16px floor: a wrap is decided on the basis, so a larger
+   one broke two-chip rows ("amendment pending" + "no ticker", 188px of a 200px
+   track) onto two ragged lines while the band still had room to give. */
+.reference-feed .cell-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  padding-left: 0;
+  /* clipped to the track, but each chip's hit square (its definition's
+     trigger) reaches past it, as on every truncating cell (D4) */
+  overflow: clip;
+  overflow-clip-margin: var(--hit-half);
+  position: relative;
+}
+.reference-feed .cell-range .band {
+  flex: 1 1 16px;
+  width: auto;
+  min-width: 16px;
+}
+.reference-feed .cell-range .band,
+[data-entity-table] .band {
+  height: 3px;
+  border: 0;
+  background: repeating-linear-gradient(90deg, var(--bar-tick) 0 1px, var(--bar-track) 1px 20%);
+}
+.reference-feed .band-fill,
+[data-entity-table] .band-fill { top: 0; bottom: 0; background: var(--bar-buy); }
+.reference-feed .sell .band-fill { background: var(--bar-sell); }
+.reference-feed .band-fill.open { background-image: var(--hatch); }
+/* A chip never shrinks, so it never needs its ellipsis; it hides no
+   overflow, so the hit square of the definition trigger inside it is whole. */
+.reference-feed .cell-range .flag { flex: 0 0 auto; overflow: visible; text-overflow: clip; }
+/* 10px, with the word gaps tightened, so the longest late row
+   ("12-31 → 08-13 LATE·1234d") fits the design's 140px dates track. */
+.reference-feed .cell-traded {
+  font: 500 var(--fs-meta)/1.2 var(--mono);
+  word-spacing: -2px;
+  white-space: normal;
+}
+.reference-feed .cell-traded .lag,
+.reference-feed .cell-traded .lag-late {
+  display: inline;
+  font: inherit;
+}
+.reference-feed .lag-late { background: transparent; padding: 0; }
+.reference-feed .cell-src { text-align: right; }
+.reference-watch .star-btn { font-size: var(--fs-meta); min-width: 18px; padding: 2px; }
+.reference-feed .reference-watch { opacity: 0; }
+.reference-feed .reference-row:hover .reference-watch,
+.reference-feed .reference-row:focus-within .reference-watch { opacity: 1; }
+
+/* ---------- institutional and signals cell roles ---------- */
+
+/* A surface with no rows states itself in one prose line. */
+/* Block padding only: the ledger's gutter rules give the cell its band gutter
+   (a zero side padding put the line on the band's edge). */
+.design-unavailable-message { white-space: normal; color: var(--ink3); font: 400 var(--fs-note)/1.7 var(--sans); padding-top: 18px !important; padding-bottom: 18px !important; max-width: 450px; }
+
+.c-issuer .filed-name { color: var(--ink); }
+.etable td.c-pos details.holding-group-rows { display: inline; margin-left: 8px; }
+.etable td.c-pos details.holding-group-rows > summary {
+  display: inline;
+  font: 400 var(--fs-note)/1.2 var(--sans);
+  color: var(--ink3);
+  cursor: pointer;
+}
+.etable td.c-pos details[open].holding-group-rows { display: block; margin: 6px 0 0; white-space: normal; }
+.design-holding-row .c-pos > .cell-src { display: inline-block; padding: 0; vertical-align: middle; font-size: var(--fs-control); }
+.design-directory-type { display: inline; margin-left: 8px; }
+.etable td .mgr-person { font: 400 var(--fs-note)/1.2 var(--sans); color: var(--ink3); margin-left: 6px; }
+.etable td .mono-note.filed-name { font: 400 var(--fs-note)/1.2 var(--sans); color: var(--ink3); }
+.design-newpositions .c-rank { font: 600 var(--fs-note) var(--mono); color: var(--ink3); width: 14px; }
+.design-newpositions .c-accent { color: var(--accent); font-weight: 600; }
+/* signals */
+.si-table .si-family { font: 500 var(--fs-meta) var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-meta); white-space: nowrap; }
+.si-table .si-kind { font: 600 var(--fs-meta) var(--mono); letter-spacing: .08em; white-space: nowrap; color: var(--kind-color, var(--ink2)); }
+.si-table .si-subject { font: 500 var(--fs-name)/1.2 var(--sans); }
+.si-table .si-subject a { color: var(--accent); }
+.si-table .si-ticker { font: 600 var(--fs-cell) var(--mono); color: var(--ink); }
+.si-table .si-evidence { font: 400 var(--fs-note)/1.4 var(--sans); color: var(--ink3); }
+.si-table .si-rule-text { font: 400 var(--fs-cell)/1.4 var(--sans); color: var(--ink); }
+.si-table .si-why { font: 400 var(--fs-cell)/1.4 var(--sans); color: var(--ink3); }
+.si-table .si-hits { font-weight: 600; font-family: var(--mono); }
+.si-table .si-status { font: 500 var(--fs-meta) var(--mono); letter-spacing: .06em; white-space: nowrap; }
+.si-status-active { color: var(--kind-new-text); }
+.si-status-withheld { color: var(--kind-sell-text); }
+.si-table .si-mag { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.si-table .si-when { font-family: var(--mono); color: var(--ink2); white-space: nowrap; }
+.si-lag { color: var(--ink3); }
+.si-late { color: var(--amber); font-weight: 600; }
+.si-table .si-what { white-space: nowrap; overflow: clip; overflow-clip-margin: var(--hit-half); text-overflow: ellipsis; }
+.si-table .si-what .si-kind { display: inline; margin-right: 10px; }
+.si-table .si-what details.si-expand,
+.si-table .si-what details.si-expand > summary { display: inline; }
+.si-table .si-what details.si-expand > summary {
+  font: 400 var(--fs-note)/1.2 var(--sans);
+  color: var(--ink3);
+  cursor: pointer;
+}
+.si-table .si-what details.si-expand[open] { display: block; white-space: normal; }
+.si-table .si-expand-body { font: 400 var(--fs-note)/1.5 var(--sans); margin: 4px 0 0; white-space: normal; }
+.si-table td.si-empty { white-space: normal; color: var(--ink3); font: 400 var(--fs-note)/1.6 var(--sans); padding-top: 22px; padding-bottom: 22px; }
+/* bar-list values (the lag distribution, the hit rate, the agreement rows) */
+.si-lag-name { font: 500 var(--fs-small)/1.3 var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.si-party { font: 500 var(--fs-label) var(--mono); }
+.si-lag-val { font: 600 var(--fs-small) var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.si-lag-n { font: 500 var(--fs-label) var(--mono); color: var(--ink3); }
+.si-rate dt { font: 400 var(--fs-small) var(--sans); color: var(--ink2); text-align: right; }
+.si-rate-val { font: 500 var(--fs-cell) var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
+.si-bar { position: relative; display: block; height: 3px; background: var(--bar-track); }
+.si-bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--bar-buy); }
+.si-bar-late { background: var(--bar-gold); }
+.si-fill-novelty { background: var(--kind-new-edge); }
+.si-fill-compliance, .si-fill-context { background: var(--bar-gold); }
+.agree-row { display: grid; grid-template-columns: 150px minmax(0,1fr) 130px; gap: var(--gap-list); align-items: center; height: 40px; border-bottom: 1px solid var(--rule); font: 500 var(--fs-cell)/1 var(--mono); }
+.agree-k { color: var(--ink2); font: 400 var(--fs-small) var(--sans); }
+.agree-v { text-align: right; font-weight: 600; }
+
+/* ---------- the rule book: a declared prose table (D-5) ----------
+   Built as the feed is: each `tr`, the head row included, is a grid (a <table>
+   cannot take grid tracks), with the design's tracks and a 14px column gap.
+   Its cells wrap; it carries no flexible column. */
+table[data-multiline] > :is(thead, tbody) { display: block; }
+table[data-multiline] > * > tr {
+  display: grid;
+  grid-template-columns: 110px 96px minmax(0, 1.1fr) minmax(0, 1fr) 56px 100px;
+  column-gap: var(--gap-list);
+  align-items: baseline;
+  padding: 8px var(--gutter-r) 8px var(--gutter-l);
+  border-bottom: 1px solid var(--rule-row);
+}
+table[data-multiline] > thead > tr { padding-top: var(--head-pad-t); padding-bottom: var(--head-pad-b); border-bottom-color: var(--rule-head); }
+table[data-multiline] > * > tr > :is(th, td) {
+  padding: 0;
+  border: 0;
+  white-space: normal;
+}
+table[data-multiline] tr[data-edge] { box-shadow: inset 3px 0 0 var(--row-edge, transparent); }
+table[data-multiline] tr[data-edge] > td:first-child { box-shadow: none; }
+
+/* ---------- band head, table foot ---------- */
+
+/* Band head (D-13): the title, then the meta on the same baseline; a control is
+   pushed right on that baseline. The meta WRAPS and is never truncated — it
+   carries windows, as-of dates and counts. */
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 4px 10px;
+  padding: 12px 0 4px;
+  border-bottom: 0;
+  background: transparent;
+}
+.panel-head > .section-h {
+  font: 600 var(--fs-body)/1 var(--sans);
+  margin: 0;
+}
+.panel-note {
+  font: 500 var(--fs-meta)/1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-meta);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.panel-head > :is(.seg, .chips, .mgr-chips, .ranking-options, .si-watch-controls) {
+  margin-left: auto;
+}
+/* Table foot: the count clause, then the pager or Show-all on the same line.
+   The bound a compact table states about itself is server-rendered VISIBLE;
+   only its button waits for a script (`[hidden]`). Nothing here may hide
+   `.compact-bound` at any width — it is on the fold sweep's honesty list. */
+.table-foot,
+.compact-disclosure,
+.feed-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 0 8px;
+  font: 400 var(--fs-note)/1.6 var(--sans);
+  color: var(--ink3);
+}
+.compact-bound {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+.compact-bound-count { color: var(--ink2); }
+.compact-bound-extra { color: var(--ink3); }
+/* The range count carries no full stop, so a stated count and the remainder
+   beside it are separated by the ledger's middle dot. */
+.compact-bound-count:not([hidden]):not(:empty) + .compact-bound-extra::before { content: " · "; }
+.view-note { font: 400 var(--fs-note)/1.6 var(--sans); color: var(--ink3); }
+.view-note a { font: inherit; }
+
+/* ---------- controls: the segmented group, pagers, tags ---------- */
+
+/* Segmented control (D-4, T-10): ONE joined group, 1px outline and dividers,
+   2px radius; the active item is filled and carries a 2px cue bar, the state
+   cue that must reach 3:1 (the group outline may stay subtle because each
+   item's text identifies it). It WRAPS at every width: a nowrap group wider
+   than its band (the manager-type chips, ~857px) pushed the page sideways at
+   721–920px (review C-3). The two watch lists are not segmented controls —
+   each chip is its own link or removable tag — and are styled below. */
+:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--seg-border);
+  border-radius: 2px;
+  background: none;
+  overflow: hidden;
+  width: auto;
+  vertical-align: middle;
+}
+:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) > :is(button, a) {
+  font: 500 var(--fs-control)/1 var(--mono);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  text-decoration: none;
+  padding: 6px 12px;
+  min-height: var(--hit-min);
+  min-width: var(--hit-min);
+  justify-content: center;
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--seg-border);
+  border-radius: 0;
+  background: none;
+  color: var(--seg-text);
+  box-shadow: none;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  /* the group hides its overflow (the 2px radius clips the active fill), so
+     the focus ring is drawn inside the item, where the group cannot clip it
+     (review C-10) */
+  outline-offset: -3px;
+}
+:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) > :first-child {
+  border-left: 0;
+}
+/* A watch list: separate chips, each a link (/signals) or a tag with its own
+   remove button (/watchlist), wrapping, each at least the hit square tall
+   (review C-4). They lost every style when the base .chips/.chip rules became
+   the segmented control. */
+:is(.si-watch-chips, [id="watch-chips"]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+:is(.si-watch-chips, [id="watch-chips"]) > .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--hit-min);
+  padding: 2px 10px;
+  border: 1px solid var(--rule2);
+  border-radius: 2px;
+  font: 500 var(--fs-control)/1.2 var(--mono);
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+:is(.si-watch-chips, [id="watch-chips"]) > .chip a { color: var(--accent); text-decoration: none; }
+:is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips) > :is([aria-pressed="true"], [aria-current="true"], [aria-current="page"], [aria-checked="true"], .chip-active) {
+  background: var(--seg-fill);
+  color: var(--seg-text-active);
+  box-shadow: inset 0 -2px 0 var(--seg-cue);
+  font-weight: 500;
+}
+/* Party, late, overlap and cross items keep the design's colours (D-11); buy
+   and sell items are not coloured, as in the design. */
+.seg button.tint-dem:not([aria-pressed="true"]) { color: var(--dem); }
+.seg button.tint-rep:not([aria-pressed="true"]) { color: var(--rep); }
+.seg button.tint-ind:not([aria-pressed="true"]) { color: var(--ind); }
+.filter-group { display: flex; align-items: center; gap: 10px; }
+.filter-label {
+  font: 500 var(--fs-meta)/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-meta);
+  white-space: nowrap;
+}
+/* Pagers and Show-all: the same box, type and states as a one-item group. */
+.pager { display: flex; align-items: center; gap: 8px; }
+.pager-range {
+  font: 400 var(--fs-note)/1.6 var(--sans);
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+.pager-btn,
+.compact-toggle {
+  font: 500 var(--fs-control)/1 var(--mono);
+  letter-spacing: 0.02em;
+  padding: 6px 12px;
+  min-height: var(--hit-min);
+  min-width: var(--hit-min);
+  border: 1px solid var(--seg-border);
+  border-radius: 2px;
+  background: none;
+  color: var(--seg-text-active);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pager-btn.is-unavailable {
+  color: var(--seg-text);
+  border-color: var(--seg-border);
+  cursor: default;
+}
+/* Hit areas (R7, L9, H-16). A note trigger and a sort button reach the
+   --hit-min square through a layout-neutral ::before centred on the control:
+   the square is max(box, --hit-min) on each axis, so the control's own box and
+   the row it sits in never grow. A header control's square stops at the header
+   row's bottom edge (never into the first body row), and where two targets'
+   squares meet, each stops at the midpoint of the gap between their boxes
+   (measured by scripts/hit-areas.ts). */
+/* z-index 1: a trigger's hit area paints above the positioned content that
+   follows it (a chart's bars, a table below its band head). */
+.th-sort,
+.note-btn {
+  position: relative;
+  z-index: 1;
+}
+.note-btn::before,
+.th-sort::before {
+  content: "";
+  position: absolute;
+  /* the square, never past the midpoint to a neighbour (--hit-x-*, written by
+     scripts/hit-areas.ts; absent, the plain square) */
+  left: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-l, 999px)));
+  right: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-r, 999px)));
+  top: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-t, 999px)));
+  bottom: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-b, 999px)));
+}
+thead :is(.note-btn, .th-sort)::before {
+  bottom: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--head-pad-b) - 2px), calc(-1 * var(--hit-x-b, 999px)));
+}
+/* Under a coarse pointer a profile row is at least the hit square tall, so two
+   stacked row labels are a full target apart. */
+@media (any-pointer: coarse), (max-width: 720px) {
+  .book-metric { min-height: var(--hit-min); }
+}
+
+/* A tag is not a control: the manager-type chip in a row, the identity chip. */
+span.mgr-chip,
+.id-chip {
+  font: 500 var(--fs-meta)/1.2 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-meta);
+  border: 1px solid var(--rule2);
+  border-radius: 2px;
+  padding: 0 4px;
+  background: none;
+  min-height: 0;
+  white-space: nowrap;
+}
+/* The ranking's window options: a head control with its own words. */
+.ranking-options { position: relative; font: 400 var(--fs-control) var(--mono); color: var(--ink3); margin: 0; }
+.ranking-options > summary { cursor: pointer; list-style: none; color: var(--accent); }
+.ranking-options > summary::-webkit-details-marker { display: none; }
+.ranking-options .range-control { position: absolute; top: 20px; right: 0; z-index: 5; background: var(--paper); border: 1px solid var(--rule); padding: 12px; }
+
+/* ---------- ≤1080px: the feed's two-line rows (moved here unchanged, with the
+   reference rows' alignment and wrap rules that media.css used to give them) ---------- */
+@media (max-width: 1080px) {
+  .reference-feed .reference-row { display: grid; grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter); min-height: 0; height: auto; position: relative; }
+  .reference-feed .reference-paper { grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter); min-height: 0; }
+  /* The range line keeps the height of a flag chip, so rows with and without
+     flags fold to the same height. */
+  .reference-feed .reference-row > .cell-range { min-height: 17px; }
+  .reference-feed .reference-paper > .paper-main { grid-column: 1/4; grid-row: 2; white-space: normal; }
+  .reference-feed .reference-paper > .cell-traded { grid-column: 1/3; grid-row: 3; text-align: left; }
+  .reference-feed .reference-paper > .cell-src { grid-row: 3; }
+  /* relative, not static: a cell's visually hidden text is then contained by
+     the cell's own clip, rather than escaping to the row and widening the page
+     now that the feed no longer sits in a scroll box */
+  .reference-feed .reference-row > .cell { position: relative; display: block; width: auto; max-width: none; margin: 0; padding: 0; float: none; }
+  .reference-feed .cell-side { grid-column: 1; grid-row: 1; }
+  .reference-feed .cell-member { grid-column: 2; grid-row: 1; }
+  .reference-feed .cell-ticker { grid-column: 3; grid-row: 1; }
+  .reference-feed .cell-asset { grid-column: 1/4; grid-row: 2; }
+  .reference-feed .cell-amount { grid-column: 1/3; grid-row: 3; text-align: left; white-space: nowrap; }
+  .reference-feed .cell-range { grid-column: 1/3; grid-row: 4; flex-wrap: wrap; overflow: visible; }
+  .reference-feed .cell-traded { grid-column: 1/3; grid-row: 5; white-space: nowrap; text-align: left; }
+  .reference-feed .cell-src { grid-column: 3; grid-row: 3/6; align-self: center; text-align: right; }
+  /* The feed reaches the band edges here too, as every ledger table does (D1)
+     and as #feed-section does at ≥1081px: the rows carry the gutter, so a feed
+     left inside the band's content box put its text on a DOUBLE gutter
+     (review C-11). The box keeps its top and bottom rules. */
+  #congress-feed { margin-left: calc(-1 * var(--gutter)); margin-right: calc(-1 * var(--gutter)); border-left: 0; border-right: 0; }
+  /* The column head is folded away visually, never removed: its labels and
+     notes (the column definitions) stay in the accessibility tree (review
+     C-12; css-fold's honesty sweep lists `.reference-head`). */
+  .reference-feed .reference-head { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+  /* …and a keyboard user who tabs into its sort buttons or notes SEES where
+     focus is: the head unfolds as a wrapped line of labels while it holds it. */
+  .reference-feed .reference-head:focus-within { position: static; width: auto; height: auto; margin: 0; padding: 8px var(--gutter); overflow: visible; clip: auto; clip-path: none; white-space: normal; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .reference-feed .cell-traded .filed { display: inline; }
+  .reference-feed .cell-member .aff { white-space: nowrap; }
+  .reference-feed .reference-row .flag { max-width: 100%; }
+  .reference-feed .reference-watch { opacity: 1; }
+  .design-dates { display: block; }
+}
+/* The feed band at every width: no top margin, the count line bare. */
+#feed-section { margin-top: 0; }
+#feed-section .filter-count { border: 0; padding: 0; margin: 0; }
+#feed-section .filterbar { padding: 8px 0; }
+/* The feed band at ≥1081px (carried forward from late-additions; only the old
+   box's `max-height:none` is gone, because the box itself is gone): the band
+   is full-bleed, its head and filters share one row, the table runs the full
+   band width with its text on the gutter, and the count and pager share the
+   foot row. */
+@media (min-width: 1081px) {
+  #feed-section { display: grid; grid-template-columns: minmax(0,1fr) auto; margin-left: calc(-1 * var(--gutter)); margin-right: calc(-1 * var(--gutter)); border-top: 0; }
+  #feed-section > .panel-head { grid-row: 1; grid-column: 1; margin: 0; padding: 12px 0 12px var(--gutter); justify-content: flex-start; border: 0; }
+  #feed-section .filterbar, #congress-feed { display: contents; }
+  #feed-section .filter-controls { grid-column: 2; grid-row: 1; display: flex; align-items: center; padding-right: var(--gutter); gap: 8px; }
+  #feed-section .filter-label { display: none; }
+  #feed-section .filter-group { gap: 0; }
+  #feed-section .advanced-filters > summary { padding: 4px; font-size: var(--fs-meta); }
+  /* R12: the "More filters" body is IN FLOW — it opens as a row inside the
+     control strip and pushes the table down; it never overlays table rows. */
+  #feed-section .filter-controls { flex-wrap: wrap; }
+  #feed-section .advanced-filters { flex-basis: 100%; }
+  #feed-section .advanced-filter-body { position: static; display: flex; flex-wrap: wrap; gap: 8px 14px; width: auto; max-width: 560px; margin-left: auto; background: var(--paper); border: 1px solid var(--rule); padding: 12px; }
+  #feed-section .advanced-filter-body .filter-label { display: inline; }
+  #feed-section .filter-count { grid-row: 3; grid-column: 1; padding: 12px 0 8px var(--gutter); font: 400 var(--fs-note)/1.6 var(--sans); align-self: center; text-align: left; }
+  #feed-section .reference-feed-scroll { grid-row: 2; grid-column: 1/-1; border-top: 1px solid var(--rule); padding-top: 18px; }
+  #feed-section .feed-foot { grid-row: 3; grid-column: 2; padding: 8px var(--gutter) 8px 8px; margin: 0; border: 0; justify-content: flex-end; }
+  #feed-section .feed-foot .pager-range { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  #feed-footnote { grid-row: 4; grid-column: 1/-1; margin: 0; padding: 0 var(--gutter) 12px; font-size: var(--fs-meta); }
+  #feed-section .feed-loading, #feed-section .feed-empty { grid-row: 2; grid-column: 1/-1; }
+  .design-rankings .reference-ranking { padding-top: 14px; }
+  .reference-ranking { position: relative; }
+  .design-dates { display: inline; }
+  .design-date-year { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .reference-feed .reference-head,
+  .reference-feed .reference-row,
+  .reference-feed .reference-paper {
+    grid-template-columns: 58px minmax(150px,1.2fr) 70px minmax(100px,1fr) 100px 200px 140px 60px;
+    column-gap: 12px;
+    padding-left: var(--gutter);
+    padding-right: var(--gutter);
+  }
+  /* 30px rows; a row whose flags wrap grows rather than overlapping the next. */
+  .reference-feed :is(.reference-row, .reference-paper) { min-height: max(30px, var(--hit-min)); margin: 0; }
+  .reference-feed .cell-traded { white-space: nowrap; text-align: right; }
+}
+@media (max-width: 899px) {
+  .th-abbr { display: inline; }
+  .th-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+
+/* ---------- ≤720px: the fold ----------
+   Wide tables scroll inside their container with a sticky identity column and
+   an edge fade; the page never scrolls sideways. Type stays on the tokens and
+   the floor; the 16px gutter and the 44px rows come from the tokens. */
+@media (max-width: 720px) {
+  .table-scroll {
+    position: relative;
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
+  }
+  .etable[data-sticky-first] th:first-child,
+  .etable[data-sticky-first] td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--paper);
+    border-right: 1px solid var(--rule2);
+    z-index: 2;
+  }
+  .etable td:is(.c-member, .c-filer, .c-pos):not(.c-flex) { max-width: 200px; }
+  /* A scrolling table's flexible column keeps its name readable (to 200px)
+     rather than collapsing to its zero minimum; the table scrolls instead. */
+  .etable td.c-flex { max-width: 200px; }
+  .reference-feed .cell-member { white-space: normal; }
+  .design-band > *, .design-rankings > * { padding-left: var(--gutter); padding-right: var(--gutter); }
+}
+/* ================================================================ ledger:end */
+
 .unjoined-name { border-bottom: 1.5px dotted var(--ink3); }
 .reconciled { border-bottom: 1.5px dotted var(--ink3); }
 
@@ -410,11 +1323,11 @@
 .rb-label {
   flex: 1;
   text-align: center;
-  font: 400 10px var(--mono);
+  font: 400 var(--fs-meta) var(--mono);
   color: var(--ink3);
 }
 .rb-caption {
-  font: 400 11px/1.6 var(--mono);
+  font: 400 var(--fs-note)/1.6 var(--mono);
   color: var(--ink3);
   margin-top: 12px;
   border-top: 1px solid var(--rule);

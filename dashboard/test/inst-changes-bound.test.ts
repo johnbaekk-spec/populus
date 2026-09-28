@@ -25,6 +25,7 @@ import {
 } from "../src/lib/holdings.ts";
 import { changesTableHtml, filerPeriodSectionHtml } from "../src/lib/ui/index.ts";
 import type { QoqDeltaRow } from "../src/lib/inst.ts";
+import { MiniElement } from "./lib/mini-dom.ts";
 
 /** A delta row shaped like the producer's, sized so a few thousand exceed the
     embed byte cap the way the real 15,885-row filer does. */
@@ -108,7 +109,14 @@ test("M2-12: the stat tile reports the true total while the table shows a page",
 test("M2-12: the changes table paginates at the shared page size", () => {
   const rows = Array.from({ length: 250 }, (_, i) => delta(i, 5_000 - i));
   const page0 = changesTableHtml(rows, "2026-03-31", "2026-05-15", { total: 250, page: 0 });
-  const rowCount = (html: string): number => (html.match(/<tr(?: data-compact-extra)?(?: id="pos-[^"]*")?><td class="c-pos"/g) ?? []).length;
+  /* DOM parse (DESIGN-POLISH M1, T1.9): a changes row is a body row whose
+     first cell is the position cell — counted by structure, so a row attribute
+     the ledger adds (`data-edge`) cannot make the count read zero. */
+  const rowCount = (html: string): number => {
+    const root = new MiniElement("body");
+    root.innerHTML = html;
+    return root.querySelectorAll("tbody tr").filter((tr) => tr.children[0]?.classList.contains("c-pos")).length;
+  };
   assert.equal(rowCount(page0), HOLDINGS_PAGE_SIZE, "page 0 holds exactly one page of rows");
   assert.ok(page0.includes("data-changes-pager"), "a multi-page table renders its pager");
 
@@ -284,4 +292,36 @@ test("PARITY: lone surrogates serialize identically in both runtimes", () => {
     assert.equal(JSON.stringify(value), c.json, c.name);
     assert.equal(utf8ByteLength(JSON.stringify(value)), c.utf8_bytes, c.name);
   }
+});
+
+/* DESIGN-POLISH M1 review R-3. The compact bound under the changes table
+   counts ONE PAGE of the filer's changes, while the pager beside it states the
+   whole set ("101–200 of 250 changes"). Stated as "1–20 of 100 changes" the
+   bound read as a second, contradictory total. The property: the compact count
+   names its bound (definite, "changes on this page"), and no count on the
+   rendered table ever states the page's row count as the total of changes. */
+function changeCounts(html: string): { compact: string | null; pager: string | null } {
+  const root = new MiniElement("body");
+  root.innerHTML = html;
+  return {
+    compact: root.querySelector(".compact-bound-count")?.textContent.trim() ?? null,
+    pager: root.querySelector("[data-changes-pager] .pager-range")?.textContent.trim() ?? null,
+  };
+}
+/** A range count ("a–b of N changes") whose total is the page's row count and
+    which does not name that bound. */
+function pageBoundStatedAsTotal(text: string, rowsOnPage: number): boolean {
+  const m = /of (the )?([\d,]+) changes(?! on this page)/.exec(text);
+  return !!m && Number(m[2]!.replace(/,/g, "")) === rowsOnPage;
+}
+
+test("R-3: the compact bound on a page of changes names the page, never states it as the total", () => {
+  const rows = Array.from({ length: 250 }, (_, i) => delta(i, 5_000 - i));
+  const page1 = changesTableHtml(rows, "2026-03-31", "2026-05-15", { total: 250, page: 1 });
+  const c = changeCounts(page1);
+  assert.equal(c.pager, "101–200 of 250 changes", "the pager states the whole set");
+  assert.equal(c.compact, `1–20 of the ${HOLDINGS_PAGE_SIZE} changes on this page`, "the bound names this page");
+  assert.equal(pageBoundStatedAsTotal(c.compact!, HOLDINGS_PAGE_SIZE), false);
+  // control: the pre-fix wording states the page bound as a total
+  assert.equal(pageBoundStatedAsTotal(`1–20 of ${HOLDINGS_PAGE_SIZE} changes`, HOLDINGS_PAGE_SIZE), true, "control");
 });

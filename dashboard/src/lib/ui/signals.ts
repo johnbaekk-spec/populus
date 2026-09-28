@@ -28,6 +28,8 @@ import {
   memberHrefFor,
   tickerHrefFor,
   cardFoot,
+  rangeOfTotal,
+  thHtml,
 } from "../format.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
 import { briefingCards, disclosureLedger } from "./shared.ts";
@@ -119,7 +121,7 @@ const FAMILY_LABEL: Record<Family, string> = {
   COMPLIANCE: "Compliance",
 };
 
-function familyOf(kind: SignalKind): Family {
+export function familyOf(kind: SignalKind): Family {
   return RULE_BOOK.find((r) => r.kind === kind)?.family ?? "BEHAVIOUR";
 }
 function shortOf(kind: SignalKind): string {
@@ -201,7 +203,32 @@ export function signalRowHtml(s: Signal, ctx: RenderCtx): string {
 
 /** Hits per page; the pager runs over the complete artifact. */
 export const SIGNAL_HITS_PAGE_SIZE = 50;
+/** The hits wrapper's accessible name while it scrolls sideways (R-8). */
+export const SIGNAL_HITS_REGION_NAME = "Signal hits · scroll sideways for more columns";
+
 export const SIGNAL_HIT_COLUMNS = ["Ticker", "Who", "What", "Filed", "Size", "Src"] as const;
+/** The watch band's columns and their ledger roles; the client's empty row
+    takes its colspan from here, never a literal. */
+export const SIGNAL_WATCH_COLUMNS: readonly (readonly [string, string])[] = [
+  ["Kind", "c-kind"],
+  ["Watched subject", "c-member"],
+  ["What happened", "c-secondary c-flex"],
+  ["Magnitude", "c-num"],
+  ["When", "c-num"],
+  ["Seen", "c-num"],
+  ["Source", "c-src"],
+];
+/** The ledger role of each hit column (DESIGN-POLISH M1, R2), header and cell
+    alike. The evidence line (What) takes the band's slack, as the approved
+    preview draws it; the member name is capped (recorded in DEV-NOTES). */
+export const SIGNAL_HIT_COLUMN_CLASSES: Readonly<Record<(typeof SIGNAL_HIT_COLUMNS)[number], string>> = {
+  Ticker: "c-ticker",
+  Who: "c-member",
+  What: "c-secondary c-flex",
+  Filed: "c-num",
+  Size: "c-num",
+  Src: "c-src",
+};
 
 /** Newest filed first, then the larger lower bound — the ONE order the server
     page and the client pager share. */
@@ -230,25 +257,29 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = ""): string {
     `<div class="si-expand-body"><p><strong>Rule:</strong> ${esc(s.rule)}</p>` +
     `<p><strong>Receipts:</strong> ${s.receipts.map((r) => srcLink(r)).join(" ") || "—"}</p>` +
     `<p class="mono-note">${esc(SIGNAL_KIND_LABELS[s.kind])} · thresholds v${esc(String(s.thresholdVersion ?? ""))} · computed ${esc(String(s.computedAt ?? ""))}</p></div></details>`;
+  /* The family drives the row's 3px edge (`data-edge`); `data-kind` stays the
+     signal kind the filter reads (G-6). The kind WORD is the rule's label
+     trigger — the exact rule opens from it, with no glyph beside it. */
   return (
     `<tr class="si-hit si-family-${family.toLowerCase()} si-kind-${esc(s.kind)}" data-signal-id="${esc(s.id)}" data-family="${family}"` +
-    ` data-kind="${esc(s.kind)}" data-bioguide="${esc(s.entities.bioguide ?? "")}" data-ticker="${esc(s.entities.ticker ?? "")}"` +
+    ` data-kind="${esc(s.kind)}" data-edge="family-${family.toLowerCase()}" data-bioguide="${esc(s.entities.bioguide ?? "")}" data-ticker="${esc(s.entities.ticker ?? "")}"` +
     ` data-filed="${esc(s.occurrence.filedDate)}"${extraAttrs}>` +
-    `<td class="si-ticker-cell">${ticker}</td>` +
-    `<td class="si-subject">${subject}</td>` +
-    `<td class="si-what"><span class="si-kind">${esc(shortOf(s.kind))}${note(s.rule, { scope: "signal-hits" }, s.id)}</span>${expand}</td>` +
-    `<td class="c-filed si-when">${whenText(s)}${lag != null ? ` <span class="${lag > 45 ? "si-late" : "si-lag"}">+${fmtInt(lag)}d</span>` : ""}</td>` +
+    `<td class="c-ticker si-ticker-cell">${ticker}</td>` +
+    `<td class="c-member si-subject">${subject}</td>` +
+    `<td class="c-secondary c-flex si-what"><span class="si-kind">${note(s.rule, { scope: "signal-hits" }, s.id, { trigger: "label", textHtml: esc(shortOf(s.kind)) })}</span>${expand}</td>` +
+    `<td class="c-num si-when">${whenText(s)}${lag != null ? ` <span class="${lag > 45 ? "si-late" : "si-lag"}">+${fmtInt(lag)}d</span>` : ""}</td>` +
     `<td class="c-num si-mag">${esc(magnitudeText(s.magnitude))}</td>` +
     `<td class="c-src"><span class="si-stamp">${esc(s.cohort === "senate" ? "eFD" : "PTR")}</span> ${receipt ? srcLink(receipt) : "—"}${s.receipts.length > 1 ? `<span class="mono-note"> +${fmtInt(s.receipts.length - 1)}</span>` : ""}</td>` +
     `</tr>`
   );
 }
 
-/** "Showing 1–50 of N" — the ONE range string the server and the pager share. */
+/** "1–50 of 693 hits" — the ONE range string the server and the pager share,
+    built by the site's one range grammar (`rangeOfTotal`). */
 export function hitsRangeText(page: number, onPage: number, total: number, pageSize = SIGNAL_HITS_PAGE_SIZE): string {
   if (total === 0) return "0 hits";
   const lo = page * pageSize + 1;
-  return `Showing ${fmtInt(lo)}–${fmtInt(lo + onPage - 1)} of ${fmtInt(total)}`;
+  return rangeOfTotal(lo, lo + onPage - 1, total, total === 1 ? "hit" : "hits");
 }
 
 function withheldHtml(w: WithheldKind, carried: number): string {
@@ -296,22 +327,22 @@ function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
     const rule = list[0]?.rule ?? r.fallbackRule;
     const status = withheld ? "withheld" : "active";
     return (
-      `<tr class="si-rule si-family-${r.family.toLowerCase()}${withheld ? " si-withheld" : ""}">` +
+      `<tr class="si-rule si-family-${r.family.toLowerCase()}${withheld ? " si-withheld" : ""}" data-edge="${withheld ? "family-withheld" : `family-${r.family.toLowerCase()}`}">` +
       `<td class="si-family">${esc(FAMILY_LABEL[r.family])}</td>` +
-      `<td class="si-kind">${esc(r.short)}<span class="visually-hidden"> — ${esc(SIGNAL_KIND_LABELS[r.kind])}</span></td>` +
+      `<td class="si-kind c-kind">${esc(r.short)}<span class="visually-hidden"> — ${esc(SIGNAL_KIND_LABELS[r.kind])}</span></td>` +
       `<td class="si-rule-text">${esc(rule)}</td>` +
       `<td class="si-why">${esc(r.why)}</td>` +
       `<td class="c-num si-hits${list.length === 0 ? " c-muted" : ""}">${withheld ? "—" : fmtInt(list.length)}</td>` +
-      `<td class="c-num si-status si-status-${status}">${withheld ? `WITHHELD${note(withheld.detail, { scope: "signal-rules" }, r.kind)}` : "ACTIVE"}</td>` +
+      `<td class="c-num si-status si-status-${status}">${withheld ? note(withheld.detail, { scope: "signal-rules" }, r.kind, { trigger: "label", textHtml: "WITHHELD" }) : "ACTIVE"}</td>` +
       `</tr>`
     );
   });
   // The one kind withheld BY DESIGN: a point return from a range-bounded
   // disclosure would be invented. Named so nobody assumes it was forgotten.
   rows.push(
-    `<tr class="si-rule si-family-withheld si-withheld">` +
+    `<tr class="si-rule si-family-withheld si-withheld" data-edge="family-withheld">` +
       `<td class="si-family">Withheld</td>` +
-      `<td class="si-kind">RETURN</td>` +
+      `<td class="si-kind c-kind">RETURN</td>` +
       `<td class="si-rule-text">not computed — a point return from a range-bounded disclosure would be invented</td>` +
       `<td class="si-why">Every tracker that publishes returns on statutory ranges is guessing. The refusal is named here rather than left implicit.</td>` +
       `<td class="c-num si-hits c-muted">—</td>` +
@@ -322,9 +353,12 @@ function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
     `<section class="panel panel-wide si-rulebook" id="signal-rulebook" aria-label="Rule book">` +
     `<div class="panel-head"><h2 class="section-h">Rule book</h2>` +
     `<span class="panel-note">EVERY KIND · ITS EXACT RULE · WHY IT CARRIES INFORMATION · HITS THIS BUILD · STATUS · THRESHOLDS v${esc(artifact.thresholdVersion)}</span></div>` +
-    `<div class="table-scroll"><table class="etable etable-compact si-table">` +
+    /* A DECLARED PROSE TABLE (`data-multiline`, D-5): each row is a grid with
+       the design's tracks, its rule and why text wrap, and it carries no
+       flexible column. */
+    `<div class="table-scroll"><table class="etable etable-compact si-table" data-multiline>` +
     `<caption class="visually-hidden">Signal rules — family, kind, exact rule, why it is informative, hits in the retained window, status</caption>` +
-    `<thead><tr><th scope="col">Family</th><th scope="col">Kind</th><th scope="col">Rule</th><th scope="col">Why it's informative</th><th scope="col" class="num">Hits</th><th scope="col" class="num">Status</th></tr></thead>` +
+    `<thead><tr><th scope="col">Family</th><th scope="col" class="c-kind">Kind</th><th scope="col">Rule</th><th scope="col">Why it's informative</th><th scope="col" class="c-num">Hits</th><th scope="col" class="c-num">Status</th></tr></thead>` +
     `<tbody>${rows.join("\n")}</tbody></table></div>` +
     `<p class="section-note">Thresholds are calibrated per kind and versioned; a kind whose measured volume falls outside its declared bounds is <span class="si-late">WITHHELD</span> with a typed reason, never emitted anyway. ` +
     `Institutional kinds wait on closed 13F periods and are not simulated. <a href="/methodology/#signals">methodology §signals ↗</a></p>` +
@@ -354,9 +388,15 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
     `<div class="panel-head"><h2 class="section-h">Hits</h2>` +
     `<span class="panel-note">RETAINED WINDOW ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} · NEWEST FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
     seg + `</div>` +
-    `<div class="table-scroll si-hits-scroll" tabindex="0" role="region" aria-label="Signal hits · scroll for more rows"><table class="etable etable-compact si-table">` +
+    /* No fixed-height box: the page scrolls, never the table. The wrapper is a
+       focusable, named "scroll sideways" region ONLY while the table overflows
+       it (review R-8): at a width where nothing scrolls, a tab stop that
+       announces sideways scrolling is a false statement. The signals island
+       sets and clears the three attributes from the measured overflow; the
+       name it uses rides here. */
+    `<div class="table-scroll si-hits-scroll" data-scroll-region="${esc(SIGNAL_HITS_REGION_NAME)}"><table class="etable etable-compact si-table">` +
     `<caption class="visually-hidden">Signal hits, newest filed first</caption>` +
-    `<thead><tr>${SIGNAL_HIT_COLUMNS.map((c) => `<th scope="col"${c === "Size" ? ' class="num"' : ""}>${esc(c)}</th>`).join("")}</tr></thead>` +
+    `<thead><tr>${SIGNAL_HIT_COLUMNS.map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c] })).join("")}</tr></thead>` +
     `<tbody id="signal-hits-body">${body}</tbody></table></div>` +
     `<div class="feed-foot"><div class="pager">` +
     `<span class="pager-range" id="signal-hits-range" tabindex="-1">${esc(range)}</span>` +
@@ -475,8 +515,8 @@ function watchBandHtml(active: Signal[], artifact: SignalArtifact): string {
     `<button type="button" class="pager-btn" id="signal-watch-seen" disabled>Mark all seen</button></span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact si-table" id="signal-watch-table">` +
     `<caption class="visually-hidden">Signal hits on watched members and tickers</caption>` +
-    `<thead><tr><th scope="col">Kind</th><th scope="col">Watched subject</th><th scope="col">What happened</th><th scope="col" class="num">Magnitude</th><th scope="col" class="num">When</th><th scope="col" class="num">Seen</th><th scope="col" class="num">Source</th></tr></thead>` +
-    `<tbody id="signal-watch-body"><tr><td colspan="7" class="si-empty" id="signal-watch-empty">Nothing watched on this device yet. Star a member on <a href="/congress/">the feed</a> or a ticker on its page; hits on watched subjects appear here.</td></tr></tbody></table></div>` +
+    `<thead><tr>${SIGNAL_WATCH_COLUMNS.map(([label, cls]) => `<th scope="col" class="${cls}">${esc(label)}</th>`).join("")}</tr></thead>` +
+    `<tbody id="signal-watch-body"><tr><td colspan="${SIGNAL_WATCH_COLUMNS.length}" class="si-empty" id="signal-watch-empty">Nothing watched on this device yet. Star a member on <a href="/congress/">the feed</a> or a ticker on its page; hits on watched subjects appear here.</td></tr></tbody></table></div>` +
     `<p class="section-note" id="signal-watch-note">Watch state lives in this browser's storage. Watching a member or ticker pins their signal hits here, and the last-seen marker separates what is new. ` +
     `<noscript>Reading the watchlist needs JavaScript; nothing is stored or sent without it.</noscript></p>` +
     `<script type="application/json" id="signal-watch-data">${payload}</script>` +
@@ -577,7 +617,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     `<div class="design-provenance signals-meta">` +
     `<span>a signal is a fact about a filing, not a forecast — no returns computed</span>` +
     `<span class="stamp-line">recomputed every build from the same rows you can audit · coverage window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} (${artifact.retentionDays} days by filed date)</span>` +
-    `<span>zero hits is a computed answer, not missing coverage ${note(artifact.lagCaveat + " " + artifact.lifecycleNote, { scope: "signals-meta" }, "lag")}</span>` +
+    `<span>${note(artifact.lagCaveat + " " + artifact.lifecycleNote, { scope: "signals-meta" }, "lag", { trigger: "label", textHtml: "zero hits is a computed answer, not missing coverage" })}</span>` +
     `</div>` +
     stories +
     /* R17 order: the hits table first (data), the rule book collapsed below it. */
@@ -656,9 +696,9 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
            not softened, shrunk or lost: it is real DOM, it opens with no
            JavaScript, and it prints. */
         // R26: ticker first — the reader's question is "which stock".
-        `<tr><td class="c-ticker">${s.entities.ticker ? `<span class="mono-ticker">${esc(s.entities.ticker)}</span>` : "—"}</td>` +
-        `<td>${esc(SIGNAL_KIND_LABELS[s.kind])}${note(s.rule, { scope: "member-signals" }, s.id)}</td>` +
-        `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
+        `<tr data-edge="family-${familyOf(s.kind).toLowerCase()}"><td class="c-ticker c-flex">${s.entities.ticker ? `<span class="mono-ticker">${esc(s.entities.ticker)}</span>` : "—"}</td>` +
+        `<td class="c-kind">${note(s.rule, { scope: "member-signals" }, s.id, { trigger: "label", textHtml: esc(SIGNAL_KIND_LABELS[s.kind]) })}</td>` +
+        `<td class="c-filed c-num">${esc(s.occurrence.filedDate)}</td>` +
         `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
         `<td class="c-src">${srcLink(s.receipts[0] ?? "")}</td></tr>`,
     )
@@ -669,7 +709,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
     `<span class="panel-note"><a href="/signals/">all signals ↗</a></span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact">` +
     `<caption class="visually-hidden">Signals for this member</caption>` +
-    `<thead><tr><th scope="col">Ticker</th><th scope="col">Kind</th><th scope="col">Filed</th><th scope="col">Size</th><th scope="col">Src</th></tr></thead>` +
+    `<thead><tr><th scope="col" class="c-ticker c-flex">Ticker</th><th scope="col" class="c-kind">Kind</th><th scope="col" class="c-num">Filed</th><th scope="col" class="c-num">Size</th><th scope="col" class="c-src">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     cardFoot({ short: "Filed dates lag the trades", full: `${artifact.lagCaveat}${lifecycleNote}`, scope: "member-signals-foot", key: "lag" }) +
     `</section>`

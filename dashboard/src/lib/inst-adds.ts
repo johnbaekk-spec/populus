@@ -72,6 +72,18 @@ export function closedPeriods(
     .slice(0, limit);
 }
 
+/** The leaderboard's count noun (DESIGN-POLISH M1, R8; review R-4). The
+    table's total is the size of this quarter's payload; when the endpoint
+    TRUNCATED it, that total is the leaderboard's own bound, so the count reads
+    "1–10 of the 2,000 issuers on this bounded leaderboard" and cannot pass for
+    the quarter's count of issuers. The server and the island both take the
+    noun from here, for every quarter and mode. */
+export function addsBoundNoun(truncated: boolean): { boundNoun: string; definite: boolean } {
+  return truncated
+    ? { boundNoun: "issuers on this bounded leaderboard", definite: true }
+    : { boundNoun: "issuers", definite: false };
+}
+
 /** The published payload for one period and mode. ONE definition, used by the
     client island's fetch and by the no-JS link the section renders, so the
     route the reader is sent to is by construction the route the island uses. */

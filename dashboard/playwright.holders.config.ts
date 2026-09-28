@@ -10,6 +10,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./test/holders-browser",
+  /* DESIGN-POLISH T1.10: the gate script sets PW_OUTPUT_DIR per run and per
+     config, so this lane and the geometry lane never wipe each other's
+     output (R30, T-16, V2 NEW-4). Unset, Playwright's default applies. */
+  ...(process.env.PW_OUTPUT_DIR ? { outputDir: process.env.PW_OUTPUT_DIR } : {}),
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],

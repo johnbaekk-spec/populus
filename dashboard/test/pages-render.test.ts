@@ -133,7 +133,10 @@ test("memberBody: honesty invariants — dual dates, star, § resolves, S5 block
      quarterly-flow panel's "derived ·§" marker. The § marker still renders;
      the clause is still in the same body. Both are asserted, so nothing about
      the honesty property is weaker than before — only the wrapper moved. */
-  assert.ok(html.includes('<span class="fn-ref">§</span>'));
+  /* DESIGN-POLISH M1 (R2, R6): the mark HANGS in the column's slot (`.hang`)
+     and the header label is the note's trigger. The § still renders on the
+     Flow range header and its clause is still in the same body. */
+  assert.match(html, /aria-label="Flow range, explain">Flow range<\/button><span class="note-pop" popover id="n-member-top-flow-range"[^>]*>[^<]*<\/span><\/span><span class="hang">·§<\/span><\/th>/);
   assert.ok(html.includes('id="n-member-top-flow-range"'));
   assert.ok(html.includes("flow range = sum of statutory bucket bounds"));
   assert.ok(html.includes("an interval, not an estimate of value"));

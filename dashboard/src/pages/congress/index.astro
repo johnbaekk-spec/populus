@@ -36,8 +36,10 @@ const coverageNote =
   `<strong>${fmtInt(coverage.needsOcr)}</strong> paper filings counted, awaiting OCR. ` +
   `<a href="/methodology/#coverage">Coverage, in full ↗</a>`;
 const stripHtml =
-  `<p class="coverage-strip" id="congress-coverage">${fmtInt(build.txnCount)} disclosures · updated ${esc(build.generatedAtDate)}` +
-  noteFromHtml(coverageNote, { scope: "congress-coverage" }, "coverage") + `</p>`;
+  // The count IS the coverage note's trigger (DESIGN-POLISH M1, R6: the label form).
+  `<p class="coverage-strip" id="congress-coverage">` +
+  noteFromHtml(coverageNote, { scope: "congress-coverage" }, "coverage", { trigger: "label", textHtml: `${fmtInt(build.txnCount)} disclosures` }) +
+  ` · updated ${esc(build.generatedAtDate)}</p>`;
 const briefingHtml = briefingCards([
   { tag: "Largest disclosed lower bound", title: largest ? `${largest.ticker ?? largest.asset ?? "Undisclosed asset"} · ${amountText(largest)}` : "No comparable amounts disclosed", body: largest ? `${largest.name} · traded ${largest.traded ?? "date not disclosed"} → filed ${largest.filed}. Ranked over this build by disclosed lower bound, not a point estimate.` : "The published records contain no usable lower bound to rank." },
   { tag: "Late filing", title: latestLate ? `${latestLate.lag ?? "—"} days from trade to filing` : "No late disclosures in this build", body: latestLate ? `${latestLate.name} · traded ${latestLate.traded ?? "—"} → filed ${latestLate.filed}. A filing delay describes the record, not its intent.` : "Computed over the published transaction records; unknown trade dates remain unknown." },
@@ -310,7 +312,9 @@ const description =
         <div class="suggestions" id="feed-empty-suggestions"></div>
       </div>
 
-      <div class="reference-feed-scroll" tabindex="0" role="region" aria-label="Disclosure feed · scroll for more rows">
+      <!-- Not a scroll region (DESIGN-POLISH M1, R3): the ledger feed is page-flow
+           rows, so the wrapper carries no focus stop and no "scroll" name. -->
+      <div class="reference-feed-scroll">
       <table class="feed-table reference-feed">
         <caption class="visually-hidden">
           Disclosed congressional transactions, newest filed first. Sort by clicking a column

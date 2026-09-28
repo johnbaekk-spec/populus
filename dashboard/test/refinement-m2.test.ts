@@ -29,6 +29,27 @@ import {
 import { SHARD_RESPONSE_CEILING_BYTES } from "../src/lib/shards.ts";
 import { congressRankingSection, CONGRESS_ROOTS } from "../src/lib/ui/index.ts";
 import { leadersRollup } from "../src/lib/derive.ts";
+import { MiniElement } from "./lib/mini-dom.ts";
+
+/* DESIGN-POLISH M1 (T1.9): tiles and tables are read by DOM parse. A tile label
+   is now its note's LABEL trigger (the text is the button) and a row carries
+   its ledger roles and edge, so string-shape regexes over `<div
+   class="tile-label">text<` or `<tr><td>` no longer describe the markup. The
+   properties are unchanged: the labels, in order; the row counts. */
+function domOf(html: string): MiniElement {
+  const root = new MiniElement("body");
+  root.innerHTML = html;
+  return root;
+}
+function visibleText(el: MiniElement): string {
+  return el.nodes.map((n) => (typeof n === "string" ? n : n.classList.contains("note-pop") ? "" : visibleText(n))).join("");
+}
+function tileLabels(html: string): string[] {
+  return domOf(html).querySelectorAll(".tile-label").map((e) => visibleText(e).trim());
+}
+function bodyRows(html: string): MiniElement[] {
+  return domOf(html).querySelectorAll("tbody tr");
+}
 
 const SRC = path.resolve(import.meta.dirname, "..", "src");
 
@@ -109,12 +130,14 @@ test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for 
   assert.equal(visible, COMPACT_ROWS, "ten rows visible");
   assert.equal(hidden, COMPACT_STEP, "fifty more ride hidden in the server bytes");
   assert.match(html, /data-compact-shown="10"/);
-  assert.match(html, /70 more ranked members below\./, "the count is plain words");
+  // DESIGN-POLISH M1 (R8): the range grammar, still plain words.
+  assert.match(html, /<span class="compact-bound-count">1–10 of 80 ranked members<\/span>/, "the count is plain words");
   assert.match(html, />Show 50 more</, "the control offers the next fifty");
   assert.doesNotMatch(html, /render bound/i, "no pipeline vocabulary");
   assert.equal(compactExpandLabel(24, "tickers"), "Show all 24 tickers");
   assert.equal(compactExpandLabel(200, "tickers"), "Show 50 more");
-  assert.doesNotMatch(compactBoundCount(5, "rows"), /render bound|data bound/);
+  assert.doesNotMatch(compactBoundCount(5, 12, "rows"), /render bound|data bound/);
+  assert.equal(compactBoundCount(5, 12, "rows"), "1–5 of 12 rows", "the new signature: shown, total, noun");
 });
 
 /* ---------- R12: feed page size + LD7 parts ---------- */
@@ -413,7 +436,7 @@ test("R14: the band renders 15 rows SSR with the period, kind and type chips, a 
   assert.match(html, /id="inst-notable-moves-more">Show 50 more</);
   assert.match(html, /href="\/institutional\/data\/notable-moves\/2026-03-31\.v1\.json"/);
   assert.match(html, /href="\/institutional\/filers\/3\/#pos-sid-sec-0"/, "row click lands on the issuer's change row");
-  assert.match(html, /Showing 15 of 40 moves/);
+  assert.match(html, /id="inst-notable-moves-count">1–15 of 40 moves/, "DESIGN-POLISH M1 (R8): the range grammar");
   assert.doesNotMatch(html, /render bound/);
 });
 
@@ -433,7 +456,8 @@ test("R14: the consensus board counts DISTINCT notable filers per issuer, needs 
   assert.equal(board.rows[0]!.netDeltaUsd, 400);
   assert.equal(board.rows[0]!.topMover!.kind, "new");
   const html = consensusBoardHtml(board, { filerHref: (cik) => `/f/${cik}` }, );
-  assert.match(html, /<th scope="col">Ticker · Issuer<\/th><th scope="col" class="num">New stakes<\/th>/);
+  // DESIGN-POLISH M1 (R2): the ledger roles — the issuer takes the slack, counts are numeric.
+  assert.match(html, /<th scope="col" class="c-issuer c-flex">Ticker · Issuer<\/th><th scope="col" class="c-num">New stakes<\/th>/);
   assert.match(html, /Nvidia Corp/);
   assert.doesNotMatch(html, /render bound/);
   // the landing's hero tile is row 1 of this board
@@ -478,16 +502,18 @@ test("R15: the filer page reads identity → 4 stats → position changes (20 ro
   assert.match(subline, /Warren Buffett/);
   assert.match(subline, /Asset managers/);
   assert.match(subline, /\$2\.5B reported 13\(f\) long value/);
-  const labels = [...html.matchAll(/<div class="tile-label">([^<]+)</g)].map((m) => m[1]);
+  const labels = tileLabels(html);
   assert.deepEqual(labels.slice(0, 4), ["reported value", "positions", "new stakes", "exits"]);
-  assert.match(html, /<div class="tile-value">5<\/div><div class="tile-label">new stakes/);
-  assert.match(html, /<div class="tile-value">6<\/div><div class="tile-label">exits/);
+  const pairs = domOf(html).querySelectorAll(".tile-label").map((l) => [visibleText(l.previousElementSibling!).trim(), visibleText(l).trim()]);
+  assert.ok(pairs.some(([v, l]) => v === "5" && l === "new stakes"));
+  assert.ok(pairs.some(([v, l]) => v === "6" && l === "exits"));
   const changes = html.indexOf('class="panel panel-wide design-changes"');
   const bookShape = html.indexOf('class="panel design-book-shape"');
   assert.ok(changes > 0 && changes < bookShape, "changes before the book shape");
   assert.doesNotMatch(html, /<details class="panel panel-wide design-supplement" aria-label="Position changes"/, "changes are open, not folded");
-  const visible = (html.match(/<tr id="pos-[^"]*"><td class="c-pos"/g) ?? []).length;
-  const hidden = (html.match(/<tr data-compact-extra id="pos-/g) ?? []).length;
+  const posRows = bodyRows(html).filter((tr) => (tr.getAttribute("id") ?? "").startsWith("pos-") && tr.children[0]?.classList.contains("c-pos"));
+  const visible = posRows.filter((tr) => !tr.hasAttribute("data-compact-extra")).length;
+  const hidden = posRows.filter((tr) => tr.hasAttribute("data-compact-extra")).length;
   assert.equal(visible, CHANGES_COMPACT_ROWS);
   assert.equal(hidden, 15);
   assert.match(html, /data-compact-for="filer-changes-tbody" data-compact-total="35" data-compact-shown="20"/);
@@ -516,16 +542,21 @@ test("R18: the masthead claim is twelve words or fewer and the three tiles carry
   const ctx: RenderCtx = { watched: new Set() };
   const rows = Array.from({ length: 9 }, (_, i) => txn({ txnId: `t${i}`, name: `Member ${i}` }));
   const congress = congressTileHtml(rows, ctx);
-  assert.equal((congress.match(/<tr><td>/g) ?? []).length, HOME_TILE_ROWS.congress);
-  assert.match(congress, /Member<\/th><th scope="col">Ticker<\/th><th scope="col">Side<\/th><th scope="col" class="num">Amount<\/th><th scope="col">Filed</);
-  assert.match(congress, /class="note-btn"/, "the range caveat is a ⓘ on the first amount");
+  assert.equal(bodyRows(congress).length, HOME_TILE_ROWS.congress);
+  assert.deepEqual(
+    domOf(congress).querySelectorAll("thead th").map((th) => [visibleText(th).trim(), th.getAttribute("class")]),
+    [["Member", "c-member c-flex"], ["Ticker", "c-ticker"], ["Side", "c-kind"], ["Amount", "c-num"], ["Filed", "c-num"]],
+  );
+  // DESIGN-POLISH M1 (R6): the first amount is its own note's label trigger.
+  const firstAmount = bodyRows(congress)[0]!.children[3]!;
+  assert.ok(firstAmount.querySelector(".note-btn.note-label"), "the range caveat hangs off the first amount");
   const moves = Array.from({ length: 8 }, (_, i) => ({ cik: `${i}`, manager: `M${i}`, principal: null, type: "hedge_fund" as const, issuer: `I${i}`, ticker: null, ticker_verified: null, kind: "new" as const, delta_shares: 1, curr_value: 1, delta_value: 1, filed: "2026-05-15", doc: null, key: `k${i}`, ikey: null }));
   const movesHtml = movesTileHtml(moves, "2026-03-31", (cik) => `/f/${cik}`);
-  assert.equal((movesHtml.match(/<tr><td>/g) ?? []).length, HOME_TILE_ROWS.moves);
+  assert.equal(bodyRows(movesHtml).length, HOME_TILE_ROWS.moves);
   const sig = (i: number): Signal => ({ id: `s${i}`, kind: "s1-large", rule: "r", thresholdVersion: "1", entities: { bioguide: "A000001", memberName: "A", ticker: `T${i}` }, magnitude: { low: 1, high: 2 }, receipts: [], occurrence: { tradeDate: null, filedDate: "2026-08-01" }, sourceAvailableAt: "", computedAt: "", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate" });
   const signals = signalsTileHtml([sig(1), sig(2), sig(3), sig(4)], ctx, () => "LARGE");
-  assert.equal((signals.match(/<tr><td>/g) ?? []).length, HOME_TILE_ROWS.signals);
-  assert.match(signals, /<tr><td><a class="mono-ticker"/, "ticker first");
+  assert.equal(bodyRows(signals).length, HOME_TILE_ROWS.signals);
+  assert.ok(bodyRows(signals)[0]!.children[0]!.querySelector("a.mono-ticker"), "ticker first");
   const page = readFileSync(path.join(SRC, "pages", "index.astro"), "utf-8");
   assert.match(page, /\{HOME_CLAIM\}/);
   assert.match(page, /\/methodology\/#principles/, "the philosophy is relocated, not cut");
@@ -636,11 +667,10 @@ test("R19/R20: the band renders on BOTH routes — the unified ticker page (via 
     window: null,
   });
   assert.match(holders, /id="overlap"/);
-  const labels = [...holders.matchAll(/<div class="tile-label">([^<]+)</g)].map((m) => m[1]);
-  assert.deepEqual(labels, ["holders", "combined value", "adds", "exits"]);
+  assert.deepEqual(tileLabels(holders), ["holders", "combined value", "adds", "exits"]);
   assert.match(holders, /<div class="tile-value">4<\/div>/);
   assert.match(holders, /\$3\.0M/);
-  assert.equal((holders.match(/<tr><td class="c-rank">/g) ?? []).length, 4, "holders ranked");
+  assert.equal(bodyRows(holders).filter((tr) => tr.children[0]?.classList.contains("c-rank")).length, 4, "holders ranked");
   assert.match(holders, /27 members disclosed NVDA/);
   assert.match(holders, /verified against the SEC company list on 2026-09-10/);
   assert.match(holders, /qoq-chip qoq-trim/);

@@ -49,13 +49,15 @@ import {
   reportingLagDays,
   terminusRow,
   fnMark,
+  hangMark,
   noteFromHtml,
+  rangeOfTotal,
   statTiles,
   srcLink,
   srcLinkDerived,
   type FootnoteEntry,
   type StatTile,
-  thLabelHtml,
+  thHtml,
 } from "./format.ts";
 export { reportingLagDays };
 import { edgarFilerUrl } from "./derive.ts";
@@ -628,7 +630,7 @@ export function holdingsRangeText(opts: {
   if (opts.rowsOnPage === 0) return `no ${noun} on this page of ${fmtInt(opts.matched)}`;
   const lo = opts.page * HOLDINGS_PAGE_SIZE + 1;
   const hi = Math.min(lo + opts.rowsOnPage - 1, opts.matched);
-  return `${fmtInt(lo)}–${fmtInt(hi)} of ${fmtInt(opts.matched)} ${noun}`;
+  return rangeOfTotal(lo, hi, opts.matched, noun);
 }
 
 /** Page bytes are a published budget too (§12.1): the whole list is embedded for
@@ -1213,6 +1215,22 @@ const HOLDINGS_COLS: readonly (readonly [string, string])[] = [
   ["flags", "Flags"],
   ["src", "Src"],
 ];
+/** The ledger role of each positions column, both layouts (DESIGN-POLISH M1, R2).
+    Value columns reserve the mark slot: an undisclosed value hangs its †u. */
+const HOLDINGS_COL_CLASS: Record<string, string> = {
+  kind: "c-kind",
+  ticker: "c-ticker",
+  issuer: "c-pos c-flex",
+  weight: "c-bar",
+  value: "c-num has-marks",
+  "shares-unit": "c-num",
+  delta: "c-num",
+  wt: "c-num",
+  overlap: "c-num",
+  "quarter-filed-lag": "c-dates",
+  flags: "c-flags",
+  src: "c-src",
+};
 const HOLDINGS_COL_NOTES: Record<string, string | undefined> = {
   issuer: HOLDINGS_FN.get("‡c"),
   value: HOLDINGS_FN.get("†u"),
@@ -1222,6 +1240,14 @@ const HOLDINGS_COL_NOTES: Record<string, string | undefined> = {
 /* The position-diff table's own descriptors. Its two period-labelled columns
    use FIXED slugs, never the interpolated period, so the ids survive a period
    switch. */
+/** The row edge of each diff kind (tr[data-edge]); "not classifiable" has none. */
+const DIFF_EDGE: Record<string, string | undefined> = {
+  added: "new",
+  removed: "exit",
+  increased: "add",
+  decreased: "trim",
+  unchanged: "nochange",
+};
 const DIFF_COLS: readonly string[] = [
   "issuer",
   "prior-value",
@@ -1248,7 +1274,7 @@ function valueCell(value: number | null, undisclosedNote = "value not disclosed 
   if (value == null) {
     return (
       `<span class="mono-note" title="${esc(undisclosedNote)}">undisclosed</span>` +
-      fnMark("†u")
+      hangMark("†u")
     );
   }
   return esc(fmtUsd(value));
@@ -1438,23 +1464,26 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         /* R3: the TICKER cell resolves per row from the reviewed mapping, and
            every ticker carries its verification ⓘ (LD6). "—" is the honest
            state for an unmapped class, never a guess. */
+        /* DESIGN-POLISH M1 (R6): the ticker is its verification note's label
+           trigger, and the issuer name is the position record's. */
         const tickerCell = row.ticker
-          ? `<span class="mono-ticker">${esc(row.ticker)}</span>` +
-            noteFromHtml(
+          ? noteFromHtml(
               `verified against the SEC company list on ${esc(verifiedDateOf(row))} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
               { scope: "filer-ticker" },
               `${opts.page}-${rowIndex}`,
+              { trigger: "label", textHtml: `<span class="mono-ticker">${esc(row.ticker)}</span>`, name: row.ticker },
             )
           : "—";
+        const issuerName = row.issuer_name || "Issuer unnamed";
         return `<tr class="design-holding-row"><td class="c-kind">—</td><td class="c-ticker">${tickerCell}</td>` +
-          `<td class="c-pos"><span class="design-holding-name"><span class="filed-name">${esc(row.issuer_name || "Issuer unnamed")}</span></span> ${src}${noteFromHtml(positionCell(row) + `<br>` + provenanceCellHtml(prov, statedHoldings), { scope: "filer-position-record" }, `${opts.page}-${rowIndex}`)}${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
-          `<td><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0,Math.min(100,weight))}%"></span>`}</span></td>` +
-          `<td class="c-num c-strong">${valueCell(row.value_usd)}</td><td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td><td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`;
+          `<td class="c-pos c-flex">${noteFromHtml(positionCell(row) + `<br>` + provenanceCellHtml(prov, statedHoldings), { scope: "filer-position-record" }, `${opts.page}-${rowIndex}`, { trigger: "label", textHtml: `<span class="design-holding-name"><span class="filed-name">${esc(issuerName)}</span></span>`, name: issuerName })} ${src}${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
+          `<td class="c-bar"><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0,Math.min(100,weight))}%"></span>`}</span></td>` +
+          `<td class="c-num c-strong has-marks">${valueCell(row.value_usd)}</td><td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td><td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`;
       }
       return (
         `<tr>` +
-        `<td class="c-pos">${positionCell(row)}</td>` +
-        `<td class="c-num c-strong">${valueCell(row.value_usd)}</td>` +
+        `<td class="c-pos c-flex">${positionCell(row)}</td>` +
+        `<td class="c-num c-strong has-marks">${valueCell(row.value_usd)}</td>` +
         `<td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td>` +
         `<td class="c-dates">${provenanceCellHtml(prov, statedHoldings)}</td>` +
         `<td class="c-flags">${flagTags(row.flags, undefined, { stated: statedHoldings })}</td>` +
@@ -1474,14 +1503,13 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     const tickered = [...new Map(g.rows.filter((r) => r.ticker).map((r) => [r.ticker!, r] as const)).values()];
     const tickerCell = tickered.length
       ? tickered
-          .map(
-            (r, ti) =>
-              `<span class="mono-ticker">${esc(r.ticker!)}</span>` +
-              noteFromHtml(
-                `verified against the SEC company list on ${esc(verifiedDateOf(r))} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
-                { scope: "filer-ticker" },
-                `${opts.page}-g${gi}-${ti}`,
-              ),
+          .map((r, ti) =>
+            noteFromHtml(
+              `verified against the SEC company list on ${esc(verifiedDateOf(r))} — a reviewed mapping row for this filed issuer name and class (never inferred)`,
+              { scope: "filer-ticker" },
+              `${opts.page}-g${gi}-${ti}`,
+              { trigger: "label", textHtml: `<span class="mono-ticker">${esc(r.ticker!)}</span>`, name: r.ticker! },
+            ),
           )
           .join(" ")
       : "—";
@@ -1492,7 +1520,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         const src = prov.docUrl ? srcLink(prov.docUrl) : srcLinkDerived(null, edgarFilerUrl(opts.cik));
         return (
           `<tr><td class="c-pos">${positionCell(row)} ${src}</td>` +
-          `<td class="c-num">${valueCell(row.value_usd)}</td>` +
+          `<td class="c-num has-marks">${valueCell(row.value_usd)}</td>` +
           `<td class="c-num">${sharesCell(row.shares, row.ssh_type)}</td></tr>`
         );
       })
@@ -1500,13 +1528,13 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
     const flags = [...new Set(g.rows.flatMap((r) => r.flags))];
     return (
       `<tr class="design-holding-row design-holding-group"><td class="c-kind">—</td><td class="c-ticker">${tickerCell}</td>` +
-      `<td class="c-pos"><span class="design-holding-name"><span class="filed-name">${esc(first.issuer_name || "Issuer unnamed")}</span></span>` +
+      `<td class="c-pos c-flex"><span class="design-holding-name"><span class="filed-name">${esc(first.issuer_name || "Issuer unnamed")}</span></span>` +
       `<details class="holding-group-rows"><summary>${fmtInt(positions)} ${positions === 1 ? "position" : "positions"} · ${fmtInt(g.rows.length)} reported rows</summary>` +
       `<table class="etable etable-compact"><caption class="visually-hidden">Rows ${esc(opts.filerName)} reported for ${esc(first.issuer_name || "this issuer")}, as it reported them</caption>` +
       `<tbody>${raw}</tbody></table></details>` +
       `${flagTags(flags, undefined, { stated: statedHoldings })}</td>` +
-      `<td><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0, Math.min(100, weight))}%"></span>`}</span></td>` +
-      `<td class="c-num c-strong">${valueCell(g.value_usd)}</td><td class="c-num">${sharesCell(g.shares, g.ssh_type)}</td>` +
+      `<td class="c-bar"><span class="book-track" aria-hidden="true">${weight == null ? "" : `<span style="width:${Math.max(0, Math.min(100, weight))}%"></span>`}</span></td>` +
+      `<td class="c-num c-strong has-marks">${valueCell(g.value_usd)}</td><td class="c-num">${sharesCell(g.shares, g.ssh_type)}</td>` +
       `<td class="c-num">—</td><td class="c-num">${weight == null ? "—" : `${weight.toFixed(1)}%`}</td><td class="c-num">—</td></tr>`
     );
   };
@@ -1578,11 +1606,7 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         overlap: "The congressional transaction join is unavailable in this build.",
       };
       const body = key === "issuer" && opts.reference ? `${HOLDINGS_COL_NOTES.issuer ?? ""} ${HOLDINGS_COL_NOTES.src ?? ""}` : HOLDINGS_COL_NOTES[key] ?? explanation[key];
-      return (
-        `<th scope="col">${thLabelHtml(label)}` +
-        (body ? noteFromHtml(body, { scope: "filer-holdings" }, key) : "") +
-        `</th>`
-      );
+      return thHtml({ label, cls: HOLDINGS_COL_CLASS[key] ?? "", noteHtml: body ?? null, notes: { scope: "filer-holdings" }, noteKey: key });
     }).join("") +
     `</tr></thead>` +
     `<tbody>${body}</tbody></table></div>` +
@@ -1634,14 +1658,14 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
       const shares = (p: FoldedPosition | null): string =>
         p == null ? `<span class="mono-note">—</span>` : sharesCell(p.shares, p.ssh_type);
       return (
-        `<tr>` +
-        `<td class="c-pos">${positionCell(shown)}</td>` +
+        `<tr${DIFF_EDGE[r.kind] ? ` data-edge="${DIFF_EDGE[r.kind]}"` : ""}>` +
+        `<td class="c-pos c-flex">${positionCell(shown)}</td>` +
         `<td class="c-num">${num(r.prior?.value_usd ?? null)}</td>` +
         `<td class="c-num">${num(r.current?.value_usd ?? null)}</td>` +
         `<td class="c-num">${delta(r.deltaValueUsd, r.notes)}</td>` +
         `<td class="c-num">${shares(r.prior)}</td>` +
         `<td class="c-num">${shares(r.current)}</td>` +
-        `<td class="c-chip">${diffChip(r.kind)}</td>` +
+        `<td class="c-chip c-kind">${diffChip(r.kind)}</td>` +
         `<td class="c-flags">${r.notes
           .filter((n) => !statedNotes.includes(n))
           .map((n) => `<span class="flag dashed">${esc(n)}</span>`)
@@ -1693,11 +1717,8 @@ export function positionDiffHtml(diff: PositionDiff, page: number): string {
                in the Change column. †u does NOT — this table formats its value
                cells with `num()`, not `valueCell`, so it emits no †u at all. */
             const body = key === "change" ? HOLDINGS_FN.get("‡a") : undefined;
-            return (
-              `<th scope="col">${esc(label)}` +
-              (body ? noteFromHtml(body, { scope: "position-diff" }, key) : "") +
-              `</th>`
-            );
+            const cls = i === 0 ? "c-pos c-flex" : key === "change" ? "c-chip c-kind" : key === "why-not-quantified" ? "c-flags" : "c-num";
+            return thHtml({ label, mark: null, cls, noteHtml: body ?? null, notes: { scope: "position-diff" }, noteKey: key });
           })
           .join("") +
         `</tr></thead>` +
@@ -1761,8 +1782,8 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
           : "";
       return (
         `<tr>` +
-        `<td class="c-filer">${filerLinkHtml(row.filer_key, row.filer_name, row.filer_tier ?? "tail")} ${affiliate}</td>` +
-        `<td class="c-num c-strong">${valueCell(
+        `<td class="c-filer c-flex">${filerLinkHtml(row.filer_key, row.filer_name, row.filer_tier ?? "tail")} ${affiliate}</td>` +
+        `<td class="c-num c-strong has-marks">${valueCell(
           row.value_usd,
           row.value_undisclosed_component
             ? "at least one of this filer's positions in the issuer carries no disclosed value, so no total is shown"
@@ -1812,11 +1833,8 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
         `<thead><tr>` +
         HOLDERS_COLS.map(([key, label]) => {
           const body = key === "value" ? HOLDINGS_FN.get("†u") : key === "src" ? HOLDINGS_FN.get("§") : undefined;
-          return (
-            `<th scope="col">${esc(label)}` +
-            (body ? noteFromHtml(body, { scope: "holders" }, key) : "") +
-            `</th>`
-          );
+          const cls = key === "filer" ? "c-filer c-flex" : key === "value" ? "c-num has-marks" : key === "securities" ? "c-num" : key === "src" ? "c-src" : "c-dates";
+          return thHtml({ label, mark: null, cls, noteHtml: body ?? null, notes: { scope: "holders" }, noteKey: key });
         }).join("") +
         `</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`) +
@@ -2019,10 +2037,11 @@ function viewChips(payload: SurfacePayload, state: SurfaceState): string {
   const note = hasPrior
     ? `<span class="period-note">this build publishes the selected quarter and the one ` +
       `before it, so a displayed change can be inspected on both sides</span>`
-    : `<span class="period-note">Prior quarter not yet available${noteFromHtml(
+    : `<span class="period-note">${noteFromHtml(
         esc(`This build carries one quarter for this manager: ${payload.current}. Notable managers carry four published quarters, others two.`),
         { scope: "filer-period" },
         "prior",
+        { trigger: "label", textHtml: "Prior quarter not yet available" },
       )}</span>`;
   return (
     `<div class="period-row"><span class="period-label">View</span><div class="chips" data-holdings-views>` +

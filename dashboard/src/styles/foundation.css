@@ -35,6 +35,74 @@
   --serif: "IBM Plex Sans", sans-serif;
   --sans: "IBM Plex Sans", -apple-system, sans-serif;
   --mono: "JetBrains Mono", monospace;
+
+  /* ---- DESIGN-POLISH M1 tokens (Architecture B). Every font-size on the site
+     reads one of these fourteen, and none is below the 9.5px floor. ---- */
+  --fs-label: 9.5px;    /* table headers, card tags, party tags */
+  --fs-meta: 10px;      /* kind word, ledger label, band meta, kicker */
+  --fs-control: 10.5px; /* segmented controls, provenance, receipts, pager */
+  --fs-note: 11px;      /* footnotes, secondary cell text, section notes */
+  --fs-cell: 11.5px;    /* table body, rule text */
+  --fs-small: 12px;     /* card body, metric labels, note panels */
+  --fs-name: 12.5px;    /* names, nav, search */
+  --fs-body: 13px;      /* lede, band titles, body */
+  --fs-title: 13.5px;   /* card titles */
+  --fs-brand: 14px;     /* brand, explainer heading */
+  --fs-lede: 15px;      /* methodology and home prose */
+  --fs-heading: 20px;   /* module-card names, state headings */
+  --fs-display: 26px;   /* H1, header-ledger values (22px at ≤720px) */
+  --fs-hero: 40px;      /* home and methodology titles (28px at ≤720px) */
+
+  /* spacing */
+  --gutter: 32px;       /* band gutter (16px at ≤720px) */
+  --col-half: 6px;      /* half the 12px gap between adjacent cell contents */
+  --gap-list: 14px;     /* rule book and bar-list rows */
+  --num-lead: 16px;     /* lead before a numeric/date column (10px compact) */
+  --row-pad-y: 7.5px;   /* single-line ledger row: 30px at 1440, fine pointer */
+  --mark-slot: 14px;    /* reserved right slot for § † ‡ ≈ and the sort caret */
+  --hit-min: 24px;      /* control hit square (44px coarse / ≤720px) */
+  --hit-half: 12px;     /* half of it, spelled out: overflow-clip-margin takes no calc() */
+  --head-pad-t: 8px;    /* ledger header cell: 8px top, 6px bottom */
+  --head-pad-b: 6px;
+
+  /* ledger ink (L3: lifted from the design's #51617A/#64748A for AA) */
+  --ink-label: #8494A8; /* 6.51:1 on #04070D, 6.15:1 on the #0A101A hover row */
+  --ink-meta: #7B8B9F;  /* 5.80:1, 5.48:1 */
+  --ink-kicker: #3385C6; /* page kicker, lifted from the design's #2774AE (4.03:1) to 5.10:1 */
+  --rule-head: #1A2533;
+  --rule-row: #0E1520;
+
+  /* kind palette (D-2): one text and one edge token per kind */
+  --kind-buy-text: #A9D2F2; --kind-buy-edge: #2774AE;
+  --kind-sell-text: #F07A66; --kind-sell-edge: #F07A66;
+  --kind-exch-text: #A7B5C6; --kind-exch-edge: #22303F;
+  --kind-late-text: #FFD100; --kind-late-edge: #7A5A20;
+  --kind-new-text: #3FD6A4; --kind-new-edge: #3FD6A4;
+  --kind-trim-text: #EFC363; --kind-trim-edge: #7A5A20;
+  --kind-nochange-text: #8FA0B3; --kind-nochange-edge: #22303F;
+  --kind-noprior-text: #8FA0B3; --kind-noprior-edge: #22303F;
+  --kind-nc-text: #A7B5C6;
+  --kind-behaviour-text: #A9D2F2; --kind-behaviour-edge: #2774AE;
+  --kind-novelty-text: #3FD6A4; --kind-novelty-edge: #3FD6A4;
+  --kind-compliance-text: #FFD100; --kind-compliance-edge: #7A5A20;
+  --kind-withheld-text: #F07A66; --kind-withheld-edge: #F07A66;
+
+  /* header-ledger tones (D-3) */
+  --tone-ink: #E9F0F7; --tone-blue: #A9D2F2; --tone-gold: #FFD100; --tone-green: #3FD6A4;
+
+  /* segmented control (D-4, T-10) */
+  --seg-border: #1B2735;
+  --seg-text: #8FA0B3;        /* 7.54:1 on the page, 6.48:1 on the fill */
+  --seg-fill: #0F1B2A;
+  --seg-text-active: #EAF4FC; /* 15.57:1 on the fill */
+  --seg-cue: #69B4EC;         /* 8.97:1 on the page, 7.72:1 on the fill */
+
+  /* bars and ticks (H-18: the sell fill is lifted from the design's #5A2E28) */
+  --bar-buy: #2774AE;   /* 4.03:1 on the page, 3.63:1 on the track */
+  --bar-sell: #9E4E41;  /* 3.48:1, 3.13:1 */
+  --bar-track: #10161F;
+  --bar-tick: #22303F;  /* decorative: the value is printed beside every bar */
+  --bar-gold: #8A6624;  /* 3.46:1 on the track; the late edge #7A5A20 is 2.86:1 */
   color-scheme: dark;
 }
 [data-theme="light"] {
@@ -44,7 +112,52 @@
   --accent: #30567c; --accent-h: #1f3d5c; --amber: #7a5a14; --amber-bg: #f4e8cf;
   --buy: #2b6a52; --sell: #92483a; --dem: #49597c; --rep: #7b524f; --ind: #67624f;
   --hatch: repeating-linear-gradient(45deg, transparent 0 3px, #948d7c 3px 4px);
+
+  --ink-label: #6b6659; /* 5.43:1 on #faf9f5 */
+  --ink-meta: #6b6659;
+  --ink-kicker: #30567c; /* 7.25:1 */
+  --rule-head: #cec8b9;
+  --rule-row: #e5e1d6;
+
+  --kind-buy-text: #30567c; --kind-buy-edge: #30567c;
+  --kind-sell-text: #92483a; --kind-sell-edge: #92483a;
+  --kind-exch-text: #5f5a4e; --kind-exch-edge: #cec8b9;
+  --kind-late-text: #7a5a14; --kind-late-edge: #7a5a14;
+  --kind-new-text: #2b6a52; --kind-new-edge: #2b6a52;
+  --kind-trim-text: #7a5a14; --kind-trim-edge: #7a5a14;
+  --kind-nochange-text: #6b6659; --kind-nochange-edge: #cec8b9;
+  --kind-noprior-text: #6b6659; --kind-noprior-edge: #cec8b9;
+  --kind-nc-text: #5f5a4e;
+  --kind-behaviour-text: #30567c; --kind-behaviour-edge: #30567c;
+  --kind-novelty-text: #2b6a52; --kind-novelty-edge: #2b6a52;
+  --kind-compliance-text: #7a5a14; --kind-compliance-edge: #7a5a14;
+  --kind-withheld-text: #92483a; --kind-withheld-edge: #92483a;
+
+  --tone-ink: #262319; --tone-blue: #30567c; --tone-gold: #7a5a14; --tone-green: #2b6a52;
+
+  --seg-border: #cec8b9;
+  --seg-text: #5f5a4e;        /* 6.52:1 */
+  --seg-fill: #fffefb;
+  --seg-text-active: #1f3d5c; /* 11.07:1 */
+  --seg-cue: #30567c;         /* 7.58:1 on #fffefb */
+
+  --bar-buy: #2774AE;   /* 4.75:1 on the page, 3.83:1 on the track */
+  --bar-sell: #b5655a;  /* 4.01:1, 3.23:1 */
+  --bar-track: #e5e1d6;
+  --bar-tick: #cec8b9;
+  --bar-gold: #7a5a14;
   color-scheme: light;
+}
+/* The fold and touch values of the size tokens. Screen widths at or below the
+   720px fold take the 16px gutter and the smaller display sizes; a coarse
+   pointer (or the fold) takes the 44px hit square and the 44px ledger row. */
+@media (max-width:720px) {
+  :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; }
+}
+@media (any-pointer: coarse), (max-width: 720px) {
+  /* The header row grows with the body rows, so a header control's 44px
+     square stays inside its table's scroll box. */
+  :root { --hit-min: 44px; --hit-half: 22px; --row-pad-y: 14.5px; --head-pad-t: 28.5px; }
 }
 
 * {

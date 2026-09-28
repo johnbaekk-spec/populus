@@ -54,6 +54,7 @@ export {
   sortHits,
   signalKindShort,
   SIGNAL_HITS_PAGE_SIZE,
+  familyOf,
 } from "./signals.ts";
 export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {

@@ -75,27 +75,39 @@ for (const [file, route] of references) {
         }
         // every rendered hit carries its receipt link
         expect(await page.locator('#signal-hits-body tr.si-hit td.c-src a').count()).toBe(all);
-        // the pager pages the artifact: 50 per page, "Showing 1–50 of N"
+        // the pager pages the artifact: 50 per page, in the range grammar
+        // (DESIGN-POLISH M1, R8): "1–50 of N hits"
         const total = Number(await page.locator('#signal-hits').getAttribute('data-total'));
         if (total > 50) {
-          await expect(page.locator('#signal-hits-range')).toContainText('Showing 1–50 of');
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${total.toLocaleString('en-US')} hits$`));
           await page.locator('#signal-hits-next').click();
-          await expect(page.locator('#signal-hits-range')).toContainText('Showing 51–');
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^51–\\d[\\d,]* of ${total.toLocaleString('en-US')} hits$`));
           await page.locator('#signal-hits-prev').click();
-          await expect(page.locator('#signal-hits-range')).toContainText('Showing 1–50 of');
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${total.toLocaleString('en-US')} hits$`));
         }
       }
       if (route === '/congress/') {
         await expect(page.locator('.reference-feed thead th')).toHaveCount(8);
         await expect(page.locator('.reference-feed .reference-row').first().locator('td')).toHaveCount(8);
-        // R12: fifty rows per page. The narrow viewport keeps its scroll
-        // container; the desktop table is in flow.
-        const scroll = await page.locator('.reference-feed-scroll').evaluate(el => ({height:el.clientHeight, contents:el.scrollHeight}));
-        if (width !== 1440) expect(scroll.height).toBeLessThanOrEqual(440);
+        // R12: fifty rows per page. DESIGN-POLISH M1 (R3, L8): the feed is
+        // never an inner scroll box at any width — its rows flow on the page.
+        const scroll = await page.locator('.reference-feed-scroll').evaluate(el => {
+          const cs = getComputedStyle(el);
+          return { height: el.clientHeight, contents: el.scrollHeight, overflowY: cs.overflowY, maxHeight: cs.maxHeight };
+        });
+        expect(['auto', 'scroll']).not.toContain(scroll.overflowY);
+        expect(scroll.maxHeight).toBe('none');
+        expect(scroll.contents - scroll.height, 'no rows hidden inside a box').toBeLessThanOrEqual(1);
         await expect(page.locator('.reference-feed .reference-row')).toHaveCount(50);
         if (width === 1440) {
-          const rows = await page.locator('.reference-feed .reference-row').evaluateAll(els => els.map(el => el.getBoundingClientRect().height));
-          expect(rows.every(height => Math.abs(height - 31) <= 1)).toBe(true);
+          // DESIGN-POLISH M1: the ledger's 30px feed row (±1) — EVERY row on
+          // the page, the rows carrying visible flag chips (and their
+          // definition triggers) included; no row is exempt (M1 review Q-5).
+          const rows = await page.locator('.reference-feed .reference-row').evaluateAll(els => els.map((el, i) => ({
+            i, height: Math.round(el.getBoundingClientRect().height * 10) / 10, chips: el.querySelectorAll('.cell-range .flag').length,
+          })));
+          expect(rows.filter(r => Math.abs(r.height - 30) > 1), 'every feed row is 30±1px').toEqual([]);
+          expect(rows.some(r => r.chips >= 1), 'the page carries flagged rows, so the pin measures chip rows too').toBe(true);
           const bars = await page.locator('.reference-feed .band-fill').evaluateAll(els => els.map(el => ({height:el.getBoundingClientRect().height,width:el.getBoundingClientRect().width})));
           expect(bars.every(bar => bar.height >= 3 && bar.width > 0), 'interval fills must actually paint inside their tracks').toBe(true);
           await expect(page.locator('#momentum-section thead th')).toHaveCount(6);
@@ -180,7 +192,28 @@ test('compact feed paging and row flags remain usable', async ({page}) => {
   expect(await page.locator('.reference-row').first().textContent()).not.toBe(first);
   await page.locator('#pager-newer').click();
   await expect(page.locator('#filter-count-line')).toContainText('1–50');
-  const flag = page.locator('.reference-flags .note-btn').first();
-  await flag.click();
-  await expect(page.locator(`#${await flag.getAttribute('popovertarget')}`)).toBeVisible();
+  /* DESIGN-POLISH M1 (H-17): a row's flags are VISIBLE chips in the range
+     cell, never inside a note panel — and each chip OPENS ITS OWN definition,
+     one interaction away, as the row's single flag note did before (M1 review,
+     the coordinator's ruling on D7; the text is the site's existing copy). */
+  const flag = page.locator('.reference-row .cell-range .flag').first();
+  await expect(flag).toBeVisible();
+  expect(await flag.evaluate(el => !el.closest('.note-pop'))).toBe(true);
+  await expect(page.locator('.reference-flags')).toHaveCount(0);
+  const chips = page.locator('.reference-row .cell-range .flag');
+  const n = Math.min(await chips.count(), 8);
+  expect(n, 'the first page carries flag chips').toBeGreaterThan(0);
+  const opened = new Set<string>();
+  for (let i = 0; i < n; i++) {
+    const trigger = chips.nth(i).locator('.note-label');
+    await expect(trigger, `chip ${i} is its definition's trigger`).toHaveCount(1);
+    const id = (await trigger.getAttribute('popovertarget'))!;
+    expect(opened.has(id), `chip ${i} opens its OWN panel, not another chip's`).toBe(false);
+    opened.add(id);
+    await trigger.click();
+    const panel = page.locator(`[id="${id}"]`);
+    await expect(panel, `chip ${i}'s definition opens`).toBeVisible();
+    expect(((await panel.textContent()) ?? '').trim().length, `chip ${i}'s definition says something`).toBeGreaterThan(10);
+    await page.keyboard.press('Escape');
+  }
 });

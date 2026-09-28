@@ -10,7 +10,7 @@
    `asOfNote` and `netCellHtml` are SHARED-PRIVATE: exported here for the
    sibling domain modules only, deliberately NOT re-exported by ui/index.ts. */
 
-import { esc, fnMark } from "../format.ts";
+import { esc, hangMark } from "../format.ts";
 import { type NetInterval, netDirection, netIntervalText } from "../derive.ts";
 
 export interface BuildStamps {
@@ -55,11 +55,14 @@ export function netCellHtml(net: NetInterval, overlapsPrev: boolean): string {
   const dir = netDirection(net);
   const dirHtml =
     dir === "accumulation"
-      ? ` <span class="net-dir net-acc">net accumulation</span>`
+      ? `<span class="net-dir net-acc"> net accumulation</span>`
       : dir === "disposal"
-        ? ` <span class="net-dir net-dis">net disposal</span>`
+        ? `<span class="net-dir net-dis"> net disposal</span>`
         : "";
-  const overlap = overlapsPrev ? fnMark("≈") : "";
+  // The separating space lives INSIDE the direction span: where the words are
+  // hidden, a space left outside it would push the digits off the column edge.
+  // The ≈ hangs past the digits (zero advance) — its column reserves the slot.
+  const overlap = overlapsPrev ? hangMark("≈") : "";
   return `${esc(netIntervalText(net))}${dirHtml}${overlap}`;
 }
 

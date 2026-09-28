@@ -214,7 +214,7 @@ test("SL-R10 (b): every bounded surface STATES its bound in server bytes, with n
   assert.doesNotMatch(live, /class="compact-disclosure"[^>]*\shidden>/, "the wrapper is NOT hidden");
   assert.match(
     live,
-    /<span class="compact-bound-count">15 more rows below/,
+    /<span class="compact-bound-count">1–10 of 25 rows<\/span>/, // DESIGN-POLISH M1 (R8): the range grammar
     "the count is real text, reachable with scripting off",
   );
   assert.match(live, /class="linklike compact-toggle"[^>]*\shidden>/, "the BUTTON is what waits for a script");
@@ -323,7 +323,7 @@ test("SL-R10 (c): the ranking bound is stated BEFORE the 22 MB feed arrives, scr
       "…and the bound is stated regardless. A bound that lived on the button was " +
         "stated to nobody for the whole duration of a 22 MB download.",
     );
-    assert.match(bound.textContent, /more ranked members below/);
+    assert.match(bound.textContent, /^1–10 of \d+ ranked members$/); // R8: the range grammar
     assert.match(control!.textContent, /published dataset/, "and the route to the withheld rows");
   } finally {
     restore();
@@ -366,7 +366,7 @@ test("SL-R10 (c): `initDomDisclosures` reveals only DOM-backed BUTTONS — never
     for (const wrap of [plain, dom]) {
       assert.equal(wrap.hidden, false);
       assert.equal(wrap.querySelector(".compact-bound-count")!.hidden, false);
-      assert.match(wrap.querySelector(".compact-bound-count")!.textContent, /below/);
+      assert.match(wrap.querySelector(".compact-bound-count")!.textContent, /^1–10 of \d+ \S/); // R8
     }
   } finally {
     restore();
@@ -393,7 +393,7 @@ test("SL-R10 (d): an island that returns early cannot take the bound with it", a
     const bound = doc.querySelector(".compact-bound-count");
     assert.ok(bound, "the statement is in the server's bytes, not produced by the island");
     assert.equal(bound!.hidden, false, "an island that never ran cannot retract it");
-    assert.match(bound!.textContent, /more ranked members below/);
+    assert.match(bound!.textContent, /^1–10 of \d+ ranked members$/); // R8: the range grammar
   } finally {
     restore();
   }
@@ -445,7 +445,13 @@ test("SL-R11/LD4: the visible suffix is the SUMMED ROW TOTAL, never a count of c
   const html = rankingWindowHtml("12 months to 2026-08-23 by trade date", rollup, "tickers", "momentum-section");
   // 72 + 212 + 1,412 = 1,696 — the live figure from Current State.
   assert.equal(rankingExcludedRows(rollup, "tickers"), 1696);
-  assert.match(html, /· 1,696 rows excluded/, "the SIZE of what the reader cannot see is on the page");
+  /* DESIGN-POLISH M1 (R6): the summed total IS the note's label trigger — on
+     the page, and the one interaction that opens the clauses. */
+  assert.match(
+    html,
+    /· <span class="note"><button type="button" class="note-btn note-label"[^>]*>1,696 rows excluded<\/button>/,
+    "the SIZE of what the reader cannot see is on the page",
+  );
   assert.doesNotMatch(html, /3 exclusions/, "never a count of categories — the round-1 objection LD4 accepted");
 
   // …and the three per-category counts are in the note body, not lost.
@@ -475,7 +481,7 @@ test("SL-R11/R12: the suffix total and the note body are produced by ONE pass an
           const expected = dateAnomalies + undated + (kind === "tickers" ? noTickerRows : 0);
           assert.equal(total, expected, `${kind} ${dateAnomalies}/${undated}/${noTickerRows}`);
           assert.ok(
-            html.includes(`· ${total.toLocaleString("en-US")} ${total === 1 ? "row" : "rows"} excluded`),
+            html.includes(`>${total.toLocaleString("en-US")} ${total === 1 ? "row" : "rows"} excluded</button>`),
             "the visible suffix IS the sum of the clauses it anchors",
           );
         }

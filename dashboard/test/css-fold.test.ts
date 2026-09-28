@@ -330,7 +330,22 @@ const HONESTY_SELECTORS = [
      only cue that an explanation exists; `.note-pop` is the explanation. */
   ".note-btn",
   ".note-pop",
+  /* DESIGN-POLISH M1 (H-15, T-17). The ledger's own honesty channels:
+     `.note-label` — a label that IS its explanation's trigger
+     `.hang`       — a mark (§ † ‡ ≈) hung in the column's slot
+     `.c-kind`     — the kind word (BUY, SELL, LATE, NEW, EXIT …)
+     `.cell-side`  — the feed row's side, the one cell that says which way
+     `.reference-head` — the feed's column head: its labels and their notes are
+                     the column definitions, and at ≤1080px it folds away
+                     visually, never out of the accessibility tree (review C-12)
+     The table foot's reason class is born with T2.1 (M2) and joins then. */
+  ".note-label",
+  ".hang",
+  ".c-kind",
+  ".cell-side",
+  ".reference-head",
 ];
+const M1_HONESTY_SELECTORS = [".note-label", ".hang", ".c-kind", ".cell-side", ".reference-head"];
 
 const PROHIBITED = [/display\s*:\s*none/, /visibility\s*:\s*hidden/, /content-visibility\s*:\s*hidden/];
 
@@ -349,6 +364,48 @@ test("no honesty selector is display:none'd inside any ≤720px media block", ()
       }
     }
   }
+});
+
+/** The fold sweep above as a function, so its controls run the same code. */
+function foldViolations(source: string): string[] {
+  const out: string[] = [];
+  for (const block of narrowMediaBlocks(source)) {
+    for (const rule of rulesOf(block.body)) {
+      if (!HONESTY_SELECTORS.some((sel) => rule.selector.includes(sel))) continue;
+      if (PROHIBITED.some((bad) => bad.test(rule.decls))) out.push(rule.selector);
+    }
+  }
+  return out;
+}
+
+test("DESIGN-POLISH M1: the ledger honesty selectors are swept — each planted fold hide is caught", () => {
+  assert.deepEqual(foldViolations(css), []);
+  for (const sel of M1_HONESTY_SELECTORS) {
+    for (const decl of ["display:none", "visibility:hidden"]) {
+      const planted = `${css}\n@media (max-width: 720px) { .etable ${sel} { ${decl}; } }`;
+      assert.deepEqual(foldViolations(planted), [`.etable ${sel}`], `control: ${sel} { ${decl} } at the fold`);
+    }
+  }
+});
+
+test("DESIGN-POLISH M1: every ledger honesty selector is emitted by the parity surfaces or the feed rows", async () => {
+  const { renderParitySurfaces } = await import("./lib/ui-parity-surfaces.ts");
+  const { txnRowHtml, feedHeadHtml } = await import("../src/lib/format.ts");
+  const row = {
+    kind: "txn", txnId: "t1", asset: "Widget Co", assetType: null, filed: "2026-07-21", traded: "2026-06-24",
+    name: "Fixture Member", bioguide: "T000001", party: "R", state: "OK", district: null, chamber: "senate",
+    ticker: "WMB", side: "sale", owner: "joint", low: 1001, high: 15000, lag: 27, late: 0, flags: [],
+    doc: "https://efdsearch.senate.gov/x",
+  } as never;
+  const corpus = [
+    ...Object.values(await renderParitySurfaces()),
+    txnRowHtml(row, { watched: new Set<string>(), referenceFeed: true }),
+    txnRowHtml(row, { watched: new Set<string>() }),
+    feedHeadHtml({ referenceFeed: true, notes: { scope: "congress-feed" } } as never),
+  ].join("\n");
+  const emitted = (c: string): boolean => new RegExp(`class="(?:[^"]*\\s)?${c.slice(1)}(?:\\s[^"]*)?"`).test(corpus);
+  for (const sel of M1_HONESTY_SELECTORS) assert.ok(emitted(sel), `${sel} is emitted — a swept selector nothing renders protects nothing`);
+  assert.ok(!emitted(".never-rendered-honesty"), "control");
 });
 
 test("the fold uses clip-pattern visually-hidden, never display:none, for the dual dates", () => {
@@ -370,6 +427,15 @@ test("corrected --ink3 and --hatch values are present; the handoff's failing val
   assert.ok(!css.includes("--ink3: #7d7869"), "handoff dark ink3 (3.68:1) must not ship");
   assert.ok(!css.includes("#cec8b9 3px 4px"), "handoff light hatch (1.58:1) must not ship");
   assert.ok(!css.includes("#4a463c 3px 4px"), "handoff dark hatch must not ship");
+  /* DESIGN-POLISH M1 (L3, T-17): the ledger's label and meta inks are the
+     LIFTED values; the design's failing #64748A is not used as a text colour. */
+  assert.ok(css.includes("--ink-label: #8494A8"), "lifted dark label ink (6.51:1)");
+  assert.ok(css.includes("--ink-meta: #7B8B9F"), "lifted dark meta ink (5.80:1)");
+  assert.ok(css.includes("--ink-label: #6b6659"), "light label ink (5.43:1)");
+  const textColour = (source: string): boolean =>
+    /(?:^|[;{\s])color\s*:\s*#64748a\b/i.test(source.replace(/\/\*[\s\S]*?\*\//g, ""));
+  assert.ok(!textColour(css), "the design's #64748A (3.9:1) must not be a text colour");
+  assert.ok(textColour(css + "\n.x { color: #64748A; }"), "control");
 });
 
 /* ---------- F2 dead-CSS: every new class is styled AND emitted ---------- */

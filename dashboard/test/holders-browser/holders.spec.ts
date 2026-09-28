@@ -12,8 +12,14 @@
    over `orderRankedHolders`; do not widen the claims here without enriching
    the seed in make-inst-preview.py first. */
 import { test, expect, type Page } from "@playwright/test";
+import { hitMisses, probe, formatResult, type PredicateName } from "../geometry/geometry.ts";
+import { g2Exemptions, isPending, type CheckId } from "../geometry/milestones.ts";
 
 const ROUTE = "/institutional/tickers/AAPL/holders/";
+
+/* The target hit-test is the ONE audit the ledger gate's G12 runs
+   (test/geometry/geometry.ts, M1 review Q-11): the lanes serve different
+   builds, but a hit square is measured one way. */
 
 function filerCells(page: Page) {
   return page.locator("[data-holders-body] td.c-filer");
@@ -66,12 +72,17 @@ test("period swap replaces the table AND the sort rebinds to the new nodes", asy
   await expect(page.locator("[data-holders-status]")).toContainText("sorted by filer ascending");
 });
 
-test("sort buttons meet the 44px touch target in a real layout", async ({ page }) => {
-  await page.goto(ROUTE);
-  const box = await page.locator('th[data-sort="value"] button').boundingBox();
-  expect(box).not.toBeNull();
-  expect(box!.width).toBeGreaterThanOrEqual(44);
-  expect(box!.height).toBeGreaterThanOrEqual(44);
+/* L9 (DESIGN-POLISH M1; record in design-principles §7): the sort button
+   reaches --hit-min (44px coarse or at/below 720px, 24px otherwise) through a
+   layout-neutral ::before. Hit-tested at the four corners of the square, at a
+   phone width and at 1440, where the button's own box must also stay its
+   text's height (it never inflates the header row). */
+test("L9: the sort button hit-tests to --hit-min in a real layout, without inflating its header", async ({ page }) => {
+  for (const w of [390, 1440]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.goto(ROUTE);
+    expect(await hitMisses(page, 'th[data-sort] .th-sort'), `at ${w}px`).toEqual([]);
+  }
 });
 
 /* ── CODE-REVIEW F4 ──────────────────────────────────────────────────────────
@@ -118,7 +129,7 @@ test("SL-R28/F4: a note opens BEFORE the period swap, and again from the REPLACE
   await expect(after).toContainText(/\S/, "the replaced root's note carries its explanation too");
 });
 
-test("SL-R24/T12: the holders page's note anchor is a >=44px target at every swept width", async ({ page }) => {
+test("SL-R24/T12 / L9: the holders page's note anchors hit-test to --hit-min at every swept width", async ({ page }) => {
   /* The third in-scope surface a browser can reach in this repository. The
      geometry lane previews the bounded `dist`, which builds no holders route,
      so R24's "a representative anchor per surface" is only satisfiable for this
@@ -128,9 +139,44 @@ test("SL-R24/T12: the holders page's note anchor is a >=44px target at every swe
   for (const w of [360, 720, 964, 1080, 1440]) {
     await page.setViewportSize({ width: w, height: 900 });
     await page.goto(ROUTE);
-    const btn = page.locator(".note-btn").first();
-    expect(await btn.count(), `the holders page must render a note anchor at ${w}px`).toBeGreaterThan(0);
-    const box = (await btn.boundingBox())!;
-    expect(Math.min(box.width, box.height), `44px target at ${w}px`).toBeGreaterThanOrEqual(44);
+    expect(await page.locator(".note-btn").count(), `the holders page must render a note anchor at ${w}px`).toBeGreaterThan(0);
+    // L9: the --hit-min square, hit-tested (not the button's own box)
+    expect(await hitMisses(page, ".note-btn"), `at ${w}px`).toEqual([]);
   }
 });
+
+/* M1 review Q-1. The ledger gate (`ledger.spec.ts`) previews the bounded
+   `dist`, which builds no holders page, so its holders route was 56 stated
+   skips and the route was never MEASURED by G1–G11. This lane serves the
+   holders page, so the same probe runs here: every ledger check that applies
+   (the pending G6 and the design-route G9 excepted, G3 at 1440 only), at 1440
+   and 390, each required to measure something and to find nothing. */
+const HOLDERS_CHECKS: { id: CheckId; fn: PredicateName; arg?: unknown; widths?: number[] }[] = [
+  { id: "G1", fn: "g1" },
+  { id: "G2", fn: "g2", arg: { exempt: [...g2Exemptions()] } },
+  { id: "G3", fn: "g3", widths: [1440] },
+  { id: "G4", fn: "g4" },
+  { id: "G5", fn: "g5" },
+  { id: "G7", fn: "g7" },
+  { id: "G8", fn: "g8" },
+  { id: "G10", fn: "g10" },
+  { id: "G11", fn: "g11" },
+  { id: "G11b", fn: "g11b" },
+  { id: "headFont", fn: "headFont" },
+  { id: "oneFlex", fn: "oneFlex" },
+];
+
+for (const width of [1440, 390]) {
+  for (const c of HOLDERS_CHECKS) {
+    if (isPending(c.id) || (c.widths && !c.widths.includes(width))) continue;
+    test(`Q-1: ledger ${c.id} measures the holders page @${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: width > 720 ? 900 : 844 });
+      await page.goto(ROUTE);
+      await page.evaluate(() => document.fonts.ready);
+      await expect(filerCells(page).first()).toBeVisible();
+      const r = await probe(page, c.fn, c.arg);
+      expect(r.measured, `${c.id} measured nothing on the holders page @${width}: a check that ran on nothing has not passed\n${formatResult(r)}`).toBeGreaterThan(0);
+      expect(r.failureCount, `holders @${width}\n${formatResult(r)}`).toBe(0);
+    });
+  }
+}

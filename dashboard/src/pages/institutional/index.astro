@@ -23,7 +23,7 @@ import {
   esc,
   compactDisclosure,
   noteBody,
-  noteFromHtml,
+  thHtml,
   COMPACT_ROWS,
 } from "../../lib/format";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
@@ -112,12 +112,20 @@ if (!inst.present) {
   // carrying the `<strong>` emphasis the deleted paragraph published.
   const headNoteBody = (h: (typeof INST_INDEX_HEADS)[number]): string =>
     noteBody(h.why ? esc(h.why) : null, h.label === "Filer" ? typeNote : null);
+  /* Ledger roles (DESIGN-POLISH M1, R2): the filer name takes the slack. */
+  const headClass: Record<string, string> = {
+    Filer: "c-filer c-flex", Manager: "c-filer c-flex", CIK: "c-num", Value: "c-num", Pos: "c-num",
+    "Top-5": "c-num", "Latest notable": "c-secondary",
+  };
   const heads = INST_INDEX_HEADS.map((h) =>
-    h.key == null
-      ? `<th scope="col">${esc(h.label)}${
-          headNoteBody(h) ? noteFromHtml(headNoteBody(h), headNotes, h.label) : ""
-        }</th>`
-      : `<th scope="col" data-inst-sort="${h.key}" aria-sort="${h.key === "value" ? "descending" : "none"}"><button class="th-sort">${esc(h.label)}</button>${headNoteBody(h) ? noteFromHtml(headNoteBody(h), headNotes, h.label) : ""}</th>`,
+    thHtml({
+      label: h.label,
+      cls: headClass[h.label] ?? "",
+      noteHtml: headNoteBody(h) || null,
+      notes: headNotes,
+      noteKey: h.label,
+      sort: h.key == null ? null : { attr: "data-inst-sort", key: h.key, state: h.key === "value" ? "descending" : "none" },
+    }),
   ).join("");
 
   /* The leaderboard leads the page. Only CLOSED quarters are offered,

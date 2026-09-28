@@ -78,7 +78,7 @@ function mib(n: number): string {
           </caption>
           <thead>
             <tr>
-              <th scope="col">Part</th>
+              <th scope="col" class="c-flex">Part</th>
               <th scope="col" class="c-num">Filing year</th>
               <th scope="col" class="c-num">Rows</th>
               <th scope="col" class="c-num">Transactions</th>
@@ -89,7 +89,7 @@ function mib(n: number): string {
           <tbody>
             {parts.map((p) => (
               <tr>
-                <td><a href={feedPartHref(p.part)}>{p.part}.v1.json</a></td>
+                <td class="c-flex"><a href={feedPartHref(p.part)}>{p.part}.v1.json</a></td>
                 <td class="c-num">{p.year}</td>
                 <td class="c-num">{fmtInt(p.rows)}</td>
                 <td class="c-num">{fmtInt(p.txn_rows)}</td>

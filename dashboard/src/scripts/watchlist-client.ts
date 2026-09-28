@@ -7,6 +7,7 @@ import {
   feedItemHtml,
   fmtInt,
   esc,
+  rangeOfTotal,
   memberHref,
   tickerHref,
   pathSafeTicker,
@@ -153,7 +154,7 @@ export function initWatchlist(): void {
       })
       .join("\n");
     countEl!.textContent =
-      `${fmtInt(shown.length)} of ${fmtInt(visible.length)} watched ${visible.length === 1 ? "row" : "rows"}` +
+      rangeOfTotal(1, shown.length, visible.length, `watched ${visible.length === 1 ? "row" : "rows"}`) +
       (visible.length > RENDER_CAP ? ` — first ${RENDER_CAP} by filed date; refine your watchlist to narrow` : "") +
       ` · stored on this device only`;
     renderBanner(mergeFeed(rows, paperRows)[0]?.filed ?? null);

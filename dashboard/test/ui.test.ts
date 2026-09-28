@@ -147,7 +147,11 @@ test("entityTxnTable: real table semantics — caption, th scope, honesty cells"
     ctx: CTX,
   });
   assert.ok(html.includes("<caption"), "caption present");
-  assert.ok(html.includes('<th scope="col">'), "th scope present");
+  /* DESIGN-POLISH M1 (T1.9): every header carries its role class now, so the
+     property is read per header — EVERY <th> has scope="col", not merely one. */
+  const ths = [...html.matchAll(/<th\b[^>]*>/g)].map((m) => m[0]);
+  assert.ok(ths.length > 0, "headers rendered");
+  assert.ok(ths.every((t) => /\sscope="col"/.test(t)), "th scope present on every header");
   assert.ok(html.includes("Traded → Filed"));
   assert.ok(html.includes("LATE·55d"), "LATE chip past 45d");
   assert.ok(html.includes("visually-hidden"), "dual dates keep the a11y-tree text");

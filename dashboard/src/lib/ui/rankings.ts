@@ -27,15 +27,15 @@ import {
   fmtInt,
   fmtUsd,
   note,
-  noteFromHtml,
-  colWhyHtml,
   memberHrefFor,
   tickerHrefFor,
   partyClass,
   compactDisclosure,
   COMPACT_ROWS,
   COMPACT_STEP,
-  thLabelHtml,
+  hangMark,
+  thHtml,
+  DATE_ANOMALY_NOTE,
 } from "../format.ts";
 import {
   type NetInterval,
@@ -76,7 +76,20 @@ function referenceNetHtml(net: NetInterval, overlaps: boolean): string {
   else if ((net.kind === "finite" || net.kind === "lower-open") && net.high < 0) bound = `≤ ${boundText(net.high)}`;
   if (bound === null) return netCellHtml(net, overlaps);
   return `<span class="reference-net-bound ${bound.startsWith("≥") ? "positive" : "negative"}" aria-hidden="true">${esc(bound)}</span><span class="visually-hidden">${esc(netIntervalText(net))}</span>` +
-    (overlaps ? `<span class="fn-ref">≈</span>` : "");
+    (overlaps ? hangMark("≈") : "");
+}
+
+/** The ledger ROLE classes of one ranking column, header and cells alike
+    (DESIGN-POLISH M1, R1/R2): numbers right-aligned; the identity column (the
+    member name, or the ticker's bar in the ticker ranking, which has no name)
+    takes the table's slack; a sortable or marked number reserves the mark slot. */
+export function rankingColumnClass(c: CongressColumn, kind: "leaders" | "tickers", cols: readonly CongressColumn[] = []): string {
+  if (c.numeric) return c.sortable || c.mark ? "c-num has-marks" : "c-num";
+  // One flexible column per table (D-1): the bar when the table has one, else
+  // the name — a ticker table without its bar gives the slack to the ticker.
+  const hasBar = cols.some((o) => !o.numeric && o.key !== "name");
+  if (c.key === "name") return kind === "tickers" ? (hasBar ? "c-ticker" : "c-ticker c-flex") : "c-member c-flex";
+  return "c-bar c-flex";
 }
 
 function rankingRowHtml(
@@ -86,6 +99,9 @@ function rankingRowHtml(
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
 ): string {
+  const cols = visualColumns(kind, ctx.referenceRankings);
+  const cls = (i: number, extra = ""): string =>
+    ` class="${[rankingColumnClass(cols[i]!, kind, cols), extra].filter(Boolean).join(" ")}"`;
   const who =
     kind === "tickers"
       ? `<a href="${tickerHrefFor(r.id, ctx)}">${esc(r.id)}</a>`
@@ -96,25 +112,25 @@ function rankingRowHtml(
         : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;
   if (kind === "tickers" && ctx.referenceRankings) {
     const scale = Math.max(r.buys, r.sells, 1);
-    return `<tr><td class="c-num c-muted">${pos ?? ""}</td><td class="c-member">${who}</td>` +
-      `<td><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${r.buys / scale * 50}%"></span><span class="sale" style="left:50%;width:${r.sells / scale * 50}%"></span></span><span class="visually-hidden">${fmtInt(r.buys)} buys; ${fmtInt(r.sells)} sells</span></td>` +
-      `<td class="c-num">${fmtInt(r.txns)}</td><td class="c-num">${r.memberCount == null ? "—" : fmtInt(r.memberCount)}</td>` +
-      `<td class="c-num c-net">${ctx.referenceRankings ? referenceNetHtml(r.net, overlapsPrev) : netCellHtml(r.net, overlapsPrev)}</td></tr>`;
+    return `<tr><td${cls(0, "c-muted")}>${pos ?? ""}</td><td${cls(1)}>${who}</td>` +
+      `<td${cls(2)}><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${r.buys / scale * 50}%"></span><span class="sale" style="left:50%;width:${r.sells / scale * 50}%"></span></span><span class="visually-hidden">${fmtInt(r.buys)} buys; ${fmtInt(r.sells)} sells</span></td>` +
+      `<td${cls(3)}>${fmtInt(r.txns)}</td><td${cls(4)}>${r.memberCount == null ? "—" : fmtInt(r.memberCount)}</td>` +
+      `<td${cls(5, "c-net")}>${ctx.referenceRankings ? referenceNetHtml(r.net, overlapsPrev) : netCellHtml(r.net, overlapsPrev)}</td></tr>`;
   }
   const lateCell =
     r.lateDenom === 0
       ? `<span class="none">—</span>`
       : `${fmtInt(r.late)} of ${fmtInt(r.lateDenom)}`;
   return (
-    `<tr><td class="c-num c-muted">${pos == null ? "" : fmtInt(pos)}</td>` +
-    `<td class="c-member">${who}</td>` +
-    `<td class="c-num">${fmtInt(r.txns)}</td>` +
-    `<td class="c-num c-buy">${fmtInt(r.buys)}</td>` +
-    `<td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
-    `<td class="c-num">${flowCellHtml(r.purchases)}</td>` +
-    `<td class="c-num">${flowCellHtml(r.sales)}</td>` +
-    `<td class="c-num c-net">${ctx.referenceRankings ? referenceNetHtml(r.net, overlapsPrev) : netCellHtml(r.net, overlapsPrev)}</td>` +
-    `<td class="c-num">${lateCell}</td></tr>`
+    `<tr><td${cls(0, "c-muted")}>${pos == null ? "" : fmtInt(pos)}</td>` +
+    `<td${cls(1)}>${who}</td>` +
+    `<td${cls(2)}>${fmtInt(r.txns)}</td>` +
+    `<td${cls(3, "c-buy")}>${fmtInt(r.buys)}</td>` +
+    `<td${cls(4, "c-sell")}>${fmtInt(r.sells)}</td>` +
+    `<td${cls(5)}>${flowCellHtml(r.purchases)}</td>` +
+    `<td${cls(6)}>${flowCellHtml(r.sales)}</td>` +
+    `<td${cls(7, "c-net")}>${ctx.referenceRankings ? referenceNetHtml(r.net, overlapsPrev) : netCellHtml(r.net, overlapsPrev)}</td>` +
+    `<td${cls(8)}>${lateCell}</td></tr>`
   );
 }
 
@@ -169,7 +185,9 @@ function visualColumns(kind: "leaders" | "tickers", reference = false): Congress
     { sortable: false, key: null, label: "Buy ◂ ▸ Sell · count", numeric: false, why: "Bars show transaction counts: purchases left, sales right; each row uses the larger count as its scale." },
     columns[2]!, { sortable: false, key: null, label: "Members", numeric: true, why: "Distinct joined members in the stated window. Unjoined filers are not inferred to be members." },
     { ...columns[7]!, label: "Net flow" }];
-  const labels = ["#", "Member", "Trades†", "Buy", "Sell", "Gross bought ·§", "Gross sales ·§", "Net flow", "Late†"];
+  /* The reference's short labels, MARK-FREE; each column keeps its own mark
+     from the contract, so a note is never left without its trigger. */
+  const labels = ["#", "Member", "Trades", "Buy", "Sell", "Gross bought", "Gross sales", "Net flow", "Late"];
   return columns.map((c, i) => ({ ...c, label: labels[i]! }));
 }
 
@@ -182,27 +200,29 @@ function rankingHeadHtml(
   active: CongressSortKey,
   dir: "asc" | "desc",
   notes: NoteCtx,
+  kind: "leaders" | "tickers",
 ): string {
   return cols
     .map((c) => {
+      const cls = rankingColumnClass(c, kind, cols);
       if (!c.sortable) {
-        return (
-          `<th scope="col"${c.numeric ? ' class="c-num"' : ""}>${thLabelHtml(c.label)}` +
-          colWhyHtml(c.why, notes, c.key ?? c.label) + `</th>`
-        );
+        /* The stated reason is the header's LABEL trigger (no glyph beside it). */
+        return thHtml({ label: c.label, mark: c.mark ?? null, cls, noteHtml: esc(c.why), notes, noteKey: c.key ?? c.label });
       }
-      const sortAttr = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
-      /* A SORTABLE column can carry a note too — the ranking footnotes
-         qualified Txns, Late and the three flow columns, all of which sort. The
-         key is `c.key`, non-null on this branch by the type. The note
-         button's click is kept out of the sort handler. */
-      return (
-        `<th scope="col"${c.numeric ? ' class="c-num"' : ""} data-congress-sort="${esc(c.key)}" ` +
-        `data-congress-dir="${c.defaultDir}" aria-sort="${sortAttr}">` +
-        `<button class="th-sort" type="button">${thLabelHtml(c.label)}</button>` +
-        (c.note ? noteFromHtml(c.note, notes, c.key) : "") +
-        `</th>`
-      );
+      const state = c.key === active ? (dir === "desc" ? "descending" : "ascending") : "none";
+      /* A SORTABLE column's note is a MARK trigger in the slot (a label
+         trigger never sits inside a sort button). The key is `c.key`, non-null
+         on this branch by the type; the note button's click is kept out of the
+         sort handler. */
+      return thHtml({
+        label: c.label,
+        mark: c.mark ?? null,
+        cls,
+        noteHtml: c.note ?? null,
+        notes,
+        noteKey: c.key,
+        sort: { attr: "data-congress-sort", key: c.key, state, extra: ` data-congress-dir="${c.defaultDir}"` },
+      });
     })
     .join("");
 }
@@ -339,7 +359,7 @@ function exclusionParts(
       text:
         `${fmtInt(rollup.dateAnomalies)} date-anomaly ${
           rollup.dateAnomalies === 1 ? "row" : "rows"
-        } excluded from the trade-date window (impossible trade dates)`,
+        } excluded from the trade-date window (${DATE_ANOMALY_NOTE})`,
     });
   if (rollup.undated > 0)
     out.push({
@@ -393,9 +413,14 @@ export function rankingWindowHtml(
   /* LD4, the mitigation the owner directed: the SIZE of what the reader cannot
      see stays on the page at every width, and is the note's anchor. The three
      per-category counts and their definitions live in the note body. */
+  /* The excluded-row count is the note's LABEL trigger: the size stays on the
+     page at every width, and the per-category clauses open from it. */
   return (
-    `${esc(windowText)} · ${fmtInt(rows)} ${rows === 1 ? "row" : "rows"} excluded` +
-    note(clauses.join(" · "), { scope: "window" }, sectionId)
+    `${esc(windowText)} · ` +
+    note(clauses.join(" · "), { scope: "window" }, sectionId, {
+      trigger: "label",
+      textHtml: `${fmtInt(rows)} ${rows === 1 ? "row" : "rows"} excluded`,
+    })
   );
 }
 
@@ -535,8 +560,13 @@ export function congressRankingSection(
     `<div class="panel-head"><h2 class="section-h">${esc(opts.heading)}</h2>` +
     `<span class="panel-note" id="${esc(opts.sectionId)}-window">` +
     rankingWindowHtml(windowText, rollup, kind, opts.sectionId) +
-    `</span></div>` +
-    (opts.controls ? (ctx.referenceRankings ? `<details class="ranking-options"><summary>Window & dates</summary>${rangeControlHtml(rollup.range, rollup.basis)}</details>` : rangeControlHtml(rollup.range, rollup.basis)) : "") +
+    `</span>` +
+    /* The window control is the band head's own right-aligned control, on the
+       head's baseline, with its own words ("Window & dates") — never an
+       absolutely positioned "⋯" over the table. */
+    (opts.controls && ctx.referenceRankings ? `<details class="ranking-options"><summary>Window &amp; dates</summary>${rangeControlHtml(rollup.range, rollup.basis)}</details>` : "") +
+    `</div>` +
+    (opts.controls && !ctx.referenceRankings ? rangeControlHtml(rollup.range, rollup.basis) : "") +
     /* The pending indicator. NOT a queue — `range` and `basis` are
        module state and `receiveRows` already reapplies them, so a pre-arrival
        click has always been applied. The defect is that `setSeg` paints the
@@ -556,7 +586,7 @@ export function congressRankingSection(
     `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by ${kind === "tickers" ? "number of disclosures" : "net disclosed flow"}, largest first.</noscript></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first>` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` })}</tr></thead>` +
+    `<thead><tr>${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` }, kind)}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
     /* A zero-rankable window STATES itself. The container ships
        in both states so the client can fill it when a range change empties the
@@ -596,7 +626,7 @@ export function congressRankingSection(
         `to the bottom as if small, and never merged into it by any sort.</p>` +
         `<div class="table-scroll"><table class="etable">` +
         `<caption class="visually-hidden">Unrankable ${esc(noun)} — amounts wholly undisclosed</caption>` +
-        `<thead><tr>${rankingHeadHtml(cols, "name", "asc", { scope: `undisc-${opts.sectionId}` })}</tr></thead>` +
+        `<thead><tr>${rankingHeadHtml(cols, "name", "asc", { scope: `undisc-${opts.sectionId}` }, kind)}</tr></thead>` +
         `<tbody id="${esc(opts.undisclosedRootId)}">${bucket.html}</tbody></table></div>` +
         /* The one terminus of the five that was NOTHING but its count,
            so it is deleted outright rather than relocated — the control's own

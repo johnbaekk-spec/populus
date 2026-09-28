@@ -656,7 +656,8 @@ test("F6: the leaderboard and the directory carry a NAMED terminus beside the co
      the server where the row's duplicate of it was. The author is named by the
      sentence ("a Public Filings render bound"), not by a `data-terminus-author`
      wrapper, so the assertion follows the text. */
-  assert.match(html, /15 more issuers below/);
+  // DESIGN-POLISH M1 (R8): the count is the range grammar — rows shown of the total.
+  assert.match(html, /<span class="compact-bound-count">1–10 of 25 issuers<\/span>/);
   // it precedes the button, which is what puts the STATED bound in front of the
   // reader before the offer to lift it
   assert.ok(

@@ -63,7 +63,8 @@ import {
   terminusRow,
   COMPACT_ROWS,
   compactDisclosure,
-  thLabelHtml,
+  changeEdgeAttr,
+  thHtml,
 } from "./format.ts";
 export { reportingLagDays };
 
@@ -789,16 +790,17 @@ function lagCell(r: ActivityFeedRecord): string {
        filing-dictionary explanation with no replacement channel while the
        exact inventory gate passed green. The cause moves into the note; the
        sibling is preserved BYTE-IDENTICAL below. */
-    return (
-      `<span class="lag">—<span class="visually-hidden"> reporting lag not resolvable</span></span>` +
-      note("filed date not resolvable from this build's filing dictionary", nctx, `${rowKey}-lagcause`)
-    );
+    return note("filed date not resolvable from this build's filing dictionary", nctx, `${rowKey}-lagcause`, {
+      trigger: "label",
+      textHtml: `<span class="lag">—<span class="visually-hidden"> reporting lag not resolvable</span></span>`,
+      name: "reporting lag not resolvable",
+    });
   }
   if (lag < 0) {
-    return (
-      `<span class="lag lag-anomaly">filed ${esc(String(Math.abs(lag)))}d before quarter end</span>` +
-      note("filed before the quarter it reports ended", nctx, `${rowKey}-laganomaly`)
-    );
+    return note("filed before the quarter it reports ended", nctx, `${rowKey}-laganomaly`, {
+      trigger: "label",
+      textHtml: `<span class="lag lag-anomaly">filed ${esc(String(Math.abs(lag)))}d before quarter end</span>`,
+    });
   }
   if (lag > STATUTORY_LAG_DAYS) {
     return `<span class="lag-late">LATE·${esc(String(lag))}d</span><span class="visually-hidden"> — filed ${esc(
@@ -855,21 +857,21 @@ export function activityRowHtml(
   const label = CHANGE_LABEL[r.change_kind] ?? CHANGE_LABEL.unclassified;
   const filerName = r.filer_name && r.filer_name.trim() !== "" ? r.filer_name : `CIK ${r.cik}`;
   return (
-    `<tr>` +
+    `<tr${changeEdgeAttr(r.change_kind)}>` +
     // ONE filer-link rule (holdings.filerLinkHtml), which routes through the
     // ONE href primitive: the caller supplies the top/tail budget state;
     // the default is tail — the reachable direction, never a dressed 404.
     // ISSUER FIRST. The feed answers "what is being accumulated", so the
     // issuer is the anchor and the manager is the qualifier. Ordering and the
     // change-kind filters are untouched — only the reading order changed.
-    `<td class="c-issuer">${issuerCell(r)}</td>` +
+    `<td class="c-issuer c-flex">${issuerCell(r)}</td>` +
     `<td class="c-filer c-secondary">${filerLinkHtml(r.cik, filerName, tier)}</td>` +
-    `<td><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span>` +
+    `<td class="c-kind"><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span>` +
     `<span class="visually-hidden"> ${esc(label.spoken)}</span>` +
     `${fnMark("§")}</td>` +
-    `<td class="c-num">${deltaCell(r)}</td>` +
+    `<td class="c-num has-marks">${deltaCell(r)}</td>` +
     `<td class="c-num mono-id">${esc(r.curr_period)}</td>` +
-    `<td class="c-num">${filedCell(r)}</td>` +
+    `<td class="c-num has-marks">${filedCell(r)}</td>` +
     `<td class="c-num">${lagCell(r)}</td>` +
     `<td class="c-flags">${flagTags(r.flags, undefined, { stated })}</td>` +
     `</tr>`
@@ -946,6 +948,10 @@ const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
   ["flags", "Flags", "flags are a set per row, with no order over them"],
 ];
 
+/** The ledger role of each column (DESIGN-POLISH M1, R2), in column order. */
+const ACTIVITY_COL_CLASSES = ["c-issuer c-flex", "c-filer c-secondary", "c-kind", "c-num", "c-num", "c-num", "c-num", "c-flags"] as const;
+const ACTIVITY_REFERENCE_CLASSES = ["c-kind", "c-issuer c-flex", "c-filer c-secondary", "c-num", "c-num", "c-num", "c-src"] as const;
+
 /** Mark → column, read off the emitter. */
 const ACTIVITY_COL_FN: Record<string, string | undefined> = {
   change: ACTIVITY_FN.get("§"),
@@ -1005,7 +1011,7 @@ export function activityAbsentHtml(reason: ActivityAbsenceReason): string {
 export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions = {}): string {
   if (opts.reference && (!feed.present || feed.pagination.total_records === 0)) {
     const explanation = !feed.present ? activityAbsentHtml(feed.reason ?? "activity-grain-unavailable") : `<p class="section-note">No comparable quarter-over-quarter records are published in this build. Missing records are not evidence of no activity.</p>`;
-    return `<section class="panel" aria-label="Cross-filer activity"><div class="panel-head"><h2 class="section-h">Recent activity</h2><span class="panel-note">REPORTED QUARTER-OVER-QUARTER CHANGES</span></div><div class="table-scroll"><table class="etable"><caption class="visually-hidden">Recent institutional activity</caption><thead><tr>${["Kind", "Name", "Filer", "Value", "Wt", "Position change", "Src"].map(label => `<th scope="col">${thLabelHtml(label)}</th>`).join("")}</tr></thead><tbody><tr><td colspan="7" class="design-unavailable-message"><span class="design-availability">Not available in this build</span>No comparable activity rows to display.</td></tr></tbody></table></div>${explanation}</section>`;
+    return `<section class="panel" aria-label="Cross-filer activity"><div class="panel-head"><h2 class="section-h">Recent activity</h2><span class="panel-note">REPORTED QUARTER-OVER-QUARTER CHANGES</span></div><div class="table-scroll"><table class="etable"><caption class="visually-hidden">Recent institutional activity</caption><thead><tr>${(["Kind", "Name", "Filer", "Value", "Wt", "Position change", "Src"] as const).map((label, i) => thHtml({ label, cls: ACTIVITY_REFERENCE_CLASSES[i] })).join("")}</tr></thead><tbody><tr><td colspan="7" class="design-unavailable-message"><span class="design-availability">Not available in this build</span>No comparable activity rows to display.</td></tr></tbody></table></div>${explanation}</section>`;
   }
   if (!feed.present) return activityAbsentHtml(feed.reason ?? "activity-grain-unavailable");
 
@@ -1099,14 +1105,15 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
       ["weight", "Wt", "Position weight is not available in this activity list."],
       ["shares", "Position change", "Reported share change; not an inference of intent."],
       ["source", "Src", "Filing date, reporting period, lag and record flags remain available in the source note."],
-    ] : ACTIVITY_COLS).map(([key, label, why]) => {
-      const body = noteBody(why, ACTIVITY_COL_FN[key]);
-      return (
-        `<th scope="col">${thLabelHtml(label)}` +
-        (body ? noteFromHtml(body, { scope: "inst-activity" }, key) : "") +
-        `</th>`
-      );
-    }).join("") +
+    ] : ACTIVITY_COLS).map(([key, label, why], i) =>
+      thHtml({
+        label,
+        cls: (opts.reference ? ACTIVITY_REFERENCE_CLASSES : ACTIVITY_COL_CLASSES)[i],
+        noteHtml: noteBody(why, ACTIVITY_COL_FN[key]) || null,
+        notes: { scope: "inst-activity" },
+        noteKey: key,
+      }),
+    ).join("") +
     `</tr></thead>` +
     // The LOCKED render root. It was an anonymous <tbody>, which meant
     // no sort or expansion could be scoped to it and no root-integrity test
@@ -1140,9 +1147,11 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
       shown: Math.min(rows.length, COMPACT_ROWS),
       noun: "changes",
       domBacked: true,
-      boundCount:
-        `Showing the first ${fmtInt(COMPACT_ROWS)} of the ${fmtInt(rows.length)} rows` +
-        ` on this page.`,
+      /* The range grammar (R8, V1 NEW-2). The total is THIS PAGE's list, not
+         the ordered set, so the count is definite and its noun names the
+         bound — chosen by the same `notable` value that chose the rows. */
+      boundNoun: notable ? "newest changes by notable managers shown here" : "largest changes shown here",
+      definite: true,
       bound:
         `These rows are the largest of ${fmtInt(emitted)} ordered change records` +
         ` published in this build${
@@ -1345,12 +1354,14 @@ function activityReferenceRow(r: ActivityFeedRecord, tier: FilerBudgetState, sta
   const accession = r.filed_accession;
   const source = accession && /^[0-9-]+$/.test(accession)
     ? `<a href="https://www.sec.gov/Archives/edgar/data/${Number(r.cik)}/${accession.replace(/-/g, "")}/${accession}-index.html" target="_blank" rel="noopener">13F ↗</a>` : `<span class="none">—</span>`;
-  return `<tr class="design-activity-row ${esc(label.cls)}"><td><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span></td>` +
-    `<td class="c-issuer">${issuerCell(r)}</td><td class="c-filer">${filerLinkHtml(r.cik, r.filer_name || `CIK ${r.cik}`, tier)}</td>` +
+  return `<tr class="design-activity-row ${esc(label.cls)}"${changeEdgeAttr(r.change_kind)}><td class="c-kind"><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span></td>` +
+    `<td class="c-issuer c-flex">${issuerCell(r)}</td><td class="c-filer c-secondary">${filerLinkHtml(r.cik, r.filer_name || `CIK ${r.cik}`, tier)}</td>` +
     // R7: the money column is the SIGNED Δ value — never `curr_value_usd`,
     // which is 0 for every exit and made the feed read "exit · $0".
     `<td class="c-num">${deltaCell(r)}</td><td class="c-num none">—</td>` +
-    `<td class="c-num">${esc(delta)}</td><td class="c-src">${source}${noteFromHtml(`Quarter ${esc(r.curr_period)} · filed ${filedCell(r)} · ${lagCell(r)} · ${deltaCell(r)}` + flagTags(r.flags, undefined, { stated }), { scope: "activity-reference" }, `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`)}</td></tr>`;
+    // The row's filing facts hang off the receipt as a MARK trigger (R6): the
+    // receipt is a link, so it cannot be the label, and the mark hangs past it.
+    `<td class="c-num">${esc(delta)}</td><td class="c-src">${source}${noteFromHtml(`Quarter ${esc(r.curr_period)} · filed ${filedCell(r)} · ${lagCell(r)} · ${deltaCell(r)}` + flagTags(r.flags, undefined, { stated }), { scope: "activity-reference" }, `${r.cik}-${r.position_key}-${r.put_call}-${r.ssh_prnamt_type}`, { trigger: "mark", textHtml: "ⓘ", name: "filing details" })}</td></tr>`;
 }
 
 /* ---------- the cluster board: issuers several filers changed in one quarter ---------- */

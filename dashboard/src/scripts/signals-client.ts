@@ -9,7 +9,14 @@
 
 import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel, type RenderCtx } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
-import { hitRowHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE } from "../lib/ui/index.ts";
+import { hitRowHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf } from "../lib/ui/index.ts";
+
+/** An empty row spans the table's own header — the column list the server
+    rendered — never a literal count (DESIGN-POLISH M1, section E). */
+function columnCount(body: HTMLElement | null, fallback: number): number {
+  const n = body?.closest("table")?.querySelectorAll("thead th").length ?? 0;
+  return n > 0 ? n : fallback;
+}
 import type { Signal, SignalArtifact } from "../lib/signals.ts";
 import { classifyCursor, readCursor, writeCursor, watchBandEmptyText, watchSeenLabel } from "../lib/watchlist.ts";
 
@@ -134,11 +141,11 @@ function initHitPager(): void {
     const slice = filtered.slice(page * pageSize, (page + 1) * pageSize);
     body!.innerHTML =
       slice.length === 0
-        ? `<tr><td colspan="6" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
+        ? `<tr><td colspan="${columnCount(body, 6)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
         : slice.map((s) => hitRowHtml(s, ctx)).join("\n");
     const range = hitsRangeText(page, slice.length, filtered.length, pageSize);
     rangeEl!.textContent = range;
-    if (status) status.textContent = `${range} hits${kind === "all" ? "" : ` · rule ${kind}`}${watchedOnly ? " · watched only" : ""}.`;
+    if (status) status.textContent = `${range}${kind === "all" ? "" : ` · rule ${kind}`}${watchedOnly ? " · watched only" : ""}.`;
     setPager(prev, page === 0);
     setPager(next, page >= pageCount - 1);
   }
@@ -210,7 +217,7 @@ function initWatchBand(): void {
     if (hits.length === 0) {
       const tr = document.createElement("tr");
       const td = cell("si-empty");
-      td.colSpan = 7;
+      td.colSpan = columnCount(body, 7);
       td.textContent = watchBandEmptyText(0, payload.total, payload.cap);
       tr.append(td);
       body.append(tr);
@@ -220,9 +227,11 @@ function initWatchBand(): void {
       const tr = document.createElement("tr");
       tr.className = "si-hit";
       tr.dataset.signalId = id;
+      // The family's row edge, as the server's hit rows (DESIGN-POLISH M1).
+      tr.dataset.edge = `family-${familyOf(kind as Parameters<typeof familyOf>[0]).toLowerCase()}`;
       const short = SHORT[kind] ?? kind;
-      tr.append(cell("si-kind", short));
-      const subject = cell("si-subject");
+      tr.append(cell("si-kind c-kind", short));
+      const subject = cell("si-subject c-member");
       subject.append(bioguide && BIOGUIDE_RE.test(bioguide) ? link(memberHref(bioguide), name) : name);
       if (ticker) {
         subject.append(" ", link(pathSafeTicker(ticker) ? tickerHref(ticker) : genericEntityHref("t", ticker), ticker, "si-ticker"));
@@ -233,11 +242,11 @@ function initWatchBand(): void {
       gold.textContent = " ◆";
       subject.append(gold);
       tr.append(subject);
-      const evidence = cell("si-evidence", `${short} rule matched · `);
+      const evidence = cell("si-evidence c-secondary c-flex", `${short} rule matched · `);
       evidence.append(link("#signal-rulebook", "rule book"));
       tr.append(evidence);
       tr.append(cell("c-num si-mag", magnitude(low, high)));
-      tr.append(cell("c-filed si-when", `${traded ? traded.slice(5) : "—"} → ${filed.slice(5)}`));
+      tr.append(cell("c-filed c-num si-when", `${traded ? traded.slice(5) : "—"} → ${filed.slice(5)}`));
       const seen = watchSeenLabel(state, filed);
       tr.append(cell(`c-num ${seen === "NEW" ? "si-new" : "c-muted"}`, seen));
       const rcpt = cell("c-src");
@@ -277,7 +286,50 @@ function initWatchBand(): void {
   }
 }
 
+/** The narrow surface `syncScrollRegion` touches, declared structurally so
+    it runs under `node --test` as well as on a real element. */
+export interface ScrollRegionNode {
+  scrollWidth: number;
+  clientWidth: number;
+  dataset: Record<string, string | undefined>;
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
+}
+
+/** A table wrapper is a focusable, named "scroll sideways" region exactly
+    while its table overflows it, and a plain box otherwise (review R-8). The
+    name is the one the server rendered in `data-scroll-region`. */
+export function syncScrollRegion(el: ScrollRegionNode): boolean {
+  const name = el.dataset.scrollRegion;
+  const scrolls = !!name && el.scrollWidth > el.clientWidth + 1;
+  if (scrolls) {
+    el.setAttribute("tabindex", "0");
+    el.setAttribute("role", "region");
+    el.setAttribute("aria-label", name!);
+  } else {
+    el.removeAttribute("tabindex");
+    el.removeAttribute("role");
+    el.removeAttribute("aria-label");
+  }
+  return scrolls;
+}
+
+function initScrollRegions(): void {
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-scroll-region]"))) {
+    const sync = (): void => void syncScrollRegion(el);
+    sync();
+    // the wrapper's width moves with the viewport, the table's with its rows
+    if (typeof ResizeObserver === "function") {
+      const ro = new ResizeObserver(sync);
+      ro.observe(el);
+      const table = el.querySelector("table");
+      if (table) ro.observe(table);
+    } else window.addEventListener("resize", sync);
+  }
+}
+
 export function initSignalsPage(): void {
   initHitPager();
   initWatchBand();
+  initScrollRegions();
 }

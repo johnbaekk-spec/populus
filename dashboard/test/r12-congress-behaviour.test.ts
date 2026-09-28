@@ -218,9 +218,10 @@ test("F12/F25: initializing over SSR rows changes NO honesty content before rows
       true,
       "the button is still hidden — it is not the channel the bound depends on",
     );
+    // DESIGN-POLISH M1 (R8): the count is the range grammar, in the server's words.
     assert.match(
       boundFor(doc, CONGRESS_ROOTS.momentum).textContent,
-      /more ranked tickers below/,
+      /^1–10 of \d+ ranked tickers$/,
       "…and the reader is told the count regardless",
     );
   } finally {
@@ -332,7 +333,7 @@ test("F12/F16: expanding updates the control and the terminus in one step", () =
        terminus row could go. */
     assert.match(btn.textContent, /^Show all 24 tickers$/);
     assert.equal(bound.hidden, false);
-    assert.match(bound.textContent, /14 more ranked tickers below/);
+    assert.equal(bound.textContent, "1–10 of 24 ranked tickers"); // R8: the range grammar
 
     btn.click();
     // expanded: nothing is held back, so the sentence retracts WITH the label
@@ -374,13 +375,11 @@ test("SL-R10: the client restates each root's bound in the SERVER's words, not o
   try {
     const { doc } = h;
     h.sections.receiveRows(rows);
-    assert.match(
-      boundFor(doc, CONGRESS_ROOTS.membersRanked).textContent,
-      /more ranked members below/,
-    );
+    // DESIGN-POLISH M1 (R8): each root's range count keeps its OWN bound noun.
+    assert.equal(boundFor(doc, CONGRESS_ROOTS.membersRanked).textContent, "1–10 of 14 ranked members");
     assert.match(
       boundFor(doc, CONGRESS_ROOTS.membersUndisclosed).textContent,
-      /more wholly-undisclosed members below/,
+      /^1–10 of 14 wholly-undisclosed members$/,
       "the unrankable bucket must never be restated as ranked",
     );
   } finally {
