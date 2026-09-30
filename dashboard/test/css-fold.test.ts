@@ -352,6 +352,11 @@ const HONESTY_SELECTORS = [
      qualifier, no flag, an incomplete book). A removed column plus a hidden
      reason is a silent omission, the exact failure column presence forbids. */
   ".table-foot-reason",
+  /* SIGNALS-CLARITY M1 (R2, R3): `.footer-notice` — the footer's one notice
+     sentence, the §13107(c) prohibited uses and "not financial advice" (or the
+     13F caveat) on every page. The full text moved to /methodology; this
+     sentence is what stays on the page, so no width may hide it. */
+  ".footer-notice",
 ];
 const M1_HONESTY_SELECTORS = [".note-label", ".hang", ".c-kind", ".cell-side", ".reference-head"];
 
@@ -406,6 +411,20 @@ test("DESIGN-POLISH M2 (D9): the table-foot reason is swept at the fold, and a s
   const { renderParitySurfaces } = await import("./lib/ui-parity-surfaces.ts");
   const corpus = Object.values(await renderParitySurfaces()).join("\n");
   assert.match(corpus, /<p class="table-foot-reason">[^<]+<\/p>/, "a removed honesty column's reason is rendered");
+});
+
+test("SIGNALS-CLARITY M1 (R2): the footer notice is swept at the fold, and the layout emits it", () => {
+  assert.ok(HONESTY_SELECTORS.includes(".footer-notice"));
+  for (const decl of ["display:none", "visibility:hidden", "content-visibility:hidden"]) {
+    const planted = `${css}\n@media (max-width: 720px) { .site-footer .footer-notice { ${decl}; } }`;
+    assert.deepEqual(foldViolations(planted), [".site-footer .footer-notice"], `control: .footer-notice { ${decl} } at the fold`);
+  }
+  const base = readFileSync(path.resolve(import.meta.dirname, "..", "src", "layouts", "Base.astro"), "utf-8");
+  assert.equal((base.match(/<p class="footer-notice">/g) ?? []).length, 1, "Base.astro emits exactly one .footer-notice");
+  // `.badge-soon` survives the nav-shell retirement: still emitted, still styled.
+  const ticker = readFileSync(path.resolve(import.meta.dirname, "..", "src", "lib", "ui", "ticker.ts"), "utf-8");
+  assert.ok(ticker.includes('class="badge-soon"'), "lib/ui/ticker.ts still emits .badge-soon");
+  assert.match(css, /(^|\n)\.badge-soon\s*\{/, ".badge-soon keeps its rule");
 });
 
 test("DESIGN-POLISH M1: every ledger honesty selector is emitted by the parity surfaces or the feed rows", async () => {
@@ -764,11 +783,16 @@ const NEW_HOOK_CLASSES = [
   "design-member-history", "design-consensus-band", "design-filer-history",
 ];
 
-/* Classes a milestone RETIRED: neither styled nor emitted. A rule left behind
-   for a removed element is how a removed component quietly comes back. */
+/* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
+   a template. A rule left behind for a removed element is how a removed
+   component quietly comes back. SIGNALS-CLARITY M1 retired the footer's
+   Financials/Macro SOON links (`nav-shell`) and its notice, source and build
+   blocks (`footer-block`, `footer-build`). `.badge-soon` is NOT retired:
+   lib/ui/ticker.ts still emits it. */
 const RETIRED_CLASSES = [
   "explainer", "explainer-h", "design-rankings-single", "coverage-strip",
   "design-triptych", "design-triptych-single", "design-activity-band",
+  "nav-shell", "footer-block", "footer-build",
 ];
 
 const ASTRO_ONLY_CLASSES = [
@@ -778,7 +802,7 @@ const ASTRO_ONLY_CLASSES = [
   "gaps-block", "pub-grid", "pub-card", "verify-line", "module-shell",
   "shell-title", "shell-lede", "caveat-box", "caveat-box-head", "caveat-box-body",
   "search-panel", "search-panel-foot", "search-kbd", "masthead-search-first",
-  "nav-shell", "entity-page",
+  "entity-page", "footer-row", "footer-brand", "footer-nav", "footer-notice",
 ];
 
 test("dead-CSS sweep: every new class is styled AND emitted", () => {
@@ -816,6 +840,7 @@ test("dead-CSS sweep: every new class is styled AND emitted", () => {
   }
   for (const cls of RETIRED_CLASSES) {
     assert.ok(!emittedExact(cls), `retired class .${cls} is emitted again`);
+    assert.ok(!emittedExact(cls, astroSources), `retired class .${cls} is back in a template`);
     assert.ok(!styledExact(cls), `retired class .${cls} still has CSS — a dead selector`);
   }
   // controls: the exact-token readers tell the prefix from the class, and see a planted rule

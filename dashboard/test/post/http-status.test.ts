@@ -149,6 +149,61 @@ test("every page carries both build markers, identical across the dist (R19)", (
   assert.match(buildId!, /^\d{8}\.\d+$/, "the marker carries a real build id");
 });
 
+/* SIGNALS-CLARITY M1 (R2, R3, R5): the minimal footer, on the BUILT pages.
+   test/footer.test.ts proves the layout's source; this proves what shipped:
+   every page carries exactly one notice sentence, the 13F pages the 13F one,
+   no footer prints the build, and /methodology prints the watermark once. */
+test("every page's footer carries exactly one notice sentence and no build text (SIGNALS-CLARITY R2/R3/R5)", () => {
+  const STANDARD =
+    "Not financial advice. Use of congressional disclosure reports for commercial purposes, " +
+    "credit decisions or solicitation is restricted by 5 U.S.C. §13107(c).";
+  const INST13F =
+    "13F: quarter-end long positions in Section 13(f) securities only, filed up to 45 days late; " +
+    "managers under $100M do not file. Not current holdings, not a census, not financial advice.";
+  const pages = walkFiles(DIST, [".html"]);
+  assert.ok(pages.length > 1000, "the full page set is under test");
+  const seen = { standard: 0, inst13f: 0 };
+  const inst13fPages: string[] = [];
+  for (const f of pages) {
+    const text = readFileSync(f, "utf-8");
+    const rel = path.relative(DIST, f).split(path.sep).join("/");
+    const notices = [...text.matchAll(/<p class="footer-notice"[^>]*>([^<]*)<\/p>/g)].map((m) => m[1]!);
+    assert.equal(notices.length, 1, `${rel} carries ${notices.length} footer notices; exactly one`);
+    const notice = notices[0]!.replace(/&amp;/g, "&").replace(/&#36;/g, "$");
+    assert.ok(notice === STANDARD || notice === INST13F, `${rel} carries an unknown footer notice: ${notice}`);
+    if (notice === INST13F) {
+      seen.inst13f++;
+      inst13fPages.push(rel);
+    } else seen.standard++;
+    const footer = text.slice(text.indexOf('<footer class="site-footer"'), text.indexOf("</footer>"));
+    assert.ok(footer.length > 0, `${rel} has a footer`);
+    assert.ok(!/build \d{8}\.\d+/.test(footer), `${rel}: the footer prints a build id`);
+  }
+  // The 13F sentence is on exactly the pages the three inst13f routes render —
+  // the /institutional/ index, every filer page, every holders page — and on
+  // no other. Set equality, so a route that loses the variant and a page that
+  // gains it both fail. (Holders pages exist only for mapped issuers; a data
+  // build without a ticker map ships none, and the set below is then empty.)
+  const INST13F_ROUTE = /^institutional\/(?:index\.html|filers\/[^/]+\/index\.html|tickers\/[^/]+\/holders\/index\.html)$/;
+  const expected = pages
+    .map((f) => path.relative(DIST, f).split(path.sep).join("/"))
+    .filter((rel) => INST13F_ROUTE.test(rel))
+    .sort();
+  assert.deepEqual([...inst13fPages].sort(), expected, "the 13F notice is on exactly the three inst13f routes' pages");
+  assert.ok(expected.includes("institutional/index.html"), "/institutional/ was built");
+  assert.ok(expected.some((p) => p.startsWith("institutional/filers/")), "filer pages were built");
+  assert.ok(seen.standard > 0 && seen.inst13f > 0, "both variants shipped");
+
+  const metho = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
+  const sha = /<meta name="populus:code_sha" content="([^"]*)"/.exec(metho)![1]!;
+  const id = /<meta name="populus:build_id" content="([^"]*)"/.exec(metho)![1]!;
+  const stamps = metho.match(/build \d{8}\.\d+ · code [^\s<]+/g) ?? [];
+  assert.deepEqual(stamps, [`build ${id} · code ${sha.slice(0, 7)}`], "/methodology prints the watermark exactly once");
+  for (const anchor of ["sources", "notices"]) {
+    assert.equal((metho.match(new RegExp(`id="${anchor}"`, "g")) ?? []).length, 1, `/methodology/#${anchor} resolves`);
+  }
+});
+
 test("no page renders a digest the site cannot know (Locked #6 / R19)", () => {
   // The manifest is re-assembled AFTER this build, so any 64-hex digest on a
   // page is stale by construction — footer, methodology command, anywhere.

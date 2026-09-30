@@ -499,7 +499,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 :is(.design-page, .entity-page) :is(.section-note, .caveat-line) { padding-left: 0; padding-right: 0; }
 .watch-btn { font: 500 var(--fs-meta)/1.4 var(--mono); vertical-align: middle; }
 .watch-note { font: inherit; text-transform: uppercase; }
-.site-footer { border-top: 1px solid var(--rule); }
 @media (max-width: 1080px) {
   .masthead-inner { padding-top: 12px; padding-bottom: 12px; }
   .design-rankings { grid-template-columns: minmax(0,1fr); }
@@ -544,7 +543,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .advanced-filters > summary { min-height: 44px; padding: 12px 8px; }
 }
 
-.footer-nav { display: flex; flex-wrap: wrap; gap: 14px; }
 .design-institutional-band > * { min-width: 0; }
 .design-institutional-band .panel { margin-top: 0; }
 /* The filer page (DESIGN-POLISH M2, F, A-9): its DOM order IS its visual order.
@@ -636,8 +634,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-holding-row .c-pos .src { display:inline; }
 .edgar-block.design-supplement { background:transparent; border:0; border-bottom:1px solid var(--rule); padding:0; margin:12px 0; }
 .edgar-block.design-supplement > summary { font:400 var(--fs-note)/1.6 var(--sans); }
-.site-footer-inner { padding-top:20px; padding-bottom:20px; row-gap:12px; }
-.site-footer-inner .theme-toggle { width:max-content; min-height:44px; padding:4px 10px; }
 @media print { .design-supplement::details-content { content-visibility:visible; display:block; } }
 
 /* Measured against the 1440px source canvas, not against our own screenshots.

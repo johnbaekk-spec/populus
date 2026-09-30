@@ -68,13 +68,51 @@ for (const width of WIDTHS) {
       }
     });
 
-    test("R4: exactly one build watermark, and it is in the footer", async ({ page }) => {
-      await page.goto("/");
+    test("R4: the build watermark is printed once, on /methodology, and never in a footer", async ({ page }) => {
+      /* SIGNALS-CLARITY M1 (R5) re-pointed this from "in the footer": the
+         property — one visible watermark, the <meta> markers as the machine
+         copy — is unchanged; its home moved (SIGNALS-CLARITY-DECISIONS.md). */
+      const watermark = /build \d{8}\.\d+ · code \S{7}(?!\S)/g;
+      await page.goto("/methodology/");
       const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-      const ids = body.match(/build \d{8}\.\d+/g) ?? [];
-      expect(ids.length, `build id renders ${ids.length} times, expected 1`).toBe(1);
-      const inFooter = await page.locator("footer").innerText();
-      expect(inFooter).toContain(ids[0]!);
+      const stamps = body.match(watermark) ?? [];
+      expect(stamps.length, `/methodology prints the watermark ${stamps.length} times, expected 1`).toBe(1);
+      const buildId = await page.locator('meta[name="populus:build_id"]').getAttribute("content");
+      const codeSha = await page.locator('meta[name="populus:code_sha"]').getAttribute("content");
+      expect(stamps[0]).toBe(`build ${buildId} · code ${codeSha!.slice(0, 7)}`);
+      for (const route of ["/", "/congress/", "/institutional/", "/methodology/"]) {
+        await page.goto(route);
+        const footer = (await page.locator("footer").innerText()).replace(/\s+/g, " ");
+        expect(footer, `${route}: the footer prints no build id`).not.toMatch(/build \d{8}\.\d+/);
+        expect(footer, `${route}: the footer prints no code sha`).not.toContain(codeSha!.slice(0, 7));
+      }
+    });
+
+    test("R1: the footer is one row plus one notice sentence, nothing hidden", async ({ page }) => {
+      for (const route of ["/", "/institutional/"]) {
+        await page.goto(route);
+        const footer = page.locator("footer.site-footer");
+        const box = (await footer.boundingBox())!;
+        if (width === 1440) {
+          expect(box.height, `${route}: footer is ${box.height}px tall at 1440 (target ≤ 96; was 206)`).toBeLessThanOrEqual(96);
+        }
+        // Every row item and the notice are visible at every width.
+        const items = [".footer-brand", ".footer-nav a >> nth=0", ".footer-nav a >> nth=1", ".footer-nav a >> nth=2", ".theme-toggle", ".footer-notice"];
+        const boxes: Box[] = [];
+        for (const sel of items) {
+          const el = footer.locator(sel);
+          await expect(el, `${route}: ${sel} is visible at ${width}px`).toBeVisible();
+          boxes.push((await el.boundingBox())!);
+        }
+        if (width >= 721) {
+          // One visual line: every row item shares a vertical band.
+          const row = boxes.slice(0, 5);
+          const top = Math.max(...row.map((b) => b.y));
+          const bottom = Math.min(...row.map((b) => b.y + b.height));
+          expect(bottom - top, `${route}: the footer row wraps at ${width}px`).toBeGreaterThan(0);
+        }
+        expect(await footer.locator(".footer-notice").count()).toBe(1);
+      }
     });
 
     test("nothing overflows the page horizontally", async ({ page }) => {
