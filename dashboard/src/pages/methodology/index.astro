@@ -72,7 +72,8 @@ const description =
       </div>
       <div class="metho-grid">
         <div>
-          <h3 class="section-h">Sources &amp; conditions</h3>
+          {/* `#sources` is the footer's "Sources & licenses" target. */}
+          <h3 class="section-h" id="sources">Sources &amp; conditions</h3>
           <div class="source-list">
             <div class="source-row">
               <div><div class="source-name">House Clerk — PTR disclosures</div><div class="mono-note">us-gov-house · public record</div></div>
@@ -89,6 +90,10 @@ const description =
             <div class="source-row">
               <div><div class="source-name">kadoa congress-trading seed</div><div class="mono-note">mit-kadoa-seed · backfill</div></div>
               <div class="source-cond">MIT-licensed historical seed, imported under a blocking human audit gate; retired row-by-row as primary filings supersede it.</div>
+            </div>
+            <div class="source-row">
+              <div><div class="source-name">SEC EDGAR</div><div class="mono-note">us-govworks-sec · 17 U.S.C. §105</div></div>
+              <div class="source-cond">Form 13F filings for the institutional module and the SEC ticker file for ticker joins. Retrieved at or below SEC's published request-rate ceiling with an identifying User-Agent; each filing keeps its source URL.</div>
             </div>
           </div>
         </div>
@@ -335,7 +340,11 @@ const description =
             the manifest after this site builds, so a digest rendered here would
             be stale by construction and every reader who pasted the command
             would get a mismatch. `--build` alone is sufficient — `populus
-            verify` resolves the manifest from the build id. */}
+            verify` resolves the manifest from the build id.
+            The build watermark below is the site's ONE visible statement of
+            its build and code (it left the footer, SIGNALS-CLARITY M1); the
+            <meta> markers every page carries are the machine-readable copy. */}
+        <span id="build-stamp">build {build.buildId} · code {build.codeSha.slice(0, 7)}</span> ·
         verify this page: <span class="verify-cmd">populus verify --build {build.buildId}</span>
       </div>
     </section>
@@ -365,7 +374,8 @@ const description =
           </p>
         </div>
         <div>
-          <h2 class="section-h2">Required notices</h2>
+          {/* `#notices` is the footer's "Legal" target. */}
+          <h2 class="section-h2" id="notices">Required notices</h2>
           <p class="metho-body">
             <strong>Prohibited uses.</strong> Use of congressional
             financial-disclosure reports for commercial purposes, for

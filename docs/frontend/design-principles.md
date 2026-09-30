@@ -33,8 +33,15 @@ brand, not compliance chrome. These are first-class, designed UI citizens:
   label; a truncated ranking names the real author of the cut; an
   unclassifiable change is neither "add" nor "trim" and says so.
 - **Required notices** (5 U.S.C. § 13107(c) prohibited-uses text, source
-  attributions, "not financial advice", the build ID) have fixed placements:
-  footer and methodology. Dignified, not cookie-banner-ugly.
+  attributions, "not financial advice", the build ID) have fixed placements.
+  Amended 2026-09-29 (SIGNALS-CLARITY M1; record:
+  `docs/design/SIGNALS-CLARITY-DECISIONS.md`): the **footer** carries, on every
+  page, one notice sentence — the §13107(c) prohibited uses and "not financial
+  advice", or the 13F caveat on the three 13F pages — and links to
+  **methodology**, which carries the full prohibited-uses text and attributions
+  (`#notices`), the sources and their conditions (`#sources`), and the build
+  watermark `build <id> · code <sha7>`, once. The footer sentence is honesty
+  copy: no width hides it. Dignified, not cookie-banner-ugly.
 
 The negative form, which is a phase gate and a test: **if a mockup or a
 refactor looks cleaner because a caveat disappeared, it is wrong.** No
@@ -205,7 +212,8 @@ book (every kind, its exact rule, hits, status — withheld kinds included),
 hits beside the lag distribution and per-family hit rate, and the
 device-local watchlist band. Two deliberate deviations from the exports are
 recorded here so they are not re-litigated by accident: the masthead carries
-no build pill (R4 pins the build watermark to the footer, once), and every
+no build pill (R4 pins the build watermark to one place, once — `/methodology`
+since SIGNALS-CLARITY M1, the footer before it), and every
 analytics panel whose inputs are not in the build renders the same
 "Not available in this build" surface with its named reason — the exports'
 illustrative rows are never reproduced.

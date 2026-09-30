@@ -51,28 +51,41 @@ function mediaBlockContaining(source: string, needle: RegExp): string | null {
   return null;
 }
 
-test("R4: the build watermark is rendered once, in the footer, not the masthead", () => {
-  /* `Base.astro` printed the build id twice: once in `.masthead-meta` and once
-     in `.footer-build`. The plan calls this a DELETION rather than a
-     relocation precisely because the footer copy already existed. */
+test("R4: the build watermark is rendered once site-wide, on /methodology — never the masthead or the footer", () => {
+  /* The property this pins has not changed since the original R4: a reader sees
+     the build identity in exactly ONE place, and deploy verification reads the
+     <meta> markers, never visible text. `Base.astro` once printed the id twice
+     (`.masthead-meta` and `.footer-build`); R4 deleted the masthead copy. The
+     SIGNALS-CLARITY M1 reversal (docs/design/SIGNALS-CLARITY-DECISIONS.md)
+     moved the one remaining copy from the footer to /methodology as
+     `build <id> · code <sha7>`. Sharper than before: the layout may reference
+     the build only inside the two <meta> markers, so neither the masthead nor
+     the footer can print it again under any spelling. */
   assert.ok(
     !base.includes("masthead-meta"),
-    "the masthead watermark is back — the footer already prints the identifiers",
+    "the masthead watermark is back — /methodology prints the identifiers",
   );
   assert.ok(
     !css.includes(".masthead-meta"),
     "the .masthead-meta rule outlived its markup — dead CSS reads as accounted-for",
   );
-  const buildIdRenders = base.match(/build \{build\.buildId\}/g) ?? [];
-  assert.equal(
-    buildIdRenders.length,
-    1,
-    `the build id renders ${buildIdRenders.length} times in Base.astro; exactly one, in the footer`,
+  const refs = [...base.matchAll(/[^\n]*\bbuild\.(buildId|codeSha)\b[^\n]*/g)].map((m) => m[0]!.trim());
+  assert.deepEqual(
+    refs,
+    [
+      '<meta name="populus:build_id" content={build.buildId} />',
+      '<meta name="populus:code_sha" content={build.codeSha} />',
+    ],
+    "Base.astro may read the build only into the two <meta> markers (deploy verification parses them, unchanged)",
   );
-  assert.ok(
-    base.indexOf("build {build.buildId}") > base.indexOf("<footer"),
-    "the surviving watermark must be the footer one",
-  );
+  const footer = base.slice(base.indexOf("<footer"), base.indexOf("</footer>"));
+  assert.ok(footer.length > 0, "the footer was found");
+  assert.ok(!/\bbuild\b|\bcode\b/i.test(footer.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")), "the footer prints no build or code text");
+
+  const methodology = readFileSync(path.join(DASH, "src", "pages", "methodology", "index.astro"), "utf-8");
+  const stamps = methodology.match(/build \{build\.buildId\} · code \{build\.codeSha\.slice\(0, 7\)\}/g) ?? [];
+  assert.equal(stamps.length, 1, `/methodology prints the watermark ${stamps.length} times; exactly once`);
+  assert.equal((methodology.match(/build\.codeSha/g) ?? []).length, 1, "the code sha appears on /methodology only in the watermark");
 });
 
 test("R4: the masthead has an intermediate breakpoint between the fold and desktop", () => {

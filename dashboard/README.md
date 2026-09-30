@@ -119,9 +119,12 @@ Deploy verification reads two things out of the built site:
 
 - **`<meta name="populus:build_id">` and `<meta name="populus:code_sha">`**
   on every page, parsed by name and compared **exactly** — never a substring
-  search over the footer. The footer shows the same two values as text and
-  renders **no digest**: the manifest is re-assembled after the site builds,
-  so any rendered digest would be stale by construction.
+  search over visible text. `/methodology` shows the same two values once as
+  text (`build <id> · code <sha7>`, the first seven characters of the sha); the
+  footer no longer prints them (SIGNALS-CLARITY M1, 2026-09-29,
+  `docs/design/SIGNALS-CLARITY-DECISIONS.md`). No page renders a **digest**:
+  the manifest is re-assembled after the site builds, so any rendered digest
+  would be stale by construction.
 - **`/stats.json`** — the raw bytes of `builds/<id>/congress/stats.json`
   passed through verbatim. The route must never parse and re-serialize;
   `test/post/http-status.test.ts` pins the served bytes, the emitted `dist/`

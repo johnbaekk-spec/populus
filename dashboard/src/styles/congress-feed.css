@@ -479,30 +479,52 @@
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-/* ---------- notice footer ---------- */
+/* ---------- footer: one row of links, one notice sentence ----------
+   Every footer rule lives here (SIGNALS-CLARITY M1). The row is brand, three
+   links and the theme toggle — one line at ≥721px, wrapping below, never
+   hidden. `.footer-notice` is honesty copy (css-fold HONESTY_SELECTORS). The
+   link and toggle hit squares follow --hit-min: 24px on a fine pointer, 44px
+   on a coarse pointer or at the fold. */
 
 .site-footer {
-  border-top: 1px solid var(--rule2);
+  border-top: 1px solid var(--rule);
   background: var(--raised);
 }
 .site-footer-inner {
-  padding-top: 24px;
-  padding-bottom: 24px;
-  display: grid;
-  grid-template-columns: 1.6fr 1fr 1fr;
-  gap: 40px;
+  padding-top: 16px;
+  padding-bottom: 16px;
 }
-.footer-block {
-  font: 400 var(--fs-cell)/1.7 var(--sans);
-  color: var(--ink2);
+.footer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 24px;
 }
-.footer-block strong {
-  font-weight: 600;
+.footer-brand {
+  font: 600 var(--fs-name) var(--sans);
   color: var(--ink);
 }
-.footer-build {
-  font: 400 var(--fs-note)/1.7 var(--mono);
-  color: var(--ink3);
+.footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+}
+.footer-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min);
+  font: 400 var(--fs-name) var(--sans);
+}
+.site-footer-inner .theme-toggle {
+  width: max-content;
+  min-height: var(--hit-min);
+  padding: 4px 10px;
+  margin-left: auto;
+}
+.footer-notice {
+  margin: 6px 0 0;
+  font: 400 var(--fs-note)/1.5 var(--sans);
+  color: var(--ink2);
 }
 
 /* ================= entity, feed & table surfaces ================= */

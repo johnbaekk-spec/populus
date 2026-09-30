@@ -474,11 +474,6 @@
   .view-note {
     font-size: var(--fs-meta);
   }
-
-  .site-footer-inner {
-    grid-template-columns: 1fr;
-    gap: 18px;
-  }
 }
 
 /* ---------- mobile fold, entity & feed surfaces (≤720px) ----------
@@ -538,7 +533,7 @@
 
 @media print {
   .masthead-right .search-toggle,
-  .masthead-right .theme-toggle,
+  .site-footer .theme-toggle,
   .masthead-right .nav-burger,
   .site-search,
   .search-panel,
