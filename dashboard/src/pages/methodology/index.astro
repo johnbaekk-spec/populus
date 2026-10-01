@@ -11,13 +11,16 @@
 import Base from "../../layouts/Base.astro";
 import { getBuildData, methodologyM1Tiles } from "../../lib/data";
 import { fmtInt } from "../../lib/format";
-import { filingWindow } from "../../lib/derive";
+import { filingWindow, lagCdf, lagCdfPointsText, LAG_SAMPLE_MONTHS, COMPLETENESS_SHADE_BELOW, FILING_WINDOW_DAYS } from "../../lib/derive";
 import { ACTIVITY_SHARDS_MAX, PAGE_BYTE_LIMIT, PAGE_RECORD_LIMIT } from "../../lib/activity";
 
 const build = getBuildData();
 const m1 = methodologyM1Tiles(build.stats, build.filedFrom);
 const inst = build.inst;
 const window = inst.present ? filingWindow(build.generatedAtDate) : null;
+/* SIGNALS-CLARITY M3 (R17): the same measured lag distribution the /congress
+   Monthly flow shades by, from the same rows and build date. */
+const lagSample = lagCdf(build.txns, build.generatedAtDate);
 
 const description =
   "Per-module sources and conditions, coverage measured against the full corpus, known gaps, " +
@@ -118,6 +121,27 @@ const description =
               children (DC), and joint accounts (JT) — the STOCK Act does not distinguish
               who directed a trade.</div>
             <div>· Amounts are statutory ranges; member totals are therefore ranges too.</div>
+          </div>
+          <h3 class="section-h" id="monthly-flow">Monthly flow — estimated filing completeness</h3>
+          <div class="gaps-block">
+            <div>· The /congress Monthly flow chart sums disclosed ranges by trade month. A trade is
+              published only once it is filed — up to {FILING_WINDOW_DAYS} days later, and often later still — so recent
+              months are incomplete, and each month is shaded by an <em>estimate</em> of how much of it is filed.</div>
+            <div>· The estimate is measured on every build: the lag from trade to filing over non-anomalous
+              rows traded {LAG_SAMPLE_MONTHS.newest} to {LAG_SAMPLE_MONTHS.oldest} months before the build
+              ({lagSample.sampleFrom} to {lagSample.sampleTo}, {fmtInt(lagSample.n)} rows, all asset types). A month's
+              estimated completeness is that distribution at the month's age: the build date minus the month's
+              midpoint.</div>
+            <div>· Which midpoint: a month that has ended is aged from the middle of the calendar month. The
+              build's own month is still in progress, so it is aged from the middle of the days elapsed so far
+              — the 1st through the build date — because no trade after the build date exists yet. Built on
+              the 17th, the current month's trades are on average 8 days old, not 1.</div>
+            <div>· This build: filed within {lagCdfPointsText(lagSample)}.</div>
+            <div>· Months under {Math.round(COMPLETENESS_SHADE_BELOW * 100)}% are shaded and labelled "≈p% filed (est.)";
+              a month that ended fewer than {FILING_WINDOW_DAYS} days before the build is inside the filing window and
+              gets the darker tone.</div>
+            <div>· The sample is mature, not closed: a trade from {LAG_SAMPLE_MONTHS.newest} months ago can still be
+              filed, and those late filings are not observed yet, so the estimate slightly overstates completeness.</div>
           </div>
         </div>
       </div>
