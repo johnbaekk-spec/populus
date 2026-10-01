@@ -85,9 +85,28 @@ export interface CongressSectionsOptions {
   requestRows?: () => void;
 }
 
+/** SIGNALS-CLARITY M3 (R18): the Monthly flow panel's two-state toggle.
+    Both variants are server-rendered; this only flips `hidden` and
+    `aria-pressed`. It reads no rows and fetches nothing (L4), so the panel is
+    complete before — and without — the dataset. Returns whether it bound. */
+export function initMonthlyFlowToggle(): boolean {
+  const section = document.getElementById("monthly-flow-section");
+  if (!section) return false;
+  const buttons = [...section.querySelectorAll<HTMLElement>("[data-flow-toggle]")];
+  const variants = [...section.querySelectorAll<HTMLElement>(".mf-variant")];
+  if (!buttons.length || !variants.length) return false;
+  const show = (value: string): void => {
+    for (const v of variants) v.hidden = v.dataset.flowVariant !== value;
+    for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.flowToggle === value));
+  };
+  for (const b of buttons) b.addEventListener("click", () => show(b.dataset.flowToggle ?? ""));
+  return true;
+}
+
 export function initCongressSections(options: CongressSectionsOptions = {}): CongressSections {
   const page = document.getElementById("congress-page");
   if (!page) return { receiveRows: () => {}, feedSettled: () => {} };
+  initMonthlyFlowToggle();
   const requestRows = (): void => {
     try {
       options.requestRows?.();

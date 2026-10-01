@@ -291,6 +291,15 @@ const HONESTY_SELECTORS = [
   ".table-stamp",
   ".inst-stamp",
   ".rb-caption",
+  /* SIGNALS-CLARITY M3 (R19): the Monthly flow panel's honesty lines — the
+     exclusion counts, the per-month "≈p% filed (est.)" shading labels, the
+     completeness method with its measured CDF and stated bias — and the
+     visually-hidden month table that carries every figure for assistive
+     technology. (Its method caption is `.rb-caption`, above.) */
+  ".mf-exclusions",
+  ".mf-shade-labels",
+  ".mf-completeness",
+  ".mf-table",
   ".c-traded",
   ".c-src",
   ".c-flags",
@@ -456,6 +465,79 @@ test("SIGNALS-CLARITY M2 (R10, R12): the hidden count and the stock label are sw
   }, { watched: new Set<string>() });
   assert.match(municipal, /<span class="si-asset-chip">Municipal Security<\/span>/);
   assert.doesNotMatch(corpus, /si-asset-chip/, "the parity surfaces' hits are listed stocks: no chip");
+});
+
+test("SIGNALS-CLARITY M3 (R19): the Monthly flow honesty lines are swept at the fold, and the panel emits each", async () => {
+  const sels = [".mf-exclusions", ".mf-shade-labels", ".mf-completeness", ".mf-table", ".rb-caption"];
+  for (const sel of sels) {
+    assert.ok(HONESTY_SELECTORS.includes(sel), `${sel} is an honesty selector`);
+    for (const decl of ["display:none", "visibility:hidden", "content-visibility:hidden"]) {
+      const planted = `${css}\n@media (max-width: 720px) { .ribbon-monthly ${sel} { ${decl}; } }`;
+      assert.deepEqual(foldViolations(planted), [`.ribbon-monthly ${sel}`], `control: ${sel} { ${decl} } at the fold`);
+    }
+  }
+  const { monthlyFlowPanel } = await import("../src/lib/ui/index.ts");
+  const html = monthlyFlowPanel(
+    [
+      {
+        kind: "txn", txnId: "t1", asset: "Widget Co", assetType: null, filed: "2026-07-21", traded: "2026-07-01",
+        name: "Fixture Member", bioguide: "T000001", party: "R", state: "OK", district: null, chamber: "house",
+        ticker: "WMB", side: "exchange", owner: "self", low: 1001, high: 15000, lag: 20, late: 0, flags: [],
+        doc: "https://disclosures-clerk.house.gov/x",
+      },
+    ] as never,
+    "2026-08-17",
+  );
+  const emitted = (c: string): boolean => new RegExp(`class="(?:[^"]*\\s)?${c.slice(1)}(?:\\s[^"]*)?"`).test(html);
+  for (const sel of sels) assert.ok(emitted(sel), `${sel} is emitted by the panel`);
+  // the a11y table is visually hidden, never removed
+  assert.match(html, /<div class="visually-hidden"><table class="mf-table">/);
+  assert.ok(!/<table[^>]*\shidden/.test(html) && !/mf-table[^>]*aria-hidden/.test(html));
+});
+
+/* SIGNALS-CLARITY M3: the Monthly flow panel's classes. Styled ones must be
+   styled AND emitted; hooks (read by the toggle, or carrying a shared base
+   class's styling) must be emitted and stay unstyled. */
+const M3_FLOW_CLASSES = [
+  "ribbon-monthly", "mf-est", "mf-window", "mf-breadth", "mf-bcol", "mf-bup", "mf-bdown", "mf-bbar",
+  "mf-breadth-note", "mf-shade-labels", "mf-shade-est", "mf-shade-window", "mf-swatch", "mf-completeness",
+  "mf-exclusions", "mf-cap", "mf-stub", "mf-tick",
+];
+const M3_FLOW_HOOKS = ["mf-variant", "mf-table"];
+
+test("SIGNALS-CLARITY M3: dead-CSS sweep over the Monthly flow panel — styled AND emitted, hooks unstyled", async () => {
+  const { monthlyFlowPanel } = await import("../src/lib/ui/index.ts");
+  const row = (over: Record<string, unknown>) => ({
+    kind: "txn", txnId: "t", asset: "Widget Co", assetType: "ST", filed: "2026-08-01", traded: "2026-07-10",
+    name: "M", bioguide: "M000001", party: "R", state: "OK", district: null, chamber: "house",
+    ticker: "WMB", side: "purchase", owner: "self", low: 1001, high: 15000, lag: 20, late: 0, flags: [],
+    doc: "https://disclosures-clerk.house.gov/x", ...over,
+  });
+  // a mature sample (so June shades as est.) and rows in the window
+  const rows = [
+    ...Array.from({ length: 100 }, (_, i) => row({ txnId: `l${i}`, traded: "2022-12-01", lag: i })),
+    row({ txnId: "b" }),
+    row({ txnId: "s", side: "sale" }),
+    row({ txnId: "open", traded: "2026-06-10", high: null }), // an open sum: the cap
+    row({ txnId: "unparsed", traded: "2026-05-10", low: null, high: null }), // an all-unparsed sum: the stub
+    row({ txnId: "outlier", traded: "2026-03-10", low: 5000001, high: 25000000 }), // an outlier scale: the small ranges get the tick
+  ];
+  const corpus = monthlyFlowPanel(rows as never, "2026-08-17");
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const styled = (cls: string): boolean => new RegExp(`\\.${cls}(?![\\w-])`).test(bare);
+  const emitted = (cls: string): boolean => new RegExp(`class="(?:[^"]*\\s)?${cls}(?:\\s[^"]*)?"`).test(corpus);
+  for (const cls of M3_FLOW_CLASSES) {
+    assert.ok(styled(cls), `.${cls} has no CSS`);
+    assert.ok(emitted(cls), `.${cls} is styled but never emitted`);
+  }
+  for (const cls of M3_FLOW_HOOKS) {
+    assert.ok(emitted(cls), `hook .${cls} is never emitted`);
+    assert.ok(!styled(cls), `hook .${cls} is now styled — move it to M3_FLOW_CLASSES`);
+  }
+  // the panel reuses the ribbon's base classes rather than a parallel set
+  for (const cls of ["ribbon", "ribbon-two", "rb-track", "rb-col", "rb-up", "rb-down", "rb-axis", "rb-bar", "rb-buy", "rb-sell", "rb-labels", "rb-label", "rb-caption", "visually-hidden"]) {
+    assert.ok(emitted(cls), `the panel reuses .${cls}`);
+  }
 });
 
 test("DESIGN-POLISH M1: every ledger honesty selector is emitted by the parity surfaces or the feed rows", async () => {

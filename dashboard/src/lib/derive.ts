@@ -20,6 +20,7 @@ import {
   fmtInt,
   fmtUsd,
   esc,
+  isListedStock,
   DATASET_VERSION,
 } from "./format.ts";
 import type { QoqDeltaRow } from "./inst.ts";
@@ -581,6 +582,257 @@ export function quarterlyFlow(
     excludedSides,
     dateAnomalies,
   };
+}
+
+/* ---------- monthly flow (SIGNALS-CLARITY M3, R15) ----------
+
+   The /congress monthly chart's data: disclosed purchases vs sales by TRADE
+   month, with breadth (distinct members per side). A sibling of
+   `quarterlyFlow`, not a generalisation of it — the quarterly callers (member
+   and ticker pages) keep their exact behaviour. The side rule is
+   `rollupRows`'s: `sale_partial` is a sale; `exchange` and `other` are
+   excluded and counted. Every exclusion is a count the caption states. */
+
+export interface MonthFlow {
+  month: string; // "2026-07"
+  start: string; // YYYY-MM-01
+  end: string; // the month's last calendar day
+  buy: SumRanges;
+  sell: SumRanges;
+  /** distinct members (`bioguide ?? "raw:" + name`) with ≥ 1 purchase row */
+  buyers: number;
+  /** distinct members with ≥ 1 sale or partial-sale row */
+  sellers: number;
+}
+
+export interface MonthlyFlowResult {
+  months: MonthFlow[]; // oldest → newest; a month with no rows stays as a gap
+  /** rows with no trade date — cannot be placed in a trade month */
+  undated: number;
+  /** in-window exchange / other rows */
+  excludedSides: number;
+  /** date_anomaly-flagged rows (constraint 9) */
+  dateAnomalies: number;
+  /** in-window rows left out by `listedStockOnly` — 0 when the option is off */
+  notListed: number;
+  /** the part of `notListed` that is untyped: the filing states no asset type */
+  untyped: number;
+  listedStockOnly: boolean;
+}
+
+function monthKeyOf(date: string): string {
+  return date.slice(0, 7);
+}
+
+function monthEndOf(month: string): string {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${month}-${String(last).padStart(2, "0")}`;
+}
+
+function prevMonthKey(month: string): string {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+}
+
+/** The member identity breadth counts: the joined bioguide, else the printed
+    name — an unjoined filer is counted, never dropped. */
+function memberKeyOf(t: Pick<TxnRow, "bioguide" | "name">): string {
+  return t.bioguide ?? `raw:${t.name}`;
+}
+
+/** Disclosed flow by trade month over the trailing `months` months ending at
+    the month of `endDate` (the build's generated-at date). Undated and
+    date-anomaly rows are counted over the whole input (they cannot be placed
+    in any month); side and listed-stock exclusions are counted inside the
+    window. With `listedStockOnly`, only rows whose FILED asset type is listed
+    stock (`isListedStock`) are drawn; the rest are counted, with the untyped
+    share stated separately. */
+export function monthlyFlow(
+  allTxns: readonly TxnRow[],
+  endDate: string,
+  months = 36,
+  opts: { listedStockOnly?: boolean } = {},
+): MonthlyFlowResult {
+  const listedStockOnly = opts.listedStockOnly === true;
+  const { rows: txns, excluded: dateAnomalies } = excludeDateAnomalies(allTxns);
+  const keys: string[] = [];
+  let cursor = monthKeyOf(endDate);
+  for (let i = 0; i < months; i++) {
+    keys.unshift(cursor);
+    cursor = prevMonthKey(cursor);
+  }
+  const byMonth = new Map<string, { buys: TxnRow[]; sells: TxnRow[]; buyers: Set<string>; sellers: Set<string> }>();
+  for (const k of keys) byMonth.set(k, { buys: [], sells: [], buyers: new Set(), sellers: new Set() });
+  let undated = 0;
+  let excludedSides = 0;
+  let notListed = 0;
+  let untyped = 0;
+  for (const t of txns) {
+    if (!t.traded) {
+      undated++;
+      continue;
+    }
+    const bucket = byMonth.get(monthKeyOf(t.traded));
+    if (!bucket) continue; // outside the window — not an exclusion to disclose
+    if (listedStockOnly && !isListedStock(t.assetType)) {
+      notListed++;
+      if (t.assetType == null) untyped++;
+      continue;
+    }
+    if (t.side === "purchase") {
+      bucket.buys.push(t);
+      bucket.buyers.add(memberKeyOf(t));
+    } else if (t.side === "sale" || t.side === "sale_partial") {
+      bucket.sells.push(t);
+      bucket.sellers.add(memberKeyOf(t));
+    } else excludedSides++;
+  }
+  return {
+    months: keys.map((k) => {
+      const b = byMonth.get(k)!;
+      return {
+        month: k,
+        start: `${k}-01`,
+        end: monthEndOf(k),
+        buy: sumRanges(b.buys),
+        sell: sumRanges(b.sells),
+        buyers: b.buyers.size,
+        sellers: b.sellers.size,
+      };
+    }),
+    undated,
+    excludedSides,
+    dateAnomalies,
+    notListed,
+    untyped,
+    listedStockOnly,
+  };
+}
+
+/* ---------- filing lag CDF and estimated completeness (R17) ----------
+
+   Recent months are still filling in: a trade is published only when it is
+   filed, up to 45 days later (and often later still). The estimate of how
+   complete a month is comes from THIS build's own lag distribution, measured
+   over a MATURE observed sample — non-anomalous rows traded 13 to 48 months
+   before the build date. It is not a closed sample: a trade from 13 months ago
+   can still be filed, and those late filings are not yet observed, so the CDF
+   slightly overstates completeness. Every surface that prints the estimate
+   states that bias beside it. */
+
+/** The lag points (days) the caption and /methodology print. */
+export const LAG_CDF_POINTS = [45, 90, 180, 365] as const;
+/** Months whose estimated completeness is under this share are shaded. */
+export const COMPLETENESS_SHADE_BELOW = 0.9;
+/** The statutory filing window: a month that ended fewer days than this
+    before the build is inside it and gets the stronger tone. */
+export const FILING_WINDOW_DAYS = 45;
+/** The mature sample's trade-date bounds, in months before the build. */
+export const LAG_SAMPLE_MONTHS = { newest: 13, oldest: 48 } as const;
+
+export interface LagCdf {
+  /** rows in the sample */
+  n: number;
+  /** inclusive trade-date bounds of the sample */
+  sampleFrom: string;
+  sampleTo: string;
+  /** the sample's lags in days, ascending */
+  lags: readonly number[];
+}
+
+/** Whole days from `a` to `b` (both ISO dates); negative when `b` precedes `a`. */
+function daysFrom(a: string, b: string): number {
+  const t = (d: string): number => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)));
+  return Math.round((t(b) - t(a)) / 86_400_000);
+}
+
+/** `monthsBefore` carries the day of month through, so 13 months before a
+    build on the 31st can name a day that does not exist ("2025-02-31"). The
+    bounds are PRINTED, so they are clamped to the month's last real day. On an
+    upper bound this changes no membership (no trade date lies between the last
+    real day and the impossible one). */
+function realDate(dateIso: string): string {
+  const end = monthEndOf(dateIso.slice(0, 7));
+  return dateIso > end ? end : dateIso;
+}
+
+/** The empirical lag distribution over the mature sample. Rows need a trade
+    date inside the sample window, no `date_anomaly` flag, and a non-negative
+    published lag (`days_to_file`); anything else cannot say how long filing
+    took. */
+export function lagCdf(allTxns: readonly TxnRow[], buildDate: string): LagCdf {
+  const sampleFrom = realDate(monthsBefore(buildDate, LAG_SAMPLE_MONTHS.oldest));
+  const sampleTo = realDate(monthsBefore(buildDate, LAG_SAMPLE_MONTHS.newest));
+  const { rows } = excludeDateAnomalies(allTxns);
+  const lags: number[] = [];
+  for (const t of rows) {
+    if (t.traded == null || t.lag == null || t.lag < 0) continue;
+    if (t.traded < sampleFrom || t.traded > sampleTo) continue;
+    lags.push(t.lag);
+  }
+  lags.sort((x, y) => x - y);
+  return { n: lags.length, sampleFrom, sampleTo, lags };
+}
+
+/** The share of the sample filed within `days` of the trade; null when the
+    sample is empty (no estimate is made from nothing). */
+export function cdfAt(cdf: LagCdf, days: number): number | null {
+  if (cdf.n === 0) return null;
+  let lo = 0;
+  let hi = cdf.lags.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cdf.lags[mid]! <= days) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo / cdf.n;
+}
+
+export interface MonthCompleteness {
+  /** estimated share of the month's trades already filed; null = no estimate */
+  est: number | null;
+  /** the month's age in days at the build: build date − its midpoint */
+  ageDays: number;
+  /** "window": ended < 45 days before the build (stronger tone); "est": under
+      the 90% shade line; null: neither */
+  tone: "window" | "est" | null;
+}
+
+/** A month's estimated completeness: the CDF at (build date − the month's
+    midpoint). R17 as amended 2026-10-01: a month that has fully ended is aged
+    from its CALENDAR midpoint; the build's own month, still in progress, is
+    aged from the midpoint of the days ELAPSED (the 1st through the build
+    date) — the trades observed in a partial month happened, on average, half
+    the elapsed days ago, and the calendar midpoint can lie after the build.
+    A build on the month's last day is the same date either way. */
+export function estimatedCompleteness(
+  cdf: LagCdf,
+  month: Pick<MonthFlow, "start" | "end">,
+  buildDate: string,
+): MonthCompleteness {
+  const last = month.end < buildDate ? month.end : buildDate;
+  const span = Math.max(0, daysFrom(month.start, last));
+  const midpoint = addDays(month.start, Math.floor(span / 2));
+  const ageDays = Math.max(0, daysFrom(midpoint, buildDate));
+  const est = cdfAt(cdf, ageDays);
+  const insideWindow = daysFrom(month.end, buildDate) < FILING_WINDOW_DAYS;
+  const tone = insideWindow ? "window" : est !== null && est < COMPLETENESS_SHADE_BELOW ? "est" : null;
+  return { est, ageDays, tone };
+}
+
+/** The measured CDF points as one line, "≤45 d 84.4% · ≤90 d 88.0% · …" —
+    the /congress caption and /methodology print the same string. */
+export function lagCdfPointsText(cdf: LagCdf): string {
+  if (cdf.n === 0) return "no mature sample in this build";
+  return LAG_CDF_POINTS.map((d) => `≤${d} d ${((cdfAt(cdf, d) ?? 0) * 100).toFixed(1)}%`).join(" · ");
+}
+
+/** "≈p% filed (est.)" — floored, so a shaded month never reads as 90%. */
+export function completenessLabel(est: number): string {
+  return `≈${Math.floor(est * 100)}% filed (est.)`;
 }
 
 /* ---------- trailing windows, medians, top tickers ---------- */

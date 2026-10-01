@@ -1446,3 +1446,58 @@ span.mgr-chip,
   padding-top: 10px;
 }
 
+/* ---------- monthly flow (SIGNALS-CLARITY M3, R16–R19) ----------
+   The same bar grammar at 36 periods: bars and gaps shrink with the column so
+   the chart fits a 375px phone without scrolling. Shading marks months still
+   filling in — `.mf-est` under 90% filed (est.), `.mf-window` inside the 45-day
+   filing window. None of the caption, labels or exclusion lines may be hidden
+   at any width (css-fold HONESTY_SELECTORS). */
+/* The 12px block padding is the room a cap needs past a bar that reaches the
+   axis top (or bottom); the columns measure their height inside it. */
+.ribbon-monthly .rb-track { gap: 2px; height: 224px; padding: 12px 2px; }
+/* Purchases and sales share ONE scale: the two halves are the same height
+   (the quarterly two-sided ribbon gives its sale half 0.7 of the purchase half). */
+.ribbon-monthly .rb-down { flex: 1; }
+.ribbon-monthly .rb-labels { gap: 2px; padding: 5px 2px 0; }
+.ribbon-monthly .rb-label { text-align: left; white-space: nowrap; overflow: visible; min-width: 0; }
+/* No border on a monthly bar: a 1px border is two pixels of height that are
+   not dollars, and at this scale two pixels is over a million (review F1).
+   Every solid edge is therefore exactly a disclosed bound. */
+.ribbon-monthly .rb-bar { width: 70%; min-width: 2px; max-width: 18px; border: 0; }
+/* The open-bound cap and the all-unparsed stub: ONE fixed height — a mark, not
+   a dollar amount — hatched and edgeless, so neither reads as a closed top. */
+.ribbon-monthly :is(.mf-cap, .mf-stub) { height: 11px; }
+/* The too-small-to-draw tick: a fixed 2px line, wider than any bar so it reads
+   as a mark on the scale rather than a short bar. Not a dollar amount. */
+.ribbon-monthly .mf-tick { height: 2px; width: 100%; max-width: none; }
+.ribbon-monthly .mf-est,
+.mf-shade-est .mf-swatch { background: color-mix(in oklab, var(--ink3) 12%, transparent); }
+.ribbon-monthly .mf-window,
+.mf-shade-window .mf-swatch { background: color-mix(in oklab, var(--ink3) 26%, transparent); }
+.mf-breadth { display: flex; gap: 2px; height: 48px; padding: 0 2px; margin-top: 12px; }
+.mf-bcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.mf-bup, .mf-bdown { flex: 1; position: relative; }
+.mf-bup { border-bottom: 1px solid var(--rule2); }
+.mf-bbar { position: absolute; left: 50%; transform: translateX(-50%); width: 70%; min-width: 2px; max-width: 18px; opacity: 0.8; }
+.mf-bup .mf-bbar { bottom: 0; }
+.mf-bdown .mf-bbar { top: 0; }
+.mf-breadth-note,
+.mf-completeness,
+.mf-exclusions {
+  font: 400 var(--fs-note)/1.6 var(--mono);
+  color: var(--ink3);
+  margin: 8px 0 0;
+}
+.mf-shade-labels {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font: 400 var(--fs-note)/1.5 var(--mono);
+  color: var(--ink2);
+}
+.mf-shade-labels li { display: inline-flex; align-items: center; gap: 6px; }
+.mf-swatch { display: inline-block; width: 10px; height: 10px; border: 1px solid var(--rule2); }
+

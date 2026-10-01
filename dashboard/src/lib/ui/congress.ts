@@ -24,6 +24,7 @@ import {
   noteFromHtml,
   esc,
   fmtInt,
+  fmtMoney,
   amountText,
   sideLabel,
   ownerNote,
@@ -67,6 +68,18 @@ import {
   sumRangesText,
   undisclosedPctText,
   quarterlyFlow,
+  monthlyFlow,
+  lagCdf,
+  lagCdfPointsText,
+  estimatedCompleteness,
+  completenessLabel,
+  COMPLETENESS_SHADE_BELOW,
+  FILING_WINDOW_DAYS,
+  LAG_SAMPLE_MONTHS,
+  type MonthFlow,
+  type MonthlyFlowResult,
+  type MonthCompleteness,
+  type LagCdf,
   topTickers,
   membersDisclosing,
   medianLag,
@@ -275,6 +288,298 @@ export function flowRibbon(
       : `<div class="rb-caption">${esc(caption)}</div>`) +
     `<p class="visually-hidden">Disclosed flow by quarter. ${esc(summary)}</p>` +
     `</div>`
+  );
+}
+
+/* ---------- monthly flow panel (SIGNALS-CLARITY M3, R16–R19) ----------
+
+   /congress's "Monthly flow": 36 trade months of disclosed purchases (above
+   the axis) vs sales (below), drawn in `flowRibbon`'s bar grammar and classes — zero
+   based, a month with no rows stays a gap, never a midpoint. An open sum is
+   solid to its provable minimum with a short FIXED-height hatched cap, and an
+   all-unparsed sum is a hatched stub at the axis (`monthlyBarHtml`; at 36 bars
+   the quarterly ribbon's hatch-to-the-axis-top swamped the real bars — a
+   recorded deviation from R16's wording, monthly ribbon only). A closed bar
+   spans exactly its disclosed bounds, with no minimum height. Under it, breadth:
+   distinct members with a purchase vs with a sale per month, counted, not dollar-weighted
+   (L6). Recent months are shaded by ESTIMATED filing completeness from the
+   build's own lag distribution (R17), and every estimate says it is one.
+
+   Two variants render at build time — listed stocks (the default) and all
+   asset types — and a small client script flips `hidden` between them; there
+   is no fetch (L4). Each variant carries its own caption, exclusion counts,
+   shading labels and a visually-hidden table of every month (R19). */
+
+const MONTHLY_FLOW_MONTHS = 36;
+
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The axis tick under a month: the year at January, the month name at the
+    other quarter starts, nothing between (36 labels cannot fit a phone). */
+function monthTick(month: string): string {
+  const m = Number(month.slice(5, 7));
+  if (m === 1) return month.slice(0, 4);
+  return m % 3 === 1 ? MONTH_ABBR[m - 1]! : "";
+}
+
+/* Wording: the §0 gate (test/lib/banned-scan.ts) bans present-tense trading
+   verbs on every built surface, so breadth is stated as "members with a
+   purchase / with a sale" — what the filings disclose — never as a verb. */
+/* ----- monthly bar geometry -----
+
+   The quarterly `barHtml` is NOT used here: it floors a closed bar at 1.5% of
+   the axis so a small range stays visible, and at 36 months on an outlier
+   scale that floor draws an upper bound nobody disclosed (review F1: $25K–$200K
+   drawn to about $1.2M). On the monthly ribbon every dollar-scaled edge is the
+   true bound, and visibility is a SEPARATE mark with no dollar meaning. */
+
+/** Percent of the axis, floored to the two decimals emitted — so a drawn top
+    is never above the true bound, by rounding or otherwise. */
+function axisPct(value: number, axisMax: number): number {
+  return Math.floor(Math.min(100, (value / axisMax) * 100) * 100) / 100;
+}
+
+/** A closed range shorter than this share of the axis (about one pixel of the
+    monthly half-track) cannot be seen at its true height, so it also gets the
+    fixed `.mf-tick`. */
+const MONTHLY_TICK_BELOW_PCT = 1;
+
+/** A closed sum's true span on the axis, and whether it needs the tick. */
+function closedSpan(s: Extract<SumRanges, { kind: "closed" }>, axisMax: number): { base: number; height: number; tick: boolean } {
+  const base = axisPct(s.low, axisMax);
+  const height = Math.max(0, axisPct(s.high, axisMax) - base);
+  return { base, height, tick: height < MONTHLY_TICK_BELOW_PCT };
+}
+
+/** Whether a month's sum is drawn with the too-small-to-draw tick. */
+function monthlyBarTicked(s: SumRanges, axisMax: number): boolean {
+  return s.kind === "closed" && closedSpan(s, axisMax).tick;
+}
+
+/** A monthly bar. `from` is the edge it grows away from: `bottom` for
+    purchases (above the axis), `top` for sales (hanging below it), so offsets
+    are always measured from the axis.
+
+    - CLOSED: one bar from the true low to the true high — no minimum height.
+      When that is under `MONTHLY_TICK_BELOW_PCT` it is followed by `.mf-tick`,
+      a fixed-height mark at the bar's position (a CSS constant, not dollars)
+      that only says "a range is here, too small to draw at this scale";
+    - OPEN (a provable minimum, no upper bound): solid from the axis to the
+      minimum, then `.mf-cap` — a hatched cap of FIXED height with no closing
+      edge, so it reads as "continues" and is never mistaken for a maximum;
+    - UNDISCLOSED (rows exist, no amount parsed): `.mf-stub`, the same hatched
+      mark at the axis on its side — present, of no stated size, never $0;
+    - EMPTY: a gap.
+
+    Nothing is a point estimate: only solid fills are dollar-scaled, and each
+    is a disclosed bound. */
+function monthlyBarHtml(s: SumRanges, axisMax: number, cls: string, from: "bottom" | "top"): string {
+  if (s.kind === "empty") return `<div class="rb-bar rb-gap" aria-hidden="true"></div>`;
+  if (s.kind === "undisclosed") {
+    return `<div class="rb-bar ${cls} rb-hatch mf-stub" style="${from}:0" aria-hidden="true"></div>`;
+  }
+  if (s.kind === "open") {
+    const base = axisPct(s.low, axisMax).toFixed(2);
+    return (
+      `<div class="rb-bar ${cls}" style="${from}:0;height:${base}%" aria-hidden="true"></div>` +
+      `<div class="rb-bar ${cls} rb-hatch mf-cap" style="${from}:${base}%" aria-hidden="true"></div>`
+    );
+  }
+  const span = closedSpan(s, axisMax);
+  const base = span.base.toFixed(2);
+  return (
+    `<div class="rb-bar ${cls}" style="${from}:${base}%;height:${span.height.toFixed(2)}%" aria-hidden="true"></div>` +
+    (span.tick ? `<div class="rb-bar ${cls} mf-tick" style="${from}:${base}%" aria-hidden="true"></div>` : "")
+  );
+}
+
+/** A month's sum for the assistive-technology table: the state is said in
+    words, since the table cannot show a hatch. */
+function monthSumWords(s: SumRanges): string {
+  switch (s.kind) {
+    case "empty":
+      return "none";
+    case "undisclosed":
+      return "undisclosed — amounts filed but none parsed";
+    case "open":
+      return `${sumRangesText(s)} (open — no upper bound disclosed)`;
+    case "closed":
+      return sumRangesText(s);
+  }
+}
+
+function monthSummary(m: MonthFlow, c: MonthCompleteness): string {
+  const part = (label: string, s: SumRanges): string =>
+    s.kind === "empty" ? `no ${label}` : `${label} ${sumRangesText(s)}`;
+  const net = netIntervalText(netFlow(m.buy, m.sell));
+  const est = c.est !== null && c.tone !== null ? `; ${completenessLabel(c.est)}` : "";
+  return (
+    `${m.month}: ${part("purchases", m.buy)}, ${part("sales", m.sell)}, net ${net}; ` +
+    `${fmtInt(m.buyers)} ${m.buyers === 1 ? "member" : "members"} with a purchase, ${fmtInt(m.sellers)} with a sale${est}`
+  );
+}
+
+function monthlyFlowVariantHtml(
+  variant: "stocks" | "all",
+  flow: MonthlyFlowResult,
+  cdf: LagCdf,
+  buildDate: string,
+  hidden: boolean,
+): string {
+  const comp = flow.months.map((m) => estimatedCompleteness(cdf, m, buildDate));
+  const axisMax = ribbonAxisMax(flow.months.flatMap((m) => [m.buy, m.sell]));
+  const drawn = flow.months.some((m) => m.buy.kind !== "empty" || m.sell.kind !== "empty");
+  const toneCls = (c: MonthCompleteness): string => (c.tone === null ? "" : ` mf-${c.tone}`);
+  const cols = flow.months
+    .map(
+      (m, i) =>
+        `<div class="rb-col${toneCls(comp[i]!)}" role="img" aria-label="${esc(monthSummary(m, comp[i]!))}">` +
+        `<div class="rb-up">${monthlyBarHtml(m.buy, axisMax, "rb-buy", "bottom")}</div>` +
+        `<div class="rb-axis" aria-hidden="true"></div>` +
+        `<div class="rb-down">${monthlyBarHtml(m.sell, axisMax, "rb-sell", "top")}</div>` +
+        `</div>`,
+    )
+    .join("");
+  const labels = flow.months
+    .map((m) => `<div class="rb-label">${esc(monthTick(m.month))}</div>`)
+    .join("");
+  const breadthMax = Math.max(1, ...flow.months.flatMap((m) => [m.buyers, m.sellers]));
+  const bar = (n: number, cls: string): string =>
+    n === 0 ? "" : `<div class="mf-bbar ${cls}" style="height:${Math.max((n / breadthMax) * 100, 4).toFixed(1)}%"></div>`;
+  const breadth = flow.months
+    .map(
+      (m, i) =>
+        `<div class="mf-bcol${toneCls(comp[i]!)}"><div class="mf-bup">${bar(m.buyers, "rb-buy")}</div>` +
+        `<div class="mf-bdown">${bar(m.sellers, "rb-sell")}</div></div>`,
+    )
+    .join("");
+  const first = flow.months[0]!;
+  const last = flow.months[flow.months.length - 1]!;
+  const latest = last;
+  const openMonth = buildDate < last.end;
+
+  /* Shading labels: one line per shaded month, in the page's own words. */
+  const shaded = flow.months
+    .map((m, i) => ({ m, c: comp[i]! }))
+    .filter(({ c }) => c.tone !== null)
+    .reverse();
+  const shadeItems = shaded
+    .map(
+      ({ m, c }) =>
+        `<li class="mf-shade-${c.tone}"><span class="mf-swatch" aria-hidden="true"></span>` +
+        `${esc(m.month)} ${c.est !== null ? esc(completenessLabel(c.est)) : "completeness not estimated"}` +
+        `${c.tone === "window" ? " · inside the 45-day window" : ""}</li>`,
+    )
+    .join("");
+  const shadeHtml = shaded.length
+    ? `<ul class="mf-shade-labels" aria-label="Months still filling in">${shadeItems}</ul>`
+    : `<p class="mf-shade-labels">No month in the window is under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.) or inside the 45-day window.</p>`;
+
+  const completenessHtml =
+    `<p class="mf-completeness">` +
+    (cdf.n === 0
+      ? `Completeness is not estimated: no row traded ${esc(cdf.sampleFrom)} to ${esc(cdf.sampleTo)} carries a filing lag, so this build has no mature sample to measure. `
+      : `Shading estimates how much of each month is filed so far: the share of this build's mature sample — ` +
+        `${fmtInt(cdf.n)} trades made ${esc(cdf.sampleFrom)} to ${esc(cdf.sampleTo)} (${LAG_SAMPLE_MONTHS.newest}–${LAG_SAMPLE_MONTHS.oldest} months before the build), all asset types — ` +
+        `filed within the month's age at the build (the build date minus the month's midpoint; for the build's own month, the midpoint of the days elapsed so far). Filed within ${esc(lagCdfPointsText(cdf))}. ` +
+        `Trades in that sample that are still unfiled are not observed yet, so the estimate slightly overstates completeness. ` +
+        `Shaded: under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.); darker: the month ended fewer than ${FILING_WINDOW_DAYS} days before the build, inside the 45-day filing window. `) +
+    `<a href="/methodology/#monthly-flow">Method ↗</a></p>`;
+
+  const exclusions: string[] = [];
+  if (flow.listedStockOnly && flow.notListed > 0) {
+    const other = flow.notListed - flow.untyped;
+    exclusions.push(
+      `${fmtInt(flow.notListed)} in-window ${flow.notListed === 1 ? "row" : "rows"} excluded as not listed stock ` +
+        `(${fmtInt(flow.untyped)} untyped — the filing states no asset type; ${fmtInt(other)} another asset type)`,
+    );
+  }
+  if (flow.excludedSides > 0)
+    exclusions.push(`${fmtInt(flow.excludedSides)} in-window exchange/unparsed-side ${flow.excludedSides === 1 ? "row" : "rows"} excluded`);
+  if (flow.undated > 0)
+    exclusions.push(`${fmtInt(flow.undated)} ${flow.undated === 1 ? "row" : "rows"} with no parseable trade date excluded`);
+  if (flow.dateAnomalies > 0)
+    exclusions.push(`${fmtInt(flow.dateAnomalies)} date-anomaly ${flow.dateAnomalies === 1 ? "row" : "rows"} excluded (${DATE_ANOMALY_NOTE})`);
+  const exclusionsHtml = `<p class="mf-exclusions">${
+    exclusions.length ? `${esc(exclusions.join(" · "))}.` : "No row in this window was excluded."
+  }</p>`;
+
+  const kinds = new Set(flow.months.flatMap((m) => [m.buy.kind, m.sell.kind]));
+  const ticked = flow.months.some((m) => monthlyBarTicked(m.buy, axisMax) || monthlyBarTicked(m.sell, axisMax));
+  const caption = [
+    `trade months ${first.month} to ${last.month}${openMonth ? ` (through ${buildDate}, the build date)` : ""}`,
+    flow.listedStockOnly
+      ? `listed stocks: rows whose filed asset type is ST (House Clerk code) or Stock (Senate eFD label) — never inferred from a name`
+      : `all asset types`,
+    "purchases above the axis, sales and partial sales below",
+    drawn ? `y from $0 to ${fmtMoney(axisMax)} · no midpoints — each bar spans the summed disclosed bounds` : "y from $0",
+    ticked ? "a thin tick marks a month whose range is too small to draw at this scale — the tick is a marker, not a dollar amount" : "",
+    kinds.has("open") ? "a hatched cap means no upper bound is disclosed (an open-ended or unparsed amount) — the bar shows the provable minimum only, and the cap's height is not a dollar amount" : "",
+    kinds.has("undisclosed") ? "a hatched stub at the axis means amounts were filed but none parsed — never counted as $0" : "",
+    "gaps are gaps — no interpolation",
+    "breadth counts distinct members, not dollars",
+    "source: House Clerk + Senate eFD",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const rows = flow.months
+    .map((m, i) => {
+      const c = comp[i]!;
+      return (
+        `<tr><th scope="row">${esc(m.month)}</th><td>${esc(monthSumWords(m.buy))}</td><td>${esc(monthSumWords(m.sell))}</td>` +
+        `<td>${esc(netIntervalText(netFlow(m.buy, m.sell)))}</td><td>${fmtInt(m.buyers)}</td><td>${fmtInt(m.sellers)}</td>` +
+        `<td>${c.est === null ? "not estimated" : esc(completenessLabel(c.est))}${c.tone === "window" ? " · inside the 45-day window" : ""}</td></tr>`
+      );
+    })
+    .join("");
+  const scopeWords = variant === "stocks" ? "listed stocks" : "all asset types";
+  const table =
+    /* The clip pattern is on a wrapping BLOCK: a <table> ignores `width:1px`
+       and `overflow`, so a visually-hidden table still widens the page. */
+    `<div class="visually-hidden"><table class="mf-table">` +
+    `<caption>Disclosed flow by trade month, ${scopeWords}, ${esc(first.month)} to ${esc(last.month)}. Amounts are summed statutory ranges; the net is an interval, never a point.</caption>` +
+    `<thead><tr><th scope="col">Trade month</th><th scope="col">Purchases</th><th scope="col">Sales</th>` +
+    `<th scope="col">Net (interval)</th><th scope="col">Members with a purchase</th><th scope="col">Members with a sale</th>` +
+    `<th scope="col">Estimated completeness</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  return (
+    `<div class="mf-variant" data-flow-variant="${variant}"${hidden ? " hidden" : ""}>` +
+    `<div class="ribbon ribbon-two ribbon-monthly">` +
+    `<div class="rb-track">${cols}</div>` +
+    `<div class="rb-labels" aria-hidden="true">${labels}</div>` +
+    `<div class="mf-breadth" aria-hidden="true">${breadth}</div>` +
+    `<p class="mf-breadth-note">Breadth — members with a disclosed purchase (above) vs with a disclosed sale (below), distinct per month; the tallest bar is ${fmtInt(breadthMax)} ${breadthMax === 1 ? "member" : "members"}. ` +
+    `${esc(latest.month)}${openMonth ? " (so far)" : ""}: ${fmtInt(latest.buyers)} with a purchase, ${fmtInt(latest.sellers)} with a sale.</p>` +
+    shadeHtml +
+    completenessHtml +
+    exclusionsHtml +
+    `<div class="rb-caption">${esc(caption)}</div>` +
+    table +
+    `</div></div>`
+  );
+}
+
+/** The whole "Monthly flow" panel, both variants, from the build's rows. */
+export function monthlyFlowPanel(txns: readonly TxnRow[], buildDate: string, months = MONTHLY_FLOW_MONTHS): string {
+  const cdf = lagCdf(txns, buildDate);
+  const stocks = monthlyFlow(txns, buildDate, months, { listedStockOnly: true });
+  const all = monthlyFlow(txns, buildDate, months);
+  const toggle =
+    `<div class="seg" role="group" aria-label="Asset types drawn">` +
+    `<button type="button" data-flow-toggle="stocks" aria-pressed="true">Listed stocks</button>` +
+    `<button type="button" data-flow-toggle="all" aria-pressed="false">All asset types</button>` +
+    `</div>`;
+  return (
+    `<section class="panel panel-wide" id="monthly-flow-section" aria-labelledby="monthly-flow-h">` +
+    `<div class="panel-head"><h2 class="section-h" id="monthly-flow-h">Monthly flow</h2>` +
+    `<span class="panel-note">disclosed purchases vs sales by trade month · trailing ${months} months · statutory ranges</span>` +
+    toggle +
+    `</div>` +
+    `<noscript><p class="caveat-inline">The all-asset-types view needs JavaScript; the listed-stock view below states its exclusions in full.</p></noscript>` +
+    monthlyFlowVariantHtml("stocks", stocks, cdf, buildDate, false) +
+    monthlyFlowVariantHtml("all", all, cdf, buildDate, true) +
+    `</section>`
   );
 }
 

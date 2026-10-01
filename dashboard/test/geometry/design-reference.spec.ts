@@ -992,3 +992,105 @@ test('compact feed paging and row flags remain usable', async ({page}) => {
     await page.keyboard.press('Escape');
   }
 });
+
+/* ======================================================================
+   SIGNALS-CLARITY M3 (R16, R18, R19; T15, T17, T18): /congress's Monthly
+   flow panel at the phone (375) and the design screen (1440). Properties:
+   it sits directly before band C1 (Leaders first); the 36 months fit their
+   track with no horizontal scroll at either width; every honesty line (the
+   caption, the exclusion counts, the shading labels, the completeness method)
+   is on screen at both widths; the month table is visually hidden, never
+   removed; the toggle swaps the two server-rendered variants.
+   ====================================================================== */
+for (const width of [375, 1440]) {
+  test(`Monthly flow panel at ${width}px (SIGNALS-CLARITY M3)`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 1000 });
+    expect((await page.goto('/congress/'))?.status()).toBe(200);
+    await expect(page.locator('#monthly-flow-section + #congress-leaders-band'), 'the panel directly precedes band C1').toHaveCount(1);
+    await expect(page.locator('#monthly-flow-section h2')).toHaveText('Monthly flow');
+    const g = await page.evaluate(() => {
+      const panel = document.querySelector('#monthly-flow-section')!;
+      const shown = Array.from(panel.querySelectorAll<HTMLElement>('.mf-variant')).filter((v) => !v.hidden);
+      const v = shown[0]!;
+      const track = v.querySelector('.rb-track')!;
+      const tr = track.getBoundingClientRect();
+      const cols = Array.from(track.querySelectorAll('.rb-col')).map((c) => c.getBoundingClientRect());
+      const vis = (sel: string) => {
+        const el = v.querySelector(sel);
+        if (!el) return { present: false, visible: false, h: 0, right: 0 };
+        const r = el.getBoundingClientRect();
+        return { present: true, visible: el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && r.height > 0 && r.width > 0, h: r.height, right: r.right };
+      };
+      const table = v.querySelector('table.mf-table')!;
+      const cs = getComputedStyle(table.closest('.visually-hidden') ?? table);
+      return {
+        shown: shown.map((s) => s.dataset.flowVariant),
+        page: { scroll: document.documentElement.scrollWidth, viewport: innerWidth },
+        panelRight: panel.getBoundingClientRect().right,
+        track: { left: tr.left, right: tr.right, scroll: track.scrollWidth, client: track.clientWidth },
+        cols: cols.length,
+        colsInside: cols.every((c) => c.left >= tr.left - 0.5 && c.right <= tr.right + 0.5 && c.width > 0),
+        minColWidth: Math.min(...cols.map((c) => c.width)),
+        caption: vis('.rb-caption'),
+        exclusions: vis('.mf-exclusions'),
+        shade: vis('.mf-shade-labels'),
+        completeness: vis('.mf-completeness'),
+        breadth: vis('.mf-breadth'),
+        /* the open-bound caps and all-unparsed stubs of BOTH variants' markup
+           are fixed-height marks; here, the visible variant's */
+        marks: Array.from(v.querySelectorAll('.mf-cap, .mf-stub')).map((m) => {
+          const r = m.getBoundingClientRect(), t = track.getBoundingClientRect();
+          return { h: Math.round(r.height * 10) / 10, inTrack: r.top >= t.top - 0.5 && r.bottom <= t.bottom + 0.5 };
+        }),
+        /* review F1: every dollar-scaled (solid, un-hatched) bar is drawn at
+           EXACTLY the height its style states — no minimum height, no border —
+           and the too-small-to-draw tick is a fixed mark */
+        solid: Array.from(v.querySelectorAll('.rb-up .rb-bar, .rb-down .rb-bar')).filter((b) => !b.matches('.rb-gap, .rb-hatch, .mf-tick')).map((b) => {
+          const half = b.parentElement!.getBoundingClientRect().height;
+          const pct = Number(/height:([\d.]+)%/.exec(b.getAttribute('style') ?? '')?.[1] ?? NaN);
+          return { px: b.getBoundingClientRect().height, want: (pct / 100) * half };
+        }),
+        ticks: Array.from(v.querySelectorAll('.mf-tick')).map((t) => Math.round(t.getBoundingClientRect().height * 10) / 10),
+        halves: (() => { const c = track.querySelector('.rb-col')!; return { up: c.querySelector('.rb-up')!.getBoundingClientRect().height, down: c.querySelector('.rb-down')!.getBoundingClientRect().height }; })(),
+        tallestHatch: Math.max(0, ...Array.from(v.querySelectorAll('.rb-hatch')).map((m) => m.getBoundingClientRect().height)),
+        table: { display: getComputedStyle(table).display, wrapDisplay: cs.display, clipped: /rect\(0(px)?,? 0(px)?,? 0(px)?,? 0(px)?\)/.test(cs.clip) || cs.clipPath === 'inset(50%)', rows: table.querySelectorAll('tbody tr').length, box: table.getBoundingClientRect().width },
+      };
+    });
+    expect(g.shown, 'exactly one variant is visible: Listed stocks, the default').toEqual(['stocks']);
+    expect(g.page.scroll, 'no horizontal page scroll').toBeLessThanOrEqual(g.page.viewport + 1);
+    expect(g.panelRight).toBeLessThanOrEqual(g.page.viewport + 1);
+    expect(g.cols, '36 trade months').toBe(36);
+    expect(g.track.scroll, 'the 36 months fit their track').toBeLessThanOrEqual(g.track.client + 1);
+    expect(g.colsInside, 'every month column lies inside the track').toBe(true);
+    expect(g.minColWidth, 'every month column has room for a bar').toBeGreaterThanOrEqual(4);
+    for (const [name, v] of Object.entries({ caption: g.caption, exclusions: g.exclusions, 'shading labels': g.shade, completeness: g.completeness, breadth: g.breadth })) {
+      expect(v.present && v.visible, `the ${name} line is on screen at ${width}px`).toBe(true);
+      expect(v.right, `the ${name} line stays inside the viewport`).toBeLessThanOrEqual(g.page.viewport + 1);
+    }
+    /* readability change: an open sum's hatch is a fixed cap (and an all-unparsed
+       sum a fixed stub), never a pillar to the axis top */
+    expect(g.marks.length, 'this build draws open-bound caps').toBeGreaterThan(0);
+    expect(g.marks.filter((m) => m.h < 10 || m.h > 12), 'every cap and stub is the one fixed 10–12px height').toEqual([]);
+    expect(g.marks.every((m) => m.inTrack), 'a cap on a bar at the axis top still sits inside the track').toBe(true);
+    expect(g.tallestHatch, 'no hatch is taller than a cap').toBeLessThanOrEqual(12);
+    expect(Math.abs(g.halves.up - g.halves.down), 'purchases and sales are drawn on one scale').toBeLessThanOrEqual(1);
+    expect(g.solid.length, 'the visible variant draws dollar-scaled bars').toBeGreaterThan(20);
+    expect(g.solid.filter((b) => !(Math.abs(b.px - b.want) <= 0.25)), 'no solid bar is taller than its stated share of the axis (no minimum height, no border)').toEqual([]);
+    expect(g.ticks.length, 'this build has months too small to draw at the outlier scale').toBeGreaterThan(0);
+    expect(g.ticks.filter((h) => h < 1 || h > 2), 'every tick is the one fixed 1–2px height').toEqual([]);
+    expect(g.table.display, 'the month table is never display:none').not.toBe('none');
+    expect(g.table.wrapDisplay, 'nor is its visually-hidden wrapper').not.toBe('none');
+    expect(g.table.clipped, 'the month table is visually hidden by the clip pattern').toBe(true);
+    expect(g.table.rows).toBe(36);
+    await page.locator('#monthly-flow-section').screenshot({ path: info.outputPath(`monthly-flow-${width}.png`) });
+    // the toggle swaps the server-rendered variants
+    await page.locator('#monthly-flow-section [data-flow-toggle="all"]').click();
+    await expect(page.locator('#monthly-flow-section .mf-variant[data-flow-variant="all"]')).toBeVisible();
+    await expect(page.locator('#monthly-flow-section .mf-variant[data-flow-variant="stocks"]')).toBeHidden();
+    await expect(page.locator('#monthly-flow-section [data-flow-toggle="all"]')).toHaveAttribute('aria-pressed', 'true');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), 'no horizontal scroll with all asset types').toBeLessThanOrEqual(width + 1);
+    await page.locator('#monthly-flow-section').screenshot({ path: info.outputPath(`monthly-flow-all-${width}.png`) });
+    await page.locator('#monthly-flow-section [data-flow-toggle="stocks"]').click();
+    await expect(page.locator('#monthly-flow-section .mf-variant[data-flow-variant="stocks"]')).toBeVisible();
+  });
+}

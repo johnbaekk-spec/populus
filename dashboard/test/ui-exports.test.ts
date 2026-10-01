@@ -51,6 +51,8 @@ const VALUE_EXPORTS = [
   "filerTiles",
   "flowCellHtml",
   "flowRibbon",
+  // SIGNALS-CLARITY M3 (R16): /congress's Monthly flow panel
+  "monthlyFlowPanel",
   "holdersBody",
   "holdersTableHtml",
   "instStamp",
@@ -142,16 +144,16 @@ const TYPE_EXPORTS = [
   "HitFilter",
 ] as const;
 
-test("ui entry exports exactly the 88 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 89 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
-  assert.equal(VALUE_EXPORTS.length, 88, "70 through M1, the twelve M2 exports, the two M3 exports, and SIGNALS-CLARITY M2's five in, one out");
+  assert.equal(VALUE_EXPORTS.length, 89, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, and SIGNALS-CLARITY M3's monthlyFlowPanel");
 });
 
-test("ui entry exports the 15 reconciled type-only symbols (103 total)", () => {
+test("ui entry exports the 15 reconciled type-only symbols (104 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -163,5 +165,5 @@ test("ui entry exports the 15 reconciled type-only symbols (103 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 103, "the reconciled surface is 103 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types)");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 104, "the reconciled surface is 104 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel)");
 });

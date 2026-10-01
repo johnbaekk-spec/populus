@@ -14,7 +14,7 @@ import {
   type RenderCtx,
 } from "../../lib/format";
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
-import { briefingCards, congressRankingSection, disclosureLedger, markPairPrimary, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
+import { briefingCards, congressRankingSection, disclosureLedger, markPairPrimary, monthlyFlowPanel, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { COMPACT_ROWS } from "../../lib/format";
 
@@ -146,6 +146,11 @@ const membersHtml = congressRankingSection(
     compact: COMPACT_ROWS,
   },
 );
+/* SIGNALS-CLARITY M3 (R16–R19): 36 trade months of purchases vs sales, both
+   variants (listed stocks, the default, and all asset types) rendered here from
+   the full row set; `congress-sections.ts` flips `hidden` between them with no
+   fetch (L4). The build date is the window end and the completeness clock. */
+const monthlyFlowHtml = monthlyFlowPanel(build.txns, build.generatedAtDate);
 const footnoteHtml = footnoteBlock(
   [
     {
@@ -221,6 +226,9 @@ const description =
     <details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary>
       <Fragment set:html={briefingHtml} />
     </details>
+    <!-- SIGNALS-CLARITY M3 (R16): Monthly flow sits immediately before
+         "Leaders · net disclosed flow" (band C1). -->
+    <Fragment set:html={monthlyFlowHtml} />
     <div class="design-rankings" id="congress-leaders-band"><Fragment set:html={markPairPrimary(membersHtml)} /><Fragment set:html={momentumHtml} /></div>
 
     <!-- filter bar. The controls live in their own wrapper so they can become a

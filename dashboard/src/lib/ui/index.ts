@@ -19,6 +19,8 @@ export {
   type MemberV2Deps,
   flowRibbon,
   flowCellHtml,
+  // SIGNALS-CLARITY M3 (R16): /congress's Monthly flow panel
+  monthlyFlowPanel,
   entityTxnRowsHtml,
   entityTableCountText,
   entityTxnTable,
