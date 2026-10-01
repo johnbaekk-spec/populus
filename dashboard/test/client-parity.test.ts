@@ -246,7 +246,11 @@ test("notable moves: the band's server count equals the island's first restateme
 });
 
 test("signal hits and holdings: the pager's range is one function on both sides", () => {
-  assert.equal(hitsRangeText(0, 50, 72, SIGNAL_HITS_PAGE_SIZE), "1–50 of 72 hits");
-  assert.equal(hitsRangeText(1, 22, 72, SIGNAL_HITS_PAGE_SIZE), "51–72 of 72 hits");
+  /* SIGNALS-CLARITY M2 (R11): the pager moves by LINES — repeats within one
+     filing collapse — and states the hits those lines hold beside them */
+  assert.equal(hitsRangeText(0, 50, 72, 80, SIGNAL_HITS_PAGE_SIZE), "1–50 of 72 lines · 80 hits");
+  assert.equal(hitsRangeText(1, 22, 72, 80, SIGNAL_HITS_PAGE_SIZE), "51–72 of 72 lines · 80 hits");
+  assert.equal(hitsRangeText(0, 1, 1, 1, SIGNAL_HITS_PAGE_SIZE), "1–1 of 1 line · 1 hit");
+  assert.equal(hitsRangeText(0, 0, 0, 0, SIGNAL_HITS_PAGE_SIZE), "0 hits");
   assert.equal(holdingsRangeText({ page: 1, rowsOnPage: 20, matched: HOLDINGS_PAGE_SIZE + 20 }), `${HOLDINGS_PAGE_SIZE + 1}–${HOLDINGS_PAGE_SIZE + 20} of ${HOLDINGS_PAGE_SIZE + 20} positions`);
 });

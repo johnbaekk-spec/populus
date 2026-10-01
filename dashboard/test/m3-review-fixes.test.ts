@@ -265,7 +265,8 @@ test("K-7: one receipt rule — the link names its regime; where it cannot, or t
   assert.match(client, /else rcpt\.append\(stamp, " —"\)/);
   assert.doesNotMatch(client, /else rcpt\.textContent = "—"/, "control: the retired bare dash");
   const signals = readFileSync(path.join(SRC, "lib", "ui", "signals.ts"), "utf-8");
-  assert.match(signals, /cols: \["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt", "cohort"\]/);
+  // the cohort rides in the payload (SIGNALS-CLARITY M2 appends the R10 fields after it; no index moves)
+  assert.match(signals, /cols: \["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt", "cohort"[,\]]/);
 });
 
 test("K-9: displayAsset strips to a fixpoint — the order of the parts does not matter; a counted suffix is not a type", () => {

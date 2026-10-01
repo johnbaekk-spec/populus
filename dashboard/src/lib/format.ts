@@ -730,6 +730,11 @@ export const ASSET_TYPE_WORDS: Readonly<Record<string, string>> = {
   VI: "Variable Insurance",
   WU: "Whole/Universal Insurance",
 };
+/** Asset types that are listed stock AS FILED (House Clerk code / Senate eFD label). Source codes only — never inferred from asset names (plan F-6). Untyped (null) is not listed stock. */
+export const LISTED_STOCK_TYPES: ReadonlySet<string> = new Set(["ST", "Stock"]);
+export function isListedStock(assetType: string | null | undefined): boolean {
+  return assetType != null && LISTED_STOCK_TYPES.has(assetType);
+}
 
 export interface DisplayAsset {
   /** the default visible asset text: the name, then the type code's words */

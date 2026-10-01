@@ -173,18 +173,23 @@ for (const [file, route] of references) {
         await expect(compact).toHaveCount(1);
         const shown = await page.locator('#signal-hits-body tr.si-hit').evaluateAll(rows => rows.filter(r => r.checkVisibility()).length);
         expect(shown, 'the fixed default: twelve hits of the page (CD-1)').toBe(12);
-        await expect(compact.locator('.compact-bound')).toHaveText(new RegExp(`^1–${shown} of the ${all} hits on this page$`));
+        /* SIGNALS-CLARITY M2 (R11): the page holds LINES — exact repeats in one
+           filing are one line — so the bound counts lines */
+        await expect(compact.locator('.compact-bound')).toHaveText(new RegExp(`^1–${shown} of the ${all} lines on this page$`));
         await compact.locator('.compact-toggle').click();
         await expect.poll(() => page.locator('#signal-hits-body tr.si-hit').evaluateAll(rows => rows.filter(r => r.checkVisibility()).length), { message: 'Show all reveals every hit on the page' }).toBe(all);
         // the pager pages the artifact: 50 per page, in the range grammar
-        // (DESIGN-POLISH M1, R8): "1–50 of N hits"
-        const total = Number(await page.locator('#signal-hits').getAttribute('data-total'));
-        if (total > 50) {
-          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${total.toLocaleString('en-US')} hits$`));
+        // (DESIGN-POLISH M1, R8). SIGNALS-CLARITY M2 (R11/R12): it pages the
+        // default view's LINES and states the hits they hold — "1–50 of L
+        // lines · H hits"; `data-lines` is the default view's line count.
+        const lines = Number(await page.locator('#signal-hits').getAttribute('data-lines'));
+        if (lines > 50) {
+          const L = lines.toLocaleString('en-US');
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${L} lines · \\d[\\d,]* hits$`));
           await page.locator('#signal-hits-next').click();
-          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^51–\\d[\\d,]* of ${total.toLocaleString('en-US')} hits$`));
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^51–\\d[\\d,]* of ${L} lines · \\d[\\d,]* hits$`));
           await page.locator('#signal-hits-prev').click();
-          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${total.toLocaleString('en-US')} hits$`));
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${L} lines · \\d[\\d,]* hits$`));
         }
       }
       if (route === '/congress/') {

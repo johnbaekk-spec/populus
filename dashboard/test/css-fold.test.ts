@@ -324,6 +324,12 @@ const HONESTY_SELECTORS = [
   ".mgr-chip",
   ".c-issuer",
   ".c-secondary",
+  /* SIGNALS-CLARITY M2 (R10, R12): the count of hits the default "Listed
+     stocks only" view hides, and the asset-type chip that labels the filed
+     type of every hit that is NOT a listed stock (a listed stock carries
+     none) — neither may vanish at a breakpoint. */
+  ".si-hidden-count",
+  ".si-asset-chip",
   /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
      channel a large share of this site's explanations travel on — every
      `.col-why`, every footnote clause, the exclusion counts, the owner codes,
@@ -425,6 +431,31 @@ test("SIGNALS-CLARITY M1 (R2): the footer notice is swept at the fold, and the l
   const ticker = readFileSync(path.resolve(import.meta.dirname, "..", "src", "lib", "ui", "ticker.ts"), "utf-8");
   assert.ok(ticker.includes('class="badge-soon"'), "lib/ui/ticker.ts still emits .badge-soon");
   assert.match(css, /(^|\n)\.badge-soon\s*\{/, ".badge-soon keeps its rule");
+});
+
+test("SIGNALS-CLARITY M2 (R10, R12): the hidden count and the stock label are swept at the fold, and the signals surfaces emit them", async () => {
+  for (const sel of [".si-hidden-count", ".si-asset-chip"]) {
+    assert.ok(HONESTY_SELECTORS.includes(sel));
+    for (const decl of ["display:none", "visibility:hidden", "content-visibility:hidden"]) {
+      const planted = `${css}\n@media (max-width: 720px) { .si-hits ${sel} { ${decl}; } }`;
+      assert.deepEqual(foldViolations(planted), [`.si-hits ${sel}`], `control: ${sel} { ${decl} } at the fold`);
+    }
+  }
+  const { renderParitySurfaces } = await import("./lib/ui-parity-surfaces.ts");
+  const corpus = Object.values(await renderParitySurfaces()).join("\n");
+  assert.match(corpus, /<span class="si-hidden-count" id="signal-hidden-count" data-hidden="\d+">\d+ hits? on other asset types hidden<\/span>/);
+  /* a listed stock carries no chip (R10 deviation D-3), so the chip is read
+     off a row that is not one */
+  const municipal = hitRowHtml({
+    id: "s1-large:m", kind: "s1-large", rule: "r", thresholdVersion: "1",
+    entities: { bioguide: "A000001", memberName: "A", ticker: null },
+    magnitude: { low: 250001, high: 500000 }, receipts: ["https://efdsearch.senate.gov/x"],
+    occurrence: { tradeDate: "2026-03-01", filedDate: "2026-06-01" }, sourceAvailableAt: "2026-06-01",
+    computedAt: "2026-07-24", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
+    asset: "City of X GO Bond", assetType: "Municipal Security", side: "purchase", owner: "self", listedStock: false,
+  }, { watched: new Set<string>() });
+  assert.match(municipal, /<span class="si-asset-chip">Municipal Security<\/span>/);
+  assert.doesNotMatch(corpus, /si-asset-chip/, "the parity surfaces' hits are listed stocks: no chip");
 });
 
 test("DESIGN-POLISH M1: every ledger honesty selector is emitted by the parity surfaces or the feed rows", async () => {
@@ -724,8 +755,20 @@ function renderCorpus(): string {
         magnitude: { low: 250001, high: 500000 }, receipts: ["https://efdsearch.senate.gov/x"],
         occurrence: { tradeDate: "2026-03-01", filedDate: "2026-06-01" }, sourceAvailableAt: "2026-06-01",
         computedAt: "2026-07-24", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
+        // SIGNALS-CLARITY M2: the R8 fields, and a two-member group (×2);
+        // an options row, so its type chip renders (a listed stock has none)
+        asset: "Williams Companies Inc", assetType: "OP", side: "purchase", owner: "spouse", listedStock: false,
       },
       CTX,
+      "",
+      null,
+      [0, 1].map((i) => ({
+        id: `s1-large:${i}`, kind: "s1-large", rule: "r", thresholdVersion: "1",
+        entities: { bioguide: "A000001", memberName: "A", ticker: "WMB" },
+        magnitude: { low: 250001, high: 500000 }, receipts: ["https://efdsearch.senate.gov/x"],
+        occurrence: { tradeDate: "2026-03-01", filedDate: "2026-06-01" }, sourceAvailableAt: "2026-06-01",
+        computedAt: "2026-07-24", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
+      }) as never),
     ),
     flowRibbon(quarterlyFlow([], "2026-07-24", 4), { twoSided: true, sourceLine: "s", emptyWindow: { latestTraded: "2024-01-02" } }),
     consensusConvictionBandHtml('<section class="panel">c</section>', '<p class="section-note">none</p>', { consensus: false, conviction: true }),
@@ -770,6 +813,10 @@ const NEW_RENDERER_CLASSES = [
   "ledger-fig", "ledger-value", "ledger-sub", "design-pair", "design-filer-band",
   "design-filer-side", "filer-ledger-root", "filer-data-note", "head-controls", "head-control",
   "table-foot-reason", "si-evidence-row", "design-member-history-band",
+  /* SIGNALS-CLARITY M2 (R10–R12): the WHAT sentence and its asset-type chip,
+     the ×n repeat mark and its member list, the rule restatement in the
+     evidence row, and the listed-stock filter's hidden count. */
+  "si-sentence", "si-asset-chip", "si-group-n", "si-group-members", "si-evidence-line", "si-hidden-count",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period

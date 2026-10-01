@@ -243,6 +243,13 @@ const SIGNAL_ARTIFACT: any = {
       lastSeenBuild: "20260724.3",
       status: "active",
       cohort: "senate",
+      /* SIGNALS-CLARITY M2 (R8): a newly emitted row carries what was traded;
+         the superseded record below predates the fields and keeps that shape */
+      asset: "Williams Companies Inc (WMB)",
+      assetType: "Stock",
+      side: "sale_partial",
+      owner: "spouse",
+      listedStock: true,
     },
     {
       id: "sig-parity-2",

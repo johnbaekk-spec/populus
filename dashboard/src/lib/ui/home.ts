@@ -88,7 +88,7 @@ export function moduleCard(
 import { fmtInt, fmtUsd, tickerHrefFor, note, thHtml, txnEdge, presentColumns, dataColumnsAttr, tableFootReasonHtml, kindWordHtml } from "../format.ts";
 import type { NotableMove } from "../notable-moves.ts";
 import type { Signal } from "../signals.ts";
-import { familyOf } from "./signals.ts";
+import { familyOf, hitsHiddenText, signalIsListedStock, signalSentenceHtml } from "./signals.ts";
 
 /** The ONE masthead claim — twelve words or fewer (R18). */
 export const HOME_CLAIM = "Who's trading, from the filings themselves.";
@@ -172,23 +172,29 @@ export function movesTileHtml(moves: readonly NotableMove[], period: string | nu
   );
 }
 
-/** Top signals, ticker first. */
+/** Top signals, ticker first. R10/R12 (SIGNALS-CLARITY M2): each row says
+    what was traded, and the tile takes /signals' default — listed stocks only
+    — stating how many hits on other asset types it leaves out. */
 export function signalsTileHtml(signals: readonly Signal[], ctx: RenderCtx, labelOf: (kind: Signal["kind"]) => string): string {
-  const shown = signals.slice(0, HOME_TILE_ROWS.signals);
+  const listed = signals.filter(signalIsListedStock);
+  const hidden = signals.length - listed.length;
+  const shown = listed.slice(0, HOME_TILE_ROWS.signals);
   const cols = presentColumns(shown, [
     { key: "ticker", hasValue: (s) => s.entities.ticker != null, emptyReason: "Ticker: none of these hits names a ticker." },
     { key: "who", always: true },
     { key: "what", always: true },
     { key: "filed", always: true },
   ]);
+  /* the Who cell gives up the flexible track to the sentence, which is the
+     row's longest text */
   const hasTicker = cols.columns.includes("ticker");
   const body = shown
     .map(
       (s) =>
         `<tr data-edge="family-${familyOf(s.kind).toLowerCase()}">` +
         (hasTicker ? `<td class="c-ticker">${s.entities.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>` : `<span class="none">—</span>`}</td>` : "") +
-        `<td class="c-member c-flex">${s.entities.bioguide ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>` : esc(s.entities.memberName)}</td>` +
-        `<td class="c-kind"><span class="si-kind">${esc(labelOf(s.kind))}</span></td>` +
+        `<td class="c-member">${s.entities.bioguide ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>` : esc(s.entities.memberName)}</td>` +
+        `<td class="c-secondary c-flex"><span class="si-kind">${esc(labelOf(s.kind))}</span> ${signalSentenceHtml(s)}</td>` +
         `<td class="c-filed c-num">${esc(s.occurrence.filedDate)}</td></tr>`,
     )
     .join("\n");
@@ -196,12 +202,12 @@ export function signalsTileHtml(signals: readonly Signal[], ctx: RenderCtx, labe
     `<section class="panel home-tile" id="home-signals" aria-label="Top signals">` +
     `<div class="panel-head"><h2 class="section-h">Signals</h2><span class="panel-note"><a class="section-link" href="/signals/">every rule ↗</a></span></div>` +
     (shown.length === 0
-      ? `<p class="section-note">Zero hits in the retained window — a computed answer, not missing coverage.</p>`
+      ? `<p class="section-note">${signals.length === 0 ? "Zero hits in the retained window — a computed answer, not missing coverage." : "No listed-stock hits in the retained window — a computed answer, not missing coverage."}</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"${dataColumnsAttr(cols)}><caption class="visually-hidden">Newest signal hits</caption>` +
-        `<thead><tr>${hasTicker ? thHtml({ label: "Ticker", cls: "c-ticker", col: "ticker" }) : ""}${thHtml({ label: "Who", cls: "c-member c-flex", col: "who" })}${thHtml({ label: "What", cls: "c-kind", col: "what" })}${thHtml({ label: "Filed", cls: "c-num", col: "filed" })}</tr></thead>` +
+        `<thead><tr>${hasTicker ? thHtml({ label: "Ticker", cls: "c-ticker", col: "ticker" }) : ""}${thHtml({ label: "Who", cls: "c-member", col: "who" })}${thHtml({ label: "What", cls: "c-secondary c-flex", col: "what" })}${thHtml({ label: "Filed", cls: "c-num", col: "filed" })}</tr></thead>` +
         `<tbody>${body}</tbody></table></div>` +
         tableFootReasonHtml(cols)) +
-    `<p class="section-note">A signal is a fact about a filing, not a forecast · ${fmtInt(signals.length)} hits in the window</p>` +
+    `<p class="section-note">A signal is a fact about a filing, not a forecast · ${fmtInt(signals.length)} hits in the window · listed stocks shown · <span class="si-hidden-count">${esc(hitsHiddenText(hidden, true))}</span></p>` +
     `</section>`
   );
 }

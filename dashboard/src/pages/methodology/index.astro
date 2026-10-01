@@ -254,6 +254,19 @@ const description =
         <span class="mono-id">superseded</span> and name the build they left in; the page counts
         them separately and never mixes them into a current total.
       </p>
+      <p class="metho-body" id="signals">
+        <strong>Congress signals: listed stocks.</strong> Each signal hit states who traded what,
+        in the filing's own words: the filed side, the asset as filed, and its filed asset type
+        (a House Clerk code shown as its words from the Clerk's list, a Senate label as printed).
+        The Signals page shows listed stocks by default. A hit is a listed stock only when its
+        filed asset type is the House code <span class="mono-id">ST</span> or the Senate label{" "}
+        <span class="mono-id">Stock</span>. A co-occurrence hit is one only when every row in it
+        is. Nothing is inferred from an asset's name, so a Treasury bill filed as a corporate
+        security, or a fund filed with no type, is not counted as a listed stock. Rows filed with
+        no asset type count as not listed. The page states how many hits on other asset types
+        the default view hides, and one checkbox shows them all. Exact repeats inside one filing
+        show as one line marked with a count; the file keeps every signal.
+      </p>
       <p class="metho-body" id="ranges">
         <strong>Ranges.</strong> Congressional amounts are disclosed as statutory ranges, never exact
         figures; totals over ranges are computed by interval arithmetic — a net range is the

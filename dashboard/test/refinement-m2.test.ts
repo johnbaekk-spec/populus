@@ -651,7 +651,8 @@ test("R18: the masthead claim is twelve words or fewer and the three tiles carry
   const moves = Array.from({ length: 8 }, (_, i) => ({ cik: `${i}`, manager: `M${i}`, principal: null, type: "hedge_fund" as const, issuer: `I${i}`, ticker: null, ticker_verified: null, kind: "new" as const, delta_shares: 1, curr_value: 1, delta_value: 1, filed: "2026-05-15", doc: null, key: `k${i}`, ikey: null }));
   const movesHtml = movesTileHtml(moves, "2026-03-31", (cik) => `/f/${cik}`);
   assert.equal(bodyRows(movesHtml).length, HOME_TILE_ROWS.moves);
-  const sig = (i: number): Signal => ({ id: `s${i}`, kind: "s1-large", rule: "r", thresholdVersion: "1", entities: { bioguide: "A000001", memberName: "A", ticker: `T${i}` }, magnitude: { low: 1, high: 2 }, receipts: [], occurrence: { tradeDate: null, filedDate: "2026-08-01" }, sourceAvailableAt: "", computedAt: "", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate" });
+  // SIGNALS-CLARITY M2 (R12): the tile shows listed stocks by default, so these hits are filed as stock
+  const sig = (i: number): Signal => ({ id: `s${i}`, kind: "s1-large", rule: "r", thresholdVersion: "1", entities: { bioguide: "A000001", memberName: "A", ticker: `T${i}` }, magnitude: { low: 1, high: 2 }, receipts: [], occurrence: { tradeDate: null, filedDate: "2026-08-01" }, sourceAvailableAt: "", computedAt: "", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate", asset: `Issuer ${i}`, assetType: "Stock", side: "purchase", owner: "self", listedStock: true });
   const signals = signalsTileHtml([sig(1), sig(2), sig(3), sig(4)], ctx, () => "LARGE");
   assert.equal(bodyRows(signals).length, HOME_TILE_ROWS.signals);
   assert.ok(bodyRows(signals)[0]!.children[0]!.querySelector("a.mono-ticker"), "ticker first");

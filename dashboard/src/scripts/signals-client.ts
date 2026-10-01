@@ -1,15 +1,16 @@
 /* /signals client island. Two device-local enhancements over a page that is
    complete without them:
 
-   1. the HITS family filter — a `.seg` over rows the server already rendered;
-      filtering hides rows, it never fetches or re-renders;
+   1. the HITS pager and filters — rule, watched only, and listed stocks only
+      (SIGNALS-CLARITY M2, on by default, never persisted); the first change
+      fetches the artifact once and repaints through the server's own view;
    2. the WATCHLIST band — joins the embedded newest-hits payload against the
       watch-v2 store (members + tickers) and the last-seen cursor, all of which
       live in this browser only. Nothing leaves the device. */
 
 import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel, parseDataColumns, type RenderCtx } from "../lib/format.ts";
 import { loadWatchStore } from "./entity-client.ts";
-import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf, signalKindShort } from "../lib/ui/index.ts";
+import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf, signalKindShort, hitsView, hitsHiddenText, signalSentence, type HitFilter } from "../lib/ui/index.ts";
 
 /** An empty row spans the table's own header — the column list the server
     rendered — never a literal count (DESIGN-POLISH M1, section E). */
@@ -28,7 +29,12 @@ const BIOGUIDE_RE = /^[A-Z]\d{6}$/;
 /** rows the watch band renders; the summary line states the bound */
 const WATCH_RENDER_CAP = 50;
 
-type Row = [string, string, string | null, string, string | null, number | null, number | null, string | null, string, string, string?];
+/* The embedded watch row (ui/signals.ts `watchBandHtml`): the R10 fields ride
+   at the end — side, asset, assetType, owner, stk — null when absent. */
+type Row = [
+  string, string, string | null, string, string | null, number | null, number | null, string | null, string, string, string?,
+  (Signal["side"] | null)?, (string | null)?, (string | null)?, (Signal["owner"] | null)?, (boolean | null)?,
+];
 
 function magnitude(low: number | null, high: number | null): string {
   if (low == null && high == null) return "not disclosed";
@@ -81,6 +87,8 @@ function initHitPager(): void {
   const prev = document.getElementById("signal-hits-prev") as HTMLButtonElement | null;
   const next = document.getElementById("signal-hits-next") as HTMLButtonElement | null;
   const watchedChk = document.getElementById("signal-watched-only") as HTMLInputElement | null;
+  const stocksChk = document.getElementById("signal-stocks-only") as HTMLInputElement | null;
+  const hiddenEl = document.getElementById("signal-hidden-count");
   const status = document.getElementById("signal-hits-status");
   if (!section || !seg || !body || !rangeEl) return;
   const pageSize = Number(section.dataset.pageSize) || SIGNAL_HITS_PAGE_SIZE;
@@ -94,6 +102,10 @@ function initHitPager(): void {
   let page = 0;
   let kind = "all";
   let watchedOnly = false;
+  /* R12: every load starts at the default — listed stocks only — whatever a
+     browser restored into the box (plan L8: not persisted). */
+  let stocksOnly = true;
+  if (stocksChk) stocksChk.checked = true;
   let all: Promise<Signal[]> | null = null;
   let token = 0;
 
@@ -111,10 +123,10 @@ function initHitPager(): void {
     return all;
   }
 
-  function matches(s: Signal): boolean {
-    if (kind !== "all" && s.kind !== kind) return false;
-    if (watchedOnly && !((s.entities.bioguide && store.members.has(s.entities.bioguide)) || (s.entities.ticker && store.tickers.has(s.entities.ticker)))) return false;
-    return true;
+  /* The ONE filter the server page used for its first page (`hitsView` over
+     `hitMatches`): rule × watched × listed stocks. */
+  function filter(): HitFilter {
+    return { kind, watchedOnly, stocksOnly, watchedMembers: store.members, watchedTickers: store.tickers };
   }
 
   function setPager(btn: HTMLButtonElement | null, unavailable: boolean): void {
@@ -135,10 +147,10 @@ function initHitPager(): void {
       return;
     }
     if (mine !== token) return;
-    const filtered = hits.filter(matches);
-    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const view = hitsView(hits, filter());
+    const pageCount = Math.max(1, Math.ceil(view.lines.length / pageSize));
     if (page > pageCount - 1) page = pageCount - 1;
-    const slice = filtered.slice(page * pageSize, (page + 1) * pageSize);
+    const slice = view.lines.slice(page * pageSize, (page + 1) * pageSize);
     body!.innerHTML =
       slice.length === 0
         ? `<tr><td colspan="${columnCount(body, 7)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
@@ -149,9 +161,14 @@ function initHitPager(): void {
       disclosure.setAttribute("data-compact-shown", String(Math.min(compactN, slice.length)));
     }
     document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "signal-hits" } }));
-    const range = hitsRangeText(page, slice.length, filtered.length, pageSize);
+    const range = hitsRangeText(page, slice.length, view.lines.length, view.hits, pageSize);
     rangeEl!.textContent = range;
-    if (status) status.textContent = `${range}${kind === "all" ? "" : ` · rule ${kind}`}${watchedOnly ? " · watched only" : ""}.`;
+    const hiddenText = hitsHiddenText(view.hidden, stocksOnly);
+    if (hiddenEl) {
+      hiddenEl.textContent = hiddenText;
+      hiddenEl.setAttribute("data-hidden", String(view.hidden));
+    }
+    if (status) status.textContent = `${range}${kind === "all" ? "" : ` · rule ${kind}`}${watchedOnly ? " · watched only" : ""} · ${stocksOnly ? "listed stocks only" : "all asset types"} · ${hiddenText}.`;
     setPager(prev, page === 0);
     setPager(next, page >= pageCount - 1);
   }
@@ -166,6 +183,11 @@ function initHitPager(): void {
   });
   watchedChk?.addEventListener("change", () => {
     watchedOnly = watchedChk.checked;
+    page = 0;
+    void paint();
+  });
+  stocksChk?.addEventListener("change", () => {
+    stocksOnly = stocksChk.checked;
     page = 0;
     void paint();
   });
@@ -229,7 +251,7 @@ function initWatchBand(): void {
       body.append(tr);
       return;
     }
-    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt, cohort] of hits.slice(0, WATCH_RENDER_CAP)) {
+    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt, cohort, side, asset, assetType, owner, stk] of hits.slice(0, WATCH_RENDER_CAP)) {
       const tr = document.createElement("tr");
       tr.className = "si-hit";
       tr.dataset.signalId = id;
@@ -248,8 +270,25 @@ function initWatchBand(): void {
       gold.textContent = " ◆";
       subject.append(gold);
       tr.append(subject);
-      const evidence = cell("si-evidence c-secondary c-flex", `${short} rule matched · `);
-      evidence.append(link("#signal-rulebook", "rule book"));
+      /* R10: the hit rows' sentence (`signalSentence`), built from the embedded
+         fields; a missing side means a record without them, which says so. */
+      const said = signalSentence({
+        kind: kind as Signal["kind"],
+        entities: { bioguide, memberName: name, ticker },
+        ...(side == null ? {} : { side, asset: asset ?? null, assetType: assetType ?? null, owner: owner ?? null }),
+        listedStock: stk === true,
+      });
+      const sentence = document.createElement("span");
+      sentence.className = said.recorded ? "si-sentence" : "si-sentence c-muted";
+      sentence.textContent = said.text;
+      const evidence = cell("si-evidence c-secondary c-flex", sentence);
+      if (said.chip) {
+        const chip = document.createElement("span");
+        chip.className = "si-asset-chip";
+        chip.textContent = said.chip;
+        evidence.append(" ", chip);
+      }
+      evidence.append(" · ", link("#signal-rulebook", `${short} rule`));
       tr.append(evidence);
       tr.append(cell("c-num si-mag", magnitude(low, high)));
       tr.append(cell("c-filed c-num si-when", `${traded ? traded.slice(5) : "—"} → ${filed.slice(5)}`));

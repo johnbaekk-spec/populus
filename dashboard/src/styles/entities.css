@@ -939,9 +939,18 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .si-lag { color: var(--ink3); }
 .si-late { color: var(--amber); font-weight: 600; }
 .si-table .si-what { white-space: nowrap; overflow: clip; overflow-clip-margin: var(--hit-half); text-overflow: ellipsis; }
-.si-table .si-what details.si-expand,
-.si-table .si-what details.si-expand > summary { display: inline; }
+.si-table .si-what details.si-expand { display: inline; }
+/* SIGNALS-CLARITY M2 (R10): the summary is the WHAT sentence, often longer
+   than its cell. Its box is the cell's visible width, so the sentence
+   ellipsises INSIDE it: the whole visible line is the control, and no part of
+   the summary sits under the next cell. */
 .si-table .si-what details.si-expand > summary {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
   font: 400 var(--fs-note)/1.2 var(--sans);
   color: var(--ink3);
   cursor: pointer;
