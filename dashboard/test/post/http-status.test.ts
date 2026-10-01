@@ -43,6 +43,11 @@ before(async () => {
   preview = spawn("npx", ["astro", "preview", "--port", String(PORT)], {
     cwd: DASH,
     stdio: "ignore",
+    // Astro >= 7.2 backgrounds `astro preview` when it detects an AI coding
+    // agent: the CLI would exit, `after`'s kill() would reach nothing, and the
+    // leaked daemon would hold the preview lock the geometry lane needs next.
+    // Any value opts out and keeps the server a child this suite can stop.
+    env: { ...process.env, ASTRO_PREVIEW_BACKGROUND: "0" },
   });
   await waitForServer(`${BASE}/`);
 });

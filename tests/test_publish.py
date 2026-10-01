@@ -3423,7 +3423,7 @@ def test_the_deploy_job_installs_then_asserts_wrangler_then_deploys():
     )
     run = steps[version]["run"]
     assert "dashboard/node_modules/.bin/wrangler" in run
-    assert '"4.60.0"' in run, "the exact locked version must be asserted"
+    assert '"4.137.0"' in run, "the exact locked version must be asserted"
     assert "exit 1" in run, "a drifted or missing binary must fail closed"
     assert "npx" not in run and "npm install" not in run and "npm exec" not in run, (
         "the assertion step must never fall back to a remote install"
