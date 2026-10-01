@@ -48,6 +48,12 @@ export default defineConfig({
   ],
   webServer: {
     command: "npx astro preview --port 4321",
+    /* Astro >= 7.2 backgrounds `astro preview` when it detects an AI coding
+       agent: the CLI exits at once ("Process from config.webServer exited
+       early") and a daemon is left holding the project's preview lock.
+       Playwright merges this over process.env; any value opts out, so the
+       server stays in the foreground whoever runs the gate. */
+    env: { ASTRO_PREVIEW_BACKGROUND: "0" },
     url: "http://localhost:4321/",
     /* F7 (codex round 1): NEVER reuse. A preview server left running from an
        earlier build serves that build's bytes, so the gate would measure a tree

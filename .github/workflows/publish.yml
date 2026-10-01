@@ -711,7 +711,7 @@ jobs:
         run: npm ci
 
       # R8/LD9 step 2 of 3 — prove the binary the deploy will invoke exists,
-      # is executable, and is EXACTLY the locked 4.60.0, before the secret is
+      # is executable, and is EXACTLY the locked 4.137.0, before the secret is
       # exposed to any step. A missing or drifted binary fails closed here;
       # the remediation is fixing the lock, never a remote install.
       - name: Assert the lock-installed wrangler version (before any secret)
@@ -724,8 +724,8 @@ jobs:
             exit 1
           fi
           version="$("$bin" --version)"
-          if [ "$version" != "4.60.0" ]; then
-            echo "::error::$bin reports '$version', locked 4.60.0."
+          if [ "$version" != "4.137.0" ]; then
+            echo "::error::$bin reports '$version', locked 4.137.0."
             echo "::error::Fix dashboard/package.json + package-lock.json;"
             echo "::error::never override the binary at deploy time."
             exit 1
