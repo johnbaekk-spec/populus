@@ -46,7 +46,8 @@ export {
 } from "./rankings.ts";
 export {
   type SignalsPageDeps,
-  signalRowHtml,
+  type HitLine,
+  type HitFilter,
   signalsBody,
   memberSignalsPanel,
   hitRowHtml,
@@ -58,6 +59,11 @@ export {
   signalKindShort,
   SIGNAL_HITS_PAGE_SIZE,
   familyOf,
+  signalSentence,
+  hitMatches,
+  hitsView,
+  hitsHiddenText,
+  groupHits,
 } from "./signals.ts";
 export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {

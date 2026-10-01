@@ -83,7 +83,6 @@ const VALUE_EXPORTS = [
   "hitRowHtml",
   "hitsRangeText",
   "signalKindShort",
-  "signalRowHtml",
   "signalsBody",
   "sortHits",
   "specimenCard",
@@ -112,6 +111,15 @@ const VALUE_EXPORTS = [
      one table and its reader. Two runtime symbols, no types. */
   "sectorLabel",
   "SECTOR_LABELS",
+  /* SIGNALS-CLARITY M2 (R10–R12): the WHAT sentence, the hits filter, its
+     hidden count, the filtered view and the repeat grouping the server page
+     and the pager share. The legacy `signalRowHtml` had no caller and is
+     gone. Five runtime symbols in, one out. */
+  "signalSentence",
+  "hitMatches",
+  "hitsView",
+  "hitsHiddenText",
+  "groupHits",
 ] as const;
 
 const TYPE_EXPORTS = [
@@ -129,18 +137,21 @@ const TYPE_EXPORTS = [
   "TickerHeaderInfo",
   "SignalsPageDeps",
   "TickerPageDeps",
+  // SIGNALS-CLARITY M2: one hits-table line, and the hits filter
+  "HitLine",
+  "HitFilter",
 ] as const;
 
-test("ui entry exports exactly the 84 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 88 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
-  assert.equal(VALUE_EXPORTS.length, 84, "70 through M1, the twelve M2 exports, and the two M3 exports");
+  assert.equal(VALUE_EXPORTS.length, 88, "70 through M1, the twelve M2 exports, the two M3 exports, and SIGNALS-CLARITY M2's five in, one out");
 });
 
-test("ui entry exports the 13 reconciled type-only symbols (97 total)", () => {
+test("ui entry exports the 15 reconciled type-only symbols (103 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -152,5 +163,5 @@ test("ui entry exports the 13 reconciled type-only symbols (97 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 97, "the reconciled surface is 97 (83 through M1 + 12 M2 + 2 M3 runtime exports)");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 103, "the reconciled surface is 103 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types)");
 });

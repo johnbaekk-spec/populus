@@ -21,8 +21,10 @@ function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
     kind: "txn",
     txnId: `t-${seq++}`,
-    asset: null,
-    assetType: null,
+    // SIGNALS-CLARITY M2: filed as a listed stock, so the default /signals
+    // view (listed stocks only) shows these hits
+    asset: "Williams Companies Inc (WMB) [ST]",
+    assetType: "ST",
     filed: "2026-08-01",
     traded: "2026-07-20",
     name: "Test Member",
@@ -243,7 +245,7 @@ test("review F10: the per-entity signal section renders each signal's exact rule
   assert.ok(html.includes(mine.rule.slice(0, 40)), "the verbatim rule must reach the member page");
 });
 
-test("R26: member signal cards lead with the ticker — Ticker · Kind · Filed · Size · Src", async () => {
+test("R26: member signal cards lead with the ticker — Ticker · What · Kind · Filed · Size · Src", async () => {
   const { memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
   const html = memberSignalsPanel(art, "T000001", { watched: new Set() });
@@ -253,7 +255,8 @@ test("R26: member signal cards lead with the ticker — Ticker · Kind · Filed 
   const root = new MiniElement("body");
   root.innerHTML = html;
   const heads = root.querySelectorAll("thead th").map((th) => th.textContent.trim());
-  assert.deepEqual(heads, ["Ticker", "Kind", "Filed", "Size", "Src"], "the card's first column is the ticker");
+  // SIGNALS-CLARITY M2 (R10): what was traded follows the ticker
+  assert.deepEqual(heads, ["Ticker", "What", "Kind", "Filed", "Size", "Src"], "the card's first column is the ticker");
   const mine = art.signals.find((s) => s.entities.bioguide === "T000001" && s.status === "active")!;
   const firstCells = root.querySelectorAll("tbody tr").map((tr) => tr.children[0]!);
   assert.ok(firstCells.length > 0);
@@ -503,4 +506,253 @@ test("c2-F1: the validator enforces identity uniqueness and status-specific life
   for (const [name, art] of [["A", a], ["B", b], ["C", c]] as const) {
     assert.deepEqual(validateSignalArtifact(JSON.parse(JSON.stringify(art))), [], `build ${name} must validate`);
   }
+});
+
+/* ======================================================================
+   SIGNALS-CLARITY M2 — R8 fields, R9 listed stock, ids unchanged (T7)
+   ====================================================================== */
+
+import { validateSignalArtifact } from "../src/lib/signals.ts";
+import { isListedStock, LISTED_STOCK_TYPES } from "../src/lib/format.ts";
+
+/* T7: a FIXED corpus on which every kind the engine computes without S-5
+   inputs fires (S-1, S-2, S-3, S-4, S-6). Each row carries an explicit txnId
+   and the asset fields vary, so the R8 copy is exercised. */
+
+function idRow(txnId: string, over: Partial<TxnRow> = {}): TxnRow {
+  return {
+    kind: "txn",
+    txnId,
+    asset: "Williams Companies Inc (WMB) [ST]",
+    assetType: "ST",
+    filed: "2026-08-01",
+    traded: "2026-07-20",
+    name: "Test Member",
+    bioguide: "T000001",
+    party: "R",
+    state: "OK",
+    district: null,
+    chamber: "senate",
+    ticker: "WMB",
+    side: "purchase",
+    owner: "self",
+    low: 1001,
+    high: 15000,
+    lag: 12,
+    late: 0,
+    flags: [],
+    doc: `https://efdsearch.senate.gov/search/view/ptr/${txnId}/`,
+    ...over,
+  };
+}
+
+export function idCorpusRows(): TxnRow[] {
+  const rows: TxnRow[] = [];
+  // history, so the 365-day min-history kinds (S-2, S-4) evaluate
+  rows.push(idRow("hist", { filed: "2025-01-02", traded: "2024-12-15", bioguide: "H000001", name: "History Member", ticker: "OLD" }));
+  // S-1 padding: 60 large rows spread over the window (calibration minimum 50)
+  for (let i = 0; i < 60; i++) {
+    rows.push(idRow(`pad${i}`, {
+      filed: `2026-0${(i % 3) + 6}-1${i % 9}`,
+      low: 250001,
+      high: 500000,
+      bioguide: "P000009",
+      name: "Pad Member",
+      ticker: "PAD",
+      asset: i % 2 === 0 ? "Pad Holdings LLC" : null,
+      assetType: i % 2 === 0 ? "OT" : null,
+      owner: i % 3 === 0 ? "spouse" : "self",
+    }));
+  }
+  // S-3: four distinct members, same ticker and side, inside 14 days
+  for (const [i, b] of ["A000001", "B000002", "C000003", "D000004"].entries()) {
+    rows.push(idRow(`c${i}`, { bioguide: b, name: `Cluster ${b}`, ticker: "SPCX", traded: `2026-07-${10 + i}`, filed: "2026-08-01", assetType: i === 3 ? "Stock" : "ST" }));
+  }
+  // S-4: an infrequent discloser's large purchase
+  rows.push(idRow("infreq", { bioguide: "I000001", name: "Rare Member", ticker: "RARE", low: 50001, high: 100000, filed: "2026-07-30", owner: "joint" }));
+  // S-6: late and large, padded past its calibration minimum (10)
+  for (let i = 0; i < 11; i++) {
+    rows.push(idRow(`late${i}`, { late: 1, low: 100001, high: 250000, filed: "2026-06-0" + ((i % 9) + 1), bioguide: `L00000${i % 10}`, name: `Late ${i}`, ticker: `LT${i}`, side: i % 2 ? "sale_partial" : "sale", assetType: i % 4 === 0 ? "Stock Option" : "ST" }));
+  }
+  return rows;
+}
+
+export function idCorpusInputs(): SignalInputs {
+  return {
+    txns: idCorpusRows(),
+    buildId: "20260812.9",
+    generatedAtDate: "2026-08-12",
+    generatedAt: "2026-08-12 00:00 UTC",
+    s5: null,
+  };
+}
+
+/* The corpus's ids, captured from the engine BEFORE the R8 fields were added
+   (code 78c3e14, `buildSignalArtifact(idCorpusInputs())`, sorted). A change to
+   the identity grammar — or an R8 field leaking into the identity — changes
+   them and fails the pin. */
+const PINNED_IDS = [
+  "s1-large:038ede0deba8f0c9",
+  "s1-large:038ee30deba8f948",
+  "s1-large:038ee40deba8fafb",
+  "s1-large:038ee50deba8fcae",
+  "s1-large:038ee60deba8fe61",
+  "s1-large:038ee70deba90014",
+  "s1-large:038ee80deba901c7",
+  "s1-large:038ee90deba9037a",
+  "s1-large:b4c540a7701fd950",
+  "s1-large:b4c541a7701fdb03",
+  "s1-large:b4c548a7701fe6e8",
+  "s1-large:b4c549a7701fe89b",
+  "s1-large:b4c54aa7701fea4e",
+  "s1-large:b4c54ca7701fedb4",
+  "s1-large:b4c54da7701fef67",
+  "s1-large:b4c54fa7701ff2cd",
+  "s1-large:b4c845a7702217a6",
+  "s1-large:b4c846a770221959",
+  "s1-large:b4c84ba7702221d8",
+  "s1-large:b4c84da77022253e",
+  "s1-large:b4c84ea7702226f1",
+  "s1-large:b4c84fa7702228a4",
+  "s1-large:b4c850a770222a57",
+  "s1-large:b4c852a770222dbd",
+  "s1-large:b4cf39a7702821f0",
+  "s1-large:b4cf3aa7702823a3",
+  "s1-large:b4cf3ba770282556",
+  "s1-large:b4cf3ca770282709",
+  "s1-large:b4cf3da7702828bc",
+  "s1-large:b4cf40a770282dd5",
+  "s1-large:b4cf41a770282f88",
+  "s1-large:b4cf42a77028313b",
+  "s1-large:b4d944a770308926",
+  "s1-large:b4d945a770308ad9",
+  "s1-large:b4d94aa770309358",
+  "s1-large:b4d94ba77030950b",
+  "s1-large:b4d94ca7703096be",
+  "s1-large:b4d94ea770309a24",
+  "s1-large:b4d94fa770309bd7",
+  "s1-large:b4d951a770309f3d",
+  "s1-large:b4dccaa77033a2af",
+  "s1-large:b4dccda77033a7c8",
+  "s1-large:b4dccea77033a97b",
+  "s1-large:b4dccfa77033ab2e",
+  "s1-large:b4dcd0a77033ace1",
+  "s1-large:b4dcd1a77033ae94",
+  "s1-large:b4dcd4a77033b3ad",
+  "s2-first:01a9a3f57a856f21",
+  "s2-first:06aebfb141612bdf",
+  "s2-first:374b1f772748143f",
+  "s2-first:3c7cc479354fc8b9",
+  "s2-first:4d9d6745b1d2a031",
+  "s2-first:5544eacab24439ef",
+  "s2-first:63cc39922979857f",
+  "s2-first:69d7de87ef2168f1",
+  "s2-first:6d3610afd699caff",
+  "s2-first:8ac52ebb1c0986bf",
+  "s2-first:942f05d8c929cc3f",
+  "s2-first:d1d7ae81a0064d5f",
+  "s2-first:d691f0f0a42d64f4",
+  "s2-first:d6a9c65d62dc1489",
+  "s2-first:d7c8736aa2f410af",
+  "s2-first:ef924509885e5c95",
+  "s2-first:f7e0d4a2b4bb3f2f",
+  "s3-cooccurrence:7723059296b91276",
+  "s4-infrequent:038ede0deba8f0c9",
+  "s4-infrequent:038ee40deba8fafb",
+  "s4-infrequent:038ee50deba8fcae",
+  "s4-infrequent:6f3b94e5f39c7520",
+  "s4-infrequent:b4c549a7701fe89b",
+  "s4-infrequent:b4c54fa7701ff2cd",
+  "s4-infrequent:b4c84ea7702226f1",
+  "s4-infrequent:b4c850a770222a57",
+  "s4-infrequent:b4cf3ca770282709",
+  "s4-infrequent:b4cf42a77028313b",
+  "s4-infrequent:b4d951a770309f3d",
+  "s4-infrequent:b4dccea77033a97b",
+  "s6-late-large:368dec6380d91ae0",
+  "s6-late-large:9ee6d9ec38344990",
+  "s6-late-large:9ee6daec38344b43",
+  "s6-late-large:9ee6dbec38344cf6",
+  "s6-late-large:9ee6dcec38344ea9",
+  "s6-late-large:9ee6ddec3834505c",
+  "s6-late-large:9ee6deec3834520f",
+  "s6-late-large:9ee6dfec383453c2",
+  "s6-late-large:9ee6e0ec38345575",
+  "s6-late-large:9ee6e1ec38345728",
+  "s6-late-large:9ee6e2ec383458db",
+];
+
+test("T7: signal ids are byte-equal to the pre-R8 capture for the fixed corpus", () => {
+  const art = buildSignalArtifact(idCorpusInputs());
+  const kinds = new Set(art.signals.map((s) => s.kind));
+  for (const k of ["s1-large", "s2-first", "s3-cooccurrence", "s4-infrequent", "s6-late-large"]) assert.ok(kinds.has(k as never), `${k} fires on the corpus`);
+  assert.deepEqual(art.signals.map((s) => s.id).sort(), PINNED_IDS);
+});
+
+test("R8 / T7: every newly emitted signal carries the row's asset, type, side, owner and listedStock; S-3 carries only side and listedStock", () => {
+  const rows = idCorpusRows();
+  const art = buildSignalArtifact(idCorpusInputs());
+  const byDoc = new Map(rows.map((r) => [r.doc, r]));
+  for (const s of art.signals) {
+    assert.equal(typeof s.listedStock, "boolean", `${s.id} listedStock`);
+    if (s.kind === "s3-cooccurrence") {
+      assert.equal(s.side, "purchase");
+      for (const k of ["asset", "assetType", "owner"] as const) assert.equal(k in s, false, `S-3 carries no ${k}`);
+      continue;
+    }
+    const r = byDoc.get(s.receipts[0]!)!;
+    assert.deepEqual([s.asset, s.assetType, s.side, s.owner], [r.asset, r.assetType, r.side, r.owner], s.id);
+    assert.equal(s.listedStock, isListedStock(r.assetType), s.id);
+  }
+  // the fields are on each kind, including a null asset and a non-stock type
+  assert.ok(art.signals.some((s) => s.kind === "s1-large" && s.asset === null && s.assetType === null && s.listedStock === false));
+  assert.ok(art.signals.some((s) => s.kind === "s6-late-large" && s.assetType === "Stock Option" && s.listedStock === false));
+  assert.ok(art.signals.some((s) => s.kind === "s6-late-large" && s.side === "sale_partial"));
+  assert.ok(art.signals.some((s) => s.kind === "s4-infrequent" && s.owner === "joint"));
+  // the artifact stays v1 and validates
+  assert.equal(art.v, 1);
+  assert.deepEqual(validateSignalArtifact(JSON.parse(JSON.stringify(art))), []);
+});
+
+test("R9 / T7: S-3 is listed stock iff EVERY contributing row is", () => {
+  const cluster = (types: (string | null)[]) =>
+    types.map((t, i) => txn({ txnId: `m${i}`, bioguide: `M00000${i}`, ticker: "SPCX", traded: `2026-07-${10 + i}`, filed: "2026-08-01", assetType: t }));
+  const s3Of = (types: (string | null)[]) => buildSignalArtifact(inputs(cluster(types))).signals.find((s) => s.kind === "s3-cooccurrence")!;
+  assert.equal(s3Of(["ST", "Stock", "ST", "ST"]).listedStock, true, "House code and Senate label both count");
+  assert.equal(s3Of(["ST", "ST", "ST", "OP"]).listedStock, false, "one option row makes the cluster not listed");
+  assert.equal(s3Of(["ST", "ST", null, "ST"]).listedStock, false, "one untyped row makes the cluster not listed");
+  const sale = buildSignalArtifact(inputs(cluster(["ST", "ST", "ST", "ST"]).map((r, i) => ({ ...r, side: i % 2 ? "sale_partial" : "sale" }) as TxnRow))).signals.find((s) => s.kind === "s3-cooccurrence")!;
+  assert.equal(sale.side, "sale", "a partial sale clusters as a sale");
+});
+
+test("R9 / T6: the listed-stock predicate reads filed codes only", () => {
+  assert.deepEqual([...LISTED_STOCK_TYPES].sort(), ["ST", "Stock"]);
+  for (const t of ["ST", "Stock"]) assert.equal(isListedStock(t), true, t);
+  for (const t of ["PS", "OP", "Stock Option", "CS", "Other", "OT", "EF", "st", "stock", " ST", "", null, undefined]) assert.equal(isListedStock(t), false, String(t));
+});
+
+test("R8 / T7: the validator type-checks the new fields when present and still accepts a prior artifact without them", () => {
+  const art = JSON.parse(JSON.stringify(buildSignalArtifact(idCorpusInputs()))) as { signals: Record<string, unknown>[] };
+  const perRow = art.signals.findIndex((s) => s.kind === "s1-large");
+  const s3 = art.signals.findIndex((s) => s.kind === "s3-cooccurrence");
+  const bad = (i: number, patch: Record<string, unknown>): string[] => {
+    const doc = JSON.parse(JSON.stringify(art));
+    Object.assign(doc.signals[i], patch);
+    return validateSignalArtifact(doc);
+  };
+  assert.ok(bad(perRow, { side: 3 }).some((e) => /side is unknown/.test(e)), "side: 3");
+  assert.ok(bad(perRow, { side: "buy" }).some((e) => /side is unknown/.test(e)), "an unknown side");
+  assert.ok(bad(s3, { side: "sale_partial" }).some((e) => /side is unknown/.test(e)), "S-3's side is purchase|sale");
+  assert.ok(bad(perRow, { listedStock: "yes" }).some((e) => /listedStock must be a boolean/.test(e)), "listedStock: \"yes\"");
+  assert.ok(bad(perRow, { asset: 7 }).some((e) => /asset must be string\|null/.test(e)));
+  assert.ok(bad(perRow, { assetType: false }).some((e) => /assetType must be string\|null/.test(e)));
+  assert.ok(bad(perRow, { owner: "trust" }).some((e) => /owner is unknown/.test(e)));
+  assert.deepEqual(bad(perRow, { owner: null, asset: null, assetType: null }), [], "null is a legal value for asset, type and owner");
+  // a prior-build artifact with none of the fields still validates
+  const prior = JSON.parse(JSON.stringify(art));
+  for (const s of prior.signals) for (const k of ["asset", "assetType", "side", "owner", "listedStock"]) delete s[k];
+  assert.deepEqual(validateSignalArtifact(prior), []);
+  // …and chains: its records are carried verbatim as tombstones
+  const next = buildSignalArtifact({ ...inputs([txn()]), priorArtifact: prior as never });
+  assert.ok(next.signals.some((s) => s.status !== "active" && !("listedStock" in s)), "a carried prior record keeps its shape");
 });

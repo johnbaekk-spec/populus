@@ -29,12 +29,15 @@ const latestFiled = build.txns[0]?.filed ?? null;
 const latestBatch = latestFiled ? build.txns.filter((t) => t.filed === latestFiled) : [];
 const deps: SignalsPageDeps = { rowsEvaluated, latestBatch, latestBatchFiled: latestFiled };
 const body = signalsBody(artifact, ctx, deps);
+// R7 (SIGNALS-CLARITY M2): the page is Congress signals in its title, h1 and
+// description; the masthead nav label stays "Signals".
 const description =
-  "Congressional disclosure signals with their exact rules, interval magnitudes, and receipts — " +
-  "calibrated thresholds only; uncalibrated or out-of-envelope kinds are withheld and say so.";
+  "Congress signals: rule-based signals over congressional trade disclosures, each saying who traded what, " +
+  "with its exact rule, interval magnitude, and receipts — calibrated thresholds only; uncalibrated or " +
+  "out-of-envelope kinds are withheld and say so.";
 ---
 
-<Base title="Signals — Public Filings" description={description} active="signals">
+<Base title="Congress signals — Public Filings" description={description} active="signals">
   <main class="shell page design-page" id="signals-page">
     <Fragment set:html={body} />
   </main>

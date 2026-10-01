@@ -37,7 +37,11 @@ import {
   dataColumnsAttr,
   tableFootReasonHtml,
   type PresentColumns,
+  ASSET_TYPE_WORDS,
+  displayAsset,
+  isListedStock,
 } from "../format.ts";
+import { sumRanges } from "../derive.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
 import { briefingCards, disclosureLedger, pairBandHtml } from "./shared.ts";
 import { serializeInlineJson } from "../inline-json.ts";
@@ -163,8 +167,9 @@ function lagDays(s: Signal): number | null {
   return Math.round((b - a) / 86_400_000);
 }
 
-/** One-line evidence for a hit: the rule's own terms restated with the row's
-    facts, never an interpretation of the filer. */
+/** The rule's own terms restated with the row's facts, never an
+    interpretation of the filer. SIGNALS-CLARITY M2 (R10): it opens in the
+    hit's evidence row; the one-line summary is the WHAT sentence. */
 function evidenceText(s: Signal): string {
   const lag = lagDays(s);
   switch (s.kind) {
@@ -183,27 +188,207 @@ function evidenceText(s: Signal): string {
   }
 }
 
-export function signalRowHtml(s: Signal, ctx: RenderCtx): string {
-  const who = s.entities.bioguide
-    ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>`
-    : esc(s.entities.memberName);
-  const what = s.entities.ticker
-    ? `<a class="mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>`
-    : `<span class="none">—</span>`;
-  const receipts = s.receipts
-    .slice(0, 5)
-    .map((doc) => srcLink(doc))
-    .join(" ");
-  const more = s.receipts.length > 5 ? ` <span class="mono-note">+${fmtInt(s.receipts.length - 5)} more filings</span>` : "";
+/* ---------- R10 (SIGNALS-CLARITY M2): the WHAT sentence ----------
+
+   Every hit says WHOSE transaction, WHICH side and WHICH asset, in words:
+   "Spouse: Purchase of Not Fade Away LLC · Other", "4 members: purchases of
+   NVDA". The words are the filing's own: the side is the filed side as a
+   NOUN, the asset is `displayAsset` over the filed name, and the chip (shown
+   only on a row that is NOT a listed stock — see `signalSentence`) is the
+   filed type — a House Clerk code as its words from
+   `ASSET_TYPE_WORDS`, a Senate eFD label verbatim. Nothing is inferred from an
+   asset's name (plan F-6). A prior build's record, which predates these
+   fields, says so ("asset not in this record") and is never counted as a
+   listed stock. The rule restatement that used to fill this cell lives in the
+   hit's evidence row. */
+
+/* The side as a NOUN, never a verb (R10 as amended, plan deviation recorded in
+   DEV-NOTES): the plan's past-tense sale verb is banned wording under the
+   site-wide §0 gate (`BANNED_WORDING`, lib/activity.ts), which stays intact.
+   The nouns are the feed's own side vocabulary, symmetric across sides. */
+const SIDE_NOUN: Readonly<Record<NonNullable<Signal["side"]>, string>> = {
+  purchase: "Purchase of",
+  sale: "Sale of",
+  sale_partial: "Partial sale of",
+  exchange: "Exchange of",
+  other: "Transaction in",
+};
+/** S-3's side, plural: a cluster is several members' transactions. */
+const S3_SIDE_NOUN: Readonly<Record<"purchase" | "sale", string>> = { purchase: "purchases of", sale: "sales of" };
+const OWNER_QUALIFIER: Readonly<Record<string, string>> = { spouse: "Spouse", child: "Child", joint: "Joint" };
+/** The WHAT text of a record that predates the R8 fields. */
+export const ASSET_NOT_IN_RECORD = "asset not in this record";
+
+/** The per-row R8 fields are all present (a newly emitted per-row signal). */
+function hasRowFields(s: Pick<Signal, "asset" | "assetType" | "side" | "owner">): boolean {
+  return s.asset !== undefined && s.assetType !== undefined && s.side !== undefined && s.owner !== undefined;
+}
+
+/** The asset-type chip's words: a House Clerk code as its words, any other
+    filed label verbatim, and an untyped row says it is untyped. */
+function assetTypeChip(assetType: string | null): string {
+  const t = (assetType ?? "").trim();
+  if (t === "") return "type not stated";
+  const up = t.toUpperCase();
+  return Object.hasOwn(ASSET_TYPE_WORDS, up) ? ASSET_TYPE_WORDS[up]! : t;
+}
+
+export interface SignalSentence {
+  /** the sentence: "{Owner: }{Side noun} {asset}", or S-3's "{n} members: {purchases|sales} of {ticker}" */
+  text: string;
+  /** the asset-type chip, or null (a listed stock, S-3, a record without the fields, or a type the text already names) */
+  chip: string | null;
+  /** false for a record that predates the R8 fields */
+  recorded: boolean;
+}
+
+type SentenceInput = Pick<Signal, "kind" | "entities" | "asset" | "assetType" | "side" | "owner" | "listedStock">;
+
+/** R10: the ONE sentence every signal-row renderer prints (hit rows, the watch
+    band, the home tile, the member panel). Plain text; callers escape. */
+export function signalSentence(s: SentenceInput): SignalSentence {
+  if (s.kind === "s3-cooccurrence") {
+    if (s.side !== "purchase" && s.side !== "sale") return { text: ASSET_NOT_IN_RECORD, chip: null, recorded: false };
+    return { text: `${s.entities.memberName}: ${S3_SIDE_NOUN[s.side]} ${s.entities.ticker ?? "one ticker"}`, chip: null, recorded: true };
+  }
+  if (!hasRowFields(s)) return { text: ASSET_NOT_IN_RECORD, chip: null, recorded: false };
+  const d = displayAsset({ asset: s.asset!, assetType: s.assetType!, ticker: s.entities.ticker });
+  const side = SIDE_NOUN[s.side!] ?? SIDE_NOUN.other;
+  const owner = s.owner ? OWNER_QUALIFIER[s.owner] : undefined;
+  const text = `${owner ? `${owner}: ` : ""}${side} ${d.text}`;
+  /* The chip follows `displayAsset`'s own rule (format.ts): "only a stock code
+     that is the row's own type goes silent: every other known code is
+     information the reader needs". A listed stock (House `ST`, Senate `Stock`)
+     carries NO chip — on the default listed-stocks view it repeated on every
+     row and was cut by the cell (R10 deviation, DEV-NOTES D-3). Any other
+     type is shown, and an untyped row says "type not stated", so the reader
+     can see why it is hidden under "Listed stocks only". */
+  if (signalIsListedStock(s)) return { text, chip: null, recorded: true };
+  const chip = assetTypeChip(s.assetType!);
+  /* a filed code the asset text already renders as words ("… · Other") is
+     not printed twice */
+  return { text, chip: d.text.endsWith(` · ${chip}`) ? null : chip, recorded: true };
+}
+
+/** The sentence as markup: the text, then — for a row that is not a listed
+    stock — its type chip. */
+export function signalSentenceHtml(s: SentenceInput): string {
+  const x = signalSentence(s);
   return (
-    `<tr data-signal-id="${esc(s.id)}">` +
-    `<td class="c-filed">${esc(s.occurrence.filedDate)}</td>` +
-    `<td>${who}</td>` +
-    `<td>${what}</td>` +
-    `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
-    `<td class="c-filed">${esc(s.occurrence.tradeDate ?? "—")}</td>` +
-    `<td class="c-src">${receipts}${more}</td></tr>`
+    `<span class="si-sentence${x.recorded ? "" : " c-muted"}">${esc(x.text)}</span>` +
+    (x.chip ? ` <span class="si-asset-chip">${esc(x.chip)}</span>` : "")
   );
+}
+
+/* ---------- R9 / R12: the listed-stock view ---------- */
+
+/** R9 / L7: listed stock through the ONE predicate (`isListedStock`, over the
+    filed type) for a per-row signal; S-3 is an aggregate, so it reads the
+    engine's all-rows verdict (`listedStock`). A record without the R8 fields
+    is never a listed stock. */
+export function signalIsListedStock(s: Pick<Signal, "kind" | "asset" | "assetType" | "side" | "owner" | "listedStock">): boolean {
+  if (s.kind === "s3-cooccurrence") return s.listedStock === true;
+  return hasRowFields(s) && isListedStock(s.assetType);
+}
+
+/** The hits table's filters (R12): the rule, the device-local watchlist, and
+    listed stocks only — checked by default, never persisted. */
+export interface HitFilter {
+  kind: string;
+  watchedOnly: boolean;
+  stocksOnly: boolean;
+  watchedMembers: ReadonlySet<string>;
+  watchedTickers: ReadonlySet<string>;
+}
+export const DEFAULT_HIT_FILTER: HitFilter = {
+  kind: "all",
+  watchedOnly: false,
+  stocksOnly: true,
+  watchedMembers: new Set(),
+  watchedTickers: new Set(),
+};
+
+/** Every filter except listed stocks. */
+function matchesOthers(s: Signal, f: HitFilter): boolean {
+  if (f.kind !== "all" && s.kind !== f.kind) return false;
+  if (f.watchedOnly && !((s.entities.bioguide && f.watchedMembers.has(s.entities.bioguide)) || (s.entities.ticker && f.watchedTickers.has(s.entities.ticker)))) return false;
+  return true;
+}
+
+/** The ONE filter predicate the server page and the client pager share. */
+export function hitMatches(s: Signal, f: HitFilter): boolean {
+  return matchesOthers(s, f) && (!f.stocksOnly || signalIsListedStock(s));
+}
+
+/* ---------- R11: repeated rows collapse to one line ---------- */
+
+/** The kinds that describe ONE row. S-3 is an aggregate and never groups. */
+const GROUPABLE_KINDS: ReadonlySet<SignalKind> = new Set(["s1-large", "s2-first", "s4-infrequent", "s5-jurisdiction", "s6-late-large"]);
+
+/** One line of the hits table: a hit, or a group of hits that are exact
+    repeats within one filing. The artifact keeps every id; grouping is
+    presentation only, so no id is ever superseded by it. */
+export interface HitLine {
+  lead: Signal;
+  members: Signal[];
+}
+
+/** The grouping key, or null for a signal that never groups (S-3, or a record
+    lacking any R8 field). */
+function groupKey(s: Signal): string | null {
+  if (!GROUPABLE_KINDS.has(s.kind) || !hasRowFields(s)) return null;
+  return JSON.stringify([
+    s.kind, s.receipts, s.entities.bioguide, s.entities.ticker, s.asset, s.assetType, s.side, s.owner,
+    s.magnitude.low, s.magnitude.high, s.occurrence.tradeDate, s.occurrence.filedDate,
+  ]);
+}
+
+/** Group hits already in page order; a group sits where its first member sat. */
+export function groupHits(sorted: readonly Signal[]): HitLine[] {
+  const lines: HitLine[] = [];
+  const byKey = new Map<string, HitLine>();
+  for (const s of sorted) {
+    const key = groupKey(s);
+    const line = key === null ? undefined : byKey.get(key);
+    if (line) {
+      line.members.push(s);
+      continue;
+    }
+    const fresh: HitLine = { lead: s, members: [s] };
+    lines.push(fresh);
+    if (key !== null) byKey.set(key, fresh);
+  }
+  return lines;
+}
+
+/** A group's size: `sumRanges` over its members — an open bound stays open,
+    and a group whose members disclose no lower bound keeps none. */
+function groupMagnitude(members: readonly Signal[]): Signal["magnitude"] {
+  const r = sumRanges(members.map((m) => m.magnitude));
+  const noLow = members.every((m) => m.magnitude.low == null);
+  switch (r.kind) {
+    case "closed":
+      return { low: noLow ? null : r.low, high: r.high };
+    case "open":
+      return { low: noLow ? null : r.low, high: null };
+    default:
+      return { low: null, high: null };
+  }
+}
+
+/** The filtered view: its lines, how many hits they hold, and how many hits
+    the listed-stock filter hides under the OTHER active filters (R12). */
+export function hitsView(sorted: readonly Signal[], f: HitFilter): { lines: HitLine[]; hits: number; hidden: number } {
+  const others = sorted.filter((s) => matchesOthers(s, f));
+  const shown = f.stocksOnly ? others.filter(signalIsListedStock) : others;
+  return { lines: groupHits(shown), hits: shown.length, hidden: others.length - shown.length };
+}
+
+/** "12 hits on other asset types hidden" — the reader's cue that the default
+    view is filtered (plan L8). */
+export function hitsHiddenText(hidden: number, stocksOnly: boolean): string {
+  if (!stocksOnly) return "all asset types shown";
+  return `${fmtInt(hidden)} ${hidden === 1 ? "hit" : "hits"} on other asset types hidden`;
 }
 
 /* ---------- R17: the HIT row — Ticker · Who · What · Filed · Size · Src ---------- */
@@ -275,7 +460,13 @@ export function signalReceiptHtml(receipt: string | null | undefined, cohort: Si
   return srcLink(receipt);
 }
 
-export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: readonly string[] | null = null): string {
+/** One hits-table line. `group` is the line's members when it collapses exact
+    repeats (R11): the line then states `×n`, its size is the members'
+    `sumRanges`, and its evidence row lists every member id and receipt. */
+export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: readonly string[] | null = null, group: readonly Signal[] | null = null): string {
+  const members = group !== null && group.length > 1 ? group : [s];
+  const grouped = members.length > 1;
+  const magnitude = grouped ? groupMagnitude(members) : s.magnitude;
   const family = familyOf(s.kind);
   const subject = s.entities.bioguide
     ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>`
@@ -294,13 +485,29 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: 
      evidence is the NEXT row, not the <details> body, so the relation is
      stated rather than implied by position. */
   const evidenceId = `si-evidence-${s.id}`;
-  const expand = `<details class="si-expand"><summary aria-controls="${esc(evidenceId)}">${esc(evidenceText(s))}</summary></details>`;
+  /* R10: the one-line summary is the sentence (who did what to which asset);
+     the rule's own terms, restated with the row's facts, open below it. */
+  const groupMark = grouped ? ` <span class="si-group-n">×${fmtInt(members.length)}<span class="visually-hidden"> identical rows in one filing</span></span>` : "";
+  const expand = `<details class="si-expand"><summary aria-controls="${esc(evidenceId)}">${signalSentenceHtml(s)}${groupMark}</summary></details>`;
+  const assetFiled =
+    s.kind !== "s3-cooccurrence" && hasRowFields(s)
+      ? `<p><strong>Asset as filed:</strong> <span class="filed-name">${esc(s.asset ?? "not named")}</span> · type ${s.assetType == null ? "not stated" : `<span class="mono-id">${esc(s.assetType)}</span>`}` +
+        `${signalIsListedStock(s) ? " · listed stock" : " · not a listed stock"}</p>`
+      : "";
+  const groupList = grouped
+    ? `<div class="si-group-members"><strong>${fmtInt(members.length)} hits, identical within one filing — one line, every id kept:</strong><ul>` +
+      members.map((m) => `<li><span class="mono-id">${esc(m.id)}</span> ${m.receipts.map((r) => srcLink(r)).join(" ") || "—"}</li>`).join("") +
+      `</ul></div>`
+    : "";
   /* The receipts are block cells (`srcLink` is a <div>), so they sit in a
      <div>, never a <p> — a <div> inside a <p> is invalid and the parser closed
      the paragraph early (review C2-6). */
   const evidenceRow =
     `<tr class="si-evidence-row" id="${esc(evidenceId)}" data-evidence-for="${esc(s.id)}"><td colspan="${columns === null ? SIGNAL_HIT_COLUMNS.length : columns.length}">` +
-    `<div class="si-expand-body"><p><strong>Rule:</strong> ${esc(s.rule)}</p>` +
+    `<div class="si-expand-body"><p class="si-evidence-line">${esc(evidenceText(s))}</p>` +
+    `<p><strong>Rule:</strong> ${esc(s.rule)}</p>` +
+    assetFiled +
+    groupList +
     `<div class="si-receipts"><strong>Receipts:</strong> ${s.receipts.map((r) => srcLink(r)).join(" ") || "—"}</div>` +
     `<p class="mono-note">${esc(SIGNAL_KIND_LABELS[s.kind])} · thresholds v${esc(String(s.thresholdVersion ?? ""))} · computed ${esc(String(s.computedAt ?? ""))}</p></div></td></tr>`;
   /* The family drives the row's 3px edge (`data-edge`); `data-kind` stays the
@@ -309,13 +516,13 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: 
   return (
     `<tr class="si-hit si-family-${family.toLowerCase()} si-kind-${esc(s.kind)}" data-signal-id="${esc(s.id)}" data-family="${family}"` +
     ` data-kind="${esc(s.kind)}" data-edge="family-${family.toLowerCase()}" data-bioguide="${esc(s.entities.bioguide ?? "")}" data-ticker="${esc(s.entities.ticker ?? "")}"` +
-    ` data-filed="${esc(s.occurrence.filedDate)}"${extraAttrs}>` +
+    ` data-filed="${esc(s.occurrence.filedDate)}"${grouped ? ` data-group-size="${members.length}"` : ""}${extraAttrs}>` +
     `<td class="c-kind si-kind">${note(s.rule, { scope: "signal-hits" }, s.id, { trigger: "label", textHtml: esc(shortOf(s.kind)) })}</td>` +
     (columns === null || columns.includes("ticker") ? `<td class="c-ticker si-ticker-cell">${ticker}</td>` : "") +
     `<td class="c-member si-subject">${subject}</td>` +
     `<td class="c-secondary c-flex si-what">${expand}</td>` +
     `<td class="c-num si-when">${whenText(s)}${lag != null ? ` <span class="${lag > 45 ? "si-late" : "si-lag"}">+${fmtInt(lag)}d</span>` : ""}</td>` +
-    `<td class="c-num si-mag">${esc(magnitudeText(s.magnitude))}</td>` +
+    `<td class="c-num si-mag">${esc(magnitudeText(magnitude))}${grouped ? `<span class="visually-hidden">, summed over ${fmtInt(members.length)} rows</span>` : ""}</td>` +
     /* R23 (DESIGN-POLISH M3, T3.7): the receipt prints its regime ONCE —
        the link reads "PTR ↗" or "eFD ↗", so the stamp before it printed
        "PTR PTR". Only a row with no receipt link keeps the stamp, so its
@@ -330,10 +537,10 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: 
     hit and its evidence row); the rest of the page stays in the DOM behind the
     named binder. The ONE body renderer the server page and the client pager
     share, so a repaint compacts exactly as the first render did. */
-export function hitsBodyHtml(slice: readonly Signal[], ctx: RenderCtx, compactN: number, columns: readonly string[] | null = null): string {
-  return slice
-    .map((s, i) => {
-      const html = hitRowHtml(s, ctx, "", columns);
+export function hitsBodyHtml(lines: readonly HitLine[], ctx: RenderCtx, compactN: number, columns: readonly string[] | null = null): string {
+  return lines
+    .map((line, i) => {
+      const html = hitRowHtml(line.lead, ctx, "", columns, line.members);
       return i >= compactN ? html.replace(/<tr\b/g, "<tr data-compact-extra") : html;
     })
     .join("\n");
@@ -346,12 +553,14 @@ export function hitsBodyHtml(slice: readonly Signal[], ctx: RenderCtx, compactN:
     PRIMARY cell, never cut to balance the lag and rate cell. */
 export const SIGNAL_HITS_COMPACT_ROWS = 12;
 
-/** "1–50 of 693 hits" — the ONE range string the server and the pager share,
-    built by the site's one range grammar (`rangeOfTotal`). */
-export function hitsRangeText(page: number, onPage: number, total: number, pageSize = SIGNAL_HITS_PAGE_SIZE): string {
-  if (total === 0) return "0 hits";
+/** "1–50 of 663 lines · 693 hits" — the ONE range string the server and the
+    pager share, built by the site's one range grammar (`rangeOfTotal`). The
+    pager moves by LINES (R11: repeats within one filing are one line); the
+    hit count beside it is every signal those lines hold. */
+export function hitsRangeText(page: number, onPage: number, lines: number, hits: number, pageSize = SIGNAL_HITS_PAGE_SIZE): string {
+  if (lines === 0) return "0 hits";
   const lo = page * pageSize + 1;
-  return rangeOfTotal(lo, lo + onPage - 1, total, total === 1 ? "hit" : "hits");
+  return `${rangeOfTotal(lo, lo + onPage - 1, lines, lines === 1 ? "line" : "lines")} · ${fmtInt(hits)} ${hits === 1 ? "hit" : "hits"}`;
 }
 
 function withheldHtml(w: WithheldKind, carried: number): string {
@@ -440,10 +649,14 @@ function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
 
 function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pageSize: number, compactN: number): string {
   const sorted = sortHits(active);
-  const shown = sorted.slice(0, pageSize);
+  /* R11/R12: the first page is the DEFAULT view — listed stocks only, exact
+     repeats collapsed to one line — the same `hitsView` the pager repaints
+     through, so the server and the client cannot disagree about it. */
+  const view = hitsView(sorted, DEFAULT_HIT_FILTER);
+  const shown = view.lines.slice(0, pageSize);
   const collapsed = shown.length > compactN;
   const cols = signalHitColumns(active);
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(view.lines.length / pageSize));
   const kinds = RULE_BOOK.filter((r) => active.some((s) => s.kind === r.kind));
   /* R17: filter by RULE (kind) and by the device-local watchlist; the family
      stays on the row as data so a family view can still be composed. */
@@ -452,13 +665,20 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
     `<button type="button" data-kind="all" aria-pressed="true">All</button>` +
     kinds.map((r) => `<button type="button" data-kind="${esc(r.kind)}" aria-pressed="false">${esc(r.short)}</button>`).join("") +
     `</div>` +
-    `<label class="filter-check" for="signal-watched-only"><input type="checkbox" id="signal-watched-only" aria-label="watched members and tickers only — stored in this browser" /> watched only</label>`;
-  const body = shown.length === 0
+    `<label class="filter-check" for="signal-watched-only"><input type="checkbox" id="signal-watched-only" aria-label="watched members and tickers only — stored in this browser" /> watched only</label>` +
+    /* R12: checked by default and never persisted (`autocomplete="off"` stops
+       a browser restoring it; the island also resets it on load). The hidden
+       count beside it is the reader's cue that the view is filtered. */
+    `<label class="filter-check" for="signal-stocks-only"><input type="checkbox" id="signal-stocks-only" checked autocomplete="off" /> Listed stocks only</label>` +
+    `<span class="si-hidden-count" id="signal-hidden-count" data-hidden="${view.hidden}">${esc(hitsHiddenText(view.hidden, true))}</span>`;
+  const body = sorted.length === 0
     ? `<tr><td colspan="${cols.columns.length}" class="si-empty">Zero hits in the retained window — a computed answer over every rule, not missing coverage.</td></tr>`
-    : hitsBodyHtml(shown, ctx, compactN, cols.columns);
-  const range = hitsRangeText(0, shown.length, sorted.length, pageSize);
+    : shown.length === 0
+      ? `<tr><td colspan="${cols.columns.length}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
+      : hitsBodyHtml(shown, ctx, compactN, cols.columns);
+  const range = hitsRangeText(0, shown.length, view.lines.length, view.hits, pageSize);
   return (
-    `<section class="panel panel-wide si-hits" id="signal-hits" aria-label="Hits" data-page-size="${pageSize}" data-compact-rows="${compactN}" data-total="${sorted.length}">` +
+    `<section class="panel panel-wide si-hits" id="signal-hits" aria-label="Hits" data-page-size="${pageSize}" data-compact-rows="${compactN}" data-total="${sorted.length}" data-lines="${view.lines.length}">` +
     `<div class="panel-head"><h2 class="section-h">Hits</h2>` +
     `<span class="panel-note">RETAINED WINDOW ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} · NEWEST FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
     seg + `</div>` +
@@ -479,8 +699,8 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
       rootId: "signal-hits-body",
       total: shown.length,
       shown: Math.min(compactN, shown.length),
-      noun: "hits",
-      boundNoun: "hits on this page",
+      noun: "lines",
+      boundNoun: "lines on this page",
       definite: true,
       domBacked: true,
     }) +
@@ -494,7 +714,7 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
     `magnitudes are the row's statutory range, never narrowed · ${fmtInt(active.length)} ${active.length === 1 ? "hit" : "hits"} in the window · ` +
     `the complete artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
     `<p class="visually-hidden" id="signal-hits-status" role="status" aria-live="polite"></p>` +
-    `<noscript><p class="section-note">Paging and filtering need JavaScript; the first ${fmtInt(pageSize)} hits are listed above regardless, and the artifact holds every hit.</p></noscript>` +
+    `<noscript><p class="section-note">Paging and filtering need JavaScript; the first ${fmtInt(pageSize)} lines of listed-stock hits are listed above regardless, and the artifact holds every hit.</p></noscript>` +
     `</section>`
   );
 }
@@ -553,7 +773,7 @@ function rateBandHtml(deps: SignalsPageDeps, active: Signal[], artifact: SignalA
   return (
     `<section class="panel si-rateband" aria-label="Hit rate by family">` +
     `<div class="panel-head"><h2 class="section-h">Hit rate by family</h2>` +
-    `<span class="panel-note">HITS PER 1,000 ROWS FILED IN THE WINDOW · RARER = MORE INFORMATIVE</span></div>` +
+    `<span class="panel-note">HITS PER 1,000 ROWS FILED IN THE WINDOW · ALL ASSET TYPES · RARER = MORE INFORMATIVE</span></div>` +
     (n == null
       ? `<p class="section-note">The evaluated-row count is not available, so no rate is stated.</p>`
       : `<dl class="si-rates">` +
@@ -585,7 +805,10 @@ function watchBandHtml(active: Signal[], artifact: SignalArtifact): string {
     total: active.length,
     /* K-7 (M3 review): "cohort" rides along (appended, so no index moves)
        so the watch band can state the receipt's regime as the hit rows do */
-    cols: ["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt", "cohort"],
+    /* R10 (SIGNALS-CLARITY M2): what was traded rides along, appended (no
+       index moves), so a watched hit prints the same sentence as the hit
+       rows. A missing field embeds as null. */
+    cols: ["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt", "cohort", "side", "asset", "assetType", "owner", "stk"],
     rows: newest.map((s) => [
       s.id,
       s.kind,
@@ -598,6 +821,11 @@ function watchBandHtml(active: Signal[], artifact: SignalArtifact): string {
       s.occurrence.filedDate,
       s.receipts[0] ?? "",
       s.cohort,
+      s.side ?? null,
+      s.asset ?? null,
+      s.assetType ?? null,
+      s.owner ?? null,
+      signalIsListedStock(s),
     ]),
   });
   return (
@@ -633,19 +861,27 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   const withheldKinds = artifact.withheld.length;
   const evaluatedKinds = RULE_BOOK.filter((r) => !artifact.withheld.some((w) => w.kind === r.kind)).length;
 
-  /* --- ledger --- */
+  /* R13: the listed-stock hits, the population the page's trade summaries describe */
+  const listed = active.filter(signalIsListedStock);
+
+  /* --- ledger --- R7: Congress only; the two permanent "—" tiles (13F hits,
+     cross-regime) are gone — the rule book still says why institutional kinds
+     wait. R13: the Congress tile states the total and the listed-stock count. */
   const ledger = disclosureLedger([
     { label: "Active kinds", value: fmtInt(evaluatedKinds), detail: `${fmtInt(withheldKinds)} withheld this build · 1 by design`, subKind: "count" },
-    { label: "Hits · Congress", value: fmtInt(active.length), detail: `${fmtInt(activeKinds.size)} kinds fired · ${artifact.retentionDays}-day window`, subKind: "count", tone: "green" },
-    { label: "Hits · 13F", value: "—", detail: "await closed 13F periods · not simulated", subKind: "absence", tone: "gold" },
-    { label: "Cross-regime", value: "—", detail: "needs the 13F join · not simulated", subKind: "absence", tone: "blue" },
+    { label: "Hits · Congress", value: fmtInt(active.length), detail: `${fmtInt(listed.length)} in listed stocks · ${fmtInt(activeKinds.size)} kinds fired · ${artifact.retentionDays}-day window`, subKind: "count", tone: "green" },
   ]);
 
-  /* --- three summaries, every one data-derived --- */
-  const largest = active
+  /* --- three summaries, every one data-derived. R13: LARGEST and COMPLIANCE
+     describe trades, so they read listed stocks and say so; RAREST and the
+     hit rates calibrate RULES, so they read every asset type and say so. --- */
+  const largest = listed
     .filter((s) => s.magnitude.low != null)
     .sort((a, b) => (b.magnitude.low ?? 0) - (a.magnitude.low ?? 0))[0];
-  const late = active.filter((s) => s.kind === "s6-late-large");
+  const lateAll = active.filter((s) => s.kind === "s6-late-large");
+  const late = lateAll.filter(signalIsListedStock);
+  const lateOther = lateAll.length - late.length;
+  const lateOtherText = lateOther > 0 ? ` · +${fmtInt(lateOther)} on other asset types` : "";
   const lateMax = late.map((s) => lagDays(s) ?? 0).reduce((m, v) => Math.max(m, v), 0);
   // A withheld LATE kind is an UNEVALUATED state, never a computed zero (Codex round 1, F3).
   const lateWithheld = artifact.withheld.find((w) => w.kind === "s6-late-large") ?? null;
@@ -655,31 +891,35 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   const stories = briefingCards([
     {
       tone: "gold",
-      tag: "Largest lower bound this window",
+      tag: "Largest lower bound this window · listed stocks",
       title: largest
         ? `${shortOf(largest.kind)}: ${largest.entities.memberName} · ${magnitudeText(largest.magnitude)}`
-        : "No hit in the window discloses a lower bound",
+        : "No listed-stock hit in the window discloses a lower bound",
       body: largest
-        ? `${largest.entities.ticker ?? "no ticker disclosed"} · traded ${largest.occurrence.tradeDate ?? "date not disclosed"} → filed ${largest.occurrence.filedDate}. Ranked by the provable lower bound of the statutory range, never a point estimate.`
-        : "Every rule ran over the retained window; ranking needs a disclosed lower bound.",
+        ? `${signalSentence(largest).text} · ${largest.entities.ticker ?? "no ticker disclosed"} · traded ${largest.occurrence.tradeDate ?? "date not disclosed"} → filed ${largest.occurrence.filedDate}. Ranked over listed-stock hits by the provable lower bound of the statutory range, never a point estimate.`
+        : "Every rule ran over the retained window; ranking needs a listed-stock hit with a disclosed lower bound.",
     },
     {
       tone: "green",
       tag: "Compliance",
       title: lateWithheld
         ? "The LATE rule was withheld this build — not evaluated"
-        : late.length === 0
+        : lateAll.length === 0
           ? "No late-and-large disclosures in the window"
-          : `${fmtInt(late.length)} ${late.length === 1 ? "disclosure" : "disclosures"} filed past the 45-day window with a lower bound ≥ $100K`,
+          : late.length === 0
+            ? `No late-and-large disclosures in listed stocks in the window${lateOtherText}`
+            : `${fmtInt(late.length)} ${late.length === 1 ? "disclosure" : "disclosures"} in listed stocks filed past the 45-day window with a lower bound ≥ $100K${lateOtherText}`,
       body: lateWithheld
         ? `Withheld (${lateWithheld.reason}): ${lateWithheld.detail} No count is stated for a rule that did not run.`
         : late.length === 0
-          ? "Zero hits is the computed answer for the LATE rule, and the rule stays published."
-          : `The longest ran +${fmtInt(lateMax)} days from trade to filing — ${fmtInt(Math.max(0, lateMax - 45))} over the STOCK Act window. Late disclosure is stated, not editorialised.`,
+          ? lateOther > 0
+            ? `No listed-stock hit fired the LATE rule; the ${fmtInt(lateOther)} on other asset types show with "Listed stocks only" unticked.`
+            : "Zero hits is the computed answer for the LATE rule, and the rule stays published."
+          : `The longest listed-stock one ran +${fmtInt(lateMax)} days from trade to filing — ${fmtInt(Math.max(0, lateMax - 45))} over the STOCK Act window. Late disclosure is stated, not editorialised.`,
     },
     {
       tone: "sell",
-      tag: "Rarest · highest signal",
+      tag: "Rarest · highest signal · all asset types",
       title: rarest
         ? rarest.n === 0
           ? `${shortOf(rarest.r.kind)} fired zero times this window — the computed answer`
@@ -705,7 +945,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   return (
     `<div class="page-head">` +
     `<div class="page-head-copy"><div class="kicker">Public record / Signals · rule-based · no price data</div>` +
-    `<h1 class="page-title">Signals</h1>` +
+    `<h1 class="page-title">Congress signals</h1>` +
     `<p class="page-lede">Behaviour that is unusual for the filer, novel for the record, or late against the statute — each with its exact rule and every receipt. ` +
     `The raw artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a></p></div>` +
     ledger +
@@ -796,8 +1036,11 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
            `aria-describedby` targets that address the wrong rule. The rule is
            not softened, shrunk or lost: it is real DOM, it opens with no
            JavaScript, and it prints. */
-        // R26: ticker first — the reader's question is "which stock".
-        `<tr data-edge="family-${familyOf(s.kind).toLowerCase()}"><td class="c-ticker c-flex">${s.entities.ticker ? `<span class="mono-ticker">${esc(s.entities.ticker)}</span>` : "—"}</td>` +
+        // R26: ticker first — the reader's question is "which stock". R10:
+        // then what was traded, in words, unfiltered (member pages show
+        // every asset type).
+        `<tr data-edge="family-${familyOf(s.kind).toLowerCase()}"><td class="c-ticker">${s.entities.ticker ? `<span class="mono-ticker">${esc(s.entities.ticker)}</span>` : "—"}</td>` +
+        `<td class="c-secondary c-flex si-what">${signalSentenceHtml(s)}</td>` +
         `<td class="c-kind">${note(s.rule, { scope: "member-signals" }, s.id, { trigger: "label", textHtml: esc(SIGNAL_KIND_LABELS[s.kind]) })}</td>` +
         `<td class="c-filed c-num">${esc(s.occurrence.filedDate)}</td>` +
         `<td class="c-num">${esc(magnitudeText(s.magnitude))}</td>` +
@@ -810,7 +1053,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
     `<span class="panel-note"><a href="/signals/">all signals ↗</a></span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact">` +
     `<caption class="visually-hidden">Signals for this member</caption>` +
-    `<thead><tr><th scope="col" class="c-ticker c-flex">Ticker</th><th scope="col" class="c-kind">Kind</th><th scope="col" class="c-num">Filed</th><th scope="col" class="c-num">Size</th><th scope="col" class="c-src">Src</th></tr></thead>` +
+    `<thead><tr><th scope="col" class="c-ticker">Ticker</th><th scope="col" class="c-secondary c-flex">What</th><th scope="col" class="c-kind">Kind</th><th scope="col" class="c-num">Filed</th><th scope="col" class="c-num">Size</th><th scope="col" class="c-src">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     cardFoot({ short: "Filed dates lag the trades", full: `${artifact.lagCaveat}${lifecycleNote}`, scope: "member-signals-foot", key: "lag" }) +
     `</section>`

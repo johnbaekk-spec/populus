@@ -30,7 +30,7 @@
    artifact) is the genuine-first-build case only, and says so. */
 
 import { SIGNAL_THRESHOLDS } from "./signal-thresholds.ts";
-import type { TxnRow } from "./format.ts";
+import { isListedStock, type TxnRow } from "./format.ts";
 import {
   excludeDateAnomalies,
   windowMembership,
@@ -75,6 +75,21 @@ export interface Signal {
   unevaluatedInBuild?: string;
   /** volume cohort (D-1b: measured volume bounds BY COHORT) */
   cohort: "house" | "senate";
+  /* R8 (SIGNALS-CLARITY M2): what was traded, copied from the triggering row.
+     OPTIONAL in the type because a prior build's records — tombstones and
+     unevaluated rows, carried verbatim — predate them; the UI renders such a
+     record as "asset not in this record" and never counts it as listed stock.
+     The artifact stays `v: 1`: the change is additive, and ids are untouched. */
+  /** per-row kinds: the asset as filed; null = the filing names none */
+  asset?: string | null;
+  /** per-row kinds: the asset type VERBATIM (House Clerk code or Senate eFD label); null = untyped */
+  assetType?: string | null;
+  /** per-row kinds: the row's side; S-3: the cluster's side (`purchase` | `sale`, a partial sale counts as a sale) */
+  side?: TxnRow["side"];
+  /** per-row kinds: whose account (null = the filing does not say) */
+  owner?: TxnRow["owner"];
+  /** R9: listed stock as filed (`isListedStock`); S-3: true iff EVERY contributing row is */
+  listedStock?: boolean;
 }
 
 export interface WithheldKind {
@@ -113,6 +128,9 @@ const WITHHELD_REASONS: ReadonlySet<string> = new Set([
   "uncalibrated", "volume-out-of-bounds", "inputs-not-in-build", "insufficient-history",
 ]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SIGNAL_SIDES: ReadonlySet<string> = new Set(["purchase", "sale", "sale_partial", "exchange", "other"]);
+const S3_SIDES: ReadonlySet<string> = new Set(["purchase", "sale"]);
+const SIGNAL_OWNERS: ReadonlySet<string> = new Set(["self", "spouse", "child", "joint"]);
 
 /** Strict schema validation of a PRIOR artifact before it is chained.
     `v === 1` alone let a structurally invalid document pass
@@ -212,6 +230,19 @@ export function validateSignalArtifact(doc: unknown): string[] {
     if (!Array.isArray(g.receipts) || g.receipts.length === 0 || g.receipts.some((r) => typeof r !== "string")) {
       at("receipts must be a non-empty array of strings");
     }
+    /* R8: the additive fields are optional (a prior build's records lack
+       them), but a PRESENT field of the wrong type is a defect, never ignored. */
+    for (const k of ["asset", "assetType"]) {
+      if (g[k] !== undefined && g[k] !== null && typeof g[k] !== "string") at(`${k} must be string|null when present`);
+    }
+    if (g.side !== undefined) {
+      const sides = g.kind === "s3-cooccurrence" ? S3_SIDES : SIGNAL_SIDES;
+      if (typeof g.side !== "string" || !sides.has(g.side)) at(`side is unknown: ${JSON.stringify(g.side)}`);
+    }
+    if (g.owner !== undefined && g.owner !== null && (typeof g.owner !== "string" || !SIGNAL_OWNERS.has(g.owner))) {
+      at(`owner is unknown: ${JSON.stringify(g.owner)}`);
+    }
+    if (g.listedStock !== undefined && typeof g.listedStock !== "boolean") at("listedStock must be a boolean when present");
   });
   return errors;
 }
@@ -290,6 +321,12 @@ function baseSignal(kind: SignalKind, identity: string, rule: string, r: TxnRow,
     lastSeenBuild: ctx.buildId,
     status: "active",
     cohort: r.chamber,
+    // R8: what was traded, from the triggering row. Not part of the identity.
+    asset: r.asset,
+    assetType: r.assetType,
+    side: r.side,
+    owner: r.owner,
+    listedStock: isListedStock(r.assetType),
   };
   Object.defineProperty(sig, RAW_IDENTITY, { value: identity, enumerable: false });
   return sig;
@@ -366,6 +403,15 @@ function computeS3(txns: readonly TxnRow[], ctx: EmitCtx): Signal[] {
         const first = window[0]!;
         const sig = baseSignal("s3-cooccurrence", `${key} ${start}`, rule, first, ctx);
         sig.entities = { bioguide: null, memberName: `${members.size} members`, ticker: first.ticker };
+        /* R8/R9: a cluster is an aggregate, so it carries no one row's asset,
+           type or owner — only its side, and listed stock only when EVERY
+           contributing row is. */
+        delete sig.asset;
+        delete sig.assetType;
+        delete sig.owner;
+        // every row in the group shares the side class the group was keyed on
+        sig.side = first.side === "purchase" ? "purchase" : "sale";
+        sig.listedStock = window.every((r) => isListedStock(r.assetType));
         sig.receipts = [...new Set(window.map((r) => r.doc))];
         // magnitude: sum of disclosed lower bounds (conservative), upper open
         // if any row is open — but a cluster magnitude as one interval over
