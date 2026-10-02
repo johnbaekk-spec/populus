@@ -11,7 +11,7 @@ the wall clock.
 Identity contracts, all G14-clean (a mapping applies only inside its interval;
 no CUSIP→current-ticker chaining, no cross-quarter name matching):
 
-* **QoQ** matches a filer's positions across its two consecutive report periods
+* **QoQ** matches a filer's positions across calendar-adjacent quarter ends
   on the as-of ``security_id`` first — correct across a CUSIP change, because the
   registry resolves both CUSIPs to one ``security_id`` — then reconciles any
   still-unmatched pair by an EXACT reported CUSIP within the same filer's
@@ -228,8 +228,8 @@ def _qoq_row(
     comparable book — at least one keyable default position for that filer and
     period. A position is ``new`` only when the filer's prior book exists and
     omits it. With no prior book (a first filing under this registration, or a
-    prior quarter that is a 13F NOTICE, its book reported inside an affiliate's
-    filing) the position is ``no_prior``: no prior value, no
+    skipped quarter, or a prior quarter that is a 13F NOTICE, its book reported
+    inside an affiliate's filing) the position is ``no_prior``: no prior value, no
     Δ, and never a new stake.
 
     ``migrated`` (R6): the prior side is a registry-declared PREDECESSOR CIK's
@@ -316,6 +316,23 @@ def _qoq_row(
         ssh_type,
         _flags_json(flags),
         ingested_at,
+    )
+
+
+def _adjacent_quarters(prev_period: str, curr_period: str) -> bool:
+    """Both report dates are calendar quarter ends exactly one quarter apart."""
+    import datetime as dt
+
+    try:
+        prev = dt.date.fromisoformat(prev_period)
+        curr = dt.date.fromisoformat(curr_period)
+    except ValueError:
+        return False
+    ends = {(3, 31), (6, 30), (9, 30), (12, 31)}
+    return (
+        prev.isoformat() == prev_period and curr.isoformat() == curr_period
+        and (prev.month, prev.day) in ends and (curr.month, curr.day) in ends
+        and curr.year * 4 + curr.month // 3 == prev.year * 4 + prev.month // 3 + 1
     )
 
 
@@ -802,8 +819,8 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
             )
         ],
     )
-    # D2: whether the PRIOR side has a comparable book (any keyable default
-    # position). Same rule as the python path's `prior_book=bool(prev)`.
+    # D2/N2: a comparable prior book has keyable positions in the immediately
+    # preceding calendar quarter. Older observed books cannot support a delta.
     conn.execute(
         "ALTER TABLE _populus_inst_agg_periods"
         " ADD COLUMN prev_has_book INTEGER NOT NULL DEFAULT 0"
@@ -812,7 +829,11 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
         "UPDATE _populus_inst_agg_periods SET prev_has_book = EXISTS ("
         " SELECT 1 FROM _populus_inst_agg_positions a"
         " WHERE a.cik=_populus_inst_agg_periods.prev_cik"
-        " AND a.period_of_report=_populus_inst_agg_periods.prev_period)"
+        " AND a.period_of_report=_populus_inst_agg_periods.prev_period"
+        " AND _populus_inst_agg_periods.prev_period = date("
+        "   _populus_inst_agg_periods.curr_period,'start of month','-2 months','-1 day')"
+        " AND substr(_populus_inst_agg_periods.curr_period,6)"
+        "   IN ('03-31','06-30','09-30','12-31'))"
     )
     conn.execute(
         "CREATE TEMP TABLE _populus_inst_agg_matches ("
@@ -828,6 +849,7 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
         " FROM _populus_inst_agg_periods p"
         " JOIN _populus_inst_agg_positions a"
         "   ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period"
+        "  AND p.prev_has_book=1"
         " JOIN _populus_inst_agg_positions b"
         "   ON b.cik=p.cik AND b.period_of_report=p.curr_period"
         "  AND b.position_key=a.position_key AND b.put_call=a.put_call"
@@ -842,6 +864,7 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
         " FROM _populus_inst_agg_periods p"
         " JOIN _populus_inst_agg_positions a"
         "  ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period"
+        "  AND p.prev_has_book=1"
         " LEFT JOIN _populus_inst_agg_matches m ON m.prev_id=a.rowid"
         " WHERE m.prev_id IS NULL"
         "), curr AS ("
@@ -872,6 +895,7 @@ def _create_match_stages(conn: sqlite3.Connection) -> None:
         " FROM _populus_inst_agg_periods p"
         " JOIN _populus_inst_agg_positions a"
         "  ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period"
+        "  AND p.prev_has_book=1"
         " LEFT JOIN _populus_inst_agg_matches m ON m.prev_id=a.rowid"
         " WHERE m.prev_id IS NULL AND a.single_cusip IS NOT NULL"
         "), curr AS ("
@@ -917,6 +941,7 @@ WITH pairs AS (
  FROM _populus_inst_agg_periods p
  JOIN _populus_inst_agg_positions a
   ON a.cik=p.prev_cik AND a.period_of_report=p.prev_period
+  AND p.prev_has_book=1
  LEFT JOIN _populus_inst_agg_matches m ON m.prev_id=a.rowid
  WHERE m.prev_id IS NULL
 ), sides AS (
@@ -1205,11 +1230,9 @@ def _build_inst_agg_python(
     qoq_rows: list[tuple] = []
     bridges = _succession_bridges(filer_periods, succession_map())
     for cik in sorted(filer_periods):
-        # CONSECUTIVE periods of the filing universe — never a bridge across an
-        # intervening quarter that reported no keyable positions, which would
-        # fabricate continuity/additions/trims. A period with no keyable
-        # positions compares as an EMPTY side, so its neighbours read as genuine
-        # exits and new positions.
+        # Consecutive observed filings supply pair metadata; only adjacent
+        # calendar quarters permit a comparison. Keep zero-position quarters
+        # in this universe too, so a later book cannot bridge over them.
         ordered = sorted(set(filer_periods[cik]))
         # (prev_cik, prev_period, curr_period, migrated). The registry-declared
         # succession bridge (R6) is ONE extra pair in front of the filer's own.
@@ -1218,7 +1241,10 @@ def _build_inst_agg_python(
         if bridge is not None:
             pairs.insert(0, (bridge[0], bridge[1], ordered[0], True))
         for prev_cik, prev_period, curr_period, migrated in pairs:
-            prev = final_positions.get((prev_cik, prev_period), {})
+            prev = (
+                final_positions.get((prev_cik, prev_period), {})
+                if _adjacent_quarters(prev_period, curr_period) else {}
+            )
             curr = final_positions.get((cik, curr_period), {})
             if not prev and not curr:
                 continue  # nothing keyable on either side — no delta to state
@@ -2760,9 +2786,10 @@ def populate_ticker_holders(
     source_conn: sqlite3.Connection, dest_path: Path | str, *, ingested_at: str
 ) -> None:
     """Derive `agg_ticker_holders` / `agg_ticker_holder_totals` (LD2) from
-    SOURCE holdings for the newest closed quarter, with the prior closed
-    quarter as the comparison side — ONE implementation after both build
-    paths, and no dependency on the serving projection or any prior artifact.
+    SOURCE holdings for the newest closed quarter, with the immediately
+    preceding calendar quarter as the comparison side — ONE implementation
+    after both build paths, and no dependency on the serving projection or
+    any prior artifact.
 
     Only rows the reviewed mapping names get a ticker (G14). Options rows
     (`put_call` set) are not holdings of the class and are skipped. Value and
@@ -2809,7 +2836,11 @@ def populate_ticker_holders(
             dest.commit()
             return
         current = closed[-1]
-        prior = closed[-2] if len(closed) >= 2 else None
+        prior = (
+            closed[-2]
+            if len(closed) >= 2 and _adjacent_quarters(closed[-2], current)
+            else None
+        )
         periods = (current,) if prior is None else (prior, current)
         placeholders = ",".join("?" for _ in periods)
         names = dict(source_conn.execute("SELECT cik, name_raw FROM inst_filers"))
