@@ -505,8 +505,8 @@ def _assert_anchor_is_serving(
 
     Both halves are read through the same probe so the comparison is like for
     like. An unreadable answer on either side is a refusal too: an anchor we
-    cannot confirm is an anchor we cannot rely on, and this runs before the
-    freeze, so nothing has been uploaded and nothing needs undoing.
+    cannot confirm is an anchor we cannot rely on. This runs before the freeze
+    and again immediately before production upload, so production remains untouched.
     """
     served = probe(domain_url)
     anchored = probe(prior.url)
@@ -515,7 +515,7 @@ def _assert_anchor_is_serving(
             f"cannot confirm the rollback anchor: {domain_url} reported "
             f"{served!r} and the captured deployment {prior.id} "
             f"({prior.url}) reported {anchored!r} for "
-            f"{MARKER_BUILD_ID!r}/{MARKER_CODE_SHA!r}. Nothing was uploaded; "
+            f"{MARKER_BUILD_ID!r}/{MARKER_CODE_SHA!r}. Nothing was uploaded to production; "
             "production is untouched. Re-run once both answer, or fix the "
             "deployment that does not serve a marker"
         )
@@ -528,7 +528,7 @@ def _assert_anchor_is_serving(
             "never by prefix). `latest_production_deployment()` answers "
             "'newest by creation', which diverges from 'currently serving' "
             "after any dashboard rollback — and rolling back to it would move "
-            "the site to a build nobody asked for. Nothing was uploaded; "
+            "the site to a build nobody asked for. Nothing was uploaded to production; "
             "production is untouched. Roll production forward or back until "
             "the two agree, then re-run (see docs/operations/rollback.md)"
         )
@@ -1023,6 +1023,19 @@ def run_deployment(
         # path also binds that entry to the sealed artifact and the live domain.
         before_ids = frozenset(_production_entries(client))
         domain_url = _domain_url(custom_domain)
+        # Preview verification can take long enough for a manual promotion or
+        # rollback to change the live domain. Re-prove the captured anchor;
+        # changing the compensation target under this run would not restore
+        # the pre-upload expectation.
+        if prior is None and before_ids:
+            raise RollbackAnchorUnverified(
+                "the captured first-run state changed during preview: the "
+                "provider now lists production deployments. No production "
+                "upload was attempted; production is untouched. Re-run to "
+                "capture the deployment that is now serving"
+            )
+        if prior is not None:
+            _assert_anchor_is_serving(serving_probe, prior=prior, domain_url=domain_url)
         production: UploadedDeployment | None = None
         try:
             production = _upload(
