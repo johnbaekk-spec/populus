@@ -89,7 +89,12 @@ from pathlib import Path
 from typing import Any, NoReturn, Protocol
 from uuid import uuid4
 
-from populus.deploy.cloudflare import Deployment, PagesClient, PagesError
+from populus.deploy.cloudflare import (
+    Deployment,
+    PagesClient,
+    PagesError,
+    PagesUnavailable,
+)
 from populus.deploy.snapshot import UploadSnapshot, freeze_tree
 from populus.deploy.verify import (
     _REQUEST_HEADERS,
@@ -99,6 +104,7 @@ from populus.deploy.verify import (
     MARKER_BUILD_ID,
     MARKER_CODE_SHA,
     HeaderMultimap,
+    VerificationResult,
     normalize_security_header_multimap,
     read_markers,
     served_path,
@@ -925,8 +931,9 @@ def run_deployment(
     verify, :class:`ProductionVerificationFailed` when the live domain does not
     (after rolling back), and :class:`FirstRunUncompensated` when that happens on
     a run with no rollback target. Cloudflare's own
-    :class:`~populus.deploy.cloudflare.PagesUnavailable` propagates untouched:
-    "could not ask" is not this module's verdict to convert.
+    :class:`~populus.deploy.cloudflare.PagesUnavailable` before promotion
+    remains an outage. After the production attempt, exceptions first reconcile
+    provider and serving identity, then compensate only a confirmed promotion.
     """
     if preview_branch == production_branch:
         raise DeployAborted(
@@ -1011,57 +1018,78 @@ def run_deployment(
 
         # --- (6) provably the same bytes --------------------------------------
         _require_seal_intact(snapshot)
-        production = _upload(
-            upload, snapshot, environment=PRODUCTION, branch=production_branch
-        )
-
-        # --- (7) verify the live custom domain --------------------------------
+        # This read is immediately before the mutation attempt. A new provider
+        # entry alone is not enough to authorize compensation: the exception
+        # path also binds that entry to the sealed artifact and the live domain.
+        before_ids = frozenset(_production_entries(client))
         domain_url = _domain_url(custom_domain)
-        _await(await_origin, f"https://{custom_domain}", stage=PRODUCTION)
-        # `_await` returns as soon as the origin ANSWERS; individual
-        # objects can still be materialising behind it, and a partially written
-        # body reads as a hash mismatch — which the 404 tolerance rightly refuses to wait
-        # out. So the wait happens here, before the question is asked, where it
-        # cannot soften any answer.
-        settle(POST_PROMOTION_SETTLE_SECONDS)
-        production_result = verify(
-            domain_url,
-            stage=PRODUCTION,
-            inventory=snapshot.inventory,
-            deployment=dict(production.payload),
-        )
-        # Absorb custom-domain propagation lag, and NOTHING else. The
-        # re-verification is the SAME inventory-wide check, not a spot-check of
-        # the paths that 404'd — so the verdict that lets a deploy stand is
-        # always a full verification, never a composite of one full pass plus a
-        # patch. Bounded by PROPAGATION_RETRIES, and every attempt says so out
-        # loud: a silent retry would turn a genuinely broken deploy into a slow
-        # one.
-        attempts = 0
-        while (
-            not production_result.ok
-            and attempts < PROPAGATION_RETRIES
-            and _propagation_lag_only(production_result)
-        ):
-            attempts += 1
-            # Derived from `divergences`, which `_propagation_lag_only` just
-            # proved non-empty — not from `diverged_paths`, which the
-            # VerificationOutcome Protocol does not require of a test double.
-            lagging = sorted({d.path for d in production_result.divergences})
-            print(
-                f"deploy: production verification found only propagation-shaped "
-                f"404s on {len(lagging)} path(s) ({', '.join(lagging[:5])}"
-                f"{', …' if len(lagging) > 5 else ''}); settling "
-                f"{PROPAGATION_SETTLE_SECONDS:g}s and re-verifying the full "
-                f"inventory once (attempt {attempts}/{PROPAGATION_RETRIES})",
-                file=sys.stderr,
+        production: UploadedDeployment | None = None
+        try:
+            production = _upload(
+                upload, snapshot, environment=PRODUCTION, branch=production_branch
             )
-            settle(PROPAGATION_SETTLE_SECONDS)
+
+            # --- (7) verify the live custom domain --------------------------------
+            _await(await_origin, f"https://{custom_domain}", stage=PRODUCTION)
+            # `_await` returns as soon as the origin ANSWERS; individual
+            # objects can still be materialising behind it, and a partially written
+            # body reads as a hash mismatch — which the 404 tolerance rightly refuses to wait
+            # out. So the wait happens here, before the question is asked, where it
+            # cannot soften any answer.
+            settle(POST_PROMOTION_SETTLE_SECONDS)
             production_result = verify(
                 domain_url,
                 stage=PRODUCTION,
                 inventory=snapshot.inventory,
                 deployment=dict(production.payload),
+            )
+            # Absorb custom-domain propagation lag, and NOTHING else. The
+            # re-verification is the SAME inventory-wide check, not a spot-check of
+            # the paths that 404'd — so the verdict that lets a deploy stand is
+            # always a full verification, never a composite of one full pass plus a
+            # patch. Bounded by PROPAGATION_RETRIES, and every attempt says so out
+            # loud: a silent retry would turn a genuinely broken deploy into a slow
+            # one.
+            attempts = 0
+            while (
+                not production_result.ok
+                and attempts < PROPAGATION_RETRIES
+                and _propagation_lag_only(production_result)
+            ):
+                attempts += 1
+                # Derived from `divergences`, which `_propagation_lag_only` just
+                # proved non-empty — not from `diverged_paths`, which the
+                # VerificationOutcome Protocol does not require of a test double.
+                lagging = sorted({d.path for d in production_result.divergences})
+                print(
+                    f"deploy: production verification found only propagation-shaped "
+                    f"404s on {len(lagging)} path(s) ({', '.join(lagging[:5])}"
+                    f"{', …' if len(lagging) > 5 else ''}); settling "
+                    f"{PROPAGATION_SETTLE_SECONDS:g}s and re-verifying the full "
+                    f"inventory once (attempt {attempts}/{PROPAGATION_RETRIES})",
+                    file=sys.stderr,
+                )
+                settle(PROPAGATION_SETTLE_SECONDS)
+                production_result = verify(
+                    domain_url,
+                    stage=PRODUCTION,
+                    inventory=snapshot.inventory,
+                    deployment=dict(production.payload),
+                )
+        # Every post-mutation exception must reconcile before compensation.
+        except Exception as exc:  # noqa: BLE001
+            _fail_production_exception(
+                client=client,
+                observer=observer,
+                settle=settle,
+                serving_probe=serving_probe,
+                domain_url=domain_url,
+                expectation=expectation,
+                before_ids=before_ids,
+                snapshot=snapshot,
+                production=production,
+                error=exc,
+                runbook=runbook,
             )
         if not production_result.ok:
             # --- (8) compensate, or say plainly that we cannot ---------------
@@ -1140,6 +1168,102 @@ def _require_seal_intact(snapshot: UploadSnapshot) -> None:
             f"{observed}. Production is a second upload of provably the same "
             "bytes (R10); aborting with production untouched."
         )
+
+
+def _production_entries(client: PagesSurface) -> dict[str, Mapping[str, Any]]:
+    """Read raw production identities without assuming creation means serving."""
+    entries: dict[str, Mapping[str, Any]] = {}
+    for entry in client.raw_deployments(PRODUCTION):
+        identifier = entry.get("id")
+        if (
+            not isinstance(identifier, str)
+            or not identifier
+            or identifier in entries
+            or entry.get("environment") != PRODUCTION
+        ):
+            raise PagesUnavailable("the provider returned ambiguous production identities")
+        entries[identifier] = entry
+    return entries
+
+
+def _fail_production_exception(
+    *,
+    client: PagesSurface,
+    observer: RollbackObserver,
+    settle: Callable[[float], None],
+    serving_probe: ServingProbe,
+    domain_url: str,
+    expectation: RollbackExpectation | None,
+    before_ids: frozenset[str],
+    snapshot: UploadSnapshot,
+    production: UploadedDeployment | None,
+    error: Exception,
+    runbook: str,
+) -> NoReturn:
+    """Compensate an exception only after proving our promotion is serving.
+
+    An uploader can promote successfully and then fail its provider read-back.
+    Conversely, a command can fail before it mutates anything. Read the provider
+    again, bind one new production entry to the sealed artifact's full identity,
+    and require the live domain to serve that identity. A concurrent deployment,
+    ambiguous answer, or unavailable probe leaves the state explicitly unknown;
+    none authorizes a blind rollback over an operator's changes.
+    """
+    try:
+        entries = _production_entries(client)
+        new_ids = set(entries) - before_ids
+        if len(new_ids) != 1:
+            raise PagesUnavailable(
+                f"the provider reports {len(new_ids)} new production deployments; "
+                "the attempted promotion cannot be identified uniquely"
+            )
+        identifier = next(iter(new_ids))
+        if production is not None and identifier != production.id:
+            raise PagesUnavailable(
+                f"the new provider deployment {identifier!r} is not the "
+                f"uploader's deployment {production.id!r}"
+            )
+        markers = read_markers((snapshot.path / DEFAULT_MARKER_PATH).read_bytes())
+        values: dict[str, str] = {}
+        for name in (MARKER_BUILD_ID, MARKER_CODE_SHA):
+            found = markers.get(name, [])
+            if len(found) != 1 or not found[0].strip():
+                raise PagesUnavailable("the sealed artifact has no unambiguous build identity")
+            values[name] = found[0]
+        attempted = ServedIdentity(
+            build_id=values[MARKER_BUILD_ID], code_sha=values[MARKER_CODE_SHA]
+        )
+        candidate_url = entries[identifier].get("url")
+        if not isinstance(candidate_url, str) or not candidate_url:
+            raise PagesUnavailable("the new provider deployment has no immutable URL")
+        if serving_probe(candidate_url) != attempted:
+            raise PagesUnavailable("the new provider deployment does not serve the sealed build")
+        if serving_probe(domain_url) != attempted:
+            raise PagesUnavailable("the live domain does not confirm the attempted promotion")
+    # Any reconciliation failure leaves serving state uncertain, not rollback authority.
+    except Exception as reconciliation_error:  # noqa: BLE001
+        raise PagesUnavailable(
+            f"the production attempt raised {type(error).__name__}: {error}. "
+            f"Promotion could not be established: {reconciliation_error}. "
+            "No rollback was attempted; production state is uncertain and may "
+            f"require operator recovery. See {runbook}"
+        ) from error
+
+    # Outside the reconciliation try: a compensation failure must not trigger a
+    # second rollback or be reported as though no rollback was attempted.
+    _fail_production(
+        client=client,
+        observer=observer,
+        settle=settle,
+        domain_url=domain_url,
+        expectation=expectation,
+        result=VerificationResult(
+            ok=False,
+            outcome=getattr(error, "outcome", UNAVAILABLE),
+            detail=f"the production attempt raised {type(error).__name__}: {error}",
+        ),
+        runbook=runbook,
+    )
 
 
 def _fail_production(
