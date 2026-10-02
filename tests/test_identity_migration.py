@@ -13,6 +13,7 @@ or after the data.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from populus.identity.bootstrap import bootstrap_ftd, parse_ftd
 from populus.identity.list13f_seed import bootstrap_13f_list
 from populus.identity.registry import (
     SECURITY_ID_REFERENCING_TABLES,
+    IdentityRegistryError,
     anchor,
     load_identity_registry,
     parse_identity_registry,
@@ -520,6 +522,63 @@ def test_fresh_split_successors_start_unresolved(tmp_path):
 
 
 # --- idempotence and collision safety -----------------------------------------
+
+
+@pytest.mark.parametrize("cycle_size", [2, 3], ids=["two-way-swap", "three-way-cycle"])
+def test_cyclic_renames_refuse_before_any_write(
+    initialized_db, make_security_identifier, cycle_size
+):
+    from test_inst_agg import _filer, _hold, _load
+
+    conn = initialized_db
+    ids = [f"sec:{chr(97 + n)}" for n in range(cycle_size)]
+    cusips = [str(111111111 * (n + 1)) for n in range(cycle_size)]
+    for security_id, cusip in zip(ids, cusips, strict=True):
+        make_security_identifier(conn, security_id=security_id, value=cusip)
+    # An independent acyclic rename would create a destination: refusal must
+    # happen before that write too, not just before rewriting the cycle's rows.
+    make_security_identifier(conn, security_id="sec:z", value="999999999")
+    cik = "0000000001"
+    _filer(conn, cik)
+    _load(
+        conn, fid="inst:cycle", cik=cik, period="2026-03-31", filed="2026-05-16",
+        holds=[
+            _hold(ordinal=n + 1, issuer=f"Issuer {n}", cusip=cusip,
+                  value=1000 * (n + 1), security_id=security_id)
+            for n, (security_id, cusip) in enumerate(zip(ids, cusips, strict=True))
+        ],
+    )
+    classes = [
+        {"security_id": ids[(n + 1) % cycle_size], "note": "revised owner",
+         "identifiers": [{"id_type": "cusip", "value": cusip}]}
+        for n, cusip in enumerate(cusips)
+    ] + [
+        {"security_id": "sec:new", "note": "independent promotion",
+         "identifiers": [{"id_type": "cusip", "value": "999999999"}]}
+    ]
+    registry = parse_identity_registry(json.dumps({"classes": classes}))
+    before = tuple(conn.iterdump())
+    changes_before = conn.total_changes
+    writes = []
+
+    def record_writes(action, table, column, _database, _trigger):
+        if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE):
+            writes.append((action, table, column))
+        return sqlite3.SQLITE_OK
+
+    conn.execute("BEGIN IMMEDIATE")
+    conn.set_authorizer(record_writes)
+    try:
+        with pytest.raises(IdentityRegistryError, match="cyclic.*rename") as exc:
+            reconcile_identity_registry(conn, registry)
+        assert all(security_id in str(exc.value) for security_id in ids)
+        assert writes == []
+        assert conn.total_changes == changes_before
+        assert tuple(conn.iterdump()) == before  # Before caller-owned rollback.
+    finally:
+        conn.set_authorizer(None)
+        conn.execute("ROLLBACK")
+    assert tuple(conn.iterdump()) == before
 
 
 def test_a_class_that_both_loses_and_gains_a_binding_survives(tmp_path):

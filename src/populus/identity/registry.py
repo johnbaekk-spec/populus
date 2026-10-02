@@ -1534,6 +1534,24 @@ def reconcile_identity_registry(conn: sqlite3.Connection, registry: IdentityRegi
         else:
             splits[old_id] = destinations
 
+    # Sequential FK repoints cannot represent a swap: a later rename would
+    # move rows that already arrived from an earlier source. Refuse cycles
+    # before creating destinations or changing any persisted row.
+    checked: set[str] = set()
+    for old_id in sorted(renames):
+        path: list[str] = []
+        visiting: set[str] = set()
+        current = old_id
+        while current in renames and current not in checked:
+            if current in visiting:
+                raise IdentityRegistryError(
+                    "cyclic identity rename: " + " -> ".join([*path, current])
+                )
+            visiting.add(current)
+            path.append(current)
+            current = renames[current]
+        checked.update(visiting)
+
     if not renames and not splits:
         # Every piece stayed with its current owner, so nothing moved and no
         # interval crossed a boundary (owner_windows coalesces adjacent
