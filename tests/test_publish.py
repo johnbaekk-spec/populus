@@ -6634,6 +6634,38 @@ def test_both_stats_copies_are_patched_and_byte_equal(tmp_path):
     assert json.loads(served)["site_file_count"] == 12543
 
 
+def test_workflow_packages_and_uploads_the_finalized_stats(tmp_path):
+    """Execute the real finalize/snapshot seams in the workflow's step order."""
+    db = seed_db(tmp_path / "populus.db")
+    repo = make_repo(tmp_path)
+    staged = stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    canonical = Path(staged.staging_dir) / "build" / "congress" / "stats.json"
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "stats.json").write_bytes(canonical.read_bytes())
+    (dist / "index.html").write_text("<!doctype html><title>fixture</title>")
+    shutil.copyfile(REPO_ROOT / "dashboard" / "public" / "_headers", dist / "_headers")
+    assert json.loads(canonical.read_bytes())["site_file_count"] is None
+
+    artifact = tmp_path / "site-artifact"
+    downloaded = tmp_path / "downloaded-artifact"
+    for step in _load_workflow("publish.yml")["jobs"]["publish"]["steps"]:
+        if step.get("name") == "Finalize build":
+            finalize_build(staged, site_file_count=3, dist_dir=dist)
+        elif step.get("name") == "Package the site artifact":
+            result = CliRunner().invoke(
+                cli_main,
+                ["snapshot-site", "--source", str(dist), "--dest", str(artifact)],
+            )
+            assert result.exit_code == 0, result.output
+        elif step.get("name") == "Upload the site artifact":
+            shutil.copytree(artifact, downloaded)
+
+    served = (downloaded / "site" / "stats.json").read_bytes()
+    assert served == canonical.read_bytes(), "the deployed package contains stale stats"
+    assert json.loads(served)["site_file_count"] == 3
+
+
 def test_a_missing_served_stats_is_refused_not_ignored(tmp_path):
     """Silently skipping the patch is how the served copy stays null."""
     db = seed_db(tmp_path / "populus.db")
