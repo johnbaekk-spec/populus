@@ -2190,18 +2190,28 @@ def test_review_f6_f8_holder_count_excludes_exits_and_rows_carry_filed_date(tmp_
     monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
     conn = _db(tmp_path)
     _seed_alphabet(conn)
-    # An exiter: held Class C in the prior quarter and filed NOTHING for the current one.
-    _filer(conn, "0000000016", "Exiter")
+    # Missing current filing: prior ownership cannot establish an exit.
+    _filer(conn, "0000000016", "Missing Filer")
     c_row = _hold(ordinal=1, issuer="ALPHABET INC", cusip="02079K107", value=60, shares=6, security_id="sec:goog1")
     c_row = c_row.__class__(**{**c_row.__dict__, "title_of_class": "CL C"})
     _load(conn, fid="inst:X-p", cik="0000000016", period="2025-12-31", filed="2026-01-15", holds=[c_row])
+    # A genuine exit has a current filing that omits this class.
+    _filer(conn, "0000000017", "Exiter")
+    _security(conn, "sec:other")
+    other = _hold(ordinal=1, issuer="OTHER CO", cusip="333333333", value=10, shares=1, security_id="sec:other")
+    _load(conn, fid="inst:E-p", cik="0000000017", period="2025-12-31", filed="2026-01-15", holds=[c_row])
+    _load(conn, fid="inst:E-c", cik="0000000017", period="2026-03-31", filed="2026-05-16", holds=[other])
     agg = _agg(conn, tmp_path)
     by = {(r["ticker"], r["cik"]): r for r in _rows(agg, "SELECT * FROM agg_ticker_holders")}
-    assert by[("GOOG", "0000000016")]["change_kind"] == "exit"
+    assert by[("GOOG", "0000000016")]["change_kind"] == "unclassified"
+    assert by[("GOOG", "0000000016")]["delta_shares"] is None
     assert by[("GOOG", "0000000016")]["filed_date"] is None
     assert by[("GOOGL", "0000000011")]["filed_date"] == "2026-05-16"
+    assert by[("GOOG", "0000000017")]["change_kind"] == "exit"
+    assert by[("GOOG", "0000000017")]["delta_shares"] == -6
+    assert by[("GOOG", "0000000017")]["filed_date"] == "2026-05-16"
     totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
-    # C Holder and Both Holder hold GOOG now; the exiter does not.
+    # Only C Holder and Both Holder report GOOG now; only Exiter reports its exit.
     assert totals["GOOG"]["holder_count"] == 2
     assert totals["GOOG"]["exits"] == 1
     agg.close()
