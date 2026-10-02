@@ -538,6 +538,21 @@ jobs:
           [ -f "$src" ] || { echo "::error::the site build produced no signal artifact at $src"; exit 1; }
           cp "$src" "$STAGE_BUILD_DIR/signals.v1.json"
 
+      # Freeze the served tree only after finalize-build patches stats.json.
+      - name: Finalize build
+        if: steps.stage.outputs.fresh == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
+          GH_REPO: johnbaekk-spec/populus-data
+          STAGE_BUILD_DIR: ${{ steps.stage.outputs.build_dir }}
+          SITE_FILE_COUNT: ${{ steps.site.outputs.file_count }}
+        run: >-
+          uv run populus finalize-build
+          --staging-dir "$(dirname "$STAGE_BUILD_DIR")"
+          --site-file-count "$SITE_FILE_COUNT"
+          --dist-dir dashboard/dist
+          --data-repo populus-data --backend gh-release --repo "$GH_REPO"
+
       # The artifact BOTH the deploy job and the signer download. Nothing
       # created it before this step, so `download-artifact` in two separate jobs
       # was reaching for a name that never existed — and neither job would have
@@ -568,20 +583,6 @@ jobs:
           # and before any upload) on the inventory/tree byte mismatch. Any
           # hidden path we serve has to survive this round trip.
           include-hidden-files: true
-
-      - name: Finalize build
-        if: steps.stage.outputs.fresh == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}
-          GH_REPO: johnbaekk-spec/populus-data
-          STAGE_BUILD_DIR: ${{ steps.stage.outputs.build_dir }}
-          SITE_FILE_COUNT: ${{ steps.site.outputs.file_count }}
-        run: >-
-          uv run populus finalize-build
-          --staging-dir "$(dirname "$STAGE_BUILD_DIR")"
-          --site-file-count "$SITE_FILE_COUNT"
-          --dist-dir dashboard/dist
-          --data-repo populus-data --backend gh-release --repo "$GH_REPO"
 
       - name: Publish
         env:

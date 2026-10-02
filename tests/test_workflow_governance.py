@@ -652,6 +652,17 @@ def _step_index(name_fragment: str) -> int:
     )
 
 
+def test_the_deployed_artifact_is_packaged_after_stats_finalization():
+    assert (
+        _step_index("Build site")
+        < _step_index("Publish the signal artifact")
+        < _step_index("Finalize build")
+        < _step_index("Package the site artifact")
+        < _step_index("Upload the site artifact")
+        < [step.get("name") for step in _publish_steps()].index("Publish")
+    )
+
+
 def test_the_corpus_is_seeded_before_the_ingests():
     assert _step_index("Seed the corpus") < _step_index("Ingest (live")
 
