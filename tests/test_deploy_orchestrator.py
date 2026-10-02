@@ -1095,6 +1095,7 @@ def test_first_run_failure_raises_the_td4_pointer(harness: Harness) -> None:
     rollback target, the runbook, and the fact that it can only happen once.
     """
     harness.client.latest_id = None
+    harness.client.production_ids = ()
     harness.with_verifier(plan=[True, False])
 
     with pytest.raises(FirstRunUncompensated) as raised:
@@ -1123,6 +1124,7 @@ def test_first_run_failure_attempts_no_delete_anywhere(harness: Harness) -> None
     for; and the orchestrator's own source contains no delete call.
     """
     harness.client.latest_id = None
+    harness.client.production_ids = ()
     harness.with_verifier(plan=[True, False])
 
     with pytest.raises(FirstRunUncompensated):
@@ -1173,6 +1175,7 @@ def _run_scenario(harness: Harness, scenario: str) -> None:
         expected = ProductionVerificationFailed
     elif scenario == "first-run":
         harness.client.latest_id = None
+        harness.client.production_ids = ()
         harness.with_verifier(plan=[True, False])
         expected = FirstRunUncompensated
     elif scenario == "digest-abort":
@@ -1577,6 +1580,7 @@ def test_a_first_run_failure_exits_with_its_own_code(cli: Cli, capsys) -> None:
     case, which is the one situation where nothing is serving unverified.
     """
     cli.client.latest_id = None
+    cli.client.production_ids = ()
     cli.verify = FakeVerifier(cli.log, plan=[True, False])
 
     assert cli.run() == EXIT_UNCOMPENSATED
@@ -2279,10 +2283,11 @@ def test_the_anchor_search_stops_at_the_first_match(harness: Harness) -> None:
     per deployment on every deploy, and the bound would be the only thing
     keeping that finite.
 
-    The winner is probed THREE times by design: once to resolve it, once by
+    The winner is probed FOUR times by design: once to resolve it, once by
     `_assert_anchor_is_serving`, which re-reads rather than trusting the value
     the resolver already has, and once inside the rollback-evidence bracket to
-    bind the observation to the target (F2). Each re-reads rather than trusting
+    bind the observation to the target (F2), then again immediately before
+    production upload (D3). Each re-reads rather than trusting
     an earlier value, which is what makes each proof independent of the thing it
     is proving, so this is asserted here rather than optimised away.
     """
@@ -2298,8 +2303,8 @@ def test_the_anchor_search_stops_at_the_first_match(harness: Harness) -> None:
     assert all(PRIOR in u for u in candidates), (
         f"the search walked past the first match: {candidates}"
     )
-    assert len(candidates) == 3, (
-        "resolve, prove, then bind the observation — each independently"
+    assert len(candidates) == 4, (
+        "resolve, prove, bind the observation, then re-prove before production"
     )
 
 
@@ -2324,6 +2329,91 @@ def test_an_unreadable_anchor_also_aborts(harness: Harness, probe, why: str) -> 
     assert harness.upload.calls == [], why
 
 
+@pytest.mark.parametrize(
+    "changed_identity",
+    [_identity(build_id="20260901.1"), _identity(code_sha="b" * 40), None],
+    ids=["new-build-same-code", "new-code-same-build", "unavailable"],
+)
+def test_serving_anchor_changed_during_preview_aborts_before_production(
+    harness: Harness, changed_identity,
+) -> None:
+    """A manual change during preview must survive an aborted production attempt."""
+    preview_verified = False
+    verifier = harness.verify
+    late_probes: list[str] = []
+
+    def verifying(url: str, **kwargs):
+        nonlocal preview_verified
+        result = verifier(url, **kwargs)
+        if kwargs["stage"] == PREVIEW:
+            preview_verified = True
+        return result
+
+    def probe(url: str):
+        if preview_verified:
+            late_probes.append(url)
+        if preview_verified and url == DOMAIN_URL:
+            return changed_identity
+        return ANCHOR_IDENTITY
+
+    with pytest.raises(RollbackAnchorUnverified) as raised:
+        harness.run(verify=verifying, serving_probe=probe)
+
+    assert preview_verified and harness.verify.stages == [PREVIEW]
+    assert harness.upload.environments == [PREVIEW]
+    assert late_probes == [DOMAIN_URL, _deployment(PRIOR).url]
+    assert harness.client.rollbacks == []
+    assert harness.sealed_dirs == []
+    assert "production is untouched" in str(raised.value)
+    assert "Nothing was uploaded to production" in str(raised.value)
+
+
+def test_first_run_production_appearing_during_preview_aborts_before_upload(
+    harness: Harness,
+) -> None:
+    """An initially empty project must not overwrite another actor's first production."""
+    harness.client.latest_id = None
+    harness.client.production_ids = ()
+    verifier = harness.verify
+    preview_verified = False
+
+    def verifying(url: str, **kwargs):
+        nonlocal preview_verified
+        result = verifier(url, **kwargs)
+        if kwargs["stage"] == PREVIEW:
+            preview_verified = True
+            harness.client.production_ids = ("dep-manual",)
+        return result
+
+    with pytest.raises(RollbackAnchorUnverified, match="first-run state changed"):
+        harness.run(verify=verifying)
+
+    assert preview_verified and harness.verify.stages == [PREVIEW]
+    assert harness.upload.environments == [PREVIEW]
+    assert harness.client.production_ids == ("dep-manual",)
+    assert harness.client.rollbacks == []
+    assert harness.sealed_dirs == []
+
+
+def test_serving_anchor_is_rechecked_immediately_before_production_upload(
+    harness: Harness,
+) -> None:
+    """The final proof follows the preview and provider read, immediately before upload."""
+    def probe(url: str):
+        harness.log.append(("probe", url))
+        return ANCHOR_IDENTITY
+
+    outcome = harness.run(serving_probe=probe)
+    production_position = _index_of(harness.log, "upload", PRODUCTION)
+    assert harness.log[production_position - 3:production_position] == [
+        ("raw-list", PRODUCTION),
+        ("probe", DOMAIN_URL),
+        ("probe", _deployment(PRIOR).url),
+    ]
+    assert outcome.rollback_target == PRIOR
+    assert harness.verify.stages == [PREVIEW, PRODUCTION]
+
+
 def test_an_agreeing_anchor_proceeds_normally(harness: Harness) -> None:
     """The check must not become a blanket refusal."""
     outcome = harness.run(serving_probe=lambda url: ANCHOR_IDENTITY)
@@ -2336,6 +2426,7 @@ def test_the_first_run_never_probes_because_there_is_no_anchor(
 ) -> None:
     """TD-4: no prior deployment means nothing to cross-check, not a refusal."""
     harness.client.latest_id = None
+    harness.client.production_ids = ()
     probed: list[str] = []
 
     def counting(url: str):
