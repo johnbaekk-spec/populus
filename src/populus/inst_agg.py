@@ -2830,15 +2830,15 @@ def populate_ticker_holders(
         )
         # R19/T20: the date each holder's current-quarter 13F became public —
         # the overlap timeline orders by FILED date, never by quarter end. NULL
-        # = no current-quarter filing on record.
-        filed_current: dict[str, str] = {
+        # = no current-quarter filing date on record. Keep undated filings in
+        # the map too: presence, rather than a known date, permits an exit.
+        filed_current: dict[str, str | None] = {
             r[0]: r[1]
             for r in source_conn.execute(
                 "SELECT cik, MAX(filed_date) FROM v_filer_reported_filings"
                 " WHERE period_of_report = ? GROUP BY cik",
                 (current,),
             )
-            if r[1] is not None
         }
         # R19: the registry's notable managers keep their row past the rank cap,
         # so the overlap band's population is complete however far down the
@@ -2904,7 +2904,10 @@ def populate_ticker_holders(
                     else:
                         kind, delta = "no_prior", None
                 elif cur is None:
-                    kind, delta = "exit", (-prv_shares if prv_shares is not None else None)
+                    if cik in filed_current:
+                        kind, delta = "exit", (-prv_shares if prv_shares is not None else None)
+                    else:
+                        kind, delta = "unclassified", None
                 elif units_ok:
                     delta = cur_shares - prv_shares
                     kind = "add" if delta > 0 else "trim" if delta < 0 else "held"
@@ -2926,9 +2929,9 @@ def populate_ticker_holders(
             total_rows.append(
                 (
                     ticker, current, prior, mrow.issuer_name_canonical, mrow.title_of_class,
-                    # R20: holders = filers holding the class NOW; an exit is a
-                    # former holder, counted under `exits` only.
-                    sum(1 for h in ranked if h[5] != "exit"),
+                    # R20: holders reported the class NOW; neither an exit nor
+                    # a missing current filing proves current ownership.
+                    sum(1 for h in ranked if (ticker, h[0], current) in acc),
                     sum(h[1] for h in ranked if h[1] is not None),
                     sum(1 for h in ranked if h[5] in ("new", "add")),
                     sum(1 for h in ranked if h[5] == "exit"),
