@@ -1004,11 +1004,141 @@ def test_declared_mismatch_and_defect_rows_load_partial(tmp_path, initialized_db
     assert _filing(initialized_db, U2)[0] == "partial"
     assert report.declared_mismatches == 1
     assert report.total_efile_rows == 2
-    assert report.clean_efile_rows == 1  # U1's row is defect-free; U2's is not
+    assert report.clean_efile_rows == 0  # Neither the mismatch nor the bad '#' is clean.
     assert report.ok  # partial reconciles — not a failure (G3 outcome-only)
     assert "declared_mismatch 1" in senate.format_summary(report)
     flags = _row_flags(initialized_db, U2)
     assert any("source_row_no_unparsed" in f for f in flags)
+
+
+@pytest.mark.parametrize("reparse", [False, True], ids=["ingest", "reparse"])
+def test_truncated_declared_703_row_filing_cannot_pass_the_gate(
+    tmp_path, initialized_db, reparse
+):
+    """Retained clean cells cannot certify a filing missing 693 printed rows."""
+    import lxml.html
+
+    from populus.parse_gate import compute_parse_gate
+
+    document = lxml.html.fromstring(
+        (FIXTURES / "ptr_fda235b3-bad7-4637-8fa1-053f354d929c.html").read_bytes()
+    )
+    printed_rows = document.xpath("//section[@class='card']//tbody/tr")
+    assert len(printed_rows) == 703
+    for row in printed_rows[10:]:
+        row.getparent().remove(row)
+    truncated = lxml.html.tostring(document, encoding="utf-8")
+    cache = _make_cache(
+        tmp_path, [_index_row(U1)], {f"ptr_{U1}.html": truncated}
+    )
+    _run_cache(initialized_db, cache)
+    if reparse:
+        # A pre-fix persisted partial filing carries no integrity marker.
+        initialized_db.execute(
+            "UPDATE transactions SET flags = '[]' WHERE filing_id = ?",
+            (f"senate:{U1}",),
+        )
+        initialized_db.commit()
+        reparse_senate(
+            initialized_db, raw_root=cache,
+            selector=ReparseSelector(filing=f"senate:{U1}"),
+        )
+    assert _filing(initialized_db, U1)[0] == "partial"
+    assert _filing(initialized_db, U1)[3] == 10
+    report = compute_parse_gate(initialized_db)
+    era = next(e for e in report.eras if (e.chamber, e.year) == ("senate", "2026"))
+    assert era.status == "unmeasurable"
+    assert era.meets_gate is False
+    assert era.row_denominator_known is False
+    assert era.unmeasurable_efile_filings == 1
+    assert era.efile_rows == era.clean_efile_rows == 0
+    assert era.efile_parse_rate is None
+    assert report.owner_decision_required
+    assert all(
+        "declared_total_mismatch" in flags for flags in _row_flags(initialized_db, U1)
+    )
+
+
+def test_legacy_partial_without_denominator_evidence_cannot_pass_after_ingest(
+    tmp_path, initialized_db
+):
+    """An upgrade must not certify a pre-fix partial that settled ingest skips."""
+    import lxml.html
+
+    from populus.parse_gate import compute_parse_gate
+
+    document = lxml.html.fromstring(
+        (FIXTURES / "ptr_fda235b3-bad7-4637-8fa1-053f354d929c.html").read_bytes()
+    )
+    printed_rows = document.xpath("//section[@class='card']//tbody/tr")
+    assert len(printed_rows) == 703
+    for row in printed_rows[10:]:
+        row.getparent().remove(row)
+    cache = _make_cache(
+        tmp_path, [_index_row(U1)],
+        {f"ptr_{U1}.html": lxml.html.tostring(document, encoding="utf-8")},
+    )
+    _run_cache(initialized_db, cache)
+    # This is the persisted state produced by the pre-fix parser: the partial
+    # status survives, but its clean extracted rows carry no denominator proof.
+    initialized_db.execute(
+        "UPDATE transactions SET flags = '[]' WHERE filing_id = ?",
+        (f"senate:{U1}",),
+    )
+    initialized_db.commit()
+    upgraded = _run_cache(initialized_db, cache, run_id="upgraded-normal-ingest")
+    assert upgraded.new_filings == 0
+    assert _filing(initialized_db, U1)[0] == "partial"
+    assert _filing(initialized_db, U1)[3] == 10
+    assert all(not flags for flags in _row_flags(initialized_db, U1))
+    report = compute_parse_gate(initialized_db)
+    era = next(e for e in report.eras if (e.chamber, e.year) == ("senate", "2026"))
+    assert era.status == "unmeasurable"
+    assert era.meets_gate is False
+    assert era.row_denominator_known is False
+    assert era.unmeasurable_efile_filings == 1
+    assert era.efile_rows == era.clean_efile_rows == 0
+    assert report.owner_decision_required
+
+
+@pytest.mark.parametrize("reparse", [False, True], ids=["ingest", "reparse"])
+def test_matched_declared_total_keeps_partial_row_defects_measurable(
+    tmp_path, initialized_db, reparse
+):
+    """Known document totals and cell quality are separate gate questions."""
+    from populus.normalize import has_parse_defect
+    from populus.parse_gate import compute_parse_gate
+
+    cache = _make_cache(
+        tmp_path, [_index_row(U1)],
+        {f"ptr_{U1}.html": _synthetic_page(
+            ROW_OK + ROW_BAD_NUMBER, "(2 transactions total)"
+        )},
+    )
+    _run_cache(initialized_db, cache)
+    if reparse:
+        initialized_db.execute(
+            "UPDATE transactions SET flags = '[]' WHERE filing_id = ?",
+            (f"senate:{U1}",),
+        )
+        initialized_db.commit()
+        reparse_senate(
+            initialized_db, raw_root=cache,
+            selector=ReparseSelector(filing=f"senate:{U1}"),
+        )
+    assert _filing(initialized_db, U1)[0] == "partial"
+    flags = _row_flags(initialized_db, U1)
+    assert all("declared_total_verified" in row_flags for row_flags in flags)
+    assert sum(has_parse_defect(row_flags) for row_flags in flags) == 1
+    report = compute_parse_gate(initialized_db)
+    era = next(e for e in report.eras if (e.chamber, e.year) == ("senate", "2026"))
+    assert era.status == "miss"
+    assert era.row_denominator_known is True
+    assert era.measurable_efile_filings == 1
+    assert era.unmeasurable_efile_filings == 0
+    assert era.efile_rows == 2
+    assert era.clean_efile_rows == 1
+    assert era.efile_parse_rate == 0.5
 
 
 def _failed_detail(summary: str) -> dict[str, int]:

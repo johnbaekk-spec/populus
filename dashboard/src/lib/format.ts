@@ -1048,22 +1048,22 @@ export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged,
    Senate parsers via `normalize_row`, the kadoa backfill via the same
    functions, backfill.py:158-172) — and ends with the site's standing rule
    that such rows stay visible. Sources, in src/populus/:
-   - date_missing: normalize.py:192-235 (`date_stats` / `normalize_dates`) —
+   - date_missing: normalize.py:198-241 (`date_stats` / `normalize_dates`) —
      the trade date is absent, not M/D/YYYY, or not a real calendar date; the
      date and the days-to-file are then NULL.
-   - side_unparsed: normalize.py:90-96 (`normalize_side`) — the type cell is
+   - side_unparsed: normalize.py:96-102 (`normalize_side`) — the type cell is
      none of the House codes P, S, S (partial), E or the Senate labels
      Purchase, Sale (Full), Sale (Partial), Exchange; the side is then "—".
-   - asset_unparsed: normalize.py:124-132 (`normalize_asset`) — the asset cell
+   - asset_unparsed: normalize.py:130-138 (`normalize_asset`) — the asset cell
      is empty; the row keeps the placeholder "(unparsed asset)".
-   - capgains_unparsed: normalize.py:270-283 (`normalize_capgains`) — the
+   - capgains_unparsed: normalize.py:276-289 (`normalize_capgains`) — the
      column is present but its box reads as neither checked nor unchecked.
    - row_incomplete: parse/house_ptr.py:330-335 (a type, date or amount cell
      is missing, or the text did not open a row of its own) and
      parse/senate_ptr.py:158-159 (a Senate row with fewer than nine cells).
    - row_orphan: parse/house_ptr.py:20-22, :334-335, :618-627 — text that
      completed no open row was kept as a row of its own (House only).
-   - owner_unparsed: normalize.py:99-106 (`normalize_owner`) — the owner cell
+   - owner_unparsed: normalize.py:105-112 (`normalize_owner`) — the owner cell
      is not blank and is none of SP, DC, JT, self (or the Senate's Spouse,
      Child, Joint); no owner is then shown. */
 const DEFECT_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {

@@ -40,6 +40,9 @@ PARSE_DEFECT_FLAGS = frozenset(
         # A printed Senate '#' cell that is not a positive integer: the row's
         # dup_seq coordinate falls back to presentation order VISIBLY (LD15).
         "source_row_no_unparsed",
+        # The document declares a different transaction total from the rows
+        # extracted: retained cells cannot establish the filing's denominator.
+        "declared_total_mismatch",
     }
 )
 SOURCE_FACT_FLAGS = frozenset(
@@ -50,6 +53,9 @@ SOURCE_FACT_FLAGS = frozenset(
         # Every transaction row of a Senate amendment filing carries this
         # until amendment semantics are settled (§9.5 conservative default).
         "amendment_unresolved",
+        # A partial Senate filing's printed total matches its extracted count;
+        # this proves the denominator without making defective cells clean.
+        "declared_total_verified",
     }
 )
 KNOWN_FLAGS = PARSE_DEFECT_FLAGS | SOURCE_FACT_FLAGS
