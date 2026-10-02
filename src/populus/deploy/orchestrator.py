@@ -1216,15 +1216,19 @@ def _fail_production_exception(
     error: Exception,
     runbook: str,
 ) -> NoReturn:
-    """Compensate an exception only after proving our promotion is serving.
+    """Compensate an exception after identifying our production promotion.
 
     An uploader can promote successfully and then fail its provider read-back.
     Conversely, a command can fail before it mutates anything. Read the provider
     again, bind one new production entry to the sealed artifact's full identity,
-    and require the live domain to serve that identity. A concurrent deployment,
-    ambiguous answer, or unavailable probe leaves the state explicitly unknown;
-    none authorizes a blind rollback over an operator's changes.
+    then settle before observing the domain. Its identity must be the attempted
+    build or the captured anchor while propagation lags. Re-read provider identities
+    after that observation so the settle cannot hide a concurrent deployment.
+    Changed identities, ambiguous answers, or unavailable probes leave state unknown;
+    none authorizes a blind rollback over an operator's changes. No new provider
+    identity means no promotion and retains the original exception's outcome.
     """
+    new_ids: set[str] | None = None
     try:
         entries = _production_entries(client)
         new_ids = set(entries) - before_ids
@@ -1254,10 +1258,39 @@ def _fail_production_exception(
             raise PagesUnavailable("the new provider deployment has no immutable URL")
         if serving_probe(candidate_url) != attempted:
             raise PagesUnavailable("the new provider deployment does not serve the sealed build")
-        if serving_probe(domain_url) != attempted:
-            raise PagesUnavailable("the live domain does not confirm the attempted promotion")
+        settle(POST_PROMOTION_SETTLE_SECONDS)
+        served = serving_probe(domain_url)
+        if served != attempted and (
+            expectation is None
+            or served != ServedIdentity(
+                build_id=expectation.observation.build_id,
+                code_sha=expectation.observation.code_sha,
+            )
+        ):
+            raise PagesUnavailable(
+                "the live domain serves neither the sealed build nor the captured anchor"
+            )
+        if set(_production_entries(client)) - before_ids != new_ids:
+            raise PagesUnavailable(
+                "production identities changed during reconciliation; "
+                "the attempted promotion is no longer uniquely identified"
+            )
     # Any reconciliation failure leaves serving state uncertain, not rollback authority.
     except Exception as reconciliation_error:  # noqa: BLE001
+        if new_ids == set():
+            outcome = getattr(
+                error,
+                "outcome",
+                REJECTED if isinstance(error, DeployError) else UNAVAILABLE,
+            )
+            not_promoted_type = PagesUnavailable if outcome == UNAVAILABLE else PagesError
+            not_promoted = not_promoted_type(
+                f"the production attempt raised {type(error).__name__}: {error}. "
+                "The provider reports no new production deployment; no promotion "
+                "occurred. No rollback was attempted"
+            )
+            not_promoted.outcome = outcome
+            raise not_promoted from error
         raise PagesUnavailable(
             f"the production attempt raised {type(error).__name__}: {error}. "
             f"Promotion could not be established: {reconciliation_error}. "
