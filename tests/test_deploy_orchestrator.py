@@ -634,6 +634,7 @@ def test_the_full_sequence_runs_in_order(harness: Harness) -> None:
         ("raw-list", "production"),
         ("upload", PREVIEW),
         ("verify", PREVIEW, PREVIEW_URL),
+        ("raw-list", "production"),
         ("upload", PRODUCTION),
         ("verify", PRODUCTION, DOMAIN_URL),
     ]
@@ -689,6 +690,184 @@ def test_both_uploads_receive_the_same_sealed_bytes(harness: Harness) -> None:
     assert preview_call.digest == production_call.digest == outcome.dist_digest
     assert preview_call.branch != production_call.branch
     assert production_call.branch == BRANCH
+
+
+# --- D2: reconcile exceptions after the production attempt -------------------
+
+
+@pytest.mark.parametrize(
+    "failure_boundary", ["upload-readback", "readiness", "settle", "verifier"]
+)
+@pytest.mark.parametrize("first_run", [False, True])
+@pytest.mark.parametrize("error_type", [PagesUnavailable, RuntimeError, AssertionError])
+def test_post_promotion_exception_uses_verified_provider_state_before_compensation(
+    harness: Harness, failure_boundary: str, first_run: bool, error_type: type[Exception]
+) -> None:
+    """A provider-confirmed, serving promotion takes the normal compensation path."""
+    if first_run:
+        harness.client.latest_id = None
+        harness.client.production_ids = ()
+    attempted = _identity(ANCHOR_SHA, "20260805.1")
+    promoted = False
+    upload = harness.upload
+    verifier = harness.verify
+
+    def fail() -> None:
+        raise error_type(f"production failure at {failure_boundary}")
+
+    def uploading(path: Path, *, environment: str, branch: str):
+        nonlocal promoted
+        result = upload(path, environment=environment, branch=branch)
+        if environment == PRODUCTION:
+            promoted = True
+            harness.client.production_ids = (result.id,) + harness.client.production_ids
+            if failure_boundary == "upload-readback":
+                fail()
+        return result
+
+    def readiness(url: str, *, stage: str) -> None:
+        if stage == PRODUCTION and failure_boundary == "readiness":
+            fail()
+
+    def settling(seconds: float) -> None:
+        if seconds == POST_PROMOTION_SETTLE_SECONDS and failure_boundary == "settle":
+            fail()
+
+    def verifying(url: str, **kwargs):
+        if kwargs["stage"] == PRODUCTION and failure_boundary == "verifier":
+            fail()
+        return verifier(url, **kwargs)
+
+    def probe(url: str):
+        if promoted and url in (DOMAIN_URL, _deployment("dep-production").url):
+            return attempted
+        return ANCHOR_IDENTITY
+
+    exception = FirstRunUncompensated if first_run else ProductionVerificationFailed
+    with pytest.raises(exception) as raised:
+        harness.run(
+            upload=uploading, await_origin=readiness, settle=settling,
+            verify=verifying, serving_probe=probe,
+        )
+
+    assert harness.upload.environments == [PREVIEW, PRODUCTION]
+    production_position = _index_of(harness.log, "upload", PRODUCTION)
+    assert ("raw-list", PRODUCTION) in harness.log[production_position + 1:]
+    assert failure_boundary in str(raised.value)
+    assert "unavailable" in str(raised.value)
+    if first_run:
+        assert harness.client.rollbacks == []
+        assert RUNBOOK in str(raised.value)
+    else:
+        assert harness.client.rollbacks == [PRIOR]
+        assert raised.value.rolled_back_to == PRIOR
+        assert raised.value.rollback_verified is True
+    assert harness.sealed_dirs == []
+
+
+def test_real_uploader_readback_exception_after_promotion_is_compensated(
+    harness: Harness,
+) -> None:
+    """Wrangler succeeds before its own provider lookup raises: the original defect."""
+    from populus.deploy.upload import WranglerUploader
+
+    promoted = False
+    commands: list[str] = []
+    attempted = _identity(ANCHOR_SHA, "20260805.1")
+
+    def runner(argv):
+        nonlocal promoted
+        environment = PRODUCTION if f"--branch={BRANCH}" in argv else PREVIEW
+        commands.append(environment)
+        if environment == PRODUCTION:
+            promoted = True
+            harness.client.production_ids = ("dep-production", PRIOR)
+        return 0, _deployment(f"dep-{environment}").url, ""
+
+    class Lookup:
+        def raw_deployments(self, environment=None):
+            if promoted:
+                raise PagesUnavailable("HTTP 503 in WranglerUploader._confirm")
+            entry = _raw_deployment("dep-preview")
+            entry["environment"] = PREVIEW
+            return [entry]
+
+    upload = WranglerUploader(
+        project="publicfilings", lookup=Lookup(),
+        executable=Path("/unused/wrangler"), runner=runner,
+    )
+
+    def probe(url: str):
+        if promoted and url in (DOMAIN_URL, _deployment("dep-production").url):
+            return attempted
+        return ANCHOR_IDENTITY
+
+    with pytest.raises(
+        ProductionVerificationFailed, match="WranglerUploader._confirm"
+    ) as raised:
+        harness.run(upload=upload, serving_probe=probe)
+
+    assert commands == [PREVIEW, PRODUCTION]
+    assert harness.verify.stages == [PREVIEW]
+    assert harness.client.rollbacks == [PRIOR]
+    assert raised.value.rollback_verified is True
+    assert harness.sealed_dirs == []
+
+
+@pytest.mark.parametrize(
+    "provider_state", ["unchanged", "unavailable", "ambiguous", "concurrent", "not-serving"]
+)
+def test_production_exception_without_confirmed_serving_promotion_never_rolls_back(
+    harness: Harness, provider_state: str
+) -> None:
+    """Creation alone, another deployment, or no provider answer is not authority to roll back."""
+    attempted = _identity(ANCHOR_SHA, "20260805.1")
+    started = False
+    upload = harness.upload
+    raw = harness.client.raw_deployments
+    provider_reads: list[bool] = []
+
+    def raw_deployments(environment=None):
+        provider_reads.append(started)
+        if started and provider_state == "unavailable":
+            raise PagesUnavailable("provider reconciliation HTTP 503")
+        return raw(environment)
+
+    harness.client.raw_deployments = raw_deployments
+
+    def uploading(path: Path, *, environment: str, branch: str):
+        nonlocal started
+        result = upload(path, environment=environment, branch=branch)
+        if environment == PRODUCTION:
+            started = True
+            if provider_state in ("ambiguous", "concurrent"):
+                harness.client.production_ids = ("dep-manual", result.id, PRIOR)
+            elif provider_state == "not-serving":
+                harness.client.production_ids = (result.id, PRIOR)
+            raise RuntimeError("production command lost its result")
+        return result
+
+    def probe(url: str):
+        if started and provider_state != "not-serving":
+            if url == _deployment("dep-production").url:
+                return attempted
+            if url == DOMAIN_URL:
+                if provider_state == "concurrent":
+                    return _identity("b" * 40, "20260901.1")
+                return attempted
+            if url == _deployment("dep-manual").url:
+                if provider_state == "ambiguous":
+                    return attempted
+                return _identity("b" * 40, "20260901.1")
+        return ANCHOR_IDENTITY
+
+    with pytest.raises(PagesUnavailable, match="No rollback was attempted"):
+        harness.run(upload=uploading, serving_probe=probe)
+
+    assert started and True in provider_reads
+    assert harness.client.rollbacks == []
+    assert harness.verify.stages == [PREVIEW]
+    assert harness.sealed_dirs == []
 
 
 # --- (8) rollback -------------------------------------------------------------
@@ -1432,6 +1611,24 @@ def test_an_unreachable_pages_api_exits_unavailable(cli: Cli) -> None:
     assert EXIT_UNAVAILABLE != EXIT_REJECTED
     assert cli.upload.calls == []
     assert cli.emitted["outcome"] == "unavailable"
+
+
+def test_an_unresolved_production_exception_exits_unavailable_without_rollback(
+    cli: Cli,
+) -> None:
+    upload = cli.upload
+
+    def uploading(path: Path, *, environment: str, branch: str):
+        result = upload(path, environment=environment, branch=branch)
+        if environment == PRODUCTION:
+            raise RuntimeError("lost production command result")
+        return result
+
+    assert cli.run(upload_factory=lambda: uploading) == EXIT_UNAVAILABLE
+    assert upload.environments == [PREVIEW, PRODUCTION]
+    assert cli.client.rollbacks == []
+    assert cli.emitted["outcome"] == "unavailable"
+    assert cli.emitted["rolled_back_to"] == ""
 
 
 def test_a_rejecting_pages_api_exits_rejected(cli: Cli) -> None:
