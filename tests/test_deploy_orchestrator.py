@@ -709,6 +709,7 @@ def test_post_promotion_exception_uses_verified_provider_state_before_compensati
         harness.client.production_ids = ()
     attempted = _identity(ANCHOR_SHA, "20260805.1")
     promoted = False
+    settle_failed = False
     upload = harness.upload
     verifier = harness.verify
 
@@ -730,7 +731,13 @@ def test_post_promotion_exception_uses_verified_provider_state_before_compensati
             fail()
 
     def settling(seconds: float) -> None:
-        if seconds == POST_PROMOTION_SETTLE_SECONDS and failure_boundary == "settle":
+        nonlocal settle_failed
+        if (
+            seconds == POST_PROMOTION_SETTLE_SECONDS
+            and failure_boundary == "settle"
+            and not settle_failed
+        ):
+            settle_failed = True
             fail()
 
     def verifying(url: str, **kwargs):
@@ -766,8 +773,9 @@ def test_post_promotion_exception_uses_verified_provider_state_before_compensati
     assert harness.sealed_dirs == []
 
 
+@pytest.mark.parametrize("domain_state", ["attempted", "anchor"])
 def test_real_uploader_readback_exception_after_promotion_is_compensated(
-    harness: Harness,
+    harness: Harness, domain_state: str,
 ) -> None:
     """Wrangler succeeds before its own provider lookup raises: the original defect."""
     from populus.deploy.upload import WranglerUploader
@@ -799,19 +807,168 @@ def test_real_uploader_readback_exception_after_promotion_is_compensated(
     )
 
     def probe(url: str):
-        if promoted and url in (DOMAIN_URL, _deployment("dep-production").url):
-            return attempted
+        if promoted:
+            harness.log.append(("reconciliation-probe", url))
+            if url == _deployment("dep-production").url:
+                return attempted
+            if url == DOMAIN_URL and domain_state == "attempted":
+                return attempted
         return ANCHOR_IDENTITY
+
+    def settling(seconds: float) -> None:
+        harness.log.append(("settle", seconds))
+
+    def observing(url: str):
+        harness.log.append(("observe", url))
+        return OBSERVATION
 
     with pytest.raises(
         ProductionVerificationFailed, match="WranglerUploader._confirm"
     ) as raised:
-        harness.run(upload=upload, serving_probe=probe)
+        harness.run(
+            upload=upload, serving_probe=probe, settle=settling, observer=observing,
+        )
 
     assert commands == [PREVIEW, PRODUCTION]
     assert harness.verify.stages == [PREVIEW]
     assert harness.client.rollbacks == [PRIOR]
     assert raised.value.rollback_verified is True
+    assert raised.value.outcome == UNAVAILABLE
+    candidate = _index_of(
+        harness.log, "reconciliation-probe", _deployment("dep-production").url,
+    )
+    promotion_settle = _index_of(harness.log, "settle", POST_PROMOTION_SETTLE_SECONDS)
+    domain_probe = _index_of(harness.log, "reconciliation-probe", DOMAIN_URL)
+    rollback = _index_of(harness.log, "rollback", PRIOR)
+    assert candidate < promotion_settle < domain_probe < rollback
+    assert ("observe", DOMAIN_URL) in harness.log[rollback + 1:]
+    assert harness.sealed_dirs == []
+
+
+@pytest.mark.parametrize("state", ["changed", "unreadable", "multiple", "settle-fails"])
+def test_sealed_candidate_with_uncertain_post_settle_state_never_rolls_back(
+    harness: Harness, state: str,
+) -> None:
+    """A sealed candidate does not authorize overwriting an unrelated domain."""
+    attempted = _identity(ANCHOR_SHA, "20260805.1")
+    started = False
+    upload = harness.upload
+
+    def uploading(path: Path, *, environment: str, branch: str):
+        nonlocal started
+        result = upload(path, environment=environment, branch=branch)
+        if environment == PRODUCTION:
+            started = True
+            harness.client.production_ids = (result.id, PRIOR)
+            if state == "multiple":
+                harness.client.production_ids = ("dep-manual", result.id, PRIOR)
+            raise PagesUnavailable("production upload read-back HTTP 503")
+        return result
+
+    def probe(url: str):
+        if started:
+            harness.log.append(("reconciliation-probe", url))
+            if url == _deployment("dep-production").url:
+                return attempted
+            if url == DOMAIN_URL:
+                return (
+                    None if state == "unreadable"
+                    else _identity("b" * 40, "20260901.1")
+                )
+        return ANCHOR_IDENTITY
+
+    def settling(seconds: float) -> None:
+        harness.log.append(("settle", seconds))
+        if state == "settle-fails":
+            raise RuntimeError("reconciliation settle failed")
+
+    with pytest.raises(PagesUnavailable, match="production state is uncertain"):
+        harness.run(upload=uploading, serving_probe=probe, settle=settling)
+
+    assert harness.upload.environments == [PREVIEW, PRODUCTION]
+    assert harness.client.rollbacks == []
+    assert harness.verify.stages == [PREVIEW]
+    if state == "multiple":
+        assert not any(event[0] == "reconciliation-probe" for event in harness.log)
+        assert not any(event[0] == "settle" for event in harness.log)
+    else:
+        candidate = _index_of(
+            harness.log, "reconciliation-probe", _deployment("dep-production").url,
+        )
+        promotion_settle = _index_of(harness.log, "settle", POST_PROMOTION_SETTLE_SECONDS)
+        assert candidate < promotion_settle
+        if state != "settle-fails":
+            assert promotion_settle < _index_of(
+                harness.log, "reconciliation-probe", DOMAIN_URL,
+            )
+    assert harness.sealed_dirs == []
+
+
+@pytest.mark.parametrize("state", ["concurrent", "unavailable", "disappeared", "stable"])
+def test_production_provider_state_is_rechecked_after_reconciliation_settle(
+    harness: Harness, state: str,
+) -> None:
+    """A lagging anchor domain cannot authorize overwriting a new manual deploy."""
+    attempted = _identity(ANCHOR_SHA, "20260805.1")
+    started = False
+    settled = False
+    upload = harness.upload
+    raw = harness.client.raw_deployments
+
+    def raw_deployments(environment=None):
+        if started:
+            harness.log.append(("production-state-read", settled))
+            if settled and state == "unavailable":
+                raise PagesUnavailable("post-settle provider HTTP 503")
+        return raw(environment)
+
+    harness.client.raw_deployments = raw_deployments
+
+    def uploading(path: Path, *, environment: str, branch: str):
+        nonlocal started
+        result = upload(path, environment=environment, branch=branch)
+        if environment == PRODUCTION:
+            started = True
+            harness.client.production_ids = (result.id, PRIOR)
+            raise PagesUnavailable("production upload read-back HTTP 503")
+        return result
+
+    def probe(url: str):
+        if started:
+            harness.log.append(("reconciliation-probe", url))
+            if url == _deployment("dep-production").url:
+                return attempted
+        # The domain still serves the captured anchor throughout the settle.
+        return ANCHOR_IDENTITY
+
+    def settling(seconds: float) -> None:
+        nonlocal settled
+        harness.log.append(("settle", seconds))
+        if seconds == POST_PROMOTION_SETTLE_SECONDS:
+            settled = True
+            if state == "concurrent":
+                harness.client.production_ids = ("dep-manual", "dep-production", PRIOR)
+            elif state == "disappeared":
+                harness.client.production_ids = (PRIOR,)
+
+    expected = ProductionVerificationFailed if state == "stable" else PagesUnavailable
+    with pytest.raises(expected) as raised:
+        harness.run(upload=uploading, serving_probe=probe, settle=settling)
+
+    assert harness.upload.environments == [PREVIEW, PRODUCTION]
+    assert harness.verify.stages == [PREVIEW]
+    promotion_settle = _index_of(harness.log, "settle", POST_PROMOTION_SETTLE_SECONDS)
+    domain_probe = _index_of(harness.log, "reconciliation-probe", DOMAIN_URL)
+    late_provider_read = _index_of(harness.log, "production-state-read", True)
+    assert promotion_settle < domain_probe < late_provider_read
+    if state == "stable":
+        assert late_provider_read < _index_of(harness.log, "rollback", PRIOR)
+        assert harness.client.rollbacks == [PRIOR]
+        assert raised.value.rollback_verified is True
+    else:
+        assert harness.client.rollbacks == []
+        assert "production state is uncertain" in str(raised.value)
+        assert "no promotion occurred" not in str(raised.value).lower()
     assert harness.sealed_dirs == []
 
 
@@ -1699,6 +1856,53 @@ def test_an_unresolved_production_exception_exits_unavailable_without_rollback(
     assert cli.client.rollbacks == []
     assert cli.emitted["outcome"] == "unavailable"
     assert cli.emitted["rolled_back_to"] == ""
+
+
+@pytest.mark.parametrize(
+    ("error_type", "exit_code", "outcome"),
+    [
+        (PagesRejected, EXIT_REJECTED, "rejected"),
+        (PagesUnavailable, EXIT_UNAVAILABLE, "unavailable"),
+        (DeployAborted, EXIT_REJECTED, "rejected"),
+        (RuntimeError, EXIT_UNAVAILABLE, "unavailable"),
+    ],
+)
+def test_zero_new_production_ids_preserve_the_original_failure_outcome(
+    cli: Cli, capsys, error_type: type[Exception], exit_code: int, outcome: str,
+) -> None:
+    """A provider-proven non-promotion is plain and retains its original verdict."""
+    started = False
+    upload = cli.upload
+    post_attempt_probes: list[str] = []
+    settles: list[float] = []
+
+    def uploading(path: Path, *, environment: str, branch: str):
+        nonlocal started
+        result = upload(path, environment=environment, branch=branch)
+        if environment == PRODUCTION:
+            started = True
+            raise error_type("provider refused or could not finish the upload")
+        return result
+
+    def probe(url: str):
+        if started:
+            post_attempt_probes.append(url)
+        return ANCHOR_IDENTITY
+
+    assert cli.run(
+        upload_factory=lambda: uploading, probe_factory=lambda: probe,
+        settle_factory=lambda: settles.append,
+    ) == exit_code
+    assert upload.environments == [PREVIEW, PRODUCTION]
+    assert cli.client.rollbacks == []
+    assert cli.emitted["outcome"] == outcome
+    assert cli.emitted["rolled_back_to"] == ""
+    assert cli.emitted["deployment_id"] == ""
+    message = capsys.readouterr().err
+    assert "no promotion occurred" in message.lower()
+    assert "provider refused or could not finish the upload" in message
+    assert "uncertain" not in message
+    assert post_attempt_probes == settles == []
 
 
 def test_a_rejecting_pages_api_exits_rejected(cli: Cli) -> None:
