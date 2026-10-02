@@ -1005,6 +1005,61 @@ def test_a_notice_only_quarter_breaks_qoq_adjacency(tmp_path):
     conn.close()
 
 
+@pytest.mark.parametrize(
+    "prior,current",
+    [
+        ("2025-12-31", "2026-06-30"),
+        ("2026-03-31", "2026-12-31"),
+        ("2026-03-30", "2026-06-30"),
+        ("2025-12-31", "2026-06-29"),
+    ],
+)
+def test_nonadjacent_quarters_have_no_comparable_prior(tmp_path, prior, current):
+    """A missing quarter cannot turn an older book into QoQ adds or exits.
+
+    Both periods must be calendar quarter ends. Current positions survive with
+    no comparable prior; prior-only positions cannot establish an exit.
+    `_agg` checks the Python and materialized SQL paths against each other.
+    """
+    conn = _db(tmp_path)
+    cik = "0000000001"
+    _filer(conn, cik)
+    for suffix in ("a", "b", "c"):
+        _security(conn, f"sec:{suffix}")
+    _load(
+        conn, fid="inst:gap-prior", cik=cik, period=prior, filed="2026-05-15",
+        holds=[
+            _hold(ordinal=1, issuer="A CO", cusip="111111111", value=1000,
+                  shares=100, security_id="sec:a"),
+            _hold(ordinal=2, issuer="B CO", cusip="222222222", value=500,
+                  shares=50, security_id="sec:b"),
+        ],
+    )
+    _load(
+        conn, fid="inst:gap-current", cik=cik, period=current, filed="2027-03-01",
+        holds=[
+            _hold(ordinal=1, issuer="A CO", cusip="111111111", value=3000,
+                  shares=300, security_id="sec:a"),
+            _hold(ordinal=2, issuer="C CO", cusip="333333333", value=700,
+                  shares=70, security_id="sec:c"),
+        ],
+    )
+    agg = _agg(conn, tmp_path)
+    rows = {r["position_key"]: r for r in _rows(agg, "SELECT * FROM agg_qoq_deltas")}
+    assert set(rows) == {"sid:sec:a", "sid:sec:c"}
+    for row in rows.values():
+        assert row["change_kind"] == "no_prior"
+        assert row["prev_value_usd"] is None
+        assert row["prev_shares"] is None
+        assert row["delta_value_usd"] is None
+        assert row["delta_shares"] is None
+    assert (rows["sid:sec:a"]["curr_value_usd"], rows["sid:sec:a"]["curr_shares"]) == (3000, 300)
+    assert _rows(agg, "SELECT * FROM agg_issuer_adds") == []
+    assert _rows(agg, "SELECT * FROM agg_book_discontinuity") == []
+    agg.close()
+    conn.close()
+
+
 def test_a_zero_position_period_still_gets_a_concentration_row(tmp_path):
     """QA-F7 / R1: every default filer-period gets a concentration row, including
     a notice-only one — total 0, NULL share/HHI, `concentration_unavailable`."""
@@ -2009,6 +2064,42 @@ def _alphabet_mapping(tmp_path):
         " verified_date: '2026-09-10', verified_by: test, method: manual}\n"
     )
     return lambda *a, **k: _load(p)
+
+
+def test_ticker_holders_do_not_compare_nonadjacent_closed_quarters(tmp_path, monkeypatch):
+    """A skipped corpus quarter supplies neither a prior holder nor a QoQ add/exit."""
+    import populus.inst_agg as m
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    conn = _db(tmp_path)
+    _filer(conn, "0000000011", "Current Holder")
+    _filer(conn, "0000000012", "Prior Holder")
+    _security(conn, "sec:goog0")
+
+    def holding(value, shares):
+        row = _hold(
+            ordinal=1, issuer="ALPHABET INC", cusip="02079K305",
+            value=value, shares=shares, security_id="sec:goog0",
+        )
+        return row.__class__(**{**row.__dict__, "title_of_class": "CL A"})
+
+    _load(conn, fid="inst:A-p", cik="0000000011", period="2025-12-31",
+          filed="2026-01-15", holds=[holding(1000, 100)])
+    _load(conn, fid="inst:A-c", cik="0000000011", period="2026-06-30",
+          filed="2026-08-15", holds=[holding(3000, 300)])
+    _load(conn, fid="inst:B-p", cik="0000000012", period="2025-12-31",
+          filed="2026-01-15", holds=[holding(500, 50)])
+    agg = _agg(conn, tmp_path)
+    (row,) = _rows(agg, "SELECT * FROM agg_ticker_holders")
+    assert (row["ticker"], row["cik"]) == ("GOOGL", "0000000011")
+    assert (row["value_usd"], row["shares"]) == (3000, 300)
+    assert row["change_kind"] == "no_prior"
+    assert row["prev_shares"] is None and row["delta_shares"] is None
+    (total,) = _rows(agg, "SELECT * FROM agg_ticker_holder_totals")
+    assert total["prev_period"] is None
+    assert (total["holder_count"], total["value_usd"], total["adds"], total["exits"]) == (1, 3000, 0, 0)
+    agg.close()
+    conn.close()
 
 
 def test_r3_ticker_holders_are_class_grain_end_to_end(tmp_path, monkeypatch):
