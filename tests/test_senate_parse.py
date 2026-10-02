@@ -350,8 +350,9 @@ def test_declared_count_mismatch_makes_filing_partial():
     assert evaluated.declared_mismatch is True
     assert evaluated.declared_total == 2
     assert evaluated.total_rows == 1
-    # No row-level defect: the mismatch alone drives the status.
-    assert all(not has_parse_defect(r.flags) for r in evaluated.rows)
+    # Persist the integrity failure so a later DB-derived gate cannot lose it.
+    assert all("declared_total_mismatch" in r.flags for r in evaluated.rows)
+    assert all(has_parse_defect(r.flags) for r in evaluated.rows)
 
 
 # --- comments -----------------------------------------------------------------

@@ -25,7 +25,7 @@ import re
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -691,7 +691,14 @@ def evaluate_page(
     except HeaderMismatchError:
         failure_kind = "header_mismatch"
     else:
+        declared_mismatch = (
+            parsed.declared_total is not None
+            and parsed.declared_total != len(parsed.rows)
+        )
         amendment_flags = frozenset({"amendment_unresolved"}) if amendment else frozenset()
+        integrity_flags = (
+            frozenset({"declared_total_mismatch"}) if declared_mismatch else frozenset()
+        )
         rows = tuple(
             normalize_row(
                 page_row.raw_row,
@@ -700,17 +707,23 @@ def evaluate_page(
                 cap_gains_column_present=False,
                 row_ordinal=page_row.row_ordinal,
                 source_row_no=page_row.source_row_no,
-                structural_flags=page_row.structural_flags | amendment_flags,
+                structural_flags=(
+                    page_row.structural_flags | amendment_flags | integrity_flags
+                ),
                 asset_display_cell=page_row.raw_asset_display,
                 asset_type_cell=page_row.asset_type_cell,
             )
             for page_row in parsed.rows
         )
         defective = [has_parse_defect(row.flags) for row in rows]
-        declared_mismatch = (
-            parsed.declared_total is not None
-            and parsed.declared_total != len(rows)
-        )
+        if any(defective) and parsed.declared_total == len(rows):
+            # A partial status alone cannot distinguish cell defects from
+            # lost rows in older seeds. Persist a matching printed total only
+            # when a partial filing needs that denominator evidence.
+            rows = tuple(
+                replace(row, flags=sorted({*row.flags, "declared_total_verified"}))
+                for row in rows
+            )
         return EvaluatedPage(
             status="partial" if any(defective) or declared_mismatch else "parsed",
             failure_kind=None,

@@ -907,7 +907,7 @@ test("F2 (M3): each defect flag's definition is its own sentence, cites the prod
     assert.ok(lines.some((l) => l.includes(flag)), `${flag}: ${cite!.file}:${cite!.from}-${cite!.to} does not mention the flag`);
   }
   // control: a citation to lines that never set the flag is caught
-  const wrong = citationOf("side_unparsed", format.replace(/- side_unparsed: normalize\.py:90-96/, "- side_unparsed: normalize.py:1-5"));
+  const wrong = citationOf("side_unparsed", format.replace(/- side_unparsed: normalize\.py:96-102/, "- side_unparsed: normalize.py:1-5"));
   const wrongLines = readFileSync(path.join(repo, "src", "populus", wrong!.file), "utf-8").split("\n").slice(wrong!.from - 1, wrong!.to);
   assert.ok(!wrongLines.some((l) => l.includes("side_unparsed")), "control: a wrong citation fails the check");
 });

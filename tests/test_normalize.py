@@ -44,12 +44,14 @@ def test_known_flags_exact_membership():
         "row_orphan",
         "text_fallback",
         "source_row_no_unparsed",
+        "declared_total_mismatch",
     }
     assert SOURCE_FACT_FLAGS == {
         "missing_ticker",
         "amount_spouse_cap",
         "date_anomaly",
         "amendment_unresolved",
+        "declared_total_verified",
     }
     assert KNOWN_FLAGS == PARSE_DEFECT_FLAGS | SOURCE_FACT_FLAGS
 

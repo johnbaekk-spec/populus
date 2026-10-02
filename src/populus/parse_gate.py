@@ -13,8 +13,9 @@ several sessions still has one answer.
 1. The **e-file filing census** — filings with ``source != 'kadoa'`` and
    ``parse_status != 'needs_ocr'`` — split into *measurable* (the document's
    expected row count is known) and *unmeasurable* (it is not: ``failed``, or
-   ``row_count`` NULL or 0). This census has no threshold. It answers a prior
-   question: is the row denominator knowable at all?
+   ``row_count`` NULL or 0, a declared-total mismatch, or a partial Senate
+   filing without matching-total evidence). This census has no threshold. It
+   answers a prior question: is the row denominator knowable at all?
 
 2. The **e-file row census** — clean rows over total rows, "clean" via
    :func:`populus.normalize.has_parse_defect`, the single source of truth for
@@ -257,6 +258,23 @@ def compute_parse_gate(
     # each measurable filing's era key is recorded here and reused verbatim
     # below, so the two censuses cannot disagree about which filings count or
     # about which era a filing belongs to.
+    # Senate retains extracted rows when its declared total disagrees. The
+    # integrity flag persists that otherwise-transient fact through ingest,
+    # reparse and seeding; a positive extracted count is not a known denominator.
+    # Older partial Senate seeds lack mismatch evidence, so they require an
+    # explicit matching-total flag before their extracted count is measurable.
+    declared_mismatches: set[str] = set()
+    declared_verified: set[str] = set()
+    for filing_id, flags in conn.execute("SELECT filing_id, flags FROM transactions"):
+        try:
+            parsed_flags = json.loads(flags)
+        except (TypeError, ValueError):
+            parsed_flags = []
+        if "declared_total_mismatch" in parsed_flags:
+            declared_mismatches.add(filing_id)
+        if "declared_total_verified" in parsed_flags:
+            declared_verified.add(filing_id)
+
     measurable_era: dict[str, tuple[str, str]] = {}
     for filing_id, chamber, year, parse_status, row_count in conn.execute(
         "SELECT filing_id, chamber, substr(filed_date, 1, 4), parse_status,"
@@ -271,6 +289,12 @@ def compute_parse_gate(
         counters["efile_filings"] += 1
         measurable = (
             parse_status != "failed"
+            and filing_id not in declared_mismatches
+            and (
+                chamber != "senate"
+                or parse_status != "partial"
+                or filing_id in declared_verified
+            )
             and isinstance(row_count, int)
             and row_count > 0
         )
