@@ -121,8 +121,21 @@ def test_recent_trades_envelope_and_dual_dates(server):
         assert rec["transaction_date"] and rec["filed_date"]  # G4: both dates
         assert rec["doc_url"]  # provenance
         assert "amount_low" in rec and "amount_high" in rec and rec["amount_label"]
-        assert "amount" not in rec or True  # no synthesized point value key
+        assert "amount" not in rec  # no synthesized point value key
         assert rec["member"]["name"]
+
+
+def test_recent_trades_point_amount_guard_rejects_a_mutated_envelope(server, monkeypatch):
+    original = env.shape_transaction
+
+    def with_point_amount(row):
+        rec = original(row)
+        rec["amount"] = rec["amount_low"]
+        return rec
+
+    monkeypatch.setattr(env, "shape_transaction", with_point_amount)
+    with pytest.raises(AssertionError):
+        test_recent_trades_envelope_and_dual_dates(server)
 
 
 def test_recent_trades_filters(server):
