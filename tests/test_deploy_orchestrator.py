@@ -755,6 +755,7 @@ def test_post_promotion_exception_uses_verified_provider_state_before_compensati
     assert ("raw-list", PRODUCTION) in harness.log[production_position + 1:]
     assert failure_boundary in str(raised.value)
     assert "unavailable" in str(raised.value)
+    assert raised.value.outcome == UNAVAILABLE
     if first_run:
         assert harness.client.rollbacks == []
         assert RUNBOOK in str(raised.value)
@@ -1154,6 +1155,7 @@ def test_an_unavailable_verification_is_not_a_pass(harness: Harness) -> None:
         harness.run()
 
     message = str(raised.value)
+    assert raised.value.outcome == UNAVAILABLE
     assert UNAVAILABLE in message
     assert REJECTED not in message
     assert harness.client.rollbacks == [PRIOR]
@@ -1572,7 +1574,71 @@ def test_a_production_verification_failure_exits_rejected(cli: Cli) -> None:
     assert cli.emitted["deployment_id"] == ""
 
 
-def test_a_first_run_failure_exits_with_its_own_code(cli: Cli, capsys) -> None:
+@pytest.mark.parametrize("failure_source", ["verdict", "real-http-503", "readiness-exception"])
+def test_unavailable_production_failure_preserves_cli_outcome_after_rollback(
+    cli: Cli, failure_source: str, monkeypatch, capsys,
+) -> None:
+    """A restored deployment does not turn a verification outage into a rejection."""
+    if failure_source == "verdict":
+        cli.verify = FakeVerifier(cli.log, plan=[True, "unavailable"])
+        code = cli.run()
+    elif failure_source == "real-http-503":
+        import httpx
+
+        from populus.deploy import verify as verification
+
+        monkeypatch.setattr(verification, "_sleep", lambda seconds: None)
+        with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(503))) as http:
+            def verifying(url: str, **kwargs):
+                if kwargs["stage"] == PREVIEW:
+                    return cli.verify(url, **kwargs)
+                return verification.verify_deployment(
+                    http, url, inventory=kwargs["inventory"],
+                    deployment=kwargs["deployment"], build_id="20260805.1",
+                    code_sha=ANCHOR_SHA, stats_bytes=(cli.source / "stats.json").read_bytes(),
+                )
+
+            code = cli.run(verifier_factory=lambda: verifying)
+    else:
+        upload = cli.upload
+        promoted = False
+        attempted = _identity(ANCHOR_SHA, "20260805.1")
+
+        def uploading(path: Path, *, environment: str, branch: str):
+            nonlocal promoted
+            result = upload(path, environment=environment, branch=branch)
+            if environment == PRODUCTION:
+                promoted = True
+                cli.client.production_ids = (result.id, PRIOR)
+            return result
+
+        def readiness(url: str, *, stage: str) -> None:
+            if stage == PRODUCTION:
+                raise PagesUnavailable("HTTP 503 during production readiness")
+
+        def probe(url: str):
+            if promoted and url in (DOMAIN_URL, _deployment("dep-production").url):
+                return attempted
+            return ANCHOR_IDENTITY
+
+        code = cli.run(
+            upload_factory=lambda: uploading, readiness_factory=lambda: readiness,
+            probe_factory=lambda: probe,
+        )
+
+    assert code == EXIT_UNAVAILABLE
+    assert cli.client.rollbacks == [PRIOR]
+    assert cli.upload.environments == [PREVIEW, PRODUCTION]
+    assert cli.emitted["outcome"] == "unavailable"
+    assert cli.emitted["rolled_back_to"] == PRIOR
+    assert cli.emitted["deployment_id"] == ""
+    message = capsys.readouterr().err
+    assert "unavailable" in message and "Rolled back" in message
+    assert "matches the pre-upload expectation exactly" in message
+
+
+@pytest.mark.parametrize("verdict", [False, "unavailable"])
+def test_a_first_run_failure_exits_with_its_own_code(cli: Cli, capsys, verdict) -> None:
     """TD-4 is not an ordinary rejection and must not page like one.
 
     Unverified bytes are serving, no rollback happened, and none was possible.
@@ -1581,7 +1647,7 @@ def test_a_first_run_failure_exits_with_its_own_code(cli: Cli, capsys) -> None:
     """
     cli.client.latest_id = None
     cli.client.production_ids = ()
-    cli.verify = FakeVerifier(cli.log, plan=[True, False])
+    cli.verify = FakeVerifier(cli.log, plan=[True, verdict])
 
     assert cli.run() == EXIT_UNCOMPENSATED
 

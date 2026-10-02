@@ -249,7 +249,8 @@ class ProductionVerificationFailed(DeployError):
     provider's rollback; ``rollback_verified`` is whether the restored
     deployment then verified. Both are attributes rather than message text
     because a caller (the job summary, the incident issue) needs them
-    structured.
+    structured. ``outcome`` retains the verification classification: restoring
+    the prior deployment does not turn an unavailable result into a rejection.
     """
 
     def __init__(
@@ -258,8 +259,10 @@ class ProductionVerificationFailed(DeployError):
         *,
         rolled_back_to: str | None = None,
         rollback_verified: bool | None = None,
+        outcome: str = REJECTED,
     ) -> None:
         super().__init__(message)
+        self.outcome = outcome
         self.rolled_back_to = rolled_back_to
         self.rollback_verified = rollback_verified
 
@@ -1301,7 +1304,7 @@ def _fail_production(
     :class:`ProductionVerificationFailed`/operator-runbook path.
     """
     if expectation is None:
-        raise FirstRunUncompensated(_td4_message(result, runbook))
+        raise FirstRunUncompensated(_td4_message(result, runbook), outcome=result.outcome)
     rollback_target = expectation.deployment_id
 
     # The provider's own object, verbatim. Reconstructing a mapping from the
@@ -1373,6 +1376,7 @@ def _fail_production(
         f"upload ({rollback_target}); {restored_state}.",
         rolled_back_to=rollback_target,
         rollback_verified=not problems,
+        outcome=result.outcome,
     )
 
 
@@ -1842,11 +1846,13 @@ def main(
         _emit_outputs(outcome=OUTCOME_UNCOMPENSATED)
         return EXIT_UNCOMPENSATED
     except ProductionVerificationFailed as exc:
+        unavailable = exc.outcome == UNAVAILABLE
         print(f"deploy: {exc}", file=sys.stderr)
         _emit_outputs(
-            outcome=OUTCOME_REJECTED, rolled_back_to=exc.rolled_back_to or ""
+            outcome=OUTCOME_UNAVAILABLE if unavailable else OUTCOME_REJECTED,
+            rolled_back_to=exc.rolled_back_to or "",
         )
-        return EXIT_REJECTED
+        return EXIT_UNAVAILABLE if unavailable else EXIT_REJECTED
     except DeployError as exc:
         print(f"deploy: {exc}", file=sys.stderr)
         _emit_outputs(outcome=OUTCOME_REJECTED)
