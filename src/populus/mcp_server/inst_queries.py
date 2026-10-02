@@ -157,6 +157,7 @@ def shape_top_holder(row: Mapping[str, Any]) -> dict[str, Any]:
     filing-level date is disclosed once per response as ``filed_through`` from
     the build watermark, not fabricated per row.
     """
+    flags = _flags(row)
     return {
         "rank": row.get("rank"),
         "cik": row.get("cik"),
@@ -168,8 +169,11 @@ def shape_top_holder(row: Mapping[str, Any]) -> dict[str, Any]:
         "value_usd": row.get("value_usd"),
         "value_unit": "USD",
         "security_count": row.get("security_count"),
-        "value_label": _VALUE_LABEL,
-        "flags": _flags(row),
+        "value_label": (
+            "partial disclosed subtotal (USD); at least one component value is undisclosed"
+            if "value_undisclosed_component" in flags else _VALUE_LABEL
+        ),
+        "flags": flags,
     }
 
 

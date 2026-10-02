@@ -28,12 +28,12 @@ import {
   breadcrumb,
   QOQ_FOOTNOTES,
   type BuildStamps } from "../src/lib/ui/index.ts";
-import { instFiledNote } from "../src/lib/ui/institutional.ts";
+import { filerTiles, holdersBody, instFiledNote } from "../src/lib/ui/institutional.ts";
 import { quarterlyFlow, sumRanges } from "../src/lib/derive.ts";
 import type { MemberEntity } from "../src/lib/derive.ts";
 import type { QoqDeltaRow, TopHolderRow } from "../src/lib/inst.ts";
 import { type TxnRow, type RenderCtx } from "../src/lib/format.ts";
-import { ledgerFigures } from "./lib/ledger-dom.ts";
+import { domOf, ledgerFigures, visibleText } from "./lib/ledger-dom.ts";
 
 const CTX: RenderCtx = { watched: new Set() };
 const STAMPS: BuildStamps = {
@@ -235,6 +235,35 @@ test("instStamp: 'Quarter ended …' (SRC §5); the newest filing travels with i
 });
 
 /* ---------- holders table (R6) ---------- */
+
+test("partial issuer holder subtotals are visible beside each value and in the combined figure", () => {
+  const partial = holder({ flags: ["value_undisclosed_component"], value_usd: 2000 });
+  const complete = holder({ rank: 2, cik: "0000000002", value_usd: 1000 });
+  const html = holdersTableHtml([partial, complete], "2026-03-31", "2026-05-15", 25);
+  const rows = domOf(html).querySelectorAll("tbody")[0]!.children;
+  assert.match(visibleText(rows[0]!.children[2]!), /partial/, "partial qualifies the actual dollar cell");
+  assert.doesNotMatch(visibleText(rows[1]!.children[2]!), /partial/, "complete control keeps its ordinary value");
+  assert.ok(html.includes("partial value"), "the flag is recognized in the visible row note");
+  const head = holdersBody("AAPL", "APPLE INC", [partial, complete], ["2026-03-31"], "2026-03-31", "2026-05-15", 25, null);
+  assert.match(ledgerFigures(head).find((f) => f.label === "Top-2 value")!.value, /partial/);
+  const completeHead = holdersBody("AAPL", "APPLE INC", [complete], ["2026-03-31"], "2026-03-31", "2026-05-15", 25, null);
+  assert.doesNotMatch(ledgerFigures(completeHead).find((f) => f.label === "Top-1 value")!.value, /partial/);
+});
+
+test("incomplete concentration keeps its disclosed subtotal and states why ratios are unavailable", () => {
+  const tiles = filerTiles({
+    cik: "0000000001", period_of_report: "2026-03-31", position_count: 3,
+    total_value_usd: 1300, null_value_positions: 1, topn_value_usd: 1300,
+    topn_share_bps: null, hhi: null, flags: ["concentration_unavailable"],
+  }, 2);
+  assert.equal(tiles[0]!.value, "$1.3K");
+  assert.match(tiles[0]!.title!, /sum of disclosed values.*1 positions carry a NULL value/);
+  assert.equal(tiles[2]!.value, "1");
+  for (const tile of tiles.slice(3, 5)) {
+    assert.equal(tile.value, "n/a ·§");
+    assert.match(tile.title!, /denominator is incomplete/);
+  }
+});
 
 test("holdersTableHtml: exactly the published columns — no Shares/Filed/Lag/doc-link", () => {
   // R22: rows carry the top/tail budget state; a top row keeps the unpadded

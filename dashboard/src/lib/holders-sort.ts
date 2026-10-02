@@ -8,27 +8,14 @@
    row with no value for the active key goes to a trailing bucket in a stated
    order, never interleaved as if it were zero.
 
-   PRECEDENT WORTH KNOWING: the sibling `IssuerHolderRow` in `holdings.ts` models
-   this correctly already — `value_usd: number | null` with a companion
-   `value_undisclosed_component` flag, commented "NULL = at least one component
-   undisclosed. Never a partial sum." That is exactly the producer-side shape
-   this module cannot synthesize for `agg_issuer_top_holders`, and it means the
-   recommended fix is not hypothetical: it exists one module over.
+   The producer keeps a disclosed subtotal in the NOT NULL value column and
+   flags `value_undisclosed_component` when any component is unknown. The table
+   visibly marks that subtotal partial; ordering uses the disclosed subtotal,
+   without claiming that it ranks the unknown complete value. Older artifacts
+   may lack this flag, which the caveat still discloses.
 
-   IMPORTANT LIMIT, found in external code review and confirmed against the
-   producer: for THIS table the rule cannot be enforced here, because the
-   collapse already happened upstream. `agg_issuer_top_holders.value_usd` is
-   declared NOT NULL and is populated with `COALESCE(SUM(value_usd), 0)`, so an
-   issuer bucket whose every holding had an undisclosed value arrives as a real
-   `0` that is indistinguishable from a genuinely reported zero. No column on
-   this row is nullable, so the trailing bucket never fires for real data.
-
-   Two consequences, both deliberate:
-     1. The bucket is kept as a GUARD, not a feature — if a future schema change
-        makes a column nullable, rows land in the bucket instead of silently
-        sorting as zero. Its test says so, rather than pretending it fires today.
-     2. The ambiguity the producer created is DISCLOSED in the table caveat
-        instead of being hidden behind a guarantee this layer cannot make. */
+   The nullable trailing bucket remains a guard for future schema changes:
+   partial subtotals are numbers, so they do not enter that bucket. */
 
 import type { TopHolderRow } from "./inst.ts";
 
@@ -131,7 +118,7 @@ export const HOLDER_ZERO_CAVEAT =
   "Values here are sums of disclosed holdings only: a holding whose value was not disclosed " +
   "is omitted from the sum rather than making it unknown, so any value may be a partial " +
   "total, and $0 means nothing disclosed at all — not necessarily a reported zero. This " +
-  "aggregate carries no signal separating a complete total from a partial one.";
+  "table marks known partial subtotals; older aggregates may omit that signal.";
 
 /** The one sentence describing the active sort, used for the status line and
     the live-region announcement. */

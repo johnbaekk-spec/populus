@@ -143,10 +143,9 @@ class _Position:
     """A filer's aggregated holding of one keyable security in one period."""
 
     value_usd: int = 0
-    #: Whether ANY constituent holding disclosed a parseable value. Without it a
-    #: position whose only value was NULL is indistinguishable from a real zero,
-    #: and the QoQ delta fabricates one.
-    has_disclosed_value: bool = False
+    #: Any unknown component makes the folded total unavailable, even when
+    #: other rows disclosed values. The internal sum is only a subtotal.
+    has_undisclosed_value: bool = False
     units: set[str] = field(default_factory=set)
     has_null_unit: bool = False
     shares_sum: int = 0
@@ -154,9 +153,10 @@ class _Position:
     cusips: set[str] = field(default_factory=set)
 
     def add(self, value_usd, ssh_prnamt, ssh_prnamt_type, cusip) -> None:
-        if value_usd is not None:
+        if value_usd is None:
+            self.has_undisclosed_value = True
+        else:
             self.value_usd += value_usd
-            self.has_disclosed_value = True
         if ssh_prnamt_type is None:
             self.has_null_unit = True
         else:
@@ -192,15 +192,15 @@ class _Position:
 
 @dataclass(frozen=True)
 class _FinalPosition:
-    value_usd: int
-    has_disclosed_value: bool
+    value_usd: int | None
     shares: int | None
     unit: str | None
     single_cusip: str | None
 
 
 def _finalize(pos: _Position) -> _FinalPosition:
-    return _FinalPosition(pos.value_usd, pos.has_disclosed_value, pos.shares,
+    value = None if pos.has_undisclosed_value else pos.value_usd
+    return _FinalPosition(value, pos.shares,
                           pos.unit, pos.single_cusip)
 
 
@@ -235,11 +235,11 @@ def _qoq_row(
     ``migrated`` (R6): the prior side is a registry-declared PREDECESSOR CIK's
     last book, not this CIK's own; every row of such a pair carries
     ``filer_migrated`` so a consumer knows the comparison basis."""
-    # A position that existed but disclosed NO parseable value must NOT
-    # difference against a fabricated zero. Absence of the
+    # A position with ANY undisclosed component must NOT difference against a
+    # partial subtotal or a fabricated zero. Absence of the
     # position is a real zero; presence with an undisclosed value is not.
-    prev_undisclosed = prev is not None and not prev.has_disclosed_value
-    curr_undisclosed = curr is not None and not curr.has_disclosed_value
+    prev_undisclosed = prev is not None and prev.value_usd is None
+    curr_undisclosed = curr is not None and curr.value_usd is None
     no_prior = prev is None and not prior_book
     prev_value = (
         None if prev_undisclosed or no_prior else (prev.value_usd if prev else 0)
@@ -688,8 +688,8 @@ WITH grouped AS (
         CASE WHEN put_call IN ('PUT','CALL') THEN put_call ELSE 'LONG' END AS put_call,
         CASE WHEN ssh_prnamt_type IN ('SH','PRN') THEN ssh_prnamt_type
              ELSE 'UNKNOWN' END AS grain_unit,
-        COALESCE(SUM(value_usd), 0) AS value_usd,
-        MAX(value_usd IS NOT NULL) AS has_disclosed_value,
+        CASE WHEN MAX(value_usd IS NULL) THEN NULL
+             ELSE SUM(value_usd) END AS value_usd,
         CASE WHEN COUNT(DISTINCT ssh_prnamt_type) = 1
                    AND SUM(ssh_prnamt_type IS NULL) = 0
              THEN MIN(ssh_prnamt_type) ELSE NULL END AS clean_unit,
@@ -718,7 +718,7 @@ WITH grouped AS (
  FROM normalized
 )
 SELECT cik, period_of_report, position_key, put_call, grain_unit,
-       value_usd, has_disclosed_value, clean_unit,
+       value_usd, clean_unit,
        CASE WHEN clean_unit IS NULL OR has_null_share OR shares_overflow
             THEN NULL ELSE {share_value} END
          AS shares,
@@ -947,13 +947,13 @@ WITH pairs AS (
 ), sides AS (
  SELECT q.*,
    CASE WHEN q.prev_id IS NULL THEN CASE WHEN q.prev_has_book THEN 0 ELSE NULL END
-        WHEN a.has_disclosed_value=0 THEN NULL ELSE a.value_usd END AS prev_value,
-   CASE WHEN q.curr_id IS NULL THEN 0 WHEN b.has_disclosed_value=0 THEN NULL ELSE b.value_usd END AS curr_value,
+        ELSE a.value_usd END AS prev_value,
+   CASE WHEN q.curr_id IS NULL THEN 0 ELSE b.value_usd END AS curr_value,
    a.shares AS prev_shares,b.shares AS curr_shares,
    (a.clean_unit IS NOT NULL AND b.clean_unit IS NOT NULL
     AND a.clean_unit=b.clean_unit AND a.shares IS NOT NULL AND b.shares IS NOT NULL) AS units_ok,
-   ((q.prev_id IS NOT NULL AND a.has_disclosed_value=0)
-    OR (q.curr_id IS NOT NULL AND b.has_disclosed_value=0)) AS value_undisclosed
+   ((q.prev_id IS NOT NULL AND a.value_usd IS NULL)
+    OR (q.curr_id IS NOT NULL AND b.value_usd IS NULL)) AS value_undisclosed
  FROM pairs q
  LEFT JOIN _populus_inst_agg_positions a ON a.rowid=q.prev_id
  LEFT JOIN _populus_inst_agg_positions b ON b.rowid=q.curr_id
@@ -1139,6 +1139,7 @@ def _build_inst_agg_python(
             {
                 "source": source,
                 "value_usd": 0,
+                "value_undisclosed_component": False,
                 "tokens": set(),
                 # R9: every contributing name, weighted by holding row; the
                 # display name is chosen by `display_issuer_name` at emission.
@@ -1147,6 +1148,8 @@ def _build_inst_agg_python(
         )
         if value_usd is not None:
             bucket["value_usd"] += value_usd
+        else:
+            bucket["value_undisclosed_component"] = True
         bucket["tokens"].add(pk if pk is not None else f"row:{holding_id}")
         bucket["names"].append(issuer_name_raw)
 
@@ -1588,6 +1591,8 @@ def _issuer_rows(
                 flags.add("issuer_from_cusip6")
             elif data["source"] == "name":
                 flags.add("issuer_from_name")
+            if data["value_undisclosed_component"]:
+                flags.add("value_undisclosed_component")
             rows.append(
                 (
                     issuer_key,
@@ -1609,7 +1614,7 @@ def _issuer_rows(
 def _concentration_rows(
     conc: dict[tuple[str, str], dict], topn: int, ingested_at: str
 ) -> list[tuple]:
-    """Per-filer concentration; NULL top-N share and HHI when the total is 0."""
+    """Concentration ratios require a complete, positive disclosed total."""
     rows: list[tuple] = []
     for (cik, period), data in sorted(conc.items()):
         total = data["total_value_usd"]
@@ -1617,7 +1622,7 @@ def _concentration_rows(
         # split-across-rows holding is one weight, not several.
         values = sorted(data["values"].values(), reverse=True)
         flags: set[str] = set()
-        if total > 0:
+        if total > 0 and data["null_value_positions"] == 0:
             topn_value = sum(values[:topn])
             topn_share_bps = topn_value * 10000 // total
             hhi = sum(v * v for v in values) * 10000 // (total * total)
@@ -2131,6 +2136,7 @@ def _create_issuer_stages(
         " cik TEXT NOT NULL, period_of_report TEXT NOT NULL,"
         " issuer_key TEXT NOT NULL, issuer_key_source TEXT NOT NULL,"
         " issuer_name_raw TEXT NOT NULL, value_usd INTEGER NOT NULL,"
+        " value_undisclosed_component INTEGER NOT NULL,"
         " security_count INTEGER NOT NULL)"
     )
     source.execute(
@@ -2151,9 +2157,9 @@ def _create_issuer_stages(
         f"   AND entity_link_state='resolved') OR length(cusip)>=6))"
         f" INSERT INTO _populus_inst_agg_issuer_holders"
         f" (cik,period_of_report,issuer_key,issuer_key_source,"
-        f"  issuer_name_raw,value_usd,security_count)"
+        f"  issuer_name_raw,value_usd,value_undisclosed_component,security_count)"
         f" SELECT cik,period_of_report,issuer_key,issuer_key_source,"
-        f"        MIN(issuer_name_raw),COALESCE(SUM(value_usd),0),"
+        f"        MIN(issuer_name_raw),COALESCE(SUM(value_usd),0),MAX(value_usd IS NULL),"
         f"        COUNT(DISTINCT security_token) FROM keyed"
         f" GROUP BY cik,period_of_report,issuer_key,issuer_key_source,"
         f"          issuer_key_source"
@@ -2163,7 +2169,7 @@ def _create_issuer_stages(
         " cik TEXT NOT NULL, period_of_report TEXT NOT NULL,"
         " normalized_name TEXT NOT NULL, issuer_name_raw TEXT NOT NULL,"
         " value_usd INTEGER NOT NULL, security_token TEXT NOT NULL,"
-        " row_count INTEGER NOT NULL)"
+        " row_count INTEGER NOT NULL, value_undisclosed_component INTEGER NOT NULL)"
     )
     cursor = source.execute(
         f"WITH keyed AS (SELECT cik,period_of_report,issuer_name_raw,value_usd,"
@@ -2175,7 +2181,8 @@ def _create_issuer_stages(
         f" AND NOT (entity_id IS NOT NULL AND entity_link_state='resolved')"
         f" AND (cusip IS NULL OR length(cusip)<6))"
         f" SELECT cik,period_of_report,issuer_name_raw,"
-        f"        COALESCE(SUM(value_usd),0),security_token,COUNT(*) FROM keyed"
+        f"        COALESCE(SUM(value_usd),0),security_token,COUNT(*),"
+        f"        MAX(value_usd IS NULL) FROM keyed"
         f" GROUP BY cik,period_of_report,issuer_name_raw,security_token"
     )
     while True:
@@ -2184,21 +2191,22 @@ def _create_issuer_stages(
         if not batch:
             break
         normalized = [
-            (row[0], row[1], _norm_issuer_name(row[2]), row[2], row[3], row[4], row[5])
+            (row[0], row[1], _norm_issuer_name(row[2]), row[2], row[3], row[4], row[5], row[6])
             for row in batch
         ]
         source.executemany(
             "INSERT INTO _populus_inst_agg_issuer_names"
             " (cik,period_of_report,normalized_name,issuer_name_raw,"
-            "  value_usd,security_token,row_count) VALUES (?,?,?,?,?,?,?)",
+            "  value_usd,security_token,row_count,value_undisclosed_component)"
+            " VALUES (?,?,?,?,?,?,?,?)",
             normalized,
         )
     source.execute(
         "INSERT INTO _populus_inst_agg_issuer_holders"
         " (cik,period_of_report,issuer_key,issuer_key_source,"
-        "  issuer_name_raw,value_usd,security_count)"
+        "  issuer_name_raw,value_usd,value_undisclosed_component,security_count)"
         " SELECT cik,period_of_report,'name:' || normalized_name,'name',"
-        "        MIN(issuer_name_raw),SUM(value_usd),"
+        "        MIN(issuer_name_raw),SUM(value_usd),MAX(value_undisclosed_component),"
         "        COUNT(DISTINCT security_token)"
         " FROM _populus_inst_agg_issuer_names"
         " GROUP BY cik,period_of_report,normalized_name"
@@ -2305,10 +2313,11 @@ def _write_bulk_issuers(
         " SELECT x.issuer_key,x.period_of_report,x.rank,x.cik,"
         "        COALESCE(f.name_raw,x.cik),x.issuer_name_raw,x.issuer_key_source,"
         "        x.value_usd,x.security_count,"
-        "        CASE x.issuer_key_source"
-        "          WHEN 'cusip6' THEN '[\"issuer_from_cusip6\"]'"
-        "          WHEN 'name' THEN '[\"issuer_from_name\"]'"
-        "          ELSE '[]' END,?"
+        "        '[' || rtrim(CASE x.issuer_key_source"
+        "          WHEN 'cusip6' THEN '\"issuer_from_cusip6\",'"
+        "          WHEN 'name' THEN '\"issuer_from_name\",'"
+        "          ELSE '' END || CASE WHEN x.value_undisclosed_component"
+        "          THEN '\"value_undisclosed_component\",' ELSE '' END, ',') || ']',?"
         " FROM ranked x LEFT JOIN main.inst_filers f ON f.cik=x.cik"
         " WHERE x.rank<=?"
         " ORDER BY x.issuer_key,x.period_of_report,x.rank",
@@ -2496,7 +2505,7 @@ def _concentration_from_bulk_row(row: tuple, ingested_at: str) -> tuple:
     topn_value = row[5]
     max_value = row[6]
     square_sum = sum(int(row[7 + i]) * (_BASE ** i) for i in range(13))
-    if total > 0:
+    if total > 0 and row[4] == 0:
         topn_share = topn_value * 10_000 // total
         hhi = square_sum * 10_000 // (total * total)
         max_share = max_value * 10_000 // total if max_value is not None else 0

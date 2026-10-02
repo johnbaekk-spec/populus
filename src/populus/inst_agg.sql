@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
   issuer_name       TEXT NOT NULL,                -- representative raw issuer name
   issuer_key_source TEXT NOT NULL                 -- entity | cusip6 | name
       CHECK (issuer_key_source IN ('entity','cusip6','name')),
-  value_usd         INTEGER NOT NULL,             -- filer's summed value in this issuer
+  value_usd         INTEGER NOT NULL,             -- disclosed subtotal; any NULL component is flagged
   security_count    INTEGER NOT NULL,             -- distinct securities the filer holds of it
   flags             TEXT NOT NULL,                -- canonical sorted JSON array
   ingested_at       TEXT NOT NULL,                -- volatile; excluded from the projection
@@ -165,8 +165,8 @@ CREATE TABLE IF NOT EXISTS agg_issuer_top_holders (
 -- relationship is still counted exactly once.
 --
 -- Per-filer portfolio concentration: top-N share (basis points) and an integer
--- HHI, computed ONLY when total_value_usd > 0; when the total is 0 (or every
--- value is NULL) both are stored NULL + concentration_unavailable — the digest
+-- HHI, computed ONLY for a complete positive total; when any value is NULL or
+-- the total is 0 both are stored NULL + concentration_unavailable — the digest
 -- keeps that NULL distinct from a real 0, and the build never divides by zero.
 -- The recently-added-issuers leaderboard, one row per
 -- (period, mode, issuer). `mode` is a stored dimension rather than a filter
@@ -293,8 +293,8 @@ CREATE TABLE IF NOT EXISTS agg_filer_concentration (
   total_value_usd      INTEGER NOT NULL,          -- COALESCE(SUM(value_usd), 0) over non-NULL
   null_value_positions INTEGER NOT NULL,
   topn_value_usd       INTEGER NOT NULL,          -- summed value of the top-N positions
-  topn_share_bps       INTEGER,                   -- topn/total in bps; NULL when total <= 0
-  hhi                  INTEGER,                   -- integer HHI in bps; NULL when total <= 0
+  topn_share_bps       INTEGER,                   -- NULL when any value is unknown or total <= 0
+  hhi                  INTEGER,                   -- NULL when any value is unknown or total <= 0
   -- The LARGEST SINGLE position's share, which is what
   -- the outsized-position flag compares against. topn_share_bps is a COMBINED
   -- top-N share and is a different statistic entirely — a book of five 10%
