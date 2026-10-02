@@ -950,6 +950,8 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   capgains_unparsed: { label: "cap-gains unparsed", cls: "dashed" },
   row_incomplete: { label: "row incomplete", cls: "dashed" },
   row_orphan: { label: "row orphan", cls: "dashed" },
+  declared_total_mismatch: { label: "filing total mismatch", cls: "dashed" },
+  declared_total_verified: { label: "filing total verified", cls: "solid" },
   // Producer institutional flags (inst_agg.py, docs/qoq-presentation.md):
   // source facts and parse defects in the same two visual classes as above.
   value_undisclosed_one_side: { label: "value undisclosed one side", cls: "dashed" },
@@ -1025,7 +1027,9 @@ export function flagChips(
    visible (M1 review, coordinator ruling on D7). The text is ONLY copy the
    site already publishes — no new wording (per-flag copy would be M3's) — and
    each constant below is the one source for its sentence, used at the site it
-   came from as well as here, so the two cannot drift. `format-flag-defs` in
+   came from as well as here, so the two cannot drift. The definitions of
+   declared-total flags follow their cited producer instead.
+   `format-flag-defs` in
    `test/ledger-system.test.ts` pins every definition to its published source. */
 
 /** The reference feed's Ticker column note. */
@@ -1043,8 +1047,9 @@ export const DATE_ANOMALY_NOTE = "impossible trade dates";
 /** The methodology page's known-limits line on every defect flag. */
 export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged, never dropped";
 
-/* The seven defect flags, one sentence each (DESIGN-POLISH M3, carried item
-   F2 from M1). Each sentence is derived ONLY from the producer code that sets
+/* The defect flags with definitions, one sentence each (DESIGN-POLISH M3,
+   carried item F2 from M1, plus the Senate transaction-count check).
+   Each sentence is derived ONLY from the producer code that sets
    the flag — every congress row goes through these normalizers (the House and
    Senate parsers via `normalize_row`, the kadoa backfill via the same
    functions, backfill.py:158-172) — and ends with the site's standing rule
@@ -1066,7 +1071,9 @@ export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged,
      completed no open row was kept as a row of its own (House only).
    - owner_unparsed: normalize.py:105-112 (`normalize_owner`) — the owner cell
      is not blank and is none of SP, DC, JT, self (or the Senate's Spouse,
-     Child, Joint); no owner is then shown. */
+     Child, Joint); no owner is then shown.
+   - declared_total_mismatch: ingest/senate.py:694-700 (`evaluate_page`) —
+     the printed transaction count differs from the extracted row count. */
 const DEFECT_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
   date_missing:
     /* W-8 (M3 review): the producer reads M/D/YYYY only (`_MDY`), so a date
@@ -1089,6 +1096,9 @@ const DEFECT_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
   owner_unparsed:
     "The filing's owner cell holds a value that is none of the owner codes (SP, DC, JT, self, or the Senate's Spouse, Child, Joint), so no owner is shown; " +
     DEFECT_FLAG_NOTE + ".",
+  declared_total_mismatch:
+    "The Senate filing's printed transaction total differs from the number of extracted rows, so the filing's transaction count is unverified; " +
+    DEFECT_FLAG_NOTE + ".",
 };
 
 /** The definition each congress flag chip opens. A flag with no entry keeps a
@@ -1099,6 +1109,10 @@ export const FEED_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
   amount_unparsed: AMOUNT_UNPARSED_SPOKEN,
   amendment_unresolved: AMENDMENT_PENDING_NOTE,
   date_anomaly: DATE_ANOMALY_NOTE,
+  // Source fact, not a claim that defective cells are clean:
+  // - declared_total_verified: ingest/senate.py:718-725 (`evaluate_page`)
+  declared_total_verified:
+    "The Senate filing's printed transaction total matches the number of extracted rows; cell defects remain flagged.",
   ...DEFECT_FLAG_DEFINITIONS,
 };
 

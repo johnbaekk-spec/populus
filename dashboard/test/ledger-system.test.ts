@@ -38,6 +38,7 @@ import {
   DATE_ANOMALY_NOTE,
   DEFECT_FLAG_NOTE,
   flagChips,
+  UNKNOWN_FLAG_LABEL,
 } from "../src/lib/format.ts";
 import { BANNED_PATTERNS, redactFiledNames } from "./lib/banned-scan.ts";
 
@@ -832,7 +833,8 @@ test("D7 ruling: every flag chip in a reference feed row opens its OWN definitio
   assert.ok((byWord.get("row orphan") ?? "").endsWith(`${DEFECT_FLAG_NOTE}.`));
   // every congress flag the feed can carry has a definition
   const congressFlags = ["amendment_unresolved", "missing_ticker", "amount_spouse_cap", "amount_unparsed", "date_missing",
-    "date_anomaly", "side_unparsed", "asset_unparsed", "capgains_unparsed", "row_incomplete", "row_orphan", "owner_unparsed"];
+    "date_anomaly", "side_unparsed", "asset_unparsed", "capgains_unparsed", "row_incomplete", "row_orphan", "owner_unparsed",
+    "declared_total_mismatch", "declared_total_verified"];
   assert.deepEqual(flagChips(congressFlags).filter((c) => !FEED_FLAG_DEFINITIONS[c.key]).map((c) => c.key), []);
   // control: a chip with no trigger is caught
   assert.equal(chipNotes(`<span class="flag solid">no ticker</span>`)[0]!.id, null, "control");
@@ -866,21 +868,24 @@ function unpublishedDefinitions(defs: Readonly<Record<string, string>>): string[
   return out;
 }
 
-/* The seven defect flags whose definitions the coordinator allowed as NEW copy
-   (DESIGN-POLISH M3, carried F2) — ONLY where the sentence can be derived from
-   the code that sets the flag, with the line cited. */
-const DEFECT_FLAGS = ["date_missing", "side_unparsed", "asset_unparsed", "capgains_unparsed", "row_incomplete", "row_orphan", "owner_unparsed"] as const;
+/* The original seven defect definitions (DESIGN-POLISH M3) plus the declared
+   total mismatch requested in audit Phase 2 F2: new copy is allowed ONLY where
+   the sentence follows the producer code that sets the flag, with a citation. */
+const DEFECT_FLAGS = ["date_missing", "side_unparsed", "asset_unparsed", "capgains_unparsed", "row_incomplete", "row_orphan", "owner_unparsed", "declared_total_mismatch"] as const;
+/* Phase 2 F2 explicitly requests a definition for this source fact too; its
+   producer citation and distinction from a defect are checked below. */
+const NEW_SOURCE_FACT_FLAGS = ["declared_total_verified"] as const;
 
 /** The producer file and line range `format.ts` cites for `flag`, or null. */
 function citationOf(flag: string, format: string): { file: string; from: number; to: number } | null {
-  const m = new RegExp(`- ${flag}: ((?:parse/)?[a-z_]+\\.py):(\\d+)(?:-(\\d+))?`).exec(format);
+  const m = new RegExp(`- ${flag}: ((?:parse/|ingest/)?[a-z_]+\\.py):(\\d+)(?:-(\\d+))?`).exec(format);
   return m ? { file: m[1]!, from: Number(m[2]), to: Number(m[3] ?? m[2]) } : null;
 }
 
 test("D7 ruling: every flag definition is copy the site already publishes — no new wording", () => {
-  /* Unchanged for every flag but the seven defect flags: their definitions are
-     the site's own published sentences. */
-  const published = Object.fromEntries(Object.entries(FEED_FLAG_DEFINITIONS).filter(([k]) => !(DEFECT_FLAGS as readonly string[]).includes(k)));
+  /* Unchanged outside the explicitly authorized, source-cited definitions. */
+  const newCopy: readonly string[] = [...DEFECT_FLAGS, ...NEW_SOURCE_FACT_FLAGS];
+  const published = Object.fromEntries(Object.entries(FEED_FLAG_DEFINITIONS).filter(([k]) => !newCopy.includes(k)));
   assert.deepEqual(unpublishedDefinitions(published), []);
   assert.equal(
     unpublishedDefinitions({ missing_ticker: "a row whose filing could not be joined" }).length,
@@ -893,7 +898,7 @@ test("F2 (M3): each defect flag's definition is its own sentence, cites the prod
   const format = readFileSync(path.join(SRC, "lib", "format.ts"), "utf-8");
   const repo = path.resolve(SRC, "..", "..");
   const texts = DEFECT_FLAGS.map((f) => FEED_FLAG_DEFINITIONS[f] ?? "");
-  assert.equal(new Set(texts).size, DEFECT_FLAGS.length, "seven different definitions — none shares a line");
+  assert.equal(new Set(texts).size, DEFECT_FLAGS.length, "different definitions — none shares a line");
   for (const flag of DEFECT_FLAGS) {
     const text = FEED_FLAG_DEFINITIONS[flag]!;
     assert.notEqual(text, DEFECT_FLAG_NOTE, `${flag}: its own definition, not the shared line`);
@@ -910,6 +915,60 @@ test("F2 (M3): each defect flag's definition is its own sentence, cites the prod
   const wrong = citationOf("side_unparsed", format.replace(/- side_unparsed: normalize\.py:96-102/, "- side_unparsed: normalize.py:1-5"));
   const wrongLines = readFileSync(path.join(repo, "src", "populus", wrong!.file), "utf-8").split("\n").slice(wrong!.from - 1, wrong!.to);
   assert.ok(!wrongLines.some((l) => l.includes("side_unparsed")), "control: a wrong citation fails the check");
+});
+
+/** Read the actual normalizer taxonomy, rather than maintain another Congress
+    flag list in the dashboard. This parity check is scoped to Phase 2 F2. */
+function producerFlagSet(source: string, name: string): Set<string> {
+  const block = new RegExp(`\\b${name} = frozenset\\(\\s*\\{([\\s\\S]*?)\\}\\s*\\)`).exec(source);
+  assert.ok(block, `${name}: the producer set was read`);
+  return new Set([...block[1]!.matchAll(/"([a-z][a-z0-9_]*)"/g)].map((m) => m[1]!));
+}
+
+test("audit F2: declared-total flag presentation agrees with the normalizer's defect/source-fact vocabulary", () => {
+  const repo = path.resolve(SRC, "..", "..");
+  const source = readFileSync(path.join(repo, "src", "populus", "normalize.py"), "utf-8");
+  const defects = producerFlagSet(source, "PARSE_DEFECT_FLAGS");
+  const facts = producerFlagSet(source, "SOURCE_FACT_FLAGS");
+  assert.ok(defects.has("declared_total_mismatch") && !facts.has("declared_total_mismatch"));
+  assert.ok(facts.has("declared_total_verified") && !defects.has("declared_total_verified"));
+  assert.deepEqual(flagChips(["declared_total_mismatch", "declared_total_verified"]), [
+    { key: "declared_total_mismatch", label: "filing total mismatch", cls: "dashed" },
+    { key: "declared_total_verified", label: "filing total verified", cls: "solid" },
+  ]);
+  for (const flag of ["declared_total_mismatch", "declared_total_verified"]) assert.ok(FEED_FLAG_DEFINITIONS[flag]);
+  // Control: deleting a producer vocabulary member is observable by this read.
+  const missing = source.replace('"declared_total_mismatch",', "");
+  assert.ok(!producerFlagSet(missing, "PARSE_DEFECT_FLAGS").has("declared_total_mismatch"));
+});
+
+test("audit F2: declared-total chips open their own definitions and verified totals carry no defect warning", () => {
+  const format = readFileSync(path.join(SRC, "lib", "format.ts"), "utf-8");
+  const repo = path.resolve(SRC, "..", "..");
+  for (const [flag, label, style] of [
+    ["declared_total_mismatch", "filing total mismatch", "dashed"],
+    ["declared_total_verified", "filing total verified", "solid"],
+  ] as const) {
+    const row = txnRowHtml({ ...FEED_ROW, flags: [flag], low: 1001, high: 15000 } as never,
+      { referenceFeed: true, watched: new Set<string>() });
+    const chips = chipNotes(row);
+    assert.equal(chips.length, 1, `${flag}: one visible chip`);
+    assert.equal(chips[0]!.word, label);
+    assert.ok(chips[0]!.id, `${flag}: the visible label opens its definition`);
+    assert.equal(chips[0]!.text, FEED_FLAG_DEFINITIONS[flag]);
+    assert.ok([...walk(parse(row))].some((e) => cls(e).has("flag") && cls(e).has(style)), `${flag}: ${style} presentation`);
+    assert.ok(!row.includes(UNKNOWN_FLAG_LABEL), `${flag}: no generic unknown warning`);
+    const cite = citationOf(flag, format);
+    assert.ok(cite, `${flag}: the new definition cites its producer`);
+    const lines = readFileSync(path.join(repo, "src", "populus", cite!.file), "utf-8")
+      .split("\n").slice(cite!.from - 1, cite!.to);
+    assert.ok(lines.some((line) => line.includes(flag)), `${flag}: the citation names the flag`);
+  }
+  assert.match(FEED_FLAG_DEFINITIONS.declared_total_mismatch!, /printed transaction total differs from the number of extracted rows/);
+  assert.ok(FEED_FLAG_DEFINITIONS.declared_total_mismatch!.endsWith(`; ${DEFECT_FLAG_NOTE}.`));
+  assert.match(FEED_FLAG_DEFINITIONS.declared_total_verified!, /printed transaction total matches the number of extracted rows/);
+  assert.match(FEED_FLAG_DEFINITIONS.declared_total_verified!, /cell defects remain flagged/);
+  assert.ok(!FEED_FLAG_DEFINITIONS.declared_total_verified!.includes(DEFECT_FLAG_NOTE));
 });
 
 /* ---- C-13: the ledger region styles only what the renderers emit ---- */
