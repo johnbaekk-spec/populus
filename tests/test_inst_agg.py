@@ -1271,6 +1271,109 @@ def test_an_undisclosed_prior_value_does_not_fabricate_a_move(tmp_path):
     assert "change_kind_undeterminable" not in row["flags"]
 
 
+@pytest.mark.parametrize("undisclosed_period", ["2025-12-31", "2026-03-31"])
+@pytest.mark.parametrize("issuer_key_source", ["cusip6", "name"])
+def test_mixed_position_values_withhold_deltas_and_mark_subtotals(tmp_path, monkeypatch, undisclosed_period, issuer_key_source):
+    """One unknown component makes a folded value unknown, on either side.
+
+    Share changes remain measured. Explicit disclosed-subtotal contracts keep
+    their sums/counts; incomplete concentration ratios are unavailable, and
+    issuer adds/holders carry a partial marker through their actual consumers.
+    """
+    import populus.inst_agg as m
+    from populus.inst_serving import build_serving_projection
+    from populus.mcp_server.inst_queries import (
+        shape_concentration,
+        shape_qoq_row,
+        shape_top_holder,
+    )
+
+    monkeypatch.setattr(m, "load_ticker_mapping", _alphabet_mapping(tmp_path))
+    conn = _db(tmp_path)
+    cik = "0000000011"
+    _filer(conn, cik, "Mixed Value Filer")
+    for security in ("sec:a", "sec:c"):
+        _security(conn, security)
+
+    def holding(ordinal, value, shares, klass="CL A"):
+        row = _hold(
+            ordinal=ordinal, issuer="ALPHABET INC",
+            cusip=("02079K305" if klass == "CL A" else "02079K107") if issuer_key_source == "cusip6" else None,
+            value=value, shares=shares,
+            security_id="sec:a" if klass == "CL A" else "sec:c",
+        )
+        return row.__class__(**{**row.__dict__, "title_of_class": klass})
+
+    for period, filed, value, shares, other in (
+        ("2025-12-31", "2026-01-15", 1000, 100, 300),
+        ("2026-03-31", "2026-05-16", 1100, 120, 600),
+    ):
+        holds = [holding(1, value, shares), holding(2, other, other // 10, "CL C")]
+        if period == undisclosed_period:
+            holds.append(holding(3, None, 10))
+        _load(conn, fid=f"inst:mixed-{period}", cik=cik, period=period, filed=filed, holds=holds)
+
+    agg = _agg(conn, tmp_path)
+    qoq = {r["position_key"]: r for r in _rows(agg, "SELECT * FROM agg_qoq_deltas")}
+    row = qoq["sid:sec:a"]
+    unknown_field = "prev_value_usd" if undisclosed_period == "2025-12-31" else "curr_value_usd"
+    assert row[unknown_field] is None
+    assert row["delta_value_usd"] is None
+    assert "value_undisclosed_one_side" in json.loads(row["flags"])
+    assert row["change_kind"] == "add"
+    assert row["delta_shares"] == (10 if undisclosed_period == "2025-12-31" else 30)
+    assert qoq["sid:sec:c"]["delta_value_usd"] == 300
+    shaped = shape_qoq_row(row)
+    assert shaped["delta_value_usd"] is None and shaped["delta_value_known"] is False
+    assert "value_undisclosed_one_side" in shaped["flags"]
+
+    (added,) = _rows(agg, "SELECT * FROM agg_issuer_adds WHERE mode='all'")
+    assert (added["delta_value_usd"], added["delta_value_is_partial"]) == (300, 1)
+    (registry,) = _rows(agg, "SELECT * FROM agg_filer_registry")
+    assert (registry["total_value_usd"], registry["null_value_positions"]) == (3000, 1)
+    concentration = {r["period_of_report"]: r for r in _rows(agg, "SELECT * FROM agg_filer_concentration")}
+    incomplete = concentration[undisclosed_period]
+    subtotal = 1300 if undisclosed_period == "2025-12-31" else 1700
+    assert (incomplete["total_value_usd"], incomplete["topn_value_usd"], incomplete["null_value_positions"]) == (subtotal, subtotal, 1)
+    assert all(incomplete[key] is None for key in ("topn_share_bps", "hhi", "max_position_share_bps"))
+    assert "concentration_unavailable" in json.loads(incomplete["flags"])
+    assert shape_concentration(incomplete)["hhi"] is None
+    complete_period = "2026-03-31" if undisclosed_period == "2025-12-31" else "2025-12-31"
+    assert concentration[complete_period]["hhi"] is not None
+
+    (holder,) = _rows(agg, "SELECT * FROM agg_issuer_top_holders WHERE period_of_report=?", (undisclosed_period,))
+    assert holder["issuer_key_source"] == issuer_key_source
+    assert holder["value_usd"] == subtotal
+    assert "value_undisclosed_component" in json.loads(holder["flags"])
+    holder_record = shape_top_holder(holder)
+    assert holder_record["value_usd"] == subtotal
+    assert "partial disclosed subtotal" in holder_record["value_label"]
+    assert "value_undisclosed_component" in holder_record["flags"]
+
+    ticker_holders = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holders")}
+    ticker_totals = {r["ticker"]: r for r in _rows(agg, "SELECT * FROM agg_ticker_holder_totals")}
+    expected_a = None if undisclosed_period == "2026-03-31" else 1100
+    assert ticker_holders["GOOGL"]["value_usd"] == expected_a
+    # This table explicitly sums disclosed holder values, excluding NULLs.
+    assert ticker_totals["GOOGL"]["value_usd"] == (0 if expected_a is None else expected_a)
+    assert ticker_holders["GOOG"]["value_usd"] == ticker_totals["GOOG"]["value_usd"] == 600
+
+    conn.execute("ATTACH DATABASE ? AS inst_agg", (str(tmp_path / "inst_agg.db"),))
+    try:
+        serving = build_serving_projection(conn, periods=("2025-12-31", "2026-03-31"))
+    finally:
+        conn.execute("DETACH DATABASE inst_agg")
+    (activity,) = [r for r in serving.activity_rows if r["position_key"] == "sid:sec:a"]
+    assert activity[unknown_field] is None and activity["delta_value_usd"] is None
+    assert "value_undisclosed_one_side" in activity["flags"]
+    (serving_holder,) = [r for r in serving.issuer_holder_rows if r["period"] == undisclosed_period]
+    assert serving_holder["value_usd"] is None
+    assert serving_holder["value_undisclosed_component"] is True
+    assert serving_holder["issuer_dedup_total_usd"] is None
+    agg.close()
+    conn.close()
+
+
 # --- F4: a REFUSED clobber leaves the source byte-identical -------------------
 #
 # External review round 2, F4. M2-7 made `ensure_views` a WRITER: it replaces a

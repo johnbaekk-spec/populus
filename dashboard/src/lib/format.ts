@@ -953,6 +953,7 @@ const FLAG_PRESENTATION: Record<string, { label: string; cls: "amber" | "solid" 
   // Producer institutional flags (inst_agg.py, docs/qoq-presentation.md):
   // source facts and parse defects in the same two visual classes as above.
   value_undisclosed_one_side: { label: "value undisclosed one side", cls: "dashed" },
+  value_undisclosed_component: { label: "partial value", cls: "dashed" },
   shares_unit_mismatch: { label: "unit mismatch", cls: "dashed" },
   // R8 RETIRED the behaviour this flag named: a position whose share count did
   // not change is no longer classified as a trade from its reported value, it

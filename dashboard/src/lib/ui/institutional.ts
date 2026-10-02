@@ -134,12 +134,13 @@ export function holdersBody(
 ): string {
   const active = holders.filter((h) => h.period_of_report === period);
   const totalValue = active.reduce((sum, h) => sum + h.value_usd, 0);
+  const partialValue = active.some((h) => h.flags.includes("value_undisclosed_component"));
   /* DESIGN-POLISH M2 (R15): the page header's figures through the ONE ledger. */
   const ledger = disclosureLedger(
     [
       {
         label: `Top-${fmtInt(active.length)} value`,
-        value: fmtUsd(totalValue),
+        value: `${fmtUsd(totalValue)}${partialValue ? " · partial" : ""}`,
         detail: "",
         noteHtml: esc(`summed reported value of the ranked holders for ${period}; NULL-value positions are excluded from sums by the producer and surfaced beside them`),
       },
@@ -223,7 +224,7 @@ export function holdersTableHtml(
         // ONE href primitive (filerHref): tier rides on the row through the SSR call
         // AND the embedded period payload, so both renders link identically.
         `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.filer_name)}</a></td>` +
-        `<td class="c-num c-strong has-marks">${esc(fmtUsd(h.value_usd))}</td>` +
+        `<td class="c-num c-strong has-marks">${esc(fmtUsd(h.value_usd))}${h.flags.includes("value_undisclosed_component") ? ' <span class="mono-note">partial</span>' : ""}</td>` +
         `<td class="c-num has-marks">${fmtInt(h.security_count)}</td>` +
         `<td class="c-keysrc c-secondary"><span class="mono-note">${esc(h.issuer_key_source)}</span></td>` +
         (hasFlags ? `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedRanked })}</td>` : "") +
@@ -324,7 +325,9 @@ export function filerTiles(conc: ConcentrationRow | null, deltaCount: number): S
       muted: conc.topn_share_bps == null,
       title:
         conc.topn_share_bps == null
-          ? "concentration_unavailable: the period's disclosed total is 0 (or every value is NULL) — the producer stores NULL, never a fabricated 0"
+          ? conc.null_value_positions > 0
+            ? "concentration_unavailable: at least one position value is undisclosed, so the denominator is incomplete"
+            : "concentration_unavailable: the period's disclosed total is 0 — the producer stores NULL, never a fabricated 0"
           : "share of the period's disclosed value held in the top-N positions; denominator is reported 13F value, not total assets",
     },
     {
@@ -333,7 +336,9 @@ export function filerTiles(conc: ConcentrationRow | null, deltaCount: number): S
       muted: conc.hhi == null,
       title:
         conc.hhi == null
-          ? "concentration_unavailable: no disclosed denominator for this period"
+          ? conc.null_value_positions > 0
+            ? "concentration_unavailable: at least one position value is undisclosed, so the denominator is incomplete"
+            : "concentration_unavailable: no disclosed denominator for this period"
           : "integer Herfindahl–Hirschman index in basis points over disclosed position values",
     },
     { value: fmtInt(deltaCount), label: "QoQ moves" },

@@ -27,6 +27,11 @@ test("constraint 5: HHI is withheld when the denominator is partial", () => {
   const partial = buildInstIndexRow(filer, conc({ null_value_positions: 3 }), "top");
   assert.equal(partial.hhi, null, "any NULL-valued position voids HHI");
   assert.match(partial.hhiNote, /partial denominator/);
+  const withheld = buildInstIndexRow(filer, conc({ null_value_positions: 3, hhi: null }), "top");
+  assert.equal(withheld.value, 1_000_000, "the disclosed subtotal is retained with its NULL counter");
+  assert.equal(withheld.nullValuePositions, 3);
+  assert.equal(withheld.hhi, null);
+  assert.match(withheld.hhiNote, /3 of 10 positions.*partial denominator/);
 
   // HHI = 10,000 on a COMPLETE single-position book is correct, not a bug.
   const single = buildInstIndexRow(filer, conc({ position_count: 1, hhi: 10000 }), "top");

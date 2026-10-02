@@ -77,13 +77,13 @@ export function buildInstIndexRow(
   let hhiNote = "";
   if (conc === null) {
     hhiNote = "no concentration row for this filer's latest period";
-  } else if (conc.hhi == null) {
-    hhiNote = "concentration_unavailable: the producer stores NULL, never a fabricated 0";
   } else if (conc.null_value_positions > 0) {
     // Constraint 5: a filer with disclosed positions AND NULL-valued ones
     // would score concentration on a partial denominator — withheld from
     // ordering entirely rather than renamed.
     hhiNote = `${conc.null_value_positions} of ${conc.position_count} positions carry a NULL value — HHI over a partial denominator is not comparable and is withheld`;
+  } else if (conc.hhi == null) {
+    hhiNote = "concentration_unavailable: the producer stores NULL, never a fabricated 0";
   } else {
     hhi = conc.hhi;
   }
