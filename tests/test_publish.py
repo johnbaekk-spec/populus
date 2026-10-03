@@ -6706,3 +6706,159 @@ def test_the_byte_equality_assertion_can_actually_fire(tmp_path, monkeypatch):
     monkeypatch.setattr(build_mod, "_write_staged", divergent_write)
     with pytest.raises(PublishError, match="byte-equality does not hold"):
         finalize_build(staged, site_file_count=99, dist_dir=dist)
+
+
+@pytest.mark.parametrize("source", ["legacy", "external-stray", "legacy-no-closure"])
+def test_stage_build_clears_inline_inst_rows_only_after_derivation(
+    tmp_path, monkeypatch, source
+):
+    """W3: erase publication-only inline rows after the real original-key derive."""
+    import sqlite3
+
+    from populus.inst_redaction import plan_registry_redaction
+    from populus.publish import build as build_mod
+    from populus.publish.digests import logical_digest, sha256_file
+    from populus.publish.seed import clear_inline_inst_data
+
+    db = seed_db(tmp_path / "populus.db")
+    if source == "legacy-no-closure":
+        seed_inst(db, covered=True)
+    else:
+        measured = _seed_identity_via_list(db, tmp_path)
+        assert measured["stamped"] == measured["holdings"] > 0
+
+    marker = "W3 PRIVATE INLINE METADATA MUST BE ERASED "
+    canary = marker * 2048
+    conn = connect(str(db))
+    try:
+        # The generic helper must discover future tables and delete children first.
+        conn.execute("CREATE TABLE inst_w3_parent (key TEXT PRIMARY KEY, note TEXT)")
+        conn.execute(
+            "CREATE TABLE inst_w3_child (key TEXT PRIMARY KEY,"
+            " parent_key TEXT REFERENCES inst_w3_parent(key), note TEXT)"
+        )
+        conn.execute("INSERT INTO inst_w3_parent VALUES ('parent', ?)", (canary,))
+        conn.execute(
+            "INSERT INTO inst_w3_child VALUES ('child', 'parent', ?)", (canary,)
+        )
+        # The underscore is literal: this table belongs to no inline inst module.
+        conn.execute("CREATE TABLE instant_w3_keep (value TEXT)")
+        conn.execute("INSERT INTO instant_w3_keep VALUES ('retained')")
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        original_schema = conn.execute(
+            "SELECT type, name, sql FROM sqlite_master"
+            " WHERE type IN ('table', 'view') ORDER BY type, name"
+        ).fetchall()
+        original_logical = logical_digest(conn)
+        values, _sids = plan_registry_redaction(conn)
+        assert bool(values) is (source != "legacy-no-closure")
+    finally:
+        conn.close()
+    original_hash = sha256_file(db)
+    assert marker.encode() in db.read_bytes()
+
+    inst_snapshot = None
+    if source == "external-stray":
+        from test_inst_external_store import make_inst_snapshot
+
+        inst_snapshot = make_inst_snapshot(tmp_path)
+    snapshot_hash = sha256_file(inst_snapshot) if inst_snapshot else None
+    repo = make_repo(tmp_path)
+    snapshot_handles = []
+    observed_clear = []
+    real_connect = build_mod.connect
+
+    def connect_with_secure_delete_disabled(path):
+        handle = real_connect(path)
+        if Path(path).name == "congress.db":
+            handle.execute("PRAGMA secure_delete=OFF")
+            snapshot_handles.append(handle)
+        return handle
+
+    def observe_real_clear(handle):
+        assert handle.execute("PRAGMA secure_delete").fetchone() == (1,)
+        for prior in snapshot_handles[:-1]:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                prior.execute("SELECT 1")
+        staged_assets = next((repo / STAGING_DIR).iterdir()) / "assets"
+        assert (staged_assets / "inst_agg.db").is_file()
+        assert (staged_assets / "inst_serving.db").is_file()
+        cleared = clear_inline_inst_data(handle)
+        observed_clear.append(cleared)
+        return cleared
+
+    monkeypatch.setattr(build_mod, "connect", connect_with_secure_delete_disabled)
+    monkeypatch.setattr(
+        build_mod, "clear_inline_inst_data", observe_real_clear, raising=False
+    )
+    staged = stage_build(
+        db, repo, now=pin(), backend=LocalDirBackend(repo), inst_db_path=inst_snapshot
+    )
+    congress = Path(staged.staging_dir) / "assets" / "congress.db"
+    conn = connect(str(congress))
+    try:
+        # This is an actual parent-SID rewrite, not an unmapped synthetic holding.
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        opaque_sids = conn.execute(
+            "SELECT COUNT(*) FROM securities WHERE security_id LIKE 'sec:withheld:%'"
+        ).fetchone()[0]
+        assert bool(opaque_sids) is (source != "legacy-no-closure")
+        inline_tables = [
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                " AND name LIKE 'inst\\_%' ESCAPE '\\' ORDER BY name"
+            )
+        ]
+        assert inline_tables
+        assert {
+            name: conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            for name in inline_tables
+        } == dict.fromkeys(inline_tables, 0)
+        assert conn.execute(
+            "SELECT type, name, sql FROM sqlite_master"
+            " WHERE type IN ('table', 'view') ORDER BY type, name"
+        ).fetchall() == original_schema
+        assert conn.execute("SELECT value FROM instant_w3_keep").fetchall() == [
+            ("retained",)
+        ]
+        assert logical_digest(conn) == original_logical
+        # The no-closure branch must compact even when registry redaction is a no-op.
+        assert conn.execute("PRAGMA freelist_count").fetchone() == (0,)
+    finally:
+        conn.close()
+    assert len(observed_clear) == 1
+    assert {"inst_holdings", "inst_w3_parent", "inst_w3_child"} <= set(
+        observed_clear[0]
+    )
+    assert marker.encode() not in congress.read_bytes()
+    assert sha256_file(db) == original_hash
+    if inst_snapshot:
+        assert sha256_file(inst_snapshot) == snapshot_hash
+
+    # Seal the actual cleaned file, with the existing minimal served-tree seam.
+    build_dir = Path(staged.staging_dir) / "build"
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    shutil.copyfile(build_dir / "congress" / "stats.json", dist / "stats.json")
+    (dist / "index.html").write_text("<!doctype html><title>W3 fixture</title>")
+    report = finalize_build(staged, site_file_count=2, dist_dir=dist)
+    assert report.inst_logical_digest is not None
+    assert report.logical_digest == original_logical
+    manifest = json.loads((build_dir / "manifest.json").read_text())
+    assert find_artifact(manifest, "congress.db")["sha256"] == sha256_file(congress)
+    assert sha256_file(db) == original_hash
+    if inst_snapshot:
+        assert sha256_file(inst_snapshot) == snapshot_hash
+
+
+def test_stage_build_refuses_remaining_inline_inst_rows(tmp_path, monkeypatch):
+    """An empty helper return does not prove every discovered table is empty."""
+    from populus.publish import build as build_mod
+
+    db = seed_inst(seed_db(tmp_path / "populus.db"), covered=True)
+    repo = make_repo(tmp_path)
+    monkeypatch.setattr(
+        build_mod, "clear_inline_inst_data", lambda _conn: [], raising=False
+    )
+    with pytest.raises(PublishError, match="inline institutional tables are not empty"):
+        stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
