@@ -103,6 +103,7 @@ from populus.publish.pointer import (
     rfc3339z,
     validate_pointer,
 )
+from populus.publish.seed import clear_inline_inst_data
 from populus.stats import DATA_NOTE, compute_stats, read_house_meta, render_stats
 
 STAGING_DIR = ".staging"
@@ -2852,6 +2853,33 @@ def stage_build(
     finally:
         snapshot.close()
 
+    # Derivation above needs the original inline keys. The publication copy
+    # keeps their schema and views, but no raw institutional rows.
+    snapshot = connect(str(snapshot_path))
+    try:
+        snapshot.execute("PRAGMA secure_delete=ON")
+        clear_inline_inst_data(snapshot)
+        inline_tables = [
+            row[0]
+            for row in snapshot.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                " AND name LIKE 'inst\\_%' ESCAPE '\\' ORDER BY name"
+            )
+        ]
+        remaining = []
+        for name in inline_tables:
+            quoted = name.replace('"', '""')
+            if snapshot.execute(
+                f'SELECT 1 FROM "{quoted}" LIMIT 1'  # nosec B608
+            ).fetchone():
+                remaining.append(name)
+        if remaining:
+            raise PublishError(
+                f"inline institutional tables are not empty: {remaining}"
+            )
+    finally:
+        snapshot.close()
+
     # C1 (refinement 20260910): the published congress.db republishes the SEC
     # Official 13F List, whose CUSIP + issuer name + class pairs with the
     # reviewed (name, class) -> ticker mapping Public Filings also publishes.
@@ -2873,6 +2901,14 @@ def stage_build(
         filed_cusips=withheld_cusips,
         unverified_cusips=unverified_cusips,
     )
+    # Compact after clearing and the registry text sweep, including the case
+    # where the redaction closure is empty and its helper made no changes.
+    snapshot = connect(str(snapshot_path))
+    try:
+        snapshot.execute("PRAGMA secure_delete=ON")
+        snapshot.execute("VACUUM")
+    finally:
+        snapshot.close()
     # The digest must describe the bytes actually published.
     db_logical = _recompute_db_logical(snapshot_path)
 
