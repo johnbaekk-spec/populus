@@ -34,12 +34,16 @@ page still holds a withheld value.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+import tempfile
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+from populus.identity.registry import anchor, provisional_security_id
 
 from populus.ticker_mapping_13f import (
     TickerMapping,
@@ -114,6 +118,334 @@ _SECURITY_COLUMN = "security_id"
 #: Handled by their own rules above; every OTHER column is checked for a
 #: withheld CUSIP sitting in it as plain text.
 _KEY_COLUMNS = frozenset({"cusip", "security_id", "position_key", "issuer_key"})
+
+# These are identities/locators, not prose. A matched value requires an owner
+# decision, even when SQLite would accept replacing it with a marker.
+_PROTECTED_TEXT = frozenset({
+    "ticker", "cik", "accession", "row_fingerprint", "filename", "url", "path",
+    "route", "route_key", "source_hash", "list_sha256", "snapshot_sha256",
+})
+_REGISTRY_TABLES = frozenset({
+    "entities", "entity_names", "securities", "security_identifiers",
+    "security_list_intervals", "security_supersessions", "security_list_seed_ledger",
+    "entity_tickers",
+})
+_LOCATOR_IN_TEXT_RE = re.compile(
+    r"(?:[A-Za-z][A-Za-z0-9+.-]*://|www\.|(?:[A-Za-z]:)?[/\\]|\.\.?[/\\])[^\s<>\"']+"
+    r"|[^\s/\\<>\"']+\.[A-Za-z]{1,10}(?=[\s<>\"')]|$)"
+)
+_PROVISIONAL_IN_TEXT_RE = re.compile(
+    r"(?<![0-9a-f])(?:(?:sid:)?sec:prov:)?([0-9a-f]{32})(?![0-9a-f])"
+)
+# Keep the probe's separate case-specific boundaries: adjacent SQLite bytes
+# can be uppercase beside a lowercase digest (or the reverse).
+_PROVISIONAL_UPPER_IN_TEXT_RE = re.compile(
+    r"(?<![0-9A-F])(?:(?:sid:)?sec:prov:)?([0-9A-F]{32})(?![0-9A-F])"
+)
+_BLOCK_IN_TEXT_RE = re.compile(r"cusip6:([0-9A-Za-z]{6})")
+
+
+def _quoted(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _protected_text(name: str) -> bool:
+    return name in _PROTECTED_TEXT or name.endswith((
+        "_id", "_key", "_url", "_path", "_filename", "_fingerprint", "_sha256",
+    ))
+
+
+def _replace_text(value: str, cusips: frozenset[str], marker: str, *,
+                  hashes: frozenset[str] = frozenset(), blocks: frozenset[str] = frozenset()) -> str:
+    def scrub(text: str) -> str:
+        text = _CUSIP_IN_TEXT_RE.sub(
+            lambda m: marker if m.group(0).upper() in cusips else m.group(0), text
+        )
+        text = _ISIN_RE.sub(
+            lambda m: marker if m.group(2).upper() in cusips else m.group(0), text
+        )
+        for pattern in (_PROVISIONAL_IN_TEXT_RE, _PROVISIONAL_UPPER_IN_TEXT_RE):
+            text = pattern.sub(
+                lambda m: marker if m.group(1).lower() in hashes else m.group(0), text
+            )
+        return _BLOCK_IN_TEXT_RE.sub(
+            lambda m: marker if m.group(1).upper() in blocks else m.group(0), text
+        )
+    for locator in _LOCATOR_IN_TEXT_RE.finditer(value):
+        if scrub(locator.group()) != locator.group():
+            raise ValueError("withholding would change a protected locator")
+    return scrub(value)
+
+
+def _semantic_json_identity(table: str, column: str, path: tuple[str, ...]) -> bool:
+    # These source fields form cross-build resolver keys (members.py), while
+    # extra note fields in the same objects remain source/prose text.
+    if table != "members":
+        return False
+    names = {"first", "middle", "last", "nickname", "official_full"}
+    terms = {"type", "start", "end", "state", "district", "party"}
+    if column == "raw":
+        return (
+            len(path) == 2 and path[0] == "name" and path[1] in names
+            or len(path) == 3 and path[:2] == ("other_names", "*")
+            and path[2] in {"first", "middle", "last", "start", "end"}
+            or len(path) == 3 and path[:2] == ("terms", "*") and path[2] in terms
+        )
+    return column == "terms" and len(path) == 2 and path[0] == "*" and path[1] in terms
+
+
+def _replace_json(
+    value: object, cusips: frozenset[str], marker: str, *, field: str = "",
+    table: str = "", column: str = "", path: tuple[str, ...] = (), protected: bool = False,
+    hashes: frozenset[str] = frozenset(), blocks: frozenset[str] = frozenset(),
+) -> object:
+    if isinstance(value, str):
+        result = _replace_text(value, cusips, marker, hashes=hashes, blocks=blocks)
+        if result != value and (protected or _protected_text(field) or _semantic_json_identity(table, column, path)):
+            raise ValueError(f"withholding would change protected JSON field {field}")
+        return result
+    if isinstance(value, list):
+        return [_replace_json(v, cusips, marker, field=field, table=table, column=column,
+                              path=path + ("*",), protected=protected, hashes=hashes, blocks=blocks) for v in value]
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            new_key = _replace_text(key, cusips, marker, hashes=hashes, blocks=blocks)
+            if new_key != key and protected:
+                raise ValueError("withholding would change protected JSON identity keys")
+            if new_key in result:
+                raise ValueError("withholding would collide JSON object keys")
+            result[new_key] = _replace_json(
+                item, cusips, marker, field=key, table=table, column=column,
+                path=path + (key,), protected=protected or _protected_text(key)
+                or _semantic_json_identity(table, column, path + (key,)),
+                hashes=hashes, blocks=blocks,
+            )
+        return result
+    return value
+
+
+def _replace_cell(value: str, cusips: frozenset[str], marker: str, *,
+                  table: str = "", column: str = "", json_contract: bool = False,
+                  hashes: frozenset[str] = frozenset(), blocks: frozenset[str] = frozenset()) -> str:
+    # JSON is decoded before matching: a string's Unicode escapes must not
+    # evade the same matcher, and values/keys must remain valid JSON.
+    duplicate_items = []
+
+    def object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                duplicate_items.extend((key, result[key], item))
+            result[key] = item
+        return result
+
+    try:
+        parsed = json.loads(value, object_pairs_hook=object_pairs)
+    except (json.JSONDecodeError, TypeError):
+        return _replace_text(value, cusips, marker, hashes=hashes, blocks=blocks)
+    # An ordinary TEXT cell holding nine digits is prose, even though it can
+    # also parse as a JSON number. Explicit JSON scalars retain their types.
+    if not json_contract and not isinstance(parsed, (dict, list, str)):
+        return _replace_text(value, cusips, marker, hashes=hashes, blocks=blocks)
+    replaced = _replace_json(parsed, cusips, marker, table=table, column=column, hashes=hashes, blocks=blocks)
+    if duplicate_items and (
+        replaced != parsed or _replace_json(duplicate_items, cusips, marker, hashes=hashes, blocks=blocks) != duplicate_items
+    ):
+        raise ValueError("withholding cannot preserve duplicate JSON object keys")
+    return value if replaced == parsed else json.dumps(replaced, ensure_ascii=False)
+
+
+def _column_inventory(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """Every real column, including generated and dynamically typed values."""
+    result = []
+    for table, ddl in conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='table'"
+        " AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).fetchall():
+        unique = []
+        for index in conn.execute(f"PRAGMA index_list({_quoted(table)})").fetchall():  # nosec B608
+            if index[2]:
+                unique.append({
+                    "name": index[1],
+                    "columns": [r[2] for r in conn.execute(
+                        f"PRAGMA index_info({_quoted(index[1])})"  # nosec B608
+                    )],
+                })
+        fks = conn.execute(f"PRAGMA foreign_key_list({_quoted(table)})").fetchall()  # nosec B608
+        references = []
+        for fk in fks:
+            parent_column = fk[4]
+            if parent_column is None:
+                parent_keys = sorted(
+                    (r[5], r[1]) for r in conn.execute(
+                        f"PRAGMA table_xinfo({_quoted(fk[2])})"  # nosec B608
+                    ) if r[5]
+                )
+                if fk[1] < len(parent_keys):
+                    parent_column = parent_keys[fk[1]][1]
+            references.append((fk[3], {"table": fk[2], "column": parent_column}))
+        infos = conn.execute(f"PRAGMA table_xinfo({_quoted(table)})").fetchall()  # nosec B608
+        expressions = ", ".join(
+            f"COALESCE(SUM(typeof({_quoted(r[1])})='text'),0)" for r in infos
+        )
+        stored_counts = conn.execute(
+            f"SELECT {expressions} FROM {_quoted(table)}"  # nosec B608
+        ).fetchone()
+        for row, stored in zip(infos, stored_counts):
+            column = row[1]
+            result.append({
+                "kind": "column", "visited": False,
+                "table": table, "column": column, "declared_type": row[2],
+                "not_null": bool(row[3]), "primary_key_position": row[5],
+                "generated": bool(row[6]), "stored_text_rows": stored,
+                "unique_indexes": [u for u in unique if column in u["columns"]],
+                "foreign_keys": [
+                    parent for child, parent in references if child == column
+                ],
+                "constraints_sql": ddl, "affected_rows": 0,
+                "operation": "text sweep",
+            })
+    return result
+
+
+def _apply_text_plan(
+    conn: sqlite3.Connection,
+    cusips: frozenset[str],
+    key_maps: dict[tuple[str, str], dict[str, str | None]],
+    *,
+    institutional: bool = False,
+    inventory: list[dict[str, object]] | None = None,
+    blocks: frozenset[str] = frozenset(),
+) -> dict[str, int]:
+    """Plan first; prove constraints on a scratch copy before artifact writes."""
+    columns = _column_inventory(conn)
+    hashes = frozenset(provisional_security_id(anchor("cusip", c)).removeprefix("sec:prov:") for c in cusips)
+    for item in columns:
+        table, column = str(item["table"]), str(item["column"])
+        if ("*", column) in key_maps:
+            key_maps[table, column] = key_maps["*", column]
+    # A declared FK follows the same authorized canonical map even if the
+    # referencing column has another name. No independent ordinal is invented.
+    while True:
+        changed = False
+        for item in columns:
+            key = (str(item["table"]), str(item["column"]))
+            for fk in item["foreign_keys"]:
+                parent = (fk["table"], fk["column"])
+                if parent in key_maps and key not in key_maps:
+                    key_maps[key] = key_maps[parent]
+                    changed = True
+        if not changed:
+            break
+    for name, ddl in conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL"
+    ).fetchall():
+        if _replace_text(ddl, cusips, WITHHELD_TEXT, hashes=hashes, blocks=blocks) != ddl:
+            raise ValueError(f"withholding requires a schema/DDL change: {name}")
+
+    schema_inventory = [
+        {"kind": "schema", "object_type": kind, "object_name": name,
+         "table": table, "column": None, "constraints_sql": ddl,
+         "visited": True, "affected_rows": 0, "operation": "DDL constant scan"}
+        for kind, name, table, ddl in conn.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+        )
+    ]
+    updates = []
+    counts: dict[str, int] = {}
+    for item in columns:
+        table, column = str(item["table"]), str(item["column"])
+        q_table, q_column = _quoted(table), _quoted(column)
+        marker = WITHHELD_TEXT if table in _REGISTRY_TABLES or table.startswith(
+            ("inst_", "agg_", "_agg_", "serving_")
+        ) else DISCLOSURE_WITHHELD_TEXT
+        item["marker"] = marker
+        mapping = key_maps.get((table, column), {})
+        if mapping:
+            item["operation"] = "identifier-value map" if column == "value" else "canonical key map"
+        constrained = bool(item["primary_key_position"] or item["unique_indexes"] or item["foreign_keys"])
+        semantic = table == "entity_names" and column == "name"
+        item["protected_contract"] = (
+            "cross-build entity name interval identity" if semantic else
+            "member resolver name/other_names/term identity fields; extra notes remain prose"
+            if table == "members" and column in {"raw", "terms"} else
+            "member alias resolution/cross-build identity" if table == "member_aliases" and column == "alias" else
+            "PK/UNIQUE/FK or structured identity/locator" if constrained or _protected_text(column) else ""
+        )
+        for value, rows in conn.execute(
+            f"SELECT {q_column}, COUNT(*) FROM {q_table}"  # nosec B608
+            f" WHERE typeof({q_column})='text' GROUP BY {q_column} COLLATE BINARY"
+        ).fetchall():
+            if value in mapping:
+                replaced = mapping[value]
+            else:
+                replaced = _replace_cell(value, cusips, marker, table=table, column=column,
+                                         json_contract=str(item["declared_type"]).upper() == "JSON",
+                                         hashes=hashes, blocks=blocks)
+                if replaced != value and (_protected_text(column) or constrained or semantic):
+                    raise ValueError(f"withholding would change protected identifier {table}.{column}")
+            if replaced != value:
+                if item["generated"]:
+                    raise ValueError(f"withholding requires generated-column change: {table}.{column}")
+                updates.append((table, column, value, replaced, rows))
+                item["affected_rows"] += rows
+                if institutional and value.upper() in cusips and value not in mapping:
+                    exact = f"{table}.{column}.cusip_text"
+                    counts[exact] = counts.get(exact, 0) + rows
+        counts[f"{table}.{column}"] = item["affected_rows"]
+        item["visited"] = True
+
+    def apply(target: sqlite3.Connection) -> None:
+        target.execute("PRAGMA foreign_keys = ON")
+        target.execute("BEGIN")
+        target.execute("PRAGMA defer_foreign_keys = ON")
+        try:
+            # One table scan per column, not one scan per distinct old value.
+            # The registry and serving artifacts can contain millions of rows.
+            grouped: dict[tuple[str, str], list[tuple[str, str | None, int]]] = defaultdict(list)
+            for table, column, old, new, expected in updates:
+                grouped[table, column].append((old, new, expected))
+            target.execute("CREATE TEMP TABLE _w_updates (old TEXT PRIMARY KEY, new)")
+            for (table, column), changes in grouped.items():
+                target.executemany("INSERT INTO _w_updates VALUES (?,?)", ((old, new) for old, new, _n in changes))
+                actual = target.execute(
+                    f"UPDATE {_quoted(table)} AS _w_target SET {_quoted(column)} ="  # nosec B608
+                    f" (SELECT new FROM _w_updates WHERE old = _w_target.{_quoted(column)} COLLATE BINARY)"
+                    f" WHERE typeof({_quoted(column)})='text'"
+                    f" AND {_quoted(column)} COLLATE BINARY IN (SELECT old FROM _w_updates)"
+                ).rowcount
+                if actual != sum(n for _old, _new, n in changes):
+                    raise ValueError(f"withholding source changed during planning: {table}.{column}")
+                target.execute("DELETE FROM temp._w_updates")
+            target.execute("DROP TABLE temp._w_updates")
+            integrity = target.execute("PRAGMA integrity_check").fetchall()
+            foreign = target.execute("PRAGMA foreign_key_check").fetchall()
+            if integrity != [("ok",)] or foreign:
+                raise ValueError(f"withholding constraint preflight failed: integrity={integrity}, foreign_keys={foreign}")
+            target.execute("COMMIT")
+        except BaseException:
+            target.execute("ROLLBACK")
+            raise
+
+    with tempfile.TemporaryDirectory(prefix="populus-redaction-preflight-") as scratch:
+        trial = sqlite3.connect(str(Path(scratch) / "preflight.db"), isolation_level=None)
+        try:
+            conn.backup(trial)
+            try:
+                apply(trial)
+            except sqlite3.Error as exc:
+                raise ValueError(f"withholding constraint preflight failed: {exc}") from exc
+        finally:
+            trial.close()
+    conn.execute("PRAGMA secure_delete = ON")
+    apply(conn)
+    if updates:
+        conn.execute("VACUUM")
+    if inventory is not None:
+        inventory.extend(columns)
+        inventory.extend(schema_inventory)
+    return counts
 
 
 @dataclass(frozen=True)
@@ -468,20 +800,6 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f'PRAGMA main.table_info("{table}")')}  # nosec B608
 
 
-def _text_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Columns that can hold a CUSIP as text.
-
-    TYPE, not just name: sweeping every non-key column tried to write the marker
-    into `_agg_qoq_deltas.change_kind_code` and hit its CHECK constraint. A
-    numeric column cannot carry a CUSIP, so it is not swept.
-    """
-    return {
-        row[1]
-        for row in conn.execute(f'PRAGMA main.table_info("{table}")')  # nosec B608
-        if not row[2] or row[2].upper().startswith(("TEXT", "CHAR", "CLOB", "VARCHAR"))
-    }
-
-
 def _scrub_embedded(
     conn: sqlite3.Connection,
     table: str,
@@ -524,79 +842,24 @@ def _scrub_embedded(
     return changed
 
 
-def apply_cusip_redaction(plan: RedactionPlan, db_path: Path | str) -> dict[str, int]:
-    """Rewrite one published database in place. Returns rows changed per
-    ``table.column``. Every table carrying one of the four columns is covered,
-    so a table added later cannot silently republish a withheld key."""
-    counts: dict[str, int] = {}
+def apply_cusip_redaction(
+    plan: RedactionPlan, db_path: Path | str, *,
+    inventory: list[dict[str, object]] | None = None,
+) -> dict[str, int]:
+    """Apply the shared canonical plan and every real stored-text column."""
     conn = sqlite3.connect(str(db_path), isolation_level=None)
     try:
-        conn.execute("PRAGMA secure_delete = ON")
-        conn.execute("CREATE TEMP TABLE _w_pk (old TEXT PRIMARY KEY, new TEXT NOT NULL)")
-        conn.execute("CREATE TEMP TABLE _w_ik (old TEXT PRIMARY KEY, new TEXT NOT NULL)")
-        conn.execute("CREATE TEMP TABLE _w_cusip (v TEXT PRIMARY KEY)")
-        conn.execute("CREATE TEMP TABLE _w_sid (v TEXT PRIMARY KEY)")
-        conn.executemany("INSERT INTO _w_pk VALUES (?, ?)", plan.position_keys.items())
-        conn.executemany("INSERT INTO _w_ik VALUES (?, ?)", plan.issuer_keys.items())
-        conn.executemany("INSERT INTO _w_cusip VALUES (?)", ((c,) for c in plan.cusips))
-        conn.executemany("INSERT INTO _w_sid VALUES (?)", ((s,) for s in plan.security_ids))
-        tables = [
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-                " AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            )
-        ]
-        conn.execute("BEGIN")
-        for table in tables:
-            cols = _columns(conn, table)
-            q = f'"{table}"'
-            # Identifiers come from sqlite_master of the file being rewritten,
-            # never from caller input; SQLite cannot bind identifiers.
-            if _CUSIP_COLUMN in cols:
-                counts[f"{table}.cusip"] = conn.execute(
-                    f"UPDATE {q} SET cusip = NULL"  # nosec B608
-                    " WHERE cusip IN (SELECT v FROM _w_cusip)"
-                ).rowcount
-            if _SECURITY_COLUMN in cols:
-                counts[f"{table}.security_id"] = conn.execute(
-                    f"UPDATE {q} SET security_id = NULL"  # nosec B608
-                    " WHERE security_id IN (SELECT v FROM _w_sid)"
-                ).rowcount
-            if _POSITION_COLUMN in cols:
-                counts[f"{table}.position_key"] = conn.execute(
-                    f"UPDATE {q} SET position_key ="  # nosec B608
-                    " (SELECT new FROM _w_pk WHERE old = position_key)"
-                    " WHERE position_key IN (SELECT old FROM _w_pk)"
-                ).rowcount
-            if _ISSUER_COLUMN in cols:
-                counts[f"{table}.issuer_key"] = conn.execute(
-                    f"UPDATE {q} SET issuer_key ="  # nosec B608
-                    " (SELECT new FROM _w_ik WHERE old = issuer_key)"
-                    " WHERE issuer_key IN (SELECT old FROM _w_ik)"
-                ).rowcount
-            # A withheld CUSIP must not survive in ANY published column, not just
-            # the ones that are supposed to hold identifiers. A filer that typed
-            # a CUSIP into `issuer_name` or `title_of_class` republished it in
-            # plain text, joinable to the ticker through the shared position key.
-            for column in sorted(_text_columns(conn, table) - _KEY_COLUMNS):
-                changed = conn.execute(
-                    f'UPDATE {q} SET "{column}" = ?'  # nosec B608
-                    f' WHERE upper("{column}") IN (SELECT v FROM _w_cusip)',
-                    (WITHHELD_TEXT,),
-                ).rowcount
-                if changed:
-                    counts[f"{table}.{column}.cusip_text"] = changed
-                embedded = _scrub_embedded(conn, table, column, plan.cusips)
-                if embedded:
-                    counts[f"{table}.{column}.cusip_in_text"] = embedded
-        conn.execute("COMMIT")
-        for name in ("_w_pk", "_w_ik", "_w_cusip", "_w_sid"):
-            conn.execute(f"DROP TABLE temp.{name}")  # nosec B608
-        conn.execute("VACUUM")
+        keys: dict[tuple[str, str], dict[str, str | None]] = {
+            ("*", "cusip"): dict.fromkeys(plan.cusips),
+            ("*", "security_id"): dict.fromkeys(plan.security_ids),
+            ("*", "position_key"): plan.position_keys,
+            ("*", "issuer_key"): plan.issuer_keys,
+        }
+        return _apply_text_plan(
+            conn, plan.cusips, keys, institutional=True, inventory=inventory, blocks=plan.blocks,
+        )
     finally:
         conn.close()
-    return counts
 
 
 # --- the published congress.db's SEC 13F list --------------------------------
@@ -622,7 +885,8 @@ def apply_cusip_redaction(plan: RedactionPlan, db_path: Path | str) -> dict[str,
 # `value` is NOT NULL and half of PRIMARY KEY (value, valid_from) (registry.sql),
 # so a withheld CUSIP cannot be nulled — it is replaced by ONE opaque token per
 # distinct CUSIP, which keeps the key unique. `raw` and `source_row` are
-# nullable and echo the CUSIP verbatim, so they are cleared. `security_id` is
+# nullable and echo the CUSIP verbatim, so their text/JSON is visibly scrubbed.
+# `security_id` is
 # the unsalted `sec:prov:` hash of the CUSIP, so it is replaced everywhere it
 # appears, `securities` included, keeping the FK intact.
 
@@ -707,6 +971,25 @@ def _next_withheld_ordinal(
         if suffix.isdigit():
             highest = max(highest, int(suffix))
     return highest + 1
+
+
+def _registry_next_ordinal(
+    conn: sqlite3.Connection,
+    prior: Collection[tuple[str, str | None, str | None, str | None]],
+) -> int:
+    occupied = list(prior)
+    for item in _column_inventory(conn):
+        table, column = str(item["table"]), str(item["column"])
+        if column in {"security_id", "old_security_id"}:
+            prefix = WITHHELD_SECURITY_ID_PREFIX
+        elif table in {"security_identifiers", "security_list_intervals"} and column == "value":
+            prefix = WITHHELD_LIST_VALUE_PREFIX
+        else:
+            continue
+        for (value,) in conn.execute(f"SELECT {_quoted(column)} FROM {_quoted(table)}"):  # nosec B608
+            if isinstance(value, str) and value.startswith(prefix):
+                occupied.append((WITHHELD_LIST_VALUE_PREFIX + value[len(prefix):], None, None, None))
+    return _next_withheld_ordinal(occupied)
 
 
 def plan_registry_redaction(
@@ -832,6 +1115,7 @@ def apply_registry_redaction(
     filed_cusips: Collection[str] = (),
     unverified_cusips: Collection[str] = (),
     inst_source: Path | str | None = None,
+    inventory: list[dict[str, object]] | None = None,
 ) -> dict[str, int]:
     """Withhold reviewed-ticker CUSIPs from ONE published congress.db copy.
 
@@ -865,7 +1149,6 @@ def apply_registry_redaction(
     counts["filed_withheld_cusips"] = len(filed)
     conn = sqlite3.connect(str(db_path), isolation_level=None)
     try:
-        conn.execute("PRAGMA secure_delete = ON")
         has_list = bool(
             conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table'"
@@ -908,63 +1191,88 @@ def apply_registry_redaction(
         else:
             counts["security_list_intervals.absent"] = 0
 
-        # Disclosure TEXT, over the SAME set the list pass withholds — `filed`
-        # UNIONED with the CUSIPs the plan decided on. Exact membership in
-        # `filed` alone is NOT enough and a fixture caught it: the closure the
-        # publisher passes covers what the 13F FILINGS hold, while the plan adds
-        # the rest of each reviewed CUSIP-6 block from the SEC list itself. A
-        # sibling class listed there but held by nobody would have had its
-        # identifier withheld from the list and published verbatim inside a
-        # member's sentence — the same pair, one table over.
-        #
-        # This runs OUTSIDE both early exits below, and before them. An artifact
-        # with no list table, and a replay whose list is already fully withheld
-        # (`values` empty), are both ordinary states of the seeded artifact that
-        # publish re-publishes — neither is a reason to leave the text alone.
-        counts.update(scrub_disclosure_text(conn, filed | frozenset(values)))
-        text_rows = sum(
-            n for key, n in counts.items() if key.startswith("transactions.")
-        )
-        if not values:
-            if text_rows:
-                # The probe reads RAW BYTES, so a value left behind in a freed
-                # page still pairs. VACUUM under secure_delete is what drops it.
-                conn.execute("VACUUM")
-            return counts
-        conn.execute("CREATE TEMP TABLE _w_val (old TEXT PRIMARY KEY, new TEXT NOT NULL)")
-        conn.execute("CREATE TEMP TABLE _w_sid (old TEXT PRIMARY KEY, new TEXT NOT NULL)")
-        conn.executemany("INSERT INTO _w_val VALUES (?, ?)", values.items())
-        conn.executemany("INSERT INTO _w_sid VALUES (?, ?)", sids.items())
-        existing = {
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-        conn.execute("BEGIN")
-        # The security_id first, while the list rows still carry their CUSIP.
-        for table in _SECURITY_ID_TABLES:
-            if table not in existing:
-                continue
-            cols = {r[1] for r in conn.execute(f'PRAGMA main.table_info("{table}")')}  # nosec B608
-            for column in ("security_id", "old_security_id"):
-                if column not in cols:
+        # FTD identifiers participate in the same value map, including a filed
+        # withheld identifier that has no surviving definitional list row.
+        population = filed | frozenset(values)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "security_identifiers" in tables:
+            identifiers = conn.execute(
+                "SELECT value,security_id,MIN(valid_from) FROM security_identifiers"
+                " WHERE id_type='cusip' GROUP BY value,security_id ORDER BY value,MIN(valid_from),security_id"
+            ).fetchall()
+            ordinal = max(_registry_next_ordinal(conn, ()), _next_withheld_ordinal(
+                [(v, None, None, None) for v in values.values()]
+                + [(WITHHELD_LIST_VALUE_PREFIX + sid[len(WITHHELD_SECURITY_ID_PREFIX):], None, None, None)
+                   for sid in sids.values()]
+            ))
+            for value, _sid, _start in identifiers:
+                if value not in population:
                     continue
-                counts[f"{table}.{column}"] = conn.execute(
-                    f'UPDATE "{table}" SET {column} ='  # nosec B608
-                    " (SELECT new FROM _w_sid WHERE old = {c})".format(c=column)
-                    + f" WHERE {column} IN (SELECT old FROM _w_sid)"
-                ).rowcount
-        counts["security_list_intervals.value"] = conn.execute(
-            "UPDATE security_list_intervals"
-            " SET value = (SELECT new FROM _w_val WHERE old = value),"
-            "     raw = NULL, source_row = NULL"
-            " WHERE value IN (SELECT old FROM _w_val)"
-        ).rowcount
-        conn.execute("COMMIT")
-        conn.execute("DROP TABLE temp._w_val")
-        conn.execute("DROP TABLE temp._w_sid")
-        conn.execute("VACUUM")
+                if value not in values:
+                    values[value] = f"{WITHHELD_LIST_VALUE_PREFIX}{ordinal}"
+                    ordinal += 1
+            used_sids = set(sids.values())
+            ordinal = max(ordinal, _next_withheld_ordinal(
+                [(v, None, None, None) for v in values.values()]
+            ))
+            for value, sid, _start in identifiers:
+                if value not in population or sid is None or sid in sids or sid.startswith(WITHHELD_SECURITY_ID_PREFIX):
+                    continue
+                target = WITHHELD_SECURITY_ID_PREFIX + values[value][len(WITHHELD_LIST_VALUE_PREFIX):]
+                if target in used_sids:
+                    target = f"{WITHHELD_SECURITY_ID_PREFIX}{ordinal}"
+                    ordinal += 1
+                sids[sid] = target
+                used_sids.add(target)
+
+        # A known provisional ID can survive without its original list/FTD
+        # row. It is still recomputable from the withheld source CUSIP, so all
+        # exact canonical SID occurrences share an injective opaque binding.
+        # Custom IDs and other cross-build keys receive no new exemption.
+        known = {provisional_security_id(anchor("cusip", c)): c for c in population}
+        present = set()
+        for item in _column_inventory(conn):
+            table, column = str(item["table"]), str(item["column"])
+            if column not in {"security_id", "old_security_id"}:
+                continue
+            present.update(
+                row[0] for row in conn.execute(
+                    f"SELECT DISTINCT {_quoted(column)} FROM {_quoted(table)}"  # nosec B608
+                    f" WHERE typeof({_quoted(column)})='text'"
+                ) if row[0] in known
+            )
+        ordinal = max(_registry_next_ordinal(conn, ()), _next_withheld_ordinal(
+            [(v, None, None, None) for v in values.values()]
+            + [(WITHHELD_LIST_VALUE_PREFIX + sid[len(WITHHELD_SECURITY_ID_PREFIX):], None, None, None)
+               for sid in sids.values()]
+        ))
+        used_sids = set(sids.values())
+        for sid in sorted(present):
+            if sid in sids:
+                continue
+            value = known[sid]
+            if value not in values:
+                values[value] = f"{WITHHELD_LIST_VALUE_PREFIX}{ordinal}"
+                ordinal += 1
+            target = WITHHELD_SECURITY_ID_PREFIX + values[value][len(WITHHELD_LIST_VALUE_PREFIX):]
+            if target in used_sids:
+                target = f"{WITHHELD_SECURITY_ID_PREFIX}{ordinal}"
+                ordinal += 1
+            sids[sid] = target
+            used_sids.add(target)
+        keys: dict[tuple[str, str], dict[str, str | None]] = {
+            ("*", "security_id"): sids,
+            ("*", "old_security_id"): sids,
+            ("security_list_intervals", "value"): values,
+            ("security_identifiers", "value"): values,
+        }
+        counts.update(_apply_text_plan(
+            conn, population, keys, inventory=inventory,
+            blocks=frozenset(c[:6] for c in population if c not in unverified),
+        ))
+        if has_list:
+            counts["withheld_cusips"] = len(values)
+            counts["withheld_security_ids"] = len(sids)
     finally:
         conn.close()
     return counts

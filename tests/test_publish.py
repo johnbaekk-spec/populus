@@ -6906,11 +6906,18 @@ def _w0_split_publication_inputs(tmp_path):
 
 
 def _w0_assert_split_artifact(path, intervals, securities, schema):
-    """Only the existing opaque ID/value and raw-removal operations differ."""
+    """Opaque keys and visible source edits retain both complete intervals."""
     expected_ids = {"sec:before": "sec:withheld:1", "sec:after": "sec:withheld:2"}
-    expected_intervals = [dict(row, security_id=expected_ids[row["security_id"]],
-                               value="withheld:1", raw=None, source_row=None)
-                          for row in intervals]
+    expected_intervals = []
+    for row in intervals:
+        source_row = row["source_row"].replace("037833100", "(CUSIP withheld)")
+        raw = json.loads(row["raw"])
+        raw["value"] = "(CUSIP withheld)"
+        raw["source_row"] = source_row
+        expected_intervals.append(dict(
+            row, security_id=expected_ids[row["security_id"]],
+            value="withheld:1", raw=raw, source_row=source_row,
+        ))
     expected_securities = [dict(row, security_id=expected_ids[row["security_id"]])
                            for row in securities]
     expected_securities.sort(key=lambda row: row["security_id"])
@@ -6918,6 +6925,9 @@ def _w0_assert_split_artifact(path, intervals, securities, schema):
     try:
         cursor = conn.execute("SELECT * FROM security_list_intervals ORDER BY valid_from")
         actual = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor]
+        for row in actual:
+            assert isinstance(row["raw"], str), "the sanitized raw source must remain valid JSON"
+            row["raw"] = json.loads(row["raw"])
         assert actual == expected_intervals
         cursor = conn.execute("SELECT * FROM securities ORDER BY security_id")
         actual = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor]
@@ -6992,3 +7002,81 @@ def test_w0_published_seed_replay_preserves_both_security_ids(tmp_path):
     )
     assert sha256_file(seed) == seed_hash
     assert (sha256_file(db), sha256_file(snapshot)) == original_hashes
+
+
+@pytest.mark.parametrize("inst_input", ["legacy", "external"])
+def test_w2_real_publication_reports_every_table_column(tmp_path, monkeypatch, inst_input):
+    """Record the real passes, including unchanged and constraint-bound columns."""
+    import csv
+    import os
+    from populus.publish import build as build_mod
+
+    db, snapshot, intervals, securities, schema = _w0_split_publication_inputs(tmp_path)
+    captured = {}
+    registry = build_mod.apply_registry_redaction
+    institutional = build_mod.apply_cusip_redaction
+
+    def capture_registry(path, **kwargs):
+        records = []
+        result = registry(path, inventory=records, **kwargs)
+        captured[Path(path)] = records
+        return result
+
+    def capture_institutional(plan, path, **kwargs):
+        records = []
+        result = institutional(plan, path, inventory=records, **kwargs)
+        captured[Path(path)] = records
+        return result
+
+    # Transparent instrumentation calls the actual redactors unchanged.
+    monkeypatch.setattr(build_mod, "apply_registry_redaction", capture_registry)
+    monkeypatch.setattr(build_mod, "apply_cusip_redaction", capture_institutional)
+    repo = make_repo(tmp_path)
+    staged = stage_build(
+        db, repo, now=pin(), backend=LocalDirBackend(repo),
+        inst_db_path=snapshot if inst_input == "external" else None,
+    )
+    assert {path.name for path in captured} == {
+        "congress.db", "inst_agg.db", "inst_serving.db",
+    }
+    rows = []
+    for path, records in captured.items():
+        columns = [row for row in records if row["kind"] == "column"]
+        assert columns and any(row["affected_rows"] > 0 for row in columns)
+        conn = connect(str(path))
+        try:
+            expected = set()
+            for (table,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                " AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall():
+                quoted = table.replace('"', '""')
+                expected.update((table, col[1]) for col in conn.execute(
+                    f'PRAGMA table_xinfo("{quoted}")'
+                ))
+            assert {(row["table"], row["column"]) for row in columns} == expected
+            assert conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            conn.close()
+        for row in columns:
+            assert row["visited"] is True
+            assert row["stored_text_rows"] >= 0 and row["affected_rows"] >= 0
+            assert row["marker"] in {"[CUSIP withheld]", "(CUSIP withheld)"}
+            assert row["operation"] and row["constraints_sql"]
+        rows.extend(dict(row, artifact=path.name, input_mode=inst_input) for row in records)
+    _w0_assert_split_artifact(
+        Path(staged.staging_dir) / "assets" / "congress.db", intervals, securities, schema
+    )
+    destination = Path(os.environ.get("POPULUS_WITHHOLDING_EVIDENCE_DIR", str(tmp_path)))
+    destination.mkdir(parents=True, exist_ok=True)
+    stem = destination / f"W2-column-inventory-{inst_input}"
+    stem.with_suffix(".json").write_text(json.dumps(rows, indent=2, sort_keys=True))
+    fields = ["artifact", "input_mode", "table", "column", "declared_type", "visited", "operation",
+              "marker", "stored_text_rows", "affected_rows", "not_null",
+              "primary_key_position", "generated", "unique_indexes", "foreign_keys",
+              "protected_contract", "constraints_sql"]
+    with stem.with_suffix(".csv").open("w", newline="") as output:
+        writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(row for row in rows if row["kind"] == "column")

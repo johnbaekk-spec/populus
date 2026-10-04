@@ -200,7 +200,9 @@ def test_the_published_list_withholds_a_reviewed_issuers_cusip(tmp_path, mapped_
     withheld = [r for r in kept if r[0].startswith("withheld:")]
     assert len(withheld) == 2
     for value, name, klass, source_row, raw in withheld:
-        assert source_row is None and raw is None, "the CUSIP is echoed in both"
+        assert source_row.startswith("(CUSIP withheld)*")
+        import json
+        assert json.loads(raw) == {"id_type": "cusip", "value": "(CUSIP withheld)"}
         assert name is not None and klass is not None, "issuer identity is kept"
     # The unmapped security is untouched: publishing CUSIPs alone is pre-existing.
     assert any(r[0] == UNMAPPED_CUSIP for r in kept)
@@ -1036,3 +1038,344 @@ def test_w0_a_seeded_owner_and_later_raw_owner_keep_distinct_identities(tmp_path
             "SELECT value,security_id,valid_from FROM security_list_intervals WHERE security_class!='NOTE NEW' ORDER BY value,valid_from"
         ).fetchall() == before
         assert conn.execute("SELECT COUNT(*) FROM securities").fetchone() == (before_security_count + 1,)
+
+
+# --- W2: enumerate every published text surface before any write ------------
+
+
+def test_w2_registry_sweeps_assets_json_keys_and_dynamically_stored_text(tmp_path, mapped_row):
+    import json
+
+    path = _disclosure_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        conn.executescript((Path(__file__).parents[1] / 'src/populus/registry.sql').read_text())
+        sid = provisional_security_id(anchor('cusip', MAPPED_CUSIP))
+        conn.execute(
+            "INSERT INTO security_identifiers (security_id,id_type,value,valid_from,provenance,confidence,review_state,license_id,raw)"
+            " VALUES (?,'cusip',?,'2026-01-01','sec-ftd','high','auto','sec-edgar',?)",
+            (sid, MAPPED_CUSIP, json.dumps({'value': MAPPED_CUSIP, 'count': 3})),
+        )
+        conn.execute('UPDATE transactions SET asset_name=? WHERE txn_id=?', (f'3M {MAPPED_CUSIP}', 't:withheld'))
+        conn.execute('CREATE TABLE publication_metadata (payload JSON NOT NULL CHECK(json_valid(payload)), mixed INTEGER, optional TEXT)')
+        # Escaped JSON strings must be decoded, including source-owned keys.
+        escaped = ''.join(f'\\u{ord(c):04x}' for c in MAPPED_CUSIP)
+        conn.execute('INSERT INTO publication_metadata VALUES (?, ?, NULL)',
+                     ('{"'+escaped+'":{"note":"'+escaped+'","count":7,"items":[false,null]}}', f'CUSIP {MAPPED_CUSIP}'))
+    counts = apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        asset = conn.execute("SELECT asset_name FROM transactions WHERE txn_id='t:withheld'").fetchone()[0]
+        assert asset == f'3M {DISCLOSURE_WITHHELD_TEXT}'
+        sid, value, raw = conn.execute('SELECT security_id,value,raw FROM security_identifiers').fetchone()
+        assert value == 'withheld:1' and sid == 'sec:withheld:1'
+        assert json.loads(raw) == {'value': '(CUSIP withheld)', 'count': 3}
+        raw, mixed, optional = conn.execute('SELECT * FROM publication_metadata').fetchone()
+        assert json.loads(raw) == {DISCLOSURE_WITHHELD_TEXT: {'note': DISCLOSURE_WITHHELD_TEXT, 'count': 7, 'items': [False, None]}}
+        assert mixed == f'CUSIP {DISCLOSURE_WITHHELD_TEXT}' and optional is None
+        assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+        assert conn.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
+    assert counts['transactions.asset_name'] == 1
+    assert counts['security_identifiers.value'] == 1
+    assert MAPPED_CUSIP.encode() not in path.read_bytes()
+
+
+def test_w2_institutional_sweep_visits_json_and_numeric_affinity_columns(tmp_path, source):
+    import json
+
+    plan = plan_cusip_redaction(source)
+    path = _published(tmp_path, [])
+    with sqlite3.connect(path) as conn:
+        conn.execute('CREATE TABLE agg_extra (payload JSON CHECK(json_valid(payload)), mixed INTEGER, optional)')
+        conn.execute('INSERT INTO agg_extra VALUES (?, ?, NULL)',
+                     (json.dumps({MAPPED_CUSIP: [f'ISIN US{MAPPED_CUSIP}7', 9]}), f'CUSIP {MAPPED_CUSIP}'))
+    apply_cusip_redaction(plan, path)
+    with sqlite3.connect(path) as conn:
+        raw, mixed, optional = conn.execute('SELECT * FROM agg_extra').fetchone()
+        assert json.loads(raw) == {'(CUSIP withheld)': ['ISIN (CUSIP withheld)', 9]}
+        assert mixed == 'CUSIP (CUSIP withheld)' and optional is None
+    assert MAPPED_CUSIP.encode() not in path.read_bytes()
+
+
+@pytest.mark.parametrize('column', ['txn_id', 'filing_id', 'bioguide_id', 'ticker', 'row_fingerprint', 'doc_url', 'asset_path'])
+def test_w2_protected_identity_or_locator_refuses_before_any_write(tmp_path, mapped_row, column):
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        conn.execute(f'CREATE TABLE protected_payload ("{column}" TEXT)')
+        conn.execute('INSERT INTO protected_payload VALUES (?)', (f'source:{MAPPED_CUSIP}',))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match=column):
+        apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    assert path.read_bytes() == before, 'protected-boundary refusal must precede writes/compaction'
+
+
+def test_w2_column_inventory_records_zero_visits_and_constraints(tmp_path, mapped_row):
+    path = _registry_db(tmp_path, mapped_row)
+    inventory = []
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP}, inventory=inventory)
+    by_column = {(r['table'], r['column']): r for r in inventory}
+    assert ('securities', 'entity_id') in by_column
+    zero = by_column['securities', 'entity_id']
+    assert zero['affected_rows'] == 0 and zero['stored_text_rows'] == 0
+    value = by_column['security_list_intervals', 'value']
+    assert value['affected_rows'] == 2 and value['not_null'] and value['primary_key_position'] == 1
+    assert value['unique_indexes'] and value['operation'] == 'identifier-value map'
+
+
+def test_w2_seeded_opaque_security_id_is_not_renamed_by_a_new_sibling(tmp_path, mapped_row):
+    path = _replay_registry_db(tmp_path, mapped_row, block_size=12)
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        before = conn.execute('SELECT security_id FROM securities ORDER BY security_id').fetchall()
+        conn.execute("INSERT INTO security_list_intervals VALUES ('sec:withheld:1','cusip','88579Y999','2026-04-01','3M CO','NOTE NEW',NULL,NULL)")
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        assert conn.execute('SELECT security_id FROM securities ORDER BY security_id').fetchall() == before
+        assert conn.execute("SELECT value,security_id FROM security_list_intervals WHERE security_class='NOTE NEW'").fetchone() == ('withheld:13', 'sec:withheld:1')
+
+
+@pytest.mark.parametrize('shape', ['json_collision', 'json_locator', 'unique_alias', 'check_constraint', 'ddl_constant'])
+def test_w2_preflight_refuses_unsafe_text_plan_with_file_unchanged(tmp_path, mapped_row, shape):
+    import json
+
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        if shape == 'json_collision':
+            conn.execute('CREATE TABLE metadata (payload JSON CHECK(json_valid(payload)))')
+            conn.execute('INSERT INTO metadata VALUES (?)', (json.dumps({MAPPED_CUSIP: 1, SIBLING_CUSIP: 2}),))
+        elif shape == 'json_locator':
+            conn.execute('CREATE TABLE metadata (payload JSON CHECK(json_valid(payload)))')
+            conn.execute('INSERT INTO metadata VALUES (?)', (json.dumps({'doc_url': f'https://example.test/{MAPPED_CUSIP}.pdf'}),))
+        elif shape == 'unique_alias':
+            conn.execute('CREATE TABLE member_aliases (alias TEXT UNIQUE)')
+            conn.execute('INSERT INTO member_aliases VALUES (?)', (f'Name {MAPPED_CUSIP}',))
+        elif shape == 'check_constraint':
+            conn.execute('CREATE TABLE metadata (note TEXT CHECK(length(note)=9))')
+            conn.execute('INSERT INTO metadata VALUES (?)', (MAPPED_CUSIP,))
+        else:
+            conn.execute(f"CREATE VIEW source_constant AS SELECT '{MAPPED_CUSIP}' AS note")
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match='withholding'):
+        apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    assert path.read_bytes() == before
+
+
+def test_w2_registry_foreign_key_reference_uses_the_same_identifier_map(tmp_path, mapped_row):
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        conn.executescript((Path(__file__).parents[1] / 'src/populus/registry.sql').read_text())
+        sid = provisional_security_id(anchor('cusip', MAPPED_CUSIP))
+        conn.execute("INSERT INTO security_identifiers (security_id,id_type,value,valid_from,provenance,confidence,review_state,license_id) VALUES (?,'cusip',?,'2026-01-01','sec-ftd','high','auto','sec-edgar')", (sid, MAPPED_CUSIP))
+        conn.execute('CREATE TABLE identifier_reference (kind TEXT, code TEXT, starts TEXT, FOREIGN KEY(kind,code,starts) REFERENCES security_identifiers(id_type,value,valid_from))')
+        conn.execute("INSERT INTO identifier_reference VALUES ('cusip',?,'2026-01-01')", (MAPPED_CUSIP,))
+        conn.execute('CREATE TABLE implicit_reference (owner_code TEXT REFERENCES securities)')
+        conn.execute('INSERT INTO implicit_reference VALUES (?)', (sid,))
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        assert conn.execute('SELECT code FROM identifier_reference').fetchone() == ('withheld:1',)
+        assert conn.execute('SELECT owner_code FROM implicit_reference').fetchone() == ('sec:withheld:1',)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+
+
+def test_w2_new_ordinal_is_above_a_retained_sparse_security_id(tmp_path, mapped_row):
+    path = _replay_registry_db(tmp_path, mapped_row, block_size=12)
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO securities VALUES ('sec:withheld:50',NULL)")
+        conn.execute("INSERT INTO security_list_intervals VALUES ('sec:withheld:50','cusip','88579Y999','2026-04-01','3M CO','NOTE NEW',NULL,NULL)")
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT value,security_id FROM security_list_intervals WHERE security_class='NOTE NEW'").fetchone() == ('withheld:51', 'sec:withheld:50')
+        assert conn.execute("SELECT COUNT(*) FROM securities WHERE security_id='sec:withheld:50'").fetchone() == (1,)
+
+
+def test_w2_plain_digit_only_text_is_scrubbed_without_changing_json_numbers(tmp_path, mapped_row):
+    import json
+    path = _registry_db(tmp_path, mapped_row)
+    cusip = "191216100"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE metadata (note TEXT, payload JSON CHECK(json_valid(payload)))")
+        conn.execute("INSERT INTO metadata VALUES (?,?)", (cusip, json.dumps({"count": int(cusip), "note": cusip})))
+    apply_registry_redaction(path, filed_cusips={cusip})
+    with sqlite3.connect(path) as conn:
+        note, payload = conn.execute("SELECT note,payload FROM metadata").fetchone()
+        assert note == DISCLOSURE_WITHHELD_TEXT
+        assert json.loads(payload) == {"count": int(cusip), "note": DISCLOSURE_WITHHELD_TEXT}
+
+
+@pytest.mark.parametrize("shape", ["entity_name", "member_name", "other_name", "term_identity"])
+def test_w2_semantic_identity_inputs_refuse_before_any_write(tmp_path, mapped_row, shape):
+    import json
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        if shape == "entity_name":
+            conn.execute("CREATE TABLE entity_names (name TEXT)")
+            conn.execute("INSERT INTO entity_names VALUES (?)", (f"Issuer {MAPPED_CUSIP}",))
+        else:
+            conn.execute("CREATE TABLE members (raw JSON, terms JSON)")
+            raw = {"name": {"first": "Jane"}, "other_names": []}
+            terms = [{"type": "rep", "state": "CA", "start": "2026-01-01"}]
+            if shape == "member_name":
+                raw["name"]["first"] = MAPPED_CUSIP
+            elif shape == "other_name":
+                raw["other_names"] = [{"first": MAPPED_CUSIP}]
+            else:
+                terms[0]["state"] = MAPPED_CUSIP
+            conn.execute("INSERT INTO members VALUES (?,?)", (json.dumps(raw), json.dumps(terms)))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="protected"):
+        apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    assert path.read_bytes() == before
+
+
+def test_w2_semantic_identity_guard_allows_unconsumed_notes_and_filer_prose(tmp_path, mapped_row):
+    import json
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE members (raw JSON, terms JSON)")
+        conn.execute("CREATE TABLE filings (filer_name_raw TEXT)")
+        conn.execute("INSERT INTO members VALUES (?,?)", (
+            json.dumps({"name": {"first": "Jane", "note": MAPPED_CUSIP}, "note": MAPPED_CUSIP}),
+            json.dumps([{"type": "rep", "state": "CA", "note": MAPPED_CUSIP}]),
+        ))
+        conn.execute("INSERT INTO filings VALUES (?)", (f"Unresolved {MAPPED_CUSIP}",))
+    inventory = []
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP}, inventory=inventory)
+    with sqlite3.connect(path) as conn:
+        raw, terms = conn.execute("SELECT raw,terms FROM members").fetchone()
+        assert json.loads(raw) == {"name": {"first": "Jane", "note": DISCLOSURE_WITHHELD_TEXT}, "note": DISCLOSURE_WITHHELD_TEXT}
+        assert json.loads(terms) == [{"type": "rep", "state": "CA", "note": DISCLOSURE_WITHHELD_TEXT}]
+        assert conn.execute("SELECT filer_name_raw FROM filings").fetchone() == (f"Unresolved {DISCLOSURE_WITHHELD_TEXT}",)
+    assert next(r for r in inventory if r["table"] == "members" and r["column"] == "raw")["protected_contract"]
+
+
+@pytest.mark.parametrize("locator", ["https://example.test/{cusip}.pdf", "../receipts/{cusip}.csv", "/receipts/{cusip}.json", "{cusip}.pdf"])
+def test_w2_locator_values_under_prose_labels_refuse_before_writes(tmp_path, mapped_row, locator):
+    import json
+    path = _disclosure_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        text = "See " + locator.format(cusip=MAPPED_CUSIP)
+        conn.execute("UPDATE transactions SET comment=?,raw_row=? WHERE txn_id='t:withheld'", (text, json.dumps({"comment": text})))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="locator"):
+        apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    assert path.read_bytes() == before
+
+
+def test_w2_identifier_only_distinct_owners_are_injective(tmp_path, mapped_row):
+    path = _registry_db(tmp_path, mapped_row)
+    cusip = "191216100"
+    with sqlite3.connect(path) as conn:
+        conn.executescript((Path(__file__).parents[1] / "src/populus/registry.sql").read_text())
+        conn.executemany("INSERT INTO securities VALUES (?,NULL)", [("sec:ftd-before",), ("sec:ftd-after",)])
+        conn.executemany(
+            "INSERT INTO security_identifiers (security_id,id_type,value,valid_from,provenance,confidence,review_state,license_id) VALUES (?,'cusip',?,?,'sec-ftd','high','auto','sec-edgar')",
+            [("sec:ftd-before", cusip, "2026-01-01"), ("sec:ftd-after", cusip, "2026-02-15")],
+        )
+    apply_registry_redaction(path, filed_cusips={cusip})
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute("SELECT value,security_id FROM security_identifiers ORDER BY valid_from").fetchall()
+        assert rows[0][0] == rows[1][0] and rows[0][0].startswith("withheld:")
+        assert rows[0][1] != rows[1][1]
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+
+
+def test_w2_inventory_includes_generated_columns_and_ddl_surfaces(tmp_path, mapped_row):
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE metadata (note TEXT, echo TEXT GENERATED ALWAYS AS (note) VIRTUAL)")
+        conn.execute("CREATE VIEW metadata_view AS SELECT echo FROM metadata")
+        conn.execute("INSERT INTO metadata(note) VALUES ('safe')")
+    inventory = []
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP}, inventory=inventory)
+    echo = next(r for r in inventory if r["table"] == "metadata" and r["column"] == "echo")
+    assert echo["kind"] == "column" and echo["generated"] and echo["visited"] and echo["affected_rows"] == 0
+    view = next(r for r in inventory if r.get("object_name") == "metadata_view")
+    assert view["kind"] == "schema" and view["visited"] and view["affected_rows"] == 0
+
+
+@pytest.mark.parametrize("form", ["lower_hash", "upper_hash", "security_id", "position_key", "issuer_key"])
+def test_w2_embedded_known_derived_keys_use_family_markers(tmp_path, mapped_row, form):
+    import json
+    path = _registry_db(tmp_path, mapped_row)
+    sid = provisional_security_id(anchor("cusip", MAPPED_CUSIP))
+    token = {
+        "lower_hash": sid.removeprefix("sec:prov:"),
+        "upper_hash": sid.removeprefix("sec:prov:").upper(),
+        "security_id": sid,
+        "position_key": "sid:" + sid,
+        "issuer_key": "cusip6:" + MAPPED_CUSIP[:6],
+    }[form]
+    unrelated = provisional_security_id(anchor("cusip", UNMAPPED_CUSIP))
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE metadata (note TEXT,payload JSON)")
+        conn.execute("INSERT INTO metadata VALUES (?,?)", ("Filed " + token, json.dumps({token: token, "unpaired": unrelated})))
+    apply_registry_redaction(path)
+    with sqlite3.connect(path) as conn:
+        note, payload = conn.execute("SELECT note,payload FROM metadata").fetchone()
+        assert note == "Filed " + DISCLOSURE_WITHHELD_TEXT
+        assert json.loads(payload) == {DISCLOSURE_WITHHELD_TEXT: DISCLOSURE_WITHHELD_TEXT, "unpaired": unrelated}
+
+
+@pytest.mark.parametrize("column", ["source_hash", "source_path"])
+def test_w2_known_derived_key_in_protected_hash_or_path_refuses(tmp_path, mapped_row, column):
+    path = _registry_db(tmp_path, mapped_row)
+    token = provisional_security_id(anchor("cusip", MAPPED_CUSIP))
+    with sqlite3.connect(path) as conn:
+        conn.execute(f'CREATE TABLE metadata ("{column}" TEXT)')
+        conn.execute("INSERT INTO metadata VALUES (?)", (token if column == "source_hash" else f"/receipts/{token}.json",))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="protected"):
+        apply_registry_redaction(path)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("upper,prefix", [(False, ""), (True, ""), (False, "sid:sec:prov:"), (True, "sec:prov:")])
+def test_w2_known_hash_boundaries_match_existing_probe(tmp_path, mapped_row, upper, prefix):
+    import json
+    path = _registry_db(tmp_path, mapped_row)
+    digest = provisional_security_id(anchor("cusip", MAPPED_CUSIP)).removeprefix("sec:prov:")
+    digest = digest.upper() if upper else digest
+    adjacent = "a" if upper else "A"
+    token = prefix + digest + adjacent
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE metadata (note TEXT,payload JSON)")
+        conn.execute("INSERT INTO metadata VALUES (?,?)", (token, json.dumps({token: token})))
+    apply_registry_redaction(path)
+    with sqlite3.connect(path) as conn:
+        note, payload = conn.execute("SELECT note,payload FROM metadata").fetchone()
+        expected = DISCLOSURE_WITHHELD_TEXT + adjacent
+        assert note == expected
+        assert json.loads(payload) == {expected: expected}
+
+
+def test_w2_unclassified_institutional_table_uses_disclosure_marker(tmp_path):
+    from populus.inst_redaction import RedactionPlan
+    path = tmp_path / "aggregate.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE metadata (note TEXT)")
+        conn.execute("INSERT INTO metadata VALUES (?)", (MAPPED_CUSIP,))
+    plan = RedactionPlan(frozenset({MAPPED_CUSIP}), frozenset({MAPPED_CUSIP}),
+                         frozenset(), frozenset({MAPPED_CUSIP[:6]}), {}, {})
+    inventory = []
+    apply_cusip_redaction(plan, path, inventory=inventory)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT note FROM metadata").fetchone() == (DISCLOSURE_WITHHELD_TEXT,)
+    assert next(r for r in inventory if r["kind"] == "column")["marker"] == DISCLOSURE_WITHHELD_TEXT
+
+
+def test_w2_known_provisional_sid_without_list_uses_injective_shared_map(tmp_path, mapped_row):
+    path = _registry_db(tmp_path, mapped_row)
+    sid = provisional_security_id(anchor("cusip", MAPPED_CUSIP))
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE security_list_intervals")
+        conn.execute("INSERT INTO securities VALUES ('sec:custom-preserved',NULL)")
+        conn.execute("CREATE TABLE retained_reference (security_id TEXT)")
+        conn.execute("INSERT INTO retained_reference VALUES ('sec:withheld:50')")
+        conn.execute("CREATE TABLE reference (owner_code TEXT REFERENCES securities, old_security_id TEXT)")
+        conn.execute("INSERT INTO reference VALUES (?,?)", (sid, sid))
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT owner_code,old_security_id FROM reference").fetchone() == ("sec:withheld:51", "sec:withheld:51")
+        assert conn.execute("SELECT security_id FROM retained_reference").fetchone() == ("sec:withheld:50",)
+        assert conn.execute("SELECT COUNT(*) FROM securities WHERE security_id='sec:custom-preserved'").fetchone() == (1,)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
