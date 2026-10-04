@@ -730,7 +730,7 @@ def plan_registry_redaction(
     neither spelling alone decides what is withheld."""
     by_key = (mapping or load_ticker_mapping()).by_key()
     rows = conn.execute(
-        "SELECT value, security_id, issuer_name, security_class"
+        "SELECT value, security_id, issuer_name, security_class, valid_from"
         " FROM security_list_intervals WHERE id_type = 'cusip'"
     ).fetchall()
     # IDEMPOTENCE IS A CORRECTNESS REQUIREMENT, not a nicety. The published
@@ -754,11 +754,11 @@ def plan_registry_redaction(
     # preserved untouched, and a newly withheld CUSIP is allocated above the
     # highest ordinal already in use rather than from 1. Ordinals are stable
     # across releases as a result, which is also what makes them joinable.
-    prior = [r for r in rows if r[0].startswith(WITHHELD_LIST_VALUE_PREFIX)]
+    prior = [r[:4] for r in rows if r[0].startswith(WITHHELD_LIST_VALUE_PREFIX)]
     fresh = [r for r in rows if not r[0].startswith(WITHHELD_LIST_VALUE_PREFIX)]
     blocks = {
         value[:6]
-        for value, _sid, name, klass in fresh
+        for value, _sid, name, klass, _start in fresh
         if name is not None and mapping_key(name, klass) in by_key
     }
     # A filed CUSIP carries its BLOCK into the withheld set — unless the seeding
@@ -771,20 +771,58 @@ def plan_registry_redaction(
     withheld = sorted(
         {
             value
-            for value, _s, _n, _c in fresh
+            for value, _s, _n, _c, _start in fresh
             if value[:6] in blocks or value in unverified
         }
     )
-    start = _next_withheld_ordinal(prior)
+    # Values and security IDs share an allocation namespace. A seeded SID can
+    # occupy an ordinal absent from the list, including an extra split owner.
+    occupied = list(prior)
+    for table in _SECURITY_ID_TABLES:
+        columns = _columns(conn, table)
+        for column in ("security_id", "old_security_id"):
+            if column not in columns:
+                continue
+            for (sid,) in conn.execute(
+                f'SELECT DISTINCT "{column}" FROM "{table}"'  # nosec B608 — module constants
+            ):
+                if isinstance(sid, str) and sid.startswith(WITHHELD_SECURITY_ID_PREFIX):
+                    occupied.append((
+                        WITHHELD_LIST_VALUE_PREFIX + sid[len(WITHHELD_SECURITY_ID_PREFIX):],
+                        None, None, None,
+                    ))
+    start = _next_withheld_ordinal(occupied)
     values = {
         value: f"{WITHHELD_LIST_VALUE_PREFIX}{n}"
         for n, value in enumerate(withheld, start=start)
     }
-    sids = {
-        sid: f"{WITHHELD_SECURITY_ID_PREFIX}{values[value][len(WITHHELD_LIST_VALUE_PREFIX):]}"
-        for value, sid, _n, _c in fresh
-        if value in values and sid is not None
+    owners: dict[str, dict[str, str]] = defaultdict(dict)
+    for value, sid, _name, _class, valid_from in fresh:
+        if value in values and sid is not None:
+            owners[value][sid] = min(valid_from, owners[value].get(sid, valid_from))
+    ordered_owners = {
+        value: sorted(owners[value], key=lambda sid: (owners[value][sid], sid))
+        for value in withheld
     }
+    sids: dict[str, str] = {}
+    # Reserve every first-owner binding before allocating additional owners.
+    # A shared SID gets one binding even when it is another CUSIP's later owner.
+    for value, owner_sids in ordered_owners.items():
+        if not owner_sids:
+            continue
+        first = owner_sids[0]
+        if first.startswith(WITHHELD_SECURITY_ID_PREFIX) or first in sids:
+            continue
+        target = WITHHELD_SECURITY_ID_PREFIX + values[value][len(WITHHELD_LIST_VALUE_PREFIX):]
+        sids[first] = target
+    next_sid = start + len(values)
+    for owner_sids in ordered_owners.values():
+        for sid in owner_sids:
+            if sid.startswith(WITHHELD_SECURITY_ID_PREFIX) or sid in sids:
+                continue
+            target = f"{WITHHELD_SECURITY_ID_PREFIX}{next_sid}"
+            sids[sid] = target
+            next_sid += 1
     return values, sids
 
 
