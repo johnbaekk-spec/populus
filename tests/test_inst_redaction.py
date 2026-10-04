@@ -24,6 +24,7 @@ from populus.inst_redaction import (
     apply_cusip_redaction,
     apply_registry_redaction,
     plan_cusip_redaction,
+    plan_registry_redaction,
 )
 from populus.ticker_mapping_13f import load_ticker_mapping
 
@@ -873,3 +874,165 @@ def test_c_load_list_issuers_on_a_database_without_the_table_is_empty(tmp_path):
     conn = sqlite3.connect(tmp_path / "empty.db")
     assert load_list_issuers(conn) == {}
     conn.close()
+
+
+# --- W0: one opaque SID per source identity, including ownership changes ------
+
+
+def _w0_registry_rows(tmp_path, mapped_row, rows):
+    """Reuse the list-shaped fixture, retaining its actual composite key."""
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DELETE FROM security_list_intervals")
+        conn.execute("DELETE FROM securities")
+        for sid in sorted({sid for _cusip, sid, _start in rows}):
+            conn.execute("INSERT INTO securities VALUES (?, NULL)", (sid,))
+        conn.executemany(
+            "INSERT INTO security_list_intervals VALUES (?,'cusip',?,?,'3M CO','COM',NULL,NULL)",
+            ((sid, cusip, start) for cusip, sid, start in rows),
+        )
+    return path
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_w0_split_owners_are_injective_and_chronological(tmp_path, mapped_row, reverse):
+    # The lexical SID order opposes the ownership chronology. A repeated
+    # interval must use the owner's earliest date, not its last inserted row.
+    rows = [
+        (MAPPED_CUSIP, "sec:before", "2026-04-01"),
+        (MAPPED_CUSIP, "sec:after", "2026-02-15"),
+        (SIBLING_CUSIP, "sec:sibling", "2026-01-01"),
+        (MAPPED_CUSIP, "sec:before", "2026-01-01"),
+    ]
+    path = _w0_registry_rows(tmp_path, mapped_row, rows[::-1] if reverse else rows)
+    before = path.read_bytes()
+    with sqlite3.connect(path) as conn:
+        values, sids = plan_registry_redaction(conn)
+    assert values == {MAPPED_CUSIP: "withheld:1", SIBLING_CUSIP: "withheld:2"}
+    assert sids == {
+        "sec:before": "sec:withheld:1",
+        "sec:after": "sec:withheld:3",
+        "sec:sibling": "sec:withheld:2",
+    }, "a split owner must not collide with the sibling's canonical ordinal"
+    assert len(set(sids.values())) == len(sids)
+    assert path.read_bytes() == before, "planning must not change the registry"
+    counts = apply_registry_redaction(path)
+    assert counts["withheld_cusips"] == 2 and counts["withheld_security_ids"] == 3
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM securities").fetchone() == (3,)
+        assert conn.execute("SELECT COUNT(*) FROM security_list_intervals").fetchone() == (4,)
+        assert conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_w0_a_shared_source_sid_has_one_deterministic_binding(tmp_path, mapped_row, reverse):
+    rows = [
+        (MAPPED_CUSIP, "sec:shared", "2026-01-01"),
+        (SIBLING_CUSIP, "sec:shared", "2026-04-01"),
+    ]
+    path = _w0_registry_rows(tmp_path, mapped_row, rows[::-1] if reverse else rows)
+    with sqlite3.connect(path) as conn:
+        values, sids = plan_registry_redaction(conn)
+    assert values == {MAPPED_CUSIP: "withheld:1", SIBLING_CUSIP: "withheld:2"}
+    assert sids == {"sec:shared": "sec:withheld:1"}
+    counts = apply_registry_redaction(path)
+    assert counts["withheld_cusips"] == 2 and counts["withheld_security_ids"] == 1
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT security_id FROM securities").fetchall() == [("sec:withheld:1",)]
+        assert {r[0] for r in conn.execute("SELECT security_id FROM security_list_intervals")} == {"sec:withheld:1"}
+
+
+def test_w0_first_owner_binding_precedes_its_other_cusips_additional_binding(tmp_path, mapped_row):
+    path = _w0_registry_rows(tmp_path, mapped_row, [
+        (MAPPED_CUSIP, "sec:before", "2026-01-01"),
+        (MAPPED_CUSIP, "sec:shared", "2026-02-15"),
+        (SIBLING_CUSIP, "sec:shared", "2026-01-01"),
+    ])
+    with sqlite3.connect(path) as conn:
+        values, sids = plan_registry_redaction(conn)
+    assert values == {MAPPED_CUSIP: "withheld:1", SIBLING_CUSIP: "withheld:2"}
+    assert sids == {"sec:before": "sec:withheld:1", "sec:shared": "sec:withheld:2"}
+
+
+def test_w0_sparse_retained_sid_reserves_value_and_sid_ordinals(tmp_path, mapped_row):
+    path = _replay_registry_db(tmp_path, mapped_row, block_size=12)
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    new_cusip = "88579Y999"
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO securities VALUES ('sec:withheld:50',NULL)")
+        conn.execute("INSERT INTO securities VALUES ('sec:new',NULL)")
+        conn.execute(
+            "INSERT INTO security_list_intervals VALUES ('sec:new','cusip',?,'2026-04-01','3M CO','NOTE NEW',NULL,NULL)",
+            (new_cusip,),
+        )
+        values, sids = plan_registry_redaction(conn, filed_cusips={MAPPED_CUSIP})
+    assert values == {new_cusip: "withheld:51"}
+    assert sids == {"sec:new": "sec:withheld:51"}
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT security_id FROM securities WHERE security_id='sec:withheld:50'").fetchone() == ("sec:withheld:50",)
+        assert conn.execute("SELECT security_id,value FROM security_list_intervals WHERE security_class='NOTE NEW'").fetchone() == ("sec:withheld:51", "withheld:51")
+
+
+def test_w0_new_value_does_not_rename_a_retained_opaque_owner(tmp_path, mapped_row):
+    path = _replay_registry_db(tmp_path, mapped_row, block_size=12)
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    new_cusip = "88579Y999"
+    with sqlite3.connect(path) as conn:
+        before = conn.execute("SELECT security_id FROM securities ORDER BY security_id").fetchall()
+        conn.execute(
+            "INSERT INTO security_list_intervals VALUES ('sec:withheld:1','cusip',?,'2026-04-01','3M CO','NOTE NEW',NULL,NULL)",
+            (new_cusip,),
+        )
+        values, sids = plan_registry_redaction(conn, filed_cusips={MAPPED_CUSIP})
+    assert values == {new_cusip: "withheld:13"}
+    assert sids == {}, "a retained opaque SID is already its stable public identity"
+    counts = apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    assert counts["withheld_cusips"] == 1 and counts["withheld_security_ids"] == 0
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT security_id FROM securities ORDER BY security_id").fetchall() == before
+        assert conn.execute("SELECT security_id,value FROM security_list_intervals WHERE security_class='NOTE NEW'").fetchone() == ("sec:withheld:1", "withheld:13")
+
+
+def test_w0_one_owner_per_value_keeps_canonical_first_build_bindings(tmp_path, mapped_row):
+    path = _registry_db(tmp_path, mapped_row)
+    with sqlite3.connect(path) as conn:
+        values, sids = plan_registry_redaction(conn)
+    assert values == {MAPPED_CUSIP: "withheld:1", SIBLING_CUSIP: "withheld:2"}
+    assert sids == {
+        provisional_security_id(anchor("cusip", MAPPED_CUSIP)): "sec:withheld:1",
+        provisional_security_id(anchor("cusip", SIBLING_CUSIP)): "sec:withheld:2",
+    }
+
+
+def test_w0_a_seeded_owner_and_later_raw_owner_keep_distinct_identities(tmp_path, mapped_row):
+    path = _replay_registry_db(tmp_path, mapped_row, block_size=12)
+    apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    new_cusip = "88579Y999"
+    with sqlite3.connect(path) as conn:
+        before = conn.execute(
+            "SELECT value,security_id,valid_from FROM security_list_intervals ORDER BY value,valid_from"
+        ).fetchall()
+        before_security_count = conn.execute("SELECT COUNT(*) FROM securities").fetchone()[0]
+        conn.execute("INSERT INTO securities VALUES ('sec:additional',NULL)")
+        conn.executemany(
+            "INSERT INTO security_list_intervals VALUES (?,'cusip',?,?,'3M CO','NOTE NEW',NULL,NULL)",
+            [("sec:withheld:1", new_cusip, "2026-04-01"),
+             ("sec:additional", new_cusip, "2026-05-01")],
+        )
+        values, sids = plan_registry_redaction(conn, filed_cusips={MAPPED_CUSIP})
+    assert values == {new_cusip: "withheld:13"}
+    assert sids == {"sec:additional": "sec:withheld:14"}
+    counts = apply_registry_redaction(path, filed_cusips={MAPPED_CUSIP})
+    assert counts["withheld_cusips"] == 1 and counts["withheld_security_ids"] == 1
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT value,security_id,valid_from FROM security_list_intervals WHERE security_class='NOTE NEW' ORDER BY valid_from"
+        ).fetchall() == [
+            ("withheld:13", "sec:withheld:1", "2026-04-01"),
+            ("withheld:13", "sec:withheld:14", "2026-05-01"),
+        ]
+        assert conn.execute(
+            "SELECT value,security_id,valid_from FROM security_list_intervals WHERE security_class!='NOTE NEW' ORDER BY value,valid_from"
+        ).fetchall() == before
+        assert conn.execute("SELECT COUNT(*) FROM securities").fetchone() == (before_security_count + 1,)

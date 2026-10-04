@@ -6862,3 +6862,133 @@ def test_stage_build_refuses_remaining_inline_inst_rows(tmp_path, monkeypatch):
     )
     with pytest.raises(PublishError, match="inline institutional tables are not empty"):
         stage_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+
+
+def _w0_split_publication_inputs(tmp_path):
+    """The existing list producer's ownership split plus a resolved holding."""
+    from test_inst_agg import _filer, _hold, _load
+    from test_inst_external_store import inst_snapshot
+    from test_list13f_seed import APPLE, SPLIT, _line, _seed_list
+    from populus.identity.registry import resolve_cusip, registry_overlap_errors
+
+    db = seed_db(tmp_path / "source.db")
+    conn = connect(str(db))
+    try:
+        _seed_list(conn, "2026q1", [_line(APPLE, "APPLE INC", "COM")], registry=SPLIT)
+        assert resolve_cusip(conn, APPLE, "2026-02-14") == "sec:before"
+        assert resolve_cusip(conn, APPLE, "2026-02-15") == "sec:after"
+        assert registry_overlap_errors(conn) == []
+        _filer(conn, "0000000001", "W0 Fixture Capital")
+        _load(
+            conn, fid="inst:w0-1", cik="0000000001", period="2026-03-31",
+            filed="2026-04-15", holds=[_hold(
+                ordinal=1, issuer="APPLE INC", cusip=APPLE, value=1000,
+                security_id=resolve_cusip(conn, APPLE, "2026-03-31"),
+            )],
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        cursor = conn.execute("SELECT * FROM security_list_intervals ORDER BY valid_from")
+        intervals = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor]
+        cursor = conn.execute("SELECT * FROM securities ORDER BY security_id")
+        securities = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor]
+        schema = conn.execute(
+            "SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','view')"
+            " ORDER BY type,name"
+        ).fetchall()
+    finally:
+        conn.close()
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    record = inst_snapshot.cut_snapshot(
+        db, snapshots, snapshot_version=1, created_at_utc="2026-07-23T12:00:00Z"
+    )
+    return db, Path(record["destination"]), intervals, securities, schema
+
+
+def _w0_assert_split_artifact(path, intervals, securities, schema):
+    """Only the existing opaque ID/value and raw-removal operations differ."""
+    expected_ids = {"sec:before": "sec:withheld:1", "sec:after": "sec:withheld:2"}
+    expected_intervals = [dict(row, security_id=expected_ids[row["security_id"]],
+                               value="withheld:1", raw=None, source_row=None)
+                          for row in intervals]
+    expected_securities = [dict(row, security_id=expected_ids[row["security_id"]])
+                           for row in securities]
+    expected_securities.sort(key=lambda row: row["security_id"])
+    conn = connect(str(path))
+    try:
+        cursor = conn.execute("SELECT * FROM security_list_intervals ORDER BY valid_from")
+        actual = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor]
+        assert actual == expected_intervals
+        cursor = conn.execute("SELECT * FROM securities ORDER BY security_id")
+        actual = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor]
+        assert actual == expected_securities
+        assert conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute(
+            "SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','view')"
+            " ORDER BY type,name"
+        ).fetchall() == schema
+    finally:
+        conn.close()
+
+
+def _w0_finalize(staged, dist):
+    dist.mkdir()
+    stats = Path(staged.staging_dir) / "build" / "congress" / "stats.json"
+    shutil.copyfile(stats, dist / "stats.json")
+    (dist / "index.html").write_text("<!doctype html><title>W0 fixture</title>")
+    return finalize_build(staged, site_file_count=2, dist_dir=dist)
+
+
+@pytest.mark.parametrize("inst_input", ["legacy", "external"])
+def test_w0_real_stage_preserves_distinct_security_owners(tmp_path, inst_input):
+    from populus.publish.digests import sha256_file
+    from populus.publish.build import journal_db_bytes
+
+    db, snapshot, intervals, securities, schema = _w0_split_publication_inputs(tmp_path)
+    original_hashes = (sha256_file(db), sha256_file(snapshot))
+    repo = make_repo(tmp_path)
+    staged = stage_build(
+        db, repo, now=pin(), backend=LocalDirBackend(repo), expect_member_join=True,
+        inst_db_path=snapshot if inst_input == "external" else None,
+    )
+    congress = Path(staged.staging_dir) / "assets" / "congress.db"
+    _w0_assert_split_artifact(congress, intervals, securities, schema)
+    _w0_finalize(staged, tmp_path / "dist")
+    journal = journal_load((Path(staged.staging_dir) / "journal.json").read_bytes())
+    assert journal_db_bytes(journal) == congress.read_bytes()
+    manifest = json.loads((Path(staged.staging_dir) / "build" / "manifest.json").read_bytes())
+    assert find_artifact(manifest, "congress.db")["sha256"] == sha256_file(congress)
+    assert (sha256_file(db), sha256_file(snapshot)) == original_hashes
+
+
+def test_w0_published_seed_replay_preserves_both_security_ids(tmp_path):
+    from populus.publish.digests import sha256_file
+
+    db, snapshot, intervals, securities, schema = _w0_split_publication_inputs(tmp_path)
+    original_hashes = (sha256_file(db), sha256_file(snapshot))
+    repo = make_repo(tmp_path)
+    backend = LocalDirBackend(repo)
+    first = stage_build(db, repo, now=pin(), backend=backend, inst_db_path=snapshot)
+    _w0_finalize(first, tmp_path / "dist-a")
+    first_congress = Path(first.staging_dir) / "assets" / "congress.db"
+    _w0_assert_split_artifact(first_congress, intervals, securities, schema)
+    run_publish(repo, build_id=first.build_id, now=pin(), backend=backend)
+    seed = tmp_path / "seed.db"
+    result = CliRunner().invoke(cli_main, [
+        "seed-corpus", "--db", str(seed), "--data-repo", str(repo),
+        "--backend", "local-dir", "--counts", str(tmp_path / "seed-counts.json"),
+    ])
+    assert result.exit_code == 0, result.output
+    _w0_assert_split_artifact(seed, intervals, securities, schema)
+    seed_hash = sha256_file(seed)
+    second = stage_build(
+        seed, repo, now=pin(NOW + timedelta(days=1)), backend=backend,
+        inst_db_path=snapshot, expect_member_join=True,
+    )
+    _w0_finalize(second, tmp_path / "dist-b")
+    _w0_assert_split_artifact(
+        Path(second.staging_dir) / "assets" / "congress.db", intervals, securities, schema
+    )
+    assert sha256_file(seed) == seed_hash
+    assert (sha256_file(db), sha256_file(snapshot)) == original_hashes
