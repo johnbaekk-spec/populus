@@ -2550,8 +2550,8 @@ def stage_build(
     A staged-only build with a valid journal is preserved verbatim, never
     re-produced from the current database or clock.
 
-    Assembly path: snapshot → integrity check → logical digest → stats →
-    feed + slices → licensing set → manifest → recovery journal (durably
+    Assembly path: snapshot → integrity check → inst derivation → sanitation
+    → stats + slices → logical digest → manifest → recovery journal (durably
     staged LAST, after which the build is completable from the data repo alone).
     """
     if not expected_modules:
@@ -2649,7 +2649,7 @@ def stage_build(
     build_dir.mkdir(parents=True)
     assets_dir.mkdir(parents=True)
 
-    # --- snapshot + integrity + logical digest ------------------------------
+    # --- snapshot + integrity -----------------------------------------------
     snapshot_path = assets_dir / DB_ARTIFACT
     source = connect(str(db_path))
     try:
@@ -2667,98 +2667,6 @@ def stage_build(
         if integrity != "ok":
             raise PublishError(f"snapshot failed integrity_check: {integrity}")
         ensure_views(snapshot)
-        db_logical = logical_digest(snapshot)
-
-        # --- stats (reuse; injected created_at, no clock reads) -------------
-        house_meta = (
-            read_house_meta(raw_root) if raw_root is not None else None
-        )
-        stats_document = compute_stats(
-            snapshot, now=lambda: created_at, house_meta=house_meta
-        )
-        _write_staged(build_dir, "congress/stats.json", render_stats(stats_document))
-
-        # --- feed + per-entity slices (locked decision 6) --------------------
-        feed = {
-            "feed_version": "1",
-            "data_note": DATA_NOTE,
-            "rows": _feed_rows(snapshot, limit=FEED_LIMIT),
-        }
-        _write_staged(build_dir, "congress/feed.json", _render_json(feed))
-
-        # A build that carries congressional rows but joined NONE of them to a
-        # member is not a small build — it is the identity layer missing, and
-        # every `/congress/members/<bioguide>` route 404s. The loop below is the
-        # exact shape that let that ship silently: with zero joined rows it
-        # iterates zero times, writes no artifact, and raises nothing, so seven
-        # consecutive builds (20260807.1 through 20260812.1) published a site
-        # whose member pages did not exist. `stats.json` even carried the
-        # evidence — 210 `unresolved_names` and no member slices — and nothing
-        # read it. Under a declared expectation an empty result set is a refusal
-        # here, never a quiet success.
-        #
-        # The predicate is deliberately "rows exist AND none joined", not a
-        # coverage percentage: a partial join is a data-quality question the §15
-        # join-coverage report already measures per era, while a total absence is
-        # always a broken pipeline (the `members` ingest never ran).
-        if expect_member_join:
-            (row_total, joined_total) = snapshot.execute(
-                "SELECT COUNT(*), COUNT(bioguide_id) FROM v_default_transactions"
-            ).fetchone()
-            if row_total and not joined_total:
-                raise PublishError(
-                    f"member join is absent: {row_total} congressional rows and 0"
-                    " joined to a member, so no member page would be built."
-                    " `populus ingest members --from-cache <legislators dir>` did"
-                    " not run against this store"
-                    " (see scripts/fetch_legislators_cache.py)."
-                )
-
-        for (bioguide_id,) in snapshot.execute(
-            "SELECT DISTINCT bioguide_id FROM v_default_transactions"
-            " WHERE bioguide_id IS NOT NULL ORDER BY bioguide_id"
-        ):
-            slice_doc = {
-                "slice_version": "1",
-                "bioguide_id": bioguide_id,
-                "data_note": DATA_NOTE,
-                "rows": _feed_rows(
-                    snapshot,
-                    limit=SLICE_LIMIT,
-                    where=" WHERE bioguide_id = ?",
-                    params=(bioguide_id,),
-                ),
-            }
-            _write_staged(
-                build_dir,
-                f"congress/members/{bioguide_id}.json",
-                _render_json(slice_doc),
-            )
-
-        skipped_tickers: list[str] = []
-        for (ticker,) in snapshot.execute(
-            "SELECT DISTINCT ticker FROM v_default_transactions"
-            " WHERE ticker IS NOT NULL ORDER BY ticker"
-        ):
-            if not safe_artifact_name(ticker) or "/" in ticker:
-                # Rows stay in the feed, the DB, and stats — only the
-                # per-ticker slice route is skipped, and counted.
-                skipped_tickers.append(ticker)
-                continue
-            slice_doc = {
-                "slice_version": "1",
-                "ticker": ticker,
-                "data_note": DATA_NOTE,
-                "rows": _feed_rows(
-                    snapshot,
-                    limit=SLICE_LIMIT,
-                    where=" WHERE ticker = ?",
-                    params=(ticker,),
-                ),
-            }
-            _write_staged(
-                build_dir, f"congress/tickers/{ticker}.json", _render_json(slice_doc)
-            )
 
         # --- licensing set (§15.1, §17 license gate) ---------------------
         register = licenses.load_register()
@@ -2773,15 +2681,6 @@ def stage_build(
             build_dir, "DATA-LICENSE.md", licenses.render_data_license(register)
         )
         _write_staged(build_dir, "NOTICE", licenses.render_notice(register))
-
-        watermarks = {
-            "house_index_last_modified": stats_document["freshness"][
-                "house_index_last_modified"
-            ],
-            "senate_max_filed_date": stats_document["freshness"][
-                "senate_db_max_filed_date"
-            ],
-        }
 
         # --- inst cross-filer aggregates + the M2 >=95% coverage gate --
         # Guard on inst data: absent → a byte-identical M1 build (no inst module,
@@ -2909,6 +2808,114 @@ def stage_build(
         snapshot.execute("VACUUM")
     finally:
         snapshot.close()
+    # Congress documents describe the sanitized publication copy, including
+    # the source-derived names retained in the finalization state.
+    snapshot = connect(str(snapshot_path))
+    try:
+        ensure_views(snapshot)
+        # --- stats (reuse; injected created_at, no clock reads) -------------
+        house_meta = (
+            read_house_meta(raw_root) if raw_root is not None else None
+        )
+        stats_document = compute_stats(
+            snapshot, now=lambda: created_at, house_meta=house_meta
+        )
+        _write_staged(build_dir, "congress/stats.json", render_stats(stats_document))
+
+        # --- feed + per-entity slices (locked decision 6) --------------------
+        feed = {
+            "feed_version": "1",
+            "data_note": DATA_NOTE,
+            "rows": _feed_rows(snapshot, limit=FEED_LIMIT),
+        }
+        _write_staged(build_dir, "congress/feed.json", _render_json(feed))
+
+        # A build that carries congressional rows but joined NONE of them to a
+        # member is not a small build — it is the identity layer missing, and
+        # every `/congress/members/<bioguide>` route 404s. The loop below is the
+        # exact shape that let that ship silently: with zero joined rows it
+        # iterates zero times, writes no artifact, and raises nothing, so seven
+        # consecutive builds (20260807.1 through 20260812.1) published a site
+        # whose member pages did not exist. `stats.json` even carried the
+        # evidence — 210 `unresolved_names` and no member slices — and nothing
+        # read it. Under a declared expectation an empty result set is a refusal
+        # here, never a quiet success.
+        #
+        # The predicate is deliberately "rows exist AND none joined", not a
+        # coverage percentage: a partial join is a data-quality question the §15
+        # join-coverage report already measures per era, while a total absence is
+        # always a broken pipeline (the `members` ingest never ran).
+        if expect_member_join:
+            (row_total, joined_total) = snapshot.execute(
+                "SELECT COUNT(*), COUNT(bioguide_id) FROM v_default_transactions"
+            ).fetchone()
+            if row_total and not joined_total:
+                raise PublishError(
+                    f"member join is absent: {row_total} congressional rows and 0"
+                    " joined to a member, so no member page would be built."
+                    " `populus ingest members --from-cache <legislators dir>` did"
+                    " not run against this store"
+                    " (see scripts/fetch_legislators_cache.py)."
+                )
+
+        for (bioguide_id,) in snapshot.execute(
+            "SELECT DISTINCT bioguide_id FROM v_default_transactions"
+            " WHERE bioguide_id IS NOT NULL ORDER BY bioguide_id"
+        ):
+            slice_doc = {
+                "slice_version": "1",
+                "bioguide_id": bioguide_id,
+                "data_note": DATA_NOTE,
+                "rows": _feed_rows(
+                    snapshot,
+                    limit=SLICE_LIMIT,
+                    where=" WHERE bioguide_id = ?",
+                    params=(bioguide_id,),
+                ),
+            }
+            _write_staged(
+                build_dir,
+                f"congress/members/{bioguide_id}.json",
+                _render_json(slice_doc),
+            )
+
+        skipped_tickers: list[str] = []
+        for (ticker,) in snapshot.execute(
+            "SELECT DISTINCT ticker FROM v_default_transactions"
+            " WHERE ticker IS NOT NULL ORDER BY ticker"
+        ):
+            if not safe_artifact_name(ticker) or "/" in ticker:
+                # Rows stay in the feed, the DB, and stats — only the
+                # per-ticker slice route is skipped, and counted.
+                skipped_tickers.append(ticker)
+                continue
+            slice_doc = {
+                "slice_version": "1",
+                "ticker": ticker,
+                "data_note": DATA_NOTE,
+                "rows": _feed_rows(
+                    snapshot,
+                    limit=SLICE_LIMIT,
+                    where=" WHERE ticker = ?",
+                    params=(ticker,),
+                ),
+            }
+            _write_staged(
+                build_dir, f"congress/tickers/{ticker}.json", _render_json(slice_doc)
+            )
+
+        watermarks = {
+            "house_index_last_modified": stats_document["freshness"][
+                "house_index_last_modified"
+            ],
+            "senate_max_filed_date": stats_document["freshness"][
+                "senate_db_max_filed_date"
+            ],
+        }
+
+    finally:
+        snapshot.close()
+
     # The digest must describe the bytes actually published.
     db_logical = _recompute_db_logical(snapshot_path)
 

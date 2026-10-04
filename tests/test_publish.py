@@ -7080,3 +7080,124 @@ def test_w2_real_publication_reports_every_table_column(tmp_path, monkeypatch, i
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(row for row in rows if row["kind"] == "column")
+
+
+@pytest.mark.parametrize("inst_input", ["legacy", "external"])
+def test_w1_serializes_congress_and_stats_from_the_sanitized_snapshot(tmp_path, inst_input):
+    """Every Congress document and both stats copies use the final DB surface."""
+    from populus.publish.build import journal_db_bytes
+    from populus.publish.digests import sha256_file
+    from test_inst_external_store import make_inst_snapshot
+
+    db = seed_db(tmp_path / "populus.db", asset=f"Apple Inc CUSIP {APPLE_CUSIP}")
+    _seed_identity_via_list(db, tmp_path)
+    conn = connect(str(db))
+    try:
+        conn.execute(
+            "UPDATE transactions SET comment = ? WHERE ticker = 'AAPL'",
+            (f"Source comment US{APPLE_CUSIP}5",),
+        )
+        # This is display disclosure prose. The filing and member identity keys
+        # remain ordinary; W1 explicitly includes unresolved_names in stats.
+        insert_filing(
+            conn, filing_id="house:w1-unresolved", chamber="house",
+            bioguide_id=None, filer_name_raw=f"Unresolved disclosure {APPLE_CUSIP}",
+            filing_kind="ptr", filed_date="2026-01-12",
+            doc_url="https://disclosures-clerk.house.gov/ptr/w1-unresolved.pdf",
+            source="house-clerk", ingested_at="2026-01-13T00:00:00Z",
+        )
+        expected_ids = conn.execute(
+            "SELECT txn_id, filing_id, bioguide_id, ticker, row_fingerprint"
+            " FROM transactions ORDER BY txn_id"
+        ).fetchall()
+    finally:
+        conn.close()
+    source_hash = sha256_file(db)
+    inst_snapshot = make_inst_snapshot(tmp_path) if inst_input == "external" else None
+    snapshot_hash = sha256_file(inst_snapshot) if inst_snapshot else None
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    last_modified = "Thu, 23 Jul 2026 06:00:00 GMT"
+    (raw / "2026FD.zip.meta.json").write_text(
+        json.dumps({"etag": "w1", "last_modified": last_modified})
+    )
+    repo = make_repo(tmp_path)
+    backend = LocalDirBackend(repo)
+    staged = stage_build(
+        db, repo, now=pin(), backend=backend, raw_root=raw,
+        inst_db_path=inst_snapshot, expect_member_join=True,
+    )
+    stage = Path(staged.staging_dir)
+    build = stage / "build"
+    stats_path = build / "congress" / "stats.json"
+    expected_name = "Unresolved disclosure [CUSIP withheld]"
+    stats = json.loads(stats_path.read_bytes())
+    assert stats["unresolved_names"] == [{
+        "filer_name_raw": expected_name, "chamber": "house",
+        "source": "house-clerk", "filing_count": 1,
+    }]
+    assert staged._state["stats_document"] == stats
+    write_stage_state(staged)
+    revived = read_stage_state(stage, data_repo=repo, backend=backend)
+    assert revived._state["stats_document"] == stats
+    assert stats["generated_at"] == "2026-07-23T12:00:00Z"
+    assert stats["site_file_count"] is None
+    assert stats["freshness"]["house_db_max_filed_date"] == "2026-01-12"
+    assert stats["freshness"]["senate_db_max_filed_date"] is None
+    assert stats["freshness"]["house_index_last_modified"] == last_modified
+    assert stats["freshness"]["house_index_last_modified_by_year"] == {
+        "2026": last_modified,
+    }
+    expected_watermarks = {
+        "house_index_last_modified": last_modified,
+        "senate_max_filed_date": None,
+    }
+    assert staged._state["watermarks"] == expected_watermarks
+    assert revived._state["watermarks"] == expected_watermarks
+    register = licenses.load_register()
+    assert json.loads((build / "licenses.json").read_bytes()) == register
+    assert (build / "DATA-LICENSE.md").read_text() == licenses.render_data_license(
+        register
+    )
+    assert (build / "NOTICE").read_text() == licenses.render_notice(register)
+
+    for name in ("feed.json", "members/D000001.json", "tickers/AAPL.json"):
+        document = json.loads((build / "congress" / name).read_bytes())
+        apple = next(row for row in document["rows"] if row["ticker"] == "AAPL")
+        assert apple["asset_name"] == "Apple Inc CUSIP [CUSIP withheld]"
+        assert apple["comment"] == "Source comment [CUSIP withheld]"
+        assert APPLE_CUSIP.lower() not in json.dumps(document).lower()
+
+    conn = connect(str(stage / "assets" / "congress.db"))
+    try:
+        assert conn.execute(
+            "SELECT txn_id, filing_id, bioguide_id, ticker, row_fingerprint"
+            " FROM transactions ORDER BY txn_id"
+        ).fetchall() == expected_ids
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    shutil.copyfile(stats_path, dist / "stats.json")
+    (dist / "index.html").write_text("<!doctype html><title>W1 fixture</title>")
+    finalize_build(revived, site_file_count=2, dist_dir=dist)
+    final_stats = json.loads(stats_path.read_bytes())
+    assert final_stats["site_file_count"] == 2
+    assert final_stats["unresolved_names"] == stats["unresolved_names"]
+    assert revived._state["stats_document"] == final_stats
+    assert read_stage_state(
+        stage, data_repo=repo, backend=backend
+    )._state["stats_document"] == final_stats
+    assert final_stats["freshness"] == stats["freshness"]
+    manifest = json.loads((build / "manifest.json").read_bytes())
+    assert manifest["modules"]["congress"]["watermarks"] == expected_watermarks
+    assert (dist / "stats.json").read_bytes() == stats_path.read_bytes()
+    journal = journal_load((stage / "journal.json").read_bytes())
+    assert json.loads(journal["artifacts"]["congress/stats.json"]) == final_stats
+    assert APPLE_CUSIP.encode() not in journal_db_bytes(journal)
+    for name, document in journal["artifacts"].items():
+        assert APPLE_CUSIP.lower() not in document.lower(), name
+    assert sha256_file(db) == source_hash
+    if inst_snapshot:
+        assert sha256_file(inst_snapshot) == snapshot_hash
