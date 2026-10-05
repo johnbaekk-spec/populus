@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { cardFoot, thLabelHtml, thHtml, HEADER_ABBREVIATIONS } from "../src/lib/format.ts";
+import { cardFoot, thLabelHtml, thHtml, HEADER_ABBREVIATIONS, identityChipHtml } from "../src/lib/format.ts";
 import { baseStylesheet } from "./lib/styles.ts";
 import { DESIGN_INST_INDEX_HEADS } from "../src/lib/inst-index.ts";
 import { unavailableDesignPanel, plannedLine } from "../src/lib/ui/shared.ts";
@@ -136,6 +136,10 @@ test("R27: the visible-text gate catches a planted term and ignores machine surf
   ];
   for (const [term, html] of planted) {
     assert.ok(hit(html).includes(term), `planted "${term}" must be caught: ${html}`);
+  }
+  // Both identity chips' accessible labels and note bodies use ordinary prose.
+  for (const key of ["pos:41", "iss:7"]) {
+    assert.deepEqual(hit(identityChipHtml(key, { scope: "wording" }, key)), [], key);
   }
   // …and M2-CONTRACT is NOT a term: the §5 data note keeps it (G-1, L18)
   assert.deepEqual(hit("<p>These are disclosures, not investment advice (ARCHITECTURE.md §5.2 / M2-CONTRACT §5).</p>"), []);
