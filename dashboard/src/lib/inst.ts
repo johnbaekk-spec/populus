@@ -56,7 +56,7 @@ export interface QoqDeltaRow {
 }
 
 export interface TopHolderRow {
-  issuer_key: string; // 'entity:<id>' | 'cusip6:<6>' | 'name:<norm>'
+  issuer_key: string; // 'entity:<id>' | 'cusip6:<6>' | 'name:<norm>' | 'iss:<ordinal>'
   period_of_report: string;
   rank: number;
   cik: string;

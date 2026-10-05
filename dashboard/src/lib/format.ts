@@ -2342,17 +2342,18 @@ export function fnMark(mark: string): string {
 
 /** How strong an issuer/position identity actually is, read off the key's own
     prefix. The producer publishes these prefixes; this only names them. */
-export type IdentityStrength = "entity" | "cusip6" | "name" | "provisional" | "withheld" | "unknown";
+export type IdentityStrength = "entity" | "cusip6" | "name" | "provisional" | "withheld" | "issuer-withheld" | "unknown";
 
 export function identityStrengthOf(key: string): IdentityStrength {
   if (key.startsWith("entity:")) return "entity";
   if (key.startsWith("cusip6:")) return "cusip6";
   if (key.startsWith("name:")) return "name";
   if (key.startsWith("sid:sec:prov:")) return "provisional";
-  // C1 (refinement 20260910, inst_redaction.py): a security with a reviewed
-  // ticker publishes no CUSIP and no CUSIP-derived key — `pos:`/`iss:` are
-  // opaque ordinals the producer substitutes.
-  if (key.startsWith("pos:") || key.startsWith("iss:")) return "withheld";
+  // C1 (refinement 20260910, inst_redaction.py): a reviewed-ticker position
+  // publishes no CUSIP or derived position key; `pos:` is its opaque ordinal.
+  if (key.startsWith("pos:")) return "withheld";
+  // An opaque issuer key does not imply every member's CUSIP is withheld.
+  if (key.startsWith("iss:")) return "issuer-withheld";
   return "unknown";
 }
 
@@ -2387,6 +2388,12 @@ const IDENTITY_CHIP: Record<Exclude<IdentityStrength, "entity">, { label: string
          that" goes; "nor any key computed from it" is the C1 fact and stays */
       "this security has a reviewed ticker, so Public Filings publishes neither its CUSIP nor any " +
       "key computed from it; the key shown links only this build's own files",
+  },
+  "issuer-withheld": {
+    label: "issuer key withheld",
+    why:
+      "this issuer key is withheld because it could tie a CUSIP block to a reviewed ticker; " +
+      "the key shown links only this build's own files",
   },
   unknown: {
     label: "unrecognized key",

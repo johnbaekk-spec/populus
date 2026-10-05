@@ -753,6 +753,8 @@ test("SL-R17: raw issuer and position keys stop being visible text; `entity:` ge
     ["cusip6:464287", "issuer from CUSIP-6"],
     ["name:apple-inc", "issuer from name"],
     ["sid:sec:prov:00076fbdb7a2ddaf78c0e89001ecf4f7", "provisional position id"],
+    ["pos:41", "CUSIP withheld"],
+    ["iss:7", "issuer key withheld"],
   ] as const) {
     const chip = identityChipHtml(key, ctx, `k-${key}`);
     assert.ok(chip.includes(label), `${key} renders a READABLE label`);
