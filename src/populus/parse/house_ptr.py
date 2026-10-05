@@ -64,8 +64,11 @@ _PAPER_YIELD_THRESHOLD = 200
 #: a handful of pages; the largest real filing in the corpus is well under
 #: 100. pypdf 6.16 closes the known per-page advisories, but a pathological
 #: PDF still runs in-process, so the bound is structural, not advisory-driven.
-#: ONE constant for every extractor — a bound applied to one engine and not
-#: its fallback is how the property silently disappears.
+#: ONE constant for every House extractor — a bound applied to one engine and
+#: not its fallback is how the property silently disappears. The 13(f) list
+#: parser reuses these extractors with its own declared ceiling
+#: (``list13f.MAX_LIST13F_PDF_PAGES``): the list is hundreds of pages, and
+#: sharing this one refused every real list.
 MAX_PDF_PAGES = 200
 
 
@@ -77,8 +80,12 @@ class PdfTooLargeError(UnreadablePdfError):
     """More pages than :data:`MAX_PDF_PAGES` — refused before extraction."""
 
 
-def _bounded_pages(pages):
+def _bounded_pages(pages, limit: int = MAX_PDF_PAGES):
     """The page sequence, or :class:`PdfTooLargeError` above the ceiling.
+
+    ``limit`` is :data:`MAX_PDF_PAGES` for every House extractor. A caller
+    parsing a different document type passes that type's own declared ceiling
+    (``list13f.MAX_LIST13F_PDF_PAGES``) — a bound is still always applied.
 
     ``len()`` is the only thing evaluated. Both engines walk the page tree
     to count, so the WALK is unbounded (a cheap, structural operation); what
@@ -86,8 +93,8 @@ def _bounded_pages(pages):
     and the surface the pypdf advisories concerned.
     """
     count = len(pages)
-    if count > MAX_PDF_PAGES:
-        raise PdfTooLargeError(f"PDF has {count} pages, over the {MAX_PDF_PAGES}-page cap")
+    if count > limit:
+        raise PdfTooLargeError(f"PDF has {count} pages, over the {limit}-page cap")
     return pages
 
 
@@ -476,14 +483,19 @@ def classify(pdf_bytes: bytes, doc_id: str) -> Classification:
 # --- positioned extraction ---------------------------------------------------
 
 
-def extract_positioned(pdf_bytes: bytes) -> list[list[Line]]:
-    """pdfplumber words grouped into printed lines, one list per page."""
+def extract_positioned(
+    pdf_bytes: bytes, *, max_pages: int = MAX_PDF_PAGES
+) -> list[list[Line]]:
+    """pdfplumber words grouped into printed lines, one list per page.
+
+    ``max_pages`` defaults to the House ceiling; the 13(f) list parser passes
+    its own (``list13f.MAX_LIST13F_PDF_PAGES``)."""
     import pdfplumber
 
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             pages: list[list[Line]] = []
-            for page_no, page in enumerate(_bounded_pages(pdf.pages)):
+            for page_no, page in enumerate(_bounded_pages(pdf.pages, max_pages)):
                 words = sorted(
                     page.extract_words(), key=lambda w: (w["top"], w["x0"])
                 )

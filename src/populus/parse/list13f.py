@@ -34,7 +34,7 @@ from typing import NamedTuple
 
 from populus.canonical import nfc
 from populus.identity.registry import normalize_cusip
-from populus.parse.house_ptr import MAX_PDF_PAGES, Line, _column_of, extract_positioned
+from populus.parse.house_ptr import Line, _column_of, extract_positioned
 
 #: Version stamped onto every seeded fact row (§5.1 transformation provenance).
 LIST13F_PARSER_VERSION = "list13f-1.0.0"
@@ -607,6 +607,18 @@ def parse_list13f_text(data: str, *, quarter: str) -> ParsedList13f:
     return _finalize(candidates, quarter=quarter)
 
 
+#: Ceiling on pages the 13(f) list parser will walk. NOT the House PTR ceiling
+#: (``house_ptr.MAX_PDF_PAGES`` = 200): a PTR is a handful of pages, while the
+#: SEC Official 13(f) List is hundreds. Measured on the real lists in
+#: data-cache/13flist (2026-10-05): 2025q1 675, 2025q2 686, 2025q3 701,
+#: 2025q4 716, 2026q1 727, 2026q2 748 — growing ~15 pages a quarter. Sharing
+#: the House ceiling (3cefa58, security audit R2 M3) refused every real list,
+#: so list ingest and `make accept-m2-5` failed closed. 1,500 is about twice
+#: the largest real list: the extraction stays bounded (the M3 property) with
+#: decades of growth headroom, and a pathological PDF is still refused.
+MAX_LIST13F_PDF_PAGES = 1500
+
+
 # --- PDF legend ----------------------------------------------------------
 
 
@@ -620,10 +632,10 @@ def _legend_text(pdf_bytes: bytes) -> str:
 
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            if len(pdf.pages) > MAX_PDF_PAGES:
+            if len(pdf.pages) > MAX_LIST13F_PDF_PAGES:
                 raise List13fParseError(
                     f"13(f) list PDF has {len(pdf.pages)} pages, over the"
-                    f" {MAX_PDF_PAGES}-page cap"
+                    f" {MAX_LIST13F_PDF_PAGES}-page cap"
                 )
             if len(pdf.pages) < 2:
                 raise List13fParseError(
@@ -777,7 +789,7 @@ def parse_list13f_pdf(pdf_bytes: bytes, *, quarter: str) -> ParsedList13f:
     candidate.
     """
     legend = parse_list13f_legend(pdf_bytes)
-    pages = extract_positioned(pdf_bytes)
+    pages = extract_positioned(pdf_bytes, max_pages=MAX_LIST13F_PDF_PAGES)
     candidates: list[_Candidate] = []
     document_quarter: str | None = None
     document_total_count: int | None = None
