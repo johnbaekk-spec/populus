@@ -557,3 +557,71 @@ def test_parse_quarter_and_bounds():
     assert quarter_bounds("2026q1") == ("2026-01-01", "2026-04-01")
     assert quarter_bounds("2026q2") == ("2026-04-01", "2026-07-01")
     assert quarter_bounds("2025q4") == ("2025-10-01", "2026-01-01")  # year rollover
+
+
+# --- page ceiling: the 13(f) list has its own, the House PTR keeps 200 ------
+#
+# The SEC Official 13(f) List is hundreds of pages (675-748 measured across
+# 2025q1-2026q2). Sharing the House PTR ceiling of 200 (3cefa58) refused every
+# real list, so list ingest and `make accept-m2-5` failed closed. The list keeps
+# a bound of its own; these pin both halves: real sizes pass, and the bound
+# still refuses.
+
+LARGEST_MEASURED_LIST_PAGES = 748  # data-cache/13flist/13flist2026q2.pdf
+
+
+def _blank_pdf(pages: int) -> bytes:
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=612, height=792)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def test_the_list_ceiling_has_headroom_and_the_house_ceiling_is_unchanged():
+    from populus.parse import house_ptr, list13f
+
+    assert list13f.MAX_LIST13F_PDF_PAGES >= 2 * LARGEST_MEASURED_LIST_PAGES
+    assert house_ptr.MAX_PDF_PAGES == 200
+
+
+def test_a_real_sized_list_passes_the_legend_page_check():
+    from populus.parse import list13f
+
+    # A blank legend page yields empty text, but it is not refused by size.
+    assert list13f._legend_text(_blank_pdf(LARGEST_MEASURED_LIST_PAGES)) == ""
+
+
+def test_a_list_over_its_ceiling_is_still_refused_by_both_checks():
+    from populus.parse import list13f
+    from populus.parse.house_ptr import PdfTooLargeError, extract_positioned
+
+    oversized = _blank_pdf(list13f.MAX_LIST13F_PDF_PAGES + 1)
+    with pytest.raises(List13fParseError, match=f"{list13f.MAX_LIST13F_PDF_PAGES}-page cap"):
+        list13f._legend_text(oversized)
+    with pytest.raises(PdfTooLargeError):
+        extract_positioned(oversized, max_pages=list13f.MAX_LIST13F_PDF_PAGES)
+
+
+def test_the_list_parser_extracts_under_the_list_ceiling_not_the_house_one(monkeypatch):
+    from populus.parse import list13f
+    from populus.parse.house_ptr import PdfTooLargeError
+
+    seen: dict[str, object] = {}
+    real = list13f.extract_positioned
+
+    def spy(pdf_bytes, **kwargs):
+        seen.update(kwargs)
+        return real(pdf_bytes, **kwargs)
+
+    monkeypatch.setattr(list13f, "extract_positioned", spy)
+    # Skip the legend semantics: this test is about the page bound only.
+    monkeypatch.setattr(list13f, "parse_list13f_legend", lambda _b: None)
+    try:
+        list13f.parse_list13f_pdf(_blank_pdf(LARGEST_MEASURED_LIST_PAGES), quarter="2026q2")
+    except PdfTooLargeError:
+        pytest.fail("a real-sized list was refused by the page ceiling")
+    except Exception:  # noqa: BLE001 — blank pages carry no rows; only the bound matters
+        pass
+    assert seen == {"max_pages": list13f.MAX_LIST13F_PDF_PAGES}
