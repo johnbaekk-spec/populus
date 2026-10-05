@@ -88,7 +88,7 @@ def test_plan_covers_the_whole_issuer_block_and_the_derived_ids(source):
     assert UNMAPPED_CUSIP not in plan.cusips, "an unmapped security keeps today's behaviour"
     assert provisional_security_id(anchor("cusip", MAPPED_CUSIP)) in plan.security_ids
     assert plan.blocks == {MAPPED_CUSIP[:6]}
-    assert f"cusip6:{MAPPED_CUSIP[:6]}" in plan.issuer_keys
+    assert plan.issuer_keys == {f"cusip6:{MAPPED_CUSIP[:6]}": "iss:1"}
 
 
 def test_no_published_column_pairs_a_withheld_cusip_with_anything(tmp_path, source):
@@ -727,8 +727,7 @@ def test_c_a_misfiled_cusip_cannot_drag_its_block_into_the_withheld_set():
     gated = close_withheld_cusips(rows, None, list_issuers)
     assert TREASURY_SIBLING not in gated.cusips, "the block is no longer dragged in"
     assert "91282C" not in gated.blocks, (
-        "and contributes no opaque issuer key either — otherwise the same block"
-        " would be re-dragged through issuer_key instead of cusip"
+        "a rejected seed must not start the block walk or withhold its siblings"
     )
     # Both mis-filed rows are named, with the class, so the record can point at
     # the filing rather than filter it silently.
@@ -750,6 +749,72 @@ def test_c_a_refused_seed_is_still_withheld_itself():
     )
     assert TREASURY_A in gated.cusips
     assert TREASURY_A in gated.mapped
+
+
+def test_rejected_seed_issuer_keys_append_without_expanding_the_closure(source):
+    """Rejected blocks get opaque issuer joins without hiding their siblings."""
+    source.execute(
+        "CREATE TABLE security_list_intervals (id_type TEXT, value TEXT, issuer_name TEXT)"
+    )
+    source.executemany(
+        "INSERT INTO security_list_intervals VALUES ('cusip', ?, ?)",
+        [(MAPPED_CUSIP, "3M CO"), (SIBLING_CUSIP, "3M CO"),
+         (UNMAPPED_CUSIP, "SOME OTHER CORP"),
+         (TREASURY_A, SEC_LIST_TREASURY), (TREASURY_SIBLING, SEC_LIST_TREASURY)],
+    )
+    # This rejected block sorts BEFORE the walked block. Sorting their union
+    # would renumber the walked issuer, which is already published as iss:1.
+    source.execute(
+        "UPDATE inst_holdings SET issuer_name_raw='NORTHERN OIL & GAS INC' WHERE cusip=?",
+        (UNMAPPED_CUSIP,),
+    )
+    treasury_sid = provisional_security_id(anchor("cusip", TREASURY_A))
+    sibling_sid = provisional_security_id(anchor("cusip", TREASURY_SIBLING))
+    source.executemany(
+        "INSERT INTO inst_holdings VALUES (?, ?, ?, ?)",
+        [("NORTHERN OIL & GAS INC", "COM", TREASURY_A, treasury_sid),
+         (SEC_LIST_TREASURY, "NOTE", TREASURY_SIBLING, sibling_sid)],
+    )
+    source.commit()
+
+    plan = plan_cusip_redaction(source)
+    assert plan.blocks == {MAPPED_CUSIP[:6]}
+    assert plan.unverified == {UNMAPPED_CUSIP, TREASURY_A}
+    assert plan.cusips == {MAPPED_CUSIP, SIBLING_CUSIP, UNMAPPED_CUSIP, TREASURY_A}
+    assert plan.security_ids == {
+        provisional_security_id(anchor("cusip", c))
+        for c in plan.cusips
+    }
+    assert sibling_sid not in plan.security_ids
+    assert f"cusip:{TREASURY_SIBLING}" not in plan.position_keys
+    assert plan.issuer_keys == {
+        f"cusip6:{MAPPED_CUSIP[:6]}": "iss:1",
+        f"cusip6:{UNMAPPED_CUSIP[:6]}": "iss:2",
+        f"cusip6:{TREASURY_A[:6]}": "iss:3",
+    }
+    # Input order cannot move an ordinal.
+    source.execute("PRAGMA reverse_unordered_selects=ON")
+    assert plan_cusip_redaction(source) == plan
+
+
+def test_absent_seed_does_not_gain_an_opaque_issuer_key(source):
+    source.execute(
+        "CREATE TABLE security_list_intervals (id_type TEXT, value TEXT, issuer_name TEXT)"
+    )
+    source.executemany(
+        "INSERT INTO security_list_intervals VALUES ('cusip', ?, ?)",
+        [(MAPPED_CUSIP, "3M CO"), (SIBLING_CUSIP, "3M CO")],
+    )
+    source.execute(
+        "INSERT INTO inst_holdings VALUES ('NORTHERN OIL & GAS INC', 'COM', ?, ?)",
+        (TREASURY_A, provisional_security_id(anchor("cusip", TREASURY_A))),
+    )
+    source.commit()
+    plan = plan_cusip_redaction(source)
+    assert {c for c, _name, _klass in plan.absent_seeds} == {TREASURY_A}
+    assert TREASURY_A not in plan.cusips
+    assert provisional_security_id(anchor("cusip", TREASURY_A)) not in plan.security_ids
+    assert plan.issuer_keys == {f"cusip6:{MAPPED_CUSIP[:6]}": "iss:1"}
 
 
 def test_c_a_spelling_difference_is_not_a_disagreement():

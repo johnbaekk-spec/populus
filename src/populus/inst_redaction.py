@@ -16,11 +16,21 @@ What counts as CUSIP-derived here:
   withheld CUSIP is withheld too, provisional or not.
 
 The withheld set is closed, not per-row: a reviewed (issuer name, class) row
-puts its CUSIP in the set; the set then grows to every CUSIP in the same CUSIP-6
+that passes the SEC-list gate seeds the set; it then grows to every CUSIP in the
+same CUSIP-6
 block (a sibling's full CUSIP carries the block, and the block is joinable to the
 ticker through the shared issuer key or the issuer name) and every CUSIP that
 shares a ``security_id`` with a member (a CUSIP change inside one registry
 class), until it stops growing.
+
+A seed the SEC list assigns to a different issuer is withheld itself without
+starting that walk. Its block's institutional issuer key is also made opaque
+(owner decision 2026-10-04), so the misfiled name cannot expose the block through
+that key. This issuer-key replacement does not withhold any other CUSIP or
+security id in the block, and does not change the Congress registry's block
+rule. Seeds absent from the list do not seed either replacement. Existing
+walked-block ``iss:<n>`` ordinals stay unchanged; rejected blocks are appended
+in sorted order through the same map shared by both institutional files.
 
 The pipeline keeps using CUSIPs internally; only the two published databases are
 rewritten, AFTER both are built (the serving projection joins the aggregate on
@@ -459,7 +469,7 @@ class RedactionPlan:
     position_keys: dict[str, str]
     issuer_keys: dict[str, str]
     #: Seeds the SEC-list issuer check refused to propagate. They ARE withheld
-    #: (they are in ``cusips``); they must simply never be expanded to a block.
+    #: (they are in ``cusips``); they must never seed CUSIP or security-id expansion.
     unverified: frozenset[str] = frozenset()
     #: ``(cusip, filed issuer name, class)`` for each of the above, so the build
     #: record can name the mis-filed row instead of dropping it silently.
@@ -603,6 +613,11 @@ def close_withheld_cusips(
     refused seeds are the TransForce/TFI International rename, filed 286 times,
     whose CUSIP genuinely does resolve to a reviewed ticker.
 
+    The institutional planner also gives each rejected seed's block an opaque
+    issuer key, without adding its other CUSIPs or security ids to the set.
+    ``blocks`` remains the walk's blocks: the Congress registry's block rule
+    and the refusal to propagate a rejected seed stay unchanged.
+
     (2) THE LIST DOES NOT CARRY THE CUSIP AT ALL. Here membership is narrowed
     too. The SEC Official 13(f) List names every 13(f) security, so a CUSIP with
     no row on it cannot BE the matched issuer's 13(f) security — the match is
@@ -687,11 +702,10 @@ def close_withheld_cusips(
                 labels[other] |= labels[cusip]
             grown |= reached
         frontier = grown - withheld
-    # The BLOCKS are the walk's, taken before the refused seeds join the set: a
-    # block becomes an opaque issuer key for every row in it, so letting a
-    # mis-filed CUSIP contribute its block would re-drag the 637 Treasuries
-    # through `issuer_key` instead of through `cusip` — the same defect, one
-    # column over.
+    # The BLOCKS are the walk's, taken before the refused seeds join the set.
+    # Rejected seeds must not expand the CUSIP/security-id closure or the
+    # Congress registry's blocks. The institutional planner separately makes
+    # their issuer keys opaque without adding that block's other securities.
     walked = frozenset(withheld)
     # A DISAGREEING seed is withheld, but only AFTER the walk, so it never acts
     # as a starting point. Adding it before would also have kept anything the
@@ -783,6 +797,12 @@ def plan_cusip_redaction(
         f"cusip6:{b}": f"{WITHHELD_ISSUER_PREFIX}{n}"
         for n, b in enumerate(sorted(blocks), start=1)
     }
+    # Append rejected blocks so already published walked-block ordinals hold.
+    rejected_blocks = {c[:6] for c in closure.unverified} - blocks
+    issuer_keys.update({
+        f"cusip6:{block}": f"{WITHHELD_ISSUER_PREFIX}{ordinal}"
+        for ordinal, block in enumerate(sorted(rejected_blocks), start=len(issuer_keys) + 1)
+    })
     return RedactionPlan(
         mapped_cusips=frozenset(mapped),
         cusips=frozenset(withheld),

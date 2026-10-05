@@ -7201,3 +7201,135 @@ def test_w1_serializes_congress_and_stats_from_the_sanitized_snapshot(tmp_path, 
     assert sha256_file(db) == source_hash
     if inst_snapshot:
         assert sha256_file(inst_snapshot) == snapshot_hash
+
+
+@pytest.mark.parametrize("inst_input", ["legacy", "external"])
+@pytest.mark.parametrize("seed_status", ["rejected", "absent"])
+def test_rejected_seed_issuer_keys_are_opaque_in_real_stage(
+    tmp_path, inst_input, seed_status,
+):
+    """A refused seed hides its issuer key without withholding its sibling."""
+    import importlib.util
+    from dataclasses import replace
+
+    from populus.identity.registry import anchor, provisional_security_id
+    from populus.inst_redaction import plan_cusip_redaction
+    from populus.publish.digests import sha256_file
+    from test_inst_external_store import inst_snapshot
+    from test_inst_redaction import (
+        MAPPED_CUSIP, SEC_LIST_TREASURY, TREASURY_A, TREASURY_SIBLING,
+    )
+    from test_list13f_seed import _line, _seed_list
+
+    db = seed_inst(seed_db(tmp_path / "source.db"), covered=True)
+    ids = {cusip: provisional_security_id(anchor("cusip", cusip))
+           for cusip in (MAPPED_CUSIP, TREASURY_A, TREASURY_SIBLING)}
+    conn = connect(str(db))
+    try:
+        listed = [
+            _line(MAPPED_CUSIP, "3M CO", "COM"),
+            _line(TREASURY_SIBLING, SEC_LIST_TREASURY, "NOTE"),
+        ]
+        if seed_status == "rejected":
+            listed.append(_line(TREASURY_A, SEC_LIST_TREASURY, "NOTE"))
+        _seed_list(conn, "2026q1", listed)
+        for sid in ids.values():
+            _security(conn, sid)
+        _filer(conn, "0000000002", "Rejected Seed Fixture Capital")
+        _load(
+            conn, fid="inst:rejected-seed", cik="0000000002",
+            period="2026-03-31", filed="2026-04-16",
+            holds=[
+                _hold(ordinal=1, issuer="3M CO", cusip=MAPPED_CUSIP,
+                      value=200, security_id=ids[MAPPED_CUSIP]),
+                _hold(ordinal=2, issuer="KIMBERLY CLARK CORP", cusip=TREASURY_A,
+                      value=100, security_id=ids[TREASURY_A]),
+                replace(_hold(
+                    ordinal=3, issuer=SEC_LIST_TREASURY, cusip=TREASURY_SIBLING,
+                    value=50, security_id=ids[TREASURY_SIBLING],
+                ), title_of_class="NOTE"),
+            ],
+        )
+        plan = plan_cusip_redaction(conn)
+    finally:
+        conn.close()
+    withheld = {MAPPED_CUSIP, TREASURY_A} if seed_status == "rejected" else {MAPPED_CUSIP}
+    assert plan.cusips == withheld
+    assert plan.security_ids == {ids[cusip] for cusip in withheld}
+    assert plan.blocks == {MAPPED_CUSIP[:6]}, "the rejected seed never seeds the block walk"
+    assert bool(plan.rejected_seeds) is (seed_status == "rejected")
+    assert bool(plan.absent_seeds) is (seed_status == "absent")
+
+    snapshot = None
+    if inst_input == "external":
+        snapshots = tmp_path / "snapshots"
+        snapshots.mkdir()
+        record = inst_snapshot.cut_snapshot(
+            db, snapshots, snapshot_version=1, created_at_utc="2026-07-23T12:00:00Z",
+        )
+        snapshot = Path(record["destination"])
+    hashes = {path: sha256_file(path) for path in (db, snapshot) if path is not None}
+    probe_spec = importlib.util.spec_from_file_location(
+        "rejected_seed_cusip_probe", REPO_ROOT / "scripts" / "cusip_join_probe.py",
+    )
+    assert probe_spec and probe_spec.loader
+    probe = importlib.util.module_from_spec(probe_spec)
+    probe_spec.loader.exec_module(probe)
+    truth, blocks = probe.truth_pairs(snapshot or db, db)
+    assert set(truth) == withheld, "the real probe uses the unchanged withheld population"
+    assert set(blocks) == {cusip[:6] for cusip in withheld}
+    probe_ids = {provisional_security_id(anchor("cusip", cusip)).removeprefix("sec:prov:"): cusip
+                 for cusip in truth}
+
+    repo = make_repo(tmp_path)
+    staged = stage_build(
+        db, repo, now=pin(), backend=LocalDirBackend(repo), expect_member_join=True,
+        inst_db_path=snapshot,
+    )
+    assets = Path(staged.staging_dir) / "assets"
+    found, files = probe.scan_path(assets, truth, probe_ids, blocks)
+    (tmp_path / "rejected-seed-probe-counts.json").write_text(json.dumps({
+        "seed_status": seed_status, "inst_input": inst_input,
+        "union_pairs": sum(len(tickers) for tickers in found.values()), "files": files,
+    }, indent=2))
+    serving = connect(str(assets / "inst_serving.db"))
+    agg = connect(str(assets / "inst_agg.db"))
+    try:
+        seed = serving.execute(
+            "SELECT security_id,cusip,position_key,issuer_key FROM serving_filer_rows"
+            " WHERE issuer_name='KIMBERLY CLARK CORP'",
+        ).fetchone()
+        sibling = serving.execute(
+            "SELECT security_id,cusip,position_key,issuer_key FROM serving_filer_rows"
+            " WHERE issuer_name=?", (SEC_LIST_TREASURY,),
+        ).fetchone()
+        assert seed is not None and sibling is not None
+        assert sibling[:3] == (ids[TREASURY_SIBLING], TREASURY_SIBLING,
+                               f"sid:{ids[TREASURY_SIBLING]}")
+        if seed_status == "rejected":
+            assert seed[:3] == (None, None, plan.position_keys[f"sid:{ids[TREASURY_A]}"])
+        else:
+            assert seed[:3] == (ids[TREASURY_A], TREASURY_A, f"sid:{ids[TREASURY_A]}")
+        assert seed[3] == sibling[3], "both rows retain their shared issuer bucket"
+        issuer = seed[3]
+        for handle, table, period_column, filer_column in (
+            (agg, "agg_issuer_top_holders", "period_of_report", "cik"),
+            (serving, "serving_issuer_holder_rows", "period", "filer_key"),
+        ):
+            rows = handle.execute(
+                f"SELECT issuer_key,value_usd FROM {table}"  # nosec B608
+                f" WHERE {period_column}='2026-03-31' AND {filer_column}='0000000002'"
+                " AND issuer_key=?", (issuer,),
+            ).fetchall()
+            assert rows == [(issuer, 150)], "cross-file issuer joins keep the complete holding total"
+            assert handle.execute("PRAGMA foreign_key_check").fetchall() == []
+            assert handle.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+        if seed_status == "rejected":
+            assert issuer.startswith("iss:"), "a rejected seed still published its CUSIP-derived issuer key"
+        else:
+            assert issuer == f"cusip6:{TREASURY_A[:6]}", "absence does not authorize issuer-key withholding"
+        assert not found, "the real byte probe still recovers a withheld issuer key"
+    finally:
+        serving.close()
+        agg.close()
+    assert {path: sha256_file(path) for path in hashes} == hashes
