@@ -1064,10 +1064,10 @@ export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged,
      is empty; the row keeps the placeholder "(unparsed asset)".
    - capgains_unparsed: normalize.py:276-289 (`normalize_capgains`) — the
      column is present but its box reads as neither checked nor unchecked.
-   - row_incomplete: parse/house_ptr.py:330-335 (a type, date or amount cell
+   - row_incomplete: parse/house_ptr.py:337-342 (a type, date or amount cell
      is missing, or the text did not open a row of its own) and
      parse/senate_ptr.py:158-159 (a Senate row with fewer than nine cells).
-   - row_orphan: parse/house_ptr.py:20-22, :334-335, :618-627 — text that
+   - row_orphan: parse/house_ptr.py:20-22, :341-342, :630-639 — text that
      completed no open row was kept as a row of its own (House only).
    - owner_unparsed: normalize.py:105-112 (`normalize_owner`) — the owner cell
      is not blank and is none of SP, DC, JT, self (or the Senate's Spouse,
