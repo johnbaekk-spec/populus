@@ -2151,7 +2151,7 @@ def test_no_gate_function_can_reach_the_cloudflare_seam():
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    gate_graph = ["gate_publish", "_gate", "_domain_code_sha", "_gate_fetch", "_main_gate"]
+    gate_graph = ["gate_publish", "_gate", "_domain_identity", "_gate_fetch", "_main_gate"]
     for name in gate_graph:
         assert name in functions, f"{name} no longer exists; the guard is stale"
 
@@ -2620,6 +2620,105 @@ def test_the_override_clears_no_other_refusal(tmp_path):
     repo = _deployed(tmp_path)  # a generation EXISTS
     result, _ = _gate(repo, served={}, acknowledged_code_sha=CODE_SHA)
     assert result.outcome == REJECTED, "the override leaked into another state"
+
+
+# --- A2-04: the gate compares the BUILD, not only the code -------------------
+
+#: A later nightly from the SAME commit: same code_sha, different data build.
+NEWER_BUILD = "20260805.2"
+
+
+def test_a_newer_unsigned_build_from_the_same_code_fails_the_gate(tmp_path):
+    """The nightly rebuilds data from an unchanged commit. When that build went
+    live and its signer then failed, the domain served the SAME code_sha as the
+    last signed generation, and a code-only comparison passed it as recorded.
+
+    Mutant: drop the build_id comparison in `_gate`. This test fails.
+    """
+    result, _ = _gate(_deployed(tmp_path), served=_site(build_id=NEWER_BUILD))
+
+    assert result.outcome == REJECTED
+    assert "populus:build_id" in result.detail
+    assert NEWER_BUILD in result.detail and BUILD_ID in result.detail
+    assert "not the deployment that was signed" in result.detail
+    # The refusal hands the operator the one value that clears it.
+    assert f"{NEWER_BUILD}@{CODE_SHA}" in result.detail
+
+
+def test_the_deployment_override_clears_only_the_exact_served_identity(tmp_path):
+    """With a generation present, the old override never applied and the only
+    exit was a Cloudflare rollback. The new one must name the exact
+    '<build_id>@<code_sha>' being served, so it cannot be set once and left on."""
+    repo = _deployed(tmp_path)
+    served = _site(build_id=NEWER_BUILD)
+
+    right, _ = _gate(
+        repo, served=served, acknowledged_deployment=f"{NEWER_BUILD}@{CODE_SHA}"
+    )
+    assert right.ok is True and right.outcome == VERIFIED
+    assert "OVERRIDE" in right.detail and f"{NEWER_BUILD}@{CODE_SHA}" in right.detail
+    # The result names the RECORDED generation, never the unrecorded build.
+    assert right.build_id == BUILD_ID and right.generation == 1
+    assert right.first_run is False
+
+    for stale in (
+        f"{BUILD_ID}@{CODE_SHA}",  # the recorded identity, not the served one
+        f"{NEWER_BUILD}@{CODE_SHA[:7]}",  # a prefix
+        NEWER_BUILD,
+        CODE_SHA,
+    ):
+        wrong, _ = _gate(repo, served=served, acknowledged_deployment=stale)
+        assert wrong.outcome == REJECTED, f"{stale!r} cleared the gate"
+
+
+def test_the_deployment_override_clears_no_other_refusal(tmp_path):
+    """Scoped to 'a verified generation exists and the domain serves another
+    identity'. Nothing live, nothing recorded, and an unsigned generation stay
+    refused whatever it names."""
+    ack = f"{BUILD_ID}@{CODE_SHA}"
+    repo = _deployed(tmp_path)
+
+    nothing_live, _ = _gate(repo, served={}, acknowledged_deployment=ack)
+    assert nothing_live.outcome == REJECTED
+
+    unrecorded, _ = _gate(_data_repo(tmp_path / "b"), acknowledged_deployment=ack)
+    assert unrecorded.outcome == REJECTED
+
+    unsigned = _Attestation(
+        {
+            "deployments/1.json": AttestationResult(
+                ok=False, detail="no bundle for this digest", outcome=REJECTED
+            )
+        }
+    )
+    refused, _ = _gate(
+        repo,
+        served=_site(build_id=NEWER_BUILD),
+        attestation=unsigned,
+        acknowledged_deployment=f"{NEWER_BUILD}@{CODE_SHA}",
+    )
+    assert refused.outcome == REJECTED
+    assert "did not verify" in refused.detail
+
+
+def test_the_deployment_override_is_dispatch_only_and_reaches_the_gate_via_env():
+    """Like the zero-generation override: a workflow_dispatch input (a nightly
+    can never carry one), handed to the gate through the step env, never
+    interpolated into the script body."""
+    doc = yaml.safe_load(PUBLISH_YML.read_text(encoding="utf-8"))
+    on = doc.get("on", doc.get(True))
+    assert "acknowledge_unrecorded_deployment" in on["workflow_dispatch"]["inputs"]
+
+    step = _publish_gate_step()
+    assert (
+        step["env"]["ACKNOWLEDGE_UNRECORDED_DEPLOYMENT"]
+        == "${{ inputs.acknowledge_unrecorded_deployment }}"
+    )
+    assert (
+        '--acknowledge-unrecorded-deployment "$ACKNOWLEDGE_UNRECORDED_DEPLOYMENT"'
+        in step["run"]
+    )
+    assert "inputs." not in step["run"]
 
 
 # --- R12/LD12: the signer refuses non-v2 artifacts before network/signing ----
