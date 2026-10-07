@@ -25,6 +25,17 @@ on:
         description: "TD-4 override: the exact populus:code_sha the live domain serves"
         required: false
         default: ""
+      # The same clearing path for the state where a generation EXISTS but the
+      # domain serves a different build (audit A2-04, owner decision
+      # 2026-10-06): the gate now compares build_id as well as code_sha, so a
+      # signer that failed after a successful deploy refuses the next run. The
+      # value must be the exact "<build_id>@<code_sha>" the domain serves — the
+      # refusal prints it — and, like the input above, it clears that one
+      # refusal for one run, attests nothing, and never reaches `schedule:`.
+      acknowledge_unrecorded_deployment:
+        description: "TD-4 override (generation exists): the exact <build_id>@<code_sha> the live domain serves"
+        required: false
+        default: ""
       # D-1c one-time bootstrap (ALPHA-UX r3-F1): declare that this publish
       # STARTS the signal-lifecycle chain because the previous build predates
       # the artifact. Absent from `schedule:` on purpose — a nightly can never
@@ -204,11 +215,13 @@ jobs:
           # Same injection class as the corpus-floor input below: a free-text
           # dispatch value must never be substituted into the script body.
           ACKNOWLEDGE_UNRECORDED_CODE_SHA: ${{ inputs.acknowledge_unrecorded_code_sha }}
+          ACKNOWLEDGE_UNRECORDED_DEPLOYMENT: ${{ inputs.acknowledge_unrecorded_deployment }}
         run: >-
           uv run python -m populus.deploy.record gate
           --data-repo populus-data
           --domain publicfilings.org
           --acknowledge-unrecorded-code-sha "$ACKNOWLEDGE_UNRECORDED_CODE_SHA"
+          --acknowledge-unrecorded-deployment "$ACKNOWLEDGE_UNRECORDED_DEPLOYMENT"
 
       # Fetched BEFORE the ingests on purpose. Run 31861037053 spent 2h11m on
       # the ingests and then died in this fetch on a one-line error (an unset

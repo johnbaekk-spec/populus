@@ -1099,6 +1099,7 @@ def gate_publish(
     domain: str,
     marker_path: str = DEFAULT_MARKER_PATH,
     acknowledged_code_sha: str = "",
+    acknowledged_deployment: str = "",
 ) -> GateResult:
     """The pre-publish gate: the previous deploy must have left a **verified** generation.
 
@@ -1118,8 +1119,9 @@ def gate_publish(
        ``deployments/`` subject, which is ``record-sign.yml@refs/heads/main``.
        The document's bytes are not parsed for a single value before this
        passes — same order as :func:`attested_build_id`, same reason.
-    4. Require the attested record's ``code_sha`` to equal what the domain
-       serves.
+    4. Require the attested record's ``code_sha`` AND its ``build_id`` to
+       equal what the domain serves (A2-04: the nightly rebuilds data from an
+       unchanged commit, so code alone cannot identify the build).
 
     **The first-run predicate, and only it:** pass when the domain resolves to
     no deployment *and* the checkout holds zero generations. Every other
@@ -1141,6 +1143,7 @@ def gate_publish(
             domain=domain,
             marker_path=marker_path,
             acknowledged_code_sha=acknowledged_code_sha,
+            acknowledged_deployment=acknowledged_deployment,
         )
     except RecordMisconfigured as exc:
         return GateResult(outcome=MISCONFIGURED, detail=f"misconfigured: {exc}")
@@ -1165,6 +1168,7 @@ def _gate(
     domain: str,
     marker_path: str,
     acknowledged_code_sha: str = "",
+    acknowledged_deployment: str = "",
 ) -> GateResult:
     repo = Path(data_repo)
     if not repo.is_dir():
@@ -1194,11 +1198,12 @@ def _gate(
     # holds zero generations"), reached in the case where the first half is
     # observed as an outage rather than as a clean answer.
     try:
-        served = _domain_code_sha(http, domain, marker_path=marker_path)
+        identity = _domain_identity(http, domain, marker_path=marker_path)
     except (RecordUnavailable, VerifyUnavailable):
         if found is not None:
             raise
-        served = None
+        identity = None
+    served_build, served = identity if identity is not None else (None, None)
 
     if found is None and served is None:
         return GateResult(
@@ -1287,12 +1292,47 @@ def _gate(
             f"the attested {found.path} carries no code_sha; there is nothing to "
             "compare against what the domain serves"
         )
+    # A2-04: the build too, not only the code. The nightly rebuilds data from
+    # an unchanged commit, so a newer build whose signer failed serves the SAME
+    # code_sha as the last signed generation; comparing code alone let that
+    # unsigned build pass as the recorded one.
+    mismatch = []
     if code_sha != served:
+        mismatch.append(
+            f"populus:code_sha {served!r} but the attested generation records "
+            f"{code_sha!r}"
+        )
+    if found.build_id != served_build:
+        mismatch.append(
+            f"populus:build_id {served_build!r} but the attested generation is "
+            f"for build {found.build_id!r}"
+        )
+    if mismatch:
+        served_identity = f"{served_build}@{served}"
+        # The generation-exists clearing path (owner decision 2026-10-06). Like
+        # the zero-generation one above it must name the EXACT identity the
+        # domain serves right now, lives on workflow_dispatch only, attests
+        # nothing, and clears this one refusal for this one run.
+        if acknowledged_deployment and acknowledged_deployment == served_identity:
+            return GateResult(
+                outcome=VERIFIED,
+                build_id=found.build_id,
+                generation=found.generation,
+                code_sha=code_sha,
+                detail=(
+                    f"OVERRIDE: an operator acknowledged that {domain} serves "
+                    f"{served_identity!r}, which generation {found.generation} "
+                    f"(build {found.build_id}) does not record. The gate is "
+                    "cleared for THIS run only; nothing was attested, and this "
+                    "run's deploy must produce a real generation."
+                ),
+            )
         raise RecordRefused(
-            f"{domain} serves populus:code_sha {served!r}; the attested "
-            f"generation {found.generation} for build {found.build_id} records "
-            f"{code_sha!r} (compared exactly, never by prefix). The live site is "
-            "not the deployment that was signed"
+            f"{domain} serves " + "; ".join(mismatch) + " (compared exactly, "
+            "never by prefix). The live site is not the deployment that was "
+            "signed. If this is a known incident (a signer that failed after a "
+            "successful deploy), re-dispatch with acknowledge_unrecorded_deployment "
+            f"set to {served_identity!r} (see docs/operations/deploy.md, TD-4)"
         )
 
     return GateResult(
@@ -1308,10 +1348,14 @@ def _gate(
     )
 
 
-def _domain_code_sha(
+def _domain_identity(
     http: HttpGetter, domain: str, *, marker_path: str
-) -> str | None:
-    """The ``populus:code_sha`` the live domain serves, or None for "nothing".
+) -> tuple[str, str] | None:
+    """``(populus:build_id, populus:code_sha)`` the live domain serves, or None.
+
+    BOTH markers (audit A2-04): the nightly rebuilds DATA from an unchanged
+    commit, so ``code_sha`` alone cannot tell the signed build from a newer,
+    unsigned one built from the same code. Each marker must appear exactly once.
 
     None means the domain **answered** and the answer was 404: there is no
     deployment behind it. That is a resolution, not an outage, which is what
@@ -1348,7 +1392,11 @@ def _domain_code_sha(
             f"{url} answered HTTP {status}; the gate reads 200 as 'this is what "
             "is live' and 404 as 'nothing is live', and has no reading for this"
         )
-    return _one_marker(read_markers(response.content), MARKER_CODE_SHA, marker_path)
+    markers = read_markers(response.content)
+    # code_sha first: a page missing every marker is refused naming the marker
+    # the gate has always required.
+    code_sha = _one_marker(markers, MARKER_CODE_SHA, marker_path)
+    return _one_marker(markers, MARKER_BUILD_ID, marker_path), code_sha
 
 
 #: The gate's copy of :data:`populus.deploy.verify.TRANSPORT_RETRY_BACKOFF_SECONDS`
@@ -1545,6 +1593,16 @@ def _add_gate_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--acknowledge-unrecorded-deployment",
+        default="",
+        help=(
+            "TD-4 clearing path when a generation EXISTS but the domain serves "
+            "a different build: name the EXACT '<build_id>@<code_sha>' it serves "
+            "(the refusal prints it). Clears only that one state, for one run, "
+            "and attests nothing. See docs/operations/deploy.md."
+        ),
+    )
+    parser.add_argument(
         # Unlike `sign`, this one HAS a default — and the default is the strong
         # provider, never the no-op. The property the defaultless flag protects
         # is "no entry point silently inherits StagingNoop"; defaulting to
@@ -1718,6 +1776,7 @@ def _main_gate(
             domain=args.domain,
             marker_path=args.marker_path,
             acknowledged_code_sha=args.acknowledge_unrecorded_code_sha,
+            acknowledged_deployment=args.acknowledge_unrecorded_deployment,
         )
     finally:
         if owned:
