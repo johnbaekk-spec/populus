@@ -584,6 +584,54 @@ jobs:
           # hidden path we serve has to survive this round trip.
           include-hidden-files: true
 
+      # A4-02 (audit 2026-10-02; owner decision 2026-10-06). The post-build
+      # suite (`npm run test:post`: HTTP/route behaviour, file budgets,
+      # inline-script/CSP consistency, the canonical-vs-served stats equality
+      # that would have caught the live `site_file_count: null`) used to run
+      # in NO workflow. It now runs here on the exact finalized tree this run
+      # just packaged — but REPORT-ONLY until its baseline is clean: a failure
+      # becomes a warning annotation and a step summary, never a failed
+      # publish. AFTER the upload, so nothing the suite does can touch the
+      # bytes that deploy; BEFORE Publish, so promoting it to a blocking gate
+      # is a one-step change (drop `continue-on-error` and the final `exit 0`).
+      # `continue-on-error` also absorbs the timeout: a hung suite cannot
+      # stall or fail the nightly. Same env as "Build site", because two of
+      # the suites run their own `astro build` into dist-cut/ and dist-fixture/.
+      - name: Post-build checks (report-only)
+        if: steps.stage.outputs.fresh == 'true'
+        continue-on-error: true
+        timeout-minutes: 90
+        working-directory: dashboard
+        env:
+          CI: "true"
+          POPULUS_PRIOR_SIGNALS: ${{ steps.prior.outputs.path }}
+          POPULUS_SIGNALS_BOOTSTRAP: ${{ steps.prior.outputs.bootstrap }}
+          POPULUS_BUILD_DIR: ${{ github.workspace }}/${{ steps.stage.outputs.build_dir }}
+          POPULUS_DB: ${{ github.workspace }}/populus.db
+          POPULUS_TICKER_MAP: ${{ github.workspace }}/data-cache/registry/company_tickers.json
+          POPULUS_INST_DB: ${{ github.workspace }}/${{ steps.stage.outputs.staging_dir }}/assets/inst_agg.db
+          SITE_CODE_SHA: ${{ github.sha }}
+        run: |
+          set +e
+          log="$RUNNER_TEMP/test-post.log"
+          npm run test:post > "$log" 2>&1
+          rc=$?
+          tail -n 40 "$log"
+          counts="$(grep -E '^ℹ (tests|pass|fail|skipped) ' "$log" | tr '\n' ' ')"
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning title=Post-build checks (report-only)::test:post exited ${rc}: ${counts:-no summary line}. Not blocking (A4-02); see this step's log."
+          fi
+          {
+            echo "### Post-build checks (report-only)"
+            echo
+            echo "exit ${rc} — ${counts:-no summary line}"
+            echo
+            echo '```'
+            grep -E '^(✖ |ℹ (tests|pass|fail|skipped) )' "$log" | head -n 60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.DATA_REPO_PAT }}

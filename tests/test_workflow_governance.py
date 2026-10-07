@@ -663,6 +663,30 @@ def test_the_deployed_artifact_is_packaged_after_stats_finalization():
     )
 
 
+def test_the_post_build_suite_runs_report_only_on_the_packaged_tree():
+    # A4-02: test:post used to run in no workflow at all. It runs after the
+    # finalized tree is packaged and uploaded (it cannot touch deployed bytes)
+    # and before Publish (so it can later become blocking in place).
+    steps = _publish_steps()
+    step = steps[_step_index("Post-build checks")]
+    assert (
+        _step_index("Upload the site artifact")
+        < _step_index("Post-build checks")
+        < [s.get("name") for s in steps].index("Publish")
+    )
+    assert "npm run test:post" in step["run"]
+    assert step.get("working-directory") == "dashboard"
+    assert step["if"] == "steps.stage.outputs.fresh == 'true'"
+    # REPORT-ONLY, both ways a step can fail: a nonzero suite and a timeout.
+    assert step.get("continue-on-error") is True
+    assert isinstance(step.get("timeout-minutes"), int)
+    assert step["run"].rstrip().endswith("exit 0")
+    assert "::warning" in step["run"], "a failure must still be visible"
+    # It needs the build's data to run its own `astro build`s.
+    build_env = steps[_step_index("Build site")]["env"]
+    assert step["env"] == build_env
+
+
 def test_the_corpus_is_seeded_before_the_ingests():
     assert _step_index("Seed the corpus") < _step_index("Ingest (live")
 

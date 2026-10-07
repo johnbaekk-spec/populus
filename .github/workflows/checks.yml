@@ -10,8 +10,11 @@
 # the dashboard typecheck, and the dashboard unit suite, plus two security
 # gate (the full-history secret scan). The post-build gates
 # (`npm run test:post`) are deliberately NOT here: they require a real
-# `POPULUS_BUILD_DIR` + release DBs, which live in the private data repo, so
-# they stay with the publisher-side workflow that has them.
+# `POPULUS_BUILD_DIR` + release DBs, which live in the private data repo.
+# publish.yml runs them on each fresh build ("Post-build checks
+# (report-only)") — REPORT-ONLY: a failure warns and never fails the publish
+# (audit A4-02, 2026-10-06). Until that step is promoted to blocking, a green
+# publish does not certify test:post; `make test` on the owner's machine does.
 #
 # HOST-BOUND SUITES SKIP THEMSELVES, they are not excluded here. The first run of
 # this workflow surfaced 163 failures that were entirely environmental, and the
