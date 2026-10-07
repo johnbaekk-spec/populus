@@ -2339,7 +2339,7 @@ def test_uv_step_is_os_tolerant_and_asserts_the_pin():
         s for s in job["steps"] if s.get("name") == "Install uv (version-pinned)"
     )
     pin_value = (step.get("env") or {}).get("UV_PIN")
-    assert pin_value == "0.7.13", "the uv pin moved out of the workflow or drifted"
+    assert pin_value == "0.11.33", "the uv pin moved out of the workflow or drifted"
     run = step["run"]
     assert "command -v uv" in run, (
         "an already-present (checksum-gated) uv must be used, not overwritten"

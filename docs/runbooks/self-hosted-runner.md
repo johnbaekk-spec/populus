@@ -314,7 +314,7 @@ root has been restored yet), or `cleanup-not-verified` after one.
 (Adjust the listed paths to wherever the toolchain actually lives; list every
 binary a job invokes.)
 
-**The `uv` you install here must be the version `publish.yml` pins — `0.7.13`
+**The `uv` you install here must be the version `publish.yml` pins — `0.11.33`
 today.** The workflow no longer installs uv on this machine: macOS Pythons are
 PEP 668 externally-managed, so `python3 -m pip install` there fails rather than
 installing, and reinstalling over the gated copy would defeat the checksum in
@@ -328,6 +328,56 @@ to whatever the machine has:
 /usr/local/populus-toolchain/bin/uv --version   # must equal publish.yml's UV_PIN
 grep -n 'UV_PIN' "$(git rev-parse --show-toplevel)/.github/workflows/publish.yml"
 ```
+
+### Upgrading the pinned uv (owner-only, coordinated with the pin PR)
+
+`publish.yml`'s `UV_PIN`, `.github/ci/uv-requirements.txt` and this machine's
+`/usr/local/populus-toolchain/bin/uv` move **together**. Merge the pin PR and
+run the script below in the same window, between nightly runs (the cron is
+06:17Z and drifts up to ~100 min late), with no job running: either order alone
+leaves the next publish failing its uv assertion, by design.
+
+Save as a file and run it with `bash ./upgrade-runner-uv.sh` (never paste it):
+it reads the version and the macOS arm64 wheel digest from the requirements
+file the hosted jobs already trust, so there is one source of truth.
+
+```bash
+#!/usr/bin/env bash
+# upgrade-runner-uv.sh — owner-only; sudo will prompt. Run from a checkout of
+# populus at the merged pin commit.
+set -euo pipefail
+REQ="$(git rev-parse --show-toplevel)/.github/ci/uv-requirements.txt"
+VERSION="$(sed -n 's/^uv==\([0-9][0-9.]*\) .*/\1/p' "$REQ")"
+[ -n "$VERSION" ] || { echo "STOP: no uv version in $REQ"; exit 1; }
+WHEEL="uv-${VERSION}-py3-none-macosx_11_0_arm64.whl"
+URL="$(curl -fsSL "https://pypi.org/pypi/uv/${VERSION}/json" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(f["url"] for f in d["urls"] if f["filename"].endswith("macosx_11_0_arm64.whl")))')"
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT; cd "$WORK"
+curl -fsSLo "$WHEEL" "$URL"
+# The digest must be one of the hashes the requirements file pins.
+DIGEST="$(shasum -a 256 "$WHEEL" | awk '{print $1}')"
+grep -q -- "--hash=sha256:${DIGEST}" "$REQ" || { echo "STOP: $WHEEL digest $DIGEST is not pinned in $REQ"; exit 1; }
+unzip -q "$WHEEL" "uv-${VERSION}.data/scripts/uv"
+NEW="uv-${VERSION}.data/scripts/uv"
+[ "$("./$NEW" --version | awk '{print $2}')" = "$VERSION" ] || { echo "STOP: extracted uv is not $VERSION"; exit 1; }
+
+sudo install -m 755 -o root -g wheel "$NEW" /usr/local/populus-toolchain/bin/uv
+# Regenerate the manifest over EXACTLY the paths it already gates.
+MANIFEST=/usr/local/populus-runner/controller/toolchain.manifest
+PATHS="$(sudo awk '!/^#/ && NF >= 2 {print $2}' "$MANIFEST")"
+[ -n "$PATHS" ] || { echo "STOP: $MANIFEST lists no paths"; exit 1; }
+# shellcheck disable=SC2086 # word-splitting the path list is intended
+sudo sh -c "umask 077; shasum -a 256 $PATHS > ${MANIFEST}.new && mv ${MANIFEST}.new ${MANIFEST}"
+sudo chown root:wheel "$MANIFEST"; sudo chmod 600 "$MANIFEST"
+[ "$(/usr/local/populus-toolchain/bin/uv --version | awk '{print $2}')" = "$VERSION" ] \
+  || { echo "STOP: installed uv is not $VERSION"; exit 1; }
+echo "uv ${VERSION} installed; manifest regenerated over: ${PATHS//$'\n'/ }"
+echo "Next: run the manifest preflight above (expect a non-toolchain refusal name),"
+echo "then: sudo launchctl kickstart -k system/com.populus.runner-controller"
+```
+
+Then dispatch one publish (`gh workflow run publish.yml --ref main`) and confirm
+its "Install uv (version-pinned)" step prints the new version.
 
 ### The runner PATH is derived from the manifest, not hardcoded
 
