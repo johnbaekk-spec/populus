@@ -2,10 +2,13 @@
 # `pip install --require-hashes -r` refuses any artifact whose sha256 is not
 # listed, so a compromised index or a republished wheel cannot substitute a
 # different `uv` into a job that goes on to hold an id-token or a secret.
-# Hashes are the PyPI-published digests for 0.7.13 (read from
-# https://pypi.org/pypi/uv/0.7.13/json on 2026-09-01). Bump the version and
-# ALL hashes together; a version-only edit fails closed.
-uv==0.7.13 \
-    --hash=sha256:5786a29e286f2cc3cbda13a357fd9a4dd5bf1d7448a9d3d842b26b4f784a3a86 \
-    --hash=sha256:4f828174e15a557d3bc0f809de76135c3b66bcbf524657f8ced9d22fc978b89c \
-    --hash=sha256:05f3c03c4ea55d294f3da725b6c2c2ff544754c18552da7594def4ec3889dcfb
+# Hashes are the PyPI-published digests for 0.11.33 (read from
+# https://pypi.org/pypi/uv/0.11.33/json on 2026-10-07): macOS arm64 wheel,
+# manylinux_2_17 x86_64 wheel, sdist. Bump the version and ALL hashes
+# together; a version-only edit fails closed. The self-hosted publish runner's
+# root-owned uv must be re-provisioned to the SAME version in the same window
+# (docs/runbooks/self-hosted-runner.md, "Upgrading the pinned uv").
+uv==0.11.33 \
+    --hash=sha256:8017991a398a55d177c33ecdb29beb33e7b53969921183e4681e3e5b278d73c2 \
+    --hash=sha256:9542178978b0b6f16a7ae99e55aca039f493a1edb373a15d7993eab80a28615a \
+    --hash=sha256:a4411bf854f5fe3d4b78d37dd2e4b84e0b99fbb0bd185de1511a8515404e04a8

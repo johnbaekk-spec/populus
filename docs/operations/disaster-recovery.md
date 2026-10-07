@@ -18,7 +18,7 @@ Execute **in order**; every command line is executable as written.
 git clone https://github.com/johnbaekk-spec/populus.git
 git clone https://github.com/johnbaekk-spec/populus-data.git
 cd populus
-python3 -m pip install --quiet 'uv==0.7.13'
+python3 -m pip install --quiet --require-hashes -r .github/ci/uv-requirements.txt
 uv sync --frozen
 ```
 
