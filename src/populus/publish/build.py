@@ -50,6 +50,7 @@ from populus.inst_agg import (
 from populus.inst_redaction import (
     apply_cusip_redaction,
     apply_registry_redaction,
+    rebind_scrubbed_identities,
     plan_cusip_redaction,
 )
 from populus.inst_serving import (
@@ -2800,8 +2801,17 @@ def stage_build(
         filed_cusips=withheld_cusips,
         unverified_cusips=unverified_cusips,
     )
-    # Compact after clearing and the registry text sweep, including the case
-    # where the redaction closure is empty and its helper made no changes.
+    # A1-05: a scrubbed row's identity is recomputed from its PUBLISHED text,
+    # before anything (slices, stats, digests, journal) serializes a txn_id.
+    snapshot = connect(str(snapshot_path))
+    try:
+        with snapshot:
+            rebind_scrubbed_identities(snapshot)
+    finally:
+        snapshot.close()
+    # Compact after clearing, the registry text sweep and the identity rebind,
+    # including the case where the redaction closure is empty and its helper
+    # made no changes.
     snapshot = connect(str(snapshot_path))
     try:
         snapshot.execute("PRAGMA secure_delete=ON")

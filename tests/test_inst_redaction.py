@@ -9,6 +9,7 @@ or a CUSIP-derived key — with the ticker".
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -1444,3 +1445,109 @@ def test_w2_known_provisional_sid_without_list_uses_injective_shared_map(tmp_pat
         assert conn.execute("SELECT security_id FROM retained_reference").fetchone() == ("sec:withheld:50",)
         assert conn.execute("SELECT COUNT(*) FROM securities WHERE security_id='sec:custom-preserved'").fetchone() == (1,)
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+# --- A1-05: a scrubbed row's identity is computed from its PUBLISHED text ----
+#
+# The scrub replaced a withheld CUSIP inside raw_row but kept the fingerprint
+# and txn_id of the ORIGINAL text; hashing each candidate CUSIP in place of the
+# marker recovered it (measured: data-20261007.1, 48 scrubbed rows, >= 3
+# recoverable from the public SEC list). These pin the rebind.
+
+A105_CUSIP = "88579Y101"
+A105_OTHER = "26875P101"
+
+
+def _a105_db(rows):
+    """A minimal transactions table with the real identity constraints."""
+    from populus.canonical import row_fingerprint, txn_id
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE transactions (txn_id TEXT PRIMARY KEY, filing_id TEXT NOT NULL,"
+        " raw_row TEXT NOT NULL, row_fingerprint TEXT NOT NULL,"
+        " dup_seq INTEGER NOT NULL DEFAULT 1, row_ordinal INTEGER NOT NULL,"
+        " source_row_no INTEGER, source TEXT NOT NULL, comment TEXT,"
+        " UNIQUE (filing_id, row_fingerprint, dup_seq))"
+    )
+    for filing, ordinal, raw, source in rows:
+        fp = row_fingerprint(raw)
+        seq = 1 + conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE filing_id=? AND row_fingerprint=?",
+            (filing, fp),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO transactions VALUES (?,?,?,?,?,?,NULL,?,?)",
+            (txn_id(filing, fp, seq), filing, json.dumps(raw), fp, seq, ordinal,
+             source, raw.get("comment")),
+        )
+    return conn
+
+
+def _rows(conn):
+    return conn.execute(
+        "SELECT txn_id, filing_id, raw_row, row_fingerprint, dup_seq, source"
+        " FROM transactions ORDER BY filing_id, row_ordinal"
+    ).fetchall()
+
+
+def test_a105_rebound_identity_hashes_the_published_text_and_hides_the_cusip():
+    from populus.canonical import row_fingerprint, txn_id
+    from populus.inst_redaction import rebind_scrubbed_identities, scrub_disclosure_text
+
+    conn = _a105_db([
+        ("house:1", 1, {"asset": "3M CO", "comment": f"cusip {A105_CUSIP}, ticker MMM"}, "house-clerk"),
+        ("house:1", 2, {"asset": "APPLE", "comment": "no identifier here"}, "house-clerk"),
+    ])
+    untouched_before = _rows(conn)[1]
+    scrub_disclosure_text(conn, {A105_CUSIP})
+    counts = rebind_scrubbed_identities(conn)
+    assert counts == {"transactions.identity_rebound": 1, "transactions.identity_frozen": 0}
+
+    scrubbed, untouched = _rows(conn)
+    txn, filing, raw, fp, seq, _src = scrubbed
+    # The published text recomputes to the published identity...
+    assert fp == row_fingerprint(json.loads(raw))
+    assert txn == txn_id(filing, fp, seq)
+    # ...and no candidate CUSIP substituted for the marker reproduces it.
+    for candidate in (A105_CUSIP, A105_OTHER):
+        guess = json.loads(raw.replace(DISCLOSURE_WITHHELD_TEXT, candidate))
+        assert row_fingerprint(guess) != fp
+        assert row_fingerprint(guess)[:32] not in txn
+    # An unaffected row keeps its identity byte for byte.
+    assert untouched == untouched_before
+
+
+def test_a105_rows_that_differed_only_by_the_cusip_stay_distinct():
+    from populus.inst_redaction import rebind_scrubbed_identities, scrub_disclosure_text
+
+    conn = _a105_db([
+        ("house:2", 1, {"asset": "X", "comment": f"cusip {A105_CUSIP}"}, "house-clerk"),
+        ("house:2", 2, {"asset": "X", "comment": f"cusip {A105_OTHER}"}, "house-clerk"),
+    ])
+    scrub_disclosure_text(conn, {A105_CUSIP, A105_OTHER})
+    assert rebind_scrubbed_identities(conn)["transactions.identity_rebound"] == 2
+    first, second = _rows(conn)
+    assert first[3] == second[3], "identical published text, identical fingerprint"
+    assert (first[4], second[4]) == (1, 2), "source order decides dup_seq"
+    assert first[0] != second[0] and second[0].endswith("#2")
+
+
+def test_a105_rebind_is_idempotent_and_spares_frozen_audit_sources():
+    from populus.inst_redaction import rebind_scrubbed_identities, scrub_disclosure_text
+
+    conn = _a105_db([
+        ("house:3", 1, {"asset": "X", "comment": f"cusip {A105_CUSIP}"}, "house-clerk"),
+        ("house:4", 1, {"asset": "Y", "comment": f"cusip {A105_CUSIP}"}, "kadoa"),
+    ])
+    scrub_disclosure_text(conn, {A105_CUSIP})
+    kadoa_before = _rows(conn)[1]
+    first = rebind_scrubbed_identities(conn)
+    assert first == {"transactions.identity_rebound": 1, "transactions.identity_frozen": 1}
+    after_first = _rows(conn)
+    # A second pass (a seeded, already rebound copy) changes nothing.
+    second = rebind_scrubbed_identities(conn)
+    assert second == {"transactions.identity_rebound": 0, "transactions.identity_frozen": 1}
+    assert _rows(conn) == after_first
+    # The kadoa backfill's sealed draw binds txn_id, so its identity is frozen.
+    assert _rows(conn)[1] == kadoa_before
