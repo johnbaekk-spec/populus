@@ -1129,6 +1129,98 @@ def plan_registry_redaction(
     return values, sids
 
 
+#: Sources whose transaction identity is bound to an external audit record, so
+#: :func:`rebind_scrubbed_identities` leaves it alone (A1-05, owner decision
+#: pending). The kadoa backfill's sealed draw authenticates its population by
+#: a digest over kadoa ``txn_id`` values (``populus.backfill.ids_digest``);
+#: rebinding one would void that record. Their fingerprints remain the A1-05
+#: residual until the owner decides.
+IDENTITY_FROZEN_SOURCES = frozenset({"kadoa"})
+
+
+def rebind_scrubbed_identities(
+    conn: sqlite3.Connection,
+    *,
+    frozen_sources: Collection[str] = IDENTITY_FROZEN_SOURCES,
+) -> dict[str, int]:
+    """A1-05: give every scrubbed transaction an identity computed from its
+    PUBLISHED text. Returns ``{"transactions.identity_rebound": n,
+    "transactions.identity_frozen": m}``.
+
+    :func:`scrub_disclosure_text` replaces a withheld CUSIP inside ``raw_row``
+    but used to leave ``row_fingerprint`` (``sha256(JCS(raw_row))`` over the
+    ORIGINAL text) and the ``txn_id`` built from it untouched. Every other byte
+    of the original row is still published, so hashing each candidate CUSIP in
+    place of the marker recovered the withheld value: measured on the published
+    ``data-20261007.1``, 48 scrubbed rows, at least 3 recoverable from the
+    public SEC 13(f) list. A hash of an identifier IS the identifier.
+
+    Runs on the STAGED copy only, after the scrub. For each row whose
+    ``raw_row`` carries :data:`DISCLOSURE_WITHHELD_TEXT` and no longer hashes to
+    its ``row_fingerprint``: the new fingerprint is the hash of the published
+    ``raw_row`` (so the published text recomputes to its published identity,
+    the property the scrub had given up), ``dup_seq`` is the first sequence
+    number free for ``(filing_id, new fingerprint)`` in source order, and
+    ``txn_id`` is rebuilt with :func:`populus.canonical.txn_id`. Deterministic,
+    secret-free, and stable across publishes: a seeded row already rebound
+    hashes to its fingerprint and is skipped. Unaffected rows are untouched.
+    Refuses rather than overwrite on any identity collision. Nothing references
+    ``transactions.txn_id`` by foreign key in ``congress.db``.
+    """
+    from populus.canonical import row_fingerprint, txn_id as make_txn_id
+
+    frozen_set = frozenset(frozen_sources)
+    candidates = conn.execute(
+        "SELECT txn_id, filing_id, raw_row, row_fingerprint, row_ordinal,"
+        " source_row_no, source FROM transactions WHERE instr(raw_row, ?) > 0",
+        (DISCLOSURE_WITHHELD_TEXT,),
+    ).fetchall()
+    by_filing: dict[str, list[tuple]] = defaultdict(list)
+    frozen = 0
+    for txn, filing, raw, fingerprint, ordinal, source_row_no, source in candidates:
+        published = row_fingerprint(json.loads(raw))
+        if published == fingerprint:
+            continue  # already bound to its published text (a rebound seed row)
+        if source in frozen_set:
+            frozen += 1
+            continue
+        by_filing[filing].append(
+            (source_row_no if source_row_no is not None else ordinal, ordinal, txn, published)
+        )
+    rebound = 0
+    for filing, rows in sorted(by_filing.items()):
+        for _order, _ordinal, old_txn, published in sorted(rows):
+            taken = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT dup_seq FROM transactions"
+                    " WHERE filing_id = ? AND row_fingerprint = ?",
+                    (filing, published),
+                )
+            }
+            seq = 1
+            while seq in taken:
+                seq += 1
+            new_txn = make_txn_id(filing, published, seq)
+            if conn.execute(
+                "SELECT 1 FROM transactions WHERE txn_id = ?", (new_txn,)
+            ).fetchone():
+                raise ValueError(
+                    f"rebinding {old_txn} would collide with existing {new_txn};"
+                    " refusing rather than overwrite a transaction identity"
+                )
+            conn.execute(
+                "UPDATE transactions SET row_fingerprint = ?, dup_seq = ?, txn_id = ?"
+                " WHERE txn_id = ?",
+                (published, seq, new_txn, old_txn),
+            )
+            rebound += 1
+    return {
+        "transactions.identity_rebound": rebound,
+        "transactions.identity_frozen": frozen,
+    }
+
+
 def apply_registry_redaction(
     db_path: Path | str,
     *,

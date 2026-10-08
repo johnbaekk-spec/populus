@@ -7170,13 +7170,39 @@ def test_w1_serializes_congress_and_stats_from_the_sanitized_snapshot(tmp_path, 
 
     conn = connect(str(stage / "assets" / "congress.db"))
     try:
-        assert conn.execute(
-            "SELECT txn_id, filing_id, bioguide_id, ticker, row_fingerprint"
-            " FROM transactions ORDER BY txn_id"
-        ).fetchall() == expected_ids
+        staged_rows = conn.execute(
+            "SELECT txn_id, filing_id, bioguide_id, ticker, row_fingerprint,"
+            " raw_row, dup_seq FROM transactions ORDER BY txn_id"
+        ).fetchall()
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         conn.close()
+    # A1-05 (reverses the old "identity untouched" expectation for SCRUBBED rows
+    # only): a row whose raw_row the scrub changed is rebound to its PUBLISHED
+    # text, so the published fingerprint cannot be brute-forced back to the
+    # CUSIP. Every other row keeps its source identity byte for byte.
+    from populus.canonical import row_fingerprint, txn_id as make_txn_id
+    from populus.inst_redaction import DISCLOSURE_WITHHELD_TEXT
+
+    rebound = [r for r in staged_rows if DISCLOSURE_WITHHELD_TEXT in r[5]]
+    untouched = [r[:5] for r in staged_rows if DISCLOSURE_WITHHELD_TEXT not in r[5]]
+    assert rebound, "the fixture must exercise a scrubbed raw_row"
+    assert len(staged_rows) == len(expected_ids)
+    assert len(untouched) == len(expected_ids) - len(rebound)
+    assert set(untouched) <= set(expected_ids)
+    for txn, filing, _bioguide, _ticker, fp, raw, seq in rebound:
+        assert fp == row_fingerprint(json.loads(raw))
+        assert txn == make_txn_id(filing, fp, seq)
+        assert row_fingerprint(
+            json.loads(raw.replace(DISCLOSURE_WITHHELD_TEXT, APPLE_CUSIP))
+        ) != fp
+    # The slices serialize the rebound identity (W1 order: after the rebind).
+    rebound_ids = {r[0] for r in rebound}
+    feed_apple = next(
+        row for row in json.loads((build / "congress" / "feed.json").read_bytes())["rows"]
+        if row["ticker"] == "AAPL"
+    )
+    assert feed_apple["txn_id"] in rebound_ids
     dist = tmp_path / "dist"
     dist.mkdir()
     shutil.copyfile(stats_path, dist / "stats.json")
