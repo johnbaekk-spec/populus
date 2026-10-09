@@ -1130,11 +1130,12 @@ def plan_registry_redaction(
 
 
 #: Sources whose transaction identity is bound to an external audit record, so
-#: :func:`rebind_scrubbed_identities` leaves it alone (A1-05, owner decision
-#: pending). The kadoa backfill's sealed draw authenticates its population by
-#: a digest over kadoa ``txn_id`` values (``populus.backfill.ids_digest``);
-#: rebinding one would void that record. Their fingerprints remain the A1-05
-#: residual until the owner decides.
+#: :func:`rebind_scrubbed_identities` leaves it alone (A1-05). The kadoa
+#: backfill's sealed draw authenticates its population by a digest over kadoa
+#: ``txn_id`` values (``populus.backfill.ids_digest``); rebinding one would void
+#: that record. Owner decision 2026-10-09: ACCEPTED as is — the 3 kadoa rows in
+#: data-20261007.1 keep their original fingerprints (none was recovered by the
+#: SEC-list attack that recovered 3 non-kadoa rows).
 IDENTITY_FROZEN_SOURCES = frozenset({"kadoa"})
 
 
