@@ -1386,7 +1386,10 @@ class FakeGh:
         raise AssertionError(f"unscripted gh call: {args}")
 
 
-def test_gh_backend_command_construction(tmp_path):
+def test_gh_backend_command_construction(tmp_path, monkeypatch):
+    import populus.publish.build as build_module
+
+    monkeypatch.setattr(build_module, "_verify_sleep", lambda _s: None)
     gh = FakeGh()
     backend = GhReleaseBackend("acme/populus-data", transport=gh)
     tag = "data-20260723.1"
@@ -1422,7 +1425,9 @@ def test_gh_backend_command_construction(tmp_path):
         json.dumps({"isDraft": False, "assets": [{"name": "journal.json"}]}),
         "",
     )
-    gh.script(("release", "download"), 1, "", "download failed")  # verify → False
+    # verify → False: every bounded re-ask of the download fails too.
+    for _ in range(len(build_module._VERIFY_RETRY_BACKOFF_SECONDS) + 1):
+        gh.script(("release", "download"), 1, "", "download failed")
     with pytest.raises(BackendError, match="immutable"):
         backend.upload("20260723.1", asset, clobber=True)
     assert gh.calls[-1][:2] == ["release", "download"]  # verify, never upload
@@ -7359,3 +7364,72 @@ def test_rejected_seed_issuer_keys_are_opaque_in_real_stage(
         serving.close()
         agg.close()
     assert {path: sha256_file(path) for path in hashes} == hashes
+
+
+# --- release verification re-asks a FAILED download, never a wrong one -------
+#
+# 2026-10-08: the nightly failed "inst_agg.db asset ... failed verification
+# after upload" while GitHub's digest for the uploaded asset equalled the
+# manifest's exactly — the verifying `gh release download` had failed, and a
+# single attempt read that as a mismatch.
+
+
+class _DownloadingGh:
+    """A `gh` transport whose `release download` follows a scripted plan:
+    an int is a failing exit code, bytes are written to --dir and succeed."""
+
+    def __init__(self, name, plan):
+        self.name, self.plan, self.downloads = name, list(plan), 0
+
+    def __call__(self, args):
+        assert args[:2] == ["release", "download"], args
+        self.downloads += 1
+        step = self.plan.pop(0)
+        if isinstance(step, int):
+            return step, "", "connection reset by peer"
+        Path(args[args.index("--dir") + 1], self.name).write_bytes(step)
+        return 0, "", ""
+
+
+def test_verify_reasks_a_failed_download_and_then_verifies(monkeypatch):
+    import populus.publish.build as build_module
+
+    monkeypatch.setattr(build_module, "_verify_sleep", lambda _s: None)
+    data = b"inst-agg-bytes"
+    gh = _DownloadingGh("inst_agg.db", [1, data])
+    backend = GhReleaseBackend("acme/populus-data", transport=gh)
+    assert backend.verify_asset(
+        "20261008.1", "inst_agg.db",
+        sha256=hashlib.sha256(data).hexdigest(), size=len(data),
+    ) is True
+    assert gh.downloads == 2
+
+
+def test_verify_never_reasks_a_download_with_the_wrong_bytes(monkeypatch):
+    import populus.publish.build as build_module
+
+    monkeypatch.setattr(build_module, "_verify_sleep", lambda _s: None)
+    gh = _DownloadingGh("inst_agg.db", [b"tampered", b"inst-agg-bytes"])
+    backend = GhReleaseBackend("acme/populus-data", transport=gh)
+    good = b"inst-agg-bytes"
+    assert backend.verify_asset(
+        "20261008.1", "inst_agg.db",
+        sha256=hashlib.sha256(good).hexdigest(), size=len(good),
+    ) is False
+    assert gh.downloads == 1, "a definitive mismatch must not be retried away"
+
+
+def test_verify_reports_an_outage_that_outlasts_the_bound(monkeypatch, capsys):
+    import populus.publish.build as build_module
+
+    waits = []
+    monkeypatch.setattr(build_module, "_verify_sleep", waits.append)
+    attempts = len(build_module._VERIFY_RETRY_BACKOFF_SECONDS) + 1
+    gh = _DownloadingGh("inst_agg.db", [1] * attempts)
+    backend = GhReleaseBackend("acme/populus-data", transport=gh)
+    assert backend.verify_asset(
+        "20261008.1", "inst_agg.db", sha256="0" * 64, size=1
+    ) is False
+    assert gh.downloads == attempts
+    assert waits == list(build_module._VERIFY_RETRY_BACKOFF_SECONDS)
+    assert "an outage, not a proven mismatch" in capsys.readouterr().err
