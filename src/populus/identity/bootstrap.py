@@ -44,6 +44,7 @@ from pathlib import Path
 from populus.canonical import nfc
 from populus.identity.registry import (
     IdentityRegistry,
+    IdentityRegistryError,
     anchor,
     applicable_value,
     apply_entity_candidates,
@@ -1064,6 +1065,39 @@ def _parse_failures(disposition: Disposition) -> int:
     )
 
 
+def _refuse_a_published_withheld_registry(conn: sqlite3.Connection) -> None:
+    """Refuse, before ANY write, to bootstrap a store seeded from a release.
+
+    The nightly seeds from the PUBLISHED ``congress.db``, where every withheld
+    CUSIP is already opaque (``withheld:<n>`` list values, ``sec:withheld:<n>``
+    security ids). This bootstrap cannot reconcile raw SEC-list/FTD rows against
+    those: measured 2026-10-04, it re-inserted the raw rows as NEW securities and
+    superseded every opaque id (15 -> 30 securities, 14/14 ids lost) — silently,
+    with a clean integrity check. See docs/build/IDENTITY-REFRESH-DESIGN.md.
+    """
+    def count(sql: str) -> int:
+        try:
+            return conn.execute(sql).fetchone()[0]
+        except sqlite3.Error:
+            return 0  # table absent: a fresh store, nothing withheld
+
+    values = count(
+        "SELECT COUNT(*) FROM security_list_intervals WHERE value LIKE 'withheld:%'"
+    )
+    ids = count(
+        "SELECT COUNT(*) FROM securities WHERE security_id LIKE 'sec:withheld:%'"
+    )
+    if values or ids:
+        raise IdentityRegistryError(
+            f"refusing to bootstrap a store seeded from a published release: it "
+            f"carries {values} withheld SEC-list value(s) and {ids} withheld "
+            "security id(s). Bootstrap would re-insert their raw rows as new "
+            "securities and supersede every published opaque id. Bootstrap a "
+            "store that holds real CUSIPs, or see "
+            "docs/build/IDENTITY-REFRESH-DESIGN.md for the refresh options."
+        )
+
+
 def run_identity_bootstrap(
     conn: sqlite3.Connection,
     *,
@@ -1104,6 +1138,7 @@ def run_identity_bootstrap(
         select_backfill_quarters,
     )
 
+    _refuse_a_published_withheld_registry(conn)
     conn.execute(
         "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
         " VALUES (?, 'identity', ?, 'running', ?)",

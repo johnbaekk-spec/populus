@@ -32,6 +32,7 @@ from populus.identity.bootstrap import (
     run_identity_bootstrap,
 )
 from populus.identity.registry import (
+    IdentityRegistryError,
     anchor,
     load_identity_registry,
     parse_identity_registry,
@@ -1110,3 +1111,59 @@ def test_cli_list13f_seeds_and_the_replace_quarter_correction_flow(tmp_path):
         ).fetchone() is None
     finally:
         conn.close()
+
+
+# --- a store seeded from a PUBLISHED release is refused before any write -----
+#
+# The nightly seeds from the published congress.db, whose withheld CUSIPs are
+# opaque. Measured 2026-10-04: bootstrap on such a store re-inserted the raw
+# rows as new securities and superseded every opaque id, silently. See
+# docs/build/IDENTITY-REFRESH-DESIGN.md.
+
+
+def _seed_published_withheld(conn, *, list_value=True, security=True):
+    if security:
+        conn.execute(
+            "INSERT INTO securities (security_id, id_state) VALUES ('sec:withheld:1', 'provisional')"
+        )
+    if list_value:
+        conn.execute(
+            "INSERT INTO security_list_intervals (security_id, id_type, value,"
+            " valid_from, valid_to, quarter, issuer_name, security_class, is_option,"
+            " status_flag, provenance, confidence, review_state, license_id,"
+            " source_url, list_sha256, row_ordinal, parser_version,"
+            " normalization_version, source_row, raw) VALUES"
+            " ('sec:withheld:1', 'cusip', 'withheld:1', '2026-04-01', '2026-07-01',"
+            " '2026q2', 'APPLE INC', 'COM', 0, '', 'sec-13f-list', 'high', 'auto',"
+            " 'sec-edgar', 'https://www.sec.gov/x', ?, 1, '1', '1', NULL, NULL)",
+            ("a" * 64,),
+        )
+    conn.commit()
+
+
+@pytest.mark.parametrize(
+    "list_value,security", [(True, True), (True, False), (False, True)]
+)
+def test_bootstrap_refuses_a_store_seeded_from_a_published_release(
+    tmp_path, list_value, security
+):
+    conn = _fresh(tmp_path, "seeded.db")
+    if not security and list_value:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    _seed_published_withheld(conn, list_value=list_value, security=security)
+    before = list(conn.iterdump())
+
+    with pytest.raises(IdentityRegistryError, match="seeded from a published release"):
+        _run_command(conn, tmp_path, registry=empty_registry())
+
+    # Refused before ANY write: no audit row, no registry change.
+    assert list(conn.iterdump()) == before
+    assert conn.execute("SELECT COUNT(*) FROM ingest_runs").fetchone()[0] == 0
+    conn.close()
+
+
+def test_the_guard_leaves_a_store_with_real_cusips_alone(tmp_path):
+    conn = _fresh(tmp_path, "real.db")
+    report = _run_command(conn, tmp_path, registry=empty_registry())
+    assert report.ok
+    conn.close()
