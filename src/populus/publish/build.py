@@ -25,6 +25,8 @@ import shutil
 import sqlite3
 import subprocess  # nosec B404 — gh CLI invocation, argv-list only, no shell
 import tempfile
+import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
@@ -403,6 +405,13 @@ def _run_gh(args: list[str]) -> tuple[int, str, str]:
     return (proc.returncode, proc.stdout, proc.stderr)
 
 
+#: Re-ask a FAILED verification download after these delays (seconds). A
+#: download that succeeded with wrong bytes is never re-asked.
+_VERIFY_RETRY_BACKOFF_SECONDS = (10.0, 30.0)
+#: The sleep the re-ask uses; a module attribute so tests never wait.
+_verify_sleep = time.sleep
+
+
 class GhReleaseBackend:
     """Release semantics over ``gh release`` against the private staging repo.
 
@@ -607,28 +616,63 @@ class GhReleaseBackend:
     def verify_asset(
         self, build_id: str, name: str, *, sha256: str, size: int
     ) -> bool:
-        with tempfile.TemporaryDirectory(prefix="populus-verify-") as scratch:
-            code, _out, _err = self._gh(
-                [
-                    "release",
-                    "download",
-                    self._tag(build_id),
-                    "--repo",
-                    self._repo,
-                    "--pattern",
-                    name,
-                    "--dir",
-                    scratch,
-                ]
+        """Re-download *name* and compare it byte-for-byte with the manifest.
+
+        A download that FAILS (``gh`` exits nonzero: a transport blip on an
+        ~900 MB asset) is not evidence the upload is wrong, so it is re-asked
+        after :data:`_VERIFY_RETRY_BACKOFF_SECONDS`. A download that SUCCEEDS
+        with the wrong size or digest is a definitive mismatch and is never
+        re-asked. Measured 2026-10-08: the nightly failed with "inst_agg.db
+        asset ... failed verification after upload" although GitHub's own
+        digest for the uploaded asset equalled the manifest's exactly — only
+        the verifying download had failed, and one attempt collapsed that into
+        a mismatch. Every outcome is written to stderr so a log reads as outage
+        or mismatch, never one for the other.
+        """
+        attempts = len(_VERIFY_RETRY_BACKOFF_SECONDS) + 1
+        for attempt in range(1, attempts + 1):
+            with tempfile.TemporaryDirectory(prefix="populus-verify-") as scratch:
+                code, out, err = self._gh(
+                    [
+                        "release",
+                        "download",
+                        self._tag(build_id),
+                        "--repo",
+                        self._repo,
+                        "--pattern",
+                        name,
+                        "--dir",
+                        scratch,
+                    ]
+                )
+                if code == 0:
+                    asset = Path(scratch) / name
+                    ok = (
+                        asset.is_file()
+                        and asset.stat().st_size == size
+                        and sha256_file(asset) == sha256
+                    )
+                    if not ok:
+                        print(
+                            f"verify: {name} on data-{build_id} downloaded but does"
+                            " NOT match its manifest size/sha256 (definitive mismatch)",
+                            file=sys.stderr,
+                        )
+                    return ok
+            detail = (err or out).strip()[:200]
+            print(
+                f"verify: could not download {name} from data-{build_id} to verify"
+                f" (attempt {attempt}/{attempts}, gh exit {code}): {detail}",
+                file=sys.stderr,
             )
-            if code != 0:
-                return False
-            asset = Path(scratch) / name
-            return (
-                asset.is_file()
-                and asset.stat().st_size == size
-                and sha256_file(asset) == sha256
-            )
+            if attempt < attempts:
+                _verify_sleep(_VERIFY_RETRY_BACKOFF_SECONDS[attempt - 1])
+        print(
+            f"verify: {name} on data-{build_id} could not be re-downloaded in"
+            f" {attempts} attempts — an outage, not a proven mismatch",
+            file=sys.stderr,
+        )
+        return False
 
     def publish_release(self, build_id: str) -> None:
         self._run(
