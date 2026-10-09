@@ -366,9 +366,17 @@ sudo install -m 755 -o root -g wheel "$NEW" /usr/local/populus-toolchain/bin/uv
 MANIFEST=/usr/local/populus-runner/controller/toolchain.manifest
 PATHS="$(sudo awk '!/^#/ && NF >= 2 {print $2}' "$MANIFEST")"
 [ -n "$PATHS" ] || { echo "STOP: $MANIFEST lists no paths"; exit 1; }
-# shellcheck disable=SC2086 # word-splitting the path list is intended
-sudo sh -c "umask 077; shasum -a 256 $PATHS > ${MANIFEST}.new && mv ${MANIFEST}.new ${MANIFEST}"
-sudo chown root:wheel "$MANIFEST"; sudo chmod 600 "$MANIFEST"
+# NEVER interpolate the path list into a `sh -c "..."` string: its NEWLINES
+# become command separators, so every path after the first is EXECUTED (as
+# root) instead of hashed — the 2026-10-08 run started a node REPL and then
+# overwrote the manifest with gh's help text. Pass the paths as ARGUMENTS, hash
+# into a user-owned temp file, check the line count, then install it.
+NEWMAN="$WORK/toolchain.manifest"
+# shellcheck disable=SC2086 # word-splitting the path list into arguments is intended
+sudo shasum -a 256 $PATHS > "$NEWMAN"
+[ "$(wc -l < "$NEWMAN")" -eq "$(printf '%s\n' "$PATHS" | wc -l)" ] \
+  || { echo "STOP: manifest line count does not match the path list"; exit 1; }
+sudo install -m 600 -o root -g wheel "$NEWMAN" "$MANIFEST"
 [ "$(/usr/local/populus-toolchain/bin/uv --version | awk '{print $2}')" = "$VERSION" ] \
   || { echo "STOP: installed uv is not $VERSION"; exit 1; }
 echo "uv ${VERSION} installed; manifest regenerated over: ${PATHS//$'\n'/ }"
