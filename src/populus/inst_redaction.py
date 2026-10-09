@@ -140,9 +140,15 @@ _REGISTRY_TABLES = frozenset({
     "security_list_intervals", "security_supersessions", "security_list_seed_ledger",
     "entity_tickers",
 })
+#: The bare ``name.ext`` branch excludes ``*``: the SEC text list's 'added'
+#: marker glues ``*`` to the CUSIP (``08975P108*COMMERCE.COM INC``), and a run
+#: through it read the CUSIP as part of a domain, so the sweep refused to
+#: publish any store still holding real list rows (measured 2026-10-09 on a
+#: --rebuild-registry of data-20261009.1). ``*`` is never part of a hostname
+#: or a real file name; scheme-prefixed URLs keep their full character set.
 _LOCATOR_IN_TEXT_RE = re.compile(
     r"(?:[A-Za-z][A-Za-z0-9+.-]*://|www\.|(?:[A-Za-z]:)?[/\\]|\.\.?[/\\])[^\s<>\"']+"
-    r"|[^\s/\\<>\"']+\.[A-Za-z]{1,10}(?=[\s<>\"')]|$)"
+    r"|[^\s/\\<>\"'*]+\.[A-Za-z]{1,10}(?=[\s<>\"')]|$)"
 )
 _PROVISIONAL_IN_TEXT_RE = re.compile(
     r"(?<![0-9a-f])(?:(?:sid:)?sec:prov:)?([0-9a-f]{32})(?![0-9a-f])"
