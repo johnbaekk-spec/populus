@@ -1167,3 +1167,222 @@ def test_the_guard_leaves_a_store_with_real_cusips_alone(tmp_path):
     report = _run_command(conn, tmp_path, registry=empty_registry())
     assert report.ok
     conn.close()
+
+
+# --- --rebuild-registry: the refresh path for a release-seeded store ----------
+#
+# docs/build/IDENTITY-REFRESH-DESIGN.md option A. The property: rebuilding a
+# store seeded from a PUBLISHED release yields exactly the registry a fresh
+# store gets from the same sources — and a rebuild is all or nothing.
+
+REBUILD_CUSIP = "037833100"
+
+#: Registry content compared across stores; run-specific audit columns
+#: (ledger seed time, run ids) are excluded by projecting stable columns.
+_REBUILD_SNAPSHOT_SQL = (
+    "SELECT * FROM entities ORDER BY entity_id",
+    "SELECT * FROM entity_names ORDER BY 1, 2, 3",
+    "SELECT * FROM entity_tickers ORDER BY 1, 2, 3",
+    "SELECT * FROM securities ORDER BY security_id",
+    "SELECT * FROM security_identifiers ORDER BY id_type, value, valid_from",
+    "SELECT * FROM security_supersessions ORDER BY old_security_id",
+    "SELECT security_id, id_type, value, valid_from, valid_to, quarter,"
+    " issuer_name, security_class FROM security_list_intervals"
+    " ORDER BY value, valid_from",
+    "SELECT quarter, list_sha256 FROM security_list_seed_ledger ORDER BY quarter",
+)
+
+
+def _registry_state(db):
+    conn = connect(str(db))
+    try:
+        return [conn.execute(sql).fetchall() for sql in _REBUILD_SNAPSHOT_SQL]
+    finally:
+        conn.close()
+
+
+def _cli_bootstrap(cache, list_dir, db, *extra):
+    return CliRunner().invoke(
+        main,
+        ["identity", "bootstrap", "--from-cache", str(cache), "--db", str(db),
+         "--list13f-cache", str(list_dir), "--list13f-start-quarter", "2026q1", *extra],
+    )
+
+
+def _rebuild_inputs(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "company_tickers.json").write_text(SAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+    list_dir = tmp_path / "13flist"
+    list_dir.mkdir()
+    _write_list(list_dir, REBUILD_CUSIP)
+    return cache, list_dir
+
+
+def _publish_withholding(db):
+    """Turn a store into what `populus seed-corpus` restores: the PUBLISHED copy."""
+    from populus.inst_redaction import apply_registry_redaction
+
+    apply_registry_redaction(db, filed_cusips=frozenset({REBUILD_CUSIP}))
+    conn = connect(str(db))
+    try:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM security_list_intervals WHERE value LIKE 'withheld:%'"
+        ).fetchone()[0] > 0, "the fixture must actually carry withheld rows"
+    finally:
+        conn.close()
+
+
+def test_rebuild_of_a_release_seeded_store_equals_a_fresh_bootstrap(tmp_path):
+    cache, list_dir = _rebuild_inputs(tmp_path)
+    fresh, seeded = tmp_path / "fresh.db", tmp_path / "seeded.db"
+    assert _cli_bootstrap(cache, list_dir, fresh).exit_code == 0
+    assert _cli_bootstrap(cache, list_dir, seeded).exit_code == 0
+    _publish_withholding(seeded)
+
+    refused = _cli_bootstrap(cache, list_dir, seeded)
+    assert refused.exit_code == 1
+    assert "--rebuild-registry" in refused.output
+
+    rebuilt = _cli_bootstrap(cache, list_dir, seeded, "--rebuild-registry")
+    assert rebuilt.exit_code == 0, rebuilt.output
+    assert "registry REBUILT" in rebuilt.output
+    assert _registry_state(seeded) == _registry_state(fresh)
+    conn = connect(str(seeded))
+    try:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM security_list_intervals WHERE value LIKE 'withheld:%'"
+        ).fetchone()[0] == 0
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        conn.close()
+
+
+def test_rebuild_refuses_without_a_list_quarter_and_changes_nothing(tmp_path):
+    cache, list_dir = _rebuild_inputs(tmp_path)
+    seeded = tmp_path / "seeded.db"
+    assert _cli_bootstrap(cache, list_dir, seeded).exit_code == 0
+    _publish_withholding(seeded)
+    before = _registry_state(seeded)
+
+    empty_lists = tmp_path / "no-lists"
+    empty_lists.mkdir()
+    result = _cli_bootstrap(cache, empty_lists, seeded, "--rebuild-registry")
+    assert result.exit_code == 1
+    assert "no SEC 13(f)-list quarter" in result.output
+    assert _registry_state(seeded) == before
+
+
+def test_rebuild_refuses_while_institutional_rows_reference_the_registry(tmp_path):
+    cache, list_dir = _rebuild_inputs(tmp_path)
+    db = tmp_path / "corpus.db"
+    assert _cli_bootstrap(cache, list_dir, db).exit_code == 0
+    conn = connect(str(db))
+    try:
+        conn.execute(
+            "INSERT INTO inst_filers (cik, name_raw, source, source_url,"
+            " source_record_id, parser_version, normalization_version, ingested_at)"
+            " VALUES ('0001067983', 'BERKSHIRE', 'sec-edgar',"
+            " 'https://data.sec.gov/submissions/CIK0001067983.json', '0001067983',"
+            " '1', '1', '2026-10-09T00:00:00Z')"
+        )
+        conn.commit()
+        before = list(conn.iterdump())
+    finally:
+        conn.close()
+
+    result = _cli_bootstrap(cache, list_dir, db, "--rebuild-registry")
+    assert result.exit_code == 1
+    assert "inst_filers" in result.output
+    conn = connect(str(db))
+    try:
+        assert list(conn.iterdump()) == before, "refused before ANY write"
+    finally:
+        conn.close()
+
+
+def test_a_failing_rebuild_rolls_the_reset_back(tmp_path, monkeypatch):
+    import populus.identity.list13f_seed as list13f_seed
+
+    cache, list_dir = _rebuild_inputs(tmp_path)
+    seeded = tmp_path / "seeded.db"
+    assert _cli_bootstrap(cache, list_dir, seeded).exit_code == 0
+    _publish_withholding(seeded)
+    before = _registry_state(seeded)
+
+    def boom(*_args, **_kwargs):
+        raise ValueError("list seed failed mid-rebuild")
+
+    monkeypatch.setattr(list13f_seed, "bootstrap_13f_list", boom)
+    result = _cli_bootstrap(cache, list_dir, seeded, "--rebuild-registry")
+    assert result.exit_code == 1
+    assert "failed mid-rebuild" in result.output
+    assert _registry_state(seeded) == before, "the reset must roll back with the seed"
+
+
+def _write_glued_list(list_dir, cusip):
+    """A real SEC text-list shape: the 'added' marker glues '*' to the CUSIP,
+    so `<cusip>*NAME.COM` reads like a domain — measured on 2026q2
+    (08975P108*COMMERCE.COM, 47215P106*JD.COM, B38564108*CMB.TECH)."""
+    import hashlib
+
+    row = cusip.ljust(9) + "*" + "APPLE.COM INC".ljust(30) + "COM".ljust(27) + "   " + " " * 9 + "E"
+    assert len(row) == 80
+    content = (row + "\n").encode("utf-8")
+    (list_dir / "13flist2026q1-txt.txt").write_bytes(content)
+    (list_dir / "13flist2026q1-txt.txt.meta.json").write_text(
+        json.dumps({
+            "source_url": "https://www.sec.gov/files/investment/13flist2026q1-txt.txt",
+            "http_status": 200,
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "retrieved_at": "2026-07-30T00:00:00Z",
+            "user_agent": "populus-mcp/0.0.1",
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_a_store_holding_real_list_rows_publishes_glued_cusip_rows(tmp_path):
+    """W2 refused to publish any store whose withheld list rows still carried
+    their raw text (a fresh build, a rebuild, a disaster recovery): the
+    locator guard's bare `name.ext` branch ran through the SEC list's `*`
+    marker and read `<cusip>*NAME.COM` as one protected domain. The row now
+    publishes as W2 intends: the CUSIP replaced by a visible marker, the rest
+    of the source line kept."""
+    from populus.inst_redaction import apply_registry_redaction
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "company_tickers.json").write_text(SAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+    list_dir = tmp_path / "13flist"
+    list_dir.mkdir()
+    _write_glued_list(list_dir, REBUILD_CUSIP)
+    db = tmp_path / "fresh.db"
+    seeded = _cli_bootstrap(cache, list_dir, db)
+    assert seeded.exit_code == 0, seeded.output
+    conn = connect(str(db))
+    try:
+        raw_source_row = conn.execute(
+            "SELECT source_row FROM security_list_intervals WHERE value = ?", (REBUILD_CUSIP,)
+        ).fetchone()[0]
+        assert f"{REBUILD_CUSIP}*APPLE.COM" in raw_source_row, "fixture must carry the glued shape"
+    finally:
+        conn.close()
+
+    apply_registry_redaction(db, filed_cusips=frozenset({REBUILD_CUSIP}))
+
+    conn = connect(str(db))
+    try:
+        rows = conn.execute(
+            "SELECT value, raw, source_row FROM security_list_intervals"
+        ).fetchall()
+        assert rows and all(v.startswith("withheld:") for v, _r, _s in rows)
+        for _value, raw, source_row in rows:
+            assert source_row.startswith("(CUSIP withheld)*APPLE.COM INC")
+            assert REBUILD_CUSIP not in raw and "(CUSIP withheld)" in raw
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
+    assert REBUILD_CUSIP.encode() not in db.read_bytes()

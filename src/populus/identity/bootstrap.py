@@ -364,6 +364,9 @@ class BootstrapReport:
     #: One List13fBootstrapReport per seeded quarter, in quarter
     #: order; empty when no 13(f)-list source was supplied.
     list13f: tuple = ()
+    #: ``--rebuild-registry`` only: rows deleted per registry table before the
+    #: re-seed, child-first. None on an ordinary (incremental) bootstrap.
+    registry_reset: Mapping[str, int] | None = None
 
     @property
     def ok(self) -> bool:
@@ -1092,10 +1095,63 @@ def _refuse_a_published_withheld_registry(conn: sqlite3.Connection) -> None:
             f"refusing to bootstrap a store seeded from a published release: it "
             f"carries {values} withheld SEC-list value(s) and {ids} withheld "
             "security id(s). Bootstrap would re-insert their raw rows as new "
-            "securities and supersede every published opaque id. Bootstrap a "
-            "store that holds real CUSIPs, or see "
-            "docs/build/IDENTITY-REFRESH-DESIGN.md for the refresh options."
+            "securities and supersede every published opaque id. Rebuild it "
+            "instead (`populus identity bootstrap --rebuild-registry` with the "
+            "list quarters to seed), or bootstrap a store that holds real "
+            "CUSIPs. See docs/build/IDENTITY-REFRESH-DESIGN.md."
         )
+
+
+#: The identity registry, CHILD-FIRST so every foreign key is satisfied while it
+#: empties: list intervals, identifiers, supersessions and the seed ledger hang
+#: off ``securities``; ``securities``, ``entity_names`` and ``entity_tickers``
+#: hang off ``entities``. Only the identity modules write these tables
+#: (audited 2026-10-09), and every reviewed decision lives in the identity
+#: registry YAML, so a rebuild from the cached sources reproduces the registry
+#: a fresh store would have.
+REGISTRY_TABLES_CHILD_FIRST = (
+    "security_list_intervals",
+    "security_identifiers",
+    "security_supersessions",
+    "security_list_seed_ledger",
+    "securities",
+    "entity_tickers",
+    "entity_names",
+    "entities",
+)
+
+#: Tables OUTSIDE the registry that reference it by foreign key. A rebuild
+#: deletes the rows they point at, so it refuses unless they are empty (a
+#: release-seeded store has them cleared by ``populus seed-corpus``).
+_REGISTRY_REFERRERS = ("inst_filers", "inst_holdings")
+
+
+def _refuse_a_rebuild_with_registry_referrers(conn: sqlite3.Connection) -> None:
+    """``--rebuild-registry`` precondition, checked before ANY write."""
+    occupied = []
+    for table in _REGISTRY_REFERRERS:
+        try:
+            if conn.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():  # nosec B608 — module constant
+                occupied.append(table)
+        except sqlite3.Error:
+            continue  # table absent: nothing references the registry from it
+    if occupied:
+        raise IdentityRegistryError(
+            "refusing --rebuild-registry: "
+            + ", ".join(occupied)
+            + " hold rows that reference the registry, which a rebuild would"
+            " delete out from under them. Rebuild a release-seeded store (its"
+            " inline institutional tables are empty), never the institutional"
+            " corpus itself."
+        )
+
+
+def _reset_registry(conn: sqlite3.Connection) -> dict[str, int]:
+    """Empty every registry table, child-first. Caller holds the transaction."""
+    return {
+        table: conn.execute(f'DELETE FROM "{table}"').rowcount  # nosec B608 — module constant
+        for table in REGISTRY_TABLES_CHILD_FIRST
+    }
 
 
 def run_identity_bootstrap(
@@ -1112,6 +1168,7 @@ def run_identity_bootstrap(
     list13f_quarters: Sequence[str] | None = None,
     list13f_start_quarter: str | None = None,
     replace_quarter: bool = False,
+    rebuild_registry: bool = False,
 ) -> BootstrapReport:
     """Reconcile the authority and seed every registry — all or nothing.
 
@@ -1127,6 +1184,14 @@ def run_identity_bootstrap(
     exactly like the ticker/FTD parses — and seeded inside it, after the FTD
     pass so the definitional intervals sit above the FTD identifiers at
     resolution.
+
+    With *rebuild_registry* the registry is EMPTIED and re-seeded inside that
+    same transaction (docs/build/IDENTITY-REFRESH-DESIGN.md, option A): the
+    refresh path for a store seeded from a published release, whose opaque
+    withheld rows an incremental bootstrap cannot reconcile. It refuses, before
+    any write, when registry-referencing tables hold rows, and refuses when no
+    13(f)-list quarter is selected, so a rebuild can never empty the list. Any
+    failure rolls the reset back with everything else.
     """
     # Lazy imports: bootstrap.py is imported at module-load time by
     # identity.registry (the reconcile path) and by identity.list13f_seed, so
@@ -1138,7 +1203,10 @@ def run_identity_bootstrap(
         select_backfill_quarters,
     )
 
-    _refuse_a_published_withheld_registry(conn)
+    if rebuild_registry:
+        _refuse_a_rebuild_with_registry_referrers(conn)
+    else:
+        _refuse_a_published_withheld_registry(conn)
     conn.execute(
         "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
         " VALUES (?, 'identity', ?, 'running', ?)",
@@ -1158,8 +1226,16 @@ def run_identity_bootstrap(
                 )
             )
             list13f_loaded = prepare_list13f_quarters(list13f_source, selected)
+        if rebuild_registry and not list13f_loaded:
+            raise IdentityRegistryError(
+                "refusing --rebuild-registry with no SEC 13(f)-list quarter"
+                " selected: the rebuild empties the list, so it must re-seed one."
+                " Pass the list cache and --list13f-start-quarter (or"
+                " --list13f-file) for every quarter the registry should carry."
+            )
         conn.execute("BEGIN IMMEDIATE")
         try:
+            registry_reset = _reset_registry(conn) if rebuild_registry else None
             migration = reconcile_identity_registry(conn, registry)
             tickers = bootstrap_tickers(
                 conn,
@@ -1206,7 +1282,12 @@ def run_identity_bootstrap(
         )
         raise
     return BootstrapReport(
-        run_id=run_id, status="ok", tickers=tickers, ftd=ftd, list13f=list13f
+        run_id=run_id,
+        status="ok",
+        tickers=tickers,
+        ftd=ftd,
+        list13f=list13f,
+        registry_reset=registry_reset,
     )
 
 
@@ -1227,6 +1308,11 @@ def _counter_lines(
 def format_bootstrap_summary(report: BootstrapReport) -> str:
     """Print all three counter families per source, every counter with its unit."""
     lines = [f"identity bootstrap {report.run_id}: {report.status}"]
+    if report.registry_reset is not None:
+        lines.append("registry REBUILT — rows deleted before the re-seed:")
+        lines.extend(
+            f"    {table}: {count} rows" for table, count in report.registry_reset.items()
+        )
 
     lines.append(f"company_tickers (snapshot {report.tickers.snapshot_date})")
     lines.append("  disposition [parse phase; buckets sum to rows_read]")
