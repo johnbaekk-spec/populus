@@ -554,6 +554,19 @@ def identity_group() -> None:
     ),
 )
 @click.option(
+    "--rebuild-registry",
+    "rebuild_registry",
+    is_flag=True,
+    help=(
+        "EMPTY the identity registry and re-seed it from the cached sources, in"
+        " one transaction. The refresh path for a store seeded from a published"
+        " release (its withheld rows are opaque, so an incremental bootstrap"
+        " refuses). Requires the list cache plus the quarters to seed; published"
+        " withheld ordinals are re-allocated at the next publish."
+        " See docs/build/IDENTITY-REFRESH-DESIGN.md."
+    ),
+)
+@click.option(
     "--replace-quarter",
     "replace_quarter",
     is_flag=True,
@@ -575,6 +588,7 @@ def identity_bootstrap(
     list13f_files: tuple[str, ...],
     list13f_start_quarter: str | None,
     replace_quarter: bool,
+    rebuild_registry: bool,
 ) -> None:
     """Seed the identity registries from cached SEC sources (no network)."""
     from populus.identity.bootstrap import (
@@ -672,6 +686,7 @@ def identity_bootstrap(
             list13f_quarters=list13f_quarters,
             list13f_start_quarter=list13f_start_quarter,
             replace_quarter=replace_quarter,
+            rebuild_registry=rebuild_registry,
         )
     except (
         FtdFormatError,

@@ -1,7 +1,8 @@
 # Identity registry refresh on a seeded store
 
-Status: DESIGN, for owner decision. The guard described in §3 is implemented
-alongside this note. The refresh path in §4 is NOT implemented.
+Status: the guard (§3) and option A (`--rebuild-registry`, §6) are IMPLEMENTED
+(owner decision 2026-10-09: build option A). Running it in PRODUCTION still needs
+the publish-workflow step described in §6.3, which is not built.
 
 ## 1. The situation (measured 2026-10-09 on the published data-20261007.1)
 
@@ -65,3 +66,84 @@ published. Acceptance:
 
 The identity of congressional transactions (A1-05) is unrelated. The
 institutional snapshot's own list refresh is the owner's existing inst pipeline.
+
+## 6. `--rebuild-registry` (implemented)
+
+### 6.1 Behaviour
+
+`populus identity bootstrap --rebuild-registry` runs inside the bootstrap's
+single `BEGIN IMMEDIATE` transaction:
+
+- It empties the eight registry tables, child-first:
+  `security_list_intervals`, `security_identifiers`, `security_supersessions`,
+  `security_list_seed_ledger`, `securities`, `entity_tickers`, `entity_names`,
+  `entities`.
+- It then re-seeds them from the ticker, FTD and 13(f)-list sources and the
+  identity-registry YAML. A failure anywhere rolls the reset back with
+  everything else.
+
+It refuses before any write if `inst_filers` or `inst_holdings` hold rows (they
+reference the registry). It refuses if no list quarter is selected, so a
+rebuild can never empty the SEC list. Without the flag, a release-seeded store
+is still refused, and the refusal names the flag.
+
+### 6.2 Measured on the published data-20261009.1 (2026-10-09)
+
+The rebuild was run on a copy with the cached `company_tickers.json`
+(10,426 rows, the file of the 2026-07-31 production run), the cached SEC lists,
+`--list13f-start-quarter 2026q2` and `--as-of 2026-07-31`. Result:
+
+- 20 s.
+- `entities`, `entity_names` and `entity_tickers` are row-for-row identical to
+  the live release (8,017 / 8,017 / 10,426).
+- The list has the same 22,521 rows. All 12,831 non-withheld rows are
+  unchanged, and the 9,690 withheld rows carry their real CUSIPs again.
+- Zero duplicate securities (the incremental bootstrap would have doubled them).
+- Integrity and foreign-key checks are clean. The seed ledger carries the same
+  2026q2 list sha256.
+
+Publishing the rebuilt store, with the real `apply_registry_redaction` against
+the 23 GB institutional snapshot, took 91 s. Integrity and foreign-key checks are
+clean, and it **withholds 7,926 list rows where the live release withholds
+9,690**:
+
+- **Nothing new is exposed:** every row the rebuild withholds is also withheld
+  live (0 rows only-rebuilt).
+- **The 1,212 distinct rows withheld only live** are fund-family share-class
+  siblings (iShares, Direxion, Invesco, First Trust, VanEck blocks). None is
+  itself a reviewed-ticker (issuer, class).
+- **Why they are only live:** production has only ever added to the withheld
+  set (prior `withheld:<n>` rows are kept forever). These rows match the
+  over-withholding that #117's SEC-list seeding gate fixed: mis-filed CUSIPs
+  dragging whole issuer blocks in.
+- **So a rebuild applies today's reviewed rules and REPUBLISHES those CUSIPs.**
+  By #117's own reasoning that is the correct result, but it is a visible change
+  to published data, and the owner should accept it before the first
+  production rebuild.
+
+This run also found a W2 defect, fixed alongside the flag. The locator guard's
+bare `name.ext` branch ran through the SEC list's `*` "added" marker
+(`08975P108*COMMERCE.COM INC`) and refused to publish ANY store still holding
+real list rows: a fresh build, a rebuild, or a disaster recovery. Published
+releases never hit it, because those cells were already swept.
+
+**Pass `--as-of` with the date the `company_tickers.json` was fetched.** Without
+it, the ticker snapshot is stamped "today", and as-of resolution between the
+real fetch date and today loses those entities.
+
+### 6.3 Reaching production (NOT built)
+
+The nightly seeds its store from the previous published release
+(`populus seed-corpus`), so a rebuild run on a workstation never reaches the
+site. Production use needs a `workflow_dispatch`-only input on `publish.yml`
+(for example `rebuild_registry_from_quarter`). After the seed and the existing
+`fetch_ticker_registry.py` step, that input must:
+
+1. fetch the SEC 13(f) list files with provenance sidecars. No script does this
+   today; `ingest/list13f.py:_LiveSource` exists but nothing calls it;
+2. run `populus identity bootstrap --rebuild-registry --as-of "$(date -u +%F)"
+   --list13f-cache <fetched> --list13f-start-quarter <input>` before
+   `stage-build`.
+
+Publishing re-allocates the opaque withheld ordinals once, at that run.
+
