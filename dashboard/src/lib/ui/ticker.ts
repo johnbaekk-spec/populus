@@ -23,7 +23,6 @@ import {
   srcLinkDerived,
   terminusRow,
   footnoteBlock,
-  watchStarHtml,
   memberHrefFor,
   congressTickerHref,
   partyClass,
@@ -218,7 +217,6 @@ export function tickerUnifiedBody(
     ticker: t.ticker,
     mappedName: inst.name ?? null,
   };
-  const watched = ctx.watchedTickers?.has(t.ticker) ?? false;
   const disclosing = membersDisclosing(t.txns, stamps.generatedAtDate, 12, 5);
   const latestFiled = t.txns[0]?.filed ?? null;
   /* The compact preview is NOT paged, so its five rows ARE the whole
@@ -251,7 +249,7 @@ export function tickerUnifiedBody(
         extraHtml: `<a href="${congressTickerHref(t.ticker)}">all ${fmtInt(t.txns.length)} ↗</a>`,
       });
 
-  /* Ticker.dc.html: kicker → mono ticker + mapped name + watch → lede, with the
+  /* Ticker.dc.html: kicker → mono ticker + mapped name → lede, with the
      four-figure ledger on the right, then the provenance strip and three
      data-derived summaries. Every figure below is computed from this page's
      own rows; the reference's illustrative 13F-side values are not reproduced. */
@@ -319,7 +317,7 @@ export function tickerUnifiedBody(
     `<div class="page-head">` +
     `<div class="page-head-copy">` +
     `<div class="kicker">Public record / Tickers / ${esc(t.ticker)}</div>` +
-    `<h1 class="entity-title">${tickerTitleHtml(info)} ${watchStarHtml("ticker", t.ticker, t.ticker, watched)}</h1>` +
+    `<h1 class="entity-title">${tickerTitleHtml(info)}</h1>` +
     `<p class="entity-lede">Both disclosure regimes on one name: who in Congress filed about ${esc(
       t.ticker,
     )}, which institutions reported holding it. Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots.</p>` +

@@ -60,7 +60,7 @@ function withDefiniteDisclosure(html: string, rootId: string, o: { total: number
 /* ---------------------------------------------------- the congress island */
 
 const GENERATED_AT = "2026-08-12";
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 const STAMPS: BuildStamps = { buildId: "b", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: GENERATED_AT };
 function txn(i: number): TxnRow {
   return {

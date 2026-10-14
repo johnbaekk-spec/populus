@@ -28,7 +28,7 @@ const stamps: BuildStamps = {
   generatedAt: "2026-08-12 00:00 UTC",
   generatedAtDate: NOW,
 };
-const ctx: RenderCtx = { watched: new Set() };
+const ctx: RenderCtx = {};
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {

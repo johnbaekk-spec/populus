@@ -330,24 +330,21 @@ test("R17: the congress page loads exactly ONE module that fetches the dataset",
      match nothing and this test would pass vacuously forever — the exact shape
      of false green this suite exists to refuse. Importing `feed-corpus.ts` is
      what makes a module a corpus owner, so that is what is counted. */
-  // `watchlist-client.ts` also reads this dataset, and that is NOT a violation:
-  // it is the single owner on /watchlist/, a different page, and the two are
-  // never loaded together. R17 forbids ONE PAGE fetching the dataset twice.
-  // Pinning the exact set here means a third owner — or the watchlist island
-  // being pulled onto /congress/ — reddens this test rather than passing.
-  assert.deepEqual(
-    owners.sort(),
-    ["scripts/feed-client.ts", "scripts/watchlist-client.ts"],
-    "a new fetch owner of the congress dataset appeared",
-  );
+  // The feed island is the ONLY owner in the tree. The second owner — the
+  // device-local watchlist island, on its own page — was removed in
+  // signals-v3 M1. Pinning the exact set here means any new owner, on this
+  // page or another, reddens this test rather than passing.
+  assert.deepEqual(owners.sort(), ["scripts/feed-client.ts"], "a new fetch owner of the congress dataset appeared");
 
   const congressPage = readFileSync(
     path.join(dir, "pages", "congress", "index.astro"),
     "latin1",
   );
   assert.ok(congressPage.includes("scripts/feed-client"), "the feed island is loaded");
-  assert.ok(
-    !congressPage.includes("watchlist-client"),
-    "the other owner must never be loaded onto the congress page",
-  );
+  /* The loader's surface is the two calls the one owner makes. Its third
+     export, `fetchFeedCorpus` (the one-call form for a page with no inlined
+     part index), served only the removed owner and was deleted with it (R2). */
+  const corpus = readFileSync(path.join(dir, "scripts", "feed-corpus.ts"), "latin1");
+  const exported = [...corpus.matchAll(/^export (?:async )?function (\w+)/gm)].map((m) => m[1]).sort();
+  assert.deepEqual(exported, ["fetchFeedPartsIndex", "loadFeedCorpus"]);
 });

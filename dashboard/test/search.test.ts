@@ -1,29 +1,14 @@
 /* Search client pure functions (results/pre-query renderers, combobox option
-   semantics) and the watchlist v2 store (Locked #16): migration from the
-   legacy bare array, corrupt-storage quarantine, legacy write-through, and
-   validation that drops junk without destroying the rest. */
+   semantics). The watchlist v2 store this file also covered (Locked #16) was
+   removed with the watchlist in signals-v3 M1; the pre-query state no longer
+   reads the device at all. */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { renderResults, renderPreQuery, optionId } from "../src/scripts/search-client.ts";
-import {
-  loadWatchStore,
-  WATCH_V2_KEY,
-  WATCH_LEGACY_KEY,
-  WATCH_QUARANTINE_KEY,
-  type StorageLike,
-} from "../src/scripts/entity-client.ts";
 import { buildSearchIndex, searchQuery } from "../src/lib/derive.ts";
-
-function fakeStorage(seed: Record<string, string> = {}): StorageLike & { data: Map<string, string> } {
-  const data = new Map(Object.entries(seed));
-  return {
-    data,
-    getItem: (k) => data.get(k) ?? null,
-    setItem: (k, v) => void data.set(k, v),
-  };
-}
 
 const INDEX = buildSearchIndex(
   [
@@ -55,94 +40,36 @@ test("renderResults: an empty result set states scope, never a bare empty", () =
   assert.ok(html.includes("every ticker, member, and filer"));
 });
 
-/* ---------- pre-query: watchlist quick links vs S6 ---------- */
+/* ---------- pre-query (S6): how the search matches, and starters ---------- */
 
-test("pre-query with watches: quick links to watched entities, names from the index", () => {
-  const storage = fakeStorage({
-    [WATCH_V2_KEY]: JSON.stringify({ v: 2, members: ["P000001"], tickers: ["NVDA"] }),
-  });
-  const store = loadWatchStore(storage);
-  const html = renderPreQuery(store, INDEX);
-  assert.ok(html.includes("★ NVDA"));
-  assert.ok(html.includes("★ Busy Member"), "member names resolve through the index");
-  assert.ok(html.includes("saved on this device"));
-});
-
-test("pre-query empty (S6): browser-only copy + most-active starters", () => {
-  const store = loadWatchStore(fakeStorage());
-  const html = renderPreQuery(store, INDEX);
-  assert.ok(html.includes("Nothing watched yet"));
-  assert.ok(html.includes("this browser only"));
-  assert.ok(html.includes("no account is required"));
+test("pre-query (S6): the matching rule, the on-device statement and the most-active starters, with no watch copy", () => {
+  const html = renderPreQuery(INDEX);
+  assert.ok(html.includes("Search this build"));
+  assert.ok(html.includes("Tickers match by prefix, names by substring."), "the same rule the empty result states");
+  assert.ok(html.includes("never leaves your device"), "the methodology's search statement");
   assert.ok(html.includes("most-active in this build"), "starter caption is build-derived (Locked #5)");
-  assert.ok(html.includes("☆ NVDA"), "top ticker by rows is a starter");
-  assert.ok(html.includes("☆ Busy Member"), "top member by rows is a starter");
+  const starters = [...html.matchAll(/<a class="quick-link" href="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(starters, [
+    ["/tickers/NVDA/", "NVDA"],
+    ["/tickers/AAPL/", "AAPL"],
+    ["/congress/members/P000001/", "Busy Member"],
+    ["/congress/members/Q000002/", "Quiet Member"],
+  ], "the top two tickers and members by rows, plain links");
   assert.ok(!html.includes("most-viewed"), "no view analytics exist to rank by");
+  /* signals-v3 M1 (R1): no star glyph and no watch copy remain */
+  assert.doesNotMatch(html, /☆|★|[Ww]atch|saved on this device/);
 });
 
-/* ---------- watchlist v2 store (Locked #16) ---------- */
-
-test("fresh storage: v2 written, legacy write-through mirror", () => {
-  const storage = fakeStorage();
-  const store = loadWatchStore(storage);
-  assert.deepEqual(JSON.parse(storage.data.get(WATCH_V2_KEY)!), { v: 2, members: [], tickers: [] });
-  store.toggle("member", "P000001");
-  store.toggle("ticker", "NVDA");
-  assert.deepEqual(JSON.parse(storage.data.get(WATCH_V2_KEY)!), {
-    v: 2,
-    members: ["P000001"],
-    tickers: ["NVDA"],
-  });
-  assert.deepEqual(
-    JSON.parse(storage.data.get(WATCH_LEGACY_KEY)!),
-    ["P000001"],
-    "the legacy bare array keeps receiving member ids until the reconciliation merge",
-  );
-  store.toggle("member", "P000001");
-  assert.deepEqual(JSON.parse(storage.data.get(WATCH_LEGACY_KEY)!), []);
+test("pre-query (S6): before the index loads, the rule still renders and no starter is invented", () => {
+  const html = renderPreQuery(null);
+  assert.ok(html.includes("Tickers match by prefix, names by substring."));
+  assert.doesNotMatch(html, /quick-link|most-active/);
 });
 
-test("legacy migration: bare array becomes v2.members; junk entries dropped", () => {
-  const storage = fakeStorage({
-    [WATCH_LEGACY_KEY]: JSON.stringify(["P000001", "not-a-bioguide", "Q000002"]),
-  });
-  const store = loadWatchStore(storage);
-  assert.deepEqual([...store.members].sort(), ["P000001", "Q000002"]);
-  assert.equal(store.tickers.size, 0);
-  const v2 = JSON.parse(storage.data.get(WATCH_V2_KEY)!);
-  assert.equal(v2.v, 2);
-});
-
-test("corrupt v2 storage is QUARANTINED verbatim, then migration re-runs", () => {
-  const storage = fakeStorage({
-    [WATCH_V2_KEY]: "{corrupt json!!",
-    [WATCH_LEGACY_KEY]: JSON.stringify(["P000001"]),
-  });
-  const store = loadWatchStore(storage);
-  assert.equal(storage.data.get(WATCH_QUARANTINE_KEY), "{corrupt json!!", "moved aside, not destroyed");
-  assert.deepEqual([...store.members], ["P000001"], "legacy data survives the corruption");
-});
-
-test("wrong-shape v2 (right JSON, wrong fields) also quarantines", () => {
-  const storage = fakeStorage({
-    [WATCH_V2_KEY]: JSON.stringify({ v: 2, members: "not-an-array", tickers: [] }),
-  });
-  loadWatchStore(storage);
-  assert.ok(storage.data.has(WATCH_QUARANTINE_KEY));
-  assert.deepEqual(JSON.parse(storage.data.get(WATCH_V2_KEY)!), { v: 2, members: [], tickers: [] });
-});
-
-test("valid v2 round-trips untouched; has()/toggle() agree", () => {
-  const storage = fakeStorage({
-    [WATCH_V2_KEY]: JSON.stringify({ v: 2, members: ["P000001"], tickers: ["AAPL", "NVDA"] }),
-  });
-  const store = loadWatchStore(storage);
-  assert.ok(store.has("member", "P000001"));
-  assert.ok(store.has("ticker", "AAPL"));
-  assert.ok(!store.has("ticker", "ZZZZ"));
-  assert.equal(store.toggle("ticker", "ZZZZ"), true);
-  assert.equal(store.toggle("ticker", "ZZZZ"), false);
-  assert.ok(!storage.data.has(WATCH_QUARANTINE_KEY));
+test("signals-v3 M1: the search island reads nothing from the device's storage", () => {
+  const src = readFileSync(new URL("../src/scripts/search-client.ts", import.meta.url), "utf-8");
+  assert.doesNotMatch(src, /localStorage|sessionStorage|loadWatchStore|entity-client/);
+  assert.equal(renderPreQuery.length, 1, "the pre-query renderer takes the index alone");
 });
 
 /* ---------- R10 (refinement 20260910): principals, notable-first, clean keys ---------- */

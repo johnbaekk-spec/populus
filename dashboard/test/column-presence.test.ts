@@ -29,7 +29,7 @@ import type { QoqDeltaRow } from "../src/lib/inst.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
 import { domOf, visibleText } from "./lib/ledger-dom.ts";
 
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 
 function txn(i: number, over: Partial<TxnRow> = {}): TxnRow {
   const day = new Date(Date.UTC(2026, 6, 30) - i * 86_400_000).toISOString().slice(0, 10);

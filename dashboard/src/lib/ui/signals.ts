@@ -11,9 +11,9 @@
 
    Composition follows docs/design/reference/Signals.dc.html band for band:
    identity + ledger, provenance strip, three summaries, the RULE BOOK (every
-   kind, its exact rule, why it carries information, hits, status), the HITS
-   table beside the lag distribution and the hit rate by family, and the
-   device-local WATCHLIST band. Every number is computed from the artifact
+   kind, its exact rule, why it carries information, hits, status), and the
+   HITS table beside the lag distribution and the hit rate by family. Every
+   number is computed from the artifact
    and the build's own rows; the reference's illustrative 13F-side examples
    are NOT reproduced — those kinds render as withheld with their reason. */
 
@@ -44,7 +44,6 @@ import {
 import { sumRanges } from "../derive.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
 import { briefingCards, disclosureLedger, pairBandHtml } from "./shared.ts";
-import { serializeInlineJson } from "../inline-json.ts";
 
 /* ================================================================================
    D-2 — /signals surfaces. Every signal renders its EXACT rule, its magnitude
@@ -244,8 +243,8 @@ export interface SignalSentence {
 
 type SentenceInput = Pick<Signal, "kind" | "entities" | "asset" | "assetType" | "side" | "owner" | "listedStock">;
 
-/** R10: the ONE sentence every signal-row renderer prints (hit rows, the watch
-    band, the home tile, the member panel). Plain text; callers escape. */
+/** R10: the ONE sentence every signal-row renderer prints (hit rows, the home
+    tile, the member panel). Plain text; callers escape. */
 export function signalSentence(s: SentenceInput): SignalSentence {
   if (s.kind === "s3-cooccurrence") {
     if (s.side !== "purchase" && s.side !== "sale") return { text: ASSET_NOT_IN_RECORD, chip: null, recorded: false };
@@ -291,28 +290,20 @@ export function signalIsListedStock(s: Pick<Signal, "kind" | "asset" | "assetTyp
   return hasRowFields(s) && isListedStock(s.assetType);
 }
 
-/** The hits table's filters (R12): the rule, the device-local watchlist, and
-    listed stocks only — checked by default, never persisted. */
+/** The hits table's filters (R12): the rule, and listed stocks only —
+    checked by default, never persisted. */
 export interface HitFilter {
   kind: string;
-  watchedOnly: boolean;
   stocksOnly: boolean;
-  watchedMembers: ReadonlySet<string>;
-  watchedTickers: ReadonlySet<string>;
 }
 export const DEFAULT_HIT_FILTER: HitFilter = {
   kind: "all",
-  watchedOnly: false,
   stocksOnly: true,
-  watchedMembers: new Set(),
-  watchedTickers: new Set(),
 };
 
 /** Every filter except listed stocks. */
 function matchesOthers(s: Signal, f: HitFilter): boolean {
-  if (f.kind !== "all" && s.kind !== f.kind) return false;
-  if (f.watchedOnly && !((s.entities.bioguide && f.watchedMembers.has(s.entities.bioguide)) || (s.entities.ticker && f.watchedTickers.has(s.entities.ticker)))) return false;
-  return true;
+  return f.kind === "all" || s.kind === f.kind;
 }
 
 /** The ONE filter predicate the server page and the client pager share. */
@@ -401,17 +392,6 @@ export const SIGNAL_HITS_REGION_NAME = "Signal hits · scroll sideways for more 
 /** The hit columns (DESIGN-POLISH M2, T2.6): the KIND is its own column, first,
     as the design draws it — it was a word inside the evidence cell. */
 export const SIGNAL_HIT_COLUMNS = ["Kind", "Ticker", "Who", "What", "Filed", "Size", "Src"] as const;
-/** The watch band's columns and their ledger roles; the client's empty row
-    takes its colspan from here, never a literal. */
-export const SIGNAL_WATCH_COLUMNS: readonly (readonly [string, string])[] = [
-  ["Kind", "c-kind"],
-  ["Watched subject", "c-member"],
-  ["What happened", "c-secondary c-flex"],
-  ["Magnitude", "c-num"],
-  ["When", "c-num"],
-  ["Seen", "c-num"],
-  ["Source", "c-src"],
-];
 /** The ledger role of each hit column (DESIGN-POLISH M1, R2), header and cell
     alike. The evidence line (What) takes the band's slack, as the approved
     preview draws it; the member name is capped (recorded in DEV-NOTES). */
@@ -451,8 +431,7 @@ export function signalHitColumns(active: readonly Signal[]): PresentColumns {
     the stamp is not repeated beside it; where the link CANNOT name it (a
     receipt URL that is neither the House Clerk's nor the Senate's, which
     `srcLabel` reads as "src") and where there is no usable receipt, the
-    regime stamp states it: "PTR src ↗", "PTR —". The watch band's client
-    (`signals-client.ts`) applies the same rule to the same fields. */
+    regime stamp states it: "PTR src ↗", "PTR —". */
 export function signalReceiptHtml(receipt: string | null | undefined, cohort: Signal["cohort"]): string {
   const stamp = `<span class="si-stamp">${cohort === "senate" ? "eFD" : "PTR"}</span>`;
   if (!receipt || !receipt.startsWith("https://")) return `${stamp} —`;
@@ -595,9 +574,6 @@ export interface SignalsPageDeps {
   renderCap?: number;
 }
 
-/** the device-local watchlist band reads this many newest active hits */
-const WATCH_EMBED_CAP = 400;
-
 function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
   const byKind = new Map<SignalKind, Signal[]>();
   for (const s of active) byKind.set(s.kind, [...(byKind.get(s.kind) ?? []), s]);
@@ -658,14 +634,13 @@ function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pa
   const cols = signalHitColumns(active);
   const pageCount = Math.max(1, Math.ceil(view.lines.length / pageSize));
   const kinds = RULE_BOOK.filter((r) => active.some((s) => s.kind === r.kind));
-  /* R17: filter by RULE (kind) and by the device-local watchlist; the family
-     stays on the row as data so a family view can still be composed. */
+  /* R17: filter by RULE (kind); the family stays on the row as data so a
+     family view can still be composed. */
   const seg =
     `<div class="seg si-hit-filter" role="group" aria-label="Filter hits by rule">` +
     `<button type="button" data-kind="all" aria-pressed="true">All</button>` +
     kinds.map((r) => `<button type="button" data-kind="${esc(r.kind)}" aria-pressed="false">${esc(r.short)}</button>`).join("") +
     `</div>` +
-    `<label class="filter-check" for="signal-watched-only"><input type="checkbox" id="signal-watched-only" aria-label="watched members and tickers only — stored in this browser" /> watched only</label>` +
     /* R12: checked by default and never persisted (`autocomplete="off"` stops
        a browser restoring it; the island also resets it on load). The hidden
        count beside it is the reader's cue that the view is filtered. */
@@ -793,58 +768,6 @@ function rateBandHtml(deps: SignalsPageDeps, active: Signal[], artifact: SignalA
   );
 }
 
-function watchBandHtml(active: Signal[], artifact: SignalArtifact): string {
-  const newest = [...active]
-    .sort((a, b) => (a.occurrence.filedDate < b.occurrence.filedDate ? 1 : a.occurrence.filedDate > b.occurrence.filedDate ? -1 : 0))
-    .slice(0, WATCH_EMBED_CAP);
-  // Compact, columnar embed: the client joins it against the device-local
-  // watch store. Strings are JSON-escaped and the block is `</script>`-safe.
-  const payload = serializeInlineJson({
-    v: 1,
-    cap: WATCH_EMBED_CAP,
-    total: active.length,
-    /* K-7 (M3 review): "cohort" rides along (appended, so no index moves)
-       so the watch band can state the receipt's regime as the hit rows do */
-    /* R10 (SIGNALS-CLARITY M2): what was traded rides along, appended (no
-       index moves), so a watched hit prints the same sentence as the hit
-       rows. A missing field embeds as null. */
-    cols: ["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt", "cohort", "side", "asset", "assetType", "owner", "stk"],
-    rows: newest.map((s) => [
-      s.id,
-      s.kind,
-      s.entities.bioguide,
-      s.entities.memberName,
-      s.entities.ticker,
-      s.magnitude.low,
-      s.magnitude.high,
-      s.occurrence.tradeDate,
-      s.occurrence.filedDate,
-      s.receipts[0] ?? "",
-      s.cohort,
-      s.side ?? null,
-      s.asset ?? null,
-      s.assetType ?? null,
-      s.owner ?? null,
-      signalIsListedStock(s),
-    ]),
-  });
-  return (
-    `<section class="panel panel-wide si-watchband" id="signal-watch" aria-label="Watchlist" data-build-id="${esc(artifact.buildId)}" data-coverage-from="${esc(artifact.coverageFrom)}">` +
-    `<div class="panel-head"><h2 class="section-h"><span class="si-gold" aria-hidden="true">◆</span> Watchlist</h2>` +
-    `<span class="panel-note">THIS BROWSER ONLY · NO ACCOUNT · NEW-SINCE-LAST-LOOK · SIGNALS ON WATCHED SUBJECTS SURFACE HERE</span>` +
-    `<span class="si-watch-controls"><span class="chips si-watch-chips" id="signal-watch-chips"></span>` +
-    `<button type="button" class="pager-btn" id="signal-watch-seen" disabled>Mark all seen</button></span></div>` +
-    `<div class="table-scroll"><table class="etable etable-compact si-table" id="signal-watch-table">` +
-    `<caption class="visually-hidden">Signal hits on watched members and tickers</caption>` +
-    `<thead><tr>${SIGNAL_WATCH_COLUMNS.map(([label, cls]) => `<th scope="col" class="${cls}">${esc(label)}</th>`).join("")}</tr></thead>` +
-    `<tbody id="signal-watch-body"><tr><td colspan="${SIGNAL_WATCH_COLUMNS.length}" class="si-empty" id="signal-watch-empty">Nothing watched on this device yet. Star a member on <a href="/congress/">the feed</a> or a ticker on its page; hits on watched subjects appear here.</td></tr></tbody></table></div>` +
-    `<p class="section-note" id="signal-watch-note">Watch state lives in this browser's storage. Watching a member or ticker pins their signal hits here, and the last-seen marker separates what is new. ` +
-    `<noscript>Reading the watchlist needs JavaScript; nothing is stored or sent without it.</noscript></p>` +
-    `<script type="application/json" id="signal-watch-data">${payload}</script>` +
-    `</section>`
-  );
-}
-
 /* ---------- the page body ---------- */
 
 export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: SignalsPageDeps): string {
@@ -958,7 +881,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     stories +
     /* D3 (L14): band S1 — Hits (1.8fr) │ Lag distribution + Hit rate (1fr) —
        then the rule book as an EXPANDED full-width band (every rule published,
-       seven rows), then the watchlist band. */
+       seven rows). */
     pairBandHtml(
       "design-signals-band",
       hitsHtml(artifact, active, ctx, d.renderCap ?? SIGNAL_HITS_PAGE_SIZE, SIGNAL_HITS_COMPACT_ROWS),
@@ -966,7 +889,6 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
       { primary: "left" },
     ) +
     ruleBookHtml(artifact, active) +
-    watchBandHtml(active, artifact) +
     supersededFoot +
     withheld
   );
@@ -1060,7 +982,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
   );
 }
 
-/* exported for the watch band's client script — the label the row prints */
+/* exported for the home tile and the ticker page — the label a hit row prints */
 export function signalKindShort(kind: SignalKind): string {
   return shortOf(kind);
 }

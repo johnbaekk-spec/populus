@@ -1,7 +1,8 @@
 /* Refinement 20260910 — fix round (D1 … D6) unit checks.
    D1 ticker cell covers every reviewed spelling · D2 `no_prior` is never a new
    stake · D3 issuer groups by group total · D4 tickers rank by disclosures ·
-   D5 Position changes kind chips · D6 a visible /watchlist/ link. */
+   D5 Position changes kind chips · D6 the site nav's links (the /watchlist/
+   link it added was removed with the watchlist in signals-v3 M1). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -133,7 +134,7 @@ test("D3: an undisclosed group total sorts after every stated total; ties keep f
 
 const NOW = "2026-08-12";
 const stamps: BuildStamps = { buildId: "t.1", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: NOW };
-const ctx: RenderCtx = { watched: new Set() };
+const ctx: RenderCtx = {};
 function txn(over: Partial<TxnRow>): TxnRow {
   return {
     kind: "txn", txnId: "t", asset: null, assetType: null, filed: "2026-07-21", traded: "2026-06-24",
@@ -197,12 +198,19 @@ test("D5: the /e/ route dispatches a kind chip to the driver", () => {
   assert.deepEqual(calls, ["new", null]);
 });
 
-/* ---------- D6: a visible link to /watchlist/ ---------- */
+/* ---------- D6: the site nav's links ----------
+   D6 added a visible /watchlist/ link. signals-v3 M1 removed the watchlist
+   (R1), so the nav is the three module links, each marking itself current. */
 
-test("D6: the site nav links to /watchlist/ and the watchlist page marks it current", () => {
+test("D6 (signals-v3 M1): the site nav is exactly the three module links, each marked current on its own page", () => {
   const base = readFileSync(path.join(SRC, "layouts", "Base.astro"), "utf-8");
   const nav = base.slice(base.indexOf('<nav class="site-nav"'), base.indexOf("</nav>", base.indexOf('<nav class="site-nav"')));
-  assert.ok(nav.includes('<a href="/watchlist/" aria-current={active === "watchlist" ? "page" : undefined}>Watchlist</a>'));
-  const page = readFileSync(path.join(SRC, "pages", "watchlist", "index.astro"), "utf-8");
-  assert.ok(page.includes('active="watchlist"'));
+  const links = [...nav.matchAll(/<a href="([^"]+)" aria-current=\{active === "([a-z]+)" \? "page" : undefined\}>([^<]+)<\/a>/g)]
+    .map((m) => [m[1], m[2], m[3]]);
+  assert.deepEqual(links, [
+    ["/congress/", "congress", "Congress"],
+    ["/institutional/", "institutional", "Institutional"],
+    ["/signals/", "signals", "Signals"],
+  ]);
+  assert.equal((nav.match(/<a\b/g) ?? []).length, links.length, "no other link sits in the nav");
 });

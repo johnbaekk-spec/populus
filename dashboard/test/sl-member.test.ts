@@ -32,7 +32,7 @@ const STAMPS: BuildStamps = {
   generatedAt: "2026-08-12 00:00 UTC",
   generatedAtDate: "2026-08-12",
 };
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {

@@ -14,21 +14,20 @@ import { baseStylesheet } from "./lib/styles.ts";
 
 const css = baseStylesheet();
 
-test("F-21: .mobile-dates is only ever displayed under a .feed-row scope", () => {
+test("F-21: .mobile-dates is never displayed — no rule can re-introduce the double date", () => {
   // The base rule hides it everywhere…
   assert.match(css, /\.mobile-dates \{\s*display: none;/);
-  // …and every rule that turns it on is scoped to the feed rows.
-  const enabling = [...css.matchAll(/^[^{}\n]*\.mobile-dates[^{}\n]*\{[^}]*display:\s*inline/gms)].map(
-    (m) => m[0],
-  );
-  assert.ok(enabling.length > 0, "the mobile combined-date rule must exist");
-  for (const rule of enabling) {
-    assert.match(
-      rule,
-      /\.feed-row \.mobile-dates/,
-      `an unscoped .mobile-dates display rule re-introduces the F-21 double date:\n${rule}`,
-    );
-  }
+  /* …and NO rule turns it on. The one rule that did was the classic feed's
+     fold, scoped to `.feed-row`; signals-v3 M1 removed that feed, and the
+     feed that remains renders `dualDate(r, true)`, which emits no
+     `.mobile-dates`. The span survives only in entity-table date cells, where
+     F-21 requires it to stay hidden, so any rule that displays it now — scoped
+     or not — would print the trade date twice there. */
+  const enabling = (source: string): string[] =>
+    [...source.matchAll(/^[^{}\n]*\.mobile-dates[^{}\n]*\{[^}]*display:\s*inline/gms)].map((m) => m[0]);
+  assert.deepEqual(enabling(css), [], "a rule displays .mobile-dates and re-introduces the F-21 double date");
+  // control: the matcher sees a planted enabling rule
+  assert.equal(enabling(`${css}\n.etable .mobile-dates {\n  display: inline;\n}`).length, 1, "control");
 });
 
 /* L8 (completed in DESIGN-POLISH M2, T2.5/T2.10; record L8 in
@@ -107,7 +106,7 @@ test("A-5: filter chips wrap on mobile instead of clipping", () => {
      group, and the group wraps at EVERY width — a stronger pin than the
      fold-only `.chips { flex-wrap: wrap }` it replaced, which the group rule
      out-ranked anyway. The group's own rule carries the wrap. */
-  const group = /:is\(\.seg, \.chips, \.mgr-chips\):where\(:not\([^)]*\)\) \{([^}]*)\}/.exec(css);
+  const group = /:is\(\.seg, \.chips, \.mgr-chips\) \{([^}]*)\}/.exec(css);
   assert.ok(group, "the segmented group rule exists");
   assert.match(group![1]!, /flex-wrap: wrap;/);
   assert.doesNotMatch(group![1]!, /flex-wrap: nowrap/);

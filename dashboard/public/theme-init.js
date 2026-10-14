@@ -10,3 +10,16 @@
       document.documentElement.setAttribute("data-theme", t);
   } catch (e) {}
 })();
+// Legacy-key cleanup (signals-v3 M1, declared debt TD-1: remove this block on
+// or after 2027-01-31). The device-local watchlist was removed from the site;
+// these are exactly the four localStorage keys it wrote. Removing an absent
+// key is a no-op, so the cleanup is one-time in effect, and best-effort: a
+// browser that denies storage access leaves nothing to clean.
+(function () {
+  try {
+    localStorage.removeItem("populus:watch:v2");
+    localStorage.removeItem("populus:watch:members");
+    localStorage.removeItem("populus:watch:v2.corrupt");
+    localStorage.removeItem("populus:watch:cursor:v1");
+  } catch (e) {}
+})();

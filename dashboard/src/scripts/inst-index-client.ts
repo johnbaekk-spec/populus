@@ -37,7 +37,6 @@ import {
   type NotableMovesShard,
 } from "../lib/notable-moves.ts";
 import { filerHref } from "../lib/holdings.ts";
-import { loadWatchStore } from "./entity-client.ts";
 
 /* `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
 
@@ -79,8 +78,8 @@ export function initInstIndex(): void {
   let q = "";
   let lastNote = "";
   /* R14: the server pressed *Hedge funds* by default; the island starts from
-     the pressed chips so its first render equals the server's. A visitor with
-     a watchlist on this device gets the unfiltered directory instead. */
+     the pressed chips so its first render equals the server's, for every
+     visitor. */
   const types = new Set<string>(
     Array.from(document.querySelectorAll<HTMLElement>('#mgr-chips [data-mgr-type][aria-pressed="true"]'))
       .map((b) => b.dataset.mgrType ?? "")
@@ -88,17 +87,6 @@ export function initInstIndex(): void {
   );
   let notableOnly = false;
   let expanded = false;
-  let hasWatchlist = false;
-  try {
-    const store = loadWatchStore(localStorage);
-    hasWatchlist = store.members.size > 0 || store.tickers.size > 0;
-  } catch {
-    hasWatchlist = false;
-  }
-  if (hasWatchlist && types.size > 0) {
-    types.clear();
-    document.querySelectorAll<HTMLElement>("#mgr-chips [data-mgr-type]").forEach((b) => b.setAttribute("aria-pressed", "false"));
-  }
 
   const disclosure = document.querySelector<HTMLElement>(
     '.compact-disclosure[data-compact-for="inst-managers-tbody"]',
@@ -133,8 +121,6 @@ export function initInstIndex(): void {
     announce: () => lastNote,
     statusEl,
   });
-
-  if (hasWatchlist) queueMicrotask(() => rerender());
 
   function syncDisclosure(total: number, _shown: number): void {
     // The label and the omission rule are derived from the COMPACT LIMIT,

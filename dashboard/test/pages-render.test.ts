@@ -28,7 +28,7 @@ import { readTickerMapJson, type TopHolderRow } from "../src/lib/inst.ts";
 import { type TxnRow, type RenderCtx } from "../src/lib/format.ts";
 import { domOf, ledgerFigures, visibleText } from "./lib/ledger-dom.ts";
 
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 const STAMPS: BuildStamps = {
   buildId: "20260724.3",
   generatedAt: "2026-07-24 06:56 UTC",
@@ -121,13 +121,15 @@ const HOLDERS: TopHolderRow[] = [
 
 /* ---------- member body ---------- */
 
-test("memberBody: honesty invariants — dual dates, star, § resolves, S5 block, caption", () => {
+test("memberBody: honesty invariants — dual dates, no watch control, § resolves, S5 block, caption", () => {
   const html = memberBody(MEMBER, STAMPS, CTX);
   assert.ok(html.includes("member ID T000001"));
   assert.ok(html.includes("serving since 1999"));
   assert.ok(html.includes("spouse (SP), dependent children (DC), and joint accounts (JT)"));
-  assert.ok(html.includes('data-watch-kind="member"'), "watch star wired to the v2 store");
-  assert.ok(html.includes("saved in this browser only"));
+  /* signals-v3 M1 (R1): the header's watch star is gone — the title is the
+     member's name alone, and nothing on the page offers to save to the device */
+  assert.equal(visibleText(domOf(html).querySelector("h1.entity-title")!).trim(), "Fixture Member");
+  assert.doesNotMatch(html, /data-watch|watch-btn|star-btn|saved in this browser|★|☆/, "no watch control or its copy");
   // § marker on the flow column resolves to a printed line in the same body
   /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6). `#member-footnotes`
      held ONE clause and it is now a note on the Flow range column and on the
@@ -547,22 +549,22 @@ test("unified ticker: ledger totals count the full 12-month population, not the 
   const base = { kind: "txn", txnId: "x", name: "M", party: "R", state: "TX", district: null, chamber: "house", ticker: "T", asset: "T", assetType: null, side: "purchase", owner: null, low: 1001, high: 15000, traded: "2026-07-01", filed: "2026-07-20", lag: 19, late: 0, flags: [], doc: "d" } as any;
   const txns = Array.from({ length: 6 }, (_, i) => ({ ...base, txnId: `t${i}`, bioguide: `A00000${i}`, name: `Member ${i}` }));
   const stamps = { buildId: "b", generatedAt: "2026-08-02 07:27 UTC", generatedAtDate: "2026-08-02" };
-  const html = tickerUnifiedBody({ ticker: "T", txns }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
+  const html = tickerUnifiedBody({ ticker: "T", txns }, { state: "no-map" }, stamps, {}, { fullTable: false });
   // DESIGN-POLISH M2 (T2.8): the figure is read from the ONE ledger's <dl> (DOM parse).
   assert.equal(ledgerFigures(html).find((f) => f.label === "Members · 12m")?.value, "6", "six members, not the five displayed");
   assert.match(html, /6 buys · 0 sells/);
   assert.match(html, /Every row filed inside the 45-day window/);
-  const unknown = tickerUnifiedBody({ ticker: "T", txns: [...txns, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
+  const unknown = tickerUnifiedBody({ ticker: "T", txns: [...txns, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
   assert.doesNotMatch(unknown, /Every row filed inside the 45-day window/);
   assert.match(unknown, /1 of 7 carry no trade date/);
-  const empty = tickerUnifiedBody({ ticker: "T", txns: [] }, { state: "no-map" }, stamps, { watched: new Set(), watchedTickers: new Set() }, { fullTable: false });
+  const empty = tickerUnifiedBody({ ticker: "T", txns: [] }, { state: "no-map" }, stamps, {}, { fullTable: false });
   assert.match(empty, /No rows on record/);
 });
 
 test("unified ticker: withheld signal kinds render as withheld, never inside a zero-hit claim; registry names are escaped (Codex F2, F3)", async () => {
   const { tickerUnifiedBody } = await import("../src/lib/ui/index.ts");
   const stamps = { buildId: "b", generatedAt: "2026-08-02 07:27 UTC", generatedAtDate: "2026-08-02" };
-  const ctx = { watched: new Set<string>(), watchedTickers: new Set<string>() };
+  const ctx = {};
   const t = { ticker: "T", txns: [] } as any;
   const withheld = tickerUnifiedBody(t, { state: "no-map" }, stamps, ctx, { fullTable: false }, { signals: [], withheld: [{ kind: "s5-jurisdiction", reason: "inputs-not-in-build", detail: "committee data absent" }], crowding: null, committees: null });
   assert.match(withheld, /withheld \(inputs-not-in-build\): committee data absent/);

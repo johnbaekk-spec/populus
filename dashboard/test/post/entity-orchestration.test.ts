@@ -6,7 +6,7 @@
    page absent, data endpoint present, listing surfaces link /e/?k=…), and
    THEN executes the actual entity-client driver over dist-cut payload BYTES
    through the injected fetch/DOM/timer seams: the happy path (fetch → decode →
-   body render → DOM apply → star wiring → pagination), every failure branch
+   body render → DOM apply → pagination), every failure branch
    of the S4 taxonomy, retry, and the watchdog. The driver under test is the
    same function the browser entry calls — nothing here is a reimplementation. */
 
@@ -20,10 +20,8 @@ import path from "node:path";
 import {
   runEntityDriver,
   dispatchEntityClick,
-  loadWatchStore,
   type DriverDeps,
   type FetchResult,
-  type StorageLike,
   type DriverHandle,
 } from "../../src/scripts/entity-client.ts";
 import { tickerDataKey } from "../../src/lib/derive.ts";
@@ -87,26 +85,18 @@ interface Harness {
   deps: DriverDeps;
   renders: string[];
   titles: string[];
-  storage: StorageLike & { data: Map<string, string> };
   watchdogs: { fn: () => void; ms: number; cancelled: boolean }[];
-}
-
-function fakeStorage(): Harness["storage"] {
-  const data = new Map<string, string>();
-  return { data, getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v) };
 }
 
 function harness(search: string, fetchJson: (url: string) => Promise<FetchResult>): Harness {
   const renders: string[] = [];
   const titles: string[] = [];
-  const storage = fakeStorage();
   const watchdogs: Harness["watchdogs"] = [];
   const deps: DriverDeps = {
     search,
     fetchJson,
     render: (html) => void renders.push(html),
     setTitle: (t) => void titles.push(t),
-    watch: loadWatchStore(storage),
     schedule: (fn, ms) => {
       const entry = { fn, ms, cancelled: false };
       watchdogs.push(entry);
@@ -115,7 +105,7 @@ function harness(search: string, fetchJson: (url: string) => Promise<FetchResult
       };
     },
   };
-  return { deps, renders, titles, storage, watchdogs };
+  return { deps, renders, titles, watchdogs };
 }
 
 function realBytes(ticker: string): unknown {
@@ -146,16 +136,19 @@ test("happy path: real payload bytes → decode → body render → DOM apply �
   assert.ok(h.watchdogs[0]!.cancelled, "the watchdog is cancelled on settle");
 });
 
-test("star wiring: toggleWatch re-renders with pressed state and persists to the v2 store", async () => {
+test("signals-v3 M1: the generic route renders no watch star and the driver holds no watch state", async () => {
+  /* The star and its store were removed with the watchlist (R1): the driver
+     takes no storage seam, its handle has no toggle, and the body it renders
+     over real bytes offers nothing to save on the device. */
   const h = harness(`?k=t:${CUT_TICKER}`, okFetch(realBytes(CUT_TICKER)));
   const handle = runEntityDriver(h.deps);
   await handle.done;
-  handle.toggleWatch("ticker", CUT_TICKER);
-  const rerender = h.renders.at(-1)!;
-  assert.ok(rerender.includes('aria-pressed="true"'), "the star re-renders pressed");
-  assert.ok(rerender.includes("watching · saved on this device"));
-  const v2 = JSON.parse(h.storage.data.get("populus:watch:v2")!);
-  assert.deepEqual(v2.tickers, [CUT_TICKER]);
+  assert.equal(handle.state(), "body");
+  assert.ok(!("toggleWatch" in handle), "the driver handle exposes no watch toggle");
+  assert.ok(!("watch" in h.deps), "the driver takes no watch store");
+  const body = h.renders.at(-1)!;
+  assert.doesNotMatch(body, /data-watch|watch-btn|star-btn|saved in this browser|★|☆/, "no watch control in the client body");
+  assert.match(body, new RegExp(`<h1 class="entity-title">[^]*${CUT_TICKER}[^]*</h1>`), "the title still renders");
 });
 
 test("pagination: older/newer re-render pages through the same body renderer", async () => {

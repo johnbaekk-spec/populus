@@ -2,7 +2,8 @@
 
    The plan names two copy files. The tree had FIVE. `Base.astro`'s footer
    ("no cookies · no account required · no tracking") ships on every page, and
-   `index.astro` and `watchlist/index.astro` carried their own versions. A
+   `index.astro` and the since-removed device-local watch page (signals-v3 M1)
+   carried their own versions. A
    line-oriented grep found only some of them, because the prose wraps — so this
    flattens whitespace before matching. A newline-insensitive sweep is the only
    kind that can make a claim about wrapped copy. */

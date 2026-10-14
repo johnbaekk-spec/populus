@@ -79,8 +79,9 @@ function rulesOf(css: string): { selector: string; decls: string }[] {
 }
 
 const CELL_PROPS = /(?:^|;)\s*(font|font-size|padding(?:-[a-z]+)?|letter-spacing|text-transform)\s*:/i;
-/** The classic /watchlist/ feed keeps its own grid (A-4): its rules are scoped
-    with zero specificity to the classic table and are the one allowed scope. */
+/** The scope the classic nine-cell feed's rules carried (A-4). That feed was
+    removed in signals-v3 M1, and its allowance with it: no rule may use the
+    scope, and a cell rule inside it is as stray as any other. */
 const CLASSIC_SCOPE = /\.feed-table:not\(\.reference-feed\)/;
 const SI_CELLS = /\.si-(?:kind|what|when|mag|ticker-cell|subject|evidence|family|rule-text|why|hits|status)\b/;
 
@@ -97,7 +98,6 @@ function strayCellRules(outside: string): string[] {
     if (!CELL_PROPS.test(r.decls)) continue;
     for (const part of r.selector.split(",").map((s) => s.trim()).filter(Boolean)) {
       if (part.startsWith("@")) continue;
-      if (CLASSIC_SCOPE.test(part)) continue;
       const rm = rightmostCompound(part);
       const tableCell = /(?:^|[^\w-])(?:th|td)(?![\w-])/.test(rm) && /\.etable|\.reference-feed|\.si-table|\btable\b/.test(part);
       const role =
@@ -125,8 +125,13 @@ test("T1.7 controls: a planted feed-cell font size and a planted activity cell p
   ]) {
     assert.ok(strayCellRules(outside + "\n" + planted).length > 0, `control not caught: ${planted}`);
   }
-  // …and the classic scope stays the one allowance.
-  assert.equal(strayCellRules(":where(.feed-table:not(.reference-feed)) .cell-member{font-size:13px}").length, 0);
+  // …and the classic scope is no longer an allowance: its feed is gone (M1).
+  assert.equal(strayCellRules(":where(.feed-table:not(.reference-feed)) .cell-member{font-size:13px}").length, 1);
+  assert.deepEqual(
+    rulesOf(baseStylesheet()).filter((r) => CLASSIC_SCOPE.test(r.selector)).map((r) => r.selector),
+    [],
+    "no rule in the cascade is scoped to the removed classic feed",
+  );
 });
 
 test("T1.7: the region's ≤1080px block precedes its ≤720px block, and the region is one contiguous block", () => {
@@ -430,7 +435,7 @@ test("T1.5: a flagged reference feed row shows its flags as visible chips, outsi
       ticker: "WMB", side: "purchase", owner: "joint", low: 1001, high: 15000, lag: 27, late: 0,
       flags: ["amendment_unresolved"], doc: "https://efdsearch.senate.gov/x", filingKey: "f1",
     } as never,
-    { referenceFeed: true, watched: new Set<string>() },
+    {},
   );
   const flagsOutsideNotes = (html: string): number =>
     [...walk(parse(html))].filter((e) => cls(e).has("flag") && !e.closest(".note-pop")).length;
@@ -611,11 +616,12 @@ test("C-9: a label trigger's dotted underline is drawn in its full colour (the o
   assert.equal(weak(".note-label { text-decoration-color: color-mix(in oklab, currentColor 50%, transparent); }").length, 1, "control");
 });
 
-/* The group selector (M1 delta review, follow-up 2): its watch-list exclusion
-   sits in `:where()`, so it weighs one class and a page's own placement of a
-   group wins (it was (0,2,0) through `.chips:not(...)` inside `:is()`, which
-   silently beat `.mgr-chips { margin }` and `.panel-head > .chips`). */
-const GROUP = ':is(.seg, .chips, .mgr-chips):where(:not(.si-watch-chips, [id="watch-chips"]))';
+/* The group selector (M1 delta review, follow-up 2): it weighs one class, so a
+   page's own placement of a group wins (it was (0,2,0) through
+   `.chips:not(...)` inside `:is()`, which silently beat `.mgr-chips { margin }`
+   and `.panel-head > .chips`). Its exclusion of the two device-local watch
+   lists went with them (signals-v3 M1): every `.chips` is a segmented group. */
+const GROUP = ":is(.seg, .chips, .mgr-chips)";
 test("C-3/C-10: the segmented group wraps at every width, and its items draw the focus ring inside themselves", () => {
   const rules = rulesOf(baseStylesheet());
   const group = rules.filter((r) => r.selector === GROUP);
@@ -629,17 +635,16 @@ test("C-3/C-10: the segmented group wraps at every width, and its items draw the
   assert.ok(item && /outline-offset\s*:\s*-\d/.test(item.decls), "items offset the focus ring inward (the group hides its overflow)");
 });
 
-test("C-4: the two watch lists are not segmented groups — wrapping chips, each at least the hit square tall", () => {
+test("C-4 (signals-v3 M1): the two watch lists are gone — the group excludes nothing and no rule styles them", () => {
   const rules = rulesOf(baseStylesheet());
-  assert.ok(GROUP.includes(".si-watch-chips") && GROUP.includes('[id="watch-chips"]'), "both lists are excluded from the group");
-  const list = rules.find((r) => r.selector === ':is(.si-watch-chips, [id="watch-chips"])');
-  assert.ok(list && /display\s*:\s*flex/.test(list.decls) && /flex-wrap\s*:\s*wrap/.test(list.decls) && /gap\s*:/.test(list.decls), "a wrapping, spaced list");
-  const chip = rules.find((r) => r.selector === ':is(.si-watch-chips, [id="watch-chips"]) > .chip');
-  assert.ok(chip, "each chip is styled");
-  assert.match(chip!.decls, /min-height\s*:\s*var\(--hit-min\)/);
-  assert.match(chip!.decls, /padding\s*:/);
-  // control: the pre-fix selector took #watch-chips into the group
-  assert.ok(!':is(.seg, .chips:not(.si-watch-chips), .mgr-chips)'.includes('[id="watch-chips"]'), "control");
+  // every rule that lays out or styles the group addresses every `.chips`
+  const groupRules = rules.filter((r) => r.selector.startsWith(":is(.seg, .chips, .mgr-chips)"));
+  assert.ok(groupRules.length >= 3, "the group, its items and its first item are styled");
+  assert.deepEqual(groupRules.filter((r) => /:where\(|:not\(/.test(r.selector)).map((r) => r.selector), [], "no group rule carries an exclusion");
+  const watchList = (rs: typeof rules): string[] =>
+    rs.filter((r) => /si-watch-chips|watch-chips/.test(r.selector)).map((r) => r.selector);
+  assert.deepEqual(watchList(rules), [], "no rule styles a removed watch list");
+  assert.equal(watchList(rulesOf(':is(.si-watch-chips, [id="watch-chips"]) { display: flex; }')).length, 1, "control: a watch-list rule is seen");
 });
 
 /** Selector specificity [ids, classes, types] for the forms the region uses:
@@ -678,9 +683,9 @@ function specificity(sel: string): [number, number, number] {
 test("follow-up 2: the segmented group weighs one class, so a page's own group placement wins", () => {
   assert.deepEqual(specificity(GROUP), [0, 1, 0]);
   // control: the pre-fix selector weighed two classes and out-ranked `.mgr-chips { margin }`
-  assert.deepEqual(specificity(':is(.seg, .chips:not(.si-watch-chips, [id="watch-chips"]), .mgr-chips)'), [0, 2, 0]);
+  assert.deepEqual(specificity(":is(.seg, .chips:not(.excluded), .mgr-chips)"), [0, 2, 0]);
   assert.deepEqual(specificity(".mgr-chips"), [0, 1, 0], "the late-additions spacing rule (later in the cascade) now wins");
-  assert.deepEqual(specificity(".panel-head > :is(.seg, .chips, .mgr-chips, .ranking-options, .si-watch-controls, .head-controls)"), [0, 2, 0], "the band head's push-right out-ranks the group's margin");
+  assert.deepEqual(specificity(".panel-head > :is(.seg, .chips, .mgr-chips, .ranking-options, .head-controls)"), [0, 2, 0], "the band head's push-right out-ranks the group's margin");
   const rules = rulesOf(baseStylesheet());
   assert.ok(rules.some((r) => r.selector === ".mgr-chips" && /margin\s*:/.test(r.decls)), "the page's group spacing rule exists");
   // no other rule in the cascade re-heavies the group with the old exclusion form
@@ -812,7 +817,7 @@ function chipNotes(html: string): { word: string; id: string | null; text: strin
 }
 
 test("D7 ruling: every flag chip in a reference feed row opens its OWN definition", () => {
-  const row = txnRowHtml(FEED_ROW, { referenceFeed: true, watched: new Set<string>() });
+  const row = txnRowHtml(FEED_ROW, {});
   const chips = chipNotes(row);
   assert.equal(chips.length, 6, "five flags plus the derived 'amount unparsed' chip");
   for (const c of chips) {
@@ -854,14 +859,21 @@ function unpublishedDefinitions(defs: Readonly<Record<string, string>>): string[
   const sites: Record<string, RegExp> = {
     [TICKER_ABSENT_NOTE]: /label: "Ticker", why: TICKER_ABSENT_NOTE/,
     [SPOUSE_CAP_NOTE]: /note\(SPOUSE_CAP_NOTE, \{ scope: "txn" \}/,
-    [AMOUNT_UNPARSED_SPOKEN]: /amountUnknown \? AMOUNT_UNPARSED_SPOKEN/,
   };
+  /* The one site that published AMOUNT_UNPARSED_SPOKEN before the chips
+     existed — the classic feed row's spoken amount
+     (`amountUnknown ? AMOUNT_UNPARSED_SPOKEN : amount`) — was deleted with
+     that feed (signals-v3 M1). Its published wording is frozen here as a
+     literal, so the chip's definition can still say nothing new: rewording the
+     constant fails this check. */
+  const FROZEN_PUBLISHED = new Set(["not disclosed in a parseable range"]);
   const congress = readFileSync(path.join(SRC, "lib", "ui", "congress.ts"), "utf-8");
   const out: string[] = [];
   for (const [flag, text] of Object.entries(defs)) {
     const published =
       methodology.includes(text) ||
       (sites[text] !== undefined && sites[text]!.test(format)) ||
+      FROZEN_PUBLISHED.has(text) ||
       (text === DATE_ANOMALY_NOTE && congress.includes("rows excluded (${DATE_ANOMALY_NOTE})"));
     if (!published) out.push(`${flag}: "${text}"`);
   }
@@ -949,8 +961,7 @@ test("audit F2: declared-total chips open their own definitions and verified tot
     ["declared_total_mismatch", "filing total mismatch", "dashed"],
     ["declared_total_verified", "filing total verified", "solid"],
   ] as const) {
-    const row = txnRowHtml({ ...FEED_ROW, flags: [flag], low: 1001, high: 15000 } as never,
-      { referenceFeed: true, watched: new Set<string>() });
+    const row = txnRowHtml({ ...FEED_ROW, flags: [flag], low: 1001, high: 15000 } as never, {});
     const chips = chipNotes(row);
     assert.equal(chips.length, 1, `${flag}: one visible chip`);
     assert.equal(chips[0]!.word, label);

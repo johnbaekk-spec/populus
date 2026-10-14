@@ -94,9 +94,9 @@ if (!inst.present) {
   const dirCols = directoryColumns(indexRows, inst.topn);
   const top5Present = dirCols.columns.includes("top5");
   if (!top5Present) for (const row of indexRows) delete row.top5Share;
-  /* R14: *Hedge funds* is selected by default. The client keeps the chip
-     unless the visitor has a watchlist on this device, in which case it clears
-     the default — the server cannot know, so it renders the common case. */
+  /* R14: *Hedge funds* is selected by default, for every visitor; the client
+     island starts from the same pressed chip, so its first render equals this
+     one. */
   const DEFAULT_TYPES = new Set<string>(["hedge_fund"]);
   const directory = instIndexBodyHtml(indexRows, "", "value", "desc", { types: DEFAULT_TYPES, notableOnly: false }, COMPACT_ROWS, dirCols.columns);
   const rows = directory.html;

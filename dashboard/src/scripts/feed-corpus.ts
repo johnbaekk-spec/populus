@@ -45,7 +45,8 @@ export interface FeedCorpus {
 }
 
 /** Fetch the part index. `/congress/` inlines it in the page (a few kilobytes)
-    and passes it straight to `loadFeedCorpus`; other pages fetch it. */
+    and passes it straight to `loadFeedCorpus`; the feed island fetches it only
+    when that inline copy is absent or unreadable. */
 export async function fetchFeedPartsIndex(): Promise<FeedPartsIndex> {
   const res = await fetch(FEED_PARTS_INDEX_HREF);
   if (!res.ok) throw new Error(`feed part index fetch failed: ${res.status}`);
@@ -95,9 +96,4 @@ export async function loadFeedCorpus(index: FeedPartsIndex): Promise<FeedCorpus>
     );
   }
   return { txns, paper };
-}
-
-/** The one-call form for a page that has no inlined index. */
-export async function fetchFeedCorpus(): Promise<FeedCorpus> {
-  return loadFeedCorpus(await fetchFeedPartsIndex());
 }

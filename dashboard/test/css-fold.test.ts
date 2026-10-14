@@ -40,13 +40,12 @@ import {
 } from "../src/lib/ui/index.ts";
 import { buildInstIndexRow, instIndexRowHtml } from "../src/lib/inst-index.ts";
 import { renderResults, renderPreQuery } from "../src/scripts/search-client.ts";
-import { loadWatchStore } from "../src/scripts/entity-client.ts";
 import {
   terminusRow,
   footnoteBlock,
   statTiles,
-  watchStarHtml,
   flagTags,
+  txnRowHtml,
   type TxnRow,
   type RenderCtx,
 } from "../src/lib/format.ts";
@@ -462,7 +461,7 @@ test("SIGNALS-CLARITY M2 (R10, R12): the hidden count and the stock label are sw
     occurrence: { tradeDate: "2026-03-01", filedDate: "2026-06-01" }, sourceAvailableAt: "2026-06-01",
     computedAt: "2026-07-24", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
     asset: "City of X GO Bond", assetType: "Municipal Security", side: "purchase", owner: "self", listedStock: false,
-  }, { watched: new Set<string>() });
+  }, {});
   assert.match(municipal, /<span class="si-asset-chip">Municipal Security<\/span>/);
   assert.doesNotMatch(corpus, /si-asset-chip/, "the parity surfaces' hits are listed stocks: no chip");
 });
@@ -542,7 +541,7 @@ test("SIGNALS-CLARITY M3: dead-CSS sweep over the Monthly flow panel — styled 
 
 test("DESIGN-POLISH M1: every ledger honesty selector is emitted by the parity surfaces or the feed rows", async () => {
   const { renderParitySurfaces } = await import("./lib/ui-parity-surfaces.ts");
-  const { txnRowHtml, feedHeadHtml } = await import("../src/lib/format.ts");
+  const { feedHeadHtml } = await import("../src/lib/format.ts");
   const row = {
     kind: "txn", txnId: "t1", asset: "Widget Co", assetType: null, filed: "2026-07-21", traded: "2026-06-24",
     name: "Fixture Member", bioguide: "T000001", party: "R", state: "OK", district: null, chamber: "senate",
@@ -551,21 +550,33 @@ test("DESIGN-POLISH M1: every ledger honesty selector is emitted by the parity s
   } as never;
   const corpus = [
     ...Object.values(await renderParitySurfaces()),
-    txnRowHtml(row, { watched: new Set<string>(), referenceFeed: true }),
-    txnRowHtml(row, { watched: new Set<string>() }),
-    feedHeadHtml({ referenceFeed: true, notes: { scope: "congress-feed" } } as never),
+    txnRowHtml(row, {}),
+    feedHeadHtml({ notes: { scope: "congress-feed" } }),
   ].join("\n");
   const emitted = (c: string): boolean => new RegExp(`class="(?:[^"]*\\s)?${c.slice(1)}(?:\\s[^"]*)?"`).test(corpus);
   for (const sel of M1_HONESTY_SELECTORS) assert.ok(emitted(sel), `${sel} is emitted — a swept selector nothing renders protects nothing`);
   assert.ok(!emitted(".never-rendered-honesty"), "control");
 });
 
-test("the fold uses clip-pattern visually-hidden, never display:none, for the dual dates", () => {
+test("the fold keeps the feed's dual dates on screen — re-placed in the stacked row, never display:none", () => {
+  /* The classic feed folded its filed-date CELL away with the sr-only clip
+     pattern and recomposed both dates in `.mobile-dates`; that feed was
+     removed in signals-v3 M1. The feed left keeps both dates in ONE cell
+     (`dualDate(r, true)`), so at the fold the property is that the cell is
+     re-placed in the stacked row and stays visible. */
   const blocks = narrowMediaBlocks(css);
   const foldBody = blocks.map((b) => b.body).join("\n");
-  const filedRule = rulesOf(foldBody).find((r) => r.selector.includes(".cell-filed"));
-  assert.ok(filedRule, "the filed-date fold rule exists");
-  assert.ok(filedRule!.decls.includes("clip"), "filed date folds via the sr-only clip pattern");
+  const placed = rulesOf(foldBody).filter((r) => r.selector === ".reference-feed .cell-traded");
+  assert.ok(placed.some((r) => /grid-row\s*:/.test(r.decls)), "the dates cell takes a row of the folded grid");
+  for (const r of placed) assert.ok(!PROHIBITED.some((bad) => bad.test(r.decls)), `${r.selector} never leaves the tree`);
+  assert.ok(rulesOf(foldBody).some((r) => r.selector === ".design-dates" && /display\s*:\s*block/.test(r.decls)), "traded → filed stays one visible block");
+  const row = txnRowHtml({
+    kind: "txn", txnId: "t-fold", asset: null, assetType: null, filed: "2026-07-21", traded: "2026-06-24",
+    name: "N", bioguide: "T000001", party: "R", state: "OK", district: null, chamber: "senate",
+    ticker: "WMB", side: "purchase", owner: null, low: 1001, high: 15000, lag: 27, late: 0, flags: [],
+    doc: "https://efdsearch.senate.gov/x",
+  }, {});
+  assert.match(row, /<td class="cell cell-traded c-num"><span class="design-dates">[\s\S]*2026-06-24[\s\S]*2026-07-21/, "both dates sit in that one cell");
 });
 
 /* ---------- R13: corrected tokens verbatim ---------- */
@@ -593,7 +604,7 @@ test("corrected --ink3 and --hatch values are present; the handoff's failing val
 /* ---------- F2 dead-CSS: every new class is styled AND emitted ---------- */
 
 function renderCorpus(): string {
-  const CTX: RenderCtx = { watched: new Set() };
+  const CTX: RenderCtx = {};
   const stamps = { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" };
   const t: TxnRow = {
     kind: "txn",
@@ -690,7 +701,6 @@ function renderCorpus(): string {
     [{ ticker: "WMB", name: "", rows: 1 }],
     [],
   );
-  const store = loadWatchStore({ getItem: () => null, setItem: () => {} });
   const window = { open: true, quarterEnd: "2026-06-30", deadline: "2026-08-14" };
   const rollup = leadersRollup([t, { ...t, bioguide: "B000002", name: "B", low: 1001, high: 15000 }], "2026-07-24", {
     range: "12m",
@@ -820,11 +830,10 @@ function renderCorpus(): string {
       0,
     ),
     renderResults([], -1),
-    renderPreQuery(store, index),
+    renderPreQuery(index),
     terminusRow({ author: "populus", html: "x" }),
     footnoteBlock([{ mark: "§", html: "x" }], { id: "f" }),
     statTiles([{ value: "1", label: "l", title: "t" }], { compact: true }),
-    watchStarHtml("ticker", "WMB", "WMB", false),
     flagTags(["mystery_flag"]),
     breadcrumb([{ text: "/x", href: "/x/" }]),
     /* DESIGN-POLISH M2: the hit's evidence row (T2.7), the empty-window chart
@@ -879,7 +888,7 @@ const NEW_RENDERER_CLASSES = [
   "rb-buy", "rb-sell", "rb-hatch", "rb-axis", "rb-labels", "rb-label", "rb-caption",
   "qoq-chip", "qoq-nc", "nc-chip", "inst-stamp", "caveat-line", "src-derived",
   "period-row", "chips", "chip", "chip-active", "edgar-block",
-  "terminus", "terminus-author", "watch-btn", "watch-glyph", "watch-note",
+  "terminus", "terminus-author",
   "absent-block", "absent-h", "s1-block", "s1-mark", "s1-h", "s1-detail",
   "s2-block", "s4-shell", "s4-error", "s4-actions", "s7-banner", "s7-chip", "s7-copy",
   "cta", "plain-link", "specimen", "spec-head", "spec-dates", "spec-scale",
@@ -917,11 +926,21 @@ const NEW_HOOK_CLASSES = [
    component quietly comes back. SIGNALS-CLARITY M1 retired the footer's
    Financials/Macro SOON links (`nav-shell`) and its notice, source and build
    blocks (`footer-block`, `footer-build`). `.badge-soon` is NOT retired:
-   lib/ui/ticker.ts still emits it. */
+   lib/ui/ticker.ts still emits it. signals-v3 M1 (R1, R2) retired the
+   watchlist: the entity-header star (`watch-btn` and its glyph and note), the
+   feed rows' star (`star-btn`, `cell-star`, `reference-watch`), the
+   /watchlist/ page's controls, chips, coverage-gap and new-since markers, the
+   Signals watch band (`si-watchband`, its controls and chips, its NEW and ◆
+   marks), and the classic nine-cell feed only that page rendered — its filed
+   cell, its paper-row name and its visible `.col-why` header reasons. */
 const RETIRED_CLASSES = [
   "explainer", "explainer-h", "design-rankings-single", "coverage-strip",
   "design-triptych", "design-triptych-single", "design-activity-band",
   "nav-shell", "footer-block", "footer-build",
+  "watch-btn", "watch-glyph", "watch-note", "star-btn", "cell-star", "reference-watch",
+  "watch-controls", "watch-chip", "chip-x", "watch-gap", "watch-new",
+  "si-watchband", "si-watch-controls", "si-watch-chips", "si-new", "si-gold",
+  "cell-filed", "who", "col-why",
 ];
 
 const ASTRO_ONLY_CLASSES = [
@@ -1232,7 +1251,7 @@ const HONESTY_CLASSES = new Set<string>(
     sweep: a new disappearance must be declared, not discovered later. */
 const DECLARED_DROPPABLE_CHROME = new Set<string>([
   "site-nav", "masthead-meta", "site-search", "search-panel", "filter-label",
-  "filter-controls", "feed-head", "pager", "s4-actions", "watch-btn", "star-btn",
+  "filter-controls", "feed-head", "pager", "s4-actions",
   // R22: the narrow-width header abbreviation. It duplicates the full header
   // word, which stays visible at >=900px and in the accessibility tree at every
   // width, so hiding the abbreviation drops nothing.
@@ -1448,9 +1467,16 @@ test("T14/R16: the drop enumeration itself works — known-dropped classes ARE r
     HONESTY_SELECTORS.includes(".mobile-dates") && DUAL_CHANNEL_EXEMPT.has("mobile-dates"),
     "the one exemption is declared, not silent",
   );
-  // and the cascade is resolved rather than "any matching rule wins": the same
-  // class is NOT dropped at the fold, where a later rule shows it again
-  assert.deepEqual(droppedAt(dup, 375), [], "cascade order is honoured");
+  /* …and it stays dropped at the fold: the one rule that showed it there was
+     the classic feed's, removed with that feed in signals-v3 M1, so no width
+     reveals the duplicate channel now (a5-table-css F-21 pins the same). */
+  assert.deepEqual(droppedAt(dup, 375).map((d) => d.cls), ["mobile-dates"], "no width reveals .mobile-dates");
+  // and the cascade is resolved rather than "any matching rule wins": the
+  // header abbreviation is display:none unconditionally and NOT dropped below
+  // 900px, where a later rule shows it again (R22)
+  const abbr = `<span class="th-abbr"> Rcpt</span>`;
+  assert.deepEqual(droppedAt(abbr, 1280).map((d) => d.cls), ["th-abbr"], "hidden at desktop");
+  assert.deepEqual(droppedAt(abbr, 375), [], "cascade order is honoured");
 });
 
 test("T14/R16: 375 / 720 / desktop drop NOTHING honesty-bearing on the three institutional surfaces", () => {

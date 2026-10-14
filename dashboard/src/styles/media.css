@@ -43,39 +43,16 @@
   }
 }
 
-/* ---------- the feed row folds to two lines from 1080px down ----------
+/* ---------- the feed head folds from 1080px down ----------
 
-   MEASURED, not guessed. At a 964px viewport the feed has 854px of usable width
-   and its nine columns need 1,033px of content:
-
-     member 193 · ticker 194 · traded 148 · range 179 · side 91 · amount 94
-     · filed 80 · src 32 · star 22
-
-   The single-line grid gives the member column `1fr`, which is whatever the
-   786px of fixed tracks leave over — 68px at 964px and 184px at 1080px. So an
-   ordinary member name was truncated by 125px, which is defect #4, and the
-   ticker column was truncated by 128px at the same time. Total slack across
-   every roomy column is 104px against a 179px shortfall: the row is
-   over-subscribed, so NO reallocation of widths can fix it. That is why this is
-   a layout change and not a wider `1fr`.
-
-   The fix reuses the two-line layout the ≤720px fold already defines rather
-   than inventing a second one, so there is ONE structural definition of a
-   folded row. Only the STRUCTURE lives here; the ≤720px block below keeps what
-   is genuinely about touch and small screens — 44px targets, the smaller type
-   ramp, the 16px gutters — because shrinking type on a laptop would trade one
-   legibility defect for another (defect #6 is imbalance, not density).
-
-   Nothing is removed at this breakpoint. Both dates stay in the accessibility
-   tree, flags, the owner/partial qualifier and the provenance link all stay on
-   screen; the column headers go, exactly as they already do on mobile. */
+   The feed's rows fold to their own stacked grid at these widths (the ledger
+   region's ≤1080px block, entities.css). The header is the table's REAL
+   <thead>, and it carries every column name plus every stated reason a column
+   is unsortable. `display: none` would remove all of that from the
+   accessibility tree — the exact honesty deletion the fold gate exists to
+   prevent. It folds through the sanctioned clip pattern instead: gone from the
+   layout, present to a screen reader. */
 @media (max-width: 1080px) {
-  /* The header is the table's REAL <thead> now, and it carries every column
-     name plus every stated reason a column is unsortable. `display: none`
-     removed all of that from the accessibility tree at these widths — the exact
-     honesty deletion the fold gate exists to prevent. It folds through the
-     sanctioned clip pattern instead: gone from the layout, present to a screen
-     reader, exactly like the dual dates below it. */
   .feed-head {
     position: absolute;
     width: 1px;
@@ -87,116 +64,6 @@
     white-space: nowrap;
     border: 0;
   }
-  /* The fold's two-line grammar is expressed as grid AREAS on the row itself.
-     It used to nest `.row-line1` / `.row-line2` divs inside the row; a <tr>
-     may hold only cells, and a browser HOISTS an illegal child out of the
-     table rather than erroring, which would have destroyed this fold silently.
-     Same two lines, same order, no extra elements — and nothing is removed:
-     both dates stay in the accessibility tree via the clip below.
-
-     DESIGN-POLISH M1 (R9, A-4): the `.feed-row` selectors in this block are
-     `.feed-row:where(:not(.reference-row))` — the SAME specificity, so the
-     classic feed (/watchlist/) keeps every rule and its ≤720px overrides still
-     win, while none of them can reach a reference row, whose ≤1080px rules are
-     the ledger region's. `.feed-row .mobile-dates`, `.feed-row .cell-filed` and
-     `.feed-row .cell-traded .traded-date` keep their selectors: reference rows
-     render none of those elements. */
-  .feed-row:where(:not(.reference-row)) {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    grid-template-areas:
-      "ticker member side"
-      "range  amount traded"
-      "src    src    src";
-    row-gap: 7px;
-    column-gap: 8px;
-    height: auto;
-    position: relative;
-    padding-right: 40px; /* clear of the star */
-  }
-  .feed-row:where(:not(.reference-row)) .cell-ticker { grid-area: ticker; }
-  .feed-row:where(:not(.reference-row)) .cell-member { grid-area: member; }
-  .feed-row:where(:not(.reference-row)) .cell-side { grid-area: side; }
-  .feed-row:where(:not(.reference-row)) .cell-range { grid-area: range; }
-  .feed-row:where(:not(.reference-row)) .cell-amount { grid-area: amount; }
-  .feed-row:where(:not(.reference-row)) .cell-traded { grid-area: traded; }
-  .feed-row:where(:not(.reference-row)) .cell-src { grid-area: src; }
-  /* Both dates stay in the accessibility tree — visually-hidden, never
-     `display: none`, which would delete them for screen readers. The visible
-     pair is recomposed by `.mobile-dates` below. */
-  .feed-row .cell-filed,
-  .feed-row .cell-traded .traded-date {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-    border: 0;
-  }
-  .feed-row:where(:not(.reference-row)) .cell-star {
-    position: absolute;
-    top: 4px;
-    right: 8px;
-  }
-  .feed-row:where(:not(.reference-row)) .cell-member .aff {
-    white-space: nowrap;
-  }
-  .feed-row:where(:not(.reference-row)) .cell-traded {
-    text-align: right;
-    white-space: nowrap;
-  }
-  .feed-row:where(:not(.reference-row)) .cell-src {
-    text-align: right;
-  }
-  /* The band and its flag chips share a line of a chip's height, so a row
-     with one short flag folds to the same height as one without (G8). Flags
-     WRAP rather than truncate (§5; review C-5): a chip never shrinks, and one
-     longer than the whole line breaks its own words instead of an ellipsis
-     cutting them. */
-  .feed-row:where(:not(.reference-row)) .cell-range {
-    padding-left: 0;
-    display: flex;
-    align-items: center;
-    gap: 4px 6px;
-    min-height: 19px;
-    flex-wrap: wrap;
-    overflow: visible;
-  }
-  .feed-row:where(:not(.reference-row)) .cell-range .band { flex: 1 1 16px; min-width: 16px; }
-  .feed-row:where(:not(.reference-row)) .cell-range .flag {
-    flex: 0 0 auto;
-    max-width: 100%;
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    overflow-wrap: anywhere;
-  }
-  :where(.feed-table:not(.reference-feed)) .cell-amount {
-    text-align: left;
-    white-space: nowrap;
-  }
-  .feed-row .mobile-dates {
-    display: inline;
-    font: 400 var(--fs-meta) var(--sans);
-    font-variant-numeric: tabular-nums;
-    color: var(--ink3);
-  }
-  .feed-row:where(:not(.reference-row)) .flag {
-    max-width: 100%;
-  }
-  /* A paper row has only three visible cells, so it keeps a simple two-line
-     shape of its own rather than inheriting the transaction row's areas. */
-  .feed-row.paper:where(:not(.reference-paper)) {
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      "main main"
-      "src  src";
-  }
-  .feed-row.paper:where(:not(.reference-paper)) .paper-main { grid-area: main; }
-  .feed-row.paper:where(:not(.reference-paper)) .cell-src { grid-area: src; text-align: right; }
   .paper-main {
     flex-wrap: wrap;
     white-space: normal;
@@ -399,50 +266,13 @@
     min-height: 28px;
   }
 
-  /* rows fold to two-line cards: who · what · side / band · amount · dates */
-  :where(.feed-table:not(.reference-feed)) .feed-grid-cols {
-    padding: 0 16px;
-  }
-  /* structure (display:block, the two lines, the star, the date collapse) is
-     owned by the ≤1080px block above — only touch sizing and the small-screen
-     type ramp remain here. */
-  .feed-row:where(:not(.reference-row)) {
-    padding: 12px 16px;
-    min-height: 44px;
-  }
-  .feed-row:where(:not(.reference-row)) .cell-star .star-btn {
-    min-width: 44px;
-    min-height: 44px;
-    font-size: var(--fs-lede);
-    text-align: center;
-  }
-  .feed-row:where(:not(.reference-row)) .cell-member {
-    font-size: var(--fs-title);
-  }
-  .feed-row:where(:not(.reference-row)) .cell-ticker,
-  .feed-row:where(:not(.reference-row)) .cell-side {
-    font-size: var(--fs-small);
-  }
-  /* Line-2 width budget at 375px: band 64 + amount ~80 + dates ~92 +
-     provenance 44 + gaps ≈ 300 + 32 padding — so the provenance link and the
-     flags stay on the same fold instead of being pushed off or removed. */
+  /* A narrower range band at the fold leaves its row room for the amount,
+     the dates, the flags and the provenance link, so none is pushed off or
+     removed. */
   .band {
     height: 9px;
     width: 64px;
     background: var(--raised);
-  }
-  :where(.feed-table:not(.reference-feed)) .cell-amount {
-    font-size: var(--fs-cell);
-  }
-  .feed-row:where(:not(.reference-row)) .lag,
-  .feed-row:where(:not(.reference-row)) .lag-late {
-    font-size: var(--fs-label);
-  }
-  .feed-row:where(:not(.reference-row)) .owner-note {
-    font-size: var(--fs-control);
-  }
-  .feed-row:where(:not(.reference-row)) .flag {
-    font-size: var(--fs-label);
   }
   /* provenance stays reachable: the glyph alone, with its own 44px target */
   .feed-row .cell-src a {
@@ -490,7 +320,6 @@
   }
   .entity-title { font-size: var(--fs-display); }
   .entity-lede { font-size: var(--fs-name); }
-  .watch-btn { min-height: 44px; }
   /* `.tiles-entity` is the same strip in compact dress (`format.ts:808` emits
      both from one function), so it loses the same dead scroll affordance. */
   .entity-grid { grid-template-columns: 1fr; }
@@ -537,8 +366,6 @@
   .masthead-right .nav-burger,
   .site-search,
   .search-panel,
-  .watch-btn,
-  .star-btn,
   .pager,
   .filterbar .filter-controls,
   .compact-toggle,

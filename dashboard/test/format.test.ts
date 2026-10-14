@@ -48,7 +48,7 @@ import {
   type RenderCtx,
 } from "../src/lib/format.ts";
 
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
@@ -465,7 +465,9 @@ test("row HTML: injection attempts in every string field are escaped", () => {
   // must leave no "<" behind. A regex over attribute values cannot fail by
   // construction (`[^"]*` stops at the first quote), so it proves nothing.
   // `tr` and `td` join the set with R5/R18: the feed row is a real table row.
-  const stripped = html.replace(/<\/?(?:tr|td|div|span|a|button|sup)\b[^>]*>/g, "");
+  // `time` joins with signals-v3 M1: the one feed row left prints its dual
+  // dates as `<time>` elements (`dualDate(r, true)`).
+  const stripped = html.replace(/<\/?(?:tr|td|div|span|a|button|sup|time)\b[^>]*>/g, "");
   assert.ok(!stripped.includes("<"), "no tag outside the allowed set may be emitted");
   assert.ok(!/<[a-zA-Z]/.test(stripped), "no element start may survive stripping");
 });
@@ -524,20 +526,19 @@ test("row HTML: provenance is present on transaction AND paper rows", () => {
   }
 });
 
-test("row HTML: a paper row states retained-and-counted and needs-OCR", () => {
+test("row HTML: a paper row states needs-OCR and that it carries no machine-readable transactions", () => {
+  /* The classic row's wording ("paper filing — needs OCR", "retained and
+     counted") left with that rendering in signals-v3 M1; this is the wording
+     the feed's paper row has carried since DESIGN-POLISH M1. */
   const html = feedItemHtml(paper(), CTX);
-  assert.ok(html.includes("paper filing — needs OCR"));
-  assert.ok(html.includes("retained and counted"));
+  assert.ok(html.includes("Paper filing · needs OCR · no machine-readable transactions"));
+  assert.match(html, /<td class="cell cell-side c-kind">Paper<\/td>/, "the kind cell names it a paper filing");
 });
 
-test("row HTML: watchlist state is reflected, and unjoined rows have no star", () => {
-  const on = txnRowHtml(txn({ bioguide: "T000001" }), { watched: new Set(["T000001"]) });
-  assert.ok(on.includes('aria-pressed="true"'));
-  assert.ok(on.includes("★"));
-  const off = txnRowHtml(txn({ bioguide: "T000001" }), CTX);
-  assert.ok(off.includes('aria-pressed="false"'));
-  const none = txnRowHtml(txn({ bioguide: null }), CTX);
-  assert.ok(none.includes("disabled"));
+test("row HTML (signals-v3 M1): no feed row carries a watch control — joined, unjoined or paper", () => {
+  for (const html of [txnRowHtml(txn({ bioguide: "T000001" }), CTX), txnRowHtml(txn({ bioguide: null }), CTX), feedItemHtml(paper(), CTX)]) {
+    assert.doesNotMatch(html, /star-btn|reference-watch|data-watch|aria-pressed|★|☆/);
+  }
 });
 
 /* ---------- SSR / client parity ---------- */
@@ -560,7 +561,7 @@ test("rangeBand + dualDate: the feed row is COMPOSED of the canonical components
   const r = txn({ low: 1001, high: 15000, traded: "2026-06-24", filed: "2026-07-21", lag: 27 });
   const row = txnRowHtml(r, CTX);
   assert.ok(row.includes(rangeBand(r)), "the row's band is byte-identically the component");
-  assert.ok(row.includes(dualDate(r)), "the row's date cell is byte-identically the component");
+  assert.ok(row.includes(dualDate(r, true)), "the row's date cell is byte-identically the component (its complete form)");
   const open = rangeBand(txn({ low: 1_000_001, high: null }));
   assert.ok(open.includes("open"), "open cap hatches");
 });
@@ -815,7 +816,7 @@ test("tickerHref targets the unified page; cut entities route to /e/ (Locked #4/
   );
   assert.equal(tickerHref("NVDA"), "/tickers/NVDA/");
   assert.equal(congressTickerHref("NVDA"), "/congress/tickers/NVDA/");
-  const ctx = { watched: new Set<string>(), cutMembers: new Set(["Z000009"]), cutTickers: new Set(["OUST"]) };
+  const ctx = { cutMembers: new Set(["Z000009"]), cutTickers: new Set(["OUST"]) };
   assert.equal(memberHrefFor("T000001", ctx), "/congress/members/T000001/");
   assert.equal(memberHrefFor("Z000009", ctx), "/e/?k=m:Z000009");
   assert.equal(tickerHrefFor("NVDA", ctx), "/tickers/NVDA/");
@@ -824,16 +825,14 @@ test("tickerHref targets the unified page; cut entities route to /e/ (Locked #4/
   assert.ok(row.includes("/e/?k=t:OUST"), "listing surfaces link cut entities to /e/");
 });
 
-test("watchStarHtml: v2-store wiring attributes and storage-locality copy", async () => {
-  const { watchStarHtml } = await import("../src/lib/format.ts");
-  const off = watchStarHtml("ticker", "NVDA", "NVDA", false);
-  assert.ok(off.includes('data-watch-kind="ticker"'));
-  assert.ok(off.includes('data-watch-key="NVDA"'));
-  assert.ok(off.includes('aria-pressed="false"'));
-  assert.ok(off.includes("saved in this browser only"));
-  const on = watchStarHtml("member", "P000001", "Name", true);
-  assert.ok(on.includes("watching · saved on this device"));
-  assert.ok(on.includes("★"));
+test("signals-v3 M1: format.ts carries no watch-star renderer and no watch state", async () => {
+  const format = (await import("../src/lib/format.ts")) as Record<string, unknown>;
+  for (const name of ["watchStarHtml", "starHtml", "FEED_COLUMNS", "colWhyHtml", "dualDateCell"]) {
+    assert.equal(format[name], undefined, `${name} is gone`);
+  }
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/lib/format.ts", import.meta.url), "utf-8");
+  assert.doesNotMatch(src, /watched|watch-btn|star-btn|data-watch|saved in this browser/, "no watch field, class or copy");
 });
 
 test("R1: each canonical component has exactly ONE implementation site", async () => {

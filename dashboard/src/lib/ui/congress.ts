@@ -39,7 +39,6 @@ import {
   effectiveFlagKeys,
   universalFlagNote,
   srcLink,
-  watchStarHtml,
   memberHrefFor,
   tickerHrefFor,
   partyClass,
@@ -864,7 +863,6 @@ const MEMBER_FLOW_NOTE =
   `derived by Public Filings from the disclosed ranges`;
 
 export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx, page = 0, deps: MemberV2Deps = { resolveSector: null, sectorMeta: null, committees: null }, signalsHtml = ""): string {
-  const watched = ctx.watched.has(m.bioguide);
   const flow = quarterlyFlow(m.txns, stamps.generatedAtDate, 8);
   // R13: the member's latest disclosed trade date, over rows whose dates are
   // not anomalous (an impossible date is never the "latest trade").
@@ -923,7 +921,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     ]) +
     `<header class="entity-head">` +
     `<div class="entity-head-copy">` +
-    `<h1 class="entity-title">${esc(m.name)} ${watchStarHtml("member", m.bioguide, m.name, watched)}</h1>` +
+    `<h1 class="entity-title">${esc(m.name)}</h1>` +
     `<div class="entity-subline"><span class="aff ${partyClass(m.party)}">${esc(
       partyWord ? `${partyWord} — ${aff}` : aff,
     )}</span> · ${esc(chamberWord)}${

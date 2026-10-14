@@ -19,7 +19,7 @@ import { memberV2Sections, NON_ALLEGATION_CAVEAT, type BuildStamps, type MemberV
 import type { TxnRow, RenderCtx } from "../src/lib/format.ts";
 
 const stamps: BuildStamps = { buildId: "t.1", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12" };
-const ctx: RenderCtx = { watched: new Set() };
+const ctx: RenderCtx = {};
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {

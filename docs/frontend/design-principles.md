@@ -171,7 +171,7 @@ must not regress (pinned by `css-fold.test.ts`'s token assertions):
   and 3.68:1) to meet the WCAG 1.4.3 AA 4.5:1 floor — its consumers are
   9–12px text, disproportionately the honesty layer.
 - The range hatch (`--rule2` at 1.58:1) corrected to 3.13:1 light / 3.67:1
-  dark (WCAG 1.4.11); the unstarred ☆ glyph likewise raised to `--ink3`.
+  dark (WCAG 1.4.11).
 - Fonts are self-hosted (Source Serif 4, Public Sans, IBM Plex Mono, latin
   subsets) — no external font requests, per the no-external-requests rule.
 
@@ -207,10 +207,11 @@ four-figure ledger on the right → provenance strip → three data-derived
 summary cards → dense content bands that share one-pixel seams → footer.
 (Where the design-polish run departs from this order, the departure is recorded
 below: L13 for the cards, L14 for the Signals rule book.)
-`/signals` is a feed-archetype page with three bands of its own: the rule
-book (every kind, its exact rule, hits, status — withheld kinds included),
-hits beside the lag distribution and per-family hit rate, and the
-device-local watchlist band. Two deliberate deviations from the exports are
+`/signals` is a feed-archetype page with two bands of its own: the rule
+book (every kind, its exact rule, hits, status — withheld kinds included), and
+hits beside the lag distribution and per-family hit rate. (Its device-local
+watchlist band was removed with the watchlist in signals-v3 M1; the export's
+watchlist band has no route twin.) Two deliberate deviations from the exports are
 recorded here so they are not re-litigated by accident: the masthead carries
 no build pill (R4 pins the build watermark to one place, once — `/methodology`
 since SIGNALS-CLARITY M1, the footer before it), and every
@@ -308,7 +309,7 @@ takes its content's width above the fold and a full ledger row at it.
   EDGAR and notes disclosures, and the §5 data note as the page's foot line.
 - **Signals:** the head beside the ledger, the provenance strip, the three
   cards, band S1 — Hits (1.8fr) │ Lag distribution + Hit rate (1fr) — the rule
-  book as an expanded full-width band, the watchlist band, the withheld panels.
+  book as an expanded full-width band, the withheld panels.
 
 **Record L10 (reversal of the Sep-10 IA) — Leaders and Tickers pair (D1).**
 The Sep-10 run stacked Leaders above Tickers, each at full width. They now pair
@@ -379,8 +380,8 @@ One vocabulary per kind of fact, from one table each, on every surface:
   anything (truncation, a code, a stated type).
 - **Signal receipts** name their regime once: "PTR ↗" / "eFD ↗"; where the link
   cannot ("src") or there is no usable receipt, the regime stamp states it
-  ("PTR src ↗", "PTR —") — the hit rows, the member panel and the watch band
-  alike (`signalReceiptHtml`).
+  ("PTR src ↗", "PTR —") — the hit rows and the member panel alike
+  (`signalReceiptHtml`).
 - **CIKs** show without leading zeros; the padded form stays in URLs and data.
 - **Issuer names** are the modal filed name, verbatim (owner decision D4 (a)):
   never re-cased, so an abbreviation is never mangled and an embedded CUSIP
@@ -416,7 +417,9 @@ classifiable".
 - Astro, static, Cloudflare Pages. No backend, no accounts, no cookies, no
   tracking, no browser calls to external APIs (SEC sends no CORS headers) —
   all data is build-time extracts and same-origin JSON deployed with the
-  site. Personalization is localStorage only. This is a stated brand
+  site. The only reader state kept is the theme choice, in this browser's
+  localStorage (the device-local watchlist was removed in signals-v3 M1, and
+  `public/theme-init.js` deletes the keys it wrote). This is a stated brand
   commitment: a transparency-first civic-data tool that profiled its readers
   would contradict its own methodology page. (Analytics, if ever added, is
   cookieless and aggregate, and the published privacy promise is rewritten in

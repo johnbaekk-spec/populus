@@ -70,7 +70,7 @@ import { FILINGS } from "./fixtures/institutional.ts";
 
 const SRC = path.resolve(import.meta.dirname, "..", "src");
 const REPO = path.resolve(import.meta.dirname, "..", "..");
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
@@ -167,7 +167,7 @@ test("T3.2 (R18): BUY / SELL / EXCHANGE / — everywhere; a late row keeps its s
     ["BUY", "SELL", "SELL", "EXCHANGE"],
   );
   assert.equal(sideLabel("other", ["side_unparsed"]).text, "—");
-  const late = txnRowHtml(txn({ side: "sale", late: 1, lag: 46 }), { ...CTX, referenceFeed: true });
+  const late = txnRowHtml(txn({ side: "sale", late: 1, lag: 46 }), CTX);
   const row = domOf(late).querySelectorAll("tr")[0]!;
   assert.equal(row.getAttribute("data-edge"), "late", "lateness is the gold edge");
   const kind = row.querySelector("td.c-kind")!;
@@ -191,10 +191,14 @@ test("T3.2 (R18): BUY / SELL / EXCHANGE / — everywhere; a late row keeps its s
   assert.ok(netKindWord({ kind: "undisclosed" }).why, "the '—' says why");
   // control: FLAT for an undisclosed side would be a claim with no range under it
   assert.notEqual(netKindWord({ kind: "undisclosed" }).word, "FLAT");
-  // the watch band speaks the rule book's words — its private map is gone
+  /* the signals island speaks the rule book's words: its private map went in
+     DESIGN-POLISH M3, and the watch band that used `signalKindShort` went with
+     the watchlist (signals-v3 M1) — the island paints kind cells only through
+     the server's hit-row renderer, so it holds no kind word of its own */
   const client = readFileSync(path.join(SRC, "scripts", "signals-client.ts"), "latin1");
   assert.doesNotMatch(client, /const SHORT\b/);
-  assert.match(client, /signalKindShort\(/);
+  assert.match(client, /\bhitsBodyHtml\(/);
+  assert.doesNotMatch(client, /signalKindShort|"(?:LARGE|NEW|RARE|LATE|COMMITTEE)"/, "no kind word is spelled in the island");
   // the side filter's segments
   const congress = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
   assert.match(congress, /data-value="buy"[^>]*>BUY</);
@@ -214,7 +218,6 @@ test("T3.3 (R17): one qualifier join — no '· ·', no cell opening with a sepa
     txn({ side: "sale", owner: null, txnId: "t-3" }),
   ];
   const html = [
-    ...rows.map((r) => txnRowHtml(r, { ...CTX, referenceFeed: true })),
     ...rows.map((r) => txnRowHtml(r, CTX)),
     entityTxnRowsHtml(rows, "member", CTX),
     entityTxnRowsHtml(rows, "ticker", CTX),

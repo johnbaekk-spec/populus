@@ -10,7 +10,7 @@ import { notableRailHtml } from "../src/lib/ui/index.ts";
 import type { TxnRow, RenderCtx } from "../src/lib/format.ts";
 
 const NOW = "2026-08-12";
-const ctx: RenderCtx = { watched: new Set() };
+const ctx: RenderCtx = {};
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {

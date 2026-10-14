@@ -90,8 +90,6 @@ const stamps: BuildStamps = {
 
 // SSR page 1 through the same renderer the client island uses.
 const ssrCtx: RenderCtx = {
-  referenceFeed: true,
-  watched: new Set(),
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };
@@ -100,7 +98,6 @@ const partsIndexJson = serializeInlineJson(partsIndex);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
 const sectionCtx: RenderCtx = {
   referenceRankings: true,
-  watched: new Set(),
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };
@@ -299,10 +296,6 @@ const description =
         <input type="checkbox" id="filter-late" aria-label="late filings only" />
         late only
       </label>
-      <label class="filter-check" for="filter-watched">
-        <input type="checkbox" id="filter-watched" aria-label="watched members and tickers only — stored in this browser" />
-        watched only · <a href="/watchlist/">watchlist ↗</a>
-      </label>
       <div class="filter-group">
         <label class="filter-label" for="filter-q">Filter</label>
         <input
@@ -360,11 +353,10 @@ const description =
           header; amounts sort on their disclosed lower bound and wholly-undisclosed rows are
           listed after every ranked row rather than treated as zero.
         </caption>
-        <!-- ONE column contract, rendered here and on /watchlist/, which
-             shows the same nine cells through the same `feedItemHtml`. The
-             watchlist had no <thead> at all; a second hand-written copy here
-             would be the drift that caused it. -->
-        <Fragment set:html={feedHeadHtml({ referenceFeed: true, sortable: true, activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } })} />
+        <!-- ONE column contract (`feedHeadHtml`), shared with the rows
+             `feedItemHtml` renders here and in the feed island; a second
+             hand-written copy here would be free to drift from the cells. -->
+        <Fragment set:html={feedHeadHtml({ activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } })} />
 
 
         <tbody id="feed-tbody" set:html={rowsHtml} />

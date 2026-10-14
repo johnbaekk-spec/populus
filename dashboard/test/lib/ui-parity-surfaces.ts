@@ -50,7 +50,7 @@ const STAMPS = {
   generatedAtDate: "2026-07-24",
 };
 
-const CTX: any = { watched: new Set() };
+const CTX: any = {};
 
 const TXNS = [
   txn(),

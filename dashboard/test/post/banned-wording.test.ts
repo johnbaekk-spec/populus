@@ -17,7 +17,7 @@ const DIST = path.join(process.cwd(), "dist");
 test("§0: no banned wording on any built surface; coverage enumerated and non-trivial", () => {
   assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
   // Review F11: application JavaScript renders client-side copy (feed,
-  // watchlist, institutional index islands) — HTML alone is not the surface.
+  // signals, institutional index islands) — HTML alone is not the surface.
   const result = scanTree(DIST, (name) => name.endsWith(".html") || name.endsWith(".js"));
   // Fail loudly if the gate covered (almost) nothing: an empty covered list
   // with an empty hit list is the silent-grep failure shape, not a pass.
