@@ -85,7 +85,7 @@ reference must resolve.
 | `dashboard/src/lib/format.ts`, `data.ts`, `feed-parts.ts`, `derive.ts`, `scripts/feed-client.ts` | Note ids and row keys are page-local or derived per build: no persistence. Verify. |
 | `src/populus/backfill.py` (kadoa crosswalk, `ids_digest` over sorted txn_ids) | **Highest risk.** Determine whether the backfill matches seeded rows to kadoa rows by `txn_id`/fingerprint. If it does, the crosswalk must use the store's original identity, or the digest's population changes. Measure it on the real seed; do not assume. |
 | `src/populus/mcp_server/queries.py`, `envelope.py` | They return `txn_id` from the installed DB, so they inherit the new ids automatically. |
-| Watchlists (client localStorage) | Confirm they key on ticker or member, not `txn_id`. |
+| Client localStorage | Nothing to verify since signals-v3 M1: the only key the site writes is `populus:theme`. The device-local watchlist (keyed on member and ticker, never `txn_id`) was removed, and `dashboard/public/theme-init.js` deletes its four legacy keys, so no client storage holds a `txn_id`. |
 | `src/populus/inst.sql` `holding_id` / `row_fingerprint` (institutional) | **Same oracle class.** If any published institutional table carries `holding_id` or `row_fingerprint` for a row whose source text held a withheld CUSIP, apply the same rule there. Check `inst_agg.db` and `inst_serving.db` schemas first; in scope only if published. |
 
 ## Prevalence (measure first)

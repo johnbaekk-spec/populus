@@ -27,6 +27,7 @@ import {
 import {
   QOQ_FOOTNOTES,
   hitRowHtml,
+  memberSignalsPanel,
   memberV2Sections,
   notableRailHtml,
   tickerInstSectionHtml,
@@ -47,7 +48,7 @@ import { FILINGS } from "./fixtures/institutional.ts";
 
 const SRC = path.resolve(import.meta.dirname, "..", "src");
 const REPO = path.resolve(import.meta.dirname, "..", "..");
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
@@ -140,7 +141,7 @@ test("honesty §3: an undisclosed mapped holder value is NULL and renders \"—\
 
 /* ===================================================== K-3 no-ticker cells */
 
-test("K-3: a no-ticker asset is a label trigger whose note gives it as filed — on the classic feed, the member's largest recent and the rail", () => {
+test("K-3: a no-ticker asset is a label trigger whose note gives it as filed — on the member's largest recent and the rail; the feed names it in its own column", () => {
   const long = "BLACKROCK LIQUIDITY FUNDS TREASURY TRUST FUND INSTITUTIONAL SHARES";
   const cell = assetNameCell({ asset: long, assetType: "Mutual Fund", txnId: "t-9" }, { scope: "x" });
   const dom = domOf(cell);
@@ -149,9 +150,16 @@ test("K-3: a no-ticker asset is a label trigger whose note gives it as filed —
   assert.ok(cell.includes(`<span class="visually-hidden">${long} — asset type as filed: Mutual Fund — asset as filed, no ticker disclosed</span>`), "the accessible name still carries the whole name");
   // nothing hidden, nothing to open
   assert.doesNotMatch(assetNameCell({ asset: "Jefferson Parish Bond", assetType: null, txnId: "t-8" }, { scope: "x" }), /note-pop/);
-  // the three surfaces pass a scope keyed on the txn id
+  /* The classic feed was the third surface; it was removed with the watchlist
+     (signals-v3 M1). The one feed left names a no-ticker asset in its Asset ·
+     Owner column, whose header states the asset rule once (CD3-4, below): the
+     ticker cell is an em dash and the whole name is the asset cell's text. */
   const row = txn({ ticker: null, asset: long, assetType: "Mutual Fund", txnId: "t-7" });
-  assert.match(txnRowHtml(row, CTX), /id="n-feed-noticker-t-7-asset"/, "the classic feed");
+  const feedRow = domOf(txnRowHtml(row, CTX));
+  assert.equal(visibleText(feedRow.querySelectorAll("td.cell-ticker")[0]!).trim(), "—", "the feed: no ticker is an em dash");
+  assert.equal(visibleText(feedRow.querySelectorAll("td.cell-asset .asset-text")[0]!).trim(), long, "the feed: the whole name, as filed");
+  assert.doesNotMatch(txnRowHtml(row, CTX), /n-feed-noticker-/, "control: the classic feed's per-row trigger is gone with it");
+  // the two remaining surfaces pass a scope keyed on the txn id
   assert.match(
     notableRailHtml({ rows: [row], windowFrom: "2026-01-01", unrankable: 0, dateAnomalies: 0 }, CTX),
     /id="n-rail-asset-t-7-asset"/,
@@ -179,7 +187,7 @@ test("CD3-4 (b)/(c): the asset rule is stated ONCE on the column; a mechanical-o
   const assetHead = domOf(table).querySelectorAll("th").find((th) => /^Asset/.test(visibleText(th).trim()))!;
   assert.ok(visibleText(assetHead.querySelectorAll(".note-pop")[0]!).includes("without the parts that repeat the row"));
   assert.equal(assetHead.querySelectorAll(".note-pop")[0]!.getAttribute("id"), "n-member-txns-asset", "its own key, not the owner note's");
-  const feedHead = feedHeadHtml({ referenceFeed: true, sortable: true, notes: { scope: "congress-feed" } });
+  const feedHead = feedHeadHtml({ notes: { scope: "congress-feed" } });
   assert.ok(feedHead.includes("without the parts that repeat the row"));
   // mechanical-only: exact " (TICKER)", " [ST]" on an ST row, " Common Stock" / " - Common Stock"
   for (const asset of ["Apple Inc. (AAPL) [ST]", "Apple Inc. - Common Stock (AAPL) [ST]", "Apple Inc. Common Stock (AAPL) [ST]", "Apple Inc. (AAPL)"]) {
@@ -247,7 +255,7 @@ test("K-6: the dead MOVE_KIND_LABELS map is deleted", () => {
   assert.ok(!("MOVE_KIND_LABELS" in notableMoves), "control: a second kind-word map could drift from `kindWord`");
 });
 
-test("K-7: one receipt rule — the link names its regime; where it cannot, or there is none, the stamp does (hit rows, member panel, watch band)", () => {
+test("K-7: one receipt rule — the link names its regime; where it cannot, or there is none, the stamp does (hit rows, member panel, the client's repaint)", () => {
   assert.equal(visibleText(domOf(signalReceiptHtml("https://disclosures-clerk.house.gov/p.pdf", "house"))).trim(), "PTR ↗");
   assert.equal(visibleText(domOf(signalReceiptHtml("https://efdsearch.senate.gov/x", "senate"))).trim(), "eFD ↗");
   assert.equal(visibleText(domOf(signalReceiptHtml("https://example.gov/doc", "senate"))).replace(/\s+/g, " ").trim(), "eFD src ↗", "a link that cannot name its regime keeps the stamp");
@@ -259,14 +267,17 @@ test("K-7: one receipt rule — the link names its regime; where it cannot, or t
     firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "house",
   } as Signal);
   assert.match(visibleText(domOf(hitRowHtml(s(["https://example.gov/doc"]), CTX)).querySelectorAll("td.c-src")[0]!), /PTR src/);
-  // the watch band's client applies the same rule to the same fields, with the cohort in its payload
+  // the member panel prints the same rule over the same fields
+  const artifact = { coverageFrom: "2026-01-01", coverageTo: "2026-06-30", lagCaveat: "c", signals: [s(["https://example.gov/doc"]), { ...s([]), id: "s2" }] } as never;
+  const panel = domOf(memberSignalsPanel(artifact, "A000001", CTX)).querySelectorAll("td.c-src").map((td) => visibleText(td).replace(/\s+/g, " ").trim());
+  assert.deepEqual(panel, ["PTR src ↗", "PTR —"]);
+  /* The watch band's own client-side receipt cell went with the band
+     (signals-v3 M1). The island repaints hits only through the server's row
+     renderer, so the one rule holds there by construction: it imports
+     `hitsBodyHtml` and builds no receipt cell of its own. */
   const client = readFileSync(path.join(SRC, "scripts", "signals-client.ts"), "utf-8");
-  assert.match(client, /if \(label === "src"\) rcpt\.append\(stamp, " "\)/);
-  assert.match(client, /else rcpt\.append\(stamp, " —"\)/);
-  assert.doesNotMatch(client, /else rcpt\.textContent = "—"/, "control: the retired bare dash");
-  const signals = readFileSync(path.join(SRC, "lib", "ui", "signals.ts"), "utf-8");
-  // the cohort rides in the payload (SIGNALS-CLARITY M2 appends the R10 fields after it; no index moves)
-  assert.match(signals, /cols: \["id", "kind", "bioguide", "name", "ticker", "low", "high", "traded", "filed", "receipt", "cohort"[,\]]/);
+  assert.match(client, /\bhitsBodyHtml\(/);
+  assert.doesNotMatch(client, /srcLabel|rcpt|si-stamp/, "the island builds no receipt markup of its own");
 });
 
 test("K-9: displayAsset strips to a fixpoint — the order of the parts does not matter; a counted suffix is not a type", () => {

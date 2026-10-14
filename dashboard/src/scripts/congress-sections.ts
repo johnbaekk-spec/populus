@@ -123,7 +123,7 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
   // the closures below read these rather than re-reading a nullable element.
   const ssrRange: CongressRange = (page.dataset.range as CongressRange) || "12m";
   const ssrBasis: CongressBasis = (page.dataset.basis as CongressBasis) || "traded";
-  const ctx: RenderCtx = { watched: new Set(), referenceRankings: true };
+  const ctx: RenderCtx = { referenceRankings: true };
   const compactLimit = Number(page.dataset.compactLimit) || COMPACT_ROWS;
 
   const bindings = new Map<string, RootBinding>();

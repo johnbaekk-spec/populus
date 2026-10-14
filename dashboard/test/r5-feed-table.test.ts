@@ -4,15 +4,20 @@
    The structural half matters as much as the behavioural half: a <tr> may
    contain only cells, and a browser HOISTS an illegal child out of the table
    instead of erroring. That failure is silent and it would take the mobile
-   fold with it, so it is asserted rather than eyeballed. */
+   fold with it, so it is asserted rather than eyeballed.
+
+   signals-v3 M1: the feed has ONE rendering now — the ledger composition
+   /congress/ shows. The classic nine-cell rendering, its column list
+   (`FEED_COLUMNS`) and its unsortable head served only /watchlist/, and were
+   deleted with that page; the cases that pinned them are restated here
+   against the rendering that remains. */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
-  FEED_COLUMNS,
   feedHeadHtml,
   feedItemHtml,
   txnRowHtml,
@@ -22,7 +27,8 @@ import {
   type RenderCtx,
 } from "../src/lib/format.ts";
 
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
+const HEAD = feedHeadHtml({ activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } });
 
 function txn(over: Partial<TxnRow> = {}): TxnRow {
   return {
@@ -81,44 +87,45 @@ test("R18: the wrapper divs the old fold used are gone from the markup entirely"
   }
 });
 
-test("R4: the cells are emitted ticker-before-member", () => {
-  const html = txnRowHtml(txn(), CTX);
-  assert.ok(
-    html.indexOf("cell-ticker") < html.indexOf("cell-member"),
-    "ticker is the row's anchor and must precede the member",
-  );
+test("R4 / F7: the cells are emitted in the head's column order, role for role", () => {
+  /* R4's ticker-before-member order belonged to the classic rendering; the
+     ledger composition orders Kind · Member · Ticker (DESIGN-POLISH M1). What
+     must hold for any order is that each cell sits under its own column. */
+  const roles = (html: string, tag: "td" | "th"): string[] =>
+    [...html.matchAll(new RegExp(`<${tag}\\b[^>]*class="([^"]*)"`, "g"))].map((m) => m[1]!.split(" ").find((c) => c.startsWith("c-"))!);
+  assert.deepEqual(roles(txnRowHtml(txn(), CTX), "td"), roles(HEAD, "th"));
+  assert.deepEqual(roles(HEAD, "th"), ["c-kind", "c-member", "c-ticker", "c-secondary", "c-num", "c-bar", "c-num", "c-src"]);
 });
 
 test("R5/R19: honesty content survives the conversion — both dates, lag, flags, provenance", () => {
   const html = txnRowHtml(txn({ flags: ["amount_spouse_cap"], late: 1, lag: 60 }), CTX);
-  assert.match(html, /class="cell cell-filed"/, "the filed date is a cell");
-  assert.match(html, /class="cell cell-traded"/, "the trade date is a cell");
-  assert.match(html, /2026-08-01/, "the filed date is present in full");
-  // `tradedText` has always rendered the trade date as MM-DD beside the filed
-  // date — that predates this change and is not what the conversion touched.
-  assert.match(html, /class="traded-date">07-20</, "the trade date is present");
-  assert.match(html, /07-20 → 08-01/, "the folded combined-date string survives");
+  assert.match(html, /class="cell cell-traded c-num"/, "the dates are a cell");
+  assert.match(html, /<time datetime="2026-08-01"/, "the filed date is present in full");
+  assert.match(html, /<time datetime="2026-07-20"/, "the trade date is present in full");
+  assert.match(html, /07-20<\/time> → <span class="visually-hidden">Filed <\/span>/, "traded → filed, in that order");
   assert.match(html, /LATE·60d/, "the filing lag survives");
-  /* DESIGN-POLISH M3 (L4, T3.10): a late row keeps its SIDE word in both feed
-     forms — the reference feed's kind cell reads BUY, never LATE; lateness is
-     the gold edge and the unchanged LATE·Nd. */
-  const ref = txnRowHtml(txn({ late: 1, lag: 60 }), { ...CTX, referenceFeed: true });
-  assert.match(ref, /data-edge="late"/);
-  assert.match(ref, /<td class="cell cell-side c-kind buy">BUY<span class="reference-watch">/, "the late row reads its side");
-  assert.doesNotMatch(ref, /c-kind buy">LATE/, "control: LATE never replaces the side");
-  assert.match(ref, /LATE·60d/);
-  assert.match(html, /class="flag solid">spouse cap</, "the flag chip survives");
-  assert.match(html, /cell-src/, "the provenance link is a cell");
+  /* DESIGN-POLISH M3 (L4, T3.10): a late row keeps its SIDE word — the kind
+     cell reads BUY, never LATE; lateness is the gold edge and the unchanged
+     LATE·Nd. */
+  assert.match(html, /data-edge="late"/);
+  assert.match(html, /<td class="cell cell-side c-kind buy">BUY<\/td>/, "the late row reads its side, and nothing else sits in the cell");
+  assert.doesNotMatch(html, /c-kind buy">LATE/, "control: LATE never replaces the side");
+  assert.match(html, /class="flag solid"><span class="note"><button[^>]*>spouse cap</, "the flag chip survives, as its definition's trigger");
+  assert.match(html, /class="cell cell-src c-src"/, "the provenance link is a cell");
   assert.match(html, /visually-hidden">Filed /, "the filed date keeps its accessible label");
   assert.match(html, /visually-hidden">Traded /, "the trade date keeps its accessible label");
 });
 
-test("R5: a row class rides on the ROW, not on a wrapping element", () => {
-  // /watchlist/ marks new-since rows. As a wrapping <div> that marker would be
-  // hoisted out of the tbody and detached from every row it marked.
-  const html = feedItemHtml(txn(), CTX, "watch-new");
-  assert.match(html, /^<tr class="feed-row feed-grid-cols watch-new"/);
-  assert.ok(!html.includes("<div class=\"watch-new\""), "never a wrapping div");
+test("R5: the row's classes are its own — no caller can hang a marker on it", () => {
+  /* The one caller that marked rows (/watchlist/'s "new since" class) was
+     removed in signals-v3 M1, and the row-class parameter with it. The
+     property it guarded — no marker as a wrapping element, which a table
+     would hoist away — holds by construction: the row is the outermost tag. */
+  assert.equal(feedItemHtml.length, 2, "feedItemHtml takes the item and the context only");
+  assert.equal(txnRowHtml.length, 2);
+  assert.equal(paperRowHtml.length, 2);
+  assert.match(feedItemHtml(txn(), CTX), /^<tr class="feed-row feed-grid-cols reference-row buy" data-edge="buy">/);
+  assert.match(feedItemHtml(paper(), CTX), /^<tr class="feed-row paper reference-paper">/);
 });
 
 /* ---------- the page contract ---------- */
@@ -130,51 +137,56 @@ const page = readFileSync(
 
 test("R5: the sort <select> is gone and the two orderable columns are headers", () => {
   assert.ok(!page.includes('id="filter-sort"'), "the sort select is removed");
-  // F7: the header markup moved into ONE shared contract because /watchlist/
-  // renders the same nine cells. The page must still be the thing that renders
-  // it — asserting only on the library would prove nothing about this page,
-  // which is exactly how the missing `#feed` id survived every test (F1).
-  assert.match(page, /feedHeadHtml\(\{ referenceFeed: true, sortable: true/, "the page renders the shared head");
-  const head = feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc" });
-  assert.match(head, /data-feed-sort="filed"[^>]*aria-sort="descending"/);
-  assert.match(head, /data-feed-sort="amount"[^>]*aria-sort="none"/);
+  // F7: the header markup is ONE shared contract. The page must still be the
+  // thing that renders it — asserting only on the library would prove nothing
+  // about this page, which is exactly how the missing `#feed` id survived
+  // every test (F1).
+  assert.match(page, /feedHeadHtml\(\{ activeKey: "filed", activeDir: "desc", notes: \{ scope: "congress-feed" \} \}\)/, "the page renders the shared head");
+  assert.match(HEAD, /data-feed-sort="filed"[^>]*aria-sort="descending"/);
+  assert.match(HEAD, /data-feed-sort="amount"[^>]*aria-sort="none"/);
 });
 
-test("R5: every non-sortable feed column states WHY, in visible text", () => {
-  // Seven of the nine columns carry no well-defined order; each must say so
-  // rather than sit mute. (The star column is labelled for screen readers and
-  // heads no data.)
-  const head = feedHeadHtml({ sortable: true, activeKey: "filed", activeDir: "desc" });
-  const whys = head.match(/class="col-why"/g) ?? [];
-  assert.ok(whys.length >= 6, `expected a stated reason per unsortable column, saw ${whys.length}`);
-  assert.ok(!head.includes('title="the rank'), "the reason is visible text, never a tooltip");
+test("R5: every non-sortable feed column states WHY — its label opens the reason", () => {
+  // Six of the eight columns carry no well-defined order; each must say so
+  // rather than sit mute. The reason is the note its label opens (SL), never a
+  // tooltip.
+  const reasons = HEAD.match(/<span class="note-pop" popover id="n-congress-feed-/g) ?? [];
+  assert.equal(reasons.length, 6, `expected a stated reason per unsortable column, saw ${reasons.length}`);
+  assert.equal((HEAD.match(/data-feed-sort="/g) ?? []).length, 2, "the other two are sort controls");
+  assert.ok(!HEAD.includes("title="), "the reason is never a tooltip");
+  assert.ok(!HEAD.includes('class="col-why"'), "nor the retired visible span");
 });
 
-test("F7: the watchlist renders the SAME contract, and its two orderable columns state why", () => {
-  // Its nine cells had no <thead> at all, so none of them had a column.
-  const wl = readFileSync(
-    path.resolve(import.meta.dirname, "..", "src", "pages", "watchlist", "index.astro"),
-    "latin1",
-  );
-  assert.match(wl, /feedHeadHtml\(\{\s*sortable: false/, "the watchlist renders the shared head");
-  assert.match(wl, /<tbody id="watch-body">/);
-  const head = feedHeadHtml({ sortable: false, whyUnsorted: "no sort control on this view" });
-  assert.ok(!head.includes("data-feed-sort"), "no dead sort header on a surface with no control");
-  assert.ok(!head.includes("th-sort"), "and no dead button");
-  // every labelled column states a reason, including the two that ARE orderable
-  // elsewhere — an orderable column silently losing its header would be the
-  // same unlabelled-cell defect in a new place
-  assert.equal((head.match(/class="col-why"/g) ?? []).length, FEED_COLUMNS.length - 1);
+test("F7 (signals-v3 M1): one page and its island render the feed contract — nothing else", () => {
+  /* The second renderer of this contract — /watchlist/, with its unsortable
+     head and nine-cell rows — was removed. Any new caller of the head or the
+     rows outside /congress/ and its feed island reddens this. */
+  const src = path.resolve(import.meta.dirname, "..", "src");
+  const callers: string[] = [];
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.(ts|astro)$/.test(e.name) && full !== path.join(src, "lib", "format.ts")) {
+        if (/\b(?:feedHeadHtml|feedItemHtml|txnRowHtml|paperRowHtml)\(/.test(readFileSync(full, "latin1"))) callers.push(path.relative(src, full));
+      }
+    }
+  };
+  walk(src);
+  assert.deepEqual(callers.sort(), ["pages/congress/index.astro", "scripts/feed-client.ts"]);
 });
 
 test("F7: the header count matches the number of cells feedItemHtml emits", () => {
-  // The real invariant behind F7: nine cells need nine columns. A column added
+  // The real invariant behind F7: every cell needs a column. A column added
   // to the row renderer without one here re-creates the defect one cell at a
-  // time.
+  // time. A paper row spans the columns it cannot fill.
   const cells = (feedItemHtml(txn(), CTX).match(/<td\b/g) ?? []).length;
-  const heads = (feedHeadHtml({ sortable: true }).match(/<th\b/g) ?? []).length;
+  const heads = (HEAD.match(/<th\b/g) ?? []).length;
   assert.equal(heads, cells, "every emitted cell must have a column to belong to");
-  assert.equal(heads, FEED_COLUMNS.length);
+  assert.equal(heads, 8);
+  const paperRow = feedItemHtml(paper(), CTX);
+  const spans = [...paperRow.matchAll(/<td\b([^>]*)>/g)].reduce((n, m) => n + Number(/colspan="(\d+)"/.exec(m[1]!)?.[1] ?? 1), 0);
+  assert.equal(spans, heads, "a paper row spans exactly the head's columns");
 });
 
 test("R18: the feed's render root is named exactly once, and it is a tbody", () => {
@@ -191,7 +203,6 @@ test("R18: the table's direct children are only caption, thead and tbody", () =>
   // the table by the browser, silently.
   for (const [file, seg] of [
     ["congress", tableSegment(page)],
-    ["watchlist", tableSegment(watchlistPage)],
   ] as const) {
     const kids = [...seg.matchAll(/^\s{8}<(\w+)/gm)].map((m) => m[1]);
     assert.deepEqual(
@@ -200,11 +211,8 @@ test("R18: the table's direct children are only caption, thead and tbody", () =>
       `${file}: a stray element between the head and the tbody is hoisted out silently`,
     );
   }
-  for (const head of [
-    feedHeadHtml({ sortable: true }),
-    feedHeadHtml({ sortable: false, whyUnsorted: "x" }),
-  ]) {
-    assert.match(head, /^<thead><tr class="feed-head feed-grid-cols">/);
+  for (const head of [HEAD]) {
+    assert.match(head, /^<thead><tr class="feed-head feed-grid-cols reference-head">/);
     assert.match(head, /<\/tr><\/thead>$/);
     assert.equal((head.match(/<tr\b/g) ?? []).length, 1, "one header row");
     // nothing but cells directly inside the row
@@ -220,7 +228,3 @@ function tableSegment(src: string): string {
   return src.slice(i, src.indexOf("</table>", i));
 }
 
-const watchlistPage = readFileSync(
-  path.resolve(import.meta.dirname, "..", "src", "pages", "watchlist", "index.astro"),
-  "latin1",
-);

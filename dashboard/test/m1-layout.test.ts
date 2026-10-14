@@ -13,7 +13,7 @@ import { baseStylesheet } from "./lib/styles.ts";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { assetNameCell } from "../src/lib/format.ts";
+import { assetNameCell, txnRowHtml } from "../src/lib/format.ts";
 import { changesTableHtml } from "../src/lib/ui/index.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
 
@@ -121,15 +121,17 @@ test("R4: the masthead reflows instead of overlapping, at any width", () => {
 /* ---------------- R5: the feed cells ---------------- */
 
 test("R5: the ticker cell is geometrically contained", () => {
-  /* `.cell-ticker` is a 66px grid column that renders a full asset name
-     whenever no ticker was disclosed — ~300px of 12.5px mono for a 40-char
-     name, painted straight over `.cell-side`. `.cell-member` already had this
-     exact treatment, which is what made the omission easy to miss. */
-  const rule = /\.cell-ticker \{([^}]*)\}/.exec(css);
-  assert.ok(rule, ".cell-ticker rule exists");
-  assert.match(rule![1]!, /overflow:\s*hidden/, ".cell-ticker must clip");
+  /* `.cell-ticker` is a fixed grid column. In the classic feed it rendered a
+     full asset name whenever no ticker was disclosed — ~300px of 12.5px mono
+     for a 40-char name, painted straight over `.cell-side`. That feed was
+     removed in signals-v3 M1; the one feed left keeps the column to the ticker
+     (an em dash when none was disclosed) and still contains whatever lands in
+     it, exactly as `.cell-member` is contained. */
+  const rule = /\.reference-feed \.cell-ticker \{([^}]*)\}/.exec(css);
+  assert.ok(rule, "the feed's .cell-ticker rule exists");
+  assert.match(rule![1]!, /overflow:\s*(?:hidden|clip)/, ".cell-ticker must clip");
   assert.match(rule![1]!, /text-overflow:\s*ellipsis/, ".cell-ticker must mark the clip");
-  assert.match(rule![1]!, /white-space:\s*nowrap/, "wrapping would overflow the 38px row instead");
+  assert.match(rule![1]!, /white-space:\s*nowrap/, "wrapping would overflow the row instead");
 });
 
 test("R5: clipping the pixels does not remove the asset from the record", () => {
@@ -154,46 +156,35 @@ test("R5: clipping the pixels does not remove the asset from the record", () => 
 });
 
 test("R5: a row renders its traded date exactly once", () => {
-  /* `dualDate` emits the traded date twice — once as `.traded-date` and again
-     inside the combined `.mobile-dates` string — and relies on the two never
-     being visible together. That is a real invariant, so it is asserted rather
-     than assumed: `.mobile-dates` is display:none by default, and the fold
-     hides `.traded-date` in the same breakpoint that reveals it. */
+  /* `dualDate` in its short form emits the traded date twice — once as
+     `.traded-date` and again inside the combined `.mobile-dates` string — and
+     relies on the two never being visible together. The classic feed's fold
+     revealed `.mobile-dates` while hiding `.traded-date`; that feed was removed
+     in signals-v3 M1. The short form survives only in entity-table date cells,
+     where `.mobile-dates` must stay hidden at every width, and the feed renders
+     the COMPLETE form, which prints each date once. Both halves are asserted. */
   assert.match(
     css,
     /\.mobile-dates \{\s*display:\s*none;\s*\}/,
-    ".mobile-dates must be hidden outside the fold or the date renders twice",
+    ".mobile-dates must be hidden or the date renders twice",
   );
-  /* The invariant is that ONE breakpoint both hides the desktop traded-date and
-     reveals the combined string. Two earlier versions of this test could not see
-     that:
-
-       `css.slice(indexOf("@media (max-width: 720px)"))` — R7 moved the fold
-         structure to ≤1080px, which sits EARLIER in the file, so the slice
-         stopped containing the rules entirely.
-       `css.slice(min(...foldStarts))` — the fix for that, and codex round 1's F3
-         killed it: slicing to end-of-file lets the two regexes match in
-         DIFFERENT blocks. Moving only the hiding rule back to ≤720px would leave
-         both dates visible from 721–1080px with this test still green.
-
-     So the governing block is extracted by brace matching and both rules are
-     asserted INSIDE it. */
-  const foldBlock = mediaBlockContaining(css, /\.feed-row \.mobile-dates \{\s*display:\s*inline/);
-  assert.ok(
-    foldBlock,
-    "some @media block must reveal .feed-row .mobile-dates, or the fold is gone",
+  assert.equal(
+    mediaBlockContaining(css, /\.mobile-dates[^{]*\{[^}]*display:\s*inline/),
+    null,
+    "no breakpoint reveals .mobile-dates, so no width shows the trade date twice",
   );
-  const fold = foldBlock!;
-  assert.match(
-    fold,
-    /\.feed-row \.cell-traded \.traded-date/,
-    "the fold must hide the desktop traded-date when it reveals .mobile-dates",
+  const row = txnRowHtml(
+    {
+      kind: "txn", txnId: "t-r5", asset: null, assetType: null, filed: "2026-07-21", traded: "2026-06-24",
+      name: "N", bioguide: "T000001", party: "R", state: "OK", district: null, chamber: "senate",
+      ticker: "WMB", side: "purchase", owner: null, low: 1001, high: 15000, lag: 27, late: 0, flags: [],
+      doc: "https://efdsearch.senate.gov/x",
+    },
+    {},
   );
-  assert.match(
-    fold,
-    /\.feed-row \.mobile-dates \{\s*display:\s*inline/,
-    ".mobile-dates is revealed only inside the fold, and only for .feed-row",
-  );
+  assert.doesNotMatch(row, /mobile-dates|traded-date/, "the feed row carries no second copy of a date");
+  assert.equal((row.match(/<time datetime="2026-06-24"/g) ?? []).length, 1, "the traded date, once");
+  assert.equal((row.match(/<time datetime="2026-07-21"/g) ?? []).length, 1, "the filed date, once");
 });
 
 /* ---------------- R6: the changes table ---------------- */

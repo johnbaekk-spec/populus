@@ -116,7 +116,7 @@ async function boundedSurfaces(): Promise<{ name: string; html: string }[]> {
   const stamps = {
     buildId: "b", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12",
   } as never;
-  const ctx = { watched: new Set() } as never;
+  const ctx = {} as never;
   return [
     {
       name: "congress ranking (members)",

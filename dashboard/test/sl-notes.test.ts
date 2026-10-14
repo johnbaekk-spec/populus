@@ -211,21 +211,20 @@ test("SL-R26: a key with no alphanumerics still yields a unique, stable id", asy
   assert.notEqual(noteId("s", "#"), noteId("s", "≈"));
 });
 
-test("SL-R2b: a note-capable renderer called WITHOUT a scope is byte-identical to the pre-run output", async () => {
-  const { feedHeadHtml } = await import("../src/lib/format.ts");
-  const args = { sortable: true, activeKey: "filed", activeDir: "desc" } as const;
-  const optedOut = feedHeadHtml({ ...args });
-  const optedIn = feedHeadHtml({ ...args, notes: { scope: "congress-feed" } });
+test("SL-R2b (signals-v3 M1): the feed head states every column reason as a note — the opt-out `.col-why` channel left with the classic feed", async () => {
+  const format = await import("../src/lib/format.ts");
+  const head = format.feedHeadHtml({ activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } });
 
-  // /watchlist/ calls this renderer and is NOT in scope for this run. The
-  // opt-out path must therefore still emit the `.col-why` channel exactly as
-  // origin/main does — this is the property that makes the whole run safe for
-  // routes it does not own, and it is asserted rather than assumed.
-  assert.ok(optedOut.includes('class="col-why"'), "no scope -> the original channel survives");
-  assert.ok(!optedOut.includes("note-pop"), "no scope -> no note markup leaks onto an out-of-scope route");
-
-  assert.ok(optedIn.includes("note-pop"), "a scope opts the surface in");
-  assert.ok(!optedIn.includes('class="col-why"'), "opting in replaces the channel, it does not double it");
+  /* The opt-out path (no scope -> the visible `.col-why` span) existed because
+     /watchlist/ rendered this head and was out of scope for SL. That route and
+     its classic feed were removed in signals-v3 M1, so the head now has one
+     caller, which passes a scope, and one channel: the note. */
+  const reasons = [...head.matchAll(/<span class="note-pop" popover id="(n-congress-feed-[^"]+)"/g)].map((m) => m[1]!);
+  assert.equal(reasons.length, 6, "each of the six columns with no defined order states why, as a note");
+  assert.equal(new Set(reasons).size, reasons.length, "one panel per column");
+  assert.equal((head.match(/data-feed-sort="/g) ?? []).length, 2, "the two ordered columns are sort controls instead");
+  assert.ok(!head.includes('class="col-why"'), "no visible-span channel remains");
+  assert.equal((format as Record<string, unknown>).colWhyHtml, undefined, "the opt-out helper is gone with its caller");
 });
 
 /* ---------------------------------------------------------------- T3 / SL-R7
@@ -320,7 +319,7 @@ test("SL-R8 Class A: every deleted attribute's content is still carried by its s
   assert.ok(!tile.includes("title="), "attribute deleted");
   assert.ok(tile.includes('visually-hidden">full breakdown'), "sibling untouched");
 
-  const ctx = { watched: new Set<string>(), tickers: new Set<string>(), members: new Set<string>() } as never;
+  const ctx = {} as never;
   const row = txnRowHtml(
     {
       txnId: "t1", filed: "2026-01-02", traded: "2026-01-01", name: "N", bioguide: "B000001",
@@ -372,8 +371,8 @@ test("SL-R8e: the activity lag note carries the CAUSE and the sibling keeps the 
 });
 
 test("SL-R2b: an unscripted panel has a defined resting place, and place() overrides it", () => {
-  // /watchlist/ and /e/ render notes through a shared renderer but never call
-  // initNotes(). Without a default they would open wherever the UA chose.
+  // /e/ renders notes through shared renderers but never calls initNotes().
+  // Without a default they would open wherever the UA chose.
   const open = /\.note-pop:popover-open\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
   assert.match(open, /top:\s*50%/);
   assert.match(open, /left:\s*50%/);
@@ -470,7 +469,7 @@ test("SL-R26 F5: instIndexRowHtml — a RENDERED duplicate-variant pair keeps ev
 
 test("SL-R26 F5: txnRowHtml — two rows differing ONLY by txnId render distinct dagger panels", async () => {
   const { txnRowHtml } = await import("../src/lib/format.ts");
-  const ctx: RenderCtx = { watched: new Set() };
+  const ctx: RenderCtx = {};
 
   /* The transaction duplicate-variant case: same member, same ticker, same
      amount band, same dates, same flags — only `txnId` separates them, which
@@ -500,7 +499,13 @@ test("SL-R26 F5: txnRowHtml — two rows differing ONLY by txnId render distinct
   };
 
   const page = txnRowHtml(base, ctx) + txnRowHtml({ ...base, txnId: "T-90211" }, ctx);
-  const ids = panelIds(page);
+  /* The one feed row (signals-v3 M1 removed the classic rendering) also
+     prints the flag as a visible chip that opens its own definition, so each
+     row carries two panels: the ‡ and the chip's. Every id on the page is
+     unique, and the ‡ pair is asserted by name. */
+  const all = panelIds(page);
+  assert.equal(new Set(all).size, all.length, "no panel id repeats on the page");
+  const ids = all.filter((id) => id.endsWith("-dagger"));
   assert.equal(ids.length, 2, "each flagged row renders its own dagger note");
   assert.equal(new Set(ids).size, 2, "…and the two ids differ, on rows that differ only by txnId");
   for (const id of ids) {

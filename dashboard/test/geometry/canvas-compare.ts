@@ -254,8 +254,8 @@ export function measurePage(arg: MeasureArg): PageMeasure {
   }
   function excludedText(p: Element): boolean {
     /* marks and mark triggers hang in the mark slot; carets, footnote
-       references, watch stars and hidden text are not the reader's text */
-    return !!p.closest(".hang, .sort-caret, .note-btn:not(.note-label), .fn-ref, .star-btn, .reference-watch, .note-pop, .visually-hidden, .sr-only, [aria-hidden='true'], script, style, template");
+       references and hidden text are not the reader's text */
+    return !!p.closest(".hang, .sort-caret, .note-btn:not(.note-label), .fn-ref, .note-pop, .visually-hidden, .sr-only, [aria-hidden='true'], script, style, template");
   }
   function textNodes(root: Element): Text[] {
     const out: Text[] = [];
@@ -633,7 +633,7 @@ export function measurePage(arg: MeasureArg): PageMeasure {
     });
   }
   /* band heads */
-  const GROUPS = ":is(.seg, .chips, .mgr-chips):not(.si-watch-chips):not(#watch-chips)";
+  const GROUPS = ":is(.seg, .chips, .mgr-chips)";
   for (const head of Array.from(document.querySelectorAll(".panel-head"))) {
     if (!visible(head)) continue;
     const title = head.querySelector(":scope > .section-h, :scope > h2, :scope > h3");

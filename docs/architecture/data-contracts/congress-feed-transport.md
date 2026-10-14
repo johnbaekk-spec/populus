@@ -3,8 +3,11 @@
 **Status:** normative for `/congress/data/feed.v1.json` (now a tombstone),
 `/congress/data/feed/{part}.v1.json`, `/congress/data/feed/index.v1.json`,
 `/congress/data/` (the human-readable route), and every consumer of the full
-congress corpus — `dashboard/src/scripts/feed-corpus.ts`,
-`dashboard/src/scripts/feed-client.ts`, `dashboard/src/scripts/watchlist-client.ts`.
+congress corpus — `dashboard/src/scripts/feed-corpus.ts` and
+`dashboard/src/scripts/feed-client.ts`. (A second consumer,
+`dashboard/src/scripts/watchlist-client.ts` on `/watchlist/`, was removed with
+the watchlist in signals-v3 M1, together with `fetchFeedCorpus`, the one-call
+loader only it used.)
 
 **Owner decision (2026-08-18), recorded as roadmap B27:** *shard by year, client
 fetches all shards*, with three silent-failure requirements. This document states
@@ -95,10 +98,12 @@ three requirements:
 
 `feed-corpus.ts` exports **functions and holds no module-level cache**,
 deliberately. R17 ("one fetch, one decode owner per page") is preserved by there
-being exactly one caller per page — `feed-client.ts` on `/congress/`,
-`watchlist-client.ts` on `/watchlist/`, never both on one page. A cached
-singleton in this module would be precisely the second owner of the same bytes
-that R17 exists to forbid.
+being exactly one caller — `feed-client.ts` on `/congress/` — which passes the
+page's inlined part index to `loadFeedCorpus` and fetches the index with
+`fetchFeedPartsIndex` only when that inline copy is absent. A cached singleton
+in this module would be precisely the second owner of the same bytes that R17
+exists to forbid. `test/r17-single-fetch.test.ts` pins the one owner and the
+module's two exports.
 
 Paging the *unfiltered* feed still costs only the part or parts holding the page
 (`partsForPage`); the full corpus is loaded only when a filter, a sort or a

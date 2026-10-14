@@ -277,7 +277,6 @@ export function installLedgerProbe(): void {
   /* ---------------------------------------------------------------- scope */
   const LEDGER = "table.etable, table.reference-feed, table.si-table, table[data-multiline]";
   const FEED = "table.feed-table";
-  const CLASSIC_FEED = "table.feed-table:not(.reference-feed)";
   const MARK_CHARS = "§†‡≈¶ⓘ";
   const CONTROLS =
     ".note-btn, .th-sort, .seg > button, .chips > button, .mgr-chips > button, .pager-btn, .compact-toggle";
@@ -1221,7 +1220,6 @@ export function installLedgerProbe(): void {
       const table = tableLabel(t);
       const tableIndex = allTables().indexOf(t);
       if (t.matches("[data-multiline]")) { exclude(res, { table, tableIndex, detail: "declared prose table ([data-multiline])" }); continue; }
-      if (t.matches(CLASSIC_FEED) && env.width > 720) { exclude(res, { table, tableIndex, detail: "classic feed: measured at the fold only (declared debt, A-4)" }); continue; }
       const fold = t.matches(FEED) && env.width <= 1080;
       const foldRows: { ri: number; h: number }[] = [];
       /* Multi-line rows at the fold or under a coarse pointer, by line count

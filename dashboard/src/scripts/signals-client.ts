@@ -1,76 +1,18 @@
-/* /signals client island. Two device-local enhancements over a page that is
-   complete without them:
+/* /signals client island. A device-local enhancement over a page that is
+   complete without it: the HITS pager and filters — rule and listed stocks
+   only (SIGNALS-CLARITY M2, on by default, never persisted). The first change
+   fetches the artifact once and repaints through the server's own view.
+   Nothing is stored and nothing leaves the device. */
 
-   1. the HITS pager and filters — rule, watched only, and listed stocks only
-      (SIGNALS-CLARITY M2, on by default, never persisted); the first change
-      fetches the artifact once and repaints through the server's own view;
-   2. the WATCHLIST band — joins the embedded newest-hits payload against the
-      watch-v2 store (members + tickers) and the last-seen cursor, all of which
-      live in this browser only. Nothing leaves the device. */
-
-import { fmtInt, fmtUsd, memberHref, tickerHref, pathSafeTicker, genericEntityHref, srcLabel, parseDataColumns, type RenderCtx } from "../lib/format.ts";
-import { loadWatchStore } from "./entity-client.ts";
-import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, familyOf, signalKindShort, hitsView, hitsHiddenText, signalSentence, type HitFilter } from "../lib/ui/index.ts";
+import { parseDataColumns, type RenderCtx } from "../lib/format.ts";
+import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, hitsView, hitsHiddenText, type HitFilter } from "../lib/ui/index.ts";
+import type { Signal, SignalArtifact } from "../lib/signals.ts";
 
 /** An empty row spans the table's own header — the column list the server
     rendered — never a literal count (DESIGN-POLISH M1, section E). */
 function columnCount(body: HTMLElement | null, fallback: number): number {
   const n = body?.closest("table")?.querySelectorAll("thead th").length ?? 0;
   return n > 0 ? n : fallback;
-}
-import type { Signal, SignalArtifact } from "../lib/signals.ts";
-import { classifyCursor, readCursor, writeCursor, watchBandEmptyText, watchSeenLabel } from "../lib/watchlist.ts";
-
-/* DESIGN-POLISH M3 (R18): the watch band's kind words are the rule book's own
-   (`signalKindShort` over RULE_BOOK) — the private SHORT map that duplicated
-   them is gone, so the band and the hits table cannot drift apart. */
-
-const BIOGUIDE_RE = /^[A-Z]\d{6}$/;
-/** rows the watch band renders; the summary line states the bound */
-const WATCH_RENDER_CAP = 50;
-
-/* The embedded watch row (ui/signals.ts `watchBandHtml`): the R10 fields ride
-   at the end — side, asset, assetType, owner, stk — null when absent. */
-type Row = [
-  string, string, string | null, string, string | null, number | null, number | null, string | null, string, string, string?,
-  (Signal["side"] | null)?, (string | null)?, (string | null)?, (Signal["owner"] | null)?, (boolean | null)?,
-];
-
-function magnitude(low: number | null, high: number | null): string {
-  if (low == null && high == null) return "not disclosed";
-  if (low != null && high == null) return `Over ${fmtUsd(low)}`;
-  if (low == null) return `Under ${fmtUsd(high!)}`;
-  return `${fmtUsd(low)}–${fmtUsd(high!)}`;
-}
-
-const cell = (cls: string, ...children: (Node | string)[]): HTMLTableCellElement => {
-  const td = document.createElement("td");
-  if (cls) td.className = cls;
-  for (const c of children) td.append(c);
-  return td;
-};
-const link = (href: string, text: string, cls = ""): HTMLAnchorElement => {
-  const a = document.createElement("a");
-  a.href = href;
-  a.textContent = text;
-  if (cls) a.className = cls;
-  return a;
-};
-
-/** A receipt is re-assembled from its parsed parts under a constant `https://`
-    prefix — never assigned as the string that came out of the document — so a
-    non-https or malformed receipt renders as "—" and nothing else can reach
-    the href. */
-function safeReceiptHref(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (u.protocol !== "https:" || !u.hostname) return null;
-  return "https://" + u.hostname + u.pathname + u.search;
 }
 
 /* R17: a REAL pager over the complete artifact. The server rendered page 1;
@@ -86,7 +28,6 @@ function initHitPager(): void {
   const rangeEl = document.getElementById("signal-hits-range");
   const prev = document.getElementById("signal-hits-prev") as HTMLButtonElement | null;
   const next = document.getElementById("signal-hits-next") as HTMLButtonElement | null;
-  const watchedChk = document.getElementById("signal-watched-only") as HTMLInputElement | null;
   const stocksChk = document.getElementById("signal-stocks-only") as HTMLInputElement | null;
   const hiddenEl = document.getElementById("signal-hidden-count");
   const status = document.getElementById("signal-hits-status");
@@ -97,11 +38,9 @@ function initHitPager(): void {
      page's disclosure and announces the re-render to the named binder. */
   const compactN = Number(section.dataset.compactRows) || pageSize;
   const disclosure = section.querySelector<HTMLElement>('.compact-disclosure[data-compact-for="signal-hits-body"]');
-  const store = loadWatchStore(localStorage);
-  const ctx: RenderCtx = { watched: store.members, watchedTickers: store.tickers };
+  const ctx: RenderCtx = {};
   let page = 0;
   let kind = "all";
-  let watchedOnly = false;
   /* R12: every load starts at the default — listed stocks only — whatever a
      browser restored into the box (plan L8: not persisted). */
   let stocksOnly = true;
@@ -124,9 +63,9 @@ function initHitPager(): void {
   }
 
   /* The ONE filter the server page used for its first page (`hitsView` over
-     `hitMatches`): rule × watched × listed stocks. */
+     `hitMatches`): rule × listed stocks. */
   function filter(): HitFilter {
-    return { kind, watchedOnly, stocksOnly, watchedMembers: store.members, watchedTickers: store.tickers };
+    return { kind, stocksOnly };
   }
 
   function setPager(btn: HTMLButtonElement | null, unavailable: boolean): void {
@@ -168,7 +107,7 @@ function initHitPager(): void {
       hiddenEl.textContent = hiddenText;
       hiddenEl.setAttribute("data-hidden", String(view.hidden));
     }
-    if (status) status.textContent = `${range}${kind === "all" ? "" : ` · rule ${kind}`}${watchedOnly ? " · watched only" : ""} · ${stocksOnly ? "listed stocks only" : "all asset types"} · ${hiddenText}.`;
+    if (status) status.textContent = `${range}${kind === "all" ? "" : ` · rule ${kind}`} · ${stocksOnly ? "listed stocks only" : "all asset types"} · ${hiddenText}.`;
     setPager(prev, page === 0);
     setPager(next, page >= pageCount - 1);
   }
@@ -178,11 +117,6 @@ function initHitPager(): void {
     if (!btn) return;
     kind = btn.dataset.kind ?? "all";
     for (const b of seg.querySelectorAll<HTMLButtonElement>("button[data-kind]")) b.setAttribute("aria-pressed", String(b === btn));
-    page = 0;
-    void paint();
-  });
-  watchedChk?.addEventListener("change", () => {
-    watchedOnly = watchedChk.checked;
     page = 0;
     void paint();
   });
@@ -201,142 +135,6 @@ function initHitPager(): void {
     page++;
     void paint();
   });
-}
-
-function initWatchBand(): void {
-  const root = document.getElementById("signal-watch");
-  const data = document.getElementById("signal-watch-data");
-  const body = document.getElementById("signal-watch-body");
-  const chips = document.getElementById("signal-watch-chips");
-  const seenBtn = document.getElementById("signal-watch-seen") as HTMLButtonElement | null;
-  const note = document.getElementById("signal-watch-note");
-  if (!root || !data || !body || !chips) return;
-  let payload: { rows: Row[]; total: number; cap: number };
-  try {
-    payload = JSON.parse(data.textContent ?? "{}");
-    if (!Array.isArray(payload.rows)) return;
-  } catch {
-    return;
-  }
-  const store = loadWatchStore(localStorage);
-  const buildId = root.dataset.buildId ?? "";
-  const coverageFrom = root.dataset.coverageFrom ?? "";
-  let cursor = readCursor(localStorage);
-
-  const watchedMembers = store.members;
-  const watchedTickers = store.tickers;
-  const nothing = watchedMembers.size === 0 && watchedTickers.size === 0;
-  chips.replaceChildren(
-    ...[...watchedMembers].filter((m) => BIOGUIDE_RE.test(m)).map((m) => link(memberHref(m), m, "chip")),
-    ...[...watchedTickers].map((t) => link(pathSafeTicker(t) ? tickerHref(t) : genericEntityHref("t", t), t, "chip")),
-  );
-  if (nothing) return;
-
-  const hits = payload.rows.filter(
-    ([, , bioguide, , ticker]) => (bioguide && watchedMembers.has(bioguide)) || (ticker && watchedTickers.has(ticker)),
-  );
-  const state = classifyCursor(cursor, coverageFrom);
-  /* DOM construction, not innerHTML: the payload came out of the document, so
-     a string path back into markup is exactly the taint CodeQL flags. Every
-     value lands through textContent; every href is validated then set as a
-     property; receipts must be https. */
-  const render = (): void => {
-    body.replaceChildren();
-    if (hits.length === 0) {
-      const tr = document.createElement("tr");
-      const td = cell("si-empty");
-      td.colSpan = columnCount(body, 7);
-      td.textContent = watchBandEmptyText(0, payload.total, payload.cap);
-      tr.append(td);
-      body.append(tr);
-      return;
-    }
-    for (const [id, kind, bioguide, name, ticker, low, high, traded, filed, receipt, cohort, side, asset, assetType, owner, stk] of hits.slice(0, WATCH_RENDER_CAP)) {
-      const tr = document.createElement("tr");
-      tr.className = "si-hit";
-      tr.dataset.signalId = id;
-      // The family's row edge, as the server's hit rows (DESIGN-POLISH M1).
-      tr.dataset.edge = `family-${familyOf(kind as Parameters<typeof familyOf>[0]).toLowerCase()}`;
-      const short = signalKindShort(kind as Parameters<typeof signalKindShort>[0]);
-      tr.append(cell("si-kind c-kind", short));
-      const subject = cell("si-subject c-member");
-      subject.append(bioguide && BIOGUIDE_RE.test(bioguide) ? link(memberHref(bioguide), name) : name);
-      if (ticker) {
-        subject.append(" ", link(pathSafeTicker(ticker) ? tickerHref(ticker) : genericEntityHref("t", ticker), ticker, "si-ticker"));
-      }
-      const gold = document.createElement("span");
-      gold.className = "si-gold";
-      gold.setAttribute("aria-hidden", "true");
-      gold.textContent = " ◆";
-      subject.append(gold);
-      tr.append(subject);
-      /* R10: the hit rows' sentence (`signalSentence`), built from the embedded
-         fields; a missing side means a record without them, which says so. */
-      const said = signalSentence({
-        kind: kind as Signal["kind"],
-        entities: { bioguide, memberName: name, ticker },
-        ...(side == null ? {} : { side, asset: asset ?? null, assetType: assetType ?? null, owner: owner ?? null }),
-        listedStock: stk === true,
-      });
-      const sentence = document.createElement("span");
-      sentence.className = said.recorded ? "si-sentence" : "si-sentence c-muted";
-      sentence.textContent = said.text;
-      const evidence = cell("si-evidence c-secondary c-flex", sentence);
-      if (said.chip) {
-        const chip = document.createElement("span");
-        chip.className = "si-asset-chip";
-        chip.textContent = said.chip;
-        evidence.append(" ", chip);
-      }
-      evidence.append(" · ", link("#signal-rulebook", `${short} rule`));
-      tr.append(evidence);
-      tr.append(cell("c-num si-mag", magnitude(low, high)));
-      tr.append(cell("c-filed c-num si-when", `${traded ? traded.slice(5) : "—"} → ${filed.slice(5)}`));
-      const seen = watchSeenLabel(state, filed);
-      tr.append(cell(`c-num ${seen === "NEW" ? "si-new" : "c-muted"}`, seen));
-      /* K-7 (M3 review): the hit rows' receipt rule (`signalReceiptHtml`) —
-         the link names its regime; where it cannot ("src") or there is no
-         usable receipt, the regime stamp states it ("PTR src ↗", "PTR —") */
-      const rcpt = cell("c-src");
-      const safe = safeReceiptHref(receipt);
-      const stamp = document.createElement("span");
-      stamp.className = "si-stamp";
-      stamp.textContent = cohort === "senate" ? "eFD" : "PTR";
-      if (safe) {
-        const label = srcLabel(safe);
-        const a = link(safe, `${label} ↗`);
-        a.rel = "noopener";
-        a.target = "_blank";
-        if (label === "src") rcpt.append(stamp, " ");
-        rcpt.append(a);
-      } else rcpt.append(stamp, " —");
-      tr.append(rcpt);
-      body.append(tr);
-    }
-  };
-  render();
-  if (note) {
-    const gap = state.kind === "gap"
-      ? ` Your last-seen marker (${state.cursor.lastSeenFiled}) predates this window's start (${coverageFrom}) — "new" cannot be stated until you mark all seen.`
-      : "";
-    const summary = document.createElement("span");
-    summary.textContent =
-      `${fmtInt(hits.length)} ${hits.length === 1 ? "hit" : "hits"} on ${fmtInt(watchedMembers.size + watchedTickers.size)} watched ${watchedMembers.size + watchedTickers.size === 1 ? "subject" : "subjects"}` +
-      (payload.total > payload.cap ? ` · joined against the newest ${fmtInt(payload.cap)} of ${fmtInt(payload.total)} hits` : "") +
-      (hits.length > WATCH_RENDER_CAP ? ` · the newest ${fmtInt(WATCH_RENDER_CAP)} shown here; the hits table above carries the rest` : "") +
-      `.${gap} `;
-    note.prepend(summary);
-  }
-  if (seenBtn) {
-    seenBtn.disabled = false;
-    seenBtn.addEventListener("click", () => {
-      const latest = payload.rows.reduce((m, r) => (r[8] > m ? r[8] : m), "");
-      if (!latest) return;
-      cursor = { v: 1, lastSeenFiled: latest, buildId, at: new Date().toISOString() };
-      writeCursor(localStorage, cursor);
-      location.reload();
-    });
-  }
 }
 
 /** The narrow surface `syncScrollRegion` touches, declared structurally so
@@ -383,6 +181,5 @@ function initScrollRegions(): void {
 
 export function initSignalsPage(): void {
   initHitPager();
-  initWatchBand();
   initScrollRegions();
 }

@@ -70,10 +70,6 @@ const WIDTHS = [1440, 768, 390] as const;
 type Width = (typeof WIDTHS)[number];
 const HEIGHT: Record<Width, number> = { 1440: 900, 768: 1024, 390: 844 };
 
-/** The seeded watchlist for `/watchlist/` (the `populus:watch:v2` shape
-    `loadWatchStore` accepts: `v: 2`, bioguide members, tickers). */
-const WATCH_SEED = JSON.stringify({ v: 2, members: ["M001193"], tickers: ["NVDA", "AAPL"] });
-
 interface Route {
   id: string;
   /** a path, or a discovery run against the served build (null: none built) */
@@ -83,7 +79,6 @@ interface Route {
   minColumns: number;
   /** a design route: G9 runs here with this many expected pairs (T-4) */
   pairs?: number;
-  seedWatch?: boolean;
   /** Checks that may measure nothing on this route, keyed `check` or
       `check@width`, each with the reason. A zero there passes WITH an
       annotation naming the reason; anywhere else measuring nothing fails. */
@@ -98,20 +93,6 @@ interface Route {
     controlHeights to size (M1 review Q-10: the allowance is these routes'
     own, never a default). */
 const NO_CONTROLS_ZERO = { controlHeights: "no segmented control or sort button on this page" };
-
-/** The classic `/watchlist/` feed keeps its classic rules (declared debt,
-    A-4): the ledger-construction checks have nothing to measure there, and
-    its rows are measured at the fold (T-9). */
-const CLASSIC_FEED_ZERO = {
-  "G1@390": "the classic feed renders no header row at the fold, so no header edge exists to align to",
-  "G6@390": "the classic feed renders no header row at the fold, so it has no columns to name",
-  G7: "the classic feed marks no c-num cells (classic rules, A-4)",
-  "G8@1440": "classic feed rows are measured at the fold only (T-9)",
-  G10: "the classic feed is not a ledger table (A-4)",
-  headFont: "the classic feed keeps its classic header (A-4)",
-  oneFlex: "the classic feed is exempt from c-flex (A-4)",
-  metaTruncation: "the page has no band head",
-};
 
 /** A tail filer the `/e/` driver resolves through the routing index — read
     from the served build, never hard-coded, so it exists in whatever build
@@ -186,7 +167,6 @@ const ROUTES: Route[] = [
   { id: "signals", path: "/signals/", minTables: 2, minColumns: 8, pairs: 1, g10Min: { colours: 1, "centring@1440": 1 } },
   { id: "ticker", path: "/tickers/AAPL/", minTables: 3, minColumns: 10, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
   { id: "congress-ticker", path: "/congress/tickers/NVDA/", minTables: 2, minColumns: 8, g10Min: { colours: 1 } },
-  { id: "watchlist", path: "/watchlist/", minTables: 1, minColumns: 6, seedWatch: true, allowZero: CLASSIC_FEED_ZERO },
   { id: "home", path: "/", minTables: 2, minColumns: 6, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
   { id: "e-member", path: "/e/?k=m:M001193", minTables: 3, minColumns: 12, g10Min: { colours: 1 } },
   { id: "e-filer", path: discoverTailFiler, minTables: 2, minColumns: 8, g10Min: { colours: 1 } },
@@ -214,7 +194,6 @@ async function newLedgerContext(
   browser: Browser,
   testInfo: TestInfo,
   width: Width,
-  route?: Route,
 ): Promise<BrowserContext> {
   const use = testInfo.project.use;
   const ctx = await browser.newContext({
@@ -236,15 +215,6 @@ async function newLedgerContext(
       /* storage blocked: the background assertion below then fails loudly */
     }
   }, THEME);
-  if (route?.seedWatch) {
-    await ctx.addInitScript((seed: string) => {
-      try {
-        localStorage.setItem("populus:watch:v2", seed);
-      } catch {
-        /* as above */
-      }
-    }, WATCH_SEED);
-  }
   return ctx;
 }
 
@@ -405,7 +375,7 @@ for (const width of WIDTHS) {
       let url: string | null = null;
 
       test.beforeAll(async ({ browser }, testInfo) => {
-        ctx = await newLedgerContext(browser, testInfo, width, route);
+        ctx = await newLedgerContext(browser, testInfo, width);
         url = await resolvePath(ctx, route);
         if (!url) {
           await ctx.close();
@@ -465,7 +435,7 @@ for (const check of ALL_CHECKS.filter((c) => isPending(c))) {
     for (const width of WIDTHS) {
       for (const route of ROUTES) {
         if (!applies(check, route, width)) continue;
-        const ctx = await newLedgerContext(browser, testInfo, width, route);
+        const ctx = await newLedgerContext(browser, testInfo, width);
         try {
           const url = await resolvePath(ctx, route);
           if (!url) {
@@ -513,7 +483,6 @@ async function open(
   testInfo: TestInfo,
   width: number,
   url: string,
-  seedWatch = false,
   init?: () => void,
 ): Promise<{ ctx: BrowserContext; page: Page }> {
   const ctx = await browser.newContext({
@@ -524,11 +493,6 @@ async function open(
   await ctx.addInitScript((t: string) => {
     try { localStorage.setItem("populus:theme", t); } catch { /* the background assertion reports it */ }
   }, THEME);
-  if (seedWatch) {
-    await ctx.addInitScript((seed: string) => {
-      try { localStorage.setItem("populus:watch:v2", seed); } catch { /* as above */ }
-    }, WATCH_SEED);
-  }
   if (init) await ctx.addInitScript(init);
   const page = await ctx.newPage();
   const resp = await page.goto(url, { waitUntil: "load" });
@@ -603,58 +567,62 @@ test.describe("M1 review: route properties", () => {
   }
 
   /* C-4: the watch lists lost every style when .chips became the segmented
-     group: chips touching, no padding, no target. Each watch chip is at
-     least the hit square tall and stands apart from its neighbours. */
-  async function watchChipProblems(page: Page, sel: string, min: number): Promise<string[]> {
-    return page.evaluate(({ sel, min }) => {
-      const chips = Array.from(document.querySelectorAll(sel)).map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0);
-      const out: string[] = [];
-      if (chips.length === 0) out.push(`no ${sel}`);
-      chips.forEach((r, i) => {
-        if (r.height < min - 0.5) out.push(`chip ${i} is ${Math.round(r.height)}px tall (< ${min})`);
-        const n = chips[i + 1];
-        if (n && Math.abs(n.top - r.top) < 2 && n.left - r.right < 4) out.push(`chips ${i} and ${i + 1} are ${Math.round(n.left - r.right)}px apart`);
-      });
-      return out;
-    }, { sel, min });
-  }
-  for (const [url, sel] of [["/watchlist/", "#watch-chips > .chip"], ["/signals/", ".si-watch-chips > .chip"]] as const) {
-    for (const width of [1440, 390]) {
-      test(`C-4: ${url} watch chips are spaced targets @${width}`, async ({ browser }, testInfo) => {
-        const { ctx, page } = await open(browser, testInfo, width, url, true);
-        try {
-          await expect(page.locator(sel).first()).toBeVisible({ timeout: 20_000 });
-          const min = width > 720 ? 24 : 44;
-          expect(await watchChipProblems(page, sel, min)).toEqual([]);
-          // control: the unstyled list the review found
-          await page.addStyleTag({ content: `${sel} { min-height: 0 !important; padding: 0 !important; border: 0 !important; } ${sel.split(" >")[0]} { gap: 0 !important; }` });
-          expect((await watchChipProblems(page, sel, min)).length, "control").toBeGreaterThan(0);
-        } finally {
-          await ctx.close();
-        }
-      });
+     group. signals-v3 M1 removed both lists with the watchlist (R1), so the
+     route property is now their absence on the served build: /signals/
+     carries no watch band or chip list, and /watchlist/ answers the site's
+     404 page. */
+  test("C-4 (signals-v3 M1): no watch list is served — /signals/ has no watch band, /watchlist/ is the 404 page", async ({ browser }, testInfo) => {
+    const { ctx, page } = await open(browser, testInfo, 1440, "/signals/");
+    try {
+      await expect(page.locator("#signal-hits")).toBeVisible({ timeout: 20_000 });
+      expect(await page.locator("#signal-watch, .si-watchband, .si-watch-chips, #signal-watched-only").count()).toBe(0);
+      const missing = await page.goto("/watchlist/", { waitUntil: "load" });
+      expect(missing?.status(), "/watchlist/ is gone").toBe(404);
+    } finally {
+      await ctx.close();
     }
-  }
+  });
 
   /* C-5: the classic feed's range cell at ≤1080px was nowrap with ellipsized
-     flags, so a flag's words were cut at 390 (§5: flags wrap). No flag is
-     truncated. */
+     flags, so a flag's words were cut at 390 (§5: flags wrap). That feed was
+     removed in signals-v3 M1; the property is held on the one feed left,
+     /congress/: no flag is cut. A flag is cut when its own box clips its text
+     (a block-level box whose content is wider than it), or when an ancestor
+     inside its row that does not show overflow ends before the flag does. At
+     390 the feed's flags are inline runs in a block cell, so the second form
+     is the one a regression would take. */
   async function truncatedFlags(page: Page): Promise<string[]> {
     return page.evaluate(() =>
       Array.from(document.querySelectorAll(".feed-table .flag"))
-        .filter((f) => f.getBoundingClientRect().width > 0 && (f as HTMLElement).scrollWidth > (f as HTMLElement).clientWidth + 1)
+        .filter((f) => {
+          const r = f.getBoundingClientRect();
+          if (r.width === 0) return false;
+          const el = f as HTMLElement;
+          if (getComputedStyle(el).display !== "inline" && el.scrollWidth > el.clientWidth + 1) return true;
+          for (let a = f.parentElement; a && a.tagName !== "TR"; a = a.parentElement) {
+            if (getComputedStyle(a).overflowX === "visible") continue;
+            const ar = a.getBoundingClientRect();
+            if (r.right > ar.right + 1 || r.left < ar.left - 1) return true;
+          }
+          return false;
+        })
         .map((f) => (f.textContent ?? "").trim()),
     );
   }
-  test("C-5: no flag on /watchlist/ is truncated @390", async ({ browser }, testInfo) => {
-    const { ctx, page } = await open(browser, testInfo, 390, "/watchlist/", true);
+  test("C-5: no flag on the /congress/ feed is truncated @390", async ({ browser }, testInfo) => {
+    const { ctx, page } = await open(browser, testInfo, 390, "/congress/");
     try {
       await expect(page.locator(".feed-table .feed-row").first()).toBeVisible({ timeout: 20_000 });
-      expect(await page.locator(".feed-table .flag").count(), "the seeded rows carry flags").toBeGreaterThan(0);
+      expect(await page.locator(".feed-table .cell-range .flag").count(), "the feed's first page carries flags").toBeGreaterThan(0);
       expect(await truncatedFlags(page)).toEqual([]);
-      // control: the pre-fix range cell
-      await page.addStyleTag({ content: ".feed-row .cell-range { flex-wrap: nowrap !important; } .feed-row .cell-range .band { flex: 0 0 300px !important; } .feed-row .cell-range .flag { flex: 0 1 auto !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }" });
-      expect((await truncatedFlags(page)).length, "control: a cut flag is caught").toBeGreaterThan(0);
+      // control 1: the pre-fix chip — a nowrap, ellipsized box narrower than its words
+      const own = await page.addStyleTag({ content: ".feed-row .cell-range .flag { display: inline-block !important; max-width: 3ch !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }" });
+      expect((await truncatedFlags(page)).length, "control: a self-clipped flag is caught").toBeGreaterThan(0);
+      await own.evaluate((el) => el.remove());
+      expect(await truncatedFlags(page), "the control style is gone").toEqual([]);
+      // control 2: a range cell that clips its flags off its right edge
+      await page.addStyleTag({ content: ".feed-row .cell-range { overflow: clip !important; max-width: 24px !important; white-space: nowrap !important; }" });
+      expect((await truncatedFlags(page)).length, "control: a flag clipped by its cell is caught").toBeGreaterThan(0);
     } finally {
       await ctx.close();
     }
@@ -1345,7 +1313,7 @@ test.describe("M2: route properties", () => {
         test.skip(true, d.skip);
         return;
       }
-      const { ctx, page } = await open(browser, testInfo, 1440, url, route.seedWatch);
+      const { ctx, page } = await open(browser, testInfo, 1440, url);
       try {
         const twin = SSR_TWIN[route.id];
         const ssr = url.startsWith("/e/") ? (twin ? await ssrCounts(page, twin) : null) : await ssrCounts(page, url);
@@ -1406,7 +1374,7 @@ test.describe("M2: route properties", () => {
   test("T2.11 control: with the populus:rerender listener removed, a hits pager click leaves the control disagreeing with its rows @1440", async ({ browser }, testInfo) => {
     /* the stub runs before the page's scripts: the binder (and every other
        listener) cannot hear the re-render any more */
-    const { ctx, page } = await open(browser, testInfo, 1440, "/signals/", false, () => {
+    const { ctx, page } = await open(browser, testInfo, 1440, "/signals/", () => {
       const add = EventTarget.prototype.addEventListener;
       document.addEventListener = function (this: Document, type: string, ...rest: unknown[]) {
         if (type === "populus:rerender") return;

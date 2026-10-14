@@ -2,8 +2,7 @@
 // D-2 (ALPHA-UX): /signals — every signal renders its exact rule, magnitude
 // interval, receipts, and the lag caveat; withheld kinds render as withheld
 // with their typed reason. Composition follows the Signals reference export:
-// rule book, hits beside the lag distribution and hit rate, and the
-// device-local watchlist band.
+// rule book, and hits beside the lag distribution and hit rate.
 import Base from "../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact } from "../../lib/data";
 import { signalsBody, type SignalsPageDeps } from "../../lib/ui/index.ts";
@@ -12,7 +11,6 @@ import type { RenderCtx } from "../../lib/format";
 const build = getBuildData();
 const artifact = getSignalArtifact();
 const ctx: RenderCtx = {
-  watched: new Set(),
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };

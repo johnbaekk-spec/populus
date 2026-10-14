@@ -2,12 +2,11 @@
    fetched lazily on first focus. Free text never leaves the device — the
    query runs entirely over the shipped index. "/" focuses (except while
    typing), Esc closes, results group Tickers · Members · Filers with
-   combobox/listbox semantics. The pre-query state is the v2 watchlist's
-   quick links, or the S6 empty-watchlist starters. */
+   combobox/listbox semantics. The pre-query state is the S6 block: how the
+   search matches, and build-derived starters. */
 
 import { esc } from "../lib/format.ts";
 import { searchQuery, searchIndexValid, type SearchIndex, type SearchHit } from "../lib/derive.ts";
-import { loadWatchStore, type WatchStore } from "./entity-client.ts";
 
 export const SEARCH_INDEX_PATH = "/search/index.v1.json";
 
@@ -47,52 +46,30 @@ export function renderResults(hits: SearchHit[], active: number): string {
     .join("");
 }
 
-/** Pre-query state: watchlist quick links when anything is starred, else the
-    S6 empty-watchlist block with build-derived starters. The starter caption
-    is "most-active in this build" — ranking comes from the build's own
-    records, never from traffic. The site does measure page traffic
-    (Cloudflare Web Analytics, see the methodology page), but that data is
-    aggregate, lives outside the build, and yields no per-page view count
-    this code could rank by. */
-export function renderPreQuery(watch: WatchStore, index: SearchIndex | null): string {
-  const watchedMembers = [...watch.members];
-  const watchedTickers = [...watch.tickers];
-  if (watchedMembers.length > 0 || watchedTickers.length > 0) {
-    const nameOf = new Map((index?.members ?? []).map((m) => [m[0], m[1]]));
-    const links = [
-      ...watchedTickers.map(
-        (t) => `<a class="quick-link" href="/tickers/${esc(encodeURIComponent(t))}/">★ ${esc(t)}</a>`,
-      ),
-      ...watchedMembers.map(
-        (b) =>
-          `<a class="quick-link" href="/congress/members/${esc(encodeURIComponent(b))}/">★ ${esc(
-            nameOf.get(b) ?? b,
-          )}</a>`,
-      ),
-    ].join("");
-    return (
-      `<div class="search-prequery"><div class="search-group-h">Watching · saved on this device</div>` +
-      `<div class="quick-links">${links}</div></div>`
-    );
-  }
-  // S6 — empty watchlist
+/** Pre-query state: the S6 block — how the search matches, then build-derived
+    starters. The starter caption is "most-active in this build" — ranking
+    comes from the build's own records, never from traffic. The site does
+    measure page traffic (Cloudflare Web Analytics, see the methodology page),
+    but that data is aggregate, lives outside the build, and yields no
+    per-page view count this code could rank by. */
+export function renderPreQuery(index: SearchIndex | null): string {
   const starters: string[] = [];
   if (index) {
     const topTickers = [...index.tickers].sort((a, b) => b[2] - a[2]).slice(0, 2);
     const topMembers = [...index.members].sort((a, b) => b[3] - a[3]).slice(0, 2);
     for (const [t] of topTickers) {
-      starters.push(`<a class="quick-link" href="/tickers/${esc(encodeURIComponent(t))}/">☆ ${esc(t)}</a>`);
+      starters.push(`<a class="quick-link" href="/tickers/${esc(encodeURIComponent(t))}/">${esc(t)}</a>`);
     }
     for (const [b, name] of topMembers) {
       starters.push(
-        `<a class="quick-link" href="/congress/members/${esc(encodeURIComponent(b))}/">☆ ${esc(name)}</a>`,
+        `<a class="quick-link" href="/congress/members/${esc(encodeURIComponent(b))}/">${esc(name)}</a>`,
       );
     }
   }
   return (
     `<div class="search-prequery s6-block">` +
-    `<div class="s6-h">Nothing watched yet</div>` +
-    `<p class="s6-body">Star a member or a ticker (☆) to pin it here. Watchlists live in <strong>this browser only</strong> — no account is required and nothing is transmitted. Clearing site data clears the list.</p>` +
+    `<div class="s6-h">Search this build</div>` +
+    `<p class="s6-body">Tickers match by prefix, names by substring. Free-text search never leaves your device: it runs against an index that ships with the build.</p>` +
     (starters.length > 0
       ? `<div class="quick-links">${starters.join("")}<span class="mono-note s6-note">← most-active in this build, as starters</span></div>`
       : "") +
@@ -107,7 +84,6 @@ export function initSearch(): void {
   const panel = document.getElementById("search-panel");
   const list = document.getElementById("search-panel-list");
   if (!input || !panel || !list) return;
-  const watch = loadWatchStore(window.localStorage);
 
   let index: SearchIndex | null = null;
   let loadPromise: Promise<void> | null = null;
@@ -148,7 +124,7 @@ export function initSearch(): void {
     if (!q) {
       hits = [];
       active = -1;
-      list!.innerHTML = renderPreQuery(watch, index);
+      list!.innerHTML = renderPreQuery(index);
       return;
     }
     if (!index) {

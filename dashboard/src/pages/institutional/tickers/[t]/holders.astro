@@ -58,7 +58,7 @@ const build = getBuildData();
 const inst = build.inst;
 if (!inst.present) throw new Error("holders page built without the inst module");
 const window = filingWindow(build.generatedAtDate);
-const ssrCtx: RenderCtx = { watched: new Set(), cutMembers: build.cutMembers, cutTickers: build.cutTickers };
+const ssrCtx: RenderCtx = { cutMembers: build.cutMembers, cutTickers: build.cutTickers };
 const hrefOf = (cik: string): string => filerHref(cik, filerTier(build, cik));
 
 let bodyHtml: string;

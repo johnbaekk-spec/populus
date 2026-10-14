@@ -15,7 +15,7 @@ import { filerHref } from "../lib/holdings";
 const build = getBuildData();
 const avail = moduleAvailability(build);
 const cov = coverageSummary(build.stats);
-const ssrCtx: RenderCtx = { watched: new Set(), cutMembers: build.cutMembers, cutTickers: build.cutTickers };
+const ssrCtx: RenderCtx = { cutMembers: build.cutMembers, cutTickers: build.cutTickers };
 
 const congressTile = congressTileHtml(build.txns, ssrCtx);
 const period = notableMovesPeriods(build)[0] ?? null;
@@ -123,9 +123,7 @@ const description =
   </main>
 
   <script>
-    import { initWatchStars } from "../scripts/entity-client";
     import { initNotes } from "../scripts/notes";
-    initWatchStars();
     initNotes();
   </script>
 </Base>

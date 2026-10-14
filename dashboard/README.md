@@ -83,7 +83,7 @@ declared, `inst_agg.db`.
   `/institutional/tickers/[t]/holders/`; versioned JSON shards under
   `/institutional/data/`
 - `/tickers/[ticker]/` — the unified ticker view; `/signals/`,
-  `/watchlist/`, `/search/index.v1.json`
+  `/search/index.v1.json`
 - `/e/` — the generic client-rendered entity route for budget-cut entities,
   rendering through the **same** pure body functions (`src/lib/ui/`) the
   static pages use — parity by construction
@@ -109,9 +109,14 @@ verification.
   [docs/frontend/design-principles.md](../docs/frontend/design-principles.md) §3;
   the mobile fold is §5 of the same document, enforced by
   `test/css-fold.test.ts`.
-- Watchlist state is localStorage only (`populus:watch:v2`), member- and
-  ticker-level, this browser only. No cookies, no accounts, no external
-  requests of any kind (fonts self-hosted).
+- The only browser storage is the reader's light or dark theme choice
+  (`localStorage` key `populus:theme`), in this browser only and never
+  transmitted. `public/theme-init.js` also removes, once and best-effort, the
+  four `populus:watch*` keys the device-local watchlist wrote before it was
+  removed (declared debt TD-1; remove the cleanup on or after 2027-01-31). No
+  cookies and no accounts; fonts are self-hosted, and the only third-party
+  requests are the cookieless Cloudflare Web Analytics beacon's (see
+  `/methodology/#privacy`).
 
 ## Build markers and `/stats.json`
 

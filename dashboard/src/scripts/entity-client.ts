@@ -1,11 +1,11 @@
 import { initSortableTable } from "./table-sort.ts";
 import { holderDefaultDir, holderSortNote, orderRankedHolders, type HolderSortKey } from "../lib/holders-sort.ts";
-/* Entity client: the watchlist v2 store, the generic-route
-   driver (qoq-presentation.md §3), and the small enhancements the
-   prerendered entity pages mount (pager, watch stars, period selectors).
+/* Entity client: the generic-route driver (qoq-presentation.md §3), and the
+   small enhancements the prerendered entity pages mount (pager, period
+   selectors).
 
    The driver is a PURE orchestration over injected seams (fetch, render,
-   timers, storage) — the browser entry at the bottom wires the real DOM, and
+   timers) — the browser entry at the bottom wires the real DOM, and
    the post-build harness executes the same function over real dist bytes with
    fakes. No logic lives only in the browser path. */
 
@@ -65,122 +65,6 @@ import { edgarFilerUrl } from "../lib/derive.ts";
 import type { TickerInstSection } from "../lib/data.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow } from "../lib/inst.ts";
 
-/* ---------- watchlist v2 store ---------- */
-
-export interface StorageLike {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-}
-
-export const WATCH_V2_KEY = "populus:watch:v2";
-export const WATCH_LEGACY_KEY = "populus:watch:members";
-export const WATCH_QUARANTINE_KEY = "populus:watch:v2.corrupt";
-
-const BIOGUIDE_RE = /^[A-Z]\d{6}$/;
-
-export interface WatchStore {
-  members: Set<string>;
-  tickers: Set<string>;
-  has(kind: "member" | "ticker", key: string): boolean;
-  toggle(kind: "member" | "ticker", key: string): boolean;
-}
-
-function validStringArray(v: unknown, validate?: (s: string) => boolean): string[] | null {
-  if (!Array.isArray(v)) return null;
-  const out: string[] = [];
-  for (const item of v) {
-    if (typeof item !== "string") return null;
-    if (validate && !validate(item)) continue; // invalid entries dropped, not fatal
-    out.push(item);
-  }
-  return out;
-}
-
-/** Load-or-migrate. Corrupt v2 storage is QUARANTINED (moved aside verbatim)
-    before starting fresh — never silently overwritten; the legacy bare-array
-    key keeps receiving member writes until the P3-1 reconciliation merge. */
-export function loadWatchStore(storage: StorageLike): WatchStore {
-  let members: string[] = [];
-  let tickers: string[] = [];
-  let migrated = false;
-
-  const rawV2 = safeGet(storage, WATCH_V2_KEY);
-  if (rawV2 != null) {
-    let ok = false;
-    try {
-      const parsed = JSON.parse(rawV2) as { v?: unknown; members?: unknown; tickers?: unknown };
-      if (parsed != null && typeof parsed === "object" && parsed.v === 2) {
-        const m = validStringArray(parsed.members, (s) => BIOGUIDE_RE.test(s));
-        const t = validStringArray(parsed.tickers);
-        if (m !== null && t !== null) {
-          members = m;
-          tickers = t;
-          ok = true;
-        }
-      }
-    } catch {
-      ok = false;
-    }
-    if (!ok) {
-      safeSet(storage, WATCH_QUARANTINE_KEY, rawV2);
-      migrated = true; // fall through to the legacy path below
-    }
-  }
-  if (rawV2 == null || migrated) {
-    const rawLegacy = safeGet(storage, WATCH_LEGACY_KEY);
-    if (rawLegacy != null) {
-      try {
-        const legacy = validStringArray(JSON.parse(rawLegacy), (s) => BIOGUIDE_RE.test(s));
-        if (legacy !== null) members = legacy;
-      } catch {
-        // corrupt legacy: nothing to migrate
-      }
-    }
-    persist();
-  }
-
-  function persist(): void {
-    safeSet(storage, WATCH_V2_KEY, JSON.stringify({ v: 2, members, tickers }));
-    // Legacy write-through until the P3-1 reconciliation merge: the feed's
-    // in-flight QA branch still reads the bare member-id array.
-    safeSet(storage, WATCH_LEGACY_KEY, JSON.stringify(members));
-  }
-
-  const store: WatchStore = {
-    members: new Set(members),
-    tickers: new Set(tickers),
-    has(kind, key) {
-      return (kind === "member" ? store.members : store.tickers).has(key);
-    },
-    toggle(kind, key) {
-      const set = kind === "member" ? store.members : store.tickers;
-      const on = !set.has(key);
-      if (on) set.add(key);
-      else set.delete(key);
-      members = [...store.members];
-      tickers = [...store.tickers];
-      persist();
-      return on;
-    },
-  };
-  return store;
-}
-
-function safeGet(s: StorageLike, k: string): string | null {
-  try {
-    return s.getItem(k);
-  } catch {
-    return null;
-  }
-}
-function safeSet(s: StorageLike, k: string, v: string): void {
-  try {
-    s.setItem(k, v);
-  } catch {
-    // storage full / denied: the watchlist is a convenience, never load-bearing
-  }
-}
-
 /* ---------- the generic-route driver (spec §3) ---------- */
 
 export type FetchResult =
@@ -193,7 +77,6 @@ export interface DriverDeps {
   fetchJson: (url: string) => Promise<FetchResult>;
   render: (html: string) => void;
   setTitle: (title: string) => void;
-  watch: WatchStore;
   /** schedule the watchdog; returns a cancel function */
   schedule: (fn: () => void, ms: number) => () => void;
   /** test seam: override a body renderer (e.g. with a throwing one) */
@@ -220,7 +103,6 @@ export interface DriverHandle {
   /** entity-table pagination over the loaded payload */
   older: () => void;
   newer: () => void;
-  toggleWatch: (kind: "member" | "ticker", key: string) => void;
   /** filer surface controls — no-ops unless an in-extract filer is loaded */
   holdingsPage: (dir: "prev" | "next") => void;
   /** changes-table pagination (the tail route previously had none). */
@@ -260,15 +142,12 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
   const params = new URLSearchParams(deps.search);
   const parsed = parseEntityKey(params.get("k"));
 
-  const ctx = (): RenderCtx => ({
-    watched: deps.watch.members,
-    watchedTickers: deps.watch.tickers,
-  });
+  const ctx: RenderCtx = {};
 
   function bodyHtml(): string {
     const e = loaded!;
-    if (e.kind === "m") return memberBody(e.member!, e.stamps, ctx(), page);
-    return tickerUnifiedBody(e.ticker!, e.inst!, e.stamps, ctx(), { fullTable: true, page });
+    if (e.kind === "m") return memberBody(e.member!, e.stamps, ctx, page);
+    return tickerUnifiedBody(e.ticker!, e.inst!, e.stamps, ctx, { fullTable: true, page });
   }
 
   function renderLoaded(): void {
@@ -779,10 +658,6 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
       page--;
       renderLoaded();
     },
-    toggleWatch: (kind, key) => {
-      deps.watch.toggle(kind, key);
-      if (loaded) renderLoaded();
-    },
     holdingsPage: (dir) => {
       if (!loadedFiler) return;
       filerState.page = Math.max(0, filerState.page + (dir === "next" ? 1 : -1));
@@ -825,38 +700,8 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
 
 /* ---------- browser entries ---------- */
 
-function browserWatch(): WatchStore {
-  return loadWatchStore(window.localStorage);
-}
-
-/** Paint + wire every [data-watch-kind] star on the page (delegated). */
-export function initWatchStars(watch: WatchStore = browserWatch()): void {
-  function paint(): void {
-    document.querySelectorAll<HTMLButtonElement>("[data-watch-kind]").forEach((btn) => {
-      const kind = btn.dataset.watchKind as "member" | "ticker";
-      const key = btn.dataset.watchKey!;
-      const on = watch.has(kind, key);
-      btn.setAttribute("aria-pressed", String(on));
-      const glyph = btn.querySelector(".watch-glyph");
-      if (glyph) glyph.textContent = on ? "★" : "☆";
-      const note = btn.querySelector(".watch-note");
-      if (note) note.textContent = on ? "watching · saved on this device" : "watch";
-    });
-  }
-  document.addEventListener("click", (ev) => {
-    const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-watch-kind]");
-    if (!btn) return;
-    watch.toggle(btn.dataset.watchKind as "member" | "ticker", btn.dataset.watchKey!);
-    paint();
-  });
-  paint();
-}
-
-/** Prerendered entity pages: watch stars + endpoint-backed table pagination. */
+/** Prerendered entity pages: endpoint-backed table pagination. */
 export function initEntityPage(): void {
-  const watch = browserWatch();
-  initWatchStars(watch);
-
   const main = document.querySelector<HTMLElement>("main[data-entity-kind]");
   const table = document.querySelector<HTMLElement>("[data-entity-table]");
   const rowsEl = document.querySelector<HTMLElement>("[data-entity-rows]");
@@ -899,7 +744,7 @@ export function initEntityPage(): void {
     const max = Math.max(0, pageCountFor(merged) - 1);
     if (page > max) page = max;
     const items = pageSlice(merged, page).filter((i): i is TxnRow => i.kind === "txn");
-    const ctx: RenderCtx = { watched: watch.members, watchedTickers: watch.tickers };
+    const ctx: RenderCtx = {};
     /* The SSR table hoisted any flag carried by every row to a
        table-level note and suppressed it per row. The client must suppress the
        identical set or paging would re-introduce badges the note above the
@@ -1236,18 +1081,12 @@ export function dispatchEntityClick(el: Element, handle: DriverHandle): void {
     const newer = el.closest("[data-entity-newer]");
     if (newer && newer.getAttribute("aria-disabled") !== "true") {
       handle.newer();
-      return;
-    }
-    const star = el.closest<HTMLButtonElement>("[data-watch-kind]");
-    if (star) {
-      handle.toggleWatch(star.dataset.watchKind as "member" | "ticker", star.dataset.watchKey!);
     }
 }
 
 export function runGenericRoute(): void {
   const root = document.getElementById("entity-root");
   if (!root) return;
-  const watch = browserWatch();
   const handle = runEntityDriver({
     search: window.location.search,
     fetchJson: async (url) => {
@@ -1270,7 +1109,6 @@ export function runGenericRoute(): void {
     setTitle: (t) => {
       document.title = t;
     },
-    watch,
     schedule: (fn, ms) => {
       const id = window.setTimeout(fn, ms);
       return () => window.clearTimeout(id);

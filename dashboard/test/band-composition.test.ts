@@ -327,7 +327,7 @@ function partnerTunedRows(o: { partnerPx: number; chromePx: number; max: number;
 test("CD-1 (Q2-10): member flows show 20 and the filing history 12 whatever the side cell holds; a partner-tuned N fails", async () => {
   const { memberBody, memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const stamps = { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" };
-  const ctx = { watched: new Set<string>() };
+  const ctx = {};
   // 30 tickers and 30 filings, so both compact tables hold rows back
   const rows = Array.from({ length: 30 }, (_, i) => txn({ txnId: `t${i}`, ticker: `T${String(i).padStart(2, "0")}`, bioguide: "T000001", traded: "2026-06-24", filed: `2026-${String(1 + (i % 6)).padStart(2, "0")}-${String(1 + i).padStart(2, "0")}`, doc: `https://efdsearch.senate.gov/x/${i}` }));
   const member = { bioguide: "T000001", name: "Fixture", party: "R", state: "OK", district: null, chamber: "senate", servingSince: "1999", filingCount: 30, txns: rows, paper: [] } as never;
@@ -687,7 +687,7 @@ test("C2-2: a value longer than a narrow figure holds is marked data-wide; the u
     txn({ txnId: "s", side: "sale", low: 50_000_001, high: null, traded: "2026-06-02", filed: "2026-06-11" }),
   ];
   const member = { bioguide: "M000001", name: "M", party: "R", state: "OK", district: null, chamber: "senate", servingSince: "1999", filingCount: 2, txns: rows, paper: [] } as never;
-  const net = ledgerFigures(memberBody(member, stamps, { watched: new Set() }, 0)).find((f) => f.label === "Net flow · 12m")!;
+  const net = ledgerFigures(memberBody(member, stamps, {}, 0)).find((f) => f.label === "Net flow · 12m")!;
   assert.equal(net.value, "unbounded");
   assert.equal(net.sub, "open on both sides · an interval");
   // control: the pre-fix value (the 37-character phrase) is wide far past any figure

@@ -127,7 +127,7 @@ function fakeEl(props: Record<string, unknown> = {}) {
   };
 }
 
-function mountIndex(payload: InstIndexRow[]) {
+function mountIndex(payload: InstIndexRow[], opts: { pressedTypes?: string[] } = {}) {
   const els: Record<string, ReturnType<typeof fakeEl>> = {
     "inst-index-data": fakeEl({ textContent: JSON.stringify(payload) }),
     "inst-managers-tbody": fakeEl(),
@@ -145,6 +145,14 @@ function mountIndex(payload: InstIndexRow[]) {
   // would pass this test. Only the exact selector the island is specified to
   // use resolves; anything else returns nothing and the assertions fail.
   const SELECTOR = "[data-inst-sort]";
+  /* the server's pressed manager-type chips (R14), when a test supplies them */
+  const PRESSED = '#mgr-chips [data-mgr-type][aria-pressed="true"]';
+  const pressed = (opts.pressedTypes ?? []).map((t) => {
+    const chip = fakeEl();
+    (chip as unknown as { dataset: Record<string, string> }).dataset = { mgrType: t };
+    chip.setAttribute("aria-pressed", "true");
+    return chip;
+  });
   const asked: string[] = [];
   (globalThis as unknown as { document: unknown }).document = {
     getElementById: (id: string) => els[id] ?? null,
@@ -157,10 +165,10 @@ function mountIndex(payload: InstIndexRow[]) {
     },
     querySelectorAll: (sel: string) => {
       asked.push(sel);
-      return sel === SELECTOR ? ths : [];
+      return sel === SELECTOR ? ths : sel === PRESSED ? pressed : [];
     },
   };
-  return { els, ths, asked };
+  return { els, ths, asked, pressed };
 }
 
 test("ENTRY POINT: initInstIndex binds headers and syncs aria without repainting", () => {
@@ -220,10 +228,10 @@ test("the island queries EXACTLY the specified sort selector, not a near-miss", 
     "[data-inst-sort]",
     '.compact-disclosure[data-compact-for="inst-managers-tbody"]',
     "#mgr-chips [data-mgr-type],#mgr-chips [data-mgr-notable]",
-    // R14: the island starts from the server's pressed default (Hedge funds)
-    // and clears it for a visitor with a watchlist on this device.
+    // R14: the island starts from the server's pressed default (Hedge funds),
+    // for every visitor — it no longer clears it for a device with a watchlist
+    // (signals-v3 M1), so it no longer asks for every chip to un-press.
     '#mgr-chips [data-mgr-type][aria-pressed="true"]',
-    "#mgr-chips [data-mgr-type]",
   ]);
   assert.ok(
     asked.includes("[data-inst-sort]"),
@@ -233,4 +241,35 @@ test("the island queries EXACTLY the specified sort selector, not a near-miss", 
     asked.every((s) => ALLOWED.has(s)),
     `unexpected selector(s): ${asked.filter((s) => !ALLOWED.has(s)).join(", ")}`,
   );
+});
+
+test("R14 (signals-v3 M1): Hedge funds is the default for EVERY visitor — legacy watch keys on the device change nothing, and the island reads no storage", () => {
+  const typing = (cik: string, display_name: string, manager_type: string) => ({ cik, display_name, person: null, manager_type, notable: false });
+  const typed = [
+    row({ cik: "0000001", name: "ALPHA CAPITAL", value: 100, typing: typing("0000001", "Alpha Capital", "hedge_fund") } as never),
+    row({ cik: "0000002", name: "bravo partners", value: 300, typing: typing("0000002", "Bravo Partners", "pension") } as never),
+  ];
+  const reads: string[] = [];
+  const g = globalThis as unknown as { localStorage?: unknown };
+  const prior = g.localStorage;
+  g.localStorage = {
+    getItem: (k: string) => {
+      reads.push(k);
+      return k === "populus:watch:v2" ? JSON.stringify({ v: 2, members: ["A000001"], tickers: ["WMB"] }) : null;
+    },
+    setItem: () => undefined,
+  };
+  try {
+    const { els, pressed } = mountIndex(typed, { pressedTypes: ["hedge_fund"] });
+    initInstIndex();
+    assert.equal(pressed[0]!.getAttribute("aria-pressed"), "true", "the server's default chip stays pressed");
+    assert.deepEqual(reads, [], "the island reads nothing from the device");
+    els["inst-index-q"].fire("input"); // a repaint at the default state
+    const body = String(els["inst-managers-tbody"].innerHTML);
+    assert.ok(body.includes("Alpha Capital"), "the hedge fund is listed");
+    assert.ok(!body.includes("Bravo Partners"), "the pension filer is filtered out by the default chip");
+    assert.match(String(els["inst-index-count"].textContent), /1 of 2 managers · .*1 filter active/, "the count states the default filter");
+  } finally {
+    g.localStorage = prior;
+  }
 });

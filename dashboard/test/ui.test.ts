@@ -35,7 +35,7 @@ import type { QoqDeltaRow, TopHolderRow } from "../src/lib/inst.ts";
 import { type TxnRow, type RenderCtx } from "../src/lib/format.ts";
 import { domOf, ledgerFigures, visibleText } from "./lib/ledger-dom.ts";
 
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 const STAMPS: BuildStamps = {
   buildId: "20260724.3",
   generatedAt: "2026-07-24 06:56 UTC",

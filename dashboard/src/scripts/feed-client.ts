@@ -1,4 +1,4 @@
-/* Client island for /congress: filtering, search, pagination, watchlist.
+/* Client island for /congress: filtering, search, pagination.
    All filtering happens on this device over the same-origin dataset shipped
    with the build (ARCHITECTURE §12.1 — no external calls, no accounts).
    Rows render through the same feedItemHtml the build used for page 1. */
@@ -29,7 +29,6 @@ import {
 } from "../lib/feed-parts.ts";
 import { fetchFeedPartsIndex, loadFeedCorpus } from "./feed-corpus.ts";
 import { initSortableTable } from "./table-sort.ts";
-import { loadWatchStore } from "./entity-client.ts";
 
 interface State {
   chamber: "all" | "house" | "senate";
@@ -50,8 +49,6 @@ interface State {
   dateFrom: string; // "" = unbounded
   dateTo: string; // "" = unbounded
   dateBasis: "filed" | "traded";
-  /** A-3: restrict to rows whose member or ticker is watched on this device */
-  watchedOnly: boolean;
 }
 
 const DEFAULTS: State = {
@@ -67,7 +64,6 @@ const DEFAULTS: State = {
   dateFrom: "",
   dateTo: "",
   dateBasis: "filed",
-  watchedOnly: false,
 };
 
 /** F-16 sort key: the disclosed lower bound, or null when the row has no
@@ -107,8 +103,8 @@ export function amountOrder(
    own copy — a second owner would mean a second download, a second decode, and
    a second failure mode, without removing the first of any of them.
 
-   R19: the download itself now lives in `scripts/feed-corpus.ts`, because
-   /watchlist/ needs the same reassembly. That module is deliberately a set of
+   R19: the download itself lives in `scripts/feed-corpus.ts`, which owns the
+   reassembly rules. That module is deliberately a set of
    FUNCTIONS with no module-level cache — a shared *cached* loader was
    considered and rejected, and still is: a cache there would be a second owner
    of the same bytes. Ownership stays here, one caller per page.
@@ -213,26 +209,6 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
   }
   const state: State = { ...DEFAULTS };
   resetWrap?.removeAttribute("hidden");
-
-  /* ---------- watchlist (shared v2 store; legacy write-through) ---------- */
-
-  const watchStore = loadWatchStore(localStorage);
-  const watched = watchStore.members;
-
-  function paintStars(): void {
-    document.querySelectorAll<HTMLButtonElement>("[data-watch]").forEach((btn) => {
-      const on = watched.has(btn.dataset.watch!);
-      btn.setAttribute("aria-pressed", String(on));
-      btn.textContent = on ? "★" : "☆";
-    });
-  }
-  document.addEventListener("click", (ev) => {
-    const btn = (ev.target as Element).closest<HTMLButtonElement>("[data-watch]");
-    if (!btn) return;
-    watchStore.toggle("member", btn.dataset.watch!);
-    paintStars();
-  });
-  paintStars();
 
   /* ---------- dataset loading (lazy, same-origin) ---------- */
 
@@ -355,7 +331,6 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
       s.amountMin === 0 &&
       s.owner === "all" &&
       !s.late &&
-      !s.watchedOnly &&
       s.q === "" &&
       s.dateFrom === "" &&
       s.dateTo === ""
@@ -382,7 +357,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
         if (seq !== partsApplySeq) return; // a later page change superseded this one
         loadingEl?.setAttribute("hidden", "");
         const items = pageSliceFrom(lists.flat(), parts[0]?.txn_offset ?? 0, state.page, PAGE_SIZE);
-        const ctx: RenderCtx = { watched, referenceFeed: true };
+        const ctx: RenderCtx = {};
         bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
         announceRerender();
         setCounts(
@@ -429,12 +404,6 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
 
   function matchTxnExceptAmount(r: TxnRow, s: State): boolean {
     if (matchDate(r, s) !== "in") return false;
-    if (
-      s.watchedOnly &&
-      !(r.bioguide !== null && watched.has(r.bioguide)) &&
-      !(r.ticker !== null && watchStore.tickers.has(r.ticker))
-    )
-      return false;
     if (s.chamber !== "all" && r.chamber !== s.chamber) return false;
     if (s.party !== "all" && r.party !== s.party) return false;
     if (s.side === "buy" && r.side !== "purchase") return false;
@@ -487,8 +456,6 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
       ) !== "in"
     )
       return false;
-    // A paper filing has no ticker, so watched-only matches on the member.
-    if (s.watchedOnly && !(p.bioguide !== null && watched.has(p.bioguide))) return false;
     return true;
   }
 
@@ -623,7 +590,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
         ? txns.filter((r) => matchDate(r, state) === "anomaly").length
         : 0;
 
-    const ctx: RenderCtx = { watched, referenceFeed: true };
+    const ctx: RenderCtx = {};
     let items: (TxnRow | PaperRow)[];
     let maxPage: number;
     let unrankedStart = -1; // index into the FULL combined list, amount sorts only
@@ -735,8 +702,6 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     if (dateFromInp) dateFromInp.value = "";
     if (dateToInp) dateToInp.value = "";
     if (dateBasisSel) dateBasisSel.value = "filed";
-    const watchedReset = document.getElementById("filter-watched") as HTMLInputElement | null;
-    if (watchedReset) watchedReset.checked = false;
     apply();
   }
 
@@ -771,13 +736,6 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
   });
   lateChk?.addEventListener("change", () => {
     state.late = lateChk.checked;
-    state.page = 0;
-    apply();
-  });
-
-  const watchedChk = document.getElementById("filter-watched") as HTMLInputElement | null;
-  watchedChk?.addEventListener("change", () => {
-    state.watchedOnly = watchedChk.checked;
     state.page = 0;
     apply();
   });

@@ -1,5 +1,5 @@
-/* The /signals composition (Signals.dc.html): rule book, hits, lag, rates,
-   watchlist — every number from the artifact and the page's own rows. */
+/* The /signals composition (Signals.dc.html): rule book, hits, lag, rates —
+   every number from the artifact and the page's own rows. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { signalsBody } from "../src/lib/ui/index.ts";
@@ -57,7 +57,7 @@ const ART: SignalArtifact = {
     sig({ kind: "s1-large", status: "superseded", supersededInBuild: "c" }),
   ],
 };
-const CTX = { watched: new Set<string>() };
+const CTX = {};
 
 test("rule book lists every kind with its exact rule, active hit counts and the withheld kinds by reason", () => {
   const html = signalsBody(ART, CTX);
@@ -184,7 +184,11 @@ test("R17 (M2): hits are Kind · Ticker · Who · What · Filed · Size · Src, 
   assert.match(full, /id="signal-hits-range"[^>]*>1–3 of 3 lines · 3 hits</);
   assert.match(full, /id="signal-hits-next" aria-disabled="true"/);
   assert.match(full, /button" data-kind="s1-large"/, "filter by rule");
-  assert.match(full, /id="signal-watched-only"/, "filter by watchlist");
+  assert.match(full, /id="signal-stocks-only"/, "filter to listed stocks");
+  /* signals-v3 M1 (R1): the "watched only" filter left with the watchlist —
+     the hits panel filters by rule and by listed stocks, and by nothing kept
+     on the device. */
+  assert.doesNotMatch(full, /signal-watched-only|watched only/i, "no watched-only control");
 });
 
 test("hit rate is per 1,000 rows filed in the window and withheld without a denominator", () => {
@@ -203,10 +207,14 @@ test("lag distribution groups identical (member, lag) rows and marks the 45-day 
   assert.match(html, /LATEST BATCH FILED 2026-05-01/);
 });
 
-test("the watch band embeds a </script>-safe payload and the whole page passes the wording scan", () => {
+test("signals-v3 M1: the page embeds no watch band and no data island; hostile names escape; the whole page passes the wording scan", () => {
   const html = signalsBody({ ...ART, signals: [sig({ kind: "s1-large", entities: { bioguide: null, memberName: "</script><b>x", ticker: null } })] }, CTX);
   assert.doesNotMatch(html, /<\/script><b>/);
-  assert.match(html, /id="signal-watch-data"/);
+  assert.match(html, /&lt;\/script&gt;&lt;b&gt;x/, "the hostile name renders as text in its hit row");
+  /* R1: the device-local watch band and its JSON island are gone; the page
+     carries no `<script>` element of any kind. */
+  assert.doesNotMatch(html, /<script\b/i, "no script element, inert or not");
+  assert.doesNotMatch(html, /id="signal-watch|si-watchband|aria-label="Watchlist"/, "no watch band");
   assert.deepEqual(scanBannedWording(signalsBody(ART, CTX, { rowsEvaluated: 100, latestBatch: [], latestBatchFiled: null })), []);
 });
 
@@ -309,6 +317,7 @@ test("R2-8 / C2-6: each summary controls its own evidence row by id; the evidenc
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, signalsTileHtml, type HitFilter } from "../src/lib/ui/index.ts";
+import { DEFAULT_HIT_FILTER } from "../src/lib/ui/signals.ts";
 
 const PAGE_SRC = path.resolve(import.meta.dirname, "..", "src", "pages", "signals", "index.astro");
 /** a per-row hit that is NOT listed stock (House "OT", as the live Not Fade Away row) */
@@ -325,7 +334,7 @@ function priorRecord(over: Partial<Signal> & { kind: Signal["kind"] }): Signal {
   return s;
 }
 const hitRows = (html: string) => domOf(html).querySelectorAll("#signal-hits-body tr.si-hit");
-const FILTER = (over: Partial<HitFilter> = {}): HitFilter => ({ kind: "all", watchedOnly: false, stocksOnly: true, watchedMembers: new Set(), watchedTickers: new Set(), ...over });
+const FILTER = (over: Partial<HitFilter> = {}): HitFilter => ({ kind: "all", stocksOnly: true, ...over });
 
 test("R7 / T8: the page is Congress signals (title, h1, description); the 13F and cross-regime tiles are gone; the institutional rule-book sentence stays", () => {
   const html = signalsBody(ART, CTX);
@@ -384,24 +393,24 @@ test("R10 / T9: the WHAT sentence — owner, verb, asset, chip; S-3 names its me
   }
 });
 
-test("R10 / T9: every signal-row renderer prints the sentence — hit rows, watch band payload, home tile, member panel; the legacy renderer is gone", async () => {
+test("R10 / T9: every signal-row renderer prints the sentence — hit rows and the client's repaint, home tile, member panel; the legacy renderer is gone", async () => {
   const art: SignalArtifact = { ...ART, signals: [other({ entities: { bioguide: "A000001", memberName: "Test <Member>", ticker: null } }), sig({ kind: "s2-first" })] };
   const html = signalsBody(art, CTX);
   assert.match(ownText(hitRows(html)[0]!.querySelector("td.si-what")!), /^Purchase of ABC Holdings Inc$/, "hit row: a listed stock, so no chip");
   assert.equal(hitRows(html)[0]!.querySelector(".si-asset-chip"), null);
   // unfiltered, a non-stock hit row carries its type chip
   const municipal = signalsBody({ ...ART, signals: [sig({ kind: "s1-large", assetType: "Municipal Security", listedStock: false })] }, CTX);
-  assert.match(municipal, /"Municipal Security"/, "the type rides in the watch payload");
+  assert.equal(hitRows(municipal).length, 0, "listed stocks only by default: the server page holds back the non-stock hit");
   const { hitRowHtml } = await import("../src/lib/ui/index.ts");
   const muniRow = domOf(`<table><tbody>${hitRowHtml(sig({ kind: "s1-large", assetType: "Municipal Security", listedStock: false }), CTX)}</tbody></table>`);
   assert.equal(ownText(muniRow.querySelector("td.si-what .si-asset-chip")!), "Municipal Security");
-  // the watch band embeds the fields its client builds the same sentence from
-  const payload = JSON.parse(domOf(html).querySelector("#signal-watch-data")!.textContent) as { cols: string[]; rows: unknown[][] };
-  assert.deepEqual(payload.cols.slice(-5), ["side", "asset", "assetType", "owner", "stk"]);
-  const row = payload.rows.find((r) => r[1] === "s1-large")!;
-  assert.deepEqual(row.slice(-5), ["purchase", "Not Fade Away LLC [OT]", "OT", "spouse", false]);
+  /* the client's repaint: the watch band (and its client-built sentence) left
+     with the watchlist in signals-v3 M1; the island repaints hit rows only
+     through the server's renderer, so it prints the same sentence by
+     construction and builds none of its own */
   const client = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "signals-client.ts"), "utf-8");
-  assert.match(client, /signalSentence\(\{/, "the watch band's client prints the shared sentence");
+  assert.match(client, /\bhitsBodyHtml\(/, "the island repaints through the server's row renderer");
+  assert.doesNotMatch(client, /signalSentence/, "the island composes no sentence of its own");
   // home tile
   const tile = signalsTileHtml(art.signals, CTX, () => "LARGE");
   assert.match(ownText(domOf(tile).querySelector("tbody td.c-flex")!), /Purchase of ABC Holdings Inc/);
@@ -476,7 +485,7 @@ test("R12 / T11: listed stocks only by default — SSR hides non-stock hits and 
   assert.match(client, /hitsView\(hits, filter\(\)\)/, "the pager repaints through the shared view");
 });
 
-test("R12 / T11: kind × watched × stocks — the hidden count is the total minus shown under every combination", () => {
+test("R12 / T11: kind × stocks — the hidden count is the total minus shown under every combination", () => {
   const hits = [
     sig({ kind: "s1-large", entities: { bioguide: "A000001", memberName: "A", ticker: "ABC" } }),
     sig({ kind: "s1-large", entities: { bioguide: "B000002", memberName: "B", ticker: "XYZ" }, assetType: "OT", listedStock: false }),
@@ -485,23 +494,26 @@ test("R12 / T11: kind × watched × stocks — the hidden count is the total min
     sig({ kind: "s3-cooccurrence", side: "sale", listedStock: false, entities: { bioguide: null, memberName: "4 members", ticker: "XYZ" } }),
   ];
   for (const kind of ["all", "s1-large", "s6-late-large", "s3-cooccurrence"]) {
-    for (const watchedOnly of [false, true]) {
-      for (const stocksOnly of [false, true]) {
-        const f = FILTER({ kind, watchedOnly, stocksOnly, watchedMembers: new Set(["A000001"]), watchedTickers: new Set(["XYZ"]) });
-        const others = hits.filter((s) => hitMatches(s, { ...f, stocksOnly: false }));
-        const shown = hits.filter((s) => hitMatches(s, f));
-        const v = hitsView(hits, f);
-        assert.equal(v.hits, shown.length, `${kind}/${watchedOnly}/${stocksOnly}`);
-        assert.equal(v.hidden, others.length - shown.length, `${kind}/${watchedOnly}/${stocksOnly}: hidden = total minus shown`);
-        if (stocksOnly) assert.ok(shown.every((s) => s.listedStock === true), "only listed stocks show");
-        if (kind !== "all") assert.ok(shown.every((s) => s.kind === kind));
-        if (watchedOnly) assert.ok(shown.every((s) => s.entities.bioguide === "A000001" || s.entities.ticker === "XYZ"));
-      }
+    for (const stocksOnly of [false, true]) {
+      const f = FILTER({ kind, stocksOnly });
+      const others = hits.filter((s) => hitMatches(s, { ...f, stocksOnly: false }));
+      const shown = hits.filter((s) => hitMatches(s, f));
+      const v = hitsView(hits, f);
+      assert.equal(v.hits, shown.length, `${kind}/${stocksOnly}`);
+      assert.equal(v.hidden, others.length - shown.length, `${kind}/${stocksOnly}: hidden = total minus shown`);
+      if (stocksOnly) assert.ok(shown.every((s) => s.listedStock === true), "only listed stocks show");
+      if (kind !== "all") assert.ok(shown.every((s) => s.kind === kind));
     }
   }
-  // spot values: watched + stocks + all kinds → A's ABC hit only; the untyped LATE and the S-3 on XYZ are hidden
-  const v = hitsView(hits, FILTER({ watchedOnly: true, watchedMembers: new Set(["A000001"]), watchedTickers: new Set(["XYZ"]) }));
-  assert.deepEqual([v.hits, v.hidden], [1, 3]);
+  // spot values: stocks + all kinds → the ABC and QQQ hits; the OT, the untyped LATE and the S-3 are hidden
+  const v = hitsView(hits, FILTER());
+  assert.deepEqual([v.hits, v.hidden], [2, 3]);
+  // stocks + LATE → the QQQ hit; the untyped LATE is hidden
+  const late = hitsView(hits, FILTER({ kind: "s6-late-large" }));
+  assert.deepEqual([late.hits, late.hidden], [1, 1]);
+  /* signals-v3 M1 (R1): the filter carries exactly the rule and the listed-stock
+     switch — no watched-only field, so no device-local state can narrow it */
+  assert.deepEqual(Object.keys(DEFAULT_HIT_FILTER).sort(), ["kind", "stocksOnly"]);
 });
 
 test("R12: the home tile takes the same default and states its hidden count", () => {

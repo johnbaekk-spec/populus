@@ -169,7 +169,7 @@ test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for 
   const rows = Array.from({ length: 80 }, (_, i) =>
     txn({ txnId: `t-${i}`, bioguide: `M${String(i).padStart(6, "0")}`, name: `Member ${i}`, low: 1000 * (i + 1), high: 2000 * (i + 1) }),
   );
-  const ctx: RenderCtx = { watched: new Set(), referenceRankings: true };
+  const ctx: RenderCtx = { referenceRankings: true };
   const html = congressRankingSection(
     "leaders",
     leadersRollup(rows, "2026-08-23", { range: "12m", basis: "traded" }),
@@ -637,7 +637,7 @@ import type { Signal } from "../src/lib/signals.ts";
 
 test("R18: the masthead claim is twelve words or fewer and the three tiles carry 5 / 5 / 3 rows", () => {
   assert.ok(HOME_CLAIM.split(/\s+/).length <= 12, HOME_CLAIM);
-  const ctx: RenderCtx = { watched: new Set() };
+  const ctx: RenderCtx = {};
   const rows = Array.from({ length: 9 }, (_, i) => txn({ txnId: `t${i}`, name: `Member ${i}` }));
   const congress = congressTileHtml(rows, ctx);
   assert.equal(bodyRows(congress).length, HOME_TILE_ROWS.congress);
@@ -706,7 +706,7 @@ function overlapTxns(): TxnRow[] {
 }
 
 test("R19: the Congress half is exactly the last 90 days by filed date; the 13F half is notable filers in the closed quarter from agg_ticker_holders", () => {
-  const ctx: RenderCtx = { watched: new Set() };
+  const ctx: RenderCtx = {};
   const band = overlapBand({ ticker: "NVDA", txns: overlapTxns(), generatedAtDate: NOW, inst: overlapInst(), typingByCik: overlapInst().typingByCik, period: "2026-03-31", ctx, filerHref: (cik) => `/f/${cik}` });
   assert.equal(band.window.start, "2026-05-25");
   assert.ok(band.buyers.some((m) => m.name === "Buyer One"), "the 90-day-old trade is in");
@@ -730,7 +730,7 @@ test("R19: the Congress half is exactly the last 90 days by filed date; the 13F 
 });
 
 test("R19: an unmapped ticker ships the Congress half and a Planned badge on the 13F half", () => {
-  const ctx: RenderCtx = { watched: new Set() };
+  const ctx: RenderCtx = {};
   const band = overlapBand({ ticker: "ZZZZ", txns: overlapTxns(), generatedAtDate: NOW, inst: overlapInst(), typingByCik: overlapInst().typingByCik, period: "2026-03-31", ctx, filerHref: (cik) => `/f/${cik}` });
   assert.equal(band.inst, null);
   assert.ok(band.buyers.length > 0);
@@ -741,7 +741,7 @@ test("R19: an unmapped ticker ships the Congress half and a Planned badge on the
 });
 
 test("R19/R20: the band renders on BOTH routes — the unified ticker page (via deps) and the reviewed-ticker holders page", () => {
-  const ctx: RenderCtx = { watched: new Set() };
+  const ctx: RenderCtx = {};
   const inst = overlapInst();
   const band = overlapBand({ ticker: "NVDA", txns: overlapTxns(), generatedAtDate: NOW, inst, typingByCik: inst.typingByCik, period: "2026-03-31", ctx, filerHref: (cik) => `/f/${cik}` });
   const overlapHtml = overlapBandHtml(band, ctx, (cik) => `/f/${cik}`);

@@ -29,7 +29,7 @@ import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 import { initCongressSections } from "../src/scripts/congress-sections.ts";
 
 const GENERATED_AT = "2026-08-12";
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 const STAMPS: BuildStamps = {
   buildId: "b",
   generatedAt: "2026-08-12 00:00 UTC",

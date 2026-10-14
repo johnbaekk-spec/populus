@@ -133,9 +133,12 @@ for (const [file, route] of references) {
       }
       if (route === '/signals/') {
         // R17: the hits table leads.
-        for (const title of ['Hits', 'Lag distribution', 'Hit rate by family', 'Watchlist']) {
+        for (const title of ['Hits', 'Lag distribution', 'Hit rate by family']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
+        // signals-v3 M1 (R1): the device-local watch band is gone
+        await expect(page.getByRole('heading', {name:'Watchlist', exact:true})).toHaveCount(0);
+        await expect(page.locator('#signal-watch')).toHaveCount(0);
         /* T2.10 (:58-62), D3/L14: the rule book is EXPANDED — no enclosing
            disclosure, its seven rules on the page — and the hits head carries
            seven columns with Kind first (T2.6). */
@@ -532,7 +535,7 @@ test('Filer composition at 1440 (T2.5): parts in DOM order = visual order; the p
   }
 });
 
-test('Signals composition at 1440 (T2.6): S1 pairs Hits with Lag + Hit rate; the rule book between S1 and the watchlist', async ({ page }) => {
+test('Signals composition at 1440 (T2.6): S1 pairs Hits with Lag + Hit rate; the rule book follows S1, and no watch band follows it', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/signals/'))?.status()).toBe(200);
   const s1 = await page.evaluate(() => {
@@ -545,9 +548,10 @@ test('Signals composition at 1440 (T2.6): S1 pairs Hits with Lag + Hit rate; the
   expect(s1[1]!.heads, 'the right cell holds Lag distribution, then Hit rate').toEqual(['Lag distribution', 'Hit rate by family']);
   expect(Math.abs(s1[0]!.top - s1[1]!.top), 'the two cells start at one top').toBeLessThanOrEqual(2);
   expect(s1[0]!.right).toBeLessThanOrEqual(s1[1]!.left + 1);
-  const order = await partsInOrder(page, ['main .design-signals-band', 'main #signal-rulebook', 'main #signal-watch']);
+  const order = await partsInOrder(page, ['main .design-signals-band', 'main #signal-rulebook']);
   expect(order.missing).toEqual([]);
-  expect(order.domOrder, 'S1 → rule book → watchlist (L14)').toBe(true);
+  expect(order.domOrder, 'S1 → rule book (L14)').toBe(true);
+  await expect(page.locator('main #signal-watch'), 'signals-v3 M1: the watch band left with the watchlist').toHaveCount(0);
   expectVisualOrder(order.tops, 'the signals page');
   const rb = await page.locator('#signal-rulebook').evaluate((s) => ({ details: !!s.closest('details'), multiline: s.querySelector('table')!.hasAttribute('data-multiline'), rows: s.querySelectorAll('tbody tr').length }));
   expect(rb).toEqual({ details: false, multiline: true, rows: 7 });
@@ -572,8 +576,6 @@ interface CanvasCase {
       renders its rows (the directory's "Hedge funds" chip matches no filer on
       a build without the manager registry) */
   release?: string;
-  /** seed the device-local watchlist, so the watch band renders rows */
-  seedWatch?: boolean;
   tables: MeasureArg["tables"];
   map: BandMap;
 }
@@ -688,11 +690,13 @@ const CANVAS_CASES: CanvasCase[] = [
     },
   },
   {
-    file: "Signals.dc.html", route: "/signals/", seedWatch: true,
+    file: "Signals.dc.html", route: "/signals/",
+    /* signals-v3 M1 (R1): the canvas's "◆ Watchlist" band has no route twin
+       any more — the watchlist was removed — so it is not compared (a band
+       the route does not have is never faked). */
     tables: [
       { label: "Rule book", selector: "#signal-rulebook table" },
       { label: "Hits", selector: "#signal-hits table.si-table" },
-      { label: "Watchlist", selector: "#signal-watch-table" },
     ],
     map: {
       ledger: true, cards: true,
@@ -703,9 +707,8 @@ const CANVAS_CASES: CanvasCase[] = [
            column; the canvas's own SRC stamp (REAL / ILLUS.) marks the
            mockup's illustrative rows and has no production twin */
         { canvas: "Hits", route: "Hits", columns: { WHO: "SUBJECT", WHAT: "EVIDENCE", FILED: "WHEN", SIZE: "MAGNITUDE", SRC: "RCPT" }, unmatched: { TICKER: WHY.ticker }, roleDeviation: { WHO: "table.role.member" } },
-        { canvas: "◆ Watchlist", route: "Watchlist", columns: { SOURCE: "RCPT" } },
       ],
-      heads: [{ canvas: "Rule book", route: "Rule book" }, { canvas: "Hits", route: "Hits" }, { canvas: "Lag distribution", route: "Lag distribution" }, { canvas: "Hit rate by family", route: "Hit rate by family" }, { canvas: "◆ Watchlist", route: "Watchlist" }],
+      heads: [{ canvas: "Rule book", route: "Rule book" }, { canvas: "Hits", route: "Hits" }, { canvas: "Lag distribution", route: "Lag distribution" }, { canvas: "Hit rate by family", route: "Hit rate by family" }],
       pairs: [{ canvas: ["Hits", "Lag distribution"], route: ["Hits", "Lag distribution"] }],
       segs: [{ canvas: "All|Congress|13F|Cross", route: "All|…" }],
     },
@@ -732,11 +735,6 @@ function canvases(browser: Browser): Promise<Record<string, PageMeasure>> {
 /** Open a route at the canvas's 1440 screen in the canvas's (dark) theme. */
 async function openRoute(page: Page, c: CanvasCase): Promise<void> {
   await page.addInitScript(() => { try { localStorage.setItem("populus:theme", "dark"); } catch { /* storage blocked */ } });
-  if (c.seedWatch) {
-    await page.addInitScript(() => {
-      try { localStorage.setItem("populus:watch:v2", JSON.stringify({ v: 2, members: ["M001193"], tickers: ["NVDA", "AAPL"] })); } catch { /* as above */ }
-    });
-  }
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto(c.route))?.status(), `${c.route} answers 200`).toBe(200);
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "the canvas is dark; so is the route").toBe("rgb(4, 7, 13)");
@@ -745,19 +743,6 @@ async function openRoute(page: Page, c: CanvasCase): Promise<void> {
   if (c.release) {
     for (const chip of await page.locator(c.release).all()) await chip.click();
     await page.waitForTimeout(300);
-  }
-  if (c.seedWatch) {
-    /* the SEEN column states NEW (the canvas's state) only against a seen
-       marker: set one at the window's start, then reload */
-    const seeded = await page.evaluate(() => {
-      const root = document.querySelector<HTMLElement>("#signal-watch");
-      if (!root?.dataset.coverageFrom) return false;
-      localStorage.setItem("populus:watch:cursor:v1", JSON.stringify({ v: 1, lastSeenFiled: root.dataset.coverageFrom, buildId: root.dataset.buildId ?? "", at: new Date().toISOString() }));
-      return true;
-    });
-    expect(seeded, "the watch band states its window, so a seen marker can be set").toBe(true);
-    await page.reload();
-    await page.evaluate(() => document.fonts.ready);
   }
 }
 

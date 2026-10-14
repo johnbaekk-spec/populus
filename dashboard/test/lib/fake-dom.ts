@@ -1,5 +1,5 @@
-/* Review F5: a minimal DOM double so the CLIENT WIRING (initWatchlist,
-   initFeed's load path) runs under node --test — removal of the wiring, not
+/* Review F5: a minimal DOM double so the CLIENT WIRING (initFeed's load
+   path) runs under node --test — removal of the wiring, not
    just of the pure helpers, must redden the suite. Deliberately tiny: enough
    surface for these islands, nothing more. */
 

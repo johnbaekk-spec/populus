@@ -169,7 +169,7 @@ test("S-2 rule states the era scope; S-6 requires late AND large", () => {
 
 test("D-2 body: rules, receipts, lag caveat, and withheld kinds all render", () => {
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
-  const html = signalsBody(art, { watched: new Set() });
+  const html = signalsBody(art, {});
   assert.match(html, /Rule book/);
   assert.match(html, /amount lower bound ≥ \$250K/);
   assert.match(html, /eFD&nbsp;↗/);
@@ -240,7 +240,7 @@ test("review F2: cohort volume bounds — a busy chamber cannot hide behind a qu
 test("review F10: the per-entity signal section renders each signal's exact rule", async () => {
   const { memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
-  const html = memberSignalsPanel(art, "T000001", { watched: new Set() });
+  const html = memberSignalsPanel(art, "T000001", {});
   const mine = art.signals.find((s) => s.entities.bioguide === "T000001")!;
   assert.ok(html.includes(mine.rule.slice(0, 40)), "the verbatim rule must reach the member page");
 });
@@ -248,7 +248,7 @@ test("review F10: the per-entity signal section renders each signal's exact rule
 test("R26: member signal cards lead with the ticker — Ticker · What · Kind · Filed · Size · Src", async () => {
   const { memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
-  const html = memberSignalsPanel(art, "T000001", { watched: new Set() });
+  const html = memberSignalsPanel(art, "T000001", {});
   /* DOM parse (DESIGN-POLISH M1, T1.9): the headers carry their ledger roles
      and the rows their family edge, so the column order is read from the
      parsed table. The property is unchanged — the ticker leads. */
@@ -282,7 +282,7 @@ test("review r2-F3: tombstones never render as active — separate section, sepa
   const dies = txn({ txnId: "leaves", low: 500001, high: 1000000, filed: "2026-07-15", bioguide: "T000001" });
   const a = buildSignalArtifact({ ...inputs([...s1Pad(), row, dies]), buildId: "A" });
   const b = buildSignalArtifact({ ...inputs([...s1Pad(), row]), buildId: "B", priorArtifact: a });
-  const html = body(b, { watched: new Set() });
+  const html = body(b, {});
   // R17: the tombstone table left the page; the footnote names the count and
   // links the artifact, and no tombstone wears an active face.
   assert.doesNotMatch(html, /Superseded — no longer in the current view/);
@@ -292,7 +292,7 @@ test("review r2-F3: tombstones never render as active — separate section, sepa
   const activeS1 = b.signals.filter((s) => s.kind === "s1-large" && s.status === "active").length;
   // The rule book's HITS cell counts actives only.
   assert.match(html, new RegExp(`<td class="c-num si-hits">${activeS1}</td>`));
-  const member = panel(b, "T000001", { watched: new Set() });
+  const member = panel(b, "T000001", {});
   assert.match(member, /superseded in the window/);
 });
 
@@ -346,7 +346,7 @@ test("review r3-F4: a tombstone-only member states the supersession, never 'no s
   const only = txn({ txnId: "solo", low: 500001, high: 1000000, filed: "2026-07-15", bioguide: "Z000009", name: "Tomb Member" });
   const a = buildSignalArtifact({ ...inputs([...s1Pad(), only]), buildId: "A" });
   const b = buildSignalArtifact({ ...inputs([...s1Pad()]), buildId: "B", priorArtifact: a });
-  const html = memberSignalsPanel(b, "Z000009", { watched: new Set() });
+  const html = memberSignalsPanel(b, "Z000009", {});
   assert.doesNotMatch(html, /No signals for this member/);
   assert.match(html, /superseded inside it/);
   assert.match(html, /1 earlier signal was/);
@@ -421,10 +421,10 @@ test("r3-F3: unevaluated rows render with their withholding, not as active", asy
     txn({ txnId: `f${i}`, filed: "2026-08-01", low: 500001, high: 1000000 }),
   );
   const b = buildSignalArtifact({ ...inputs(flood), buildId: "B", priorArtifact: a });
-  const html = body(b, { watched: new Set() });
+  const html = body(b, {});
   assert.match(html, /carried forward <strong>unevaluated<\/strong>/);
   assert.doesNotMatch(html, /Superseded — no longer in the current view/);
-  const member = panel(b, "U000001", { watched: new Set() });
+  const member = panel(b, "U000001", {});
   assert.match(member, /unevaluated/);
   assert.doesNotMatch(member, /superseded/);
 });

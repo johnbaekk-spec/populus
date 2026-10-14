@@ -97,8 +97,7 @@ export function paperFromArray(a: unknown[]): PaperRow {
    The entity endpoints already refuse a version-mismatched payload
    (classifyResponse); the FULL feed dataset needs the same discipline or a
    cached v1 body is decoded with v2 column offsets — asset fields and txnId
-   silently undefined. One classifier, used by every full-dataset consumer
-   (feed client, watchlist client). */
+   silently undefined. One classifier, used by every full-dataset consumer. */
 
 export type DatasetClassification =
   | { outcome: "ok"; txns: unknown[][]; paper: unknown[][] }
@@ -194,8 +193,8 @@ export function esc(s: string): string {
 
    OPT-IN. Renderers take an optional NoteCtx. Called WITHOUT one they
    emit exactly what they emit on origin/main, byte for byte, because several of
-   them also render on routes this run does not own (/tickers/*, /watchlist/,
-   /e/). A note appears only where a caller asked for one. */
+   them also render on routes this run does not own (/tickers/*, /e/). A note
+   appears only where a caller asked for one. */
 
 export interface NoteCtx {
   /** Table or section identity, e.g. "filer-changes". Unique per rendered table. */
@@ -434,21 +433,6 @@ export function noteBody(...parts: (string | null | undefined)[]): string {
   return parts.filter((p): p is string => !!p).join(" · ");
 }
 
-/**
- * The column-explanation channel, opt-in.
- *
- * WITH a NoteCtx the `why` text becomes a note anchored on the header.
- * WITHOUT one it emits the `.col-why` span byte-for-byte as `origin/main`
- * does — because `feedHeadHtml` renders on `/congress/` (in scope) AND
- * `/watchlist/` (not in scope), so this cannot be an unconditional swap.
- * That is the whole point of the opt-in contract: the out-of-scope route is
- * untouched by construction, not by remembering to exclude it.
- */
-export function colWhyHtml(why: string, ctx: NoteCtx | undefined, key: string): string {
-  if (!why) return "";
-  return ctx ? note(why, ctx, key) : `<span class="col-why">${esc(why)}</span>`;
-}
-
 export function fmtInt(n: number): string {
   return n.toLocaleString("en-US");
 }
@@ -545,9 +529,9 @@ export function tickerNoteKey(ticker: string): string {
     40-character truncation and the cell's clip hide — before, only a screen
     reader could. The trigger is omitted only when the visible text hides
     NOTHING — shown exactly as filed, untruncated, with no stated type. These
-    surfaces (the classic feed, the member's largest recent disclosures, the
-    home rail) have no column note stating the mechanical rule, so CD3-4 (c)'s
-    drop does not apply to them. */
+    surfaces (the member's largest recent disclosures, the home rail) have no
+    column note stating the mechanical rule, so CD3-4 (c)'s drop does not apply
+    to them. */
 export function assetNameCell(
   r: Pick<TxnRow, "asset" | "assetType"> & Partial<Pick<TxnRow, "txnId">>,
   notes?: NoteCtx,
@@ -1516,13 +1500,7 @@ export function feedCountText(i: CountInputs): string {
 /* ---------- row renderers (single source for SSR + client) ---------- */
 
 export interface RenderCtx {
-  /** Eight-column reference composition; shared by Congress SSR and filtering. */
-  referenceFeed?: boolean;
   referenceRankings?: boolean;
-  /** bioguide ids watched in this browser; SSR passes an empty set. */
-  watched: ReadonlySet<string>;
-  /** tickers watched in this browser (watchlist v2); optional for old callers. */
-  watchedTickers?: ReadonlySet<string>;
   /** Entities cut by the page budget (ARCHITECTURE §12.1): links to them go to
       the generic client route /e/?k=… instead of a canonical page that was not
       emitted. Empty/absent in ordinary builds — the dev extract sits far inside
@@ -1633,17 +1611,6 @@ export function srcLinkDerived(footnoteHref: string | null, edgarUrl: string | n
   );
 }
 
-function starHtml(bioguide: string | null, name: string, ctx: RenderCtx): string {
-  if (!bioguide) {
-    return `<button class="star-btn" disabled aria-hidden="true" tabindex="-1">☆</button>`;
-  }
-  const on = ctx.watched.has(bioguide);
-  return (
-    `<button class="star-btn" data-watch="${esc(bioguide)}" aria-pressed="${on}"` +
-    ` aria-label="Watch ${esc(name)} — saved in this browser only">${on ? "★" : "☆"}</button>`
-  );
-}
-
 function memberCellHtml(r: {
   name: string; bioguide: string | null; party: string;
   state: string | null; district: string | null; chamber: "house" | "senate";
@@ -1694,19 +1661,6 @@ export function dualDate(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">, c
   return `<span class="visually-hidden">Traded </span><span class="traded-date">${esc(traded)}</span><span class="mobile-dates" aria-hidden="true">${esc(traded)} → ${esc(r.filed.slice(5))}</span> ${lagHtml(r)}`;
 }
 
-/** DualDate as a feed-row CELL.
-
-    `dualDate` returns CONTENT, never a container. It briefly returned a
-    `<td>` of its own when the feed became a table, which produced
-    `<td class="c-traded"><td class="cell cell-traded">…</td></td>` on the
-    per-member and per-ticker detail pages — pages this change lists as explicit
-    NON-GOALS. A browser silently REPAIRS nested cells by splitting them, so the
-    defect moved a column instead of erroring. Content and container are
-    separated here for the same reason `srcLink` was split. */
-export function dualDateCell(r: Pick<TxnRow, "traded" | "filed" | "lag" | "late">): string {
-  return `<td class="cell cell-traded">${dualDate(r)}</td>`;
-}
-
 /** The kind edge of a disclosed-trade row (`tr[data-edge]`, DESIGN-POLISH M1):
     lateness first — a late row carries the gold edge while its dates cell keeps
     `LATE·Nd` — then the side. An unparsed side states no direction, so it gets
@@ -1730,143 +1684,81 @@ function referenceEdge(r: Pick<TxnRow, "late">, sideCls: string): string | null 
    one on screen but could not carry sortable column headers, a `<caption>`, or
    a single named render root. `#feed-tbody` is that root now.
 
-   NO WRAPPER ELEMENTS. The old two-line mobile fold nested `.row-line1` and
-   `.row-line2` inside the row; a `<tr>` may contain only `<td>`/`<th>`, and a
-   browser HOISTS an illegal child out of the table, which would silently
-   destroy the fold rather than fail loudly. The fold is expressed with
-   `grid-template-areas` on the row itself instead, so the same two-line
-   grammar survives with no extra elements — and both dates, the lag, the
-   flags and the provenance link stay exactly as reachable as before. */
-export function txnRowHtml(r: TxnRow, ctx: RenderCtx, rowClass = ""): string {
+   NO WRAPPER ELEMENTS. A `<tr>` may contain only `<td>`/`<th>`, and a browser
+   HOISTS an illegal child out of the table, which would silently destroy the
+   layout rather than fail loudly. The ledger grid and its ≤1080px fold are
+   expressed on the row itself (entities.css, the reference feed), so both
+   dates, the lag, the flags and the provenance link stay reachable with no
+   extra elements.
+
+   ONE RENDERING. The feed renders only the ledger composition `/congress/`
+   shows, on the server and in the feed island alike. A second, "classic"
+   nine-cell rendering served only a device-local page that signals-v3 M1
+   removed, and was deleted with it. */
+export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
   const side = sideLabel(r.side, r.flags);
-  const qualifiers = ownerQualifiersHtml(r);
   const amount = amountText(r);
   const amountUnknown = r.low == null && r.high == null;
-  /* The sole channel for this fact was a `title=`, which no
-     touch device can open. It becomes a note keyed on the row's own `txnId`
-     — a per-row identity the renderer already holds, so no signature
-     changes and no caller is edited.
-
-     JUDGEMENT CALL, recorded for the owner: `txnRowHtml` also renders on
-     `/watchlist/` and `/e/`, which this run does not own, so this is NOT a
-     no-scope-no-note renderer under the opt-in rule. It is converted anyway because
-     that rule's harm is LOSING published text on a route this run does not own, and
-     nothing is lost here — a tooltip unreachable by touch is replaced by real
-     DOM that opens declaratively via `popovertarget` with no JavaScript at
-     all. Those routes strictly gain a channel. The alternative — an opt-in
-     parameter — would keep the `title=` in the source for the fallback branch
-     and so break the exact 32→17 `title=` inventory gate while leaving the
-     tooltip-only channel on the very rows the owner ratified converting. */
-  /* The ‡ IS its note's trigger (the mark form, DESIGN-POLISH M1 R6). */
-  const spouseCapDagger = r.flags.includes("amount_spouse_cap")
-    ? `<sup class="dagger">` +
-      note(SPOUSE_CAP_NOTE, { scope: "txn" }, `${r.txnId}-dagger`, { trigger: "mark", textHtml: "‡", name: "open-ended cap" }) +
-      `</sup>`
+  /* The row's kind drives its 3px edge (`data-edge`), never `data-kind`,
+     which already carries other meanings (G-6). A late row keeps the gold
+     lateness edge. */
+  const edge = referenceEdge(r, side.cls);
+  /* The spouse-cap mark hangs past the amount's digits (zero inline advance)
+     and IS the note's trigger, so the amount's alignment edge never moves. The
+     note is keyed on the row's own `txnId` — a per-row identity the renderer
+     already holds — and opens declaratively via `popovertarget`, so no
+     touch-unreachable `title=` carries the fact. */
+  const capMark = r.flags.includes("amount_spouse_cap")
+    ? `<span class="hang">` +
+      note(SPOUSE_CAP_NOTE, { scope: "txn" }, `${r.txnId}-dagger`, {
+        trigger: "mark",
+        textHtml: "‡",
+        name: "Amount",
+      }) +
+      `</span>`
     : "";
-  /* K-3 (M3 review): the classic feed's no-ticker cell is a label trigger
-     whose note gives the asset as filed (scope `feed-noticker`, keyed on the
-     txn id, like the spouse-cap note beside it) */
-  const tickerHtml = r.ticker
-    ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
-    : ctx.referenceFeed
-      ? ""
-      : assetNameCell(r, { scope: "feed-noticker" });
-  const amountSpoken = amountUnknown ? AMOUNT_UNPARSED_SPOKEN : amount;
-
-  if (ctx.referenceFeed) {
-    /* The row's kind drives its 3px edge (`data-edge`), never `data-kind`,
-       which already carries other meanings (G-6). A late row keeps the gold
-       lateness edge. */
-    const edge = referenceEdge(r, side.cls);
-    /* The spouse-cap mark hangs past the amount's digits (zero inline advance)
-       and IS the note's trigger, so the amount's alignment edge never moves. */
-    const capMark = r.flags.includes("amount_spouse_cap")
-      ? `<span class="hang">` +
-        note(SPOUSE_CAP_NOTE, { scope: "txn" }, `${r.txnId}-dagger`, {
-          trigger: "mark",
-          textHtml: "‡",
-          name: "Amount",
-        }) +
-        `</span>`
-      : "";
-    return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}${rowClass ? " " + esc(rowClass) : ""}"${edge ? ` data-edge="${edge}"` : ""}>` +
-      /* L4 (DESIGN-POLISH M3, T3.2): a late row keeps its side word — the
-         lateness is the gold edge and the dates cell's LATE·Nd, never a
-         replacement for the side, which is honesty content (§1). */
-      `<td class="cell cell-side c-kind ${esc(side.cls)}">${esc(side.text)}<span class="reference-watch">${starHtml(r.bioguide, r.name, ctx)}</span></td>` +
-      `<td class="cell cell-member c-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
-      `<td class="cell cell-ticker c-ticker">${r.ticker ? tickerHtml : '<span class="none">—</span>'}</td>` +
-      /* R17 (M3, T3.3): the default asset text, its as-filed note, and the
-         qualifiers OUTSIDE the ellipsis — one separator, never "· ·" (A9). */
-      `<td class="cell cell-asset c-secondary">${assetLineHtml(r, { notes: { scope: "feed-asset" }, qualifiers: true })}</td>` +
-      `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amount)}${capMark}</td>` +
-      /* H-17: the row's flags are VISIBLE chips in the range cell, as the
-         classic feed prints them — never folded behind a note. Each chip is
-         the label trigger of its OWN definition (FEED_FLAG_DEFINITIONS). */
-      `<td class="cell cell-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { definitions: { notes: { scope: "feed-flag" }, key: r.txnId } })}</td>` +
-      `<td class="cell cell-traded c-num">${dualDate(r, true)}</td>` +
-      `<td class="cell cell-src c-src">${srcLinkInner(r.doc)}</td></tr>`;
-  }
-  return `<tr class="feed-row feed-grid-cols${rowClass ? " " + esc(rowClass) : ""}">
-<td class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</td>
-<td class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>
-<td class="cell cell-ticker"><span class="visually-hidden">Ticker </span>${tickerHtml}</td>
-<td class="cell cell-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>
-<td class="cell cell-side ${side.cls}"><span class="visually-hidden">Side </span>${esc(side.text)}${qualifiers ? ` ${qualifiers}` : ""}</td>
-${dualDateCell(r)}
-<td class="cell cell-amount${amountUnknown ? " unknown" : ""}"><span class="visually-hidden">Amount </span><span aria-hidden="true">${esc(amount)}</span><span class="visually-hidden">${esc(amountSpoken)}</span>${spouseCapDagger}</td>
-<td class="cell cell-range">${rangeBand(r)}${flagTags(r.flags, r)}</td>
-${srcLinkCell(r.doc)}
-</tr>`;
+  return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}"${edge ? ` data-edge="${edge}"` : ""}>` +
+    /* L4 (DESIGN-POLISH M3, T3.2): a late row keeps its side word — the
+       lateness is the gold edge and the dates cell's LATE·Nd, never a
+       replacement for the side, which is honesty content (§1). */
+    `<td class="cell cell-side c-kind ${esc(side.cls)}">${esc(side.text)}</td>` +
+    `<td class="cell cell-member c-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
+    `<td class="cell cell-ticker c-ticker">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : '<span class="none">—</span>'}</td>` +
+    /* R17 (M3, T3.3): the default asset text, its as-filed note, and the
+       qualifiers OUTSIDE the ellipsis — one separator, never "· ·" (A9). */
+    `<td class="cell cell-asset c-secondary">${assetLineHtml(r, { notes: { scope: "feed-asset" }, qualifiers: true })}</td>` +
+    `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amount)}${capMark}</td>` +
+    /* H-17: the row's flags are VISIBLE chips in the range cell — never folded
+       behind a note. Each chip is the label trigger of its OWN definition
+       (FEED_FLAG_DEFINITIONS). */
+    `<td class="cell cell-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { definitions: { notes: { scope: "feed-flag" }, key: r.txnId } })}</td>` +
+    `<td class="cell cell-traded c-num">${dualDate(r, true)}</td>` +
+    `<td class="cell cell-src c-src">${srcLinkInner(r.doc)}</td></tr>`;
 }
 
-export function paperRowHtml(r: PaperRow, ctx: RenderCtx, rowClass = ""): string {
-  if (ctx.referenceFeed) {
-    /* The ledger's grid row (DESIGN-POLISH M1): the kind word, the member, one
-       cell spanning the four columns a paper filing cannot fill, the filed
-       date in the dates column, the receipt. */
-    return `<tr class="feed-row paper reference-paper"><td class="cell cell-side c-kind">Paper</td><td class="cell cell-member c-member">${starHtml(r.bioguide,r.name,ctx)}${memberCellHtml(r,ctx)}</td>` +
-      `<td colspan="4" class="paper-main c-secondary">Paper filing · needs OCR · no machine-readable transactions</td>` +
-      `<td class="cell cell-traded c-num"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
-  }
-
-  // A paper filing discloses no ticker, side, amount, dates or flags, so its
-  // main cell SPANS those columns rather than rendering five empty cells that
-  // would read as five disclosed blanks.
-  return `<tr class="feed-row paper feed-grid-cols${rowClass ? " " + esc(rowClass) : ""}">
-<td class="cell cell-star">${starHtml(r.bioguide, r.name, ctx)}</td>
-<td class="cell cell-filed"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>
-<td class="cell paper-main" colspan="6">${
-    r.bioguide
-      ? `<a class="who" href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>`
-      : `<span class="who">${esc(r.name)}</span>`
-  } <span class="aff ${partyClass(r.party)}">${esc(affText(r))}</span><span class="chip-ocr">paper filing — needs OCR</span><span class="paper-note">transactions filed on paper; retained and counted, not yet machine-readable</span></td>
-${srcLinkCell(r.doc)}
-</tr>`;
+export function paperRowHtml(r: PaperRow, ctx: RenderCtx): string {
+  /* The ledger's grid row (DESIGN-POLISH M1): the kind word, the member, one
+     cell spanning the four columns a paper filing cannot fill, the filed
+     date in the dates column, the receipt. */
+  return `<tr class="feed-row paper reference-paper"><td class="cell cell-side c-kind">Paper</td><td class="cell cell-member c-member">${memberCellHtml(r, ctx)}</td>` +
+    `<td colspan="4" class="paper-main c-secondary">Paper filing · needs OCR · no machine-readable transactions</td>` +
+    `<td class="cell cell-traded c-num"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
 }
 
-/* ---------- the feed table's COLUMN CONTRACT, shared by both tables --------
+/* ---------- the feed table's COLUMN CONTRACT ----------
 
-   `feedItemHtml` emits NINE cells, and two pages render it: `/congress/` and
-   `/watchlist/`. The watchlist shipped those nine cells inside a `<tbody>` with
-   NO `<thead>` at all, so every cell on that page was unlabelled — a screen
-   reader was handed nine values with nothing to associate them to.
-
-   The fix is one contract, not a second copy of the markup: a copy is what let
-   the two tables disagree in the first place, and the header count has to track
-   the cell count exactly or the association is wrong rather than absent.
-
-   The two pages differ in ONE way and it is stated here: `/congress/` sorts by
-   Filed and by Amount through the feed island, `/watchlist/` does not sort at
-   all. So an unsortable rendering does not silently drop those headers — it
-   renders them with a stated reason, exactly like the seven columns that are
-   unsortable everywhere. */
+   One header for the one feed rendering: eight columns, each carrying the
+   ledger ROLE class its row cells carry (c-kind, c-member, c-ticker,
+   c-secondary, c-num, c-bar, c-src), so a number sits under its right-aligned
+   header by construction. The two columns with a defined order (Range, sorted
+   on the disclosed lower bound, and Traded → Filed) are sort buttons; every
+   other column states why it has no order, as the note its label opens. A
+   mute column cannot be added by omission: `why` is required wherever
+   `sortKey` is absent. */
 
 export interface FeedColumn {
-  /** printed header text; "" for the star column, which is labelled for screen
-      readers only because its glyph is the label */
+  /** printed header text */
   label: string;
-  srLabel?: string;
   /** the feed island's sort key, on the two columns that have a defined order */
   sortKey?: "filed" | "amount";
   /** why this column has no defined order — required on every column that
@@ -1876,64 +1768,17 @@ export interface FeedColumn {
   cls?: string;
 }
 
-export const FEED_COLUMNS: readonly FeedColumn[] = [
-  { label: "", srLabel: "Watch" },
-  { label: "Filed", sortKey: "filed" },
-  {
-    label: "Ticker",
-    why:
-      "the feed lists one filing per row, so a ticker order would just group rows without " +
-      "ranking them — use the ticker momentum section above to rank tickers",
-  },
-  {
-    label: "Member",
-    why: "same reason as Ticker: use the member net-flow section below to rank members",
-  },
-  {
-    label: "Side · Owner",
-    why: "side and owner are categories, not an order — filter by them in the bar above",
-  },
-  {
-    label: "Traded · Lag",
-    why:
-      "a trade date is missing on some rows and impossible on others, so a trade-date order " +
-      "would silently rank rows it cannot place — the date range filter states both exclusions " +
-      "instead",
-  },
-  { label: "Amount", sortKey: "amount", cls: "c-num" },
-  {
-    label: "Range · Flags",
-    why: "the band renders the same statutory range the Amount column sorts on",
-    cls: "range",
-  },
-  {
-    label: "Src",
-    why: "every row links its own source document; there is no order over them",
-    cls: "src",
-  },
-];
-
 export interface FeedHeadOpts {
-  referenceFeed?: boolean;
-  /** Opt-in. Present -> column explanations render as notes. Absent ->
-      `.col-why` exactly as today, which is what `/watchlist/` relies on. */
-  notes?: NoteCtx;
-  /** false on a surface with no sort control; the two orderable columns then
-      state `whyUnsorted` instead of carrying a dead header button */
-  sortable: boolean;
-  whyUnsorted?: string;
-  /** initial `aria-sort` for the default order — only meaningful when sortable */
+  /** the note scope the column explanations render under */
+  notes: NoteCtx;
+  /** initial `aria-sort` for the default order */
   activeKey?: "filed" | "amount";
   activeDir?: "asc" | "desc";
 }
 
 export function feedHeadHtml(opts: FeedHeadOpts): string {
-  /* The reference feed's columns carry their ledger ROLE classes (c-kind,
-     c-member, c-ticker, c-secondary, c-num, c-bar, c-src) on the header, and
-     every row cell carries the same class, so a number sits under its
-     right-aligned header by construction. */
-  const referenceColumns: readonly FeedColumn[] = [
-    { label: "Kind", why: "Purchase, sale or exchange as disclosed; watch controls save locally.", cls: "c-kind" },
+  const columns: readonly FeedColumn[] = [
+    { label: "Kind", why: "Purchase, sale or exchange as disclosed.", cls: "c-kind" },
     { label: "Member", why: "Member and affiliation as recorded in the filing.", cls: "c-member" },
     { label: "Ticker", why: TICKER_ABSENT_NOTE, cls: "c-ticker" },
     /* CD3-4 (b)/(c), M3 review: the asset rule, stated once on the column */
@@ -1943,12 +1788,9 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
     { label: "Traded → Filed", sortKey: "filed", cls: "c-num" },
     { label: "Source", why: "Each link opens the original disclosure.", cls: "src c-src" },
   ];
-  const cells = (opts.referenceFeed ? referenceColumns : FEED_COLUMNS).map((c) => {
+  const cells = columns.map((c) => {
     const cls = c.cls ? ` class="${c.cls}"` : "";
-    if (c.srLabel !== undefined) {
-      return `<th scope="col"${cls}><span class="visually-hidden">${esc(c.srLabel)}</span></th>`;
-    }
-    if (c.sortKey && opts.sortable) {
+    if (c.sortKey) {
       const dir =
         c.sortKey === opts.activeKey
           ? opts.activeDir === "asc"
@@ -1958,38 +1800,27 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
       return (
         `<th scope="col"${cls} data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
         `aria-sort="${dir}"><button class="th-sort" type="button">${thLabelHtml(c.label)}</button>` +
-        (opts.referenceFeed ? SORT_CARET : "") +
+        SORT_CARET +
         `</th>`
       );
     }
-    // Either a column with no defined order anywhere, or an orderable column on
-    // a surface that offers no control. Both state a reason; neither is mute.
-    const why = c.sortKey ? (opts.whyUnsorted ?? "") : (c.why ?? "");
-    /* With a note scope the stated reason is the header's own LABEL trigger:
-       the label is the button, so the header adds no inline width. Without one
-       (the classic feed on /watchlist/) it stays the visible `.col-why` text. */
-    if (why && opts.notes) {
-      return (
-        `<th scope="col"${cls}>` +
-        noteFromHtml(esc(why), opts.notes, c.sortKey ?? c.label, {
-          trigger: "label",
-          textHtml: thLabelHtml(c.label),
-          name: c.label,
-        }) +
-        `</th>`
-      );
-    }
+    /* The stated reason is the header's own LABEL trigger: the label is the
+       button, so the header adds no inline width. */
     return (
-      `<th scope="col"${cls}>${thLabelHtml(c.label)}` +
-      colWhyHtml(why, opts.notes, c.sortKey ?? c.label) +
+      `<th scope="col"${cls}>` +
+      noteFromHtml(esc(c.why ?? ""), opts.notes, c.label, {
+        trigger: "label",
+        textHtml: thLabelHtml(c.label),
+        name: c.label,
+      }) +
       `</th>`
     );
   }).join("");
-  return `<thead><tr class="feed-head feed-grid-cols${opts.referenceFeed ? " reference-head" : ""}">${cells}</tr></thead>`;
+  return `<thead><tr class="feed-head feed-grid-cols reference-head">${cells}</tr></thead>`;
 }
 
-export function feedItemHtml(item: FeedItem, ctx: RenderCtx, rowClass = ""): string {
-  return item.kind === "txn" ? txnRowHtml(item, ctx, rowClass) : paperRowHtml(item, ctx, rowClass);
+export function feedItemHtml(item: FeedItem, ctx: RenderCtx): string {
+  return item.kind === "txn" ? txnRowHtml(item, ctx) : paperRowHtml(item, ctx);
 }
 
 /* ---------- TerminusRow (G3) ---------- */
@@ -2503,23 +2334,6 @@ export function statTiles(
   return `<div class="${cls}" role="list" aria-label="${esc(aria)}">${tiles.map(tile).join("\n")}</div>`;
 }
 
-/* ---------- watch star (watchlist v2: members + tickers) ---------- */
-
-/** Entity-header watch star. `data-watch-kind`/`data-watch-key` drive the
-    shared v2 store; copy states the storage locality per the design. */
-export function watchStarHtml(
-  kind: "member" | "ticker",
-  key: string,
-  name: string,
-  on: boolean,
-): string {
-  return (
-    `<button class="watch-btn" data-watch-kind="${kind}" data-watch-key="${esc(key)}"` +
-    ` aria-pressed="${on}" aria-label="Watch ${esc(name)} — saved in this browser only">` +
-    `<span class="watch-glyph" aria-hidden="true">${on ? "★" : "☆"}</span>` +
-    `<span class="watch-note">${on ? "watching · saved on this device" : "watch"}</span></button>`
-  );
-}
 
 /* ================================================================================
    Institutional shared primitives — ONE definition each (QA M2-8 M7).

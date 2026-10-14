@@ -173,12 +173,12 @@ for (const width of WIDTHS) {
         for (let c = 0; c < (await cells.count()); c++) {
           const el = cells.nth(c);
           if (!(await el.isVisible())) continue;
-          /* Out-of-flow cells are EXCLUDED, and this is not a loophole. The
-             mobile fold lifts `.cell-star` out of the grid and parks it in the
-             row's top-right corner, clearing the text with `padding-right` on
-             `.row-line1`. Its box legitimately overlaps its neighbours' boxes
-             while no glyph ever does. Comparing it would report a collision
-             that does not exist, and a check that cries wolf gets muted. */
+          /* Out-of-flow cells are EXCLUDED, and this is not a loophole: a cell
+             a fold lifts out of the grid (the classic feed's star cell was
+             one, removed with that feed in signals-v3 M1) legitimately
+             overlaps its neighbours' boxes while no glyph does. Comparing it
+             would report a collision that does not exist, and a check that
+             cries wolf gets muted. */
           const flow = await el.evaluate((n) => getComputedStyle(n).position);
           if (flow === "absolute" || flow === "fixed") continue;
           const box = await el.boundingBox();

@@ -59,7 +59,7 @@ function txn(over: Partial<TxnRow> = {}): TxnRow {
 /* ---------- F1: the member "Net flow · 12m" stat nets sales against purchases ---------- */
 
 const STAMPS = { buildId: "t.1", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12" };
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 
 function member(txns: TxnRow[]): MemberEntity {
   return {

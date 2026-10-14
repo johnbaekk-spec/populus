@@ -50,7 +50,7 @@ function memberBandOrder(html: string): string[] {
 test('T2.3: member bands read chart → M1 → transactions → M2 → paper → Planned line → context; band M2 collapses exactly when Signals is an empty state', async () => {
   const { memberBody, memberSignalsPanel } = await import('../src/lib/ui/index.ts');
   const stamps = { buildId: 'b', generatedAt: '2026-07-24 06:56 UTC', generatedAtDate: '2026-07-24' };
-  const ctx = { watched: new Set<string>() };
+  const ctx = {};
   const row = (i: number, over: Partial<TxnRow> = {}): TxnRow => ({ kind:'txn', txnId:`t${i}`, bioguide:'T000001', name:'Fixture Member', party:'R', state:'OK', district:null, chamber:'senate', ticker:'WMB', asset:'Williams', assetType:null, side:'purchase', owner:'self', low:1001, high:15000, traded:'2026-06-24', filed:`2026-07-${String(10 + i).padStart(2, '0')}`, lag:20, late:0, flags:[], doc:`https://efdsearch.senate.gov/x/${i}`, ...over });
   const member = { bioguide:'T000001', name:'Fixture Member', party:'R', state:'OK', district:null, chamber:'senate', servingSince:'1999', filingCount:4, txns:[row(1), row(2, { side:'sale', ticker:'NVDA' })], paper:[{ kind:'paper', filed:'2026-06-01', name:'Fixture Member', bioguide:'T000001', party:'R', state:'OK', district:null, chamber:'senate', doc:'https://efdsearch.senate.gov/p' }] } as never;
   const deps = { resolveSector: null, sectorMeta: null, committees: null };
@@ -96,9 +96,9 @@ test('T2.3: member bands read chart → M1 → transactions → M2 → paper →
 
 test('reference feed keeps eight matching columns, unknown amount, owner and both dates', () => {
   const row = { kind:'txn', txnId:'design', bioguide:'T000001', name:'Test Member', party:'I', state:'VT', district:null, chamber:'senate', ticker:null, asset:'<Unknown asset>', assetType:null, side:'purchase', owner:'joint', low:null, high:null, traded:'2026-01-01', filed:'2026-02-01', lag:31, late:0, flags:[], doc:'https://example.org/receipt' } as TxnRow;
-  const html = txnRowHtml(row, { watched:new Set(), referenceFeed:true });
+  const html = txnRowHtml(row, {});
   assert.equal((html.match(/<td\b/g) ?? []).length, 8);
-  assert.equal((feedHeadHtml({referenceFeed:true}).match(/<th\b/g) ?? []).length, 8);
+  assert.equal((feedHeadHtml({ notes:{ scope:'congress-feed' } }).match(/<th\b/g) ?? []).length, 8);
   assert.match(html,/&lt;Unknown asset&gt;/);
   assert.match(html,/Member <\/span>/);
   assert.match(html,/2026-02-01/);
@@ -173,7 +173,7 @@ test('reference ticker ranks keep count bars and distinct member totals on sort 
   const rollup = congressTickersRollup([{...base,bioguide:'A'},{...base,bioguide:'A'},{...base,bioguide:'B'},{...base,bioguide:null}], '2026-08-02');
   assert.equal(rollup.rows[0]!.memberCount,2);
   for (const dir of ['asc','desc'] as const) {
-    const html=rankingRootHtml(rollup.rows,'txns',dir,'tickers',{watched:new Set(),referenceRankings:true}).html;
+    const html=rankingRootHtml(rollup.rows,'txns',dir,'tickers',{referenceRankings:true}).html;
     assert.equal((html.match(/<td\b/g)??[]).length,6);
     assert.match(html,/4 buys; 0 sells/);
     assert.match(html,/<td class="c-num">2<\/td>/);
@@ -184,7 +184,7 @@ test('reference ticker ranks keep count bars and distinct member totals on sort 
 test('provable net display cannot round a guarantee away from zero', async () => {
   const {rankingRowsHtml} = await import('../src/lib/ui/rankings.ts');
   const base = {id:'ABC',bioguide:null,name:'ABC',party:'',chamber:'house',txns:1,buys:1,sells:0,memberCount:1} as any;
-  const ctx = {watched:new Set<string>(),referenceRankings:true};
+  const ctx = {referenceRankings:true};
   const positive = rankingRowsHtml([{...base,net:{kind:'finite',low:9_090_000,high:15_000_000}}],'tickers',ctx);
   assert.match(positive,/≥ \$9\.0M/);
   assert.doesNotMatch(positive,/≥ \$9\.1M/);

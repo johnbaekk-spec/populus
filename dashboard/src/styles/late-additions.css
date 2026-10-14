@@ -70,21 +70,6 @@
 .rail-filed { font: 400 var(--fs-cell) var(--mono); color: var(--ink3); }
 .rail-caption { font: 400 var(--fs-note) var(--mono); color: var(--ink3); margin-top: 8px; }
 
-/* A-3: /watchlist */
-.watch-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 14px 0; }
-.watch-chip { display: inline-flex; align-items: baseline; gap: 6px; }
-.chip-x { background: none; border: none; cursor: pointer; color: var(--ink3); font-size: var(--fs-body); }
-.chip-x:hover { color: var(--sell, #c62828); }
-.watch-note { font: 500 var(--fs-name) var(--sans); color: var(--ink2); margin: 10px 0; }
-.watch-gap {
-  font: 500 var(--fs-body) var(--sans);
-  border: 1px dashed var(--amber, #b8860b);
-  color: var(--ink);
-  padding: 10px 14px;
-  margin: 10px 0;
-}
-.watch-new { border-left: 3px solid var(--amber, #b8860b); }
-
 /* C-3: member v2 panels (the mix-bucket cell style is in the ledger region) */
 .non-allegation { font-weight: 600; }
 
@@ -111,22 +96,6 @@
 /* The label is VISIBLE now, not only an aria-label — a sighted reader met two
    unlabelled button rows and had to guess which axis each moved. Its type is
    the one filter-label spec in the ledger region. */
-
-/* The stated reason an unsortable column carries. VISIBLE text, never a
-   title attribute — a tooltip is not a channel a touch device can open, and
-   this site does not treat one as published. It is small and quiet, but it is
-   on the page at every width. */
-.col-why {
-  display: block;
-  font: 400 var(--fs-meta) var(--sans);
-  line-height: 1.35;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--ink3);
-  max-width: 22ch;
-  margin-top: 3px;
-  white-space: normal;
-}
 
 /* The bound a compact table states about itself, and the control that lifts
    it, are the ledger's table foot now (entities.css ledger region): the count
@@ -289,9 +258,8 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
 
 /* A DEFAULT resting place for a panel nobody positions.
 
-   `note()` renders through shared renderers, two of which (`txnRowHtml` via
-   `feedItemHtml`) also draw rows on `/watchlist/` and `/e/` — routes this run
-   does not own and does not initialise. There the panel still OPENS, because
+   `note()` renders through shared renderers, some of which also draw on
+   `/e/` — a route this run does not own and does not initialise. There the panel still OPENS, because
    `popovertarget` is declarative, and it still light-dismisses and closes on
    Escape, because those are native to `popover`. What it does not get is
    `place()`. Without this rule it would open wherever the UA put it.
@@ -497,8 +465,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
    first text start — the 16px inset they kept from the old boxed panels put
    them on no edge at all. */
 :is(.design-page, .entity-page) :is(.section-note, .caveat-line) { padding-left: 0; padding-right: 0; }
-.watch-btn { font: 500 var(--fs-meta)/1.4 var(--mono); vertical-align: middle; }
-.watch-note { font: inherit; text-transform: uppercase; }
 @media (max-width: 1080px) {
   .masthead-inner { padding-top: 12px; padding-bottom: 12px; }
   .design-rankings { grid-template-columns: minmax(0,1fr); }
@@ -529,7 +495,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .tiles { gap: 20px; padding: 10px 0; }
   .site-search { width: 100%; }
   .filter-controls { display: flex; flex-wrap: wrap; gap: 10px; }
-  .watch-btn, .filter-select { min-height: 44px; }
+  .filter-select { min-height: 44px; }
 }
 
 /* Keep the reference's short page intro and compact default control row. */
@@ -679,7 +645,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 /* Absolute screen-reader text belongs to its scrolling table, not the page. */
 .table-scroll, .reference-feed-scroll { position:relative; }
 
-/* ---------- /signals (Signals.dc.html): rule book, hits, lag, rates, watchlist ---------- */
+/* ---------- /signals (Signals.dc.html): rule book, hits, lag, rates ---------- */
 /* The Signals header ledger is bottom-aligned with its H1 block like every
    other page's (R15, D-14): its `align-items: center` override is deleted
    (review C2-4). */
@@ -694,7 +660,8 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-signals-band .panel-head { flex-wrap: wrap; }
 .si-hits .panel-head .seg { margin-left: auto; }
 /* In band S1's 1.8fr cell the rule segments wrap below the title and its meta;
-   the "watched only" check sits on the segments' line, centred on them (G10). */
+   the "Listed stocks only" check sits on the segments' line, centred on them
+   (G10). */
 .si-hits .panel-head > .filter-check { align-self: center; }
 .si-hits-scroll:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .si-stamp { font: 600 var(--fs-label) var(--mono); letter-spacing: .06em; color: var(--kind-new-text); }
@@ -711,8 +678,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .si-evidence-line { color: var(--ink); }
 .si-group-members ul { margin: 2px 0 4px; padding-left: 16px; }
 .si-group-members .cell-src { display: inline; text-align: left; }
-.si-new { color: var(--amber); font: 600 var(--fs-meta) var(--mono); }
-.si-gold { color: var(--amber); }
 .si-lags { list-style: none; margin: 4px 0 0; padding: 0; }
 .si-lags li { display: grid; grid-template-columns: 150px minmax(0,1fr) 52px; gap: 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--rule); }
 .c-dem { color: var(--dem); }
@@ -721,8 +686,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .si-rate { display: grid; grid-template-columns: 120px minmax(0,1fr) 70px; gap: 14px; align-items: center; padding: 7px 0; }
 .si-rate dd { display: contents; margin: 0; }
 .si-rate.si-withheld .si-rate-val { color: var(--kind-sell-text); }
-.si-watchband .panel-head { flex-wrap: wrap; }
-.si-watch-controls { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
 .site-nav a[aria-current="page"] { position: relative; }
 @media (max-width: 1080px) {
   .design-signals-band { grid-template-columns: minmax(0,1fr); }
@@ -732,7 +695,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .si-lags li { grid-template-columns: 110px minmax(0,1fr) 48px; }
   .si-rate { grid-template-columns: 90px minmax(0,1fr) 60px; }
   .si-table { min-width: 720px; }
-  .si-watch-controls { margin-left: 0; flex-wrap: wrap; }
 }
 /* cluster board + new-position leaders + benchmarked book shape (the bars and
    the cell roles are in the ledger region) */

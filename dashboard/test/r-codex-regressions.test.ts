@@ -27,7 +27,7 @@ import { leadersRollup } from "../src/lib/derive.ts";
 import { instIndexBodyHtml } from "../src/scripts/inst-index-client.ts";
 import { buildInstIndexRow, type InstIndexRow } from "../src/lib/inst-index.ts";
 
-const CTX: RenderCtx = { watched: new Set() };
+const CTX: RenderCtx = {};
 const stamps: BuildStamps = {
   buildId: "b",
   generatedAt: "2026-08-12 00:00 UTC",
