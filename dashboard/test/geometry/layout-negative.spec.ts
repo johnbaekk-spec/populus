@@ -1372,8 +1372,10 @@ test.describe("route negative controls (clean target → injected defect → sam
   });
 
   test("T1.2 G10 @1440: a band-head control moved 3px down fails the centring check", async ({ page }) => {
-    /* /signals/: its Hits band head carries the rule filter, a segmented
-       control IN the head (the Congress feed's filters sit in their own strip) */
+    /* /signals/: its Lead cards head carries the Own record │ Absolute $
+       control, a segmented control IN the head (signals-v3 M2; the kind chips
+       that sat in the Hits head left with R13). The Congress feed's filters sit
+       in their own strip. */
     await openRoute(page, "/signals/");
     const before = await probe(page, "g10");
     expect(before.notes.join(" "), "a band head with a segmented control is measured").toMatch(/centring [1-9]/);

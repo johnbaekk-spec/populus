@@ -158,13 +158,15 @@ function routeAbsent(route: Route, reason: string): { skip: string } | { fail: s
    build: Congress 3 tables × 23 columns, Member 3 × 20, Institutional 2 × 13
    — its directory and activity bodies render empty in the bounded build —,
    Filer 3 × 20, Signals 2 × 13, AAPL 4 × 18, NVDA 2 × 11, home 2 × 9,
-   /e/ member 3 × 20, /e/ tail filer 3 × 20). */
+   /e/ member 3 × 20, /e/ tail filer 3 × 20). signals-v3 M2: /signals/ is a
+   triage — its rows are articles — and its one table is the slim hits
+   (1 × 6); the rule book moved to /methodology/. */
 const ROUTES: Route[] = [
   { id: "congress", path: "/congress/", minTables: 3, minColumns: 16, pairs: 1, g10Min: { colours: 1 } },
   { id: "member", path: "/congress/members/M001193/", minTables: 3, minColumns: 12, pairs: 2, g10Min: { colours: 1 } },
   { id: "institutional", path: "/institutional/", minTables: 2, minColumns: 8, pairs: 1 },
   { id: "filer", path: "/institutional/filers/1135730/", minTables: 3, minColumns: 12, pairs: 1, g10Min: { colours: 1 } },
-  { id: "signals", path: "/signals/", minTables: 2, minColumns: 8, pairs: 1, g10Min: { colours: 1, "centring@1440": 1 } },
+  { id: "signals", path: "/signals/", minTables: 1, minColumns: 6, pairs: 1, g10Min: { colours: 1, "centring@1440": 1 } },
   { id: "ticker", path: "/tickers/AAPL/", minTables: 3, minColumns: 10, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
   { id: "congress-ticker", path: "/congress/tickers/NVDA/", minTables: 2, minColumns: 8, g10Min: { colours: 1 } },
   { id: "home", path: "/", minTables: 2, minColumns: 6, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
@@ -574,7 +576,7 @@ test.describe("M1 review: route properties", () => {
   test("C-4 (signals-v3 M1): no watch list is served — /signals/ has no watch band, /watchlist/ is the 404 page", async ({ browser }, testInfo) => {
     const { ctx, page } = await open(browser, testInfo, 1440, "/signals/");
     try {
-      await expect(page.locator("#signal-hits")).toBeVisible({ timeout: 20_000 });
+      await expect(page.locator("#hits")).toBeVisible({ timeout: 20_000 });
       expect(await page.locator("#signal-watch, .si-watchband, .si-watch-chips, #signal-watched-only").count()).toBe(0);
       const missing = await page.goto("/watchlist/", { waitUntil: "load" });
       expect(missing?.status(), "/watchlist/ is gone").toBe(404);
@@ -634,23 +636,24 @@ test.describe("M1 review: route properties", () => {
      text sit on the gutters, and its rows paint their kind edges (G10's edge
      and colour parts). Its gaps are not asserted here: the rule and why
      columns keep their 420/380px caps until M2 lays the rule book out on the
-     prose-table spec (DEV-NOTES, debt). */
+     prose-table spec (DEV-NOTES, debt). signals-v3 M2 (R14): the rule book
+     renders on /methodology/ (#signal-rules); the property is held there. */
   async function ruleBookPadding(page: Page): Promise<string[]> {
     return page.evaluate(() =>
-      Array.from(document.querySelectorAll("#signal-rulebook table > * > tr > :is(th, td)"))
+      Array.from(document.querySelectorAll("#signal-rules table > * > tr > :is(th, td)"))
         .map((c) => [c.className || c.tagName, getComputedStyle(c).paddingLeft, getComputedStyle(c).paddingRight] as const)
         .filter(([, l, r]) => l !== "0px" || r !== "0px")
         .map(([n, l, r]) => `${n}: padding ${l} / ${r}`),
     );
   }
   test("C-7: the opened rule book's cells take no ledger cell padding; its edges sit on the gutters", async ({ browser }, testInfo) => {
-    const { ctx, page } = await open(browser, testInfo, 1440, "/signals/");
+    const { ctx, page } = await open(browser, testInfo, 1440, "/methodology/");
     try {
       await page.evaluate(() => {
-        for (const d of Array.from(document.querySelectorAll<HTMLDetailsElement>("details"))) if (d.querySelector("#signal-rulebook")) d.open = true;
+        for (const d of Array.from(document.querySelectorAll<HTMLDetailsElement>("details"))) if (d.querySelector("#signal-rules")) d.open = true;
       });
       await installProbe(page);
-      const ruleBook = await page.evaluate(() => Array.from(document.querySelectorAll("table")).findIndex((t) => t.matches("#signal-rulebook table")));
+      const ruleBook = await page.evaluate(() => Array.from(document.querySelectorAll("table")).findIndex((t) => t.matches("#signal-rules table")));
       expect(ruleBook, "the rule book table renders").toBeGreaterThanOrEqual(0);
       const edgeFindings = async () =>
         (await page.evaluate(() => window.__ledger!.g10())).failures
@@ -658,8 +661,10 @@ test.describe("M1 review: route properties", () => {
           .map((f) => f.detail);
       expect(await ruleBookPadding(page), "no rule book cell carries side padding").toEqual([]);
       expect(await edgeFindings(), "G10's edge and colour parts on the rule book").toEqual([]);
-      // control: the pre-fix gutter rule, reaching the prose table's cells
-      await page.addStyleTag({ content: ".table-scroll > table > :is(thead, tbody, tfoot) > tr > :first-child { padding-left: var(--gutter-l); }" });
+      /* control: the pre-fix gutter rule, reaching the prose table's cells.
+         signals-v3 M2: on /methodology/ the section sets no --gutter-l of its
+         own, so the doubled gutter is planted at the ledger's 16px. */
+      await page.addStyleTag({ content: ".table-scroll > table > :is(thead, tbody, tfoot) > tr > :first-child { padding-left: 16px !important; }" });
       expect((await ruleBookPadding(page)).length, "control: the doubled gutter is caught").toBeGreaterThan(0);
       expect((await edgeFindings()).length, "control: …and G10 sees the text off the gutter").toBeGreaterThan(0);
     } finally {
@@ -1100,9 +1105,11 @@ test.describe("M2: route properties", () => {
      Every collapsed tbody holding rows back has a disclosure naming it
      (review Q2-7), and the primary tables hold their FIXED defaults
      (coordinator decision CD-1: member flows 20, filing history 12, the
-     filer's reported positions 20, the signal hits 12, and — CD-5 — the
-     Consensus board 10). The signal hits'
-     evidence rows show only when opened, so they are not counted as rows. */
+     filer's reported positions 20, and — CD-5 — the Consensus board 10).
+     signals-v3 M2: the slim signal hits hold NOTHING back in the DOM — the
+     server renders 10 lines and "Show 10 more" fetches the next from the
+     artifact — so /signals/ has no compact table (its "Show 10 more" is
+     asserted by the T2.11 actions below and by design-reference.spec.ts). */
   type SsrCounts = Record<string, { text: string; total: number; shown: number }>;
   /** A count's words with its digits masked ("1–20 of 608 tickers" → "#–# of # tickers"). */
   const maskDigits = (t: string): string => t.replace(/\d[\d,]*/g, "#");
@@ -1115,7 +1122,6 @@ test.describe("M2: route properties", () => {
     "e-member": [{ id: "member-flows-tbody", n: 20, hold: true }, { id: "member-history-tbody", n: 12, hold: true }],
     filer: [{ id: "filer-holdings-tbody", n: 20, hold: true }],
     "e-filer": [{ id: "filer-holdings-tbody", n: 20, hold: false }],
-    signals: [{ id: "signal-hits-body", n: 12, hold: true }],
     /* CD-5: the Consensus board, I1's primary, shows a fixed 10 (the bounded
        build has no qualifying issuer, so nothing is held back there) */
     institutional: [{ id: "inst-consensus-tbody", n: 10, hold: false }],
@@ -1291,10 +1297,10 @@ test.describe("M2: route properties", () => {
       { name: "holdings pager", sel: '#holdings-next:not([aria-disabled="true"])' },
       { name: "holdings view", sel: '[data-holdings-views] button[aria-pressed="false"]' },
     ],
-    signals: [
-      { name: "hits pager", sel: '#signal-hits-next:not([aria-disabled="true"])' },
-      { name: "rule filter", sel: '.si-hit-filter button[aria-pressed="false"]' },
-    ],
+    /* signals-v3 M2 (R13): /signals/ holds no compact table any more — its
+       slim hits render 10 lines and "Show 10 more" fetches the next — so it
+       has no T2.11 actions; "Show 10 more" and the family filter are asserted
+       by "R13 (signals-v3 M2)" below and by design-reference.spec.ts. */
     member: [{ name: "transactions pager", sel: '[data-entity-older]:not([aria-disabled="true"])' }],
     /* the M2 delta review: a step-paged ranking's "Show 50 more" (R13), then
        its restated count — "1–60 of 993 ranked tickers" — against the server's
@@ -1371,10 +1377,16 @@ test.describe("M2: route properties", () => {
     });
   }
 
-  test("T2.11 control: with the populus:rerender listener removed, a hits pager click leaves the control disagreeing with its rows @1440", async ({ browser }, testInfo) => {
+  /* signals-v3 M2: this control ran on /signals/'s hits pager, whose
+     compact table held rows back in the DOM. The slim hits hold nothing back
+     now (10 server lines, "Show 10 more" from the artifact), so the same
+     control runs on the filer's Position changes: a compact table whose kind
+     chips re-render it and announce the re-render (R15). The gate build's
+     filer has one page of changes, so the kind chips are the re-render. */
+  test("T2.11 control: with the populus:rerender listener removed, re-rendering the filer's changes leaves its control disagreeing with its rows @1440", async ({ browser }, testInfo) => {
     /* the stub runs before the page's scripts: the binder (and every other
        listener) cannot hear the re-render any more */
-    const { ctx, page } = await open(browser, testInfo, 1440, "/signals/", () => {
+    const { ctx, page } = await open(browser, testInfo, 1440, "/institutional/filers/1135730/", () => {
       const add = EventTarget.prototype.addEventListener;
       document.addEventListener = function (this: Document, type: string, ...rest: unknown[]) {
         if (type === "populus:rerender") return;
@@ -1382,21 +1394,23 @@ test.describe("M2: route properties", () => {
       } as typeof document.addEventListener;
     });
     try {
-      const load = await disclosureState(page, await ssrCounts(page, "/signals/"));
+      const load = await disclosureState(page, await ssrCounts(page, "/institutional/filers/1135730/"));
       expect(load.problems, "after load the binder still works (it binds on init)").toEqual([]);
-      expect(load.held.some((h) => h.id === "signal-hits-body"), "the hits table holds rows back").toBe(true);
+      expect(load.held.some((h) => h.id === "filer-changes-tbody"), "the changes table holds rows back").toBe(true);
       await expandAll(page);
-      await page.locator("#signal-hits-next").click();
+      // one kind, then All again: the full table re-rendered, rows held back again
+      await page.locator('[data-changes-kinds] button[data-changes-kind="new"]').click();
+      await page.waitForTimeout(300);
+      await page.locator('[data-changes-kinds] button[data-changes-kind="all"]').click();
       await page.waitForLoadState("networkidle").catch(() => undefined);
       await page.waitForTimeout(300);
       const after = await disclosureState(page, null);
       testInfo.annotations.push({ type: "control caught", description: after.problems.join("; ") });
-      /* review Q2-11: the disagreement caught is the hits table's own — its
-         control says one thing and its re-rendered rows another — never some
-         unrelated problem elsewhere on the page */
+      /* review Q2-11: the disagreement caught is the changes table's own —
+         never some unrelated problem elsewhere on the page */
       expect(
-        after.problems.some((p) => /^signal-hits-body: (?:the toggle says expanded, but \d+ of \d+ rows show|expanded, the (?:toggle reads|count still shows)|collapsed, \d+ rows show|collapsed, the toggle reads)/.test(p)),
-        `control: the hits control disagrees with its rows\n${JSON.stringify(after, null, 1)}`,
+        after.problems.some((p) => /^filer-changes-tbody: /.test(p)),
+        `control: the changes control disagrees with its rows\n${JSON.stringify(after, null, 1)}`,
       ).toBe(true);
     } finally {
       await ctx.close();
@@ -1454,118 +1468,97 @@ test.describe("M2: route properties", () => {
   });
 
   /* ---------------------------------------------------------------- T2.7
-     An opened hit's evidence lays out on its own row across the table's full
-     width (R11, H-14): the row follows its hit, its one cell spans every
-     column, the row is the table's width ±1px and its body fills the cell;
-     and every receipt link in it is fully visible — inside its row, inside
-     the viewport, and clipped by no ancestor (the G7 walk). */
-  async function evidenceProblems(page: Page): Promise<{ links: number; problems: string[] }> {
+     signals-v3 M2 (R13, LD9): the per-hit evidence row is gone; what it
+     carried is on the hit row itself. Every visible slim hit shows BOTH dates
+     in its Traded → Filed cell, its kind word opens the exact rule, and its
+     receipt link is fully visible — inside its row, inside the viewport, and
+     clipped by no ancestor (the G7 walk the evidence test used). */
+  async function slimHitProblems(page: Page): Promise<{ rows: number; problems: string[] }> {
     return page.evaluate(() => {
       const problems: string[] = [];
-      const hit = Array.from(document.querySelectorAll("#signal-hits-body > tr.si-hit")).find((tr) => tr.querySelector("details.si-expand[open]"));
-      if (!hit) return { links: 0, problems: ["no hit's evidence is open"] };
-      const row = hit.nextElementSibling as HTMLTableRowElement | null;
-      if (!row || !row.matches("tr.si-evidence-row")) return { links: 0, problems: ["the opened hit is not followed by its evidence row"] };
-      const table = hit.closest("table")!;
-      const rr = row.getBoundingClientRect();
-      if (!row.checkVisibility() || rr.height < 1) return { links: 0, problems: ["the evidence row is not displayed"] };
-      const head = table.tHead?.rows[table.tHead.rows.length - 1];
-      const cols = head ? Array.from(head.cells).reduce((n, c) => n + Math.max(1, c.colSpan), 0) : 0;
-      const td = row.cells[0];
-      if (row.cells.length !== 1 || !td || td.colSpan !== cols) problems.push(`the evidence row has ${row.cells.length} cell(s) spanning ${td?.colSpan ?? 0} of ${cols} columns`);
-      const tr = table.getBoundingClientRect();
-      if (Math.abs(rr.width - tr.width) > 1) problems.push(`the evidence row is ${rr.width.toFixed(1)}px wide, the table ${tr.width.toFixed(1)}px`);
-      const body = td?.querySelector(".si-expand-body");
-      if (td && body) {
-        const cs = getComputedStyle(td);
-        const inner = td.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-        const bw = body.getBoundingClientRect().width;
-        if (Math.abs(bw - inner) > 1) problems.push(`the evidence body is ${bw.toFixed(1)}px wide in a ${inner.toFixed(1)}px cell`);
-      } else problems.push("the evidence row has no evidence body");
-      const links = Array.from(row.querySelectorAll<HTMLElement>("a[href]"));
-      if (!links.length) problems.push("the evidence carries no receipt link");
-      for (const a of links) {
-        const label = `receipt "${(a.textContent ?? "").trim().slice(0, 24)}"`;
+      const rows = Array.from(document.querySelectorAll<HTMLTableRowElement>("#signal-hits-body > tr.si-hit")).filter((r) => r.checkVisibility());
+      for (const row of rows) {
+        const id = row.dataset.signalId ?? "?";
+        const rr = row.getBoundingClientRect();
+        const when = row.querySelector("td.si-when");
+        if (!when || when.querySelectorAll("time").length !== 2) problems.push(`${id}: the Traded → Filed cell does not hold both dates`);
+        const kind = row.querySelector("td.c-kind .note-btn.note-label");
+        const pop = kind ? document.getElementById(kind.getAttribute("popovertarget") ?? "") : null;
+        if (!kind || !pop || !(pop.textContent ?? "").trim()) problems.push(`${id}: the kind word opens no rule`);
+        const a = row.querySelector<HTMLElement>("td.c-src a[href]");
+        if (!a) { problems.push(`${id}: no receipt link`); continue; }
         const rects = Array.from(a.getClientRects()).filter((q) => q.width > 0 && q.height > 0);
-        if (!a.checkVisibility() || !rects.length) { problems.push(`${label} does not render`); continue; }
+        if (!a.checkVisibility() || !rects.length) { problems.push(`${id}: the receipt does not render`); continue; }
         for (const q of rects) {
-          if (q.left < rr.left - 0.5 || q.right > rr.right + 0.5 || q.top < rr.top - 0.5 || q.bottom > rr.bottom + 0.5) problems.push(`${label} reaches outside its row`);
-          if (q.left < -0.5 || q.right > document.documentElement.clientWidth + 0.5) problems.push(`${label} reaches outside the viewport`);
+          if (q.left < rr.left - 0.5 || q.right > rr.right + 0.5 || q.top < rr.top - 0.5 || q.bottom > rr.bottom + 0.5) problems.push(`${id}: the receipt reaches outside its row`);
           for (let e = a.parentElement; e && e !== document.body; e = e.parentElement) {
             const cs = getComputedStyle(e);
             if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+            /* the hits wrapper scrolls sideways by design (R-8); what it holds back is reachable */
+            if (e.matches(".si-hits-scroll")) continue;
             const b = e.getBoundingClientRect();
             const l = b.left + e.clientLeft, t = b.top + e.clientTop;
             if (q.left < l - 0.5 || q.right > l + e.clientWidth + 0.5 || q.top < t - 0.5 || q.bottom > t + e.clientHeight + 0.5) {
-              problems.push(`${label} is clipped by ${e.tagName.toLowerCase()}.${String(e.className).split(/\s+/)[0] ?? ""}`);
+              problems.push(`${id}: the receipt is clipped by ${e.tagName.toLowerCase()}.${String(e.className).split(/\s+/)[0] ?? ""}`);
               break;
             }
           }
         }
       }
-      return { links: links.length, problems };
+      return { rows: rows.length, problems };
     });
   }
-  test("T2.7: an opened hit's evidence spans the table and every receipt in it is fully visible @1440", async ({ browser }, testInfo) => {
+  test("T2.7 (signals-v3 M2): every slim hit shows both dates, opens its rule from its kind word, and shows its receipt whole @1440", async ({ browser }, testInfo) => {
     const { ctx, page } = await open(browser, testInfo, 1440, "/signals/");
     try {
-      await page.locator("#signal-hits-body > tr.si-hit details.si-expand > summary").first().click();
-      await expect(page.locator("#signal-hits-body > tr.si-evidence-row").first()).toBeVisible();
-      const r = await evidenceProblems(page);
-      expect(r.links, "the opened evidence carries receipt links").toBeGreaterThan(0);
+      const r = await slimHitProblems(page);
+      expect(r.rows, "the hits table renders lines").toBeGreaterThan(0);
       expect(r.problems).toEqual([]);
-      // control 1: the evidence body boxed and clipped
-      const tag = await page.addStyleTag({ content: ".si-expand-body { max-width: 300px !important; overflow: hidden !important; }" });
-      expect((await evidenceProblems(page)).problems.length, "control: a clipped evidence body is caught").toBeGreaterThan(0);
+      // the rule opens on a click, with no script needed (the native popover)
+      const kind = page.locator("#signal-hits-body > tr.si-hit td.c-kind .note-btn").first();
+      await kind.click();
+      await expect(page.locator(`#${await kind.getAttribute("popovertarget")}`)).toBeVisible();
+      await page.keyboard.press("Escape");
+      // control 1: a receipt cell that clips its link
+      const tag = await page.addStyleTag({ content: "#signal-hits-body td.c-src .cell-src { display: block !important; overflow: hidden !important; width: 6px !important; }" });
+      expect((await slimHitProblems(page)).problems.some((p) => /clipped/.test(p)), "control: a clipped receipt is caught").toBe(true);
       await tag.evaluate((el) => el.remove());
-      expect((await evidenceProblems(page)).problems).toEqual([]);
-      // control 2: the evidence row never displayed
-      await page.addStyleTag({ content: ".si-table > tbody > tr.si-evidence-row { display: none !important; }" });
-      expect((await evidenceProblems(page)).problems, "control: an evidence row that never shows is caught").toEqual(["the evidence row is not displayed"]);
+      expect((await slimHitProblems(page)).problems).toEqual([]);
+      // control 2: a dates cell that lost its traded date
+      await page.evaluate(() => document.querySelector("#signal-hits-body td.si-when time")?.remove());
+      expect((await slimHitProblems(page)).problems.some((p) => /both dates/.test(p)), "control: a missing date is caught").toBe(true);
     } finally {
       await ctx.close();
     }
   });
 
-  /* Review R2-2 / C2-1: a HELD hit's evidence never shows. Opened while the
-     table was expanded, then collapsed, the held hit is hidden — and its
-     evidence row must be hidden with it, or its receipts read as belonging to
-     the last visible hit. The predicate: every displayed evidence row directly
-     follows a displayed hit, and names that hit. */
-  async function strayEvidence(page: Page): Promise<string[]> {
-    return page.evaluate(() => {
-      const shown = (e: Element | null): boolean => !!e && e.checkVisibility() && e.getBoundingClientRect().height > 0;
-      const out: string[] = [];
-      for (const row of Array.from(document.querySelectorAll<HTMLElement>("#signal-hits-body > tr.si-evidence-row"))) {
-        if (!shown(row)) continue;
-        const hit = row.previousElementSibling as HTMLElement | null;
-        if (!hit || !hit.matches("tr.si-hit") || !shown(hit)) out.push(`the evidence of ${row.dataset.evidenceFor} shows under no visible hit of its own`);
-        else if (hit.dataset.signalId !== row.dataset.evidenceFor) out.push(`the evidence of ${row.dataset.evidenceFor} sits under ${hit.dataset.signalId}`);
-      }
-      return out;
-    });
-  }
-  test("R2-2: a held hit's opened evidence is hidden with it when the table collapses — no receipts under the wrong hit @1440", async ({ browser }, testInfo) => {
+  /* signals-v3 M2 (R13): "Show 10 more" adds exactly the next ten lines from
+     the artifact and restates the range in the server's grammar; a family row
+     filters, presses itself and shows the removable pill. (Review R2-2's held
+     evidence cannot recur: no hit row and no evidence row is held back in the
+     DOM any more.) */
+  test("R13 (signals-v3 M2): Show 10 more and the family filter repaint the slim hits, and no evidence row exists @1440", async ({ browser }, testInfo) => {
     const { ctx, page } = await open(browser, testInfo, 1440, "/signals/");
     try {
-      const btn = page.locator('.compact-disclosure[data-compact-for="signal-hits-body"] button');
-      await expect(btn).toBeVisible();
-      await btn.click(); // expand: every hit on the page
-      const held = page.locator("#signal-hits-body > tr.si-hit[data-compact-extra]").first();
-      await expect(held).toBeVisible();
-      await held.locator("details.si-expand > summary").click();
-      await expect(page.locator("#signal-hits-body > tr.si-evidence-row[data-compact-extra]").first()).toBeVisible();
-      expect(await strayEvidence(page), "expanded: the opened evidence sits under its own hit").toEqual([]);
-      await btn.click(); // collapse
-      await expect(held).toBeHidden();
-      expect(await strayEvidence(page)).toEqual([]);
-      expect(await page.locator("#signal-hits-body > tr.si-evidence-row[data-compact-extra]").evaluateAll((rs) => rs.filter((r) => r.checkVisibility()).length), "no held evidence row displays").toBe(0);
-      /* control: the pre-fix stylesheet (the show rule outranking the compact
-         hide) with the held evidence left open — the stray receipts are caught */
-      await page.addStyleTag({ content: ".si-table > tbody > tr.si-hit:has(details.si-expand[open]) + tr.si-evidence-row { display: table-row !important; }" });
-      await held.evaluate((tr) => tr.querySelector("details.si-expand")!.setAttribute("open", ""));
-      const stray = await strayEvidence(page);
-      expect(stray.length, `control: the stray evidence is caught\n${stray.join("\n")}`).toBeGreaterThan(0);
+      expect(await page.locator("#signal-hits-body > tr.si-evidence-row, #signal-hits-body > tr[data-compact-extra]").count(), "no held or evidence row").toBe(0);
+      const lines = Number(await page.locator("#hits").getAttribute("data-lines"));
+      const first = await page.locator("#signal-hits-body > tr.si-hit").evaluateAll((rs) => rs.map((r) => r.getAttribute("data-signal-id")));
+      expect(first.length).toBe(Math.min(10, lines));
+      if (lines > 10) {
+        await page.locator("#signal-hits-more").click();
+        await expect(page.locator("#signal-hits-body > tr.si-hit")).toHaveCount(Math.min(20, lines));
+        const grown = await page.locator("#signal-hits-body > tr.si-hit").evaluateAll((rs) => rs.map((r) => r.getAttribute("data-signal-id")));
+        expect(grown.slice(0, first.length), "the first ten lines are kept, the next ten appended").toEqual(first);
+        expect((await slimHitProblems(page)).problems).toEqual([]);
+      } else testInfo.annotations.push({ type: "R13", description: `${lines} lines: nothing more to show on this build` });
+      const fam = page.locator('#families button[data-family="COMPLIANCE"]');
+      await fam.click();
+      await expect(fam).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#signal-family-pill-row")).toBeVisible();
+      await expect(page.locator('#signal-hits-body > tr.si-hit:not([data-family="COMPLIANCE"])')).toHaveCount(0);
+      await page.locator("#signal-family-pill").click();
+      await expect(page.locator("#signal-family-pill-row")).toBeHidden();
+      await expect(page.locator("#signal-hits-body > tr.si-hit")).toHaveCount(Math.min(10, lines));
     } finally {
       await ctx.close();
     }

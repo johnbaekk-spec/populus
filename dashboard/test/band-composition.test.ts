@@ -353,20 +353,23 @@ test("CD-1 (Q2-10): member flows show 20 and the filing history 12 whatever the 
   assert.ok(fixedDefaultProblems(tuned, 20).length > 0, `control: a partner-tuned N (${tuned.join(", ")}) fails`);
 });
 
-test("CD-1 (Q2-10): the filer's reported positions show 20 and the signal hits 12, fixed; the hits page still holds 50", async () => {
+test("CD-1 (Q2-10): the filer's reported positions show 20 and the signal hits 10, fixed (signals-v3 M2: 10 server lines, \"Show 10 more\")", async () => {
   const { holdingsTableHtml, HOLDINGS_COMPACT_ROWS } = await import("../src/lib/holdings.ts");
   const row = (i: number) => ({ cik: "1", period: "2026-03-31", filing_key: null, security_id: null, cusip: null, issuer_name: `Issuer ${i}`, title_of_class: null, value_usd: 1000 + i, shares: 10, ssh_type: "SH", put_call: null, position_key: `k${i}`, flags: [] }) as never;
   const html = holdingsTableHtml({ cik: "1", filerName: "F", period: "2026-03-31", rows: Array.from({ length: 60 }, (_, i) => row(i)), filings: {}, page: 0, reference: true });
   assert.equal(HOLDINGS_COMPACT_ROWS, 20);
   assert.deepEqual(fixedDefaultProblems([shownOf(html, "filer-holdings-tbody")], 20), []);
-  assert.equal(SIGNAL_HITS_COMPACT_ROWS, 12);
-  assert.equal(SIGNAL_HITS_PAGE_SIZE, 50, "the pager still moves by 50");
+  /* signals-v3 M2 (LD7): the slim hits show a FIXED 10 lines, and "Show 10
+     more" adds 10 — the CD-1 property (a fixed default, never tuned to the
+     partner cell) is unchanged; the numbers are the plan's. */
+  assert.equal(SIGNAL_HITS_COMPACT_ROWS, 10);
+  assert.equal(SIGNAL_HITS_PAGE_SIZE, 10, "the step of Show 10 more");
   // the renderers take no partner input any more: the signature is the pin
   assert.doesNotMatch(readFileSync(path.join(SRC, "lib", "holdings.ts"), "utf-8"), /pairPx/, "no partner height reaches the holdings renderer");
   assert.doesNotMatch(readFileSync(path.join(SRC, "lib", "ui", "signals.ts"), "utf-8"), /signalHitsCompactRows/, "no partner height reaches the hits renderer");
   // control: a tuned hits N beside a two-row lag list fails the pin
   const tunedHits = [2, 8].map((lag) => partnerTunedRows({ partnerPx: 10 + 47 + lag * 35 + 285, chromePx: 239, max: 50 }));
-  assert.ok(fixedDefaultProblems(tunedHits, 12).length > 0, `control: ${tunedHits.join(", ")}`);
+  assert.ok(fixedDefaultProblems(tunedHits, 10).length > 0, `control: ${tunedHits.join(", ")}`);
 });
 
 /* ======================================================================

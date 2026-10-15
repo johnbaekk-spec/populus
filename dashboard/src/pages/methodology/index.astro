@@ -13,6 +13,8 @@ import { getBuildData, methodologyM1Tiles } from "../../lib/data";
 import { fmtInt } from "../../lib/format";
 import { filingWindow, lagCdf, lagCdfPointsText, LAG_SAMPLE_MONTHS, COMPLETENESS_SHADE_BELOW, FILING_WINDOW_DAYS } from "../../lib/derive";
 import { ACTIVITY_SHARDS_MAX, PAGE_BYTE_LIMIT, PAGE_RECORD_LIMIT } from "../../lib/activity";
+import { getSignalArtifact } from "../../lib/data";
+import { committeeDirectHtml, lagBandHtml, ruleBookHtml, signalsRankingHtml } from "../../lib/ui/index.ts";
 
 const build = getBuildData();
 const m1 = methodologyM1Tiles(build.stats, build.filedFrom);
@@ -21,6 +23,20 @@ const window = inst.present ? filingWindow(build.generatedAtDate) : null;
 /* SIGNALS-CLARITY M3 (R17): the same measured lag distribution the /congress
    Monthly flow shades by, from the same rows and build date. */
 const lagSample = lagCdf(build.txns, build.generatedAtDate);
+/* signals-v3 M2 (R14): the Signals rule book and lag distribution moved here
+   from /signals/, beside the ranking rules and the committee direct table —
+   each rendered by the one function that owns it, the constants and the
+   table read from code so this prose cannot drift. */
+const signalArtifact = getSignalArtifact();
+// The latest filed batch: every transaction sharing the newest filed date.
+// `build.txns` is sorted filed-desc, so the first row names the date.
+const latestFiled = build.txns[0]?.filed ?? null;
+const latestBatch = latestFiled ? build.txns.filter((t) => t.filed === latestFiled) : [];
+const signalSections =
+  ruleBookHtml(signalArtifact) +
+  lagBandHtml({ latestBatch, latestBatchFiled: latestFiled }) +
+  signalsRankingHtml() +
+  committeeDirectHtml();
 
 const description =
   "Per-module sources and conditions, coverage measured against the full corpus, known gaps, " +
@@ -44,6 +60,7 @@ const description =
     </p>
     <nav class="toc" aria-label="Sections">
       <a href="#m1">M1 · Congressional</a>
+      <a href="#signals-method">Congress signals · rules &amp; ranking</a>
       <a href="#m2">M2 · Institutional 13F</a>
       <a href="#m3m4" class="toc-muted">M3 · Financials — planned</a>
       <a href="#m3m4" class="toc-muted">M4 · Macro — planned</a>
@@ -145,6 +162,19 @@ const description =
           </div>
         </div>
       </div>
+    </section>
+
+    <section class="metho-section" id="signals-method">
+      <div class="metho-section-head">
+        <h2 class="section-h2">Congress signals — rules, lag and ranking</h2>
+        <div class="mono-note">thresholds v{signalArtifact.thresholdVersion} · window {signalArtifact.coverageFrom} → {signalArtifact.coverageTo}</div>
+      </div>
+      <p class="metho-body">
+        The rule book every signal on <a href="/signals/">/signals</a> is computed by, the lag between
+        trade and filing in the newest batch, how the page ranks the filings it lists, and the committee
+        direct-match table. A signal is a fact about a filing, not a forecast.
+      </p>
+      <Fragment set:html={signalSections} />
     </section>
 
     <section class="metho-section" id="m2">

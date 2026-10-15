@@ -167,15 +167,22 @@ test("S-2 rule states the era scope; S-6 requires late AND large", () => {
   assert.ok(!s6.some((s) => s.magnitude.low === 1001), "late-but-small never fires");
 });
 
-test("D-2 body: rules, receipts, lag caveat, and withheld kinds all render", () => {
+test("D-2 body: rules, receipts, lag caveat, and withheld kinds all render", async () => {
   const art = buildSignalArtifact(inputs([...s1Pad(), txn({ txnId: "big", low: 500001, high: 1000000 })]));
   const html = signalsBody(art, {});
-  assert.match(html, /Rule book/);
-  assert.match(html, /amount lower bound ≥ \$250K/);
+  /* signals-v3 M2 (R13, R14, LD9): the rule book moved to Methodology
+     (`ruleBookHtml`); on /signals/ every hit's kind word opens its exact rule,
+     and the lag caveat and coverage window ride in the "How signals work"
+     note. Each property is asserted in its new home. */
+  assert.match(html, /<span class="note-pop" popover id="n-signal-hits-[^"]+" role="note">amount lower bound ≥ \$250K/, "the exact rule opens from the hit's kind word");
   assert.match(html, /eFD&nbsp;↗/);
   assert.ok(html.includes("WITHHELD"), "withheld kinds render as withheld");
   assert.ok(html.includes(LAG_CAVEAT.slice(0, 40)));
   assert.match(html, /coverage window/);
+  const { ruleBookHtml } = await import("../src/lib/ui/index.ts");
+  const book = ruleBookHtml(art);
+  assert.match(book, /Signal rule book/);
+  assert.match(book, /amount lower bound ≥ \$250K/);
 });
 
 test("review F1: prior-artifact chaining — first-seen carried, tombstones emitted", () => {
@@ -290,8 +297,12 @@ test("review r2-F3: tombstones never render as active — separate section, sepa
   assert.match(html, /changes since last build/);
   // The active S-1 count excludes the tombstone: actives in window minus one.
   const activeS1 = b.signals.filter((s) => s.kind === "s1-large" && s.status === "active").length;
-  // The rule book's HITS cell counts actives only.
-  assert.match(html, new RegExp(`<td class="c-num si-hits">${activeS1}</td>`));
+  // The rule book's HITS cell (Methodology, signals-v3 M2) counts actives only…
+  const { ruleBookHtml } = await import("../src/lib/ui/index.ts");
+  assert.match(ruleBookHtml(b), new RegExp(`<td class="c-num si-hits">${activeS1}</td>`));
+  // …and so does the page's Hits figure.
+  const active = b.signals.filter((s) => s.status === "active").length;
+  assert.match(html, new RegExp(`<dt>Hits</dt><dd class="ledger-value">${active}</dd>`));
   const member = panel(b, "T000001", {});
   assert.match(member, /superseded in the window/);
 });
@@ -755,4 +766,106 @@ test("R8 / T7: the validator type-checks the new fields when present and still a
   // …and chains: its records are carried verbatim as tombstones
   const next = buildSignalArtifact({ ...inputs([txn()]), priorArtifact: prior as never });
   assert.ok(next.signals.some((s) => s.status !== "active" && !("listedStock" in s)), "a carried prior record keeps its shape");
+});
+
+/* ======================================================================
+   signals-v3 M2 (T2.1, R4) — read-only accessors; the artifact's bytes
+   ====================================================================== */
+
+import { createHash } from "node:crypto";
+import { signalIdentity, s3WindowRows, s3MemberKey } from "../src/lib/signals.ts";
+import { fnv1a64 } from "../src/lib/derive.ts";
+
+/* The S-5 byte corpus: the T7 corpus plus one committee member's 120 trades in
+   two finance issuers, so S-5 is computed (not withheld) and its rows are in
+   the artifact too. */
+function s5CorpusInputs(): SignalInputs {
+  const base = idCorpusInputs();
+  const rows = [...base.txns];
+  for (let i = 0; i < 120; i++) {
+    const m = String((i % 12) + 1).padStart(2, "0");
+    rows.push({
+      kind: "txn", txnId: `cmte${i}`, filed: i < 110 ? `2025-${m}-2${i % 8}` : `2026-07-1${i % 9}`, traded: i < 110 ? `2025-${m}-0${(i % 9) + 1}` : `2026-07-0${(i % 9) + 1}`,
+      name: "Committee Member", bioguide: "H000001", party: "D", state: "CT", district: "4", chamber: "house",
+      ticker: i % 3 === 0 ? "CB" : "BAC", side: i % 2 ? "sale" : "purchase", owner: "self", low: 1001, high: 15000, lag: 20, late: 0, flags: [],
+      doc: `https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2025/cmte${i}.pdf`, asset: "Bank Holding (BAC) [ST]", assetType: "ST",
+    });
+  }
+  const sectors: Record<string, string> = { BAC: "finance-insurance-realestate", CB: "finance-insurance-realestate", WMB: "transport-utilities" };
+  return {
+    ...base,
+    txns: rows,
+    s5: {
+      membershipsByMember: new Map([["H000001", [{ committeeId: "HSBA", name: "House Committee on Financial Services", role: null, validFrom: "2025-01-03", validTo: "2026-09-09" }]]]),
+      windowFrom: "2025-01-03",
+      windowTo: "2026-09-09",
+      jurisdictionByCommittee: new Map([["HSBA", ["finance-insurance-realestate"]]]),
+      resolveSector: (t: string) => (sectors[t] ? { state: "sector", sector: sectors[t]! } : { state: "unresolved-ticker" }),
+    },
+  };
+}
+
+const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+
+/* Captured from the engine BEFORE signals-v3 M2 touched signals.ts (main @
+   335e5fc, `JSON.stringify(buildSignalArtifact(...))`, sha256). A field added
+   to a Signal, a changed window rule or a reordered key changes them (R4). */
+const PRE_CHANGE_BYTES = {
+  idCorpus: { length: 62556, sha256: "8f741999141675cad987ab3dcf2a681f8eee780d39141107417835a9ddeb7d83" },
+  idCorpusChained: { length: 62684, sha256: "e26355f5df1b23a3ba272964753dc38dd23346b5b9d55865118db08c9be41647" },
+  s5Corpus: { length: 70969, sha256: "d8e3b194192d6a5ca3d9bafeff238c08fba32287151368f6021cf739447a73b0" },
+} as const;
+
+test("T2.1 (R4): JSON.stringify of the artifact is byte-equal to the pre-change snapshot (plain, chained, and with S-5)", () => {
+  const a = JSON.stringify(buildSignalArtifact(idCorpusInputs()));
+  assert.deepEqual({ length: a.length, sha256: sha(a) }, PRE_CHANGE_BYTES.idCorpus);
+  const chained = JSON.stringify(buildSignalArtifact({ ...idCorpusInputs(), buildId: "20260813.1", generatedAtDate: "2026-08-13", generatedAt: "2026-08-13 00:00 UTC", priorArtifact: JSON.parse(a) }));
+  assert.deepEqual({ length: chained.length, sha256: sha(chained) }, PRE_CHANGE_BYTES.idCorpusChained);
+  const s5art = buildSignalArtifact(s5CorpusInputs());
+  assert.ok(s5art.signals.some((s) => s.kind === "s5-jurisdiction"), "S-5 is computed in this corpus (control)");
+  const s5 = JSON.stringify(s5art);
+  assert.deepEqual({ length: s5.length, sha256: sha(s5) }, PRE_CHANGE_BYTES.s5Corpus);
+});
+
+test("T2.1: the identity is read-only and non-enumerable — it covers every active signal and adds no key", () => {
+  const art = buildSignalArtifact(s5CorpusInputs());
+  const rows = new Map(s5CorpusInputs().txns.map((r) => [r.txnId, r]));
+  const active = art.signals.filter((s) => s.status === "active");
+  assert.ok(active.length > 50);
+  for (const s of active) {
+    const id = signalIdentity(s);
+    assert.ok(id, `${s.id} carries its identity`);
+    assert.ok(!Object.keys(s).some((k) => /ident/i.test(k)), "no enumerable identity key");
+    if (s.kind === "s2-first") assert.equal(id, `${s.entities.bioguide}\u0000${s.entities.ticker}`);
+    else if (s.kind === "s3-cooccurrence") assert.equal(id, `${s.entities.ticker}\u0000${s.side}\u0000${s.occurrence.tradeDate}`);
+    else {
+      assert.ok(rows.has(id!), `${s.kind}'s identity is its triggering txnId`);
+      assert.equal(s.id, `${s.kind}:${fnv1a64(id!)}`, "and it reproduces the public id");
+      assert.equal(rows.get(id!)!.doc, s.receipts[0]);
+    }
+  }
+  // a record parsed from JSON (a prior build's) carries none — never a guess
+  assert.equal(signalIdentity(JSON.parse(JSON.stringify(active[0]))), null);
+});
+
+test("T2.1: s3WindowRows reproduces every cluster's member count and receipts (fixture corpus and the golden live clusters)", async () => {
+  const rows = idCorpusRows();
+  const art = buildSignalArtifact(idCorpusInputs());
+  const clusters = art.signals.filter((s) => s.kind === "s3-cooccurrence");
+  assert.ok(clusters.length >= 1);
+  for (const s of clusters) {
+    const w = s3WindowRows(rows, s.entities.ticker!, s.side as "purchase" | "sale", s.occurrence.tradeDate!);
+    assert.equal(`${new Set(w.map(s3MemberKey)).size} members`, s.entities.memberName);
+    assert.deepEqual(new Set(w.map((r) => r.doc)), new Set(s.receipts));
+  }
+  // the live clusters the golden fixture carries in full (signals-v3 M2 T2.3)
+  const { loadTriageFixture } = await import("./lib/triage-fixture.ts");
+  const f = loadTriageFixture();
+  const live = f.artifact.signals.filter((s) => s.kind === "s3-cooccurrence");
+  assert.equal(live.length, 11, "SPCX and Tuberville's ten");
+  for (const s of live) {
+    const w = s3WindowRows(f.rows, s.entities.ticker!, s.side as "purchase" | "sale", s.occurrence.tradeDate!);
+    assert.equal(`${new Set(w.map(s3MemberKey)).size} members`, s.entities.memberName, `${s.entities.ticker} ${s.occurrence.tradeDate}`);
+    assert.deepEqual(new Set(w.map((r) => r.doc)), new Set(s.receipts), `${s.entities.ticker} receipts`);
+  }
 });

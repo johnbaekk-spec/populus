@@ -66,6 +66,13 @@ export {
   hitsView,
   hitsHiddenText,
   groupHits,
+  // signals-v3 M2 (LD10, R14): a triage row, and the Methodology sections
+  // the rule book, the lag distribution, the ranking and the committee table
+  triageRowHtml,
+  ruleBookHtml,
+  lagBandHtml,
+  signalsRankingHtml,
+  committeeDirectHtml,
 } from "./signals.ts";
 export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {

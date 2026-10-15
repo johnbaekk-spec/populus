@@ -242,3 +242,24 @@ test("R2-6: the directory's Top-5 presence is decided by directoryColumns, and t
   // control: without the column set the row falls back to the field, and renders the cell the table dropped
   assert.equal(cols(instIndexBodyHtml(withShare, "", "value", "desc").html), 6, "control: the field alone would put the cell back");
 });
+
+/* ---------- signals-v3 M2 (R13): the slim hits table ---------- */
+
+test("signals-v3 M2 (R13): the slim hits table names its six columns; a window whose hits name no ticker removes Ticker and states why", async () => {
+  const { signalsBody } = await import("../src/lib/ui/index.ts");
+  const art = (ticker: string | null) => ({
+    v: 1, buildId: "b", computedAt: "c", thresholdVersion: "1", retentionDays: 90, coverageFrom: "2026-05-04", coverageTo: "2026-08-02",
+    lifecycleNote: "n", compaction: "none", dateAnomaliesExcluded: 0, lagCaveat: "l", withheld: [],
+    signals: [{ id: "s1-large:1", kind: "s1-large", rule: "r", thresholdVersion: "1", entities: { bioguide: "A000001", memberName: "A Member", ticker },
+      magnitude: { low: 250001, high: 500000 }, receipts: ["https://efdsearch.senate.gov/x"], occurrence: { tradeDate: "2026-03-01", filedDate: "2026-06-01" },
+      sourceAvailableAt: "2026-06-01", computedAt: "c", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
+      asset: "A Inc", assetType: "Stock", side: "purchase", owner: "self", listedStock: true }],
+  }) as never;
+  const withTicker = signalsBody(art("ABC"), CTX);
+  assert.match(withTicker, /<table class="etable etable-compact si-table" data-columns="kind,ticker,who,when,size,src" data-columns-proven="ticker">/);
+  assert.equal((/<thead><tr>([\s\S]*?)<\/tr><\/thead>/.exec(withTicker.slice(withTicker.indexOf('id="hits"')))![1]!.match(/<th\b/g) ?? []).length, 6);
+  const noTicker = signalsBody(art(null), CTX);
+  assert.match(noTicker, /data-columns="kind,who,when,size,src"/);
+  assert.match(noTicker, /<p class="table-foot-reason">Ticker: no hit in the window names a ticker\.<\/p>/);
+  assert.doesNotMatch(noTicker.slice(noTicker.indexOf('id="hits"')), /data-col="ticker"/);
+});

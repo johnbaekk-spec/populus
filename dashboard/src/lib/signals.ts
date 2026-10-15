@@ -289,6 +289,17 @@ function rawIdentityOf(sig: Signal): string {
   return (sig as unknown as Record<symbol, string>)[RAW_IDENTITY] ?? sig.id;
 }
 
+/** signals-v3 M2 (T2.1, R4): the raw identity the engine minted `sig` from —
+    the triggering row's `txnId` for s1, s4, s5 and s6, `bioguide` NUL
+    `ticker` for s2, `ticker` NUL `side` NUL `windowStart` for s3 (the NUL is
+    the engine's composite-key delimiter) — READ-ONLY, from the non-enumerable
+    symbol, so nothing is added to the object and `JSON.stringify` of the
+    artifact is unchanged. Null for a record that carries none: a prior
+    build's record, parsed from JSON (a tombstone or an unevaluated row). */
+export function signalIdentity(sig: Signal): string | null {
+  return (sig as unknown as Record<symbol, string | undefined>)[RAW_IDENTITY] ?? null;
+}
+
 function addDaysIso(dateIso: string, days: number): string {
   const t = Date.UTC(
     Number(dateIso.slice(0, 4)),
@@ -367,17 +378,58 @@ function computeS2(txns: readonly TxnRow[], ctx: EmitCtx, corpusFrom: string): S
   );
 }
 
+/* ---------- S-3's window rule, shared (signals-v3 M2, T2.1) ----------
+   ONE window rule for the engine and every consumer that recovers a cluster's
+   members at build time (`signal-triage.ts`): the side class (a partial sale
+   is a sale), the dated, anomaly-free rows it reads, and the inclusive
+   trade-date window [start, start + window_days]. The artifact stores only a
+   cluster's count and receipts; `s3WindowRows` recomputes its rows from the
+   same rule rather than a second cluster rule. */
+
+/** S-3's side class: purchases, and sales with partial sales folded in; every
+    other side never clusters. */
+export function s3SideClass(side: TxnRow["side"]): "purchase" | "sale" | null {
+  return side === "purchase" ? "purchase" : side === "sale" || side === "sale_partial" ? "sale" : null;
+}
+
+/** The rows S-3 can count: not a date anomaly, trade-dated, ticker-bearing, in
+    a side class. */
+function s3Eligible(txns: readonly TxnRow[]): TxnRow[] {
+  return excludeDateAnomalies(txns).rows.filter((r) => r.traded != null && r.ticker != null && s3SideClass(r.side) !== null);
+}
+
+/** The last trade date inside a window that opens on `start`. */
+export function s3WindowEnd(start: string): string {
+  const p = T.kinds["s3-cooccurrence"]!.params as { window_days: number };
+  return addDaysIso(start, p.window_days);
+}
+
+/** Even a rolling detection window asks the one membership question. */
+function inS3Window(r: TxnRow, start: string, end: string): boolean {
+  return windowMembership(r, { start, end }, "traded") === "in";
+}
+
+/** The rows of one S-3 window — `ticker`, side class `side`, trades from
+    `start` through `s3WindowEnd(start)` — by the engine's own rule. */
+export function s3WindowRows(rows: readonly TxnRow[], ticker: string, side: "purchase" | "sale", start: string): TxnRow[] {
+  const end = s3WindowEnd(start);
+  return s3Eligible(rows).filter((r) => r.ticker === ticker && s3SideClass(r.side) === side && inS3Window(r, start, end));
+}
+
+/** S-3's distinct-member key, as the engine counts members. */
+export function s3MemberKey(r: Pick<TxnRow, "bioguide" | "name">): string {
+  return r.bioguide ?? `raw:${r.name}`;
+}
+
 function computeS3(txns: readonly TxnRow[], ctx: EmitCtx): Signal[] {
   const p = T.kinds["s3-cooccurrence"]!.params as { min_members: number; window_days: number };
   const rule =
     `≥${p.min_members} distinct members disclosed the same ticker, same side, within a ` +
     `${p.window_days}-day trade-date window`;
-  const dated = excludeDateAnomalies(txns).rows.filter(
-    (r) => r.traded != null && r.ticker != null && (r.side === "purchase" || r.side === "sale" || r.side === "sale_partial"),
-  );
+  const dated = s3Eligible(txns);
   const groups = new Map<string, TxnRow[]>();
   for (const r of dated) {
-    const side = r.side === "purchase" ? "purchase" : "sale";
+    const side = s3SideClass(r.side)!;
     const key = `${r.ticker} ${side}`;
     let list = groups.get(key);
     if (!list) {
@@ -393,12 +445,11 @@ function computeS3(txns: readonly TxnRow[], ctx: EmitCtx): Signal[] {
     for (let i = 0; i < list.length; i++) {
       const start = list[i]!.traded!;
       if (start <= cooldownUntil) continue;
-      const end = addDaysIso(start, p.window_days);
-      // Even a rolling detection window asks the one membership question.
+      const end = s3WindowEnd(start);
       // `list` is already anomaly-filtered and trade-dated, so the traded basis
       // returns "in"/"out" here and never an exclusion verdict.
-      const window = list.filter((r) => windowMembership(r, { start, end }, "traded") === "in");
-      const members = new Set(window.map((r) => r.bioguide ?? `raw:${r.name}`));
+      const window = list.filter((r) => inS3Window(r, start, end));
+      const members = new Set(window.map(s3MemberKey));
       if (members.size >= p.min_members) {
         const first = window[0]!;
         const sig = baseSignal("s3-cooccurrence", `${key} ${start}`, rule, first, ctx);

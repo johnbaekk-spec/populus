@@ -67,6 +67,8 @@ import {
 } from "./filer-payload.ts";
 import { paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
 import { buildSignalArtifact, validateSignalArtifact } from "./signals.ts";
+import { buildTriage } from "./signal-triage.ts";
+import { sicCode } from "./committee-direct.ts";
 import { planFeedParts, type FeedPartsPlan } from "./feed-parts.ts";
 import { pathSafeTicker } from "./format.ts";
 import { notableMoves, offeredMovePeriods } from "./notable-moves-derive.ts";
@@ -137,6 +139,11 @@ export interface BuildData {
 export interface SectorData {
   /** issuer CIK (10-digit) → sector, resolved by the producer's taxonomy at ingest */
   sectorByCik: Map<string, string>;
+  /** signals-v3 M2 (R5): issuer CIK → the 4-digit SIC as EDGAR records it
+      (`issuer_sic.sic`), read for the committee direct-match grade only. EMPTY
+      when the build's `issuer_sic` predates the column — every grade is then
+      broad, the table's rule for an unresolved SIC; never guessed. */
+  sicByCik: Map<string, string>;
   taxonomyVersion: string;
   asOf: string;
 }
@@ -193,8 +200,18 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
         ),
       );
       const sectorByCik = new Map<string, string>();
-      for (const r of db.prepare(`SELECT cik, sector FROM issuer_sic`).all() as Record<string, unknown>[]) {
+      const sicByCik = new Map<string, string>();
+      /* signals-v3 M2 (R5): the 4-digit SIC rides beside the sector when the
+         build's table has the column. An older `issuer_sic` without it still
+         loads its sectors exactly as before; the direct grade then has no SIC
+         to read and grades broad. Detected from the schema, never from a
+         swallowed error. */
+      const hasSic = (db.prepare(`PRAGMA table_info(issuer_sic)`).all() as Record<string, unknown>[]).some(
+        (c) => String(c.name) === "sic",
+      );
+      for (const r of db.prepare(hasSic ? `SELECT cik, sector, sic FROM issuer_sic` : `SELECT cik, sector FROM issuer_sic`).all() as Record<string, unknown>[]) {
         sectorByCik.set(String(r.cik), String(r.sector));
+        if (hasSic && r.sic != null) sicByCik.set(String(r.cik), String(r.sic));
       }
       // The family is COMPLETE here, so "empty" is a failed or
       // never-run ingest — a producer defect. Converting it to null would let
@@ -222,6 +239,7 @@ export function loadContext(dbPath: string): { sectorData: SectorData | null; co
       }
       sectorData = {
         sectorByCik,
+        sicByCik,
         taxonomyVersion: meta.get("taxonomy_version")!,
         asOf: meta.get("snapshot_as_of")!,
       };
@@ -472,6 +490,48 @@ export function getSignalArtifact(): import("./signals.ts").SignalArtifact {
         : null,
   });
   return signalCache;
+}
+
+/* ---------- signals-v3 M2 (LD1): the per-build triage (memoized like the artifact) --- */
+
+let triageCache: import("./signal-triage.ts").TriageResult | null = null;
+
+/** The Signals triage of this build: `buildTriage` over the build's artifact,
+    its rows and the committee inputs S-5 used. Build-time memory only — it is
+    never serialized (R4). */
+export function getTriage(): import("./signal-triage.ts").TriageResult {
+  if (triageCache) return triageCache;
+  const build = getBuildData();
+  const artifact = getSignalArtifact();
+  const resolveSector = sectorResolver(build);
+  const resolveSic = sicResolver(build);
+  triageCache = buildTriage(artifact, build.txns, {
+    committee:
+      build.committeeData !== null && resolveSector !== null && resolveSic !== null
+        ? {
+            membershipsByMember: build.committeeData.byMember,
+            windowFrom: build.committeeData.windowFrom,
+            windowTo: build.committeeData.windowTo,
+            jurisdictionByCommittee: build.committeeData.jurisdictionByCommittee,
+            resolveSector,
+            resolveSic,
+          }
+        : null,
+  });
+  return triageCache;
+}
+
+/** ticker → unique issuer CIK (the sector resolver's own join, ambiguity
+    refused) → the 4-digit SIC, for the committee direct grade (R5). Null when
+    the build has no sector data or no ticker map. */
+export function sicResolver(build: BuildData): ((ticker: string) => number | null) | null {
+  if (build.sectorData === null || build.tickerMap === null) return null;
+  const { sicByCik } = build.sectorData;
+  const map = build.tickerMap;
+  return (ticker: string) => {
+    const res = resolveTicker(map, ticker);
+    return res.state === "resolved" ? sicCode(sicByCik.get(res.cik)) : null;
+  };
 }
 
 /** One sector-resolution rule for every consumer: ticker → unique issuer CIK

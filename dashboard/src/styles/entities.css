@@ -913,46 +913,13 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .si-table .si-when { font-family: var(--mono); color: var(--ink2); white-space: nowrap; }
 .si-lag { color: var(--ink3); }
 .si-late { color: var(--amber); font-weight: 600; }
-.si-table .si-what { white-space: nowrap; overflow: clip; overflow-clip-margin: var(--hit-half); text-overflow: ellipsis; }
-.si-table .si-what details.si-expand { display: inline; }
-/* SIGNALS-CLARITY M2 (R10): the summary is the WHAT sentence, often longer
-   than its cell. Its box is the cell's visible width, so the sentence
-   ellipsises INSIDE it: the whole visible line is the control, and no part of
-   the summary sits under the next cell. */
-.si-table .si-what details.si-expand > summary {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: top;
-  font: 400 var(--fs-note)/1.2 var(--sans);
-  color: var(--ink3);
-  cursor: pointer;
-}
-/* An opened evidence lays out at the FULL table width on its own row (R11,
-   H-14): the body is the row after its hit, shown while that hit's disclosure
-   is open — a one-line row never clips its receipts. A hit HELD BACK by its
-   compact disclosure (`[data-compact-extra]` in a collapsed tbody) is hidden,
-   and so is its evidence, open or not: shown under the visible hits, a held
-   hit's receipts would read as another hit's (review R2-2 / C2-1). The binder
-   also closes it on collapse. */
-.si-table > tbody > tr.si-evidence-row { display: none; }
-.si-table > tbody > tr.si-hit:has(details.si-expand[open]) + tr.si-evidence-row:not(tbody[data-collapsed="true"] > [data-compact-extra]) { display: table-row; }
-.si-table > tbody > tr.si-evidence-row > td { white-space: normal; padding-top: 4px; padding-bottom: 12px; }
-.si-table .si-expand-body { font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink2); margin: 0; white-space: normal; }
-.si-table .si-expand-body p,
-.si-table .si-expand-body .si-receipts { margin: 0 0 4px; }
-/* The receipts read on one line after their label (a <div>, never inside a
-   <p>: review C2-6). */
-.si-table .si-expand-body .si-receipts .cell-src { display: inline; text-align: left; }
 .si-table td.si-empty { white-space: normal; color: var(--ink3); font: 400 var(--fs-note)/1.6 var(--sans); padding-top: 22px; padding-bottom: 22px; }
-/* bar-list values (the lag distribution, the hit rate, the agreement rows) */
+/* bar-list values (the lag distribution, the hit rate by family, the agreement rows) */
 .si-lag-name { font: 500 var(--fs-small)/1.3 var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .si-party { font: 500 var(--fs-label) var(--mono); }
 .si-lag-val { font: 600 var(--fs-small) var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
 .si-lag-n { font: 500 var(--fs-label) var(--mono); color: var(--ink3); }
-.si-rate dt { font: 400 var(--fs-small) var(--sans); color: var(--ink2); text-align: right; }
+.si-family-name { font: 400 var(--fs-small) var(--sans); color: var(--ink2); text-align: right; }
 .si-rate-val { font: 500 var(--fs-cell) var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
 .si-bar { position: relative; display: block; height: 3px; background: var(--bar-track); }
 .si-bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--bar-buy); }

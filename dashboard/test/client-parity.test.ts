@@ -245,12 +245,88 @@ test("notable moves: the band's server count equals the island's first restateme
   assert.equal(server, "1–15 of 40 moves");
 });
 
-test("signal hits and holdings: the pager's range is one function on both sides", () => {
-  /* SIGNALS-CLARITY M2 (R11): the pager moves by LINES — repeats within one
-     filing collapse — and states the hits those lines hold beside them */
-  assert.equal(hitsRangeText(0, 50, 72, 80, SIGNAL_HITS_PAGE_SIZE), "1–50 of 72 lines · 80 hits");
-  assert.equal(hitsRangeText(1, 22, 72, 80, SIGNAL_HITS_PAGE_SIZE), "51–72 of 72 lines · 80 hits");
+test("signal hits and holdings: the range is one function on both sides", () => {
+  /* SIGNALS-CLARITY M2 (R11): the count moves by LINES — repeats within one
+     filing collapse — and states the hits those lines hold beside them.
+     signals-v3 M2 (R13): the hits grow by "Show 10 more", so the range always
+     starts at 1 and its end is the lines shown. */
+  assert.equal(SIGNAL_HITS_PAGE_SIZE, 10);
+  assert.equal(hitsRangeText(0, 10, 72, 80, SIGNAL_HITS_PAGE_SIZE), "1–10 of 72 lines · 80 hits");
+  assert.equal(hitsRangeText(0, 20, 72, 80, SIGNAL_HITS_PAGE_SIZE), "1–20 of 72 lines · 80 hits");
   assert.equal(hitsRangeText(0, 1, 1, 1, SIGNAL_HITS_PAGE_SIZE), "1–1 of 1 line · 1 hit");
   assert.equal(hitsRangeText(0, 0, 0, 0, SIGNAL_HITS_PAGE_SIZE), "0 hits");
   assert.equal(holdingsRangeText({ page: 1, rowsOnPage: 20, matched: HOLDINGS_PAGE_SIZE + 20 }), `${HOLDINGS_PAGE_SIZE + 1}–${HOLDINGS_PAGE_SIZE + 20} of ${HOLDINGS_PAGE_SIZE + 20} positions`);
+});
+
+/* signals-v3 M2 (T2.7, R13): the signals island is RUN over the server's own
+   /signals markup. Its first repaint under the server's filter is byte-equal
+   to the server's body; "Show 10 more" keeps those ten lines and appends the
+   next ten exactly as the server would render them; a family filter repaints
+   through the same view, presses its row and shows the removable pill; the
+   artifact is fetched ONCE. */
+test("T2.7: the signals island's repaint equals the server render for the same filter; Show 10 more and the family filter use one fetch", async () => {
+  const { signalsBody, sortHits, hitsView, hitsBodyHtml } = await import("../src/lib/ui/index.ts");
+  const { hitsRepaint, initSignalsPage } = await import("../src/scripts/signals-client.ts");
+  const mk = (i: number, kind: "s1-large" | "s6-late-large"): Record<string, unknown> => ({
+    id: `${kind}:${i}`, kind, rule: `${kind} rule`, thresholdVersion: "1.0.0",
+    entities: { bioguide: `B${String(i).padStart(6, "0")}`, memberName: `Member ${i}`, ticker: `T${i}` },
+    magnitude: { low: 250001, high: 500000 }, receipts: [`https://efdsearch.senate.gov/${i}`],
+    occurrence: { tradeDate: "2026-03-01", filedDate: `2026-06-${String((i % 28) + 1).padStart(2, "0")}` }, sourceAvailableAt: "2026-06-01",
+    computedAt: "c", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
+    asset: `T${i} Inc`, assetType: "Stock", side: "purchase", owner: "self", listedStock: true,
+  });
+  const artifact = {
+    v: 1, buildId: "b", computedAt: "c", thresholdVersion: "1.0.0", retentionDays: 90, coverageFrom: "2026-05-04", coverageTo: "2026-08-02",
+    lifecycleNote: "n", compaction: "c", dateAnomaliesExcluded: 0, lagCaveat: "l", withheld: [],
+    signals: [...Array.from({ length: 24 }, (_, i) => mk(i, "s1-large")), ...Array.from({ length: 6 }, (_, i) => mk(100 + i, "s6-late-large"))],
+  } as never;
+  const html = signalsBody(artifact, {}, { rowsEvaluated: 1000 });
+  const serverBody = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
+  const cols = /<table class="etable etable-compact si-table" data-columns="([^"]*)"/.exec(html)![1]!.split(",");
+  const active = sortHits((artifact as { signals: never[] }).signals);
+  // the pure composition the island paints with
+  const first = hitsRepaint(active, { family: "all", stocksOnly: true }, 10, {}, cols);
+  assert.equal(first.body, serverBody, "the client's first repaint is the server's body");
+  assert.equal(first.range, /id="signal-hits-range"[^>]*>([^<]*)</.exec(html)![1], "and the server's range");
+  // the island itself, mounted over the server's bytes
+  const { doc, restore } = installDom(html);
+  const g = globalThis as unknown as Record<string, unknown>;
+  const prevFetch = g.fetch, prevWindow = g.window;
+  let fetches = 0;
+  g.fetch = async () => (fetches++, { ok: true, json: async () => JSON.parse(JSON.stringify(artifact)) });
+  g.window = { addEventListener() {} };
+  const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
+  try {
+    initSignalsPage();
+    const body = () => doc.getElementById("signal-hits-body")!.innerHTML;
+    assert.equal(body(), serverBody, "mounting changes nothing");
+    (doc.getElementById("signal-hits-more") as unknown as MiniElement).click();
+    await tick();
+    const twenty = hitsBodyHtml(hitsView(active, { family: "all", stocksOnly: true }).lines.slice(0, 20), {}, cols);
+    assert.equal(body(), twenty, "Show 10 more: the server's renderer, twenty lines");
+    assert.ok(body().startsWith(serverBody), "the first ten lines are unchanged");
+    assert.equal(doc.getElementById("signal-hits-range")!.textContent, "1–20 of 30 lines · 30 hits");
+    (doc.getElementById("signal-hits-more") as unknown as MiniElement).click();
+    await tick();
+    assert.equal(doc.getElementById("signal-hits-range")!.textContent, "1–30 of 30 lines · 30 hits");
+    assert.equal(doc.getElementById("signal-hits-more")!.getAttribute("aria-disabled"), "true", "nothing more to show");
+    // a family filter: COMPLIANCE is S-6
+    (doc.querySelector('#families button[data-family="COMPLIANCE"]') as unknown as MiniElement).bubbleClick();
+    await tick();
+    assert.equal(body(), hitsBodyHtml(hitsView(active, { family: "COMPLIANCE", stocksOnly: true }).lines.slice(0, 10), {}, cols));
+    assert.equal(doc.querySelector('#families button[data-family="COMPLIANCE"]')!.getAttribute("aria-pressed"), "true");
+    assert.equal(doc.querySelector('#families button[data-family="BEHAVIOUR"]')!.getAttribute("aria-pressed"), "false");
+    assert.equal(doc.getElementById("signal-family-pill-row")!.hidden, false, "the removable pill shows");
+    assert.equal(doc.getElementById("signal-family-pill-name")!.textContent, "Compliance");
+    // the pill removes the filter
+    (doc.getElementById("signal-family-pill") as unknown as MiniElement).click();
+    await tick();
+    assert.equal(body(), serverBody, "back to the server's view");
+    assert.equal(doc.getElementById("signal-family-pill-row")!.hidden, true);
+    assert.equal(fetches, 1, "one lazy fetch, memoised");
+  } finally {
+    restore();
+    g.fetch = prevFetch;
+    g.window = prevWindow;
+  }
 });

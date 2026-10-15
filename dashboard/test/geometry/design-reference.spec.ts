@@ -38,14 +38,15 @@ const references = [
    - /congress/: inside the "Notes on this data" disclosure that directly
      follows the provenance strip (D2), closed by default;
    - member and filer pages: inside a collapsed context disclosure;
-   - /signals/: visible, on the card spec;
+   - /signals/: none since signals-v3 M2 — its three summary cards became the
+     lead cards (record SV3-M2), asserted in the route block below;
    - /institutional/: none. */
 const CARDS: Record<(typeof references)[number][1], { count: number; where: "notes" | "context" | "visible" | "none" }> = {
   "/congress/": { count: 3, where: "notes" },
   "/institutional/": { count: 0, where: "none" },
   "/congress/members/M001193/": { count: 3, where: "context" },
   "/institutional/filers/1067983/": { count: 3, where: "context" },
-  "/signals/": { count: 3, where: "visible" },
+  "/signals/": { count: 0, where: "none" },
 };
 
 async function expectCardPlacement(page: Page, route: (typeof references)[number][1]): Promise<void> {
@@ -132,68 +133,57 @@ for (const [file, route] of references) {
         await expectHeadFollowsColumns(page, '[data-entity-table]', 'the member transactions table');
       }
       if (route === '/signals/') {
-        // R17: the hits table leads.
-        for (const title of ['Hits', 'Lag distribution', 'Hit rate by family']) {
+        /* signals-v3 M2 (R10–R13, LD7): the triage page — the head, the lead
+           cards, then Filings to read │ Hit rate by family above the slim hits */
+        for (const title of ['Lead cards', 'Filings to read', 'Hit rate by family', 'Hits']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
-        // signals-v3 M1 (R1): the device-local watch band is gone
-        await expect(page.getByRole('heading', {name:'Watchlist', exact:true})).toHaveCount(0);
-        await expect(page.locator('#signal-watch')).toHaveCount(0);
-        /* T2.10 (:58-62), D3/L14: the rule book is EXPANDED — no enclosing
-           disclosure, its seven rules on the page — and the hits head carries
-           seven columns with Kind first (T2.6). */
-        await expect(page.locator('#signal-rulebook-wrap')).toHaveCount(0);
-        expect(await page.locator('#signal-rulebook').evaluate(el => !!el.closest('details')), 'no disclosure encloses the rule book').toBe(false);
-        await expect(page.locator('#signal-rulebook tbody tr')).toHaveCount(7);
-        await expect(page.locator('#signal-rulebook tbody tr').first()).toBeVisible();
-        await expect(page.locator('#signal-hits thead th')).toHaveCount(7);
-        await expect(page.locator('#signal-hits thead th').first()).toHaveText(/^\s*kind\s*$/i);
+        // the rule book and the lag distribution moved to Methodology; the watch band left in M1
+        for (const gone of ['Lag distribution', 'Rule book', 'Signal rule book', 'Watchlist']) {
+          await expect(page.getByRole('heading', {name:gone, exact:true})).toHaveCount(0);
+        }
+        await expect(page.locator('#signal-watch, #signal-rules, #signal-rulebook, #signal-lag, .si-evidence-row, .si-hit-filter')).toHaveCount(0);
+        await expect(page.locator('main .page-head .ledger-fig')).toHaveCount(3);
+        // the three lead cards show on the page, each with both dates
+        const cards = page.locator('#lead-cards .si-card');
+        await expect(cards).toHaveCount(3);
+        for (const c of await cards.all()) await expect(c).toBeVisible();
+        // the tiers: Stands out and Worth a look open, Routine a CLOSED disclosure
+        expect(await page.locator('#triage > #stands, #triage > #look').count()).toBe(2);
+        expect(await page.locator('#routine').evaluate((d) => d.tagName === 'DETAILS' && !(d as HTMLDetailsElement).open), 'Routine is closed').toBe(true);
+        // every triage row shows its four meters, both dates and its receipt
+        const rows = page.locator('#stands article.si-row, #look article.si-row');
+        const n = await rows.count();
+        for (let i = 0; i < Math.min(n, 5); i++) {
+          const r = rows.nth(i);
+          await expect(r.locator('.si-meter[role="img"]')).toHaveCount(4);
+          await expect(r.locator('.si-row-filed time')).toBeVisible();
+          await expect(r.locator('.si-row-src a')).toBeVisible();
+        }
+        // the slim hits: six columns, Kind first; at most ten server lines, each with its receipt
+        await expect(page.locator('#hits thead th')).toHaveCount(6);
+        await expect(page.locator('#hits thead th').first()).toHaveText(/^\s*kind\s*$/i);
         const all = await page.locator('#signal-hits-body tr.si-hit').count();
-        expect(all).toBeLessThanOrEqual(50);
-        // the rule filter re-renders from the complete artifact; the status line announces the count
-        const kinds = page.locator('.si-hit-filter button[data-kind]');
-        if (await kinds.count() > 1) {
-          await kinds.nth(1).click();
-          const kind = await kinds.nth(1).getAttribute('data-kind');
-          await expect(page.locator('#signal-hits-body tr.si-hit').first()).toHaveAttribute('data-kind', kind!);
-          // retrying: the filter repaints after one artifact fetch, and the server's
-          // first row may already be of this kind
-          await expect(page.locator(`#signal-hits-body tr.si-hit:not([data-kind="${kind}"])`)).toHaveCount(0);
-          await kinds.first().click();
-          await expect(page.locator('#signal-hits-body tr.si-hit')).toHaveCount(all);
-        }
-        // every rendered hit carries its receipt link
+        expect(all).toBeLessThanOrEqual(10);
         expect(await page.locator('#signal-hits-body tr.si-hit td.c-src a').count()).toBe(all);
-        /* DESIGN-POLISH M2 (T2.6, R36): the hits page shows a compact bound
-           WITHIN its 50-row page — "1–K of the 50 hits on this page", a
-           definite bound noun, never the collection's size — and Show all
-           reveals the rest of THAT page (the pager still pages 50). */
-        /* review Q2-9: unconditional — under CD-1 the page shows its FIXED
-           twelve of the fifty, on every build with more than twelve hits (the
-           gate's has 50 on its first page) */
-        const compact = page.locator('#signal-hits .compact-disclosure');
-        expect(all, 'the gate build pages more than twelve hits').toBeGreaterThan(12);
-        await expect(compact).toHaveCount(1);
-        const shown = await page.locator('#signal-hits-body tr.si-hit').evaluateAll(rows => rows.filter(r => r.checkVisibility()).length);
-        expect(shown, 'the fixed default: twelve hits of the page (CD-1)').toBe(12);
-        /* SIGNALS-CLARITY M2 (R11): the page holds LINES — exact repeats in one
-           filing are one line — so the bound counts lines */
-        await expect(compact.locator('.compact-bound')).toHaveText(new RegExp(`^1–${shown} of the ${all} lines on this page$`));
-        await compact.locator('.compact-toggle').click();
-        await expect.poll(() => page.locator('#signal-hits-body tr.si-hit').evaluateAll(rows => rows.filter(r => r.checkVisibility()).length), { message: 'Show all reveals every hit on the page' }).toBe(all);
-        // the pager pages the artifact: 50 per page, in the range grammar
-        // (DESIGN-POLISH M1, R8). SIGNALS-CLARITY M2 (R11/R12): it pages the
-        // default view's LINES and states the hits they hold — "1–50 of L
-        // lines · H hits"; `data-lines` is the default view's line count.
-        const lines = Number(await page.locator('#signal-hits').getAttribute('data-lines'));
-        if (lines > 50) {
-          const L = lines.toLocaleString('en-US');
-          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${L} lines · \\d[\\d,]* hits$`));
-          await page.locator('#signal-hits-next').click();
-          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^51–\\d[\\d,]* of ${L} lines · \\d[\\d,]* hits$`));
-          await page.locator('#signal-hits-prev').click();
-          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–50 of ${L} lines · \\d[\\d,]* hits$`));
+        // "Show 10 more" grows the view from the complete artifact, in the range grammar
+        const lines = Number(await page.locator('#hits').getAttribute('data-lines'));
+        const L = lines.toLocaleString('en-US');
+        await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–${Math.min(10, lines)} of ${L} lines? · \\d[\\d,]* hits?$`));
+        if (lines > 10) {
+          await page.locator('#signal-hits-more').click();
+          await expect(page.locator('#signal-hits-body tr.si-hit')).toHaveCount(Math.min(20, lines));
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–${Math.min(20, lines)} of ${L} lines · \\d[\\d,]* hits$`));
         }
+        // a family row filters the hits and shows the removable pill; the pill clears it
+        const fam = page.locator('#families button[data-family="BEHAVIOUR"]');
+        await fam.click();
+        await expect(fam).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.locator('#signal-family-pill-row')).toBeVisible();
+        await expect(page.locator('#signal-hits-body tr.si-hit:not([data-family="BEHAVIOUR"])')).toHaveCount(0);
+        await page.locator('#signal-family-pill').click();
+        await expect(fam).toHaveAttribute('aria-pressed', 'false');
+        await expect(page.locator('#signal-family-pill-row')).toBeHidden();
       }
       if (route === '/congress/') {
         await expect(page.locator('.reference-feed thead th')).toHaveCount(8);
@@ -535,27 +525,109 @@ test('Filer composition at 1440 (T2.5): parts in DOM order = visual order; the p
   }
 });
 
-test('Signals composition at 1440 (T2.6): S1 pairs Hits with Lag + Hit rate; the rule book follows S1, and no watch band follows it', async ({ page }) => {
+test('Signals composition at 1440 (signals-v3 M2, LD7): head → lead cards → S1 (Filings to read │ families above hits) → the Methodology links; no rule book, lag or watch band', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/signals/'))?.status()).toBe(200);
   const s1 = await page.evaluate(() => {
     const band = document.querySelector('.design-signals-band')!;
     const cells = Array.from(band.children).filter((c) => c.checkVisibility());
-    return cells.map((c) => ({ id: c.id, top: c.getBoundingClientRect().top, left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right, heads: Array.from(c.querySelectorAll('h2')).map((h) => h.textContent!.trim()) }));
+    return cells.map((c) => ({ id: c.id, cls: c.getAttribute('class'), primary: c.hasAttribute('data-pair-primary'), top: c.getBoundingClientRect().top, left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right, heads: Array.from(c.querySelectorAll('h2')).map((h) => h.textContent!.trim()) }));
   });
   expect(s1.length, 'S1 is a pair').toBe(2);
-  expect(s1[0]!.id, 'Hits is the left cell').toBe('signal-hits');
-  expect(s1[1]!.heads, 'the right cell holds Lag distribution, then Hit rate').toEqual(['Lag distribution', 'Hit rate by family']);
+  expect([s1[0]!.id, s1[0]!.primary], 'Filings to read is the left, primary cell').toEqual(['triage', true]);
+  expect(s1[1]!.cls, 'the right cell is the side cell').toBe('si-side');
+  expect(s1[1]!.heads, 'the right cell holds Hit rate by family, then Hits').toEqual(['Hit rate by family', 'Hits']);
   expect(Math.abs(s1[0]!.top - s1[1]!.top), 'the two cells start at one top').toBeLessThanOrEqual(2);
   expect(s1[0]!.right).toBeLessThanOrEqual(s1[1]!.left + 1);
-  const order = await partsInOrder(page, ['main .design-signals-band', 'main #signal-rulebook']);
+  const order = await partsInOrder(page, ['main .page-head', 'main #lead-cards', 'main .design-signals-band', 'main #signal-method-links']);
   expect(order.missing).toEqual([]);
-  expect(order.domOrder, 'S1 → rule book (L14)').toBe(true);
-  await expect(page.locator('main #signal-watch'), 'signals-v3 M1: the watch band left with the watchlist').toHaveCount(0);
+  expect(order.domOrder, 'head → lead cards → S1 → Methodology links').toBe(true);
   expectVisualOrder(order.tops, 'the signals page');
-  const rb = await page.locator('#signal-rulebook').evaluate((s) => ({ details: !!s.closest('details'), multiline: s.querySelector('table')!.hasAttribute('data-multiline'), rows: s.querySelectorAll('tbody tr').length }));
+  await expect(page.locator('main #signal-watch, main #signal-rules, main #signal-rulebook, main #signal-lag'), 'the watch band left in M1; the rule book and lag moved to Methodology').toHaveCount(0);
+  // the moved sections are on Methodology, the rule book still expanded with its seven rules
+  expect((await page.goto('/methodology/'))?.status()).toBe(200);
+  for (const id of ['signal-rules', 'signal-lag', 'signals-ranking', 'committee-direct']) await expect(page.locator(`#${id}`)).toBeVisible();
+  const rb = await page.locator('#signal-rules').evaluate((s) => ({ details: !!s.closest('details'), multiline: s.querySelector('table')!.hasAttribute('data-multiline'), rows: s.querySelectorAll('tbody tr').length }));
   expect(rb).toEqual({ details: false, multiline: true, rows: 7 });
 });
+
+/* signals-v3 M2 (R11, LD6): the ranking control works with JavaScript OFF —
+   it is two radio inputs and CSS. Choosing "Absolute $" shows the absolute
+   variants of both cards and hides the own-record ones; choosing "Own
+   record" restores them. */
+test('Signals lead cards (R11): the Own record │ Absolute $ control works with JavaScript disabled', async ({ browser }, info) => {
+  const ctx = await browser.newContext({ baseURL: info.project.use.baseURL, javaScriptEnabled: false, viewport: { width: 1440, height: 1000 } });
+  try {
+    const page = await ctx.newPage();
+    expect((await page.goto('/signals/'))?.status()).toBe(200);
+    const shown = (rank: string) => page.locator(`#lead-cards .si-variant[data-rank="${rank}"]`).evaluateAll((vs) => vs.filter((v) => v.checkVisibility()).length);
+    expect([await shown('record'), await shown('absolute')], 'own record by default').toEqual([2, 0]);
+    await page.locator('#lead-cards label[for="si-rank-absolute"]').click();
+    expect([await shown('record'), await shown('absolute')], 'absolute $ after its label is chosen').toEqual([0, 2]);
+    await page.locator('#lead-cards label[for="si-rank-record"]').click();
+    expect([await shown('record'), await shown('absolute')]).toEqual([2, 0]);
+    // and the keyboard reaches the radios (clipped, never removed)
+    expect(await page.locator('#si-rank-record').evaluate((el) => getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden')).toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+/* signals-v3 M2 (R23): at 390 and 360 px /signals/ never scrolls sideways, a
+   triage row's meters name themselves inline, and its dates, owner, LATE tags
+   and receipt stay rendered; each lead card keeps both dates. */
+for (const width of [390, 360]) {
+  test(`Signals at ${width}px (R23): no sideways scroll; the meter labels inline; dates, owner and receipts kept`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    expect((await page.goto('/signals/'))?.status()).toBe(200);
+    const m = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, vw: innerWidth }));
+    expect(m.sw, 'the page never scrolls sideways').toBeLessThanOrEqual(m.vw + 1);
+    const row = page.locator('#stands article.si-row, #look article.si-row').first();
+    await row.scrollIntoViewIfNeeded();
+    const facts = await row.evaluate((a) => {
+      const vis = (sel: string) => Array.from(a.querySelectorAll(sel)).filter((e) => (e as HTMLElement).checkVisibility() && e.getBoundingClientRect().width > 1);
+      const labels = Array.from(a.querySelectorAll<HTMLElement>('.si-meter')).map((meter) => {
+        const label = meter.querySelector<HTMLElement>('.si-meter-label')!;
+        const bars = meter.querySelector<HTMLElement>('.si-meter-bars')!;
+        const lr = label.getBoundingClientRect(), br = bars.getBoundingClientRect();
+        return { w: lr.width, inline: Math.abs((lr.top + lr.bottom) / 2 - (br.top + br.bottom) / 2) < br.height, before: lr.right <= br.left + 1, text: label.textContent };
+      });
+      const right = a.getBoundingClientRect().right;
+      return {
+        labels,
+        filed: vis('.si-row-filed time').length,
+        traded: vis('.si-row-traded').length,
+        owner: vis('.owner-note').length,
+        receipt: vis('.si-row-src a').length,
+        overflow: Array.from(a.querySelectorAll('*')).filter((e) => e.getBoundingClientRect().right > right + 1).map((e) => e.className).slice(0, 3),
+      };
+    });
+    expect(facts.labels.map((l) => l.text)).toEqual(['Size', 'Pattern', 'Others', 'Cmte']);
+    for (const l of facts.labels) {
+      expect(l.w, `the ${l.text} label is rendered at ${width}`).toBeGreaterThan(8);
+      expect(l.inline && l.before, `the ${l.text} label sits inline, before its bars`).toBe(true);
+    }
+    expect([facts.filed, facts.traded, facts.owner, facts.receipt], 'filed, traded, owner and receipt are rendered').toEqual([1, 1, 1, 1]);
+    expect(facts.overflow, 'nothing in the row runs past it').toEqual([]);
+    /* every card that shows a pick shows both dates and its receipt; a card
+       with no pick (the committee card on a build without committee data)
+       shows its stated empty line instead */
+    const cards = await page.locator('#lead-cards .si-card').evaluateAll((cs) => cs.map((c) => {
+      const shown = Array.from(c.querySelectorAll<HTMLElement>('.si-card-h')).filter((h) => h.checkVisibility());
+      return {
+        card: c.getAttribute('data-card'),
+        picks: shown.length,
+        dated: shown.filter((h) => { const b = h.parentElement!; const d = b.querySelector<HTMLElement>('.si-card-dates'); return !!d && d.checkVisibility() && d.querySelectorAll('time').length === 2 && !!b.querySelector('.si-card-src a, .si-card-src .si-stamp'); }).length,
+        empty: Array.from(c.querySelectorAll<HTMLElement>('[data-empty-state]')).filter((e) => e.checkVisibility()).length,
+      };
+    }));
+    expect(cards.map((c) => c.card)).toEqual(['committee', 'buy', 'sell']);
+    for (const c of cards) {
+      expect(c.picks + c.empty, `the ${c.card} card shows a pick or its stated empty line`).toBeGreaterThan(0);
+      expect(c.dated, `every ${c.card} pick shows both dates and its receipt at ${width}`).toBe(c.picks);
+    }
+  });
+}
 
 /* ======================================================================
    DESIGN-POLISH T2.9 (R29, R30) — every band against the design canvas.
@@ -694,23 +766,26 @@ const CANVAS_CASES: CanvasCase[] = [
     /* signals-v3 M1 (R1): the canvas's "◆ Watchlist" band has no route twin
        any more — the watchlist was removed — so it is not compared (a band
        the route does not have is never faked). */
+    /* signals-v3 M2 (record SV3-M2): the owner-approved v3 mock supersedes
+       this canvas's composition. The rule book and the lag distribution are on
+       /methodology/, the summary cards became the lead cards and the kind
+       chips left, so those bands have no route twin here and are not compared
+       (never faked); the slim hits table and the band heads that remain are
+       still held to the canvas's ledger, header and head roles. */
     tables: [
-      { label: "Rule book", selector: "#signal-rulebook table" },
-      { label: "Hits", selector: "#signal-hits table.si-table" },
+      { label: "Hits", selector: "#hits table.si-table" },
     ],
     map: {
-      ledger: true, cards: true,
+      ledger: true, cards: false,
       tables: [
-        { canvas: "Rule book", route: "Rule book" },
-        /* R23 (DESIGN-POLISH M3, T3.7): the route's SRC cell is now the
-           receipt ONCE — its "PTR ↗" link — which is the canvas's RCPT
-           column; the canvas's own SRC stamp (REAL / ILLUS.) marks the
-           mockup's illustrative rows and has no production twin */
-        { canvas: "Hits", route: "Hits", columns: { WHO: "SUBJECT", WHAT: "EVIDENCE", FILED: "WHEN", SIZE: "MAGNITUDE", SRC: "RCPT" }, unmatched: { TICKER: WHY.ticker }, roleDeviation: { WHO: "table.role.member" } },
+        /* R23 (DESIGN-POLISH M3, T3.7): the route's SRC cell is the receipt
+           ONCE — its "PTR ↗" link — which is the canvas's RCPT column; the
+           slim table's both-dates column answers the canvas's WHEN */
+        { canvas: "Hits", route: "Hits", columns: { WHO: "SUBJECT", "TRADED → FILED": "WHEN", SIZE: "MAGNITUDE", SRC: "RCPT" }, unmatched: { TICKER: WHY.ticker }, roleDeviation: { WHO: "table.role.member" } },
       ],
-      heads: [{ canvas: "Rule book", route: "Rule book" }, { canvas: "Hits", route: "Hits" }, { canvas: "Lag distribution", route: "Lag distribution" }, { canvas: "Hit rate by family", route: "Hit rate by family" }],
-      pairs: [{ canvas: ["Hits", "Lag distribution"], route: ["Hits", "Lag distribution"] }],
-      segs: [{ canvas: "All|Congress|13F|Cross", route: "All|…" }],
+      heads: [{ canvas: "Hits", route: "Hits" }, { canvas: "Hit rate by family", route: "Hit rate by family" }],
+      pairs: [],
+      segs: [],
     },
   },
 ];
@@ -804,7 +879,6 @@ for (const c of CANVAS_CASES) {
 /* The T2.9 controls: each injects ONE defect and requires the comparison to
    report exactly that property — a check that cannot fail is not a check. */
 const CONGRESS = CANVAS_CASES[0]!;
-const SIGNALS = CANVAS_CASES[4]!;
 const hasFinding = (fs: Finding[], band: RegExp, check: RegExp): boolean => fs.some((f) => f.record === null && band.test(f.band) && check.test(f.check));
 
 test('T2.9 control: the header ledger — tone, value letter-spacing, label-to-value gap', async ({ page, browser }) => {
@@ -843,13 +917,16 @@ test('T2.9 control: the segmented control — outline, dividers, active state', 
   expect(hasFinding(seg, /^control /, /^active text --seg-text-active$/), "control: an active item in --seg-text fails").toBe(true);
 });
 
+/* signals-v3 M2: /signals/ shows no summary cards any more (its lead cards
+   are SV3-M2's), so the card control runs on /congress/'s, opened from the
+   "Notes on this data" disclosure as its canvas case does. */
 test('T2.9 control: the summary card — body colour', async ({ page, browser }) => {
-  await openRoute(page, SIGNALS);
+  await openRoute(page, CONGRESS);
   const bodyFindings = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => /^cards$/.test(f.band) && /^body (colour|role)/.test(f.check));
-  const clean = bodyFindings((await compareRoute(page, browser, SIGNALS)).findings);
+  const clean = bodyFindings((await compareRoute(page, browser, CONGRESS)).findings);
   expect(clean, `the card bodies match before any defect is planted:\n${formatFindings(clean)}`).toEqual([]);
   await page.addStyleTag({ content: ".design-story p { color: var(--ink2) !important; }" });
-  const fs = (await compareRoute(page, browser, SIGNALS)).findings;
+  const fs = (await compareRoute(page, browser, CONGRESS)).findings;
   expect(hasFinding(fs, /^cards$/, /^body colour is --ink3$/), "control: a card body in --ink2 fails").toBe(true);
 });
 

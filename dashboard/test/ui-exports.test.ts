@@ -1,6 +1,6 @@
 /* T6.1 (REPOSITORY-PROFESSIONALIZATION Slice 6): export-parity for the ui entry.
 
-   The reconciled public surface is exactly 64 exports: 54 runtime values
+   The reconciled public surface was exactly 64 exports: 54 runtime values
    (RANKING_FOOTNOTES among them — a re-export from congress-columns.ts, the
    61st symbol the plan calls out by name) and 10 type-only exports, which do
    not exist at runtime and are asserted against the entry file's source text.
@@ -122,6 +122,18 @@ const VALUE_EXPORTS = [
   "hitsView",
   "hitsHiddenText",
   "groupHits",
+  /* signals-v3 M2 (LD10, R14): one "Filings to read" row, and the four
+     Methodology sections the Signals page links to — the rule book and the lag
+     distribution (moved from /signals/), the ranking rules and the committee
+     direct-match table. Five runtime symbols in, none out: `hitRowHtml`,
+     `signalHitColumns`, `groupHits` and `hitMatches` keep their callers (the
+     slim hits table, its column set, its repeat grouping and its family
+     filter). */
+  "triageRowHtml",
+  "ruleBookHtml",
+  "lagBandHtml",
+  "signalsRankingHtml",
+  "committeeDirectHtml",
 ] as const;
 
 const TYPE_EXPORTS = [
@@ -144,16 +156,16 @@ const TYPE_EXPORTS = [
   "HitFilter",
 ] as const;
 
-test("ui entry exports exactly the 89 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 94 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
-  assert.equal(VALUE_EXPORTS.length, 89, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, and SIGNALS-CLARITY M3's monthlyFlowPanel");
+  assert.equal(VALUE_EXPORTS.length, 94, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, SIGNALS-CLARITY M3's monthlyFlowPanel, and signals-v3 M2's five");
 });
 
-test("ui entry exports the 15 reconciled type-only symbols (104 total)", () => {
+test("ui entry exports the 15 reconciled type-only symbols (109 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -165,5 +177,5 @@ test("ui entry exports the 15 reconciled type-only symbols (104 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 104, "the reconciled surface is 104 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel)");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 109, "the reconciled surface is 109 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel, then signals-v3 M2: +5 runtime)");
 });
