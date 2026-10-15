@@ -73,6 +73,8 @@ export {
   lagBandHtml,
   signalsRankingHtml,
   committeeDirectHtml,
+  // signals-v3 M3 (LD10, R18): the ticker page's "On Signals" block
+  tickerOnSignalsHtml,
 } from "./signals.ts";
 export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {

@@ -282,6 +282,18 @@ test("R36: renderLoaded, the holders period switch and the holdings draw each di
   // control: a pager body without the announcement fails the same reading
   assert.equal(ANNOUNCE.exec(partsApply.slice(partsWrite).replace(/announceRerender\(\);/g, "")), null, "control: the write alone is caught");
 
+  /* signals-v3 M3 (R16): the rule has a LISTENER on /e/ too — the ticker tab
+     binder re-binds every body the driver renders. It subscribes before the
+     driver starts, so the first render is already covered. */
+  const LISTEN = /document\.addEventListener\(\s*["']populus:rerender["'],\s*\(\)\s*=>\s*initTabs\(root\)\s*\)/;
+  const route = between(client, "export function runGenericRoute", "\n}\n");
+  const listens = (body: string): boolean => {
+    const m = LISTEN.exec(body);
+    return !!m && m.index < body.indexOf("runEntityDriver(");
+  };
+  assert.ok(listens(route), "runGenericRoute binds the ticker tabs on populus:rerender, before the driver renders");
+  assert.ok(!listens(route.replace(LISTEN, "")), "control: the route without the listener is caught");
+
   // The two emitters that already existed stay.
   assert.match(between(client, "function renderFiler", "function maxPage"), DISPATCH, "renderFiler still dispatches");
   assert.match(between(client, "export function initFilerPeriods", "\nexport function "), DISPATCH, "the filer period draw still dispatches");

@@ -212,6 +212,12 @@ export class MiniElement {
     const ev = { type: "click", target: this };
     for (let n: MiniElement | null = this; n; n = n.parent) for (const fn of [...(n.listeners.get("click") ?? [])]) fn(ev);
   }
+  /** Call every `type` listener with `ev`, non-bubbling like `click()` — the
+      event a listener reads (a keydown's `key`, a click's `preventDefault`).
+      signals-v3 M3: the ticker tab binder is driven this way. */
+  dispatch(type: string, ev: unknown): void {
+    for (const fn of [...(this.listeners.get(type) ?? [])]) fn(ev);
+  }
   /** Focus is not modelled; an island that moves focus after a repaint must not throw. */
   focus(): void {}
   /** How many listeners of `type` are attached. A binder that re-attaches on

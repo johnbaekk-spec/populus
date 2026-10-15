@@ -310,7 +310,12 @@ test("POST-BUILD R20: /institutional/tickers/NVDA/holders/ exists with ≥10 hol
   for (const name of ["BLACKROCK", "VANGUARD", "STATE STREET"]) assert.ok(html.toUpperCase().includes(name), `${name} is a holder`);
   assert.match(html, /id="overlap"/, "the overlap band renders on the holders page");
   const ticker = path.join(DIST, "tickers", "NVDA", "index.html");
-  if (existsSync(ticker)) assert.match(readFileSync(ticker, "utf-8"), /id="overlap"/, "…and on the unified ticker page");
+  if (existsSync(ticker)) {
+    const page = readFileSync(ticker, "utf-8");
+    assert.match(page, /id="overlap"/, "…and on the unified ticker page");
+    // signals-v3 M3 (R21): inside the Institutional tab panel, after the holders
+    assert.ok(page.indexOf('role="tabpanel" id="institutional"') >= 0 && page.indexOf('role="tabpanel" id="institutional"') < page.indexOf('id="overlap"'), "…in its Institutional tab");
+  }
   /* Top-50 Congress tickers by disclosures, reassembled from the feed PARTS —
      the whole corpus, which is what this assertion has always needed. It used
      to read `feed.v1.json`; R19 retired that single asset (85% of the 25 MiB

@@ -569,14 +569,18 @@ test("T2.8: ledger groups hold only dt and dd, on every rendered header", async 
   assert.ok(ledgerStructureProblems(stray).length > 0);
 });
 
-test("T2.8: every figure's tone is one of the four; an unknown tone is refused", async () => {
+test("T2.8: every figure's tone is one of the five; an unknown tone is refused", async () => {
   const surfaces = await renderParitySurfaces();
   const tones = Object.values(surfaces).flatMap((h) => ledgers(h).flatMap((dl) => figuresOf(dl).map((f) => f.tone)));
   assert.ok(tones.length > 0);
   for (const t of tones) assert.ok((LEDGER_TONES as readonly (string | null)[]).includes(t), `tone ${t}`);
-  assert.deepEqual([...LEDGER_TONES], ["ink", "blue", "gold", "green"]);
-  // control: the renderer refuses a fifth tone rather than print it
-  assert.match(ledgerItemProblem(item({ tone: "red" as never }))!, /tone red is not one of ink, blue, gold, green/);
+  /* signals-v3 M3 (R17): `sell` joins the four — the ticker's "Filed late"
+     figure when a row was late — and it is styled like the other four */
+  assert.deepEqual([...LEDGER_TONES], ["ink", "blue", "gold", "green", "sell"]);
+  const css = baseStylesheet().replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const t of LEDGER_TONES.filter((x) => x !== "ink")) assert.match(css, new RegExp(`\\.ledger-fig\\[data-tone="${t}"\\] \\{ --ledger-tone: var\\(--`), `tone ${t} is styled`);
+  // control: the renderer refuses an unknown tone rather than print it
+  assert.match(ledgerItemProblem(item({ tone: "red" as never }))!, /tone red is not one of ink, blue, gold, green, sell/);
   assert.throws(() => disclosureLedger([item({ tone: "red" as never })]), /tone red/);
 });
 

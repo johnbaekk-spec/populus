@@ -169,46 +169,6 @@
 }
 .card-foot a { font: inherit; }
 
-/* section index (unified ticker) */
-.section-index {
-  display: flex;
-  align-items: stretch;
-  border: 1px solid var(--rule2);
-  border-top: none;
-  background: var(--raised);
-  margin-bottom: 28px;
-  overflow-x: auto;
-}
-.section-index a,
-.section-index .si-soon {
-  font: 500 var(--fs-name) var(--sans);
-  text-decoration: none;
-  color: var(--ink2);
-  padding: 10px 20px;
-  border-left: 1px solid var(--rule);
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.section-index a:first-child { border-left: none; }
-.section-index a.si-active {
-  font-weight: 600;
-  color: var(--ink);
-  border-bottom: 2px solid var(--accent);
-}
-.si-n {
-  font: 400 var(--fs-control) var(--mono);
-  color: var(--ink3);
-}
-.si-soon { color: var(--ink3); }
-.si-asof {
-  font: 400 var(--fs-note) var(--mono);
-  color: var(--ink3);
-  margin-left: auto;
-  padding: 12px 16px;
-  white-space: nowrap;
-}
 
 /* ================================================================ ledger:begin
    DESIGN-POLISH M1 — the ONE ledger construction (docs/design/DESIGN-POLISH-PLAN.md,
@@ -902,7 +862,6 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .si-table .si-subject { font: 500 var(--fs-name)/1.2 var(--sans); }
 .si-table .si-subject a { color: var(--accent); }
 .si-table .si-ticker { font: 600 var(--fs-cell) var(--mono); color: var(--ink); }
-.si-table .si-evidence { font: 400 var(--fs-note)/1.4 var(--sans); color: var(--ink3); }
 .si-table .si-rule-text { font: 400 var(--fs-cell)/1.4 var(--sans); color: var(--ink); }
 .si-table .si-why { font: 400 var(--fs-cell)/1.4 var(--sans); color: var(--ink3); }
 .si-table .si-hits { font-weight: 600; font-family: var(--mono); }

@@ -672,7 +672,7 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
   );
 }
 
-function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = []): string {
+function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [], pinned = false): string {
   const side = sideLabel(r.side, r.flags);
   const owner = ownerQualifiersHtml(r);
   const amountUnknown = r.low == null && r.high == null;
@@ -683,7 +683,9 @@ function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
     : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;
   return (
     `<td class="c-filed c-num has-marks">${esc(r.filed)}</td>` +
-    `<td class="c-member c-flex">${memberCell}</td>` +
+    /* signals-v3 M3 (R19): a row pinned from the ticker's "On Signals" block
+       says so in words, beside the member it names */
+    `<td class="c-member c-flex">${memberCell}${pinned ? ` <span class="on-signals-mark">On Signals</span>` : ""}</td>` +
     `<td class="c-side c-kind ${side.cls}">${esc(side.text)}${owner ? ` ${owner}` : ""}</td>` +
     `<td class="c-traded c-num">${dualDate(r)}</td>` +
     `<td class="c-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
@@ -699,13 +701,18 @@ export function entityTxnRowsHtml(
   stated: readonly string[] = [],
   /** the table's `data-columns` set (R12); null renders every column */
   columns: readonly string[] | null = null,
+  /** signals-v3 M3 (R19), the ticker page's preview only: every row carries
+      `data-txn`, and a row whose txnId is in `pinned` is marked On Signals.
+      Every other caller passes nothing and renders the bytes it always did. */
+  rowOpts: { dataTxn?: boolean; pinned?: ReadonlySet<string> } = {},
 ): string {
   /* The row's kind edge (tr[data-edge]); `data-kind` stays the table kind. */
   return rows
     .map((r) => {
       const edge = txnEdge(r);
-      const cells = kind === "member" ? txnCellsMember(r, ctx, stated, columns) : txnCellsTicker(r, ctx, stated);
-      return `<tr${edge ? ` data-edge="${edge}"` : ""}>${cells}</tr>`;
+      const pinned = kind === "ticker" && rowOpts.pinned?.has(r.txnId) === true;
+      const cells = kind === "member" ? txnCellsMember(r, ctx, stated, columns) : txnCellsTicker(r, ctx, stated, pinned);
+      return `<tr${pinned ? ' class="on-signals"' : ""}${edge ? ` data-edge="${edge}"` : ""}${rowOpts.dataTxn ? ` data-txn="${esc(r.txnId)}"` : ""}>${cells}</tr>`;
     })
     .join("\n");
 }

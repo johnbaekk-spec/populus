@@ -68,6 +68,8 @@ import {
   SIZE_MIN_HISTORY,
   TIER_LABELS,
   TRIAGE_VERSION,
+  compareLines,
+  compareRows,
   daysBetween,
   type CardPick,
   type Level,
@@ -807,10 +809,11 @@ function lateTagHtml(late: number, total: number): string {
 
 /** R12: one row of "Filings to read" — an `<article>` whose ticker-and-member
     heading is the stretched link to the ticker page; the receipt is a
-    separate link above it. */
-export function triageRowHtml(row: TriageRow, ctx: RenderCtx): string {
+    separate link above it. The ticker page's own block (M3, R18) renders the
+    same row with `link: false`: the heading would only link to itself. */
+export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boolean } = {}): string {
   const t = row.lead.txn;
-  const href = onSignalsHref(t.ticker, ctx);
+  const href = opts.link === false ? null : onSignalsHref(t.ticker, ctx);
   const filers = [...new Map(row.filings.map((f) => [f.memberKey, f.rows[0]!])).values()];
   const who =
     row.grouping === "cluster" && row.cluster
@@ -1171,6 +1174,120 @@ export function committeeDirectHtml(): string {
     `<tbody>${rows}</tbody></table></div>` +
     `</section>`
   );
+}
+
+/* ---------- signals-v3 M3 (R18, R19, LD8): the ticker page's "On Signals" block ----------
+
+   Beside `memberSignalsPanel`, the other per-entity signal surface, so it
+   prints a row and a hit through the SAME renderers `/signals/` uses
+   (`triageRowHtml`, `hitRowHtml`) — one function, two callers. Static and
+   server-only: the ticker page passes the build's triage, `/e/` passes none
+   and renders no block (R18). */
+
+/** The most triggering lines the ticker page pins above its newest rows (R19). */
+export const ON_SIGNALS_MAX_PINNED = 5;
+/** The most hit lines the compact block lists (R18). */
+export const ON_SIGNALS_COMPACT_LINES = 5;
+
+type OnSignalsView =
+  | { kind: "full"; row: TriageRow; rows: number }
+  | { kind: "compact"; lines: HitLine[]; allLines: number; hits: number }
+  | null;
+
+const TIER_ORDER: readonly Tier[] = ["stands", "look", "routine"];
+
+/** Which block a ticker gets: the FULL block for its strongest Stands-out or
+    Worth-a-look row, else the COMPACT block over its active hits, else none. */
+function onSignalsView(rows: readonly TriageRow[], hits: readonly Signal[]): OnSignalsView {
+  const ranked = rows.filter((r) => r.tier !== "routine").sort((a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier) || compareRows(a, b));
+  if (ranked[0]) return { kind: "full", row: ranked[0], rows: rows.length };
+  if (hits.length === 0) return null;
+  const lines = groupHits(sortHits(hits));
+  return { kind: "compact", lines: lines.slice(0, ON_SIGNALS_COMPACT_LINES), allLines: lines.length, hits: hits.length };
+}
+
+const BACK_TO_SIGNALS = `<a class="section-link tk-onsig-back" href="/signals/">← Back to Signals</a>`;
+
+/** R18: the ticker's "On Signals" block (`#on-signals`), or "" when the
+    ticker has no active signal.
+
+    - FULL — the ticker leads a Stands-out or Worth-a-look row: the tier, then
+      that row exactly as "Filings to read" prints it (the member with party
+      and state, the side chip and range, the reason sentence, the four
+      meters, and ONE line's own filed date, trade date, lag and receipt —
+      the lead line's), the way back to `/signals/`, and the committee caveat
+      whenever the Cmte meter shows committee context (level 1 or more).
+    - COMPACT — active hits but no such row: up to five hit lines through the
+      slim hits row (kind with its exact rule as a note, member, traded and
+      filed dates, size, receipt), an honest count of the rest, and the
+      committee caveat when a COMMITTEE hit is shown. */
+export function tickerOnSignalsHtml(triageRows: readonly TriageRow[], hits: readonly Signal[], ctx: RenderCtx): string {
+  const view = onSignalsView(triageRows, hits);
+  if (view === null) return "";
+  if (view.kind === "full") {
+    const { row } = view;
+    const ticker = row.lead.txn.ticker ?? "";
+    const more = view.rows > 1 ? ` · THE STRONGEST OF ${fmtInt(view.rows)} ROWS LED BY ${esc(ticker)}` : "";
+    return (
+      `<section class="panel tk-onsig" id="on-signals" data-block="full" data-tier="${row.tier}" aria-labelledby="on-signals-h">` +
+      `<div class="panel-head"><h2 class="section-h" id="on-signals-h">On Signals</h2>` +
+      `<span class="panel-note">FILINGS TO READ · AGAINST THE FILER'S OWN RECORD, AS OF ITS FILING${more}</span>` +
+      BACK_TO_SIGNALS +
+      `</div>` +
+      // the tier is the row's heading level above it, as in "Filings to read"
+      `<h3 class="si-tier-h tk-onsig-tier">${esc(TIER_LABELS[row.tier])}</h3>` +
+      METER_HEAD +
+      triageRowHtml(row, ctx, { link: false }) +
+      (row.meters.cmte >= 1 ? `<p class="section-note si-cmte-context">${esc(COMMITTEE_CAVEAT)}</p>` : "") +
+      `</section>`
+    );
+  }
+  const ticker = view.lines[0]?.lead.entities.ticker ?? "";
+  const cols = SIGNAL_HIT_COLUMNS.filter((c) => c !== "Ticker");
+  const committee = view.lines.some((l) => l.members.some((s) => s.kind === "s5-jurisdiction"));
+  return (
+    `<section class="panel tk-onsig" id="on-signals" data-block="compact" aria-labelledby="on-signals-h">` +
+    `<div class="panel-head"><h2 class="section-h" id="on-signals-h">On Signals</h2>` +
+    `<span class="panel-note">ACTIVE HITS NAMING ${esc(ticker)} · NEWEST FILED FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
+    BACK_TO_SIGNALS +
+    `</div>` +
+    `<div class="table-scroll"><table class="etable etable-compact si-table">` +
+    `<caption class="visually-hidden">Active signal hits naming ${esc(ticker)}, newest filed first</caption>` +
+    `<thead><tr>${cols.map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c], col: SIGNAL_HIT_COLUMN_KEYS[c] })).join("")}</tr></thead>` +
+    `<tbody>${hitsBodyHtml(view.lines, ctx, cols.map((c) => SIGNAL_HIT_COLUMN_KEYS[c]))}</tbody></table></div>` +
+    `<p class="section-note">${esc(hitsRangeText(0, view.lines.length, view.allLines, view.hits, ON_SIGNALS_COMPACT_LINES))} · each kind word opens its exact rule · every hit is in <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
+    (committee ? `<p class="section-note si-cmte-context">COMMITTEE: ${esc(COMMITTEE_CAVEAT)}</p>` : "") +
+    `</section>`
+  );
+}
+
+/** R19: the rows the ticker page pins above its newest rows — the block's
+    own triggering lines on THIS ticker, deduplicated, at most
+    ON_SIGNALS_MAX_PINNED, in the block's order: the full block's row lines in
+    LD4 line order (the lead line first), or the compact block's shown hits'
+    lines (`hitLines`, the triage's own LD3 mapping) newest hit first. `txns`
+    is the ticker's rows: a grouped row's line on another ticker is never
+    pinned. No block, no pinned row. */
+export function onSignalsLines(
+  triageRows: readonly TriageRow[],
+  hits: readonly Signal[],
+  hitLines: ReadonlyMap<string, readonly string[]>,
+  txns: readonly TxnRow[],
+): TxnRow[] {
+  const view = onSignalsView(triageRows, hits);
+  if (view === null) return [];
+  const byId = new Map(txns.map((r) => [r.txnId, r]));
+  const ids =
+    view.kind === "full"
+      ? [...view.row.lines].sort(compareLines).map((l) => l.txn.txnId)
+      : view.lines.flatMap((l) => l.members.flatMap((s) => hitLines.get(s.id) ?? []));
+  const out: TxnRow[] = [];
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (r && !out.includes(r)) out.push(r);
+    if (out.length === ON_SIGNALS_MAX_PINNED) break;
+  }
+  return out;
 }
 
 /** Per-entity signal section (D-2): the member page filters the build's

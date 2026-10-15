@@ -751,10 +751,21 @@ test("R19/R20: the band renders on BOTH routes — the unified ticker page (via 
     { buildId: "b", generatedAt: "2026-08-23 00:00 UTC", generatedAtDate: NOW },
     ctx,
     { fullTable: false },
-    { signals: [], withheld: [], crowding: null, committees: null, overlap: overlapHtml },
+    { crowding: null, committees: null, overlap: overlapHtml },
   );
   assert.match(ticker, /id="overlap"/);
-  assert.ok(ticker.indexOf('id="congress"') < ticker.indexOf('id="overlap"') && ticker.indexOf('id="overlap"') < ticker.indexOf('id="institutional"'), "between the Congress rows and the holders");
+  /* signals-v3 M3 (R21, LD8): the band moved INTO the Institutional tab
+     panel, after the holders and before the agreement — the Congress panel
+     comes first and closes before the Institutional panel opens. Read by DOM
+     parse: the band's nearest tab panel is #institutional. */
+  const dom = domOf(ticker);
+  const overlapEl = dom.querySelector("#overlap")!;
+  assert.equal(overlapEl.closest('[role="tabpanel"]')?.getAttribute("id"), "institutional", "the overlap band sits in the Institutional panel");
+  assert.ok(ticker.indexOf('id="congress"') < ticker.indexOf('id="institutional"'), "Congress, then Institutional");
+  const instPanel = ticker.slice(ticker.indexOf('id="institutional"'));
+  assert.ok(instPanel.indexOf('id="ticker-holders"') < instPanel.indexOf('id="overlap"') && instPanel.indexOf('id="overlap"') < instPanel.indexOf("Do the two regimes agree?"), "holders, then the overlap band, then the agreement");
+  // control: the pre-M3 order (the band between the two sections, outside both) fails the panel reading
+  assert.notEqual(domOf(`<section role="tabpanel" id="congress"></section>${overlapHtml}<section role="tabpanel" id="institutional"></section>`).querySelector("#overlap")!.closest('[role="tabpanel"]')?.getAttribute("id"), "institutional");
   const holders = tickerHoldersBody({
     ticker: "NVDA",
     totals: inst.tickerTotals.get("NVDA")!,

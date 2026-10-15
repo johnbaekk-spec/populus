@@ -8,7 +8,13 @@
 
 /* ui/ticker.ts — the unified /tickers/* page body. One of the ui/ domain
    modules: consumers import from ./index.ts only, never from this file
-   directly. */
+   directly.
+
+   signals-v3 M3 (R16–R21, LD8): the head (title, the five-figure ledger, the
+   provenance line that carries each section's own clock), the server-rendered
+   "On Signals" block, then two REAL tabs — Congress and Institutional — on a
+   sticky tab bar. Both panels are in the HTML and both show without
+   JavaScript; `scripts/tabs.ts` hides the inactive one only once it runs. */
 
 import {
   type RenderCtx,
@@ -26,7 +32,6 @@ import {
   memberHrefFor,
   congressTickerHref,
   partyClass,
-  sideLabel,
   cardFoot,
   presentColumns,
   dataColumnsAttr,
@@ -48,14 +53,14 @@ import {
   edgarFilerUrl,
   edgarTickerUrl,
 } from "../derive.ts";
-import type { Signal } from "../signals.ts";
+import type { TriageResult } from "../signal-triage.ts";
 import type { TickerCrowding } from "../inst-analytics.ts";
-import { plannedLine, unavailableDesignPanel } from "./shared.ts";
+import { unavailableDesignPanel } from "./shared.ts";
 import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
-import { type BuildStamps, asOfNote, briefingCards, disclosureLedger } from "./shared.ts";
+import { type BuildStamps, asOfNote, disclosureLedger } from "./shared.ts";
 import { fmtCik, note, rangeOfTotal, thHtml } from "../format.ts";
-import { familyOf, signalKindShort } from "./signals.ts";
+import { onSignalsLines, tickerOnSignalsHtml } from "./signals.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
 import { instStamp, instFiledNote } from "./institutional.ts";
 
@@ -74,12 +79,21 @@ function tickerTitleHtml(info: TickerHeaderInfo): string {
   return `<span class="mono-ticker">${esc(info.ticker)}</span>${name}`;
 }
 
+/** R21: the holders the Institutional tab shows before its "Show all N
+    holders" disclosure; holders 11..N sit inside it, in the same HTML. */
+export const TICKER_HOLDERS_VISIBLE = 10;
+/** R20: the rows the Congress tab's disclosures preview shows in total,
+    pinned rows included; the rest are one link away. */
+export const TICKER_PREVIEW_ROWS = 10;
+
 export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): string {
+  /* The tab panel is `#institutional` (R16); the holders section it holds
+     keeps its own anchor. */
   const head = (note: string): string =>
     `<div class="section-head"><h2 class="section-h2">Institutional holders <span class="section-note-inline">· 13F${note}</span></h2></div>`;
   if (inst.state === "module-absent") {
     return (
-      `<section class="page-section" id="institutional">` +
+      `<section class="page-section" id="ticker-holders">` +
       head("") +
       `<div class="absent-block">` +
       `<h3 class="absent-h">The institutional module is not in this build.</h3>` +
@@ -96,7 +110,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
           ? `This build carries no ticker→issuer mapping input, so the join is not attempted.`
           : `This ticker is not in the SEC's present-day ticker file.`;
     return (
-      `<section class="page-section" id="institutional">` +
+      `<section class="page-section" id="ticker-holders">` +
       head("") +
       `<div class="absent-block">` +
       `<h3 class="absent-h">Not resolved to an issuer — deliberately.</h3>` +
@@ -108,7 +122,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
   }
   if (inst.state === "resolved-no-data") {
     return (
-      `<section class="page-section" id="institutional">` +
+      `<section class="page-section" id="ticker-holders">` +
       head("") +
       `<div class="absent-block">` +
       `<h3 class="absent-h">Mapped, but not in the published aggregate.</h3>` +
@@ -124,22 +138,33 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
   const holders = inst.holders ?? [];
   /* Universal-flag hoisting applies to EVERY flag-bearing table, not only the entity txn one.
      Measured before wiring these: 1,004 pages carried a table whose every row
-     read `security not in mapping`, with no caveat line above it. */
+     read `security not in mapping`, with no caveat line above it.
+     signals-v3 M3 (LD8): computed over ALL N holders — the ten shown and the
+     rest inside "Show all N holders" alike — so a flag is stated once only
+     when every holder carries it. */
   const statedHolders = universalFlags(holders.map((h) => h.flags));
-  const rows = holders
-    .map(
-      (h) =>
-        `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
-        // ONE href primitive (filerHref): the payload carries the top/tail target.
-        `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
-        `<td class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
-        `<td class="c-num">${fmtInt(h.securities)}</td>` +
-        `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedHolders })}</td>` +
-        `<td class="c-src">${srcLinkDerived("#ticker-inst-footnotes", edgarFilerUrl(h.cik))}</td></tr>`,
-    )
-    .join("\n");
+  const rowHtml = (h: (typeof holders)[number]): string =>
+    `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
+    // ONE href primitive (filerHref): the payload carries the top/tail target.
+    `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
+    `<td class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
+    `<td class="c-num">${fmtInt(h.securities)}</td>` +
+    `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedHolders })}</td>` +
+    `<td class="c-src">${srcLinkDerived("#ticker-inst-footnotes", edgarFilerUrl(h.cik))}</td></tr>`;
+  const shown = holders.slice(0, TICKER_HOLDERS_VISIBLE);
+  const rest = holders.slice(TICKER_HOLDERS_VISIBLE);
+  /* With holders 11..N in a disclosure, the list spans TWO tables. Each is
+     then a part of the collection the hoist judged — the meaning `data-paged`
+     carries ("this HTML shows only PART of the collection"): a flag every row
+     of one part shows, but not every holder carries, stays on its rows. */
+  const tableHtml = (rows: typeof holders, caption: string): string =>
+    `<div class="table-scroll"><table class="etable" data-sticky-first${rest.length > 0 ? ' data-paged="1"' : ""} data-stated-flags="${esc(statedHolders.join(","))}">` +
+    `<caption class="visually-hidden">${esc(caption)}</caption>` +
+    `<thead><tr>${thHtml({ label: "#", cls: "c-num" })}${thHtml({ label: "Filer", cls: "c-filer c-flex" })}${thHtml({ label: "Value", cls: "c-num", order: "descending" })}${thHtml({ label: "Securities", cls: "c-num" })}${thHtml({ label: "Flags", cls: "c-flags" })}${thHtml({ label: "Src", cls: "c-src" })}</tr></thead>` +
+    `<tbody>${rows.map(rowHtml).join("\n")}</tbody></table></div>`;
+  const caption = `Top institutional holders of ${ticker} for quarter ${inst.period!}`;
   return (
-    `<section class="page-section" id="institutional">` +
+    `<section class="page-section" id="ticker-holders">` +
     `<div class="section-head"><h2 class="section-h2">Institutional holders <span class="section-note-inline">· 13F · ${instStamp(
       inst.period!,
       inst.latestFiled ?? null,
@@ -150,17 +175,19 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
       : "") +
     `</div>` +
     universalFlagNote(statedHolders) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHolders.join(","))}">` +
-    `<caption class="visually-hidden">Top institutional holders of ${esc(ticker)} for quarter ${esc(inst.period!)}</caption>` +
-    `<thead><tr>${thHtml({ label: "#", cls: "c-num" })}${thHtml({ label: "Filer", cls: "c-filer c-flex" })}${thHtml({ label: "Value", cls: "c-num", order: "descending" })}${thHtml({ label: "Securities", cls: "c-num" })}${thHtml({ label: "Flags", cls: "c-flags" })}${thHtml({ label: "Src", cls: "c-src" })}</tr></thead>` +
-    `<tbody>${rows}</tbody></table></div>` +
+    tableHtml(shown, rest.length > 0 ? `${caption}, ${rangeOfTotal(1, shown.length, holders.length, "holders")}` : caption) +
+    (rest.length > 0
+      ? `<details class="tk-holders-more"><summary>Show all ${fmtInt(holders.length)} holders</summary>` +
+        tableHtml(rest, `${caption}, ${rangeOfTotal(shown.length + 1, holders.length, holders.length, "holders")}`) +
+        `</details>`
+      : "") +
     terminusRow({
       author: "populus",
       /* W-3 (M3 review): the two sources differ, so the terminus and the §
          note branch on them. The reviewed-mapping list (share-class grain)
          keeps the largest holders up to its rank cap and states the true
          holder count; the entity-keyed top-holders list is cut at the build's
-         top-N parameter. */
+         top-N parameter. Both count ALL N holders, shown or in the disclosure. */
       html: inst.mapped
         ? (holders.length >= inst.mapped.holderCount
             ? `Every one of the ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class for the quarter is listed.`
@@ -192,16 +219,15 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
 /** SSR-only inputs for the Ticker.dc.html bands; the generic /e/ route passes
     none and every dependent band renders its stated unavailable state. */
 export interface TickerPageDeps {
-  /** active signals whose subject ticker is this one */
-  signals: readonly Signal[];
-  /** kinds the artifact WITHHELD this build — a withheld rule was not
-      evaluated, so a zero-hit statement must never cover it (Codex F2) */
-  withheld?: readonly { kind: Signal["kind"]; reason: string; detail: string }[];
+  /** signals-v3 M3 (R18, R19): the build's triage (`getTriage()`), read for
+      this ticker's rows and active hits — the "On Signals" block and the rows
+      it pins. Absent → no block and no pinned row (as on `/e/`). */
+  triage?: TriageResult | null;
   /** crowding percentiles when the ticker resolves to an issuer with holder rows */
   crowding: TickerCrowding | null;
   /** committee memberships keyed by bioguide (dating contract applied per trade) */
   committees: { byMember: ReadonlyMap<string, CommitteeMembership[]>; windowFrom: string; windowTo: string; snapshotDate: string } | null;
-  /** R19: the rendered Congress ↔ notable-managers overlap band (server only) */
+  /** R19 (refinement 20260910): the rendered Congress ↔ notable-managers overlap band (server only) */
   overlap?: string;
 }
 
@@ -217,14 +243,24 @@ export function tickerUnifiedBody(
     ticker: t.ticker,
     mappedName: inst.name ?? null,
   };
-  const disclosing = membersDisclosing(t.txns, stamps.generatedAtDate, 12, 5);
   const latestFiled = t.txns[0]?.filed ?? null;
-  /* The compact preview is NOT paged, so its five rows ARE the whole
-     set it speaks for — a flag universal among them is universal, full stop.
-     This was the fifth flag-bearing renderer and the last one still repeating a
-     caveat on every row; the whole-dist assertion in
-     `test/post/universal-caveat.test.ts` is what named it. */
-  const previewRows = t.txns.slice(0, 5);
+
+  /* R18 / R19: the "On Signals" block and the rows it pins, from the build's
+     triage. `/e/` passes no deps: no block, no pinned row. */
+  const triage = deps?.triage ?? null;
+  const signalRows = triage?.byTicker.get(t.ticker) ?? [];
+  const signalHits = triage?.hitsByTicker.get(t.ticker) ?? [];
+  const onSignals = triage ? tickerOnSignalsHtml(signalRows, signalHits, ctx) : "";
+  const pinned = triage ? onSignalsLines(signalRows, signalHits, triage.hitLines, t.txns) : [];
+  const pinnedIds = new Set(pinned.map((r) => r.txnId));
+
+  /* R20: the preview is the pinned rows, then the newest rows, ten in total.
+     It is NOT paged, so its rows ARE the whole set it speaks for — a flag
+     universal among them, pinned rows included, is universal, full stop (the
+     whole-dist assertion in `test/post/universal-caveat.test.ts` reads every
+     built table). With pinned rows on top the table is no longer in filed
+     order, so its Filed header claims no sort; the panel note says the order. */
+  const previewRows = [...pinned, ...t.txns.filter((r) => !pinnedIds.has(r.txnId)).slice(0, Math.max(0, TICKER_PREVIEW_ROWS - pinned.length))];
   const statedPreview = universalFlags(previewRows.map(effectiveFlagKeys));
   const recent = opts.fullTable
     ? entityTxnTable(t.txns, {
@@ -236,147 +272,137 @@ export function tickerUnifiedBody(
     : universalFlagNote(statedPreview) +
       `<div class="table-scroll"><table class="etable etable-compact" data-stated-flags="${esc(statedPreview.join(","))}"><caption class="visually-hidden">Latest congressional filings mentioning ${esc(
         t.ticker,
-      )}</caption>` +
-      `<thead><tr>${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}${(
+      )}${pinned.length > 0 ? `, the rows on Signals first` : ""}</caption>` +
+      `<thead><tr>${
+        pinned.length > 0
+          ? thHtml({ label: "Filed", mark: null, cls: "c-num has-marks" })
+          : thHtml({ label: "Filed", cls: "c-num", order: "descending" })
+      }${(
         [["Member", "c-member c-flex"], ["Side · Owner", "c-kind"], ["Traded · Lag", "c-num"], ["Amount", "c-num"], ["Range · Flags", "c-bar"], ["Src", "c-src"]] as const
       ).map(([label, cls]) => thHtml({ label, mark: null, cls })).join("")}</tr></thead>` +
-      `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview)}</tbody></table></div>` +
+      `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview, null, { dataTxn: true, pinned: pinnedIds })}</tbody></table></div>` +
       cardFoot({
         short: "Traded → filed dates on every row",
         full: "Each row shows the trade date and the filing date; the gap between them is the disclosure lag.",
         scope: "ticker-congress-foot",
         key: "dates",
-        extraHtml: `<a href="${congressTickerHref(t.ticker)}">all ${fmtInt(t.txns.length)} ↗</a>`,
+        extraHtml: `<a href="${congressTickerHref(t.ticker)}">all ${fmtInt(t.txns.length)} rows ↗</a>`,
       });
 
-  /* Ticker.dc.html: kicker → mono ticker + mapped name → lede, with the
-     four-figure ledger on the right, then the provenance strip and three
-     data-derived summaries. Every figure below is computed from this page's
-     own rows; the reference's illustrative 13F-side values are not reproduced. */
-  // Totals are over the FULL qualifying population; `disclosing` is the
-  // five-row display slice and must never be the population a total describes
-  // (Codex round 1, F2).
+  /* R17: the five-figure ledger. Every figure is computed from this page's
+     own rows. Totals are over the FULL qualifying population; `disclosing`
+     was the five-row display slice of the members table and must never be the
+     population a total describes (Codex round 1, F2). */
   const population = membersDisclosing(t.txns, stamps.generatedAtDate, 12, Number.MAX_SAFE_INTEGER);
   const members12 = population.length;
   const buys12 = population.reduce((n, m) => n + m.buys, 0);
   const sells12 = population.reduce((n, m) => n + m.sells, 0);
-  const largest = t.txns.filter((r) => r.low != null).sort((a, b) => (b.low ?? 0) - (a.low ?? 0))[0];
   // Timeliness has THREE states: late, inside the window, and unknown (no
   // trade date, so no lag). The universal statement is reserved for a
   // non-empty population whose timeliness is fully known (Codex round 1, F4).
   const late = t.txns.filter((r) => r.late === 1).length;
   const unknownTimeliness = t.txns.filter((r) => r.lag == null).length;
-  const timelyKnown = t.txns.length > 0 && unknownTimeliness === 0;
   const holders = inst.state === "data" ? inst.holders?.length ?? 0 : null;
-  const ledger = disclosureLedger([
-    { label: "Congress txns", value: fmtInt(t.txns.length), detail: `all PTR rows naming ${t.ticker}`, subKind: "count" },
-    { label: "Members · 12m", value: fmtInt(members12), detail: `${fmtInt(buys12)} buys · ${fmtInt(sells12)} sells · by trade date`, subKind: "count" },
-    { label: "Latest PTR", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ? `filed ${latestFiled}` : "no filing on record", subKind: latestFiled ? "date" : "absence" },
-    {
-      label: "13F holders",
-      value: holders === null ? "—" : fmtInt(holders),
-      detail:
-        inst.state === "data"
-          ? `top-${fmtInt(inst.topn ?? 25)} slice · ${inst.period ?? ""}`
-          : inst.state === "module-absent"
-            ? "13F module not in build"
-            : "ticker not resolved to an issuer",
-      subKind: inst.state === "data" ? "qualifier" : "absence",
-    },
-  ]);
-  const stories = briefingCards([
-    {
-      tag: "Largest disclosed lower bound",
-      title: largest ? `${largest.name} · ${largest.low != null ? fmtUsd(largest.low) : "—"}${largest.high != null ? `–${fmtUsd(largest.high)}` : "+"}` : "No row discloses a lower bound",
-      body: largest
-        ? `${sideLabel(largest.side, largest.flags).text} · traded ${largest.traded ?? "date not disclosed"} → filed ${largest.filed}. Ranked over every ${t.ticker} row by the provable lower bound, never a point estimate.`
-        : `Every ${t.ticker} row is a range with no usable floor; nothing can be ranked.`,
-    },
-    {
-      tag: "Congress · trailing 12 months",
-      title: disclosing.length === 0 ? `No member disclosed ${t.ticker} in the trailing 12 months` : `${fmtInt(members12)} ${members12 === 1 ? "member" : "members"} · ${fmtInt(buys12)} buys / ${fmtInt(sells12)} sells`,
-      body: "Counts of disclosures by trade date, not dollars — ranges cannot be netted across members. Flow ranges per member are in the table below.",
-    },
-    {
-      tag: late > 0 ? "Late filings" : "Timeliness",
-      title: late > 0
-        ? `${fmtInt(late)} ${late === 1 ? "row" : "rows"} filed past the 45-day window`
-        : timelyKnown
-          ? "Every row filed inside the 45-day window"
-          : t.txns.length === 0
-            ? "No rows on record"
-            : `No row is flagged late · ${fmtInt(unknownTimeliness)} of ${fmtInt(t.txns.length)} carry no trade date, so their timeliness is unknown`,
-      body:
-        (unknownTimeliness > 0
-          ? `${fmtInt(unknownTimeliness)} ${unknownTimeliness === 1 ? "row discloses" : "rows disclose"} no trade date; lag is unknown there, not zero. `
-          : "") +
-        "Late disclosure is stated on the row, never editorialised. Both dates and the receipt stay on every row.",
-    },
-  ]);
+  /* LD9: "unknown timeliness" moved from the retired summary card into the
+     Filed late figure's sub-line; its explanation is the figure's note. */
+  const lateSub =
+    t.txns.length === 0
+      ? { detail: "no rows on record", subKind: "absence" as const }
+      : unknownTimeliness > 0
+        ? { detail: `${fmtInt(unknownTimeliness)} of ${fmtInt(t.txns.length)} undated: timeliness unknown`, subKind: "count" as const }
+        : late > 0
+          ? { detail: "filed past the 45-day window", subKind: "qualifier" as const }
+          : { detail: "every row filed inside 45 days", subKind: "qualifier" as const };
+  const ledger = disclosureLedger(
+    [
+      { label: "Congress txns", value: fmtInt(t.txns.length), detail: `all PTR rows naming ${t.ticker}`, subKind: "count" },
+      { label: "Members · 12m", value: fmtInt(members12), detail: `${fmtInt(buys12)} buys · ${fmtInt(sells12)} sells · by trade date`, subKind: "count" },
+      { label: "Latest PTR", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ? `filed ${latestFiled}` : "no filing on record", subKind: latestFiled ? "date" : "absence" },
+      {
+        label: "Filed late",
+        value: fmtInt(late),
+        ...lateSub,
+        tone: late > 0 ? "sell" : "ink",
+        noteHtml: esc(
+          `Rows filed past the STOCK Act's 45-day window, stated on the row, never editorialised; both dates and the receipt stay on every row.` +
+            (unknownTimeliness > 0
+              ? ` ${fmtInt(unknownTimeliness)} ${unknownTimeliness === 1 ? "row discloses" : "rows disclose"} no trade date: the lag is unknown there, not zero, so the timeliness of ${unknownTimeliness === 1 ? "that row" : "those rows"} is unknown.`
+              : ""),
+        ),
+      },
+      {
+        label: "13F holders",
+        value: holders === null ? "—" : fmtInt(holders),
+        detail:
+          inst.state === "data"
+            ? `top-${fmtInt(inst.topn ?? 25)} slice · ${inst.period ?? ""}`
+            : inst.state === "module-absent"
+              ? "13F module not in build"
+              : "ticker not resolved to an issuer",
+        subKind: inst.state === "data" ? "qualifier" : "absence",
+      },
+    ],
+    { scope: "ticker-ledger" },
+  );
+
+  /* R16: two real tabs. Server HTML shows both panels, stacked; the binder
+     (`scripts/tabs.ts`) sets aria-selected and the roving tabindex, and hides
+     the inactive panel only once it runs. */
+  const tabs =
+    `<div class="tk-tabs" role="tablist" aria-label="Sections">` +
+    `<a class="tk-tab" role="tab" id="tab-congress" href="#congress" aria-controls="congress">Congress <span class="tk-tab-n">${fmtInt(t.txns.length)}</span></a>` +
+    `<a class="tk-tab" role="tab" id="tab-institutional" href="#institutional" aria-controls="institutional">Institutional${
+      inst.state === "data" ? ` <span class="tk-tab-n">${fmtInt(inst.holders?.length ?? 0)}</span>` : ""
+    }</a>` +
+    `</div>`;
+
   return (
     `<div class="page-head">` +
     `<div class="page-head-copy">` +
     `<div class="kicker">Public record / Tickers / ${esc(t.ticker)}</div>` +
     `<h1 class="entity-title">${tickerTitleHtml(info)}</h1>` +
-    `<p class="entity-lede">Both disclosure regimes on one name: who in Congress filed about ${esc(
-      t.ticker,
-    )}, which institutions reported holding it. Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots.</p>` +
     `</div>` +
     ledger +
     `</div>` +
+    /* R17 / LD9: the provenance line carries each section's own clock (it was
+       the lede's sentence). */
     `<div class="design-provenance"><span>Congress = transactions in statutory ranges, 45-day lag · Institutions = quarter-end positions, 45-day lag</span>` +
+    `<span class="tk-clock">Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots.</span>` +
     `<span class="stamp-line">${asOfNote(stamps)}</span>` +
     `<span>no price data — a disclosure record, not a chart</span></div>` +
-    stories +
-    `<nav class="section-index" aria-label="Sections">` +
-    `<a href="#congress" class="si-active">Congress <span class="si-n">${fmtInt(t.txns.length)}</span></a>` +
-    `<a href="#institutional">Institutional${
-      inst.state === "data" ? ` <span class="si-n">top ${fmtInt(inst.topn ?? 25)}</span>` : ""
-    }</a>` +
-    `<span class="si-soon">Financials <span class="badge-soon">SOON</span></span>` +
-    `<span class="si-soon">Macro <span class="badge-soon">SOON</span></span>` +
-    `<span class="si-asof">${asOfNote(stamps)} · build ${esc(stamps.buildId)}</span>` +
-    `</nav>` +
-    /* BAND 1 — the two regimes over time */
+    onSignals +
+    tabs +
+    /* PANEL 1 — Congress: the timeline beside the members active, then the
+       disclosures (R20) */
+    `<section class="tk-panel" role="tabpanel" id="congress" aria-labelledby="tab-congress">` +
     `<div class="design-band design-ticker-band design-ticker-time">` +
-    timelineHtml(t, stamps) +
-    // R24: the holder-flow frame never had data in any build; one Planned line.
-    plannedLine(["institutional holder flow by quarter"]) +
+    timelineHtml(t, stamps, pinnedIds) +
+    membersActiveHtml(t, stamps, ctx, deps) +
     `</div>` +
-    /* BAND 2 — Congress rows (wide) + members active */
-    `<section class="page-section" id="congress">` +
     `<div class="design-band design-ticker-band design-ticker-congress">` +
     `<section class="panel" aria-label="Congressional disclosures">` +
     `<div class="panel-head"><h2 class="section-h">Congressional disclosures</h2>` +
-    `<span class="panel-note">ALL PTR ROWS NAMING ${esc(t.ticker)} · SORTED FILED ↓ · STATUTORY RANGES · FILED ≤45D LATE</span>` +
+    `<span class="panel-note">ALL PTR ROWS NAMING ${esc(t.ticker)} · ${
+      pinned.length > 0 && !opts.fullTable ? "ON SIGNALS ROWS FIRST, THEN FILED ↓" : "SORTED FILED ↓"
+    } · STATUTORY RANGES · FILED ≤45D LATE</span>` +
     (opts.fullTable ? "" : `<a class="section-link" href="${congressTickerHref(t.ticker)}">full congressional view ↗</a>`) +
     `</div>` +
     recent +
     `</section>` +
-    membersActiveHtml(t, stamps, ctx, deps) +
     `</div>` +
     `</section>` +
-    /* R19 — the overlap band, between the Congress rows and the holders */
-    (deps?.overlap ?? "") +
-    /* BAND 3 — who holds (wide) + crowding */
+    /* PANEL 2 — Institutional (R21): who holds (with crowding), then the
+       Congress ↔ notable-managers overlap, then "Do the two regimes agree?" */
+    `<section class="tk-panel" role="tabpanel" id="institutional" aria-labelledby="tab-institutional">` +
     `<div class="design-band design-ticker-band design-ticker-holders">` +
     `<div>` + tickerInstSectionHtml(inst, t.ticker) + `</div>` +
     crowdingHtml(deps?.crowding ?? null, inst) +
     `</div>` +
-    /* BAND 4 — agreement + signals */
+    (deps?.overlap ?? "") +
     `<div class="design-band design-ticker-band design-ticker-agree">` +
     agreementHtml(t, stamps, inst) +
-    tickerSignalsHtml(t.ticker, deps?.signals ?? null, deps?.withheld ?? []) +
     `</div>` +
-    `<details class="design-supplement"><summary>Planned modules for ${esc(t.ticker)} · financials and macro</summary>` +
-    `<section class="page-section planned-grid" aria-label="Planned sections">` +
-    `<div class="planned-card"><h2 class="section-h">Financials — as filed <span class="badge-soon">PLANNED</span></h2>` +
-    `<p>${esc(t.ticker)}'s as-reported XBRL fundamentals will appear here when the financials module passes its gates. Until then: <a href="${esc(
-      edgarTickerUrl(t.ticker),
-    )}" rel="noopener" target="_blank">${esc(t.ticker)} on EDGAR ↗</a></p></div>` +
-    `<div class="planned-card"><h2 class="section-h">Macro context <span class="badge-soon">PLANNED</span></h2>` +
-    `<p>Rates, inflation, and positioning series land here with the macro module — vintage-aware, never nowcast.</p></div>` +
-    `</section></details>` +
+    `</section>` +
     footnoteBlock(
       info.mappedName
         ? [
@@ -390,7 +416,6 @@ export function tickerUnifiedBody(
     )
   );
 }
-
 
 /* ---------- Ticker.dc.html bands ---------- */
 
@@ -422,22 +447,37 @@ function dayNum(iso: string): number {
   return Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86_400_000;
 }
 
+/** R20: the timeline's dollar gridlines — the lower bounds of three
+    statutory ranges ($15,001, $250,001, $5,000,001) — labelled by the round
+    figure the ranges are known by. */
+export const TIMELINE_GRIDLINES: readonly (readonly [number, string])[] = [
+  [15_000, "$15K"],
+  [250_000, "$250K"],
+  [5_000_000, "$5M"],
+];
+
 /** Congress · disclosure timeline: one mark per dated row in the trailing 24
     months by TRADE date, x = position in the window, y = log lower bound,
-    fill = side. Rows without a trade date cannot be placed and are counted. */
-function timelineHtml(t: TickerEntity, stamps: BuildStamps): string {
+    fill = side. Rows without a trade date cannot be placed and are counted.
+    signals-v3 M3 (R19, R20): $15K / $250K / $5M gridlines, and a ring on each
+    mark whose row is pinned from the "On Signals" block. */
+function timelineHtml(t: TickerEntity, stamps: BuildStamps, pinned: ReadonlySet<string> = new Set()): string {
   const bounds = legacyTrailingMonthsBounds(stamps.generatedAtDate, 24);
   const rows = excludeDateAnomalies(t.txns).rows.filter((r) => windowMembership(r, bounds, "traded") === "in" && r.traded);
   const undated = t.txns.filter((r) => !r.traded).length;
   const span = Math.max(1, dayNum(bounds.end) - dayNum(bounds.start));
+  const ringed = rows.filter((r) => pinned.has(r.txnId)).length;
   const marks = rows
     .map((r) => {
       const x = ((dayNum(r.traded!) - dayNum(bounds.start)) / span) * 100;
       const y = r.low == null ? 4 : logPos(r.low);
       const side = r.side === "purchase" ? "buy" : r.side === "sale" || r.side === "sale_partial" ? "sell" : "other";
-      return `<i class="tl-mark tl-${side}" style="left:${x.toFixed(1)}%;bottom:${y.toFixed(1)}%"></i>`;
+      return `<i class="tl-mark tl-${side}${pinned.has(r.txnId) ? " tl-ring" : ""}" style="left:${x.toFixed(1)}%;bottom:${y.toFixed(1)}%"></i>`;
     })
     .join("");
+  const grid = TIMELINE_GRIDLINES.map(
+    ([usd, label]) => `<span class="tl-grid" style="bottom:${logPos(usd).toFixed(1)}%"><span class="tl-grid-label">${esc(label)}</span></span>`,
+  ).join("");
   const ticks = [0, 6, 12, 18, 24].map((m) => {
     const d = new Date(Date.UTC(+bounds.start.slice(0, 4), +bounds.start.slice(5, 7) - 1 + m, 1));
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -445,12 +485,13 @@ function timelineHtml(t: TickerEntity, stamps: BuildStamps): string {
   return (
     `<section class="panel design-timeline" aria-label="Congress disclosure timeline">` +
     `<div class="panel-head"><h2 class="section-h">Congress · disclosure timeline</h2>` +
-    `<span class="panel-note">TRADE DATES · 24M · ▲ BUY ▼ SELL · HEIGHT = LOG LOWER BOUND</span></div>` +
+    `<span class="panel-note">TRADE DATES · 24M · ▲ BUY ▼ SELL · HEIGHT = LOG LOWER BOUND${ringed > 0 ? " · RINGED = ON SIGNALS" : ""}</span></div>` +
     (rows.length === 0
       ? `<p class="section-note">No dated ${esc(t.ticker)} rows fall inside the trailing 24 months by trade date.</p>`
-      : `<div class="tl-plot" aria-hidden="true"><span class="tl-mid"></span>${marks}</div>` +
+      : `<div class="tl-plot" aria-hidden="true">${grid}${marks}</div>` +
         `<div class="tl-axis" aria-hidden="true">${ticks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` +
-        `<p class="visually-hidden">${fmtInt(rows.length)} dated disclosures in the window, placed by trade date; magnitudes are the disclosed lower bounds.</p>`) +
+        `<p class="visually-hidden">${fmtInt(rows.length)} dated disclosures in the window, placed by trade date; magnitudes are the disclosed lower bounds, against gridlines at ${TIMELINE_GRIDLINES.map(([, l]) => l).join(", ")}` +
+        `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a row" : "marks are rows"} on Signals, pinned in the table below` : ""}.</p>`) +
     `<p class="section-note">Trade date, not filing date — the lag lives in the table below. ${fmtInt(rows.length)} rows placed` +
     (undated > 0 ? ` · ${fmtInt(undated)} rows disclose no trade date and cannot be placed` : "") +
     `.</p></section>`
@@ -587,29 +628,3 @@ function agreementHtml(t: TickerEntity, stamps: BuildStamps, inst: TickerInstSec
   );
 }
 
-function tickerSignalsHtml(ticker: string, signals: readonly Signal[] | null, withheld: readonly { kind: Signal["kind"]; reason: string; detail: string }[]): string {
-  if (signals === null) {
-    return `<section class="panel design-ticker-signals" aria-label="Signals"><div class="panel-head"><h2 class="section-h">Signals on ${esc(ticker)}</h2><span class="panel-note">RETAINED WINDOW</span></div><p class="section-note">Signals are joined on the server; this view carries none. <a href="/signals/">Every rule, with its definition →</a></p></section>`;
-  }
-  const kinds = new Map<Signal["kind"], Signal[]>();
-  for (const s of signals) kinds.set(s.kind, [...(kinds.get(s.kind) ?? []), s]);
-  /* K-4 (M3 review): the rule book's own short labels (`signalKindShort`),
-     never a private copy that could drift from them */
-  const rows = [...kinds.entries()]
-    .map(([kind, list]) => `<tr data-edge="family-${familyOf(kind).toLowerCase()}"><td class="si-kind c-kind">${esc(signalKindShort(kind))}</td><td class="si-evidence c-secondary c-flex">${esc(list[0]!.rule)}</td><td class="c-num">${fmtInt(list.length)} ${list.length === 1 ? "hit" : "hits"}</td></tr>`)
-    .join("\n");
-  const withheldRows = withheld
-    .map((w) => `<tr class="si-withheld" data-edge="family-withheld"><td class="si-kind c-kind">${esc(signalKindShort(w.kind))}</td><td class="si-evidence c-secondary c-flex">withheld (${esc(w.reason)}): ${esc(w.detail)}</td><td class="c-num si-status-withheld">not evaluated</td></tr>`)
-    .join("\n");
-  const evaluated = withheld.length === 0 ? "every rule" : `every evaluated rule (${fmtInt(withheld.length)} withheld, listed)`;
-  return (
-    `<section class="panel design-ticker-signals" aria-label="Signals">` +
-    `<div class="panel-head"><h2 class="section-h">Signals on ${esc(ticker)}</h2><span class="panel-note">RETAINED WINDOW · ACTIVE HITS${withheld.length > 0 ? ` · ${fmtInt(withheld.length)} WITHHELD` : ""}</span></div>` +
-    (signals.length === 0 && withheld.length === 0
-      ? `<p class="section-note">Zero hits on ${esc(ticker)} in the retained window — a computed answer over every rule, not missing coverage.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact si-table"><caption class="visually-hidden">Signal hits naming ${esc(ticker)}</caption><thead><tr><th scope="col" class="c-kind">Kind</th><th scope="col" class="c-secondary c-flex">Rule</th><th scope="col" class="c-num">Hits</th></tr></thead><tbody>${rows}${rows && withheldRows ? "\n" : ""}${withheldRows}</tbody></table></div>` +
-        (signals.length === 0 ? `<p class="section-note">Zero hits on ${esc(ticker)} in the retained window over ${evaluated} — a computed answer for those rules; a withheld rule states its reason above and is not a zero.</p>` : "")) +
-    `<p class="section-note"><a href="/signals/">Every rule, with its definition →</a></p>` +
-    `</section>`
-  );
-}

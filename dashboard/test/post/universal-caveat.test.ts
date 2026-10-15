@@ -124,6 +124,28 @@ test("the detector FIRES on production-shaped markup, not just headerless fixtur
   );
 });
 
+/* signals-v3 M3 (R19, R21, LD8): the ticker page now holds two shapes this
+   gate reads. The disclosures preview pins the On Signals rows above the
+   newest ones in ONE table, so its hoist runs over every shown row, pinned
+   ones included (pinned in `pages-render.test.ts`). The holders list spans
+   TWO tables (rows 1–10, and 11..N inside "Show all N holders"); its hoist is
+   computed over all N, so each part is a part of the collection it judged —
+   `data-paged`, the one exemption, and exactly its meaning. Driven through
+   the real renderer here, with the control that an unmarked part is caught. */
+test("signals-v3 M3: the split holders tables — a flag on every holder is stated once; one only the first ten carry stays on their rows, in a part marked data-paged", async () => {
+  const { tickerInstSectionHtml } = await import("../../src/lib/ui/index.ts");
+  const holders = (flagged: (i: number) => boolean) =>
+    Array.from({ length: 14 }, (_, i) => ({ rank: i + 1, cik: String(i + 1).padStart(10, "0"), name: `H${i + 1}`, value: 1000 - i, securities: 1, keySource: "entity", flags: flagged(i + 1) ? ["security_not_in_mapping"] : [] }));
+  const render = (flagged: (i: number) => boolean) =>
+    tickerInstSectionHtml({ state: "data", name: "X", cik: "0000000001", period: "2026-03-31", latestFiled: null, topn: 25, holders: holders(flagged) } as never, "XYZ");
+  assert.deepEqual(offendingTables(render(() => true)), [], "every holder: stated once, above the first part");
+  const topOnly = render((i) => i <= 10);
+  assert.deepEqual(offendingTables(topOnly), [], "the first ten only: each part is a marked part of the judged collection");
+  assert.equal((topOnly.match(/data-paged="1"/g) ?? []).length, 2, "both parts are marked");
+  // control: the same parts, unmarked, are caught — the gate still reads them
+  assert.equal(offendingTables(topOnly.replace(/ data-paged="1"/g, "")).length, 1, "control: an unmarked uniform part fails");
+});
+
 test("R10: no built table repeats one flag on EVERY row without its renderer evaluating it", () => {
   const pages = globSync("**/*.html", { cwd: DIST });
   assert.ok(pages.length > 1000, `dist looks unbuilt: ${pages.length} pages`);

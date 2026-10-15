@@ -1,12 +1,12 @@
 ---
 import { pathSafeTicker } from "../../lib/format.ts";
 // Unified ticker page — the primary ticker surface and the INSTRUMENT
-// archetype of docs/frontend/design-principles.md §7:
-// search-first masthead, congress cards, the mapping-gated institutional
-// section (gated on the ticker→issuer mapping contract, spec §4), planned-section placeholders.
+// archetype of docs/frontend/design-principles.md §7: the five-figure head,
+// the "On Signals" block, then two tabs — Congress and the mapping-gated
+// Institutional section (gated on the ticker→issuer mapping contract, spec §4).
 import Base from "../../layouts/Base.astro";
-import { getBuildData, tickerInstSection, getSignalArtifact, notableMovesPeriods, filerTier } from "../../lib/data";
-import { overlapBand, overlapBandHtml } from "../../lib/overlap";
+import { getBuildData, tickerInstSection, getTriage, notableMovesPeriods, filerTier } from "../../lib/data";
+import { overlapBand, tickerOverlapHtml } from "../../lib/overlap";
 import { filerHref } from "../../lib/holdings";
 import { resolveTicker } from "../../lib/derive";
 import { tickerCrowding } from "../../lib/inst-analytics";
@@ -37,21 +37,22 @@ const ssrCtx: RenderCtx = {
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };
-// Ticker.dc.html bands that need the corpus: signals naming this ticker,
-// crowding among ranked issuers (only when the ticker resolves), committee
-// roster when the build carries it. The /e/ route passes none of these.
+// Ticker.dc.html bands that need the corpus: the build's Signals triage (the
+// "On Signals" block and the rows it pins, signals-v3 M3), crowding among
+// ranked issuers (only when the ticker resolves), committee roster when the
+// build carries it. The /e/ route passes none of these.
 const resolved = resolveTicker(build.tickerMap, entity.ticker);
 const crowding =
   resolved.state === "resolved" && inst.state === "data" && inst.period
     ? tickerCrowding(build.inst, resolved.issuerKey, inst.period)
     : null;
-const artifact = getSignalArtifact();
 /* R19: the Congress ↔ notable-managers overlap band — the Congress half from
    this ticker's own rows (last 90 days by filed date), the 13F half from the
-   class-grain holders of the closed quarter, or a Planned badge when the
-   reviewed mapping does not name this ticker. */
+   class-grain holders of the closed quarter, or — when that side cannot be
+   read — a plain statement of the absence and its reason (signals-v3 M3
+   success criterion 4: a ticker page renders no PLANNED markup). */
 const hrefOf = (cik: string): string => filerHref(cik, filerTier(build, cik));
-const overlapHtml = overlapBandHtml(
+const overlapHtml = tickerOverlapHtml(
   overlapBand({
     ticker: entity.ticker,
     txns: entity.txns,
@@ -67,8 +68,7 @@ const overlapHtml = overlapBandHtml(
 );
 const deps: TickerPageDeps = {
   overlap: overlapHtml,
-  signals: artifact.signals.filter((s) => s.status === "active" && s.entities.ticker === entity.ticker),
-  withheld: artifact.withheld,
+  triage: getTriage(),
   crowding,
   committees: build.committeeData
     ? { byMember: build.committeeData.byMember, windowFrom: build.committeeData.windowFrom, windowTo: build.committeeData.windowTo, snapshotDate: build.committeeData.snapshotDate }
@@ -90,6 +90,9 @@ const description =
   </main>
   <script>
     import { initEntityPage } from "../../scripts/entity-client";
+    import { initTabs } from "../../scripts/tabs";
     initEntityPage();
+    // signals-v3 M3 (R16): the Congress / Institutional tabs
+    initTabs(document);
   </script>
 </Base>

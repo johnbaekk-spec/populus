@@ -132,6 +132,13 @@ test("happy path: real payload bytes → decode → body render → DOM apply �
   assert.ok(body.includes("<caption"), "the client body is the same real-table renderer");
   assert.ok(body.includes("Congressional disclosures"));
   assert.ok(body.includes("cell-src"), "SRC receipts survive the client render");
+  /* signals-v3 M3 (R16, R18): the client body is the tabbed page — two tabs
+     over two panels, both shown until the binder runs — and, with no server
+     triage on this route, no On Signals block and no pinned row */
+  assert.equal((body.match(/role="tab"/g) ?? []).length, 2, "the Congress and Institutional tabs");
+  assert.match(body, /<section class="tk-panel" role="tabpanel" id="congress"[^>]*>[\s\S]*<section class="tk-panel" role="tabpanel" id="institutional"/);
+  assert.doesNotMatch(body, /<section class="tk-panel"[^>]*\shidden/, "no panel is hidden in the rendered HTML");
+  assert.doesNotMatch(body, /id="on-signals"|class="on-signals"/, "/e/ never renders the block");
   assert.equal(h.titles[0], `${CUT_TICKER} — disclosures — Public Filings`);
   assert.ok(h.watchdogs[0]!.cancelled, "the watchdog is cancelled on settle");
 });

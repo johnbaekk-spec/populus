@@ -329,9 +329,6 @@
   .hero { padding-top: 36px; padding-bottom: 32px; gap: 32px; grid-template-columns: 1fr; }
   .hero-title { font-size: var(--fs-hero); }
   .metho-title { font-size: var(--fs-hero); }
-  .section-index { overflow-x: auto; }
-  .section-index a, .section-index .si-soon { min-height: 44px; }
-  .si-asof { margin-left: 0; }
   .toc a { min-height: 44px; }
   .search-opt { min-height: 44px; }
   .quick-link { min-height: 44px; }
