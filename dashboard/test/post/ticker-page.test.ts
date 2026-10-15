@@ -46,7 +46,8 @@ function tickerPages(): Page[] {
     const html = readFileSync(f, "utf-8");
     const m = /<main class="shell page entity-page" data-entity-kind="t" data-entity-key="([^"]*)">([\s\S]*?)<\/main>/.exec(html);
     assert.ok(m, `${d}: a ticker page's <main>`);
-    out.push({ ticker: m![1]!.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">"), main: m![2]!, html });
+    // `&amp;` decodes last (as in lib/banned-scan.ts), so `&amp;quot;` is never decoded twice.
+    out.push({ ticker: m![1]!.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"), main: m![2]!, html });
   }
   return out;
 }
