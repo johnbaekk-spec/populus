@@ -206,10 +206,13 @@ now follows, in the reference's order: masthead → identity block with the
 four-figure ledger on the right → provenance strip → three data-derived
 summary cards → dense content bands that share one-pixel seams → footer.
 (Where the design-polish run departs from this order, the departure is recorded
-below: L13 for the cards, L14 for the Signals rule book.)
-`/signals` is a feed-archetype page with two bands of its own: the rule
-book (every kind, its exact rule, hits, status — withheld kinds included), and
-hits beside the lag distribution and per-family hit rate. (Its device-local
+below: L13 for the cards, L14 for the Signals rule book, SV3-M2 for the
+Signals triage.)
+`/signals` is a triage page (signals-v3 M2, record SV3-M2 below): three lead
+cards, then "Filings to read" in three tiers beside the hit rate by family and
+a slim hits table. Its rule book (every kind, its exact rule, hits, status —
+withheld kinds included) and the lag distribution are on `/methodology`
+(`#signal-rules`, `#signal-lag`), linked from the page. (Its device-local
 watchlist band was removed with the watchlist in signals-v3 M1; the export's
 watchlist band has no route twin.) Two deliberate deviations from the exports are
 recorded here so they are not re-litigated by accident: the masthead carries
@@ -266,8 +269,9 @@ Each design page follows the approved preview on the design's grid fractions.
 A paired band names ONE primary cell (`data-pair-primary`, the wider cell the
 reader came for) and is balanced asymmetrically (coordinator decision CD-1):
 the primary's table shows its FIXED default — member flows 20, filing history
-12, a filer's reported positions 20, the signal hits 12 of their page, the
-Consensus board 10 — and is never cut to balance its side, and no row count
+12, a filer's reported positions 20, the Consensus board 10 (the Signals
+triage is its band's primary since signals-v3 M2, and the slim hits beside it
+show a fixed 10) — and is never cut to balance its side, and no row count
 depends on the partner cell (CD-5); the side cell may end earlier, but not more
 than 96px below the primary at 1440 (the geometry check G9), so no void opens
 under the primary — unless the primary is COMPLETE: its table shows its whole
@@ -307,9 +311,11 @@ takes its content's width above the fold and a full ledger row at it.
   with the period and kind segments on its band head, band F1 — Reported
   positions (1.7fr) │ Book shape + Filing history (1fr) — the Planned line, the
   EDGAR and notes disclosures, and the §5 data note as the page's foot line.
-- **Signals:** the head beside the ledger, the provenance strip, the three
-  cards, band S1 — Hits (1.8fr) │ Lag distribution + Hit rate (1fr) — the rule
-  book as an expanded full-width band, the withheld panels.
+- **Signals** (signals-v3 M2, record SV3-M2): the head beside its
+  three-figure ledger (Hits, Stand out, Window) with the "How signals work"
+  note in the lede, the lead cards, band S1 — Filings to read (1.5fr, the
+  primary) │ Hit rate by family above the slim hits (1fr) — the Methodology
+  links, the changes foot and the withheld panels.
 
 **Record L10 (reversal of the Sep-10 IA) — Leaders and Tickers pair (D1).**
 The Sep-10 run stacked Leaders above Tickers, each at full width. They now pair
@@ -332,6 +338,50 @@ the rule book before the hits. The owner's D3 places it as an expanded
 full-width band after Hits │ Lag. The rule book's content requirement here —
 every kind, its exact rule, why it carries information, hits and status,
 withheld kinds included — is met in full: seven rows, never collapsed.
+(Superseded in place by SV3-M2: the same seven-row rule book renders on
+`/methodology#signal-rules`, still expanded.)
+
+**Record SV3-M2 (signals-v3 M2, owner-approved mock 2026-10-13) — the Signals
+triage layout.** `/signals/` answers "which filings should I read first",
+from the filings themselves:
+
+- **Head.** Kicker, "Congress signals", a one-line lede ending in the
+  "How signals work" label note, and exactly three ledger figures: Hits (with
+  the listed-stock count), Stand out ("of N rows ranked") and Window (90d,
+  with its dates).
+- **Lead cards.** Committee (amber; "direct match", "broad match", or the
+  stated absence when committee data is not in the build — never a grade it
+  cannot state), Largest buy (green) and Largest sell (red). One segmented
+  control ranks buy and sell by "Own record" or "Absolute $": two clipped
+  radio inputs and `:checked ~` rules, no script; without CSS both variants
+  show. Every card shows both dates, its receipt and a ticker link.
+- **Band S1.** Filings to read (1.5fr, the primary) │ Hit rate by family
+  above the slim hits (1fr). A row is an `<article>`: the ticker-and-member
+  heading is a stretched link to `/tickers/<T>/#on-signals`, the receipt a
+  separate link above it; side, range, party-state, owner and LATE tags; the
+  reason sentence; four meters (`role="img"`, "Size: strong"; three bars;
+  level 3 amber, 1–2 accent, unknown hatched); the lead line's own filed
+  date, then "traded {date} · {lag}d" and its filing's receipt — a grouped
+  row labels its latest filing apart ("latest of {n} filings: {date}"). Routine is a closed `<details>`. A legend defines the levels and
+  the four meters, the Cmte line carrying "context, never an allegation". The
+  family rows are `<button aria-pressed>` filters with a removable pill; the
+  slim hits table is Kind (its exact rule a note) · Ticker · Who (last name,
+  the full name its link's name) · Traded → Filed · Size · Src, 10 lines and
+  "Show 10 more". A non-stock hit keeps its asset-type chip beside the
+  member.
+- **Moved, not deleted (LD9).** Every caveat that left the visible page is
+  in the head note (fact not forecast; never prices, returns or intent;
+  recomputed every build; the lag caveat; the lifecycle note; withheld and
+  superseded counts; date anomalies) or beside what it qualifies (the window
+  in its figure, the committee caveat on its card and in the legend, each
+  kind's rule on its kind word, both dates in their column), and on
+  Methodology (`#signals-ranking`, `#committee-direct`, `#signal-rules`,
+  `#signal-lag`).
+- **Phones.** At 390 and 360 px the row folds to one column, the meters name
+  themselves inline (the desktop meter head is clipped, never removed), and
+  nothing honesty-bearing is hidden: `css-fold.test.ts` sweeps the row's
+  dates, LATE tag and receipt, the cards' dates and receipt, the committee
+  caveat and the meter's inline name.
 
 **Record L15 (reversal of a Sep-10 SRC §5 ban) — the HOUSE PARSE label (D2).**
 The Sep-10 copy pass banned "HOUSE PARSE" in visible text. D2 restores the

@@ -39,6 +39,19 @@ import {
   signalsBody,
 } from "../src/lib/ui/index.ts";
 import { buildInstIndexRow, instIndexRowHtml } from "../src/lib/inst-index.ts";
+import { memberSignalsPanel, ruleBookHtml, lagBandHtml, signalsRankingHtml, committeeDirectHtml } from "../src/lib/ui/index.ts";
+import { buildTriage, type TriageResult } from "../src/lib/signal-triage.ts";
+import type { SignalArtifact } from "../src/lib/signals.ts";
+import { loadTriageFixture } from "./lib/triage-fixture.ts";
+
+let goldenCache: { artifact: SignalArtifact; triage: TriageResult } | null = null;
+/** The golden public-row fixture's triage (signals-v3 M2), built once. */
+function goldenTriage(): { artifact: SignalArtifact; triage: TriageResult } {
+  if (goldenCache) return goldenCache;
+  const f = loadTriageFixture();
+  goldenCache = { artifact: f.artifact, triage: buildTriage(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf }) };
+  return goldenCache;
+}
 import { renderResults, renderPreQuery } from "../src/scripts/search-client.ts";
 import {
   terminusRow,
@@ -338,6 +351,19 @@ const HONESTY_SELECTORS = [
      none) — neither may vanish at a breakpoint. */
   ".si-hidden-count",
   ".si-asset-chip",
+  /* signals-v3 M2 (R11, R12, R23): a triage row's both dates, its LATE tag,
+     owner and receipt; a lead card's dual dates and receipt; the committee
+     caveat on the committee card and in the Cmte legend; and the meter's
+     inline name on phones. None may vanish at a breakpoint. */
+  ".si-row-filed",
+  ".si-row-traded",
+  ".si-row-src",
+  ".si-late-tag",
+  ".si-card-dates",
+  ".si-card-src",
+  ".si-card-context",
+  ".si-cmte-context",
+  ".si-meter-label",
   /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
      channel a large share of this site's explanations travel on — every
      `.col-why`, every footnote clause, the exclusion counts, the owner codes,
@@ -453,7 +479,8 @@ test("SIGNALS-CLARITY M2 (R10, R12): the hidden count and the stock label are sw
   const corpus = Object.values(await renderParitySurfaces()).join("\n");
   assert.match(corpus, /<span class="si-hidden-count" id="signal-hidden-count" data-hidden="\d+">\d+ hits? on other asset types hidden<\/span>/);
   /* a listed stock carries no chip (R10 deviation D-3), so the chip is read
-     off a row that is not one */
+     off a row that is not one — signals-v3 M2: in the slim hits row's Who
+     cell, beside the member, now that the WHAT column is gone */
   const municipal = hitRowHtml({
     id: "s1-large:m", kind: "s1-large", rule: "r", thresholdVersion: "1",
     entities: { bioguide: "A000001", memberName: "A", ticker: null },
@@ -462,8 +489,26 @@ test("SIGNALS-CLARITY M2 (R10, R12): the hidden count and the stock label are sw
     computedAt: "2026-07-24", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
     asset: "City of X GO Bond", assetType: "Municipal Security", side: "purchase", owner: "self", listedStock: false,
   }, {});
-  assert.match(municipal, /<span class="si-asset-chip">Municipal Security<\/span>/);
+  assert.match(municipal, /<td class="c-member c-flex si-subject">[^]*<span class="si-asset-chip">Municipal Security<\/span><\/td>/);
   assert.doesNotMatch(corpus, /si-asset-chip/, "the parity surfaces' hits are listed stocks: no chip");
+});
+
+test("signals-v3 M2 (R23): the triage row's dates, LATE tag and receipt, the cards' dates and receipt, the committee caveat and the meter's inline name are swept at the fold, and /signals emits each", async () => {
+  const sels = [".si-row-filed", ".si-row-traded", ".si-row-src", ".si-late-tag", ".si-card-dates", ".si-card-src", ".si-card-context", ".si-cmte-context", ".si-meter-label"];
+  for (const sel of sels) {
+    assert.ok(HONESTY_SELECTORS.includes(sel));
+    for (const decl of ["display:none", "visibility:hidden", "content-visibility:hidden"]) {
+      const planted = `${css}\n@media (max-width: 720px) { #signals-page ${sel} { ${decl}; } }`;
+      assert.deepEqual(foldViolations(planted), [`#signals-page ${sel}`], `control: ${sel} { ${decl} } at the fold`);
+    }
+  }
+  const corpus = renderCorpus();
+  for (const sel of sels) assert.ok(new RegExp(`class="(?:[^"]*\\s)?${sel.slice(1)}(?:\\s[^"]*)?"`).test(corpus), `${sel} is emitted`);
+  // R23: on phones the meter names itself inline — the fold SHOWS the label it clips at desktop
+  const fold = narrowMediaBlocks(css).map((b) => b.body).join("\n");
+  assert.match(fold, /\.si-meter-label \{ position: static; width: auto; height: auto;[^}]*clip: auto;/);
+  // and the decorative meter head is clipped, never display:none
+  assert.match(fold, /\.si-meter-head \{ position: absolute; width: 1px; height: 1px;[^}]*clip: rect\(0 0 0 0\)/);
 });
 
 test("SIGNALS-CLARITY M3 (R19): the Monthly flow honesty lines are swept at the fold, and the panel emits each", async () => {
@@ -851,7 +896,6 @@ function renderCorpus(): string {
         asset: "Williams Companies Inc", assetType: "OP", side: "purchase", owner: "spouse", listedStock: false,
       },
       CTX,
-      "",
       null,
       [0, 1].map((i) => ({
         id: `s1-large:${i}`, kind: "s1-large", rule: "r", thresholdVersion: "1",
@@ -872,6 +916,16 @@ function renderCorpus(): string {
       } as never,
       CTX,
     ),
+    /* signals-v3 M2: the triage page over the golden public-row fixture (lead
+       cards, the three tiers, cluster and late-batch rows, the families
+       filter), the member panel's WHAT sentence, and Methodology's four
+       signal sections */
+    signalsBody(goldenTriage().artifact, CTX, { rowsEvaluated: 2051, triage: goldenTriage().triage }),
+    memberSignalsPanel(goldenTriage().artifact, "S000168", CTX),
+    ruleBookHtml(goldenTriage().artifact),
+    lagBandHtml({ latestBatch: [{ name: "M", bioguide: "M1", party: "D", traded: "2026-01-01", filed: "2026-05-01", lag: 120, late: 1 }], latestBatchFiled: "2026-05-01" }),
+    signalsRankingHtml(),
+    committeeDirectHtml(),
   ].join("\n");
 }
 
@@ -903,11 +957,23 @@ const NEW_RENDERER_CLASSES = [
      replaced the paragraph with the provenance strip (see RETIRED below). */
   "ledger-fig", "ledger-value", "ledger-sub", "design-pair", "design-filer-band",
   "design-filer-side", "filer-ledger-root", "filer-data-note", "head-controls", "head-control",
-  "table-foot-reason", "si-evidence-row", "design-member-history-band",
+  "table-foot-reason", "design-member-history-band",
   /* SIGNALS-CLARITY M2 (R10–R12): the WHAT sentence and its asset-type chip,
-     the ×n repeat mark and its member list, the rule restatement in the
-     evidence row, and the listed-stock filter's hidden count. */
-  "si-sentence", "si-asset-chip", "si-group-n", "si-group-members", "si-evidence-line", "si-hidden-count",
+     the ×n repeat mark, and the listed-stock filter's hidden count. (The
+     evidence row, its rule restatement and its member list left with
+     signals-v3 M2 — see RETIRED below.) */
+  "si-sentence", "si-asset-chip", "si-group-n", "si-hidden-count",
+  /* signals-v3 M2 (R10–R14): the lead cards and their CSS-only ranking
+     control, the "Filings to read" tiers, rows, meters and legend, the
+     family filter rows and pill, and Methodology's signal sections. */
+  "si-lead", "si-rank-input", "si-lead-head", "si-rank-seg", "si-cards", "si-card", "si-card-tag", "si-card-h",
+  "si-card-amt", "si-card-who", "si-card-dates", "si-card-fact", "si-card-src", "si-card-context", "si-variant",
+  "si-legend", "si-legend-levels", "si-legend-h", "si-legend-level", "si-legend-word", "si-legend-meters", "si-cmte-context",
+  "si-tier", "si-tier-h", "si-tier-n", "si-row", "si-meter-head", "si-meter-col", "si-row-main", "si-row-h", "si-row-link",
+  "si-row-member", "si-row-what", "si-row-why", "si-row-amt", "si-side-buy", "si-side-sell", "si-chip", "si-group-tag",
+  "si-late-tag", "si-row-when", "si-row-filed", "si-row-traded", "si-row-src", "si-meters", "si-meter", "si-meter-label",
+  "si-meter-bars", "si-mbar", "si-family-list", "si-rate-row", "si-pill-row", "si-pill", "si-family-name",
+  "si-method", "si-method-list", "si-direct-table", "si-direct-ranges",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period
@@ -919,6 +985,9 @@ const NEW_RENDERER_CLASSES = [
 const NEW_HOOK_CLASSES = [
   "filer-bookshape-root", "filer-provenance", "si-side", "flow-window-empty",
   "design-member-history", "design-consensus-band", "design-filer-history",
+  /* signals-v3 M2: the triage panel and the families panel are laid out by
+     the band and `.panel`; an exchange-led row's chip keeps the neutral ink */
+  "si-triage", "si-families", "si-side-neutral",
 ];
 
 /* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
@@ -941,6 +1010,10 @@ const RETIRED_CLASSES = [
   "watch-controls", "watch-chip", "chip-x", "watch-gap", "watch-new",
   "si-watchband", "si-watch-controls", "si-watch-chips", "si-new", "si-gold",
   "cell-filed", "who", "col-why",
+  /* signals-v3 M2 (R13): the per-hit evidence row and its parts, the kind
+     chips, and the per-family rate list the filter rows replaced. */
+  "si-evidence-row", "si-evidence-line", "si-group-members", "si-expand", "si-expand-body", "si-receipts",
+  "si-hit-filter", "si-rates", "si-rate",
 ];
 
 const ASTRO_ONLY_CLASSES = [

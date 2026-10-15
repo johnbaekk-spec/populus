@@ -429,6 +429,17 @@ export async function renderParitySurfaces(): Promise<Record<string, string>> {
   );
 
   out["signalsBody"] = ui.signalsBody(SIGNAL_ARTIFACT, CTX);
+  /* signals-v3 M2: the page WITH its triage (one filing: a first-on-record
+     $1M–$5M sale, so Stands out), and Methodology's four signal sections. */
+  const { buildTriage } = await import("../../src/lib/signal-triage.ts");
+  const triageRow = txn({ txnId: "t-triage", doc: "https://efdsearch.senate.gov/search/view/ptr/abc/", low: 1000001, high: 5000000, side: "sale_partial", owner: "spouse", assetType: "Stock", asset: "Williams Companies Inc (WMB)" });
+  const triage = buildTriage(SIGNAL_ARTIFACT, [triageRow], { committee: null, identityOf: (sg: any) => (sg.id === "sig-parity-1" ? "t-triage" : null) });
+  out["signalsBody.triage"] = ui.signalsBody(SIGNAL_ARTIFACT, CTX, { rowsEvaluated: 1000, triage });
+  out["triageRowHtml"] = ui.triageRowHtml(triage.rows[0], CTX);
+  out["ruleBookHtml"] = ui.ruleBookHtml(SIGNAL_ARTIFACT);
+  out["lagBandHtml"] = ui.lagBandHtml({ latestBatch: [TXNS[0]], latestBatchFiled: TXNS[0].filed });
+  out["signalsRankingHtml"] = ui.signalsRankingHtml();
+  out["committeeDirectHtml"] = ui.committeeDirectHtml();
   out["memberSignalsPanel"] = ui.memberSignalsPanel(SIGNAL_ARTIFACT, "T000001", CTX);
   out["memberSignalsPanel.empty"] = ui.memberSignalsPanel(SIGNAL_ARTIFACT, "Z999999", CTX);
 

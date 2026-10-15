@@ -39,3 +39,66 @@ The owner tier ran against data build 20260817.1. That is the build behind `POPU
   - `ledger.spec.ts:427`: "G1, G6, G7, G8 measured nothing on /institutional/". The test fails 16 times: 2 widths × 2 projects, which is 4 runs, × 4 checks.
 
 The machine-specific raw log is kept outside the tree, in the review artifacts directory (`.codex-review/t0-baseline.txt`).
+
+## M2 — Signals page
+
+M2 rebuilds `/signals/` as a triage (PLAN R4–R15). The decisions below are the plan's locked ones (LD1–LD10, LD13) as implemented; where the implementation had to choose, the choice is stated.
+
+- **Where it runs (LD1).** `buildTriage` (`dashboard/src/lib/signal-triage.ts`, `TRIAGE_VERSION = "1.0.0"`) is memoised per build as `getTriage()` in `data.ts`. It reads signals through the read-only `signalIdentity` accessor and never writes onto them. Nothing is serialized: no route, no file. `signals.v1.json` is byte-identical before and after M2 (pinned in `signals.test.ts` against a pre-change sha256 of three corpora, plain, chained and with S-5).
+- **Committee grade (LD2).** `dashboard/src/lib/committee-direct.ts`, table version 1, below. A test parses `src/populus/committee_jurisdiction.yaml` and `src/populus/sic_taxonomy.yaml` and fails unless every range lies inside its committee's broad sectors, so a direct grade only refines an S-5 hit. An unresolved SIC, an unmapped committee, or an `issuer_sic` without the `sic` column grades broad.
+- **Rows, meters, tiers (LD3, LD4).** Exactly the plan's rules. Two readings the plan left open are stated in DEV-NOTES: a cluster row forms only when it absorbs at least one in-window filing (so "on a listed ticker" is met by its absorbed lead line), and a late batch takes all of the member's ranked filings on that date. When S-5 did not run (its inputs are not in the build, or it was withheld), Cmte reads unknown on every row and the page says why. A row's date block is its lead line's own chronology — that line's filed date, trade date, the lag between them and its filing's receipt — and a row grouping several filings labels the group's latest filing apart ("+2 filings · latest of 3 filings: {date}"); rows still sort by that latest date (DEV-NOTES D21).
+- **Sentences (LD5).** The plan's templates; when no template applies, a fallback names the rules the row's lines matched ("Rules matched: first disclosure of the ticker."). Pronoun-free, at most 160 characters, and scanned by both banned-wording gates.
+- **Cards (LD6).** Committee (direct before broad), Largest buy and Largest sell, each "Own record" (≥ 20 prior disclosures spanning ≥ 365 days, low ≥ $50,001, ranked by brackets above the record) or "Absolute $". Every card links to its ticker page, so a listed-stock line with no ticker never becomes one (DEV-NOTES D20). The committee card states only what is on record: a direct grade names the matched SIC; a broad grade with no SIC on record says the SIC is not on record, and only a known SIC is said to sit outside the matched committees' direct ranges (DEV-NOTES D22). The control is two radio inputs and `:checked ~` CSS; it works with JavaScript off (a geometry test runs it so).
+- **Methodology (R14).** `#signal-rules` (the rule book, moved), `#signal-lag` (the lag distribution, moved), `#signals-ranking` (every constant interpolated from `signal-triage.ts`) and `#committee-direct` (the table below, from `DIRECT_SIC`).
+- **Principle (LD13).** `ARCHITECTURE.md` §2.4's first bullet is now "Not an advice product … published, rule-based classifications of a disclosure against the filer's own record".
+
+### Committee direct-match table, v1 — for the owner's sign-off
+
+Inclusive 4-digit SIC ranges, read from House Rule X and Senate Rule XXV. Memberships are committee-level (debt TD-4: subcommittee seats are collapsed onto the parent at ingest).
+
+| Committee | Name (as the YAML prints it) | Direct SIC ranges |
+|---|---|---|
+| HSAG | House Agriculture | 0100–0999 |
+| SSAF | Senate Agriculture, Nutrition, and Forestry | 0100–0999 |
+| HSBA | House Financial Services | 6000–6799 |
+| SSBK | Senate Banking, Housing, and Urban Affairs | 6000–6799, 1520–1531 |
+| HSIF | House Energy and Commerce | 2830–2836, 2911, 3661–3669, 3841–3851, 4800–4899, 4900–4949 |
+| SSEG | Senate Energy and Natural Resources | 1000–1499, 4610–4619, 4900–4949 |
+| SSEV | Senate Environment and Public Works | 1600–1629, 4940–4959 |
+| HSPW | House Transportation and Infrastructure | 1600–1629, 4000–4789 |
+| SSCM | Senate Commerce, Science, and Transportation | 4000–4789, 4800–4899 |
+| HSAS | House Armed Services | 3480–3489, 3720–3729, 3730–3732, 3760–3769, 3795, 3812 |
+| SSAS | Senate Armed Services | 3480–3489, 3720–3729, 3730–3732, 3760–3769, 3795, 3812 |
+
+### Golden cases (PLAN success criterion 2)
+
+Cut from public rows of live build 20261013.1 into `dashboard/test/fixtures/signal-triage-cases.json`: each golden member's full history, every row of the S-3 windows the cases read, the live artifact's signals verbatim, and committee and SIC inputs read from the data-20260802.2 release database (`issuer_sic`, `committees`, `committee_memberships`, `committee_jurisdiction`; the membership snapshot is valid 2025-01-03 → 2026-09-09). Where the locked rule disagrees with the plan's expectation, the rule wins (`signal-triage.test.ts` asserts the computed value).
+
+| Case | Plan expected | Computed under LD3/LD4 |
+|---|---|---|
+| Cory A. Booker, filed 2026-09-09 | Stands out; Size 3, Pattern 3 (AMZN) | **Differs.** Stands out; Pattern 3 ("First trades since Aug 2014."); **Size 0, led by NVDA**. The AMZN line ($100,001–$250,000) carries no active signal (AMZN was disclosed in 2014, so no first disclosure; it is below S-1's $250K floor), so it is not a ranked line. |
+| April McClain Delaney, MLM, filed 2026-09-09 | Stands out; Size 3 | Matches: Stands out; Size 3 ("3 brackets above anything in 408 prior disclosures."). |
+| Alan Armstrong, filed 2026-07-21 (703 lines) | One row, WMB; Stands out; Size -1; Pattern 3; "701 of 703 lines late" | Matches. |
+| SPCX purchase cluster, traded 2026-06-12 to 06-18 | One cluster row, 6 members; Others 3; absorbs Moskowitz 2026-07-26 | Matches. |
+| James A. Himes, filed 2026-07-20 | Stands out; Pattern 3; Committee 2 (BAC ↔ HSBA, direct) | Matches (BAC SIC 6021, HSBA, direct). |
+| Maria Elvira Salazar, CB, filings 2026-08-07, 09-09, 10-07 | One row; Committee 2 | **Differs in the filings.** One CB row (Worth a look), Committee 2, of the **2026-08-07 and 2026-09-09** filings. The 2026-10-07 filing's CB trade (2026-09-24) falls outside the sourced membership snapshot, so its CB line reads Cmte unknown, the filing's lead line is SNOW, and it stands as its own row. With a snapshot covering that date, the rule would group all three. |
+| Tommy Tuberville, eight filings on 2026-08-05 | One late-batch row | Matches (8 filings, 10 completed clusters). |
+| Kevin Hern, filed 2026-09-25, led by an exchange | Routine | Matches (OKE exchange). |
+| Lead cards | Committee Salazar CB sale 2026-08-19; Buy Pelosi BE $1M–$5M on both; Sell absolute Armstrong WMB; Sell own record Delaney MLM | Matches. |
+
+### M2 measurements
+
+Measured with `getTriage()` and on the built `/signals/` page of the T0 owner-tier inputs (data build 20260817.1, S-5 withheld: "inputs-not-in-build"), 2026-10-14. The mock's numbers were never targets.
+
+| Measure | Value |
+|---|---|
+| Hits (listed stocks) | 716 (580) |
+| Rows ranked | 51: Stands out 13, Worth a look 2, Routine 36 |
+| Groupings | single 47, cluster 3, late batch 1 |
+| Committee card | stated absence: committee data is not in this build (inputs-not-in-build) |
+| Largest buy, own record | John Boozman, XFIV, $50K–$100K, traded 2026-05-13, filed 2026-06-16 ("1 bracket above anything in 369 prior disclosures.") |
+| Largest buy, absolute | Alan Armstrong, AAPL, $250K–$500K, traded 2026-03-27, filed 2026-07-21 (after DEV-NOTES D20; before it, David McCormick's listed-stock line with no ticker, which R11 forbids as a card) |
+| Largest sell, own record | Sara Jacobs, QCOM, $500K–$1M, traded 2026-05-06, filed 2026-05-20 ("1 bracket below the largest of 64 prior disclosures.") |
+| Largest sell, absolute | Alan Armstrong, WMB, $5M–$25M, traded 2026-06-24, filed 2026-07-21 |
+
+A second measurement with only `POPULUS_DB` pointed at the data-20260802.2 release database (committee data present) and every other input from data build 20260817.1 does not measure what it was meant to: the database's corpus (58,059 transactions) does not match the build directory's, and with the development ticker map the owner tier uses (five issuers) S-5 fired 30 times against its calibrated minimum of 100 and was withheld ("volume-out-of-bounds"). Cmte read unknown on every row there too (43 rows: 12 / 1 / 30). It is reported and not used. The committee meter's behaviour on sourced data is pinned by the golden fixture instead.

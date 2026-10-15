@@ -9,13 +9,16 @@
 /* ui/signals.ts — the /signals surfaces. One of the ui/ domain modules:
    consumers import from ./index.ts only, never from this file directly.
 
-   Composition follows docs/design/reference/Signals.dc.html band for band:
-   identity + ledger, provenance strip, three summaries, the RULE BOOK (every
-   kind, its exact rule, why it carries information, hits, status), and the
-   HITS table beside the lag distribution and the hit rate by family. Every
-   number is computed from the artifact
-   and the build's own rows; the reference's illustrative 13F-side examples
-   are NOT reproduced — those kinds render as withheld with their reason. */
+   signals-v3 M2 (R10–R14, LD7, LD9): the page is a triage. Its head carries
+   three figures and a "How signals work" note that holds every caveat the
+   page no longer prints inline (LD9); three lead cards; then one band — the
+   "Filings to read" table in three tiers on the left, the hit rate by family
+   (the hits filter) above a slim hits table on the right. The rule book, the
+   lag distribution, the ranking rules and the committee direct table render
+   on Methodology (`ruleBookHtml`, `lagBandHtml`, `signalsRankingHtml`,
+   `committeeDirectHtml`), and the page links to each. Every number is
+   computed from the artifact, the build's own rows and the triage
+   (`signal-triage.ts`); nothing here is serialized. */
 
 import {
   type RenderCtx,
@@ -24,6 +27,7 @@ import {
   fmtInt,
   fmtUsd,
   note,
+  noteFromHtml,
   srcLabel,
   srcLink,
   srcLinkInner,
@@ -32,7 +36,6 @@ import {
   cardFoot,
   rangeOfTotal,
   thHtml,
-  compactDisclosure,
   presentColumns,
   dataColumnsAttr,
   tableFootReasonHtml,
@@ -40,10 +43,42 @@ import {
   ASSET_TYPE_WORDS,
   displayAsset,
   isListedStock,
+  amountText,
+  sideLabel,
+  partyClass,
 } from "../format.ts";
-import { sumRanges } from "../derive.ts";
+import { affTextOf, sumRanges } from "../derive.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
-import { briefingCards, disclosureLedger, pairBandHtml } from "./shared.ts";
+import {
+  BRACKET_LOWER_BOUNDS,
+  LATE_BATCH_MIN_CLUSTERS,
+  LEVEL_WORDS,
+  LOOK_MIN_SUM,
+  METER_KEYS,
+  METER_LABELS,
+  OTHERS_MEMBERS,
+  PATTERN_GAP_DAYS,
+  RECORD_MIN_LOW,
+  RECORD_MIN_PRIOR,
+  RECORD_MIN_SPAN_DAYS,
+  SENTENCE_MAX,
+  SIZE_LARGE_LOW,
+  SIZE_LEVEL1_LOW,
+  SIZE_LEVEL1_SHARE,
+  SIZE_MIN_HISTORY,
+  TIER_LABELS,
+  TRIAGE_VERSION,
+  daysBetween,
+  type CardPick,
+  type Level,
+  type MeterKey,
+  type Tier,
+  type TriageResult,
+  type TriageRow,
+} from "../signal-triage.ts";
+import { COMMITTEE_DIRECT_SOURCE, COMMITTEE_DIRECT_VERSION, DIRECT_COMMITTEE_NAMES, DIRECT_SIC, directRangesText } from "../committee-direct.ts";
+import { SIGNAL_THRESHOLDS } from "../signal-thresholds.ts";
+import { disclosureLedger, pairBandHtml } from "./shared.ts";
 
 /* ================================================================================
    D-2 — /signals surfaces. Every signal renders its EXACT rule, its magnitude
@@ -51,6 +86,11 @@ import { briefingCards, disclosureLedger, pairBandHtml } from "./shared.ts";
    withheld with their typed reason — never silently empty (the F-26 lesson at
    the signal layer).
    ============================================================================ */
+
+/** S-5's non-allegation caveat, the rule book's own wording, reused verbatim
+    wherever a committee grade or overlap renders (R5, LD9). */
+export const COMMITTEE_CAVEAT =
+  "The overlap is context, never an allegation — it states a sector-to-committee fact and nothing about intent.";
 
 const SIGNAL_KIND_LABELS: Record<Signal["kind"], string> = {
   "s1-large": "S-1 · Large disclosure",
@@ -67,7 +107,7 @@ const SIGNAL_KIND_LABELS: Record<Signal["kind"], string> = {
    The exact rule text comes from the artifact when a kind has emitted, and
    from this fallback only when it has not (a withheld kind still names its
    rule so nobody assumes it was forgotten). */
-type Family = "BEHAVIOUR" | "NOVELTY" | "STRUCTURE" | "COMPLIANCE" | "CONTEXT";
+export type Family = "BEHAVIOUR" | "NOVELTY" | "STRUCTURE" | "COMPLIANCE" | "CONTEXT";
 
 interface RuleBookEntry {
   kind: SignalKind;
@@ -111,7 +151,7 @@ const RULE_BOOK: readonly RuleBookEntry[] = [
     family: "CONTEXT",
     short: "COMMITTEE",
     fallbackRule: "the issuer's sector falls within a committee the member sat on as of the trade date (SIC → committee map)",
-    why: "Information asymmetry is structural here. The overlap is context, never an allegation — it states a sector-to-committee fact and nothing about intent.",
+    why: `Information asymmetry is structural here. ${COMMITTEE_CAVEAT}`,
   },
   {
     kind: "s6-late-large",
@@ -122,7 +162,7 @@ const RULE_BOOK: readonly RuleBookEntry[] = [
   },
 ];
 
-const FAMILY_ORDER: readonly Family[] = ["BEHAVIOUR", "STRUCTURE", "NOVELTY", "CONTEXT", "COMPLIANCE"];
+export const FAMILY_ORDER: readonly Family[] = ["BEHAVIOUR", "STRUCTURE", "NOVELTY", "CONTEXT", "COMPLIANCE"];
 const FAMILY_LABEL: Record<Family, string> = {
   BEHAVIOUR: "Behaviour",
   STRUCTURE: "Structure",
@@ -164,27 +204,6 @@ function lagDays(s: Signal): number | null {
   const f = s.occurrence.filedDate;
   const b = Date.UTC(+f.slice(0, 4), +f.slice(5, 7) - 1, +f.slice(8, 10));
   return Math.round((b - a) / 86_400_000);
-}
-
-/** The rule's own terms restated with the row's facts, never an
-    interpretation of the filer. SIGNALS-CLARITY M2 (R10): it opens in the
-    hit's evidence row; the one-line summary is the WHAT sentence. */
-function evidenceText(s: Signal): string {
-  const lag = lagDays(s);
-  switch (s.kind) {
-    case "s1-large":
-      return `disclosed lower bound ${s.magnitude.low == null ? "—" : fmtUsd(s.magnitude.low)} · ≥ $250K rule`;
-    case "s2-first":
-      return `First ${s.entities.ticker ?? "ticker"} disclosure by this member`;
-    case "s3-cooccurrence":
-      return `${s.receipts.length} filings · same ticker, same side, 14-day trade window`;
-    case "s4-infrequent":
-      return `purchase with lower bound ≥ $50K from a member with ≤10 prior disclosures`;
-    case "s5-jurisdiction":
-      return `issuer sector within a committee jurisdiction as of the trade date`;
-    case "s6-late-large":
-      return `filed ${lag == null ? "late" : `+${fmtInt(lag)}d after trade`} · ${lag == null ? "" : `${fmtInt(lag - 45)}d over `}the 45-day window`;
-  }
 }
 
 /* ---------- R10 (SIGNALS-CLARITY M2): the WHAT sentence ----------
@@ -290,20 +309,24 @@ export function signalIsListedStock(s: Pick<Signal, "kind" | "asset" | "assetTyp
   return hasRowFields(s) && isListedStock(s.assetType);
 }
 
-/** The hits table's filters (R12): the rule, and listed stocks only —
-    checked by default, never persisted. */
+/* ---------- R13: the family filter ---------- */
+
+/** The hits table's filters (signals-v3 M2, R13): the FAMILY — set from the
+    "Hit rate by family" rows, which double as the filter — and listed stocks
+    only, checked by default, never persisted. The kind chips are gone. */
 export interface HitFilter {
-  kind: string;
+  /** "all", or one of FAMILY_ORDER */
+  family: string;
   stocksOnly: boolean;
 }
 export const DEFAULT_HIT_FILTER: HitFilter = {
-  kind: "all",
+  family: "all",
   stocksOnly: true,
 };
 
 /** Every filter except listed stocks. */
 function matchesOthers(s: Signal, f: HitFilter): boolean {
-  return f.kind === "all" || s.kind === f.kind;
+  return f.family === "all" || familyOf(s.kind) === f.family;
 }
 
 /** The ONE filter predicate the server page and the client pager share. */
@@ -382,25 +405,34 @@ export function hitsHiddenText(hidden: number, stocksOnly: boolean): string {
   return `${fmtInt(hidden)} ${hidden === 1 ? "hit" : "hits"} on other asset types hidden`;
 }
 
-/* ---------- R17: the HIT row — Ticker · Who · What · Filed · Size · Src ---------- */
+/* ---------- R13: the slim HIT row — Kind · Ticker · Who · Traded → Filed · Size · Src ---------- */
 
-/** Hits per page; the pager runs over the complete artifact. */
-export const SIGNAL_HITS_PAGE_SIZE = 50;
+/** Lines the server renders, and the step of "Show 10 more" (LD7). */
+export const SIGNAL_HITS_COMPACT_ROWS = 10;
+export const SIGNAL_HITS_PAGE_SIZE = 10;
 /** The hits wrapper's accessible name while it scrolls sideways (R-8). */
 export const SIGNAL_HITS_REGION_NAME = "Signal hits · scroll sideways for more columns";
 
-/** The hit columns (DESIGN-POLISH M2, T2.6): the KIND is its own column, first,
-    as the design draws it — it was a word inside the evidence cell. */
-export const SIGNAL_HIT_COLUMNS = ["Kind", "Ticker", "Who", "What", "Filed", "Size", "Src"] as const;
-/** The ledger role of each hit column (DESIGN-POLISH M1, R2), header and cell
-    alike. The evidence line (What) takes the band's slack, as the approved
-    preview draws it; the member name is capped (recorded in DEV-NOTES). */
-export const SIGNAL_HIT_COLUMN_CLASSES: Readonly<Record<(typeof SIGNAL_HIT_COLUMNS)[number], string>> = {
+/** The slim hit columns (R13). The per-hit evidence row is gone: the exact
+    rule opens from the kind word, and both dates sit in their own column. */
+export const SIGNAL_HIT_COLUMNS = ["Kind", "Ticker", "Who", "Traded → Filed", "Size", "Src"] as const;
+type HitColumn = (typeof SIGNAL_HIT_COLUMNS)[number];
+/** Each column's key in the table's `data-columns` set. */
+export const SIGNAL_HIT_COLUMN_KEYS: Readonly<Record<HitColumn, string>> = {
+  Kind: "kind",
+  Ticker: "ticker",
+  Who: "who",
+  "Traded → Filed": "when",
+  Size: "size",
+  Src: "src",
+};
+/** The ledger role of each hit column, header and cell alike. The member
+    takes the band's slack (the one flexible column). */
+export const SIGNAL_HIT_COLUMN_CLASSES: Readonly<Record<HitColumn, string>> = {
   Kind: "c-kind",
   Ticker: "c-ticker",
-  Who: "c-member",
-  What: "c-secondary c-flex",
-  Filed: "c-num",
+  Who: "c-member c-flex",
+  "Traded → Filed": "c-num",
   Size: "c-num",
   Src: "c-src",
 };
@@ -422,7 +454,7 @@ export function signalHitColumns(active: readonly Signal[]): PresentColumns {
   return presentColumns(active, SIGNAL_HIT_COLUMNS.map((c) =>
     c === "Ticker"
       ? { key: "ticker", hasValue: (s: Signal) => s.entities.ticker != null, emptyReason: "Ticker: no hit in the window names a ticker." }
-      : { key: c.toLowerCase(), always: true },
+      : { key: SIGNAL_HIT_COLUMN_KEYS[c], always: true },
   ));
 }
 
@@ -439,100 +471,68 @@ export function signalReceiptHtml(receipt: string | null | undefined, cohort: Si
   return srcLink(receipt);
 }
 
-/** One hits-table line. `group` is the line's members when it collapses exact
-    repeats (R11): the line then states `×n`, its size is the members'
-    `sumRanges`, and its evidence row lists every member id and receipt. */
-export function hitRowHtml(s: Signal, ctx: RenderCtx, extraAttrs = "", columns: readonly string[] | null = null, group: readonly Signal[] | null = null): string {
+/** A member's last name for the slim Who column ("Cory A. Booker" →
+    "Booker", "Thomas H. Kean, Jr." → "Kean"): the generational suffix and
+    the given names drop; the full name stays in the link's name and title. */
+export function memberLastName(full: string): string {
+  const base = full.replace(/,?\s+(?:Jr\.?|Sr\.?|II|III|IV|V)$/i, "").trim();
+  const parts = base.split(/\s+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1]! : full;
+}
+
+/** The asset-type chip of a hit that is NOT a listed stock (R10/R12): the
+    slim table drops the WHAT column, so with "Listed stocks only" unticked a
+    non-stock hit still says what it is — the filed type's words, "type not
+    stated", a cluster that is not all listed stock, or a prior build's record
+    without the field. A listed stock carries none. */
+function hitAssetChip(s: Signal): string | null {
+  if (signalIsListedStock(s)) return null;
+  if (s.kind === "s3-cooccurrence") return "not all listed stock";
+  if (!hasRowFields(s)) return ASSET_NOT_IN_RECORD;
+  return assetTypeChip(s.assetType ?? null);
+}
+
+/** One slim hits-table line. `group` is the line's members when it collapses
+    exact repeats (R11): the size is then their `sumRanges` and the cell says
+    `×n`. */
+export function hitRowHtml(s: Signal, ctx: RenderCtx, columns: readonly string[] | null = null, group: readonly Signal[] | null = null): string {
   const members = group !== null && group.length > 1 ? group : [s];
   const grouped = members.length > 1;
   const magnitude = grouped ? groupMagnitude(members) : s.magnitude;
   const family = familyOf(s.kind);
-  const subject = s.entities.bioguide
-    ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}">${esc(s.entities.memberName)}</a>`
-    : esc(s.entities.memberName);
+  const full = s.entities.memberName;
+  const who = s.entities.bioguide
+    ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}" title="${esc(full)}" aria-label="${esc(full)}">${esc(memberLastName(full))}</a>`
+    : esc(full);
   const ticker = s.entities.ticker
     ? `<a class="si-ticker mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>`
     : `<span class="none">—</span>`;
   const receipt = s.receipts[0] ?? "";
   const lag = lagDays(s);
-  /* The evidence is ONE line; its expand carries the full text — the exact
-     rule and every receipt — so nothing is deleted, only folded. Opened, the
-     evidence lays out at the FULL table width on its own row (R11, H-14): the
-     body is the next row (`.si-evidence-row`), shown while this row's
-     disclosure is open, so a one-line row can never clip its receipts. */
-  /* The summary names the row it opens (`aria-controls`, review R2-8): the
-     evidence is the NEXT row, not the <details> body, so the relation is
-     stated rather than implied by position. */
-  const evidenceId = `si-evidence-${s.id}`;
-  /* R10: the one-line summary is the sentence (who did what to which asset);
-     the rule's own terms, restated with the row's facts, open below it. */
-  const groupMark = grouped ? ` <span class="si-group-n">×${fmtInt(members.length)}<span class="visually-hidden"> identical rows in one filing</span></span>` : "";
-  const expand = `<details class="si-expand"><summary aria-controls="${esc(evidenceId)}">${signalSentenceHtml(s)}${groupMark}</summary></details>`;
-  const assetFiled =
-    s.kind !== "s3-cooccurrence" && hasRowFields(s)
-      ? `<p><strong>Asset as filed:</strong> <span class="filed-name">${esc(s.asset ?? "not named")}</span> · type ${s.assetType == null ? "not stated" : `<span class="mono-id">${esc(s.assetType)}</span>`}` +
-        `${signalIsListedStock(s) ? " · listed stock" : " · not a listed stock"}</p>`
-      : "";
-  const groupList = grouped
-    ? `<div class="si-group-members"><strong>${fmtInt(members.length)} hits, identical within one filing — one line, every id kept:</strong><ul>` +
-      members.map((m) => `<li><span class="mono-id">${esc(m.id)}</span> ${m.receipts.map((r) => srcLink(r)).join(" ") || "—"}</li>`).join("") +
-      `</ul></div>`
-    : "";
-  /* The receipts are block cells (`srcLink` is a <div>), so they sit in a
-     <div>, never a <p> — a <div> inside a <p> is invalid and the parser closed
-     the paragraph early (review C2-6). */
-  const evidenceRow =
-    `<tr class="si-evidence-row" id="${esc(evidenceId)}" data-evidence-for="${esc(s.id)}"><td colspan="${columns === null ? SIGNAL_HIT_COLUMNS.length : columns.length}">` +
-    `<div class="si-expand-body"><p class="si-evidence-line">${esc(evidenceText(s))}</p>` +
-    `<p><strong>Rule:</strong> ${esc(s.rule)}</p>` +
-    assetFiled +
-    groupList +
-    `<div class="si-receipts"><strong>Receipts:</strong> ${s.receipts.map((r) => srcLink(r)).join(" ") || "—"}</div>` +
-    `<p class="mono-note">${esc(SIGNAL_KIND_LABELS[s.kind])} · thresholds v${esc(String(s.thresholdVersion ?? ""))} · computed ${esc(String(s.computedAt ?? ""))}</p></div></td></tr>`;
-  /* The family drives the row's 3px edge (`data-edge`); `data-kind` stays the
-     signal kind the filter reads (G-6). The kind WORD, in its own column, is
-     the rule's label trigger — the exact rule opens from it, no glyph. */
+  const chip = hitAssetChip(s);
+  const groupMark = grouped ? ` <span class="si-group-n">×${fmtInt(members.length)}<span class="visually-hidden"> identical rows in one filing, sizes summed</span></span>` : "";
   return (
     `<tr class="si-hit si-family-${family.toLowerCase()} si-kind-${esc(s.kind)}" data-signal-id="${esc(s.id)}" data-family="${family}"` +
     ` data-kind="${esc(s.kind)}" data-edge="family-${family.toLowerCase()}" data-bioguide="${esc(s.entities.bioguide ?? "")}" data-ticker="${esc(s.entities.ticker ?? "")}"` +
-    ` data-filed="${esc(s.occurrence.filedDate)}"${grouped ? ` data-group-size="${members.length}"` : ""}${extraAttrs}>` +
+    ` data-filed="${esc(s.occurrence.filedDate)}"${grouped ? ` data-group-size="${members.length}"` : ""}>` +
+    /* The kind WORD is the exact rule's label trigger (R13, LD9). */
     `<td class="c-kind si-kind">${note(s.rule, { scope: "signal-hits" }, s.id, { trigger: "label", textHtml: esc(shortOf(s.kind)) })}</td>` +
     (columns === null || columns.includes("ticker") ? `<td class="c-ticker si-ticker-cell">${ticker}</td>` : "") +
-    `<td class="c-member si-subject">${subject}</td>` +
-    `<td class="c-secondary c-flex si-what">${expand}</td>` +
+    `<td class="c-member c-flex si-subject">${who}${chip ? ` <span class="si-asset-chip">${esc(chip)}</span>` : ""}</td>` +
     `<td class="c-num si-when">${whenText(s)}${lag != null ? ` <span class="${lag > 45 ? "si-late" : "si-lag"}">+${fmtInt(lag)}d</span>` : ""}</td>` +
-    `<td class="c-num si-mag">${esc(magnitudeText(magnitude))}${grouped ? `<span class="visually-hidden">, summed over ${fmtInt(members.length)} rows</span>` : ""}</td>` +
-    /* R23 (DESIGN-POLISH M3, T3.7): the receipt prints its regime ONCE —
-       the link reads "PTR ↗" or "eFD ↗", so the stamp before it printed
-       "PTR PTR". Only a row with no receipt link keeps the stamp, so its
-       source regime is still stated. The regime legend stays in the foot. */
+    `<td class="c-num si-mag">${esc(magnitudeText(magnitude))}${groupMark}</td>` +
     `<td class="c-src">${signalReceiptHtml(receipt, s.cohort)}${s.receipts.length > 1 ? `<span class="mono-note"> +${fmtInt(s.receipts.length - 1)}</span>` : ""}</td>` +
-    `</tr>` +
-    evidenceRow
+    `</tr>`
   );
 }
 
-/** The hits body for one page, compacted to its first `compactN` hits (each
-    hit and its evidence row); the rest of the page stays in the DOM behind the
-    named binder. The ONE body renderer the server page and the client pager
-    share, so a repaint compacts exactly as the first render did. */
-export function hitsBodyHtml(lines: readonly HitLine[], ctx: RenderCtx, compactN: number, columns: readonly string[] | null = null): string {
-  return lines
-    .map((line, i) => {
-      const html = hitRowHtml(line.lead, ctx, "", columns, line.members);
-      return i >= compactN ? html.replace(/<tr\b/g, "<tr data-compact-extra") : html;
-    })
-    .join("\n");
+/** The hits body for the lines shown — the ONE body renderer the server page
+    and the client pager share, so a repaint is the server's markup (R13). */
+export function hitsBodyHtml(lines: readonly HitLine[], ctx: RenderCtx, columns: readonly string[] | null = null): string {
+  return lines.map((line) => hitRowHtml(line.lead, ctx, columns, line.members)).join("\n");
 }
 
-/** Hits the page shows before its "Show all 50 hits" (coordinator decision
-    CD-1): a FIXED default, never tuned to one data build. The page still holds
-    SIGNAL_HITS_PAGE_SIZE hits and the pager still moves by it; the rest of the
-    page stays in the DOM behind the named binder. Band S1's hits are its
-    PRIMARY cell, never cut to balance the lag and rate cell. */
-export const SIGNAL_HITS_COMPACT_ROWS = 12;
-
-/** "1–50 of 663 lines · 693 hits" — the ONE range string the server and the
+/** "1–10 of 663 lines · 693 hits" — the ONE range string the server and the
     pager share, built by the site's one range grammar (`rangeOfTotal`). The
     pager moves by LINES (R11: repeats within one filing are one line); the
     hit count beside it is every signal those lines hold. */
@@ -552,8 +552,7 @@ function withheldHtml(w: WithheldKind, carried: number): string {
       ? `<p class="section-note">${fmtInt(carried)} earlier ${carried === 1 ? "signal" : "signals"} of this kind ` +
         `${carried === 1 ? "is" : "are"} carried forward <strong>unevaluated</strong> — this build asked nothing of ` +
         `${carried === 1 ? "it" : "them"}, so ${carried === 1 ? "its" : "their"} absence from the active tables is ` +
-        `not a retraction and not an amendment.</p>` +
-        ``
+        `not a retraction and not an amendment.</p>`
       : "") +
     `</section>`
   );
@@ -565,16 +564,22 @@ export interface SignalsPageDeps {
   /** rows filed inside the artifact's coverage window — the denominator of the
       hit rate. Null → the rate is withheld, never guessed. */
   rowsEvaluated: number | null;
-  /** the newest filed batch of transactions (one filed date), for the lag
-      distribution. Empty → the band states so. */
+  /** the build's triage (`getTriage()`); absent or null → the page states
+      that this view does not carry it, never an empty table */
+  triage?: TriageResult | null;
+}
+
+/** Inputs of the lag distribution (Methodology `#signal-lag`). */
+export interface LagBandDeps {
+  /** the newest filed batch of transactions (one filed date). Empty → the band states so. */
   latestBatch: readonly Pick<TxnRow, "name" | "bioguide" | "party" | "traded" | "filed" | "lag" | "late">[];
   /** the batch's filed date, printed as the band's period label */
   latestBatchFiled: string | null;
-  /** hits per page (defaults to SIGNAL_HITS_PAGE_SIZE); the pager covers the rest */
-  renderCap?: number;
 }
 
-function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
+/** The rule book (R14: on Methodology `#signal-rules`, moved from /signals/). */
+export function ruleBookHtml(artifact: SignalArtifact): string {
+  const active = artifact.signals.filter((s) => s.status === "active");
   const byKind = new Map<SignalKind, Signal[]>();
   for (const s of active) byKind.set(s.kind, [...(byKind.get(s.kind) ?? []), s]);
   const withheldByKind = new Map(artifact.withheld.map((w) => [w.kind, w]));
@@ -607,8 +612,8 @@ function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
       `</tr>`,
   );
   return (
-    `<section class="panel panel-wide si-rulebook" id="signal-rulebook" aria-label="Rule book">` +
-    `<div class="panel-head"><h2 class="section-h">Rule book</h2>` +
+    `<section class="panel panel-wide si-rulebook" id="signal-rules" aria-label="Rule book">` +
+    `<div class="panel-head"><h3 class="section-h">Signal rule book</h3>` +
     `<span class="panel-note">EVERY KIND · ITS EXACT RULE · WHY IT CARRIES INFORMATION · HITS THIS BUILD · STATUS · THRESHOLDS v${esc(artifact.thresholdVersion)}</span></div>` +
     /* A DECLARED PROSE TABLE (`data-multiline`, D-5): each row is a grid with
        the design's tracks, its rule and why text wrap, and it carries no
@@ -618,84 +623,13 @@ function ruleBookHtml(artifact: SignalArtifact, active: Signal[]): string {
     `<thead><tr><th scope="col">Family</th><th scope="col" class="c-kind">Kind</th><th scope="col">Rule</th><th scope="col">Why it's informative</th><th scope="col" class="c-num">Hits</th><th scope="col" class="c-num">Status</th></tr></thead>` +
     `<tbody>${rows.join("\n")}</tbody></table></div>` +
     `<p class="section-note">Thresholds are calibrated per kind and versioned; a kind whose measured volume falls outside its declared bounds is <span class="si-late">WITHHELD</span> with a typed reason, never emitted anyway. ` +
-    `Institutional kinds wait on closed 13F periods and are not simulated. <a href="/methodology/#signals">methodology §signals ↗</a></p>` +
-    `</section>`
-  );
-}
-
-function hitsHtml(artifact: SignalArtifact, active: Signal[], ctx: RenderCtx, pageSize: number, compactN: number): string {
-  const sorted = sortHits(active);
-  /* R11/R12: the first page is the DEFAULT view — listed stocks only, exact
-     repeats collapsed to one line — the same `hitsView` the pager repaints
-     through, so the server and the client cannot disagree about it. */
-  const view = hitsView(sorted, DEFAULT_HIT_FILTER);
-  const shown = view.lines.slice(0, pageSize);
-  const collapsed = shown.length > compactN;
-  const cols = signalHitColumns(active);
-  const pageCount = Math.max(1, Math.ceil(view.lines.length / pageSize));
-  const kinds = RULE_BOOK.filter((r) => active.some((s) => s.kind === r.kind));
-  /* R17: filter by RULE (kind); the family stays on the row as data so a
-     family view can still be composed. */
-  const seg =
-    `<div class="seg si-hit-filter" role="group" aria-label="Filter hits by rule">` +
-    `<button type="button" data-kind="all" aria-pressed="true">All</button>` +
-    kinds.map((r) => `<button type="button" data-kind="${esc(r.kind)}" aria-pressed="false">${esc(r.short)}</button>`).join("") +
-    `</div>` +
-    /* R12: checked by default and never persisted (`autocomplete="off"` stops
-       a browser restoring it; the island also resets it on load). The hidden
-       count beside it is the reader's cue that the view is filtered. */
-    `<label class="filter-check" for="signal-stocks-only"><input type="checkbox" id="signal-stocks-only" checked autocomplete="off" /> Listed stocks only</label>` +
-    `<span class="si-hidden-count" id="signal-hidden-count" data-hidden="${view.hidden}">${esc(hitsHiddenText(view.hidden, true))}</span>`;
-  const body = sorted.length === 0
-    ? `<tr><td colspan="${cols.columns.length}" class="si-empty">Zero hits in the retained window — a computed answer over every rule, not missing coverage.</td></tr>`
-    : shown.length === 0
-      ? `<tr><td colspan="${cols.columns.length}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
-      : hitsBodyHtml(shown, ctx, compactN, cols.columns);
-  const range = hitsRangeText(0, shown.length, view.lines.length, view.hits, pageSize);
-  return (
-    `<section class="panel panel-wide si-hits" id="signal-hits" aria-label="Hits" data-page-size="${pageSize}" data-compact-rows="${compactN}" data-total="${sorted.length}" data-lines="${view.lines.length}">` +
-    `<div class="panel-head"><h2 class="section-h">Hits</h2>` +
-    `<span class="panel-note">RETAINED WINDOW ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} · NEWEST FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
-    seg + `</div>` +
-    /* No fixed-height box: the page scrolls, never the table. The wrapper is a
-       focusable, named "scroll sideways" region ONLY while the table overflows
-       it (review R-8): at a width where nothing scrolls, a tab stop that
-       announces sideways scrolling is a false statement. The signals island
-       sets and clears the three attributes from the measured overflow; the
-       name it uses rides here. */
-    `<div class="table-scroll si-hits-scroll" data-scroll-region="${esc(SIGNAL_HITS_REGION_NAME)}"><table class="etable etable-compact si-table"${dataColumnsAttr(cols)}>` +
-    `<caption class="visually-hidden">Signal hits, newest filed first</caption>` +
-    `<thead><tr>${SIGNAL_HIT_COLUMNS.filter((c) => cols.columns.includes(c.toLowerCase())).map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c], col: c.toLowerCase() })).join("")}</tr></thead>` +
-    `<tbody id="signal-hits-body"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
-    tableFootReasonHtml(cols) +
-    /* The page's compact bound names itself — "1–7 of the 50 hits on this
-       page" — beside the pager's whole-set range (the changes-table grammar). */
-    compactDisclosure({
-      rootId: "signal-hits-body",
-      total: shown.length,
-      shown: Math.min(compactN, shown.length),
-      noun: "lines",
-      boundNoun: "lines on this page",
-      definite: true,
-      domBacked: true,
-    }) +
-    `<div class="feed-foot"><div class="pager">` +
-    `<span class="pager-range" id="signal-hits-range" tabindex="-1">${esc(range)}</span>` +
-    `<button class="pager-btn is-unavailable" id="signal-hits-prev" aria-disabled="true">← Prev</button>` +
-    `<button class="pager-btn${pageCount > 1 ? "" : " is-unavailable"}" id="signal-hits-next" aria-disabled="${pageCount > 1 ? "false" : "true"}">Next →</button>` +
-    `</div></div>` +
-    `<p class="section-note" id="signal-hits-count" data-total="${active.length}" data-shown="${shown.length}">` +
-    `<span class="si-stamp">PTR</span> / <span class="si-stamp">eFD</span> = the source regime of the underlying row · ` +
-    `magnitudes are the row's statutory range, never narrowed · ${fmtInt(active.length)} ${active.length === 1 ? "hit" : "hits"} in the window · ` +
-    `the complete artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
-    `<p class="visually-hidden" id="signal-hits-status" role="status" aria-live="polite"></p>` +
-    `<noscript><p class="section-note">Paging and filtering need JavaScript; the first ${fmtInt(pageSize)} lines of listed-stock hits are listed above regardless, and the artifact holds every hit.</p></noscript>` +
+    `Institutional kinds wait on closed 13F periods and are not simulated. Every hit on <a href="/signals/">/signals</a> opens its rule from its kind word.</p>` +
     `</section>`
   );
 }
 
 /** The lag distribution's rows: one per (member, lag), at most 8. */
-function lagRows(deps: SignalsPageDeps): { name: string; party: string; lag: number; n: number; traded: string | null; filed: string }[] {
+function lagRows(deps: LagBandDeps): { name: string; party: string; lag: number; n: number; traded: string | null; filed: string }[] {
   // One row per (member, lag): a bulk filing of forty identical rows is one
   // fact about lag, not forty — the multiplicity is printed, never hidden.
   const grouped = new Map<string, { name: string; party: string; lag: number; n: number; traded: string | null; filed: string }>();
@@ -708,7 +642,9 @@ function lagRows(deps: SignalsPageDeps): { name: string; party: string; lag: num
   }
   return [...grouped.values()].sort((a, b) => b.lag - a.lag).slice(0, 8);
 }
-function lagBandHtml(deps: SignalsPageDeps): string {
+
+/** The lag distribution (R14: on Methodology `#signal-lag`, moved from /signals/). */
+export function lagBandHtml(deps: LagBandDeps): string {
   const rows = lagRows(deps);
   const scale = Math.max(112, ...rows.map((r) => r.lag));
   const tick = (45 / scale) * 100;
@@ -726,15 +662,17 @@ function lagBandHtml(deps: SignalsPageDeps): string {
           .join("") +
         `</ol>`;
   return (
-    `<section class="panel si-lagband" aria-label="Lag distribution">` +
-    `<div class="panel-head"><h2 class="section-h">Lag distribution</h2>` +
+    `<section class="panel si-lagband" id="signal-lag" aria-label="Lag distribution">` +
+    `<div class="panel-head"><h3 class="section-h">Lag distribution</h3>` +
     `<span class="panel-note">TRADE → FILING · LATEST BATCH${deps.latestBatchFiled ? ` FILED ${esc(deps.latestBatchFiled)}` : ""} · TICK = 45 DAYS</span></div>` +
     body +
     `</section>`
   );
 }
 
-function rateBandHtml(deps: SignalsPageDeps, active: Signal[], artifact: SignalArtifact): string {
+/* ---------- R13: Hit rate by family — the hits filter ---------- */
+
+function familiesHtml(deps: SignalsPageDeps, active: Signal[], artifact: SignalArtifact): string {
   const n = deps.rowsEvaluated;
   const perFamily = FAMILY_ORDER.map((f) => ({
     family: f,
@@ -746,32 +684,387 @@ function rateBandHtml(deps: SignalsPageDeps, active: Signal[], artifact: SignalA
   const rateText = (r: (typeof rates)[number]): string =>
     r.withheld ? "withheld" : r.rate == null ? "—" : r.rate < 0.1 && r.hits > 0 ? "<0.1 ‰" : `${r.rate.toFixed(1)} ‰`;
   return (
-    `<section class="panel si-rateband" aria-label="Hit rate by family">` +
-    `<div class="panel-head"><h2 class="section-h">Hit rate by family</h2>` +
-    `<span class="panel-note">HITS PER 1,000 ROWS FILED IN THE WINDOW · ALL ASSET TYPES · RARER = MORE INFORMATIVE</span></div>` +
+    `<section class="panel si-families" id="families" aria-labelledby="families-h">` +
+    `<div class="panel-head"><h2 class="section-h" id="families-h">Hit rate by family</h2>` +
+    `<span class="panel-note">HITS PER 1,000 ROWS FILED IN THE WINDOW · ALL ASSET TYPES · A ROW FILTERS THE HITS</span></div>` +
+    (n == null ? `<p class="section-note">The evaluated-row count is not available, so no rate is stated; the rows still filter the hits.</p>` : "") +
+    `<div class="si-family-list" role="group" aria-label="Filter hits by family">` +
+    rates
+      .map(
+        (r) =>
+          `<button type="button" class="si-rate-row${r.withheld ? " si-withheld" : ""}" data-family="${r.family}" aria-pressed="false">` +
+          `<span class="si-family-name">${esc(FAMILY_LABEL[r.family])}</span>` +
+          `<span class="si-bar" aria-hidden="true"><span class="si-bar-fill si-fill-${r.family.toLowerCase()}" style="width:${r.rate == null ? 0 : ((r.rate / max) * 100).toFixed(1)}%"></span></span>` +
+          `<span class="si-rate-val">${esc(rateText(r))}<span class="visually-hidden"> — ${fmtInt(r.hits)} ${r.hits === 1 ? "hit" : "hits"}</span></span></button>`,
+      )
+      .join("") +
+    `</div>` +
+    /* The active family filter, removable (R13). The client shows it on the
+       first filter; with no script there is no filter to remove. */
+    `<p class="si-pill-row" id="signal-family-pill-row" hidden><button type="button" class="si-pill" id="signal-family-pill">Family: <span id="signal-family-pill-name"></span> <span aria-hidden="true">×</span><span class="visually-hidden">, remove the family filter</span></button></p>` +
     (n == null
-      ? `<p class="section-note">The evaluated-row count is not available, so no rate is stated.</p>`
-      : `<dl class="si-rates">` +
-        rates
-          .map(
-            (r) =>
-              `<div class="si-rate${r.withheld ? " si-withheld" : ""}"><dt>${esc(FAMILY_LABEL[r.family])}</dt><dd>` +
-              `<span class="si-bar" aria-hidden="true"><span class="si-bar-fill si-fill-${r.family.toLowerCase()}" style="width:${r.rate == null ? 0 : ((r.rate / max) * 100).toFixed(1)}%"></span></span>` +
-              `<span class="si-rate-val">${esc(rateText(r))}<span class="visually-hidden"> — ${fmtInt(r.hits)} hits</span></span></dd></div>`,
-          )
-          .join("") +
-        `</dl>` +
-        `<p class="section-note">${fmtInt(n)} rows filed inside the window` +
+      ? ""
+      : `<p class="section-note">${fmtInt(n)} rows filed inside the window` +
         (artifact.dateAnomaliesExcluded > 0 ? ` · ${fmtInt(artifact.dateAnomaliesExcluded)} date-anomaly rows excluded before any rule ran` : "") +
         `. A rule that fires on 5% of rows is a filter; one that fires on 0.1% is a signal. Rates are published so "unusual" can be calibrated.</p>`) +
     `</section>`
   );
 }
 
+/* ---------- R13: the slim hits panel ---------- */
+
+function hitsHtml(active: Signal[], ctx: RenderCtx): string {
+  const sorted = sortHits(active);
+  /* The first view is the DEFAULT — every family, listed stocks only, exact
+     repeats collapsed to one line — through the same `hitsView` the client
+     repaints with, so the two cannot disagree. */
+  const view = hitsView(sorted, DEFAULT_HIT_FILTER);
+  const shown = view.lines.slice(0, SIGNAL_HITS_COMPACT_ROWS);
+  const cols = signalHitColumns(active);
+  const more = view.lines.length > shown.length;
+  const body = sorted.length === 0
+    ? `<tr><td colspan="${cols.columns.length}" class="si-empty">Zero hits in the retained window — a computed answer over every rule, not missing coverage.</td></tr>`
+    : shown.length === 0
+      ? `<tr><td colspan="${cols.columns.length}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
+      : hitsBodyHtml(shown, ctx, cols.columns);
+  const range = hitsRangeText(0, shown.length, view.lines.length, view.hits, SIGNAL_HITS_PAGE_SIZE);
+  return (
+    `<section class="panel si-hits" id="hits" aria-labelledby="hits-h" data-step="${SIGNAL_HITS_PAGE_SIZE}" data-shown="${shown.length}" data-total="${sorted.length}" data-lines="${view.lines.length}">` +
+    `<div class="panel-head"><h2 class="section-h" id="hits-h">Hits</h2>` +
+    `<span class="panel-note">NEWEST FILED FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
+    /* R12: checked by default and never persisted (`autocomplete="off"` stops
+       a browser restoring it; the island also resets it on load). The hidden
+       count beside it is the reader's cue that the view is filtered. */
+    `<label class="filter-check" for="signal-stocks-only"><input type="checkbox" id="signal-stocks-only" checked autocomplete="off" /> Listed stocks only</label>` +
+    `<span class="si-hidden-count" id="signal-hidden-count" data-hidden="${view.hidden}">${esc(hitsHiddenText(view.hidden, true))}</span></div>` +
+    /* No fixed-height box: the page scrolls, never the table. The wrapper is a
+       focusable, named "scroll sideways" region ONLY while the table overflows
+       it (review R-8). */
+    `<div class="table-scroll si-hits-scroll" data-scroll-region="${esc(SIGNAL_HITS_REGION_NAME)}"><table class="etable etable-compact si-table"${dataColumnsAttr(cols)}>` +
+    `<caption class="visually-hidden">Signal hits, newest filed first</caption>` +
+    `<thead><tr>${SIGNAL_HIT_COLUMNS.filter((c) => cols.columns.includes(SIGNAL_HIT_COLUMN_KEYS[c])).map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c], col: SIGNAL_HIT_COLUMN_KEYS[c] })).join("")}</tr></thead>` +
+    `<tbody id="signal-hits-body">${body}</tbody></table></div>` +
+    tableFootReasonHtml(cols) +
+    `<div class="feed-foot"><div class="pager">` +
+    `<span class="pager-range" id="signal-hits-range" tabindex="-1">${esc(range)}</span>` +
+    `<button type="button" class="pager-btn${more ? "" : " is-unavailable"}" id="signal-hits-more" aria-disabled="${more ? "false" : "true"}">Show ${fmtInt(SIGNAL_HITS_PAGE_SIZE)} more</button>` +
+    `</div></div>` +
+    `<p class="section-note" id="signal-hits-count" data-total="${active.length}">` +
+    `<span class="si-stamp">PTR</span> / <span class="si-stamp">eFD</span> = the source regime of the underlying row · ` +
+    `sizes are the row's statutory range, never narrowed · each kind word opens its exact rule · ${fmtInt(active.length)} ${active.length === 1 ? "hit" : "hits"} in the window · ` +
+    `the complete artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
+    `<p class="visually-hidden" id="signal-hits-status" role="status" aria-live="polite"></p>` +
+    `<noscript><p class="section-note">Filtering and "Show more" need JavaScript; the newest ${fmtInt(SIGNAL_HITS_COMPACT_ROWS)} lines of listed-stock hits are listed above regardless, and the artifact holds every hit.</p></noscript>` +
+    `</section>`
+  );
+}
+
+/* ---------- R12: the "Filings to read" triage ---------- */
+
+/** One meter (LD7): three bars of 5, 9 and 13 px; level 3 amber, 1–2 accent,
+    -1 hatched. Its accessible name is "Size: strong"; the visible label rides
+    inline and shows on phones (R23). */
+export function meterHtml(key: MeterKey, level: Level): string {
+  const label = METER_LABELS[key];
+  return (
+    `<span class="si-meter" data-meter="${key}" data-level="${level}" role="img" aria-label="${esc(`${label}: ${LEVEL_WORDS[level]}`)}">` +
+    `<span class="si-meter-label">${esc(label)}</span>` +
+    `<span class="si-meter-bars"><span class="si-mbar"></span><span class="si-mbar"></span><span class="si-mbar"></span></span>` +
+    `</span>`
+  );
+}
+
+function metersHtml(m: Record<MeterKey, Level>): string {
+  return `<span class="si-meters">${METER_KEYS.map((k) => meterHtml(k, m[k])).join("")}</span>`;
+}
+
+/** The owner, in words (R12): the filing's own owner code, and a stated
+    absence when it names none. */
+const OWNER_WORDS: Readonly<Record<string, string>> = { self: "Self", spouse: "Spouse", child: "Child", joint: "Joint" };
+function ownerWordHtml(owner: TxnRow["owner"]): string {
+  return `<span class="owner-note">${esc(owner ? OWNER_WORDS[owner] ?? owner : "owner not stated")}</span>`;
+}
+
+function lagOf(r: TxnRow): number | null {
+  if (r.lag != null) return r.lag;
+  return r.traded ? daysBetween(r.traded, r.filed) : null;
+}
+
+/** The ticker-page link of a row's heading: the canonical page's
+    `#on-signals` anchor, the /e/ route as the existing helper decides, and
+    no link when the line names no ticker (LD7). */
+function onSignalsHref(ticker: string | null, ctx: RenderCtx): string | null {
+  if (!ticker) return null;
+  const href = tickerHrefFor(ticker, ctx);
+  return href.startsWith("/tickers/") ? `${href}#on-signals` : href;
+}
+
+/** The LATE tag: every line of a one-line filing, or "701 of 703 lines late". */
+function lateTagHtml(late: number, total: number): string {
+  if (late === 0) return "";
+  return ` <span class="si-late si-late-tag">${total === 1 ? "LATE" : `${fmtInt(late)} of ${fmtInt(total)} lines late`}</span>`;
+}
+
+/** R12: one row of "Filings to read" — an `<article>` whose ticker-and-member
+    heading is the stretched link to the ticker page; the receipt is a
+    separate link above it. */
+export function triageRowHtml(row: TriageRow, ctx: RenderCtx): string {
+  const t = row.lead.txn;
+  const href = onSignalsHref(t.ticker, ctx);
+  const filers = [...new Map(row.filings.map((f) => [f.memberKey, f.rows[0]!])).values()];
+  const who =
+    row.grouping === "cluster" && row.cluster
+      ? `${fmtInt(row.cluster.members)} members`
+      : t.name;
+  const suffix =
+    row.grouping === "member-ticker" || row.grouping === "late-batch"
+      ? ` · ${fmtInt(row.filings.length)} ${row.filings.length === 1 ? "filing" : "filings"}`
+      : "";
+  const headInner =
+    `<span class="mono-ticker">${esc(t.ticker ?? "no ticker")}</span> ` +
+    `<span class="si-row-member">${esc(who)}${esc(suffix)}</span>`;
+  const head = href ? `<a class="si-row-link" href="${esc(href)}">${headInner}</a>` : headInner;
+  const side = sideLabel(t.side, t.flags);
+  const affs = (row.grouping === "cluster" ? filers : [t])
+    .map((r) => `${row.grouping === "cluster" ? `${esc(r.name)} ` : ""}<span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`)
+    .join(", ");
+  const kindTag =
+    row.grouping === "late-batch"
+      ? ` <span class="si-group-tag">LATE BATCH</span>`
+      : row.grouping === "cluster"
+        ? ` <span class="si-group-tag">CLUSTER</span>`
+        : "";
+  /* The date block is the LEAD line's own chronology (D21): its filed date,
+     its trade date, the lag between those two and its filing's receipt, so
+     the four always correspond. A row that groups several filings names the
+     group's latest filing separately, labelled as such — `row.filed` is that
+     date and the sort key, never the lead line's filed date. */
+  const lag = lagOf(t);
+  const n = row.filings.length;
+  const group =
+    n > 1
+      ? `<span class="mono-note"> +${fmtInt(n - 1)} ${n === 2 ? "filing" : "filings"} · latest of ${fmtInt(n)} filings: <time datetime="${esc(row.filed)}">${esc(row.filed)}</time></span>`
+      : "";
+  return (
+    `<article class="si-row" data-tier="${row.tier}" data-grouping="${row.grouping}" data-ticker="${esc(t.ticker ?? "")}" data-row-key="${esc(row.key)}">` +
+    `<div class="si-row-main">` +
+    `<h4 class="si-row-h">${head}</h4>` +
+    `<p class="si-row-what"><span class="si-chip si-side-${side.cls}">${esc(side.text)}</span> <span class="si-row-amt">${esc(amountText(t))}</span>${kindTag} · ${affs} · ${ownerWordHtml(t.owner)}${lateTagHtml(row.lateLines, row.totalLines)}</p>` +
+    `<p class="si-row-why">${esc(row.sentence)}</p>` +
+    `</div>` +
+    metersHtml(row.meters) +
+    `<div class="si-row-when">` +
+    `<span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>` +
+    `<span class="si-row-traded">${t.traded ? `traded <time datetime="${esc(t.traded)}">${esc(t.traded)}</time>${lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : ""}` : "trade date not disclosed"}</span>` +
+    `<span class="si-row-src">${signalReceiptHtml(row.lead.doc, t.chamber)}${group}</span>` +
+    `</div>` +
+    `</article>`
+  );
+}
+
+/** The meter column labels over a tier's rows (R12); each meter also names
+    itself, so this head is decoration for sighted readers at desktop width. */
+const METER_HEAD = `<div class="si-meter-head" aria-hidden="true"><span></span><span class="si-meters">${METER_KEYS.map((k) => `<span class="si-meter-col">${esc(METER_LABELS[k])}</span>`).join("")}</span><span></span></div>`;
+
+const TIER_EMPTY: Readonly<Record<Tier, string>> = {
+  stands: "No filing in the window stands out — a computed answer over every ranked filing.",
+  look: "No filing in the window is worth a look by these rules — a computed answer.",
+  routine: "No routine filing in the window.",
+};
+
+function tierHtml(tier: Tier, rows: readonly TriageRow[], ctx: RenderCtx): string {
+  const label = `${esc(TIER_LABELS[tier])} <span class="si-tier-n">${fmtInt(rows.length)}</span>`;
+  const body = rows.length === 0 ? `<p class="section-note">${esc(TIER_EMPTY[tier])}</p>` : METER_HEAD + rows.map((r) => triageRowHtml(r, ctx)).join("\n");
+  if (tier === "routine") {
+    // the heading rides in the summary, so the tier keeps its place in the outline while closed
+    return `<details class="si-tier" id="routine" data-tier="routine"><summary><h3 class="si-tier-h" id="routine-h">${label}</h3></summary>${body}</details>`;
+  }
+  return `<section class="si-tier" id="${tier}" data-tier="${tier}" aria-labelledby="${tier}-h"><h3 class="si-tier-h" id="${tier}-h">${label}</h3>${body}</section>`;
+}
+
+/** The meters' definitions, each interpolated from `signal-triage.ts`. */
+function meterDefinitions(): Record<MeterKey, { short: string; full: string }> {
+  return {
+    size: {
+      short: "the lower bound against the filer's prior disclosures",
+      full:
+        `Strong: at least one bracket above the largest of the filer's prior disclosures and a lower bound of $${fmtInt(SIZE_LARGE_LOW)} or more. ` +
+        `Medium: a bracket above, or the same bracket at $${fmtInt(SIZE_LARGE_LOW)} or more. Low: at least $${fmtInt(SIZE_LEVEL1_LOW)} and above ${Math.round(SIZE_LEVEL1_SHARE * 100)}% of the prior lower bounds. ` +
+        `Unknown with fewer than ${SIZE_MIN_HISTORY} prior disclosures that state one. Prior means traded earlier, in another filing, and filed by this row's cutoff.`,
+    },
+    pattern: {
+      short: "the gap since the filer's previous trade",
+      full:
+        `Strong: the first filing on record, or ${fmtInt(PATTERN_GAP_DAYS[3])} days or more since the previous trade. Medium: ${fmtInt(PATTERN_GAP_DAYS[2])} days or more. Low: ${fmtInt(PATTERN_GAP_DAYS[1])} days or more. ` +
+        `Measured from the filing's earliest trade date over rows filed by the cutoff.`,
+    },
+    others: {
+      short: "members disclosing the same ticker and side in one co-occurrence window",
+      full:
+        `Strong: ${OTHERS_MEMBERS[3]} or more distinct members in the active co-occurrence window that holds the trade; medium: ${OTHERS_MEMBERS[2]}. ` +
+        `Only filings filed by the cutoff are counted, so a member who filed later never raises an earlier filing.`,
+    },
+    cmte: {
+      short: "the issuer inside a committee the member sat on at the trade date",
+      full:
+        `Medium: a direct match — the issuer's 4-digit SIC inside a direct range of a committee that matched (table v${COMMITTEE_DIRECT_VERSION} on Methodology). ` +
+        `Low: a sector match only. None: no mapped committee matched. Unknown: the sector or the membership on that date is not on record, or the committee inputs are not in this build. ` +
+        COMMITTEE_CAVEAT,
+    },
+  };
+}
+
+function legendHtml(): string {
+  const defs = meterDefinitions();
+  const levels = ([3, 2, 1, 0, -1] as const)
+    .map(
+      (l) =>
+        `<span class="si-legend-level"><span class="si-meter" data-level="${l}" aria-hidden="true"><span class="si-meter-bars"><span class="si-mbar"></span><span class="si-mbar"></span><span class="si-mbar"></span></span></span>` +
+        `<span class="si-legend-word">${esc(LEVEL_WORDS[l])}${l === -1 ? " (hatched)" : ""}</span></span>`,
+    )
+    .join("");
+  return (
+    `<div class="si-legend" aria-label="Meter legend" role="group">` +
+    `<p class="si-legend-levels"><span class="si-legend-h">Levels</span> ${levels}</p>` +
+    `<dl class="si-legend-meters">` +
+    METER_KEYS.map(
+      (k) =>
+        `<div><dt>${note(defs[k].full, { scope: "signals-legend" }, k, { trigger: "label", textHtml: esc(METER_LABELS[k]) })}</dt>` +
+        `<dd>${esc(defs[k].short)}${k === "cmte" ? ` — <span class="si-cmte-context">context, never an allegation</span>` : ""}</dd></div>`,
+    ).join("") +
+    `</dl>` +
+    `</div>`
+  );
+}
+
+function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: RenderCtx): string {
+  const head =
+    `<div class="panel-head"><h2 class="section-h" id="triage-h">Filings to read</h2>` +
+    `<span class="panel-note">${triage ? `${fmtInt(triage.rows.length)} ${triage.rows.length === 1 ? "ROW" : "ROWS"} RANKED · ` : ""}FILED ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} · EACH AGAINST THE FILER'S OWN RECORD, AS OF ITS FILING</span></div>`;
+  if (triage === null) {
+    return (
+      `<section class="panel si-triage" id="triage" aria-labelledby="triage-h">` +
+      head +
+      `<p class="section-note">The filings table is computed on the server from the build's rows; this view carries the artifact only. Every hit is in the hits table and in <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
+      `</section>`
+    );
+  }
+  const by = (t: Tier) => triage.rows.filter((r) => r.tier === t);
+  return (
+    `<section class="panel si-triage" id="triage" aria-labelledby="triage-h">` +
+    head +
+    legendHtml() +
+    (triage.cmteAvailable ? "" : `<p class="section-note">Cmte reads unknown on every row: committee data is not in this build (${esc(triage.cmteUnavailableReason ?? "inputs-not-in-build")}).</p>`) +
+    tierHtml("stands", by("stands"), ctx) +
+    tierHtml("look", by("look"), ctx) +
+    tierHtml("routine", by("routine"), ctx) +
+    `</section>`
+  );
+}
+
+/* ---------- R11: the lead cards ---------- */
+
+function cardFactsHtml(p: CardPick, ctx: RenderCtx): string {
+  const t = p.line.txn;
+  const side = sideLabel(t.side, t.flags);
+  const href = onSignalsHref(t.ticker, ctx);
+  const ticker = `<span class="mono-ticker">${esc(t.ticker ?? "no ticker")}</span>`;
+  const lag = lagOf(t);
+  return (
+    `<h3 class="si-card-h">${href ? `<a href="${esc(href)}">${ticker}</a>` : ticker} <span class="si-chip si-side-${side.cls}">${esc(side.text)}</span> <span class="si-card-amt">${esc(amountText(t))}</span></h3>` +
+    `<p class="si-card-who">${t.bioguide ? `<a href="${memberHrefFor(t.bioguide, ctx)}">${esc(t.name)}</a>` : esc(t.name)} <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span> · ${ownerWordHtml(t.owner)}</p>` +
+    `<p class="si-card-dates">traded ${t.traded ? `<time datetime="${esc(t.traded)}">${esc(t.traded)}</time>` : "date not disclosed"} · filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time>${lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : ""}</p>` +
+    `<p class="si-card-fact">${esc(p.fact)}</p>` +
+    `<div class="si-card-src">${signalReceiptHtml(p.line.doc, t.chamber)}</div>`
+  );
+}
+
+function emptyCardHtml(text: string): string {
+  return `<p class="section-note" data-empty-state>— ${esc(text)}</p>`;
+}
+
+/** R11 / LD6: three cards — the highest-confidence committee trade, the
+    largest buy and the largest sell — with ONE segmented control ranking the
+    buy and sell cards by the filer's own record or by absolute dollars. The
+    control is two radio inputs and CSS (`:checked ~`): no script. Without CSS
+    both variants show. */
+export function leadCardsHtml(triage: TriageResult | null, ctx: RenderCtx): string {
+  const c = triage?.cards ?? null;
+  const committeeBody =
+    triage === null
+      ? emptyCardHtml("not computed in this view.")
+      : !triage.cmteAvailable
+        ? `<p class="section-note" data-empty-state>Committee data is not in this build (${esc(triage.cmteUnavailableReason ?? "inputs-not-in-build")}), so no committee grade is stated.</p>`
+        : c?.committee
+          ? cardFactsHtml(c.committee, ctx)
+          : emptyCardHtml("no ranked listed-stock line carries a committee overlap in the window.");
+  // The tag names a grade only when a graded line is shown — never on an empty card.
+  const committeeTag =
+    triage !== null && triage.cmteAvailable && c?.committee
+      ? c.committee.line.cmte.grade === "broad"
+        ? "Committee · broad match"
+        : "Committee · direct match"
+      : "Committee";
+  /* The card names are R11's ("Largest buy", "Largest sell"); the copy uses
+     the side NOUNS (R25). */
+  const variant = (rank: "record" | "absolute", pick: CardPick | null, card: "buy" | "sell"): string => {
+    const noun = card === "buy" ? "purchase" : "sale";
+    return (
+      `<div class="si-variant" data-rank="${rank}">` +
+      `<div class="si-card-tag">${esc(`Largest ${card} · ${rank === "record" ? "own record" : "absolute $"}`)}</div>` +
+      (triage === null
+        ? emptyCardHtml("not computed in this view.")
+        : pick
+          ? cardFactsHtml(pick, ctx)
+          : emptyCardHtml(
+              rank === "record"
+                ? `no listed-stock ${noun} of at least $${fmtInt(RECORD_MIN_LOW)} from a filer with at least ${RECORD_MIN_PRIOR} prior disclosures spanning ${RECORD_MIN_SPAN_DAYS} days or more.`
+                : `no listed-stock ${noun} with a lower bound in the window.`,
+            )) +
+      `</div>`
+    );
+  };
+  return (
+    `<section class="si-lead" id="lead-cards" aria-labelledby="lead-cards-h">` +
+    `<input type="radio" name="rank" id="si-rank-record" class="si-rank-input" value="record" checked autocomplete="off" />` +
+    `<input type="radio" name="rank" id="si-rank-absolute" class="si-rank-input" value="absolute" autocomplete="off" />` +
+    `<div class="panel-head si-lead-head"><h2 class="section-h" id="lead-cards-h">Lead cards</h2>` +
+    `<span class="panel-note">LISTED-STOCK LINES OF THE FILINGS TO READ · BOTH DATES · EVERY RECEIPT</span>` +
+    `<div class="seg si-rank-seg" role="group" aria-label="Rank the largest buy and sell by"><label for="si-rank-record">Own record</label><label for="si-rank-absolute">Absolute $</label></div></div>` +
+    `<div class="si-cards">` +
+    `<article class="si-card" data-card="committee" data-tone="amber"><div class="si-card-tag">${esc(committeeTag)}</div>${committeeBody}` +
+    `<p class="si-card-context">${esc(COMMITTEE_CAVEAT)}</p></article>` +
+    `<article class="si-card" data-card="buy" data-tone="green">${variant("record", c?.buyRecord ?? null, "buy")}${variant("absolute", c?.buyAbsolute ?? null, "buy")}</article>` +
+    `<article class="si-card" data-card="sell" data-tone="red">${variant("record", c?.sellRecord ?? null, "sell")}${variant("absolute", c?.sellAbsolute ?? null, "sell")}</article>` +
+    `</div>` +
+    `</section>`
+  );
+}
+
+/* ---------- R10: the head and its "How signals work" note (LD9) ---------- */
+
+function howSignalsWorkHtml(artifact: SignalArtifact, superseded: number, unevaluated: number): string {
+  const withheld = artifact.withheld;
+  const parts = [
+    "A signal is a fact about a filing, not a forecast: no returns are computed. Never used: prices, returns, intent.",
+    "Recomputed every build from the same rows you can audit; zero hits is a computed answer, not missing coverage.",
+    `The coverage window is ${artifact.coverageFrom} → ${artifact.coverageTo} (${artifact.retentionDays} days by filed date).`,
+    artifact.lagCaveat,
+    `Lifecycle: ${artifact.lifecycleNote}`,
+    withheld.length === 0
+      ? "No kind was withheld this build."
+      : `${withheld.length} ${withheld.length === 1 ? "kind was" : "kinds were"} withheld this build: ${withheld.map((w) => `${SIGNAL_KIND_LABELS[w.kind]} (${w.reason})`).join("; ")}.`,
+    `${superseded} ${superseded === 1 ? "signal" : "signals"} from an earlier build left the window; ${unevaluated} ${unevaluated === 1 ? "is" : "are"} carried forward unevaluated.`,
+    artifact.dateAnomaliesExcluded > 0 ? `${artifact.dateAnomaliesExcluded} date-anomaly rows were excluded before any rule ran.` : "No date-anomaly row was excluded.",
+    "Filings to read ranks each filing against the filer's own record as it stood on the filing's date; the tiers, meters and cards are defined on Methodology.",
+  ];
+  return parts.map((p) => esc(p)).join(" ") + ` <a href="/methodology/#signals-ranking">How rows are ranked ↗</a>`;
+}
+
 /* ---------- the page body ---------- */
 
 export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: SignalsPageDeps): string {
-  const d: SignalsPageDeps = deps ?? { rowsEvaluated: null, latestBatch: [], latestBatchFiled: null };
+  const d: SignalsPageDeps = deps ?? { rowsEvaluated: null, triage: null };
   // Tombstones are lifecycle HISTORY — they never sit in the
   // active tables or counts wearing an active face.
   const active = artifact.signals.filter((s) => s.status === "active");
@@ -780,78 +1073,17 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   // they are neither active nor retracted, and are reported with the
   // withholding that caused it.
   const unevaluated = artifact.signals.filter((s) => s.status === "unevaluated");
-  const activeKinds = new Set(active.map((s) => s.kind));
-  const withheldKinds = artifact.withheld.length;
-  const evaluatedKinds = RULE_BOOK.filter((r) => !artifact.withheld.some((w) => w.kind === r.kind)).length;
-
-  /* R13: the listed-stock hits, the population the page's trade summaries describe */
+  /* R13: the listed-stock hits, the population the page's trade rows describe */
   const listed = active.filter(signalIsListedStock);
+  const triage = d.triage ?? null;
 
-  /* --- ledger --- R7: Congress only; the two permanent "—" tiles (13F hits,
-     cross-regime) are gone — the rule book still says why institutional kinds
-     wait. R13: the Congress tile states the total and the listed-stock count. */
+  /* --- R10: exactly three figures --- */
   const ledger = disclosureLedger([
-    { label: "Active kinds", value: fmtInt(evaluatedKinds), detail: `${fmtInt(withheldKinds)} withheld this build · 1 by design`, subKind: "count" },
-    { label: "Hits · Congress", value: fmtInt(active.length), detail: `${fmtInt(listed.length)} in listed stocks · ${fmtInt(activeKinds.size)} kinds fired · ${artifact.retentionDays}-day window`, subKind: "count", tone: "green" },
-  ]);
-
-  /* --- three summaries, every one data-derived. R13: LARGEST and COMPLIANCE
-     describe trades, so they read listed stocks and say so; RAREST and the
-     hit rates calibrate RULES, so they read every asset type and say so. --- */
-  const largest = listed
-    .filter((s) => s.magnitude.low != null)
-    .sort((a, b) => (b.magnitude.low ?? 0) - (a.magnitude.low ?? 0))[0];
-  const lateAll = active.filter((s) => s.kind === "s6-late-large");
-  const late = lateAll.filter(signalIsListedStock);
-  const lateOther = lateAll.length - late.length;
-  const lateOtherText = lateOther > 0 ? ` · +${fmtInt(lateOther)} on other asset types` : "";
-  const lateMax = late.map((s) => lagDays(s) ?? 0).reduce((m, v) => Math.max(m, v), 0);
-  // A withheld LATE kind is an UNEVALUATED state, never a computed zero (Codex round 1, F3).
-  const lateWithheld = artifact.withheld.find((w) => w.kind === "s6-late-large") ?? null;
-  const rarest = RULE_BOOK.filter((r) => !artifact.withheld.some((w) => w.kind === r.kind))
-    .map((r) => ({ r, n: active.filter((s) => s.kind === r.kind).length }))
-    .sort((a, b) => a.n - b.n)[0];
-  const stories = briefingCards([
-    {
-      tone: "gold",
-      tag: "Largest lower bound this window · listed stocks",
-      title: largest
-        ? `${shortOf(largest.kind)}: ${largest.entities.memberName} · ${magnitudeText(largest.magnitude)}`
-        : "No listed-stock hit in the window discloses a lower bound",
-      body: largest
-        ? `${signalSentence(largest).text} · ${largest.entities.ticker ?? "no ticker disclosed"} · traded ${largest.occurrence.tradeDate ?? "date not disclosed"} → filed ${largest.occurrence.filedDate}. Ranked over listed-stock hits by the provable lower bound of the statutory range, never a point estimate.`
-        : "Every rule ran over the retained window; ranking needs a listed-stock hit with a disclosed lower bound.",
-    },
-    {
-      tone: "green",
-      tag: "Compliance",
-      title: lateWithheld
-        ? "The LATE rule was withheld this build — not evaluated"
-        : lateAll.length === 0
-          ? "No late-and-large disclosures in the window"
-          : late.length === 0
-            ? `No late-and-large disclosures in listed stocks in the window${lateOtherText}`
-            : `${fmtInt(late.length)} ${late.length === 1 ? "disclosure" : "disclosures"} in listed stocks filed past the 45-day window with a lower bound ≥ $100K${lateOtherText}`,
-      body: lateWithheld
-        ? `Withheld (${lateWithheld.reason}): ${lateWithheld.detail} No count is stated for a rule that did not run.`
-        : late.length === 0
-          ? lateOther > 0
-            ? `No listed-stock hit fired the LATE rule; the ${fmtInt(lateOther)} on other asset types show with "Listed stocks only" unticked.`
-            : "Zero hits is the computed answer for the LATE rule, and the rule stays published."
-          : `The longest listed-stock one ran +${fmtInt(lateMax)} days from trade to filing — ${fmtInt(Math.max(0, lateMax - 45))} over the STOCK Act window. Late disclosure is stated, not editorialised.`,
-    },
-    {
-      tone: "sell",
-      tag: "Rarest · highest signal · all asset types",
-      title: rarest
-        ? rarest.n === 0
-          ? `${shortOf(rarest.r.kind)} fired zero times this window — the computed answer`
-          : `${shortOf(rarest.r.kind)} is the rarest active kind: ${fmtInt(rarest.n)} ${rarest.n === 1 ? "hit" : "hits"}`
-        : "No kind evaluated this build",
-      body: rarest
-        ? `${rarest.r.why} Rates are published beside the hits so "unusual" can be calibrated against the corpus.`
-        : "Every kind was withheld with a typed reason; see the rule book.",
-    },
+    { label: "Hits", value: fmtInt(active.length), detail: `${fmtInt(listed.length)} in listed stocks`, subKind: "count", tone: "green" },
+    triage
+      ? { label: "Stand out", value: fmtInt(triage.counts.stands), detail: `of ${fmtInt(triage.rows.length)} rows ranked`, subKind: "count", tone: "gold" }
+      : { label: "Stand out", value: "—", detail: "not computed in this view", subKind: "absence", tone: "gold" },
+    { label: "Window", value: `${artifact.retentionDays}d`, detail: `${artifact.coverageFrom} → ${artifact.coverageTo}`, subKind: "date" },
   ]);
 
   const withheld = artifact.withheld
@@ -869,28 +1101,75 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     `<div class="page-head">` +
     `<div class="page-head-copy"><div class="kicker">Public record / Signals · rule-based · no price data</div>` +
     `<h1 class="page-title">Congress signals</h1>` +
-    `<p class="page-lede">Behaviour that is unusual for the filer, novel for the record, or late against the statute — each with its exact rule and every receipt. ` +
-    `The raw artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a></p></div>` +
+    `<p class="page-lede">Filings to read first, each measured against the filer's own record, with every receipt. ` +
+    noteFromHtml(howSignalsWorkHtml(artifact, superseded.length, unevaluated.length), { scope: "signals-head" }, "how", { trigger: "label", textHtml: "How signals work" }) +
+    `</p></div>` +
     ledger +
     `</div>` +
-    `<div class="design-provenance signals-meta">` +
-    `<span>a signal is a fact about a filing, not a forecast — no returns computed</span>` +
-    `<span class="stamp-line">recomputed every build from the same rows you can audit · coverage window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} (${artifact.retentionDays} days by filed date)</span>` +
-    `<span>${note(artifact.lagCaveat + " " + artifact.lifecycleNote, { scope: "signals-meta" }, "lag", { trigger: "label", textHtml: "zero hits is a computed answer, not missing coverage" })}</span>` +
-    `</div>` +
-    stories +
-    /* D3 (L14): band S1 — Hits (1.8fr) │ Lag distribution + Hit rate (1fr) —
-       then the rule book as an EXPANDED full-width band (every rule published,
-       seven rows). */
+    leadCardsHtml(triage, ctx) +
+    /* LD7: one band — the triage (the primary cell) │ families above the hits. */
     pairBandHtml(
       "design-signals-band",
-      hitsHtml(artifact, active, ctx, d.renderCap ?? SIGNAL_HITS_PAGE_SIZE, SIGNAL_HITS_COMPACT_ROWS),
-      `<div class="si-side">` + lagBandHtml(d) + rateBandHtml(d, active, artifact) + `</div>`,
+      triageHtml(triage, artifact, ctx),
+      `<div class="si-side">` + familiesHtml(d, active, artifact) + hitsHtml(active, ctx) + `</div>`,
       { primary: "left" },
     ) +
-    ruleBookHtml(artifact, active) +
+    `<p class="section-note" id="signal-method-links">On Methodology: <a href="/methodology/#signal-rules">the rule book</a> · ` +
+    `<a href="/methodology/#signal-lag">the lag distribution</a> · <a href="/methodology/#signals-ranking">how rows are ranked</a> · ` +
+    `<a href="/methodology/#committee-direct">the committee direct-match table</a>. The raw artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
     supersededFoot +
     withheld
+  );
+}
+
+/* ---------- R14: Methodology's ranking and committee sections ---------- */
+
+/** Methodology `#signals-ranking` (R14): the tiers, meters, grouping and
+    cards, every constant read from `signal-triage.ts`. */
+export function signalsRankingHtml(): string {
+  const defs = meterDefinitions();
+  const li = (s: string): string => `<li>${s}</li>`;
+  return (
+    `<section class="si-method" id="signals-ranking" aria-labelledby="signals-ranking-h">` +
+    `<h3 class="section-h" id="signals-ranking-h">How signal rows are ranked (triage v${esc(TRIAGE_VERSION)})</h3>` +
+    `<p class="metho-body">A signal is a fact about a filing, not a forecast: no returns are computed, and no price, return or intent is read. ` +
+    `"Filings to read" on <a href="/signals/">/signals</a> classifies each filing that carries an active signal against the filer's own record, by published rules; it does not predict anything.</p>` +
+    `<ul class="si-method-list">` +
+    li(`<strong>Rows.</strong> Filings filed inside the ${fmtInt(SIGNAL_THRESHOLDS.retention_days)}-day window that carry at least one active signal on a listed-stock line (options excluded). Grouped in this order: a <em>late batch</em> (one member's filings on one date that complete ${LATE_BATCH_MIN_CLUSTERS} or more co-occurrence clusters whose windows ended before the window opened); a <em>cluster</em> (an active co-occurrence, absorbing every filing in its window whose lead line is that ticker and side); <em>same member and ticker</em> (filings whose lead lines share a ticker, as "N filings"); and the single filing.`) +
+    li(`<strong>Point in time.</strong> Every meter is computed at a cutoff and sees only rows filed on or before it: a single filing at its filed date; each filing of a same-member-and-ticker row at its own filed date; a cluster at its latest absorbed filing; a late batch at its date.`) +
+    METER_KEYS.map((k) => li(`<strong>${esc(METER_LABELS[k])}</strong> — ${esc(defs[k].short)}. ${esc(defs[k].full)}`)).join("") +
+    li(`<strong>Brackets.</strong> The floors of the statutory ranges: ${BRACKET_LOWER_BOUNDS.map((b) => `$${fmtInt(b)}`).join(", ")}.`) +
+    li(`<strong>Tiers.</strong> A row led by an exchange is ${esc(TIER_LABELS.routine)}. Otherwise any meter at strong is ${esc(TIER_LABELS.stands)}; any at medium, or a sum of ${LOOK_MIN_SUM} or more over the meters that are known, is ${esc(TIER_LABELS.look)}; the rest are ${esc(TIER_LABELS.routine)}. Lateness is a tag, never a ranking input.`) +
+    li(`<strong>Lead line and order.</strong> A row's meter is the strongest over its lines. Its lead line has the strongest meter, then the highest sum, then is not an exchange, then has the highest lower bound. ${esc(TIER_LABELS.stands)} and ${esc(TIER_LABELS.look)} sort by the count of strong meters, the sum, the lead lower bound and the filed date; ${esc(TIER_LABELS.routine)} by filed date.`) +
+    li(`<strong>Reason sentence.</strong> Generated from the row's facts by fixed templates, without pronouns, at most ${SENTENCE_MAX} characters.`) +
+    li(`<strong>Lead cards.</strong> From the ranked listed-stock lines. Committee: direct matches before broad, then the lower bound, then the filed date. Largest buy and sell, own record: filers with at least ${RECORD_MIN_PRIOR} prior disclosures spanning ${RECORD_MIN_SPAN_DAYS} days or more, lines of at least $${fmtInt(RECORD_MIN_LOW)}, ranked by brackets above the filer's largest prior disclosure; absolute: by lower bound, then filed date.`) +
+    `</ul>` +
+    `</section>`
+  );
+}
+
+/** Methodology `#committee-direct` (R5, R14): the LD2 table rendered from
+    `DIRECT_SIC`, its version, source and the non-allegation caveat. */
+export function committeeDirectHtml(): string {
+  const rows = Object.entries(DIRECT_SIC)
+    .map(
+      ([id, ranges]) =>
+        `<tr data-committee="${esc(id)}"><td class="c-ticker"><span class="mono-id">${esc(id)}</span></td>` +
+        `<td class="c-secondary c-flex">${esc(DIRECT_COMMITTEE_NAMES[id] ?? id)}</td>` +
+        `<td class="c-num si-direct-ranges">${esc(directRangesText(ranges))}</td></tr>`,
+    )
+    .join("");
+  return (
+    `<section class="si-method" id="committee-direct" aria-labelledby="committee-direct-h">` +
+    `<h3 class="section-h" id="committee-direct-h">Committee direct matches (table v${COMMITTEE_DIRECT_VERSION})</h3>` +
+    `<p class="metho-body">Every committee-overlap hit is graded <em>direct</em> when the issuer's 4-digit SIC falls inside a range below for a committee that matched it, and <em>broad</em> otherwise — including an issuer whose SIC is not on record and a committee this table does not list. ` +
+    `Each range lies inside that committee's mapped sectors, so a direct grade only refines an existing hit. Source: ${esc(COMMITTEE_DIRECT_SOURCE)}. Memberships are committee-level: a subcommittee seat counts for its parent.</p>` +
+    `<p class="metho-body si-cmte-context">${esc(COMMITTEE_CAVEAT)}</p>` +
+    `<div class="table-scroll"><table class="etable etable-compact si-direct-table">` +
+    `<caption class="visually-hidden">Committee direct-match SIC ranges, version ${COMMITTEE_DIRECT_VERSION}</caption>` +
+    `<thead><tr><th scope="col" class="c-ticker">Committee</th><th scope="col" class="c-secondary c-flex">Name</th><th scope="col" class="c-num">Direct SIC ranges</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table></div>` +
+    `</section>`
   );
 }
 

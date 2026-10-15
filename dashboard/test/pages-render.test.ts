@@ -576,3 +576,74 @@ test("unified ticker: withheld signal kinds render as withheld, never inside a z
   assert.doesNotMatch(hostile, /<b>Issuer<\/b>/);
   assert.match(hostile, /Example &lt;b&gt;Issuer&lt;\/b&gt;/);
 });
+
+/* ======================================================================
+   signals-v3 M2 (T2.8, R14, R5): Methodology's signal sections
+   ====================================================================== */
+
+import { committeeDirectHtml, lagBandHtml, ruleBookHtml, signalsRankingHtml, signalsBody } from "../src/lib/ui/index.ts";
+import * as TRIAGE from "../src/lib/signal-triage.ts";
+import { COMMITTEE_DIRECT_VERSION, DIRECT_COMMITTEE_NAMES, DIRECT_SIC, directRangesText } from "../src/lib/committee-direct.ts";
+
+const METHODOLOGY = path.resolve(import.meta.dirname, "..", "src", "pages", "methodology", "index.astro");
+
+test("T2.8: Methodology renders #signal-rules, #signal-lag, #signals-ranking and #committee-direct, each through the one function that owns it", () => {
+  const page = readFileSync(METHODOLOGY, "utf-8");
+  for (const fn of ["ruleBookHtml(", "lagBandHtml(", "signalsRankingHtml(", "committeeDirectHtml("]) assert.ok(page.includes(fn), `methodology calls ${fn}`);
+  assert.match(page, /<Fragment set:html=\{signalSections\} \/>/);
+  assert.match(page, /<a href="#signals-method">/, "the TOC links the section");
+  const art = {
+    v: 1, buildId: "b", computedAt: "c", thresholdVersion: "1.0.0", retentionDays: 90, coverageFrom: "2026-05-04", coverageTo: "2026-08-02",
+    lifecycleNote: "n", compaction: "none", dateAnomaliesExcluded: 0, lagCaveat: "l", withheld: [{ kind: "s5-jurisdiction", reason: "inputs-not-in-build", detail: "committee data absent" }], signals: [],
+  } as never;
+  const html = ruleBookHtml(art) + lagBandHtml({ latestBatch: [], latestBatchFiled: null }) + signalsRankingHtml() + committeeDirectHtml();
+  for (const id of ["signal-rules", "signal-lag", "signals-ranking", "committee-direct"]) assert.match(html, new RegExp(`id="${id}"`), id);
+  // the rule book moved whole: seven rows, the withheld kind by its reason, the BY DESIGN refusal
+  const book = domOf(ruleBookHtml(art));
+  assert.equal(book.querySelectorAll("#signal-rules tbody tr").length, 7);
+  assert.ok(book.querySelector("table[data-multiline]"), "still the declared prose table");
+  assert.match(visibleText(book), /BY DESIGN/);
+  assert.ok(book.querySelector("td.si-status-withheld .note-btn.note-label"), "WITHHELD opens its reason");
+  // /signals/ links to each of the four
+  const sig = signalsBody(art, {});
+  for (const id of ["signal-rules", "signal-lag", "signals-ranking", "committee-direct"]) assert.match(sig, new RegExp(`<a href="/methodology/#${id}">`), `/signals/ links #${id}`);
+});
+
+test("T2.8: #signals-ranking states every LD3/LD4/LD6 constant READ FROM signal-triage.ts — the prose cannot drift", () => {
+  const text = visibleText(domOf(signalsRankingHtml())).replace(/\s+/g, " ");
+  const money = (n: number): string => `$${n.toLocaleString("en-US")}`;
+  const want = [
+    `triage v${TRIAGE.TRIAGE_VERSION}`,
+    `${TRIAGE.LATE_BATCH_MIN_CLUSTERS} or more co-occurrence clusters`,
+    `${money(TRIAGE.SIZE_LARGE_LOW)} or more`,
+    `at least ${money(TRIAGE.SIZE_LEVEL1_LOW)} and above ${Math.round(TRIAGE.SIZE_LEVEL1_SHARE * 100)}%`,
+    `fewer than ${TRIAGE.SIZE_MIN_HISTORY} prior disclosures`,
+    `${TRIAGE.PATTERN_GAP_DAYS[3]} days or more since the previous trade`,
+    `Medium: ${TRIAGE.PATTERN_GAP_DAYS[2]} days or more`,
+    `Low: ${TRIAGE.PATTERN_GAP_DAYS[1]} days or more`,
+    `${TRIAGE.OTHERS_MEMBERS[3]} or more distinct members`,
+    `medium: ${TRIAGE.OTHERS_MEMBERS[2]}`,
+    `a sum of ${TRIAGE.LOOK_MIN_SUM} or more`,
+    `at most ${TRIAGE.SENTENCE_MAX} characters`,
+    `at least ${TRIAGE.RECORD_MIN_PRIOR} prior disclosures spanning ${TRIAGE.RECORD_MIN_SPAN_DAYS} days or more`,
+    `lines of at least ${money(TRIAGE.RECORD_MIN_LOW)}`,
+    TRIAGE.BRACKET_LOWER_BOUNDS.map(money).join(", "),
+    `A row led by an exchange is ${TRIAGE.TIER_LABELS.routine}`,
+    TRIAGE.TIER_LABELS.stands,
+    TRIAGE.TIER_LABELS.look,
+    "A signal is a fact about a filing, not a forecast: no returns are computed",
+    `table v${COMMITTEE_DIRECT_VERSION}`,
+  ];
+  for (const w of want) assert.ok(text.includes(w), `#signals-ranking states: ${w}`);
+});
+
+test("T2.8 / R5: #committee-direct is the DIRECT_SIC table — every committee, name and range — with its version, source and the non-allegation caveat", () => {
+  const root = domOf(committeeDirectHtml());
+  const rows = root.querySelectorAll("#committee-direct tbody tr").map((tr) => tr.children.map((td) => visibleText(td).trim()));
+  assert.deepEqual(rows, Object.entries(DIRECT_SIC).map(([id, ranges]) => [id, DIRECT_COMMITTEE_NAMES[id]!, directRangesText(ranges)]));
+  const text = visibleText(root);
+  assert.match(text, new RegExp(`Committee direct matches \\(table v${COMMITTEE_DIRECT_VERSION}\\)`));
+  assert.match(text, /House Rule X and Senate Rule XXV/);
+  assert.match(text, /The overlap is context, never an allegation/);
+  assert.match(text, /a direct grade only refines an existing hit/);
+});

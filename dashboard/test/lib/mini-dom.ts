@@ -90,9 +90,21 @@ export class MiniElement {
     return out;
   }
 
-  get classList(): { contains(name: string): boolean } {
+  get classList(): { contains(name: string): boolean; toggle(name: string, force?: boolean): boolean } {
     const classes = new Set((this.getAttribute("class") ?? "").split(/\s+/).filter(Boolean));
-    return { contains: (n: string) => classes.has(n) };
+    return {
+      contains: (n: string) => classes.has(n),
+      /* signals-v3 M2: the signals island marks its "Show 10 more" button
+         unavailable this way; it writes the class ATTRIBUTE, so the bytes a
+         test reads are the bytes a browser would hold. */
+      toggle: (n: string, force?: boolean) => {
+        const on = force ?? !classes.has(n);
+        if (on) classes.add(n);
+        else classes.delete(n);
+        this.setAttribute("class", [...classes].join(" "));
+        return on;
+      },
+    };
   }
 
   /* ---------- tree ---------- */

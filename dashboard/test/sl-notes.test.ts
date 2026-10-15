@@ -552,7 +552,7 @@ function titleSites(rel: string): { fn: string; text: string }[] {
   return out;
 }
 
-test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path and by emitting function", () => {
+test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path and by emitting function — plus signals-v3 M2's one declared Who title", () => {
   /* R8c's disqualifying test, applied per site: the renderer receives no
      unique non-null identity, so R26 forbids it inventing one. If a
      legitimate conversion lands, DELETE that entry in the same commit — never
@@ -585,6 +585,11 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
       { fn: "biggestChangeCellHtml", text: "no disclosed value on any change this period" },
       { fn: "biggestChangeCellHtml", text: "share units were not comparable, so the producer classified this change from VALUE" },
     ],
+    /* signals-v3 M2 (R13, plan-required): the slim hits table's Who cell shows
+       the member's LAST name with the full name in `title`. The title carries
+       nothing honesty-bearing: the full name is also the link's accessible
+       name (`aria-label`), and the member page is the link. */
+    "src/lib/ui/signals.ts": [{ fn: "hitRowHtml", text: "<interpolated>" }],
   };
 
   let total = 0;
@@ -631,5 +636,5 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
     "an undeclared title= site exists in a src/lib module outside the Class-C table — " +
       "convert it, or declare it with its path, function and text in the same commit",
   );
-  assert.equal(total, 17, "the Class-C survivor count is exactly 17 (32 measured - 5 deleted - 10 converted)");
+  assert.equal(total, 18, "the Class-C survivor count is exactly 17 (32 measured - 5 deleted - 10 converted), plus the one signals-v3 M2 site R13 requires");
 });

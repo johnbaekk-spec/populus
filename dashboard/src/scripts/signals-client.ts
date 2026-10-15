@@ -1,8 +1,10 @@
 /* /signals client island. A device-local enhancement over a page that is
-   complete without it: the HITS pager and filters — rule and listed stocks
-   only (SIGNALS-CLARITY M2, on by default, never persisted). The first change
-   fetches the artifact once and repaints through the server's own view.
-   Nothing is stored and nothing leaves the device. */
+   complete without it: the slim hits table's filters — the FAMILY, from the
+   "Hit rate by family" rows, and listed stocks only (on by default, never
+   persisted) — and "Show 10 more". The first change fetches the artifact once
+   and repaints through the server's own view and row renderer, so a repaint
+   is the server's markup (signals-v3 M2, R13). Nothing is stored and nothing
+   leaves the device. */
 
 import { parseDataColumns, type RenderCtx } from "../lib/format.ts";
 import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, hitsView, hitsHiddenText, type HitFilter } from "../lib/ui/index.ts";
@@ -15,32 +17,43 @@ function columnCount(body: HTMLElement | null, fallback: number): number {
   return n > 0 ? n : fallback;
 }
 
-/* R17: a REAL pager over the complete artifact. The server rendered page 1;
-   the first page change or filter fetches `signals.v1.json` once (it is
-   complete for the window) and every later view renders from it through the
-   SAME row renderer the server used. */
+/* R13: the server rendered the first lines; the first filter or "Show more"
+   fetches `signals.v1.json` once (it is complete for the window) and every
+   later view renders from it through the SAME row renderer the server used. */
 const ARTIFACT_HREF = "/signals/data/signals.v1.json";
 
+/** The view a filter state shows: the server's `hitsView`, its first `shown`
+    lines, the body markup and the range string. Exported so the parity test
+    runs the client's own composition against the server's. */
+export function hitsRepaint(hits: readonly Signal[], filter: HitFilter, shown: number, ctx: RenderCtx, columns: readonly string[] | null): { body: string; range: string; hidden: number; lines: number; shown: number } {
+  const view = hitsView(hits, filter);
+  const slice = view.lines.slice(0, shown);
+  return {
+    body: slice.length === 0 ? "" : hitsBodyHtml(slice, ctx, columns),
+    range: hitsRangeText(0, slice.length, view.lines.length, view.hits, SIGNAL_HITS_PAGE_SIZE),
+    hidden: view.hidden,
+    lines: view.lines.length,
+    shown: slice.length,
+  };
+}
+
 function initHitPager(): void {
-  const section = document.getElementById("signal-hits");
-  const seg = document.querySelector<HTMLElement>(".si-hit-filter");
+  const section = document.getElementById("hits");
+  const families = document.getElementById("families");
   const body = document.getElementById("signal-hits-body");
   const rangeEl = document.getElementById("signal-hits-range");
-  const prev = document.getElementById("signal-hits-prev") as HTMLButtonElement | null;
-  const next = document.getElementById("signal-hits-next") as HTMLButtonElement | null;
+  const more = document.getElementById("signal-hits-more") as HTMLButtonElement | null;
   const stocksChk = document.getElementById("signal-stocks-only") as HTMLInputElement | null;
   const hiddenEl = document.getElementById("signal-hidden-count");
   const status = document.getElementById("signal-hits-status");
-  if (!section || !seg || !body || !rangeEl) return;
-  const pageSize = Number(section.dataset.pageSize) || SIGNAL_HITS_PAGE_SIZE;
-  /* The page's FIXED compact N (DESIGN-POLISH M2, CD-1: 12 of the 50): every
-     repaint compacts through the same body renderer, restates the bound on the
-     page's disclosure and announces the re-render to the named binder. */
-  const compactN = Number(section.dataset.compactRows) || pageSize;
-  const disclosure = section.querySelector<HTMLElement>('.compact-disclosure[data-compact-for="signal-hits-body"]');
+  const pillRow = document.getElementById("signal-family-pill-row");
+  const pill = document.getElementById("signal-family-pill") as HTMLButtonElement | null;
+  const pillName = document.getElementById("signal-family-pill-name");
+  if (!section || !body || !rangeEl) return;
+  const step = Number(section.dataset.step) || SIGNAL_HITS_PAGE_SIZE;
   const ctx: RenderCtx = {};
-  let page = 0;
-  let kind = "all";
+  let shown = Number(section.dataset.shown) || step;
+  let family = "all";
   /* R12: every load starts at the default — listed stocks only — whatever a
      browser restored into the box (plan L8: not persisted). */
   let stocksOnly = true;
@@ -62,16 +75,28 @@ function initHitPager(): void {
     return all;
   }
 
-  /* The ONE filter the server page used for its first page (`hitsView` over
-     `hitMatches`): rule × listed stocks. */
+  /* The ONE filter the server page used for its first lines (`hitsView` over
+     `hitMatches`): family × listed stocks. */
   function filter(): HitFilter {
-    return { kind, stocksOnly };
+    return { family, stocksOnly };
   }
 
-  function setPager(btn: HTMLButtonElement | null, unavailable: boolean): void {
-    if (!btn) return;
-    btn.setAttribute("aria-disabled", String(unavailable));
-    btn.classList.toggle("is-unavailable", unavailable);
+  function setMore(unavailable: boolean): void {
+    if (!more) return;
+    more.setAttribute("aria-disabled", String(unavailable));
+    more.classList.toggle("is-unavailable", unavailable);
+  }
+
+  function setFamily(next: string): void {
+    family = next;
+    for (const b of families?.querySelectorAll<HTMLButtonElement>("button[data-family]") ?? []) {
+      b.setAttribute("aria-pressed", String(b.dataset.family === family));
+    }
+    if (pillRow) pillRow.hidden = family === "all";
+    if (pillName) {
+      const label = families?.querySelector<HTMLElement>(`button[data-family="${family}"] .si-family-name`)?.textContent ?? family;
+      pillName.textContent = label;
+    }
   }
 
   async function paint(): Promise<void> {
@@ -86,53 +111,44 @@ function initHitPager(): void {
       return;
     }
     if (mine !== token) return;
-    const view = hitsView(hits, filter());
-    const pageCount = Math.max(1, Math.ceil(view.lines.length / pageSize));
-    if (page > pageCount - 1) page = pageCount - 1;
-    const slice = view.lines.slice(page * pageSize, (page + 1) * pageSize);
+    const v = hitsRepaint(hits, filter(), shown, ctx, parseDataColumns(body!.closest("table")?.getAttribute("data-columns")));
     body!.innerHTML =
-      slice.length === 0
-        ? `<tr><td colspan="${columnCount(body, 7)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
-        : hitsBodyHtml(slice, ctx, compactN, parseDataColumns(body!.closest("table")?.getAttribute("data-columns")));
-    body!.setAttribute("data-collapsed", String(slice.length > compactN));
-    if (disclosure) {
-      disclosure.setAttribute("data-compact-total", String(slice.length));
-      disclosure.setAttribute("data-compact-shown", String(Math.min(compactN, slice.length)));
-    }
-    document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "signal-hits" } }));
-    const range = hitsRangeText(page, slice.length, view.lines.length, view.hits, pageSize);
-    rangeEl!.textContent = range;
-    const hiddenText = hitsHiddenText(view.hidden, stocksOnly);
+      v.shown === 0
+        ? `<tr><td colspan="${columnCount(body, 6)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
+        : v.body;
+    section!.dataset.shown = String(v.shown);
+    document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "hits" } }));
+    rangeEl!.textContent = v.range;
+    const hiddenText = hitsHiddenText(v.hidden, stocksOnly);
     if (hiddenEl) {
       hiddenEl.textContent = hiddenText;
-      hiddenEl.setAttribute("data-hidden", String(view.hidden));
+      hiddenEl.setAttribute("data-hidden", String(v.hidden));
     }
-    if (status) status.textContent = `${range}${kind === "all" ? "" : ` · rule ${kind}`} · ${stocksOnly ? "listed stocks only" : "all asset types"} · ${hiddenText}.`;
-    setPager(prev, page === 0);
-    setPager(next, page >= pageCount - 1);
+    if (status) status.textContent = `${v.range}${family === "all" ? "" : ` · family ${family.toLowerCase()}`} · ${stocksOnly ? "listed stocks only" : "all asset types"} · ${hiddenText}.`;
+    setMore(v.shown >= v.lines);
   }
 
-  seg.addEventListener("click", (ev) => {
-    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-kind]");
+  families?.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-family]");
     if (!btn) return;
-    kind = btn.dataset.kind ?? "all";
-    for (const b of seg.querySelectorAll<HTMLButtonElement>("button[data-kind]")) b.setAttribute("aria-pressed", String(b === btn));
-    page = 0;
+    // a pressed family toggles off; another one replaces it
+    setFamily(btn.dataset.family === family ? "all" : (btn.dataset.family ?? "all"));
+    shown = step;
+    void paint();
+  });
+  pill?.addEventListener("click", () => {
+    setFamily("all");
+    shown = step;
     void paint();
   });
   stocksChk?.addEventListener("change", () => {
     stocksOnly = stocksChk.checked;
-    page = 0;
+    shown = step;
     void paint();
   });
-  prev?.addEventListener("click", () => {
-    if (prev.getAttribute("aria-disabled") === "true" || page === 0) return;
-    page--;
-    void paint();
-  });
-  next?.addEventListener("click", () => {
-    if (next.getAttribute("aria-disabled") === "true") return;
-    page++;
+  more?.addEventListener("click", () => {
+    if (more.getAttribute("aria-disabled") === "true") return;
+    shown += step;
     void paint();
   });
 }
