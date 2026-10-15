@@ -38,9 +38,8 @@ export function breadcrumb(parts: { text: string; href?: string }[]): string {
    already prints it once per page — `m1-layout.test.ts:52` pins exactly that
    "rendered once, in the footer" rule. Repeating it beside every window
    statement spent characters on the least reader-relevant token in the line.
-   The one caller that is NOT a `.panel-note` — the signals page's `.si-asof`,
-   out of scope for this run — appends it explicitly, so that surface's bytes
-   are unchanged. */
+   (The one caller that appended it, the ticker page's section-index
+   `.si-asof`, left with that index in signals-v3 M3.) */
 export function asOfNote(stamps: BuildStamps): string {
   return `as of ${esc(stamps.generatedAt)}`;
 }
@@ -161,8 +160,11 @@ export function briefingCards(cards: readonly { tag: string; title: string; body
    degenerate input; the caller fixes it). Counts, qualifiers, date bases and
    absence statements always stay visible in the sub. */
 
-export type LedgerTone = "ink" | "blue" | "gold" | "green";
-export const LEDGER_TONES: readonly LedgerTone[] = ["ink", "blue", "gold", "green"];
+/* `sell` (signals-v3 M3, R17): the ticker page's "Filed late" figure takes the
+   SELL text colour when a row was filed late — the colour the summary cards
+   used for the same fact (`StoryTone`). */
+export type LedgerTone = "ink" | "blue" | "gold" | "green" | "sell";
+export const LEDGER_TONES: readonly LedgerTone[] = ["ink", "blue", "gold", "green", "sell"];
 /** What a sub states. Every kind but `plain` is honesty text that must stay
     visible whatever its length. */
 export type LedgerSubKind = "count" | "qualifier" | "date" | "absence" | "plain";

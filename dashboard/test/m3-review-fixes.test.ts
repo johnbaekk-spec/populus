@@ -229,11 +229,25 @@ test("CD3-4 (a): the net-flow notes are keyed on the ticker, injectively, and ev
 
 /* ===================================================== K-4 … K-10 */
 
-test("K-4: the ticker page's signals table speaks the rule book's short labels — no private copy", () => {
+test("K-4: the ticker page's signals table speaks the rule book's short labels — no private copy", async () => {
+  /* signals-v3 M3 (R18, R21): the per-kind table (`tickerSignalsHtml`) is gone;
+     the ticker's "On Signals" block prints its hits through the slim hits row
+     `/signals/` uses, whose kind word IS the rule book's short label. */
   const src = readFileSync(path.join(SRC, "lib", "ui", "ticker.ts"), "utf-8");
   assert.doesNotMatch(src, /"s1-large": "LARGE"/, "control: the private label map is gone");
-  assert.match(src, /signalKindShort\(kind\)/);
-  assert.match(src, /signalKindShort\(w\.kind\)/);
+  assert.doesNotMatch(src, /tickerSignalsHtml/, "the retired per-kind table is not back");
+  const { tickerOnSignalsHtml, signalKindShort } = await import("../src/lib/ui/index.ts");
+  const hit = (kind: Signal["kind"], i: number): Signal => ({
+    id: `${kind}:${i}`, kind, rule: `rule of ${kind}`, thresholdVersion: "1",
+    entities: { bioguide: "A000001", memberName: "A Member", ticker: "WMB" },
+    magnitude: { low: 250_001, high: 500_000 }, receipts: ["https://efdsearch.senate.gov/x"],
+    occurrence: { tradeDate: "2026-06-01", filedDate: `2026-07-0${i}` }, sourceAvailableAt: "2026-07-01",
+    computedAt: "2026-07-24", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate",
+    asset: "Williams Cos", assetType: "Stock", side: "purchase", owner: "self", listedStock: true,
+  });
+  const kinds: Signal["kind"][] = ["s1-large", "s6-late-large", "s5-jurisdiction"];
+  const words = domOf(tickerOnSignalsHtml([], kinds.map((k, i) => hit(k, i + 1)), {})).querySelectorAll("td.si-kind .note-label").map((b) => visibleText(b).trim());
+  assert.deepEqual(words.sort(), kinds.map((k) => signalKindShort(k)).sort(), "each kind word is the rule book's own short label");
 });
 
 test("K-5: an activity row does not carry its kind's colour hook — only the word does", () => {

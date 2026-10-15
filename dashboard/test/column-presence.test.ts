@@ -201,7 +201,8 @@ test("R2-9: an emptied Committees column says unmatchable members could not be m
   const { tickerUnifiedBody } = await import("../src/lib/ui/index.ts");
   const stamps = { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" };
   const committees = { byMember: new Map(), windowFrom: "2025-01-01", windowTo: "2026-07-24", snapshotDate: "2026-07-24" };
-  const deps = { signals: [], crowding: null, committees };
+  // signals-v3 M3: the deps carry the triage now; this test needs none of it
+  const deps = { crowding: null, committees };
   const reasonOf = (rows: TxnRow[]): string => {
     const html = tickerUnifiedBody({ ticker: "WMB", txns: rows }, { state: "module-absent" } as never, stamps, CTX, { fullTable: false }, deps as never);
     const section = /<section class="panel design-members-active"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";

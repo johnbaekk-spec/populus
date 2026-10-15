@@ -199,6 +199,11 @@ export interface TriageResult {
   /** active per-row signals whose triggering line could not be located (0 in
       a build: every active signal carries its identity) */
   unlocated: number;
+  /** signals-v3 M3 (R19): each active signal's lines, as LD3 "Lines" reads
+      them — signal id → the txnIds the engine marked hit for it (the identity
+      line of S-1/S-4/S-5/S-6, the matching rows of S-2's filing, every row of
+      S-3's window). The ticker page pins these; build memory only (R4). */
+  hitLines: Map<string, string[]>;
 }
 
 /* ================================================================ helpers */
@@ -392,18 +397,23 @@ function scoreLine(e: Engine, r: TxnRow, f: TriageFiling, cutoff: string): LineS
   };
 }
 
-/** LD4's lead line: the highest maximum meter, then the highest sum of the
+/** LD4's line order: the highest maximum meter, then the highest sum of the
     non-negative meters, then not an exchange, then the highest lower bound
-    (then the row id, so the pick is deterministic). */
+    (then the row id, so the order is deterministic). The lead line is its
+    first; the ticker page pins a row's lines in this order (M3, R19). */
+export function compareLines(a: Pick<LineScore, "meters" | "txn">, b: Pick<LineScore, "meters" | "txn">): number {
+  return (
+    maxMeter(b.meters) - maxMeter(a.meters) ||
+    meterSum(b.meters) - meterSum(a.meters) ||
+    Number(a.txn.side === "exchange") - Number(b.txn.side === "exchange") ||
+    (b.txn.low ?? -1) - (a.txn.low ?? -1) ||
+    (a.txn.txnId < b.txn.txnId ? -1 : a.txn.txnId > b.txn.txnId ? 1 : 0)
+  );
+}
+
+/** LD4's lead line: the first line in `compareLines` order. */
 export function pickLead<T extends Pick<LineScore, "meters" | "txn">>(lines: readonly T[]): T {
-  return [...lines].sort(
-    (a, b) =>
-      maxMeter(b.meters) - maxMeter(a.meters) ||
-      meterSum(b.meters) - meterSum(a.meters) ||
-      Number(a.txn.side === "exchange") - Number(b.txn.side === "exchange") ||
-      (b.txn.low ?? -1) - (a.txn.low ?? -1) ||
-      (a.txn.txnId < b.txn.txnId ? -1 : a.txn.txnId > b.txn.txnId ? 1 : 0),
-  )[0]!;
+  return [...lines].sort(compareLines)[0]!;
 }
 
 /** LD4's tier: an exchange-led row is Routine; otherwise any meter at 3 stands
@@ -628,10 +638,14 @@ export function buildTriage(artifact: SignalArtifact, txns: readonly TxnRow[], c
 
   /* ---- hit lines (LD3 "Lines") ---- */
   const hitSignals = new Map<string, Signal[]>();
+  const hitLines = new Map<string, string[]>();
   const mark = (r: TxnRow, s: Signal): void => {
     let l = hitSignals.get(r.txnId);
     if (!l) hitSignals.set(r.txnId, (l = []));
     if (!l.includes(s)) l.push(s);
+    let ids = hitLines.get(s.id);
+    if (!ids) hitLines.set(s.id, (ids = []));
+    if (!ids.includes(r.txnId)) ids.push(r.txnId);
   };
   const s5Lines = new Set<string>();
   const activeS3: Signal[] = [];
@@ -829,5 +843,6 @@ export function buildTriage(artifact: SignalArtifact, txns: readonly TxnRow[], c
     cmteAvailable,
     cmteUnavailableReason,
     unlocated,
+    hitLines,
   };
 }

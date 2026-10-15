@@ -202,22 +202,6 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
 }
 
 /* planned cards (unified ticker) */
-.planned-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 28px;
-}
-.planned-card {
-  border: 1px dashed var(--rule2);
-  padding: 22px 26px;
-}
-.planned-card .section-h { color: var(--ink2); }
-.planned-card p {
-  font: 400 var(--fs-name)/1.65 var(--sans);
-  color: var(--ink2);
-  margin: 8px 0 0;
-}
-
 /* ---------- methodology ---------- */
 
 .methodology { max-width: 1120px; }

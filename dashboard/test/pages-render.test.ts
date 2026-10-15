@@ -249,12 +249,36 @@ test("R2: the unified ticker's holders link renders only when that page is built
   assert.ok(!html.includes("/holders/"), "no link to an unbuilt holders page");
 });
 
-test("unified ticker: section index, planned placeholders, own-clock lede", () => {
+/* signals-v3 M3 (R16, R17, LD8, LD9): the section index, the planned
+   Financials / Macro placeholders, the lede and the story cards are gone. The
+   page is two real tabs over two panels, both in the HTML, and the "each
+   section keeps its own clock" sentence moved into the provenance line. */
+test("R16/R17: two real tabs over two panels, both visible in the HTML; no Financials, Macro or PLANNED; no lede or story cards; the own-clock sentence in the provenance line", () => {
   const html = unified({ state: "module-absent" });
-  assert.ok(html.includes("section-index"));
-  assert.ok(html.includes("Financials"));
-  assert.ok(html.includes("PLANNED"));
-  assert.ok(html.includes("each section keeps its own clock") || html.includes("Each section keeps its own clock"));
+  const dom = domOf(html);
+  const lists = dom.querySelectorAll('[role="tablist"]');
+  assert.equal(lists.length, 1, "one tab list");
+  assert.ok(lists[0]!.classList.contains("tk-tabs"));
+  const tabs = lists[0]!.querySelectorAll('[role="tab"]');
+  assert.deepEqual(tabs.map((t) => [t.tagName, t.getAttribute("href"), t.getAttribute("aria-controls")]), [["a", "#congress", "congress"], ["a", "#institutional", "institutional"]]);
+  assert.deepEqual(tabs.map((t) => visibleText(t).trim().split(/\s+/)[0]), ["Congress", "Institutional"]);
+  const panels = dom.querySelectorAll('[role="tabpanel"]');
+  assert.deepEqual(panels.map((p) => [p.tagName, p.getAttribute("id"), p.getAttribute("aria-labelledby")]), [["section", "congress", "tab-congress"], ["section", "institutional", "tab-institutional"]]);
+  assert.deepEqual(tabs.map((t) => t.getAttribute("id")), ["tab-congress", "tab-institutional"], "each panel is labelled by its tab");
+  // without JavaScript both panels show: the server never hides one, nor marks a tab selected
+  assert.ok(panels.every((p) => !p.hasAttribute("hidden")), "no panel is hidden in the server HTML");
+  assert.ok(tabs.every((t) => !t.hasAttribute("aria-selected") && !t.hasAttribute("tabindex")), "selection is the binder's, never the server's");
+  assert.ok(html.indexOf('role="tablist"') < html.indexOf('id="congress"'), "the bar precedes the panels");
+  // the Congress panel holds the Congress rows; the Institutional panel the holders
+  assert.ok(dom.querySelector('#congress [aria-label="Congressional disclosures"]'), "the disclosures sit in the Congress panel");
+  assert.ok(dom.querySelector("#institutional #ticker-holders"), "the holders sit in the Institutional panel");
+  for (const gone of ["Financials", "Macro", "PLANNED", "SOON", "section-index", "si-soon", "entity-lede", "design-briefing", "design-story", "planned-card"]) {
+    assert.ok(!html.includes(gone), `no ${gone}`);
+  }
+  // the clock sentence moved, it did not vanish (LD9)
+  const prov = dom.querySelector(".design-provenance")!;
+  assert.match(visibleText(prov.querySelector(".tk-clock")!), /^Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots\.$/);
+  assert.equal(html.split("keeps its own clock").length - 1, 1, "stated once, in the provenance line");
   assert.ok(html.includes("full congressional view ↗"));
 });
 
@@ -544,35 +568,52 @@ test("parity: decode(encode(rows)) renders byte-identical bodies", async () => {
   );
 });
 
-test("unified ticker: ledger totals count the full 12-month population, not the five-row display slice; timeliness has an unknown state", async () => {
+test("unified ticker: ledger totals count the full 12-month population, not a display slice; timeliness has an unknown state (R17: five figures, Filed late)", async () => {
   const { tickerUnifiedBody } = await import("../src/lib/ui/index.ts");
   const base = { kind: "txn", txnId: "x", name: "M", party: "R", state: "TX", district: null, chamber: "house", ticker: "T", asset: "T", assetType: null, side: "purchase", owner: null, low: 1001, high: 15000, traded: "2026-07-01", filed: "2026-07-20", lag: 19, late: 0, flags: [], doc: "d" } as any;
   const txns = Array.from({ length: 6 }, (_, i) => ({ ...base, txnId: `t${i}`, bioguide: `A00000${i}`, name: `Member ${i}` }));
   const stamps = { buildId: "b", generatedAt: "2026-08-02 07:27 UTC", generatedAtDate: "2026-08-02" };
   const html = tickerUnifiedBody({ ticker: "T", txns }, { state: "no-map" }, stamps, {}, { fullTable: false });
   // DESIGN-POLISH M2 (T2.8): the figure is read from the ONE ledger's <dl> (DOM parse).
-  assert.equal(ledgerFigures(html).find((f) => f.label === "Members · 12m")?.value, "6", "six members, not the five displayed");
+  const figs = ledgerFigures(html);
+  // signals-v3 M3 (R17): exactly five figures, in order
+  assert.deepEqual(figs.map((f) => f.label), ["Congress txns", "Members · 12m", "Latest PTR", "Filed late", "13F holders"]);
+  assert.equal(figs.find((f) => f.label === "Members · 12m")?.value, "6", "six members, not a display slice");
   assert.match(html, /6 buys · 0 sells/);
-  assert.match(html, /Every row filed inside the 45-day window/);
+  /* LD9: the timeliness card's three states moved into the Filed late figure —
+     its value, its tone, and its sub-line */
+  const late = (h: string) => ledgerFigures(h).find((f) => f.label === "Filed late")!;
+  assert.deepEqual([late(html).value, late(html).tone, late(html).sub], ["0", "ink", "every row filed inside 45 days"]);
   const unknown = tickerUnifiedBody({ ticker: "T", txns: [...txns, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
-  assert.doesNotMatch(unknown, /Every row filed inside the 45-day window/);
-  assert.match(unknown, /1 of 7 carry no trade date/);
+  assert.equal(late(unknown).sub, "1 of 7 undated: timeliness unknown", "an undated row's timeliness is unknown, never on time");
+  assert.doesNotMatch(unknown, /every row filed inside/i, "no claim that every row was on time");
+  assert.match(unknown, /1 row discloses no trade date: the lag is unknown there, not zero/, "the figure's note says why");
+  const lateRows = tickerUnifiedBody({ ticker: "T", txns: [...txns.slice(1), { ...base, txnId: "l", bioguide: "A000010", late: 1, lag: 60, traded: "2026-05-21" }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
+  assert.deepEqual([late(lateRows).value, late(lateRows).tone, late(lateRows).sub], ["1", "sell", "filed past the 45-day window"], "a late row: the SELL tone");
+  const both = tickerUnifiedBody({ ticker: "T", txns: [...txns.slice(2), { ...base, txnId: "l", bioguide: "A000010", late: 1, lag: 60, traded: "2026-05-21" }, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
+  assert.deepEqual([late(both).value, late(both).tone, late(both).sub], ["1", "sell", "1 of 6 undated: timeliness unknown"], "late AND undated: the sub carries the undated count");
   const empty = tickerUnifiedBody({ ticker: "T", txns: [] }, { state: "no-map" }, stamps, {}, { fullTable: false });
-  assert.match(empty, /No rows on record/);
+  assert.deepEqual([late(empty).value, late(empty).sub], ["0", "no rows on record"]);
 });
 
-test("unified ticker: withheld signal kinds render as withheld, never inside a zero-hit claim; registry names are escaped (Codex F2, F3)", async () => {
+test("unified ticker: a ticker with no active hit gets no signals block and no zero-hit claim, so a withheld rule is never covered by one; registry names are escaped (Codex F2, F3; signals-v3 M3 R18)", async () => {
+  /* The per-kind table that stated "zero hits … a computed answer over every
+     rule" (and listed withheld kinds beside it) is retired; R18 replaces it
+     with the On Signals block, which renders NOTHING for a ticker with no
+     active hit. So no zero-hit claim exists to cover a withheld rule: the
+     withholding is stated where the rules are (/signals/ and Methodology). */
   const { tickerUnifiedBody } = await import("../src/lib/ui/index.ts");
+  const { buildTriage } = await import("../src/lib/signal-triage.ts");
   const stamps = { buildId: "b", generatedAt: "2026-08-02 07:27 UTC", generatedAtDate: "2026-08-02" };
   const ctx = {};
   const t = { ticker: "T", txns: [] } as any;
-  const withheld = tickerUnifiedBody(t, { state: "no-map" }, stamps, ctx, { fullTable: false }, { signals: [], withheld: [{ kind: "s5-jurisdiction", reason: "inputs-not-in-build", detail: "committee data absent" }], crowding: null, committees: null });
-  assert.match(withheld, /withheld \(inputs-not-in-build\): committee data absent/);
-  assert.match(withheld, /every evaluated rule \(1 withheld, listed\)/);
-  assert.doesNotMatch(withheld, /a computed answer over every rule, not missing coverage/);
-  const clean = tickerUnifiedBody(t, { state: "no-map" }, stamps, ctx, { fullTable: false }, { signals: [], withheld: [], crowding: null, committees: null });
-  assert.match(clean, /a computed answer over every rule, not missing coverage/);
-  const hostile = tickerUnifiedBody(t, { state: "resolved-no-data", name: "Example <b>Issuer</b>", cik: "0000000001" }, stamps, ctx, { fullTable: false }, { signals: [], withheld: [], crowding: null, committees: null });
+  const art = (withheld: unknown[]) => ({ v: 1, buildId: "b", computedAt: "c", thresholdVersion: "1", retentionDays: 90, coverageFrom: "2026-05-04", coverageTo: "2026-08-02", lifecycleNote: "n", compaction: "none", dateAnomaliesExcluded: 0, lagCaveat: "l", withheld, signals: [] }) as never;
+  for (const w of [[{ kind: "s5-jurisdiction", reason: "inputs-not-in-build", detail: "committee data absent" }], []]) {
+    const html = tickerUnifiedBody(t, { state: "no-map" }, stamps, ctx, { fullTable: false }, { triage: buildTriage(art(w), [], { committee: null }), crowding: null, committees: null });
+    assert.doesNotMatch(html, /id="on-signals"/, "no block without an active hit");
+    assert.doesNotMatch(html, /[Zz]ero hits|a computed answer over every rule/, "no zero-hit claim, withheld or not");
+  }
+  const hostile = tickerUnifiedBody(t, { state: "resolved-no-data", name: "Example <b>Issuer</b>", cik: "0000000001" }, stamps, ctx, { fullTable: false }, { crowding: null, committees: null });
   assert.doesNotMatch(hostile, /<b>Issuer<\/b>/);
   assert.match(hostile, /Example &lt;b&gt;Issuer&lt;\/b&gt;/);
 });
@@ -646,4 +687,335 @@ test("T2.8 / R5: #committee-direct is the DIRECT_SIC table — every committee, 
   assert.match(text, /House Rule X and Senate Rule XXV/);
   assert.match(text, /The overlap is context, never an allegation/);
   assert.match(text, /a direct grade only refines an existing hit/);
+});
+
+/* ======================================================================
+   signals-v3 M3 (R17–R21, LD8, LD9): the ticker page
+   ====================================================================== */
+
+import { tickerOnSignalsHtml } from "../src/lib/ui/index.ts";
+import { onSignalsLines, COMMITTEE_CAVEAT } from "../src/lib/ui/signals.ts";
+import { TICKER_HOLDERS_VISIBLE, TICKER_PREVIEW_ROWS, TIMELINE_GRIDLINES } from "../src/lib/ui/ticker.ts";
+import { amountText, sideLabel, universalFlags, effectiveFlagKeys } from "../src/lib/format.ts";
+import { affTextOf, excludeDateAnomalies, legacyTrailingMonthsBounds, windowMembership } from "../src/lib/derive.ts";
+import { loadTriageFixture } from "./lib/triage-fixture.ts";
+import type { MiniElement } from "./lib/mini-dom.ts";
+
+const M3_STAMPS = { buildId: "b", generatedAt: "2026-10-13 06:00 UTC", generatedAtDate: "2026-10-13" };
+let goldenM3: TRIAGE.TriageResult | null = null;
+/** The golden public-row fixture's triage (signals-v3 M2), built once. */
+function golden(): TRIAGE.TriageResult {
+  const f = loadTriageFixture();
+  return (goldenM3 ??= TRIAGE.buildTriage(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf }));
+}
+/** A ticker's rows from the fixture, newest filed first (the build's order). */
+function goldenTicker(ticker: string, rows: readonly TxnRow[] = loadTriageFixture().rows): TickerEntity {
+  return { ticker, txns: rows.filter((r) => r.ticker === ticker).sort((a, b) => (a.filed !== b.filed ? (a.filed < b.filed ? 1 : -1) : a.txnId < b.txnId ? -1 : 1)) };
+}
+function goldenPage(ticker: string, triage: TRIAGE.TriageResult | null = golden(), entity = goldenTicker(ticker)): string {
+  return tickerUnifiedBody(entity, { state: "no-map" }, M3_STAMPS, CTX, { fullTable: false }, triage ? { triage, crowding: null, committees: null } : null);
+}
+/** The strongest Stands-out / Worth-a-look row a ticker leads. */
+function strongRow(ticker: string): TRIAGE.TriageRow {
+  const row = golden().byTicker.get(ticker)?.find((r) => r.tier !== "routine");
+  assert.ok(row, `${ticker} leads a Stands-out or Worth-a-look row in the golden fixture`);
+  return row!;
+}
+const lagOfLine = (r: TxnRow): number | null => r.lag ?? (r.traded ? TRIAGE.daysBetween(r.traded, r.filed) : null);
+
+/** Every R18 field of the FULL block, checked against the row it shows. One
+    line's own facts: the lead line's filed date, trade date, lag and receipt. */
+function fullBlockProblems(html: string, row: TRIAGE.TriageRow): string[] {
+  const out: string[] = [];
+  const block = domOf(html).querySelector("#on-signals");
+  if (!block) return ["no #on-signals"];
+  const L = row.lead.txn;
+  const text = (sel: string): string | null => {
+    const el = block.querySelector(sel);
+    return el ? visibleText(el).replace(/\s+/g, " ").trim() : null;
+  };
+  if (block.getAttribute("data-block") !== "full") out.push("not the full block");
+  if (text(".tk-onsig-tier") !== TRIAGE.TIER_LABELS[row.tier]) out.push(`tier label ${text(".tk-onsig-tier")}`);
+  // the heading names the lead line's member ("· 2 filings" follows on a grouped row)
+  if (row.grouping !== "cluster" && !(text(".si-row-member") ?? "").startsWith(L.name)) out.push(`member ${text(".si-row-member")}`);
+  if (text(".si-row-what .aff") !== affTextOf(L)) out.push(`party and state ${text(".si-row-what .aff")}`);
+  if (text(".si-row-what .si-chip") !== sideLabel(L.side, L.flags).text) out.push(`side chip ${text(".si-row-what .si-chip")}`);
+  if (text(".si-row-amt") !== amountText(L)) out.push(`amount range ${text(".si-row-amt")}`);
+  const filed = block.querySelector(".si-row-filed time");
+  if (filed?.getAttribute("datetime") !== L.filed) out.push(`filed date ${filed?.getAttribute("datetime")} is not the lead line's ${L.filed}`);
+  const traded = block.querySelector(".si-row-traded time");
+  if (traded?.getAttribute("datetime") !== L.traded) out.push(`trade date ${traded?.getAttribute("datetime")} is not the lead line's ${L.traded}`);
+  const lag = lagOfLine(L);
+  if (!(text(".si-row-traded") ?? "").includes(`${lag}d`)) out.push(`lag: "${text(".si-row-traded")}" lacks the lead line's ${lag}d`);
+  if (text(".si-row-why") !== row.sentence) out.push("reason sentence");
+  const meters = block.querySelectorAll('.si-row [role="img"]').map((m) => m.getAttribute("aria-label") ?? "");
+  const want = TRIAGE.METER_KEYS.map((k) => `${TRIAGE.METER_LABELS[k]}: ${TRIAGE.LEVEL_WORDS[row.meters[k]]}`);
+  if (meters.length !== 4 || !meters.every((m) => /^(Size|Pattern|Others|Cmte): /.test(m)) || meters.join("|") !== want.join("|")) out.push(`meters ${meters.join(", ")}`);
+  const receipt = block.querySelector(".si-row-src a");
+  if (receipt?.getAttribute("href") !== L.doc) out.push(`receipt ${receipt?.getAttribute("href")} is not the lead filing ${L.doc}`);
+  const back = block.querySelector("a.tk-onsig-back");
+  if (back?.getAttribute("href") !== "/signals/" || visibleText(back).trim() !== "← Back to Signals") out.push("back to Signals");
+  const caveat = block.querySelector(".si-cmte-context");
+  if (row.meters.cmte >= 1 && (caveat ? visibleText(caveat).trim() : "") !== COMMITTEE_CAVEAT) out.push("the committee caveat is missing");
+  if (row.meters.cmte < 1 && caveat) out.push("a committee caveat with no committee context");
+  return out;
+}
+
+test("T3.2 (R17): the title keeps today's name source — ticker — mapped name exactly as supplied with its † link and footnote; no mapped name, the ticker alone", () => {
+  const name = "Williams Cos Inc. (Mixed Case)";
+  const mapped = domOf(unified({ state: "resolved-no-data", name, cik: "0000107263" }));
+  const h1 = mapped.querySelector("h1.entity-title")!;
+  const own = (el: MiniElement): string => el.nodes.map((n) => (typeof n === "string" ? n : n.classList.contains("fn-ref") ? "" : own(n))).join("");
+  assert.equal(own(h1), `${TICKER.ticker} — ${name}`, "ticker + ' — ' + the mapped name, never re-cased");
+  const dagger = h1.querySelector('a.fn-ref[href="#ticker-footnotes"]');
+  assert.equal(dagger && visibleText(dagger), "†");
+  const foot = mapped.querySelector("#ticker-footnotes")!;
+  assert.match(visibleText(foot), /present-day mapping, not the name as of each filing/);
+  for (const inst of [{ state: "no-map" }, { state: "ambiguous" }, { state: "module-absent" }] as TickerInstSection[]) {
+    const html = unified(inst);
+    const plain = domOf(html).querySelector("h1.entity-title")!;
+    assert.equal(visibleText(plain), TICKER.ticker, `${inst.state}: the ticker alone`);
+    assert.ok(!visibleText(plain).includes("—") && !plain.querySelector(".fn-ref"), `${inst.state}: no dash, no † link`);
+    assert.ok(!html.includes("†") && !html.includes("present-day mapping"), `${inst.state}: no † footnote`);
+  }
+});
+
+test("T3.3 (R18): a Stands-out ticker renders the FULL block once, before the tabs — every field pinned, the caveat with Cmte ≥ 1", () => {
+  const row = strongRow("BAC");
+  assert.equal(row.tier, "stands");
+  assert.ok(row.meters.cmte >= 1, "the fixture row carries committee context (BAC ↔ House Financial Services, direct)");
+  const html = goldenPage("BAC");
+  assert.equal((html.match(/id="on-signals"/g) ?? []).length, 1, "exactly one block");
+  assert.ok(html.indexOf('id="on-signals"') < html.indexOf('role="tablist"'), "before the tabs");
+  assert.deepEqual(fullBlockProblems(html, row), []);
+  // the same function the triage row uses, with the heading's self-link removed
+  const block = domOf(html).querySelector("#on-signals")!;
+  assert.ok(!block.querySelector("a.si-row-link"), "the row's heading does not link to the page it is on");
+  // Removal tests: each R18 field the honesty rules protect fails the reading when deleted
+  const cut = (re: RegExp, why: string): string[] => {
+    const mutated = html.replace(re, "");
+    assert.notEqual(mutated, html, `control: ${why} was found to remove`);
+    return fullBlockProblems(mutated, row);
+  };
+  assert.ok(cut(/<p class="section-note si-cmte-context">[^<]*<\/p>/, "the caveat").some((p) => /committee caveat is missing/.test(p)), "removing the caveat fails");
+  assert.ok(cut(/<span class="si-row-filed">.*?<\/span>/, "the filed date").some((p) => /filed date/.test(p)), "removing the filed date fails");
+  assert.ok(cut(/<time datetime="[^"]+">[^<]+<\/time>(?= · <span class="si-lag|<\/span><span class="si-row-src)/, "the trade date").some((p) => /trade date/.test(p)), "removing the trade date fails");
+  assert.ok(cut(/<span class="si-row-src">.*?<\/span>(?=<\/div><\/article>)/, "the receipt").some((p) => /receipt/.test(p)), "removing the receipt fails");
+});
+
+test("T3.3 (R18, D21): the full block's dates and lag are ONE line's — the lead line's own — never a group's latest filed date", () => {
+  const row = strongRow("CB");
+  assert.equal(row.grouping, "member-ticker");
+  assert.notEqual(row.filed, row.lead.txn.filed, "precondition: the group's latest filing is not the lead line's");
+  const html = goldenPage("CB");
+  assert.deepEqual(fullBlockProblems(html, row), []);
+  const block = domOf(html).querySelector("#on-signals")!;
+  assert.equal(block.querySelector(".si-row-filed time")!.getAttribute("datetime"), row.lead.txn.filed, "the lead line's filed date");
+  // the group's latest filing is named apart, labelled as such
+  assert.match(visibleText(block.querySelector(".si-row-src")!), new RegExp(`latest of ${row.filings.length} filings: ${row.filed}`));
+  assert.equal(row.tier, "look");
+  assert.equal(visibleText(block.querySelector(".tk-onsig-tier")!), "Worth a look");
+});
+
+test("T3.3 (R18): a full block with no committee context carries no committee caveat", () => {
+  const row = strongRow("MLM");
+  assert.ok(row.meters.cmte < 1, `precondition: Cmte ${row.meters.cmte}`);
+  const html = goldenPage("MLM");
+  assert.deepEqual(fullBlockProblems(html, row), []);
+  assert.ok(!html.includes(COMMITTEE_CAVEAT), "no caveat without committee context");
+});
+
+/** Every R18 field of the COMPACT block, per hit row. */
+function compactBlockProblems(html: string, hits: readonly import("../src/lib/signals.ts").Signal[]): string[] {
+  const out: string[] = [];
+  const block = domOf(html).querySelector("#on-signals");
+  if (!block) return ["no #on-signals"];
+  if (block.getAttribute("data-block") !== "compact") out.push("not the compact block");
+  const rows = block.querySelectorAll("tbody tr");
+  if (rows.length === 0 || rows.length > 5) out.push(`${rows.length} hit rows (1 to 5)`);
+  const byId = new Map(hits.map((h) => [h.id, h]));
+  let committee = false;
+  for (const tr of rows) {
+    const s = byId.get(tr.getAttribute("data-signal-id") ?? "");
+    if (!s) { out.push("a row names no hit of this ticker"); continue; }
+    if (s.kind === "s5-jurisdiction") committee = true;
+    const kind = tr.querySelector("td.si-kind");
+    if (!kind?.querySelector(".note-label") || visibleText(kind.querySelector(".note-pop")!).trim() === "" || !(kind.querySelector(".note-pop")!.textContent ?? "").includes(s.rule)) out.push(`${s.id}: the kind and its rule note`);
+    if (visibleText(tr.querySelector("td.si-subject")!).trim() === "") out.push(`${s.id}: the member`);
+    const times = tr.querySelectorAll("td.si-when time").map((t) => t.getAttribute("datetime"));
+    if (s.occurrence.tradeDate && times[0] !== s.occurrence.tradeDate) out.push(`${s.id}: the trade date`);
+    if (times[times.length - 1] !== s.occurrence.filedDate || times.length !== (s.occurrence.tradeDate ? 2 : 1)) out.push(`${s.id}: the filed date`);
+    if (visibleText(tr.querySelector("td.si-mag")!).trim() === "") out.push(`${s.id}: the size`);
+    if (tr.querySelector("td.c-src a")?.getAttribute("href") !== s.receipts[0]) out.push(`${s.id}: the receipt`);
+  }
+  const caveat = block.querySelector(".si-cmte-context");
+  if (committee && !(caveat && visibleText(caveat).includes(COMMITTEE_CAVEAT))) out.push("the committee caveat is missing beside a COMMITTEE hit");
+  if (!committee && caveat) out.push("a committee caveat with no COMMITTEE hit");
+  return out;
+}
+
+test("T3.3 (R18): a ticker with hits and no Stands-out or Worth-a-look row renders the COMPACT block — at most 5 hits, each with its kind and rule, member, both dates, size and receipt; the caveat beside a COMMITTEE hit", () => {
+  const t = golden();
+  assert.ok(!(t.byTicker.get("AAPL") ?? []).some((r) => r.tier !== "routine"), "precondition: AAPL leads no Stands-out or Worth-a-look row");
+  const hits = t.hitsByTicker.get("AAPL")!;
+  assert.ok(hits.length > 5 && hits.some((h) => h.kind === "s5-jurisdiction"), "precondition: more than five hits, a COMMITTEE hit among them");
+  const html = goldenPage("AAPL");
+  assert.equal((html.match(/id="on-signals"/g) ?? []).length, 1);
+  assert.ok(html.indexOf('id="on-signals"') < html.indexOf('role="tablist"'), "before the tabs");
+  assert.deepEqual(compactBlockProblems(html, hits), []);
+  const block = domOf(html).querySelector("#on-signals")!;
+  assert.equal(block.querySelectorAll("tbody tr").length, 5, "capped at five");
+  assert.match(visibleText(block), /1–5 of \d+ lines · \d+ hits/, "the cap is stated");
+  assert.equal(block.querySelector("a.tk-onsig-back")?.getAttribute("href"), "/signals/");
+  // Removal tests
+  const cut = (re: RegExp, why: string): string[] => {
+    const mutated = html.replace(re, "");
+    assert.notEqual(mutated, html, `control: ${why} was found to remove`);
+    return compactBlockProblems(mutated, hits);
+  };
+  assert.ok(cut(/<p class="section-note si-cmte-context">[^<]*<\/p>/, "the caveat").some((p) => /caveat is missing/.test(p)), "removing the caveat fails");
+  assert.ok(cut(/<span class="visually-hidden">Traded <\/span><time[^>]*>[^<]*<\/time> → /, "a trade date").some((p) => /trade date|filed date/.test(p)), "removing a trade date fails");
+  assert.ok(cut(/ → <span class="visually-hidden">Filed <\/span><time[^>]*>[^<]*<\/time>/, "a filed date").some((p) => /filed date/.test(p)), "removing a filed date fails");
+  assert.ok(cut(/<div class="cell cell-src">.*?<\/div>/, "a receipt").some((p) => /receipt/.test(p)), "removing a receipt fails");
+  // a ticker that leads only a Routine row: still the compact block, never a full block for a Routine row
+  const be = t.byTicker.get("BE") ?? [];
+  assert.ok(be.length > 0 && be.every((r) => r.tier === "routine"), "precondition: BE leads Routine rows only");
+  assert.deepEqual(compactBlockProblems(goldenPage("BE"), t.hitsByTicker.get("BE")!), []);
+  // a ticker whose hits hold no COMMITTEE hit: the compact block, and no caveat
+  const snow = t.hitsByTicker.get("SNOW")!;
+  assert.ok(snow.every((h) => h.kind !== "s5-jurisdiction") && !(t.byTicker.get("SNOW") ?? []).some((r) => r.tier !== "routine"));
+  assert.deepEqual(compactBlockProblems(goldenPage("SNOW"), snow), []);
+  assert.ok(!goldenPage("SNOW").includes(COMMITTEE_CAVEAT));
+});
+
+test("T3.3 (R18): no active hit, no block; /e/ (no deps) never renders one, and the parity capture holds none", () => {
+  const t = golden();
+  assert.ok(!t.hitsByTicker.has("TJX"));
+  assert.ok(!goldenPage("TJX").includes('id="on-signals"'), "a ticker with no active hit");
+  assert.equal(tickerOnSignalsHtml([], [], CTX), "", "the renderer says nothing with nothing to say");
+  assert.ok(!goldenPage("BAC", null).includes('id="on-signals"'), "deps null (/e/): no block for a Stands-out ticker");
+  assert.ok(!goldenPage("BAC", null).includes('class="on-signals"'), "and no pinned row");
+  const capture = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "fixtures", "ui-split-parity.json"), "utf-8")) as Record<string, string>;
+  for (const key of ["tickerUnifiedBody.module-absent", "tickerUnifiedBody.data"]) {
+    assert.ok(capture[key]!.includes('role="tablist"'), `${key} is the re-captured tabbed body`);
+    assert.ok(!capture[key]!.includes('id="on-signals"'), `${key} carries no block`);
+  }
+});
+
+/** The preview table's rows. */
+function previewRows(html: string): MiniElement[] {
+  const panel = domOf(html).querySelector('[aria-label="Congressional disclosures"]')!;
+  return panel.querySelectorAll("tbody tr");
+}
+
+test("T3.4 (R19, R20): the block's triggering lines on THIS ticker are pinned first, deduplicated, at most 5, each with data-txn and the On Signals marker; then the newest rows, 10 in all, and 'all N rows ↗'", () => {
+  const t = golden();
+  for (const ticker of ["AAPL", "BAC", "CB", "SPCX", "SNOW"]) {
+    const entity = goldenTicker(ticker);
+    const rows = previewRows(goldenPage(ticker));
+    const ids = rows.map((r) => r.getAttribute("data-txn"));
+    assert.ok(ids.every((id) => id !== null && entity.txns.some((x) => x.txnId === id)), `${ticker}: every preview row carries data-txn`);
+    assert.equal(new Set(ids).size, ids.length, `${ticker}: no row twice`);
+    assert.equal(rows.length, Math.min(TICKER_PREVIEW_ROWS, entity.txns.length), `${ticker}: ten rows in total`);
+    const pinned = rows.filter((r) => r.classList.contains("on-signals"));
+    assert.ok(pinned.length >= 1 && pinned.length <= 5, `${ticker}: 1 to 5 pinned (${pinned.length})`);
+    assert.deepEqual(rows.slice(0, pinned.length), pinned, `${ticker}: pinned rows come first`);
+    assert.ok(pinned.every((r) => visibleText(r.querySelector("td.c-member .on-signals-mark")!) === "On Signals"), `${ticker}: each says On Signals`);
+    assert.ok(rows.slice(pinned.length).every((r) => !r.querySelector(".on-signals-mark")), `${ticker}: the marker lands only on a pinned row`);
+    // the pinned rows are the block's own lines, as onSignalsLines picks them
+    const want = onSignalsLines(t.byTicker.get(ticker) ?? [], t.hitsByTicker.get(ticker) ?? [], t.hitLines, entity.txns).map((r) => r.txnId);
+    assert.deepEqual(pinned.map((r) => r.getAttribute("data-txn")), want, `${ticker}: the triggering lines`);
+    // after them, the newest rows not already shown, in filed order
+    const rest = entity.txns.filter((r) => !want.includes(r.txnId)).slice(0, TICKER_PREVIEW_ROWS - want.length).map((r) => r.txnId);
+    assert.deepEqual(rows.slice(pinned.length).map((r) => r.getAttribute("data-txn")), rest, `${ticker}: then the newest`);
+    // each pinned row keeps its dates, owner column and receipt
+    for (const r of pinned) {
+      assert.ok(r.querySelector("td.c-filed") && r.querySelector("td.c-traded") && r.querySelector("td.c-src a"), `${ticker}: a pinned row keeps both dates and its receipt`);
+    }
+    assert.match(goldenPage(ticker), new RegExp(`<a href="/congress/tickers/${ticker}/">all ${entity.txns.length.toLocaleString("en-US")} rows ↗</a>`), `${ticker}: the full Congress view`);
+  }
+  // the full block's lines: lead first, LD4 line order, only this ticker's (BAC's row holds three lines, one on BAC)
+  const bac = strongRow("BAC");
+  assert.ok(bac.lines.some((l) => l.txn.ticker !== "BAC"), "precondition: the row holds lines on other tickers");
+  assert.deepEqual(previewRows(goldenPage("BAC")).filter((r) => r.classList.contains("on-signals")).map((r) => r.getAttribute("data-txn")), [bac.lead.txn.txnId], "only the BAC line, the lead");
+  // the compact block's lines: the shown hits' own lines (`hitLines`), never a guess
+  const aapl = t.hitsByTicker.get("AAPL")!;
+  const aaplPinned = previewRows(goldenPage("AAPL")).filter((r) => r.classList.contains("on-signals")).map((r) => r.getAttribute("data-txn")!);
+  assert.equal(aaplPinned.length, 5, "five of AAPL's hit lines");
+  const shownIds = new Set(domOf(goldenPage("AAPL")).querySelectorAll("#on-signals tbody tr").map((r) => r.getAttribute("data-signal-id")));
+  const lines = new Set([...shownIds].flatMap((id) => t.hitLines.get(id!) ?? []));
+  assert.ok(aaplPinned.every((id) => lines.has(id)) && aapl.length > 0, "every pinned AAPL row is a line of a hit the block shows");
+  // no block, no pinned row: the preview is the newest ten, Filed sorted ↓
+  const plain = previewRows(goldenPage("TJX"));
+  assert.ok(plain.every((r) => !r.classList.contains("on-signals")));
+  assert.match(goldenPage("TJX"), /aria-sort="descending"/, "unpinned, the Filed column claims its sort");
+  assert.match(goldenPage("BAC"), /ON SIGNALS ROWS FIRST, THEN FILED ↓/, "pinned, the panel states the order");
+});
+
+test("T3.4 (R19): universalFlags covers the pinned rows — a flag the newest rows share but a pinned row lacks is never hoisted", () => {
+  const t = golden();
+  const entity = goldenTicker("AAPL");
+  const pinned = new Set(onSignalsLines(t.byTicker.get("AAPL") ?? [], t.hitsByTicker.get("AAPL")!, t.hitLines, entity.txns).map((r) => r.txnId));
+  assert.ok(pinned.size > 0);
+  const flagged = (all: boolean): TickerEntity => ({ ticker: "AAPL", txns: entity.txns.map((r) => (all || !pinned.has(r.txnId) ? { ...r, flags: [...r.flags, "x_test_flag"] } : r)) });
+  const stated = (html: string): string[] => (domOf(html).querySelector('[aria-label="Congressional disclosures"] table')!.getAttribute("data-stated-flags") ?? "").split(",").filter(Boolean);
+  assert.ok(!stated(goldenPage("AAPL", golden(), flagged(false))).includes("x_test_flag"), "a pinned row without it: not universal");
+  assert.ok(stated(goldenPage("AAPL", golden(), flagged(true))).includes("x_test_flag"), "every shown row, pinned ones included: hoisted once");
+  // control: the hoist over the NON-pinned rows alone would have claimed it
+  const nonPinned = flagged(false).txns.filter((r) => !pinned.has(r.txnId)).slice(0, TICKER_PREVIEW_ROWS - pinned.size);
+  assert.ok(universalFlags(nonPinned.map(effectiveFlagKeys)).includes("x_test_flag"), "control: the wrong population would hoist it");
+});
+
+test("T3.4 (R19, R20): the timeline draws the $15K, $250K and $5M gridlines and rings exactly the pinned rows inside its 24-month window", () => {
+  for (const ticker of ["AAPL", "BAC", "CB"]) {
+    const html = goldenPage(ticker);
+    const plot = domOf(html).querySelector(".tl-plot")!;
+    assert.deepEqual(plot.querySelectorAll(".tl-grid-label").map((l) => visibleText(l)), ["$15K", "$250K", "$5M"]);
+    assert.deepEqual(TIMELINE_GRIDLINES.map(([, l]) => l), ["$15K", "$250K", "$5M"]);
+    const pinned = previewRows(html).filter((r) => r.classList.contains("on-signals")).map((r) => r.getAttribute("data-txn"));
+    const bounds = legacyTrailingMonthsBounds(M3_STAMPS.generatedAtDate, 24);
+    const placed = excludeDateAnomalies(goldenTicker(ticker).txns).rows.filter((r) => r.traded && windowMembership(r, bounds, "traded") === "in");
+    const want = placed.filter((r) => pinned.includes(r.txnId)).length;
+    assert.equal(plot.querySelectorAll(".tl-ring").length, want, `${ticker}: ${want} ringed`);
+    assert.ok(want > 0, `${ticker}: the fixture places a pinned row in the window`);
+  }
+  // control: with no triage nothing is pinned, so nothing is ringed
+  assert.equal(domOf(goldenPage("AAPL", null)).querySelectorAll(".tl-ring").length, 0);
+});
+
+test("T3.5 (R21): holders 1–10 show; 11..N sit in 'Show all N holders'; the hoist and the terminus are computed over all N; the full holders link only with holdersPage", () => {
+  const holder = (i: number, flags: string[] = []) => ({ rank: i, cik: String(i).padStart(10, "0"), name: `HOLDER ${i}`, value: 100_000 - i, securities: 1, keySource: "entity", flags });
+  const data = (n: number, over: Partial<TickerInstSection> = {}, flags: (i: number) => string[] = () => []): string =>
+    unified({ state: "data", name: "Fixture Corp", cik: "0000320193", period: "2026-03-31", latestFiled: "2026-05-15", topn: 25, holders: Array.from({ length: n }, (_, i) => holder(i + 1, flags(i + 1))), ...over } as TickerInstSection);
+  const html = data(25);
+  const sec = domOf(html).querySelector("#ticker-holders")!;
+  const tables = sec.querySelectorAll("table");
+  assert.equal(tables.length, 2);
+  const ranks = (el: MiniElement): string[] => el.querySelectorAll("tbody tr").map((tr) => visibleText(tr.querySelectorAll("td")[0]!).trim());
+  assert.deepEqual(ranks(tables[0]!), Array.from({ length: TICKER_HOLDERS_VISIBLE }, (_, i) => String(i + 1)), "holders 1–10 visible");
+  const more = sec.querySelector("details.tk-holders-more")!;
+  assert.ok(more && !more.hasAttribute("open"), "closed by default");
+  assert.equal(visibleText(more.querySelector("summary")!), "Show all 25 holders");
+  assert.deepEqual(ranks(more), Array.from({ length: 15 }, (_, i) => String(i + 11)), "holders 11..N inside, none lost");
+  assert.ok(tables.every((t) => t.getAttribute("data-paged") === "1"), "each part says it shows part of the collection");
+  assert.match(visibleText(sec), /ranks the top 25 holders per issuer/, "the terminus");
+  // ten or fewer: one table, no disclosure, nothing marked partial
+  const ten = domOf(data(10)).querySelector("#ticker-holders")!;
+  assert.equal(ten.querySelectorAll("table").length, 1);
+  assert.ok(!ten.querySelector("details.tk-holders-more") && !ten.querySelector("table[data-paged]"));
+  // the terminus counts ALL N on the mapped path
+  const mapped = data(25, { mapped: { issuer: "FIXTURE CORP", titleOfClass: "COM", holderCount: 700 } } as never);
+  assert.match(mapped, /The 25 largest of the 700 13F filers reporting this share class for the quarter are listed/);
+  // the hoist reads ALL N: a flag on every holder is stated once; one on the first ten only stays on their rows
+  const flag = "security_not_in_mapping";
+  const every = data(25, {}, () => [flag]);
+  assert.equal((every.match(/class="caveat-line table-caveat"/g) ?? []).length, 1, "every holder carries it: stated once");
+  assert.ok(domOf(every).querySelectorAll("#ticker-holders td.c-flags").every((td) => visibleText(td).trim() === ""), "and on no row");
+  const topOnly = data(25, {}, (i) => (i <= TICKER_HOLDERS_VISIBLE ? [flag] : []));
+  assert.ok(!topOnly.includes("table-caveat"), "the first ten carry it, holders 11..25 do not: never hoisted from the visible ten");
+  const cells = domOf(topOnly).querySelectorAll("#ticker-holders td.c-flags").map((td) => visibleText(td).trim() !== "");
+  assert.deepEqual(cells, Array.from({ length: 25 }, (_, i) => i < TICKER_HOLDERS_VISIBLE), "it stays on the ten rows that carry it");
+  // the full holders view: only when that page is built
+  assert.ok(data(25, { holdersPage: true }).includes("full holders view ↗"));
+  assert.ok(!data(25, { holdersPage: false }).includes("/holders/"));
 });

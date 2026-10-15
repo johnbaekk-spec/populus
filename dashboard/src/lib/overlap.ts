@@ -9,7 +9,10 @@
    `agg_ticker_holders` (R3 tickers). Dollar figures on that side are the
    managers' REPORTED value now — a Δ$ per holder is not published at that
    grain, so none is invented. When R3 has not mapped the ticker the 13F half
-   is a `Planned` badge and the Congress half still ships.
+   is a `Planned` badge and the Congress half still ships — except on
+   /tickers/{T}/, which states the absence and its reason in plain words
+   (`absence: "statement"`, signals-v3 M3 success criterion 4: no PLANNED
+   markup on a ticker page).
    Below both: a merged timeline, 20 rows, newest first. */
 
 import { esc, fmtInt, fmtUsd, kindWord, memberHrefFor, sideLabel, amountText, utcDayNumber, thHtml, type RenderCtx, type TxnRow } from "./format.ts";
@@ -61,7 +64,7 @@ export interface OverlapBand {
   sellers: OverlapMember[];
   buyTotal: string;
   sellTotal: string;
-  /** null = the ticker is not mapped (R3), so the 13F half is Planned */
+  /** null = the 13F half cannot be read (why: `instAbsence`) */
   inst: null | {
     period: string;
     issuer: string;
@@ -71,6 +74,36 @@ export interface OverlapBand {
     trimmingValue: number;
   };
   timeline: OverlapTimelineRow[];
+  /** why `inst` is null; null when it is not:
+      - `module-absent` / `artifact-missing`: the build carries no
+        institutional module, or its aggregate is missing (`InstData.reason`);
+      - `unmapped`: the reviewed name-and-class mapping (R3) does not name the
+        ticker, so `agg_ticker_holders` holds no row for it;
+      - `no-closed-quarter`: no closed 13F quarter to read. */
+  instAbsence: OverlapInstAbsence | null;
+}
+
+export type OverlapInstAbsence = "module-absent" | "artifact-missing" | "unmapped" | "no-closed-quarter";
+
+/** How the renderer shows an unreadable 13F half: the `PLANNED` badge (the
+    holders page), or a plain-language statement of the absence and its
+    reason (the ticker page, which renders no PLANNED markup). */
+export interface OverlapRenderOpts {
+  absence?: "badge" | "statement";
+}
+
+/** The plain-language absence statement, one per reason the band knows. */
+export function overlapAbsenceText(ticker: string, why: OverlapInstAbsence): string {
+  switch (why) {
+    case "module-absent":
+      return `Not available for ${ticker}: this build does not include the institutional (13F) module, so no notable manager's holding can be read.`;
+    case "artifact-missing":
+      return `Not available for ${ticker}: this build's institutional (13F) aggregate is missing, so no notable manager's holding can be read.`;
+    case "no-closed-quarter":
+      return `Not available for ${ticker}: this build holds no closed 13F quarter yet, so no notable manager's move can be read.`;
+    default:
+      return `Not available for ${ticker}: the reviewed 13F name-and-class mapping does not name this ticker yet, so no notable manager's holding of it can be read.`;
+  }
 }
 
 function dayShift(iso: string, days: number): string {
@@ -115,6 +148,13 @@ export function overlapBand(i: OverlapInputs): OverlapBand {
 
   let inst: OverlapBand["inst"] = null;
   const totals = tickerTotalsFor(i.inst, i.ticker);
+  const instAbsence: OverlapInstAbsence | null = !i.inst.present
+    ? i.inst.reason
+    : !totals
+      ? "unmapped"
+      : !i.period
+        ? "no-closed-quarter"
+        : null;
   if (totals && i.period) {
     const rows = tickerHoldersFor(i.inst, i.ticker).filter((h) => h.period_of_report === i.period && i.typingByCik.get(h.cik)?.notable === true);
     const toMgr = (h: TickerHolderRow): OverlapManager => ({
@@ -186,6 +226,7 @@ export function overlapBand(i: OverlapInputs): OverlapBand {
     sellTotal: sumRangesText(sumRanges(sells)),
     inst,
     timeline: timeline.slice(0, OVERLAP_TIMELINE_ROWS),
+    instAbsence,
   };
 }
 
@@ -206,7 +247,7 @@ function managerList(ms: readonly OverlapManager[], filerHref: (cik: string) => 
 }
 
 /** The band. */
-export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik: string) => string): string {
+export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik: string) => string, opts: OverlapRenderOpts = {}): string {
   const congress =
     `<div class="overlap-half overlap-congress"><h3 class="section-h">Congress · last ${OVERLAP_CONGRESS_DAYS} days</h3>` +
     `<dl class="overlap-rows">` +
@@ -219,8 +260,11 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
       `<div><dt>Adding</dt><dd><span class="overlap-n c-buy">${fmtInt(b.inst.adding.length)}</span> ${managerList(b.inst.adding, filerHref)} <span class="overlap-total c-num">${esc(fmtUsd(b.inst.addingValue))} held</span></dd></div>` +
       `<div><dt>Trimming</dt><dd><span class="overlap-n c-sell">${fmtInt(b.inst.trimming.length)}</span> ${managerList(b.inst.trimming, filerHref)} <span class="overlap-total c-num">${esc(fmtUsd(b.inst.trimmingValue))} held</span></dd></div>` +
       `</dl><p class="section-note">NEW + ADD vs TRIM + EXIT, by shares · $ = reported value now, not the change · <span class="filed-name">${esc(b.inst.issuer)}</span></p></div>`
-    : `<div class="overlap-half overlap-inst overlap-planned"><h3 class="section-h">Notable managers <span class="badge-planned">PLANNED</span></h3>` +
-      `<p class="section-note">Ticker not yet mapped — the 13F side needs a reviewed name-and-class mapping row for ${esc(b.ticker)}. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a></p></div>`;
+    : opts.absence === "statement"
+      ? `<div class="overlap-half overlap-inst" data-absent="${esc(b.instAbsence ?? "unmapped")}"><h3 class="section-h">Notable managers</h3>` +
+        `<p class="section-note">${esc(overlapAbsenceText(b.ticker, b.instAbsence ?? "unmapped"))}${(b.instAbsence ?? "unmapped") === "unmapped" ? ` <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>` : ""}</p></div>`
+      : `<div class="overlap-half overlap-inst overlap-planned"><h3 class="section-h">Notable managers <span class="badge-planned">PLANNED</span></h3>` +
+        `<p class="section-note">Ticker not yet mapped — the 13F side needs a reviewed name-and-class mapping row for ${esc(b.ticker)}. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a></p></div>`;
   /* The row edge (tr[data-edge], DESIGN-POLISH M1): a congressional row by its
      side, a 13F row by its change kind. */
   const edgeOf = (r: OverlapTimelineRow): string | null =>
@@ -250,4 +294,12 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
         `<p class="section-note">${fmtInt(b.timeline.length)} newest rows · every row dates by its filing date: a disclosure's, or the 13F's for the quarter · a 13F row is a quarter-end snapshot, not a trade</p>`) +
     `</section>`
   );
+}
+
+/** The band as the ticker page renders it (signals-v3 M3, success criterion
+    4): an unreadable 13F half is a plain statement of the absence and its
+    reason, never the `PLANNED` badge. The holders page keeps the badge
+    (`overlapBandHtml` default). */
+export function tickerOverlapHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik: string) => string): string {
+  return overlapBandHtml(b, ctx, filerHref, { absence: "statement" });
 }

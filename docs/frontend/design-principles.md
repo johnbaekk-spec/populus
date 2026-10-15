@@ -207,7 +207,7 @@ four-figure ledger on the right → provenance strip → three data-derived
 summary cards → dense content bands that share one-pixel seams → footer.
 (Where the design-polish run departs from this order, the departure is recorded
 below: L13 for the cards, L14 for the Signals rule book, SV3-M2 for the
-Signals triage.)
+Signals triage, SV3-M3 for the ticker page.)
 `/signals` is a triage page (signals-v3 M2, record SV3-M2 below): three lead
 cards, then "Filings to read" in three tiers beside the hit rate by family and
 a slim hits table. Its rule book (every kind, its exact rule, hits, status —
@@ -316,6 +316,12 @@ takes its content's width above the fold and a full ledger row at it.
   note in the lede, the lead cards, band S1 — Filings to read (1.5fr, the
   primary) │ Hit rate by family above the slim hits (1fr) — the Methodology
   links, the changes foot and the withheld panels.
+- **Ticker** (signals-v3 M3, record SV3-M3): the head beside its five-figure
+  ledger, the provenance strip, the "On Signals" block when the ticker has an
+  active signal, then the sticky Congress │ Institutional tab bar over two
+  panels — Congress: the timeline │ members active band, then the
+  disclosures; Institutional: holders │ crowding, the overlap band, then the
+  agreement — and the † footnote.
 
 **Record L10 (reversal of the Sep-10 IA) — Leaders and Tickers pair (D1).**
 The Sep-10 run stacked Leaders above Tickers, each at full width. They now pair
@@ -382,6 +388,53 @@ from the filings themselves:
   nothing honesty-bearing is hidden: `css-fold.test.ts` sweeps the row's
   dates, LATE tag and receipt, the cards' dates and receipt, the committee
   caveat and the meter's inline name.
+
+**Record SV3-M3 (signals-v3 M3, owner-approved mock 2026-10-13) — the ticker
+page.** `/tickers/<T>/` is two real tabs, Congress and Institutional:
+
+- **Head.** The title is unchanged: the ticker, then the issuer name from the
+  SEC's present-day ticker file with its † "present-day mapping" footnote, or
+  the ticker alone when no name maps. Five ledger figures: Congress txns,
+  Members · 12m, Latest PTR, Filed late (the SELL tone when a row was late;
+  its sub-line says how many rows are undated, whose timeliness is unknown,
+  and its label note says why) and 13F holders. The lede and the three summary
+  cards are gone (a deviation from this section's composition, like L13); the
+  lede's "each section keeps its own clock" sentence is in the provenance
+  strip.
+- **On Signals (`#on-signals`).** Server-rendered, before the tabs. A ticker
+  that leads a Stands out or Worth a look row gets that row exactly as
+  "Filings to read" prints it — tier, member with party and state, side and
+  range, the reason sentence, the four meters, ONE line's own filed date,
+  trade date, lag and receipt — with "← Back to Signals", and the committee
+  caveat whenever the Cmte meter shows committee context. A ticker with
+  active hits and no such row gets up to five slim hit rows (each kind's
+  exact rule a note, member, both dates, size, receipt), an honest count of
+  the rest, and the caveat beside a COMMITTEE hit. Otherwise nothing; `/e/`
+  never shows the block.
+- **Tabs.** A sticky `role="tablist"` bar of two links over two
+  `role="tabpanel"` sections. The server HTML shows both panels, stacked:
+  without JavaScript the tabs are in-page links. `scripts/tabs.ts` selects one
+  (from the hash, or the panel that holds a deep-linked element), hides the
+  other with `hidden`, keeps a roving tabindex with Arrow, Home and End, and
+  writes the hash with `history.replaceState`; `/e/` re-binds after every
+  `populus:rerender`. Anchors keep clear of the bar (`scroll-margin-top`);
+  paper prints both panels and every holder. A tab panel is hidden by the reader's choice,
+  never by a width: no media query touches it.
+- **Congress tab.** The timeline (with $15K, $250K and $5M gridlines) beside
+  the members active; then the disclosures preview: up to five rows the On
+  Signals block names, pinned first and marked "On Signals" (their marks ringed
+  on the timeline), then the newest rows, ten in all, and "all N rows ↗".
+  Pinned first, the Filed column claims no sort; the panel note states the
+  order. The universal-flag hoist reads every shown row, pinned ones included.
+- **Institutional tab.** Holders 1–10, then holders 11–N inside "Show all N
+  holders" in the same HTML (the full holders view is linked only where it is
+  built); the hoist and the terminus count all N. Then the overlap band and
+  "Do the two regimes agree?".
+- **Retired:** the section index with its Financials / Macro SOON tabs, the
+  planned supplement, the "PLANNED institutional holder flow" line and the
+  per-kind signals table. The ticker page carries no PLANNED markup: an
+  overlap band that cannot read its notable-manager side states that absence
+  and its reason in plain words (the holders page keeps the badge).
 
 **Record L15 (reversal of a Sep-10 SRC §5 ban) — the HOUSE PARSE label (D2).**
 The Sep-10 copy pass banned "HOUSE PARSE" in visible text. D2 restores the

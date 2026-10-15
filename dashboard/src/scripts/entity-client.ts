@@ -1,4 +1,5 @@
 import { initSortableTable } from "./table-sort.ts";
+import { initTabs } from "./tabs.ts";
 import { holderDefaultDir, holderSortNote, orderRankedHolders, type HolderSortKey } from "../lib/holders-sort.ts";
 /* Entity client: the generic-route driver (qoq-presentation.md §3), and the
    small enhancements the prerendered entity pages mount (pager, period
@@ -1087,6 +1088,10 @@ export function dispatchEntityClick(el: Element, handle: DriverHandle): void {
 export function runGenericRoute(): void {
   const root = document.getElementById("entity-root");
   if (!root) return;
+  /* signals-v3 M3 (R16): a ticker body carries the Congress / Institutional
+     tabs; every render the driver makes announces itself with
+     `populus:rerender`, and the binder binds the fresh tab list then. */
+  document.addEventListener("populus:rerender", () => initTabs(root));
   const handle = runEntityDriver({
     search: window.location.search,
     fetchJson: async (url) => {

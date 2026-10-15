@@ -52,6 +52,26 @@ function goldenTriage(): { artifact: SignalArtifact; triage: TriageResult } {
   goldenCache = { artifact: f.artifact, triage: buildTriage(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf }) };
   return goldenCache;
 }
+
+/** signals-v3 M3: a ticker page over the golden public rows and the build's
+    triage — BAC leads a Stands-out row (the full "On Signals" block, its rows
+    pinned and ringed), AAPL has hits and no such row (the compact block) — with
+    twelve holders, so holders 11..12 sit in the "Show all" disclosure. */
+function goldenTickerBody(ticker: string): string {
+  const f = loadTriageFixture();
+  const txns = f.rows
+    .filter((r) => r.ticker === ticker)
+    .sort((a, b) => (a.filed !== b.filed ? (a.filed < b.filed ? 1 : -1) : a.txnId < b.txnId ? -1 : 1));
+  const holders = Array.from({ length: 12 }, (_, i) => ({ rank: i + 1, cik: String(1000 + i).padStart(10, "0"), name: `H${i}`, value: 12_000 - i, securities: 1, keySource: "entity", flags: [] }));
+  return tickerUnifiedBody(
+    { ticker, txns },
+    { state: "data", name: "X", cik: "0000070858", period: "2026-06-30", latestFiled: null, topn: 25, holders },
+    { buildId: "b", generatedAt: "2026-10-13 06:00 UTC", generatedAtDate: "2026-10-13" },
+    {},
+    { fullTable: false },
+    { triage: goldenTriage().triage, crowding: null, committees: null },
+  );
+}
 import { renderResults, renderPreQuery } from "../src/scripts/search-client.ts";
 import {
   terminusRow,
@@ -317,7 +337,9 @@ const HONESTY_SELECTORS = [
   ".c-flags",
   ".c-amount",
   ".spec-dates",
-  ".si-asof",
+  /* signals-v3 M3: `.si-asof` left with the ticker's section index (its "as
+     of" stays in the provenance strip, `.stamp-line`). The ticker page's own
+     honesty lines join below with the M3 sweep. */
   ".filter-count",
   ".paper-note",
   ".chip-ocr",
@@ -364,6 +386,13 @@ const HONESTY_SELECTORS = [
   ".si-card-context",
   ".si-cmte-context",
   ".si-meter-label",
+  /* signals-v3 M3 (R17, R19, R21, R23, LD9): the ticker page's "each section
+     keeps its own clock" line (moved from the lede into the provenance strip),
+     a pinned row's "On Signals" marker, and the "Show all N holders"
+     disclosure that holds holders 11..N. None may vanish at a breakpoint. */
+  ".tk-clock",
+  ".on-signals-mark",
+  ".tk-holders-more",
   /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
      channel a large share of this site's explanations travel on — every
      `.col-why`, every footnote clause, the exclusion counts, the owner codes,
@@ -461,10 +490,13 @@ test("SIGNALS-CLARITY M1 (R2): the footer notice is swept at the fold, and the l
   }
   const base = readFileSync(path.resolve(import.meta.dirname, "..", "src", "layouts", "Base.astro"), "utf-8");
   assert.equal((base.match(/<p class="footer-notice">/g) ?? []).length, 1, "Base.astro emits exactly one .footer-notice");
-  // `.badge-soon` survives the nav-shell retirement: still emitted, still styled.
+  /* `.badge-soon` survived the nav-shell retirement only because the ticker
+     page's Financials / Macro SOON tabs still emitted it. signals-v3 M3 (R16)
+     removed those tabs, so it is retired too: no source emits it and no rule
+     styles it (RETIRED_CLASSES below holds it from coming back). */
   const ticker = readFileSync(path.resolve(import.meta.dirname, "..", "src", "lib", "ui", "ticker.ts"), "utf-8");
-  assert.ok(ticker.includes('class="badge-soon"'), "lib/ui/ticker.ts still emits .badge-soon");
-  assert.match(css, /(^|\n)\.badge-soon\s*\{/, ".badge-soon keeps its rule");
+  assert.ok(!ticker.includes("badge-soon"), "lib/ui/ticker.ts no longer emits .badge-soon");
+  assert.doesNotMatch(css, /(^|\n)\.badge-soon\s*\{/, ".badge-soon has no rule left");
 });
 
 test("SIGNALS-CLARITY M2 (R10, R12): the hidden count and the stock label are swept at the fold, and the signals surfaces emit them", async () => {
@@ -509,6 +541,29 @@ test("signals-v3 M2 (R23): the triage row's dates, LATE tag and receipt, the car
   assert.match(fold, /\.si-meter-label \{ position: static; width: auto; height: auto;[^}]*clip: auto;/);
   // and the decorative meter head is clipped, never display:none
   assert.match(fold, /\.si-meter-head \{ position: absolute; width: 1px; height: 1px;[^}]*clip: rect\(0 0 0 0\)/);
+});
+
+test("signals-v3 M3 (R17, R19, R21, R23): the ticker's clock line, a pinned row's marker and the holders disclosure are swept at the fold; the ticker page emits each, and its On Signals block emits the row's dates, receipt and committee caveat", () => {
+  const sels = [".tk-clock", ".on-signals-mark", ".tk-holders-more"];
+  for (const sel of sels) {
+    assert.ok(HONESTY_SELECTORS.includes(sel));
+    for (const decl of ["display:none", "visibility:hidden", "content-visibility:hidden"]) {
+      const planted = `${css}\n@media (max-width: 720px) { .entity-page ${sel} { ${decl}; } }`;
+      assert.deepEqual(foldViolations(planted), [`.entity-page ${sel}`], `control: ${sel} { ${decl} } at the fold`);
+    }
+  }
+  const bac = goldenTickerBody("BAC");
+  for (const sel of [...sels, ".si-row-filed", ".si-row-traded", ".si-row-src", ".si-cmte-context", ".si-meter-label"]) {
+    assert.ok(new RegExp(`class="(?:[^"]*\\s)?${sel.slice(1)}(?:\\s[^"]*)?"`).test(bac), `${sel} is emitted on the ticker page`);
+  }
+  // the compact block's committee caveat rides the COMMITTEE hit it qualifies
+  assert.match(goldenTickerBody("AAPL"), /<p class="section-note si-cmte-context">COMMITTEE: /);
+  // a hidden tab panel is the binder's state, never a width's: no fold rule touches the panels
+  const fold = narrowMediaBlocks(css).map((b) => b.body).join("\n");
+  assert.doesNotMatch(fold, /\.tk-panel/, "no media query hides or shows a tab panel");
+  // and paper prints both panels, and every holder
+  assert.match(css, /@media print \{\s*\.tk-panel\[hidden\] \{ display: block !important; \}/);
+  assert.match(css, /\.tk-holders-more::details-content \{ content-visibility: visible !important; \}/);
 });
 
 test("SIGNALS-CLARITY M3 (R19): the Monthly flow honesty lines are swept at the fold, and the panel emits each", async () => {
@@ -926,6 +981,9 @@ function renderCorpus(): string {
     lagBandHtml({ latestBatch: [{ name: "M", bioguide: "M1", party: "D", traded: "2026-01-01", filed: "2026-05-01", lag: 120, late: 1 }], latestBatchFiled: "2026-05-01" }),
     signalsRankingHtml(),
     committeeDirectHtml(),
+    // signals-v3 M3: the ticker page's tabs, both "On Signals" blocks, pinned rows, gridlines and the holders disclosure
+    goldenTickerBody("BAC"),
+    goldenTickerBody("AAPL"),
   ].join("\n");
 }
 
@@ -936,7 +994,7 @@ const NEW_RENDERER_CLASSES = [
   "crumb", "entity-head", "entity-title", "entity-subline", "entity-lede",
   "mono-id", "mono-ticker", "mono-note", "tiles-entity", "entity-grid",
   "panel", "panel-head", "panel-note", "section-h", "section-h2",
-  "section-index", "si-n", "si-soon", "si-asof", "page-section",
+  "page-section",
   "table-scroll", "etable", "etable-compact", "table-foot",
   "ribbon", "ribbon-two", "rb-track", "rb-col", "rb-up", "rb-down", "rb-bar",
   "rb-buy", "rb-sell", "rb-hatch", "rb-axis", "rb-labels", "rb-label", "rb-caption",
@@ -949,7 +1007,7 @@ const NEW_RENDERER_CLASSES = [
   "mod-card", "badge-live", "badge-planned",
   "search-group-h", "search-opt", "opt-label", "opt-sub", "search-empty",
   "quick-links", "quick-link", "s6-block", "s6-h", "s6-body",
-  "footnotes-stacked", "footnote-line", "fn-ref", "flag-raw", "planned-card",
+  "footnotes-stacked", "footnote-line", "fn-ref", "flag-raw",
   "paper-block", "unjoined-name", "reconciled",
   /* DESIGN-POLISH M2: the one header ledger (T2.8), the paired bands and the
      filer parts (T2.3–T2.5), column presence's foot reason (T2.1), the hit
@@ -974,6 +1032,12 @@ const NEW_RENDERER_CLASSES = [
   "si-late-tag", "si-row-when", "si-row-filed", "si-row-traded", "si-row-src", "si-meters", "si-meter", "si-meter-label",
   "si-meter-bars", "si-mbar", "si-family-list", "si-rate-row", "si-pill-row", "si-pill", "si-family-name",
   "si-method", "si-method-list", "si-direct-table", "si-direct-ranges",
+  /* signals-v3 M3 (R16–R21): the sticky tab bar, its tabs and counts, the two
+     tab panels, the provenance strip's clock line, the "On Signals" block and
+     its tier, a pinned row's marker, the holders disclosure, and the
+     timeline's gridlines, their labels and the ring on a pinned row's mark. */
+  "tk-tabs", "tk-tab", "tk-tab-n", "tk-panel", "tk-clock", "tk-onsig", "tk-onsig-tier",
+  "on-signals-mark", "tk-holders-more", "tl-grid", "tl-grid-label", "tl-ring",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period
@@ -988,6 +1052,10 @@ const NEW_HOOK_CLASSES = [
   /* signals-v3 M2: the triage panel and the families panel are laid out by
      the band and `.panel`; an exchange-led row's chip keeps the neutral ink */
   "si-triage", "si-families", "si-side-neutral",
+  /* signals-v3 M3: a pinned preview row (`tr.on-signals`, its words are the
+     styled `.on-signals-mark`) and the block's way back to /signals/ (styled
+     as the `.section-link` beside it) */
+  "on-signals", "tk-onsig-back",
 ];
 
 /* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
@@ -1014,6 +1082,14 @@ const RETIRED_CLASSES = [
      chips, and the per-family rate list the filter rows replaced. */
   "si-evidence-row", "si-evidence-line", "si-group-members", "si-expand", "si-expand-body", "si-receipts",
   "si-hit-filter", "si-rates", "si-rate",
+  /* signals-v3 M3 (R16, R17, R20, R21): the ticker page's section index (its
+     static Congress `si-active`, the Financials / Macro `si-soon` tabs and
+     their `badge-soon`, the counts and the build stamp), the planned
+     Financials / Macro supplement's grid and cards, the signals table the
+     "On Signals" block replaced (`tickerSignalsHtml`, its rule cell), and the
+     timeline's mid line the dollar gridlines replaced. */
+  "section-index", "si-active", "si-soon", "badge-soon", "si-n", "si-asof",
+  "planned-grid", "planned-card", "design-ticker-signals", "si-evidence", "tl-mid",
 ];
 
 const ASTRO_ONLY_CLASSES = [

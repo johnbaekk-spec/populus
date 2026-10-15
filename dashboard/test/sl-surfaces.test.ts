@@ -60,11 +60,15 @@ test("SL-R9: no `.panel-note` prints a build id, and the footer copy is untouche
 
   const ui = uiModuleSource();
   // Every remaining `· build ` in this module must be OUTSIDE a `.panel-note`.
-  // There is exactly one, the signals page's `.si-asof`, which this run does
-  // not own and whose bytes are therefore unchanged.
-  const buildStamps = [...ui.matchAll(/[^\n]*· build [^\n]*/g)].map((m) => m[0]!);
-  assert.equal(buildStamps.length, 1, "one build stamp left in ui.ts");
-  assert.ok(buildStamps[0]!.includes("si-asof"), "and it is the out-of-scope signals stamp");
+  // There was exactly one, the ticker page's section-index `.si-asof`, which
+  // this run did not own. signals-v3 M3 (R16) retired the section index with
+  // it: the page's "as of" stays in its provenance strip, and the build id
+  // stays in its one home on /methodology (SIGNALS-CLARITY R4). So none is left.
+  const STAMP = /[^\n]*· build [^\n]*/g;
+  const buildStamps = [...ui.matchAll(STAMP)].map((m) => m[0]!);
+  assert.deepEqual(buildStamps, [], "no build stamp left in the ui modules");
+  // control: the retired section-index stamp is what the reading finds
+  assert.equal([..."`<span class=\"si-asof\">${asOfNote(stamps)} · build ${esc(stamps.buildId)}</span>`".matchAll(STAMP)].length, 1, "control: the old stamp line is caught");
 });
 
 test("SL-R9: the client no longer reconstructs a build id out of rendered text", () => {

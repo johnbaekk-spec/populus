@@ -134,6 +134,10 @@ const VALUE_EXPORTS = [
   "lagBandHtml",
   "signalsRankingHtml",
   "committeeDirectHtml",
+  /* signals-v3 M3 (LD10, R18): the ticker page's "On Signals" block. One
+     runtime symbol in, none out: the retired per-kind table
+     (`tickerSignalsHtml`) was never exported. */
+  "tickerOnSignalsHtml",
 ] as const;
 
 const TYPE_EXPORTS = [
@@ -156,16 +160,16 @@ const TYPE_EXPORTS = [
   "HitFilter",
 ] as const;
 
-test("ui entry exports exactly the 94 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 95 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
-  assert.equal(VALUE_EXPORTS.length, 94, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, SIGNALS-CLARITY M3's monthlyFlowPanel, and signals-v3 M2's five");
+  assert.equal(VALUE_EXPORTS.length, 95, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, SIGNALS-CLARITY M3's monthlyFlowPanel, signals-v3 M2's five, and signals-v3 M3's one");
 });
 
-test("ui entry exports the 15 reconciled type-only symbols (109 total)", () => {
+test("ui entry exports the 15 reconciled type-only symbols (110 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -177,5 +181,5 @@ test("ui entry exports the 15 reconciled type-only symbols (109 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 109, "the reconciled surface is 109 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel, then signals-v3 M2: +5 runtime)");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 110, "the reconciled surface is 110 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel, then signals-v3 M2: +5 runtime, then signals-v3 M3: +1 runtime, tickerOnSignalsHtml)");
 });

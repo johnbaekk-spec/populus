@@ -71,14 +71,6 @@
 .site-nav .nav-soon {
   color: var(--ink3);
 }
-.badge-soon {
-  font: 600 var(--fs-label) var(--mono);
-  color: var(--ink3);
-  border: 1px solid var(--rule2);
-  padding: 1px 4px;
-  border-radius: 2px;
-  vertical-align: 1.5px;
-}
 .masthead-right {
   display: flex;
   align-items: center;

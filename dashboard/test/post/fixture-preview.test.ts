@@ -109,6 +109,9 @@ test("the unified AAPL page's institutional section binds the same data", () => 
   assert.ok(html.includes("Institutional holders"));
   assert.ok(html.includes("BERKSHIRE HATHAWAY INC"));
   assert.ok(html.includes("full holders view ↗"));
+  // signals-v3 M3 (R21): the holders sit in the Institutional tab panel
+  const panel = html.indexOf('role="tabpanel" id="institutional"');
+  assert.ok(panel >= 0 && panel < html.indexOf("BERKSHIRE HATHAWAY INC") && panel < html.indexOf("full holders view ↗"), "inside the Institutional tab");
 });
 
 test("/institutional landing lists the fixture filers when the module is present", () => {

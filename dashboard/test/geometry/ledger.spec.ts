@@ -28,7 +28,7 @@
    (PW_OUTPUT_DIR) as JSON, so the evidence survives the run. */
 
 import { test, expect, type Browser, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   installProbe,
@@ -160,14 +160,23 @@ function routeAbsent(route: Route, reason: string): { skip: string } | { fail: s
    Filer 3 × 20, Signals 2 × 13, AAPL 4 × 18, NVDA 2 × 11, home 2 × 9,
    /e/ member 3 × 20, /e/ tail filer 3 × 20). signals-v3 M2: /signals/ is a
    triage — its rows are articles — and its one table is the slim hits
-   (1 × 6); the rule book moved to /methodology/. */
+   (1 × 6); the rule book moved to /methodology/. signals-v3 M3 (R16): the
+   ticker page is two tabs, and the binder hides the inactive panel, so AAPL
+   is measured PER ACTIVE TAB, each selected by its hash: Congress (the
+   members active and the disclosures preview, 2 × 10, plus the "On Signals"
+   hits when AAPL has some) and Institutional (measured on the owner-tier
+   build: AAPL resolves to an issuer with no aggregate holder rows there, so
+   the panel's one table is the overlap band's merged timeline, 1 × 4; a
+   build with AAPL holders adds the 6-column holders table). The two together
+   hold the tables the one 3 × 10 floor stood for. */
 const ROUTES: Route[] = [
   { id: "congress", path: "/congress/", minTables: 3, minColumns: 16, pairs: 1, g10Min: { colours: 1 } },
   { id: "member", path: "/congress/members/M001193/", minTables: 3, minColumns: 12, pairs: 2, g10Min: { colours: 1 } },
   { id: "institutional", path: "/institutional/", minTables: 2, minColumns: 8, pairs: 1 },
   { id: "filer", path: "/institutional/filers/1135730/", minTables: 3, minColumns: 12, pairs: 1, g10Min: { colours: 1 } },
   { id: "signals", path: "/signals/", minTables: 1, minColumns: 6, pairs: 1, g10Min: { colours: 1, "centring@1440": 1 } },
-  { id: "ticker", path: "/tickers/AAPL/", minTables: 3, minColumns: 10, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
+  { id: "ticker", path: "/tickers/AAPL/#congress", minTables: 2, minColumns: 10, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
+  { id: "ticker-inst", path: "/tickers/AAPL/#institutional", minTables: 1, minColumns: 4, allowZero: NO_CONTROLS_ZERO },
   { id: "congress-ticker", path: "/congress/tickers/NVDA/", minTables: 2, minColumns: 8, g10Min: { colours: 1 } },
   { id: "home", path: "/", minTables: 2, minColumns: 6, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
   { id: "e-member", path: "/e/?k=m:M001193", minTables: 3, minColumns: 12, g10Min: { colours: 1 } },
@@ -1636,3 +1645,196 @@ test.describe("M3: route properties", () => {
     }
   });
 });
+
+/* ======================================================================
+   signals-v3 M3 (R16, R19, R23, T3.7): the ticker page's tabs, its sticky
+   bar and its pinned rows, at 1440 and on phones (390, 360).
+   ====================================================================== */
+
+/** A built ticker page that pins rows from its "On Signals" block: found on
+    disk (the dist under test), else from the served artifact's active hits.
+    Null when the build pins none — a stated skip off the owner tier. */
+async function pinnedTickerPath(browser: Browser, testInfo: TestInfo): Promise<string | null> {
+  const dist = process.env.POPULUS_DIST_DIR ?? path.resolve(import.meta.dirname, "..", "..", "dist");
+  const dir = path.join(dist, "tickers");
+  if (existsSync(dir)) {
+    for (const t of readdirSync(dir).sort()) {
+      const f = path.join(dir, t, "index.html");
+      if (existsSync(f) && readFileSync(f, "utf-8").includes('<tr class="on-signals"')) return `/tickers/${t}/`;
+    }
+    return null;
+  }
+  const ctx = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+  try {
+    const res = await ctx.request.get("/signals/data/signals.v1.json");
+    if (!res.ok()) return null;
+    const art = (await res.json()) as { signals: { status: string; entities: { ticker: string | null } }[] };
+    const tickers = [...new Set(art.signals.filter((x) => x.status === "active" && x.entities.ticker).map((x) => x.entities.ticker!))].sort();
+    for (const t of tickers.slice(0, 40)) {
+      const r = await ctx.request.get(`/tickers/${encodeURIComponent(t)}/`);
+      if (r.ok() && (await r.text()).includes('<tr class="on-signals"')) return `/tickers/${encodeURIComponent(t)}/`;
+    }
+    return null;
+  } finally {
+    await ctx.close();
+  }
+}
+
+test.describe("signals-v3 M3: the ticker page (R16, R19, R23)", () => {
+  let url: string | null = null;
+  test.beforeAll(async ({ browser }, testInfo) => {
+    url = await pinnedTickerPath(browser, testInfo);
+  });
+  const need = (): string => {
+    if (!url) {
+      const d = skipDecision(process.env, "no built ticker page pins a row from an On Signals block");
+      if ("fail" in d) throw new Error(d.fail);
+      test.skip(true, d.skip);
+    }
+    return url!;
+  };
+
+  test("R16: with JavaScript off both panels show, stacked, and the tabs are plain in-page links", async ({ browser }, testInfo) => {
+    const u = need();
+    const ctx = await browser.newContext({ baseURL: testInfo.project.use.baseURL, javaScriptEnabled: false, viewport: { width: 1440, height: 900 } });
+    try {
+      const page = await ctx.newPage();
+      expect((await page.goto(u))?.status()).toBe(200);
+      const r = await page.evaluate(() => {
+        const panels = Array.from(document.querySelectorAll<HTMLElement>('[role="tabpanel"]'));
+        return {
+          visible: panels.map((p) => p.checkVisibility() && p.getBoundingClientRect().height > 0),
+          stacked: panels.length === 2 && panels[0]!.getBoundingClientRect().bottom <= panels[1]!.getBoundingClientRect().top + 1,
+          hrefs: Array.from(document.querySelectorAll('[role="tab"]')).map((a) => a.getAttribute("href")),
+        };
+      });
+      expect(r.visible, "both panels render").toEqual([true, true]);
+      expect(r.stacked, "Congress above Institutional").toBe(true);
+      expect(r.hrefs).toEqual(["#congress", "#institutional"]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  for (const width of [1440, 390, 360]) {
+    test(`R16/R19/R23 @${width}: one tab panel at a time; the bar wraps, never scrolls sideways; pinned rows keep their dates, owner and receipt`, async ({ browser }, testInfo) => {
+      const u = need();
+      const { ctx, page } = await open(browser, testInfo, width, u);
+      try {
+        await expect(page.locator('.tk-tabs [role="tab"][aria-selected="true"]')).toHaveCount(1, { timeout: 20_000 });
+        const state = await page.evaluate(() => {
+          const bar = document.querySelector<HTMLElement>(".tk-tabs")!;
+          const tabs = Array.from(bar.querySelectorAll<HTMLElement>('[role="tab"]'));
+          return {
+            selected: tabs.map((t) => t.getAttribute("aria-selected")),
+            shown: Array.from(document.querySelectorAll<HTMLElement>('[role="tabpanel"]')).map((p) => p.checkVisibility()),
+            barScrolls: bar.scrollWidth > bar.clientWidth + 1,
+            tabsInside: tabs.every((t) => t.getBoundingClientRect().right <= bar.getBoundingClientRect().right + 1 && t.getBoundingClientRect().left >= bar.getBoundingClientRect().left - 1),
+            page: { sw: document.documentElement.scrollWidth, vw: window.innerWidth },
+            sticky: getComputedStyle(bar).position,
+          };
+        });
+        expect(state.selected, "Congress is selected on load").toEqual(["true", "false"]);
+        expect(state.shown, "only the selected panel shows").toEqual([true, false]);
+        expect(state.barScrolls, "the tab bar wraps rather than scrolls").toBe(false);
+        expect(state.tabsInside, "every tab sits inside the bar").toBe(true);
+        expect(state.page.sw, "the page never scrolls sideways").toBeLessThanOrEqual(state.page.vw + 1);
+        expect(state.sticky).toBe("sticky");
+        // the pinned rows: marked, first, and every honesty cell rendered
+        const pinned = await page.locator("tr.on-signals").evaluateAll((rows) => rows.map((tr) => {
+          const shown = (sel: string) => { const e = tr.querySelector<HTMLElement>(sel); return !!e && e.checkVisibility() && e.getBoundingClientRect().width > 1; };
+          const prev = tr.previousElementSibling;
+          return {
+            first: !prev || prev.classList.contains("on-signals"),
+            mark: shown(".on-signals-mark"),
+            filed: shown("td.c-filed"),
+            traded: shown("td.c-traded"),
+            sideOwner: shown("td.c-side"),
+            receipt: shown("td.c-src a"),
+            txn: !!tr.getAttribute("data-txn"),
+          };
+        }));
+        expect(pinned.length, "the page pins rows").toBeGreaterThan(0);
+        expect(pinned.length).toBeLessThanOrEqual(5);
+        for (const r of pinned) expect(r, "a pinned row keeps its marker, both dates, side and owner, and receipt").toEqual({ first: true, mark: true, filed: true, traded: true, sideOwner: true, receipt: true, txn: true });
+        /* a click switches the panel without moving the page. Playwright's
+           click scrolls its target into view first (on a phone the bar sits
+           below the fold), so the bar is brought into view BEFORE the
+           position is read: what is measured is the binder's own scroll. */
+        await page.locator("#tab-institutional").scrollIntoViewIfNeeded();
+        const before = await page.evaluate(() => window.scrollY);
+        await page.locator("#tab-institutional").click();
+        const after = await page.evaluate(() => ({ y: window.scrollY, hash: location.hash, shown: Array.from(document.querySelectorAll<HTMLElement>('[role="tabpanel"]')).map((p) => p.checkVisibility()) }));
+        expect(after.shown).toEqual([false, true]);
+        expect(after.hash).toBe("#institutional");
+        expect(Math.abs(after.y - before), "no jump to the anchor").toBeLessThanOrEqual(1);
+        const after2 = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(after2, "the Institutional panel never scrolls the page sideways either").toBeLessThanOrEqual(1);
+        // control: a bar that cannot wrap is caught by the same reading
+        await page.addStyleTag({ content: ".tk-tabs { flex-wrap: nowrap !important; overflow-x: auto !important; } .tk-tab { min-width: 2000px !important; }" });
+        expect(await page.evaluate(() => { const b = document.querySelector<HTMLElement>(".tk-tabs")!; return b.scrollWidth > b.clientWidth + 1; }), "control: a non-wrapping bar scrolls sideways").toBe(true);
+      } finally {
+        await ctx.close();
+      }
+    });
+
+    test(`R16/R23 @${width}: a deep link selects the panel that holds its anchor and lands the anchor below the sticky bar`, async ({ browser }, testInfo) => {
+      const u = need();
+      // on load: the binder selects the panel that holds the anchor, and the anchor shows
+      for (const hash of ["#institutional", "#ticker-holders", "#congress"]) {
+        const { ctx, page } = await open(browser, testInfo, width, `${u}${hash}`);
+        try {
+          await expect(page.locator('.tk-tabs [role="tab"][aria-selected="true"]')).toHaveCount(1, { timeout: 20_000 });
+          const r = await page.evaluate((id) => {
+            const el = document.getElementById(id)!;
+            return {
+              visible: el.checkVisibility(),
+              panel: el.closest('[role="tabpanel"]')?.id ?? el.id,
+              selected: document.querySelector('.tk-tabs [role="tab"][aria-selected="true"]')?.getAttribute("aria-controls") ?? null,
+            };
+          }, hash.slice(1));
+          expect(r.visible, `${hash} shows`).toBe(true);
+          expect(r.selected, `${hash}: the selected tab is the panel that holds it`).toBe(r.panel);
+        } finally {
+          await ctx.close();
+        }
+      }
+      /* under a STUCK bar: room is added below the page (a spacer after it),
+         so following a link to an anchor scrolls the page far enough for the
+         bar to stick; the anchor must then sit below the bar, not under it */
+      const { ctx, page } = await open(browser, testInfo, width, u);
+      try {
+        await expect(page.locator('.tk-tabs [role="tab"][aria-selected="true"]')).toHaveCount(1, { timeout: 20_000 });
+        await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", '<div style="height:4000px" aria-hidden="true"></div>'));
+        const land = async (hash: string) => {
+          await page.evaluate((h) => { location.hash = h; }, hash);
+          await page.waitForTimeout(200);
+          return page.evaluate((id) => {
+            const el = document.getElementById(id)!;
+            const bar = document.querySelector<HTMLElement>(".tk-tabs")!.getBoundingClientRect();
+            return { top: el.getBoundingClientRect().top, barBottom: bar.bottom, barTop: bar.top, shown: el.checkVisibility() };
+          }, hash.slice(1));
+        };
+        /* A panel's own anchor (and the holders right under the bar) leaves
+           the bar where it sits, just above; the overlap band, deep in the
+           Institutional panel, scrolls the page past the bar, which sticks.
+           Either way the anchor is below the bar. */
+        for (const hash of ["#ticker-holders", "#congress", "#institutional", "#overlap"]) {
+          const r = await land(hash);
+          expect(r.shown, `${hash} shows`).toBe(true);
+          if (hash === "#overlap") expect(r.barTop, `${hash}: the bar is stuck at the top`).toBeLessThanOrEqual(1);
+          expect(r.top, `${hash} sits below the bar (top ${r.top} ≥ bar bottom ${r.barBottom})`).toBeGreaterThanOrEqual(r.barBottom - 1);
+          await page.evaluate(() => { location.hash = ""; window.scrollTo(0, 0); });
+        }
+        // control: without the scroll margin the same anchor lands under the stuck bar
+        await page.addStyleTag({ content: ".tk-panel, .tk-panel [id] { scroll-margin-top: 0 !important; }" });
+        const under = await land("#overlap");
+        expect(under.barTop).toBeLessThanOrEqual(1);
+        expect(under.top, "control: with no scroll margin the anchor is under the bar").toBeLessThan(under.barBottom - 1);
+      } finally {
+        await ctx.close();
+      }
+    });
+  }
+});
+
