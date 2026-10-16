@@ -456,7 +456,8 @@ PROJECTED_COLUMNS = {
     "transactions": [
         "txn_id", "filing_id", "raw_row", "row_fingerprint", "dup_seq",
         "row_ordinal", "source_row_no", "bioguide_id", "chamber", "owner",
-        "ticker", "asset_name", "asset_type", "side", "transaction_date",
+        "ticker", "exchanged_ticker", "asset_name", "asset_type", "side",
+        "transaction_date",
         "filed_date", "days_to_file", "is_late", "amount_low", "amount_high",
         "amount_label", "cap_gains_over_200", "comment",
         "filing_status", "subholding_of", "location", "flags", "source",

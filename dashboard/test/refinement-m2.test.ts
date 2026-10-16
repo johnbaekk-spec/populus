@@ -74,6 +74,7 @@ function txn(over: Partial<TxnRow> = {}): TxnRow {
     late: 0,
     flags: [],
     doc: "https://efdsearch.senate.gov/x",
+    exchangedTicker: null,
     ...over,
   };
 }

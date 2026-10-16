@@ -24,7 +24,7 @@ from datetime import date
 
 from populus.load import ParsedRow
 
-NORMALIZATION_VERSION = "norm-1.1.0"
+NORMALIZATION_VERSION = "norm-1.2.0"
 
 PARSE_DEFECT_FLAGS = frozenset(
     {
@@ -43,6 +43,9 @@ PARSE_DEFECT_FLAGS = frozenset(
         # The document declares a different transaction total from the rows
         # extracted: retained cells cannot establish the filing's denominator.
         "declared_total_mismatch",
+        # A ticker cell whose token shape no rule reads (not blank/`--`, not
+        # one token, not a two-leg exchange): never joined into one value.
+        "ticker_unparsed",
     }
 )
 SOURCE_FACT_FLAGS = frozenset(
@@ -115,11 +118,75 @@ def normalize_owner(raw: str | None) -> tuple[str | None, frozenset[str]]:
 # --- ticker / asset ----------------------------------------------------------
 
 
+#: The flags the ticker rule owns: the only flags :func:`ticker_legs` emits, and
+#: the only ones the stored-row re-derivation may add or remove.
+TICKER_FLAGS = frozenset({"missing_ticker", "ticker_unparsed"})
+
+_TICKER_PLACEHOLDER = "--"
+
+
+def ticker_legs(
+    raw: str | None, *, exchange: bool
+) -> tuple[str | None, str | None, frozenset[str]]:
+    """``(ticker, exchanged_ticker, flags)`` from one printed ticker cell.
+
+    The rule is decided by the whitespace-token count first, and only then by
+    the ``--`` placeholder:
+
+    - no tokens: NULL + ``missing_ticker``;
+    - one token: a lone ``--`` is NULL + ``missing_ticker``, anything else is
+      that token uppercased;
+    - two tokens on an exchange row: the Senate eFD two-leg cell (exchanged
+      leg, ``<br/>``, received leg). ``ticker`` is the received leg and
+      ``exchanged_ticker`` the exchanged one; a ``--`` leg is NULL, and a
+      ``--`` received leg also flags ``missing_ticker``. There is never a
+      fallback from one leg to the other;
+    - anything else (three or more tokens, or two on a non-exchange row,
+      placeholders included): NULL + ``ticker_unparsed`` — never the joined
+      text.
+
+    Printed legs are taken verbatim (uppercased) with no grammar check, the
+    same rule as a single printed ticker.
+    """
+    tokens = raw.split() if raw is not None else []
+    if not tokens:
+        return None, None, frozenset({"missing_ticker"})
+    if len(tokens) == 1:
+        if tokens[0] == _TICKER_PLACEHOLDER:
+            return None, None, frozenset({"missing_ticker"})
+        return tokens[0].upper(), None, frozenset()
+    if exchange and len(tokens) == 2:
+        exchanged, received = tokens
+        exchanged_ticker = (
+            None if exchanged == _TICKER_PLACEHOLDER else exchanged.upper()
+        )
+        if received == _TICKER_PLACEHOLDER:
+            return None, exchanged_ticker, frozenset({"missing_ticker"})
+        return received.upper(), exchanged_ticker, frozenset()
+    return None, None, frozenset({"ticker_unparsed"})
+
+
 def normalize_ticker(raw: str | None) -> tuple[str | None, frozenset[str]]:
-    """Uppercase the printed ticker; ``--``/blank/absent → NULL + flag."""
-    if raw is None or not raw.strip() or raw.strip() == "--":
-        return None, frozenset({"missing_ticker"})
-    return raw.strip().upper(), frozenset()
+    """One ticker cell with no exchange legs: ``(ticker, flags)``.
+
+    ``--``/blank/absent is NULL + ``missing_ticker``; one token is uppercased;
+    any multi-token cell is NULL + ``ticker_unparsed`` (:func:`ticker_legs`).
+    """
+    ticker, _exchanged, flags = ticker_legs(raw, exchange=False)
+    return ticker, flags
+
+
+def ticker_from_raw_row(
+    raw_row: Mapping[str, str | None],
+) -> tuple[str | None, str | None, frozenset[str]]:
+    """``(ticker, exchanged_ticker, flags)`` from a stored or parsed ``raw_row``.
+
+    The one composition both paths call — :func:`normalize_row` at ingest and
+    the stored-row re-derivation — so the leg rule cannot fork: the side
+    decides whether the cell may carry two legs.
+    """
+    side, _side_flags = normalize_side(raw_row.get("side"))
+    return ticker_legs(raw_row.get("ticker"), exchange=side == "exchange")
 
 
 _ASSET_TYPE_TAG = re.compile(r"\[([A-Za-z]{2})\]")
@@ -323,7 +390,7 @@ def normalize_row(
     behavior exactly (asset name and ``[XX]`` type tag from the raw cell).
     """
     owner, owner_flags = normalize_owner(raw_row.get("owner"))
-    ticker, ticker_flags = normalize_ticker(raw_row.get("ticker"))
+    ticker, exchanged_ticker, ticker_flags = ticker_from_raw_row(raw_row)
     asset_source = (
         asset_display_cell
         if asset_display_cell is not None
@@ -360,6 +427,7 @@ def normalize_row(
         side=side,
         owner=owner,
         ticker=ticker,
+        exchanged_ticker=exchanged_ticker,
         transaction_date=transaction_date,
         days_to_file=days_to_file,
         is_late=is_late,

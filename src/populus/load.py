@@ -21,19 +21,27 @@ from populus.canonical import assign_identity, canonical_json
 
 
 SUBLINE_COLUMNS = ("filing_status", "subholding_of", "location")
+#: The Senate two-leg exchange cell's given-up leg (``ticker`` carries the
+#: received leg). Added after the first published builds, so existing stores
+#: gain it here; fresh stores get it from ``schema.sql``.
+EXCHANGE_COLUMNS = ("exchanged_ticker",)
+#: Every nullable TEXT column added to ``transactions`` after §9.4 was first
+#: published, in the order they were added.
+ADDITIVE_TRANSACTION_COLUMNS = SUBLINE_COLUMNS + EXCHANGE_COLUMNS
 
 
-def ensure_subline_columns(conn: sqlite3.Connection) -> None:
-    """Add the M1-E per-row sub-line columns when absent (idempotent).
+def ensure_transaction_columns(conn: sqlite3.Connection) -> None:
+    """Add the additive ``transactions`` columns when absent (idempotent).
 
-    Purely additive: three nullable TEXT columns on ``transactions``, so an
-    existing database gains them without a rewrite and every stored row keeps
-    its ``txn_id`` — the columns are outside ``raw_row``, which is the identity
+    The M1-E per-row sub-line columns and the exchanged leg of a Senate
+    two-leg exchange: purely additive nullable TEXT columns, so an existing
+    database gains them without a rewrite and every stored row keeps its
+    ``txn_id`` — the columns are outside ``raw_row``, which is the identity
     fingerprint's input, exactly so that adding them cannot churn identity.
 
     ``ALTER TABLE ... ADD COLUMN`` is guarded by ``PRAGMA table_info`` rather
     than by catching the duplicate-column error, so a genuine DDL failure is
-    never swallowed as "already applied".
+    never swallowed as "already applied". Column names are module constants.
     """
     if not conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'"
@@ -42,7 +50,7 @@ def ensure_subline_columns(conn: sqlite3.Connection) -> None:
     existing = {
         row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
     }
-    for column in SUBLINE_COLUMNS:
+    for column in ADDITIVE_TRANSACTION_COLUMNS:
         if column not in existing:
             conn.execute(f"ALTER TABLE transactions ADD COLUMN {column} TEXT")
 
@@ -80,6 +88,10 @@ class ParsedRow:
     source_row_no: int | None = None
     owner: str | None = None
     ticker: str | None = None
+    # A Senate two-leg exchange's given-up leg (``ticker`` is the received
+    # leg); NULL for every other row and when eFD prints ``--``. Outside
+    # raw_row on purpose, like the M1-E sub-lines below.
+    exchanged_ticker: str | None = None
     asset_type: str | None = None
     transaction_date: str | None = None
     days_to_file: int | None = None
@@ -585,13 +597,13 @@ def _insert_transaction_rows(
         INSERT INTO transactions (
           txn_id, filing_id, raw_row, row_fingerprint, dup_seq,
           row_ordinal, source_row_no, bioguide_id, chamber, owner,
-          ticker, asset_name, asset_type, side, transaction_date,
-          filed_date, days_to_file, is_late, amount_low, amount_high,
-          amount_label, cap_gains_over_200, comment,
+          ticker, exchanged_ticker, asset_name, asset_type, side,
+          transaction_date, filed_date, days_to_file, is_late, amount_low,
+          amount_high, amount_label, cap_gains_over_200, comment,
           filing_status, subholding_of, location, flags, source,
           license_id, kadoa_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -606,6 +618,7 @@ def _insert_transaction_rows(
                 chamber,
                 row.owner,
                 row.ticker,
+                row.exchanged_ticker,
                 row.asset_name,
                 row.asset_type,
                 row.side,

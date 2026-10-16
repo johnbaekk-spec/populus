@@ -30,6 +30,7 @@
 import { test, expect, type Browser, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { assetLineHtml } from "../../src/lib/format.ts";
 import {
   installProbe,
   themeBackgroundProblem,
@@ -1640,6 +1641,120 @@ test.describe("M3: route properties", () => {
       await expect(page.locator("#feed-section .asset-line").first()).toBeAttached({ timeout: 20_000 });
       const r = await qualifierProblems(page, true);
       expect(r.problems.length, "control: qualifiers inside the ellipsis are clipped").toBeGreaterThan(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+});
+
+/* ======================================================================
+   Senate exchange legs (T7b, R7): the exchanged leg of a two-leg exchange is
+   its own flex item on the asset line, OUTSIDE the ellipsis, so a truncated
+   asset name gives way and the leg never does — on the /congress/ ledger and
+   on a member page's disclosure table, at 1440 and 390. Data-independent: the
+   corpus's first rows need not carry a non-NULL leg, so the REAL shared
+   renderer (`assetLineHtml`) renders a synthetic two-leg row — LSXMK, the
+   longest real exchanged leg, with a spouse owner — into a live asset cell,
+   whose text is then lengthened so it MUST truncate (asserted). Control: the
+   leg moved inside the truncating text is caught. A real leg on the built
+   page, when there is one, is measured the same way.
+   ====================================================================== */
+const LEG_ROW = {
+  asset: "Liberty Media Corporation - Series C Liberty SiriusXM Common Stock (Exchanged) Sirius XM Holdings Inc. - Common Stock (Received)",
+  assetType: "Stock",
+  ticker: "SIRI",
+  side: "exchange",
+  owner: "spouse",
+  txnId: "t7b-leg",
+  exchangedTicker: "LSXMK",
+} as const;
+
+const LEG_SURFACES = [
+  { id: "feed", path: "/congress/", cell: "#feed-section td.cell-asset", html: assetLineHtml(LEG_ROW, { qualifiers: true }) },
+  { id: "member", path: "/congress/members/M001193/", cell: "td.c-asset", html: assetLineHtml(LEG_ROW) },
+] as const;
+
+/** Measure one `.exchanged-leg`: a box, inside its cell, clear of the
+    truncating text, and unclipped at both ends. With `html`, the line is first
+    rendered into the first visible `cell` and its text lengthened. */
+async function exchangedLegProblems(
+  page: Page,
+  opts: { cell: string; html?: string; plantInside?: boolean },
+): Promise<{ found: boolean; truncated: boolean; problems: string[] }> {
+  return page.evaluate(({ cell: sel, html, inside }) => {
+    let line: HTMLElement | null;
+    if (html !== undefined) {
+      const cell = [...document.querySelectorAll<HTMLElement>(sel)].find((c) => c.checkVisibility());
+      if (!cell) return { found: false, truncated: false, problems: [`no visible asset cell (${sel})`] };
+      cell.innerHTML = html;
+      line = cell.querySelector<HTMLElement>(".asset-line");
+    } else {
+      line = [...document.querySelectorAll<HTMLElement>(".asset-line")].find(
+        (l) => l.querySelector(":scope > .exchanged-leg") && l.checkVisibility(),
+      ) ?? null;
+      if (!line) return { found: false, truncated: false, problems: [] };
+    }
+    if (!line) return { found: false, truncated: false, problems: ["the rendered cell holds no .asset-line"] };
+    line.scrollIntoView({ block: "center", inline: "nearest" });
+    const text = line.querySelector<HTMLElement>(":scope > .asset-text")!;
+    const box = text.querySelector<HTMLElement>(".note-label") ?? text;
+    if (html !== undefined) {
+      const label = box.querySelector(".filed-name") ?? box;
+      label.textContent = `${label.textContent} ${"Very Long Issuer Name Corporation ".repeat(8)}`.trim();
+    }
+    const leg = line.querySelector<HTMLElement>(":scope > .exchanged-leg");
+    if (!leg) return { found: false, truncated: false, problems: ["no .exchanged-leg on the line"] };
+    /* the pre-fix structure: the leg in the SAME truncating inline run */
+    if (inside) box.append(" ", leg);
+    const cell = line.closest("td")!;
+    const cr = cell.getBoundingClientRect();
+    const lr = leg.getBoundingClientRect();
+    const problems: string[] = [];
+    const truncated = box.scrollWidth > box.clientWidth + 1;
+    if (lr.width === 0) problems.push("the exchanged leg has no box");
+    if (lr.left < cr.left - 0.5 || lr.right > cr.right + 0.5) problems.push(`the exchanged leg (${lr.left.toFixed(1)}–${lr.right.toFixed(1)}) reaches past its cell (${cr.left.toFixed(1)}–${cr.right.toFixed(1)})`);
+    const tr = text.getBoundingClientRect();
+    if (!inside && lr.left < tr.right - 0.5) problems.push("the exchanged leg overlaps the truncating text");
+    for (const [x, where] of [[lr.left + 1, "start"], [lr.right - 1, "end"]] as const) {
+      const e = document.elementFromPoint(x, lr.top + lr.height / 2);
+      if (!e || !(e === leg || leg.contains(e))) problems.push(`the exchanged leg's ${where} is clipped or covered (${e ? e.tagName.toLowerCase() + "." + [...e.classList].join(".") : "nothing"})`);
+    }
+    return { found: true, truncated, problems };
+  }, { cell: opts.cell, html: opts.html, inside: opts.plantInside ?? false });
+}
+
+test.describe("T7b: the exchanged leg stays visible in a truncated asset cell", () => {
+  test.beforeEach(({}, testInfo) => {
+    test.skip(!!testInfo.project.use.hasTouch, "fine-pointer route properties; the touch project runs the probe checks");
+  });
+
+  for (const surface of LEG_SURFACES) {
+    for (const width of [1440, 390] as const) {
+      test(`T7b: ${surface.id} @${width}`, async ({ browser }, testInfo) => {
+        const { ctx, page } = await open(browser, testInfo, width, surface.path);
+        try {
+          await expect(page.locator(surface.cell).first()).toBeAttached({ timeout: 20_000 });
+          const real = await exchangedLegProblems(page, { cell: surface.cell });
+          if (real.found) expect(real.problems, `${surface.path} @${width}: a real exchanged leg`).toEqual([]);
+          else testInfo.annotations.push({ type: "T7b", description: `${surface.path}: no real exchanged leg on this build's page` });
+          const r = await exchangedLegProblems(page, { cell: surface.cell, html: surface.html });
+          expect(r.found, "the shared renderer emitted the leg").toBe(true);
+          expect(r.truncated, "the planted asset text truncates (the check measures a truncated cell)").toBe(true);
+          expect(r.problems, `${surface.path} @${width}`).toEqual([]);
+        } finally {
+          await ctx.close();
+        }
+      });
+    }
+  }
+
+  test("T7b control: the leg inside the truncating text (the pre-fix structure) is caught @1440", async ({ browser }, testInfo) => {
+    const surface = LEG_SURFACES[0];
+    const { ctx, page } = await open(browser, testInfo, 1440, surface.path);
+    try {
+      await expect(page.locator(surface.cell).first()).toBeAttached({ timeout: 20_000 });
+      const r = await exchangedLegProblems(page, { cell: surface.cell, html: surface.html, plantInside: true });
+      expect(r.problems.length, "control: a leg inside the ellipsis is clipped").toBeGreaterThan(0);
     } finally {
       await ctx.close();
     }

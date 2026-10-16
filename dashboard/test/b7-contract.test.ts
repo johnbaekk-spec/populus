@@ -53,6 +53,7 @@ function txn(over: Partial<TxnRow> = {}): TxnRow {
     late: 0,
     flags: [],
     doc: "https://efdsearch.senate.gov/x",
+    exchangedTicker: null,
     ...over,
   };
 }
@@ -67,8 +68,9 @@ test("B-7: TXN_COLS carries asset + assetType and round-trips them", () => {
   assert.equal(back.ticker, null);
 });
 
-test("B-7: DATASET_VERSION is 2 and version mismatch is refused", () => {
-  assert.equal(DATASET_VERSION, 2);
+test("B-7: DATASET_VERSION is 3 and version mismatch is refused", () => {
+  // 2 → 3: the Senate exchange legs appended `exchangedTicker` to TXN_COLS.
+  assert.equal(DATASET_VERSION, 3);
   // A v1 (pre-B-7) payload must be refused, never half-read with missing cols.
   const stale = { v: 1, kind: "m", t: [], p: [], meta: {} };
   assert.equal(classifyResponse(200, stale).outcome, "version_mismatch");

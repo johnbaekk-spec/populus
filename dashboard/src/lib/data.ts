@@ -682,6 +682,20 @@ export function countWithheldDisclosureRows(dbPath: string): number {
   }
 }
 
+/** The select expression for a Senate exchange's given-up leg. Congress schema
+    1.1 added `transactions.exchanged_ticker`; schema_version is MAJOR.MINOR and
+    a reader accepts the same MAJOR (ARCHITECTURE.md §5.5), so a 1.0 store — an
+    older release, such as the newest local release the holders preview and
+    the fixture builds read — has no such column and reads every leg as NULL,
+    exactly what a 1.1 store holds for a row without one. Absence is decided by
+    the table's own column list, never by catching a query error. */
+export function exchangedTickerSelect(db: Pick<DatabaseSync, "prepare">): string {
+  const columns = db.prepare("PRAGMA table_info(transactions)").all() as { name: string }[];
+  return columns.some((c) => c.name === "exchanged_ticker")
+    ? "t.exchanged_ticker"
+    : "NULL AS exchanged_ticker";
+}
+
 function loadRows(dbPath: string): {
   txns: TxnRow[];
   paper: PaperRow[];
@@ -692,7 +706,7 @@ function loadRows(dbPath: string): {
     const txnRows = db
       .prepare(
         `SELECT t.txn_id, t.filed_date, t.transaction_date, t.bioguide_id, t.chamber,
-                t.ticker, t.asset_name, t.asset_type, t.side, t.owner,
+                t.ticker, ${exchangedTickerSelect(db)}, t.asset_name, t.asset_type, t.side, t.owner,
                 t.amount_low, t.amount_high,
                 t.days_to_file, t.is_late, t.flags,
                 f.doc_url, f.filer_name_raw,
@@ -719,6 +733,9 @@ function loadRows(dbPath: string): {
       // so a "\n   AMCR"-style source value can never mint a second entity or
       // a whitespace URL slug.
       ticker: normalizeTicker(r.ticker == null ? null : String(r.ticker)),
+      // congress schema 1.1: a Senate two-leg exchange's given-up leg (the
+      // producer's `exchanged_ticker`), trimmed by the same load-boundary gate
+      exchangedTicker: normalizeTicker(r.exchanged_ticker == null ? null : String(r.exchanged_ticker)),
       asset: r.asset_name == null ? null : String(r.asset_name),
       assetType: r.asset_type == null ? null : String(r.asset_type),
       side: String(r.side) as TxnRow["side"],

@@ -185,7 +185,7 @@ def ingest(
             raise click.UsageError(f"{option} must be MM/DD/YYYY (got {value!r})")
     if job == "congress-house":
         from populus.amendments import ensure_views
-        from populus.load import ensure_subline_columns
+        from populus.load import ensure_transaction_columns
         from populus.ingest import house
 
         if db_path is None:
@@ -203,7 +203,7 @@ def ingest(
             # idempotent view DDL here means a pre-view database gains it on
             # first use rather than failing at summary time.
             ensure_views(conn)
-            ensure_subline_columns(conn)
+            ensure_transaction_columns(conn)
             report = house.run_house_ingest(
                 conn,
                 years=years,
@@ -224,7 +224,7 @@ def ingest(
             ctx.exit(1)
     elif job == "congress-senate":
         from populus.amendments import ensure_views
-        from populus.load import ensure_subline_columns
+        from populus.load import ensure_transaction_columns
         from populus.ingest import senate
 
         if db_path is None:
@@ -243,7 +243,7 @@ def ingest(
         conn = connect(db_path)
         try:
             ensure_views(conn)
-            ensure_subline_columns(conn)
+            ensure_transaction_columns(conn)
             report = senate.run_senate_ingest(
                 conn,
                 raw_root=raw_root if raw_root is not None else from_cache,
@@ -269,7 +269,7 @@ def ingest(
     elif job == "congress-backfill":
         from populus import backfill
         from populus.amendments import ensure_views
-        from populus.load import ensure_subline_columns
+        from populus.load import ensure_transaction_columns
 
         if db_path is None:
             raise click.UsageError("--db is required for ingest congress-backfill")
@@ -291,7 +291,7 @@ def ingest(
         conn = connect(db_path)
         try:
             ensure_views(conn)
-            ensure_subline_columns(conn)
+            ensure_transaction_columns(conn)
             report = backfill.run_backfill_ingest(
                 conn,
                 trades_path=trades_path,
@@ -306,7 +306,7 @@ def ingest(
             ctx.exit(1)
     elif job == "inst-13f":
         from populus.amendments import ensure_views
-        from populus.load import ensure_subline_columns
+        from populus.load import ensure_transaction_columns
         from populus.ingest import inst13f
         from populus.load import ensure_inst_schema
         from populus.net.sec_client import HttpxSecTransport, SecClient, sec_contact
@@ -334,7 +334,7 @@ def ingest(
             # views on first M2 use.
             ensure_inst_schema(conn)
             ensure_views(conn)
-            ensure_subline_columns(conn)
+            ensure_transaction_columns(conn)
             common = dict(
                 run_id=f"inst-{uuid.uuid4()}",
                 now=_utc_now,
@@ -368,7 +368,7 @@ def ingest(
     else:  # members
         from populus import members
         from populus.amendments import ensure_views
-        from populus.load import ensure_subline_columns
+        from populus.load import ensure_transaction_columns
 
         if db_path is None:
             raise click.UsageError("--db is required for ingest members")
@@ -392,7 +392,7 @@ def ingest(
         conn = connect(db_path)
         try:
             ensure_views(conn)
-            ensure_subline_columns(conn)
+            ensure_transaction_columns(conn)
             run_report = members.run_members_ingest(
                 conn,
                 legislators_dir=from_cache,
@@ -743,6 +743,9 @@ def reparse(
     )
     conn = connect(db_path)
     try:
+        from populus.load import ensure_transaction_columns
+
+        ensure_transaction_columns(conn)
         if job == "congress-house":
             report = house.reparse_house(conn, raw_root=raw_root, selector=selector)
             summary = house.format_reparse_summary(report)
@@ -903,7 +906,7 @@ def seed_corpus(
     what produced the earlier corpus-loss defects.
     """
     from populus.amendments import ensure_views
-    from populus.load import ensure_subline_columns
+    from populus.load import ensure_transaction_columns
     from populus.publish import seed as seedmod
 
     # An unset repository variable arrives as the EMPTY STRING, not an absent
@@ -947,7 +950,7 @@ def seed_corpus(
         conn = connect(db_path)
         try:
             ensure_views(conn)
-            ensure_subline_columns(conn)
+            ensure_transaction_columns(conn)
             cleared = seedmod.clear_inline_inst_data(conn)
             document = seedmod.write_seed_counts(
                 conn,

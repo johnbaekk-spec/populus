@@ -24,7 +24,12 @@ from populus.publish.digests import LOGICAL_PROJECTION_VERSION
 from populus.publish.pointer import parse_rfc3339z
 
 MODULE = "congress"
-MANIFEST_SCHEMA_VERSION = "1.0"
+# MAJOR.MINOR (ARCHITECTURE.md §5.5 compatibility policy: clients accept the
+# same MAJOR). 1.1: `transactions.exchanged_ticker` (and the matching
+# `exchanged_ticker` key of feed.json and the per-entity slices) is an
+# additive, backward-compatible change, so MINOR advances — as the inst
+# schema's observable 1.0 → 1.1 change did.
+MANIFEST_SCHEMA_VERSION = "1.1"
 CLIENT_COMPAT = ">=0.0.1,<1"
 DB_ARTIFACT = "congress.db"
 FEED_ARTIFACT = "congress/feed.json"

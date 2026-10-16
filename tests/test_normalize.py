@@ -12,6 +12,7 @@ from populus.normalize import (
     NORMALIZATION_VERSION,
     PARSE_DEFECT_FLAGS,
     SOURCE_FACT_FLAGS,
+    TICKER_FLAGS,
     UNPARSED_ASSET_SENTINEL,
     has_parse_defect,
     normalize_amount,
@@ -23,6 +24,8 @@ from populus.normalize import (
     normalize_row,
     normalize_side,
     normalize_ticker,
+    ticker_from_raw_row,
+    ticker_legs,
 )
 
 # --- flag taxonomy (R21) -----------------------------------------------------
@@ -45,6 +48,8 @@ def test_known_flags_exact_membership():
         "text_fallback",
         "source_row_no_unparsed",
         "declared_total_mismatch",
+        # Senate exchange legs: a ticker cell no token rule reads.
+        "ticker_unparsed",
     }
     assert SOURCE_FACT_FLAGS == {
         "missing_ticker",
@@ -148,6 +153,135 @@ def test_ticker_missing_forms(raw):
     ticker, flags = normalize_ticker(raw)
     assert ticker is None
     assert flags == {"missing_ticker"}
+
+
+# --- Senate exchange legs ------------------------------------------------------
+
+# The exact `raw_row` the live Wyden exchange row stores (senate:5ecc9b5c…,
+# build 20260817.1): the eFD ticker cell prints `--` (BERY is not linked), a
+# <br/>, then the AMCR link, and text_content() keeps every newline and the
+# indentation between them. The pre-fix normalizer stripped only the outer
+# whitespace and published `--` + newlines + spaces + `AMCR` as the ticker.
+WYDEN_TICKER_CELL = (
+    "\n" + " " * 40 + "\n" + " " * 44 + "--\n" + " " * 40 + "\n" + " " * 40 + "\n"
+    + " " * 44 + "\n" + " " * 44 + "AMCR\n" + " " * 40 + "\n" + " " * 36
+)
+WYDEN_RAW_ROW = {
+    "amount_label": "$100,001 - $250,000",
+    "asset_name": "BERY - Berry Global Group, Inc. (Exchanged) Amcor plc Ordinary Shares (Received)",
+    "comment": "--",
+    "owner": "Spouse",
+    "side": "Exchange",
+    "ticker": WYDEN_TICKER_CELL,
+    "transaction_date": "04/30/2025",
+}
+# The Hagerty exchange (senate:f60cfac8…): both legs linked, ETRN then EQT.
+HAGERTY_TICKER_CELL = WYDEN_TICKER_CELL.replace("--", "ETRN").replace("AMCR", "EQT")
+
+
+def test_the_live_wyden_cell_shape_is_the_one_measured():
+    # The constant really is the stored shape: `--` and AMCR on separate
+    # lines, with interior newlines and runs of spaces.
+    assert WYDEN_TICKER_CELL.split() == ["--", "AMCR"]
+    assert WYDEN_TICKER_CELL.strip() != "AMCR" and "\n" in WYDEN_TICKER_CELL.strip()
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # received leg is `ticker`; a `--` exchanged leg is NULL, unflagged
+        (WYDEN_TICKER_CELL, ("AMCR", None, frozenset())),
+        # both legs linked
+        (HAGERTY_TICKER_CELL, ("EQT", "ETRN", frozenset())),
+        ("etrn eqt", ("EQT", "ETRN", frozenset())),
+        # a `--` received leg: no ticker (flagged), the exchanged leg kept,
+        # never a fallback to it
+        ("BERY --", (None, "BERY", frozenset({"missing_ticker"}))),
+        # both legs unlinked
+        ("-- --", (None, None, frozenset({"missing_ticker"}))),
+        # the caret symbols eFD prints stay verbatim (owner: preserved)
+        ("MPLX ^MWE", ("^MWE", "MPLX", frozenset())),
+        # one-token exchange cells keep today's result, no exchanged leg
+        ("ANCX", ("ANCX", None, frozenset())),
+        ("--", (None, None, frozenset({"missing_ticker"}))),
+        (None, (None, None, frozenset({"missing_ticker"}))),
+        # three tokens: no rule reads it — never the joined text
+        ("-- -- --", (None, None, frozenset({"ticker_unparsed"}))),
+        ("A B C", (None, None, frozenset({"ticker_unparsed"}))),
+    ],
+)
+def test_exchange_ticker_legs(raw, expected):
+    assert ticker_legs(raw, exchange=True) == expected
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("rds.b", ("RDS.B", None, frozenset())),
+        ("  WMB  ", ("WMB", None, frozenset())),
+        ("--", (None, None, frozenset({"missing_ticker"}))),
+        ("   ", (None, None, frozenset({"missing_ticker"}))),
+        # two tokens are an exchange shape only: on any other row, even two
+        # placeholders, the cell is unreadable
+        ("AB CD", (None, None, frozenset({"ticker_unparsed"}))),
+        ("-- --", (None, None, frozenset({"ticker_unparsed"}))),
+        (WYDEN_TICKER_CELL, (None, None, frozenset({"ticker_unparsed"}))),
+    ],
+)
+def test_non_exchange_ticker_legs(raw, expected):
+    assert ticker_legs(raw, exchange=False) == expected
+    # the one-cell contract (kadoa backfill) is the same rule without the leg
+    assert normalize_ticker(raw) == (expected[0], expected[2])
+
+
+def test_ticker_flags_are_the_rules_own_and_partitioned():
+    assert TICKER_FLAGS == {"missing_ticker", "ticker_unparsed"}
+    assert "ticker_unparsed" in PARSE_DEFECT_FLAGS
+    assert "missing_ticker" in SOURCE_FACT_FLAGS
+    assert has_parse_defect(["ticker_unparsed"]) is True
+
+
+def test_ticker_from_raw_row_reads_the_side_from_the_row():
+    assert ticker_from_raw_row(WYDEN_RAW_ROW) == ("AMCR", None, frozenset())
+    # the same cell on a purchase row is not an exchange: unreadable
+    assert ticker_from_raw_row(dict(WYDEN_RAW_ROW, side="Purchase")) == (
+        None,
+        None,
+        frozenset({"ticker_unparsed"}),
+    )
+    # the House exchange code reads as an exchange too
+    assert ticker_from_raw_row({"ticker": "CBS", "side": "E"}) == ("CBS", None, frozenset())
+    assert ticker_from_raw_row({}) == (None, None, frozenset({"missing_ticker"}))
+
+
+def test_normalize_row_on_the_live_wyden_row():
+    row = normalize_row(
+        WYDEN_RAW_ROW,
+        filed_date="2026-08-08",
+        cap_gains_cell=None,
+        cap_gains_column_present=False,
+        row_ordinal=1,
+        source_row_no=1,
+        asset_display_cell=WYDEN_RAW_ROW["asset_name"],
+        asset_type_cell="Stock",
+    )
+    assert row.raw_row == WYDEN_RAW_ROW  # lossless: identity input untouched
+    assert row.ticker == "AMCR"
+    assert row.exchanged_ticker is None
+    assert row.side == "exchange"
+    assert row.flags == []
+
+
+def test_normalize_row_carries_both_legs():
+    row = normalize_row(
+        dict(WYDEN_RAW_ROW, ticker=HAGERTY_TICKER_CELL),
+        filed_date="2025-08-11",
+        cap_gains_cell=None,
+        cap_gains_column_present=False,
+        row_ordinal=1,
+        source_row_no=1,
+    )
+    assert (row.ticker, row.exchanged_ticker, row.flags) == ("EQT", "ETRN", [])
 
 
 # --- asset (LD18) ------------------------------------------------------------
@@ -414,4 +548,5 @@ def test_normalize_row_senate_blank_type_cell_falls_back_to_tag():
 
 
 def test_normalization_version_is_stamped_constant():
-    assert NORMALIZATION_VERSION == "norm-1.1.0"
+    # norm-1.2.0: the Senate two-leg exchange ticker rule and exchanged_ticker.
+    assert NORMALIZATION_VERSION == "norm-1.2.0"
