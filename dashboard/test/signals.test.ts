@@ -869,3 +869,70 @@ test("T2.1: s3WindowRows reproduces every cluster's member count and receipts (f
     assert.deepEqual(new Set(w.map((r) => r.doc)), new Set(s.receipts), `${s.entities.ticker} receipts`);
   }
 });
+
+/* Senate exchange legs (D2 correction): the stored-row re-derivation turns the
+   live Wyden row's ticker from `--` + whitespace + `AMCR` into `AMCR`, keeping
+   its txnId. The fix relies on D-1c alone — no artifact edit: a txnId-keyed
+   kind (S-6) keeps its id, first-seen build and status with the corrected
+   ticker; the pair-keyed S-2 id (bioguide NUL ticker) leaves the view as a
+   tombstone that carries the old string verbatim, and the corrected pair
+   mints a new active id. Measured on the live rows with the same engine:
+   s6-late-large:32aa0975024978e5 kept, s2-first:4926f726211a32f8 superseded,
+   s2-first:b019bbc82e0ab61e new. */
+test("Senate exchange legs: a corrected ticker keeps a txnId-keyed signal and supersedes a pair-keyed one", () => {
+  const broken = "--\n" + " ".repeat(40) + "\n" + " ".repeat(40) + "\n" + " ".repeat(44) + "\n" + " ".repeat(44) + "AMCR";
+  const exchange = (ticker: string): TxnRow =>
+    idRow("senate:5ecc9b5c-07c1-4ec1-bd4a-2db759eff299:11c6d72045e828c575da77981cbc388d", {
+      bioguide: "W000779",
+      name: "Ron Wyden",
+      ticker,
+      side: "exchange",
+      owner: "spouse",
+      late: 1,
+      lag: 465,
+      low: 100001,
+      high: 250000,
+      filed: "2026-08-08",
+      traded: "2025-04-30",
+      asset: "BERY - Berry Global Group, Inc. (Exchanged) Amcor plc Ordinary Shares (Received)",
+      assetType: "Stock",
+    });
+  const base = idCorpusInputs();
+  const a = buildSignalArtifact({ ...base, txns: [...base.txns, exchange(broken)] });
+  const b = buildSignalArtifact({
+    ...base,
+    txns: [...base.txns, exchange("AMCR")],
+    buildId: "20260813.1",
+    generatedAtDate: "2026-08-13",
+    generatedAt: "2026-08-13 00:00 UTC",
+    priorArtifact: JSON.parse(JSON.stringify(a)),
+  });
+  const wyden = (art: typeof a, kind: string) =>
+    art.signals.filter((s) => s.kind === kind && s.entities.bioguide === "W000779");
+
+  const [s6a] = wyden(a, "s6-late-large");
+  assert.ok(s6a, "S-6 fires on the broken row");
+  assert.equal(s6a.entities.ticker, broken);
+  const [s6b] = wyden(b, "s6-late-large");
+  assert.equal(s6b!.id, s6a.id, "txnId-keyed: the id survives the correction");
+  assert.equal(s6b!.status, "active");
+  assert.equal(s6b!.entities.ticker, "AMCR");
+  assert.equal(s6b!.firstSeenBuild, a.buildId, "first-seen carries forward by id");
+
+  const [s2a] = wyden(a, "s2-first");
+  assert.ok(s2a, "S-2 fires on the broken row");
+  const s2b = wyden(b, "s2-first");
+  const tomb = s2b.find((s) => s.id === s2a.id)!;
+  assert.equal(tomb.status, "superseded");
+  assert.equal(tomb.supersededInBuild, "20260813.1");
+  assert.equal(tomb.entities.ticker, broken, "a tombstone is final history, carried verbatim");
+  const fresh = s2b.filter((s) => s.status === "active");
+  assert.equal(fresh.length, 1);
+  assert.notEqual(fresh[0]!.id, s2a.id, "pair-keyed: the corrected pair is a new identity");
+  assert.equal(fresh[0]!.entities.ticker, "AMCR");
+  assert.equal(fresh[0]!.firstSeenBuild, "20260813.1");
+  // nothing else in the artifact moved
+  const rest = (art: typeof a) =>
+    art.signals.filter((s) => s.entities.bioguide !== "W000779").map((s) => `${s.id}|${s.status}`).sort();
+  assert.deepEqual(rest(b), rest(a));
+});

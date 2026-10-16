@@ -61,6 +61,7 @@ from populus.inst_serving import (
     publication_periods,
     write_serving_db,
 )
+from populus.load import ensure_transaction_columns
 from populus.manager_registry import load_manager_registry
 from populus.normalize_inst import NORMALIZATION_VERSION as INST_NORMALIZATION_VERSION
 from populus.publish import atomic_write_bytes
@@ -123,6 +124,9 @@ _FEED_COLUMNS = (
     "chamber",
     "owner",
     "ticker",
+    # A Senate two-leg exchange's given-up leg (`ticker` is the received leg);
+    # additive in congress schema 1.1.
+    "exchanged_ticker",
     "asset_name",
     "asset_type",
     "side",
@@ -2699,6 +2703,9 @@ def stage_build(
     source = connect(str(db_path))
     try:
         ensure_views(source)
+        # The published snapshot must carry the congress 1.1 transactions
+        # columns its manifest declares (schema_version 1.1, projection 3).
+        ensure_transaction_columns(source)
         destination = sqlite3.connect(str(snapshot_path))
         try:
             source.backup(destination)

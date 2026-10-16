@@ -421,7 +421,7 @@ table:is(.etable, .feed-table.reference-feed) {
   white-space: nowrap;
   text-align: left;
 }
-.asset-line > :is(.asset-sep, .owner-note) {
+.asset-line > :is(.asset-sep, .owner-note, .exchanged-leg) {
   flex: none;
   white-space: nowrap;
 }

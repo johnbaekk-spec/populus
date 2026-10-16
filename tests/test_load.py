@@ -10,10 +10,13 @@ from types import MappingProxyType
 import pytest
 
 from populus.canonical import canonical_json
+from populus.db import connect
 from populus.load import (
+    ADDITIVE_TRANSACTION_COLUMNS,
     ParsedRow,
     LoadResult,
     UnknownFilingError,
+    ensure_transaction_columns,
     load_filing,
     upsert_filing,
 )
@@ -101,6 +104,7 @@ def test_every_parsed_row_column_round_trips(initialized_db, make_filing):
         source_row_no=13,
         owner="spouse",
         ticker="ZQXW",
+        exchanged_ticker="XWQZ",
         asset_type="corporate_bond",
         transaction_date="2025-11-30",
         days_to_file=99,
@@ -116,7 +120,8 @@ def test_every_parsed_row_column_round_trips(initialized_db, make_filing):
     result = load_filing(conn, fid, [row], **VERSIONS)
 
     stored = conn.execute(
-        "SELECT raw_row, row_ordinal, source_row_no, owner, ticker, asset_name,"
+        "SELECT raw_row, row_ordinal, source_row_no, owner, ticker,"
+        " exchanged_ticker, asset_name,"
         " asset_type, side, transaction_date, days_to_file, is_late, amount_low,"
         " amount_high, amount_label, cap_gains_over_200, comment, flags, kadoa_id"
         " FROM transactions WHERE txn_id = ?",
@@ -128,6 +133,7 @@ def test_every_parsed_row_column_round_trips(initialized_db, make_filing):
         13,
         "spouse",
         "ZQXW",
+        "XWQZ",
         "Sentinel Asset Name",
         "corporate_bond",
         "sale_partial",
@@ -445,3 +451,59 @@ def test_upsert_failed_retry_preserves_prior_state(initialized_db, make_row):
     assert conn.execute(
         "SELECT parse_status FROM filings WHERE filing_id = 'house:20034916'"
     ).fetchone() == ("parsed",)
+
+
+# --- the additive transactions columns (Senate exchange legs) ----------------
+
+# §9.4 as first published: `transactions` before M1-E's sub-line columns and the
+# Senate exchanged leg. A store seeded from an older release has this shape.
+_PRE_ADDITIVE_TRANSACTIONS = """
+CREATE TABLE transactions (
+  txn_id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, raw_row TEXT NOT NULL,
+  row_fingerprint TEXT NOT NULL, dup_seq INTEGER NOT NULL DEFAULT 1,
+  ticker TEXT, flags TEXT NOT NULL DEFAULT '[]'
+)
+"""
+
+
+def test_ensure_transaction_columns_adds_every_additive_column_once(tmp_path):
+    conn = connect(str(tmp_path / "old.db"))
+    conn.execute(_PRE_ADDITIVE_TRANSACTIONS)
+    conn.execute(
+        "INSERT INTO transactions (txn_id, filing_id, raw_row, row_fingerprint, ticker)"
+        " VALUES ('t:1', 'f:1', '{}', 'fp', 'AMCR')"
+    )
+    ensure_transaction_columns(conn)
+    ensure_transaction_columns(conn)  # idempotent: a second call adds nothing
+    columns = [r[1] for r in conn.execute("PRAGMA table_info(transactions)")]
+    assert ADDITIVE_TRANSACTION_COLUMNS == (
+        "filing_status",
+        "subholding_of",
+        "location",
+        "exchanged_ticker",
+    )
+    for column in ADDITIVE_TRANSACTION_COLUMNS:
+        assert columns.count(column) == 1, column
+    # existing rows keep every value; the new column arrives NULL
+    assert conn.execute(
+        "SELECT txn_id, ticker, exchanged_ticker FROM transactions"
+    ).fetchall() == [("t:1", "AMCR", None)]
+    conn.close()
+
+
+def test_ensure_transaction_columns_is_a_no_op_on_a_fresh_store(initialized_db):
+    before = [r[1] for r in initialized_db.execute("PRAGMA table_info(transactions)")]
+    assert "exchanged_ticker" in before  # schema.sql already carries it
+    ensure_transaction_columns(initialized_db)
+    after = [r[1] for r in initialized_db.execute("PRAGMA table_info(transactions)")]
+    assert after == before
+
+
+def test_exchanged_ticker_is_outside_identity(initialized_db, make_filing, make_row):
+    # The column is outside raw_row, so carrying a leg cannot move a txn_id.
+    fid = make_filing(initialized_db)
+    plain = load_filing(initialized_db, fid, [make_row()], **VERSIONS).txn_ids
+    with_leg = load_filing(
+        initialized_db, fid, [make_row(exchanged_ticker="ETRN")], **VERSIONS
+    ).txn_ids
+    assert plain == with_leg

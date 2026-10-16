@@ -30,6 +30,11 @@ export interface TxnRow {
   assetType: string | null;
   /** producer txn_id — the stable row identity signals and sorts key on */
   txnId: string;
+  /** A Senate two-leg exchange's given-up leg, as printed (`ticker` is the
+      received leg); null for every other row and when eFD prints `--`. Shown
+      on the row's asset line only — the row is listed under `ticker`, and
+      signals never read it. */
+  exchangedTicker: string | null;
 }
 
 export interface PaperRow {
@@ -63,13 +68,16 @@ export interface StatTile {
    already carried both (`build.py` `_FEED_COLUMNS`); this is the CLIENT
    contract catching up — every consumer round-trips through
    txnToArray/txnFromArray, and every payload embeds this version, so a
-   stale cached dataset is refused (classifyResponse), never half-read. */
-export const DATASET_VERSION = 2;
+   stale cached dataset is refused (classifyResponse), never half-read.
+   v3 (Senate exchange legs): `exchangedTicker` joins, APPENDED so no existing
+   column index moves; the producer column is `transactions.exchanged_ticker`
+   (congress schema 1.1). */
+export const DATASET_VERSION = 3;
 
 export const TXN_COLS = [
   "filed", "traded", "name", "bioguide", "party", "state", "district",
   "chamber", "ticker", "side", "owner", "low", "high", "lag", "late",
-  "flags", "doc", "asset", "assetType", "txnId",
+  "flags", "doc", "asset", "assetType", "txnId", "exchangedTicker",
 ] as const;
 
 export const PAPER_COLS = [
@@ -153,12 +161,15 @@ export function classifyDataset(body: unknown): DatasetClassification {
 
 /* ---------- text helpers ---------- */
 
-/** Parser-side ticker hygiene (B-7, F-5): NFC + outer-whitespace trim, empty
-    → null. The Senate corpus delivered tickers with leading newlines/spaces
-    that produced `/tickers/--%0A%20…AMCR/` URLs. Trim-only, deliberately: a
-    ticker with INTERIOR whitespace is not repaired into a listed symbol (that
-    would invent identity) — it stays as-is and `pathSafeTicker` routes it to
-    the /e/ fallback at render time, the defensive half of the same gate. */
+/** Load-boundary ticker hygiene (B-7, F-5): NFC + outer-whitespace trim,
+    empty → null. The Senate corpus delivered tickers with leading
+    newlines/spaces that produced `/tickers/--%0A%20…AMCR/` URLs. The producer
+    now resolves that cell — a two-leg exchange's `--`/whitespace/`AMCR` is
+    `ticker` AMCR plus `exchanged_ticker` (normalize.py `ticker_legs`) — so this
+    stays the defensive half. Trim-only, deliberately: a ticker with INTERIOR
+    whitespace is not repaired into a listed symbol here (that would invent
+    identity) — it stays as-is and `pathSafeTicker` routes it to the /e/
+    fallback at render time. */
 export function normalizeTicker(raw: string | null): string | null {
   if (raw == null) return null;
   const t = raw.normalize("NFC").trim();
@@ -868,7 +879,9 @@ export function assetColumnNote(opts: { nameOnly?: boolean } = {}): string {
     shows the name without a code's words (W-9); `noteKey` overrides the
     per-row key (the net-flow table keys its notes on the ticker, CD3-4 (a)). */
 export function assetLineHtml(
-  r: Pick<TxnRow, "asset" | "assetType" | "ticker" | "side" | "owner" | "txnId">,
+  r: Pick<TxnRow, "asset" | "assetType" | "ticker" | "side" | "owner" | "txnId"> & {
+    exchangedTicker?: string | null;
+  },
   opts: { notes?: NoteCtx; noteKey?: string; qualifiers?: boolean; nameOnly?: boolean } = {},
 ): string {
   const d = displayAsset(r);
@@ -882,9 +895,19 @@ export function assetLineHtml(
       ? noteFromHtml(asFiledNoteHtml(d, opts.nameOnly === true), opts.notes, opts.noteKey ?? `${r.txnId}-asset`, { trigger: "label", textHtml: shown })
       : shown;
   const quals = opts.qualifiers ? ownerQualifiersHtml(r) : "";
-  /* the separator between the asset and its qualifiers is its own element, so
-     neither side ever opens or doubles one */
-  return `<span class="asset-line"><span class="asset-text">${text}</span>${quals ? `<span class="asset-sep">·</span>${quals}` : ""}</span>`;
+  /* A Senate two-leg exchange's given-up leg is part of WHAT was traded, so it
+     sits on the asset line — outside the ellipsis like the qualifiers, never
+     in the 76px ticker cell, where it would clip the canonical received leg.
+     Plain text, not a link: the row is listed under `ticker` only, and an
+     exchanged-only symbol may have no page. A `nameOnly` caller describes a
+     ticker aggregate, never one row, so it carries no leg. */
+  const leg = !opts.nameOnly && r.exchangedTicker
+    ? `<span class="exchanged-leg">exchanged <span class="mono-ticker">${esc(r.exchangedTicker)}</span></span>`
+    : "";
+  /* each separator is its own element and sits only BETWEEN present parts, so
+     no side ever opens or doubles one */
+  const tail = [leg, quals].filter((part) => part !== "").map((part) => `<span class="asset-sep">·</span>${part}`).join("");
+  return `<span class="asset-line"><span class="asset-text">${text}</span>${tail}</span>`;
 }
 
 /** A CIK as a reader sees it (R20): no leading zeros. The zero-padded form
@@ -1038,22 +1061,22 @@ export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged,
    Senate parsers via `normalize_row`, the kadoa backfill via the same
    functions, backfill.py:158-172) — and ends with the site's standing rule
    that such rows stay visible. Sources, in src/populus/:
-   - date_missing: normalize.py:198-241 (`date_stats` / `normalize_dates`) —
+   - date_missing: normalize.py:265-308 (`date_stats` / `normalize_dates`) —
      the trade date is absent, not M/D/YYYY, or not a real calendar date; the
      date and the days-to-file are then NULL.
-   - side_unparsed: normalize.py:96-102 (`normalize_side`) — the type cell is
+   - side_unparsed: normalize.py:99-105 (`normalize_side`) — the type cell is
      none of the House codes P, S, S (partial), E or the Senate labels
      Purchase, Sale (Full), Sale (Partial), Exchange; the side is then "—".
-   - asset_unparsed: normalize.py:130-138 (`normalize_asset`) — the asset cell
+   - asset_unparsed: normalize.py:197-205 (`normalize_asset`) — the asset cell
      is empty; the row keeps the placeholder "(unparsed asset)".
-   - capgains_unparsed: normalize.py:276-289 (`normalize_capgains`) — the
+   - capgains_unparsed: normalize.py:343-356 (`normalize_capgains`) — the
      column is present but its box reads as neither checked nor unchecked.
    - row_incomplete: parse/house_ptr.py:337-342 (a type, date or amount cell
      is missing, or the text did not open a row of its own) and
      parse/senate_ptr.py:158-159 (a Senate row with fewer than nine cells).
    - row_orphan: parse/house_ptr.py:20-22, :341-342, :630-639 — text that
      completed no open row was kept as a row of its own (House only).
-   - owner_unparsed: normalize.py:105-112 (`normalize_owner`) — the owner cell
+   - owner_unparsed: normalize.py:108-115 (`normalize_owner`) — the owner cell
      is not blank and is none of SP, DC, JT, self (or the Senate's Spouse,
      Child, Joint); no owner is then shown.
    - declared_total_mismatch: ingest/senate.py:694-700 (`evaluate_page`) —

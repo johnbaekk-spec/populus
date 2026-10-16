@@ -323,7 +323,12 @@ def test_run_build_manifest_exact_shape_and_licensing(tmp_path):
     # M1-E bumped the congress projection to "2": the byte envelope gained the
     # filing_status/subholding_of/location columns, and digests.py states that
     # a module's projection version bumps exactly when its envelope changes.
-    assert module["digest_projection_version"] == "2"
+    # The Senate exchange legs bumped it to "3": `transactions` gained the
+    # digested `exchanged_ticker` column.
+    assert module["digest_projection_version"] == "3"
+    # The same additive column (and its feed/slice key) advances the MINOR of
+    # the congress schema (ARCHITECTURE.md §5.5: clients accept same-MAJOR).
+    assert MANIFEST_SCHEMA_VERSION == "1.1"
     assert set(module["watermarks"]) == {
         "house_index_last_modified",
         "senate_max_filed_date",
@@ -375,6 +380,61 @@ def test_run_build_journal_is_valid_and_deterministic(tmp_path):
     assert report2.build_id == report.build_id
     assert report2.adopted
     assert journal_path.read_bytes() == first
+
+
+def test_feed_and_slices_carry_the_exchanged_leg(tmp_path):
+    """Congress schema 1.1: every feed and slice row carries `exchanged_ticker`
+    (NULL unless a Senate two-leg exchange printed the given-up leg)."""
+    db = seed_db(tmp_path / "populus.db")
+    conn = connect(str(db))
+    try:
+        conn.execute(
+            "UPDATE transactions SET side = 'exchange', exchanged_ticker = 'ETRN'"
+            " WHERE row_ordinal = 1"
+        )
+    finally:
+        conn.close()
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    build_dir = repo / STAGING_DIR / report.build_id / "build"
+    feed = json.loads((build_dir / "congress" / "feed.json").read_text(encoding="utf-8"))
+    assert all("exchanged_ticker" in row for row in feed["rows"])
+    legs = {row["ticker"]: row["exchanged_ticker"] for row in feed["rows"]}
+    assert legs["AAPL"] == "ETRN"
+    assert [v for k, v in legs.items() if k != "AAPL"] == [None] * (len(legs) - 1)
+    slice_doc = json.loads(
+        (build_dir / "congress" / "tickers" / "AAPL.json").read_text(encoding="utf-8")
+    )
+    assert [row["exchanged_ticker"] for row in slice_doc["rows"]] == ["ETRN"]
+
+
+def test_build_migrates_a_pre_change_store(tmp_path):
+    """A build from a congress 1.0 store (no `exchanged_ticker`) migrates the
+    source before snapshotting, so the published `congress.db` carries the
+    columns its manifest declares (schema 1.1) and every feed row the key."""
+    import sqlite3
+
+    db = seed_db(tmp_path / "populus.db")
+    conn = connect(str(db))
+    try:
+        conn.execute("ALTER TABLE transactions DROP COLUMN exchanged_ticker")
+        conn.commit()
+    finally:
+        conn.close()
+    repo = make_repo(tmp_path)
+    report = run_build(db, repo, now=pin(), backend=LocalDirBackend(repo))
+    staging = repo / STAGING_DIR / report.build_id
+    snapshot = sqlite3.connect(str(staging / "assets" / "congress.db"))
+    try:
+        columns = {r[1] for r in snapshot.execute("PRAGMA table_info(transactions)")}
+    finally:
+        snapshot.close()
+    assert "exchanged_ticker" in columns
+    feed = json.loads(
+        (staging / "build" / "congress" / "feed.json").read_text(encoding="utf-8")
+    )
+    assert feed["rows"]
+    assert all(row["exchanged_ticker"] is None for row in feed["rows"])
 
 
 def test_run_build_skips_and_counts_nonconforming_tickers(tmp_path):

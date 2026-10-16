@@ -43,9 +43,9 @@ from populus.ingest import (
 )
 from populus.load import ParsedRow, load_filing, upsert_filing
 from populus.normalize import (
-    NORMALIZATION_VERSION,
+    NORMALIZATION_VERSION, PARSE_DEFECT_FLAGS, TICKER_FLAGS,
     has_parse_defect,
-    normalize_row,
+    normalize_row, ticker_from_raw_row,
 )
 from populus.parse.senate_ptr import (
     PARSER_VERSION,
@@ -799,6 +799,92 @@ def reconcile(
     )
 
 
+# --- stored-row ticker re-derivation -------------------------------------
+
+
+class TickerRederivationError(RuntimeError):
+    """Re-deriving a stored row's ticker would add a parse defect.
+
+    Nothing was written: a new defect changes the filing's ``partial`` status,
+    which only a reparse from the raw archive may decide.
+    """
+
+
+def rederive_senate_tickers(conn: sqlite3.Connection) -> int:
+    """Re-derive ``ticker``/``exchanged_ticker`` of stored Senate rows; idempotent.
+
+    The nightly store is SEEDED from the previous release and settled filings
+    are never re-fetched, so a corrected ticker rule would otherwise reach only
+    new filings. ``raw_row.ticker`` is the cell's exact printed text (LD3), so
+    the current rule — :func:`populus.normalize.ticker_from_raw_row`, the same
+    function ``normalize_row`` calls at ingest — re-derives both columns from
+    the stored row alone, with no archive and no network.
+
+    Change detection is semantic and per column: a row changes only when its
+    ``ticker`` or ``exchanged_ticker`` differs, or when the SET of ticker-owned
+    flags (:data:`~populus.normalize.TICKER_FLAGS`) in its stored flags differs
+    from the re-derived set. Flag order and JSON separators are never compared:
+    ``flag_unresolved_pair_rows`` appends ``amendment_unresolved`` after load,
+    so stored order is not sorted. When the ticker-owned set is unchanged the
+    stored ``flags`` text is left byte-for-byte; when it changes, every other
+    flag keeps its stored order and newly derived ticker flags are appended.
+    Only the filings of changed rows get ``normalization_version`` stamped.
+
+    Refuses with :class:`TickerRederivationError`, writing nothing, if any row
+    would gain a parse-defect flag. Returns the number of rows updated.
+    """
+    stored = conn.execute(
+        "SELECT txn_id, filing_id, raw_row, ticker, exchanged_ticker, flags"
+        " FROM transactions WHERE source = 'senate-efd' ORDER BY txn_id"
+    ).fetchall()
+    updates: list[tuple[str | None, str | None, str, str]] = []
+    touched_filings: set[str] = set()
+    refused: list[str] = []
+    for txn_id, filing_id, raw_row, ticker, exchanged, flags_text in stored:
+        new_ticker, new_exchanged, ticker_flags = ticker_from_raw_row(
+            json.loads(raw_row)
+        )
+        stored_flags = json.loads(flags_text)
+        stored_ticker_flags = TICKER_FLAGS.intersection(stored_flags)
+        flags_change = stored_ticker_flags != ticker_flags
+        if new_ticker == ticker and new_exchanged == exchanged and not flags_change:
+            continue
+        new_flags_text = flags_text
+        if flags_change:
+            if PARSE_DEFECT_FLAGS.intersection(ticker_flags - stored_ticker_flags):
+                refused.append(txn_id)
+                continue
+            kept = [f for f in stored_flags if f not in TICKER_FLAGS or f in ticker_flags]
+            kept += sorted(ticker_flags.difference(kept))
+            new_flags_text = json.dumps(kept, ensure_ascii=False)
+        updates.append((new_ticker, new_exchanged, new_flags_text, txn_id))
+        touched_filings.add(filing_id)
+    if refused:
+        raise TickerRederivationError(
+            f"{len(refused)} stored Senate row(s) would gain a parse-defect"
+            " ticker flag; reparse their filings from the raw archive instead"
+            f" (e.g. {refused[:5]}). Nothing was written."
+        )
+    if not updates:
+        return 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.executemany(
+            "UPDATE transactions SET ticker = ?, exchanged_ticker = ?, flags = ?"
+            " WHERE txn_id = ?",
+            updates,
+        )
+        conn.executemany(
+            "UPDATE filings SET normalization_version = ? WHERE filing_id = ?",
+            [(NORMALIZATION_VERSION, f) for f in sorted(touched_filings)],
+        )
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return len(updates)
+
+
 # --- ingest run -------------------------------------------
 
 
@@ -829,6 +915,9 @@ class SenateIngestReport:
     # start / open end), recorded so the operational artifact can state which
     # era the figures describe.
     window: tuple[str, str | None] | None = None
+    # Stored rows whose ticker/exchanged_ticker the current rule corrected at
+    # this run's tail (rederive_senate_tickers); 0 once the corpus is current.
+    tickers_rederived: int = 0
 
     @property
     def index_count(self) -> int:
@@ -1077,6 +1166,10 @@ def _ingest(
     # loader delete-and-reinserts rows, so the flag is restored at every
     # job tail that rebuilds rows (here, reparse_senate, reparse_house).
     flag_unresolved_pair_rows(conn)
+    # Stored rows carry the ticker rule of the run that loaded them; settled
+    # filings are never re-fetched, so the current rule is re-applied here
+    # from each row's lossless raw_row (idempotent: 0 once current).
+    report.tickers_rederived = rederive_senate_tickers(conn)
     report.reconciliation = reconcile(conn, discovered.uuids)
 
 
@@ -1391,6 +1484,9 @@ def format_summary(
         )
     else:
         lines.append("efile rows: 0 clean / 0 total")
+    lines.append(
+        f"ticker re-derivation: {report.tickers_rederived} row(s) updated"
+    )
     lines.append(report.fetch.format_line("senate", elapsed_s=report.elapsed_s))
     lines.append(
         f"run {report.run_id}: new_filings {report.new_filings}"

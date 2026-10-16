@@ -523,7 +523,10 @@ CREATE TABLE transactions (
                                             -- invariant: equals its filing's bioguide_id
   chamber       TEXT NOT NULL,
   owner         TEXT,                       -- canonical: self|spouse|child|joint|NULL
-  ticker        TEXT,                       -- normalized; NULL for bonds/funds/'--'
+  ticker        TEXT,                       -- normalized; NULL for bonds/funds/'--';
+                                            -- a Senate two-leg exchange: the received leg
+  exchanged_ticker TEXT,                    -- that exchange's given-up leg as printed;
+                                            -- NULL for every other row and for a '--' leg
   asset_name    TEXT NOT NULL,              -- normalized (raw lives in raw_row)
   asset_type    TEXT,
   side          TEXT NOT NULL CHECK (side IN

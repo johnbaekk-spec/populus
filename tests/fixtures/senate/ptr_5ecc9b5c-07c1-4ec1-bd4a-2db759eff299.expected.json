@@ -1,0 +1,41 @@
+{
+  "filing": {
+    "uuid": "5ecc9b5c-07c1-4ec1-bd4a-2db759eff299",
+    "parse_status": "parsed",
+    "declared_total": 1,
+    "title": "Periodic Transaction Report for 08/08/2026",
+    "filer_display": "The Honorable Ron L Wyden (Wyden, Ron)",
+    "filed_date": "2026-08-08"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        04/30/2025\n                                    ",
+        "owner": "Spouse",
+        "ticker": "\n                                        \n                                            --\n                                        \n                                        \n                                            \n                                            AMCR\n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            BERY - Berry Global Group, Inc. (Exchanged)\n                                            \n                                            Amcor plc Ordinary Shares (Received)\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Exchange",
+        "amount_label": "$100,001 - $250,000",
+        "comment": "--"
+      },
+      "raw_asset_display": "BERY - Berry Global Group, Inc. (Exchanged) Amcor plc Ordinary Shares (Received)",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 1,
+      "source_row_no": 1,
+      "owner": "spouse",
+      "ticker": "AMCR",
+      "asset_name": "BERY - Berry Global Group, Inc. (Exchanged) Amcor plc Ordinary Shares (Received)",
+      "asset_type": "Stock",
+      "side": "exchange",
+      "transaction_date": "2025-04-30",
+      "days_to_file": 465,
+      "is_late": 1,
+      "amount_low": 100001,
+      "amount_high": 250000,
+      "amount_label": "$100,001 - $250,000",
+      "cap_gains_over_200": null,
+      "comment": null,
+      "flags": []
+    }
+  ]
+}

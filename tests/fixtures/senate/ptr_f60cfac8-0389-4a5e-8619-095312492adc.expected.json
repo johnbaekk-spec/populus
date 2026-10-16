@@ -1,0 +1,41 @@
+{
+  "filing": {
+    "uuid": "f60cfac8-0389-4a5e-8619-095312492adc",
+    "parse_status": "parsed",
+    "declared_total": 1,
+    "title": "Periodic Transaction Report for 08/11/2025",
+    "filer_display": "Mr. William F Hagerty IV (Hagerty, Bill)",
+    "filed_date": "2025-08-11"
+  },
+  "rows": [
+    {
+      "raw_row": {
+        "transaction_date": "\n                                        07/22/2024\n                                    ",
+        "owner": "Self",
+        "ticker": "\n                                        \n                                            ETRN\n                                        \n                                        \n                                            \n                                            EQT\n                                        \n                                    ",
+        "asset_name": "\n                                        \n                                            Equitrans Midstream Corp (Exchanged)\n                                            \n                                            Eqt Corp (Received)\n                                        \n                                        \n                                        \n                                    ",
+        "side": "Exchange",
+        "amount_label": "$15,001 - $50,000",
+        "comment": "While no immediate PTR required, provided to clearly denote basis for the renamed asset on the 2024 annual report that was previously named ETRN."
+      },
+      "raw_asset_display": "Equitrans Midstream Corp (Exchanged) Eqt Corp (Received)",
+      "asset_type_cell": "Stock",
+      "row_ordinal": 1,
+      "source_row_no": 1,
+      "owner": "self",
+      "ticker": "EQT",
+      "asset_name": "Equitrans Midstream Corp (Exchanged) Eqt Corp (Received)",
+      "asset_type": "Stock",
+      "side": "exchange",
+      "transaction_date": "2024-07-22",
+      "days_to_file": 385,
+      "is_late": 1,
+      "amount_low": 15001,
+      "amount_high": 50000,
+      "amount_label": "$15,001 - $50,000",
+      "cap_gains_over_200": null,
+      "comment": "While no immediate PTR required, provided to clearly denote basis for the renamed asset on the 2024 annual report that was previously named ETRN.",
+      "flags": []
+    }
+  ]
+}

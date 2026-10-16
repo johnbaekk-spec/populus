@@ -1090,7 +1090,21 @@ def test_legacy_partial_without_denominator_evidence_cannot_pass_after_ingest(
     assert upgraded.new_filings == 0
     assert _filing(initialized_db, U1)[0] == "partial"
     assert _filing(initialized_db, U1)[3] == 10
-    assert all(not flags for flags in _row_flags(initialized_db, U1))
+    # The upgrade adds no denominator evidence and no defect to the legacy
+    # rows. The blanking above also stripped `missing_ticker` from the `--`
+    # rows, which no normalizer version ever emitted; the stored-row ticker
+    # re-derivation restores exactly that ticker-owned source fact (ticker NULL
+    # ⇔ missing_ticker) and touches no other flag.
+    tickers = [
+        t for (t,) in initialized_db.execute(
+            "SELECT ticker FROM transactions WHERE filing_id = ? ORDER BY row_ordinal",
+            (f"senate:{U1}",),
+        )
+    ]
+    assert upgraded.tickers_rederived == sum(1 for t in tickers if t is None)
+    assert _row_flags(initialized_db, U1) == [
+        ["missing_ticker"] if t is None else [] for t in tickers
+    ]
     report = compute_parse_gate(initialized_db)
     era = next(e for e in report.eras if (e.chamber, e.year) == ("senate", "2026"))
     assert era.status == "unmeasurable"
@@ -2248,3 +2262,312 @@ def test_a_transport_that_never_answers_still_gives_up():
     )
     response = session.get("https://efdsearch.senate.gov/search/home/", headers={})
     assert response.status_code == senate.TRANSPORT_FAILURE_STATUS
+
+
+# --- stored-row ticker re-derivation (Senate exchange legs, D2) --------------
+
+from populus.load import ParsedRow, insert_filing, load_filing  # noqa: E402
+from populus.publish.seed import assert_corpus_floor, write_seed_counts  # noqa: E402
+
+WYDEN_UUID = "5ecc9b5c-07c1-4ec1-bd4a-2db759eff299"
+HAGERTY_UUID = "f60cfac8-0389-4a5e-8619-095312492adc"
+WYDEN_PAGE = (FIXTURES / f"ptr_{WYDEN_UUID}.html").read_bytes()
+HAGERTY_PAGE = (FIXTURES / f"ptr_{HAGERTY_UUID}.html").read_bytes()
+
+
+def _pre_fix_ticker(raw: str | None) -> str | None:
+    """The norm-1.1.0 rule, verbatim: outer strip, then upper — the joined
+    `--`/whitespace/`AMCR` string the live artifact carried."""
+    if raw is None or not raw.strip() or raw.strip() == "--":
+        return None
+    return raw.strip().upper()
+
+
+def _cell(first: str, second: str) -> str:
+    """The eFD two-leg cell shape: leg, newlines and indentation, leg."""
+    return (
+        "\n" + " " * 40 + "\n" + " " * 44 + f"{first}\n" + " " * 40 + "\n" + " " * 40
+        + "\n" + " " * 44 + "\n" + " " * 44 + f"{second}\n" + " " * 40 + "\n" + " " * 36
+    )
+
+
+def _seed_pre_fix_store(conn):
+    """A store as norm-1.1.0 left it: two two-leg Senate exchange rows carrying
+    the joined string, a one-token Senate row whose flags are in the appended
+    (non-sorted) order, and a House row."""
+    rows_by_filing = {
+        f"senate:{WYDEN_UUID}": [
+            ("Exchange", _cell("--", "AMCR"), '["amendment_unresolved"]', "BERY/AMCR"),
+        ],
+        f"senate:{HAGERTY_UUID}": [
+            # compact separators, non-sorted order: any re-serialization of a
+            # changed row's flags would alter these bytes
+            ("Exchange", _cell("ETRN", "EQT"), '["date_anomaly","amendment_unresolved"]', "ETRN/EQT"),
+        ],
+        "senate:00000000-0000-4000-8000-000000000099": [
+            ("Purchase", "\n    --\n  ", '["missing_ticker","amendment_unresolved"]', "Muni Bond"),
+        ],
+    }
+    for filing_id, rows in rows_by_filing.items():
+        insert_filing(
+            conn,
+            filing_id=filing_id,
+            chamber="senate",
+            filer_name_raw="Doe, Jane",
+            filing_kind="ptr",
+            filed_date="2026-08-08",
+            doc_url=f"https://efdsearch.senate.gov/search/view/ptr/{filing_id.split(':')[1]}/",
+            source="senate-efd",
+            ingested_at="2026-08-09T00:00:00Z",
+        )
+        load_filing(
+            conn,
+            filing_id,
+            [
+                ParsedRow(
+                    raw_row={"asset_name": asset, "side": side, "ticker": cell},
+                    row_ordinal=i,
+                    asset_name=asset,
+                    side="exchange" if side == "Exchange" else "purchase",
+                    ticker=_pre_fix_ticker(cell),
+                )
+                for i, (side, cell, _flags, asset) in enumerate(rows, start=1)
+            ],
+            parse_status="parsed",
+            parser_version="senate-ptr-1.0.0",
+            normalization_version="norm-1.1.0",
+        )
+        for i, (_side, _cell_text, flags, _asset) in enumerate(rows, start=1):
+            # exactly the bytes flag_unresolved_pair_rows leaves (json_insert
+            # appends, compact separators) — never re-sorted
+            conn.execute(
+                "UPDATE transactions SET flags = ? WHERE filing_id = ? AND row_ordinal = ?",
+                (flags, filing_id, i),
+            )
+    insert_filing(
+        conn,
+        filing_id="house:1",
+        chamber="house",
+        filer_name_raw="Doe, John",
+        filing_kind="ptr",
+        filed_date="2026-01-10",
+        doc_url="https://disclosures-clerk.house.gov/ptr/1.pdf",
+        source="house-clerk",
+        ingested_at="2026-01-11T00:00:00Z",
+    )
+    load_filing(
+        conn,
+        "house:1",
+        [
+            ParsedRow(
+                raw_row={"asset_name": "CBS Corp (CBS) [ST]", "side": "E", "ticker": "CBS"},
+                row_ordinal=1,
+                asset_name="CBS Corp (CBS) [ST]",
+                side="exchange",
+                ticker="CBS",
+            )
+        ],
+        parse_status="parsed",
+        parser_version="house-ptr-x",
+        normalization_version="norm-1.1.0",
+    )
+
+
+def _snapshot(conn):
+    return {
+        "transactions": conn.execute(
+            "SELECT txn_id, filing_id, raw_row, row_fingerprint, dup_seq, ticker,"
+            " exchanged_ticker, flags FROM transactions ORDER BY txn_id"
+        ).fetchall(),
+        "filings": dict(
+            conn.execute("SELECT filing_id, normalization_version FROM filings")
+        ),
+    }
+
+
+def test_rederive_corrects_the_two_leg_rows_and_nothing_else(initialized_db):
+    conn = initialized_db
+    _seed_pre_fix_store(conn)
+    before = _snapshot(conn)
+    by_filing_before = {r[1]: r for r in before["transactions"]}
+    assert by_filing_before[f"senate:{WYDEN_UUID}"][5].split() == ["--", "AMCR"]
+
+    assert senate.rederive_senate_tickers(conn) == 2
+    after = _snapshot(conn)
+    by_filing = {r[1]: r for r in after["transactions"]}
+
+    wyden = by_filing[f"senate:{WYDEN_UUID}"]
+    assert (wyden[5], wyden[6]) == ("AMCR", None)
+    hagerty = by_filing[f"senate:{HAGERTY_UUID}"]
+    assert (hagerty[5], hagerty[6]) == ("EQT", "ETRN")
+    # flags bytes are preserved exactly: the ticker-owned set did not change
+    assert wyden[7] == '["amendment_unresolved"]'
+    assert hagerty[7] == '["date_anomaly","amendment_unresolved"]'
+    # identity is untouched on every row
+    ident = lambda snap: [r[:5] for r in snap["transactions"]]  # noqa: E731
+    assert ident(after) == ident(before)
+    # the unchanged one-token row (appended flag order) and the House row are
+    # byte-identical, and their filings keep their stamp
+    for fid in ("senate:00000000-0000-4000-8000-000000000099", "house:1"):
+        assert by_filing[fid] == by_filing_before[fid]
+        assert after["filings"][fid] == "norm-1.1.0"
+    assert by_filing["senate:00000000-0000-4000-8000-000000000099"][7] == (
+        '["missing_ticker","amendment_unresolved"]'
+    )
+    # only the changed rows' filings are stamped
+    assert after["filings"][f"senate:{WYDEN_UUID}"] == "norm-1.2.0"
+    assert after["filings"][f"senate:{HAGERTY_UUID}"] == "norm-1.2.0"
+
+    # idempotent: a second pass changes nothing at all
+    assert senate.rederive_senate_tickers(conn) == 0
+    assert _snapshot(conn) == after
+
+
+def test_rederive_rewrites_flags_only_when_the_ticker_flag_set_changes(initialized_db):
+    conn = initialized_db
+    _seed_pre_fix_store(conn)
+    fid = f"senate:{HAGERTY_UUID}"
+    # a stored row whose received leg is `--`: the rule now flags missing_ticker
+    conn.execute(
+        "UPDATE transactions SET raw_row = json_set(raw_row, '$.ticker', ?),"
+        " flags = '[\"date_anomaly\",\"amendment_unresolved\"]' WHERE filing_id = ?",
+        (_cell("ETRN", "--"), fid),
+    )
+    assert senate.rederive_senate_tickers(conn) == 2
+    ticker, exchanged, flags = conn.execute(
+        "SELECT ticker, exchanged_ticker, flags FROM transactions WHERE filing_id = ?",
+        (fid,),
+    ).fetchone()
+    assert (ticker, exchanged) == (None, "ETRN")
+    # other flags keep their stored order; the new ticker flag is appended
+    assert json.loads(flags) == ["date_anomaly", "amendment_unresolved", "missing_ticker"]
+
+
+def test_rederive_refuses_a_new_parse_defect_and_writes_nothing(initialized_db):
+    conn = initialized_db
+    _seed_pre_fix_store(conn)
+    conn.execute(
+        "UPDATE transactions SET raw_row = json_set(raw_row, '$.ticker', 'A B C')"
+        " WHERE filing_id = ?",
+        (f"senate:{HAGERTY_UUID}",),
+    )
+    before = _snapshot(conn)
+    with pytest.raises(senate.TickerRederivationError, match="parse-defect"):
+        senate.rederive_senate_tickers(conn)
+    assert _snapshot(conn) == before  # the Wyden row was not corrected either
+
+
+def test_rederive_keeps_identity_and_the_corpus_floor(initialized_db, tmp_path):
+    conn = initialized_db
+    _seed_pre_fix_store(conn)
+    counts = tmp_path / "seed-counts.json"
+    write_seed_counts(
+        conn,
+        counts,
+        seed_build_id="20260817.1",
+        seed_sha256="0" * 64,
+        run_started_at="2026-10-16T00:00:00Z",
+    )
+    rows_before = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()
+    assert senate.rederive_senate_tickers(conn) == 2
+    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone() == rows_before
+    conn.execute(
+        "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
+        " VALUES ('m1', 'members', '2026-10-16T00:00:01Z', 'ok', 'h')"
+    )
+    assert assert_corpus_floor(conn, counts, allow_reparse=frozenset()) == []
+
+
+def test_ingest_tail_corrects_settled_rows_and_reports_the_count(tmp_path, initialized_db):
+    conn = initialized_db
+    rows = [
+        _index_row(WYDEN_UUID, first="Ron", last="Wyden", filed="08/08/2026",
+                   title_date="08/08/2026"),
+        _index_row(HAGERTY_UUID, first="Bill", last="Hagerty", filed="08/11/2025",
+                   title_date="08/11/2025"),
+    ]
+    cache = _make_cache(
+        tmp_path,
+        rows,
+        {f"ptr_{WYDEN_UUID}.html": WYDEN_PAGE, f"ptr_{HAGERTY_UUID}.html": HAGERTY_PAGE},
+    )
+    first = _run_cache(conn, cache, run_id="run-1")
+    # a fresh ingest already applies the rule; nothing stored needs correcting
+    assert first.tickers_rederived == 0
+    legs = lambda: dict(  # noqa: E731
+        conn.execute(
+            "SELECT filing_id, ticker || '|' || coalesce(exchanged_ticker, '-')"
+            " FROM transactions WHERE source = 'senate-efd'"
+        )
+    )
+    assert legs() == {
+        f"senate:{WYDEN_UUID}": "AMCR|-",
+        f"senate:{HAGERTY_UUID}": "EQT|ETRN",
+    }
+    # simulate the seeded store a norm-1.1.0 build published
+    for (txn_id, raw_row) in conn.execute(
+        "SELECT txn_id, raw_row FROM transactions WHERE source = 'senate-efd'"
+    ).fetchall():
+        conn.execute(
+            "UPDATE transactions SET ticker = ?, exchanged_ticker = NULL WHERE txn_id = ?",
+            (_pre_fix_ticker(json.loads(raw_row)["ticker"]), txn_id),
+        )
+    second = _run_cache(conn, cache, run_id="run-2")
+    assert second.new_filings == 0  # settled: never re-fetched or re-parsed
+    assert second.tickers_rederived == 2
+    assert "ticker re-derivation: 2 row(s) updated" in senate.format_summary(second)
+    assert legs() == {
+        f"senate:{WYDEN_UUID}": "AMCR|-",
+        f"senate:{HAGERTY_UUID}": "EQT|ETRN",
+    }
+    third = _run_cache(conn, cache, run_id="run-3")
+    assert third.tickers_rederived == 0
+    assert "ticker re-derivation: 0 row(s) updated" in senate.format_summary(third)
+
+
+def test_reparse_cli_migrates_a_pre_change_store(tmp_path):
+    """`populus reparse` on a congress 1.0 store (no `exchanged_ticker`) adds
+    the additive column before the loader INSERT names it, and reparsing keeps
+    every txn_id."""
+    cache = _make_cache(
+        tmp_path,
+        [_index_row(WYDEN_UUID, first="Ron", last="Wyden", filed="08/08/2026",
+                    title_date="08/08/2026")],
+        {f"ptr_{WYDEN_UUID}.html": WYDEN_PAGE},
+    )
+    db_path = tmp_path / "populus.db"
+    init_db(str(db_path))
+    conn = connect(str(db_path))
+    try:
+        _run_cache(conn, cache)
+        ids_before = sorted(
+            r[0] for r in conn.execute("SELECT txn_id FROM transactions").fetchall()
+        )
+        assert ids_before
+        # simulate a pre-change (congress 1.0) store
+        conn.execute("ALTER TABLE transactions DROP COLUMN exchanged_ticker")
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = CliRunner().invoke(
+        cli_main,
+        ["reparse", "congress-senate", "--db", str(db_path),
+         "--raw-root", str(cache), "--filing", f"senate:{WYDEN_UUID}"],
+    )
+    assert result.exit_code == 0, result.output
+
+    conn = connect(str(db_path))
+    try:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(transactions)")}
+        assert "exchanged_ticker" in columns
+        assert conn.execute(
+            "SELECT ticker, exchanged_ticker FROM transactions WHERE filing_id = ?",
+            (f"senate:{WYDEN_UUID}",),
+        ).fetchall() == [("AMCR", None)]
+        ids_after = sorted(
+            r[0] for r in conn.execute("SELECT txn_id FROM transactions").fetchall()
+        )
+        assert ids_after == ids_before
+    finally:
+        conn.close()

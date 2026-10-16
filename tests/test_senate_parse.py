@@ -14,6 +14,7 @@ first/midpoint/last coordinate pairs. Regenerate goldens with
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import unicodedata
@@ -47,6 +48,11 @@ FIXTURE_FILED_DATES = {
     "ptr_a5fdbba4-9c67-4002-b931-1cd910ce590d": "2026-07-09",
     "ptr_fda235b3-bad7-4637-8fa1-053f354d929c": "2026-07-21",
     "ptr_ff0b0573-2809-40ae-8197-4b26648e9027": "2026-06-26",
+    # Senate exchange legs: the archived bytes of the two live two-leg rows
+    # (raw/pages of the publish runner; sha256 pinned below), filed dates from
+    # the store's filings rows.
+    "ptr_5ecc9b5c-07c1-4ec1-bd4a-2db759eff299": "2026-08-08",
+    "ptr_f60cfac8-0389-4a5e-8619-095312492adc": "2025-08-11",
 }
 PAPER_FILED_DATES = {
     "paper_3a4c5095-028a-4614-a692-836719da4e63": "2026-07-17",
@@ -59,6 +65,8 @@ PAPER_FIXTURES = sorted(PAPER_FILED_DATES)
 
 BOND = "ptr_a5fdbba4-9c67-4002-b931-1cd910ce590d"
 LARGE = "ptr_fda235b3-bad7-4637-8fa1-053f354d929c"
+WYDEN_EXCHANGE = "ptr_5ecc9b5c-07c1-4ec1-bd4a-2db759eff299"
+HAGERTY_EXCHANGE = "ptr_f60cfac8-0389-4a5e-8619-095312492adc"
 
 
 def _fixture_bytes(stem: str) -> bytes:
@@ -415,7 +423,7 @@ def test_golden_round_trip(stem):
 def test_goldens_and_fixtures_are_one_to_one():
     goldens = {p.stem.removesuffix(".expected") for p in FIXTURES.glob("*.expected.json")}
     assert goldens == set(EFILE_FIXTURES)
-    assert len(EFILE_FIXTURES) == 8
+    assert len(EFILE_FIXTURES) == 10
     assert len(PAPER_FIXTURES) == 3
 
 
@@ -432,6 +440,87 @@ def test_all_committed_efile_goldens_are_parsed():
 
 def test_parser_version_constant():
     assert PARSER_VERSION == "senate-ptr-1.0.0"
+
+
+# --- Senate exchange legs: the two live two-leg rows, hand-verified ---------
+
+# sha256 of the archived page = the store's `filings.response_hash` for the
+# filing (20260817.1), so the fixture is the exact bytes eFD served.
+EXCHANGE_FIXTURE_SHA256 = {
+    WYDEN_EXCHANGE: "64d820d21511115d5262ce6622ee1afd77241e9773274cdb74ea13a2d77298d1",
+    HAGERTY_EXCHANGE: "ee8764f9fc9bf253cd77b1db4469db93d03405c6da993b4bc36ece11e04c3231",
+}
+
+
+@pytest.mark.parametrize("stem", sorted(EXCHANGE_FIXTURE_SHA256))
+def test_exchange_fixtures_are_the_archived_bytes(stem):
+    digest = hashlib.sha256(_fixture_bytes(stem)).hexdigest()
+    assert digest == EXCHANGE_FIXTURE_SHA256[stem]
+
+
+def _only_row(stem: str):
+    evaluated = evaluate_page(
+        _fixture_bytes(stem),
+        uuid=_uuid(stem),
+        kind="ptr",
+        filed_date=FIXTURE_FILED_DATES[stem],
+        amendment=False,
+    )
+    assert evaluated.status == "parsed"
+    assert len(evaluated.rows) == 1 == evaluated.declared_total
+    return evaluated.rows[0]
+
+
+def test_wyden_exchange_hand_verified():
+    """The live defect, on the exact bytes: the ticker cell prints `--`
+    (BERY is not linked), a <br/>, then the AMCR link. The received leg is the
+    ticker, and the unlinked exchanged leg is NULL — never the joined text."""
+    row = _only_row(WYDEN_EXCHANGE)
+    # raw_row is lossless and byte-identical to the stored live value
+    assert row.raw_row["ticker"] == (
+        "\n" + " " * 40 + "\n" + " " * 44 + "--\n" + " " * 40 + "\n" + " " * 40
+        + "\n" + " " * 44 + "\n" + " " * 44 + "AMCR\n" + " " * 40 + "\n" + " " * 36
+    )
+    assert row.ticker == "AMCR"
+    assert row.exchanged_ticker is None
+    assert row.side == "exchange"
+    assert row.owner == "spouse"
+    assert row.asset_name == (
+        "BERY - Berry Global Group, Inc. (Exchanged) Amcor plc Ordinary Shares (Received)"
+    )
+    assert row.asset_type == "Stock"
+    assert row.transaction_date == "2025-04-30"
+    assert (row.amount_low, row.amount_high) == (100_001, 250_000)
+    assert row.flags == []
+
+
+def test_hagerty_exchange_hand_verified():
+    """Both legs linked: ETRN (exchanged), <br/>, EQT (received)."""
+    row = _only_row(HAGERTY_EXCHANGE)
+    assert row.raw_row["ticker"].split() == ["ETRN", "EQT"]
+    assert row.ticker == "EQT"
+    assert row.exchanged_ticker == "ETRN"
+    assert row.side == "exchange"
+    assert row.asset_name == "Equitrans Midstream Corp (Exchanged) Eqt Corp (Received)"
+    assert row.flags == []
+
+
+def test_no_other_golden_fixture_gains_an_exchanged_leg():
+    # Collateral check over every committed e-file page: only the two-leg
+    # Hagerty row carries an exchanged leg; every other row keeps NULL.
+    legs = {}
+    for stem in EFILE_FIXTURES:
+        evaluated = evaluate_page(
+            _fixture_bytes(stem),
+            uuid=_uuid(stem),
+            kind="ptr",
+            filed_date=FIXTURE_FILED_DATES[stem],
+            amendment=False,
+        )
+        for r in evaluated.rows:
+            if r.exchanged_ticker is not None:
+                legs[(stem, r.row_ordinal)] = r.exchanged_ticker
+    assert legs == {(HAGERTY_EXCHANGE, 1): "ETRN"}
 
 
 # --- the hand-verified bond filing (R12, Fetterman ptr_a5fdbba4…) -------------
