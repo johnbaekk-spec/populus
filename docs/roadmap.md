@@ -100,6 +100,23 @@ Carried open from the M2-5 merge. Full mechanism analysis was recorded in
   filings (`Hagerty, IV, William F`, …) the packaged `aliases.yaml` does not
   cover. Counted and published in `unresolved_names`, never dropped — a
   data-quality follow-up, not a blocker.
+- **B46 — 58 one-token Senate exchange cells keep an ambiguous leg.** The
+  two-leg fix (PR #152,
+  [decision record](architecture/decisions/senate-exchange-ticker.md)) splits a
+  `<br/>`-separated cell into the received `ticker` and `exchanged_ticker`.
+  When eFD prints a single ticker for an exchange, the source does not say
+  which leg it is. It is kept as `ticker`, with `exchanged_ticker` NULL (58
+  rows, owner store 20260817.1). Closing it needs another source for the
+  missing leg, such as the asset text's "(Exchanged)/(Received)" names
+  resolved through the ticker registry.
+- **B47 — 5 congress rows still fail the ticker key grammar**
+  `^[A-Z0-9][A-Z0-9.:$\-]{0,15}$` (`dashboard/src/lib/derive.ts`).
+  - Two are live: Toomey's 2017 received symbols `^MWE` and `^RGP`, kept
+    verbatim by owner decision on 2026-10-16.
+  - Three are unpublished rows carrying the 18-character option symbol
+    `SPY160219P00180000`.
+  - Decide whether the grammar admits these shapes or the rows are
+    normalized.
 
 ## 3. Site weight and file budgets
 
@@ -246,6 +263,28 @@ not closed, and it closes when that suite is retired.
   into R7. The fix is a judgement call: letting the ticker shrink truncates
   40-character fund names (R5's boundary case); moving it to line 2 changes an
   approved mobile grammar.
+- **B48 — the exchanged ticker's page does not list the exchange.** Build
+  20261016.3 has 50 rows with an exchanged leg. Each is listed only under its
+  received `ticker`: Hagerty's ETRN → EQT row appears on `/tickers/EQT/` but
+  not on `/tickers/ETRN/`. The leg is shown as text on the row's asset line
+  (`· exchanged ETRN`), and it is deliberately absent from the "Net range"
+  holdings rollup. Listing the row on the exchanged ticker's page needs a
+  second ticker key per row, not a display change.
+- **B49 — the congress feed text filter does not match the exchanged leg.**
+  The filter (`dashboard/src/scripts/feed-client.ts`) matches a `ticker`
+  prefix and a member-name substring, so filtering for `ETRN` misses the
+  ETRN → EQT exchange.
+- **B50 — decide whether "Largest buy · Own record" may show a buy that is
+  below the filer's own record.** The card ranks by bracket delta and shows the
+  top line even when no buy in the window exceeds the filer's previous
+  largest. Build 20261016.1 showed Pelosi · BE $1M–$5M, "1 bracket below the
+  largest of 216 prior disclosures". The wording is accurate, and the rule
+  shipped as approved. The open question is whether to hide the card when the
+  best delta is ≤ 0.
+- **B51 — TD-1: delete the watchlist storage cleanup on or after
+  2027-01-31.** `dashboard/public/theme-init.js` removes the four legacy
+  `populus:watch*` localStorage keys on every page load. It exists only to
+  clear devices that used the watchlist removed in signals-v3 M1.
 
 ## 7. Owner actions and data acquisition
 
@@ -269,6 +308,17 @@ not closed, and it closes when that suite is retired.
 - **B12 — M3, company financials.**
 - **B13 — M4, macro.**
 - **B14 — remaining P3 dashboard surfaces** beyond the shipped set.
+- **B52 — the MCP congress tools return only `ticker`.** Since PR #152 that
+  field is the received leg of a two-leg exchange, and `exchanged_ticker` is
+  not exposed. Adding it changes the tools' output contract, so it needs its
+  own version decision.
+- **B53 — no model of a member's relationship to the issuer.** Signals rank a
+  trade against the filer's own record and committee overlap only. A former
+  executive trading the former employer's stock reads as an ordinary trade:
+  for example, Alan Armstrong's $5M–$25M WMB sale (Williams Companies,
+  Armstrong's former employer) ranks Stands out on size alone. This was out of
+  scope for Signals v3, and it needs a sourced relationship dataset before any
+  surface can use it.
 
 ## 9. Security and supply chain (security audit R2, 2026-09-07)
 
